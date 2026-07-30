@@ -11,6 +11,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..
 
 from cvs.lib.preflight.base import partition_nodes_into_groups
 from cvs.lib.preflight.rdma_connectivity import RdmaConnectivityCheck
+from cvs.lib.preflight.report import PreflightReportGenerator
+from cvs.parsers.schemas import PreflightConfigFile
 
 
 def _make_checker(
@@ -35,6 +37,98 @@ def _make_checker(
         parallel_group_size=parallel_group_size,
         config_dict=kwargs.get('config_dict', {}),
     )
+
+
+class TestPreflightRdmaConfigContract(unittest.TestCase):
+    def test_schema_places_rdma_inventory_under_rdma(self):
+        config = PreflightConfigFile.model_validate(
+            {
+                'connectivity_check': {
+                    'rdma': {
+                        'connectivity_mode': 'skip',
+                        'gid_index': '7',
+                        'interfaces': ['enp4s0np0'],
+                    }
+                },
+                'reporting': {
+                    'generate_html_report': True,
+                    'generate_rdma_pairs_csv': False,
+                },
+            }
+        )
+
+        self.assertEqual(config.connectivity_check.rdma.gid_index, '7')
+        self.assertEqual(config.connectivity_check.rdma.interfaces, ['enp4s0np0'])
+        self.assertIs(config.reporting.generate_html_report, True)
+        self.assertIs(config.reporting.generate_rdma_pairs_csv, False)
+
+    def test_skip_mode_skips_interface_and_gid_checks_and_reporting(self):
+        from cvs.tests.preflight import preflight_checks
+
+        config = {'connectivity_check': {'rdma': {'connectivity_mode': 'skip'}}}
+        previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        try:
+            with (
+                patch.object(preflight_checks, 'InterfaceConsistencyCheck') as interface_checker,
+                patch.object(preflight_checks, 'GidConsistencyCheck') as gid_checker,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+            ):
+                preflight_checks.test_interface_name_consistency(MagicMock(), config)
+                preflight_checks.test_gid_consistency(MagicMock(), config)
+
+            interface_checker.assert_not_called()
+            gid_checker.assert_not_called()
+            interface_result = preflight_checks.preflight_results['interface_names']
+            gid_result = preflight_checks.preflight_results['gid_consistency']
+            self.assertEqual(interface_result['status'], 'SKIPPED')
+            self.assertEqual(gid_result['status'], 'SKIPPED')
+
+            report = PreflightReportGenerator(MagicMock(), {}, {})
+            self.assertEqual(report._summarize_interface_results(interface_result)['status'], 'SKIPPED')
+            self.assertEqual(report._summarize_gid_results(gid_result)['status'], 'SKIPPED')
+            self.assertEqual(report._generate_interface_names_html(interface_result), '')
+            self.assertEqual(report._generate_gid_consistency_html(gid_result), '')
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
+    def test_enabled_checks_use_nested_rdma_inventory(self):
+        from cvs.tests.preflight import preflight_checks
+
+        phdl = MagicMock()
+        config = {
+            'connectivity_check': {
+                'rdma': {
+                    'connectivity_mode': 'basic',
+                    'gid_index': '7',
+                    'interfaces': ['enp4s0np0'],
+                }
+            }
+        }
+        previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        try:
+            with (
+                patch.object(preflight_checks, 'InterfaceConsistencyCheck') as interface_checker,
+                patch.object(preflight_checks, 'GidConsistencyCheck') as gid_checker,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+            ):
+                interface_checker.return_value.run.return_value = {
+                    'nodeA': {'status': 'PASS', 'errors': [], 'interfaces': []}
+                }
+                gid_checker.return_value.run.return_value = {
+                    'nodeA': {'status': 'PASS', 'errors': [], 'interfaces': {}}
+                }
+
+                preflight_checks.test_interface_name_consistency(phdl, config)
+                preflight_checks.test_gid_consistency(phdl, config)
+
+            interface_checker.assert_called_once_with(phdl, ['enp4s0np0'], config)
+            gid_checker.assert_called_once_with(phdl, '7', ['enp4s0np0'], config)
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
 
 
 class TestPartitionNodesIntoGroups(unittest.TestCase):

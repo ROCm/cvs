@@ -30,7 +30,7 @@ Ethernet) scale-up connectivity by:
      the result is marked ``WARNING``.
 
 The preflight entrypoint makes this check opt-in through
-``preflight.transferbench.enabled`` and supplies a validated, CVS-supported
+``preflight.connectivity_check.ifoe.transferbench.enabled`` and supplies a validated, CVS-supported
 profile. This library class retains explicit constructor arguments for unit
 testing and internal profile implementation; they are not customer config.
 

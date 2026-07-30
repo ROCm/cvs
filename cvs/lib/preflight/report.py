@@ -205,6 +205,14 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_gid_results(self, gid_results):
         """Summarize GID consistency check results."""
+        if not gid_results or gid_results.get('skipped') or gid_results.get('status') == 'SKIPPED':
+            return {
+                'status': 'SKIPPED',
+                'total_interfaces': 0,
+                'ok_interfaces': 0,
+                'failed_nodes': [],
+                'summary': gid_results.get('message', 'RDMA GID validation skipped') if gid_results else 'Not run',
+            }
         total_interfaces = 0
         ok_interfaces = 0
         failed_nodes = []
@@ -336,6 +344,14 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_rocm_results(self, rocm_results):
         """Summarize ROCm version check results."""
+        if not rocm_results or rocm_results.get('skipped') or rocm_results.get('status') == 'SKIPPED':
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'consistent_nodes': 0,
+                'failed_nodes': [],
+                'summary': rocm_results.get('message', 'ROCm validation skipped') if rocm_results else 'Not run',
+            }
         total_nodes = len(rocm_results)
         consistent_nodes = sum(1 for result in rocm_results.values() if result['status'] == 'PASS')
         failed_nodes = [node for node, result in rocm_results.items() if result['status'] == 'FAIL']
@@ -350,6 +366,18 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_interface_results(self, interface_results):
         """Summarize interface name check results."""
+        if not interface_results or interface_results.get('skipped') or interface_results.get('status') == 'SKIPPED':
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'compliant_nodes': 0,
+                'failed_nodes': [],
+                'summary': (
+                    interface_results.get('message', 'RDMA interface validation skipped')
+                    if interface_results
+                    else 'Not run'
+                ),
+            }
         total_nodes = len(interface_results)
         compliant_nodes = sum(1 for result in interface_results.values() if result['status'] == 'PASS')
         failed_nodes = [node for node, result in interface_results.items() if result['status'] == 'FAIL']
@@ -952,7 +980,7 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _generate_gid_consistency_html(self, gid_results):
         """Generate GID inconsistencies section - only show failed nodes."""
-        if not gid_results:
+        if not gid_results or gid_results.get('skipped') or gid_results.get('status') == 'SKIPPED':
             return ""
 
         # Filter to only failed nodes
@@ -2059,7 +2087,7 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _generate_rocm_versions_html(self, rocm_results):
         """Generate ROCm version inconsistencies section - only show failed nodes."""
-        if not rocm_results:
+        if not rocm_results or rocm_results.get('skipped') or rocm_results.get('status') == 'SKIPPED':
             return ""
 
         # Filter to only failed nodes
@@ -2105,7 +2133,7 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _generate_interface_names_html(self, interface_results):
         """Generate RDMA interface inconsistencies section - only show failed nodes."""
-        if not interface_results:
+        if not interface_results or interface_results.get('skipped') or interface_results.get('status') == 'SKIPPED':
             return ""
 
         # Filter to only failed nodes

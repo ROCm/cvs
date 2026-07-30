@@ -348,25 +348,30 @@ class TestNodeHealthConfigContract(unittest.TestCase):
     def test_schema_accepts_only_the_three_customer_facing_options(self):
         config = PreflightConfigFile.model_validate(
             {
-                "node_health": {
+                "node_check": {
                     "enabled": True,
                     "gpus_per_node": 4,
-                    "fabric_checks": True,
-                }
+                    "expected_rocm_version": "7.15.0",
+                },
+                "connectivity_check": {
+                    "ifoe": {
+                        "fabric_checks": True,
+                    }
+                },
             }
         )
 
-        self.assertTrue(config.node_health.enabled)
-        self.assertEqual(config.node_health.gpus_per_node, 4)
-        self.assertTrue(config.node_health.fabric_checks)
+        self.assertTrue(config.node_check.enabled)
+        self.assertEqual(config.node_check.gpus_per_node, 4)
+        self.assertEqual(config.node_check.expected_rocm_version, "7.15.0")
+        self.assertTrue(config.connectivity_check.ifoe.fabric_checks)
 
         with self.assertRaises(ValidationError):
             PreflightConfigFile.model_validate(
                 {
-                    "node_health": {
+                    "node_check": {
                         "enabled": True,
                         "gpus_per_node": 4,
-                        "fabric_checks": True,
                         "failure_mode": "report",
                     }
                 }
@@ -375,10 +380,10 @@ class TestNodeHealthConfigContract(unittest.TestCase):
         with self.assertRaises(ValidationError):
             PreflightConfigFile.model_validate(
                 {
-                    "node_check": {
-                        "mi4xx_node_health": {
-                            "enabled": True,
-                        }
+                    "node_health": {
+                        "enabled": True,
+                        "gpus_per_node": 4,
+                        "fabric_checks": True,
                     }
                 }
             )
@@ -389,11 +394,16 @@ class TestNodeHealthConfigContract(unittest.TestCase):
         phdl = MagicMock()
         phdl.reachable_hosts = ["nodeA"]
         config = {
-            "node_health": {
+            "node_check": {
                 "enabled": True,
                 "gpus_per_node": 8,
-                "fabric_checks": False,
-            }
+                "expected_rocm_version": "7.15.0",
+            },
+            "connectivity_check": {
+                "ifoe": {
+                    "fabric_checks": False,
+                }
+            },
         }
         cluster = {"node_dict": {"nodeA": {}}}
         checker_results = {

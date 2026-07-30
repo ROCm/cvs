@@ -67,38 +67,35 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 ```json
 {
   "preflight": {
-    "node_health": {
+    "node_check": {
       "enabled": true,
       "gpus_per_node": 4,
-      "fabric_checks": true
-    },
-    "l2ping": {
-      "enabled": true,
-      "pings_per_port": 3
-    },
-    "transferbench": {
-      "enabled": true,
-      "scope": "node",
-      "profile": "smoketest",
-      "message_sizes": ["1K", "16M"],
-      "iterations": 2,
-      "warmup_iterations": 0
-    },
-    "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "6.2.0",
-      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+      "expected_rocm_version": "7.15.0"
     },
     "connectivity_check": {
       "rdma": {
-        "connectivity_mode": "basic",
-        "ibv_test_timeout": "10",
-        "ibv_test_port_range": "10000-50000"
+        "connectivity_mode": "skip"
+      },
+      "ifoe": {
+        "fabric_checks": true,
+        "l2ping": {
+          "enabled": true,
+          "pings_per_port": 3
+        },
+        "transferbench": {
+          "enabled": true,
+          "scope": "node",
+          "profile": "smoketest",
+          "message_sizes": ["1K", "16M"],
+          "iterations": 2,
+          "warmup_iterations": 0
+        }
       }
     },
     "reporting": {
-      "generate_html_report": "true",
-      "artifacts_root_dir": "/tmp/preflight"
+      "generate_html_report": true,
+      "artifacts_root_dir": "/tmp/preflight",
+      "generate_rdma_pairs_csv": false
     }
   }
 }
@@ -106,18 +103,19 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 
 ### Key Parameters
 
-- **`node_health.enabled`**: Run mandatory GPU node-health admission
-- **`node_health.gpus_per_node`**: Exact GPU count expected on every node
-- **`node_health.fabric_checks`**: Add the MI4XX AIFM/AFM/vPOD and IFoE station/port checks
+- **`node_check.enabled`**: Run GPU node-health and ROCm validation
+- **`node_check.gpus_per_node`**: Exact GPU count expected on every node
+- **`connectivity_check.ifoe.fabric_checks`**: Add MI4XX AIFM/AFM/vPOD and IFoE station/port checks
 - **`connectivity_check.rdma.connectivity_mode`**: `"basic"`, `"full_mesh"`, or `"skip"`
-- **`l2ping.enabled`**: Run the strict IFoE L2 connectivity gate
-- **`l2ping.pings_per_port`**: Samples sent through each discovered UP port pair (default: `3`)
-- **`transferbench.enabled`**: Run the mandatory TransferBench data-path gate
-- **`transferbench.scope`**: `"node"` or `"cluster"`
-- **`transferbench.profile`**: CVS-supported profile (`"smoketest"`)
-- **`transferbench.message_sizes`**, **`iterations`**, **`warmup_iterations`**: Workload intensity
+- **`connectivity_check.ifoe.l2ping.enabled`**: Run the strict IFoE L2 connectivity gate
+- **`connectivity_check.ifoe.l2ping.pings_per_port`**: Samples per discovered UP port pair
+- **`connectivity_check.ifoe.transferbench.enabled`**: Run the TransferBench data-path gate
+- **`connectivity_check.ifoe.transferbench.scope`**: `"node"` or `"cluster"`
+- **`connectivity_check.ifoe.transferbench.profile`**: CVS-supported profile (`"smoketest"`)
+- **`connectivity_check.ifoe.transferbench.message_sizes`**, **`iterations`**, **`warmup_iterations`**: Workload intensity
 - **`node_check.expected_rocm_version`**: ROCm version expected across all nodes
-- **`node_check.rdma_interfaces`**: List of expected RDMA interface names
+- **`connectivity_check.rdma.interfaces`**: List of expected RDMA interface names
+- **`connectivity_check.rdma.gid_index`**: GID index validated on those interfaces
 - **`connectivity_check.rdma.ibv_test_timeout`**: Timeout in seconds for ibv_rc_pingpong tests
 - **`connectivity_check.rdma.ibv_test_port_range`**: Port range for parallel ibv_rc_pingpong tests
 
@@ -134,7 +132,7 @@ Each invocation issues:
     --dst-accelerator <accel_id> [-t <per_ping_timeout>] [--traffic-type ...]
 ```
 
-The check is opt-in through `preflight.l2ping.enabled`. When enabled, CVS
+The check is opt-in through `preflight.connectivity_check.ifoe.l2ping.enabled`. When enabled, CVS
 discovers each node's source BDFs, vPOD peers, and operational ports, then
 tests every ordered non-self accelerator pair. It validates IFoE request,
 IFoE response, and non-IFoE traffic with a zero-loss policy and requires
@@ -143,9 +141,11 @@ complete coverage. Discovery or connectivity failures fail the preflight gate.
 ### Example IFoE config block
 
 ```json
-"l2ping": {
-  "enabled": true,
-  "pings_per_port": 3
+"ifoe": {
+  "l2ping": {
+    "enabled": true,
+    "pings_per_port": 3
+  }
 }
 ```
 
@@ -216,13 +216,15 @@ Per-node verdict is derived as:
 ### Example TransferBench config block
 
 ```json
-"transferbench": {
-  "enabled": true,
-  "scope": "node",
-  "profile": "smoketest",
-  "message_sizes": ["1K", "16M"],
-  "iterations": 2,
-  "warmup_iterations": 0
+"ifoe": {
+  "transferbench": {
+    "enabled": true,
+    "scope": "node",
+    "profile": "smoketest",
+    "message_sizes": ["1K", "16M"],
+    "iterations": 2,
+    "warmup_iterations": 0
+  }
 }
 ```
 
@@ -393,25 +395,25 @@ cvs/cvs/input/config_file/preflight/
 ```json
 {
   "preflight": {
-    "node_health": {
+    "node_check": {
       "enabled": true,
       "gpus_per_node": 8,
-      "fabric_checks": false
-    },
-    "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "6.2.0",
-      "rdma_interfaces": ["mlx5_0", "mlx5_1"]
+      "expected_rocm_version": "6.2.0"
     },
     "connectivity_check": {
       "rdma": {
         "connectivity_mode": "full_mesh",
-        "ibv_test_timeout": "15",
+        "gid_index": "3",
+        "interfaces": ["mlx5_0", "mlx5_1"],
+        "ibv_test_timeout": 15,
         "ibv_test_port_range": "10000-10999"
+      },
+      "ifoe": {
+        "fabric_checks": false
       }
     },
     "reporting": {
-      "generate_html_report": "true",
+      "generate_html_report": true,
       "artifacts_root_dir": "/shared/preflight_reports"
     }
   }

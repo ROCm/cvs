@@ -603,38 +603,37 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
     def test_schema_accepts_only_the_six_customer_facing_options(self):
         config = PreflightConfigFile.model_validate(
             {
-                'transferbench': {
-                    'enabled': True,
-                    'scope': 'cluster',
-                    'profile': 'smoketest',
-                    'message_sizes': ['1K', '16M'],
-                    'iterations': 3,
-                    'warmup_iterations': 1,
+                'connectivity_check': {
+                    'ifoe': {
+                        'transferbench': {
+                            'enabled': True,
+                            'scope': 'cluster',
+                            'profile': 'smoketest',
+                            'message_sizes': ['1K', '16M'],
+                            'iterations': 3,
+                            'warmup_iterations': 1,
+                        }
+                    }
                 }
             }
         )
 
-        self.assertTrue(config.transferbench.enabled)
-        self.assertEqual(config.transferbench.scope, 'cluster')
-        self.assertEqual(config.transferbench.message_sizes, ['1K', '16M'])
+        transferbench = config.connectivity_check.ifoe.transferbench
+        self.assertTrue(transferbench.enabled)
+        self.assertEqual(transferbench.scope, 'cluster')
+        self.assertEqual(transferbench.message_sizes, ['1K', '16M'])
 
         with self.assertRaises(ValidationError):
             PreflightConfigFile.model_validate(
                 {
-                    'transferbench': {
-                        'enabled': True,
-                        'scope': 'node',
-                        'profile': 'bandwidth',
-                    }
-                }
-            )
-
-        with self.assertRaises(ValidationError):
-            PreflightConfigFile.model_validate(
-                {
-                    'transferbench': {
-                        'enabled': True,
-                        'tb_binary': '/custom/TransferBench',
+                    'connectivity_check': {
+                        'ifoe': {
+                            'transferbench': {
+                                'enabled': True,
+                                'scope': 'node',
+                                'profile': 'bandwidth',
+                            }
+                        }
                     }
                 }
             )
@@ -643,9 +642,21 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             PreflightConfigFile.model_validate(
                 {
                     'connectivity_check': {
-                        'transferbench': {
-                            'connectivity_mode': 'run',
+                        'ifoe': {
+                            'transferbench': {
+                                'enabled': True,
+                                'tb_binary': '/custom/TransferBench',
+                            }
                         }
+                    }
+                }
+            )
+
+        with self.assertRaises(ValidationError):
+            PreflightConfigFile.model_validate(
+                {
+                    'transferbench': {
+                        'enabled': True,
                     }
                 }
             )
@@ -656,13 +667,17 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         phdl = MagicMock()
         phdl.reachable_hosts = ['nodeA', 'nodeB']
         config = {
-            'transferbench': {
-                'enabled': True,
-                'scope': 'cluster',
-                'profile': 'smoketest',
-                'message_sizes': ['1K', '1M', '16M'],
-                'iterations': 4,
-                'warmup_iterations': 1,
+            'connectivity_check': {
+                'ifoe': {
+                    'transferbench': {
+                        'enabled': True,
+                        'scope': 'cluster',
+                        'profile': 'smoketest',
+                        'message_sizes': ['1K', '1M', '16M'],
+                        'iterations': 4,
+                        'warmup_iterations': 1,
+                    }
+                }
             }
         }
         checker_results = {
@@ -710,18 +725,23 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         phdl = MagicMock()
         phdl.reachable_hosts = ['nodeA']
         config = {
-            'node_health': {
+            'node_check': {
                 'enabled': True,
                 'gpus_per_node': 4,
-                'fabric_checks': True,
+                'expected_rocm_version': '7.15.0',
             },
-            'transferbench': {
-                'enabled': True,
-                'scope': 'node',
-                'profile': 'smoketest',
-                'message_sizes': ['1K', '16M'],
-                'iterations': 2,
-                'warmup_iterations': 0,
+            'connectivity_check': {
+                'ifoe': {
+                    'fabric_checks': True,
+                    'transferbench': {
+                        'enabled': True,
+                        'scope': 'node',
+                        'profile': 'smoketest',
+                        'message_sizes': ['1K', '16M'],
+                        'iterations': 2,
+                        'warmup_iterations': 0,
+                    },
+                }
             },
         }
         admission = {
@@ -773,7 +793,13 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
             ):
                 preflight_checks.test_ifoe_transferbench_smoke(
                     phdl,
-                    {'transferbench': {'enabled': False}},
+                    {
+                        'connectivity_check': {
+                            'ifoe': {
+                                'transferbench': {'enabled': False},
+                            }
+                        }
+                    },
                 )
 
             checker_cls.assert_not_called()
@@ -790,13 +816,17 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         phdl = MagicMock()
         phdl.reachable_hosts = ['nodeA']
         config = {
-            'transferbench': {
-                'enabled': True,
-                'scope': 'node',
-                'profile': 'smoketest',
-                'message_sizes': ['1K', '16M'],
-                'iterations': 2,
-                'warmup_iterations': 0,
+            'connectivity_check': {
+                'ifoe': {
+                    'transferbench': {
+                        'enabled': True,
+                        'scope': 'node',
+                        'profile': 'smoketest',
+                        'message_sizes': ['1K', '16M'],
+                        'iterations': 2,
+                        'warmup_iterations': 0,
+                    }
+                }
             }
         }
         checker_results = {

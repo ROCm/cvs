@@ -916,23 +916,31 @@ class TestL2PingConfigContract(unittest.TestCase):
     def test_schema_accepts_only_the_two_customer_facing_options(self):
         config = PreflightConfigFile.model_validate(
             {
-                'l2ping': {
-                    'enabled': True,
-                    'pings_per_port': 5,
+                'connectivity_check': {
+                    'ifoe': {
+                        'l2ping': {
+                            'enabled': True,
+                            'pings_per_port': 5,
+                        }
+                    }
                 }
             }
         )
 
-        self.assertTrue(config.l2ping.enabled)
-        self.assertEqual(config.l2ping.pings_per_port, 5)
+        self.assertTrue(config.connectivity_check.ifoe.l2ping.enabled)
+        self.assertEqual(config.connectivity_check.ifoe.l2ping.pings_per_port, 5)
 
         with self.assertRaises(ValidationError):
             PreflightConfigFile.model_validate(
                 {
-                    'l2ping': {
-                        'enabled': True,
-                        'pings_per_port': 3,
-                        'loss_threshold_pct': 1.0,
+                    'connectivity_check': {
+                        'ifoe': {
+                            'l2ping': {
+                                'enabled': True,
+                                'pings_per_port': 3,
+                                'loss_threshold_pct': 1.0,
+                            }
+                        }
                     }
                 }
             )
@@ -940,10 +948,9 @@ class TestL2PingConfigContract(unittest.TestCase):
         with self.assertRaises(ValidationError):
             PreflightConfigFile.model_validate(
                 {
-                    'connectivity_check': {
-                        'ifoe': {
-                            'connectivity_mode': 'run',
-                        }
+                    'l2ping': {
+                        'enabled': True,
+                        'pings_per_port': 3,
                     }
                 }
             )
@@ -954,9 +961,13 @@ class TestL2PingConfigContract(unittest.TestCase):
         phdl = MagicMock()
         phdl.reachable_hosts = ['nodeA']
         config = {
-            'l2ping': {
-                'enabled': True,
-                'pings_per_port': 5,
+            'connectivity_check': {
+                'ifoe': {
+                    'l2ping': {
+                        'enabled': True,
+                        'pings_per_port': 5,
+                    }
+                }
             }
         }
         cluster = {'node_dict': {'nodeA': {}}}
@@ -1013,7 +1024,13 @@ class TestL2PingConfigContract(unittest.TestCase):
             ):
                 preflight_checks.test_ifoe_l2_connectivity(
                     phdl,
-                    {'l2ping': {'enabled': False, 'pings_per_port': 3}},
+                    {
+                        'connectivity_check': {
+                            'ifoe': {
+                                'l2ping': {'enabled': False, 'pings_per_port': 3},
+                            }
+                        }
+                    },
                     {'node_dict': {'nodeA': {}}},
                 )
 

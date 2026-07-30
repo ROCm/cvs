@@ -71,31 +71,66 @@ def _config_flag_enabled(value, default=True):
     return bool(value)
 
 
-def _node_health_config(config_dict):
-    """Return the customer-facing node-health configuration."""
-    legacy = get_nested_config(config_dict, 'node_check', 'mi4xx_node_health', None)
-    if legacy is not None:
+def _reject_flat_preflight_checks(config_dict):
+    if not isinstance(config_dict, dict):
+        return
+    removed = sorted(set(config_dict) & {'node_health', 'l2ping', 'transferbench'})
+    if removed:
         raise ValueError(
-            "node_check.mi4xx_node_health is no longer supported; use preflight.node_health with "
-            "enabled, gpus_per_node, and fabric_checks"
+            "Unsupported flat preflight block(s): "
+            + ', '.join(removed)
+            + "; use preflight.node_check and preflight.connectivity_check.ifoe"
         )
-    config = config_dict.get('node_health', {}) if isinstance(config_dict, dict) else {}
+
+
+def _node_check_config(config_dict):
+    """Return the customer-facing generic node-check configuration."""
+    _reject_flat_preflight_checks(config_dict)
+    config = config_dict.get('node_check', {}) if isinstance(config_dict, dict) else {}
     if not isinstance(config, dict):
-        raise ValueError("preflight.node_health must be an object")
-    unknown = sorted(set(config) - {'enabled', 'gpus_per_node', 'fabric_checks'})
+        raise ValueError("preflight.node_check must be an object")
+    unknown = sorted(
+        key for key in set(config) - {'enabled', 'gpus_per_node', 'expected_rocm_version'} if not key.startswith('_')
+    )
     if unknown:
-        raise ValueError("Unsupported preflight.node_health option(s): " + ', '.join(unknown))
+        raise ValueError("Unsupported preflight.node_check option(s): " + ', '.join(unknown))
     return config
 
 
+def _ifoe_config(config_dict):
+    """Return the customer-facing IFoE configuration."""
+    _reject_flat_preflight_checks(config_dict)
+    config = get_nested_config(config_dict, 'connectivity_check', 'ifoe', {})
+    if not isinstance(config, dict):
+        raise ValueError("preflight.connectivity_check.ifoe must be an object")
+    unknown = sorted(
+        key for key in set(config) - {'fabric_checks', 'l2ping', 'transferbench'} if not key.startswith('_')
+    )
+    if unknown:
+        raise ValueError("Unsupported preflight.connectivity_check.ifoe option(s): " + ', '.join(unknown))
+    return config
+
+
+def _rdma_config(config_dict):
+    config = get_nested_config(config_dict, 'connectivity_check', 'rdma', {})
+    if not isinstance(config, dict):
+        raise ValueError("preflight.connectivity_check.rdma must be an object")
+    return config
+
+
+def _rdma_enabled(config_dict):
+    return str(_rdma_config(config_dict).get('connectivity_mode', 'basic')).strip().lower() != 'skip'
+
+
 def _node_health_enabled(config_dict):
-    return _config_flag_enabled(_node_health_config(config_dict).get('enabled'), default=False)
+    return _config_flag_enabled(_node_check_config(config_dict).get('enabled'), default=True)
 
 
 def _node_health_fabric_checks_enabled(config_dict):
-    return _node_health_enabled(config_dict) and _config_flag_enabled(
-        _node_health_config(config_dict).get('fabric_checks'), default=False
-    )
+    enabled = _config_flag_enabled(_ifoe_config(config_dict).get('fabric_checks'), default=False)
+    if enabled and not _node_health_enabled(config_dict):
+        raise ValueError("preflight.connectivity_check.ifoe.fabric_checks requires node_check.enabled=true")
+    return enabled
 
 
 def _node_health_admission_failed(config_dict):
@@ -399,7 +434,7 @@ def test_node_health(phdl, config_dict, cluster_dict):
         preflight_update_test_result()
         return
 
-    health_config = _node_health_config(config_dict)
+    health_config = _node_check_config(config_dict)
     fabric_checks = _node_health_fabric_checks_enabled(config_dict)
     gpus_per_node = int(health_config.get('gpus_per_node', 4))
     log.info(
@@ -461,6 +496,15 @@ def test_rocm_version_consistency(phdl, config_dict):
     (RDMA interface consistency) still runs on the full reachability-passed set.
     """
     global preflight_results
+
+    if not _node_health_enabled(config_dict):
+        preflight_results['rocm_versions'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'ROCm validation skipped because preflight.node_check is disabled',
+        }
+        preflight_update_test_result()
+        return
 
     expected_version = get_nested_config(config_dict, 'node_check', 'expected_rocm_version', '6.2.0')
     log.info(f"Testing ROCm version consistency (expected: {expected_version})")
@@ -528,8 +572,17 @@ def test_interface_name_consistency(phdl, config_dict):
     """
     global preflight_results
 
+    if not _rdma_enabled(config_dict):
+        preflight_results['interface_names'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'RDMA interface validation skipped because RDMA connectivity mode is skip',
+        }
+        preflight_update_test_result()
+        return
+
     expected_interfaces = get_nested_config(
-        config_dict, 'node_check', 'rdma_interfaces', ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+        config_dict, 'connectivity_check.rdma', 'interfaces', ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
     )
     log.info(f"Testing interface presence (expected: {expected_interfaces})")
 
@@ -577,9 +630,18 @@ def test_gid_consistency(phdl, config_dict):
     """
     global preflight_results
 
-    gid_index = get_nested_config(config_dict, 'node_check', 'gid_index', '3')
+    if not _rdma_enabled(config_dict):
+        preflight_results['gid_consistency'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'RDMA GID validation skipped because RDMA connectivity mode is skip',
+        }
+        preflight_update_test_result()
+        return
+
+    gid_index = get_nested_config(config_dict, 'connectivity_check.rdma', 'gid_index', '3')
     expected_interfaces = get_nested_config(
-        config_dict, 'node_check', 'rdma_interfaces', ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+        config_dict, 'connectivity_check.rdma', 'interfaces', ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
     )
     log.info(f"Testing GID consistency for index {gid_index} on interfaces: {expected_interfaces}")
 
@@ -616,17 +678,12 @@ def test_gid_consistency(phdl, config_dict):
 
 def _l2ping_config(config_dict):
     """Return the customer-facing l2ping configuration."""
-    legacy = get_nested_config(config_dict, 'connectivity_check', 'ifoe', None)
-    if legacy is not None:
-        raise ValueError(
-            "connectivity_check.ifoe is no longer supported; use preflight.l2ping with enabled and pings_per_port"
-        )
-    config = config_dict.get('l2ping', {}) if isinstance(config_dict, dict) else {}
+    config = _ifoe_config(config_dict).get('l2ping', {})
     if not isinstance(config, dict):
-        raise ValueError("preflight.l2ping must be an object")
-    unknown = sorted(set(config) - {'enabled', 'pings_per_port'})
+        raise ValueError("preflight.connectivity_check.ifoe.l2ping must be an object")
+    unknown = sorted(key for key in set(config) - {'enabled', 'pings_per_port'} if not key.startswith('_'))
     if unknown:
-        raise ValueError("Unsupported preflight.l2ping option(s): " + ', '.join(unknown))
+        raise ValueError("Unsupported preflight.connectivity_check.ifoe.l2ping option(s): " + ', '.join(unknown))
     return config
 
 
@@ -642,7 +699,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     (BDF, dst-accelerator) pairing and validates the per-port pass/fail
     counts and Summary loss percentages against the configured threshold.
 
-    Configuration lives under ``l2ping`` in the preflight config file. The
+    Configuration lives under ``connectivity_check.ifoe.l2ping`` in the preflight config file. The
     check is opt-in: when ``enabled`` is false or omitted it records a SKIPPED
     result without contacting nodes. When enabled, l2ping is a strict
     admission gate: any IFoE failure, incomplete coverage, or missing required
@@ -662,7 +719,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
 
     l2ping_config = _l2ping_config(config_dict)
     if not _l2ping_enabled(config_dict):
-        log.info("IFoE L2 connectivity test skipped because preflight.l2ping is disabled")
+        log.info("IFoE L2 connectivity test skipped because connectivity_check.ifoe.l2ping is disabled")
         preflight_results['ifoe_l2_connectivity'] = {
             'mode': 'skip',
             'skipped': True,
@@ -696,7 +753,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
 
     pings_per_port = int(l2ping_config.get('pings_per_port', 3))
     if pings_per_port < 1:
-        raise ValueError("preflight.l2ping.pings_per_port must be at least 1")
+        raise ValueError("preflight.connectivity_check.ifoe.l2ping.pings_per_port must be at least 1")
 
     log.info(
         "Running strict IFoE L2 full-mesh connectivity (pings_per_port=%d) on %d host(s)",
@@ -812,19 +869,13 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
 
 def _transferbench_config(config_dict):
     """Return the customer-facing TransferBench configuration."""
-    legacy = get_nested_config(config_dict, 'connectivity_check', 'transferbench', None)
-    if legacy is not None:
-        raise ValueError(
-            "connectivity_check.transferbench is no longer supported; use preflight.transferbench with "
-            "enabled, scope, profile, message_sizes, iterations, and warmup_iterations"
-        )
-    config = config_dict.get('transferbench', {}) if isinstance(config_dict, dict) else {}
+    config = _ifoe_config(config_dict).get('transferbench', {})
     if not isinstance(config, dict):
-        raise ValueError("preflight.transferbench must be an object")
+        raise ValueError("preflight.connectivity_check.ifoe.transferbench must be an object")
     supported = {'enabled', 'scope', 'profile', 'message_sizes', 'iterations', 'warmup_iterations'}
-    unknown = sorted(set(config) - supported)
+    unknown = sorted(key for key in set(config) - supported if not key.startswith('_'))
     if unknown:
-        raise ValueError("Unsupported preflight.transferbench option(s): " + ', '.join(unknown))
+        raise ValueError("Unsupported preflight.connectivity_check.ifoe.transferbench option(s): " + ', '.join(unknown))
     return config
 
 
@@ -856,7 +907,7 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
          two reachable nodes; otherwise we degrade to ``per_node`` mode and
          log a warning.
 
-    Configuration lives under ``transferbench`` in the preflight config file.
+    Configuration lives under ``connectivity_check.ifoe.transferbench`` in the preflight config file.
     The check is opt-in through ``enabled``. Once enabled, a failed run is a
     mandatory preflight gate; skip-budget warnings remain non-fatal. Failed
     nodes are not pruned from ``phdl`` so downstream diagnostics and reporting
@@ -874,7 +925,7 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
 
     transferbench_config = _transferbench_config(config_dict)
     if not _transferbench_enabled(config_dict):
-        log.info("IFoE TransferBench smoketest skipped because preflight.transferbench is disabled")
+        log.info("IFoE TransferBench smoketest skipped because connectivity_check.ifoe.transferbench is disabled")
         preflight_results['transferbench_smoke'] = {
             'mode': 'skip',
             'skipped': True,
@@ -900,22 +951,24 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
 
     scope = str(transferbench_config.get('scope', 'node')).strip().lower()
     if scope not in ('node', 'cluster'):
-        raise ValueError("preflight.transferbench.scope must be 'node' or 'cluster'")
+        raise ValueError("preflight.connectivity_check.ifoe.transferbench.scope must be 'node' or 'cluster'")
     profile = str(transferbench_config.get('profile', 'smoketest')).strip().lower()
     if profile != 'smoketest':
-        raise ValueError("preflight.transferbench.profile must be a CVS-supported profile: smoketest")
+        raise ValueError(
+            "preflight.connectivity_check.ifoe.transferbench.profile must be a CVS-supported profile: smoketest"
+        )
     message_sizes = transferbench_config.get('message_sizes', ['1K', '16M'])
     if not isinstance(message_sizes, (list, tuple)) or not message_sizes:
-        raise ValueError("preflight.transferbench.message_sizes must be a non-empty list")
+        raise ValueError("preflight.connectivity_check.ifoe.transferbench.message_sizes must be a non-empty list")
     message_sizes = [str(size).strip() for size in message_sizes]
     if any(not size for size in message_sizes):
-        raise ValueError("preflight.transferbench.message_sizes entries must not be empty")
+        raise ValueError("preflight.connectivity_check.ifoe.transferbench.message_sizes entries must not be empty")
     iterations = int(transferbench_config.get('iterations', 2))
     warmup_iterations = int(transferbench_config.get('warmup_iterations', 0))
     if iterations < 1:
-        raise ValueError("preflight.transferbench.iterations must be at least 1")
+        raise ValueError("preflight.connectivity_check.ifoe.transferbench.iterations must be at least 1")
     if warmup_iterations < 0:
-        raise ValueError("preflight.transferbench.warmup_iterations must be at least 0")
+        raise ValueError("preflight.connectivity_check.ifoe.transferbench.warmup_iterations must be at least 0")
     rank_mode = 'per_node' if scope == 'node' else 'multi_rank'
     ssh_timeout = _transferbench_timeout(message_sizes, iterations, warmup_iterations)
     afm_vpod_admission = None
@@ -1065,9 +1118,12 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     port_range = get_nested_config(config_dict, 'connectivity_check.rdma', 'ibv_test_port_range', '10000-50000')
     timeout = int(get_nested_config(config_dict, 'connectivity_check.rdma', 'ibv_test_timeout', 90))
     expected_interfaces = get_nested_config(
-        config_dict, 'node_check', 'rdma_interfaces', ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+        config_dict,
+        'connectivity_check.rdma',
+        'interfaces',
+        ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
     )
-    gid_index = get_nested_config(config_dict, 'node_check', 'gid_index', '3')
+    gid_index = get_nested_config(config_dict, 'connectivity_check.rdma', 'gid_index', '3')
     parallel_group_size = get_nested_config(
         config_dict,
         'connectivity_check.rdma',

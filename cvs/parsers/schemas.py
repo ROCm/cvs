@@ -782,41 +782,14 @@ class PreflightDebugConfig(BaseModel):
     )
 
 
-class PreflightNodeHealthConfig(BaseModel):
-    """Small customer-facing node-health policy.
-
-    Generic AMDGPU/KFD/GPU visibility checks always run when enabled.
-    ``fabric_checks`` adds the fixed MI4XX AIFM/AFM/vPOD admission contract.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = Field(default=False, description="Enable mandatory node-health admission")
-    gpus_per_node: int = Field(default=4, ge=1, description="Expected AMD GPU count on each node")
-    fabric_checks: bool = Field(
-        default=False,
-        description="Enable MI4XX AIFM, AFM, vPOD, station-mask, and IFoE port checks",
-    )
-
-
 class PreflightNodeCheckConfig(BaseModel):
     """Individual node validation settings."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
-    gid_index: str = Field(default="3", description="GID index to check on all RDMA interfaces (typically 3 for RoCE)")
+    enabled: bool = Field(default=True, description="Enable generic GPU node health and ROCm validation")
+    gpus_per_node: int = Field(default=4, ge=1, description="Expected AMD GPU count on each node")
     expected_rocm_version: str = Field(default="6.2.0", description="Expected ROCm version across all cluster nodes")
-    rdma_interfaces: List[str] = Field(
-        default_factory=lambda: ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
-        description="List of specific RDMA interface names to check and test",
-    )
-
-    @model_validator(mode="before")
-    @classmethod
-    def reject_legacy_node_health(cls, value):
-        if isinstance(value, dict) and "mi4xx_node_health" in value:
-            raise ValueError("node_check.mi4xx_node_health is no longer supported; use the top-level node_health block")
-        return value
 
 
 class PreflightRdmaConfig(BaseModel):
@@ -825,6 +798,12 @@ class PreflightRdmaConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     connectivity_mode: str = Field(default="basic", description="RDMA connectivity testing: basic, full_mesh, or skip")
+    gid_index: str = Field(default="3", description="GID index to check on all RDMA interfaces (typically 3 for RoCE)")
+    interfaces: List[str] = Field(
+        default_factory=lambda: ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
+        min_length=1,
+        description="RDMA device names checked for presence, GID consistency, and connectivity",
+    )
     nodes_per_full_mesh_group: int = Field(
         default=128,
         ge=2,
@@ -962,23 +941,32 @@ class PreflightTransferBenchConfig(BaseModel):
         return normalized
 
 
+class PreflightIfoeConfig(BaseModel):
+    """MI4XX IFoE admission and data-path checks."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fabric_checks: bool = Field(
+        default=False,
+        description="Enable MI4XX AIFM, AFM, vPOD, station-mask, and IFoE port admission",
+    )
+    l2ping: PreflightL2PingConfig = Field(
+        default_factory=PreflightL2PingConfig,
+        description="Strict IFoE L2 connectivity admission",
+    )
+    transferbench: PreflightTransferBenchConfig = Field(
+        default_factory=PreflightTransferBenchConfig,
+        description="TransferBench IFoE data-path validation",
+    )
+
+
 class PreflightConnectivityCheckConfig(BaseModel):
     """Connectivity check settings by protocol."""
 
     model_config = ConfigDict(extra="allow")
 
     rdma: PreflightRdmaConfig = Field(default_factory=PreflightRdmaConfig, description="RDMA connectivity settings")
-
-    @model_validator(mode="before")
-    @classmethod
-    def reject_legacy_preflight_checks(cls, value):
-        if isinstance(value, dict) and "ifoe" in value:
-            raise ValueError("connectivity_check.ifoe is no longer supported; use the top-level l2ping block")
-        if isinstance(value, dict) and "transferbench" in value:
-            raise ValueError(
-                "connectivity_check.transferbench is no longer supported; use the top-level transferbench block"
-            )
-        return value
+    ifoe: PreflightIfoeConfig = Field(default_factory=PreflightIfoeConfig, description="IFoE connectivity settings")
 
 
 class PreflightReportingConfig(BaseModel):
@@ -986,7 +974,7 @@ class PreflightReportingConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    generate_html_report: str = Field(default="true", description="Whether to generate HTML report")
+    generate_html_report: bool = Field(default=True, description="Whether to generate HTML report")
     artifacts_root_dir: str = Field(
         default="/tmp/preflight",
         description=(
@@ -994,8 +982,8 @@ class PreflightReportingConfig(BaseModel):
             "<artifacts_root_dir>/rdma_connectivity_workspace/<session>/<round>/ on each node (NFS-friendly)."
         ),
     )
-    generate_rdma_pairs_csv: str = Field(
-        default="true",
+    generate_rdma_pairs_csv: bool = Field(
+        default=True,
         description="If true, write preflight_report_*_rdma_pairs.csv beside the HTML report (failed pairs only)",
     )
 
@@ -1015,18 +1003,6 @@ class PreflightConfigFile(BaseModel):
     debug: PreflightDebugConfig = Field(
         default_factory=PreflightDebugConfig, description="Debug and troubleshooting options"
     )
-    node_health: PreflightNodeHealthConfig = Field(
-        default_factory=PreflightNodeHealthConfig,
-        description="Generic GPU node health with optional MI4XX fabric admission",
-    )
-    l2ping: PreflightL2PingConfig = Field(
-        default_factory=PreflightL2PingConfig,
-        description="Strict IFoE L2 connectivity admission",
-    )
-    transferbench: PreflightTransferBenchConfig = Field(
-        default_factory=PreflightTransferBenchConfig,
-        description="TransferBench data-path validation admission",
-    )
     node_check: PreflightNodeCheckConfig = Field(
         default_factory=PreflightNodeCheckConfig, description="Individual node validation settings"
     )
@@ -1036,6 +1012,26 @@ class PreflightConfigFile(BaseModel):
     reporting: PreflightReportingConfig = Field(
         default_factory=PreflightReportingConfig, description="Report generation and output settings"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_flat_preflight_checks(cls, value):
+        if not isinstance(value, dict):
+            return value
+        removed = sorted(set(value) & {"node_health", "l2ping", "transferbench"})
+        if removed:
+            raise ValueError(
+                "Unsupported flat preflight block(s): "
+                + ", ".join(removed)
+                + "; use node_check and connectivity_check.ifoe"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_fabric_prerequisites(self):
+        if self.connectivity_check.ifoe.fabric_checks and not self.node_check.enabled:
+            raise ValueError("connectivity_check.ifoe.fabric_checks requires node_check.enabled=true")
+        return self
 
 
 def validate_config_file(
