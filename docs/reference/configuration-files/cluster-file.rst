@@ -77,8 +77,7 @@ Both templates share the same top-level shape. The ``container`` block and the `
         },
 
         "container": {
-            "enabled": true,
-            "launch": true,
+            "lifetime": "per_run",
             "image": "rocm/cvs:latest",
             "name": "cvs_container",
             "runtime": {
@@ -124,6 +123,8 @@ Top-level parameters
      - ``{}``
      - Container backend configuration. Required when ``orchestrator`` is ``container``. See the next section.
 
+CVS's own internal commands -- the Docker CLI calls made by ``DockerRuntime`` (``docker run``/``exec``/``rm``/``ps``/``load``) and the MPI hostfile cleanup in ``BaremetalOrchestrator`` -- automatically detect whether ``sudo`` is needed. Once per run, CVS probes each host with ``sudo -n true`` and caches whether passwordless sudo is available; every subsequent privileged command is then prefixed with ``sudo -n `` or left unprefixed accordingly, for the lifetime of that run. No cluster-file configuration is required.
+
 Container block
 ===============
 
@@ -136,12 +137,9 @@ The ``container`` block configures the container backend. It is consumed by the 
    * - Configuration parameter
      - Default value
      - Description
-   * - ``enabled``
-     - ``false``
-     - Master switch. Must be ``true`` for the container backend to do anything. When ``false``, ``setup_containers`` and ``teardown_containers`` short-circuit to no-ops.
-   * - ``launch``
-     - ``false``
-     - When ``true``, CVS starts the long-running containers on every host as part of test setup. When ``false``, CVS only verifies that containers with the configured name are already running on every host and never stops them.
+   * - ``lifetime``
+     - ``per_run``
+     - Container lifecycle policy: ``no_launch``, ``per_run``, or ``persistent``. See the truth table below.
    * - ``image``
      - (required)
      - Image with the test dependencies (for example ``rvs``) pre-installed and an ``sshd`` you can start on port ``2224``. Must be present locally on each node or pullable from a reachable registry.
@@ -182,7 +180,7 @@ When ``runtime.name`` is ``docker``, the keys below configure the underlying ``d
      - ``--privileged``. Required for device passthrough and RDMA.
    * - ``volumes``
      - Appended
-     - List of ``host:container[:ro]`` mounts. The container always also receives ``/home/$user:/workspace`` and ``/home/$user/.ssh:/host_ssh`` injected by the orchestrator.
+     - List of ``host:container[:ro]`` mounts. The container always also receives ``/home/$user/.ssh:/host_ssh`` injected by the orchestrator.
    * - ``devices``
      - ``["/dev/kfd", "/dev/dri", "/dev/infiniband"]`` (appended)
      - Device passthroughs. Per-host ``/dev/infiniband/*`` is also discovered at runtime.
@@ -199,42 +197,38 @@ When ``runtime.name`` is ``docker``, the keys below configure the underlying ``d
      - ``["memlock=-1"]`` (appended)
      - Per-process resource limits. ``memlock=-1`` is required for RDMA.
 
-``launch`` truth table
-======================
+``lifetime`` truth table
+========================
 
-The ``launch`` flag interacts with ``enabled`` and the runtime-tracked ``container_id`` to decide whether ``teardown_containers`` actually stops anything. The behavior below is pinned by the unit test ``test_teardown_containers_short_circuits_when_launch_true`` in `cvs/core/orchestrators/unittests/test_container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/unittests/test_container.py>`_.
+``setup_containers`` and ``teardown_containers`` branch on ``container.lifetime``. The behavior below is pinned by the per-lifetime unit tests in `cvs/core/orchestrators/unittests/test_container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/unittests/test_container.py>`_.
 
 .. list-table::
-   :widths: 2 2 2 5
+   :widths: 2 4 4
    :header-rows: 1
 
-   * - ``enabled``
-     - ``launch``
-     - ``container_id``
-     - Behavior of ``teardown_containers``
-   * - ``false``
-     - any
-     - any
-     - Short-circuit (no-op, returns ``True``).
-   * - ``true``
-     - ``true``
-     - any
-     - Short-circuit. Containers are treated as externally managed; CVS does not stop them.
-   * - ``true``
-     - ``false``
-     - unset
-     - Short-circuit. Nothing was started.
-   * - ``true``
-     - ``false``
-     - set
-     - Calls the runtime's ``teardown_containers`` to stop and remove the container.
+   * - ``lifetime``
+     - ``setup_containers``
+     - ``teardown_containers``
+   * - ``no_launch``
+     - Verify a container with the configured name is already running on every host; set ``container_id``. Never starts anything.
+     - No-op. CVS does not own a container it did not launch.
+   * - ``per_run`` (default)
+     - Start a fresh container on every host (force-removing any stale same-named container first).
+     - Force-remove the container CVS started.
+   * - ``persistent``
+     - Attach if the container is already running on every host. Start fresh only if it is running on no host. Running on some hosts but not all is a hard error (CVS will not force-remove the still-running hosts and destroy their overlay). Idempotent across runs.
+     - No-op. The container is left running for the next run; remove it yourself when done.
+
+.. note::
+
+  With ``lifetime: persistent``, pin ``container.name`` explicitly. The default ``<user>_<sanitized_image>`` name shifts when you bump the image tag, silently abandoning the previous container's overlay.
 
 Prerequisites on each cluster node
 ==================================
 
 To use the container backend, every cluster node must have:
 
-- **Docker installed** with passwordless ``sudo docker`` for the SSH user.
+- **Docker installed**. The SSH user needs either passwordless ``sudo docker`` or direct Docker access (for example membership in the ``docker`` group) -- CVS probes once per run (``sudo -n true``) and caches which applies, prefixing every subsequent Docker command accordingly.
 - **Host driver loaded** so ``/dev/kfd``, ``/dev/dri/*``, and ``/dev/infiniband/*`` (when RDMA is in scope) are present for passthrough.
 - **SSH user home directory accessible**. The orchestrator mounts ``~/.ssh`` as ``/host_ssh`` and copies keys into ``/root/.ssh`` inside the container so that the in-container ``sshd`` on port ``2224`` can authenticate.
 - **Container image** either pre-loaded on every node (``docker load``) or pullable from a reachable registry. The image must contain ``openssh-server`` (for the in-container ``sshd``) and the workload binaries the suite invokes (for example ``/opt/rocm/bin/rvs``).

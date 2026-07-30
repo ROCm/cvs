@@ -24,7 +24,7 @@ class NICAdvancedCollector:
 
         # Get ALL NIC PCIe info in one command per node
         # cmd = "sudo lspci -vvv 2>/dev/null | grep -A 30 -i 'ethernet\\|network' | grep -E '^[0-9a-f]{2}:|Ethernet|Network|LnkCap:|LnkSta:'"
-        cmd = "sudo lspci -vvv 2>/dev/null | egrep -A 30 -i 'ethernet\\|network' | egrep '^[0-9a-f]{2}:|Ethernet|Network|LnkCap:|LnkSta:'"
+        cmd = "sudo lspci -vvv 2>/dev/null | egrep -A 30 -i 'ethernet\\|network' | egrep '^[0-9a-f]{2}:|Ethernet|Network|LnkCap:|LnkSta:' || true"
         result = await ssh_manager.exec_async(cmd, timeout=120)
 
         logger.info(f"NIC PCIe lspci returned results from {len(result)} nodes")

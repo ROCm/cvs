@@ -192,18 +192,18 @@ def test_install_rvs(orch, config_dict):
     rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
     log.info(f"Using ROCm path: {rocm_path}")
 
-    # Update config paths to use detected rocm_path (support both old and new ROCm layouts)
-    if 'config_path_mi300x' in config_dict:
-        # Replace /opt/rocm or <changeme> with detected rocm_path
-        config_dict['config_path_mi300x'] = (
-            config_dict['config_path_mi300x'].replace('/opt/rocm', rocm_path).replace('<changeme>', rocm_path)
-        )
-    if 'config_path_default' in config_dict:
-        config_dict['config_path_default'] = (
-            config_dict['config_path_default'].replace('/opt/rocm', rocm_path).replace('<changeme>', rocm_path)
-        )
-    if 'path' in config_dict:
-        config_dict['path'] = config_dict['path'].replace('/opt/rocm', rocm_path).replace('<changeme>', rocm_path)
+    # Update config paths to use detected rocm_path (support both old and new ROCm layouts).
+    # Skip the prefix rewrite when the value already starts with rocm_path; otherwise a
+    # config like path="/opt/rocm/extras-7/bin" with rocm_path="/opt/rocm/extras-7" would
+    # double up to "/opt/rocm/extras-7/extras-7/bin". Replace only the first occurrence
+    # so we never touch a `/opt/rocm` segment deeper in the path.
+    for key in ('config_path_mi300x', 'config_path_default', 'path'):
+        if key in config_dict and isinstance(config_dict[key], str):
+            value = config_dict[key]
+            if not value.startswith(rocm_path):
+                value = value.replace('/opt/rocm', rocm_path, 1)
+            value = value.replace('<changeme>', rocm_path)
+            config_dict[key] = value
 
     log.info(
         f"Using config paths: MI300X={config_dict.get('config_path_mi300x')}, default={config_dict.get('config_path_default')}"
@@ -211,7 +211,6 @@ def test_install_rvs(orch, config_dict):
 
     log.info('Testcase install RVS (ROCmValidationSuite)')
     git_install_path = config_dict['git_install_path']
-    git_url = config_dict['git_url']
 
     # Check if RVS is already installed via system packages
     out_dict = orch.exec('which rvs', timeout=30)
@@ -287,38 +286,83 @@ def test_install_rvs(orch, config_dict):
                 log.warning('RVS binary not found after package install, falling back to source build')
                 package_installed = False
 
-        # If package installation failed, build from source
+        # If package installation failed, install pre-built RVS tarball from repo.amd.com
         if not package_installed:
-            log.info('Installing RVS from source')
+            log.info('Installing RVS from pre-built tarball at repo.amd.com')
 
-            # Check if install directory exists, otherwise create
+            tarball_index_url = 'https://repo.amd.com/rocm/rvs/tarball/'
+            extras_dir = '/opt/rocm/extras-7'
+
+            # Ensure staging directory exists for the tarball download
             out_dict = orch.exec(f'ls -ld {git_install_path}')
             for node in out_dict.keys():
                 if re.search('No such file', out_dict[node]):
                     orch.exec(f'mkdir -p {git_install_path}')
 
-            # Remove any existing RVS directory and clone fresh
-            src_dir = f'{git_install_path}/ROCmValidationSuite'
-            build_dir = f'{src_dir}/build'
-            out_dict = orch.exec(f'rm -rf {src_dir}')
-            out_dict = orch.exec(f'git clone {git_url} {src_dir}', timeout=300)
-
-            # Build and install RVS (using rocm_path detected earlier).
-            # Each orch.exec is a single command (no shell operators) so the
-            # docker exec / SSH transport doesn't have to interpret a pipeline.
-            # RVS_BUILD_TESTS=OFF skips the bundled googletest, whose old
-            # cmake_minimum_required(<3.5) breaks on newer cmakes.
             try:
+                # Resolve the latest amdrocm7-rvs-*.tar.gz from the directory listing
                 out_dict = orch.exec(
-                    f'cmake -S {src_dir} -B {build_dir} -DROCM_PATH={rocm_path} -DCMAKE_INSTALL_PREFIX={rocm_path} -DCPACK_PACKAGING_INSTALL_PREFIX={rocm_path} -DHIP_PLATFORM=amd -DRVS_BUILD_TESTS=OFF',
-                    timeout=1200,
+                    f"curl -sSL {tarball_index_url} | grep -oE 'amdrocm7-rvs-[^\"]+\\.tar\\.gz' | sort -V -u | tail -1",
+                    timeout=60,
                 )
-                out_dict = orch.exec(f'cmake --build {build_dir} --parallel', timeout=1200)
-                out_dict = orch.exec(f'cmake --build {build_dir} --target package --parallel', timeout=1200)
-                out_dict = orch.exec(f'sudo cmake --install {build_dir}', timeout=1200)
-                # Install success is verified by the `which rvs` / config-file
-                # checks below; cmake --install exits non-zero on failure and
-                # the verification block will fail the test.
+                latest_tarball = ''
+                for node, output in out_dict.items():
+                    stripped = output.strip()
+                    if stripped.endswith('.tar.gz'):
+                        latest_tarball = stripped
+                        log.info(f'Latest RVS tarball detected on node {node}: {latest_tarball}')
+                        break
+
+                if not latest_tarball:
+                    fail_test(f'Could not determine latest RVS tarball from {tarball_index_url}')
+
+                # Build LD_LIBRARY_PATH for the ldd verification below.
+                #
+                # The rvs tarball ships librvslib but NOT the ROCm runtime libs it
+                # depends on (libamd_smi, llvm libs, rocm_sysdeps). Those come from a
+                # separate ROCm dist tarball whose standard install location is
+                # /install/lib (with rocm_sysdeps/ and llvm/lib/ subdirs). These
+                # paths are therefore required for the tarball install workflow
+                # even though they're absolute and won't exist on every host.
+                #
+                # rocm_runtime_lib_path (optional) is a per-config override for sites
+                # that extract the ROCm dist somewhere other than /install (e.g.
+                # ~/install/lib). When set it's prepended so it wins symbol
+                # resolution; when unset, only the standard tarball-install paths
+                # are used. The same knob is honored at test runtime in rvs_cvs.py.
+                runtime_lib_path = config_dict.get('rocm_runtime_lib_path') or ''
+                tarball_default_libs = '/install/lib:/install/lib/rocm_sysdeps:/install/lib/llvm/lib'
+                ld_prefix_parts = [f'{extras_dir}/lib']
+                if runtime_lib_path:
+                    ld_prefix_parts.append(runtime_lib_path)
+                ld_prefix_parts.append(tarball_default_libs)
+                ld_prefix = ':'.join(ld_prefix_parts)
+
+                # Download tarball, extract to /opt/rocm/extras-7, and run ldd to confirm
+                # all runtime dependencies of the rvs binary resolve.
+                install_cmd = (
+                    f'cd {git_install_path} && '
+                    f'rm -f amdrocm7-rvs-*.tar.gz && '
+                    f'wget -q {tarball_index_url}{latest_tarball} && '
+                    f'sudo mkdir -p {extras_dir} && '
+                    f'sudo tar -xzf {latest_tarball} -C {extras_dir} && '
+                    f'export LD_LIBRARY_PATH={ld_prefix}:$LD_LIBRARY_PATH && '
+                    f'ldd {extras_dir}/bin/rvs; echo "RVS_INSTALL_STATUS:$?"'
+                )
+                out_dict = orch.exec(install_cmd, timeout=1200)
+                for node in out_dict.keys():
+                    if not re.search(r'RVS_INSTALL_STATUS:0', out_dict[node]):
+                        fail_test(f'RVS tarball install failed on node {node}')
+
+                # RVS now lives under /opt/rocm/extras-7; realign paths so the
+                # subsequent verification finds the binary and config files.
+                log.info(
+                    f'RVS installed via tarball to {extras_dir}; updating rocm_path from {rocm_path} to {extras_dir}'
+                )
+                for key in ('path', 'config_path_mi300x', 'config_path_default'):
+                    if key in config_dict:
+                        config_dict[key] = config_dict[key].replace(rocm_path, extras_dir)
+                rocm_path = extras_dir
 
             except Exception as e:
                 fail_test(f'RVS installation failed with exception: {e}')

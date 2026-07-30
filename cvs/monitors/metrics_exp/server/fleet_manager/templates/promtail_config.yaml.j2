@@ -1,0 +1,66 @@
+# Promtail configuration for node: {{ hostname }}
+# Node Group: {{ node_group_name }}
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/promtail/positions.yaml
+
+clients:
+  - url: {{ loki_url }}/loki/api/v1/push
+
+scrape_configs:
+  # Scrape systemd journal (includes kernel/dmesg messages)
+  - job_name: journal
+    journal:
+      max_age: 12h
+      path: /var/log/journal
+      labels:
+        job: systemd-journal
+        host: {{ hostname }}
+        node_group: {{ node_group_name }}
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: 'unit'
+      - source_labels: ['__journal__transport']
+        target_label: 'transport'
+      - source_labels: ['__journal_priority_keyword']
+        target_label: 'priority'
+    pipeline_stages:
+      - match:
+          selector: '{transport="kernel"}'
+          stages:
+            - static_labels:
+                log_type: kernel
+      # Extract GPU-related errors
+      - match:
+          selector: '{job="systemd-journal"}'
+          stages:
+            - regex:
+                expression: '(?i)(?P<error_type>ecc|ras|xgmi|pcie|gpu.*error|amdgpu)'
+            - labels:
+                error_type:
+
+  # Scrape syslog
+  - job_name: syslog
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: syslog
+          host: {{ hostname }}
+          node_group: {{ node_group_name }}
+          __path__: /var/log/syslog
+
+  # Scrape kernel ring buffer directly if available
+  - job_name: kern
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: kern
+          host: {{ hostname }}
+          node_group: {{ node_group_name }}
+          __path__: /var/log/kern.log

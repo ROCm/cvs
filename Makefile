@@ -1,6 +1,9 @@
 TEST_VENV_DIR = .test_venv
 CVS_VENV_DIR = .cvs_venv
 RUFF_VENV_DIR = .ruff_venv
+DOC_VENV_DIR  = .doc_venv
+DOC_BUILD_DIR = docs/_build/html
+DOC_PORT      ?= 8080
 RUFF_VERSION = 0.14.8
 # Scoped logging checks: argument count vs %-placeholders (runtime TypeError class).
 PYLINT_VERSION = 4.0.5
@@ -12,28 +15,32 @@ RUFF = $(RUFF_VENV_DIR)/bin/ruff
 PYLINT = $(RUFF_VENV_DIR)/bin/pylint
 CVS = $(TEST_VENV_DIR)/bin/cvs
 
-.PHONY: all help sdist build test-venv cvs-venv install installtest ut test clean_test_venv clean_cvs_venv clean_sdist clean_pycache clean
+.PHONY: all help sdist build test-venv cvs-venv install installtest ut test \
+        doc-venv html-doc clean_doc_venv \
+        clean_test_venv clean_cvs_venv clean_sdist clean_pycache clean
 
 all: build test-venv installtest test
 
 help:
 	@echo "Available targets:"
-	@echo "  sdist      - Build source distribution"
-	@echo "  build      - Format/lint check and then build source distribution"
-	@echo "  test-venv  - Create virtual environment"
-	@echo "  cvs-venv   - Create cvs virtual environment"
-	@echo "  ruff-venv  - Create ruff virtual environment"
-	@echo "  install    - Install from built distribution in .cvs_venv"
-	@echo "  installtest    - Install from built distribution"
-	@echo "  ut         - Execute all Unittests"
-	@echo "  test       - Execute all UTs and cvs cli tests"
-	@echo "  lint       - Run ruff + pylint (logging E1205/E1206 on cvs/)"
-	@echo "  fmt        - Run ruff formatter"
-	@echo "  fmt-check  - Check ruff formatting without modifying files"
-	@echo "  lint-fix   - Run ruff linter with auto-fix (fixes code quality issues, not formatting)"
+	@echo "  sdist           - Build source distribution"
+	@echo "  build           - Format/lint check and then build source distribution"
+	@echo "  test-venv       - Create virtual environment"
+	@echo "  cvs-venv        - Create cvs virtual environment"
+	@echo "  ruff-venv       - Create ruff virtual environment"
+	@echo "  install         - Install from built distribution in .cvs_venv"
+	@echo "  installtest     - Install from built distribution"
+	@echo "  ut              - Execute all Unittests"
+	@echo "  test            - Execute all UTs and cvs cli tests"
+	@echo "  lint            - Run ruff + pylint (logging E1205/E1206 on cvs/)"
+	@echo "  fmt             - Run ruff formatter"
+	@echo "  fmt-check       - Check ruff formatting without modifying files"
+	@echo "  lint-fix        - Run ruff linter with auto-fix (fixes code quality issues, not formatting)"
 	@echo "  unsafe-lint-fix - Interactive unsafe lint fixes"
-	@echo "  all        - Run build, test-venv, installtest, and test"
-	@echo "  clean      - Remove virtual environment, build artifacts, and Python cache files"
+	@echo "  html-doc        - Build and serve docs with live-reload at http://localhost:$(DOC_PORT)"
+	@echo "                    Override port: make html-doc DOC_PORT=9090"
+	@echo "  all             - Run build, test-venv, installtest, and test"
+	@echo "  clean           - Remove virtual environment, build artifacts, and Python cache files"
 
 sdist: clean_sdist
 	@echo "Building source distribution..."
@@ -146,6 +153,32 @@ unsafe-lint-fix: ruff-venv
 	@echo "Running formatter..."
 	$(RUFF) format .
 
+doc-venv:
+	@if [ ! -d $(DOC_VENV_DIR) ]; then \
+		echo "Creating doc virtual environment..."; \
+		$(PYTHON) -m venv $(DOC_VENV_DIR); \
+		$(DOC_VENV_DIR)/bin/pip install --upgrade pip -q; \
+		echo "Installing Sphinx dependencies..."; \
+		$(DOC_VENV_DIR)/bin/pip install -q -r docs/sphinx/requirements.txt; \
+	else \
+		echo "Doc venv already exists, skipping install (delete $(DOC_VENV_DIR) to reinstall)."; \
+	fi
+
+html-doc: doc-venv
+	@if ! $(DOC_VENV_DIR)/bin/python -c "import sphinx_autobuild" 2>/dev/null; then \
+		echo "Installing sphinx-autobuild..."; \
+		$(DOC_VENV_DIR)/bin/pip install -q sphinx-autobuild; \
+	fi
+	@echo "Watching docs for changes. Open http://$(shell hostname -I | awk '{print $$1}'):$(DOC_PORT) in your browser."
+	@echo "Press Ctrl+C to stop."
+	@echo ""
+	ROCM_DOCS_CORE_READ_GITHUB_ACTIVITY=false \
+		$(DOC_VENV_DIR)/bin/sphinx-autobuild docs $(DOC_BUILD_DIR) --port $(DOC_PORT) --host 0.0.0.0 -q
+
+clean_doc_venv:
+	@echo "Removing doc virtual environment and build artifacts..."
+	rm -rf $(DOC_VENV_DIR) $(DOC_BUILD_DIR) docs/sphinx/_toc.yml
+
 clean_test_venv:
 	@echo "Removing virtual environment..."
 	@if [ -n "$$VIRTUAL_ENV" ] && [ "$$VIRTUAL_ENV" = "$$(pwd)/$(TEST_VENV_DIR)" ]; then \
@@ -180,4 +213,4 @@ clean_pycache:
 	find . -name "*.pyc" -delete 2>/dev/null || true
 	find . -name "*.pyo" -delete 2>/dev/null || true
 
-clean: clean_test_venv clean_cvs_venv clean_ruff_venv clean_sdist clean_pycache
+clean: clean_test_venv clean_cvs_venv clean_ruff_venv clean_doc_venv clean_sdist clean_pycache

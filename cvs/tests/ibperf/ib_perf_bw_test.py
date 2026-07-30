@@ -204,7 +204,7 @@ def vpc_node_list(cluster_dict):
 
 
 @pytest.mark.parametrize("bw_test", ["ib_write_bw", "ib_read_bw", "ib_send_bw"])
-def test_ib_bw_perf(phdl, bw_test, config_dict):
+def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
     # Get IB_backend_nics for each node
     # Get the NIC to GPU mapping dict
     # Generate the command list for all nodes
@@ -237,6 +237,7 @@ def test_ib_bw_perf(phdl, bw_test, config_dict):
             start_time = phdl.exec('date +"%a %b %e %H:%M"')
             phdl.exec(f'echo "Starting Test {bw_test} for {msg_size} and QP count {qp_count}" | sudo -n tee /dev/kmsg')
             ib_bw_dict[bw_test][msg_size][qp_count] = ibperf_lib.run_ib_perf_bw_test(
+                shdl,
                 phdl,
                 bw_test,
                 gpu_numa_dict,
@@ -267,7 +268,7 @@ def test_ib_bw_perf(phdl, bw_test, config_dict):
 
 
 @pytest.mark.parametrize("lat_test", ["ib_write_lat", "ib_send_lat"])
-def test_ib_lat_perf(phdl, lat_test, config_dict):
+def test_ib_lat_perf(shdl, phdl, lat_test, config_dict):
     globals.error_list = []
     ib_lat_dict[lat_test] = {}
 
@@ -296,6 +297,7 @@ def test_ib_lat_perf(phdl, lat_test, config_dict):
         start_time = phdl.exec('date +"%a %b %e %H:%M"')
         phdl.exec(f'echo "Starting Test {lat_test} for {msg_size}" | sudo -n tee /dev/kmsg')
         ib_lat_dict[lat_test][msg_size] = ibperf_lib.run_ib_perf_lat_test(
+            shdl,
             phdl,
             lat_test,
             gpu_numa_dict,

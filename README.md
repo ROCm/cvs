@@ -94,6 +94,17 @@ cvs list       # Should list available test suites
 
 The `cvs` command will now be available globally in your environment. You can run tests from anywhere, not just from the CVS source directory.
 
+## Method 3: Run CVS in a container
+
+The repository provides a Docker image for running CVS as the cluster head-node CLI. Build it from the repository root:
+
+```bash
+docker build --tag cvs:local .
+docker run --rm cvs:local --version
+```
+
+Bind mount your cluster/configuration files, SSH key, and a results directory when running a suite. The cluster file must refer to the in-container, read-only key path. See the [container installation guide](https://rocm.docs.amd.com/projects/cvs/en/latest/install/cvs-install.html#run-cvs-in-a-container) for a complete example and notes on the container backend.
+
 # How to upgrade
 
 To upgrade CVS to the latest version:

@@ -32,6 +32,28 @@ rccl_err_dict = {
 }
 
 
+def _cleanup_stale_rccl_processes(phdl, test_name, reason):
+    """
+    Best-effort kill of leftover mpirun/prterun/rccl-tests processes on every
+    host phdl can reach.
+
+    Pssh.exec()'s `timeout` (cvs/lib/parallel/pssh.py) maps to parallel-ssh's
+    `read_timeout` — a client-side timeout on reading the SSH channel's output.
+    It does not signal the remote process. So when the mpirun invocation in
+    rccl_perf/rccl_regression exceeds cvs_exec_timeout, the remote mpirun and
+    the rccl-tests ranks it launched on every participating node keep running
+    (and holding GPUs) indefinitely. Without this cleanup, the next pairwise/
+    incremental sub-test starts while those ranks are still alive, causing GPU
+    oversubscription and cascading failures on subsequent node pairs.
+    """
+    log.warning(f'Cleaning up stale RCCL/mpirun processes on all reachable hosts ({reason})')
+    for pattern in ('prterun', 'mpirun.*rccl_hosts_file', test_name):
+        try:
+            phdl.exec(f"pkill -9 -f '{pattern}' || true", timeout=30)
+        except Exception as kill_exc:
+            log.warning(f'Cleanup pkill for pattern {pattern!r} raised {kill_exc!r} (continuing)')
+
+
 def _is_severe_wrong_corruption_error(err: ValidationError) -> bool:
     """
     Detect the rccl-tests '#wrong' corruption failure from a pydantic ValidationError.
@@ -720,6 +742,7 @@ def rccl_regression(
         scan_rccl_logs(output)
     except Exception as e:
         log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+        _cleanup_stale_rccl_processes(phdl, test_name, f'exception in rccl_regression: {repr(e)}')
         fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
     # Read the JSON results emitted by the RCCL test binary via SFTP
@@ -907,6 +930,7 @@ def rccl_perf(
             scan_rccl_logs(output)
         except Exception as e:
             log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+            _cleanup_stale_rccl_processes(phdl, test_name, f'exception in rccl_perf ({dtype}): {repr(e)}')
             fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
         # Read the JSON results emitted by the RCCL test binary via SFTP

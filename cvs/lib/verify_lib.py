@@ -5,11 +5,13 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import os
 import re
 
 from cvs.lib.utils_lib import *
 from cvs.lib.rocm_plib import *
 from cvs.lib import linux_utils
+from cvs.lib import node_scraper_adapter
 
 
 err_patterns_dict = {
@@ -27,6 +29,25 @@ err_stats_pattern = 'err|drop|discard|overflow|fcs|nak|uncorrect|loss'
 warn_stats_pattern = 'retry|timeout|exceeded|ooo|retransmit'
 threshold_stats_pattern = 'cnp|ecn'
 threshold_counter_val = 1000
+
+
+# Environment toggle selecting the dmesg parser backend:
+#   CVS_DMESG_PARSER=node-scraper (default) -> AMD node-scraper analyzer
+#   CVS_DMESG_PARSER=legacy                 -> historical err_patterns_dict regex
+DMESG_PARSER_ENV = 'CVS_DMESG_PARSER'
+
+
+def use_node_scraper_dmesg():
+    """Return True if dmesg scanning should use the node-scraper adapter.
+
+    Controlled by the CVS_DMESG_PARSER environment variable (default
+    'node-scraper'). Values legacy/cvs/0/false/off/no select the legacy regex
+    path for explicit comparison or rollback.
+    """
+    choice = os.environ.get(DMESG_PARSER_ENV, 'node-scraper').strip().lower()
+    if choice in ('legacy', 'cvs', '0', 'false', 'off', 'no'):
+        return False
+    return True
 
 
 def verify_gpu_pcie_bus_width(phdl, expected_cards=8, gpu_pcie_speed=32, gpu_pcie_width=16):
@@ -445,7 +466,13 @@ def full_dmesg_scan(
     phdl,
 ):
     """
-    Scan dmesg across nodes for known error patterns and fail on first match.
+    Scan dmesg across nodes for known error patterns and fail on each match.
+
+    The parsing backend is selected by the CVS_DMESG_PARSER environment
+    variable (see use_node_scraper_dmesg): the default 'node-scraper' path uses
+    the AMD node-scraper analyzer, while 'legacy' uses the historical
+    err_patterns_dict regex. Both paths return the same {node: [lines]} dict and
+    call fail_test for every detected error.
 
     Parameters:
       phdl: Host/process handle abstraction that supports:
@@ -477,6 +504,24 @@ def full_dmesg_scan(
 
     log.info('scan dmesg')
 
+    if use_node_scraper_dmesg():
+        # node-scraper path: collect with ISO timestamps + decoded level prefix
+        # ('--time-format iso -x') so the analyzer's full pattern set and
+        # timestamp extraction apply, then flag every detected error.
+        err_dict = {}
+        output_dict = phdl.exec(
+            "sudo dmesg --time-format iso -x | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never"
+        )
+        for node in output_dict.keys():
+            err_dict[node] = []
+            events = node_scraper_adapter.parse_dmesg(output_dict[node], node_name=node)
+            for line in node_scraper_adapter.event_match_lines(events):
+                msg = f'ERROR - Failure pattern *** {line} *** seen in Dmesg on node {node}'
+                fail_test(msg)
+                err_dict[node].append(line)
+        return err_dict
+
+    # Legacy path: historical err_patterns_dict regex over human-readable dmesg.
     err_dict = {}
 
     # Pull human-readable kernel logs and filter out common noise

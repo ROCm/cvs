@@ -30,3 +30,19 @@ jobs:
           *.log
           .coverage
         retention-days: 2
+
+  container-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Build CVS container image
+      run: docker build --tag cvs:ci .
+
+    - name: Verify container entrypoint and packaged configuration
+      run: |
+        docker run --rm cvs:ci --version
+        docker run --rm cvs:ci copy-config --list
+        docker run --rm --entrypoint /bin/sh cvs:ci -c 'command -v ssh && command -v ip'

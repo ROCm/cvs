@@ -1,0 +1,279 @@
+{
+  "uid": "logs-analysis",
+  "title": "Logs Analysis",
+  "description": "Critical log patterns, dmesg, and journalctl analysis",
+  "tags": ["gpu-fleet", "logs", "dmesg", "errors"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "1m",
+  "time": {"from": "now-24h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "nodegroup",
+        "type": "query",
+        "datasource": {"type": "loki", "uid": "loki"},
+        "query": "label_values(node_group)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      },
+      {
+        "name": "host",
+        "type": "query",
+        "datasource": {"type": "loki", "uid": "loki"},
+        "query": "label_values({node_group=~\"$nodegroup\"}, host)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      },
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": {"type": "loki", "uid": "loki"},
+        "query": "label_values({node_group=~\"$nodegroup\"}, job)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Error Summary",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "GPU Errors (24h)",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$host\"} |~ \"(?i)(gpu.*error|amdgpu.*fail|ecc.*uncorrect)\"[24h]))",
+          "refId": "A"
+        }
+      ],
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 10}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "ECC Errors (24h)",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$host\"} |~ \"(?i)(ecc|ue error|ce error)\"[24h]))",
+          "refId": "A"
+        }
+      ],
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 5}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Hardware Errors (24h)",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$host\"} |~ \"(?i)(hardware error|mce|machine check)\"[24h]))",
+          "refId": "A"
+        }
+      ],
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Thermal Events (24h)",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$host\"} |~ \"(?i)(thermal|throttl|overheat|temperature)\"[24h]))",
+          "refId": "A"
+        }
+      ],
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 5},
+              {"color": "red", "value": 20}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "Error Trends",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Error Rate by Type",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 6},
+      "targets": [
+        {
+          "expr": "sum by (host) (rate({node_group=~\"$nodegroup\", host=~\"$host\"} |~ \"(?i)error\"[5m]))",
+          "legendFormat": "{{host}} Errors",
+          "refId": "A"
+        }
+      ],
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"lineWidth": 2, "fillOpacity": 20}
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Critical GPU Errors",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 14}
+    },
+    {
+      "id": 9,
+      "type": "logs",
+      "title": "GPU & ECC Errors",
+      "description": "GPU-related errors including ECC, RAS, and driver issues",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 15},
+      "targets": [
+        {
+          "expr": "{node_group=~\"$nodegroup\", host=~\"$host\", job=~\"$job\"} |~ \"(?i)(gpu.*error|amdgpu|ecc|ras|xgmi.*fail)\"",
+          "refId": "A"
+        }
+      ],
+      "datasource": {"type": "loki", "uid": "loki"},
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Hardware & System Errors",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 25}
+    },
+    {
+      "id": 11,
+      "type": "logs",
+      "title": "Hardware Errors (MCE, PCIe, etc.)",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 26},
+      "targets": [
+        {
+          "expr": "{node_group=~\"$nodegroup\", host=~\"$host\", job=~\"$job\"} |~ \"(?i)(hardware error|mce|machine check|pcie.*error|nvme.*error)\"",
+          "refId": "A"
+        }
+      ],
+      "datasource": {"type": "loki", "uid": "loki"},
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Kernel Messages",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 36}
+    },
+    {
+      "id": 13,
+      "type": "logs",
+      "title": "Kernel Ring Buffer (dmesg)",
+      "description": "Recent kernel messages including GPU driver output",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 37},
+      "targets": [
+        {
+          "expr": "{node_group=~\"$nodegroup\", host=~\"$host\", transport=\"kernel\"}",
+          "refId": "A"
+        }
+      ],
+      "datasource": {"type": "loki", "uid": "loki"},
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "Log Volume",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 47}
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Log Volume by Host",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 48},
+      "targets": [
+        {
+          "expr": "sum by (host) (rate({node_group=~\"$nodegroup\", host=~\"$host\"}[5m]))",
+          "legendFormat": "{{host}}",
+          "refId": "A"
+        }
+      ],
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {"lineWidth": 1, "fillOpacity": 30, "stacking": {"mode": "normal"}}
+        }
+      }
+    }
+  ]
+}

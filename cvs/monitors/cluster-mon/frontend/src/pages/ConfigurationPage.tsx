@@ -126,12 +126,20 @@ export function ConfigurationPage() {
       }
 
       // Prepare configuration
+      // When jump host is enabled the direct SSH section is irrelevant — use
+      // the node credentials from the jump host section instead.
+      const effectiveAuthMethod = useJumpHost ? 'key' : authMethod
+      const effectiveKeyFilePath = useJumpHost
+        ? (nodeKeyFileOnJumpHost || undefined)
+        : (authMethod === 'key' ? keyFilePath : undefined)
+      const effectivePassword = useJumpHost ? undefined : (authMethod === 'password' ? password : undefined)
+
       const config = {
         nodes,
         username: effectiveUsername,
-        auth_method: authMethod,
-        key_file_path: authMethod === 'key' ? (useJumpHost ? nodeKeyFileOnJumpHost : keyFilePath) : undefined,
-        password: authMethod === 'password' ? password : undefined,
+        auth_method: effectiveAuthMethod,
+        key_file_path: effectiveKeyFilePath,
+        password: effectivePassword,
         use_jump_host: useJumpHost,
         jump_host: useJumpHost ? {
           host: jumpHost,
@@ -475,12 +483,17 @@ export function ConfigurationPage() {
         )}
 
         {/* SSH Authentication */}
-        <Card>
+        <Card className={useJumpHost ? 'opacity-50' : ''}>
           <CardHeader>
             <CardTitle>SSH Authentication</CardTitle>
             <CardDescription>Configure SSH access to cluster nodes</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className={`space-y-4 ${useJumpHost ? 'pointer-events-none select-none' : ''}`}>
+            {useJumpHost && (
+              <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-sm text-amber-800">
+                <strong>Not used when Jump Host is enabled.</strong> Configure node credentials in the Jump Host section below.
+              </div>
+            )}
             {/* Username */}
             <div>
               <label className="block text-sm font-medium mb-2">SSH Username</label>
@@ -758,28 +771,27 @@ export function ConfigurationPage() {
                   </p>
                 </div>
 
-                {/* Node Key File Path on Jump Host */}
+                {/* Node Key File Path on jump host */}
                 <div>
                   <label className="block text-sm font-medium mb-2">
-                    Node SSH Private Key Path (ON JUMP HOST)
+                    Node SSH Key Path (on jump host)
                   </label>
                   <input
                     type="text"
                     value={nodeKeyFileOnJumpHost}
                     onChange={(e) => setNodeKeyFileOnJumpHost(e.target.value)}
-                    placeholder="~/.ssh/id_rsa"
+                    placeholder="~/.ssh/id_ed25519"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    Path to SSH private key ON THE JUMP HOST to access cluster nodes (e.g., ~/.ssh/id_rsa or /home/user/.ssh/cluster_key)
+                    Path to the SSH private key <strong>on the jump host</strong> used to authenticate to cluster nodes (e.g., ~/.ssh/id_ed25519). The backend fetches it via SFTP — the key is never stored in this container.
                   </p>
                 </div>
 
                 {/* Jump Host Info */}
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                   <p className="text-xs text-blue-800">
-                    <strong>Jump Host Setup:</strong> The system will SSH to the jump host first,
-                    then from the jump host, SSH to cluster nodes using the keyfile specified above.
+                    <strong>Jump Host Setup:</strong> The system SSHes to the jump host, reads the node key from the path above via SFTP, and streams it to the Go daemon in memory — the node key is never written inside the container.
                   </p>
                 </div>
               </>

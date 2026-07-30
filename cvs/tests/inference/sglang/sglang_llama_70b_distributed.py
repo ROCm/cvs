@@ -223,7 +223,7 @@ def test_cleanup_stale_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict
 
 
 def test_launch_inference_containers(p_phdl, d_phdl, r_phdl, b_phdl, inference_dict):
-    log.info('Testcase launch InferenceMax containers')
+    log.info('Testcase launch SGLang containers')
     globals.error_list = []
     container_name = inference_dict['container_name']
     # Launch the containers ..
@@ -426,4 +426,14 @@ def test_run_benchmark_test(im_obj):
     globals.error_list = []
     im_obj.setup_benchmark_serv_container_env()
     im_obj.benchserv_test_random(d_type='auto')
+    update_test_result()
+
+
+# Test to validate the prefill/decode GPU layout
+def test_disagg_gpu_topology(im_obj):
+    """
+    Report occupied GPUs on prefill/decode nodes after model load.
+    """
+    globals.error_list = []
+    im_obj.sglang_disagg_gpu_counts()
     update_test_result()

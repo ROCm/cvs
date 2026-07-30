@@ -155,7 +155,8 @@ You can list all available host check test cases using the CLI:
     - test_check_numa_balancing
     - test_check_online_memory
     - test_check_pci_accelerators
-    - test_check_pci_speed_width
+    - test_check_gpu_pcie_speed_width
+    - test_check_be_nic_pcie_speed_width
     - test_check_pci_acs
     - test_check_dmesg_driver_errors
 
@@ -267,7 +268,6 @@ You can list all available TransferBench test cases using the CLI:
 .. code:: text
 
   Available tests in transferbench_cvs:
-    - test_transfer_bench_example_tests_1_6_t
     - test_transfer_bench_a2a
     - test_transfer_bench_p2p
     - test_transfer_bench_healthcheck

@@ -8,6 +8,7 @@
     "_key_comment": "Absolute path to the SSH private key. Same key is used for all nodes.",
     "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
 
+
     "_head_comment": "Head node. mgmt_ip MUST match one of the keys in node_dict.",
     "head_node_dict": {
         "mgmt_ip": "{xx.xx.xx.xx|hostname-1}"
@@ -29,13 +30,10 @@
         }
     },
 
-    "_container_block_comment": "Container backend configuration. Consumed by ContainerOrchestrator in cvs/core/orchestrators/container.py. See README.md for the full schema and launch:true/launch:false semantics.",
+    "_container_block_comment": "Container backend configuration. Consumed by ContainerOrchestrator in cvs/core/orchestrators/container.py. See README.md for the full schema and lifetime semantics.",
     "container": {
-        "_enabled_comment": "Master switch. Must be true for the container backend to do anything; if false, setup_containers/teardown_containers short-circuit to no-ops.",
-        "enabled": true,
-
-        "_launch_comment": "true = CVS owns container lifecycle (starts on setup_containers, stops on teardown_containers). false = containers are externally managed; CVS only verifies they are running and never stops them.",
-        "launch": true,
+        "_lifetime_comment": "Container lifecycle policy. 'no_launch' = CVS never launches the container (verify it is already running, never stopped). 'per_run' = CVS starts on setup and removes on teardown. 'persistent' = CVS starts if absent / attaches if present and leaves running on exit (unblocks install-then-run; pin 'name' explicitly).",
+        "lifetime": "per_run",
 
         "_image_comment": "Image with test dependencies (rvs, etc.) pre-installed and an sshd you can start on port 2224. Must be present locally on each node OR pullable from a reachable registry.",
         "image": "rocm/cvs:latest",
@@ -48,6 +46,12 @@
             "name": "docker",
 
             "_args_comment": "Backend-specific runtime arguments. Defaults from cvs/core/orchestrators/container.py:DEFAULT_CONTAINER_ARGS apply for any key omitted here. List args (volumes/devices/cap_add/security_opt/group_add/ulimit) append to defaults; scalars (network/ipc/privileged) override.",
+            "_registry_comment": "Optional: log in to a private registry (e.g. rocm/ufb-private) before pulling. Omit entirely if the image is public or already loaded locally. password_file is a path ON EACH REMOTE HOST to a file containing the password/token -- never put the credential itself in this file. server is the registry hostname; omit/empty for Docker Hub. See README.md for the full schema.",
+            "_registry_example": {
+                "username": "myuser",
+                "password_file": "/home/{user-id}/.docker_token",
+                "server": ""
+            },
             "args": {
                 "network": "host",
                 "ipc": "host",

@@ -255,8 +255,10 @@ class AfmctlPingParser:
         if failed is None:
             failed = max(0, total - passed)
         try:
-            loss_pct = float(str(raw_loss).strip().rstrip("%")) if raw_loss is not None else (
-                (failed / total) * 100.0 if total else 100.0
+            loss_pct = (
+                float(str(raw_loss).strip().rstrip("%"))
+                if raw_loss is not None
+                else ((failed / total) * 100.0 if total else 100.0)
             )
         except (TypeError, ValueError):
             return None
@@ -294,7 +296,12 @@ class AfmctlPingParser:
                 result["parse_errors"].append(f"Duplicate afmctl ping result row for port {key}")
                 return
             entry = {"accelerator_id": cls._as_int(accelerator)}
-            entry.update({name: {k: v for k, v in metric.items() if k not in ("fail", "fail_total", "loss_pct")} for name, metric in traffic.items()})
+            entry.update(
+                {
+                    name: {k: v for k, v in metric.items() if k not in ("fail", "fail_total", "loss_pct")}
+                    for name, metric in traffic.items()
+                }
+            )
             result["ports"][key] = entry
 
         def walk(value: Any, inherited_bdf: Optional[str] = None, in_summary: bool = False) -> None:
@@ -318,9 +325,7 @@ class AfmctlPingParser:
                     for traffic_key, metric in traffic.items():
                         existing = result["summary"].get(traffic_key)
                         if existing and existing != metric:
-                            result["parse_errors"].append(
-                                f"Conflicting afmctl ping summary values for {traffic_key}"
-                            )
+                            result["parse_errors"].append(f"Conflicting afmctl ping summary values for {traffic_key}")
                         else:
                             result["summary"][traffic_key] = metric
                 for key, child in value.items():
@@ -585,9 +590,7 @@ def parse_afmctl_show_device_json(output: str) -> Tuple[List[Dict], List[str]]:
                 "num_network_ports": port_count,
                 # Retain generic AFM state fields for callers that enforce
                 # additional admission policy beyond topology discovery.
-                "config_phase": _json_first_value(
-                    flattened, ("config_phase", "configuration_phase", "phase")
-                ),
+                "config_phase": _json_first_value(flattened, ("config_phase", "configuration_phase", "phase")),
                 "virtualization_mode": _json_first_value(
                     flattened, ("virtualization_mode", "virtualisation_mode", "virt_mode", "virtualization")
                 ),
@@ -599,7 +602,9 @@ def parse_afmctl_show_device_json(output: str) -> Tuple[List[Dict], List[str]]:
     return devices, []
 
 
-def parse_afmctl_show_device_output(output: str, *, allow_text_fallback: bool = True) -> Tuple[List[Dict], List[str], str]:
+def parse_afmctl_show_device_output(
+    output: str, *, allow_text_fallback: bool = True
+) -> Tuple[List[Dict], List[str], str]:
     """Parse AFM device output, treating text as an opt-in compatibility mode."""
     raw = (output or "").strip()
     if not raw:
@@ -681,9 +686,7 @@ class AfmctlPortParser:
             if allow_text_fallback:
                 cls._parse_text(output, result)
             else:
-                result["parse_errors"].append(
-                    "Expected JSON from afmctl show port; legacy text fallback is disabled"
-                )
+                result["parse_errors"].append("Expected JSON from afmctl show port; legacy text fallback is disabled")
 
         if not result["ports_by_bdf"] and not result["unscoped_ports"]:
             result["parse_errors"].append("Could not locate port/state records in afmctl show port output")
@@ -743,9 +746,7 @@ class AfmctlPortParser:
                 if station_number < 0:
                     raise ValueError
             except (TypeError, ValueError):
-                result["parse_errors"].append(
-                    f"Malformed station ID {station!r} for port {port_number}"
-                )
+                result["parse_errors"].append(f"Malformed station ID {station!r} for port {port_number}")
                 return
             entry["station_id"] = station_number
         normalized_bdf = _normalize_bdf(bdf) if bdf is not None else None
@@ -1363,8 +1364,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         reported_pings_per_port = parsed.get("pings_per_port")
         if reported_pings_per_port is not None and reported_pings_per_port != self.pings_per_port:
             errors.append(
-                f"afmctl reported {reported_pings_per_port} pings per port pair; "
-                f"requested {self.pings_per_port}"
+                f"afmctl reported {reported_pings_per_port} pings per port pair; requested {self.pings_per_port}"
             )
             status, failure_category = "FAIL", "COVERAGE_ERROR"
         if selected_ports is not None:
@@ -1462,7 +1462,9 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             node_result["bdfs_under_test"] = [device.get("bdf") for device in source_devices if device.get("bdf")]
 
             local_ids = [
-                device.get("accelerator_id") for device in discovered_devices if device.get("accelerator_id") is not None
+                device.get("accelerator_id")
+                for device in discovered_devices
+                if device.get("accelerator_id") is not None
             ]
             for source in source_devices:
                 bdf = source.get("bdf")
@@ -1504,7 +1506,9 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                 coverage["expected_pairs"] += len(peers)
                 if self.ports == "up":
                     if self.port_discovery != "auto":
-                        self._add_node_issue(node, "PORT_DISCOVERY_ERROR", f"{bdf}: ports='up' requires port_discovery='auto'")
+                        self._add_node_issue(
+                            node, "PORT_DISCOVERY_ERROR", f"{bdf}: ports='up' requires port_discovery='auto'"
+                        )
                         continue
                     selected_ports = self._discover_up_ports(node, bdf)
                     if selected_ports is None:
@@ -1512,7 +1516,9 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                 else:
                     selected_ports = self._explicit_port_list(self.ports)
                     if selected_ports == [] and self.ports not in (None, "", "all"):
-                        self._add_node_issue(node, "PORT_DISCOVERY_ERROR", f"{bdf}: invalid explicit port selection {self.ports!r}")
+                        self._add_node_issue(
+                            node, "PORT_DISCOVERY_ERROR", f"{bdf}: invalid explicit port selection {self.ports!r}"
+                        )
                         continue
 
                 for dst in peers:

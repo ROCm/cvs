@@ -1,0 +1,132 @@
+{
+    "_comment": "Rack-aware cluster.json — extends cluster.json with a 'racks' block for switch tray targeting.",
+
+    "_user_comment": " user-id will be resolved to current username in runtime. You can also change to your user-id here.",
+    "username": "{user-id}",
+
+    "_key_comment": " Change <priv_key_file> to your private key if it is different.",
+    "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
+
+    "head_node_dict": {
+        "mgmt_ip": "{xx.xx.xx.xx|hostname}"
+    },
+
+    "_env_vars_comment": "Custom env variables to be exported before executing each command",
+    "_env_vars_example": {
+        "PATH": "/shared/apps/ubuntu/opt/rocm-7.11.0/bin:$PATH"
+    },
+    "env_vars": {},
+
+    "_node_comment": " Change to your node IPs. The Public IPs of the nodes will be the keys of the node_dict.",
+    "_vpc_comment": "If your cluster has a dedicated VPC IP that is reachable from other nodes in the cluster, set it to that (or) else set the same as the main host IP/Name",
+    "_rack_id_comment": "rack_id associates each compute node with a rack entry in the 'racks' block below.",
+    "node_dict": {
+        "10.0.0.1": {
+            "bmc_ip": "10.0.1.1",
+            "vpc_ip": "10.0.0.1",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.2": {
+            "bmc_ip": "10.0.1.2",
+            "vpc_ip": "10.0.0.2",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.3": {
+            "bmc_ip": "10.0.1.3",
+            "vpc_ip": "10.0.0.3",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.4": {
+            "bmc_ip": "10.0.1.4",
+            "vpc_ip": "10.0.0.4",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.5": {
+            "bmc_ip": "10.0.1.5",
+            "vpc_ip": "10.0.0.5",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.6": {
+            "bmc_ip": "10.0.1.6",
+            "vpc_ip": "10.0.0.6",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.7": {
+            "bmc_ip": "10.0.1.7",
+            "vpc_ip": "10.0.0.7",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.8": {
+            "bmc_ip": "10.0.1.8",
+            "vpc_ip": "10.0.0.8",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.9": {
+            "bmc_ip": "10.0.1.9",
+            "vpc_ip": "10.0.0.9",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.10": {
+            "bmc_ip": "10.0.1.10",
+            "vpc_ip": "10.0.0.10",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.11": {
+            "bmc_ip": "10.0.1.11",
+            "vpc_ip": "10.0.0.11",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.12": {
+            "bmc_ip": "10.0.1.12",
+            "vpc_ip": "10.0.0.12",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.13": {
+            "bmc_ip": "10.0.1.13",
+            "vpc_ip": "10.0.0.13",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.14": {
+            "bmc_ip": "10.0.1.14",
+            "vpc_ip": "10.0.0.14",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.15": {
+            "bmc_ip": "10.0.1.15",
+            "vpc_ip": "10.0.0.15",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.16": {
+            "bmc_ip": "10.0.1.16",
+            "vpc_ip": "10.0.0.16",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.17": {
+            "bmc_ip": "10.0.1.17",
+            "vpc_ip": "10.0.0.17",
+            "rack_id": "rack-01"
+        },
+        "10.0.0.18": {
+            "bmc_ip": "10.0.1.18",
+            "vpc_ip": "10.0.0.18",
+            "rack_id": "rack-01"
+        }
+    },
+
+    "_racks_comment": "Rack block.",
+    "racks": {
+        "switch_ssh_user": "admin",
+        "switch_ssh_password": "password",
+        "rack-01": {
+            "platform": "HeliosP",
+            "switch_trays": [
+                "10.0.2.1",
+                "10.0.2.2",
+                "10.0.2.3",
+                "10.0.2.4",
+                "10.0.2.5",
+                "10.0.2.6"
+            ]
+        }
+    }
+}
