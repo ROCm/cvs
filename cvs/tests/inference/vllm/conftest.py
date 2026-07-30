@@ -144,8 +144,9 @@ def pytest_collection_modifyitems(items):
         "test_vllm_inference": 5,
         "test_metric": 6,
         "test_gpu_metric": 6,
-        "test_print_results_table": 7,
-        "test_teardown": 8,
+        "test_accuracy_eval": 7,
+        "test_print_results_table": 8,
+        "test_teardown": 9,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 

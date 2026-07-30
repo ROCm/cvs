@@ -80,16 +80,20 @@ class Run(_Forbid):
     concurrency: int
 
 
+NON_SWEEP_THRESHOLD_KEYS = {"accuracy"}
+
+
 def validate_thresholds_cover_sweep(
     *,
     expected_cells,
     thresholds,
     enforce_thresholds: bool,
     gated_metrics=None,
+    gated_gpu_metrics=None,
 ) -> None:
     """Shared sweep/threshold coverage check for inference variant configs."""
     expected = set(expected_cells)
-    present = set(thresholds.keys())
+    present = set(thresholds.keys()) - NON_SWEEP_THRESHOLD_KEYS
     missing = sorted(expected - present)
     extra = sorted(present - expected)
     problems = []
@@ -99,6 +103,8 @@ def validate_thresholds_cover_sweep(
         problems.append(f"threshold keys matching no sweep cell (typo?): {extra}")
     gated = gated_metrics if gated_metrics is not None else GATED_METRICS
     gated_keys = [f"client.{m}" for m in sorted(gated)]
+    if gated_gpu_metrics:
+        gated_keys += [f"gpu.{m}" for m in sorted(gated_gpu_metrics)]
     gated_gaps = {}
     for cell in sorted(expected & present):
         specs = thresholds.get(cell) or {}
