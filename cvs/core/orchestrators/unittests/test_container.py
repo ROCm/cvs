@@ -354,6 +354,24 @@ class TestResolveContainerLifetime(unittest.TestCase):
                 container={"launch": True, "image": "x"},
             )
 
+    def test_capture_image_provenance_resolves_digest_on_head(self):
+        orch, runtime = self._make()
+        runtime.orchestrator.head.exec.side_effect = [
+            {"10.0.0.1": {"exit_code": 0, "output": "sha256:abc123deadbeef"}},
+            {
+                "10.0.0.1": {
+                    "exit_code": 0,
+                    "output": "rocm/atom-dev@sha256:abc123deadbeefcafebabe",
+                }
+            },
+        ]
+        orch.container_id = "cvs_iter_test"
+        provenance = orch.capture_image_provenance("cvs_iter_test")
+        self.assertEqual(provenance["image_tag"], "rocm/cvs:test")
+        self.assertEqual(provenance["image_id"], "sha256:abc123deadbeef")
+        self.assertIn("rocm/atom-dev@sha256:", provenance["image_digest"])
+        self.assertIn("rocm/cvs:test @", provenance["image_display"])
+
 
 if __name__ == "__main__":
     unittest.main()

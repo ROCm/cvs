@@ -8,11 +8,20 @@ from cvs.lib.report.provenance import (
     extend_run_card_display,
     provenance_run_card_rows,
 )
+from cvs.core.image_display import format_image_display
 from cvs.lib.report.unittests._fixtures import (
     generic_inference_report_config,
     generic_variant,
     two_cell_inf_res,
 )
+
+
+def test_format_image_display_shortens_digest_with_tag():
+    display = format_image_display(
+        image_tag="rocm/cvs:test",
+        image_digest="rocm/atom-dev@sha256:abc123deadbeefcafebabe",
+    )
+    assert display.startswith("rocm/cvs:test @ sha256:abc123deadbe")
 
 
 def test_build_inference_report_provenance_collects_paths():
@@ -39,13 +48,22 @@ def test_provenance_run_card_rows_includes_standard_fields():
     rows = provenance_run_card_rows(
         {
             "cvs_version": "1.0.0",
-            "git_commit": "abc1234",
+            "git_ref": "abc1234 @ feature/x",
+            "image_display": "rocm/atom-dev:latest @ sha256:deadbeef…",
+            "launch_summary": "atom · TP=8 · max_model_len=10240",
             "cluster_file": "/cluster.json",
             "config_file": "/config.json",
         }
     )
     labels = [r[0] for r in rows]
-    assert labels == ["CVS version", "Git commit", "Cluster file", "Config file"]
+    assert labels == [
+        "CVS version",
+        "Git ref",
+        "Image",
+        "Launch",
+        "Cluster file",
+        "Config file",
+    ]
 
 
 def test_extend_run_card_display_skips_duplicate_labels():
@@ -70,11 +88,16 @@ def test_payload_includes_provenance_and_run_card_fields():
         provenance={
             "cluster_file": "/cluster.json",
             "config_file": "/config.json",
-            "git_commit": "deadbeef",
+            "git_ref": "deadbeef @ main",
+            "launch_summary": "atom · TP=8",
+            "launch_server_cmd": "python -m atom.entrypoints.openai_server --model demo",
+            "launch_bench_cmd": "python -m atom.benchmarks.benchmark_serving --model demo",
         },
     )
     assert payload["provenance"]["cluster_file"] == "/cluster.json"
     labels = [r[0] for r in payload["run_card_display"]]
     assert "Cluster file" in labels
     assert "Config file" in labels
-    assert "CVS version" in labels
+    assert "Git ref" in labels
+    assert "Launch" in labels
+    assert payload["panels"]["launch"]["server_cmd"].startswith("python -m atom")
