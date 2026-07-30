@@ -49,13 +49,14 @@ class Orchestrator(ABC):
         pass
 
     @abstractmethod
-    def exec_on_head(self, cmd, timeout=None):
+    def exec_on_head(self, cmd, timeout=None, detailed=False):
         """
         Execute command on head node only.
 
         Args:
             cmd: Command to execute
             timeout: Command timeout in seconds
+            detailed: If True, return detailed execution info including exit_code
 
         """
         pass
