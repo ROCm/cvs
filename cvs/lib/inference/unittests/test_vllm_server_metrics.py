@@ -8,7 +8,7 @@ Black-box tests authored from the behavioral spec only (impl-blind). The
 module contains pure parsers for vLLM's engine-side Prometheus `/metrics`
 exposition-format text: no I/O, no hardware, pure text/dict transformations.
 
-Contract under test (from VLLM_PROMETHEUS_METRICS_SPEC.md Sec 3.2/7):
+Contract under test:
   parse_prometheus_text(raw) -> {metric_name: {"buckets": {le: count},
       "sum": float, "count": float}} for histograms, {metric_name: float}
       for bare gauges. Degrades to {} on empty/unparseable input; never raises.
@@ -37,8 +37,7 @@ from cvs.lib.inference.utils.vllm_server_metrics import (
 )
 from cvs.lib.inference.vllm_job import scrape_vllm_metrics
 
-# Shared bucket list (queue/prefill/decode/inference/e2e), seconds -- per
-# VLLM_PROMETHEUS_METRICS_SPEC.md Sec 1.
+# Shared bucket list (queue/prefill/decode/inference/e2e), seconds.
 _BUCKETS = [
     0.3,
     0.5,

@@ -389,8 +389,8 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
         # the client run -- not before the server-reuse branch above, since a
         # reused server has no guaranteed-zero baseline (it may have already
         # served the smoke test and/or prior cells). Two single, sequential,
-        # main-thread exec calls -- see VLLM_PROMETHEUS_METRICS_SPEC.md Sec 3.1
-        # for why this is safe from the SSH-session race the GPU poller hit.
+        # main-thread exec calls -- safe from the SSH-session race the GPU
+        # poller hit.
         prom_before = scrape_vllm_metrics(orch, job.base_url, job.port_no)
         try:
             job.run_client()

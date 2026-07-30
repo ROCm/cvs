@@ -15,8 +15,7 @@ this module turns it into numbers.
 Namespacing contract: `prom.*` -- percentile metrics interpolated from
 Prometheus Histograms scraped off the live vLLM server, distinct from
 `client.*` (measured by the load generator) and `gpu.*` (amd-smi snapshots).
-See VLLM_PROMETHEUS_METRICS_SPEC.md Sec 1 for why this is its own namespace
-rather than joining either of those.
+Its own namespace rather than joining either of those.
 
 vLLM's histogram buckets are cumulative per scrape (each `le` bucket already
 counts everything at or below it), but the *counters themselves* are
@@ -32,9 +31,7 @@ from __future__ import annotations
 import re
 
 # Human-readable derived metrics exposed as HTML rows (one row per entry per
-# cell), mirroring gpu.py's GPU_METRICS shape. These are the metrics this
-# spec's Phase 1 closes a gap for -- see VLLM_PROMETHEUS_METRICS_SPEC.md Sec 5
-# for the primary/secondary/out-of-scope breakdown.
+# cell), mirroring gpu.py's GPU_METRICS shape.
 PROM_METRICS: list[tuple[str, str]] = [
     ("queue_time_p50_ms", "ms"),
     ("queue_time_p95_ms", "ms"),
@@ -121,8 +118,7 @@ def diff_histogram(before: "dict | None", after: "dict | None") -> "dict[str, fl
     running long enough to register it; `before` may be missing a boundary
     `after` has if this is the server's first-ever scrape). Missing `before`
     buckets are treated as 0. Negative diffs (e.g. a server restart between
-    scrapes resetting the counters) are clamped to 0 rather than propagated,
-    per VLLM_PROMETHEUS_METRICS_SPEC.md Sec 3.2/8.3.
+    scrapes resetting the counters) are clamped to 0 rather than propagated.
 
     Returns None if `after` is missing/empty (nothing to diff against).
     """
@@ -185,8 +181,8 @@ def to_prom_metrics(before_text: "str | None", after_text: "str | None") -> dict
 
     Analogous to vllm_parsing.py's to_client_metrics(). Returns an all-None
     dict (never a partial one, never a raise) if either scrape is
-    missing/unparseable -- see VLLM_PROMETHEUS_METRICS_SPEC.md Sec 3.4: a
-    transport failure must degrade every prom.* key for the cell, not crash it.
+    missing/unparseable: a transport failure must degrade every prom.* key
+    for the cell, not crash it.
     """
     all_none = {f"prom.{short}": None for short, _unit in PROM_METRICS}
     if not before_text or not after_text:

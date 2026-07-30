@@ -106,9 +106,8 @@ class TestPromGatedMetricCoverage(unittest.TestCase):
     """The prom.* axis of vllm_config_loader's _check_thresholds_cover_sweep.
 
     Mirrors TestGpuGatedMetricCoverage: prom.* is a fully separate, parallel
-    gated family (VLLM_PROMETHEUS_METRICS_SPEC.md Sec 6), not part of
-    client.*'s tiering machinery, so its coverage is proven independently
-    here rather than in test_vllm_report_preset.py.
+    gated family, not part of client.*'s tiering machinery, so its coverage
+    is proven independently here rather than in test_vllm_report_preset.py.
     """
 
     _CELL = "ISL=128,OSL=2048,TP=8,CONC=16"

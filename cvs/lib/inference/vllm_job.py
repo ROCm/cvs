@@ -54,10 +54,10 @@ def scrape_vllm_metrics(orch, base_url: str, port_no: str, timeout_s: "float | N
     synchronous, main-thread orch.exec_on_head call, never backgrounded. Two
     calls to this function (one before, one after a cell's client run) bracket
     test_vllm_inference the same way start_gpu_poller/stop_and_collect_gpu_poller
-    do, but this only needs point-in-time reads, not a continuous poll -- see
-    VLLM_PROMETHEUS_METRICS_SPEC.md Sec 3.1 for why a background thread/poller
-    must never be used here (the SSH-session race that started that spec's
-    concurrency-safety note applies to this bracket too).
+    do, but this only needs point-in-time reads, not a continuous poll -- a
+    background thread/poller must never be used here (the same SSH-session
+    race that the GPU poller has to guard against applies to this bracket
+    too).
 
     Returns the raw exposition-format text, or None if the curl fails
     (endpoint down, timeout, non-2xx) or comes back empty -- never raises.

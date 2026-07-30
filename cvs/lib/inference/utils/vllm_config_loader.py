@@ -40,10 +40,9 @@ from cvs.lib.utils.gpu import GPU_METRICS
 
 GATED_GPU_METRICS = {k for k, _unit in GPU_METRICS}
 # A fully separate, parallel gated family, following GPU_METRICS's precedent
-# rather than joining vllm_parsing.GATED_METRICS/METRIC_TIERS -- see
-# VLLM_PROMETHEUS_METRICS_SPEC.md Sec 6 for why prom.* must not be mixed into
-# the client.* tiering machinery (a locked invariant test partitions that set
-# exactly).
+# rather than joining vllm_parsing.GATED_METRICS/METRIC_TIERS -- prom.* must
+# not be mixed into the client.* tiering machinery (a locked invariant test
+# partitions that set exactly).
 GATED_PROM_METRICS = {k for k, _unit in PROM_METRICS}
 
 
