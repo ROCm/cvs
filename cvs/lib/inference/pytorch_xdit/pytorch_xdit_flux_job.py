@@ -33,7 +33,7 @@ FATAL_OUTPUT_PATTERNS = (
     r"\bOSError:\b",
 )
 
-DEFAULT_BENCHMARK_TIMEOUT_S = 900
+DEFAULT_BENCHMARK_TIMEOUT_S = 1800
 DEFAULT_MASTER_PORT = 29500
 RUN_USP_PATH = "/app/Flux/run_usp.py"
 CONTAINER_OUTPUT_MOUNT = "/outputs"
@@ -73,7 +73,7 @@ def _exec_on_single_node(
     cmd: str,
     *,
     timeout: Optional[int] = None,
-    print_console: bool = True,
+    print_console: bool = False,
 ) -> str:
     """Run ``cmd`` on exactly one node, even when ``s_phdl`` covers more hosts."""
     phdl_hosts = list(getattr(s_phdl, "host_list", []) or [])
@@ -96,7 +96,7 @@ def _exec_on_nodes(
     cmd: str,
     *,
     timeout: Optional[int] = None,
-    print_console: bool = True,
+    print_console: bool = False,
 ) -> Dict[str, str]:
     """Run the same command on an explicit node subset."""
     node_list = list(nodes)
@@ -123,7 +123,7 @@ def _exec_cmd_list_on_nodes(
     cmd_list: Sequence[str],
     *,
     timeout: Optional[int] = None,
-    print_console: bool = True,
+    print_console: bool = False,
 ) -> Dict[str, str]:
     """
     Run per-node commands on an explicit node subset.
