@@ -300,6 +300,33 @@ class TestCellCoverageAxis(unittest.TestCase):
             self._variant_with(thresholds={}, enforce=False)
         self.assertTrue(any("sweep cells with no threshold entry" in str(w.message) for w in caught))
 
+    def test_accuracy_key_does_not_trip_extra_key_check(self):
+        # "accuracy" is a top-level threshold key for lm-eval gating, not a
+        # sweep cell -- it must not be flagged as an unrecognized extra key.
+        specs = _full_gated_specs()
+        vc = self._variant_with(
+            thresholds={self._CELL: specs, "accuracy": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.5}}}},
+            enforce=True,
+        )
+        self.assertIn("accuracy", vc.thresholds)
+
+    def test_unrecognized_key_still_raises_alongside_accuracy(self):
+        # The "accuracy" exclusion must be narrow: a genuinely unrecognized
+        # key (typo'd or bogus) alongside a valid "accuracy" block still trips
+        # the extra-key check.
+        specs = _full_gated_specs()
+        with self.assertRaises(ValidationError) as ctx:
+            self._variant_with(
+                thresholds={
+                    self._CELL: specs,
+                    "accuracy": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.5}}},
+                    "acuracy": {},
+                },
+                enforce=True,
+            )
+        self.assertIn("threshold keys matching no sweep cell", str(ctx.exception))
+        self.assertIn("acuracy", str(ctx.exception))
+
 
 class TestExpectedCellsBoundaries(unittest.TestCase):
     """Boundary cases for VariantConfig.expected_cells."""

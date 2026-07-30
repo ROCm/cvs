@@ -640,18 +640,19 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         return self.runtime.exec_cmd_list(self.container_id, cmd_list, timeout)
 
-    def exec_on_head(self, cmd, timeout=None):
+    def exec_on_head(self, cmd, timeout=None, detailed=False):
         """
         Execute command directly on head node (baremetal).
 
         Args:
             cmd: Command to execute on head node
             timeout: Command timeout
+            detailed: If True, return detailed execution info including exit_code
 
         Returns:
             Dictionary mapping head node to execution result
         """
-        return self.runtime.exec_on_head(self.container_id, cmd, timeout)
+        return self.runtime.exec_on_head(self.container_id, cmd, timeout, detailed)
 
     def distribute_using_mpi(
         self,
