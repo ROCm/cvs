@@ -280,11 +280,11 @@ class DockerRuntime:
         exec_cmd_list = [f"{sudo_prefix}docker exec {container_name} bash -c {shlex.quote(cmd)}" for cmd in cmd_list]
         return self.orchestrator.all.exec_cmd_list(exec_cmd_list, timeout=timeout)
 
-    def exec_on_head(self, container_name, cmd, timeout=None):
+    def exec_on_head(self, container_name, cmd, timeout=None, detailed=False):
         """Execute command directly on head node (container). See exec() for
         the bash -c wrap rationale."""
         exec_cmd = f"{self.orchestrator.sudo_prefix()}docker exec {container_name} bash -c {shlex.quote(cmd)}"
-        return self.orchestrator.head.exec(exec_cmd, timeout=timeout)
+        return self.orchestrator.head.exec(exec_cmd, timeout=timeout, detailed=detailed)
 
     @staticmethod
     def _build_runtime_args(runtime_args_config):

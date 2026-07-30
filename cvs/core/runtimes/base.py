@@ -33,7 +33,7 @@ class ContainerRuntime(Protocol):
         """Execute command in running containers."""
         ...
 
-    def exec_on_head(self, container_name, cmd, timeout=None):
+    def exec_on_head(self, container_name, cmd, timeout=None, detailed=False):
         """Execute command directly on head node (baremetal)."""
         ...
 
