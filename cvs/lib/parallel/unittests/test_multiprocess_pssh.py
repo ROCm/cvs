@@ -473,7 +473,9 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
         config = ParallelConfig(hosts_per_shard=1, max_workers_per_cpu=1)
         expected_result = {"host2": "/tmp/test.txt_host2"}
 
-        with patch('cvs.lib.parallel.multiprocess_pssh.Pssh.download_file', return_value=expected_result) as mock_download:
+        with patch(
+            'cvs.lib.parallel.multiprocess_pssh.Pssh.download_file', return_value=expected_result
+        ) as mock_download:
             pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
             result = pssh.download_file("/remote/test.txt", "/tmp/test.txt", hosts=["host2"])
 
@@ -489,6 +491,4 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
             stop_on_errors=True,
             env_vars=None,
         )
-        mock_download.assert_called_once_with(
-            "/remote/test.txt", "/tmp/test.txt", recurse=False, suffix_separator="_"
-        )
+        mock_download.assert_called_once_with("/remote/test.txt", "/tmp/test.txt", recurse=False, suffix_separator="_")

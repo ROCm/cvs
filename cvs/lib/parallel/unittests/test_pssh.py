@@ -1054,9 +1054,7 @@ class TestPsshFileTransfer(unittest.TestCase):
 
         self.assertEqual(result, {"host2": "/tmp/local.json_host2"})
         self.mock_client.copy_remote_file.assert_not_called()
-        mock_client.assert_called_once_with(
-            ["host2"], user="user", password="pass", keepalive_seconds=30
-        )
+        mock_client.assert_called_once_with(["host2"], user="user", password="pass", keepalive_seconds=30)
         target_client.copy_remote_file.assert_called_once_with(
             "/remote/file.json", "/tmp/local.json", recurse=False, suffix_separator="_"
         )

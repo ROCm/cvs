@@ -351,7 +351,9 @@ class MultiProcessPssh(ShardableSshInterface):
                 env_vars=self.env_vars,
                 **self.ssh_client_kwargs,
             )
-            return target_pssh.download_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
+            return target_pssh.download_file(
+                remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator
+            )
 
         self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, self.reachable_hosts)
 
