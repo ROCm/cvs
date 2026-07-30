@@ -45,7 +45,7 @@ VLLM_REPORT_CONFIG = make_inference_report_config(
     metric_tier_order=METRIC_TIER_ORDER,
     chart_series=DEFAULT_PERF_CHART_SERIES,
     inference_test_substring="test_vllm_inference",
-    row_card_test_names=("test_metric",),
+    row_card_test_names=("test_metric", "test_gpu_metric", "test_prom_metric"),
     session_lifecycle_labels=VLLM_SESSION_LIFECYCLE_LABELS,
     cell_lifecycle_labels=VLLM_CELL_LIFECYCLE_LABELS,
 )
