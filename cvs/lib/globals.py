@@ -14,10 +14,15 @@ log = logging.getLogger()
 # NullHandler unless enable_host_logger() is called -- which CVS never does --
 # but `log` above is the ROOT logger, so propagation delivers those lines to
 # CVS's handlers anyway. The result is that every line is logged twice: once by
-# pssh, once by Pssh._process_output (cvs/lib/parallel/pssh.py). Detaching the
-# third-party logger keeps the _process_output copy, which is the one that
-# honors print_console and can therefore be suppressed for bulk-data commands.
-logging.getLogger('pssh.host_logger').propagate = False
+# pssh, once by Pssh._process_output (cvs/lib/parallel/pssh.py). Dropping the
+# pssh copy keeps the _process_output one, which is the one that honors
+# print_console and can therefore be suppressed for bulk-data commands.
+#
+# A filter, not propagate=False: pytest's catching_logs attaches its capture
+# handler to root AND to every non-propagating logger (_pytest/logging.py), so
+# clearing propagate makes pytest attach directly and the duplicate survives.
+# A filter drops the record before any handler is consulted, however attached.
+logging.getLogger('pssh.host_logger').addFilter(lambda _record: False)
 
 error_list = []
 
