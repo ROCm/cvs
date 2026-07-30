@@ -399,6 +399,7 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
         benchmark_params_dict,
         hf_token,
         distributed=False,
+        timeout=900,
     ):
         fail_test(msg)
     update_test_result()
