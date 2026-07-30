@@ -322,12 +322,12 @@ def verify_distributed_logs(output: str, *, world_size: int) -> Tuple[bool, str]
         return True, "Saw distributed process-group initialization in logs"
 
     rank_refs = len(re.findall(r"\brank[=:\s]+\d+\b", output, re.I))
+    log.info("Saw %d rank references in logs", rank_refs)
     if rank_refs >= 2:
         return True, f"Saw {rank_refs} rank references in logs"
 
     return False, (
         f"No distributed proof in logs for world_size={world_size}. "
-        "Try NCCL_DEBUG=INFO and verify IB/socket interface settings."
     )
 
 
