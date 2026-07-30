@@ -47,6 +47,34 @@ from cvs.lib.utils.model_query_lib import OpenAIProbe
 log = globals.log
 
 
+def scrape_vllm_metrics(orch, base_url: str, port_no: str, timeout_s: "float | None" = None) -> "str | None":
+    """One-shot scrape of vLLM's `/metrics` Prometheus endpoint, head-only.
+
+    Mirrors capture_gpu_metrics()'s one-shot-exec shape (gpu.py): a single,
+    synchronous, main-thread orch.exec_on_head call, never backgrounded. Two
+    calls to this function (one before, one after a cell's client run) bracket
+    test_vllm_inference the same way start_gpu_poller/stop_and_collect_gpu_poller
+    do, but this only needs point-in-time reads, not a continuous poll -- a
+    background thread/poller must never be used here (the same SSH-session
+    race that the GPU poller has to guard against applies to this bracket
+    too).
+
+    Returns the raw exposition-format text, or None if the curl fails
+    (endpoint down, timeout, non-2xx) or comes back empty -- never raises.
+    """
+    kwargs = {"timeout": timeout_s} if timeout_s is not None else {}
+    try:
+        out = orch.exec_on_head(f"curl -sf {base_url}:{port_no}/metrics", **kwargs)
+    except Exception as exc:
+        log.warning("scrape_vllm_metrics: exec_on_head failed: %s", exc)
+        return None
+    text = next(iter(out.values()), None) if out else None
+    if not text or not str(text).strip():
+        log.warning("scrape_vllm_metrics: empty/failed scrape from %s:%s/metrics", base_url, port_no)
+        return None
+    return text
+
+
 class VllmJob:
     """Unified vLLM benchmark job for single-node and multinode distributed runs.
 

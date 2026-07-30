@@ -144,6 +144,7 @@ def pytest_collection_modifyitems(items):
         "test_vllm_inference": 5,
         "test_metric": 6,
         "test_gpu_metric": 6,
+        "test_prom_metric": 6,
         "test_accuracy_eval": 7,
         "test_print_results_table": 8,
         "test_teardown": 9,
