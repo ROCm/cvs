@@ -12,7 +12,9 @@
        "gpu_pcie_speed": "32",
        "gpu_pcie_width": "16",
        "nic_pcie_speed": "32",
+        "_comment_nic_pcie_speed": "If nic is connected via UAlink (for example, for MI450 platform) delete nic_pci_speed line above, otherwise provide pcie speed of nic (default)",
        "nic_pcie_width": "16",
+        "_comment_nic_pcie_width": "If nic is connected via UAlink (for example, for MI450 platform) delete nic_pci_width line above, otherwise provide pcie width of nic (default)",
        "fw_dict":
        {
            "CP_MEC1": "32945",

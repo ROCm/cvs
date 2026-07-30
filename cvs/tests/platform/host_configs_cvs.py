@@ -541,6 +541,12 @@ def test_check_be_nic_pcie_speed_width(phdl, config_dict):
     globals.error_list = []
     log.info('Testcase check backend NIC PCIe speed and width')
 
+    # if nic on the Scale Out network is connected via UAlink (example, MI450) insteaad
+    # of PCIe then skip this test
+    if 'nic_pcie_speed' not in config_dict or 'nic_pcie_width' not in config_dict:
+        log.info('nic_pcie_speed or nic_pcie_width not in config_dict, skipping test')
+        return
+
     nic_pcie_speed = config_dict['nic_pcie_speed']
     nic_pcie_width = config_dict['nic_pcie_width']
 
