@@ -73,20 +73,29 @@ class TestPreflightRdmaConfigContract(unittest.TestCase):
                 patch.object(preflight_checks, 'InterfaceConsistencyCheck') as interface_checker,
                 patch.object(preflight_checks, 'GidConsistencyCheck') as gid_checker,
                 patch.object(preflight_checks, 'preflight_update_test_result'),
+                patch.object(RdmaConnectivityCheck, 'run') as rdma_run,
             ):
                 preflight_checks.test_interface_name_consistency(MagicMock(), config)
                 preflight_checks.test_gid_consistency(MagicMock(), config)
+                phdl = MagicMock()
+                phdl.reachable_hosts = ['nodeA']
+                preflight_checks.test_rdma_connectivity(phdl, {'node_dict': {'nodeA': {}}}, config)
 
             interface_checker.assert_not_called()
             gid_checker.assert_not_called()
+            rdma_run.assert_not_called()
             interface_result = preflight_checks.preflight_results['interface_names']
             gid_result = preflight_checks.preflight_results['gid_consistency']
+            rdma_result = preflight_checks.preflight_results['rdma_connectivity']
             self.assertEqual(interface_result['status'], 'SKIPPED')
             self.assertEqual(gid_result['status'], 'SKIPPED')
+            self.assertEqual(rdma_result['status'], 'SKIPPED')
+            self.assertTrue(rdma_result['skipped'])
 
             report = PreflightReportGenerator(MagicMock(), {}, {})
             self.assertEqual(report._summarize_interface_results(interface_result)['status'], 'SKIPPED')
             self.assertEqual(report._summarize_gid_results(gid_result)['status'], 'SKIPPED')
+            self.assertEqual(report._summarize_connectivity_results(rdma_result)['status'], 'SKIPPED')
             self.assertEqual(report._generate_interface_names_html(interface_result), '')
             self.assertEqual(report._generate_gid_consistency_html(gid_result), '')
         finally:

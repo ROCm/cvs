@@ -1083,6 +1083,23 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     """
     global preflight_results
 
+    mode = get_nested_config(config_dict, 'connectivity_check.rdma', 'connectivity_mode', 'basic')
+    if mode == 'skip':
+        preflight_results['rdma_connectivity'] = {
+            'status': 'SKIPPED',
+            'mode': 'skip',
+            'skipped': True,
+            'message': 'RDMA interface, GID, and connectivity validation skipped by configuration',
+            'total_pairs': 0,
+            'successful_pairs': 0,
+            'failed_pairs': 0,
+            'pair_results': {},
+            'node_status': {},
+        }
+        log.info("RDMA interface, GID, and connectivity validation skipped by configuration")
+        preflight_update_test_result()
+        return
+
     if _node_health_admission_failed(config_dict):
         blocked = _blocked_by_node_health('RDMA connectivity')
         blocked.update(
@@ -1104,17 +1121,18 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     node_list = list(phdl.reachable_hosts)
 
     iface_results = preflight_results.get('interface_names') or {}
-    excluded_nodes_interface_check = sorted(n for n, r in iface_results.items() if r.get('status') == 'FAIL')
+    excluded_nodes_interface_check = sorted(
+        n for n, r in iface_results.items() if isinstance(r, dict) and r.get('status') == 'FAIL'
+    )
 
     gid_results = preflight_results.get('gid_consistency') or {}
-    excluded_nodes_gid = sorted(n for n, r in gid_results.items() if r.get('status') == 'FAIL')
+    excluded_nodes_gid = sorted(n for n, r in gid_results.items() if isinstance(r, dict) and r.get('status') == 'FAIL')
 
     log.info(
         f"RDMA connectivity: {len(node_list)} host(s) on phdl after reachability / interface / GID pruning "
         f"(ROCm mismatches are not pruned)."
     )
 
-    mode = get_nested_config(config_dict, 'connectivity_check.rdma', 'connectivity_mode', 'basic')
     port_range = get_nested_config(config_dict, 'connectivity_check.rdma', 'ibv_test_port_range', '10000-50000')
     timeout = int(get_nested_config(config_dict, 'connectivity_check.rdma', 'ibv_test_timeout', 90))
     expected_interfaces = get_nested_config(
@@ -1140,7 +1158,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
         f"Testing RDMA connectivity using parallel algorithm (mode: {mode}, group_size: {parallel_group_size}, timeout: {timeout}s, interfaces: {expected_interfaces}, GID: {gid_index})"
     )
 
-    if mode != 'skip' and len(phdl.reachable_hosts) < 2:
+    if len(phdl.reachable_hosts) < 2:
         log.warning(
             'RDMA connectivity skipped: fewer than 2 hosts remain after reachability / interface / GID pruning.'
         )
