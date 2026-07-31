@@ -8,7 +8,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import re
 
 from cvs.lib import globals
-from cvs.lib.training.megatron.megatron_lib import MegatronTrainingJob
 from cvs.lib.training.primus.primus_lib import PrimusTrainingJob
 
 log = globals.log
@@ -21,7 +20,7 @@ def create_training_job(orch, variant_config, **kwargs):
            Primus backend derived from variant_config.framework by stripping
            the "_single" / "_distributed" topology suffix.
         2. Otherwise dispatch on the stripped framework name:
-              megatron    → MegatronTrainingJob
+              megatron    → MegatronTrainingJob     (not yet implemented)
               jax         → JaxTrainingJob         (not yet implemented)
               torchtitan  → TorchTitanTrainingJob   (not yet implemented)
 
@@ -63,8 +62,8 @@ def create_training_job(orch, variant_config, **kwargs):
         )
 
     if framework == 'megatron':
-        log.info(f"framework='{framework}' — using MegatronTrainingJob")
-        return MegatronTrainingJob(orch, variant_config, **kwargs)
+        log.info(f"framework='{framework}' — MegatronTrainingJob not yet implemented")
+        raise NotImplementedError("MegatronTrainingJob is not yet implemented")
 
     if framework == 'jax':
         log.info(f"framework='{framework}' — JaxTrainingJob not yet implemented")
