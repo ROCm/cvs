@@ -27,7 +27,13 @@ The preflight configuration file follows this structure:
     },
     "connectivity_check": {
       "rdma": {
-        "connectivity_mode": "skip"
+        "connectivity_mode": "skip",
+        "gid_index": "3",
+        "interfaces": ["enp4s0np0"],
+        "nodes_per_full_mesh_group": 128,
+        "ibv_test_timeout": 90,
+        "ibv_test_port_range": "10000-50000",
+        "inter_full_mesh_group_pairs_per_wave": "auto"
       },
       "ifoe": {
         "fabric_checks": true,
@@ -47,7 +53,7 @@ The preflight configuration file follows this structure:
     },
     "reporting": {
       "generate_html_report": true,
-      "artifacts_root_dir": "/tmp/preflight",
+      "artifacts_root_dir": "/tmp/{user-id}/preflight",
       "generate_rdma_pairs_csv": false
     },
     "debug": {
@@ -86,7 +92,7 @@ preflight/
 
 ### Complete Parameter Reference
 
-All parameters below are optional and have sensible defaults. The sample configuration file retains `_comment*` and `_example*` pseudo-fields so it can be used as a self-documenting template. CVS strips those reserved documentation fields before validating the runtime options.
+All parameters below are optional and have sensible defaults. The sample configuration file includes all available parameters with their default values and inline comments explaining their purpose.
 
 ### Important Update: RDMA Connectivity Testing
 
@@ -149,7 +155,6 @@ All parameters below are optional and have sensible defaults. The sample configu
   - Examples:
     - `["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]` - Standard 4-interface setup
     - `["mlx5_0", "mlx5_1"]` - Mellanox 2-interface setup
-    - `["ib0", "ib1", "ib2", "ib3"]` - Generic InfiniBand setup
 
 - **`ibv_test_timeout`** (default: 90)
   - Timeout in seconds for each ibv_rc_pingpong connectivity test
@@ -203,7 +208,7 @@ and TransferBench data-path validation. CVS owns `afmctl` discovery, privilege
 handling, BDF and port discovery, strict coverage, traffic selection, timeout
 derivation, and result parsing.
 
-The earlier AIMVT-180 shape exposed those implementation details directly.
+The earlier configuration shape exposed those implementation details directly.
 They now follow this fixed policy:
 
 | Previous setting | Current CVS behavior |
@@ -254,7 +259,7 @@ port and validates per-port and aggregate summary accounting.
   - Whether to generate detailed HTML report
   - Set to `false` to disable HTML report generation
 
-- **`artifacts_root_dir`** (default: `"/tmp/preflight"`)
+- **`artifacts_root_dir`** (default: `"/tmp/{user-id}/preflight"`)
   - Root directory where preflight artifacts are saved
   - Includes HTML reports and RDMA full_mesh workspace logs under `rdma_connectivity_workspace/`
   - Must be writable by the user running the tests
@@ -359,7 +364,7 @@ port and validates per-port and aggregate summary accounting.
     },
     "reporting": {
       "generate_html_report": true,
-      "artifacts_root_dir": "/tmp/preflight",
+      "artifacts_root_dir": "/tmp/{user-id}/preflight",
       "generate_rdma_pairs_csv": true
     }
   }

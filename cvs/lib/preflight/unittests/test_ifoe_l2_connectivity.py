@@ -1,4 +1,4 @@
-"""Unit tests for IFoE L2 connectivity preflight check (AIMVT-180)."""
+"""Unit tests for the IFoE L2 connectivity preflight check."""
 
 import json
 import os

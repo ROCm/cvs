@@ -1,5 +1,5 @@
 """
-IFoE L2 Connectivity Check (AIMVT-180).
+IFoE L2 Connectivity Check.
 
 Validates L2 connectivity by invoking ``afmctl test ping`` on each
 reachable node and parsing its aggregate ``Summary:`` section. Current MI4XX
@@ -872,7 +872,7 @@ def _format_ports_arg(ports) -> Optional[str]:
 
 
 class IfoeL2ConnectivityCheck(PreflightCheck):
-    """Validate IFoE L2 connectivity via ``afmctl test ping`` (AIMVT-180).
+    """Validate IFoE L2 connectivity via ``afmctl test ping``.
 
     Each reachable cluster node runs one ``afmctl test ping`` invocation per
     configured ``(bdf, dst_accelerator)`` pairing. The check reports a node

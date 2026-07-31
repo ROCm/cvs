@@ -696,7 +696,7 @@ def _l2ping_enabled(config_dict):
 
 def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     """
-    Test IFoE L2 connectivity using ``afmctl test ping`` (AIMVT-180).
+    Test IFoE L2 connectivity using ``afmctl test ping``.
 
     Runs ``afmctl test ping`` on each reachable node for every configured
     (BDF, dst-accelerator) pairing and validates the per-port pass/fail
@@ -895,8 +895,8 @@ def _transferbench_timeout(message_sizes, iterations, warmup_iterations):
 def _run_ifoe_transferbench_smoke(phdl, config_dict):
     """Test IFoE scale-up via TransferBench candidate-branch smoketest (AIMVT-181).
 
-    Builds on AIMVT-180 (L2 reachability via ``afmctl test ping``) by exercising
-    the IFoE data path one layer above L2: it asks every reachable node to run
+    Builds on L2 reachability via ``afmctl test ping`` by exercising the IFoE
+    data path one layer above L2: it asks every reachable node to run
     the TransferBench candidate-branch ``smoketest`` preset and validates that
     the binary completes with exit code zero and no ``FAIL`` cells.
 

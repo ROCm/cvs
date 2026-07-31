@@ -10,7 +10,7 @@ The preflight checks system validates essential cluster health and configuration
 2. **GID Consistency** - Ensures RDMA interfaces have valid Global Identifier entries
 3. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
 4. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
-5. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(AIMVT-180; opt-in)*
+5. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(opt-in)*
 6. **IFoE TransferBench Smoketest** - Runs the TransferBench candidate-branch `smoketest`
    preset to validate the IFoE scale-up data path (using MI4XX AFM admission or,
    for generic profiles, an `amd-smi fabric --json` single-vPod precondition)
@@ -94,7 +94,7 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
     },
     "reporting": {
       "generate_html_report": true,
-      "artifacts_root_dir": "/tmp/preflight",
+      "artifacts_root_dir": "/tmp/{user-id}/preflight",
       "generate_rdma_pairs_csv": false
     }
   }
@@ -126,7 +126,7 @@ and emits a deprecation warning. The legacy paths will be removed in a future
 release. If legacy and canonical values are both supplied, they must match.
 New configurations should use only the canonical paths.
 
-## IFoE L2 Connectivity (AIMVT-180)
+## IFoE L2 Connectivity
 
 Validates L2 reachability of IFoE links by invoking `afmctl test ping` on
 each reachable node and parsing the per-port pass/fail counts and the
