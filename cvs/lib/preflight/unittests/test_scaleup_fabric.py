@@ -1,4 +1,4 @@
-"""Unit tests for the read-only MI4XX node-health admission gate."""
+"""Unit tests for the read-only node-health and MI4XX scale-up fabric gate."""
 
 import json
 import os
@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
-from cvs.lib.preflight.mi4xx_node_health import (  # noqa: E402
+from cvs.lib.preflight.scaleup_fabric import (  # noqa: E402
     Mi4xxNodeHealthCheck,
     NodeHealthCheck,
     parse_afmctl_device_json,
@@ -345,6 +345,43 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
 
 
 class TestNodeHealthConfigContract(unittest.TestCase):
+    def test_schema_accepts_documentation_pseudo_fields_without_allowing_typos(self):
+        config = PreflightConfigFile.model_validate(
+            {
+                "_comment": "Preflight settings",
+                "node_check": {
+                    "_comment": "Node checks",
+                    "_example_gpus_per_node": 8,
+                    "enabled": True,
+                    "gpus_per_node": 4,
+                    "expected_rocm_version": "7.15.0",
+                },
+                "connectivity_check": {
+                    "ifoe": {
+                        "_comment": "IFoE checks",
+                        "l2ping": {
+                            "_comment_enabled": "Enable strict L2 validation",
+                            "enabled": True,
+                        },
+                    }
+                },
+            }
+        )
+
+        self.assertEqual(config.node_check.gpus_per_node, 4)
+        self.assertTrue(config.connectivity_check.ifoe.l2ping.enabled)
+        self.assertNotIn("_comment", config.node_check.model_extra or {})
+
+        with self.assertRaises(ValidationError):
+            PreflightConfigFile.model_validate(
+                {
+                    "node_check": {
+                        "enabled": True,
+                        "gpus_per_nod": 4,
+                    }
+                }
+            )
+
     def test_schema_accepts_only_the_three_customer_facing_options(self):
         config = PreflightConfigFile.model_validate(
             {

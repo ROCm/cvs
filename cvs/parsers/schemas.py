@@ -850,6 +850,27 @@ LEGACY_PREFLIGHT_RDMA_PATHS = {
     "rdma_interfaces": "interfaces",
 }
 
+PREFLIGHT_METADATA_PREFIXES = ("_comment", "_example")
+
+
+def strip_preflight_metadata(value):
+    """Remove documentation-only pseudo-fields before schema validation.
+
+    Preflight JSON files conventionally carry ``_comment*`` and ``_example*``
+    keys so that the files remain self-documenting. They are not runtime
+    options. Strip only those reserved prefixes recursively, preserving strict
+    rejection of every other unknown customer-facing option.
+    """
+    if isinstance(value, dict):
+        return {
+            key: strip_preflight_metadata(item)
+            for key, item in value.items()
+            if not (isinstance(key, str) and key.startswith(PREFLIGHT_METADATA_PREFIXES))
+        }
+    if isinstance(value, list):
+        return [strip_preflight_metadata(item) for item in value]
+    return value
+
 
 def normalize_legacy_preflight_rdma_config(value):
     """Move the two deprecated node-check RDMA keys to their canonical block.
@@ -1167,14 +1188,15 @@ class PreflightConfigFile(BaseModel):
     def reject_flat_preflight_checks(cls, value):
         if not isinstance(value, dict):
             return value
-        removed = sorted(set(value) & {"node_health", "l2ping", "transferbench"})
+        cleaned = strip_preflight_metadata(value)
+        removed = sorted(set(cleaned) & {"node_health", "l2ping", "transferbench"})
         if removed:
             raise ValueError(
                 "Unsupported flat preflight block(s): "
                 + ", ".join(removed)
                 + "; use node_check and connectivity_check.ifoe"
             )
-        normalized, warning_message = normalize_legacy_preflight_rdma_config(value)
+        normalized, warning_message = normalize_legacy_preflight_rdma_config(cleaned)
         if warning_message:
             warnings.warn(warning_message, FutureWarning, stacklevel=2)
         return normalized

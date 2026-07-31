@@ -1,37 +1,124 @@
 {
   "preflight": {
+    "_comment": "GPU node-health, IFoE scale-up fabric, and optional RDMA preflight validation",
+
     "node_check": {
+      "_comment": "Generation-independent node validation performed in parallel across nodes",
+
       "enabled": true,
+      "_comment_enabled": "Enable GPU visibility, AMDGPU/KFD, kernel-health, and ROCm validation.",
+
+      "_example_gpus_per_node": 4,
       "gpus_per_node": 4,
-      "expected_rocm_version": "<changeme>"
+      "_comment_gpus_per_node": "Exact number of AMD GPUs expected on every node.",
+
+      "_example_expected_rocm_version": "7.15.0",
+      "expected_rocm_version": "<changeme>",
+      "_comment_expected_rocm_version": "Expected ROCm version across all cluster nodes. Replace <changeme> with the output reported by amd-smi."
     },
+
     "connectivity_check": {
+      "_comment": "Inter-node connectivity tests grouped by protocol",
+
       "rdma": {
-        "connectivity_mode": "skip"
+        "_comment": "RDMA inventory and ibv_rc_pingpong connectivity settings",
+
+        "connectivity_mode": "skip",
+        "_comment_connectivity_mode": "RDMA mode: basic, full_mesh, or skip. Skip disables RDMA interface, GID, and pairwise checks.",
+
+        "_example_gid_index": "3",
+        "gid_index": "3",
+        "_comment_gid_index": "GID index checked on every configured RDMA interface, typically 3 for RoCE.",
+
+        "_example_interfaces": ["enp4s0np0"],
+        "interfaces": ["enp4s0np0"],
+        "_comment_interfaces": "RDMA device names expected on every node. These replace the deprecated node_check.rdma_interfaces path.",
+
+        "nodes_per_full_mesh_group": 32,
+        "_comment_nodes_per_full_mesh_group": "Nodes per full-mesh partition group. Smaller groups reduce per-node resource use but require more rounds.",
+
+        "ibv_test_timeout": 90,
+        "_comment_ibv_test_timeout": "Timeout in seconds for each ibv_rc_pingpong connectivity test.",
+
+        "ibv_test_port_range": "10000-50000",
+        "_comment_ibv_test_port_range": "TCP coordination port range for ibv_rc_pingpong tests, formatted as start-end.",
+
+        "inter_full_mesh_group_pairs_per_wave": "auto",
+        "_comment_inter_full_mesh_group_pairs_per_wave": "Maximum ordered group pairs per inter-group wave. Auto derives a safe value from the group count.",
+
+        "prune_failure_threshold": 0.5,
+        "_comment_prune_failure_threshold": "Exclude a node from inter-group testing when its intra-group peer failure fraction reaches this threshold.",
+
+        "port_retry_max": 3,
+        "_comment_port_retry_max": "Additional batches attempted for PORT_LISTEN_FAILED pairs using newly assigned ports.",
+
+        "port_retry_gap": 1000,
+        "_comment_port_retry_gap": "Gap above the previous maximum port when assigning ports for retries.",
+
+        "exclude_failed_interface_nodes": "true",
+        "_comment_exclude_failed_interface_nodes": "Legacy reporting hint. Interface- or GID-failed nodes are excluded from the RDMA mesh regardless of this value."
       },
+
       "ifoe": {
+        "_comment": "MI4XX IFoE scale-up fabric admission and data-path checks",
+
         "fabric_checks": true,
+        "_comment_fabric_checks": "Add AIFM/AFM/vPOD, station-mask, and IFoE port admission to node health.",
+
+        "_comment_policy": "CVS owns afmctl discovery, privilege handling, BDF and port discovery, strict coverage, traffic selection, and timeout derivation.",
+
         "l2ping": {
+          "_comment": "Strict afmctl L2 connectivity gate executed before TransferBench and RDMA",
+
           "enabled": true,
-          "pings_per_port": 3
+          "_comment_enabled": "Enable IFoE L2 connectivity validation.",
+
+          "pings_per_port": 3,
+          "_comment_pings_per_port": "Ping samples sent per selected IFoE port pair."
         },
+
         "transferbench": {
+          "_comment": "TransferBench IFoE data-path validation executed before RDMA",
+
           "enabled": true,
+          "_comment_enabled": "Enable the TransferBench preflight gate.",
+
           "scope": "node",
+          "_comment_scope": "Run independent tests per node or one multi-rank cluster test. Options: node, cluster.",
+
           "profile": "smoketest",
+          "_comment_profile": "CVS-supported TransferBench validation profile. Currently: smoketest.",
+
           "message_sizes": ["1K", "16M"],
+          "_comment_message_sizes": "Message sizes exercised by the selected profile.",
+
           "iterations": 2,
-          "warmup_iterations": 0
+          "_comment_iterations": "Validated iterations per test and message size.",
+
+          "warmup_iterations": 0,
+          "_comment_warmup_iterations": "Warmup iterations performed before validation."
         }
       }
     },
+
     "reporting": {
+      "_comment": "Post-test reporting and artifact output",
+
       "generate_html_report": true,
+      "_comment_generate_html_report": "Generate the detailed HTML preflight report.",
+
       "artifacts_root_dir": "/tmp/preflight",
-      "generate_rdma_pairs_csv": false
+      "_comment_artifacts_root_dir": "Root directory for reports and RDMA full-mesh ScriptLet workspaces.",
+
+      "generate_rdma_pairs_csv": false,
+      "_comment_generate_rdma_pairs_csv": "Write a CSV containing failed RDMA pairs beside the HTML report."
     },
+
     "debug": {
-      "scriptlet": false
+      "_comment": "Debug and troubleshooting options",
+
+      "scriptlet": false,
+      "_comment_scriptlet": "Preserve RDMA ScriptLet artifacts and enable detailed server tracing. This can be expensive at scale."
     }
   }
 }

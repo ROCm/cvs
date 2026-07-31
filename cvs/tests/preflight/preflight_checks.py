@@ -13,7 +13,7 @@ from cvs.lib.preflight.gid_consistency import GidConsistencyCheck
 from cvs.lib.preflight.version_check import RocmVersionCheck
 from cvs.lib.preflight.interface_consistency import InterfaceConsistencyCheck
 from cvs.lib.preflight.ifoe_l2_connectivity import IfoeL2ConnectivityCheck
-from cvs.lib.preflight.mi4xx_node_health import NodeHealthCheck
+from cvs.lib.preflight.scaleup_fabric import NodeHealthCheck
 from cvs.lib.preflight.transferbench_smoke import TransferBenchSmokeCheck
 
 # RdmaConnectivityCheck not used - using legacy function temporarily

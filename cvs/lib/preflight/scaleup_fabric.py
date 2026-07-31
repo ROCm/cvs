@@ -1,4 +1,4 @@
-"""AMD GPU node-health checks with optional MI4XX fabric admission.
+"""AMD GPU node-health checks with optional MI4XX scale-up fabric admission.
 
 The check intentionally validates state only.  It never loads a driver, starts
 an AIFM agent, changes a vPOD, or masks an IFoE station.  Those are platform
