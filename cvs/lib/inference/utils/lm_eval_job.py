@@ -19,7 +19,9 @@ from typing import Any, Dict, List
 from cvs.lib.inference.utils.accuracy_config import AccuracyTask
 from cvs.lib.inference.utils.lm_eval_parsing import project
 
-LM_EVAL_INSTALL_CHECK_CMD = "pip list 2>/dev/null | grep -q '^lm[_-]eval ' || pip install -q 'lm-eval[api]>=0.4.4'"
+LM_EVAL_INSTALL_CHECK_CMD = (
+    "python -c 'import lm_eval, math_verify' 2>/dev/null || pip install -q 'lm-eval[api,math]>=0.4.4'"
+)
 PER_TASK_TIMEOUT_S = 4 * 60 * 60
 
 
