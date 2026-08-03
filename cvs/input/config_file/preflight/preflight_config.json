@@ -155,7 +155,7 @@
       "venv_activate": "/home/{user-id}/envs/preflight/.venv/bin/activate",
       "_comment_venv_activate": "Path to the Python virtualenv activate script used by primus-cli direct. Required when connectivity_mode is 'run'.",
 
-      "connectivity_mode": "run",
+      "connectivity_mode": "skip",
       "_comment_connectivity_mode": "Options: 'run' (host/GPU/RDMA roll-call via node_smoke) or 'skip' (default).",
 
       "gpus_per_node": 8,
