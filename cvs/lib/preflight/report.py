@@ -546,6 +546,13 @@ class PreflightReportGenerator(PreflightCheck):
         passing_nodes = total_nodes - len(failed_nodes) - len(unknown_nodes)
         status = 'FAIL' if failed_nodes or unknown_nodes else 'PASS'
         summary_text = f"{passing_nodes}/{total_nodes} nodes passed Primus node_smoke"
+        if node_smoke_results.get('tier2_perf'):
+            thresholds = node_smoke_results.get('tier2_thresholds') or {}
+            summary_text += (
+                f" (Tier 2: GEMM>={thresholds.get('gemm_tflops_min', '?')} TFLOPS, "
+                f"HBM>={thresholds.get('hbm_gbs_min', '?')} GB/s, "
+                f"RCCL>={thresholds.get('rccl_gbs_min', '?')} GB/s)"
+            )
         if unknown_nodes:
             summary_text += f"; {len(unknown_nodes)} unknown"
         return {
@@ -554,6 +561,7 @@ class PreflightReportGenerator(PreflightCheck):
             'passing_nodes': passing_nodes,
             'failed_nodes': failed_nodes,
             'unknown_nodes': unknown_nodes,
+            'tier2_perf': bool(node_smoke_results.get('tier2_perf')),
             'summary': summary_text,
         }
 
@@ -1227,10 +1235,17 @@ class PreflightReportGenerator(PreflightCheck):
 
         if not failed_nodes:
             passing = len([n for n, r in node_results.items() if r.get('status') == 'PASS'])
+            tier2_html = ""
+            if node_smoke_results.get('tier2_perf'):
+                thresholds = node_smoke_results.get('tier2_thresholds') or {}
+                tier2_html = f"""
+            <p>Tier 2 perf enabled: GEMM &ge; {html.escape(str(thresholds.get('gemm_tflops_min', '?')))} TFLOPS,
+            HBM &ge; {html.escape(str(thresholds.get('hbm_gbs_min', '?')))} GB/s,
+            local RCCL &ge; {html.escape(str(thresholds.get('rccl_gbs_min', '?')))} GB/s.</p>"""
             return f"""
         <section>
             <h2>Primus Node Smoke</h2>
-            <p>All <code>{passing}</code> node(s) passed Primus node_smoke.</p>
+            <p>All <code>{passing}</code> node(s) passed Primus node_smoke.</p>{tier2_html}
         </section>
         """
 

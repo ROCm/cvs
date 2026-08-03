@@ -1231,6 +1231,38 @@ class PreflightNodeSmokeConfig(BaseModel):
         description="Training NIC allowlist for node_smoke (defaults to node_check.rdma_interfaces)",
     )
     ssh_timeout: int = Field(default=300, ge=30, description="SSH timeout in seconds for each node_smoke run")
+    tier2_perf: bool = Field(
+        default=False,
+        description=(
+            "Enable Primus node_smoke Tier 2 perf sanity (--tier2-perf): "
+            "8192³ GEMM TFLOPS floor, HBM D2D bandwidth, local multi-GPU RCCL all-reduce"
+        ),
+    )
+    gemm_tflops_min: float = Field(
+        default=600.0,
+        ge=0,
+        description="Tier 2 large GEMM TFLOPS floor (--gemm-tflops-min); used when tier2_perf is true",
+    )
+    hbm_gbs_min: float = Field(
+        default=2000.0,
+        ge=0,
+        description="Tier 2 HBM device-to-device bandwidth floor in GB/s (--hbm-gbs-min)",
+    )
+    rccl_gbs_min: float = Field(
+        default=100.0,
+        ge=0,
+        description="Tier 2 local multi-GPU RCCL all-reduce bandwidth floor in GB/s (--rccl-gbs-min)",
+    )
+    rccl_size_mb: int = Field(
+        default=64,
+        ge=1,
+        description="Tier 2 local RCCL all-reduce message size in MB (--rccl-size-mb)",
+    )
+    rccl_timeout_sec: int = Field(
+        default=120,
+        ge=30,
+        description="Tier 2 local RCCL all-reduce hard timeout in seconds (--rccl-timeout-sec)",
+    )
     extra_args: List[str] = Field(
         default_factory=list,
         description="Additional node_smoke CLI flags forwarded to primus-cli",

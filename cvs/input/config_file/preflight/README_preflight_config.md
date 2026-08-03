@@ -308,6 +308,25 @@ on branch `dev/preflight-direct-test`.
 - **`ssh_timeout`** (default: `300`)
 - **`extra_args`** (default: `[]`) — additional flags forwarded to primus-cli
 
+#### Tier 2 perf sanity (`node_smoke.tier2_perf`) — optional
+
+When `tier2_perf` is `true`, preflight forwards `--tier2-perf` to Primus `node_smoke`, enabling all three Tier 2 checks on each node (same as `launch_nodesmoke_ssh.sh -- --tier2-perf`):
+
+1. **Large GEMM TFLOPS floor** — 8192³ bf16 `torch.matmul`; FAIL below `gemm_tflops_min` (default 600)
+2. **HBM D2D bandwidth** — 512 MB device-to-device copy; FAIL below `hbm_gbs_min` (default 2000 GB/s)
+3. **Local multi-GPU RCCL all-reduce** — node-local only; FAIL below `rccl_gbs_min` (default 100 GB/s)
+
+Set `NCCL_IB_HCA`, `NCCL_SOCKET_IFNAME`, and `NCCL_IB_GID_INDEX` (via `node_smoke` config or cluster `env_vars`) before enabling Tier 2 — RCCL init enumerates every transport even though the all-reduce is local-only.
+
+- **`tier2_perf`** (default: `false`) — master switch; maps to `--tier2-perf`
+- **`gemm_tflops_min`** (default: `600`) — `--gemm-tflops-min`
+- **`hbm_gbs_min`** (default: `2000`) — `--hbm-gbs-min`
+- **`rccl_gbs_min`** (default: `100`) — `--rccl-gbs-min`
+- **`rccl_size_mb`** (default: `64`) — `--rccl-size-mb`
+- **`rccl_timeout_sec`** (default: `120`) — `--rccl-timeout-sec`
+
+Tier 2 runs need a longer SSH budget; when `tier2_perf` is enabled the effective timeout is at least 600 seconds even if `ssh_timeout` is lower.
+
 ### Reporting Settings (`reporting`)
 
 - **`generate_html_report`** (default: `true`)
@@ -385,6 +404,35 @@ on branch `dev/preflight-direct-test`.
       "rdma": {
         "connectivity_mode": "skip"
       }
+    }
+  }
+}
+```
+
+### Enable Primus Node Smoke with Tier 2 perf
+
+```json
+{
+  "preflight": {
+    "node_check": {
+      "gid_index": "3",
+      "expected_rocm_version": "6.4.2",
+      "rdma_interfaces": ["rdma0", "rdma1", "rdma2", "rdma3", "rdma4", "rdma5", "rdma6", "rdma7"]
+    },
+    "node_smoke": {
+      "connectivity_mode": "run",
+      "auto_setup": true,
+      "shared_install": true,
+      "primus_dir": "/home/{user-id}/INSTALL/Primus",
+      "venv_activate": "/home/{user-id}/envs/preflight/.venv/bin/activate",
+      "gpus_per_node": 8,
+      "tier2_perf": true,
+      "gemm_tflops_min": 700,
+      "hbm_gbs_min": 4500,
+      "rccl_gbs_min": 180,
+      "nccl_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "nccl_ib_gid_index": 3,
+      "ssh_timeout": 600
     }
   }
 }
