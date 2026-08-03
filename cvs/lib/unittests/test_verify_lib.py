@@ -198,8 +198,24 @@ class TestDmesgMigrations(unittest.TestCase):
         result = verify_lib.full_journalctl_scan(phdl)
 
         self.assertIn("journalctl -k -o short-iso", phdl.exec.call_args[0][0])
+        self.assertNotIn("--since", phdl.exec.call_args[0][0])
         self.assertTrue(result["node1"])
         mock_fail.assert_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    def test_full_journalctl_scan_bounds_with_since(self, mock_parse, mock_fail):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = []
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw"}
+
+        verify_lib.full_journalctl_scan(phdl, start_time_dict={"node1": "Mon Jun  5 08:53:27"})
+
+        cmd = phdl.exec.call_args[0][0]
+        expected_year = datetime.datetime.now().astimezone().year
+        self.assertIn("journalctl -k -o short-iso", cmd)
+        self.assertIn(f'--since="{expected_year}-06-05 08:53:27"', cmd)
 
     @patch("cvs.lib.verify_lib.fail_test")
     @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")

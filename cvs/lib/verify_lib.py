@@ -516,7 +516,7 @@ def verify_host_lspci(phdl, pcie_speed=32, pcie_width=16):
     return err_dict
 
 
-def full_journalctl_scan(phdl):
+def full_journalctl_scan(phdl, start_time_dict=None):
     """
     Scan kernel logs via journalctl across nodes for GPU/interrupt/error-related issues
     and fail if any known error patterns are detected.
@@ -526,6 +526,11 @@ def full_journalctl_scan(phdl):
             - exec(cmd: str) -> dict[node: str, output: str]
               Executes the given command on all relevant nodes and returns a mapping
               of node identifier to the command's stdout.
+      start_time_dict: Optional {node: cvs_time_str} (same format produced by
+            `date +"%a %b %e %H:%M"` / `...%H:%M:%S`, e.g. from the caller's own
+            start-of-run timestamp). When provided, journalctl is asked to only
+            return entries `--since` that time (derived from the first node's
+            entry), instead of collecting the entire kernel journal.
 
     Behavior:
       - Runs 'journalctl -k' (kernel messages) filtered through egrep for high-signal
@@ -549,11 +554,20 @@ def full_journalctl_scan(phdl):
         not containing those keywords if broader scanning is desired.
     """
 
+    since_clause = ''
+    if start_time_dict:
+        node0 = list(start_time_dict.keys())[0]
+        start_dt = _parse_cvs_time(start_time_dict[node0])
+        if start_dt:
+            since_clause = f' --since="{start_dt.strftime("%Y-%m-%d %H:%M:%S")}"'
+
     if use_node_scraper_dmesg():
-        # node-scraper path: scan the full kernel journal (ISO timestamps) with
-        # the node-scraper analyzer plus CVS's historical patterns, instead of
-        # the lossy egrep prefilter + per-line regex.
-        output_dict = phdl.exec('sudo journalctl -k -o short-iso')
+        # node-scraper path: scan the kernel journal (ISO timestamps) with the
+        # node-scraper analyzer plus CVS's historical patterns, instead of the
+        # lossy egrep prefilter + per-line regex. --since (when available) is
+        # applied server-side so journalctl itself, not just the analyzer,
+        # avoids transferring/parsing the entire historic journal.
+        output_dict = phdl.exec(f'sudo journalctl -k -o short-iso{since_clause}')
         return _node_scraper_scan(
             output_dict,
             analysis_args={'error_regex': cvs_dmesg_error_regex()},
@@ -562,7 +576,7 @@ def full_journalctl_scan(phdl):
 
     err_dict = {}
     # Fetch kernel logs filtered for likely error indicators across nodes
-    out_dict = phdl.exec('sudo journalctl -k | egrep "amdgpu|interrupt|error|fail|timeout|fault"')
+    out_dict = phdl.exec(f'sudo journalctl -k{since_clause} | egrep "amdgpu|interrupt|error|fail|timeout|fault"')
     for node in out_dict.keys():
         err_dict[node] = []
 
