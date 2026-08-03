@@ -925,7 +925,7 @@ def rccl_perf(
         # Validate the results against the schema fail if results are not valid
         try:
             validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
-            log.info(f'Validation passed: {len(validated)} RcclTests schema validation passed')
+            log.info(f'{dtype}: {len(validated)} rccl-tests row(s) passed schema validation')
             all_validated_results.extend(validated)
             all_raw_results.extend(dtype_result_out)
         except ValidationError as e:
