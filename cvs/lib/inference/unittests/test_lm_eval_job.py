@@ -158,6 +158,29 @@ class TestBuildLmEvalCmd(unittest.TestCase):
         self.assertIsInstance(cmd, str)
 
 
+class TestInstallGuard(unittest.TestCase):
+    '''The install guard must cover the `math` extra and detect it by capability.
+
+    leaderboard_math_hard imports math_verify at task-build time; the `api`
+    extra alone omits it, so the task dies with ModuleNotFoundError after the
+    server is already up (observed on GLM-5.2, 2026-07-31).
+    '''
+
+    def test_installs_math_extra(self):
+        self.assertIn("lm-eval[api,math]", LM_EVAL_INSTALL_CHECK_CMD)
+
+    def test_guard_probes_math_verify_import_not_just_lm_eval_presence(self):
+        # A `pip list | grep lm_eval` guard short-circuits on an image that
+        # preinstalls bare lm-eval, silently skipping the math extra. Probing
+        # the import instead fails closed.
+        self.assertIn("import lm_eval, math_verify", LM_EVAL_INSTALL_CHECK_CMD)
+        self.assertNotIn("pip list", LM_EVAL_INSTALL_CHECK_CMD)
+
+    def test_install_still_runs_only_when_probe_fails(self):
+        self.assertIn("||", LM_EVAL_INSTALL_CHECK_CMD)
+        self.assertIn("pip install", LM_EVAL_INSTALL_CHECK_CMD)
+
+
 class FakeOrch:
     """Head-only orch test double: records commands, returns queued responses.
 
