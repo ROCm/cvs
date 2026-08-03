@@ -25,6 +25,9 @@ TRAINING_METRICS = [
     ("tokens_per_sec_per_gpu", "tok/s/GPU"),
     ("tokens_per_sec_total", "tok/s total"),
     ("step_time_seconds", "s/step"),
+    ("step_time_mean_ms", "ms/step"),
+    ("step_time_p50_ms", "ms/step"),
+    ("step_time_p95_ms", "ms/step"),
     ("final_loss", "loss"),
     ("loss_decreased", "bool"),
 ]
@@ -42,6 +45,24 @@ GATED_METRICS = {
 # Example: "completed step: 50, seconds: 1.234, TFLOP/s/device: 185.4, Tokens/s/device: 3456.7, ..., loss: 6.543"
 _STEP_RE = re.compile(r"completed step:\s*(\d+)")
 _METRIC_RE = re.compile(r"(\S+?):\s*([\d.eE+\-]+)")
+
+
+def _percentile(values, q):
+    """Linear-interpolated percentile (q in [0, 100]) over a list of numbers.
+
+    Returns None for an empty list. Matches numpy's default ('linear')
+    interpolation so p50 equals the median for even-length samples.
+    """
+    if not values:
+        return None
+    xs = sorted(values)
+    if len(xs) == 1:
+        return xs[0]
+    rank = (q / 100.0) * (len(xs) - 1)
+    lo = int(rank)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = rank - lo
+    return xs[lo] + (xs[hi] - xs[lo]) * frac
 
 
 def _parse_step_line(line):
@@ -100,6 +121,9 @@ def parse_training_log(log_text, num_gpus, avg_last_n=10):
             "training.tokens_per_sec_per_gpu": None,
             "training.tokens_per_sec_total": None,
             "training.step_time_seconds": None,
+            "training.step_time_mean_ms": None,
+            "training.step_time_p50_ms": None,
+            "training.step_time_p95_ms": None,
             "training.final_loss": None,
             "training.loss_decreased": None,
         }
@@ -118,6 +142,17 @@ def parse_training_log(log_text, num_gpus, avg_last_n=10):
 
     tokens_total = tokens_per_gpu * num_gpus if tokens_per_gpu is not None else None
 
+    # Step-time distribution (ms) over steady-state steps. perf_steps already
+    # excludes rampup/profiler steps, whose compile-heavy outliers would inflate
+    # the tail and mask real jitter. Percentiles use the full steady-state
+    # window (not just `tail`) so p95 has enough samples to be meaningful.
+    step_seconds = [s["seconds"] for s in perf_steps if "seconds" in s]
+    step_time_mean_ms = (sum(step_seconds) / len(step_seconds) * 1000.0) if step_seconds else None
+    p50 = _percentile(step_seconds, 50)
+    p95 = _percentile(step_seconds, 95)
+    step_time_p50_ms = p50 * 1000.0 if p50 is not None else None
+    step_time_p95_ms = p95 * 1000.0 if p95 is not None else None
+
     # Loss metrics from all steps that have a loss value.
     loss_steps = [s for s in steps if "loss" in s]
     final_loss = loss_steps[-1]["loss"] if loss_steps else None
@@ -131,6 +166,9 @@ def parse_training_log(log_text, num_gpus, avg_last_n=10):
         "training.tokens_per_sec_per_gpu": tokens_per_gpu,
         "training.tokens_per_sec_total": tokens_total,
         "training.step_time_seconds": step_time,
+        "training.step_time_mean_ms": step_time_mean_ms,
+        "training.step_time_p50_ms": step_time_p50_ms,
+        "training.step_time_p95_ms": step_time_p95_ms,
         "training.final_loss": final_loss,
         "training.loss_decreased": loss_decreased,
     }
