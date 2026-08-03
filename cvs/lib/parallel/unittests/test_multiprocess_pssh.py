@@ -432,7 +432,7 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
 
         removed = pssh.prune_nodes(["host2"])
 
-        pssh.pssh.prune_nodes.assert_called_once_with(["host2"])
+        pssh.pssh.prune_nodes.assert_called_once_with(["host2"], reason="Unreachable", log_pruning=True)
         self.assertEqual(removed, ["host2"])
         self.assertEqual(pssh.reachable_hosts, ["host1"])
         self.assertEqual(pssh.host_list, ["host1", "host2"])
