@@ -687,6 +687,11 @@ def test_node_smoke(phdl, config_dict):
     Opt-in via ``node_smoke.connectivity_mode`` in the preflight config (default
     ``skip``).  Uses parallel SSH — no Slurm required.
 
+    Optional Tier 2 perf sanity (``node_smoke.tier2_perf``) enables
+    ``--tier2-perf``: large GEMM TFLOPS floor, HBM D2D bandwidth, and local
+    multi-GPU RCCL all-reduce thresholds (``gemm_tflops_min``, ``hbm_gbs_min``,
+    ``rccl_gbs_min``, etc.).
+
     Nodes that fail are reported but are **not** pruned from ``phdl``.
     """
     global preflight_results
