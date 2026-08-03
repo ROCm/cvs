@@ -2,25 +2,26 @@
 
 from __future__ import annotations
 
-import re
 import shlex
 from types import SimpleNamespace
 from typing import Any
 
 from cvs.lib.inference.inferencex_atom.inferencex_atom_orch import InferenceXAtomJob
 
-_CELL_RE = re.compile(
-    r"ISL=(?P<isl>\d+),OSL=(?P<osl>\d+)(?:,TP=\d+)?(?:,PP=\d+)?(?:,NNODES=\d+)?,CONC=(?P<conc>\d+)"
-)
 
-
-def _first_sweep_coords(variant: Any) -> tuple[str, str, str, str]:
-    cells = list(getattr(variant, "expected_cells", lambda: [])())
-    if cells:
-        match = _CELL_RE.search(cells[0])
-        if match:
-            return cells[0], match.group("isl"), match.group("osl"), match.group("conc")
-    return "", "1024", "1024", "128"
+def _first_sweep_point(variant: Any) -> tuple[str, str, str, str] | None:
+    """Return (cell_key, isl, osl, concurrency) for the first sweep run."""
+    runs = list(getattr(getattr(variant, "sweep", None), "runs", None) or [])
+    if not runs:
+        return None
+    by_name = {c.name: c for c in variant.sweep.sequence_combinations}
+    combo = by_name.get(runs[0].combo)
+    if combo is None:
+        return None
+    isl = str(combo.isl)
+    osl = str(combo.osl)
+    conc = str(runs[0].concurrency)
+    return variant.cell_key(isl, osl, conc), isl, osl, conc
 
 
 def launch_summary(variant: Any) -> str:
@@ -49,34 +50,39 @@ def _example_job(variant: Any, *, isl: str, osl: str, concurrency: str) -> Infer
 
 
 def server_command(variant: Any) -> str:
-    example_cell, isl, osl, conc = _first_sweep_coords(variant)
-    del example_cell
+    point = _first_sweep_point(variant)
+    if point is None:
+        return ""
+    _cell, isl, osl, conc = point
     job = _example_job(variant, isl=isl, osl=osl, concurrency=conc)
-    if job.driver == "atom":
-        argv = job._atom_server_argv()
-    else:
-        argv = job._server_argv()
+    argv = job._atom_server_argv() if job.driver == "atom" else job._server_argv()
     return " ".join(shlex.quote(str(arg)) for arg in argv)
 
 
 def bench_command(variant: Any) -> str:
-    example_cell, isl, osl, conc = _first_sweep_coords(variant)
-    del example_cell
+    point = _first_sweep_point(variant)
+    if point is None:
+        return ""
+    _cell, isl, osl, conc = point
     job = _example_job(variant, isl=isl, osl=osl, concurrency=conc)
-    if job.driver == "atom":
-        argv = job._atom_client_argv()
-    else:
-        argv = job._vllm_client_argv()
+    argv = job._atom_client_argv() if job.driver == "atom" else job._vllm_client_argv()
     return " ".join(shlex.quote(str(arg)) for arg in argv)
 
 
 def build_launch_provenance(variant: Any) -> dict[str, str]:
-    example_cell, _isl, _osl, _conc = _first_sweep_coords(variant)
-    out = {
-        "launch_summary": launch_summary(variant),
-        "launch_server_cmd": server_command(variant),
-        "launch_bench_cmd": bench_command(variant),
-    }
-    if example_cell:
-        out["launch_example_cell"] = example_cell
+    out: dict[str, str] = {"launch_summary": launch_summary(variant)}
+    point = _first_sweep_point(variant)
+    if point is None:
+        return out
+    cell, isl, osl, conc = point
+    job = _example_job(variant, isl=isl, osl=osl, concurrency=conc)
+    if job.driver == "atom":
+        server_argv = job._atom_server_argv()
+        bench_argv = job._atom_client_argv()
+    else:
+        server_argv = job._server_argv()
+        bench_argv = job._vllm_client_argv()
+    out["launch_example_cell"] = cell
+    out["launch_server_cmd"] = " ".join(shlex.quote(str(arg)) for arg in server_argv)
+    out["launch_bench_cmd"] = " ".join(shlex.quote(str(arg)) for arg in bench_argv)
     return out
