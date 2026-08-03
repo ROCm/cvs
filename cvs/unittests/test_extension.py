@@ -54,7 +54,7 @@ class TestExtensionConfig(unittest.TestCase):
             parser = configparser.ConfigParser()
             parser.add_section("extensions")
             parser.set("extensions", "package_name", "cvs_test")
-            abs_test_path = "/absolute/path/to/tests"
+            abs_test_path = os.path.abspath("/absolute/path/to/tests")
             parser.set("extensions", "tests_dirs", abs_test_path)
             parser.set("extensions", "input_dirs", "input")
             with open(config_file, "w") as f:
@@ -106,7 +106,7 @@ class TestExtensionConfig(unittest.TestCase):
             parser.add_section("extensions")
             parser.set("extensions", "package_name", "cvs_test")
             parser.set("extensions", "tests_dirs", "tests")
-            abs_input_path = "/absolute/path/to/input"
+            abs_input_path = os.path.abspath("/absolute/path/to/input")
             parser.set("extensions", "input_dirs", abs_input_path)
             with open(config_file, "w") as f:
                 parser.write(f)
@@ -171,12 +171,12 @@ class TestExtensionConfig(unittest.TestCase):
                 self.assertEqual(len(test_dirs), 2)
                 abs_paths = [abs_path for module_path, abs_path in test_dirs]
                 self.assertIn(os.path.join(tmpdir, "cvs_test", "tests"), abs_paths)
-                self.assertIn("/abs/tests", abs_paths)
+                self.assertIn(os.path.abspath("/abs/tests"), abs_paths)
 
                 input_dirs = config.get_input_dirs()
                 self.assertEqual(len(input_dirs), 2)
                 self.assertIn(os.path.join(tmpdir, "cvs_test", "input"), input_dirs)
-                self.assertIn("/abs/input", input_dirs)
+                self.assertIn(os.path.abspath("/abs/input"), input_dirs)
 
     def test_extension_ini_base_set(self):
         """Test that extension_ini_base is properly set."""

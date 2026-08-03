@@ -130,6 +130,86 @@ After upgrading, verify the installation:
 cvs --version
 ```
 
+# Cross-Platform Build System
+
+CVS supports different build automation tools based on your development platform:
+
+## Platform-Specific Build Tools
+
+### Linux/macOS: Use Make
+Traditional Make-based build system for Unix-like environments:
+
+```bash
+make help                 # Show all available targets
+make ut                   # Run unit tests
+make lint                 # Run linting
+make fmt                  # Format code
+make build                # Build source distribution
+make install              # Install from built distribution
+make docs                 # Build and serve documentation
+make clean                # Clean build artifacts
+```
+
+### Windows: Use Nox
+Modern Python-based build automation for Windows development:
+
+#### Install Nox
+```bash
+pip install nox
+```
+
+#### Available Nox Sessions
+```bash
+python -m nox -l                    # List all available sessions
+python -m nox -s ut                 # Run unit tests
+python -m nox -s lint               # Run code linting
+python -m nox -s fmt                # Format code
+python -m nox -s docs               # Build and serve documentation
+python -m nox -s clean              # Clean build artifacts
+python -m nox                       # Run default sessions (ut, lint, fmt-check)
+```
+
+#### Common Development Tasks
+```bash
+# Run tests
+python -m nox -s ut
+
+# Run linting and formatting
+python -m nox -s lint fmt
+
+# Build documentation and serve locally
+python -m nox -s docs
+
+# Clean all build artifacts and virtual environments
+python -m nox -s clean
+
+# Build source distribution
+python -m nox -s sdist
+
+# Install package for development
+python -m nox -s install
+```
+
+## Why Separate Tools?
+
+- **Make**: Mature, well-tested for Linux/macOS CI/CD pipelines
+- **Nox**: Cross-platform Python tool, ideal for Windows development
+- **No new CI dependencies**: Linux/macOS CI systems continue using Make (no Nox required)
+- **Developer choice**: Use the tool that works best for your platform
+
+## Equivalent Commands
+
+| Task | Linux/macOS (Make) | Windows (Nox) |
+|------|-------------------|---------------|
+| Run tests | `make ut` | `python -m nox -s ut` |
+| Format code | `make fmt` | `python -m nox -s fmt` |
+| Run linting | `make lint` | `python -m nox -s lint` |
+| Build docs | `make html-doc` | `python -m nox -s docs` |
+| Clean up | `make clean` | `python -m nox -s clean` |
+| Build distribution | `make sdist` | `python -m nox -s sdist` |
+
+Both tools provide identical functionality with the same environment isolation and automation features.
+
 # How to run CVS Tests
 
 ## Setting up Configuration Files

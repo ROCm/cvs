@@ -22,7 +22,14 @@ CVS = $(TEST_VENV_DIR)/bin/cvs
 all: build test-venv installtest test
 
 help:
-	@echo "Available targets:"
+	@echo "CVS Build System"
+	@echo ""
+	@echo "Platform-specific build automation:"
+	@echo "  • Linux/macOS: Use Make targets below"
+	@echo "  • Windows:     Use 'nox -s <session>' (after 'pip install nox')"
+	@echo ""
+	@echo "Available Make targets (Linux/macOS):"
+	@echo "  all             - Run build, test-venv, installtest, and test"
 	@echo "  sdist           - Build source distribution"
 	@echo "  build           - Format/lint check and then build source distribution"
 	@echo "  test-venv       - Create virtual environment"
@@ -40,8 +47,16 @@ help:
 	@echo "  html-doc        - Build and serve docs with live-reload at http://localhost:$(DOC_PORT)"
 	@echo "                    Override port: make html-doc DOC_PORT=9090"
 	@echo "  gen-anc-suites  - Regenerate per-group ANC suite files from anc_lib group lists"
-	@echo "  all             - Run build, test-venv, installtest, and test"
 	@echo "  clean           - Remove virtual environment, build artifacts, and Python cache files"
+	@echo ""
+	@echo "Windows developers - use Nox instead:"
+	@echo "  pip install nox           # Install Nox"
+	@echo "  python -m nox -l          # List all available sessions"
+	@echo "  python -m nox -s ut       # Run unit tests"
+	@echo "  python -m nox -s lint     # Run linting"
+	@echo "  python -m nox -s fmt      # Format code"
+	@echo "  python -m nox -s docs     # Build and serve docs"
+	@echo "  python -m nox             # Run default sessions"
 
 gen-anc-suites:
 	@echo "Generating per-group ANC suite files from anc_lib group lists..."

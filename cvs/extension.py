@@ -120,7 +120,7 @@ class ExtensionConfig:
             for test_path in test_paths:
                 # Always treat as relative path: convert to module path and absolute path
                 module_path = test_path.replace(os.sep, ".")
-                abs_path = os.path.join(self.site_packages_dir, test_path)
+                abs_path = os.path.normpath(os.path.join(self.site_packages_dir, test_path))
                 dirs.append((module_path, abs_path))
         return dirs
 
@@ -141,8 +141,8 @@ class ExtensionConfig:
 
             for input_path in input_paths:
                 if os.path.isabs(input_path):
-                    dirs.append(input_path)
+                    dirs.append(os.path.normpath(input_path))
                 else:
                     # Resolve relative to site-packages directory
-                    dirs.append(os.path.join(self.site_packages_dir, input_path))
+                    dirs.append(os.path.normpath(os.path.join(self.site_packages_dir, input_path)))
         return dirs
