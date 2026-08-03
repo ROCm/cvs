@@ -172,5 +172,7 @@ Top-level blocks follow the DTNI variant schema. InferenceX ATOM-specific keys:
      - Explicit cell list (not a cartesian product).
 
 Metric tiers and parsing live in :mod:`cvs.lib.inference.inferencex_atom.inferencex_atom_parsing`
-(see ``cvs/lib/inference/utils/docs/inferencex-atom-parsing.md``). Legacy monolithic JSON
-(``config`` + ``benchmark_params``) and the deprecated ``inferencemax`` suite are not used.
+(see ``cvs/lib/inference/utils/docs/inferencex-atom-parsing.md``). The legacy monolithic JSON
+layout (``config`` + ``benchmark_params``) and the deprecated ``inferencemax`` suite remain in
+the repo for gradual migration — see :doc:`InferenceMAX (legacy) </reference/configuration-files/inferencemax>`.
+New work should use ``inferencex_atom_single`` only.

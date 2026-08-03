@@ -6,8 +6,16 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.lib import globals
+from cvs.lib.inference.inference_max import InferenceMaxJob
 
 log = globals.log
+
+_LEGACY_INFERENCEMAX_MSG = (
+    "InferenceMax is deprecated. Prefer ``cvs run inferencex_atom_single`` with "
+    "``cvs.lib.inference.inferencex_atom.inferencex_atom_orch.InferenceXAtomJob`` and schema_version 1 "
+    "configs under ``cvs/input/config_file/inference/inferencex_atom_single/``. "
+    "The legacy InferenceMax suite remains available for gradual migration."
+)
 
 
 class _LegacyVllmInferenceJobPlaceholder:
@@ -26,8 +34,9 @@ class _LegacyInferenceXAtomInferenceJobPlaceholder:
 
     def __init__(self, *args, **kwargs):
         raise NotImplementedError(
-            "InferenceMax is deprecated. Use ``cvs.lib.inference.inferencex_atom.inferencex_atom_orch.InferenceXAtomJob`` "
-            "with ``ContainerOrchestrator`` from the tests under ``cvs.tests.inference.inferencex_atom`` "
+            "InferenceJobFactory no longer builds a host+docker InferenceX ATOM InferenceBaseJob. "
+            "Use ``cvs.lib.inference.inferencex_atom.inferencex_atom_orch.InferenceXAtomJob`` with "
+            "``ContainerOrchestrator`` from the tests under ``cvs.tests.inference.inferencex_atom`` "
             "(``inferencex_atom_single`` suite and schema_version 1 configs)."
         )
 
@@ -38,7 +47,7 @@ class InferenceJobFactory:
     # Registry of supported frameworks
     _FRAMEWORK_CLASSES = {
         'vllm': _LegacyVllmInferenceJobPlaceholder,
-        'inferencemax': _LegacyInferenceXAtomInferenceJobPlaceholder,
+        'inferencemax': InferenceMaxJob,
         'inferencex_atom': _LegacyInferenceXAtomInferenceJobPlaceholder,
     }
 
@@ -51,18 +60,16 @@ class InferenceJobFactory:
             inference_config_dict: Infrastructure configuration dictionary
 
         Returns:
-            Detected framework name ('vllm' or 'inferencex_atom')
+            Detected framework name ('vllm' or 'inferencemax')
 
         Detection logic:
-            - If 'inferencemax_repo' is present → inferencex_atom (InferenceMax deprecated)
+            - If 'inferencemax_repo' is present → InferenceMax (deprecated)
             - If 'vllm_script_path' is present → vLLM
             - Otherwise → vLLM (default)
         """
         if 'inferencemax_repo' in inference_config_dict:
-            log.warning(
-                "inferencemax_repo detected; InferenceMax is deprecated — use the inferencex_atom_single suite instead"
-            )
-            return 'inferencex_atom'
+            log.warning(_LEGACY_INFERENCEMAX_MSG)
+            return 'inferencemax'
         elif 'vllm_script_path' in inference_config_dict:
             return 'vllm'
         else:
@@ -97,7 +104,8 @@ class InferenceJobFactory:
             framework: Framework type ('vllm', 'inferencemax', 'inferencex_atom', or None for auto-detect)
 
         Returns:
-            A placeholder that raises — use suite jobs under ``cvs.tests.inference`` instead.
+            Instance of InferenceMaxJob for legacy InferenceMax configs, or a placeholder
+            that raises for migrated suite jobs under ``cvs.tests.inference``.
 
         Raises:
             ValueError: If framework is not supported
@@ -109,8 +117,7 @@ class InferenceJobFactory:
 
         framework_lower = framework.lower()
         if framework_lower == 'inferencemax':
-            log.warning("framework='inferencemax' is deprecated; use inferencex_atom_single")
-            framework_lower = 'inferencex_atom'
+            log.warning(_LEGACY_INFERENCEMAX_MSG)
 
         if framework_lower not in cls._FRAMEWORK_CLASSES:
             supported = ', '.join(cls._FRAMEWORK_CLASSES.keys())

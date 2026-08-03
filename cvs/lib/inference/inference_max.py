@@ -3,19 +3,32 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved. This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
+
+.. deprecated::
+   Legacy InferenceMax host+docker job. New work should use
+   ``cvs.lib.inference.inferencex_atom_orch.InferenceXAtomJob`` and the
+   ``inferencex_atom_single`` suite. This module is retained for OSS users
+   migrating gradually.
 '''
 
 import re
 import time
+import warnings
 
 from cvs.lib.inference.base import InferenceBaseJob
 from cvs.lib.verify_lib import fail_test
 
 
 class InferenceMaxJob(InferenceBaseJob):
-    """InferenceMAX-specific implementation."""
+    """Legacy InferenceMAX-specific implementation (deprecated)."""
 
     def __init__(self, *args, **kwargs):
+        warnings.warn(
+            "InferenceMaxJob is deprecated; migrate to inferencex_atom_single "
+            "(InferenceXAtomJob + schema_version 1 configs).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         super().__init__(*args, **kwargs)
         self.if_dict.setdefault('inferencemax_repo', 'https://github.com/InferenceMAX/InferenceMAX.git')
 

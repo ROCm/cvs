@@ -1,9 +1,17 @@
 .. meta::
-  :description: Configure the variables in the InferenceMAX configuration files
-  :keywords: inference, ROCm, install, cvs, InferenceMAX, vLLM
+  :description: Configure the variables in the legacy InferenceMAX configuration files
+  :keywords: inference, ROCm, install, cvs, InferenceMAX, vLLM, legacy, deprecated
+
+.. warning::
+
+   **Legacy (deprecated).** This page documents the monolithic ``config`` + ``benchmark_params``
+   InferenceMAX layout and the ``inferencemax_gpt_oss_120b_single`` pytest suite. New work should
+   use :doc:`InferenceX ATOM </reference/configuration-files/inferencex_atom>` and
+   ``cvs run inferencex_atom_single``. The legacy suite remains in the repo for OSS users
+   migrating gradually; it is scheduled for removal after a deprecation window.
 
 *******************************************
-InferenceMAX inference configuration file
+InferenceMAX inference configuration file (legacy)
 *******************************************
 
 InferenceMAX tests validate inference performance for large language models (LLMs) using vLLM backend on AMD GPU clusters. These tests ensure optimal inference throughput, latency, and token generation performance for AI serving workloads.

@@ -83,7 +83,7 @@ When MI355X nodes are **not** available in the lab:
 | `cvs/input/cluster_file/mi300x_atom_multi.json` (M5)                     | Example 2+ node MI300X cluster for scaling (Section 1.7)               |
 
 
-Legacy InferenceMax configs, nested variant subdirs (`deepseek_r1_fp8_*`, `inferencemax/`), and the deprecated `inferencemax` suite are **removed**; all work uses flat `inferencex_atom_single/` stems.
+Legacy InferenceMax configs (`inferencemax/`), nested variant subdirs (`deepseek_r1_fp8_*`), and the deprecated `inferencemax` pytest suite are **retained but marked legacy/deprecated** for OSS migration. All **new** work uses flat `inferencex_atom_single/` stems.
 
 ### 1.4 ATOM benchmark artifact → CVS metrics contract
 
@@ -645,7 +645,7 @@ See **Section 12** for perf variant modes (PERF-2..8), supplemental metrics (12.
 | Phase | Name                      | Goal                                                                              | Status on branch                        |
 | ----- | ------------------------- | --------------------------------------------------------------------------------- | --------------------------------------- |
 | **R** | **Rename + pytest shell** | `inferencex_atom_single`, `InferenceXAtomJob`, schema_version 1, DTNI conftest    | **Done**                                |
-| **0** | **ATOM backend**          | ATOM serve + bench + parse; W1 dirs; cluster JSON; legacy `inferencemax/` removed | **Done** (0-1 image/recipe pin partial) |
+| **0** | **ATOM backend**          | ATOM serve + bench + parse; W1 dirs; cluster JSON; legacy `inferencemax/` retained (deprecated) | **Done** (0-1 image/recipe pin partial) |
 | **A** | **W1 calibration**        | MI300X smoke → perf lab-gated; MI355X seeds pending (Section 1.2)                 | **MI300X in progress**                  |
 | **B** | **Metric namespace**      | IX-native keys; `server.`* lifecycle; Section 6.1 tiers                           | Partial (`client.*` ATOM)               |
 | **C** | **P1 workloads**          | W2, W3, W13, W17 on MI300X first; MI355X dirs when hardware available             | Not started                             |
@@ -697,7 +697,7 @@ flowchart TB
 | 0-4 | **DTNI pytest shell**     | `conftest.py` + sweep parametrization + tiered `test_cell_metrics`; shared `inference_suite_lifecycle.py` | **Done**                                                          |
 | 0-5 | **Variant configs W1**  | Flat perf + smoke + mtp3 stems for MI300X and MI355X (Section 3.1)                                        | **Done**                                                          |
 | 0-6 | **Cluster configs**       | `mi300x_atom_single.json`, `mi355x_atom_single.json` (`inferencex_atom_mi300x` / `mi355x` container names) | **Done**                                                          |
-| 0-7 | **Remove legacy configs** | Delete `inferencemax/`, nested `deepseek_r1_fp8_*` subdirs, old monolithic JSON layouts                  | **Done**                                                          |
+| 0-7 | **Deprecate legacy configs** | Retain `inferencemax/` monolithic JSON + pytest suite; mark legacy in docs/README; nested `deepseek_r1_fp8_*` interim dirs not shipped | **Done**                                                          |
 
 
 ### Phase A — W1 calibration (MI300X lab-gated; MI355X pending)

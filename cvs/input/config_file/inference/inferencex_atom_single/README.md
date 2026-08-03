@@ -20,7 +20,10 @@ W1 **DeepSeek R1 FP8** on 8× GPU, ISL=OSL=1024, TP8.
 
 Each shipped config sets `"threshold_json"` to the sibling threshold filename (resolved relative to the config directory). You may also use an absolute path (vLLM-style).
 
-Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, `inferencemax/`, etc.) are **removed** from the repo tree. Use only the flat stems below.
+Legacy nested layouts (`deepseek_r1_fp8_mi300x_atom_perf/`, etc.) are **not** used for new work.
+The legacy **InferenceMax** suite (`inferencemax/`, monolithic `config` + `benchmark_params` JSON)
+remains in the repo but is **deprecated** — see `cvs/input/config_file/inference/inferencemax/README.md`
+and `docs/reference/configuration-files/inferencemax.rst`. Use the flat `inferencex_atom_single/` stems below for new runs.
 
 **Config filename example:** `mi300x_inferencex-atom-single_deepseek-r1_fp8_perf_config.json`
 

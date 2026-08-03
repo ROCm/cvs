@@ -1,4 +1,5 @@
 {
+    "_comment": "Legacy InferenceMax config (deprecated). Migrate to inferencex_atom_single/. See inferencemax/README.md.",
     "config": {
         "container_image": "rocm/7.0:rocm7.0_ubuntu_22.04_vllm_0.10.1_instinct_20250927_rc1",
         "container_name": "inference_max_rocm",
