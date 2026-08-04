@@ -93,7 +93,7 @@ writes ``{report_basename}.html`` + ``.json`` (and viewer for sweep suites).
 | `rccl_regression` | Yes | `profiles/rccl_regression.json` |
 | `sglang_single`, `sglang_distributed`, … | After `dev/dtni` merge | Legacy `presets/sglang_*.py` on that branch |
 
-Sample artifacts (no cluster run): ``python scripts/generate_sample_rundecks.py --out sample_reports``
+Sample artifacts (no cluster run): ``python -m cvs.lib.report.demo.generate_inferencex_atom_rundeck --out sample_reports`` (or run ``sample_reports/generate_sample_rundecks.py`` locally for all profiles)
 
 ## Author tiers
 
@@ -212,7 +212,7 @@ For matrix compare, also expose `golden_results` and list it under `sources.refe
 ```bash
 cvs run <stem> --cluster_file ... --config_file ... --html=~/cvs_results/run.html
 python -m pytest cvs/lib/report/unittests/test_rundeck_foundation.py -q
-python scripts/generate_sample_rundecks.py --out sample_reports   # offline smoke
+python -m cvs.lib.report.demo.generate_inferencex_atom_rundeck --out sample_reports   # offline smoke
 ```
 
 Expected artifacts next to the pytest HTML report:

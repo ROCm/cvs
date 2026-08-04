@@ -17,3 +17,6 @@ docs/sphinx/_toc.yml
 
 # Build distributions
 dist/
+
+# Local Run Deck sample artifacts and offline generator
+sample_reports/
