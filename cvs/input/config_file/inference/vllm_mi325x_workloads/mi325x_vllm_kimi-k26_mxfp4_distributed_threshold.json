@@ -1,6 +1,6 @@
 {
-  "_comment": "Record-only placeholders for kimi-k26_mxfp4 (distributed, TP=8, PP=2, CONC=16). Not calibrated on MI325X -- enforce_thresholds is false in the config, so these record without gating. Replace with measured values after a calibration run.",
-  "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": {
+  "_comment": "Record-only placeholders for kimi-k26_mxfp4 (distributed, TP=4, PP=2, CONC=16). Not calibrated on MI325X -- enforce_thresholds is false in the config, so these record without gating. Replace with measured values after a calibration run.",
+  "ISL=1024,OSL=1024,TP=4,PP=2,CONC=16": {
     "client.total_token_throughput": {
       "kind": "min_tok_s",
       "value": 0
