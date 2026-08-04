@@ -1,0 +1,75 @@
+{
+  "_comment": "Llama 3.1 8B single-node thresholds for MI325X Megatron. Cell keys must match MegatronVariantConfig.cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>.",
+  "MBS=4,GBS=128,PRECISION=FP8": {
+    "training.throughput_per_gpu": {
+      "kind": "min",
+      "value": 100
+    },
+    "training.elapsed_time_per_iteration": {
+      "kind": "max",
+      "value": 500
+    },
+    "training.tokens_per_gpu": {
+      "kind": "min",
+      "value": 1000
+    },
+    "training.mem_usage": {
+      "kind": "max",
+      "value": 0
+    }
+  },
+  "MBS=4,GBS=128,PRECISION=BF16": {
+    "training.throughput_per_gpu": {
+      "kind": "min",
+      "value": 100
+    },
+    "training.elapsed_time_per_iteration": {
+      "kind": "max",
+      "value": 500
+    },
+    "training.tokens_per_gpu": {
+      "kind": "min",
+      "value": 1000
+    },
+    "training.mem_usage": {
+      "kind": "max",
+      "value": 0
+    }
+  },
+  "MBS=4,GBS=128,PRECISION=MXFP4": {
+    "training.throughput_per_gpu": {
+      "kind": "min",
+      "value": 100
+    },
+    "training.elapsed_time_per_iteration": {
+      "kind": "max",
+      "value": 500
+    },
+    "training.tokens_per_gpu": {
+      "kind": "min",
+      "value": 1000
+    },
+    "training.mem_usage": {
+      "kind": "max",
+      "value": 0
+    }
+  },
+  "MBS=4,GBS=128,PRECISION=MXFP8": {
+    "training.throughput_per_gpu": {
+      "kind": "min",
+      "value": 100
+    },
+    "training.elapsed_time_per_iteration": {
+      "kind": "max",
+      "value": 500
+    },
+    "training.tokens_per_gpu": {
+      "kind": "min",
+      "value": 1000
+    },
+    "training.mem_usage": {
+      "kind": "max",
+      "value": 0
+    }
+  }
+}
