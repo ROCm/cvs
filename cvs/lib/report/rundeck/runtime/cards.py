@@ -90,7 +90,11 @@ def _render_sweep_analytics(payload: dict, _card: dict, data: Any) -> str:
     chart_series = sweep.get("chart_series") or payload.get("chart_series") or {}
     chart_config = sweep.get("chart_config") or payload.get("chart_config") or []
     charts_html = render_sweep_charts_html(chart_config, chart_series)
-    hint = "<p class='chart-sweep-hint'>Per-shape bars use a y/x grid; hover a bar for the exact value.</p>" if charts_html else ""
+    hint = (
+        "<p class='chart-sweep-hint'>Per-shape bars use a y/x grid; hover a bar for the exact value.</p>"
+        if charts_html
+        else ""
+    )
     return f"<div class='summary-grid'>{summary_html}</div>{viewer_banner}{hint}{charts_html}"
 
 
@@ -190,9 +194,7 @@ def _render_heatmap(_payload: dict, card: dict, data: Any) -> str:
         return ""
     headers = ["Collective", "Size", "Current", "Reference", "Delta %"]
     body = "".join(
-        "<tr>"
-        + "".join(f"<td>{html.escape(str(v) if v is not None else '—')}</td>" for v in row)
-        + "</tr>"
+        "<tr>" + "".join(f"<td>{html.escape(str(v) if v is not None else '—')}</td>" for v in row) + "</tr>"
         for row in rows
     )
     head = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
@@ -260,5 +262,5 @@ def close_gate_matrix_section(section_html: str, heatmap_html: str) -> str:
     if heatmap_html and "</section>" not in section_html:
         return section_html + heatmap_html + "</div></section>"
     if heatmap_html and section_html.endswith("</section>"):
-        return section_html[:- len("</section>")] + heatmap_html + "</div></section>"
+        return section_html[: -len("</section>")] + heatmap_html + "</div></section>"
     return section_html

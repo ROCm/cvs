@@ -98,9 +98,7 @@ class HtmlReportManager:
 
         log_content = []
         for section_name, section_content in report.sections:
-            log_content.append(
-                f"<h3>{html.escape(section_name)}</h3><pre>{html.escape(section_content)}</pre>"
-            )
+            log_content.append(f"<h3>{html.escape(section_name)}</h3><pre>{html.escape(section_content)}</pre>")
 
         if log_content:
             # Persist a standalone html log page per test.

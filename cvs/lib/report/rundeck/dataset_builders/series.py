@@ -56,13 +56,15 @@ def build_series_datasets(sources: dict[str, Any], profile: dict[str, Any]) -> d
             entry = sizes[size_key]
             if not isinstance(entry, dict):
                 continue
-            table_rows.append([
-                collective,
-                size_key,
-                entry.get("bus_bw", "—"),
-                entry.get("alg_bw", "—"),
-                entry.get("time", "—"),
-            ])
+            table_rows.append(
+                [
+                    collective,
+                    size_key,
+                    entry.get("bus_bw", "—"),
+                    entry.get("alg_bw", "—"),
+                    entry.get("time", "—"),
+                ]
+            )
 
     return {
         "charts": charts,

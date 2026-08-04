@@ -33,7 +33,9 @@ def _compare_matrices(current: dict, reference: dict) -> list[list[Any]]:
     for row_label in sorted(set(current.keys()) | set(reference.keys())):
         cur_row = current.get(row_label) or {}
         ref_row = reference.get(row_label) or {}
-        for col in sorted(set(cur_row.keys()) | set(ref_row.keys()), key=lambda s: int(s) if str(s).isdigit() else str(s)):
+        for col in sorted(
+            set(cur_row.keys()) | set(ref_row.keys()), key=lambda s: int(s) if str(s).isdigit() else str(s)
+        ):
             cur = cur_row.get(col)
             ref = ref_row.get(col)
             delta_pct = None

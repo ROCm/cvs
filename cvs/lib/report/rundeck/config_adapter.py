@@ -86,9 +86,11 @@ def build_inference_config_from_profile(profile: dict[str, Any]) -> InferenceRep
     hooks = profile.get("hooks") or {}
     sweep = profile.get("sweep") or {}
 
-    tier_metric_specs = import_callable(
-        hooks.get("tier_metric_specs") or sweep.get("tier_metric_specs_hook", "")
-    ) if hooks.get("tier_metric_specs") or sweep.get("tier_metric_specs_hook") else None
+    tier_metric_specs = (
+        import_callable(hooks.get("tier_metric_specs") or sweep.get("tier_metric_specs_hook", ""))
+        if hooks.get("tier_metric_specs") or sweep.get("tier_metric_specs_hook")
+        else None
+    )
 
     if tier_metric_specs is None:
         raise ValueError("JSON sweep profile requires hooks.tier_metric_specs")
@@ -131,16 +133,26 @@ def build_inference_config_from_profile(profile: dict[str, Any]) -> InferenceRep
         results_columns=results_columns,
         metric_units=metric_units,
         tier_metric_specs=tier_metric_specs,
-        metric_tier_order=tuple(sweep.get("tier_order") or profile.get("tier_order") or ("throughput", "health", "record")),
+        metric_tier_order=tuple(
+            sweep.get("tier_order") or profile.get("tier_order") or ("throughput", "health", "record")
+        ),
         metric_prefix=sweep.get("metric_prefix") or profile.get("metric_prefix") or "client.",
         cell_highlights=cell_highlights or None,
         chart_series=chart_series or None,
         inference_test_substring=behavior.get("inference_test_substring") or profile.get("inference_test_substring"),
         row_card_extras=behavior.get("row_card_extras", profile.get("row_card_extras", True)),
-        row_card_test_names=tuple(behavior.get("row_card_test_names") or profile.get("row_card_test_names") or ("test_metric", "test_cell_metrics")),
+        row_card_test_names=tuple(
+            behavior.get("row_card_test_names")
+            or profile.get("row_card_test_names")
+            or ("test_metric", "test_cell_metrics")
+        ),
         interactive_viewer=profile.get("interactive_viewer", True),
         viewer_cell_threshold=int(profile.get("viewer_cell_threshold", 24)),
-        prev_run_json=str(profile.get("prev_run", {}).get("json_path", "") if isinstance(profile.get("prev_run"), dict) else profile.get("prev_run_json", "")),
+        prev_run_json=str(
+            profile.get("prev_run", {}).get("json_path", "")
+            if isinstance(profile.get("prev_run"), dict)
+            else profile.get("prev_run_json", "")
+        ),
         run_card_display_builder=run_card_builder,
         launch_provenance_builder=launch_builder,
         sweep_throughput_metric=sweep.get("throughput_metric") or "client.output_throughput",

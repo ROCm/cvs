@@ -74,8 +74,7 @@ def cvs_rundeck_bind_module_fixture(request, _cvs_rundeck_session):
                 resolved[role] = None
                 continue
             log.warning(
-                "Run Deck profile registered but %s fixture (%s) is missing; "
-                "session-end report will be skipped",
+                "Run Deck profile registered but %s fixture (%s) is missing; session-end report will be skipped",
                 role,
                 fixture_name,
             )
