@@ -5,27 +5,25 @@ All rights reserved.
 Training-specific config schema for Megatron suites (single-node and distributed).
 
 The framework-agnostic machinery (ContainerSpec, RuntimeSpec, placeholder
-substitution helpers) lives in `cvs.lib.utils.config_loader`. This module holds
-the training half: MegatronSweepCombo, MegatronSweep, MegatronVariantConfig,
-and load_training_variant.
+substitution, threshold file discovery) lives in `cvs.lib.utils.config_loader`.
+This module holds the training half: MegatronSweepCombo, MegatronSweep,
+MegatronVariantConfig, and load_training_variant.
 
-Unlike inference configs, Megatron configs carry thresholds inline inside each
-sweep combo's result_dict — no sibling *threshold.json file is needed.
-enforce_thresholds gates whether those inline thresholds are asserted in
-test_throughput.
+Thresholds live in a sibling *threshold.json file (not inline in result_dict).
+The threshold file is discovered via the `threshold_json` field in the config or
+auto-discovered as the sole *threshold.json sibling. Cell keys in the threshold
+file must match the combination keys in sweep.combinations exactly.
+
+enforce_thresholds gates whether threshold specs are asserted in test_metric.
 
 Both megatron_single and megatron_distributed are covered by MegatronVariantConfig
 via the framework field, which is a validated schema tag / config discriminator.
-Topology is not selected from it at runtime: each test suite hardcodes its own
-distributed_training value (megatron_single.py -> False, megatron_distributed.py
--> True) when constructing MegatronTrainingJob.
 '''
 
 from __future__ import annotations
 
-import json
+import warnings
 from collections import Counter
-from pathlib import Path
 from typing import Any, Dict, List
 
 from pydantic import Field, model_validator
@@ -34,8 +32,7 @@ from typing_extensions import Literal
 from cvs.lib.utils.config_loader import (
     ContainerSpec,
     _Forbid,
-    _resolve_cluster_mapping,
-    _walk_substitute,
+    substitute_config,
 )
 
 
@@ -47,7 +44,6 @@ class MegatronSweepCombo(_Forbid):
     micro_batch_size: str
     global_batch_size: str
     precision: str = ""
-    result_dict: Dict[str, Any] = Field(default_factory=dict)
 
 
 def validate_sweep_selector(combo_keys, run_refs):
@@ -72,6 +68,45 @@ def validate_sweep_selector(combo_keys, run_refs):
         )
 
 
+def validate_thresholds_cover_sweep(
+    *,
+    expected_cells,
+    thresholds,
+    enforce_thresholds: bool,
+    gated_metrics=None,
+) -> None:
+    """Shared sweep/threshold coverage check for training variant configs.
+
+    Checks every sweep cell has a threshold entry and no threshold key is
+    orphaned. Individual metrics within a cell are optional — absent specs
+    are skipped in test_metric (record-only for that metric).
+    """
+    expected = set(expected_cells)
+    present = set(thresholds.keys())
+    missing = sorted(expected - present)
+    extra = sorted(present - expected)
+    problems = []
+    if missing:
+        problems.append(f"sweep cells with no threshold entry: {missing}")
+    if extra:
+        problems.append(f"threshold keys matching no sweep cell (typo?): {extra}")
+    gated = gated_metrics if gated_metrics is not None else set()
+    gated_keys = [f"training.{m}" for m in sorted(gated)]
+    gated_gaps = {}
+    for cell in sorted(expected & present):
+        specs = thresholds.get(cell) or {}
+        absent = [k for k in gated_keys if k not in specs]
+        if absent:
+            gated_gaps[cell] = absent
+    if gated_gaps:
+        problems.append(f"cells missing gated-metric specs: {gated_gaps}")
+    if problems:
+        msg = "threshold.json does not match the sweep matrix; " + "; ".join(problems)
+        if enforce_thresholds:
+            raise ValueError(msg)
+        warnings.warn(f"{msg} (enforce_thresholds=false -> record-only)", stacklevel=3)
+
+
 class MegatronSweep(_Forbid):
     combinations: Dict[str, MegatronSweepCombo]
     runs: List[str]
@@ -90,10 +125,40 @@ class MegatronVariantConfig(_Forbid):
     framework: Literal["megatron_single", "megatron_distributed"]
     gpu_arch: str
     enforce_thresholds: bool = True
+    threshold_json: str = ""
     config: Dict[str, Any]        # training knobs: megatron_root, nccl_*, nic_type, ...
     model_params: Dict[str, Any]  # model knobs: model_name, precision, tp, pp, ...
     container: ContainerSpec
     sweep: MegatronSweep
+    thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+
+    def cell_key(self, combo_key: str) -> str:
+        """Canonical threshold lookup key for a sweep combo.
+
+        Constructs a key from the combo's micro_batch_size, global_batch_size,
+        and precision — must match the top-level keys in the threshold file exactly.
+        """
+        combo = self.sweep.combinations[combo_key]
+        return f"MBS={combo.micro_batch_size},GBS={combo.global_batch_size},PRECISION={combo.precision}"
+
+    def expected_cells(self) -> List[str]:
+        """Return the threshold cell key for every run in sweep.runs."""
+        return [self.cell_key(k) for k in self.sweep.runs]
+
+    @model_validator(mode="after")
+    def _check_thresholds_cover_sweep(self):
+        """Every sweep cell must have a threshold entry; no metric within it is
+        mandatory. test_metric treats an absent ``training.*`` spec as
+        "don't gate this metric" (skips the assertion), so a threshold.json
+        is free to gate only the metrics an operator cares about.
+        """
+        validate_thresholds_cover_sweep(
+            expected_cells=self.expected_cells(),
+            thresholds=self.thresholds,
+            enforce_thresholds=self.enforce_thresholds,
+            gated_metrics=set(),
+        )
+        return self
 
 
 # ---------- public API (training) ----------
@@ -122,23 +187,23 @@ def _check_no_changeme(node, path="", _offenders=None):
 
 
 def load_training_variant(config_path, cluster_dict) -> MegatronVariantConfig:
-    """Load and validate a Megatron training variant config.
+    """Load and validate a Megatron training variant config + its threshold file.
 
-    Delegates placeholder substitution to _resolve_cluster_mapping +
-    _walk_substitute (pass 1 only — no paths block, no cross-block refs).
-    No sibling threshold file is required — thresholds live inline in
-    sweep.combinations.<id>.result_dict.
+    Delegates file read, placeholder substitution, and threshold file discovery
+    to the generic substitute_config. The threshold file is located via the
+    threshold_json field in the config (relative to the config file's directory)
+    or auto-discovered as the sole *threshold.json sibling.
+
+    Cell keys in the threshold file must match MegatronVariantConfig.cell_key()
+    output exactly — MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>. A load-time
+    validator checks that every sweep cell has a threshold entry and no key is
+    orphaned.
     """
-    config_path = Path(config_path)
-    if not config_path.is_file():
-        raise FileNotFoundError(f"training config not found: {config_path}")
-
-    raw = json.loads(config_path.read_text())
-    raw = {k: v for k, v in raw.items() if not k.startswith("_")}
-
-    cluster_map = _resolve_cluster_mapping(cluster_dict)
-    raw = _walk_substitute(raw, cluster_map)
+    raw, thresholds = substitute_config(config_path, cluster_dict)
 
     _check_no_changeme(raw)
 
-    return MegatronVariantConfig(**raw)
+    known = {k: v for k, v in raw.items() if k in MegatronVariantConfig.model_fields}
+    known["thresholds"] = thresholds
+    return MegatronVariantConfig(**known)
+ 

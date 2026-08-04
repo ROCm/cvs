@@ -176,7 +176,6 @@ class MegatronTrainingJob:
         micro_batch_size,
         global_batch_size,
         precision=None,
-        result_dict=None,
         distributed_training=False,
         tune_model_params=False,
         scripts_dir=None,
@@ -193,7 +192,6 @@ class MegatronTrainingJob:
           micro_batch_size: Micro batch size for this sweep cell (overrides model_params).
           precision: Optional precision override for this sweep cell. When None, falls
             back to model_params.precision (default: TE_FP8).
-          result_dict: Inline threshold dict for this sweep cell (from sweep.combinations).
           distributed_training: True for multi-node distributed runs.
           tune_model_params: If True, adjust batch size based on cluster size.
           scripts_dir: Optional override for the per-node wrapper scripts folder.
@@ -207,7 +205,7 @@ class MegatronTrainingJob:
         self.job_cmd = ''
         self.job_cmd_list = []
         self.training_results_dict = {}
-
+        self.local_tokenizer_path = None
         self.rdma_stats_dict_before = {}
         self.ethtool_stats_dict_before = {}
         self.rdma_stats_dict_after = {}
@@ -271,9 +269,6 @@ class MegatronTrainingJob:
         if precision:
             pdict['precision'] = precision
         pdict.pop('model_name', None)
-
-        self.expected_result_dict = result_dict or {}
-
         # Per-combo log dir so sweep combos don't overwrite each other's
         # training.log. Label is the sweep combination name (run_label); falls
         # back to a model_name/mbs/gbs/precision tag when none is provided.
@@ -327,6 +322,20 @@ class MegatronTrainingJob:
                 self.gbs_env = flags['gbs']
                 break
 
+        if re.search('mixtral', self.tokenizer_model, re.I):
+            self.tp_env = 'TP_SIZE'
+            self.pp_env = 'PP_SIZE'
+            self.seq_env = 'SEQLEN'
+        else:
+            self.tp_env = 'TP'
+            self.pp_env = 'PP'
+            self.seq_env = 'SEQ_LENGTH'
+ 
+        if re.search('mixtral|deepseek|qwen3', self.tokenizer_model, re.I):
+            self.iters_env = 'TRAIN_ITERS'
+        else:
+            self.iters_env = 'TOTAL_ITERS'
+ 
         # Remove and recreate the scripts dir on the bare host (volume-mounted path)
         self.orch.all.exec(f'rm -rf {self.scripts_dir}')
         self.orch.all.exec(f'mkdir -p {self.scripts_dir}')
@@ -340,7 +349,69 @@ class MegatronTrainingJob:
                 if int(self.global_batch_size) % 32 == 0:
                     per_gpu_batch_size = int(self.global_batch_size) / 32
                     self.global_batch_size = per_gpu_batch_size * int(self.nnodes) * 8
-
+                    
+    def _needs_local_tokenizer(self):
+        return bool(re.search(r'deepseek|mixtral', self.tokenizer_model, re.I))
+ 
+    def download_tokenizer_model(self):
+        """Download tokenizer.model locally for models that require a file path instead of an HF repo ID.
+ 
+        No-op for llama/qwen (their training scripts accept the HF repo ID directly).
+        For deepseek/mixtral, downloads the tokenizer.model file into data_cache_dir
+        and stores the known local path in self.local_tokenizer_path.
+        """
+        if not self._needs_local_tokenizer():
+            return
+ 
+        local_dir = f'{self.data_cache_dir}/{self.model_name}'
+        log.info('Downloading tokenizer.model for %s into %s', self.model_name, local_dir)
+        self.orch.exec(
+            f'huggingface-cli download {self.tokenizer_model} '
+            f'--include "tokenizer.model" '
+            f'--local-dir {local_dir} '
+            f'--token {self.hf_token}'
+        )
+        self.local_tokenizer_path = f'{local_dir}/tokenizer.model'
+        log.info('tokenizer.model path: %s', self.local_tokenizer_path)
+ 
+    def stop_training_processes(self):
+        """Check GPU VRAM after a training combo and free memory if any processes remain.
+ 
+        After normal training completion VRAM% is 0 and no KFD PIDs are present —
+        returns immediately in that case. If processes are still holding GPU memory
+        (crash or hang), extracts their PIDs from rocm-smi --showpids, kills them
+        with SIGKILL, then waits and verifies VRAM is clear before the next combo.
+        """
+        log.info('Checking GPU memory state after training combo')
+        out_dict = self.orch.exec('rocm-smi --showpids 2>/dev/null')
+ 
+        has_pids = False
+        for node, output in (out_dict or {}).items():
+            if 'No KFD PIDs currently running' in (output or ''):
+                log.info('Node %s: VRAM already free, no GPU processes running', node)
+            else:
+                log.warning('Node %s: GPU processes still holding VRAM, will kill', node)
+                has_pids = True
+ 
+        if not has_pids:
+            return
+ 
+        # Extract PIDs (lines starting with a number) and SIGKILL on all nodes
+        self.orch.exec(
+            "rocm-smi --showpids 2>/dev/null "
+            "| awk '/^[0-9]+[[:space:]]/{print $1}' "
+            "| xargs -r kill -9 2>/dev/null || true; "
+            "sleep 10"
+        )
+ 
+        # Verify VRAM is now free
+        out_dict = self.orch.exec('rocm-smi --showpids 2>/dev/null')
+        for node, output in (out_dict or {}).items():
+            if 'No KFD PIDs currently running' in (output or ''):
+                log.info('Node %s: VRAM successfully freed', node)
+            else:
+                log.warning('Node %s: GPU processes may still be running after kill attempt', node)
+ 
     def run_pretraining_tasks(
         self,
     ):
@@ -421,10 +492,11 @@ class MegatronTrainingJob:
             + f'export IMAGE={self.container_image}; '
             + f'export HF_TOKEN="{self.hf_token}"; '
             + f'export DATA_CACHE_PATH={self.data_cache_dir}; '
-            + f'export TOKENIZER_MODEL={self.tokenizer_model}; '
+            + f'export TOKENIZER_MODEL={self.local_tokenizer_path if self.local_tokenizer_path else self.tokenizer_model}; '
             + f'export LD_LIBRARY_PATH=/usr/local/lib/:{self.rocm_path}/lib:$LD_LIBRARY_PATH; '
             + f'export LOG_DIR={self.log_dir}; '
             + 'export EXP_NAME="megatron_training"; '
+            + 'export TORCH_NCCL_ASYNC_ERROR_HANDLING=0; '
         )
 
         if self.distributed_training is True:
@@ -444,16 +516,16 @@ class MegatronTrainingJob:
             cmd = (
                 cmd
                 + f'RECOMPUTE={self.recompute} '
-                + f'SEQ_LENGTH={self.sequence_length} '
+                + f'{self.seq_env}={self.sequence_length} '
                 + f'{self.mbs_env}={self.micro_batch_size} {self.gbs_env}={self.global_batch_size} '
-                + f'TP={self.tensor_parallelism} '
-                + f'PP={self.pipeline_parallelism} FSDP={self.fsdp} '
-                + f'MODEL_SIZE={self.model_size} TOTAL_ITERS={self.iterations} '
+                + f'{self.tp_env}={self.tensor_parallelism} '
+                + f'{self.pp_env}={self.pipeline_parallelism} FSDP={self.fsdp} '
+                + f'MODEL_SIZE={self.model_size} {self.iters_env}={self.iterations} '
                 + self.precision_env + ' '
                 + f'MASTER_ADDR={self.master_address} NNODES={self.nnodes} '
             )
 
-            for i  in range(len(self.orch.hosts)):
+            for i in range(len(self.orch.hosts)):
                 full_cmd = cmd + f'NODE_RANK={i} nohup bash {self.training_script} &'
                 script_cmd = f'echo {shlex.quote(full_cmd)} > {self.scripts_dir}/distributed_wrapper_script_{i}.sh && chmod 777 {self.scripts_dir}/distributed_wrapper_script_{i}.sh'
                 self.job_cmd_list.append(script_cmd)
@@ -463,11 +535,11 @@ class MegatronTrainingJob:
             cmd = (
                 cmd
                 + f'RECOMPUTE={self.recompute} '
-                + f'SEQ_LENGTH={self.sequence_length} '
+                + f'{self.seq_env}={self.sequence_length} '
                 + f'{self.mbs_env}={self.micro_batch_size} {self.gbs_env}={self.global_batch_size} '
-                + f'TP={self.tensor_parallelism} '
-                + f'PP={self.pipeline_parallelism} FSDP={self.fsdp} '
-                + f'MODEL_SIZE={self.model_size} TOTAL_ITERS={self.iterations} '
+                + f'{self.tp_env}={self.tensor_parallelism} '
+                + f'{self.pp_env}={self.pipeline_parallelism} FSDP={self.fsdp} '
+                + f'MODEL_SIZE={self.model_size} {self.iters_env}={self.iterations} '
             )
             cmd = cmd + self.precision_env + ' '
             self.job_cmd = cmd + f'nohup bash {self.training_script} &'
@@ -712,19 +784,18 @@ class MegatronTrainingJob:
             fail_test(
                 'Failed to populate training results, training_results_dict is empty - please check logs for failures'
             )
+            return
 
         for result_key in self.training_results_dict.keys():
-            for result_list in self.training_results_dict[result_key]:
-                for result_val in result_list:
-                    # Search for 'nan' or 'inf' (case-sensitive as written; add re.I if desired)
-                    if re.search('nan|inf', result_val):
-                        fail_test(
-                            f'Failures seen in training_result dict for {result_key}, numbers are either NaN or Inf - f{result_val}'
-                        )
+            for result_val in self.training_results_dict[result_key]:
+                if re.search('nan|inf', result_val, re.I):
+                    fail_test(
+                        f'Failures seen in training_result dict for {result_key}, numbers are either NaN or Inf - f{result_val}'
+                    )
 
         # Check if RDMA and Ethtool stats have errors ..
         if self.distributed_training is True:
-            if self.verify_network_errors is True:
+            if self.verify_network_errors.lower() == "true":
                 self.rdma_stats_dict_after = linux_utils.get_rdma_stats_dict(self.orch.all)
                 self.ethtool_stats_dict_after = linux_utils.get_nic_ethtool_stats_dict(self.orch.all)
 
@@ -761,17 +832,3 @@ class MegatronTrainingJob:
         log.info('training_results_dict')
         log.info('^^^^^^^^^^^^^^^^^^^^')
         log.info("%s", self.training_results_dict)
-        # Compare perf expected numbers from input JSON file ..
-        for result_key in self.training_results_dict.keys():
-            if result_key in self.expected_result_dict:
-                log.info("%s", self.training_results_dict[result_key])
-                # check if all nodes have met the expected perf numbers
-                for actual_perf in self.training_results_dict[result_key]:
-                    if float(actual_perf) < float(self.expected_result_dict[result_key]):
-                        fail_test(
-                            f'The Training performance numbers are below expected numbers for \
-                           {result_key}, expected = {self.expected_result_dict[result_key]}, \
-                           actual = {actual_perf}'
-                        )
-            else:
-                log.warning(f'Perf result key {result_key} not provided in input JSON file, so will not be checked')
