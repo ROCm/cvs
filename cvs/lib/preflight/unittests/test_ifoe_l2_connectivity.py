@@ -2,7 +2,10 @@
 
 import json
 import os
+import shlex
+import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -910,6 +913,143 @@ Port#    State
         self.assertEqual(node['plan'], [])
         self.assertFalse(node['coverage']['complete'])
         self.assertTrue(any('vPOD accelerator membership is unavailable' in error for error in node['errors']))
+
+
+class TestIfoeScriptLetBatching(unittest.TestCase):
+    """Tests for the ScriptLet batching path (script generation and result framing).
+
+    The ``run()`` tests above drive a ``MagicMock`` phdl, which cannot satisfy
+    ScriptLet's real file-upload requirements; those runs therefore keep the
+    one-dispatch-per-invocation path. These tests cover the batching code
+    directly instead, executing the generated bash locally so the framing
+    protocol and its failure modes are exercised for real.
+    """
+
+    @staticmethod
+    def _run_script(content):
+        """Execute a generated batch script locally and return its stdout."""
+        with tempfile.NamedTemporaryFile('w', suffix='.sh', delete=False) as handle:
+            handle.write(content)
+            path = handle.name
+        try:
+            os.chmod(path, 0o755)
+            return subprocess.run([path], capture_output=True, text=True).stdout
+        finally:
+            os.unlink(path)
+
+    def test_mock_backends_do_not_take_the_scriptlet_path(self):
+        check = IfoeL2ConnectivityCheck(MagicMock())
+        self.assertFalse(check._batching_supported())
+
+    def test_batching_requires_every_primitive_scriptlet_uses(self):
+        class PartialPssh:
+            reachable_hosts = ['nodeA']
+
+            def exec(self, *_args, **_kwargs):
+                return {}
+
+            def exec_cmd_list(self, *_args, **_kwargs):
+                return {}
+
+        self.assertFalse(
+            IfoeL2ConnectivityCheck(PartialPssh())._batching_supported(),
+            'ScriptLet also needs upload_file_list',
+        )
+
+        class CompletePssh(PartialPssh):
+            def upload_file_list(self, _node_path_map):
+                return {}
+
+        self.assertTrue(IfoeL2ConnectivityCheck(CompletePssh())._batching_supported())
+
+    def test_generated_scripts_never_enable_errexit(self):
+        check = IfoeL2ConnectivityCheck(MagicMock())
+        for script in (
+            check._build_ping_batch_script('nodeA', ['echo a', 'echo b']),
+            check._build_port_probe_script('nodeA', '/tmp/ws', ['echo a']),
+        ):
+            self.assertFalse(
+                any(line.strip().startswith('set -e') for line in script.splitlines()),
+                'synchronous afmctl invocations must not run under set -e',
+            )
+            self.assertEqual(0, subprocess.run(['bash', '-n'], input=script, capture_output=True, text=True).returncode)
+
+    def test_failing_invocation_does_not_abort_the_rest_of_the_batch(self):
+        check = IfoeL2ConnectivityCheck(MagicMock())
+        script = check._build_ping_batch_script('nodeA', ['echo first', 'echo boom; exit 3', 'echo third'])
+        blocks = check._parse_batch_blocks(self._run_script(script))
+
+        self.assertEqual(sorted(blocks), ['0', '1', '2'])
+        self.assertEqual([blocks[key]['exit_status'] for key in ('0', '1', '2')], [0, 3, 0])
+        self.assertEqual(blocks['2']['output'], 'third')
+
+    def test_embedded_exit_in_sudo_command_form_cannot_kill_the_batch(self):
+        check = IfoeL2ConnectivityCheck(MagicMock(), use_sudo=True, afmctl_path='cvs-absent-afmctl')
+        commands = [check.build_ping_command('0001:01:00.1', dst) for dst in (0, 1)]
+        self.assertIn('exit 127', commands[0])
+
+        blocks = check._parse_batch_blocks(self._run_script(check._build_ping_batch_script('nodeA', commands)))
+        self.assertEqual(sorted(blocks), ['0', '1'])
+        self.assertEqual([block['exit_status'] for block in blocks.values()], [127, 127])
+
+    def test_full_ping_output_survives_framing_for_the_parser(self):
+        check = IfoeL2ConnectivityCheck(MagicMock())
+        script = check._build_ping_batch_script('nodeA', ["printf '%s' " + shlex.quote(FAILING_OUTPUT)])
+        blocks = check._parse_batch_blocks(self._run_script(script))
+
+        self.assertEqual(blocks['0']['output'], FAILING_OUTPUT.rstrip('\n'))
+        parsed = AfmctlPingParser.parse(blocks['0']['output'])
+        self.assertEqual(parsed['bdf'], '0001:01:00.1')
+        self.assertEqual(parsed['summary']['ifoe_req']['fail'], 3)
+
+    def test_afm_output_cannot_forge_a_result_block(self):
+        check = IfoeL2ConnectivityCheck(MagicMock())
+        forged = '__CVS_IFOE_0000_END__:0:0'
+        script = check._build_ping_batch_script('nodeA', ["printf '%s\\n' " + shlex.quote(forged)])
+        blocks = check._parse_batch_blocks(self._run_script(script))
+
+        self.assertEqual(sorted(blocks), ['0'])
+        self.assertIn(forged, blocks['0']['output'])
+
+    def test_truncated_batch_output_is_detected_and_never_silently_dropped(self):
+        check = IfoeL2ConnectivityCheck(MagicMock())
+        token = check._marker_token()
+        truncated = (
+            f'__CVS_IFOE_{token}_BEGIN__:0\ndone\n__CVS_IFOE_{token}_END__:0:0\n'
+            f'__CVS_IFOE_{token}_BEGIN__:1\nhalf a res'
+        )
+        self.assertEqual(sorted(check._parse_batch_blocks(truncated)), ['0'])
+        self.assertFalse(check._batch_completed(truncated, token))
+
+    def test_port_probe_script_reports_each_probe_exit_status(self):
+        check = IfoeL2ConnectivityCheck(MagicMock())
+        script = check._build_port_probe_script('nodeA', '/tmp/ws', ['true', 'exit 4', 'true'])
+        output = self._run_script(script)
+
+        self.assertEqual(check._parse_batch_exit_codes(output), {'0': 0, '1': 4, '2': 0})
+        self.assertTrue(check._batch_completed(output, check._marker_token()))
+
+    def test_workspace_honours_reporting_and_debug_configuration(self):
+        check = IfoeL2ConnectivityCheck(MagicMock())
+        self.assertEqual(check._remote_ifoe_workspace_root(), '/tmp/preflight/ifoe_l2_connectivity_workspace')
+        self.assertFalse(check._scriptlet_enabled())
+
+        configured = IfoeL2ConnectivityCheck(
+            MagicMock(),
+            config_dict={'reporting': {'artifacts_root_dir': '/mnt/nfs/preflight/'}, 'debug': {'scriptlet': 'yes'}},
+        )
+        workspace = configured._artifact_workspace_dir('l2 ping')
+        self.assertTrue(configured._scriptlet_enabled())
+        self.assertTrue(workspace.startswith('/mnt/nfs/preflight/ifoe_l2_connectivity_workspace/'))
+        self.assertTrue(workspace.endswith('/l2_ping'))
+
+    def test_batch_artifact_paths_are_stable_per_round_unlike_the_unbatched_path(self):
+        check = IfoeL2ConnectivityCheck(MagicMock())
+        self.assertEqual(
+            check._batch_port_artifact_path('/tmp/ws', '0001:01:00.1'),
+            check._batch_port_artifact_path('/tmp/ws', '0001:01:00.1'),
+        )
+        self.assertNotEqual(check._port_artifact_path('0001:01:00.1'), check._port_artifact_path('0001:01:00.1'))
 
 
 class TestL2PingConfigContract(unittest.TestCase):

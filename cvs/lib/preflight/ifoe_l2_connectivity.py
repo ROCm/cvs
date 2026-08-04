@@ -40,6 +40,7 @@ import os
 import re
 import shlex
 import tempfile
+import time
 import uuid
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -83,6 +84,29 @@ _LABEL_TO_KEY: Dict[str, str] = {
 }
 
 _BDF_VALUE_PATTERN = re.compile(r"^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$")
+
+
+def _get_nested_config(config_dict: Optional[Mapping], section: str, key: str, default: Any) -> Any:
+    """Read ``config_dict[section][key]`` tolerating dotted sections and gaps."""
+    current: Any = config_dict
+    for part in str(section).split("."):
+        if isinstance(current, Mapping) and part in current:
+            current = current[part]
+        else:
+            return default
+    if isinstance(current, Mapping) and key in current:
+        return current[key]
+    return default
+
+
+def _empty_port_parse() -> Dict[str, Any]:
+    """Return the neutral :meth:`AfmctlPortParser.parse` shape used before a probe lands."""
+    return {
+        "format": None,
+        "ports_by_bdf": {},
+        "unscoped_ports": {},
+        "parse_errors": [],
+    }
 
 
 def _normalize_bdf(value) -> Optional[str]:
@@ -885,6 +909,9 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
     DEFAULT_SSH_TIMEOUT_SEC = 600
     DEFAULT_LOSS_THRESHOLD_PCT = 0.0
     DEFAULT_TRAFFIC_TYPES: Tuple[str, ...] = TRAFFIC_TYPES
+    #: Extra seconds granted to a batch script on top of the sum of its
+    #: individually bounded invocations (script start-up, SFTP, marker I/O).
+    BATCH_TIMEOUT_SLACK_SEC = 60
 
     def __init__(
         self,
@@ -1034,6 +1061,13 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
         # preserves the one-broadcast-per-command behaviour of the historical
         # implementation).
         self._broadcast_result_cache: Dict[str, Dict[str, Dict]] = {}
+        # ScriptLet batching state.  Both caches are keyed by the work item they
+        # pre-compute, so the per-item code paths stay identical whether the work
+        # was batched or executed one dispatch at a time.
+        self._port_probe_cache: Dict[Tuple[str, str], Dict] = {}
+        self._ping_output_cache: Dict[Tuple[str, str, str], Dict] = {}
+        self._batch_marker_token: Optional[str] = None
+        self._ifoe_session_id: Optional[str] = None
 
     def _traffic_type_cli(self) -> Optional[str]:
         """Render ``--traffic-type`` argument or ``None`` if all are enabled."""
@@ -1106,6 +1140,176 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
     def _build_remove_artifact_command(artifact_path: str) -> str:
         """Render a safe cleanup command for a generated AFM JSON artifact."""
         return f"rm -f -- {shlex.quote(artifact_path)}"
+
+    # ------------------------------------------------------------------
+    # ScriptLet batching support
+    # ------------------------------------------------------------------
+
+    def _scriptlet_enabled(self) -> bool:
+        """True when ``debug.scriptlet`` asks for scripts/artifacts to be preserved."""
+        if not self.config_dict:
+            return False
+        value = _get_nested_config(self.config_dict, "debug", "scriptlet", False)
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "yes", "on")
+        return bool(value)
+
+    def _artifacts_root_dir(self) -> str:
+        """Root of the operator-visible artifact tree (``reporting.artifacts_root_dir``)."""
+        root = _get_nested_config(self.config_dict or {}, "reporting", "artifacts_root_dir", "/tmp/preflight")
+        return str(root).rstrip("/") or "/tmp/preflight"
+
+    def _remote_ifoe_workspace_root(self) -> str:
+        """Remote tree that holds every ScriptLet this check distributes."""
+        return f"{self._artifacts_root_dir()}/ifoe_l2_connectivity_workspace"
+
+    def _session_workspace_dir(self) -> str:
+        """Remote directory holding every batched phase of the current run."""
+        if not self._ifoe_session_id:
+            self._ifoe_session_id = time.strftime("%Y%m%d_%H%M%S")
+        return f"{self._remote_ifoe_workspace_root()}/{self._ifoe_session_id}"
+
+    def _artifact_workspace_dir(self, work_segment: str) -> str:
+        """Remote workspace directory for one batched phase of a single run."""
+        safe_segment = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(work_segment).strip()) or "round"
+        return f"{self._session_workspace_dir()}/{safe_segment}"
+
+    def _marker_token(self) -> str:
+        """Per-run random token that makes batch framing markers unforgeable by AFM output."""
+        if not self._batch_marker_token:
+            self._batch_marker_token = uuid.uuid4().hex
+        return self._batch_marker_token
+
+    def _batching_supported(self) -> bool:
+        """True when ``phdl`` really implements the batch primitives ScriptLet needs.
+
+        Lightweight and mock backends expose auto-generated attributes that would
+        silently accept a script upload and return a ``MagicMock``; those callers
+        keep the one-dispatch-per-work-item path instead.
+        """
+        for attribute in ("exec_cmd_list", "upload_file_list", "exec"):
+            candidate = getattr(self.phdl, attribute, None)
+            if not callable(candidate) or type(candidate).__module__.startswith("unittest.mock"):
+                return False
+        return isinstance(getattr(self.phdl, "reachable_hosts", None), (list, tuple))
+
+    def _batch_timeout(self, invocations_per_node: int) -> int:
+        """Wall-clock cap for one batch script.
+
+        Each invocation inside the script is individually bounded by
+        ``ssh_timeout`` (via coreutils ``timeout``), so the script's own worst
+        case is the sum of its parts.  The SSH read cap must therefore cover the
+        whole batch or a slow-but-healthy node would be reported as truncated.
+        """
+        return max(1, int(invocations_per_node)) * self.ssh_timeout + self.BATCH_TIMEOUT_SLACK_SEC
+
+    def _batch_preamble(self, node: str, description: str, invocations: int) -> List[str]:
+        """Shared header for generated batch scripts.
+
+        ``set -e`` is deliberately **not** used.  Unlike the RDMA connectivity
+        scripts (whose tests are backgrounded and reaped with ``wait``), every
+        afmctl invocation here runs synchronously and its exit status is
+        load-bearing.  Under ``set -e`` the first failing ping would abort the
+        node's remaining tests, which would then be reported as *missing* rather
+        than *failed* -- a false PASS in a check whose purpose is finding
+        failures.
+        """
+        return [
+            "#!/bin/bash",
+            f"# CVS IFoE L2 connectivity: {description} for {node} ({invocations} invocation(s)).",
+            "# Intentionally no 'set -e': every afmctl exit status below is load-bearing",
+            "# and one failing invocation must never abort the rest of the batch.",
+            "",
+            "__cvs_timeout=''",
+            "if command -v timeout >/dev/null 2>&1; then",
+            f"    __cvs_timeout={shlex.quote(f'timeout {self.ssh_timeout}')}",
+            "fi",
+            "",
+        ]
+
+    def _build_ping_batch_script(self, node: str, commands: Sequence[str]) -> str:
+        """Render the script that runs every planned ping invocation for one node.
+
+        Each invocation is framed by a token-tagged BEGIN/END marker pair so the
+        full ``afmctl test ping`` stdout survives intact for
+        :meth:`AfmctlPingParser.parse`, and the END marker carries the
+        invocation's own exit status.
+        """
+        token = self._marker_token()
+        lines = self._batch_preamble(node, "L2 ping batch", len(commands))
+        lines.extend(
+            [
+                "__cvs_ifoe_ping() {",
+                '    __cvs_id="$1"',
+                '    __cvs_cmd="$2"',
+                f"    printf '%s%s\\n' '__CVS_IFOE_{token}_BEGIN__:' \"$__cvs_id\"",
+                '    $__cvs_timeout bash -c "$__cvs_cmd" 2>&1',
+                "    __cvs_rc=$?",
+                f"    printf '\\n%s%s:%s\\n' '__CVS_IFOE_{token}_END__:' \"$__cvs_id\" \"$__cvs_rc\"",
+                "}",
+                "",
+            ]
+        )
+        for index, command in enumerate(commands):
+            lines.append(f"__cvs_ifoe_ping {index} {shlex.quote(command)}")
+        lines.extend(["", f"printf '%s\\n' '__CVS_IFOE_{token}_DONE__'", "exit 0", ""])
+        return "\n".join(lines)
+
+    def _build_port_probe_script(self, node: str, workspace_dir: str, commands: Sequence[str]) -> str:
+        """Render the script that writes every AFM port inventory artifact for one node.
+
+        Only each probe's exit status travels back on stdout; the JSON payloads
+        stay in private files and are retrieved over SFTP, because
+        ``Pssh.download_file`` is the supported transport for payloads larger
+        than a few KB.
+        """
+        token = self._marker_token()
+        lines = self._batch_preamble(node, "port inventory batch", len(commands))
+        lines.extend(
+            [
+                f"mkdir -p {shlex.quote(workspace_dir)} 2>/dev/null",
+                "",
+                "__cvs_ifoe_port() {",
+                '    __cvs_id="$1"',
+                '    __cvs_cmd="$2"',
+                '    $__cvs_timeout bash -c "$__cvs_cmd"',
+                f"    printf '%s%s=%s\\n' '__CVS_IFOE_{token}_RC__:' \"$__cvs_id\" \"$?\"",
+                "}",
+                "",
+            ]
+        )
+        for index, command in enumerate(commands):
+            lines.append(f"__cvs_ifoe_port {index} {shlex.quote(command)}")
+        lines.extend(["", f"printf '%s\\n' '__CVS_IFOE_{token}_DONE__'", "exit 0", ""])
+        return "\n".join(lines)
+
+    def _parse_batch_blocks(self, output: str) -> Dict[str, Dict]:
+        """Extract ``{invocation_id: {output, exit_status}}`` from a batch script's stdout."""
+        token = self._marker_token()
+        pattern = re.compile(
+            rf"^__CVS_IFOE_{token}_BEGIN__:(?P<id>\d+)[ \t\r]*$"
+            r"\n(?P<body>.*?)\n"
+            rf"__CVS_IFOE_{token}_END__:(?P=id):(?P<rc>-?\d+)[ \t\r]*$",
+            re.MULTILINE | re.DOTALL,
+        )
+        blocks: Dict[str, Dict] = {}
+        for match in pattern.finditer(output or ""):
+            blocks[match.group("id")] = {
+                "output": match.group("body").rstrip("\n"),
+                "exit_status": int(match.group("rc")),
+            }
+        return blocks
+
+    def _parse_batch_exit_codes(self, output: str) -> Dict[str, int]:
+        """Extract ``{invocation_id: exit_status}`` from a status-only batch script."""
+        token = self._marker_token()
+        pattern = re.compile(rf"^__CVS_IFOE_{token}_RC__:(\d+)=(-?\d+)[ \t\r]*$", re.MULTILINE)
+        return {match.group(1): int(match.group(2)) for match in pattern.finditer(output or "")}
+
+    @staticmethod
+    def _batch_completed(output: str, token: str) -> bool:
+        """True when the generated script printed its terminating DONE marker."""
+        return f"__CVS_IFOE_{token}_DONE__" in (output or "")
 
     @staticmethod
     def _normalise_exec_results(raw_results) -> Dict[str, Dict]:
@@ -1204,18 +1408,19 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                         node, "DISCOVERY_ERROR", f"{device.get('bdf', '<unknown BDF>')}: {error}", self.strict_discovery
                     )
 
-    def _discover_up_ports(self, node: str, bdf: str) -> Optional[List[int]]:
-        """Discover operational ports from an AFM JSON artifact retrieved over SFTP."""
+    def _probe_port_artifact(self, node: str, bdf: str) -> Dict[str, Any]:
+        """Create, retrieve, parse and remove one AFM JSON port inventory artifact.
+
+        This is the unbatched transport: one cluster dispatch to write the
+        artifact, one targeted SFTP download, and one cluster dispatch to remove
+        it.  :meth:`_prefetch_port_probes` produces the same record shape for
+        every ``(node, bdf)`` in a single batch.
+        """
         artifact_path = self._port_artifact_path(bdf)
         command = self.build_show_port_artifact_command(bdf, artifact_path)
         result = self._exec_on_node(node, command)
         exit_status = result.get("exit_status")
-        parsed: Dict[str, Any] = {
-            "format": None,
-            "ports_by_bdf": {},
-            "unscoped_ports": {},
-            "parse_errors": [],
-        }
+        parsed: Dict[str, Any] = _empty_port_parse()
         transfer_error = None
         cleanup_error = None
         cleanup_status = None
@@ -1239,6 +1444,31 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                 cleanup_status = cleanup_result.get("exit_status")
             except (OSError, ValueError, TypeError) as exc:
                 cleanup_error = str(exc)
+        return {
+            "command": command,
+            "exit_status": exit_status,
+            "parsed": parsed,
+            "transfer_error": transfer_error,
+            "cleanup_error": cleanup_error,
+            "cleanup_status": cleanup_status,
+        }
+
+    def _discover_up_ports(self, node: str, bdf: str) -> Optional[List[int]]:
+        """Discover operational ports from an AFM JSON artifact retrieved over SFTP.
+
+        The probe itself is either taken from the batched pre-fetch performed by
+        :meth:`_prefetch_port_probes` or issued on demand; the admission policy
+        applied to it below is identical either way.
+        """
+        probe = self._port_probe_cache.pop((node, bdf), None)
+        if probe is None:
+            probe = self._probe_port_artifact(node, bdf)
+        command = probe["command"]
+        exit_status = probe["exit_status"]
+        parsed = probe["parsed"]
+        transfer_error = probe["transfer_error"]
+        cleanup_error = probe["cleanup_error"]
+        cleanup_status = probe["cleanup_status"]
 
         bdf_key = _normalize_bdf(bdf) or bdf
         scoped = (parsed.get("ports_by_bdf") or {}).get(bdf_key)
@@ -1285,6 +1515,284 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             self._add_node_issue(node, "PORT_DISCOVERY_ERROR", f"{bdf}: no UP ports discovered")
             return None
         return inventory["up_ports"]
+
+    def _candidate_source_devices(self, node_result: Dict) -> List[Dict]:
+        """Return the topology descriptors a node would draw its source BDFs from.
+
+        Deliberately side-effect free so both the planning pass and the batched
+        port pre-fetch can agree on the candidate set without either of them
+        emitting an issue twice.
+        """
+        discovered_devices = node_result.get("topology") or []
+        if self.bdfs:
+            source_devices = [device for device in discovered_devices if device.get("bdf") in self.bdfs]
+            if not source_devices and self.mesh_mode == "config":
+                source_devices = [{"bdf": bdf, "accelerator_id": None} for bdf in self.bdfs]
+            return source_devices
+        return list(discovered_devices)
+
+    @staticmethod
+    def _batch_port_artifact_path(workspace_dir: str, bdf: str) -> str:
+        """Return the batch-round remote path for one source BDF's AFM inventory.
+
+        Unlike :meth:`_port_artifact_path` this is stable for a given round, so
+        the same path can be fetched from every node holding that BDF with one
+        SFTP call.
+        """
+        safe_bdf = bdf.replace(":", "_").replace(".", "_")
+        return f"{workspace_dir}/cvs-ifoe-port-{safe_bdf}.json"
+
+    def _prefetch_port_probes(self) -> None:
+        """Batch every node's AFM port inventory probe into one ScriptLet round.
+
+        Populates :attr:`_port_probe_cache`; :meth:`_discover_up_ports` then
+        consumes the records instead of issuing its own dispatches.  Any failure
+        leaves the cache empty so the unbatched path transparently takes over.
+        """
+        requests: Dict[str, List[str]] = {}
+        for node, node_result in self.results.items():
+            bdfs: List[str] = []
+            for device in self._candidate_source_devices(node_result):
+                bdf = device.get("bdf")
+                if bdf and bdf not in bdfs:
+                    bdfs.append(bdf)
+            if bdfs:
+                requests[node] = bdfs
+        if not requests:
+            return
+
+        try:
+            probes = self._run_port_probe_batch(requests)
+        except Exception as exc:  # pragma: no cover - defensive: fall back to per-item dispatch
+            self._port_probe_cache = {}
+            self.log_warning(f"Batched IFoE port discovery failed ({exc}); falling back to per-device discovery")
+            return
+        self._port_probe_cache = probes
+
+    def _run_port_probe_batch(self, requests: Dict[str, List[str]]) -> Dict[Tuple[str, str], Dict]:
+        """Distribute, run and harvest one port-inventory ScriptLet per node."""
+        from cvs.lib.scriptlet import ScriptLet
+
+        scriptlet_debug = self._scriptlet_enabled()
+        workspace_dir = self._artifact_workspace_dir("port_discovery")
+        token = self._marker_token()
+        probes: Dict[Tuple[str, str], Dict] = {}
+        artifact_paths: Dict[str, str] = {}
+        nodes_by_bdf: Dict[str, List[str]] = {}
+        self.log_info(
+            f"Batching IFoE port discovery for {sum(len(v) for v in requests.values())} device(s) "
+            f"across {len(requests)} node(s) under {workspace_dir}"
+        )
+
+        with ScriptLet(
+            self.phdl,
+            debug=scriptlet_debug,
+            scriptlet_workspace=workspace_dir,
+            cleanup_on_init=True,
+            preserve_workspace_on_exit=True,
+        ) as scriptlet:
+            script_mapping: Dict[str, str] = {}
+            for node, bdfs in requests.items():
+                commands: List[str] = []
+                for bdf in bdfs:
+                    artifact_path = artifact_paths.setdefault(bdf, self._batch_port_artifact_path(workspace_dir, bdf))
+                    nodes_by_bdf.setdefault(bdf, []).append(node)
+                    command = self.build_show_port_artifact_command(bdf, artifact_path)
+                    commands.append(command)
+                    probes[(node, bdf)] = {
+                        "command": command,
+                        "exit_status": -1,
+                        "parsed": _empty_port_parse(),
+                        "transfer_error": None,
+                        "cleanup_error": None,
+                        "cleanup_status": None,
+                    }
+                script_id = f"ifoe_ports_{node}"
+                scriptlet.create_script(script_id, self._build_port_probe_script(node, workspace_dir, commands))
+                script_mapping[node] = script_id
+
+            scriptlet.copy_script_list(script_mapping)
+            outputs = scriptlet.run_parallel_group(
+                script_mapping, timeout=self._batch_timeout(max(len(bdfs) for bdfs in requests.values()))
+            )
+
+            for node, bdfs in requests.items():
+                output = outputs.get(node, "") or ""
+                exit_codes = self._parse_batch_exit_codes(output)
+                if not self._batch_completed(output, token):
+                    self.log_warning(f"{node}: IFoE port discovery batch did not report completion")
+                for index, bdf in enumerate(bdfs):
+                    status = exit_codes.get(str(index))
+                    probes[(node, bdf)]["exit_status"] = status if status is not None else -1
+
+            self._download_port_artifacts(artifact_paths, nodes_by_bdf, probes)
+
+        self._cleanup_batch_workspace(workspace_dir, probes, skip=scriptlet_debug)
+        return probes
+
+    def _download_port_artifacts(
+        self,
+        artifact_paths: Mapping[str, str],
+        nodes_by_bdf: Mapping[str, List[str]],
+        probes: Dict[Tuple[str, str], Dict],
+    ) -> None:
+        """Fetch one AFM inventory artifact per BDF from every node that wrote it."""
+        with tempfile.TemporaryDirectory(prefix="cvs_ifoe_port_batch_") as temp_dir:
+            for bdf, remote_path in artifact_paths.items():
+                nodes = [node for node in nodes_by_bdf.get(bdf, []) if probes[(node, bdf)]["exit_status"] in (None, 0)]
+                if not nodes:
+                    continue
+                safe_bdf = bdf.replace(":", "_").replace(".", "_")
+                local_prefix = os.path.join(temp_dir, f"port-{safe_bdf}.json")
+                downloaded = self._download_from_nodes(remote_path, local_prefix, nodes, probes, bdf)
+                for node in nodes:
+                    if probes[(node, bdf)]["transfer_error"]:
+                        continue
+                    local_path = downloaded.get(node)
+                    if not local_path:
+                        probes[(node, bdf)]["transfer_error"] = f"SFTP did not return an artifact path for {node}"
+                        continue
+                    try:
+                        with open(local_path, "r", encoding="utf-8") as artifact_file:
+                            probes[(node, bdf)]["parsed"] = AfmctlPortParser.parse(
+                                artifact_file.read(), allow_text_fallback=self.allow_text_fallback
+                            )
+                    except (OSError, ValueError, TypeError) as exc:
+                        probes[(node, bdf)]["transfer_error"] = str(exc)
+
+    def _download_from_nodes(
+        self,
+        remote_path: str,
+        local_prefix: str,
+        nodes: Sequence[str],
+        probes: Dict[Tuple[str, str], Dict],
+        bdf: str,
+    ) -> Dict[str, str]:
+        """Download one remote path from ``nodes``, isolating per-node failures.
+
+        ``download_file`` raises as soon as *any* host fails, so a single node
+        missing the device would otherwise mask every other node's inventory.
+        The grouped call is retried per node in that case to preserve the
+        unbatched implementation's per-node error attribution.
+        """
+        try:
+            return self.phdl.download_file(remote_path, local_prefix, hosts=list(nodes)) or {}
+        except (OSError, ValueError, TypeError) as exc:
+            if len(nodes) == 1:
+                probes[(nodes[0], bdf)]["transfer_error"] = str(exc)
+                return {}
+            self.log_warning(f"Grouped SFTP of {remote_path} failed ({exc}); retrying per node")
+
+        downloaded: Dict[str, str] = {}
+        for node in nodes:
+            try:
+                result = self.phdl.download_file(remote_path, f"{local_prefix}.{node}", hosts=[node]) or {}
+            except (OSError, ValueError, TypeError) as exc:
+                probes[(node, bdf)]["transfer_error"] = str(exc)
+                continue
+            if node in result:
+                downloaded[node] = result[node]
+        return downloaded
+
+    def _cleanup_batch_workspace(
+        self, workspace_dir: str, probes: Dict[Tuple[str, str], Dict], skip: bool = False
+    ) -> None:
+        """Remove a batch workspace, recording per-node removal status on ``probes``."""
+        if skip:
+            return
+        removal = self._exec_all(f"rm -rf -- {shlex.quote(workspace_dir)}")
+        for (node, _bdf), probe in probes.items():
+            node_result = removal.get(node)
+            probe["cleanup_status"] = node_result.get("exit_status") if node_result else None
+            if node_result is None:
+                probe["cleanup_error"] = f"No cleanup result returned for {node}"
+
+    def _prefetch_ping_outputs(self) -> None:
+        """Batch every planned ``afmctl test ping`` invocation into one ScriptLet round.
+
+        Populates :attr:`_ping_output_cache` with the same ``{output,
+        exit_status}`` records :meth:`_exec_on_node` returns, so evaluation is
+        byte-for-byte identical to the unbatched path.
+        """
+        cells_by_node = {node: list(result.get("plan") or []) for node, result in self.results.items()}
+        cells_by_node = {node: cells for node, cells in cells_by_node.items() if cells}
+        if not cells_by_node:
+            return
+        try:
+            self._ping_output_cache = self._run_ping_batch(cells_by_node)
+        except Exception as exc:  # pragma: no cover - defensive: fall back to per-item dispatch
+            self._ping_output_cache = {}
+            self.log_warning(f"Batched IFoE ping execution failed ({exc}); falling back to per-invocation dispatch")
+
+    def _run_ping_batch(self, cells_by_node: Dict[str, List[Dict]]) -> Dict[Tuple[str, str, str], Dict]:
+        """Distribute, run and harvest one ping ScriptLet per node."""
+        from cvs.lib.scriptlet import ScriptLet
+
+        scriptlet_debug = self._scriptlet_enabled()
+        workspace_dir = self._artifact_workspace_dir("l2_ping")
+        token = self._marker_token()
+        total = sum(len(cells) for cells in cells_by_node.values())
+        timeout = self._batch_timeout(max(len(cells) for cells in cells_by_node.values()))
+        self.log_info(
+            f"Batching {total} IFoE ping invocation(s) across {len(cells_by_node)} node(s) "
+            f"under {workspace_dir} (batch timeout {timeout}s)"
+        )
+
+        with ScriptLet(
+            self.phdl,
+            debug=scriptlet_debug,
+            scriptlet_workspace=workspace_dir,
+            cleanup_on_init=True,
+            # The session tree (this phase plus the port-discovery phase's empty
+            # shell) is removed as a whole below, so ScriptLet's own workspace
+            # teardown would be a redundant extra dispatch.
+            preserve_workspace_on_exit=True,
+        ) as scriptlet:
+            script_mapping: Dict[str, str] = {}
+            for node, cells in cells_by_node.items():
+                commands = [
+                    self.build_ping_command(cell["source_bdf"], cell["dst_accelerator"], ports=cell["selected_ports"])
+                    for cell in cells
+                ]
+                script_id = f"ifoe_ping_{node}"
+                scriptlet.create_script(script_id, self._build_ping_batch_script(node, commands))
+                script_mapping[node] = script_id
+
+            scriptlet.copy_script_list(script_mapping)
+            outputs = scriptlet.run_parallel_group(script_mapping, timeout=timeout)
+
+        if not scriptlet_debug:
+            self._exec_all(f"rm -rf -- {shlex.quote(self._session_workspace_dir())}")
+
+        executions: Dict[Tuple[str, str, str], Dict] = {}
+        for node, cells in cells_by_node.items():
+            output = outputs.get(node, "") or ""
+            blocks = self._parse_batch_blocks(output)
+            truncated = not self._batch_completed(output, token)
+            if truncated:
+                self.log_warning(f"{node}: IFoE ping batch did not report completion; results may be truncated")
+            for index, cell in enumerate(cells):
+                key = (node, cell["source_bdf"], str(cell["dst_accelerator"]))
+                block = blocks.get(str(index))
+                if block is None:
+                    executions[key] = {
+                        "output": "",
+                        "exit_status": -1,
+                        "batch_error": (
+                            "Batched afmctl test ping produced no result block for this invocation "
+                            f"({'batch did not complete' if truncated else 'marker missing from batch output'})"
+                        ),
+                    }
+                else:
+                    executions[key] = {"output": block["output"], "exit_status": block["exit_status"]}
+        return executions
+
+    def _execute_ping(self, node: str, bdf: str, dst_accelerator: int, command: str) -> Dict:
+        """Return one ping invocation's result, preferring the batched pre-fetch."""
+        cached = self._ping_output_cache.pop((node, bdf, str(dst_accelerator)), None)
+        if cached is not None:
+            return cached
+        return self._exec_on_node(node, command)
 
     @staticmethod
     def _explicit_port_list(ports) -> Optional[List[int]]:
@@ -1402,14 +1910,6 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             status, failure_category = "FAIL", "PARSE_ERROR"
         return status, errors, failure_category
 
-    def _resolve_bdfs_for_node(self, node: str, discovered: Dict[str, List[str]]) -> List[str]:
-        """Return the BDFs that should be exercised on a single node."""
-        if self.bdfs:
-            return list(self.bdfs)
-        if self.bdf_discovery == "auto":
-            return list(discovered.get(node, []))
-        return []
-
     def run(self) -> Dict:
         """Execute IFoE L2 connectivity check across all reachable nodes.
 
@@ -1422,6 +1922,13 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             f"ports={self.ports}, pings_per_port={self.pings_per_port}, "
             f"traffic_types={list(self.traffic_types)}, loss_threshold_pct={self.loss_threshold_pct})"
         )
+
+        # Batching state is per-run: a second run() must not consume a previous
+        # run's cached probes, nor reuse its remote workspace or framing token.
+        self._port_probe_cache = {}
+        self._ping_output_cache = {}
+        self._batch_marker_token = None
+        self._ifoe_session_id = None
 
         self.results = {
             node: {
@@ -1448,14 +1955,13 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
             self.log_info("Discovering IFoE accelerator topology via 'afmctl show device'")
             self._discover_topology()
 
+        batching = self._batching_supported()
+        if batching and self.ports == "up" and self.port_discovery == "auto":
+            self._prefetch_port_probes()
+
         for node, node_result in self.results.items():
             discovered_devices = node_result.get("topology") or []
-            if self.bdfs:
-                source_devices = [device for device in discovered_devices if device.get("bdf") in self.bdfs]
-                if not source_devices and self.mesh_mode == "config":
-                    source_devices = [{"bdf": bdf, "accelerator_id": None} for bdf in self.bdfs]
-            else:
-                source_devices = list(discovered_devices)
+            source_devices = self._candidate_source_devices(node_result)
             if not source_devices:
                 self._add_node_issue(node, "DISCOVERY_ERROR", "No IFoE source BDFs available for testing")
                 continue
@@ -1532,6 +2038,9 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                     coverage["planned_pairs"] += 1
                     coverage["expected_invocations"] += 1
 
+        if batching:
+            self._prefetch_ping_outputs()
+
         for node, node_result in self.results.items():
             for cell in node_result["plan"]:
                 bdf = cell["source_bdf"]
@@ -1539,11 +2048,15 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                 selected_ports = cell["selected_ports"]
                 command = self.build_ping_command(bdf, dst, ports=selected_ports)
                 self.log_info(f"Executing on {node}: {command}")
-                execution = self._exec_on_node(node, command)
+                execution = self._execute_ping(node, bdf, dst, command)
                 parsed = AfmctlPingParser.parse(execution.get("output", ""), allow_text_fallback=True)
                 status, errors, failure_category = self._evaluate_invocation(
                     parsed, bdf, dst, selected_ports, execution.get("exit_status")
                 )
+                batch_error = execution.get("batch_error")
+                if batch_error:
+                    errors.insert(0, batch_error)
+                    status, failure_category = "FAIL", failure_category or "COMMAND_ERROR"
                 node_result["coverage"]["completed_invocations"] += 1
                 node_result["accelerators"].setdefault(bdf, {})[str(dst)] = {
                     "command": command,
@@ -1580,16 +2093,3 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
                 )
 
         return self.results
-
-    def _all_unique_bdfs(self, discovered: Dict[str, List[str]]) -> List[str]:
-        """Union of explicitly configured BDFs and per-node discovered BDFs."""
-        seen: List[str] = []
-        for b in self.bdfs:
-            if b not in seen:
-                seen.append(b)
-        if not self.bdfs and self.bdf_discovery == "auto":
-            for blist in discovered.values():
-                for b in blist:
-                    if b not in seen:
-                        seen.append(b)
-        return seen
