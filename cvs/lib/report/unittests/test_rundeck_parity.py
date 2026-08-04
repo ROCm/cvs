@@ -1,7 +1,6 @@
 '''Parity and integration tests for the unified Run Deck engine.'''
 
 from cvs.lib.report.inference import build_inference_report_payload, render_report_html
-from cvs.lib.report.presets.inferencex_atom import INFERENCEX_ATOM_REPORT_CONFIG
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
 from cvs.lib.report.rundeck.dataset_builders.registry import build_datasets
@@ -10,41 +9,45 @@ from cvs.lib.report.rundeck.render import render_rundeck_html
 from cvs.lib.report.unittests._fixtures import generic_variant, two_cell_inf_res
 
 
-def test_json_profile_matches_legacy_inference_config():
+def _inferencex_atom_profile():
     profile = load_json_profile("inferencex_atom_single")
     assert profile is not None
-    from_profile = build_inference_config_from_profile(profile)
-    legacy = INFERENCEX_ATOM_REPORT_CONFIG
-    assert from_profile.suite_id == legacy.suite_id
-    assert from_profile.report_basename == legacy.report_basename
-    assert from_profile.results_columns == legacy.results_columns
-    assert from_profile.metric_tier_order == legacy.metric_tier_order
-    assert len(from_profile.chart_series) == len(legacy.chart_series)
+    return profile
 
 
-def test_rundeck_payload_parity_with_legacy_builder():
-    profile = load_json_profile("inferencex_atom_single")
+def test_json_profile_resolves_expected_config():
+    profile = _inferencex_atom_profile()
+    cfg = build_inference_config_from_profile(profile)
+    assert cfg.suite_id == "inferencex_atom"
+    assert cfg.report_basename == "inferencex_atom_run_deck"
+    assert cfg.metric_tier_order == ("throughput", "ttft", "tpot", "health", "record")
+    assert len(cfg.chart_series) == 7
+
+
+def test_rundeck_payload_matches_inference_builder():
+    profile = _inferencex_atom_profile()
     store = {
         "inf_res_dict": two_cell_inf_res(),
         "variant_config": generic_variant(),
         "lifecycle_report": {},
     }
+    config = build_inference_config_from_profile(profile)
     rundeck_payload = build_rundeck_payload(profile=profile, store=store, cvs_version="1.0.0")
-    legacy_payload = build_inference_report_payload(
-        config=INFERENCEX_ATOM_REPORT_CONFIG,
+    inference_payload = build_inference_report_payload(
+        config=config,
         variant_config=generic_variant(),
         inf_res_dict=two_cell_inf_res(),
         lifecycle_report={},
         cvs_version="1.0.0",
     )
-    assert len(rundeck_payload["cells"]) == len(legacy_payload["cells"])
-    assert rundeck_payload["results_table"]["headers"] == legacy_payload["results_table"]["headers"]
-    assert len(rundeck_payload["gate_matrix"]) == len(legacy_payload["gate_matrix"])
-    assert rundeck_payload["chart_series"].keys() == legacy_payload["chart_series"].keys()
+    assert len(rundeck_payload["cells"]) == len(inference_payload["cells"])
+    assert rundeck_payload["results_table"]["headers"] == inference_payload["results_table"]["headers"]
+    assert len(rundeck_payload["gate_matrix"]) == len(inference_payload["gate_matrix"])
+    assert rundeck_payload["chart_series"].keys() == inference_payload["chart_series"].keys()
 
 
 def test_rundeck_render_contains_core_panels():
-    profile = load_json_profile("inferencex_atom_single")
+    profile = _inferencex_atom_profile()
     payload = build_rundeck_payload(
         profile=profile,
         store={
@@ -62,9 +65,10 @@ def test_rundeck_render_contains_core_panels():
     assert "Sweep analytics" in doc
 
 
-def test_legacy_render_path_uses_unified_runtime():
+def test_inference_render_path_uses_unified_runtime():
+    config = build_inference_config_from_profile(_inferencex_atom_profile())
     payload = build_inference_report_payload(
-        config=INFERENCEX_ATOM_REPORT_CONFIG,
+        config=config,
         variant_config=generic_variant(),
         inf_res_dict=two_cell_inf_res(),
         lifecycle_report={},

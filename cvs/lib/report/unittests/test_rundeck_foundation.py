@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cvs.lib.report.presets.builder import make_inference_report_config
+from cvs.lib.report.rundeck.config_builder import make_inference_report_config
 from cvs.lib.report.profile import DEFAULT_SOURCES, sources_for_profile
 from cvs.lib.report.registry import (
     bind_session_results,

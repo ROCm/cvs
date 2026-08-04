@@ -13,12 +13,14 @@ keys and column presets, plus optional HTML/JSON dashboard when pytest ``--html`
         bind_inference_suite_report_session,
         configure_inference_suite_report,
     )
-    from cvs.lib.report.presets.my_suite import MY_SUITE_REPORT_CONFIG
+    from cvs.lib.report.profile import load_json_profile
+    from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
 
     def pytest_configure(config):
-        configure_inference_suite_report(config, MY_SUITE_REPORT_CONFIG)
+        profile = load_json_profile("my_suite")
+        configure_inference_suite_report(config, build_inference_config_from_profile(profile))
 
-Demo preset: ``cvs.lib.report.presets.inferencex_atom.INFERENCEX_ATOM_REPORT_CONFIG``.
+Reference profile: ``profiles/inferencex_atom_single.json`` (auto-loaded by stem).
 Session-end generation is automatic when ``--html`` is set; no lifecycle report test.
 '''
 

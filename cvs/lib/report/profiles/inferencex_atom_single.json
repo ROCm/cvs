@@ -16,9 +16,9 @@
     "lifecycle": "lifecycle"
   },
   "hooks": {
-    "tier_metric_specs": "cvs.lib.report.presets.inferencex_atom_metrics:tier_metric_specs",
-    "metric_units": "cvs.lib.report.presets.inferencex_atom_metrics:CLIENT_METRIC_UNITS",
-    "run_card_display": "cvs.lib.report.presets.inferencex_atom:_atom_run_card_display"
+    "tier_metric_specs": "cvs.lib.report.profiles.hooks.inferencex_atom_metrics:tier_metric_specs",
+    "metric_units": "cvs.lib.report.profiles.hooks.inferencex_atom_metrics:CLIENT_METRIC_UNITS",
+    "run_card_display": "cvs.lib.report.profiles.hooks.inferencex_atom_run_card:atom_run_card_display"
   },
   "sweep": {
     "metric_prefix": "client.",

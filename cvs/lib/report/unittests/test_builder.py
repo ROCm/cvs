@@ -1,6 +1,6 @@
 '''Tests for inference report preset builder.'''
 
-from cvs.lib.report.presets.builder import make_inference_report_config
+from cvs.lib.report.rundeck.config_builder import make_inference_report_config
 
 
 def test_make_inference_report_config_defaults():

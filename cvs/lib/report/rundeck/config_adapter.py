@@ -10,7 +10,7 @@ from __future__ import annotations
 import importlib
 from typing import Any, Callable, Optional
 
-from cvs.lib.report.presets.builder import make_inference_report_config
+from cvs.lib.report.rundeck.config_builder import make_inference_report_config
 from cvs.lib.report.profile import DeckProfile
 from cvs.lib.report.types import InferenceReportConfig, ReportChartSeries
 

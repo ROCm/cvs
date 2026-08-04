@@ -4,39 +4,17 @@ All rights reserved.
 
 Auto-load Run Deck profiles for ``cvs run <suite_stem>``.
 
-Auto-load order:
-  1. ``profiles/{stem}.json`` when present
-  2. Legacy ``presets/{stem}.py`` defining ``*_REPORT_CONFIG``
+Loads ``profiles/{stem}.json`` when present.
 '''
 
 from __future__ import annotations
 
-import importlib
-from typing import Optional
-
 from cvs.lib.report.profile import load_json_profile
-from cvs.lib.report.registry import get_resolved_profile, register_deck_profile, register_suite_report
-from cvs.lib.report.types import InferenceReportConfig
-
-
-def _find_preset_in_module(module) -> Optional[InferenceReportConfig]:
-    named: list[InferenceReportConfig] = []
-    for name, value in vars(module).items():
-        if isinstance(value, InferenceReportConfig):
-            if name.endswith("_REPORT_CONFIG"):
-                named.append(value)
-    if len(named) == 1:
-        return named[0]
-    if named:
-        return named[0]
-    for value in vars(module).values():
-        if isinstance(value, InferenceReportConfig):
-            return value
-    return None
+from cvs.lib.report.registry import get_resolved_profile, register_deck_profile
 
 
 def try_auto_register_suite_report(pytest_config) -> bool:
-    """Register a deck profile from JSON or legacy preset when not already configured."""
+    """Register a deck profile from JSON when not already configured."""
     if get_resolved_profile(pytest_config) is not None:
         return False
 
@@ -49,18 +27,7 @@ def try_auto_register_suite_report(pytest_config) -> bool:
         register_deck_profile(pytest_config, json_profile)
         return True
 
-    module_name = f"cvs.lib.report.presets.{stem}"
-    try:
-        module = importlib.import_module(module_name)
-    except ImportError:
-        return False
-
-    preset = _find_preset_in_module(module)
-    if preset is None:
-        return False
-
-    register_suite_report(pytest_config, preset)
-    return True
+    return False
 
 
 def try_auto_register_inference_suite_report(pytest_config) -> bool:

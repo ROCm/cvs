@@ -3,27 +3,16 @@
 from types import SimpleNamespace
 
 from cvs.lib.report.auto_register import try_auto_register_inference_suite_report
-from cvs.lib.report.presets.builder import make_inference_report_config
-from cvs.lib.report.registry import get_resolved_profile, get_suite_report_config, register_suite_report
+from cvs.lib.report.registry import get_resolved_profile, register_suite_report
+from cvs.lib.report.rundeck.config_builder import make_inference_report_config
 
 
-def test_auto_register_loads_stem_preset(monkeypatch):
-    cfg = make_inference_report_config(
-        suite_id="stem_demo",
-        results_columns=(),
-        metric_units={},
-        tier_metric_specs=lambda _c, _t: {},
-    )
-    fake = SimpleNamespace(STEM_DEMO_REPORT_CONFIG=cfg)
-    monkeypatch.setitem(
-        __import__("sys").modules,
-        "cvs.lib.report.presets.stem_demo",
-        fake,
-    )
-
-    config = SimpleNamespace(_suite_name="stem_demo")
+def test_auto_register_loads_json_profile():
+    config = SimpleNamespace(_suite_name="inferencex_atom_single")
     assert try_auto_register_inference_suite_report(config) is True
-    assert get_suite_report_config(config) is cfg
+    preset = get_resolved_profile(config)
+    assert preset is not None
+    assert preset["suite_id"] == "inferencex_atom"
 
 
 def test_auto_register_skips_when_already_configured():
@@ -38,12 +27,12 @@ def test_auto_register_skips_when_already_configured():
     assert try_auto_register_inference_suite_report(config) is False
 
 
-def test_auto_register_missing_module():
+def test_auto_register_missing_profile():
     config = SimpleNamespace(_suite_name="no_such_suite_xyz")
     assert try_auto_register_inference_suite_report(config) is False
 
 
-def test_auto_register_loads_inferencex_atom_single_preset():
+def test_auto_register_loads_inferencex_atom_single_profile():
     config = SimpleNamespace(_suite_name="inferencex_atom_single")
     assert try_auto_register_inference_suite_report(config) is True
     preset = get_resolved_profile(config)

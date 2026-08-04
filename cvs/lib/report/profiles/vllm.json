@@ -16,8 +16,8 @@
     "lifecycle": "lifecycle"
   },
   "hooks": {
-    "tier_metric_specs": "cvs.lib.report.presets.vllm_metrics:tier_metric_specs",
-    "metric_units": "cvs.lib.report.presets.vllm_metrics:CLIENT_METRIC_UNITS"
+    "tier_metric_specs": "cvs.lib.report.profiles.hooks.vllm_metrics:tier_metric_specs",
+    "metric_units": "cvs.lib.report.profiles.hooks.vllm_metrics:CLIENT_METRIC_UNITS"
   },
   "sweep": {
     "metric_prefix": "client.",

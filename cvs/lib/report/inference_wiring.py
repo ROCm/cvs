@@ -4,17 +4,19 @@ All rights reserved.
 
 Generic pytest wiring for inference suite reports.
 
-**Suite owners** — add ``cvs/lib/report/presets/<cvs_run_stem>.py`` (see
-``_inference_suite_template.py``). Root ``cvs/conftest.py`` auto-registers the
-preset, binds session data, and attaches HTML row extras when ``--html`` is set.
+**Suite owners** — add ``cvs/lib/report/profiles/<cvs_run_stem>.json`` (see
+``cvs/lib/report/README.md``). Root ``cvs/conftest.py`` auto-registers the profile,
+binds session data, and attaches HTML row extras when ``--html`` is set.
 
-Optional explicit registration::
+Optional explicit registration with a resolved ``InferenceReportConfig``::
 
     from cvs.lib.report.inference_wiring import configure_inference_suite_report
-    from cvs.lib.report.presets.my_suite import MY_SUITE_REPORT_CONFIG
+    from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
+    from cvs.lib.report.profile import load_json_profile
 
     def pytest_configure(config):
-        configure_inference_suite_report(config, MY_SUITE_REPORT_CONFIG)
+        profile = load_json_profile("my_suite")
+        configure_inference_suite_report(config, build_inference_config_from_profile(profile))
 '''
 
 from __future__ import annotations

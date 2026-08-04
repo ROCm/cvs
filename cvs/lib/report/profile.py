@@ -4,9 +4,7 @@ All rights reserved.
 
 Deck profile discovery and source resolution for CVS Run Deck.
 
-Auto-load order:
-  1. ``profiles/{stem}.json`` when present
-  2. Legacy ``presets/{stem}.py`` defining ``*_REPORT_CONFIG`` (handled by auto_register)
+Deck profiles live under ``profiles/{stem}.json`` and are loaded by ``auto_register``.
 '''
 
 from __future__ import annotations

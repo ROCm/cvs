@@ -64,8 +64,7 @@ Root `cvs/conftest.py` binds fixtures from profile `sources` via `pytest_hooks.p
 Auto-load order for `cvs run <stem>`:
 
 1. `profiles/<stem>.json`
-2. Legacy `presets/<stem>.py` (`*_REPORT_CONFIG`)
-3. No Run Deck
+2. No Run Deck
 
 ## Reference profiles
 
@@ -75,23 +74,23 @@ Auto-load order for `cvs run <stem>`:
 | `vllm.json` | `sweep` | vLLM | Yes |
 | `rccl_perf.json` | `series` | RCCL bandwidth | Yes |
 | `rccl_regression.json` | `matrix` | RCCL golden compare | Yes |
-| SGLang (legacy preset) | `sweep` | `sglang_*` stems | **`dev/dtni` only** — no JSON profile yet |
+| SGLang | `sweep` | `sglang_*` stems | **`dev/dtni` only** — add JSON profile when suite merges |
 
 Schema: `profiles/schema.json`
 
 ### Which suites get a Run Deck at session finish?
 
-When you run with `--html`, auto-load tries ``profiles/<stem>.json`` then ``presets/<stem>.py``.
+When you run with `--html`, auto-load uses ``profiles/<stem>.json``.
 If a profile is registered **and** session fixtures contain results, ``generate_rundeck()``
 writes ``{report_basename}.html`` + ``.json`` (and viewer for sweep suites).
 
 | `cvs run` stem | Produced on this branch? | Mechanism |
 | -------------- | ------------------------ | --------- |
 | `inferencex_atom_single` | Yes | `profiles/inferencex_atom_single.json` |
-| `vllm` | Yes | `profiles/vllm.json` (falls back to `presets/vllm.py`) |
+| `vllm` | Yes | `profiles/vllm.json` |
 | `rccl_perf` | Yes | `profiles/rccl_perf.json` |
 | `rccl_regression` | Yes | `profiles/rccl_regression.json` |
-| `sglang_single`, `sglang_distributed`, … | After `dev/dtni` merge | Legacy `presets/sglang_*.py` on that branch |
+| `sglang_single`, `sglang_distributed`, … | After `dev/dtni` merge | Add `profiles/sglang_*.json` when suite lands |
 
 Sample artifacts (no cluster run): ``python -m cvs.lib.report.demo.generate_inferencex_atom_rundeck --out sample_reports`` (or run ``sample_reports/generate_sample_rundecks.py`` locally for all profiles)
 
@@ -235,7 +234,7 @@ Expected artifacts next to the pytest HTML report:
 
 The Run Deck **platform** can land on `main` independently of the InferenceX ATOM test
 suite. The profile ``profiles/inferencex_atom_single.json`` uses report-layer hooks
-(``presets/inferencex_atom_metrics.py``) so it works without
+(``profiles/hooks/inferencex_atom_metrics.py``) so it works without
 ``cvs/lib/inference/inferencex_atom/``.
 
 | Proof level | Works on `main`? | How |
@@ -279,9 +278,8 @@ cvs/lib/report/
     config_adapter.py
     dataset_builders/   # sweep, series, matrix
     runtime/            # card components + theme
-  profiles/             # JSON deck profiles
+  profiles/             # JSON deck profiles + hooks/
   pytest_hooks.py
-  presets/              # legacy shims (transitional)
   registry.py
 ```
 
