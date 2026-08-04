@@ -153,6 +153,75 @@ def compute_convergence(step_metrics, eval_metrics, target_metric="auto", target
     return (target_step, time_to_target)
 
 
+def sample_loss_curve(step_metrics, sample_every=10, milestone_steps=None):
+    """Downsample per-step training loss for the loss curve (row 32).
+
+    Keeps a point when its step is a multiple of `sample_every`, is one of the
+    `milestone_steps` (e.g. 100/500/1k/5k), or is the first/last recorded step.
+    The first/last inclusion keeps short runs (fewer than `sample_every` steps)
+    from producing an empty curve.
+
+    Returns an ordered, de-duplicated list of ``(step, loss)`` tuples. Only steps
+    that carry a numeric `loss` are considered. Never raises.
+    """
+    milestones = set(milestone_steps or [])
+    every = sample_every if sample_every and sample_every > 0 else 1
+
+    loss_steps = [
+        s for s in (step_metrics or [])
+        if s.get("step") is not None and isinstance(s.get("loss"), (int, float))
+    ]
+    if not loss_steps:
+        return []
+
+    first_step = loss_steps[0]["step"]
+    last_step = loss_steps[-1]["step"]
+
+    picked = {}
+    for s in loss_steps:
+        step = s["step"]
+        if step % every == 0 or step in milestones or step in (first_step, last_step):
+            picked[step] = s["loss"]
+
+    return [(step, picked[step]) for step in sorted(picked)]
+
+
+def evaluate_loss_decreasing(points, max_slope=0.0):
+    """Decide whether a sampled loss curve trends downward (row 32).
+
+    Fits a least-squares line to ``points`` (a list of ``(step, loss)``) and
+    treats the run as decreasing when the slope is below `max_slope` (default
+    0.0, i.e. strictly negative). Uses a dependency-free closed form:
+
+        slope = (n*Sxy - Sx*Sy) / (n*Sxx - Sx^2)
+
+    Returns ``(decreasing: bool, slope: float, detail: str)`` or ``None`` when
+    there are fewer than 2 points (verdict not computable). Never raises; a
+    degenerate x-spread (all steps equal) also returns None.
+    """
+    if not points or len(points) < 2:
+        return None
+
+    n = len(points)
+    sx = sum(p[0] for p in points)
+    sy = sum(p[1] for p in points)
+    sxx = sum(p[0] * p[0] for p in points)
+    sxy = sum(p[0] * p[1] for p in points)
+
+    denom = n * sxx - sx * sx
+    if denom == 0:
+        return None
+
+    slope = (n * sxy - sx * sy) / denom
+    decreasing = slope < max_slope
+    detail = (
+        f"loss slope {slope:.6g}/step over {n} points "
+        f"(first={points[0][1]:.4f}@{points[0][0]}, last={points[-1][1]:.4f}@{points[-1][0]}); "
+        f"{'decreasing' if decreasing else 'NOT decreasing'} (max_slope={max_slope})"
+    )
+    return (decreasing, slope, detail)
+
+
 def _percentile(values, q):
     """Linear-interpolated percentile (q in [0, 100]) over a list of numbers.
 

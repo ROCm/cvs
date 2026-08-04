@@ -56,9 +56,14 @@ class _Lifecycle:
         self.failed = False
         self.torn_down = False
         self.report = {}
+        self.artifacts = {}
 
     def record(self, nodeid, label, value, unit="s"):
         self.report.setdefault(nodeid, []).append((label, value, unit))
+
+    def add_artifact(self, nodeid, name, rel_path, abs_path):
+        """Register a per-test report artifact (e.g. loss-curve PNG) for linking."""
+        self.artifacts.setdefault(nodeid, []).append((name, rel_path, abs_path))
 
 
 @pytest.fixture(scope="module")
@@ -108,8 +113,9 @@ def pytest_collection_modifyitems(items):
         "test_setup_tokenizer": 3,
         "test_training_run": 4,
         "test_metric": 5,
-        "test_print_results_table": 6,
-        "test_teardown": 7,
+        "test_loss_curve": 6,
+        "test_print_results_table": 7,
+        "test_teardown": 8,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
@@ -123,16 +129,34 @@ def pytest_runtest_makereport(item, call):
         return
     lc = item.funcargs.get("lifecycle")
     rows = getattr(lc, "report", {}).get(item.nodeid) if lc else None
-    if not rows:
+    artifacts = getattr(lc, "artifacts", {}).get(item.nodeid) if lc else None
+    if not rows and not artifacts:
         return
     try:
         import pytest_html
     except ImportError:
         return
-    body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
-    html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
+
     extras = getattr(report, "extras", [])
-    extras.append(pytest_html.extras.html(html))
+
+    if rows:
+        body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
+        html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
+        extras.append(pytest_html.extras.html(html))
+
+    for name, rel_path, abs_path in artifacts or []:
+        # Primary: a clickable link to the PNG bundled next to the report.
+        extras.append(pytest_html.extras.url(rel_path, name=name))
+        # Best-effort inline thumbnail (base64); never break the row if it fails.
+        try:
+            import base64
+
+            with open(abs_path, "rb") as fp:
+                b64 = base64.b64encode(fp.read()).decode("ascii")
+            extras.append(pytest_html.extras.png(b64, name=name))
+        except Exception:  # noqa: BLE001
+            pass
+
     report.extras = extras
 
 
