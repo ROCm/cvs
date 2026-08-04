@@ -1,0 +1,127 @@
+# vllm MI325X workload configs
+
+14 inference workloads for the `vllm` suite on MI325X, each shipped as a
+`single` / `distributed` pair — 28 configs, 28 sibling thresholds.
+
+## Layout
+
+Flat sibling pairs, same convention as `inferencex_atom_single`:
+
+```text
+mi325x_vllm_{model}_{precision}_{topology}_config.json
+mi325x_vllm_{model}_{precision}_{topology}_threshold.json
+```
+
+`topology` is `single` or `distributed`. Each config points `threshold_json` at
+its sibling filename, so **copy one variant at a time into its own directory**
+on the lab machine — `substitute_config` globs the config's parent for
+`*threshold.json` and raises on more than one match only when `threshold_json`
+is absent, but keeping one pair per directory avoids the trap entirely.
+
+## Topology
+
+| | TP | PP | nnodes |
+|---|---|---|---|
+| `single` | 8 | 1 | 1 |
+| `distributed` | 8 | 2 | 2 |
+
+**Deviation from the source workload list:** several workloads there specify
+TP=4 (DeepSeek V4 Flash, Kimi K2.6, Kimi K2.5, gpt-oss). These configs use
+**TP=8 uniformly**, per the "all distributed TP8PP2, all single TP8PP1"
+directive. Change `params.tensor_parallelism` if you want the per-model TP.
+
+## Sweep
+
+Every config carries all three concurrency-16 shapes:
+
+| combo suffix | ISL | OSL |
+|---|---|---|
+| `1k1k` | 1024 | 1024 |
+| `1k8k` | 1024 | 8192 |
+| `8k1k` | 8192 | 1024 |
+
+Only `1k1k` is referenced by `sweep.runs`, so that is the single cell a run
+executes. To run another shape, add it to `sweep.runs` **and** add the matching
+cell key to the threshold file — the coverage check compares the two.
+
+Cell keys follow the loader's format:
+
+```text
+single:      ISL=1024,OSL=1024,TP=8,CONC=16
+distributed: ISL=1024,OSL=1024,TP=8,PP=2,CONC=16
+```
+
+`random_range_ratio` is `0.0` so ISL/OSL are exact rather than jittered ±80%.
+
+## Thresholds
+
+`enforce_thresholds` is **false** on every config, and each threshold file
+carries permissive placeholder values for all 25 gated `client.*` metrics.
+Nothing gates; metrics are recorded. Replace the placeholders with measured
+values after a calibration run before flipping `enforce_thresholds` to true.
+
+## Before running — fill in the `<changeme>` fields
+
+Every environment-specific value is redacted. Per config:
+
+| Field | What to set |
+|---|---|
+| `model.id` | Local model path (e.g. `/models/GLM-5.1-FP8`) or an HF repo id |
+| `container.image` | The vLLM/ROCm image tag under test |
+| `container.runtime.args.volumes[1]` | Replace `<changeme-models-mount>` with the host models directory |
+| `roles.server.ib_netdev` | *(distributed only)* NCCL socket interface name, as reported by `ip -o link show` on the node |
+| `params.master_addr` | *(distributed only)* head node IP |
+
+`paths.models_dir` is `/models`, the in-container mount point — it is exported
+as `HF_HUB_CACHE`. When `model.id` is an absolute path under `/models`, vLLM
+loads straight from the mount and no download occurs.
+
+## Workload set
+
+| Config stem | Model | Notes |
+|---|---|---|
+| `llama33-70b_fp8` | Llama 3.3 70B FP8 | `kv-cache-dtype: fp8` |
+| `glm-51_fp8` | GLM 5.1 FP8 | |
+| `glm-52_fp8` | GLM 5.2 FP8 | |
+| `deepseek-v4-pro_fp8` | DeepSeek V4 Pro FP8 | |
+| `deepseek-v4-flash_fp8` | DeepSeek V4 Flash FP8 | |
+| `kimi-k26_mxfp4` | Kimi K2.6 MXFP4 | |
+| `kimi-k27-code_mxfp4` | Kimi K2.7 Code MXFP4 | |
+| `kimi-k25_w4a8` | Kimi K2.5 W4A8 | |
+| `qwen35-397b-a17b_bf16` | Qwen3.5 397B A17B BF16 | |
+| `minimax-m3_bf16` | MiniMax M3 BF16 | |
+| `mimo-v25-pro_fp8` | MiMo V2.5 Pro FP8 | |
+| `mistral-large-3_bf16` | Mistral Large 3 BF16 | Mistral-native format: `tokenizer-mode`/`config-format`/`load-format` all `mistral` |
+| `deepseek-r1-0528_fp8` | DeepSeek R1 0528 FP8 PTPC | |
+| `gpt-oss-20b_fp8` | GPT-OSS 20B FP8 | |
+
+Models with a custom tokenizer or modelling code set `trust-remote-code: true`;
+the suite mirrors that flag onto the bench client so it can load the same
+tokenizer.
+
+## Running
+
+```bash
+cd ~/cvs && source .cvs_venv/bin/activate
+
+VAR=mi325x_vllm_glm-51_fp8_single
+DIR=~/input/config_file/inference/vllm_mi325x_workloads/$VAR
+mkdir -p "$DIR"
+
+cvs copy-config inference/vllm_mi325x_workloads/${VAR}_config.json \
+  --output "$DIR/${VAR}_config.json"
+cvs copy-config inference/vllm_mi325x_workloads/${VAR}_threshold.json \
+  --output "$DIR/${VAR}_threshold.json"
+# then edit "$DIR/${VAR}_config.json" and fill in every <changeme>
+
+TS=$(date +%Y%m%d_%H%M%S)
+cvs run vllm \
+  --cluster_file ~/input/cluster_file/<your-cluster>.json \
+  --config_file "$DIR/${VAR}_config.json" \
+  --html=~/cvs_results/${TS}_${VAR}.html \
+  --self-contained-html \
+  --log-file=~/cvs_results/${TS}_${VAR}.log \
+  -vvv -s
+```
+
+Do not pass pytest function names — let the suite's default tests run.
