@@ -8,7 +8,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import pytest
 
 import re
-import os
 import time
 import json
 

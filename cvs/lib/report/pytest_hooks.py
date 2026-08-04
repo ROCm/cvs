@@ -96,7 +96,6 @@ def cvs_rundeck_bind_module_fixture(request, _cvs_rundeck_session):
 
 def attach_rundeck_row_extras(item, report) -> None:
     """Attach inference suite row extras when the active profile uses sweep data."""
-    from cvs.lib.report.profile import DeckProfile
     from cvs.lib.report.rundeck.config_adapter import resolve_report_config
 
     profile = get_resolved_profile(item.config)

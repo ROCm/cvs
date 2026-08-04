@@ -10,9 +10,8 @@ from __future__ import annotations
 import html
 from typing import Any, Callable
 
-from cvs.lib.report.cell_build import select_summary_cells
-from cvs.lib.report.formatting import fmt_num, link_or_text_html, status_badge_html
-from cvs.lib.report.rundeck.runtime.theme import render_launch_panel_html, report_css
+from cvs.lib.report.formatting import fmt_num, link_or_text_html
+from cvs.lib.report.rundeck.runtime.theme import render_launch_panel_html
 from cvs.lib.report.inference_payload import sweep_has_multi_shape_comparison
 from cvs.lib.report.render.cell_card import render_cell_card_html
 from cvs.lib.report.render.gate_matrix import render_gate_heatmap_html, render_gate_matrix_html

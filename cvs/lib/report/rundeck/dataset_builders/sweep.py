@@ -11,7 +11,6 @@ from typing import Any, Mapping
 
 from cvs.lib.report.cell_build import build_all_cells, select_summary_cells
 from cvs.lib.report.inference_payload import (
-    aggregate_lifecycle,
     build_chart_series,
     build_results_table,
     build_sweep_summaries,

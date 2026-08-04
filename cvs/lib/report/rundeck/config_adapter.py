@@ -8,7 +8,7 @@ Resolve deck profile hooks and build ``InferenceReportConfig`` from JSON profile
 from __future__ import annotations
 
 import importlib
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from cvs.lib.report.rundeck.config_builder import make_inference_report_config
 from cvs.lib.report.profile import DeckProfile
