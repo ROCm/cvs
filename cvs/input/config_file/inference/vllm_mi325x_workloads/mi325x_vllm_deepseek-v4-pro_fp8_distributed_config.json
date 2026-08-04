@@ -40,7 +40,8 @@
   "roles": {
     "server": {
       "serve_args": {
-        "trust-remote-code": true
+        "trust-remote-code": true,
+        "kv-cache-dtype": "fp8"
       },
       "env": {
         "HF_HUB_OFFLINE": "1",
