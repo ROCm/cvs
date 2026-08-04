@@ -63,17 +63,18 @@ def hf_token(variant_config):
 
 
 class _Lifecycle:
-    """Cross-test state for the per-combo lifecycle model.
-
-    Each combo's container launch, training, and teardown are timed sub-stages
-    of test_training. `report` maps each nodeid to its recorded (label, value,
-    unit) rows, which pytest_runtest_makereport renders into the HTML detail
-    panel. `torn_down` suppresses the orch fixture leak-guard: test_training
-    sets it True after its own teardown so the module-end finalizer does not
-    tear down a second time.
+    """Cross-test state for the lifecycle-as-tests model.
+ 
+    The container is launched once (test_launch_container), all sweep combos
+    run inside it (test_training), GPU memory is freed between combos via
+    stop_training_processes(), and the container is torn down once at the end
+    (test_teardown). `failed` lets a broken stage skip the rest. `torn_down`
+    suppresses the orch fixture leak-guard when test_teardown already ran.
+    `report` maps each nodeid to its recorded (label, value, unit) rows.
     """
 
     def __init__(self):
+        self.failed = False
         self.torn_down = False
         self.report = {}  # nodeid -> list[(label, value, unit)]
 
@@ -95,11 +96,11 @@ def train_res_dict():
 def orch(cluster_dict, variant_config, lifecycle):
     """Construct a ContainerOrchestrator and own a final teardown safety net.
 
-    Each combo's test_training launches and tears down its own container in a
-    finally block, setting lifecycle.torn_down=True afterwards. This finalizer
-    only fires when torn_down is False -- i.e. a combo crashed hard before its
-    own teardown ran -- so nothing leaks past the module without double-tearing
-    down in the normal case.
+    The container is launched once in test_launch_container and torn down once
+    in test_teardown, which sets lifecycle.torn_down=True. This finalizer only
+    fires when torn_down is False -- i.e. test_teardown did not run (e.g. a
+    crash before teardown) -- so nothing leaks past the module without
+    double-tearing down in the normal case.
     """
     container_block = _deep_merge(cluster_dict.get("container", {}), variant_config.container.model_dump())
     testsuite_config = {"orchestrator": "container", "container": container_block}
@@ -113,11 +114,12 @@ def orch(cluster_dict, variant_config, lifecycle):
 
 
 def pytest_collection_modifyitems(items):
-    """Pin test order: each combo's test_training (which owns the full container
-    lifecycle) runs before any test_throughput, which only reads saved results."""
+    """Pin lifecycle order: launch → training combos → metric → teardown."""
     rank = {
-        "test_training": 0,
-        "test_throughput": 1,
+        "test_launch_container": 0,
+        "test_training": 1,
+        "test_metric": 2,
+        "test_teardown": 3,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
@@ -137,13 +139,19 @@ def pytest_runtest_makereport(item, call):
         import pytest_html
     except ImportError:
         return
-    body = "".join(
-        f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>"
-        for label, value, unit in rows
-    )
-    html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
     extras = getattr(report, "extras", [])
-    extras.append(pytest_html.extras.html(html))
+    if rows:
+        body = "".join(
+            f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>"
+            for label, value, unit in rows
+        )
+        html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
+        extras.append(pytest_html.extras.html(html))
+    if report.failed:
+        props = dict(item.user_properties)
+        log_tail = props.get("training_log_tail")
+        if log_tail:
+            extras.append(pytest_html.extras.text(log_tail, name="Training Log (tail)"))
     report.extras = extras
 
 
@@ -153,6 +161,8 @@ def pytest_html_results_table_header(cells):
 
 
 def pytest_html_results_table_row(report, cells):
+    if not hasattr(report, 'user_properties'):
+        return
     props = dict(report.user_properties)
     has = "metric_value" in props
     val = props.get("metric_value")
