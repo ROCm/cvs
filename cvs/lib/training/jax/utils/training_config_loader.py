@@ -54,6 +54,21 @@ class RdmaLib(_Allow):
     container_dest_file: str = ""
 
 
+class ScalingBaseline(_Allow):
+    """Reference (typically 1-node) throughput for scaling-efficiency %.
+
+    `tokens_per_sec_total` is the TOTAL tokens/sec measured on a prior run of
+    `num_nodes` nodes (source it from a previous single-node run log). Scaling
+    efficiency % = throughput_N / ((N / num_nodes) * tokens_per_sec_total) * 100.
+
+    Leave `tokens_per_sec_total` at 0.0 to disable the metric (it then reports
+    record-only as None instead of gating on an uncalibrated baseline).
+    """
+
+    tokens_per_sec_total: float = 0.0
+    num_nodes: int = 1
+
+
 class TrainingConfig(_Allow):
     distributed: bool = True
     steps: int = 30
@@ -67,6 +82,7 @@ class TrainingConfig(_Allow):
     xla_flags: Dict[str, str] = {}
     nccl: NcclConfig = NcclConfig()
     jax_distributed: JaxDistributed = JaxDistributed()
+    scaling_baseline: ScalingBaseline = ScalingBaseline()
 
 
 def validate_thresholds_cover_training(

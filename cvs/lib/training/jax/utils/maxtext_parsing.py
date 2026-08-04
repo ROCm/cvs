@@ -24,6 +24,7 @@ TRAINING_METRICS = [
     ("tflops_per_sec_per_gpu", "TFLOP/s/GPU"),
     ("tokens_per_sec_per_gpu", "tok/s/GPU"),
     ("tokens_per_sec_total", "tok/s total"),
+    ("scaling_efficiency_pct", "%"),
     ("step_time_seconds", "s/step"),
     ("step_time_mean_ms", "ms/step"),
     ("step_time_p50_ms", "ms/step"),
@@ -45,6 +46,34 @@ GATED_METRICS = {
 # Example: "completed step: 50, seconds: 1.234, TFLOP/s/device: 185.4, Tokens/s/device: 3456.7, ..., loss: 6.543"
 _STEP_RE = re.compile(r"completed step:\s*(\d+)")
 _METRIC_RE = re.compile(r"(\S+?):\s*([\d.eE+\-]+)")
+
+
+def compute_scaling_efficiency(
+    tokens_per_sec_total,
+    num_nodes,
+    baseline_tokens_per_sec_total,
+    baseline_num_nodes=1,
+):
+    """Scaling efficiency % for a training run.
+
+    efficiency % = throughput_N / ((N / ref_N) * throughput_ref) * 100
+
+    where throughput_N is this run's total tokens/sec on `num_nodes` nodes and
+    throughput_ref is the reference (typically 1-node) total tokens/sec measured
+    on `baseline_num_nodes` nodes. 100% means perfectly linear scaling; lower
+    means communication/straggler overhead is eating into the added nodes.
+
+    Returns None (record-only) when any input is missing or non-positive so an
+    uncalibrated baseline never produces a misleading number or a crash.
+    """
+    if not tokens_per_sec_total or not baseline_tokens_per_sec_total:
+        return None
+    if not num_nodes or not baseline_num_nodes:
+        return None
+    ideal = (num_nodes / baseline_num_nodes) * baseline_tokens_per_sec_total
+    if ideal <= 0:
+        return None
+    return tokens_per_sec_total / ideal * 100.0
 
 
 def _percentile(values, q):
