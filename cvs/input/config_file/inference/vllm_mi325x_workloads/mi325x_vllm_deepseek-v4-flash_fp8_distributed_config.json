@@ -45,7 +45,8 @@
       },
       "env": {
         "HF_HUB_OFFLINE": "1",
-        "TRANSFORMERS_OFFLINE": "1"
+        "TRANSFORMERS_OFFLINE": "1",
+        "VLLM_ROCM_USE_AITER": "1"
       },
       "ib_hca_devices": "auto",
       "ib_netdev": "<changeme>"
