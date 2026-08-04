@@ -1,0 +1,48 @@
+{
+    "config": {
+      "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
+      "container_name": "flux-benchmark-dist",
+      "hf_token_file": "/home/{user-id}/.hf_token",
+      "hf_home": "/home/{user-id}",
+      "output_base_dir": "/home/{user-id}/cvs_flux_output",
+      "model_repo": "/data/models/FLUX.1-dev",
+      "model_rev": "",
+      "nnodes": 2,
+      "master_addr": "10.32.80.110",
+      "master_port": 29500,
+      "nccl_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "nccl_socket_ifname": "eno0",
+      "gloo_socket_ifname": "eno0",
+      "nccl_ib_gid_index": "3",
+      "nccl_debug": "INFO",
+      "container_config": {
+        "device_list": ["/dev/dri", "/dev/kfd"],
+        "volume_dict": {},
+        "env_dict": {}
+      }
+    },
+    "benchmark_params": {
+      "flux1_dev_t2i": {
+        "prompt": "A small cat",
+        "seed": 42,
+        "num_inference_steps": 25,
+        "max_sequence_length": 256,
+        "no_use_resolution_binning": true,
+        "warmup_steps": 1,
+        "warmup_calls": 5,
+        "num_repetitions": 25,
+        "height": 1024,
+        "width": 1024,
+        "ulysses_degree": 8,
+        "ring_degree": 2,
+        "use_torch_compile": true,
+        "torchrun_nproc": 8,
+        "expected_results": {
+          "auto": { "max_avg_pipe_time_s": 12.0 },
+          "mi300x": { "max_avg_pipe_time_s": 10.0 },
+          "mi355": { "max_avg_pipe_time_s": 7.0 }
+  
+        }
+      }
+    }
+  }
