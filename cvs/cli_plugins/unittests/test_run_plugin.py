@@ -15,6 +15,12 @@ class TestRunPlugin(unittest.TestCase):
     def setUp(self):
         self.plugin = RunPlugin()
 
+    def test_epilog_uses_valid_agfhc_suite(self):
+        """Keep help examples synchronized with the real test-suite name."""
+        epilog = self.plugin.get_epilog()
+        self.assertEqual(epilog.count("cvs run agfhc_cvs"), 4)
+        self.assertNotIn("cvs run agfhc ", epilog)
+
     @patch("cvs.cli_plugins.run_plugin.pytest.main")
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
     def test_run_test_single_function(self, mock_exit, mock_pytest_main):
