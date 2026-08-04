@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Mapping, Optional
 
 from cvs.lib.report.formatting import fmt_num
 from cvs.lib.report.types import InferenceReportConfig
-from cvs.lib.utils.verdict import _check_one
+from cvs.lib.report.verdict import _check_one
 
 
 def metric_pass(metric: str, actual: Any, spec: Optional[dict]) -> str:
