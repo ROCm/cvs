@@ -46,7 +46,8 @@
       "env": {
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
-        "VLLM_ROCM_USE_AITER": "1"
+        "VLLM_ROCM_USE_AITER": "1",
+        "GPU_ARCHS": "gfx942"
       }
     }
   },
