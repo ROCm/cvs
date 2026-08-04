@@ -71,7 +71,7 @@ Every environment-specific value is redacted. Per config:
 | `model.id` | Local model path (e.g. `/models/GLM-5.1-FP8`) or an HF repo id |
 | `container.image` | The vLLM/ROCm image tag under test |
 | `container.runtime.args.volumes[1]` | Replace `<changeme-models-mount>` with the host models directory |
-| `roles.server.ib_netdev` | *(distributed only)* NCCL socket interface name, as reported by `ip -o link show` on the node |
+| `roles.server.ib_netdev` | *(distributed only)* socket interface name for `NCCL_SOCKET_IFNAME` / `GLOO_SOCKET_IFNAME` / `TP_SOCKET_IFNAME`. Must be **UP and hold a routable IPv4 reaching the other node** — check `ip -o -4 addr show`, not just `ip -o link show`. An interface that exists but is DOWN/addressless fails engine init with gloo `Unable to find address for: <name>` |
 | `params.master_addr` | *(distributed only)* head node IP |
 
 `paths.models_dir` is `/models`, the in-container mount point — it is exported
