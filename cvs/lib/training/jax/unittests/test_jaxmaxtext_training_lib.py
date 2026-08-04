@@ -1,0 +1,236 @@
+'''
+Copyright 2025 Advanced Micro Devices, Inc.
+All rights reserved.
+
+Unit tests for cvs/lib/training/jax/jaxmaxtext_training_lib.py::MaxTextTrainingJob.
+
+The job talks to the outside world only through an injected orchestrator
+(`orch.exec` / `orch.exec_cmd_list`), so every test builds a job with a
+MagicMock orch and a lightweight SimpleNamespace variant -- no SSH, no
+container, no real sleeps (mirrors test_megatron_training_lib.py).
+'''
+
+import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from cvs.lib.training.jax.jaxmaxtext_training_lib import MaxTextTrainingJob
+
+
+def _training(**overrides):
+    t = SimpleNamespace(
+        steps=3,
+        distributed=True,
+        enable_checkpointing=False,
+        train_script="/workspace/maxtext/src/MaxText/train.py",
+        maxtext_config={
+            "per_device_batch_size": 2,
+            "max_target_length": 8192,
+            "scan_layers": True,
+            "mlp_activations": ["silu", "linear"],
+        },
+        nic_type="thor2",
+        env_vars={"NCCL_DEBUG": "ERROR"},
+        xla_flags={"xla_gpu_autotune_level": "0", "xla_gpu_enable_triton_gemm": "False"},
+        nccl=SimpleNamespace(
+            ib_hca="rdma0",
+            ib_hca_list="rdma0,rdma1",
+            socket_ifname="eno0",
+            gloo_socket_ifname="eno0",
+        ),
+        jax_distributed=SimpleNamespace(
+            coordinator_port="12346",
+            initialization_timeout_seconds="1800",
+            heartbeat_timeout_seconds="900",
+        ),
+        rdma_lib=SimpleNamespace(container_mount_file="", container_dest_file=""),
+        tokenizer=SimpleNamespace(hf_model_id="", tokenizer_path="/models/tok"),
+    )
+    for k, v in overrides.items():
+        setattr(t, k, v)
+    return t
+
+
+def _make_job(hosts=None, **training_overrides):
+    hosts = hosts or ["h0"]
+    orch = MagicMock()
+    orch.hosts = list(hosts)
+    orch.exec = MagicMock(return_value={})
+    orch.exec_cmd_list = MagicMock(return_value={})
+    variant = SimpleNamespace(
+        training=_training(**training_overrides),
+        model=SimpleNamespace(id="llama3.3-70b"),
+        paths=SimpleNamespace(log_dir="/logs", models_dir="/models"),
+    )
+    return MaxTextTrainingJob(orch, variant, hf_token="dummy"), orch
+
+
+def _log(steps=3):
+    lines = []
+    for i in range(steps):
+        lines.append(
+            f"I0804 08:14:00 1 metric_logger.py:196] completed step: {i}, seconds: 0.5, "
+            f"TFLOP/s/device: 200.0, Tokens/s/device: 25000.0, total_weights: 1, loss: {9.0 - i}"
+        )
+    return "\n".join(lines) + "\n"
+
+
+class ConstructorTests(unittest.TestCase):
+    def test_node_and_gpu_counts(self):
+        job, _ = _make_job(hosts=["h0", "h1"])
+        self.assertEqual(job.num_nodes, 2)
+        self.assertEqual(job.num_gpus, 16)
+        self.assertEqual(job.out_dir, "/logs/jaxmaxtext")
+
+    def test_build_xla_flags_str(self):
+        job, _ = _make_job()
+        s = job._build_xla_flags_str()
+        self.assertIn("--xla_gpu_autotune_level=0", s)
+        self.assertIn("--xla_gpu_enable_triton_gemm=False", s)
+
+
+class IsCompleteTests(unittest.TestCase):
+    def test_all_nodes_complete(self):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        orch.exec_cmd_list.return_value = {"h0": "1", "h1": "1"}
+        self.assertTrue(job.is_complete())
+
+    def test_one_node_incomplete(self):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        orch.exec_cmd_list.return_value = {"h0": "1", "h1": "0"}
+        self.assertFalse(job.is_complete())
+
+    def test_missing_host_output(self):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        orch.exec_cmd_list.return_value = {"h0": "1"}
+        self.assertFalse(job.is_complete())
+
+    def test_dict_shaped_result(self):
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec_cmd_list.return_value = {"h0": {"output": "1"}}
+        self.assertTrue(job.is_complete())
+
+
+class ScanForErrorsTests(unittest.TestCase):
+    def test_clean_log_no_raise(self):
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec_cmd_list.return_value = {"h0": _log()}
+        job._scan_for_errors()  # should not raise
+
+    def test_nccl_error_raises(self):
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec_cmd_list.return_value = {"h0": "some log\nNCCL ERROR: unhandled\n"}
+        with self.assertRaises(RuntimeError):
+            job._scan_for_errors()
+
+    def test_nan_metric_raises(self):
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec_cmd_list.return_value = {"h0": "completed step: 1, TFLOP/s/device: NaN\n"}
+        with self.assertRaises(RuntimeError):
+            job._scan_for_errors()
+
+
+class ParseResultsTests(unittest.TestCase):
+    def test_parses_from_node0_log(self):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        orch.exec_cmd_list.return_value = {"h0": _log(steps=3), "h1": ""}
+        summary = job.parse_results()
+        self.assertEqual(len(job.step_metrics), 3)
+        self.assertIn("training.final_loss", summary)
+        self.assertAlmostEqual(summary["training.final_loss"], 7.0)
+
+    def test_empty_log_raises(self):
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec_cmd_list.return_value = {"h0": "   "}
+        with self.assertRaises(RuntimeError):
+            job.parse_results()
+
+
+class SetupRdmaLibTests(unittest.TestCase):
+    def test_skip_when_paths_unset(self):
+        job, orch = _make_job()  # rdma_lib defaults are empty strings
+        job.setup_rdma_lib()
+        orch.exec.assert_not_called()
+
+    def test_raises_when_devinfo_mismatch(self):
+        job, orch = _make_job(
+            rdma_lib=SimpleNamespace(container_mount_file="/src.so", container_dest_file="/dst.so")
+        )
+        orch.exec.return_value = {"h0": "no matching hca here"}
+        with self.assertRaises(RuntimeError):
+            job.setup_rdma_lib()
+
+    def test_ok_when_devinfo_matches(self):
+        job, orch = _make_job(
+            rdma_lib=SimpleNamespace(container_mount_file="/src.so", container_dest_file="/dst.so")
+        )
+        orch.exec.return_value = {"h0": "hca_id: bnxt_re0\n"}
+        job.setup_rdma_lib()  # should not raise
+
+
+class SetupTokenizerTests(unittest.TestCase):
+    def test_skips_download_when_no_model_id(self):
+        job, orch = _make_job()  # hf_model_id="" by default
+        job.setup_tokenizer()
+        # Only the mkdir exec fires; no huggingface-cli download command.
+        joined = " ".join(str(c.args[0]) for c in orch.exec.call_args_list)
+        self.assertNotIn("huggingface-cli", joined)
+
+    def test_downloads_when_model_id_set(self):
+        job, orch = _make_job(
+            tokenizer=SimpleNamespace(hf_model_id="org/model", tokenizer_path="/models/tok")
+        )
+        job.setup_tokenizer()
+        joined = " ".join(str(c.args[0]) for c in orch.exec.call_args_list)
+        self.assertIn("huggingface-cli download", joined)
+        self.assertIn("org/model", joined)
+
+
+class BuildTrainingCmdTests(unittest.TestCase):
+    def test_distributed_per_rank_indices(self):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        job.build_training_cmd()
+        cmds = orch.exec_cmd_list.call_args.args[0]
+        self.assertEqual(len(cmds), 2)
+        self.assertIn("JAX_PROCESS_INDEX=0", cmds[0])
+        self.assertIn("NODE_RANK=0", cmds[0])
+        self.assertIn("JAX_PROCESS_INDEX=1", cmds[1])
+        self.assertIn("NODE_RANK=1", cmds[1])
+        # coordinator IP is host 0
+        self.assertIn("JAX_COORDINATOR_IP=h0", cmds[0])
+
+    def test_single_node_localhost_coordinator(self):
+        job, orch = _make_job(hosts=["h0"], distributed=False)
+        job.build_training_cmd()
+        cmds = orch.exec_cmd_list.call_args.args[0]
+        self.assertEqual(len(cmds), 1)
+        self.assertIn("JAX_COORDINATOR_IP=localhost", cmds[0])
+        self.assertIn("JAX_PROCESS_INDEX=0", cmds[0])
+
+
+class WriteMaxtextYamlTests(unittest.TestCase):
+    def test_yaml_content_has_run_name_steps_and_bools(self):
+        job, orch = _make_job()
+        job._write_maxtext_yaml()
+        written = " ".join(str(c.args[0]) for c in orch.exec.call_args_list)
+        self.assertIn("run_name: jaxmaxtext_llama3.3-70b", written)
+        self.assertIn("steps: 3", written)
+        # enable_checkpointing False -> rendered as lowercase yaml bool
+        self.assertIn("enable_checkpointing: false", written)
+        # scan_layers True -> lowercase bool
+        self.assertIn("scan_layers: true", written)
+
+
+class StartTrainingTests(unittest.TestCase):
+    @patch("cvs.lib.training.jax.jaxmaxtext_training_lib.time.sleep")
+    def test_launches_per_node_backgrounded(self, _sleep):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        job.start_training()
+        cmds = orch.exec_cmd_list.call_args.args[0]
+        self.assertEqual(len(cmds), 2)
+        self.assertTrue(all("nohup bash" in c for c in cmds))
+        _sleep.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()

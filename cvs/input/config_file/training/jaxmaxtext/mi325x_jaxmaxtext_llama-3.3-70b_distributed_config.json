@@ -165,6 +165,14 @@
     "convergence": {
       "target_metric": "auto",
       "target_value": 10.0
+    },
+
+    "_loss_curve_comment": "Row 32: sample training loss every `sample_every` steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
+    "loss_curve": {
+      "sample_every": 10,
+      "milestone_steps": [100, 500, 1000, 5000],
+      "max_slope": 0.0,
+      "enforce": true
     }
   }
 }

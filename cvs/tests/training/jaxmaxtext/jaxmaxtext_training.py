@@ -20,8 +20,14 @@ from cvs.lib.training.jax.utils.maxtext_parsing import (
     TRAINING_METRIC_UNITS,
     compute_scaling_efficiency,
     compute_convergence,
+    sample_loss_curve,
+    evaluate_loss_decreasing,
 )
+from cvs.lib.training.jax.utils.loss_curve import render_loss_curve_png
 from cvs.lib.utils.verdict import evaluate_all
+
+import uuid as _uuid
+from pathlib import Path as _Path
 
 import importlib.util as _ilu
 import pathlib as _pl
@@ -165,6 +171,64 @@ def test_metric(metric, training_res_dict, variant_config, lifecycle, request):
     if spec is None:
         return
     evaluate_all(results, {full: spec})
+
+
+def test_loss_curve(training_res_dict, variant_config, lifecycle, request):
+    """Row 32: sample the training loss, render a PNG, and gate on a downward trend.
+
+    Samples per-step loss (every N steps + milestone steps), fits a least-squares
+    slope, renders a PNG linked in this row, and fails when the curve is not
+    decreasing (unless loss_curve.enforce is False, or there are too few points).
+    """
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    step_metrics = training_res_dict.get("step_metrics")
+    if not step_metrics:
+        pytest.skip("no step metrics (training_run did not complete)")
+
+    cfg = variant_config.training.loss_curve
+    points = sample_loss_curve(step_metrics, cfg.sample_every, cfg.milestone_steps)
+    verdict = evaluate_loss_decreasing(points, cfg.max_slope)
+
+    # Render the PNG into the HTML report bundle dir when reporting is enabled,
+    # else into the run's log_dir. The clickable link is attached by the conftest
+    # makereport hook from the artifact stashed on `lifecycle`.
+    mgr = getattr(request.config, "_html_report_manager", None)
+    if mgr is not None and getattr(mgr, "is_enabled", False):
+        out_dir = mgr.log_dir
+    else:
+        out_dir = _Path(variant_config.paths.log_dir)
+    png_path = None
+    try:
+        _Path(out_dir).mkdir(parents=True, exist_ok=True)
+        fname = f"loss_curve_{variant_config.model.id}_{str(_uuid.uuid4()).split('-')[-1]}.png"
+        abs_path = _Path(out_dir) / fname
+        title = f"Training Loss Curve — {variant_config.model.id}"
+        png_path = render_loss_curve_png(points, abs_path, title=title)
+    except Exception as e:  # noqa: BLE001 - plotting must never break the verdict
+        log.warning("loss curve: could not prepare PNG output (%s)", e)
+
+    if png_path and mgr is not None and getattr(mgr, "is_enabled", False):
+        try:
+            rel_path = str(_Path(png_path).relative_to(mgr.htmlpath.parent))
+            lifecycle.add_artifact(request.node.nodeid, "Loss Curve", rel_path, str(png_path))
+        except Exception as e:  # noqa: BLE001
+            log.warning("loss curve: could not register report link (%s)", e)
+
+    if verdict is None:
+        slope = None
+    else:
+        _decreasing, slope, detail = verdict
+        log.info("loss curve: %s", detail)
+    request.node.user_properties.append(("metric_value", slope))
+    request.node.user_properties.append(("metric_unit", "loss/step"))
+
+    if verdict is None:
+        pytest.skip(f"loss curve needs >= 2 sampled points (got {len(points)})")
+    decreasing, _slope, detail = verdict
+    if cfg.enforce and not decreasing:
+        pytest.fail(f"training loss is not decreasing: {detail}")
 
 
 def test_teardown(orch, lifecycle, request):

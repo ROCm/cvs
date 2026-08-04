@@ -20,7 +20,7 @@ is injected at runtime from `len(orch.hosts)` via `cell_key(num_nodes=...)`.
 from __future__ import annotations
 
 import warnings
-from typing import Any, Dict, Literal
+from typing import Any, Dict, List, Literal
 
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Allow, _Forbid, substitute_config
 from cvs.lib.training.jax.utils.maxtext_parsing import GATED_METRICS
@@ -85,6 +85,22 @@ class Convergence(_Allow):
     target_value: float = 0.0
 
 
+class LossCurve(_Allow):
+    """Loss-curve (row 32) sampling + pass/fail settings.
+
+    `sample_every` and `milestone_steps` control which per-step losses are kept
+    for the plotted/asserted curve (keeps short runs non-empty). The verdict is
+    the least-squares slope of the sampled curve: the run passes when
+    `slope < max_slope` (default 0.0 = strictly decreasing). `enforce` gates the
+    test (fail on a non-decreasing curve); set False for record-only.
+    """
+
+    sample_every: int = 10
+    milestone_steps: List[int] = [100, 500, 1000, 5000]
+    max_slope: float = 0.0
+    enforce: bool = True
+
+
 class TrainingConfig(_Allow):
     distributed: bool = True
     steps: int = 30
@@ -100,6 +116,7 @@ class TrainingConfig(_Allow):
     jax_distributed: JaxDistributed = JaxDistributed()
     scaling_baseline: ScalingBaseline = ScalingBaseline()
     convergence: Convergence = Convergence()
+    loss_curve: LossCurve = LossCurve()
 
 
 def validate_thresholds_cover_training(
