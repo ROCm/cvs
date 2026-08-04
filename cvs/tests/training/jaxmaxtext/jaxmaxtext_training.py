@@ -15,7 +15,11 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.training.jax.jaxmaxtext_training_lib import MaxTextTrainingJob
-from cvs.lib.training.jax.utils.maxtext_parsing import TRAINING_METRICS, TRAINING_METRIC_UNITS
+from cvs.lib.training.jax.utils.maxtext_parsing import (
+    TRAINING_METRICS,
+    TRAINING_METRIC_UNITS,
+    compute_scaling_efficiency,
+)
 from cvs.lib.utils.verdict import evaluate_all
 
 import importlib.util as _ilu
@@ -108,6 +112,17 @@ def test_training_run(orch, variant_config, hf_token, training_res_dict, lifecyc
     results["training.wall_time_seconds"] = wall_time
     results["training.convergence_steps"] = variant_config.training.steps
     results["training.convergence_wall_time"] = wall_time
+
+    # Scaling efficiency % vs the configured 1-node throughput baseline. Cross-run
+    # metric: it needs num_nodes and the reference throughput, which the pure log
+    # parser does not have, so it is computed here after parse_results().
+    baseline = variant_config.training.scaling_baseline
+    results["training.scaling_efficiency_pct"] = compute_scaling_efficiency(
+        results.get("training.tokens_per_sec_total"),
+        job.num_nodes,
+        baseline.tokens_per_sec_total,
+        baseline.num_nodes,
+    )
 
     training_res_dict["results"] = results
     training_res_dict["step_metrics"] = job.step_metrics

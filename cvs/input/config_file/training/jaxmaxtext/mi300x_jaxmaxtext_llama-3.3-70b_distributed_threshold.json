@@ -5,6 +5,7 @@
     "training.tflops_per_sec_per_gpu": { "kind": "min", "value": 350.0 },
     "training.tokens_per_sec_per_gpu": { "kind": "min", "value": 700.0 },
     "training.tokens_per_sec_total":   { "kind": "min", "value": 0 },
+    "training.scaling_efficiency_pct": { "kind": "min", "value": 80.0 },
     "training.final_loss":             { "kind": "max", "value": 15.0 },
     "training.loss_decreased":         { "kind": "min", "value": 1 }
   }
