@@ -31,6 +31,9 @@ TRAINING_METRICS = [
     ("step_time_p95_ms", "ms/step"),
     ("final_loss", "loss"),
     ("loss_decreased", "bool"),
+    ("eval_loss", "loss"),
+    ("steps_to_target", "steps"),
+    ("time_to_target_seconds", "s"),
 ]
 TRAINING_METRIC_UNITS = dict(TRAINING_METRICS)
 
@@ -46,6 +49,20 @@ GATED_METRICS = {
 # Example: "completed step: 50, seconds: 1.234, TFLOP/s/device: 185.4, Tokens/s/device: 3456.7, ..., loss: 6.543"
 _STEP_RE = re.compile(r"completed step:\s*(\d+)")
 _METRIC_RE = re.compile(r"(\S+?):\s*([\d.eE+\-]+)")
+
+# Eval (validation) lines. MaxText emits an eval summary when eval_interval > 0,
+# but the exact wording is image-dependent and none of the current logs ran with
+# eval enabled -- so we match defensively: a line that mentions "eval" and carries
+# an eval-loss-like token. Both a step index and the loss are optional per line.
+# NOTE: confirm this against a real eval-enabled run and tighten if needed.
+_EVAL_LINE_RE = re.compile(r"\beval", re.I)
+_EVAL_STEP_RE = re.compile(r"step:?\s*(\d+)", re.I)
+_EVAL_LOSS_RE = re.compile(r"eval[_ ]?loss[:=]?\s*([\d.eE+\-]+)", re.I)
+# Fallback: a bare "loss: X" on an eval line when the token is not prefixed with "eval".
+_LOSS_RE = re.compile(r"\bloss[:=]?\s*([\d.eE+\-]+)", re.I)
+# Config-dump lines ("Config param target_eval_loss: 0.0") mention eval + loss but
+# are not eval results -- exclude them so they never register as eval points.
+_CONFIG_LINE_RE = re.compile(r"config param|pyconfig", re.I)
 
 
 def compute_scaling_efficiency(
@@ -74,6 +91,66 @@ def compute_scaling_efficiency(
     if ideal <= 0:
         return None
     return tokens_per_sec_total / ideal * 100.0
+
+
+def compute_convergence(step_metrics, eval_metrics, target_metric="auto", target_value=0.0):
+    """Steps and wall-clock to reach a target loss (row 33).
+
+    target_metric:
+      - "eval_loss": converge on validation loss (eval_metrics points)
+      - "train_loss": converge on per-step training loss (step_metrics)
+      - "auto": use eval_metrics when present, else training loss
+
+    A `target_value <= 0` disables the metric and returns (None, None) so an
+    uncalibrated target never gates or misleads.
+
+    Returns (steps_to_target, time_to_target_seconds), where the time is the
+    cumulative sum of per-step `seconds` up to and including the target step.
+    This is training compute time (it includes the step-0 compile spike and
+    excludes eval/checkpoint overhead), not true wall-clock. Returns (None, None)
+    when disabled or the target is never reached. Never raises.
+    """
+    if not target_value or target_value <= 0:
+        return (None, None)
+
+    use_eval = target_metric == "eval_loss" or (target_metric == "auto" and bool(eval_metrics))
+
+    # Cumulative training seconds indexed by step, from the per-step lines.
+    cum = {}
+    running = 0.0
+    for s in step_metrics or []:
+        sec = s.get("seconds")
+        if isinstance(sec, (int, float)):
+            running += sec
+        step = s.get("step")
+        if step is not None:
+            cum[step] = running
+
+    target_step = None
+    if use_eval:
+        for e in eval_metrics or []:
+            loss = e.get("eval_loss")
+            if loss is not None and e.get("step") is not None and loss <= target_value:
+                target_step = e.get("step")
+                break
+    else:
+        for s in step_metrics or []:
+            loss = s.get("loss")
+            if loss is not None and s.get("step") is not None and loss <= target_value:
+                target_step = s.get("step")
+                break
+
+    if target_step is None:
+        return (None, None)
+
+    time_to_target = cum.get(target_step)
+    if time_to_target is None and cum:
+        # An eval step may not line up with a training-step key; take the
+        # cumulative time at the latest training step at or before the target.
+        prior = [t for st, t in cum.items() if st <= target_step]
+        time_to_target = max(prior) if prior else None
+
+    return (target_step, time_to_target)
 
 
 def _percentile(values, q):
@@ -134,6 +211,38 @@ def extract_step_metrics(log_text):
     return steps
 
 
+def extract_eval_metrics(log_text):
+    """Extract validation-loss points from a MaxText training log (row 34).
+
+    Returns a list of ``{"step": int|None, "eval_loss": float}`` dicts, one per
+    eval summary line. Defensive by design: MaxText only emits eval output when
+    ``eval_interval > 0`` and the exact wording is image-dependent, so we accept
+    any non-config line that mentions "eval" and carries a loss token. Config
+    dumps (e.g. "Config param target_eval_loss: 0.0") are excluded. Returns
+    ``[]`` when eval was not enabled or the format is unrecognized.
+
+    NOTE: validate the matched format against a real eval-enabled run and
+    tighten the regex if MaxText's eval line differs from what is assumed here.
+    """
+    evals = []
+    for line in log_text.splitlines():
+        if not _EVAL_LINE_RE.search(line):
+            continue
+        if _CONFIG_LINE_RE.search(line):
+            continue
+        m = _EVAL_LOSS_RE.search(line) or _LOSS_RE.search(line)
+        if not m:
+            continue
+        try:
+            loss = float(m.group(1))
+        except ValueError:
+            continue
+        step_m = _EVAL_STEP_RE.search(line)
+        step = int(step_m.group(1)) if step_m else None
+        evals.append({"step": step, "eval_loss": loss})
+    return evals
+
+
 def parse_training_log(log_text, num_gpus, avg_last_n=10):
     """Parse MaxText training log into namespaced training.* metrics dict.
 
@@ -155,6 +264,7 @@ def parse_training_log(log_text, num_gpus, avg_last_n=10):
             "training.step_time_p95_ms": None,
             "training.final_loss": None,
             "training.loss_decreased": None,
+            "training.eval_loss": None,
         }
 
     # Filter to steps that have perf metrics (skip rampup steps without them).
@@ -190,6 +300,10 @@ def parse_training_log(log_text, num_gpus, avg_last_n=10):
     if first_loss is not None and final_loss is not None:
         loss_decreased = 1 if final_loss < first_loss else 0
 
+    # Validation loss (row 34): last eval point, or None when eval was disabled.
+    eval_metrics = extract_eval_metrics(log_text)
+    eval_loss = eval_metrics[-1]["eval_loss"] if eval_metrics else None
+
     return {
         "training.tflops_per_sec_per_gpu": tflops,
         "training.tokens_per_sec_per_gpu": tokens_per_gpu,
@@ -200,4 +314,5 @@ def parse_training_log(log_text, num_gpus, avg_last_n=10):
         "training.step_time_p95_ms": step_time_p95_ms,
         "training.final_loss": final_loss,
         "training.loss_decreased": loss_decreased,
+        "training.eval_loss": eval_loss,
     }

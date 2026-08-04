@@ -24,7 +24,11 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.lib.training.jax.utils.maxtext_parsing import parse_training_log, extract_step_metrics
+from cvs.lib.training.jax.utils.maxtext_parsing import (
+    parse_training_log,
+    extract_step_metrics,
+    extract_eval_metrics,
+)
 
 log = globals.log
 
@@ -66,6 +70,7 @@ class MaxTextTrainingJob:
         self.num_gpus = self.num_nodes * 8
 
         self.step_metrics = []
+        self.eval_metrics = []
         self.summary_metrics = {}
 
         self._poll_wait_s = 60
@@ -372,6 +377,7 @@ class MaxTextTrainingJob:
             raise RuntimeError(f"empty/missing training log: {log_file}")
 
         self.step_metrics = extract_step_metrics(log_text)
+        self.eval_metrics = extract_eval_metrics(log_text)
         self.summary_metrics = parse_training_log(log_text, self.num_gpus)
         return dict(self.summary_metrics)
 

@@ -72,7 +72,9 @@
       "ici_tensor_parallelism": 1,
       "ici_pipeline_parallelism": 1,
       "max_segments_per_seq": 32,
-      "skip_first_n_steps_for_profiler": 3
+      "skip_first_n_steps_for_profiler": 3,
+      "eval_interval": -1,
+      "eval_steps": -1
     },
 
     "tokenizer": {
@@ -110,6 +112,12 @@
       "xla_gpu_enable_command_buffer": "",
       "xla_gpu_enable_cublaslt": "True",
       "xla_gpu_autotune_level": "0"
+    },
+
+    "_convergence_comment": "to enable validation loss set eval_interval > 0 (and eval_steps) in maxtext_config; this needs a validation dataset (eval_split/eval_dataset_name). target_value <= 0 disables convergence (record-only). target_metric 'auto' uses eval_loss when eval runs, else training loss.",
+    "convergence": {
+      "target_metric": "auto",
+      "target_value": 0.0
     }
   }
 }

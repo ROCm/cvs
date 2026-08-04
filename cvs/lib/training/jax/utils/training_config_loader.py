@@ -69,6 +69,22 @@ class ScalingBaseline(_Allow):
     num_nodes: int = 1
 
 
+class Convergence(_Allow):
+    """Target for convergence / time-to-target-accuracy (row 33).
+
+    `target_metric` selects the loss series to converge on:
+      - "eval_loss"  : validation loss (requires eval enabled + parseable)
+      - "train_loss" : per-step training loss
+      - "auto"       : eval loss when eval points exist, else training loss
+
+    `target_value` is the loss threshold to reach; <= 0 disables the metric
+    (steps_to_target / time_to_target_seconds report record-only as None).
+    """
+
+    target_metric: Literal["auto", "train_loss", "eval_loss"] = "auto"
+    target_value: float = 0.0
+
+
 class TrainingConfig(_Allow):
     distributed: bool = True
     steps: int = 30
@@ -83,6 +99,7 @@ class TrainingConfig(_Allow):
     nccl: NcclConfig = NcclConfig()
     jax_distributed: JaxDistributed = JaxDistributed()
     scaling_baseline: ScalingBaseline = ScalingBaseline()
+    convergence: Convergence = Convergence()
 
 
 def validate_thresholds_cover_training(
