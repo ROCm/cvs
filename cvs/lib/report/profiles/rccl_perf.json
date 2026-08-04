@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "profile_id": "rccl_perf_rundeck",
+  "suite_id": "rccl_perf",
+  "report_basename": "rccl_perf_run_deck",
+  "title": "RCCL Performance Run Deck",
+  "subtitle": "RCCL bandwidth curves · message size sweep",
+  "footer": "CVS rccl_perf · render-only",
+  "link_name": "RCCL Performance Run Deck",
+  "dataset_builder": "series",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "variant_config"
+  },
+  "series": {
+    "x_field": "size",
+    "y_fields": ["bus_bw", "alg_bw"]
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {"type": "line_chart", "id": "bandwidth", "title": "Bus bandwidth", "bind": "datasets.series", "series": {"y_field": "bus_bw", "unit": "GB/s"}},
+    {"type": "line_chart", "id": "alg-bandwidth", "title": "Algorithm bandwidth", "bind": "datasets.series", "series": {"y_field": "alg_bw", "unit": "GB/s"}},
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}

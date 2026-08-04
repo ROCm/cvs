@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "profile_id": "rccl_regression_rundeck",
+  "suite_id": "rccl_regression",
+  "report_basename": "rccl_regression_run_deck",
+  "title": "RCCL Regression Run Deck",
+  "subtitle": "RCCL golden compare · bandwidth heatmap",
+  "footer": "CVS rccl_regression · render-only",
+  "link_name": "RCCL Regression Run Deck",
+  "dataset_builder": "matrix",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "cvs_results_dict",
+    "reference": "golden_results",
+    "variant": "variant_config"
+  },
+  "matrix": {
+    "value_field": "bus_bw"
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {"type": "heatmap", "id": "compare", "title": "Golden compare", "bind": "datasets.matrix"},
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}
