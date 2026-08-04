@@ -20,15 +20,15 @@ is absent, but keeping one pair per directory avoids the trap entirely.
 
 ## Topology
 
-| | TP | PP | nnodes |
-|---|---|---|---|
-| `single` | 8 | 1 | 1 |
-| `distributed` | 8 | 2 | 2 |
+| | PP | nnodes |
+|---|---|---|
+| `single` | 1 | 1 |
+| `distributed` | 2 | 2 |
 
-**Deviation from the source workload list:** several workloads there specify
-TP=4 (DeepSeek V4 Flash, Kimi K2.6, Kimi K2.5, gpt-oss). These configs use
-**TP=8 uniformly**, per the "all distributed TP8PP2, all single TP8PP1"
-directive. Change `params.tensor_parallelism` if you want the per-model TP.
+TP is **per model**, following the source workload list: TP=4 for
+`deepseek-v4-flash`, `kimi-k26`, `kimi-k25` and `gpt-oss-20b`; TP=8 for
+everything else. A TP=4 distributed variant still spans 2 nodes via PP=2,
+using 4 GPUs per node.
 
 ## Sweep
 
@@ -47,9 +47,11 @@ cell key to the threshold file — the coverage check compares the two.
 Cell keys follow the loader's format:
 
 ```text
-single:      ISL=1024,OSL=1024,TP=8,CONC=16
-distributed: ISL=1024,OSL=1024,TP=8,PP=2,CONC=16
+single:      ISL=1024,OSL=1024,TP=<tp>,CONC=16
+distributed: ISL=1024,OSL=1024,TP=<tp>,PP=2,CONC=16
 ```
+
+`<tp>` is the config's own `params.tensor_parallelism` (4 or 8).
 
 `random_range_ratio` is `0.0` so ISL/OSL are exact rather than jittered ±80%.
 
