@@ -19,6 +19,7 @@ from cvs.lib.training.jax.utils.maxtext_parsing import (
     TRAINING_METRICS,
     TRAINING_METRIC_UNITS,
     compute_scaling_efficiency,
+    compute_convergence,
 )
 from cvs.lib.utils.verdict import evaluate_all
 
@@ -123,6 +124,19 @@ def test_training_run(orch, variant_config, hf_token, training_res_dict, lifecyc
         baseline.tokens_per_sec_total,
         baseline.num_nodes,
     )
+
+    # Convergence / time-to-target-accuracy (row 33). Cross-series metric: it
+    # needs the configured target and both the per-step and eval loss series,
+    # so it is computed here rather than in the pure log parser.
+    conv = variant_config.training.convergence
+    steps_to_target, time_to_target = compute_convergence(
+        job.step_metrics,
+        job.eval_metrics,
+        conv.target_metric,
+        conv.target_value,
+    )
+    results["training.steps_to_target"] = steps_to_target
+    results["training.time_to_target_seconds"] = time_to_target
 
     training_res_dict["results"] = results
     training_res_dict["step_metrics"] = job.step_metrics
