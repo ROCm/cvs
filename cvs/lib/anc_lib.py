@@ -44,10 +44,20 @@ from cvs.lib.run_config_paths import resolve_runner_results_base
 log = globals.log
 
 # --- Install locations ---------------------------------------------------
+# Default install prefix laid down by the deb/rpm packages and by a legacy tar
+# install. TAR installs may relocate elsewhere via config anc.ANC_INSTALL_PATH
+# (see resolve_anc_install_prefix); deb/rpm always use this fixed prefix because
+# their archives bake in absolute locations.
 ANC_TOOLS_PREFIX = "/opt/amdtools"
-# ANC directory and entrypoint laid down by the deb/rpm packages.
+# ANC directory and entrypoint at the DEFAULT prefix. Per-install paths (which
+# honour a relocated tar prefix) come from resolve_anc_paths, not these; these
+# remain the deb/rpm layout and the fallback when no relocation is configured.
 ANC_DIR = f"{ANC_TOOLS_PREFIX}/anc"
 ANC_BIN = f"{ANC_DIR}/anc.py"
+
+# config anc.ANC_INSTALL_PATH: TAR-ONLY relocatable install prefix. Blank/absent
+# -> ANC_TOOLS_PREFIX. deb/rpm ignore it entirely (fixed archive locations).
+ANC_INSTALL_PATH_KEY = "ANC_INSTALL_PATH"
 
 # validate_exe_paths.py ships beside the anc test suites.
 RESOURCES_DIR = os.path.join(
@@ -500,9 +510,69 @@ def detect_package_type(anc_release_url):
     )
 
 
-def node_version_matches(phdl, expected_version):
+# Install paths for one run: the prefix ANC is extracted under, plus the derived
+# anc/ dir and anc.py entrypoint. For deb/rpm these are always the fixed default
+# layout; for tar they honour a relocated config anc.ANC_INSTALL_PATH.
+AncPaths = namedtuple("AncPaths", ["prefix", "anc_dir", "anc_bin"])
+
+
+def resolve_anc_install_prefix(config_dict, pkg_type):
     '''
-    Query ``ANC_BIN --version`` on every node and report version matches.
+    Resolve the install PREFIX ANC is laid down under for this run.
+
+    Only tar installs are relocatable: when pkg_type == "tar" and config
+    anc.ANC_INSTALL_PATH is set to a non-blank value, that value (leading "~"
+    expanded; "{home}"/other tokens are already substituted by the config
+    placeholder pass in the ANC conftest) is the prefix. A blank/absent value,
+    or ANY deb/rpm install, resolves to the fixed ANC_TOOLS_PREFIX because those
+    packages carry predefined absolute locations baked into their archive.
+
+    The returned prefix is normalised to an absolute path with no trailing slash
+    so it composes cleanly into "<prefix>/anc/anc.py".
+    '''
+    prefix = ANC_TOOLS_PREFIX
+    if pkg_type == "tar":
+        raw = config_dict.get("anc", {}).get(ANC_INSTALL_PATH_KEY)
+        if raw and str(raw).strip():
+            prefix = os.path.expanduser(str(raw).strip())
+    return os.path.abspath(prefix)
+
+
+def resolve_anc_paths(config_dict, pkg_type):
+    '''
+    Build the AncPaths (prefix, anc_dir, anc_bin) for this install flavour.
+
+    anc_dir is "<prefix>/anc" and anc_bin is "<prefix>/anc/anc.py", mirroring the
+    layout the release archives lay down under any prefix.
+    '''
+    prefix = resolve_anc_install_prefix(config_dict, pkg_type)
+    anc_dir = f"{prefix}/anc"
+    return AncPaths(prefix=prefix, anc_dir=anc_dir, anc_bin=f"{anc_dir}/anc.py")
+
+
+def resolve_anc_paths_from_config(config_dict):
+    '''
+    Resolve AncPaths from config alone, detecting the package flavour from
+    anc.anc_release_url. Used by run-time consumers (version check, group run,
+    ldconfig-independent path lookups) that need the live install location
+    without re-passing pkg_type. Falls back to the default prefix if the URL is
+    missing or its flavour cannot be determined.
+    '''
+    url = config_dict.get("anc", {}).get("anc_release_url") or ""
+    try:
+        pkg_type = detect_package_type(url) if url and str(url).strip() else ""
+    except ValueError:
+        pkg_type = ""
+    return resolve_anc_paths(config_dict, pkg_type)
+
+
+def node_version_matches(phdl, expected_version, anc_bin=ANC_BIN):
+    '''
+    Query ``<anc_bin> --version`` on every node and report version matches.
+
+    ``anc_bin`` is the anc.py entrypoint path; it defaults to the fixed-prefix
+    ANC_BIN but callers pass the per-install path (which may be a relocated tar
+    prefix) so a version check hits the location ANC was actually installed to.
 
     The version is matched as a whole token (bounded by non-version characters),
     not a substring, so expecting "1.4.7" does NOT match "1.4.70" or "1.4.7-rc".
@@ -512,7 +582,7 @@ def node_version_matches(phdl, expected_version):
       standalone version token in the node's ``anc.py --version`` output (False
       if ANC is absent or reports a different version).
     '''
-    out_dict = phdl.exec(f"{ANC_BIN} --version 2>&1 || true", timeout=60)
+    out_dict = phdl.exec(f"{anc_bin} --version 2>&1 || true", timeout=60)
     print_test_output(log, out_dict)
     # Boundaries are any char that isn't part of a version token (digits, dots,
     # hyphens, alphanumerics) so "1.4.7" won't match inside "1.4.70"/"1.4.7-rc".
@@ -548,6 +618,13 @@ def install_anc(phdl, cluster_dict, config_dict):
     pkg_type = detect_package_type(anc_release_url)
     log.info("ANC package type detected from archive: %s", pkg_type)
 
+    # Per-install paths: tar honours a relocated anc.ANC_INSTALL_PATH; deb/rpm
+    # always resolve to the fixed default prefix. The version prechecks and
+    # post-verify below query anc.py at this resolved location so a relocated
+    # tar install is detected/verified where it actually lives.
+    paths = resolve_anc_paths(config_dict, pkg_type)
+    log.info("ANC install prefix for this run: %s (anc.py -> %s)", paths.prefix, paths.anc_bin)
+
     expected = _expected_nodes(cluster_dict)
 
     # Precheck: skip install only when EVERY expected node already runs the
@@ -555,7 +632,7 @@ def install_anc(phdl, cluster_dict, config_dict):
     # == None -> falsy, so we never skip on incomplete coverage.
     if anc_version:
         log.info("ANC precheck: expecting version %s", anc_version)
-        matches = node_version_matches(phdl, anc_version)
+        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin)
         if expected and all(matches.get(host) for host in expected):
             log.info(
                 "ANC %s already installed on all nodes; skipping install",
@@ -585,7 +662,7 @@ def install_anc(phdl, cluster_dict, config_dict):
     # detail focused).
     if anc_version and not globals.error_list:
         log.info("ANC final verification: expecting version %s", anc_version)
-        matches = node_version_matches(phdl, anc_version)
+        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin)
         for host in expected:
             if host not in matches:
                 fail_test(
@@ -595,7 +672,7 @@ def install_anc(phdl, cluster_dict, config_dict):
                 log.info("Node %s: ANC version %s confirmed", host, anc_version)
             else:
                 fail_test(
-                    f"ANC version verification failed on {host}: expected {anc_version} from '{ANC_BIN} --version'"
+                    f"ANC version verification failed on {host}: expected {anc_version} from '{paths.anc_bin} --version'"
                 )
 
     update_test_result()
@@ -723,6 +800,26 @@ def _install_anc_deb(phdl, cluster_dict, config_dict):
     _fail_unreachable_nodes(cluster_dict, out_dict, ".deb install")
 
 
+def _sudo_prefix_snippet(prefix):
+    '''
+    Build a shell snippet that sets ``SUDO`` to "sudo" or "" for writing under
+    ``prefix``, honouring the "auto: sudo only if not writable" policy.
+
+    We cannot test the (not-yet-existing) prefix directly, so walk up to its
+    deepest EXISTING ancestor and test whether THAT is writable by the current
+    user. A user-writable ancestor (e.g. the home dir for a relocated install)
+    means we can mkdir/extract without sudo, so files land user-owned and can be
+    cleaned up later without root. A non-writable ancestor (e.g. /opt) selects
+    sudo. The result is exported as ``$SUDO`` for the extract/rewrite commands.
+    '''
+    return (
+        f"probe='{prefix}'; "
+        f"while [ ! -e \"$probe\" ] && [ \"$probe\" != '/' ]; do probe=$(dirname \"$probe\"); done; "
+        f"if [ -w \"$probe\" ]; then SUDO=''; else SUDO='sudo'; fi; "
+        f"echo \"ANC install: prefix '{prefix}' -> $( [ -n \"$SUDO\" ] && echo 'sudo' || echo 'no-sudo (user-writable)' )\""
+    )
+
+
 def _install_anc_tar(phdl, cluster_dict, config_dict):
     '''
     Install ANC from the tar release on remote nodes (fresh install each run).
@@ -733,10 +830,24 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
         ccx_tests, computerocker, difect, firexs2, maxcorestim, maxiostim,
         memrocker, miidct, mithac, rvs, transferbench)
 
-    Extracting BOTH into ``ANC_TOOLS_PREFIX`` (/opt/amdtools) reproduces exactly
-    the layout the deb/rpm packages install, so ANC ends up at ``ANC_BIN``
-    (/opt/amdtools/anc/anc.py) and the content YAMLs' hard-coded
-    ``exe_path: /opt/amdtools/...`` entries resolve.
+    Install PREFIX is relocatable (config anc.ANC_INSTALL_PATH): tar releases are
+    the ONLY relocatable flavour, because deb/rpm packages bake absolute paths
+    into their archive. A blank/absent ANC_INSTALL_PATH keeps the legacy default
+    (/opt/amdtools). Extracting BOTH inner tarballs into ``<prefix>`` reproduces
+    the deb/rpm layout under that prefix, so ANC ends up at ``<prefix>/anc/anc.py``.
+
+    The content YAMLs ship absolute ``exe_path: /opt/amdtools/<tool>`` entries.
+    When the prefix is relocated, those entries would point at the old location,
+    so after extraction every ``exe_path`` under ``<prefix>/anc/content`` is
+    rewritten from ``/opt/amdtools`` to ``<prefix>`` (relative entries like
+    ``./exe`` and system entries like ``/usr/bin`` are untouched because the
+    substitution only rewrites strings containing ``/opt/amdtools``).
+
+    sudo policy (auto): extraction and the exe_path rewrite use sudo ONLY when
+    the prefix's deepest existing ancestor is not user-writable (e.g. /opt). A
+    user-writable prefix (a home-dir install) is extracted WITHOUT sudo so the
+    tree is user-owned. Running ANC itself always uses sudo regardless (hardware
+    access), so passwordless sudo is still required to run the groups.
 
     Algorithm (per node):
       1. Download the outer archive into a private ``mktemp -d`` staging dir. A
@@ -744,28 +855,40 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
          the ~1.3 GB of archives never linger.
       2. Extract the outer archive to expose the two inner tarballs, derive the
          set of TOP-LEVEL folders they provide, and ``rm -rf`` each of those
-         under /opt/amdtools so the install is clean (a stale file removed in a
+         under ``<prefix>`` so the install is clean (a stale file removed in a
          new release does not survive as an overlaid leftover). Only the folders
-         the release actually ships are touched; unrelated /opt/amdtools content
-         is left alone.
-      3. Extract both inner tarballs into /opt/amdtools. The top-level folders
-         are thus replaced wholesale; the files inside arrange themselves from
-         the archive. ``content/base`` (a no_op placeholder) is kept, matching
-         the deb/rpm install.
-
-    Extraction into /opt/amdtools needs sudo, so the runner must have
-    passwordless sudo (already required to run ANC).
+         the release actually ships are touched; unrelated content is left alone.
+      3. Extract both inner tarballs into ``<prefix>``, then rewrite exe_path
+         entries if relocated.
 
     Records failures via fail_test; the caller (install_anc) owns the single
     update_test_result reporting call.
     '''
     anc_cfg = config_dict["anc"]
     anc_release_url = anc_cfg["anc_release_url"]
+    paths = resolve_anc_paths(config_dict, "tar")
+    prefix = paths.prefix
+    anc_bin = paths.anc_bin
+    content_dir = f"{paths.anc_dir}/content"
+    relocated = prefix != ANC_TOOLS_PREFIX
 
-    log.info("ANC: install tar release on remote nodes (staging=mktemp temp dir, install prefix=%s)", ANC_TOOLS_PREFIX)
+    log.info("ANC: install tar release on remote nodes (staging=mktemp temp dir, install prefix=%s)", prefix)
+
+    # Rewrite exe_path entries only when relocated (a default-prefix install
+    # keeps the archive's own /opt/amdtools entries). The substitution targets
+    # content YAMLs and only rewrites the /opt/amdtools token, leaving relative
+    # (./exe) and system (/usr/bin) exe_path values intact.
+    rewrite_snippet = ""
+    if relocated:
+        rewrite_snippet = (
+            f"echo 'Rewriting exe_path entries {ANC_TOOLS_PREFIX} -> {prefix}...'; "
+            f"$SUDO find '{content_dir}' -type f \\( -name '*.yml' -o -name '*.yaml' \\) "
+            f"-exec sed -i 's#{ANC_TOOLS_PREFIX}#{prefix}#g' {{}} +; "
+        )
 
     install_cmd = (
         f"set -e; "
+        f"{_sudo_prefix_snippet(prefix)}; "
         # Private staging dir; trap removes it on success AND failure so the
         # large download/unpack never leaks onto the node.
         f"STAGE=$(mktemp -d); "
@@ -780,17 +903,18 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
         f"echo 'Determining top-level tool folders...'; "
         f"tops=$( {{ tar -tzf anc-tool*.tar.gz; tar -tzf anc-content*.tar.gz; }} "
         f"| sed 's#^\\./##' | awk -F/ '{{print $1}}' | grep -vE '^[.]?$' | sort -u ); "
-        f"sudo mkdir -p '{ANC_TOOLS_PREFIX}'; "
-        f"echo 'Replacing top-level folders under {ANC_TOOLS_PREFIX}...'; "
-        f"for name in $tops; do echo \"  {ANC_TOOLS_PREFIX}/$name\"; sudo rm -rf \"{ANC_TOOLS_PREFIX}/$name\"; done; "
-        f"echo 'Extracting anc-tool archive to {ANC_TOOLS_PREFIX}...'; "
-        f"sudo tar -xzf anc-tool*.tar.gz -C '{ANC_TOOLS_PREFIX}'; "
-        f"echo 'Extracting anc-content archive to {ANC_TOOLS_PREFIX}...'; "
-        f"sudo tar -xzf anc-content*.tar.gz -C '{ANC_TOOLS_PREFIX}'; "
+        f"$SUDO mkdir -p '{prefix}'; "
+        f"echo 'Replacing top-level folders under {prefix}...'; "
+        f"for name in $tops; do echo \"  {prefix}/$name\"; $SUDO rm -rf \"{prefix}/$name\"; done; "
+        f"echo 'Extracting anc-tool archive to {prefix}...'; "
+        f"$SUDO tar -xzf anc-tool*.tar.gz -C '{prefix}'; "
+        f"echo 'Extracting anc-content archive to {prefix}...'; "
+        f"$SUDO tar -xzf anc-content*.tar.gz -C '{prefix}'; "
+        f"{rewrite_snippet}"
         f"echo '--- Installed top-level tools ---'; "
-        f"ls '{ANC_TOOLS_PREFIX}' | sort; "
+        f"ls '{prefix}' | sort; "
         f"echo '--- Verification ---'; "
-        f"test -f '{ANC_BIN}' && echo 'ANC_INSTALL_SUCCESS'"
+        f"test -f '{anc_bin}' && echo 'ANC_INSTALL_SUCCESS'"
     )
 
     out_dict = phdl.exec(install_cmd, timeout=_install_timeout(anc_cfg))
@@ -798,9 +922,7 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
 
     for host, output in out_dict.items():
         if "ANC_INSTALL_SUCCESS" not in output:
-            fail_test(
-                f"ANC installation failed on {host}: '{ANC_BIN}' not found after extracting into {ANC_TOOLS_PREFIX}"
-            )
+            fail_test(f"ANC installation failed on {host}: '{anc_bin}' not found after extracting into {prefix}")
         else:
             log.info("Node %s: ANC directory installed successfully", host)
 
@@ -812,7 +934,6 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
         return
 
     # Validate exe_path entries with the bundled script.
-    content_dir = f"{ANC_DIR}/content"
     local_script = os.path.join(RESOURCES_DIR, "validate_exe_paths.py")
     remote_script = "/tmp/validate_exe_paths.py"
 
@@ -934,20 +1055,24 @@ def _anc_installed(phdl, cluster_dict, config_dict):
     '''
     Report whether ANC is already installed on every expected node.
 
+    "Installed" is judged at the per-install anc.py location (a relocated tar
+    prefix when configured, else the default), so a run configured for a new
+    prefix does not treat a leftover install at the old location as present.
     When ``anc.anc_version`` is set, "installed" means every node reports that
-    version (reuses ``node_version_matches``). Otherwise "installed" means
-    ``ANC_BIN`` is present on every node.
+    version there; otherwise it means that anc.py is present on every node.
     '''
     expected = _expected_nodes(cluster_dict)
     if not expected:
         return False
 
+    paths = resolve_anc_paths_from_config(config_dict)
+
     anc_version = config_dict.get("anc", {}).get("anc_version")
     if anc_version:
-        matches = node_version_matches(phdl, anc_version)
+        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin)
         return all(matches.get(host) for host in expected)
 
-    out_dict = phdl.exec(f"test -f '{ANC_BIN}' && echo ANC_PRESENT || true", timeout=60)
+    out_dict = phdl.exec(f"test -f '{paths.anc_bin}' && echo ANC_PRESENT || true", timeout=60)
     return all("ANC_PRESENT" in (out_dict.get(host) or "") for host in expected)
 
 
@@ -1391,6 +1516,10 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
     globals.error_list = []
 
     anc_cfg = config_dict["anc"]
+    # anc.py lives under the per-install prefix (a relocated tar prefix when
+    # configured, else the default), so the group run cd's to where ANC actually
+    # installed rather than the fixed default dir.
+    anc_dir = resolve_anc_paths_from_config(config_dict).anc_dir
     inactivity_timeout = anc_cfg.get(INACTIVITY_TIMEOUT_KEY, DEFAULT_ANC_INACTIVITY_TIMEOUT)
     print_all = _as_bool(anc_cfg.get(PRINT_ALL_TO_CONSOLE_KEY), default=True)
     timestamp = new_run_timestamp()
@@ -1411,7 +1540,7 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
         # Run ANC normally so its full output streams back, and print it. ANC's
         # own progress lines keep the SSH channel active, which continually
         # resets the inactivity timer (only a genuine stall trips it).
-        cmd = f"cd '{ANC_DIR}' && sudo ./anc.py -g {groups_arg}"
+        cmd = f"cd '{anc_dir}' && sudo ./anc.py -g {groups_arg}"
     else:
         # Suppress the (potentially huge) ANC output: redirect stdout/stderr to
         # a per-run file on the node and echo ONLY the "Log directory:" line.
@@ -1428,7 +1557,7 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
         # first output, which would otherwise look like silence).
         remote_stdout = "/tmp/anc_run_$$.out"
         cmd = (
-            f"cd '{ANC_DIR}' && "
+            f"cd '{anc_dir}' && "
             f"( sudo ./anc.py -g {groups_arg} > '{remote_stdout}' 2>&1 ) & "
             f"anc_pid=$! && "
             f"last=-1; "

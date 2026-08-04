@@ -16,6 +16,9 @@
         "_comment_anc_release_url": "URL of the ANC release archive to download and install. Flavour (deb/rpm/tar) is auto-detected from the filename.",
         "anc_release_url": "REPLACE_ME",
 
+        "_comment_ANC_INSTALL_PATH": "TAR installs ONLY: relocatable install prefix ANC is extracted into (its anc/ dir, tool folders, and content live under here). A leading '{home}' expands to the runner user's home directory (e.g. '/home/{id}/my/anc/install/path'); a leading '~' is also expanded. Applies exclusively to tar releases -- deb/rpm packages carry predefined absolute locations baked into their archive and IGNORE this key entirely. Leave blank or omit to keep the legacy default (/opt/amdtools).",
+        "ANC_INSTALL_PATH": "",
+
         "_comment_print_all_to_console": "'True' echoes ANC group output to the console; 'False' suppresses it (install/ldconfig/version diagnostics still print).",
         "print_all_to_console": "True",
 
