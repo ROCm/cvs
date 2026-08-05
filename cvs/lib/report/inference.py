@@ -20,7 +20,8 @@ keys and column presets, plus optional HTML/JSON dashboard when pytest ``--html`
         profile = load_json_profile("my_suite")
         configure_inference_suite_report(config, build_inference_config_from_profile(profile))
 
-Reference profile: ``profiles/inferencex_atom_single.json`` (auto-loaded by stem).
+Reference profiles for inference suites land with ``dev/dtni`` (IX-ATOM, vLLM, SGLang).
+Until then, add ``profiles/<stem>.json`` when wiring a suite on your branch.
 Session-end generation is automatic when ``--html`` is set; no lifecycle report test.
 '''
 

@@ -89,3 +89,76 @@ def multi_shape_inf_res():
             }
         }
     return inf_res
+
+
+def generic_tier_metric_specs(cell, tier):
+    if tier != "throughput":
+        return {}
+    return {"client.output_throughput": {"kind": "min_tok_s", "value": 1000.0}}
+
+
+GENERIC_METRIC_UNITS = {
+    "output_throughput": "tok/s",
+    "mean_ttft_ms": "ms",
+    "mean_tpot_ms": "ms",
+}
+
+
+def generic_sweep_profile() -> dict:
+    """Minimal sweep deck profile for engine unit tests (not a shipped suite profile)."""
+    return {
+        "schema_version": 1,
+        "profile_id": "generic_sweep_rundeck",
+        "suite_id": "test_inference_suite",
+        "report_basename": "test_inference_suite_run_deck",
+        "title": "Test Sweep Run Deck",
+        "subtitle": "generic unit test profile",
+        "footer": "render-only",
+        "link_name": "Test Run Deck",
+        "dataset_builder": "sweep",
+        "interactive_viewer": True,
+        "sources": {
+            "results": "inf_res_dict",
+            "variant": "variant_config",
+            "lifecycle": "lifecycle",
+        },
+        "hooks": {
+            "tier_metric_specs": "cvs.lib.report.unittests._fixtures:generic_tier_metric_specs",
+            "metric_units": "cvs.lib.report.unittests._fixtures:GENERIC_METRIC_UNITS",
+        },
+        "sweep": {
+            "metric_prefix": "client.",
+            "tier_order": ["throughput", "record"],
+            "throughput_metric": "client.output_throughput",
+            "ttft_metric": "client.mean_ttft_ms",
+            "headline_metric": "client.output_throughput",
+            "results_table_columns": [
+                ["Model", None],
+                ["GPU", None],
+                ["ISL", None],
+                ["OSL", None],
+                ["Policy", None],
+                ["Conc", None],
+                ["Host", None],
+                ["Output tok/s", "client.output_throughput"],
+                ["Mean TTFT (ms)", "client.mean_ttft_ms"],
+                ["Mean TPOT (ms)", "client.mean_tpot_ms"],
+            ],
+            "cell_highlights": [
+                ["output_throughput", "Output tok/s"],
+                ["mean_ttft_ms", "Mean TTFT (ms)"],
+                ["mean_tpot_ms", "Mean TPOT (ms)"],
+            ],
+            "chart_series": [
+                {"metric_suffix": "output_throughput", "title": "Output tok/s", "unit": "tok/s", "invert": False},
+                {"metric_suffix": "mean_ttft_ms", "title": "Mean TTFT", "unit": "ms", "invert": True},
+                {"metric_suffix": "mean_tpot_ms", "title": "Mean TPOT", "unit": "ms", "invert": True},
+            ],
+        },
+        "cards": [
+            {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+            {"type": "sweep_analytics", "id": "sweep", "title": "Sweep analytics", "bind": "datasets.sweep"},
+            {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
+            {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"},
+        ],
+    }

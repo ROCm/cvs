@@ -68,12 +68,9 @@ Auto-load order for `cvs run <stem>`:
 
 ## Reference profiles
 
-| Profile | Builder | Suite | On this branch? |
-| ------- | ------- | ----- | --------------- |
-| `inferencex_atom_single.json` | `sweep` | InferenceX ATOM | Yes |
-| `vllm.json` | `sweep` | vLLM | Yes |
-| SGLang | `sweep` | `sglang_*` stems | **`dev/dtni` only** — add JSON profile when suite merges |
-| RCCL | `series` / `matrix` | `rccl_*` stems | **Suite owners** — add `profiles/rccl_*.json` when ready |
+This branch ships the **Run Deck platform only** — no suite-specific JSON profiles.
+Suite owners add ``profiles/<stem>.json`` after ``dev/dtni`` rebases (IX-ATOM, vLLM,
+SGLang, RCCL, etc.).
 
 Schema: `profiles/schema.json`
 
@@ -83,14 +80,13 @@ When you run with `--html`, auto-load uses ``profiles/<stem>.json``.
 If a profile is registered **and** session fixtures contain results, ``generate_rundeck()``
 writes ``{report_basename}.html`` + ``.json`` (and viewer for sweep suites).
 
-| `cvs run` stem | Produced on this branch? | Mechanism |
-| -------------- | ------------------------ | --------- |
-| `inferencex_atom_single` | Yes | `profiles/inferencex_atom_single.json` |
-| `vllm` | Yes | `profiles/vllm.json` |
-| `rccl_perf`, `rccl_regression` | When profile added | Suite owner adds `profiles/<stem>.json` |
-| `sglang_single`, `sglang_distributed`, … | After `dev/dtni` merge | Add `profiles/sglang_*.json` when suite lands |
+| `cvs run` stem | On this branch? | Mechanism |
+| -------------- | --------------- | --------- |
+| Any suite | When profile added | ``profiles/<stem>.json`` + session fixtures |
+| IX-ATOM / vLLM / SGLang | After ``dev/dtni`` merge | Suite owner adds profile + hooks |
+| RCCL | When profile added | Suite owner adds ``profiles/rccl_*.json`` |
 
-Offline sample artifacts (gitignored, local only): run ``python sample_reports/generate_sample_rundecks.py`` from the repo root.
+Offline sample artifacts (gitignored, local only): run ``python sample_reports/generate_sample_rundecks.py`` after adding profiles locally.
 
 ## Author tiers
 
@@ -137,7 +133,7 @@ or you need a card type that does not exist yet.
 
 | Builder | Use when results look like | Copy from |
 | ------- | ------------------------- | --------- |
-| `sweep` | Cell-keyed dict: `ISL=…,OSL=…,CONC=…` → metric fields | `profiles/inferencex_atom_single.json` or `vllm.json` |
+| `sweep` | Cell-keyed dict: `ISL=…,OSL=…,CONC=…` → metric fields | Tier A checklist skeleton below |
 | `series` | Nested dict: collective → message size → `{bus_bw, alg_bw, …}` | Inline `series` block in profile JSON |
 | `matrix` | Current results + golden reference for compare rows | Inline `matrix` block + `sources.reference` |
 
@@ -176,7 +172,7 @@ For series/matrix, copy the `series` or `matrix` block instead and set
 `interactive_viewer` to `false` unless you need the sweep viewer.
 
 Optional `hooks` (module path strings) customize metric tiers, units, run card rows, or
-launch provenance — see `profiles/inferencex_atom_single.json`.
+launch provenance — add under ``profiles/hooks/`` when authoring a suite profile.
 
 ### 3. Wire session fixtures
 
@@ -230,19 +226,14 @@ Expected artifacts next to the pytest HTML report:
 
 ## Merging to `main` before `dev/dtni`
 
-The Run Deck **platform** can land on `main` independently of the InferenceX ATOM test
-suite. The profile ``profiles/inferencex_atom_single.json`` uses report-layer hooks
-(``profiles/hooks/inferencex_atom_metrics.py``) so it works without
-``cvs/lib/inference/inferencex_atom/``.
+The Run Deck **platform** can land on `main` independently of inference suite code on
+``dev/dtni``. Suite-specific profiles (IX-ATOM, vLLM, SGLang) follow after rebase.
 
 | Proof level | Works on `main`? | How |
 | ----------- | ---------------- | --- |
 | Engine + parity | Yes | ``pytest cvs/lib/report/unittests/test_rundeck_parity.py`` |
-| Sample artifacts | Local only | ``python sample_reports/generate_sample_rundecks.py`` (gitignored) |
-| Live ``cvs run inferencex_atom_single`` | After suite merges | Full suite from ``dev/dtni`` + Run Deck |
-
-Launch-command panel is omitted from the main-safe profile; add
-``hooks.launch_provenance`` when the suite package is available.
+| Sample artifacts | Local only | Add profiles locally, then ``python sample_reports/generate_sample_rundecks.py`` |
+| Live suite Run Deck | After ``dev/dtni`` + profile | Suite owner adds ``profiles/<stem>.json`` |
 
 ## Quick start
 
@@ -253,7 +244,7 @@ See **Adding a Run Deck** above for the full checklist. Short version:
 3. Run with `--html`.
 
 ```bash
-cvs run inferencex_atom_single --cluster_file ... --config_file ... --html=~/cvs_results/run.html
+cvs run <stem> --cluster_file ... --config_file ... --html=~/cvs_results/run.html
 python -m pytest cvs/lib/report/unittests/ -q
 ```
 

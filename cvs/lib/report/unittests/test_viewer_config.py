@@ -1,17 +1,12 @@
 '''Tests for profile-driven interactive viewer configuration.'''
 
-import json
-from pathlib import Path
-
 from cvs.lib.report.rundeck.config_adapter import resolve_report_config
 from cvs.lib.report.rundeck.viewer_config import build_viewer_config
-from cvs.lib.report.unittests._fixtures import generic_inference_report_config
-
-_PROFILES = Path(__file__).resolve().parents[1] / "profiles"
+from cvs.lib.report.unittests._fixtures import generic_inference_report_config, generic_sweep_profile
 
 
-def test_build_viewer_config_from_inference_profile():
-    profile = json.loads((_PROFILES / "inferencex_atom_single.json").read_text(encoding="utf-8"))
+def test_build_viewer_config_from_sweep_profile():
+    profile = generic_sweep_profile()
     config = resolve_report_config(profile)
     vc = build_viewer_config(profile, config)
 

@@ -1,31 +1,24 @@
 '''Parity and integration tests for the unified Run Deck engine.'''
 
 from cvs.lib.report.inference import build_inference_report_payload, render_report_html
-from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
 from cvs.lib.report.rundeck.dataset_builders.registry import build_datasets
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.render import render_rundeck_html
-from cvs.lib.report.unittests._fixtures import generic_variant, two_cell_inf_res
-
-
-def _inferencex_atom_profile():
-    profile = load_json_profile("inferencex_atom_single")
-    assert profile is not None
-    return profile
+from cvs.lib.report.unittests._fixtures import generic_sweep_profile, generic_variant, two_cell_inf_res
 
 
 def test_json_profile_resolves_expected_config():
-    profile = _inferencex_atom_profile()
+    profile = generic_sweep_profile()
     cfg = build_inference_config_from_profile(profile)
-    assert cfg.suite_id == "inferencex_atom"
-    assert cfg.report_basename == "inferencex_atom_run_deck"
-    assert cfg.metric_tier_order == ("throughput", "ttft", "tpot", "health", "record")
-    assert len(cfg.chart_series) == 7
+    assert cfg.suite_id == "test_inference_suite"
+    assert cfg.report_basename == "test_inference_suite_run_deck"
+    assert cfg.metric_tier_order == ("throughput", "record")
+    assert len(cfg.chart_series) == 3
 
 
 def test_rundeck_payload_matches_inference_builder():
-    profile = _inferencex_atom_profile()
+    profile = generic_sweep_profile()
     store = {
         "inf_res_dict": two_cell_inf_res(),
         "variant_config": generic_variant(),
@@ -49,7 +42,7 @@ def test_rundeck_payload_matches_inference_builder():
 
 
 def test_rundeck_render_contains_core_panels():
-    profile = _inferencex_atom_profile()
+    profile = generic_sweep_profile()
     payload = build_rundeck_payload(
         profile=profile,
         store={
@@ -60,7 +53,7 @@ def test_rundeck_render_contains_core_panels():
         cvs_version="1.0.0",
     )
     doc = render_rundeck_html(payload)
-    assert "IX Run Deck" in doc
+    assert "Test Sweep Run Deck" in doc
     assert "report-nav" in doc
     assert "Gate matrix" in doc
     assert "Full results" in doc
@@ -68,7 +61,7 @@ def test_rundeck_render_contains_core_panels():
 
 
 def test_inference_render_path_uses_unified_runtime():
-    config = build_inference_config_from_profile(_inferencex_atom_profile())
+    config = build_inference_config_from_profile(generic_sweep_profile())
     payload = build_inference_report_payload(
         config=config,
         variant_config=generic_variant(),
@@ -95,11 +88,3 @@ def test_series_builder_from_nested_graph_shape():
     datasets = build_datasets("series", {"results": graph}, profile)
     assert "bus_bw" in datasets["charts"]
     assert datasets["results_table"]["rows"]
-
-
-def test_vllm_json_profile_loads():
-    profile = load_json_profile("vllm")
-    assert profile is not None
-    cfg = build_inference_config_from_profile(profile)
-    assert cfg.suite_id == "vllm"
-    assert cfg.session_lifecycle_labels[1] == "topology_discovery"
