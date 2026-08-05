@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from cvs.lib.report.cell_build import build_all_cells, select_summary_cells
 from cvs.lib.report.inference import write_report
-from cvs.lib.report.render.cell_card import render_cell_card_html
+from cvs.lib.report.render.cell_card import CellCardConfig, CellCardRenderer
 from cvs.lib.report.unittests._fixtures import (
     generic_inference_report_config,
     generic_variant,
@@ -21,14 +21,15 @@ def test_render_cell_card_html_compact():
         inf_res_dict=two_cell_inf_res(),
         lifecycle_report={},
     )
-    html_out = render_cell_card_html(
-        cells[0],
+    config = CellCardConfig(
         tier_order=cfg.metric_tier_order,
         headline_metric=cfg.headline_metric,
         enforce=True,
         cell_lifecycle_labels=cfg.cell_lifecycle_labels,
         compact=True,
     )
+    renderer = CellCardRenderer(config)
+    html_out = renderer.render(cells[0])
     assert "cell-card-compact" in html_out
     assert "ISL=1024" in html_out
 

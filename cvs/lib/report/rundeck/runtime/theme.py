@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 
 from cvs.lib.report.formatting import status_badge_css
-from cvs.lib.report.render.cell_card import cell_card_report_css
+from cvs.lib.report.render.cell_card import CellCardConfig, CellCardRenderer
 from cvs.lib.report.render.gate_matrix import gate_heatmap_css, gate_matrix_table_css
 from cvs.lib.report.render.sweep_charts import chart_tooltip_css
 
@@ -92,7 +92,7 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 """
         + chart_tooltip_css()
         + gate_matrix_table_css()
-        + cell_card_report_css()
+        + CellCardRenderer(CellCardConfig(theme="report")).get_css()
         + """
 .cell-title { font-weight: 600; font-size: 1.05rem; }
 .metric-row { margin-bottom: 0.65rem; }

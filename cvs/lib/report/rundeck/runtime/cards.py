@@ -13,7 +13,7 @@ from typing import Any, Callable
 from cvs.lib.report.formatting import fmt_num, link_or_text_html
 from cvs.lib.report.rundeck.runtime.theme import render_launch_panel_html
 from cvs.lib.report.inference_payload import sweep_has_multi_shape_comparison
-from cvs.lib.report.render.cell_card import render_cell_card_html
+from cvs.lib.report.render.cell_card import CellCardConfig, CellCardRenderer
 from cvs.lib.report.render.gate_matrix import render_gate_heatmap_html, render_gate_matrix_html
 from cvs.lib.report.render.panel_shell import render_results_table_html
 from cvs.lib.report.rundeck.context import is_empty, resolve_bind
@@ -119,17 +119,15 @@ def _render_cell_cards(payload: dict, _card: dict, data: Any) -> str:
     pytest_basename = (payload.get("provenance") or {}).get("pytest_html_href") or (
         (payload.get("provenance") or {}).get("pytest_html_basename", "")
     )
-    cards = [
-        render_cell_card_html(
-            c,
-            tier_order=tuple(tier_order),
-            headline_metric=report.get("headline_metric", "client.output_throughput"),
-            enforce=enforce,
-            cell_lifecycle_labels=cell_lifecycle_labels,
-            pytest_html_basename=pytest_basename or None,
-        )
-        for c in cells
-    ]
+    config = CellCardConfig(
+        tier_order=tuple(tier_order),
+        headline_metric=report.get("headline_metric", "client.output_throughput"),
+        enforce=enforce,
+        cell_lifecycle_labels=cell_lifecycle_labels,
+        pytest_html_basename=pytest_basename or None,
+    )
+    renderer = CellCardRenderer(config)
+    cards = [renderer.render(c) for c in cells]
     summary = payload.get("summary") or {}
     banner = ""
     viewer_name = summary.get("viewer_html")
