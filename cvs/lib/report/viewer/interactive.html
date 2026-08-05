@@ -690,30 +690,37 @@ function fmtTooltipNum(v, digits) {
   });
 }
 
+function gpusFromCell(cell) {
+  const tp = tpFromCellId(cell.cell_id) || Number(runCardMap().TP) || null;
+  if (!tp) return null;
+  const pp = ppFromCellId(cell.cell_id) || Number(runCardMap().PP) || 1;
+  return tp * pp;
+}
+
 function totalPerGpuThroughput(cell) {
   const direct = metricNum(cell, 'client.per_gpu_throughput');
   if (direct != null) return direct;
   const tput = metricNum(cell, 'client.total_token_throughput');
-  const tp = tpFromCellId(cell.cell_id);
-  if (tput == null || !tp) return null;
-  return tput / tp;
+  const gpus = gpusFromCell(cell);
+  if (tput == null || !gpus) return null;
+  return tput / gpus;
 }
 
 function outputPerGpuThroughput(cell) {
   const direct = metricNum(cell, 'client.output_tput_per_gpu');
   if (direct != null) return direct;
   const tput = metricNum(cell, 'client.output_throughput');
-  const tp = tpFromCellId(cell.cell_id);
-  if (tput == null || !tp) return null;
-  return tput / tp;
+  const gpus = gpusFromCell(cell);
+  if (tput == null || !gpus) return null;
+  return tput / gpus;
 }
 
 function inputPerGpuThroughput(cell, totalPg, outputPg) {
-  const tp = tpFromCellId(cell.cell_id);
   if (totalPg != null && outputPg != null) return totalPg - outputPg;
   const total = metricNum(cell, 'client.total_token_throughput');
   const output = metricNum(cell, 'client.output_throughput');
-  if (total != null && output != null && tp) return (total - output) / tp;
+  const gpus = gpusFromCell(cell);
+  if (total != null && output != null && gpus) return (total - output) / gpus;
   return null;
 }
 
