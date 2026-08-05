@@ -14,6 +14,7 @@ import json
 import itertools
 
 from cvs.lib import rccl_lib
+from cvs.lib import html_lib
 from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
@@ -436,10 +437,31 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regre
     update_test_result()
 
 
-def test_gen_graph(request, cvs_results_dict):
+def test_gen_graph(request):
     log.info('Final Global result dict')
     log.info("%s", rccl_res_dict)
     rccl_graph_dict = rccl_lib.convert_to_graph_dict(rccl_res_dict)
     log.info("%s", rccl_graph_dict)
-    cvs_results_dict.update(rccl_graph_dict)
-    log.info("RCCL graph data bound to cvs_results_dict for Run Deck publish")
+
+    proc_id = os.getpid()
+
+    html_file = f'/tmp/rccl_perf_report_{proc_id}.html'
+
+    html_lib.add_html_begin(html_file)
+    html_lib.build_rccl_amcharts_graph(html_file, 'rccl', rccl_graph_dict)
+    html_lib.insert_chart(html_file, 'rccl')
+    html_lib.build_rccl_result_table(html_file, rccl_graph_dict)
+    html_lib.add_json_data(html_file, json.dumps(rccl_graph_dict))
+    html_lib.add_html_end(html_file)
+
+    # Add the HTML file to the report bundle with clickable link
+    copied_path = request.config._html_report_manager.add_html_to_report(
+        html_file, link_name="RCCL Multi Node Performance Report", request=request
+    )
+
+    if copied_path:
+        log.info(f'Perf report saved and added to report bundle: {copied_path}')
+    else:
+        log.info(
+            f'Perf report is saved under {html_file}, pls copy it to your web server under /var/www/html folder to view'
+        )
