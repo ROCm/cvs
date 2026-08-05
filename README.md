@@ -182,6 +182,25 @@ cvs copy-config --all --output /tmp/cvs/input/ --force
 
 Alternatively, you can generate the cluster JSON file for N number of hosts using the `cvs generate cluster_json` command. This is useful for automatically creating cluster configurations from a list of host IPs.
 
+### Find a Config for a Test Suite
+
+To see the bundled configs supported by a CVS test suite, pass its name to `cvs copy-config --list`:
+
+```bash
+cvs copy-config --list rccl_perf
+cvs copy-config --list vllm_gpt_oss_120b_single --platform mi355
+```
+
+The command prints config paths relative to `cvs/input/config_file`. Copy a selected config before running the test:
+
+```bash
+cvs copy-config inference/vllm/mi355x_vllm_single.json --output /tmp/vllm_config.json
+```
+
+Supported platform names are `mi300`, `mi300x`, `mi350`, and `mi355`. Without `--platform`, CVS lists every bundled config supported by the suite.
+
+Applications can consume the same mapping from the packaged `cvs/input/config_catalog.json` file.
+
 #### Option 1: Using a hosts file
 
 Create a hosts file with one IP address or hostname per line (supports IP ranges like `192.168.1.10-20` and bracket notation like `hostname[1-10]`, comments with `#`, and blank lines are ignored):
