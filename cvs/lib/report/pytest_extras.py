@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from cvs.lib.report.cell_build import build_cell_record
 from cvs.lib.report.registry import get_resolved_profile, resolve_suite_report_config

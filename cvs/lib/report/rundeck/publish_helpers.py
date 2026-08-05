@@ -64,10 +64,7 @@ def enrich_provenance(
     if variant_config is not None and not prov.get("image_display"):
         run_card = getattr(variant_config, "run_card", None)
         image_tag = (
-            prov.get("image_tag")
-            or getattr(run_card, "image_tag", None)
-            or getattr(run_card, "image_pin", None)
-            or ""
+            prov.get("image_tag") or getattr(run_card, "image_tag", None) or getattr(run_card, "image_pin", None) or ""
         )
         if image_tag:
             from cvs.core.image_display import format_image_display

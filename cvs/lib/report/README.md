@@ -3,9 +3,9 @@
 CVS **Run Deck** is the HTML/JSON suite dashboard produced when tests run with
 pytest `--html`. It is **not** the Rundeck job scheduler product.
 
-This branch ships the **platform only**: engine, schema, tests. No suite JSON
-profiles are checked in. After `dev/dtni` rebases onto `main`, suite owners add
-`profiles/<stem>.json` for IX-ATOM, vLLM, SGLang, RCCL, etc.
+Suite owners enable Run Deck by adding `profiles/<stem>.json` (matching the
+`cvs run` stem) plus the session fixtures declared in the profile. Schema:
+`profiles/schema.json`.
 
 ## How it works
 
@@ -150,5 +150,5 @@ Engine coverage lives in `cvs/lib/report/unittests/`:
 - `test_rundeck_parity.py` — payload/render integration
 - `test_viewer_config.py` — interactive viewer config
 
-Suite profiles and inference-suite lifecycle row extras land with `dev/dtni`.
-The platform has no hard dependency on `cvs.lib.inference`.
+Optional sweep pytest-html row extras may require suite-specific lifecycle helpers
+when enabled in a profile. The core engine does not require `cvs.lib.inference`.
