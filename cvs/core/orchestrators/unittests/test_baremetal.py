@@ -54,7 +54,7 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.all = MagicMock()
         orch.all.exec.return_value = {"10.0.0.1": "ok", "10.0.0.2": "ok"}
         result = orch.exec("ls", timeout=5)
-        orch.all.exec.assert_called_once_with("ls", timeout=5, detailed=False)
+        orch.all.exec.assert_called_once_with("ls", timeout=5, detailed=False, print_console=True)
         self.assertEqual(result, {"10.0.0.1": "ok", "10.0.0.2": "ok"})
 
     @patch("cvs.core.orchestrators.baremetal.Pssh")
@@ -63,8 +63,48 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.head = MagicMock()
         orch.head.exec.return_value = {"10.0.0.1": "ok"}
         result = orch.exec_on_head("hostname", timeout=10)
-        orch.head.exec.assert_called_once_with("hostname", timeout=10, detailed=False)
+        orch.head.exec.assert_called_once_with("hostname", timeout=10, detailed=False, print_console=True)
         self.assertEqual(result, {"10.0.0.1": "ok"})
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_exec_forwards_print_console_false_to_all(self, _mock_pssh):
+        """print_console=False must reach the pssh handle, not be swallowed here.
+
+        A dropped kwarg is silent -- the command still works, it just logs
+        hundreds of MB -- so this is pinned explicitly.
+        """
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        orch.exec("cat /tmp/huge", print_console=False)
+        self.assertIs(orch.all.exec.call_args.kwargs["print_console"], False)
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_exec_forwards_print_console_false_to_host_subset(self, mock_pssh):
+        """The subset branch builds its own Pssh; it must forward too.
+
+        orch.all is stubbed with a distinct mock so that falling through to the
+        all-hosts branch would fail this test rather than silently satisfy it
+        -- both handles would otherwise be the same patched Pssh return value.
+        """
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        mock_pssh.reset_mock()
+        orch.exec("cat /tmp/huge", hosts=["10.0.0.2"], print_console=False)
+        # A subset handle was constructed for exactly the requested host...
+        mock_pssh.assert_called_once()
+        self.assertEqual(mock_pssh.call_args.args[1], ["10.0.0.2"])
+        # ...the all-hosts handle was bypassed...
+        orch.all.exec.assert_not_called()
+        # ...and the kwarg reached the subset handle.
+        subset_handle = mock_pssh.return_value
+        self.assertIs(subset_handle.exec.call_args.kwargs["print_console"], False)
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_exec_on_head_forwards_print_console_false(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        orch.exec_on_head("cat /tmp/huge", print_console=False)
+        self.assertIs(orch.head.exec.call_args.kwargs["print_console"], False)
 
     @patch("cvs.core.orchestrators.baremetal.Pssh")
     def test_cleanup_returns_true(self, _mock_pssh):

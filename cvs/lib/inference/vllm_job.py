@@ -410,7 +410,10 @@ class VllmJob:
             if self._is_ray_backend and int(self.nnodes) > 1 and rank > 0:
                 continue
             rank_log = self._rank_log(rank)
-            out = self.orch.exec(f"tail -30 {shlex.quote(rank_log)}", hosts=[host])
+            # print_console=False: the tail is re-emitted below under emit_tail
+            # with host+rank+provenance labels, which is the copy worth keeping.
+            # Without this the same 30 lines land in the log on every poll.
+            out = self.orch.exec(f"tail -30 {shlex.quote(rank_log)}", hosts=[host], print_console=False)
             for h, output in (out or {}).items():
                 if emit_tail:
                     for line in (output or "").splitlines():
@@ -421,6 +424,7 @@ class VllmJob:
                 f"grep -m1 -iE {shlex.quote(self.FATAL_LOG_RE.pattern)} {shlex.quote(rank_log)}",
                 detailed=True,
                 hosts=[host],
+                print_console=False,
             )
             for h, r in (out or {}).items():
                 if r.get("exit_code") == 0 and r.get("output", "").strip():
@@ -596,7 +600,10 @@ class VllmJob:
         log.info("client initial wait %ds", self._client_initial_wait)
         time.sleep(self._client_initial_wait)
         for it in range(self._client_poll_count):
-            out = self.orch.exec_on_head(f"tail -2000 {shlex.quote(self.client_log)}")
+            # print_console=False: this poll re-reads the same growing log every
+            # iteration. dump_client_log() emits it in full on every exit path
+            # below, so logging each poll only duplicates that.
+            out = self.orch.exec_on_head(f"tail -2000 {shlex.quote(self.client_log)}", print_console=False)
             failed = []
             done = []
             for host, output in out.items():
@@ -636,7 +643,7 @@ class VllmJob:
 
     def dump_client_log(self):
         """Emit the full client log to the captured section once after completion."""
-        out = self.orch.exec_on_head(f"cat {shlex.quote(self.client_log)}")
+        out = self.orch.exec_on_head(f"cat {shlex.quote(self.client_log)}", print_console=False)
         for host, text in (out or {}).items():
             for line in (text or "").splitlines():
                 log.info("[%s client.log] %s", host, line)
@@ -655,7 +662,7 @@ class VllmJob:
             if self._is_ray_backend and int(self.nnodes) > 1 and rank > 0:
                 continue
             rank_log = self._rank_log(rank)
-            out = self.orch.exec(f"cat {shlex.quote(rank_log)}", hosts=[host])
+            out = self.orch.exec(f"cat {shlex.quote(rank_log)}", hosts=[host], print_console=False)
             for h, text in (out or {}).items():
                 for line in (text or "").splitlines():
                     log.info("[%s rank%d server.log] %s", h, rank, line)
@@ -663,7 +670,7 @@ class VllmJob:
     def parse_results(self):
         """Fetch and parse the results artifact from the HEAD node via exec_on_head."""
         artifact = f"{self.out_dir}/results"
-        out = self.orch.exec_on_head(f"cat {shlex.quote(artifact)}")
+        out = self.orch.exec_on_head(f"cat {shlex.quote(artifact)}", print_console=False)
         results = {}
         for host, text in out.items():
             text = (text or "").strip()
@@ -672,6 +679,12 @@ class VllmJob:
             try:
                 raw = json.loads(text)
             except (json.JSONDecodeError, ValueError) as e:
-                raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}") from e
+                # The artifact is read with print_console=False, so its content
+                # is nowhere else in the log -- carry a slice into the error or
+                # the failure is undiagnosable.
+                # repr() keeps the snippet on one line: the artifact can be a
+                # stack trace or an HTML error page, and raw newlines there
+                # would break up CI output and pasted ticket bodies.
+                raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}: {text[:500]!r}") from e
             results[host] = to_client_metrics(raw, tp=self.tp, isl=self.isl, pp=self.pp)
         return results

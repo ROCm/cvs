@@ -576,7 +576,7 @@ class TestCaptureGpuMetrics(unittest.TestCase):
         self.assertEqual(set(out.keys()), set(ALL_KEYS))
         mock_parse.assert_called_once_with([_full_gpu_entry()])
         # Pin the exact command string sent to amd-smi (host-side, no sudo needed).
-        orch.exec_on_head.assert_called_once_with("amd-smi metric --json")
+        orch.exec_on_head.assert_called_once_with("amd-smi metric --json", print_console=False)
         # Verify parse result is actually returned, not silently discarded.
         self.assertEqual(out["gpu.gfx_activity"], 30)
         self.assertIsNotNone(out["gpu.total_vram"])
@@ -782,7 +782,7 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
     def _make_exec_by_hosts(self, host_to_vram: dict, gfx: float = 80.0):
         """Build an orch.exec side_effect keyed by the hosts= kwarg."""
 
-        def _exec(cmd, hosts=None):
+        def _exec(cmd, hosts=None, print_console=True):
             return {h: self._make_gpu_json(host_to_vram[h], gfx) for h in hosts}
 
         return _exec
@@ -794,7 +794,7 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
         from cvs.lib.utils.gpu import capture_gpu_metrics
 
         result = capture_gpu_metrics(orch, nodes=None)
-        orch.exec_on_head.assert_called_once_with("amd-smi metric --json")
+        orch.exec_on_head.assert_called_once_with("amd-smi metric --json", print_console=False)
         self.assertEqual(result["gpu.used_vram"], 1000)
 
     def test_nodes_provided_calls_orch_exec_with_hosts_not_exec_on_head(self):
@@ -808,8 +808,8 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
             nodes=[("prefill-0", ["prefill-host"]), ("decode-0", ["decode-host"])],
         )
         orch.exec_on_head.assert_not_called()
-        orch.exec.assert_any_call("amd-smi metric --json", hosts=["prefill-host"])
-        orch.exec.assert_any_call("amd-smi metric --json", hosts=["decode-host"])
+        orch.exec.assert_any_call("amd-smi metric --json", hosts=["prefill-host"], print_console=False)
+        orch.exec.assert_any_call("amd-smi metric --json", hosts=["decode-host"], print_console=False)
 
     def test_nodes_vram_summed_across_nodes(self):
         """VRAM from all nodes is summed in the merged result."""
@@ -824,7 +824,7 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
         """GFX activity from all nodes is averaged."""
         orch = MagicMock()
 
-        def _exec(cmd, hosts=None):
+        def _exec(cmd, hosts=None, print_console=True):
             gfx = 60.0 if hosts == ["p"] else 100.0
             return {hosts[0]: self._make_gpu_json(1000, gfx)}
 
@@ -849,7 +849,7 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
 
         orch = MagicMock()
 
-        def _exec(cmd, hosts=None):
+        def _exec(cmd, hosts=None, print_console=True):
             vram = {"p": 1000, "d": 2000}[hosts[0]]
             return {
                 hosts[0]: json.dumps(
@@ -1147,7 +1147,7 @@ class TestStopAndCollectGpuPollerMultiNode(unittest.TestCase):
         text_b = _poller_file_text(_gpu_chunk_text(500), _gpu_chunk_text(600))
         orch = MagicMock()
 
-        def _exec(cmd, hosts=None):
+        def _exec(cmd, hosts=None, print_console=True):
             if "pkill" in cmd:
                 return {h: "" for h in hosts}
             host = hosts[0]
@@ -1164,7 +1164,7 @@ class TestStopAndCollectGpuPollerMultiNode(unittest.TestCase):
         text_b = _poller_file_text(_gpu_chunk_text(500), _gpu_chunk_text(600))
         orch = MagicMock()
 
-        def _exec(cmd, hosts=None):
+        def _exec(cmd, hosts=None, print_console=True):
             if "pkill" in cmd:
                 return {h: "" for h in hosts}
             host = hosts[0]
@@ -1186,7 +1186,7 @@ class TestStopAndCollectGpuPollerMultiNode(unittest.TestCase):
         text_b = _poller_file_text(_gpu_chunk_text(500), "")
         orch = MagicMock()
 
-        def _exec(cmd, hosts=None):
+        def _exec(cmd, hosts=None, print_console=True):
             if "pkill" in cmd:
                 return {h: "" for h in hosts}
             host = hosts[0]
@@ -1201,7 +1201,7 @@ class TestStopAndCollectGpuPollerMultiNode(unittest.TestCase):
         text_b = _poller_file_text(_gpu_chunk_text(500), _gpu_chunk_text(600))
         orch = MagicMock()
 
-        def _exec(cmd, hosts=None):
+        def _exec(cmd, hosts=None, print_console=True):
             if "pkill" in cmd:
                 return {h: "" for h in hosts}
             host = hosts[0]
@@ -1242,7 +1242,7 @@ class TestStopAndCollectGpuPollerMultiNode(unittest.TestCase):
         text_a = _poller_file_text(_gpu_chunk_text(1000))
         orch = MagicMock()
 
-        def _exec(cmd, hosts=None):
+        def _exec(cmd, hosts=None, print_console=True):
             if "pkill" in cmd:
                 return {h: "" for h in hosts}
             host = hosts[0]

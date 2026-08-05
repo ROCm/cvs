@@ -75,7 +75,7 @@ class BaremetalOrchestrator(Orchestrator):
             stop_on_errors=self.stop_on_errors,
         )
 
-    def exec(self, cmd, hosts=None, timeout=None, detailed=False):
+    def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """
         Execute command across hosts via SSH (baremetal execution).
 
@@ -85,6 +85,8 @@ class BaremetalOrchestrator(Orchestrator):
             timeout: Command timeout
             detailed: If True, return detailed execution info including
                 exit_code (mirrors ContainerOrchestrator.exec).
+            print_console: If False, the command's output is returned but not
+                logged. Use for bulk data the caller parses itself.
 
         Returns:
             Dictionary mapping hosts to execution results
@@ -94,7 +96,7 @@ class BaremetalOrchestrator(Orchestrator):
 
         # Use appropriate handle based on target hosts
         if set(hosts) == set(self.hosts):
-            return self.all.exec(cmd, timeout=timeout, detailed=detailed)
+            return self.all.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
         else:
             # For arbitrary subset (including head node), create temporary handle
             pssh = Pssh(
@@ -106,7 +108,7 @@ class BaremetalOrchestrator(Orchestrator):
                 host_key_check=False,
                 stop_on_errors=self.stop_on_errors,
             )
-            return pssh.exec(cmd, timeout=timeout, detailed=detailed)
+            return pssh.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
 
     def sudo_prefix(self):
         """
@@ -130,7 +132,7 @@ class BaremetalOrchestrator(Orchestrator):
             self._needs_sudo = sudo_status.get(self.head_node, False)
         return 'sudo -n ' if self._needs_sudo else ''
 
-    def exec_on_head(self, cmd, timeout=None, detailed=False):
+    def exec_on_head(self, cmd, timeout=None, detailed=False, print_console=True):
         """
         Execute command on head node only via SSH.
 
@@ -138,11 +140,12 @@ class BaremetalOrchestrator(Orchestrator):
             cmd: Command to execute
             timeout: Command timeout
             detailed: See exec().
+            print_console: See exec().
 
         Returns:
             Dictionary mapping head node to execution result
         """
-        return self.head.exec(cmd, timeout=timeout, detailed=detailed)
+        return self.head.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
 
     def setup_env(self, hosts, env_script=None):
         """Set up environment on hosts."""
