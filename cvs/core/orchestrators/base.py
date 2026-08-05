@@ -31,7 +31,7 @@ class Orchestrator(ABC):
         self.stop_on_errors = stop_on_errors
 
     @abstractmethod
-    def exec(self, cmd, hosts=None, timeout=None):
+    def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """
         Execute command across hosts using the orchestrator's execution strategy.
 
@@ -42,6 +42,9 @@ class Orchestrator(ABC):
             cmd: Command to execute
             hosts: Target hosts (if None, uses all hosts)
             timeout: Command timeout in seconds
+            detailed: If True, return detailed execution info including exit_code
+            print_console: If False, the command's output is returned but not
+                logged. Use for bulk data the caller parses itself.
 
         Returns:
             Dictionary mapping hosts to execution results
@@ -49,7 +52,7 @@ class Orchestrator(ABC):
         pass
 
     @abstractmethod
-    def exec_on_head(self, cmd, timeout=None, detailed=False):
+    def exec_on_head(self, cmd, timeout=None, detailed=False, print_console=True):
         """
         Execute command on head node only.
 
@@ -57,6 +60,8 @@ class Orchestrator(ABC):
             cmd: Command to execute
             timeout: Command timeout in seconds
             detailed: If True, return detailed execution info including exit_code
+            print_console: If False, the command's output is returned but not
+                logged. See exec().
 
         """
         pass
