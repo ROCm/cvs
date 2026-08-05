@@ -51,6 +51,31 @@
       }
     },
     "sweep": { "type": "object" },
+    "viewer": {
+      "type": "object",
+      "properties": {
+        "group_by": { "type": "array", "items": { "type": "string" } },
+        "filters": { "type": "array", "items": { "type": "string" } },
+        "heatmap_metrics": { "type": "array", "items": { "type": "string" } },
+        "margin_metrics": { "type": "array", "items": { "type": "string" } },
+        "default_heatmap_metric": { "type": "string" },
+        "default_margin_metric": { "type": "string" },
+        "heatmap_row_fields": { "type": "array", "items": { "type": "string" } },
+        "concurrency_field": { "type": "string" },
+        "comparison_hint": { "type": "string" },
+        "table_columns": { "type": "array" },
+        "metrics": { "type": "object" },
+        "interactivity": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "tpot_metric": { "type": "string" },
+            "title": { "type": "string" },
+            "hint": { "type": "string" }
+          }
+        }
+      }
+    },
     "series": { "type": "object" },
     "matrix": { "type": "object" },
     "lifecycle": { "type": "object" },

@@ -109,6 +109,12 @@ def build_rundeck_payload(
     if isinstance(profile, dict) and profile.get("cards"):
         payload["deck_profile"] = profile
 
+    if builder_id == "sweep":
+        from cvs.lib.report.rundeck.viewer_config import build_viewer_config
+
+        profile_for_viewer = profile_dict if isinstance(profile, dict) else {}
+        payload["viewer_config"] = build_viewer_config(profile_for_viewer, config)
+
     return payload
 
 

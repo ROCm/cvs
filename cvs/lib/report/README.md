@@ -55,7 +55,7 @@ flowchart TB
 | Benchmark results | `cvs_results_dict` | `inf_res_dict` | Tests after parse |
 | Config / thresholds | `variant_config` | same | `--config` loader |
 | Stage timings | `lifecycle` | same | `lifecycle.record(...)` |
-| Golden reference | `golden_results` | — | RCCL regression compare |
+| Golden reference | `golden_results` | — | Matrix compare suites (e.g. regression) |
 
 Root `cvs/conftest.py` binds fixtures from profile `sources` via `pytest_hooks.py`.
 
@@ -72,9 +72,8 @@ Auto-load order for `cvs run <stem>`:
 | ------- | ------- | ----- | --------------- |
 | `inferencex_atom_single.json` | `sweep` | InferenceX ATOM | Yes |
 | `vllm.json` | `sweep` | vLLM | Yes |
-| `rccl_perf.json` | `series` | RCCL bandwidth | Yes |
-| `rccl_regression.json` | `matrix` | RCCL golden compare | Yes |
 | SGLang | `sweep` | `sglang_*` stems | **`dev/dtni` only** — add JSON profile when suite merges |
+| RCCL | `series` / `matrix` | `rccl_*` stems | **Suite owners** — add `profiles/rccl_*.json` when ready |
 
 Schema: `profiles/schema.json`
 
@@ -88,11 +87,10 @@ writes ``{report_basename}.html`` + ``.json`` (and viewer for sweep suites).
 | -------------- | ------------------------ | --------- |
 | `inferencex_atom_single` | Yes | `profiles/inferencex_atom_single.json` |
 | `vllm` | Yes | `profiles/vllm.json` |
-| `rccl_perf` | Yes | `profiles/rccl_perf.json` |
-| `rccl_regression` | Yes | `profiles/rccl_regression.json` |
+| `rccl_perf`, `rccl_regression` | When profile added | Suite owner adds `profiles/<stem>.json` |
 | `sglang_single`, `sglang_distributed`, … | After `dev/dtni` merge | Add `profiles/sglang_*.json` when suite lands |
 
-Sample artifacts (no cluster run): ``python -m cvs.lib.report.demo.generate_inferencex_atom_rundeck --out sample_reports`` (or run ``sample_reports/generate_sample_rundecks.py`` locally for all profiles)
+Offline sample artifacts (gitignored, local only): run ``python sample_reports/generate_sample_rundecks.py`` from the repo root.
 
 ## Author tiers
 
@@ -140,8 +138,8 @@ or you need a card type that does not exist yet.
 | Builder | Use when results look like | Copy from |
 | ------- | ------------------------- | --------- |
 | `sweep` | Cell-keyed dict: `ISL=…,OSL=…,CONC=…` → metric fields | `profiles/inferencex_atom_single.json` or `vllm.json` |
-| `series` | Nested dict: collective → message size → `{bus_bw, alg_bw, …}` | `profiles/rccl_perf.json` |
-| `matrix` | Current results + golden reference for compare rows | `profiles/rccl_regression.json` |
+| `series` | Nested dict: collective → message size → `{bus_bw, alg_bw, …}` | Inline `series` block in profile JSON |
+| `matrix` | Current results + golden reference for compare rows | Inline `matrix` block + `sources.reference` |
 
 ### 2. Copy profile JSON
 
@@ -211,7 +209,7 @@ For matrix compare, also expose `golden_results` and list it under `sources.refe
 ```bash
 cvs run <stem> --cluster_file ... --config_file ... --html=~/cvs_results/run.html
 python -m pytest cvs/lib/report/unittests/test_rundeck_foundation.py -q
-python -m cvs.lib.report.demo.generate_inferencex_atom_rundeck --out sample_reports   # offline smoke
+python sample_reports/generate_sample_rundecks.py   # optional local smoke (gitignored dir)
 ```
 
 Expected artifacts next to the pytest HTML report:
@@ -240,7 +238,7 @@ suite. The profile ``profiles/inferencex_atom_single.json`` uses report-layer ho
 | Proof level | Works on `main`? | How |
 | ----------- | ---------------- | --- |
 | Engine + parity | Yes | ``pytest cvs/lib/report/unittests/test_rundeck_parity.py`` |
-| Sample artifacts | Yes | ``python -m cvs.lib.report.demo.generate_inferencex_atom_rundeck --out sample_reports`` |
+| Sample artifacts | Local only | ``python sample_reports/generate_sample_rundecks.py`` (gitignored) |
 | Live ``cvs run inferencex_atom_single`` | After suite merges | Full suite from ``dev/dtni`` + Run Deck |
 
 Launch-command panel is omitted from the main-safe profile; add

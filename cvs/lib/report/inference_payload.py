@@ -264,7 +264,9 @@ def build_inference_report_payload(
         for ch in config.chart_series
     ]
 
-    return {
+    from cvs.lib.report.rundeck.viewer_config import build_viewer_config
+
+    payload = {
         "schema_version": 1,
         "suite_id": config.suite_id,
         "generated_at": generated_at,
@@ -292,3 +294,5 @@ def build_inference_report_payload(
         "results_table": build_results_table(config, inf_res_dict),
         "panels": panels,
     }
+    payload["viewer_config"] = build_viewer_config({}, config)
+    return payload

@@ -44,6 +44,8 @@ def test_rundeck_payload_matches_inference_builder():
     assert rundeck_payload["results_table"]["headers"] == inference_payload["results_table"]["headers"]
     assert len(rundeck_payload["gate_matrix"]) == len(inference_payload["gate_matrix"])
     assert rundeck_payload["chart_series"].keys() == inference_payload["chart_series"].keys()
+    assert "viewer_config" in rundeck_payload
+    assert rundeck_payload["viewer_config"]["group_by"] == ["isl", "osl"]
 
 
 def test_rundeck_render_contains_core_panels():
@@ -79,28 +81,20 @@ def test_inference_render_path_uses_unified_runtime():
     assert "Full results" in doc
 
 
-def test_series_builder_from_rccl_shape():
+def test_series_builder_from_nested_graph_shape():
     graph = {
         "all_reduce": {
             "8": {"bus_bw": 12.5, "alg_bw": 11.0, "time": 100},
             "64": {"bus_bw": 45.0, "alg_bw": 40.0, "time": 200},
         }
     }
-    profile = load_json_profile("rccl_perf")
+    profile = {
+        "dataset_builder": "series",
+        "series": {"x_field": "size", "y_fields": ["bus_bw", "alg_bw"]},
+    }
     datasets = build_datasets("series", {"results": graph}, profile)
     assert "bus_bw" in datasets["charts"]
     assert datasets["results_table"]["rows"]
-
-
-def test_demo_generator_writes_artifacts(tmp_path):
-    from cvs.lib.report.demo.generate_inferencex_atom_rundeck import generate
-
-    paths = generate(tmp_path)
-    assert paths["html"].is_file()
-    assert paths["json"].is_file()
-    html = paths["html"].read_text(encoding="utf-8")
-    assert "IX Run Deck" in html
-    assert "Full results" in html
 
 
 def test_vllm_json_profile_loads():
