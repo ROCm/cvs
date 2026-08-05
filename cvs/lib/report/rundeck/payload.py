@@ -103,7 +103,7 @@ def build_rundeck_payload(
         "results_table": sweep_data.get("results_table") or datasets.get("series", {}).get("results_table") or {},
         "panels": panels,
         "datasets": datasets,
-        "deck_profile": profile_dict or {"cards": default_inference_cards()},
+        "deck_profile": profile_dict or {"cards": default_deck_cards()},
     }
 
     if isinstance(profile, dict) and profile.get("cards"):
@@ -143,17 +143,7 @@ def apply_summary_meta(payload: dict, config: InferenceReportConfig) -> dict:
     return payload
 
 
-def _profile_dict_from_config(config: InferenceReportConfig) -> dict[str, Any]:
-    return {
-        "dataset_builder": "sweep",
-        "suite_id": config.suite_id,
-        "report_basename": config.report_basename,
-        "title": config.title,
-        "cards": default_inference_cards(),
-    }
-
-
-def default_inference_cards() -> list[dict[str, Any]]:
+def default_deck_cards() -> list[dict[str, Any]]:
     return [
         {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
         {"type": "launch_panel", "bind": "panels.launch", "when_empty": "hide"},

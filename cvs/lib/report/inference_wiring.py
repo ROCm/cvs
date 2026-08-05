@@ -2,26 +2,14 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Generic pytest wiring for inference suite reports.
+Optional pytest wiring helpers for sweep suite reports.
 
-**Suite owners** — add ``cvs/lib/report/profiles/<cvs_run_stem>.json`` (see
-``cvs/lib/report/README.md``). Root ``cvs/conftest.py`` auto-registers the profile,
-binds session data, and attaches HTML row extras when ``--html`` is set.
-
-Optional explicit registration with a resolved ``InferenceReportConfig``::
-
-    from cvs.lib.report.inference_wiring import configure_inference_suite_report
-    from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
-    from cvs.lib.report.profile import load_json_profile
-
-    def pytest_configure(config):
-        profile = load_json_profile("my_suite")
-        configure_inference_suite_report(config, build_inference_config_from_profile(profile))
+Root ``cvs/conftest.py`` auto-registers ``profiles/<stem>.json``, binds session
+fixtures, and attaches HTML row extras when ``--html`` is set. Suite owners only
+need this module for explicit ``InferenceReportConfig`` registration.
 '''
 
 from __future__ import annotations
-
-from cvs.lib.inference.utils.inference_suite_lifecycle import attach_lifecycle_html_table
 
 from cvs.lib.report.pytest_extras import attach_inference_cell_row_extra
 from cvs.lib.report.registry import bind_session_results, register_suite_report
@@ -29,7 +17,7 @@ from cvs.lib.report.types import InferenceReportConfig
 
 
 def configure_inference_suite_report(pytest_config, preset: InferenceReportConfig) -> None:
-    """Register a suite report preset (overrides auto-discovery)."""
+    """Register a resolved report config (overrides JSON auto-discovery)."""
     register_suite_report(pytest_config, preset)
 
 
@@ -53,6 +41,9 @@ def attach_inference_suite_report_row_extra(item, report) -> None:
 
 
 def attach_inference_suite_lifecycle_table(item, report) -> None:
-    """Attach per-test lifecycle timing table to pytest-html rows."""
-
+    """Attach per-test lifecycle timing table when the inference suite module is present."""
+    try:
+        from cvs.lib.inference.utils.inference_suite_lifecycle import attach_lifecycle_html_table
+    except ImportError:
+        return
     attach_lifecycle_html_table(item, report)

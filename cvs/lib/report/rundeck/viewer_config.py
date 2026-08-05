@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from cvs.lib.report.types import InferenceReportConfig, ReportChartSeries
+from cvs.lib.report.types import InferenceReportConfig
 
 # Results-table column labels → cell record fields (sweep cells).
 LABEL_TO_FIELD: dict[str, str] = {
@@ -186,17 +186,3 @@ def build_viewer_config(
         "comparison_hint": comparison_hint,
         "interactivity": interactivity,
     }
-
-
-def chart_config_from_series(config: InferenceReportConfig) -> list[dict[str, Any]]:
-    series: tuple[ReportChartSeries, ...] = config.chart_series or ()
-    return [
-        {
-            "suffix": ch.metric_suffix,
-            "title": ch.title,
-            "unit": ch.unit,
-            "metric": config.full_metric(ch.metric_suffix),
-            "invert": ch.invert,
-        }
-        for ch in series
-    ]

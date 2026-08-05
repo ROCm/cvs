@@ -11,7 +11,7 @@ import html
 
 from cvs.lib.report.formatting import status_badge_html
 from cvs.lib.report.rundeck.runtime.theme import report_css
-from cvs.lib.report.rundeck.payload import default_inference_cards
+from cvs.lib.report.rundeck.payload import default_deck_cards
 from cvs.lib.report.rundeck.runtime.cards import close_gate_matrix_section, render_card
 
 
@@ -20,7 +20,7 @@ def _cards_from_payload(payload: dict) -> list[dict]:
     cards = deck_profile.get("cards")
     if cards:
         return cards
-    return default_inference_cards()
+    return default_deck_cards()
 
 
 def _build_nav(nav_items: list[tuple[str, str]], viewer_name: str | None) -> str:

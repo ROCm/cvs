@@ -2,101 +2,35 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Generic inference suite reports for DTNI.
+Test and offline helpers for sweep Run Deck payloads.
 
-Sits on top of the tabular ``print_results_table`` output: same ``inf_res_dict``
-keys and column presets, plus optional HTML/JSON dashboard when pytest ``--html`` is set.
-
-**Suite conftest** — optional explicit wiring via ``inference_wiring`` (see ``cvs/lib/report/README.md``)::
-
-    from cvs.lib.report.inference_wiring import (
-        bind_inference_suite_report_session,
-        configure_inference_suite_report,
-    )
-    from cvs.lib.report.profile import load_json_profile
-    from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
-
-    def pytest_configure(config):
-        profile = load_json_profile("my_suite")
-        configure_inference_suite_report(config, build_inference_config_from_profile(profile))
-
-Reference profiles for inference suites land with ``dev/dtni`` (IX-ATOM, vLLM, SGLang).
-Until then, add ``profiles/<stem>.json`` when wiring a suite on your branch.
-Session-end generation is automatic when ``--html`` is set; no lifecycle report test.
+Production publish path: ``rundeck.generate_rundeck`` (session finish via
+``report_plugins``). This module keeps ``build_inference_report_payload`` and
+``write_report`` for unit tests until those call ``build_rundeck_payload`` directly.
 '''
 
 from __future__ import annotations
 
-import importlib.metadata
-import shutil
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from cvs.lib import globals
 from cvs.lib.report.artifacts import write_html_json_artifacts
 from cvs.lib.report.ci_summary import write_inference_ci_summary
-from cvs.lib.report.inference_html import render_report_html
 from cvs.lib.report.inference_payload import build_inference_report_payload
-from cvs.lib.report.provenance import build_inference_report_provenance
+from cvs.lib.report.rundeck.payload import apply_summary_meta
+from cvs.lib.report.rundeck.render import render_rundeck_html
 from cvs.lib.report.types import InferenceReportConfig
 from cvs.lib.report.viewer.scaffold import viewer_basename_for, write_interactive_viewer
 
-log = globals.log
-
-
-def _cvs_version() -> str:
-    try:
-        return importlib.metadata.version("cvs")
-    except importlib.metadata.PackageNotFoundError:
-        return "dev"
-
-
-def _summary_payload_meta(config: InferenceReportConfig, total_cells: int) -> dict:
-    if config.interactive_viewer and total_cells > config.viewer_cell_threshold:
-        return {
-            "mode": "truncated",
-            "total_cells": total_cells,
-            "inline_limit": config.viewer_cell_threshold,
-            "viewer_html": viewer_basename_for(config.report_basename),
-            "gated_tiers": list(config.gated_tiers),
-        }
-    summary = {"mode": "full", "total_cells": total_cells}
-    if config.interactive_viewer:
-        summary["viewer_html"] = viewer_basename_for(config.report_basename)
-    return summary
-
-
-def _bundle_artifact_hrefs(
-    *,
-    html_path: Path,
-    log_file_path: str,
-    report_manager,
-) -> tuple[Path, str, str]:
-    """Return output dir and zip-safe hrefs for pytest HTML and run log."""
-    out_dir = html_path.parent
-    pytest_href = html_path.name
-    log_href = ""
-    if report_manager and report_manager.is_enabled:
-        out_dir = report_manager.log_dir
-        out_dir.mkdir(parents=True, exist_ok=True)
-        pytest_href = f"../{html_path.name}"
-        if log_file_path:
-            log_src = Path(log_file_path)
-            log_href = log_src.name
-            if log_src.is_file():
-                shutil.copy2(log_src, out_dir / log_src.name)
-    elif log_file_path:
-        log_href = Path(log_file_path).name
-    return out_dir, pytest_href, log_href
-
-
-# Re-export public API for existing imports.
 __all__ = [
     "build_inference_report_payload",
-    "publish_inference_suite_report",
     "render_report_html",
     "write_report",
 ]
+
+
+def render_report_html(payload: dict) -> str:
+    return render_rundeck_html(payload)
 
 
 def write_report(
@@ -111,7 +45,7 @@ def write_report(
     log_file_path: str = "",
     provenance: Optional[Mapping[str, str]] = None,
 ) -> dict:
-    """Build payload, render HTML + JSON sidecar. Returns artifact paths and payload."""
+    """Build payload, render HTML + JSON sidecar. Used by report unit tests."""
     out_path = Path(path)
     payload = build_inference_report_payload(
         config=config,
@@ -124,21 +58,18 @@ def write_report(
         provenance=provenance,
         report_dir=out_path.parent,
     )
-    total_cells = len(payload["cells"])
-    payload["summary"] = _summary_payload_meta(config, total_cells)
+    payload = apply_summary_meta(payload, config)
 
-    path = out_path
     viewer_path = None
-
     html_path, json_path = write_html_json_artifacts(
-        path,
+        out_path,
         payload=payload,
         render_html=render_report_html,
     )
 
     if config.interactive_viewer:
         viewer_name = viewer_basename_for(config.report_basename)
-        viewer_path = path.parent / viewer_name
+        viewer_path = out_path.parent / viewer_name
         write_interactive_viewer(
             viewer_path,
             json_basename=f"{config.report_basename}.json",
@@ -147,92 +78,8 @@ def write_report(
             tier_order=config.metric_tier_order,
             embed_payload=payload,
         )
-    summary_path = write_inference_ci_summary(payload, config, path.parent)
+    summary_path = write_inference_ci_summary(payload, config, out_path.parent)
     result = {"html": html_path, "json": json_path, "payload": payload, "summary": summary_path}
     if viewer_path is not None:
         result["viewer"] = viewer_path
     return result
-
-
-def publish_inference_suite_report(
-    config: InferenceReportConfig,
-    *,
-    variant_config,
-    inf_res_dict: Mapping[tuple, Any],
-    lifecycle_report: Mapping[str, list],
-    report_manager,
-    pytest_config,
-) -> Optional[dict]:
-    """Write suite report artifacts and register them with the pytest HTML bundle."""
-    if variant_config is None:
-        log.warning("Skipping suite report generation: variant_config not in session store")
-        return None
-
-    cvs_version = _cvs_version()
-
-    htmlpath = getattr(pytest_config.option, "htmlpath", None)
-    if not htmlpath:
-        return None
-
-    html_path = Path(htmlpath).resolve()
-    log_file = getattr(pytest_config.option, "log_file", None)
-    log_file_path = str(Path(log_file).resolve()) if log_file else ""
-    out_dir, pytest_href, log_href = _bundle_artifact_hrefs(
-        html_path=html_path,
-        log_file_path=log_file_path,
-        report_manager=report_manager,
-    )
-    provenance = build_inference_report_provenance(
-        pytest_config,
-        cvs_version=cvs_version,
-        pytest_html_path=str(html_path),
-        log_file_path=log_file_path,
-        pytest_html_href=pytest_href,
-        log_file_href=log_href,
-    )
-    from cvs.core.image_display import format_image_display
-    from cvs.lib.report.registry import get_session_results
-
-    store = get_session_results()
-    runtime = store.get("runtime_provenance") or {}
-    if isinstance(runtime, dict):
-        provenance.update({k: str(v) for k, v in runtime.items() if v})
-    if not provenance.get("image_display"):
-        image_pin = getattr(getattr(variant_config, "run_card", None), "atom_image_pin", "") or ""
-        if image_pin:
-            provenance.setdefault("image_tag", image_pin)
-            provenance["image_display"] = format_image_display(image_tag=image_pin)
-    launch_builder = getattr(config, "launch_provenance_builder", None)
-    if launch_builder and variant_config is not None:
-        try:
-            provenance.update({k: str(v) for k, v in launch_builder(variant_config).items() if v})
-        except Exception as exc:
-            log.warning("Could not build launch provenance: %s", exc)
-    artifacts = write_report(
-        out_dir / f"{config.report_basename}.html",
-        config=config,
-        variant_config=variant_config,
-        inf_res_dict=inf_res_dict,
-        lifecycle_report=lifecycle_report,
-        cvs_version=cvs_version,
-        pytest_html_path=str(html_path),
-        log_file_path=log_file_path,
-        provenance=provenance,
-    )
-    log.info(
-        "Suite report written (%s): %s (json: %s, summary: %s)",
-        config.suite_id,
-        artifacts["html"],
-        artifacts["json"],
-        artifacts["summary"],
-    )
-
-    if report_manager and report_manager.is_enabled:
-        report_manager.add_html_to_report(artifacts["html"], link_name=config.link_name)
-        report_manager.add_html_to_report(artifacts["json"], link_name=f"{config.link_name} JSON")
-        report_manager.add_html_to_report(artifacts["summary"], link_name=f"{config.link_name} summary")
-        viewer = artifacts.get("viewer")
-        if viewer is not None:
-            report_manager.add_html_to_report(viewer, link_name=f"{config.link_name} viewer")
-
-    return artifacts

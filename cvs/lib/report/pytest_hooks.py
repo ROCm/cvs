@@ -95,17 +95,15 @@ def cvs_rundeck_bind_module_fixture(request, _cvs_rundeck_session):
 
 
 def attach_rundeck_row_extras(item, report) -> None:
-    """Attach inference suite row extras when the active profile uses sweep data."""
-    from cvs.lib.report.rundeck.config_adapter import resolve_report_config
+    """Attach sweep row extras when the active profile uses sweep data."""
+    from cvs.lib.report.registry import get_resolved_profile, resolve_suite_report_config
 
     profile = get_resolved_profile(item.config)
     if profile is None:
         return
     if isinstance(profile, dict) and profile.get("dataset_builder") not in (None, "sweep"):
         return
-    try:
-        resolve_report_config(profile)
-    except (TypeError, ValueError):
+    if resolve_suite_report_config(item.config) is None:
         return
 
     from cvs.lib.report.inference_wiring import (

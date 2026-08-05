@@ -45,6 +45,21 @@ def get_suite_report_config(pytest_config) -> Optional[InferenceReportConfig]:
     return None
 
 
+def resolve_suite_report_config(pytest_config) -> Optional[InferenceReportConfig]:
+    """Resolve JSON deck profiles and legacy presets to ``InferenceReportConfig``."""
+    profile = get_resolved_profile(pytest_config)
+    if profile is None:
+        return None
+    if isinstance(profile, InferenceReportConfig):
+        return profile
+    from cvs.lib.report.rundeck.config_adapter import resolve_report_config
+
+    try:
+        return resolve_report_config(profile)
+    except (TypeError, ValueError):
+        return None
+
+
 def get_resolved_profile(pytest_config) -> Optional[DeckProfile]:
     return getattr(pytest_config, "_suite_report_config", None)
 
@@ -153,6 +168,7 @@ __all__ = [
     "get_session_results",
     "get_sources",
     "get_suite_report_config",
+    "resolve_suite_report_config",
     "register_deck_profile",
     "register_suite_report",
     "try_load_json_profile_for_stem",

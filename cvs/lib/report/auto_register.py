@@ -28,8 +28,3 @@ def try_auto_register_suite_report(pytest_config) -> bool:
         return True
 
     return False
-
-
-def try_auto_register_inference_suite_report(pytest_config) -> bool:
-    """Backward-compatible alias for existing imports."""
-    return try_auto_register_suite_report(pytest_config)

@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-CVS inference suite reports: HTML/JSON dashboards bundled with pytest-html output.
+CVS Run Deck reporting: HTML/JSON dashboards bundled with pytest-html output.
 '''
 
 from __future__ import annotations
@@ -14,12 +14,12 @@ from cvs.lib.report.registry import (
     get_session_results,
     get_suite_report_config,
     register_suite_report,
+    resolve_suite_report_config,
 )
 from cvs.lib.report.types import InferenceReportConfig, ReportChartSeries
 
 _LAZY = {
     "build_inference_report_payload",
-    "publish_inference_suite_report",
     "render_report_html",
     "write_report",
 }
@@ -40,8 +40,8 @@ __all__ = [
     "build_inference_report_payload",
     "get_session_results",
     "get_suite_report_config",
-    "publish_inference_suite_report",
     "register_suite_report",
+    "resolve_suite_report_config",
     "render_report_html",
     "write_report",
 ]
