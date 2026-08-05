@@ -79,6 +79,16 @@ class TestHostLoggerSuppression(unittest.TestCase):
 
         self.assertEqual([r.getMessage() for r in handler.records], ["kept"])
 
+    def test_filter_is_identifiable_by_name(self):
+        # The filter has to be recognisable in
+        # logging.getLogger('pssh.host_logger').filters when someone is
+        # debugging log routing on a live node. An anonymous lambda shows up
+        # there as a bare <function <lambda>> with no hint of what installed it
+        # or why, so the suppression is pinned to a named callable.
+        installed = logging.getLogger(HOST_LOGGER).filters
+        names = [getattr(f, '__name__', '') for f in installed]
+        self.assertIn('_suppress_pssh_host_logger', names, f"no named suppression filter among {installed}")
+
 
 if __name__ == '__main__':
     unittest.main()

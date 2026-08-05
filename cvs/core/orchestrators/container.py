@@ -618,7 +618,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         if not self.container_id:
             raise RuntimeError("No containers running. Call setup_containers() first.")
 
-        return self.runtime.exec(self.container_id, cmd, hosts, timeout, detailed, print_console)
+        return self.runtime.exec(self.container_id, cmd, hosts, timeout, detailed=detailed, print_console=print_console)
 
     def exec_cmd_list(self, cmd_list, timeout=None):
         """
@@ -659,7 +659,9 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         Returns:
             Dictionary mapping head node to execution result
         """
-        return self.runtime.exec_on_head(self.container_id, cmd, timeout, detailed, print_console)
+        return self.runtime.exec_on_head(
+            self.container_id, cmd, timeout, detailed=detailed, print_console=print_console
+        )
 
     def distribute_using_mpi(
         self,

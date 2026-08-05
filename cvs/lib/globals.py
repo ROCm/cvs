@@ -9,6 +9,7 @@ import logging
 
 log = logging.getLogger()
 
+
 # pssh's own host_logger emits every remote stdout/stderr line, tagged with the
 # host (pssh/clients/base/single.py). Upstream keeps it quiet behind a
 # NullHandler unless enable_host_logger() is called -- which CVS never does --
@@ -22,7 +23,15 @@ log = logging.getLogger()
 # handler to root AND to every non-propagating logger (_pytest/logging.py), so
 # clearing propagate makes pytest attach directly and the duplicate survives.
 # A filter drops the record before any handler is consulted, however attached.
-logging.getLogger('pssh.host_logger').addFilter(lambda _record: False)
+#
+# Named rather than a lambda so it is identifiable in
+# logging.getLogger('pssh.host_logger').filters when someone is debugging log
+# routing on a live node.
+def _suppress_pssh_host_logger(_record):
+    return False
+
+
+logging.getLogger('pssh.host_logger').addFilter(_suppress_pssh_host_logger)
 
 error_list = []
 

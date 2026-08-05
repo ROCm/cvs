@@ -682,6 +682,9 @@ class VllmJob:
                 # The artifact is read with print_console=False, so its content
                 # is nowhere else in the log -- carry a slice into the error or
                 # the failure is undiagnosable.
-                raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}: {text[:500]}") from e
+                # repr() keeps the snippet on one line: the artifact can be a
+                # stack trace or an HTML error page, and raw newlines there
+                # would break up CI output and pasted ticket bodies.
+                raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}: {text[:500]!r}") from e
             results[host] = to_client_metrics(raw, tp=self.tp, isl=self.isl, pp=self.pp)
         return results

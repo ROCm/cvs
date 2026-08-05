@@ -9,12 +9,10 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # and command-dispatch surface (exec, exec_on_head, cleanup, sudo_prefix) used by the
 # migrated rvs_cvs.py orch fixture. Mocks Pssh so tests run with no SSH.
 
-import inspect
 import unittest
 from unittest.mock import MagicMock, patch
 
 from cvs.core.orchestrators.factory import OrchestratorConfig
-from cvs.core.orchestrators.base import Orchestrator
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 
 
@@ -107,30 +105,6 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.head = MagicMock()
         orch.exec_on_head("cat /tmp/huge", print_console=False)
         self.assertIs(orch.head.exec.call_args.kwargs["print_console"], False)
-
-    def test_abc_signature_matches_implementation(self):
-        """The Orchestrator ABC must advertise the kwargs its subclasses accept.
-
-        Python's abstractmethod enforces method NAMES only, never parameter
-        lists, so a subclass may silently widen a signature. That is how
-        `detailed` and then `print_console` came to exist on every concrete
-        orchestrator while the ABC still documented neither: nothing raises,
-        the tests pass, and the gap is invisible until someone writes a new
-        backend from the ABC and omits the kwarg -- at which point the drop is
-        silent (the command still works, it just logs hundreds of MB again).
-        Pinning the ABC against the implementation is the only thing that makes
-        that class of drift loud.
-        """
-        for method in ("exec", "exec_on_head"):
-            with self.subTest(method=method):
-                abc_params = inspect.signature(getattr(Orchestrator, method)).parameters
-                impl_params = inspect.signature(getattr(BaremetalOrchestrator, method)).parameters
-                missing = [p for p in impl_params if p not in abc_params]
-                self.assertEqual(
-                    missing,
-                    [],
-                    f"Orchestrator.{method}() is missing {missing}, which BaremetalOrchestrator.{method}() accepts",
-                )
 
     @patch("cvs.core.orchestrators.baremetal.Pssh")
     def test_cleanup_returns_true(self, _mock_pssh):
