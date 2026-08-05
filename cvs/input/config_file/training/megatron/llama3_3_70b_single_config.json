@@ -3,6 +3,12 @@
   "framework": "megatron_single",
   "gpu_arch": "MI325X",
   "enforce_thresholds": false,
+  "threshold_json": "llama3_3_70b_single_threshold.json",
+  "_scaling_baseline_comment": "Single-node baseline for scaling-efficiency %. tokens_per_sec_total=0.0 means disabled (record-only). Populate from this run's tok/s/GPU * 8 to use as reference for multi-node comparisons.",
+  "scaling_baseline": {
+    "tokens_per_sec_total": 0.0,
+    "num_nodes": 1
+  },
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOGS/megatron",
@@ -58,25 +64,13 @@
         "name": "llama3_3_70b_mbs3_gbs96_FP8",
         "global_batch_size": "96",
         "micro_batch_size": "3",
-        "precision": "FP8",
-        "result_dict": {
-          "throughput_per_gpu": "100",
-          "elapsed_time_per_iteration": "500",
-          "tokens_per_gpu": "1000",
-          "mem_usage": "0"
-        }
+        "precision": "FP8"
       },
       "llama3_3_70b-mi325-bs96-mbs3-bf16": {
         "name": "llama3_3_70b_mbs3_gbs96_BF16",
         "global_batch_size": "96",
         "micro_batch_size": "3",
-        "precision": "BF16",
-        "result_dict": {
-          "throughput_per_gpu": "100",
-          "elapsed_time_per_iteration": "500",
-          "tokens_per_gpu": "1000",
-          "mem_usage": "0"
-        }
+        "precision": "BF16"
       }
     },
     "runs": [
