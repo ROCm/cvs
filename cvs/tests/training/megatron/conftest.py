@@ -117,9 +117,12 @@ def pytest_collection_modifyitems(items):
     """Pin lifecycle order: launch → training combos → metric → teardown."""
     rank = {
         "test_launch_container": 0,
-        "test_training": 1,
-        "test_metric": 2,
-        "test_teardown": 3,
+        "test_download_tokenizer": 1,
+        "test_smoke": 2,
+        "test_training": 3,
+        "test_metric": 4,
+        "test_loss_curve": 4,
+        "test_teardown": 5,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 

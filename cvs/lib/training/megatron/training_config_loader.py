@@ -120,12 +120,18 @@ class MegatronSweep(_Forbid):
         return self
 
 
+class ScalingBaseline(_Forbid):
+    tokens_per_sec_total: float = 0.0
+    num_nodes: int = 1
+
+
 class MegatronVariantConfig(_Forbid):
     schema_version: Literal[1]
     framework: Literal["megatron_single", "megatron_distributed"]
     gpu_arch: str
     enforce_thresholds: bool = True
     threshold_json: str = ""
+    scaling_baseline: ScalingBaseline = Field(default_factory=ScalingBaseline)
     config: Dict[str, Any]        # training knobs: megatron_root, nccl_*, nic_type, ...
     model_params: Dict[str, Any]  # model knobs: model_name, precision, tp, pp, ...
     container: ContainerSpec
