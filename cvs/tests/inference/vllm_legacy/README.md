@@ -44,6 +44,33 @@ cvs run vllm_gpt_oss_120b_single \
 Importing `cvs.lib.inference.vllm` raises a `DeprecationWarning` naming the
 removal date and the replacement.
 
+## Known limitations of the frozen path
+
+These are preserved pre-#223 behaviour, not new defects. They are not fixed
+here because doing so would break the freeze that makes this a faithful
+deprecation notice; the replacement suite addresses all of them.
+
+1. **The server launch scripts are not distributed with CVS.** The config's
+   `server_script` values (`gpt-oss-120b_fp4_mi355x_vllm_docker.sh`,
+   `qwen3-235b-bf16_mi355x_vllm_docker.sh`,
+   `qwen3-80b-bf16_mi355x_vllm_docker.sh`, `dsr1_fp8_mi355x_vllm_docker.sh`)
+   live in no repository. Pre-stage them at `benchmark_server_script_path` on
+   every node or the command above cannot run.
+2. **Every model block must spell `random_range_ratio`.** The frozen base
+   setdefaults the misspelled `random_range_ration`, so the correctly-spelled
+   key it later reads has no fallback and a config omitting it raises
+   `KeyError` while building the server command.
+3. **Server-readiness budget is tight.** 30s precheck + 330s wait + 20 polls x
+   60s = 1560s (2160s for `vllm_qwen3_80b_single`, which polls 30 times). A
+   first run that downloads weights from HF can exhaust it and fail on a
+   readiness timeout rather than on a real fault. Pre-stage the weights. There
+   is no config knob for this -- `server_launch_poll_count` is a constructor
+   argument, so the only in-tree override is the `VllmJob(...)` call site in
+   the suite file.
+4. **The bench client is cloned at run time** from
+   `https://github.com/kimbochen/bench_serving.git`, a third-party repository
+   that is not pinned or mirrored.
+
 ## Why this directory, and why no conftest.py
 
 `cvs/tests/inference/vllm/conftest.py` defines `pytest_collection_modifyitems`,

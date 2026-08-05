@@ -17,9 +17,12 @@ These tests exist to keep the quarantine intact until the window closes.
 
 import ast
 import datetime
+import hashlib
 import os
+import re
 import unittest
 
+import cvs.lib.inference.base as live_base
 import cvs.lib.inference.base_legacy as base_legacy
 import cvs.lib.inference.vllm as legacy_vllm
 from cvs.lib.inference.base_legacy import InferenceBaseJob as LegacyInferenceBaseJob
@@ -36,6 +39,39 @@ LEGACY_SUITE_STEMS = (
     'vllm_qwen3_235b_single',
     'vllm_deepseek31_685b_single',
 )
+
+
+class _FakePhdl:
+    """Records commands. InferenceBaseJob.__init__ only needs host_list and exec()."""
+
+    host_list = ['node0']
+
+    def __init__(self):
+        self.commands = []
+
+    def exec(self, cmd, *args, **kwargs):
+        self.commands.append(cmd)
+        return {'node0': ''}
+
+    def exec_cmd_list(self, cmd_list, *args, **kwargs):
+        self.commands.extend(cmd_list)
+        return {'node0': ''}
+
+
+def _build_job(base_cls):
+    """Build base_cls against a config that omits random_range_ratio.
+
+    Both bases take the same __init__ signature, so one builder serves the
+    frozen and the live class and the assertions can contrast them directly.
+    """
+    return base_cls(
+        c_phdl=_FakePhdl(),
+        s_phdl=_FakePhdl(),
+        model_name='m',
+        inference_config_dict={'container_image': 'img:tag', 'benchmark_server_script_path': '/scripts'},
+        benchmark_params_dict={'m': {'server_script': 'srv.sh', 'bench_serv_script': 'bench.py'}},
+        hf_token='tok',
+    )
 
 
 class TestLegacyVllmJobRestored(unittest.TestCase):
@@ -74,17 +110,30 @@ class TestFrozenLegacyBase(unittest.TestCase):
         self.assertIsNot(base_legacy, live_base)
         self.assertIsNot(base_legacy.InferenceBaseJob, live_base.InferenceBaseJob)
 
-    def test_retains_pre_dtni_bench_clone_behaviour(self):
+    def test_frozen_base_clones_bench_serving_and_live_base_does_not(self):
         # dtni turned clone_bench_serving_repo into a no-op and dropped the
-        # benchmark_script_repo default. The frozen copy must still do neither,
-        # or restored configs silently stop working the way they used to.
-        self.assertIn('benchmark_script_repo', base_legacy.LEGACY_BENCH_DEFAULTS)
+        # benchmark_script_repo default; the frozen copy must still clone.
+        legacy_job = _build_job(base_legacy.InferenceBaseJob)
+        legacy_job.clone_bench_serving_repo('/app')
+        self.assertIn(
+            'git clone https://github.com/kimbochen/bench_serving.git',
+            legacy_job.c_phdl.commands[-1],
+        )
 
-    def test_retains_legacy_random_range_ratio_key_spelling(self):
-        # The deleted code spelled it 'random_range_ration'; dtni fixed the
-        # typo. Legacy configs still carry the misspelling, so the frozen base
-        # must keep honouring it.
-        self.assertIn('random_range_ration', base_legacy.LEGACY_BENCH_DEFAULTS)
+        live_job = _build_job(live_base.InferenceBaseJob)
+        live_job.clone_bench_serving_repo('/app')
+        self.assertEqual(live_job.c_phdl.commands, [])
+
+    def test_frozen_base_requires_random_range_ratio_in_config(self):
+        # base_legacy setdefaults the misspelled 'random_range_ration', so the
+        # reads of 'random_range_ratio' have no fallback and a config omitting
+        # the key raises. dtni fixed the spelling. Legacy configs must set it.
+        legacy_job = _build_job(base_legacy.InferenceBaseJob)
+        with self.assertRaises(KeyError):
+            legacy_job.bp_dict['random_range_ratio']
+
+        live_job = _build_job(live_base.InferenceBaseJob)
+        self.assertEqual(live_job.bp_dict['random_range_ratio'], '1.0')
 
 
 class TestLegacySuiteQuarantine(unittest.TestCase):
@@ -119,6 +168,48 @@ class TestLegacySuiteQuarantine(unittest.TestCase):
     def test_unified_suite_still_present(self):
         # Restoration must not disturb the replacement suite.
         self.assertTrue(os.path.isfile(os.path.join(_UNIFIED_SUITE_DIR, 'vllm.py')))
+
+
+class TestFrozenContentPins(unittest.TestCase):
+    """The restored files still hash to their pre-#223 content on main.
+
+    Pinned by hash rather than compared against ``git show origin/main:...``:
+    CI checks out at depth 1 with no ``origin/main`` ref, these tests also run
+    from the sdist copy which has no ``.git`` at all, and ``origin/main`` is not
+    an ancestor of ``dev/dtni``. Hashes are of the file with the added
+    deprecation header stripped, taken against main at commit d8da9a43.
+    """
+
+    # sha256 of each file minus its inserted deprecation block.
+    FROZEN_SHA256 = {
+        'lib/inference/base_legacy.py': '7744e396a547ba22820a2d55be8f8ef742b3ab65b64fd9fa62211f1361fc0a47',
+        'tests/inference/vllm_legacy/vllm_gpt_oss_120b_single.py': (
+            'f3ad2f1cf58691401745fa5ef08ab89cac52a29579596a7486a08dffd97c0b99'
+        ),
+        'tests/inference/vllm_legacy/vllm_qwen3_80b_single.py': (
+            '25edc96e9b7fff58b69414f99bb07d5551de5388b0d2b64c1c051885a08a9135'
+        ),
+        'tests/inference/vllm_legacy/vllm_qwen3_235b_single.py': (
+            '84ce576cbcc477f967d01ef63cb687d92330ac66cb7d0d0c7415b2822adae52b'
+        ),
+        'tests/inference/vllm_legacy/vllm_deepseek31_685b_single.py': (
+            'efa1593fb0e4fb0e604b4d0f9fc190af71e3332549e1e0241f363dd0ddcde1ce'
+        ),
+    }
+
+    # The header is inserted inside the module docstring, not prepended, so
+    # neither a byte- nor a suffix-compare identifies the frozen content.
+    _SUITE_HEADER = re.compile(r'\n\nDEPRECATED -- scheduled.*?There is deliberately no conftest\.py here\.\n', re.S)
+    _BASE_HEADER = re.compile(r'\n\nDEPRECATED -- frozen copy.*?once the window closes\.\n', re.S)
+
+    def test_restored_files_match_their_pre_deletion_content(self):
+        for relpath, expected in self.FROZEN_SHA256.items():
+            with self.subTest(path=relpath):
+                with open(os.path.join(_CVS_ROOT, relpath)) as fp:
+                    body = fp.read()
+                stripped = self._BASE_HEADER.sub('\n', self._SUITE_HEADER.sub('\n', body))
+                self.assertNotEqual(stripped, body, 'deprecation header missing from ' + relpath)
+                self.assertEqual(hashlib.sha256(stripped.encode()).hexdigest(), expected)
 
 
 class TestDeprecationNotice(unittest.TestCase):

@@ -39,14 +39,6 @@ from cvs.lib import linux_utils
 
 log = globals.log
 
-# The pre-#223 defaults the legacy suites' configs are written against. Named
-# here so the deprecation guard test can assert this copy stayed frozen rather
-# than drifting toward the live base's replacements.
-LEGACY_BENCH_DEFAULTS = {
-    'benchmark_script_repo': 'https://github.com/kimbochen/bench_serving.git',
-    'random_range_ration': '1.0',
-}
-
 inference_err_dict = {
     'NCCL ERROR': 'NCCL ERROR|NCCL timeout|local work queue catastrophic error',
     'GPU HW ERROR': 'HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset',
