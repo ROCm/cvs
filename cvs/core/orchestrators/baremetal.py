@@ -108,7 +108,10 @@ class BaremetalOrchestrator(Orchestrator):
                 host_key_check=False,
                 stop_on_errors=self.stop_on_errors,
             )
-            return pssh.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+            try:
+                return pssh.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+            finally:
+                pssh.destroy_clients()
 
     def sudo_prefix(self):
         """
@@ -170,7 +173,10 @@ class BaremetalOrchestrator(Orchestrator):
                 host_key_check=False,
                 stop_on_errors=self.stop_on_errors,
             )
-            result = pssh.exec(f"bash {env_script}", timeout=60, detailed=True)
+            try:
+                result = pssh.exec(f"bash {env_script}", timeout=60, detailed=True)
+            finally:
+                pssh.destroy_clients()
 
         # Check if all hosts succeeded
         success = all(output['exit_code'] == 0 for output in result.values())

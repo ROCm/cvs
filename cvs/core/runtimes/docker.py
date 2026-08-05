@@ -260,7 +260,10 @@ class DockerRuntime:
                 host_key_check=False,
                 stop_on_errors=self.orchestrator.stop_on_errors,
             )
-            return pssh.exec(exec_cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+            try:
+                return pssh.exec(exec_cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+            finally:
+                pssh.destroy_clients()
 
         return self.orchestrator.all.exec(exec_cmd, timeout=timeout, detailed=detailed, print_console=print_console)
 

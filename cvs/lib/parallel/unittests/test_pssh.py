@@ -1227,5 +1227,58 @@ class TestPsshInactivityTimeout(unittest.TestCase):
             self.pssh.exec("run", inactivity_timeout=0.3)
 
 
+class TestPsshDestroyClients(unittest.TestCase):
+    """destroy_clients must actually tear the SSH transport down.
+
+    A timed-out exec leaves the per-host greenlet in client.cmds unfinished.
+    That greenlet's callable is a bound method of the ParallelSSHClient, so the
+    client stays reachable, SSHClient.__del__ never runs, and the sshd session
+    survives the Pssh object -- verified against a live sshd. Dropping the
+    reference is therefore not enough; the teardown has to be explicit.
+    """
+
+    @patch("cvs.lib.parallel.pssh.ParallelSSHClient")
+    def _make_pssh(self, mock_pssh_client, host_clients=None, cmds=None):
+        mock_client = MagicMock()
+        mock_client.cmds = cmds
+        mock_client._host_clients = host_clients if host_clients is not None else {}
+        mock_pssh_client.return_value = mock_client
+        pssh = Pssh(MagicMock(), ["host1"], user="user", password="pass")
+        return pssh, mock_client
+
+    def test_destroy_clients_disconnects_each_host_client(self):
+        # The per-host SSHClient owns the socket; without an explicit
+        # _disconnect() the session is left open on the server.
+        host_client = MagicMock()
+        pssh, client = self._make_pssh(host_clients={(0, "host1"): host_client})
+
+        pssh.destroy_clients()
+
+        host_client._disconnect.assert_called_once_with()
+
+    def test_destroy_clients_kills_pending_command_greenlets(self):
+        # Unfinished greenlets from a timed-out exec are what pin the client;
+        # they must be killed or the disconnect above is unreachable.
+        greenlet = MagicMock()
+        pssh, client = self._make_pssh(cmds=[greenlet])
+
+        with patch("cvs.lib.parallel.pssh.killall") as mock_killall:
+            pssh.destroy_clients()
+
+        mock_killall.assert_called_once()
+        self.assertEqual(list(mock_killall.call_args.args[0]), [greenlet])
+
+    def test_destroy_clients_survives_disconnect_errors(self):
+        # A host that is already gone must not abort teardown of the others.
+        dead = MagicMock()
+        dead._disconnect.side_effect = OSError("connection already gone")
+        alive = MagicMock()
+        pssh, client = self._make_pssh(host_clients={(0, "h1"): dead, (1, "h2"): alive})
+
+        pssh.destroy_clients()
+
+        alive._disconnect.assert_called_once_with()
+
+
 if __name__ == "__main__":
     unittest.main()
