@@ -12,9 +12,11 @@ suite. The topology is determined entirely by the config file:
  
 Lifecycle (each stage is a separate test):
   test_launch_container  — launch the container once for all sweep combos
+  test_smoke             — fixed small cell: model loads and runs N steps without error
   test_training          — parametrized: one test per sweep combo; kills GPU
                            processes in finally so VRAM is free for the next combo
   test_metric            — parametrized: threshold check per combo via evaluate_all
+  test_loss_curve        — parametrized: loss decreases smoothly at steps 100/500/1k/5k
   test_teardown          — tear down the container once after all combos
 '''
  
@@ -26,12 +28,26 @@ import pytest
  
 from cvs.lib import globals
 from cvs.lib.training.factory import create_training_job
+from cvs.lib.training.megatron.utils.loss_curve import parse_loss_at_steps, check_loss_decreasing
+from cvs.lib.training.megatron.utils.scaling import compute_scaling_efficiency
 from cvs.lib.utils.verdict import evaluate_all
 from cvs.lib.utils_lib import update_test_result
  
 log = globals.log
- 
- 
+
+# Loss curve checkpoints: iteration numbers at which lm_loss is sampled.
+# The run must reach at least the second entry for the test to execute.
+_LOSS_CURVE_STEPS = [100, 500, 1000, 5000]
+
+# Smoke cell: smallest fixed parameters that confirm the model loads and trains.
+# Concurrency/num_prompts are irrelevant — the smoke never runs the benchmark
+# sweep. Runs once before the sweep so a broken model or NCCL setup fails fast.
+_SMOKE_MBS = "1"
+_SMOKE_GBS = "8"
+_SMOKE_ITERS = "10"
+_SMOKE_PRECISION = "BF16"
+
+
 def pytest_generate_tests(metafunc):
     """Parametrize test_training and test_metric from sweep.combinations filtered by sweep.runs.
  
@@ -89,6 +105,132 @@ def test_launch_container(orch, variant_config, lifecycle, request):
         pytest.fail(f"container {name} not running after setup_containers()")
  
  
+def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
+    """Stage 1: download the tokenizer model once if the model family requires it.
+
+    No-op for llama and qwen — their training scripts accept the HF repo ID
+    directly and no local file is needed. For deepseek and mixtral, downloads
+    tokenizer.model into data_cache_dir inside the container and verifies the
+    file is present before any training starts.
+
+    Stores the resolved local path in lifecycle.tokenizer_path so test_smoke
+    and test_training can reuse it without re-downloading. A failure here tells
+    the user exactly where the problem is (token missing, network unreachable,
+    disk full) rather than surfacing as a cryptic training script error.
+    """
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    distributed = "distributed" in variant_config.framework
+    mt_obj = create_training_job(
+        orch,
+        variant_config,
+        hf_token=hf_token,
+        micro_batch_size="1",
+        global_batch_size="1",
+        precision="BF16",
+        distributed_training=distributed,
+        tune_model_params=False,
+        run_label="tokenizer_check",
+    )
+
+    if not mt_obj._needs_local_tokenizer():
+        lifecycle.tokenizer_path = None
+        log.info(
+            "test_download_tokenizer: no local tokenizer needed for %s — skipping download",
+            variant_config.model_params["tokenizer_model"],
+        )
+        return
+
+    t = time.monotonic()
+    try:
+        mt_obj.download_tokenizer_model()
+    except Exception:
+        lifecycle.failed = True
+        raise
+
+    lifecycle.tokenizer_path = mt_obj.local_tokenizer_path
+    lifecycle.record(request.node.nodeid, "tokenizer_download", time.monotonic() - t)
+    log.info("test_download_tokenizer: tokenizer ready at %s", lifecycle.tokenizer_path)
+
+
+def test_smoke(orch, variant_config, hf_token, lifecycle, request):
+    """Stage 1: smoke-test — model loads and runs _SMOKE_ITERS steps without error.
+
+    Independent of the sweep. Brings up a short-lived training job with a fixed
+    small cell (MBS/GBS above) so a broken model, missing script, or NCCL failure
+    is caught fast before burning sweep-scale GPU time. Always stops GPU processes
+    in finally (success or failure) so test_training's first combo starts on a
+    clean node.
+
+    Asserts:
+      - Training reaches iteration _SMOKE_ITERS/_SMOKE_ITERS (no hang or early exit)
+      - At least one throughput value is parsed (model actually ran forward passes)
+      - No NaN or Inf values in any metric line
+    """
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    distributed = "distributed" in variant_config.framework
+
+    mt_obj = create_training_job(
+        orch,
+        variant_config,
+        hf_token=hf_token,
+        micro_batch_size=_SMOKE_MBS,
+        global_batch_size=_SMOKE_GBS,
+        precision=_SMOKE_PRECISION,
+        distributed_training=distributed,
+        tune_model_params=False,
+        run_label="smoke",
+    )
+    # Override iterations for the smoke cell without mutating variant_config.
+    mt_obj.iterations = int(_SMOKE_ITERS)
+
+    mt_obj.local_tokenizer_path = getattr(lifecycle, "tokenizer_path", None)
+
+    t = time.monotonic()
+    try:
+        mt_obj.build_training_job_cmd()
+        mt_obj.start_training_job()
+        mt_obj.poll_for_training_completion()
+        results = mt_obj.training_results_dict
+        if not results:
+            lifecycle.failed = True
+            pytest.fail(
+                "smoke: no results parsed after training — model may have failed "
+                "to load or hung before the final iteration; check the training log"
+            )
+        tput = results.get("throughput_per_gpu", [])
+        if not tput or float(tput[-1]) <= 0:
+            lifecycle.failed = True
+            pytest.fail(
+                f"smoke: throughput_per_gpu is zero or missing ({results}) — "
+                "model loaded but did not produce valid training output"
+            )
+        nan_hits = [
+            f"{k}={v}"
+            for k, vals in results.items()
+            for v in vals
+            if v.strip().lower() in ("nan", "inf", "-inf")
+        ]
+        if nan_hits:
+            lifecycle.failed = True
+            pytest.fail(f"smoke: NaN or Inf values in results: {nan_hits}")
+    except Exception:
+        lifecycle.failed = True
+        raise
+    finally:
+        mt_obj.stop_training_processes()
+
+    lifecycle.record(request.node.nodeid, "smoke", time.monotonic() - t)
+    log.info(
+        "smoke PASSED | throughput=%.2f TFLOP/s/GPU | iters=%s",
+        float(mt_obj.training_results_dict.get("throughput_per_gpu", ["0"])[-1]),
+        _SMOKE_ITERS,
+    )
+
+
 def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request):
     """Stage 1 (parametrized): run one sweep combo inside the shared container.
  
@@ -120,10 +262,11 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
         run_label=combo_key,
     )
  
+    mt_obj.local_tokenizer_path = getattr(lifecycle, "tokenizer_path", None)
+
     elapsed = 0
     try:
         t = time.monotonic()
-        mt_obj.download_tokenizer_model()
         mt_obj.build_training_job_cmd()
         mt_obj.start_training_job()
         mt_obj.poll_for_training_completion()
@@ -140,6 +283,21 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
     request.node.user_properties.append(("metric_unit", "s"))
  
     train_res_dict[combo_key] = mt_obj.training_results_dict
+    train_res_dict[combo_key]["_combo_log_dir"] = mt_obj.combo_log_dir
+
+    tput_per_gpu = train_res_dict[combo_key].get("throughput_per_gpu", [])
+    if tput_per_gpu:
+        gpus_per_node = 8
+        tokens_per_sec_total = float(tput_per_gpu[-1]) * mt_obj.nnodes * gpus_per_node
+        baseline = variant_config.scaling_baseline
+        efficiency = compute_scaling_efficiency(
+            tokens_per_sec_total,
+            mt_obj.nnodes,
+            baseline.tokens_per_sec_total,
+            baseline.num_nodes,
+        )
+        if efficiency is not None:
+            train_res_dict[combo_key]["scaling_efficiency_pct"] = [str(efficiency)]
     try:
         tail = mt_obj._read_last_node_log(tail_lines=50)
         train_res_dict[combo_key]["_log_tail"] = tail
@@ -181,6 +339,61 @@ def test_metric(variant_config, micro_batch_size, global_batch_size, precision, 
     evaluate_all(actuals, thresholds)
  
  
+def test_loss_curve(orch, variant_config, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request):
+    """Parametrized: verify lm_loss decreases smoothly at steps 100, 500, 1k, 5k.
+
+    Reads the full training log written by test_training (no container interaction
+    needed — the log file already exists on disk). Skips gracefully when the run
+    did not produce enough iterations to reach at least two checkpoints.
+
+    Uses parse_loss_at_steps() to extract lm_loss per checkpoint and
+    check_loss_decreasing() to validate:
+      - Monotonic decrease  : loss at each checkpoint < loss at previous (hard fail)
+      - Smoothness          : < 1% drop between any two checkpoints logged as warning
+    """
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    combo_key = request.node.callspec.id
+    if combo_key not in train_res_dict:
+        pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run)")
+
+    combo_log_dir = train_res_dict[combo_key].get("_combo_log_dir")
+    if not combo_log_dir:
+        pytest.skip(f"no log dir recorded for combo '{combo_key}'")
+
+    n = len(orch.hosts)
+    out_dict = orch.exec(f'cat {combo_log_dir}/out-node{n - 1}/training.log')
+    log_text = list(out_dict.values())[-1] or ""
+
+    losses = parse_loss_at_steps(log_text, _LOSS_CURVE_STEPS)
+
+    if len(losses) < 2:
+        pytest.skip(
+            f"fewer than 2 loss checkpoints found in log "
+            f"(steps checked: {_LOSS_CURVE_STEPS}) — "
+            f"training needs at least {_LOSS_CURVE_STEPS[1]} iterations for this test"
+        )
+
+    log.info("loss curve for combo '%s': %s", combo_key, losses)
+    request.node.user_properties.append(("metric_value", losses.get(max(losses))))
+    request.node.user_properties.append(("metric_unit", "lm_loss"))
+
+    messages = check_loss_decreasing(losses)
+    warnings = [m for m in messages if m.startswith("WARN:")]
+    failures = [m for m in messages if not m.startswith("WARN:")]
+
+    for w in warnings:
+        log.warning("loss curve '%s': %s", combo_key, w)
+
+    if failures:
+        pytest.fail(
+            f"loss not smoothly decreasing for combo '{combo_key}':\n"
+            + "\n".join(failures)
+            + f"\nfull curve: {losses}"
+        )
+
+
 def test_teardown(orch, lifecycle, request):
     """Stage 3: tear down the container once after all combos have run."""
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])

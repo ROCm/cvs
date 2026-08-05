@@ -16,6 +16,10 @@
     "training.mem_usage": {
       "kind": "max",
       "value": 0
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "min",
+      "value": 85.0
     }
   },
   "MBS=4,GBS=128,PRECISION=BF16": {
@@ -34,6 +38,10 @@
     "training.mem_usage": {
       "kind": "max",
       "value": 0
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "min",
+      "value": 85.0
     }
   },
   "MBS=4,GBS=128,PRECISION=MXFP4": {
@@ -52,6 +60,10 @@
     "training.mem_usage": {
       "kind": "max",
       "value": 0
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "min",
+      "value": 85.0
     }
   },
   "MBS=4,GBS=128,PRECISION=MXFP8": {
@@ -70,6 +82,10 @@
     "training.mem_usage": {
       "kind": "max",
       "value": 0
+    },
+    "training.scaling_efficiency_pct": {
+      "kind": "min",
+      "value": 85.0
     }
   }
 }
