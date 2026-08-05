@@ -296,6 +296,70 @@ class TestContainerOrchestrator(unittest.TestCase):
         runtime.teardown_containers.assert_not_called()
 
 
+class TestContainerOrchestratorExecForwarding(unittest.TestCase):
+    """print_console / detailed must survive the orchestrator -> runtime hop.
+
+    Mirrors the forwarding pins in test_baremetal.py, but for the container
+    path -- which is the one the vLLM suite actually runs on, and the one that
+    previously dropped both kwargs. A dropped kwarg here is silent: the command
+    still succeeds, it just logs hundreds of MB again.
+
+    Asserted by keyword rather than positionally so the pin keeps holding if
+    the runtime signature gains a parameter.
+    """
+
+    def setUp(self):
+        p_pssh = patch("cvs.core.orchestrators.baremetal.Pssh")
+        p_rf = patch("cvs.core.orchestrators.container.RuntimeFactory")
+        self.mock_pssh = p_pssh.start()
+        self.mock_rf = p_rf.start()
+        self.addCleanup(p_pssh.stop)
+        self.addCleanup(p_rf.stop)
+        self.runtime = MagicMock(name="docker_runtime")
+        self.mock_rf.create.return_value = self.runtime
+        self.orch = ContainerOrchestrator(MagicMock(), _make_orch_config())
+        # exec()/exec_on_head() raise unless a container is registered.
+        self.orch.container_id = "cvs_iter_test"
+
+    def _kwarg(self, call, name, position):
+        """Read an argument passed either by keyword or positionally.
+
+        Fails the test (rather than raising IndexError) when the argument was
+        not forwarded at all, so a dropped kwarg reads as the assertion it is.
+        """
+        if name in call.kwargs:
+            return call.kwargs[name]
+        if position >= len(call.args):
+            self.fail(f"{name!r} was not forwarded to the runtime (call was {call})")
+        return call.args[position]
+
+    def test_exec_forwards_print_console_false_to_runtime(self):
+        self.orch.exec("cat /tmp/huge", print_console=False)
+        self.assertIs(self._kwarg(self.runtime.exec.call_args, "print_console", 5), False)
+
+    def test_exec_defaults_print_console_true(self):
+        self.orch.exec("ls")
+        self.assertIs(self._kwarg(self.runtime.exec.call_args, "print_console", 5), True)
+
+    def test_exec_forwards_detailed_to_runtime(self):
+        self.orch.exec("ls", detailed=True)
+        self.assertIs(self._kwarg(self.runtime.exec.call_args, "detailed", 4), True)
+
+    def test_exec_on_head_forwards_print_console_false_to_runtime(self):
+        self.orch.exec_on_head("cat /tmp/huge", print_console=False)
+        self.assertIs(self._kwarg(self.runtime.exec_on_head.call_args, "print_console", 4), False)
+
+    def test_exec_on_head_defaults_print_console_true(self):
+        self.orch.exec_on_head("hostname")
+        self.assertIs(self._kwarg(self.runtime.exec_on_head.call_args, "print_console", 4), True)
+
+    def test_exec_on_head_forwards_detailed_to_runtime(self):
+        # build_mpi_cmd calls exec_on_head(detailed=True); pinned so the
+        # container path cannot regress it independently of baremetal.
+        self.orch.exec_on_head("hostname", detailed=True)
+        self.assertIs(self._kwarg(self.runtime.exec_on_head.call_args, "detailed", 3), True)
+
+
 class TestResolveContainerLifetime(unittest.TestCase):
     """One assertion per row of the lifetime resolution table."""
 

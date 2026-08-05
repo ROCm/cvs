@@ -313,6 +313,11 @@ def test_openai_compatible_smoke(orch, variant_config, hf_token, lifecycle, requ
         summary = job.probe_openai_endpoints()
     except Exception:
         lifecycle.failed = True
+        # This job owns its own short-lived server, so unlike the sweep there
+        # is no reuse path to consult -- dump ours. Needed because the poll
+        # loop's tails are no longer echoed to the console, so without this a
+        # bringup timeout leaves nothing from the failing server in the log.
+        job.dump_server_log()
         raise
     finally:
         job.stop_server()

@@ -235,12 +235,15 @@ class DockerRuntime:
 
         return success
 
-    def exec(self, container_name, cmd, hosts=None, timeout=None, detailed=False):
+    def exec(self, container_name, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """Execute command in running Docker containers.
 
         cmd is wrapped in `bash -c` so shell features (cd, ;, &&, |, globs,
         redirects) run inside the container -- docker exec uses execve with
         no implicit shell.
+
+        print_console=False returns the output without logging it; use for bulk
+        data the caller parses itself.
         """
         exec_cmd = f"{self.orchestrator.sudo_prefix()}docker exec {container_name} bash -c {shlex.quote(cmd)}"
         if hosts:
@@ -257,9 +260,9 @@ class DockerRuntime:
                 host_key_check=False,
                 stop_on_errors=self.orchestrator.stop_on_errors,
             )
-            return pssh.exec(exec_cmd, timeout=timeout, detailed=detailed)
+            return pssh.exec(exec_cmd, timeout=timeout, detailed=detailed, print_console=print_console)
 
-        return self.orchestrator.all.exec(exec_cmd, timeout=timeout, detailed=detailed)
+        return self.orchestrator.all.exec(exec_cmd, timeout=timeout, detailed=detailed, print_console=print_console)
 
     def exec_cmd_list(self, container_name, cmd_list, timeout=None):
         """Execute different commands on different hosts inside the container.
@@ -280,11 +283,11 @@ class DockerRuntime:
         exec_cmd_list = [f"{sudo_prefix}docker exec {container_name} bash -c {shlex.quote(cmd)}" for cmd in cmd_list]
         return self.orchestrator.all.exec_cmd_list(exec_cmd_list, timeout=timeout)
 
-    def exec_on_head(self, container_name, cmd, timeout=None, detailed=False):
+    def exec_on_head(self, container_name, cmd, timeout=None, detailed=False, print_console=True):
         """Execute command directly on head node (container). See exec() for
-        the bash -c wrap rationale."""
+        the bash -c wrap rationale and the print_console semantics."""
         exec_cmd = f"{self.orchestrator.sudo_prefix()}docker exec {container_name} bash -c {shlex.quote(cmd)}"
-        return self.orchestrator.head.exec(exec_cmd, timeout=timeout, detailed=detailed)
+        return self.orchestrator.head.exec(exec_cmd, timeout=timeout, detailed=detailed, print_console=print_console)
 
     @staticmethod
     def _build_runtime_args(runtime_args_config):

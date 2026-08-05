@@ -1051,6 +1051,26 @@ class TestVllmJobParseResults(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             job.parse_results()
 
+    def test_unparseable_artifact_snippet_is_single_line(self):
+        # Deliberate departure from this class's "pin the TYPE only" rule: the
+        # snippet is carried into the message precisely so a failure stays
+        # diagnosable once print_console=False keeps the artifact out of the
+        # log, so its SHAPE is the behaviour under test, not incidental
+        # phrasing. A raw multi-line artifact (a stack trace, or HTML from a
+        # proxy error page) would otherwise inject newlines straight into CI
+        # output and Jira ticket bodies, where the failure text is pasted.
+        artifact = 'oh no\nline two\rline three\tand a tab'
+        orch = RecordingOrch(head_responder=lambda cmd: {HEAD: artifact}, hosts=[HEAD])
+        job = _job(orch=orch, serve_args={}, nnodes="1", pp="1", ib_netdev=None)
+        with self.assertRaises(RuntimeError) as ctx:
+            job.parse_results()
+
+        message = str(ctx.exception)
+        self.assertNotIn("\n", message, f"raw newline leaked into the error text: {message!r}")
+        self.assertNotIn("\r", message, f"raw carriage return leaked into the error text: {message!r}")
+        # Escaped, not dropped -- the content still has to be recoverable.
+        self.assertIn("line two", message)
+
     def test_valid_artifact_delegates_to_to_client_metrics_with_tp_isl_pp(self):
         # tp, isl, and pp are keyword-only in to_client_metrics, so they MUST
         # arrive as kwargs; raw (the json-loaded artifact) arrives positionally.

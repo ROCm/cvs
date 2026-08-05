@@ -596,7 +596,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             container_name = f"{username}_{sanitized_image}"
         return container_name
 
-    def exec(self, cmd, hosts=None, timeout=None, detailed=False):
+    def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """
         Execute command in running containers.
 
@@ -605,6 +605,9 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             hosts: Target hosts (if None, uses all hosts)
             timeout: Command timeout
             detailed: If True, return detailed execution info including exit_code
+            print_console: If False, the command's output is returned but not
+                logged. Use for bulk data the caller parses itself — a single
+                unfiltered dump can otherwise reach hundreds of MB.
 
         Returns:
             Dictionary mapping hosts to execution results
@@ -615,7 +618,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         if not self.container_id:
             raise RuntimeError("No containers running. Call setup_containers() first.")
 
-        return self.runtime.exec(self.container_id, cmd, hosts, timeout, detailed)
+        return self.runtime.exec(self.container_id, cmd, hosts, timeout, detailed=detailed, print_console=print_console)
 
     def exec_cmd_list(self, cmd_list, timeout=None):
         """
@@ -640,19 +643,25 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         return self.runtime.exec_cmd_list(self.container_id, cmd_list, timeout)
 
-    def exec_on_head(self, cmd, timeout=None, detailed=False):
+    def exec_on_head(self, cmd, timeout=None, detailed=False, print_console=True):
         """
         Execute command directly on head node (baremetal).
 
         Args:
             cmd: Command to execute on head node
             timeout: Command timeout
-            detailed: If True, return detailed execution info including exit_code
+            detailed: If True, return detailed execution info including
+                exit_code. Mirrors BaremetalOrchestrator.exec_on_head, whose
+                build_mpi_cmd path calls this with detailed=True.
+            print_console: If False, the command's output is returned but not
+                logged. See exec().
 
         Returns:
             Dictionary mapping head node to execution result
         """
-        return self.runtime.exec_on_head(self.container_id, cmd, timeout, detailed)
+        return self.runtime.exec_on_head(
+            self.container_id, cmd, timeout, detailed=detailed, print_console=print_console
+        )
 
     def distribute_using_mpi(
         self,
