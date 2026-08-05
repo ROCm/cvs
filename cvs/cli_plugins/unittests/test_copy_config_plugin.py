@@ -7,6 +7,7 @@ import io
 from contextlib import redirect_stdout
 
 from cvs.cli_plugins.copy_config_plugin import CopyConfigPlugin
+from cvs.lib.config_catalog import ConfigCatalog
 
 
 class TestCopyConfigPlugin(unittest.TestCase):
@@ -46,6 +47,58 @@ class TestCopyConfigPlugin(unittest.TestCase):
 
         # Should print configs
         mock_print.assert_called()
+
+    def test_list_suite_configs(self):
+        args = argparse.Namespace(path="vllm_gpt_oss_120b_single", output=None, list=True, all=False, force=False)
+
+        captured_output = io.StringIO()
+        with redirect_stdout(captured_output):
+            self.plugin.run(args)
+
+        output = captured_output.getvalue()
+        self.assertIn("Configs for vllm_gpt_oss_120b_single", output)
+        self.assertIn("inference/vllm/mi355x_vllm_single.json", output)
+
+    def test_list_suite_configs_for_platform(self):
+        args = argparse.Namespace(
+            path="vllm_gpt_oss_120b_single", output=None, list=True, all=False, force=False, platform="mi355"
+        )
+
+        captured_output = io.StringIO()
+        with redirect_stdout(captured_output):
+            self.plugin.run(args)
+
+        output = captured_output.getvalue()
+        self.assertIn("Configs for vllm_gpt_oss_120b_single on mi355", output)
+        self.assertIn("inference/vllm/mi355x_vllm_single.json", output)
+
+    def test_platform_filter_keeps_shared_config(self):
+        args = argparse.Namespace(path="rccl_perf", output=None, list=True, all=False, force=False, platform="mi355")
+
+        captured_output = io.StringIO()
+        with redirect_stdout(captured_output):
+            self.plugin.run(args)
+
+        self.assertIn("rccl/rccl_config.json", captured_output.getvalue())
+
+    def test_platform_requires_suite_name(self):
+        args = argparse.Namespace(path="training", output=None, list=True, all=False, force=False, platform="mi355")
+
+        captured_output = io.StringIO()
+        with redirect_stdout(captured_output):
+            self.plugin.run(args)
+
+        self.assertIn("--platform requires a test suite", captured_output.getvalue())
+
+    @patch("cvs.cli_plugins.copy_config_plugin.load_config_catalog")
+    def test_unavailable_suite_has_a_clear_message(self, mock_load_catalog):
+        mock_load_catalog.return_value = ConfigCatalog([], {"test_aorta": "No default config is bundled."})
+
+        captured_output = io.StringIO()
+        with redirect_stdout(captured_output):
+            self.plugin._list_suite_configs("test_aorta", None, {"test_aorta"})
+
+        self.assertIn("No bundled config is available for test_aorta", captured_output.getvalue())
 
     def test_run_copy_all_success(self):
         """Test successful copy of all configs"""
