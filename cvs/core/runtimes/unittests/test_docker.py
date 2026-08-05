@@ -488,5 +488,43 @@ class TestDockerRuntimeSudoProbeCachedAcrossCalls(unittest.TestCase):
         self.assertEqual(len(probe_calls), 1, f"probe must fire once total, calls: {pssh_instance.exec.call_args_list}")
 
 
+class TestDockerRuntimeExecSubsetHandleCleanup(unittest.TestCase):
+    """The host-subset branch builds a throwaway Pssh; it must be destroyed.
+
+    Mirrors BaremetalOrchestrator.exec: without an explicit teardown a
+    timed-out exec leaves its sshd session open on the target host.
+    """
+
+    def _make_runtime(self):
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.log = MagicMock()
+        orchestrator.user = "u"
+        orchestrator.password = None
+        orchestrator.pkey = None
+        orchestrator.stop_on_errors = False
+        orchestrator.sudo_prefix.return_value = ""
+        return DockerRuntime(MagicMock(), orchestrator), orchestrator
+
+    def test_exec_destroys_subset_handle(self):
+        # The timeout path is the one that leaks, so cleanup must not depend
+        # on a clean return.
+        for label, side_effect in (("returns", None), ("raises", RuntimeError("timed out"))):
+            with self.subTest(label):
+                rt, _ = self._make_runtime()
+
+                with patch("cvs.lib.parallel_ssh_lib.Pssh") as mock_pssh_cls:
+                    mock_pssh_cls.return_value.exec.side_effect = side_effect
+                    mock_pssh_cls.return_value.exec.return_value = {"host1": {"output": "", "exit_code": 0}}
+
+                    if side_effect is None:
+                        rt.exec("cvs_iter_test", "echo hi", hosts=["host1"])
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            rt.exec("cvs_iter_test", "sleep 300", hosts=["host1"], timeout=1)
+
+                    mock_pssh_cls.return_value.destroy_clients.assert_called_once_with()
+
+
 if __name__ == "__main__":
     unittest.main()

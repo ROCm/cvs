@@ -279,5 +279,64 @@ class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
         pssh_instance.exec.assert_called_once_with("sudo -n true >/dev/null 2>&1; echo $?")
 
 
+class TestBaremetalOrchestratorSubsetHandleCleanup(unittest.TestCase):
+    """The subset branch builds a throwaway Pssh; it must be destroyed.
+
+    Left to refcounting, a call whose exec timed out keeps its SSH session
+    open on the target host, so a polling suite accumulates sessions until
+    sshd's limit is hit.
+    """
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_exec_destroys_subset_handle(self, mock_pssh):
+        # The timeout path is the one that leaks, so cleanup must not depend
+        # on a clean return.
+        for label, side_effect in (("returns", None), ("raises", RuntimeError("timed out"))):
+            with self.subTest(label):
+                orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+                orch.all = MagicMock()
+                mock_pssh.reset_mock()
+                mock_pssh.return_value.exec.side_effect = side_effect
+
+                if side_effect is None:
+                    orch.exec("hostname", hosts=["10.0.0.2"])
+                else:
+                    with self.assertRaises(RuntimeError):
+                        orch.exec("sleep 300", hosts=["10.0.0.2"], timeout=1)
+
+                mock_pssh.return_value.destroy_clients.assert_called_once_with()
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_setup_env_destroys_subset_handle(self, mock_pssh):
+        # Same subset branch as exec(); it has no callers today, but it is an
+        # abstractmethod on the base class, so an implementation could reach it.
+        for label, side_effect in (("returns", None), ("raises", RuntimeError("timed out"))):
+            with self.subTest(label):
+                orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+                orch.all = MagicMock()
+                mock_pssh.reset_mock()
+                if side_effect is None:
+                    mock_pssh.return_value.exec.return_value = {"10.0.0.2": {"exit_code": 0}}
+                    mock_pssh.return_value.exec.side_effect = None
+                    orch.setup_env(["10.0.0.2"], env_script="/tmp/env.sh")
+                else:
+                    mock_pssh.return_value.exec.side_effect = side_effect
+                    with self.assertRaises(RuntimeError):
+                        orch.setup_env(["10.0.0.2"], env_script="/tmp/env.sh")
+
+                mock_pssh.return_value.destroy_clients.assert_called_once_with()
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_exec_does_not_destroy_shared_all_handle(self, _mock_pssh):
+        # self.all is long-lived and reused; tearing it down would break
+        # every later call.
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+
+        orch.exec("hostname")
+
+        orch.all.destroy_clients.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

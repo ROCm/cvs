@@ -9,6 +9,7 @@ from __future__ import print_function
 
 import warnings
 from gevent import Timeout as GTimeout
+from gevent import killall
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import Timeout, ConnectionError, SessionError
 
@@ -545,5 +546,34 @@ class Pssh:
         self.client.run_command('reboot -f', stop_on_errors=self.stop_on_errors)
 
     def destroy_clients(self):
+        """Close the SSH transport for every host and drop the client.
+
+        Dropping the reference alone is not sufficient. A timed-out exec leaves
+        its per-host greenlet in client.cmds unfinished, and that greenlet's
+        callable is a bound method of the ParallelSSHClient, so the client stays
+        reachable, SSHClient.__del__ never runs and the sshd session outlives
+        this object. Kill the pending greenlets, then disconnect each host
+        client explicitly.
+        """
         self.log.info('Destroying Current phdl connections ..')
+        client = getattr(self, 'client', None)
+        if client is None:
+            return
+
+        pending = getattr(client, 'cmds', None)
+        if pending:
+            try:
+                killall(pending, block=True, timeout=5)
+            except Exception as exc:
+                self.log.debug(f"Error killing pending SSH greenlets: {exc}")
+            client.cmds = None
+
+        host_clients = getattr(client, '_host_clients', None) or {}
+        for key, host_client in list(host_clients.items()):
+            try:
+                host_client._disconnect()
+            except Exception as exc:
+                self.log.debug(f"Error disconnecting SSH client {key}: {exc}")
+        host_clients.clear()
+
         del self.client
