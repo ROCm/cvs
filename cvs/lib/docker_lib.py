@@ -127,8 +127,7 @@ def launch_docker_container(
                 break
         else:
             log.warning(
-                'Could not auto-detect a numeric ulimit -n on any node; '
-                'skipping --ulimit nofile for docker run'
+                'Could not auto-detect a numeric ulimit -n on any node; skipping --ulimit nofile for docker run'
             )
     if ulimit_nofile:
         cmd = cmd + f' --ulimit nofile={ulimit_nofile} '

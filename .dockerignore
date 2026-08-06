@@ -1,0 +1,11 @@
+.git
+.github
+.cvs_venv
+.doc_venv
+.ruff_venv
+.test_venv
+dist
+docs/_build
+*.egg-info
+**/__pycache__
+**/*.py[cod]

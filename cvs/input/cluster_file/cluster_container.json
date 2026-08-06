@@ -8,6 +8,7 @@
     "_key_comment": "Absolute path to the SSH private key. Same key is used for all nodes.",
     "priv_key_file": "/home/{user-id}/.ssh/id_rsa",
 
+
     "_head_comment": "Head node. mgmt_ip MUST match one of the keys in node_dict.",
     "head_node_dict": {
         "mgmt_ip": "{xx.xx.xx.xx|hostname-1}"
@@ -45,6 +46,12 @@
             "name": "docker",
 
             "_args_comment": "Backend-specific runtime arguments. Defaults from cvs/core/orchestrators/container.py:DEFAULT_CONTAINER_ARGS apply for any key omitted here. List args (volumes/devices/cap_add/security_opt/group_add/ulimit) append to defaults; scalars (network/ipc/privileged) override.",
+            "_registry_comment": "Optional: log in to a private registry (e.g. rocm/ufb-private) before pulling. Omit entirely if the image is public or already loaded locally. password_file is a path ON EACH REMOTE HOST to a file containing the password/token -- never put the credential itself in this file. server is the registry hostname; omit/empty for Docker Hub. See README.md for the full schema.",
+            "_registry_example": {
+                "username": "myuser",
+                "password_file": "/home/{user-id}/.docker_token",
+                "server": ""
+            },
             "args": {
                 "network": "host",
                 "ipc": "host",

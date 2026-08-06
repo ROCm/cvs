@@ -32,6 +32,28 @@ rccl_err_dict = {
 }
 
 
+def _cleanup_stale_rccl_processes(phdl, test_name, reason):
+    """
+    Best-effort kill of leftover mpirun/prterun/rccl-tests processes on every
+    host phdl can reach.
+
+    Pssh.exec()'s `timeout` (cvs/lib/parallel/pssh.py) maps to parallel-ssh's
+    `read_timeout` — a client-side timeout on reading the SSH channel's output.
+    It does not signal the remote process. So when the mpirun invocation in
+    rccl_perf/rccl_regression exceeds cvs_exec_timeout, the remote mpirun and
+    the rccl-tests ranks it launched on every participating node keep running
+    (and holding GPUs) indefinitely. Without this cleanup, the next pairwise/
+    incremental sub-test starts while those ranks are still alive, causing GPU
+    oversubscription and cascading failures on subsequent node pairs.
+    """
+    log.warning(f'Cleaning up stale RCCL/mpirun processes on all reachable hosts ({reason})')
+    for pattern in ('prterun', 'mpirun.*rccl_hosts_file', test_name):
+        try:
+            phdl.exec(f"pkill -9 -f '{pattern}' || true", timeout=30)
+        except Exception as kill_exc:
+            log.warning(f'Cleanup pkill for pattern {pattern!r} raised {kill_exc!r} (continuing)')
+
+
 def _is_severe_wrong_corruption_error(err: ValidationError) -> bool:
     """
     Detect the rccl-tests '#wrong' corruption failure from a pydantic ValidationError.
@@ -129,11 +151,11 @@ def _read_json_from_head_node(shdl, head_node, remote_path, log_label):
       log_label: Short label used in log lines (e.g. 'all_reduce_perf_float').
 
     Returns:
-      The parsed JSON object.
+      The parsed JSON object, or [] if the downloaded file is not valid JSON
+      (a clear diagnostic is logged and the test is failed in that case).
 
     Raises:
       IOError: If the SFTP transfer fails.
-      json.JSONDecodeError: If the downloaded file is not valid JSON.
     """
     with tempfile.TemporaryDirectory(prefix='cvs_rccl_dl_') as tmpdir:
         local_prefix = os.path.join(tmpdir, os.path.basename(remote_path))
@@ -141,7 +163,17 @@ def _read_json_from_head_node(shdl, head_node, remote_path, log_label):
         local_path = paths[head_node]
         log.info('SFTP download succeeded for %s <- %s:%s', log_label, head_node, remote_path)
         with open(local_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            raw_output = f.read()
+        try:
+            return json.loads(raw_output)
+        except json.JSONDecodeError:
+            msg = (
+                f'Unable to parse RCCL JSON result file {remote_path} on {head_node}. '
+                f'Raw content: {raw_output.strip() or "<empty>"}'
+            )
+            log.error(msg)
+            fail_test(msg)
+            return []
 
 
 def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
@@ -643,10 +675,11 @@ def rccl_regression(
     for node in vpc_node_list:
         host_file_params = f'{host_file_params}{node} slots={proc_per_node}\n'
 
-    cmd = 'rm -f /tmp/rccl_hosts_file.txt'
+    hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
+    cmd = f'rm -f {hosts_file_path}'
     shdl.exec(cmd)
 
-    cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
+    cmd = f'echo "{host_file_params}" > {hosts_file_path}'
     shdl.exec(cmd)
 
     # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
@@ -700,7 +733,7 @@ def rccl_regression(
     cmd = f'''{mpi_dir}/bin/mpirun \
         --allow-run-as-root \
         -np {no_of_global_ranks} \
-        --hostfile /tmp/rccl_hosts_file.txt \
+        --hostfile {hosts_file_path} \
         --bind-to numa \
         {ucx_params} \
         --mca btl ^vader,openib \
@@ -720,6 +753,7 @@ def rccl_regression(
         scan_rccl_logs(output)
     except Exception as e:
         log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+        _cleanup_stale_rccl_processes(phdl, test_name, f'exception in rccl_regression: {repr(e)}')
         fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
     # Read the JSON results emitted by the RCCL test binary via SFTP
@@ -826,10 +860,11 @@ def rccl_perf(
     for node in vpc_node_list:
         host_file_params = f'{host_file_params}' + f'{node} slots={proc_per_node}\n'
 
-    cmd = 'rm -f /tmp/rccl_hosts_file.txt'
+    hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
+    cmd = f'rm -f {hosts_file_path}'
     shdl.exec(cmd)
 
-    cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
+    cmd = f'echo "{host_file_params}" > {hosts_file_path}'
     shdl.exec(cmd)
 
     # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
@@ -887,7 +922,7 @@ def rccl_perf(
         # Build mpirun command
         cmd = f'''{mpi_dir}/bin/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
-        --hostfile /tmp/rccl_hosts_file.txt \
+        --hostfile {hosts_file_path} \
         --bind-to numa \
         {ucx_params} \
         --mca btl ^vader,openib \
@@ -907,6 +942,7 @@ def rccl_perf(
             scan_rccl_logs(output)
         except Exception as e:
             log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+            _cleanup_stale_rccl_processes(phdl, test_name, f'exception in rccl_perf ({dtype}): {repr(e)}')
             fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
         # Read the JSON results emitted by the RCCL test binary via SFTP
@@ -915,7 +951,7 @@ def rccl_perf(
         # Validate the results against the schema fail if results are not valid
         try:
             validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
-            log.info(f'Validation passed: {len(validated)} RcclTests schema validation passed')
+            log.info(f'{dtype}: {len(validated)} rccl-tests row(s) passed schema validation')
             all_validated_results.extend(validated)
             all_raw_results.extend(dtype_result_out)
         except ValidationError as e:
@@ -983,7 +1019,7 @@ def rccl_perf(
         nic_type = 'ainic'
     elif re.search('broadcom|thor|bnxt', nic_model, re.I):
         nic_type = 'thor'
-    elif re.search('mellanox|cx|nvidia', nic_model, re.I):
+    elif re.search('mellanox|connectx|cx|nvidia', nic_model, re.I):
         nic_type = 'connectx'
     else:
         nic_type = 'ainic'

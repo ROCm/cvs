@@ -89,6 +89,32 @@ make unsafe-lint-fix
 
 This provides interactive confirmation for each file with potentially breaking changes.
 
+## Documentation Preview
+
+Before committing documentation changes, preview them locally in your browser to verify formatting and structure:
+
+```bash
+make html-doc
+```
+
+This will:
+- Create a dedicated Python virtual environment (`.doc_venv/`) with all Sphinx dependencies
+- Build the HTML documentation
+- Start a live-reload server accessible at the URL printed in the terminal
+- Automatically rebuild whenever you save a `.rst` or `.md` file
+
+Press `Ctrl+C` to stop the server. To override the default port (8080):
+
+```bash
+make html-doc DOC_PORT=9090
+```
+
+To clean up the documentation environment and build artifacts:
+
+```bash
+make clean
+```
+
 ## Development Workflow
 
 1. Create a feature branch:
@@ -146,6 +172,7 @@ This creates a source distribution in the `dist/` directory.
 - `make lint-fix` - Auto-fix safe linting issues
 - `make unsafe-lint-fix` - Interactive unsafe fixes
 - `make build` - Build distribution
+- `make html-doc` - Build and serve docs with live-reload (preview in browser)
 - `make clean` - Clean build artifacts and environments
 
 ## Code Style Guidelines

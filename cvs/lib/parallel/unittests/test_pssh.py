@@ -1046,6 +1046,25 @@ class TestPsshFileTransfer(unittest.TestCase):
             "/remote/file.json", "/tmp/local.json", recurse=False, suffix_separator="."
         )
 
+    def test_download_file_targets_only_requested_host(self):
+        target_client = MagicMock()
+        target_client.copy_remote_file.return_value = [self._ok_greenlet()]
+        with patch("cvs.lib.parallel.pssh.ParallelSSHClient", return_value=target_client) as mock_client:
+            result = self.pssh.download_file("/remote/file.json", "/tmp/local.json", hosts=["host2"])
+
+        self.assertEqual(result, {"host2": "/tmp/local.json_host2"})
+        self.mock_client.copy_remote_file.assert_not_called()
+        mock_client.assert_called_once_with(["host2"], user="user", password="pass", keepalive_seconds=30)
+        target_client.copy_remote_file.assert_called_once_with(
+            "/remote/file.json", "/tmp/local.json", recurse=False, suffix_separator="_"
+        )
+        target_client.pool.join.assert_called_once()
+
+    def test_download_file_rejects_unknown_target_host(self):
+        with self.assertRaisesRegex(ValueError, "unreachable host"):
+            self.pssh.download_file("/remote/file.json", "/tmp/local.json", hosts=["host3"])
+        self.mock_client.copy_remote_file.assert_not_called()
+
     def test_download_file_partial_failure_raises_ioerror(self):
         # Failed host -> IOError lists it; succeeded host's path is NOT returned
         # (we raise before constructing a partial return value)
@@ -1153,6 +1172,59 @@ class TestPsshScpFile(unittest.TestCase):
         # Must chain the original exception via __cause__ so the original
         # traceback is recoverable.
         self.assertIs(ctx.exception.__cause__, original_error)
+
+
+class TestPsshInactivityTimeout(unittest.TestCase):
+    """Per-line inactivity timeout: resets on output, fires only on a stall."""
+
+    @patch("cvs.lib.parallel.pssh.ParallelSSHClient")
+    def setUp(self, mock_pssh_client):
+        self.mock_client = MagicMock()
+        mock_pssh_client.return_value = self.mock_client
+        self.host_list = ["host1"]
+        self.mock_log = MagicMock()
+        self.pssh = Pssh(self.mock_log, self.host_list, user="user", password="pass")
+
+    @staticmethod
+    def _slow_stream(gaps, lines):
+        """Yield each line after sleeping the paired gap (gevent-cooperative)."""
+        from gevent import sleep as gsleep
+
+        for gap, line in zip(gaps, lines):
+            gsleep(gap)
+            yield line
+
+    def test_active_stream_survives_short_gaps(self):
+        # Gaps (0.05s) are well under the inactivity window (0.5s): the timer
+        # resets on every line, so a long-but-active stream is NOT aborted.
+        out = MagicMock()
+        out.host = "host1"
+        out.stdout = self._slow_stream([0.05, 0.05, 0.05], ["a", "b", "c"])
+        out.stderr = []
+        out.exception = None
+        self.mock_client.run_command.return_value = [out]
+
+        result = self.pssh.exec("run", inactivity_timeout=0.5)
+
+        # No total cap should be passed to run_command when inactivity is set.
+        self.mock_client.run_command.assert_called_once_with("run", stop_on_errors=True)
+        self.assertIn("a", result["host1"])
+        self.assertIn("c", result["host1"])
+
+    def test_stall_longer_than_window_aborts(self):
+        # First line is quick, then a gap (0.6s) exceeds the window (0.3s): the
+        # per-line timer fires and (stop_on_errors=True) the Timeout propagates.
+        from pssh.exceptions import Timeout
+
+        out = MagicMock()
+        out.host = "host1"
+        out.stdout = self._slow_stream([0.02, 0.6], ["first", "second"])
+        out.stderr = []
+        out.exception = None
+        self.mock_client.run_command.return_value = [out]
+
+        with self.assertRaises(Timeout):
+            self.pssh.exec("run", inactivity_timeout=0.3)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from __future__ import print_function
 
 import warnings
+from gevent import Timeout as GTimeout
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import Timeout, ConnectionError, SessionError
 
@@ -15,6 +16,18 @@ from cvs.lib.env_lib import build_env_prefix
 from cvs.lib import globals
 
 global_log = globals.log
+
+
+def _select_reachable_hosts(reachable_hosts, hosts):
+    """Return requested reachable hosts in established host-list order."""
+    reachable = list(reachable_hosts)
+    if hosts is None:
+        return reachable
+    requested = list(hosts)
+    unknown_hosts = [host for host in requested if host not in reachable]
+    if unknown_hosts:
+        raise ValueError(f"SFTP download requested unreachable host(s): {unknown_hosts}")
+    return [host for host in reachable if host in requested]
 
 
 class Pssh:
@@ -170,10 +183,49 @@ class Pssh:
             else:
                 cmd_output[host] = cmd_output.get(host, "") + "\nABORT: Host Unreachable Error"
 
-    def _process_output(self, output, cmd=None, cmd_list=None, print_console=True, include_exit_codes=False):
+    def _iter_lines(self, stream, inactivity_timeout):
+        """
+        Yield lines from an stdout/stderr stream.
+
+        When inactivity_timeout is set, each individual line fetch is wrapped in a
+        fresh gevent.Timeout that is re-armed on every line, so the timer measures
+        the gap BETWEEN lines (inactivity) rather than the total command runtime.
+        A stream that keeps producing output never trips it; only a genuine stall
+        (no output for inactivity_timeout seconds) raises pssh Timeout. When
+        inactivity_timeout is None the stream is iterated normally (any total
+        read_timeout is enforced by parallel-ssh itself).
+        """
+        if not stream:
+            return
+        if inactivity_timeout is None:
+            for line in stream:
+                yield line
+            return
+        it = iter(stream)
+        while True:
+            try:
+                with GTimeout(seconds=inactivity_timeout, exception=Timeout):
+                    line = next(it)
+            except StopIteration:
+                return
+            yield line
+
+    def _process_output(
+        self,
+        output,
+        cmd=None,
+        cmd_list=None,
+        print_console=True,
+        include_exit_codes=False,
+        inactivity_timeout=None,
+    ):
         """
         Helper method to process output from run_command, collect results, and handle pruning.
         Returns cmd_output dictionary. If include_exit_codes=True, returns structured format.
+
+        When inactivity_timeout is set, output reads use a per-line (inactivity)
+        timeout instead of a total-runtime cap: the timer resets on every line and
+        fires only after inactivity_timeout seconds with no new output.
         """
         cmd_output = {}
         i = 0
@@ -187,11 +239,11 @@ class Pssh:
             else:
                 self.log.debug("%s", cmd)
             try:
-                for line in item.stdout or []:
+                for line in self._iter_lines(item.stdout, inactivity_timeout):
                     if print_console:
                         self.log.info("%s", line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
-                for line in item.stderr or []:
+                for line in self._iter_lines(item.stderr, inactivity_timeout):
                     if print_console:
                         self.log.info("%s", line)
                     cmd_out_str += line.replace('\t', '   ') + '\n'
@@ -242,11 +294,19 @@ class Pssh:
                 if item.exception is None:
                     item.exception = e
 
-    def exec(self, cmd, timeout=None, print_console=True, detailed=False):
+    def exec(self, cmd, timeout=None, print_console=True, detailed=False, inactivity_timeout=None):
         """
         Returns a dictionary of host as key and command output as values.
         If detailed=True, returns structured dict with 'output' and 'exit_code' keys.
         If detailed=False (default), returns output strings.
+
+        timeout is parallel-ssh's read_timeout: a TOTAL wall-clock cap on reading
+        the command's output (it is NOT reset by activity). inactivity_timeout is
+        an alternative that measures the gap between output lines instead: the
+        command may run arbitrarily long as long as it keeps producing output, and
+        is aborted only after inactivity_timeout seconds of silence. When
+        inactivity_timeout is set, the underlying read_timeout is disabled so there
+        is no total cap. Pass at most one of the two.
         """
         if self.env_prefix:
             full_cmd = f"{self.env_prefix} ; {cmd}"
@@ -257,19 +317,32 @@ class Pssh:
 
         # Log command execution
         if self.log:
-            if timeout is not None:
+            if inactivity_timeout is not None:
+                self.log.debug(
+                    f"Executing command on {len(self.reachable_hosts)} host(s) "
+                    f"[inactivity_timeout={inactivity_timeout}s]: {full_cmd}"
+                )
+            elif timeout is not None:
                 self.log.debug(
                     f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
                 )
             else:
                 self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
 
-        if timeout is None:
+        # With an inactivity timeout the total read_timeout must be disabled, so
+        # the per-line gevent timer in _process_output is the only limiter.
+        if inactivity_timeout is not None:
+            output = self.client.run_command(full_cmd, stop_on_errors=self.stop_on_errors)
+        elif timeout is None:
             output = self.client.run_command(full_cmd, stop_on_errors=self.stop_on_errors)
         else:
             output = self.client.run_command(full_cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
         cmd_output = self._process_output(
-            output, cmd=full_cmd, print_console=print_console, include_exit_codes=detailed
+            output,
+            cmd=full_cmd,
+            print_console=print_console,
+            include_exit_codes=detailed,
+            inactivity_timeout=inactivity_timeout,
         )
 
         # Log per-host execution completion
@@ -361,10 +434,10 @@ class Pssh:
                 f"{len(errors)}/{len(self.reachable_hosts)} hosts: {errors}"
             ) from errors[0][1]
 
-    def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_'):
+    def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_', hosts=None):
         """
-        SFTP-download `remote_file` from every host in this Pssh's reachable_hosts
-        to the runner node. Wraps ParallelSSHClient.copy_remote_file.
+        SFTP-download ``remote_file`` from selected reachable hosts to the
+        runner node. Wraps ``ParallelSSHClient.copy_remote_file``.
 
         Use this instead of `exec('cat <file>')` + parsing stdout when the file
         may exceed a few KB. `cat`-over-exec reassembles bytes through the
@@ -381,19 +454,35 @@ class Pssh:
           local_file: Local path prefix on the runner node (host name will be appended).
           recurse: If True, recursively download a directory tree.
           suffix_separator: Separator placed between local_file and host. Default '_'.
+          hosts: Optional iterable of reachable hosts to fetch from. ``None``
+              fetches from every reachable host.
 
         Returns:
-          dict: {host: actual_local_path} for each host in reachable_hosts.
+          dict: {host: actual_local_path} for each selected host.
 
         Raises:
           IOError: If transfer fails on any host. Message lists offending hosts.
         """
-        self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, self.reachable_hosts)
-        cmds = self.client.copy_remote_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
-        self.client.pool.join()
+        target_hosts = _select_reachable_hosts(self.reachable_hosts, hosts)
+        if not target_hosts:
+            return {}
+
+        self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, target_hosts)
+        if target_hosts == self.reachable_hosts:
+            client = self.client
+        elif self.password is None:
+            client = ParallelSSHClient(
+                target_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30, **self.ssh_client_kwargs
+            )
+        else:
+            client = ParallelSSHClient(
+                target_hosts, user=self.user, password=self.password, keepalive_seconds=30, **self.ssh_client_kwargs
+            )
+        cmds = client.copy_remote_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
+        client.pool.join()
         errors = []
         result = {}
-        for cmd, host in zip(cmds, self.reachable_hosts):
+        for cmd, host in zip(cmds, target_hosts):
             try:
                 cmd.get()
                 result[host] = f'{local_file}{suffix_separator}{host}'
@@ -402,7 +491,7 @@ class Pssh:
         if errors:
             raise IOError(
                 f"download_file '{remote_file}' -> '{local_file}' failed on "
-                f"{len(errors)}/{len(self.reachable_hosts)} hosts: {errors}"
+                f"{len(errors)}/{len(target_hosts)} hosts: {errors}"
             ) from errors[0][1]
         return result
 
