@@ -126,5 +126,260 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
         self.assertTrue(result["node1"])
 
 
+class TestDetectPackageFlavour(unittest.TestCase):
+    '''detect_package_flavour: flavour + legacy/direct generation from the name.'''
+
+    def test_legacy_tar_token(self):
+        url = "http://x/anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz"
+        self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("tar", False))
+
+    def test_legacy_deb_token(self):
+        url = "http://x/anc-release-helios-nda-1.4.9-deb-linux-x64.tar.gz"
+        self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("deb", False))
+
+    def test_legacy_rpm_token(self):
+        url = "http://x/anc-release-helios-nda-1.4.9-rpm-linux-x64.tar.gz"
+        self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("rpm", False))
+
+    def test_legacy_dot_token_tar(self):
+        # Trailing "-tar." before the extension is legacy, NOT a direct tar.
+        url = "http://x/anc-release-helios-nda-1.4.9-tar.tar.gz"
+        self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("tar", False))
+
+    def test_legacy_dot_token_deb(self):
+        url = "http://x/anc-release-helios-nda-1.4.9-deb.tar.gz"
+        self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("deb", False))
+
+    def test_direct_deb(self):
+        url = "http://x/anc-release-helios-nda_1.5.5_amd64.deb"
+        self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("deb", True))
+
+    def test_direct_rpm(self):
+        url = "http://x/anc-release-helios-nda-1.5.5-1.x86_64.rpm"
+        self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("rpm", True))
+
+    def test_direct_tar(self):
+        url = "http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz"
+        self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("tar", True))
+
+    def test_direct_tgz(self):
+        url = "http://x/anc-release-helios-nda-1.5.5-x86_64.tgz"
+        self.assertEqual(anc_lib.detect_package_flavour(url), anc_lib.PackageFlavour("tar", True))
+
+    def test_unrecognised_raises(self):
+        with self.assertRaises(ValueError):
+            anc_lib.detect_package_flavour("http://x/mystery.bin")
+
+    def test_detect_package_type_wrapper_direct_tar(self):
+        self.assertEqual(anc_lib.detect_package_type("http://x/anc-1.5.5-x86_64.tar.gz"), "tar")
+
+    def test_detect_package_type_wrapper_legacy_deb(self):
+        self.assertEqual(anc_lib.detect_package_type("http://x/anc-1.4.9-deb-linux-x64.tar.gz"), "deb")
+
+
+class TestParseVersionFromUrl(unittest.TestCase):
+    '''parse_version_from_url: first dotted-numeric run in the filename.'''
+
+    def test_legacy_url(self):
+        self.assertEqual(
+            anc_lib.parse_version_from_url("http://x/anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz"),
+            "1.4.9",
+        )
+
+    def test_direct_tar_url(self):
+        self.assertEqual(
+            anc_lib.parse_version_from_url("http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz"),
+            "1.5.5",
+        )
+
+    def test_direct_deb_url(self):
+        self.assertEqual(
+            anc_lib.parse_version_from_url("http://x/anc-release-helios-nda_1.5.5_amd64.deb"),
+            "1.5.5",
+        )
+
+    def test_no_version_returns_none(self):
+        self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-release.tar.gz"))
+
+    def test_empty_returns_none(self):
+        self.assertIsNone(anc_lib.parse_version_from_url(""))
+
+
+class TestCheckVersionMatchesUrl(unittest.TestCase):
+    '''check_version_matches_url: abort when configured version != URL version.'''
+
+    def test_match_returns_none(self):
+        cfg = {"anc": {"anc_version": "1.5.5", "anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz"}}
+        self.assertIsNone(anc_lib.check_version_matches_url(cfg))
+
+    def test_mismatch_returns_problem(self):
+        cfg = {"anc": {"anc_version": "1.5.4", "anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz"}}
+        problem = anc_lib.check_version_matches_url(cfg)
+        self.assertIsNotNone(problem)
+        self.assertIn("1.5.4", problem)
+        self.assertIn("1.5.5", problem)
+
+    def test_blank_version_skips(self):
+        cfg = {"anc": {"anc_version": "", "anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz"}}
+        self.assertIsNone(anc_lib.check_version_matches_url(cfg))
+
+    def test_unparseable_url_skips(self):
+        cfg = {"anc": {"anc_version": "1.5.5", "anc_release_url": "http://x/anc-release.tar.gz"}}
+        self.assertIsNone(anc_lib.check_version_matches_url(cfg))
+
+    def test_legacy_url_match(self):
+        cfg = {"anc": {"anc_version": "1.4.9", "anc_release_url": "http://x/anc-1.4.9-tar-linux-x64.tar.gz"}}
+        self.assertIsNone(anc_lib.check_version_matches_url(cfg))
+
+
+class _RecordingPhdl:
+    '''Minimal phdl stand-in: records the install command, returns a success line.'''
+
+    def __init__(self, response):
+        self.cmd = None
+        self._response = response
+
+    def exec(self, cmd, timeout=None):  # noqa: ARG002
+        self.cmd = cmd
+        return dict(self._response)
+
+
+class TestDirectInstallers(unittest.TestCase):
+    '''Direct 1.5.0+ installers issue single-artifact download + install commands.'''
+
+    CLUSTER = {"node_dict": {"node1": {}}, "username": "u", "priv_key_file": "k"}
+
+    def _cfg(self, url, install_path=""):
+        return {"anc": {"anc_release_url": url, "ANC_INSTALL_PATH": install_path}}
+
+    def test_deb_direct_command_shape(self):
+        cfg = self._cfg("http://x/anc-release-helios-nda_1.5.5_amd64.deb")
+        phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
+        with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
+            anc_lib._install_anc_deb_direct(phdl, self.CLUSTER, cfg)
+        self.assertIn("dpkg -i --force-depends ./anc.deb", phdl.cmd)
+        self.assertIn("anc-release-helios-nda_1.5.5_amd64.deb", phdl.cmd)
+        # No outer-tarball extraction for a direct package.
+        self.assertNotIn("outer.tar.gz", phdl.cmd)
+
+    def test_rpm_direct_command_shape(self):
+        cfg = self._cfg("http://x/anc-release-helios-nda-1.5.5-1.x86_64.rpm")
+        phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
+        with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
+            anc_lib._install_anc_rpm_direct(phdl, self.CLUSTER, cfg)
+        self.assertIn("dnf install -y ./anc.rpm", phdl.cmd)
+        self.assertNotIn("outer.tar.gz", phdl.cmd)
+
+    def test_tar_direct_default_prefix_no_rewrite(self):
+        cfg = self._cfg("http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz")
+        phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
+        with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "_validate_exe_paths"):
+            anc_lib._install_anc_tar_direct(phdl, self.CLUSTER, cfg)
+        self.assertIn(f"tar -xzf anc.tar.gz -C '{anc_lib.ANC_TOOLS_PREFIX}'", phdl.cmd)
+        # Single archive, no inner anc-tool/anc-content tarballs.
+        self.assertNotIn("anc-tool", phdl.cmd)
+        self.assertNotIn("anc-content", phdl.cmd)
+        # Default prefix -> no exe_path rewrite.
+        self.assertNotIn("Rewriting exe_path", phdl.cmd)
+
+    def test_tar_direct_relocated_rewrites_exe_path(self):
+        cfg = self._cfg("http://x/anc-release-helios-nda-1.5.5-x86_64.tar.gz", install_path="/home/u/anc")
+        phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
+        with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "_validate_exe_paths"):
+            anc_lib._install_anc_tar_direct(phdl, self.CLUSTER, cfg)
+        self.assertIn("tar -xzf anc.tar.gz -C '/home/u/anc'", phdl.cmd)
+        self.assertIn("Rewriting exe_path", phdl.cmd)
+        self.assertIn(f"s#{anc_lib.ANC_TOOLS_PREFIX}#/home/u/anc#g", phdl.cmd)
+
+
+class _ProbePhdl:
+    '''phdl stand-in for resolve_anc_install_location: records the probe command
+    and returns a canned per-host response.'''
+
+    def __init__(self, response):
+        self.cmd = None
+        self._response = response
+
+    def exec(self, cmd, timeout=None):  # noqa: ARG002
+        self.cmd = cmd
+        return dict(self._response)
+
+
+class TestResolveAncInstallLocation(unittest.TestCase):
+    '''resolve_anc_install_location: probe by URL flavour, verify, cache.'''
+
+    def setUp(self):
+        anc_lib._ANC_INSTALL_PATHS = None
+        globals_patcher = patch.object(anc_lib.globals, "error_list", [])
+        globals_patcher.start()
+        self.addCleanup(globals_patcher.stop)
+        self.addCleanup(setattr, anc_lib, "_ANC_INSTALL_PATHS", None)
+
+    def _cluster(self):
+        return {"node_dict": {"node1": {}}, "username": "u", "priv_key_file": "k"}
+
+    def test_deb_probes_default_prefix(self):
+        cfg = {"anc": {"anc_release_url": "http://x/anc_1.5.5_amd64.deb", "ANC_INSTALL_PATH": "/home/u/anc"}}
+        phdl = _ProbePhdl({"node1": "ANC_PRESENT"})
+        with patch.object(anc_lib, "print_test_output"):
+            paths = anc_lib.resolve_anc_install_location(phdl, self._cluster(), cfg)
+        self.assertEqual(paths.anc_bin, anc_lib.ANC_BIN)
+        self.assertIn(anc_lib.ANC_BIN, phdl.cmd)
+        self.assertIs(anc_lib._ANC_INSTALL_PATHS, paths)
+
+    def test_tar_probes_relocated_prefix(self):
+        cfg = {"anc": {"anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz", "ANC_INSTALL_PATH": "/home/u/anc"}}
+        phdl = _ProbePhdl({"node1": "ANC_PRESENT"})
+        with patch.object(anc_lib, "print_test_output"):
+            paths = anc_lib.resolve_anc_install_location(phdl, self._cluster(), cfg)
+        self.assertEqual(paths.anc_bin, "/home/u/anc/anc/anc.py")
+        self.assertIn("/home/u/anc/anc/anc.py", phdl.cmd)
+
+    def test_missing_fails_and_clears_cache(self):
+        cfg = {"anc": {"anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz", "ANC_INSTALL_PATH": "/home/u/anc"}}
+        phdl = _ProbePhdl({"node1": ""})
+        with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "fail_test") as ft:
+            result = anc_lib.resolve_anc_install_location(phdl, self._cluster(), cfg)
+        self.assertIsNone(result)
+        self.assertIsNone(anc_lib._ANC_INSTALL_PATHS)
+        ft.assert_called_once()
+        self.assertIn("/home/u/anc/anc/anc.py", ft.call_args[0][0])
+
+    def test_partial_coverage_fails(self):
+        cluster = {"node_dict": {"node1": {}, "node2": {}}, "username": "u", "priv_key_file": "k"}
+        cfg = {"anc": {"anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz", "ANC_INSTALL_PATH": "/home/u/anc"}}
+        phdl = _ProbePhdl({"node1": "ANC_PRESENT"})  # node2 unreachable / absent
+        with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "fail_test") as ft:
+            result = anc_lib.resolve_anc_install_location(phdl, cluster, cfg)
+        self.assertIsNone(result)
+        ft.assert_called_once()
+        self.assertIn("node2", ft.call_args[0][0])
+
+
+class TestRunAncGroupsUsesCachedPath(unittest.TestCase):
+    '''run_anc_groups builds the command from the session-cached install path.'''
+
+    def setUp(self):
+        self.addCleanup(setattr, anc_lib, "_ANC_INSTALL_PATHS", None)
+
+    def test_cached_path_used_in_command(self):
+        cached = anc_lib.AncPaths(prefix="/home/u/anc", anc_dir="/home/u/anc/anc", anc_bin="/home/u/anc/anc/anc.py")
+        anc_lib._ANC_INSTALL_PATHS = cached
+        cluster = {"node_dict": {"node1": {}}, "username": "u", "priv_key_file": "k"}
+        cfg = {"anc": {"print_all_to_console": "True", "log_folder_path": "/tmp/logs"}}
+
+        captured = {}
+
+        class FakePhdl:
+            def exec(self, cmd, inactivity_timeout=None):  # noqa: ARG002
+                captured["cmd"] = cmd
+                return {}
+
+        with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
+            anc_lib.run_anc_groups(FakePhdl(), cluster, cfg, ["cpu_sanity"], "test_cpu_sanity")
+
+        self.assertIn("cd '/home/u/anc/anc' && sudo ./anc.py -g cpu_sanity", captured["cmd"])
+
+
 if __name__ == "__main__":
     unittest.main()
