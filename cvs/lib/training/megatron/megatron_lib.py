@@ -40,6 +40,40 @@ TRAINING_RESULT_PATTERNS = {
     'elapsed_time_per_iteration': [r'elapsed time per iteration:\s+([0-9\.]+)'],
 }
 
+# Per-iteration patterns for models whose training script does not append summary lines.
+# These match the inline iteration format: `throughput per GPU (TFLOP/s/GPU): X`.
+# Used as a fallback in get_training_results_dict when summary-line parsing returns empty.
+TRAINING_ITERATION_PATTERNS = {
+    'throughput_per_gpu': r'throughput per GPU\s*\([^)]*\)\s*:\s*([0-9.eE+\-]+)',
+    'tokens_per_gpu': r'tokens/GPU/s\s*:\s*([0-9.eE+\-]+)',
+    'mem_usage': r'mem usages:\s*([0-9.eE+\-]+)',
+    'elapsed_time_per_iteration': r'elapsed time per iteration\s*\([^)]*\)\s*:\s*([0-9.eE+\-]+)',
+}
+
+
+def _parse_mean_from_iterations(log_text, pattern, skip_warmup=True):
+    """Parse per-iteration metric values from full log text and return their mean.
+
+    Extracts all values matching `pattern` (one capture group) from `log_text`,
+    optionally skips the first match (iteration 1 warmup which is artificially
+    slow due to JIT compilation), and returns the mean as a string.
+
+    Args:
+        log_text:     Full training log text.
+        pattern:      Regex with one capture group for the numeric metric value.
+        skip_warmup:  If True and more than one value found, drop the first match.
+
+    Returns:
+        Mean value as a string, or None if no values were found.
+    """
+    matches = re.findall(pattern, log_text, re.I)
+    if not matches:
+        return None
+    values = [float(m) for m in matches]
+    if skip_warmup and len(values) > 1:
+        values = values[1:]
+    return str(sum(values) / len(values))
+
 TRAINING_PROGRESS_PATTERNS = [
     r'throughput per GPU(?:\s*\([^)]*\))?\s*:|tokens\/GPU\/s\s+[0-9]+',
     r'throughput per GPU:|tokens\/GPU\/s\s+[0-9]+',
@@ -52,15 +86,20 @@ TRAINING_NAN_PATTERNS = [
     r'mem usages:\s+(?:NaN|Inf)',
 ]
 
-def _parse_training_results(output):
+def _parse_training_results(output, full_log=None):
     """Extract metric values from training-log text using ordered fallback chains.
 
-    For each metric in TRAINING_RESULT_PATTERNS, try each pattern in order and
-    return the first non-empty list of matches. If no pattern matches, the
-    metric maps to an empty list.
+    Primary: tries each pattern in TRAINING_RESULT_PATTERNS against `output`
+    (typically the last N lines containing shell-script-appended summary lines).
+
+    Fallback: when a metric is still empty and `full_log` is provided, searches
+    the full log for per-iteration values using TRAINING_ITERATION_PATTERNS,
+    skips the warmup iteration, and stores the mean as a single-element list.
+    Used for models whose training script does not append summary lines.
 
     Args:
-        output (str): Raw training-log text to parse.
+        output (str):        Tail of the training log (summary lines).
+        full_log (str|None): Full training log text for per-iteration fallback.
 
     Returns:
         dict: {metric_name: list[str]} for every key in TRAINING_RESULT_PATTERNS.
@@ -73,6 +112,13 @@ def _parse_training_results(output):
             if matches:
                 out[metric] = matches
                 break
+        if not out[metric] and full_log is not None:
+            pattern = TRAINING_ITERATION_PATTERNS.get(metric)
+            if pattern:
+                mean = _parse_mean_from_iterations(full_log, pattern, skip_warmup=True)
+                if mean:
+                    out[metric] = [mean]
+                    log.info('per-iteration fallback: %s = %s', metric, mean)
     return out
 
 
@@ -642,17 +688,22 @@ class MegatronTrainingJob:
     def get_training_results_dict(self):
         """Parse training log from the last node and extract key performance metrics.
 
+        Reads the tail (summary lines) and full log, passing both to
+        _parse_training_results which handles primary summary-line parsing and
+        per-iteration fallback for models without shell-appended summary lines.
+
         Returns:
         dict: A dictionary with lists of extracted values (strings) for each metric.
         """
-        output = self._read_last_node_log(tail_lines=15)
+        tail_output = self._read_last_node_log(tail_lines=15)
 
         log.info('Extracting results from logs')
         log.info('#===========================#')
-        log.info("%s", output)
+        log.info("%s", tail_output)
         log.info('#===========================#')
 
-        training_results_dict = _parse_training_results(output)
+        full_log = self._read_last_node_log()
+        training_results_dict = _parse_training_results(tail_output, full_log)
         log.info("%s", training_results_dict)
         return training_results_dict
 
@@ -724,7 +775,7 @@ class MegatronTrainingJob:
                     fail_test(f'ERROR - NaN or Inf values seen in training results {output}')
                     return
                 else:
-                    time.sleep(5)
+                    time.sleep(30)
                     self.training_results_dict = self.get_training_results_dict()
                     log.info('Completed Training, returning !!!')
                     return

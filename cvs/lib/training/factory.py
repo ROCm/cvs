@@ -43,7 +43,7 @@ def create_training_job(orch, variant_config, **kwargs):
         **kwargs:
             Forwarded verbatim to the selected TrainingJob constructor.
             Expected keys: hf_token, micro_batch_size, global_batch_size,
-            precision, result_dict, distributed_training, tune_model_params,
+            precision, distributed_training, tune_model_params,
             scripts_dir, run_label.
 
     Returns:
