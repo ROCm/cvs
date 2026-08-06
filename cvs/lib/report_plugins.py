@@ -6,6 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import datetime
+import html
 import re
 import shutil
 import sys
@@ -97,12 +98,12 @@ class HtmlReportManager:
 
         log_content = []
         for section_name, section_content in report.sections:
-            log_content.append(f"<h3>{section_name}</h3><pre>{section_content}</pre>")
+            log_content.append(f"<h3>{html.escape(section_name)}</h3><pre>{html.escape(section_content)}</pre>")
 
         if log_content:
             # Persist a standalone html log page per test.
             log_path.write_text(
-                f"<html><body><h1>{report.nodeid}</h1>{''.join(log_content)}</body></html>",
+                f"<html><body><h1>{html.escape(report.nodeid)}</h1>{''.join(log_content)}</body></html>",
                 encoding="utf-8",
             )
             log.info("Wrote external test log: %s", log_path)
@@ -164,7 +165,7 @@ class HtmlReportManager:
             return None
 
         try:
-            source_path = Path(html_file)
+            source_path = Path(html_file).resolve()
             if not source_path.exists():
                 log.warning("File not found, cannot add to report: %s", source_path)
                 return None
@@ -173,10 +174,12 @@ class HtmlReportManager:
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
             # Copy file to log directory (optionally under a caller-supplied unique name)
-            dest_path = self.log_dir / (dest_name or source_path.name)
-            shutil.copy2(source_path, dest_path)
-
-            log.info("Added file to report bundle: %s -> %s", source_path, dest_path)
+            dest_path = (self.log_dir / (dest_name or source_path.name)).resolve()
+            if source_path == dest_path:
+                log.info("File already in report bundle: %s", source_path)
+            else:
+                shutil.copy2(source_path, dest_path)
+                log.info("Added file to report bundle: %s -> %s", source_path, dest_path)
 
             # Return relative path for potential linking
             rel_path = dest_path.relative_to(self.htmlpath.parent)
@@ -448,6 +451,15 @@ class HtmlReportManager:
         html += '</div>'
 
         return html
+
+    def generate_suite_reports(self, session):
+        """Write registered Run Deck HTML/JSON into the pytest bundle before zip."""
+        if not self.is_enabled:
+            return
+
+        from cvs.lib.report.rundeck import generate_rundeck
+
+        generate_rundeck(session, self)
 
     @staticmethod
     def inject_style_overrides(prefix):

@@ -12,6 +12,11 @@ from pathlib import Path
 
 import pytest
 
+from cvs.lib.report.pytest_hooks import (
+    attach_rundeck_row_extras,
+    cvs_rundeck_bind_module_fixture,
+    cvs_rundeck_session_fixture,
+)
 from cvs.lib.report_plugins import HtmlReportManager
 
 
@@ -80,8 +85,8 @@ def _maybe_autocollect_html(config, suite_name):
         return
 
 
-@pytest.hookimpl(tryfirst=True)
-def pytest_configure(config):
+def _sync_suite_name_from_args(config):
+    """Derive suite stem from the first ``*.py`` target in ``config.args``."""
     suite_name = "test"
     for arg in config.args:
         bare = arg.split("::")[0]
@@ -90,8 +95,42 @@ def pytest_configure(config):
             break
     config._suite_name = suite_name
     config._test_html_dir = f"{suite_name}_html"
-    _maybe_autocollect_html(config, suite_name)
+
+
+def _ensure_html_report_manager(config):
+    """Create ``HtmlReportManager`` once; safe if ``pytest_configure`` did not run."""
+    _sync_suite_name_from_args(config)
+    mgr = getattr(config, "_html_report_manager", None)
+    if mgr is not None:
+        return mgr
+
     config._html_report_manager = HtmlReportManager(config)
+    return config._html_report_manager
+
+
+def _auto_register_suite_report(config):
+    from cvs.lib.report.auto_register import try_auto_register_suite_report
+
+    _sync_suite_name_from_args(config)
+    return try_auto_register_suite_report(config)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config):
+    _sync_suite_name_from_args(config)
+    _maybe_autocollect_html(config, config._suite_name)
+    _ensure_html_report_manager(config)
+    _auto_register_suite_report(config)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _cvs_rundeck_session(request):
+    yield from cvs_rundeck_session_fixture(request)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _cvs_rundeck_bind_module(request, _cvs_rundeck_session):
+    yield from cvs_rundeck_bind_module_fixture(request, _cvs_rundeck_session)
 
 
 # Add all additional cmd line arguments for the script
@@ -160,7 +199,8 @@ def pytest_metadata(metadata):
 
 # Prepare a clean per-run log directory before tests start.
 def pytest_sessionstart(session):
-    session.config._html_report_manager.setup_log_dir()
+    _auto_register_suite_report(session.config)
+    _ensure_html_report_manager(session.config).setup_log_dir()
 
 
 # Capture each test report and attach a per-test external log link.
@@ -168,7 +208,8 @@ def pytest_sessionstart(session):
 def pytest_runtest_makereport(item, call):  # noqa: ARG001
     outcome = yield
     report = outcome.get_result()
-    report.extras = item.config._html_report_manager.write_test_log(report, item.originalname)
+    report.extras = _ensure_html_report_manager(item.config).write_test_log(report, item.originalname)
+    attach_rundeck_row_extras(item, report)
 
 
 # Replace inline pytest-html log content with a short externalized-log message.
@@ -185,4 +226,6 @@ def pytest_html_results_summary(prefix, summary, postfix):
 @pytest.hookimpl(hookwrapper=True)
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
     yield  # wait for pytest-html and all other plugins to finish writing the report
-    session.config._html_report_manager.create_zip_bundle(session)
+    mgr = _ensure_html_report_manager(session.config)
+    mgr.generate_suite_reports(session)
+    mgr.create_zip_bundle(session)

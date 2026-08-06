@@ -1,0 +1,1676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>__TITLE__</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<style>
+:root {
+  --bg: #0f1117; --panel: #1a1d27; --border: #2a2f3d; --text: #e8eaef;
+  --muted: #9aa3b5; --accent: #ff6b35; --accent2: #6b9fff; --accent3: #c77dff;
+  --pass: #3dd68c; --fail: #ff5c6a; --record: #6b9fff;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
+  background: linear-gradient(160deg, #0a0c12 0%, #12151f 40%, #0f1117 100%);
+  color: var(--text); padding: 1.25rem; line-height: 1.45; }
+.wrap { max-width: 1200px; margin: 0 auto; }
+.hero { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between;
+  gap: 1rem; margin-bottom: 1rem; }
+h1 { margin: 0 0 0.25rem; font-size: 1.6rem; font-weight: 600; letter-spacing: -0.02em; }
+.subtitle { color: var(--muted); margin: 0; font-size: 0.95rem; }
+.status-badge { display: inline-block; padding: 0.35rem 0.75rem; border-radius: 999px;
+  font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.status-pass { background: rgba(61,214,140,0.15); color: var(--pass); border: 1px solid rgba(61,214,140,0.35); }
+.status-fail { background: rgba(255,92,106,0.15); color: var(--fail); border: 1px solid rgba(255,92,106,0.35); }
+.status-record { background: rgba(107,159,255,0.12); color: var(--record); border: 1px solid rgba(107,159,255,0.3); }
+.viewer-nav { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin-bottom: 1rem; padding: 0.65rem 1rem;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; font-size: 0.8rem; }
+.viewer-nav a { color: var(--accent2); text-decoration: none; }
+.viewer-nav a:hover { text-decoration: underline; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1rem 1.25rem; margin-bottom: 1rem; box-shadow: 0 8px 32px rgba(0,0,0,0.25); }
+.panel h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  margin: 0 0 0.85rem; font-weight: 600; }
+.subsection { margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--border); }
+.subsection:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.subsection-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 0.75rem; margin-bottom: 0.75rem; }
+.subsection-title { margin: 0; font-size: 0.9rem; font-weight: 600; color: var(--text); }
+.subsection-hint { margin: 0 0 0.75rem; font-size: 0.75rem; color: var(--muted); }
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; }
+.summary-card { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 10px; padding: 0.85rem 1rem; }
+.summary-card h3 { margin: 0 0 0.35rem; font-size: 0.85rem; font-weight: 600; }
+.summary-stat { font-size: 1.35rem; font-weight: 700; color: var(--accent); }
+.summary-meta { font-size: 0.75rem; color: var(--muted); margin-top: 0.25rem; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
+.toolbar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.72rem; color: var(--muted); }
+.toolbar select, .toolbar input, .toolbar button {
+  background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.5rem; min-width: 7rem; font-size: 0.85rem; }
+.toolbar button { cursor: pointer; min-width: auto; }
+.toolbar button:hover { border-color: var(--accent); }
+.meta-line { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.85rem; color: var(--muted); }
+.meta-line strong { color: var(--text); font-weight: 600; }
+.chart-mode-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.chart-mode-toggle button {
+  background: #12151f; color: var(--muted); border: none; border-right: 1px solid var(--border);
+  padding: 0.35rem 0.75rem; font-size: 0.78rem; cursor: pointer; min-width: auto;
+}
+.chart-mode-toggle button:last-child { border-right: none; }
+.chart-mode-toggle button.active { background: rgba(107,159,255,0.2); color: var(--text); }
+.chart-mode-toggle button:hover:not(.active) { color: var(--text); }
+.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
+.chart-card { background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem; }
+.chart-card-title { margin: 0 0 0.5rem; font-size: 0.72rem; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+.chart-wrap { position: relative; height: 240px; }
+.chart-wrap-tall { height: 300px; }
+.chart-wrap-interactivity { height: min(520px, 70vh); min-height: 380px; }
+.chart-card-wide { max-width: 100%; }
+.panel-interactivity { margin-bottom: 1.25rem; }
+.interactivity-head { margin-bottom: 0.75rem; }
+.interactivity-chart-title {
+  margin: 0 0 0.35rem; font-size: 1.15rem; font-weight: 600; letter-spacing: -0.01em;
+}
+.interactivity-chart-subtitle {
+  margin: 0; font-size: 0.82rem; color: var(--muted); line-height: 1.4;
+}
+.interactivity-tab {
+  display: inline-block; margin-bottom: 0.85rem; padding-bottom: 0.35rem;
+  border-bottom: 2px solid var(--accent); font-size: 0.78rem; font-weight: 600;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--text);
+}
+.interactivity-tooltip {
+  position: absolute; pointer-events: none; z-index: 30; opacity: 0;
+  transition: opacity 0.12s ease; max-width: 22rem;
+  background: rgba(22, 26, 36, 0.96); border: 1px solid #3a4255; border-radius: 10px;
+  padding: 0.65rem 0.85rem; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  font-size: 0.78rem; line-height: 1.45;
+}
+.interactivity-tooltip.visible { opacity: 1; pointer-events: auto; }
+.interactivity-tooltip.pinned { border-color: var(--accent2); box-shadow: 0 0 0 1px rgba(107,159,255,0.35), 0 12px 40px rgba(0, 0, 0, 0.45); }
+.interactivity-tooltip-hint {
+  margin: 0.35rem 0 0; font-size: 0.68rem; color: var(--muted); font-style: italic;
+}
+.interactivity-tooltip-title {
+  font-weight: 700; font-size: 0.85rem; margin-bottom: 0.45rem; color: var(--text);
+}
+.interactivity-tooltip-row { display: flex; gap: 0.5rem; justify-content: space-between; color: #c8d0e0; }
+.interactivity-tooltip-row span:first-child { color: var(--muted); flex-shrink: 0; }
+.interactivity-tooltip-row span:last-child { text-align: right; word-break: break-word; }
+.interactivity-tooltip-link {
+  display: block; margin-top: 0.5rem; padding-top: 0.45rem; border-top: 1px solid var(--border);
+  color: var(--accent2); text-decoration: none; font-weight: 600;
+}
+.interactivity-tooltip-link:hover { text-decoration: underline; }
+.toolbar-inline { display: flex; align-items: center; gap: 0.5rem; font-size: 0.72rem; color: var(--muted); }
+.toolbar-inline select {
+  background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.5rem; font-size: 0.85rem; min-width: 9rem;
+}
+.shape-details { margin-bottom: 0.75rem; border: 1px solid var(--border); border-radius: 10px;
+  background: rgba(255,255,255,0.02); overflow: hidden; }
+.shape-details summary { cursor: pointer; padding: 0.65rem 0.85rem; font-size: 0.9rem; font-weight: 600;
+  list-style: none; display: flex; align-items: center; justify-content: space-between; }
+.shape-details summary::-webkit-details-marker { display: none; }
+.shape-details summary::after { content: "▾"; color: var(--muted); font-size: 0.85rem; }
+.shape-details[open] summary::after { content: "▴"; }
+.shape-details .chart-grid { padding: 0 0.85rem 0.85rem; }
+table.data { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+table.data th, table.data td { border: 1px solid var(--border); padding: 0.45rem 0.55rem; text-align: right; }
+table.data th { background: rgba(255,255,255,0.04); color: var(--muted); font-size: 0.68rem; text-transform: uppercase; }
+table.data td:first-child, table.data th:first-child { text-align: left; }
+tr.fail td { background: rgba(255,92,106,0.08); }
+tr.regression td { background: rgba(255,92,106,0.14); }
+tr.changed td { background: rgba(255,107,53,0.1); }
+.status-pass-txt { color: var(--pass); } .status-fail-txt { color: var(--fail); } .status-record-txt { color: var(--record); }
+.heat td { text-align: center; font-size: 0.75rem; min-width: 3rem; }
+.matrix-pass { background: rgba(61,214,140,0.15); color: var(--pass); }
+.matrix-fail { background: rgba(255,92,106,0.15); color: var(--fail); }
+.matrix-record { background: rgba(107,159,255,0.1); color: var(--record); }
+.matrix-na { color: var(--muted); }
+@media (max-width: 640px) {
+  body { padding: 0.75rem; }
+  .chart-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="hero">
+  <div>
+    <h1>__TITLE__</h1>
+    <p class="subtitle">__SUBTITLE__</p>
+  </div>
+  <span class="status-badge status-record" id="hero-status">—</span>
+</header>
+
+<nav class="viewer-nav" id="viewer-nav">
+  <a href="#filters">Filters</a>
+  <a href="#overview">Overview</a>
+  <a href="#interactivity-panel">Interactivity</a>
+  <a href="#charts">Charts</a>
+  <a href="#heatmap">Heatmap</a>
+  <a href="#gates">Gates</a>
+  <a href="#cells">Cells</a>
+  <a id="run-deck-link" href="#" style="display:none">Run deck</a>
+</nav>
+
+<section class="panel" id="filters">
+  <h2>Filters</h2>
+  <div class="toolbar">
+    <span id="dimension-filters"></span>
+    <label>Tier fail <select id="f-tier"><option value="">Any</option></select></label>
+    <label>Search <input id="f-search" type="search" placeholder="cell id, host…"/></label>
+    <label>Baseline JSON <input id="f-baseline" type="file" accept=".json,application/json"/></label>
+    <label>Delta % <input id="f-delta-threshold" type="number" min="0" step="0.5" value="5" style="min-width:4rem"/></label>
+    <button type="button" id="btn-export">Export CSV</button>
+    <button type="button" id="btn-reset-zoom">Reset zoom</button>
+  </div>
+  <div class="meta-line" id="meta" style="margin-top:0.85rem">Loading…</div>
+</section>
+
+<section class="panel" id="overview">
+  <h2>Overview</h2>
+  <div class="summary-grid" id="summary-grid"></div>
+</section>
+
+<section class="panel panel-interactivity" id="interactivity-panel" style="display:none">
+  <div id="interactivity-block">
+    <div class="interactivity-head">
+      <span class="interactivity-tab">Interactivity</span>
+      <h2 class="interactivity-chart-title" id="interactivity-title">Token Throughput per GPU vs. Interactivity</h2>
+      <p class="interactivity-chart-subtitle" id="interactivity-subtitle"></p>
+    </div>
+    <div class="subsection-head">
+      <div class="toolbar-inline" style="flex-wrap:wrap">
+        <label><input type="checkbox" id="interactivity-log-scale" checked/> Log Y</label>
+        <label><input type="checkbox" id="interactivity-labels" checked/> Point labels</label>
+        <button type="button" id="interactivity-zoom-reset">Reset view</button>
+      </div>
+    </div>
+    <p class="subsection-hint" id="interactivity-chart-hint">Interactivity = 1000 / mean TPOT (ms) (tok/s/user), matching InferenceX · Y = total token throughput per GPU · scroll to zoom · shift+drag to pan · drag to box-zoom · click a point to pin the detail card</p>
+    <article class="chart-card chart-card-wide" style="position:relative">
+      <div class="chart-wrap chart-wrap-interactivity" id="interactivity-chart-wrap"></div>
+      <div class="interactivity-tooltip" id="interactivity-tooltip" role="tooltip" aria-hidden="true"></div>
+    </article>
+  </div>
+</section>
+
+<section class="panel" id="charts" style="display:none">
+  <h2>Sweep charts</h2>
+  <div class="subsection" id="comparison-block" style="display:none">
+    <div class="subsection-head">
+      <p class="subsection-title">Cross-shape comparison</p>
+      <div class="chart-mode-toggle" id="comparison-toggle-wrap" role="group" aria-label="Comparison chart type">
+        <button type="button" id="compare-mode-bars" class="active" aria-pressed="true">Grouped bars</button>
+        <button type="button" id="compare-mode-lines" aria-pressed="false">Line trends</button>
+      </div>
+    </div>
+    <p class="subsection-hint" id="comparison-hint">Compare shapes at each concurrency · hover for values · dashed lines stay visible when trends overlap</p>
+    <div class="chart-grid" id="comparison-grid"></div>
+  </div>
+  <div class="subsection" id="margin-block" style="display:none">
+    <div class="subsection-head">
+      <p class="subsection-title">Gate margin vs concurrency</p>
+      <label class="toolbar-inline">Gate metric
+        <select id="margin-metric" aria-label="Gated metric for margin chart"></select>
+      </label>
+    </div>
+    <p class="subsection-hint">% of gate threshold (100% = on gate) · only cells with enforced gate specs · dashed line marks 100%</p>
+    <div class="chart-grid" id="margin-grid"></div>
+  </div>
+</section>
+
+<section class="panel" id="heatmap" style="display:none">
+  <div class="subsection-head">
+    <h2 style="margin:0;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);font-weight:600">Sweep heatmap</h2>
+    <label class="toolbar-inline">Metric
+      <select id="heatmap-metric" aria-label="Heatmap metric"></select>
+    </label>
+  </div>
+  <p class="subsection-hint" id="heatmap-hint">Concurrency columns · greener is better for throughput · greener is lower for latency</p>
+  <div style="overflow-x:auto" id="heatmap-wrap"></div>
+</section>
+
+<section class="panel" id="gates" style="display:none">
+  <h2>Gate matrix</h2>
+  <p class="subsection-hint">Tier status for filtered cells</p>
+  <div style="overflow-x:auto" id="gate-wrap"></div>
+</section>
+
+<section class="panel" id="cells">
+  <h2>Cells</h2>
+  <div style="overflow-x:auto">
+    <table class="data"><thead><tr id="cells-header"></tr></thead><tbody id="rows"></tbody></table>
+  </div>
+</section>
+</div>
+
+__EMBEDDED_JSON__
+
+<script>
+const JSON_PATH = __JSON_PATH__;
+const tierOrder = __TIER_ORDER__;
+let reportData = null;
+let allCells = [];
+let chartInstances = [];
+let comparisonChartMode = 'bar';
+let interactivityLogScale = true;
+let interactivityShowLabels = true;
+let interactivityChart = null;
+let interactivityTooltipPinned = false;
+let interactivityTooltipOver = false;
+let interactivityTooltipHideTimer = null;
+let interactivityTooltipLastMeta = null;
+let heatmapMetricKey = 'client.output_throughput';
+let marginMetricKey = 'client.output_throughput';
+let prevRunByKey = null;
+let deltaThresholdPct = 5;
+
+const FALLBACK_VIEWER_CONFIG = {
+  group_by: ['isl', 'osl'],
+  group_labels: { isl: 'ISL', osl: 'OSL' },
+  filters: [
+    { field: 'isl', label: 'ISL' },
+    { field: 'osl', label: 'OSL' },
+    { field: 'policy', label: 'Policy' },
+    { field: 'host', label: 'Host' },
+  ],
+  concurrency_field: 'concurrency',
+  metrics: {
+    'client.output_throughput': { label: 'Output tok/s', unit: 'tok/s', higher_better: true },
+    'client.total_token_throughput': { label: 'Total tok/s', unit: 'tok/s', higher_better: true },
+    'client.mean_ttft_ms': { label: 'Mean TTFT', unit: 'ms', higher_better: false },
+    'client.mean_tpot_ms': { label: 'Mean TPOT', unit: 'ms', higher_better: false },
+  },
+  heatmap_metrics: [
+    'client.output_throughput',
+    'client.total_token_throughput',
+    'client.mean_ttft_ms',
+    'client.mean_tpot_ms',
+  ],
+  margin_metrics: [
+    'client.output_throughput',
+    'client.mean_ttft_ms',
+    'client.mean_tpot_ms',
+  ],
+  default_heatmap_metric: 'client.output_throughput',
+  default_margin_metric: 'client.output_throughput',
+  table_columns: [
+    { field: 'cell_id', label: 'Cell' },
+    { field: 'isl', label: 'ISL' },
+    { field: 'osl', label: 'OSL' },
+    { field: 'policy', label: 'Policy' },
+    { field: 'host', label: 'Host' },
+    { field: 'concurrency', label: 'C' },
+    { metric: 'client.output_throughput', label: 'Throughput' },
+    { metric: 'client.mean_ttft_ms', label: 'TTFT' },
+    { metric: 'client.mean_tpot_ms', label: 'TPOT' },
+    { computed: 'status', label: 'Status' },
+  ],
+  heatmap_row_fields: ['isl', 'osl', 'policy'],
+  comparison_hint: 'Compare ISL/OSL shapes at each concurrency · hover for values · dashed lines stay visible when trends overlap',
+  interactivity: {
+    enabled: true,
+    tpot_metric: 'client.mean_tpot_ms',
+    title: 'Token Throughput per GPU vs. Interactivity',
+    hint: 'Interactivity = 1000 / mean TPOT (ms) (tok/s/user) · Y = total token throughput per GPU · scroll to zoom · shift+drag to pan · drag to box-zoom · click a point to pin the detail card',
+  },
+};
+
+function viewerConfig() {
+  return (reportData && reportData.viewer_config) ? reportData.viewer_config : FALLBACK_VIEWER_CONFIG;
+}
+
+function metricsRegistry() {
+  const out = {};
+  Object.entries(viewerConfig().metrics || {}).forEach(([key, meta]) => {
+    out[key] = {
+      label: meta.label || key,
+      unit: meta.unit || '',
+      higherBetter: meta.higher_better !== false,
+    };
+  });
+  return out;
+}
+
+function metricMeta(key) {
+  return metricsRegistry()[key] || { label: key, unit: '', higherBetter: true };
+}
+
+function groupByFields() {
+  return viewerConfig().group_by || ['isl', 'osl'];
+}
+
+function fieldLabel(field) {
+  const labels = viewerConfig().group_labels || {};
+  return labels[field] || field.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function shapeLabelFromParts(parts) {
+  const fields = groupByFields();
+  return fields.map((f, i) => fieldLabel(f) + '=' + (parts[i] ?? '—')).join(' · ');
+}
+
+function shapeKeyFromCell(c) {
+  return groupByFields().map(f => String(c[f] ?? '')).join('|');
+}
+
+function shapeLabelFromCell(c) {
+  return shapeLabelFromParts(groupByFields().map(f => c[f]));
+}
+
+function shapeLabelFromSummary(s) {
+  return shapeLabelFromParts(groupByFields().map(f => s[f]));
+}
+
+function interactivityTpotMetric() {
+  return (viewerConfig().interactivity || {}).tpot_metric || 'client.mean_tpot_ms';
+}
+
+function tableColumns() {
+  return viewerConfig().table_columns || FALLBACK_VIEWER_CONFIG.table_columns;
+}
+
+function initViewerUi() {
+  const vc = viewerConfig();
+  const compHint = $('comparison-hint');
+  if (compHint && vc.comparison_hint) compHint.textContent = vc.comparison_hint;
+
+  const interTitle = $('interactivity-title');
+  const interHint = $('interactivity-chart-hint');
+  const inter = vc.interactivity || {};
+  if (interTitle && inter.title) interTitle.textContent = inter.title;
+  if (interHint && inter.hint) interHint.textContent = inter.hint;
+
+  const heatmapSel = $('heatmap-metric');
+  if (heatmapSel) {
+    heatmapSel.innerHTML = '';
+    (vc.heatmap_metrics || []).forEach(key => {
+      const m = metricMeta(key);
+      const o = document.createElement('option');
+      o.value = key;
+      o.textContent = m.label;
+      heatmapSel.appendChild(o);
+    });
+    const defaultHeat = vc.default_heatmap_metric || vc.heatmap_metrics[0];
+    if (defaultHeat && heatmapSel.querySelector('option[value="' + defaultHeat + '"]')) {
+      heatmapSel.value = defaultHeat;
+      heatmapMetricKey = defaultHeat;
+    } else if (heatmapSel.options.length) {
+      heatmapMetricKey = heatmapSel.options[0].value;
+    }
+  }
+
+  const marginSel = $('margin-metric');
+  if (marginSel) {
+    marginSel.innerHTML = '';
+    (vc.margin_metrics || []).forEach(key => {
+      const m = metricMeta(key);
+      const o = document.createElement('option');
+      o.value = key;
+      o.textContent = m.label;
+      marginSel.appendChild(o);
+    });
+    const defaultMargin = vc.default_margin_metric || vc.margin_metrics[0];
+    if (defaultMargin && marginSel.querySelector('option[value="' + defaultMargin + '"]')) {
+      marginSel.value = defaultMargin;
+      marginMetricKey = defaultMargin;
+    } else if (marginSel.options.length) {
+      marginMetricKey = marginSel.options[0].value;
+    }
+  }
+}
+
+function $(id) { return document.getElementById(id); }
+
+function cellMapKey(c) {
+  return String(c.cell_id || '') + '\0' + String(c.host || '');
+}
+
+function prevRunDeltaPct(current, previous) {
+  if (current == null || previous == null || previous === 0) return null;
+  return 100.0 * (current - previous) / previous;
+}
+
+function prevRunChangeFlags(deltaPct, threshold) {
+  if (deltaPct == null) return { changed: false, regression: false };
+  const changed = Math.abs(deltaPct) > threshold;
+  return { changed, regression: changed && deltaPct < 0 };
+}
+
+function applyPrevRunPanel(panel) {
+  if (!panel || !panel.rows) {
+    prevRunByKey = null;
+    return;
+  }
+  prevRunByKey = new Map();
+  panel.rows.forEach(r => {
+    prevRunByKey.set(cellMapKey(r), r);
+  });
+  if (panel.threshold_pct != null) {
+    deltaThresholdPct = Number(panel.threshold_pct);
+    const deltaInput = $('f-delta-threshold');
+    if (deltaInput) deltaInput.value = String(deltaThresholdPct);
+  }
+}
+
+function buildPrevRunFromBaseline(data) {
+  const headline = (reportData.report || {}).headline_metric || 'client.output_throughput';
+  const threshold = Number($('f-delta-threshold').value) || deltaThresholdPct;
+  const baseMap = new Map();
+  (data.cells || []).forEach(c => baseMap.set(cellMapKey(c), c));
+  prevRunByKey = new Map();
+  allCells.forEach(c => {
+    const prev = baseMap.get(cellMapKey(c));
+    const current = metricNum(c, headline);
+    const previous = prev ? metricNum(prev, headline) : null;
+    const delta_pct = prevRunDeltaPct(current, previous);
+    const flags = prevRunChangeFlags(delta_pct, threshold);
+    prevRunByKey.set(cellMapKey(c), {
+      previous_throughput: previous,
+      'compare.prev_run.throughput_delta_pct': delta_pct,
+      regression: flags.regression,
+      changed: flags.changed,
+    });
+  });
+}
+
+function updateCellsHeader() {
+  const header = $('cells-header');
+  if (!header) return;
+  const labels = tableColumns().map(col => col.label || col.field || col.metric || '');
+  if (prevRunByKey) {
+    const statusIdx = labels.findIndex((_, i) => tableColumns()[i].computed === 'status');
+    const insertAt = statusIdx >= 0 ? statusIdx : labels.length;
+    labels.splice(insertAt, 0, 'Prev tok/s', 'Delta %');
+  }
+  header.innerHTML = labels.map(h => '<th>' + h + '</th>').join('');
+}
+
+function cellColumnHtml(c, col) {
+  if (col.computed === 'status') {
+    const st = cellStatus(c);
+    return '<td class="status-' + st + '-txt">' + st.toUpperCase() + '</td>';
+  }
+  if (col.metric) return '<td>' + metricVal(c, col.metric) + '</td>';
+  return '<td>' + (c[col.field] ?? '') + '</td>';
+}
+
+function cellColumnCsv(c, col) {
+  if (col.computed === 'status') return cellStatus(c);
+  if (col.metric) return metricNum(c, col.metric) ?? '';
+  return c[col.field] ?? '';
+}
+
+function clearEl(id) {
+  const el = $(id);
+  if (el) el.innerHTML = '';
+}
+
+function cellStatus(cell) {
+  for (const t of tierOrder) {
+    if (cell.tiers && cell.tiers[t] === 'fail') return 'fail';
+  }
+  return 'pass';
+}
+
+function metricVal(cell, key) {
+  const v = (cell.actuals || {})[key];
+  if (v == null) return '—';
+  return Math.abs(v) >= 1000
+    ? Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 })
+    : Number(v).toFixed(1);
+}
+
+function metricNum(cell, key) {
+  const v = (cell.actuals || {})[key];
+  return v == null ? null : Number(v);
+}
+
+function cellBarPct(cell, metricKey) {
+  const entry = (cell.metrics || []).find(m => m.metric === metricKey);
+  if (!entry || entry.bar_pct == null || !entry.spec) return null;
+  return Number(entry.bar_pct);
+}
+
+function pointsByConcurrency(rows, valueFn) {
+  const byConc = new Map();
+  rows.forEach(c => {
+    const conc = Number(c.concurrency);
+    const val = valueFn(c);
+    if (val == null || Number.isNaN(conc)) return;
+    byConc.set(conc, val);
+  });
+  return [...byConc.entries()].sort((a, b) => a[0] - b[0]);
+}
+
+function filteredCells() {
+  const tier = $('f-tier') && $('f-tier').value;
+  const q = $('f-search') && $('f-search').value.trim().toLowerCase();
+  const filterFields = viewerConfig().filters || [];
+  return allCells.filter(c => {
+    for (const f of filterFields) {
+      const field = f.field || f;
+      const sel = $('f-' + field);
+      if (!sel || !sel.value) continue;
+      if (String(c[field]) !== sel.value) return false;
+    }
+    if (tier && (c.tiers || {})[tier] !== 'fail') return false;
+    if (q) {
+      const hay = [c.cell_id, c.host, c.policy, c.concurrency]
+        .concat(groupByFields().map(f => c[f]))
+        .join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function populateFilters() {
+  const toolbar = $('dimension-filters');
+  if (toolbar) toolbar.innerHTML = '';
+  (viewerConfig().filters || []).forEach(f => {
+    const field = f.field || f;
+    const label = f.label || fieldLabel(field);
+    const wrap = document.createElement('label');
+    wrap.textContent = label + ' ';
+    const sel = document.createElement('select');
+    sel.id = 'f-' + field;
+    const allOpt = document.createElement('option');
+    allOpt.value = '';
+    allOpt.textContent = 'All';
+    sel.appendChild(allOpt);
+    const uniq = [...new Set(allCells.map(c => String(c[field] ?? '')))].filter(Boolean).sort();
+    uniq.forEach(v => {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = v;
+      sel.appendChild(o);
+    });
+    wrap.appendChild(sel);
+    if (toolbar) toolbar.appendChild(wrap);
+    sel.addEventListener('input', render);
+    sel.addEventListener('change', render);
+  });
+  const tierSel = $('f-tier');
+  if (tierSel) {
+    while (tierSel.options.length > 1) tierSel.remove(1);
+    tierOrder.forEach(t => {
+      const o = document.createElement('option');
+      o.value = t;
+      o.textContent = t + ' fail';
+      tierSel.appendChild(o);
+    });
+  }
+}
+
+function shapeGroups(rows) {
+  const groups = new Map();
+  rows.forEach(c => {
+    const key = shapeKeyFromCell(c);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(c);
+  });
+  return groups;
+}
+
+function destroyCharts() {
+  chartInstances.forEach(ch => ch.destroy());
+  chartInstances = [];
+  clearEl('comparison-grid');
+  clearEl('margin-grid');
+  const interactivityWrap = $('interactivity-chart-wrap');
+  if (interactivityWrap) interactivityWrap.innerHTML = '';
+  ['comparison-block', 'margin-block'].forEach(id => {
+    const el = $(id);
+    if (el) el.style.display = 'none';
+  });
+  const interPanel = $('interactivity-panel');
+  if (interPanel) interPanel.style.display = 'none';
+  interactivityChart = null;
+  interactivityTooltipPinned = false;
+  interactivityTooltipOver = false;
+  clearTimeout(interactivityTooltipHideTimer);
+  hideInteractivityTooltip();
+}
+
+function updateComparisonToggleUI() {
+  const barsBtn = $('compare-mode-bars');
+  const linesBtn = $('compare-mode-lines');
+  if (!barsBtn || !linesBtn) return;
+  const isBar = comparisonChartMode === 'bar';
+  barsBtn.classList.toggle('active', isBar);
+  linesBtn.classList.toggle('active', !isBar);
+  barsBtn.setAttribute('aria-pressed', String(isBar));
+  linesBtn.setAttribute('aria-pressed', String(!isBar));
+}
+
+function buildOverview() {
+  const grid = $('summary-grid');
+  const summaries = reportData.sweep_summaries || [];
+  grid.innerHTML = summaries.map(s => (
+    '<article class="summary-card"><h3>' + shapeLabelFromSummary(s) + '</h3>'
+    + '<div class="summary-stat">' + metricVal({ actuals: { 'client.output_throughput': s.max_output_throughput } }, 'client.output_throughput')
+    + ' <span style="font-size:0.75rem;font-weight:500;color:var(--muted)">tok/s</span></div>'
+    + '<div class="summary-meta">Peak at C=' + s.conc_at_max_tput
+    + ' · TTFT ' + (s.ttft_at_max_tput != null ? Number(s.ttft_at_max_tput).toFixed(1) : '—') + ' ms'
+    + (s.saturated ? ' · saturated' : '') + '</div></article>'
+  )).join('') || '<p class="subsection-hint">No sweep summary data.</p>';
+
+  const status = reportData.overall_status || 'record';
+  const badge = $('hero-status');
+  badge.textContent = status.toUpperCase();
+  badge.className = 'status-badge status-' + status;
+}
+
+const LINE_DASHES = [[], [7, 4], [3, 3], [10, 4, 2, 4]];
+const LINE_POINT_STYLES = ['circle', 'rect', 'triangle', 'rectRot'];
+const CHART_COLORS = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#9aa3b5', '#ff5c6a'];
+
+function shapeLabel(isl, osl) {
+  return shapeLabelFromParts([isl, osl]);
+}
+
+function buildLineDataset(series, index, color) {
+  const dashed = LINE_DASHES[index % LINE_DASHES.length];
+  return {
+    label: series.label,
+    data: series.values != null ? series.values : series.data,
+    borderColor: color,
+    backgroundColor: color,
+    borderWidth: 2.5,
+    borderDash: dashed,
+    tension: 0.2,
+    fill: false,
+    pointRadius: 5,
+    pointHoverRadius: 7,
+    pointStyle: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
+    pointBackgroundColor: color,
+    pointBorderColor: '#1a1d27',
+    pointBorderWidth: 2,
+    spanGaps: true,
+    // Dashed / alternate styles draw on top so overlapping trends stay visible.
+    order: dashed.length ? index : index + 10,
+  };
+}
+
+function buildChartComparisonFromRows(rows) {
+  const shapes = shapeGroups(rows);
+  if (shapes.size < 2) return null;
+  const chartConfig = reportData.chart_config || [];
+  const out = {};
+  chartConfig.forEach(spec => {
+    const shapeSeries = [];
+    const allConcs = new Set();
+    shapes.forEach((shapeRows, shapeKey) => {
+      const parts = shapeKey.split('|');
+      const byConc = new Map();
+      shapeRows.forEach(c => {
+        const val = metricNum(c, spec.metric);
+        if (val == null) return;
+        const conc = Number(c.concurrency);
+        if (Number.isNaN(conc)) return;
+        byConc.set(conc, val);
+        allConcs.add(conc);
+      });
+      if (byConc.size) {
+        shapeSeries.push({ label: shapeLabelFromParts(parts), byConc });
+      }
+    });
+    if (shapeSeries.length < 2) return;
+    const concurrencies = [...allConcs].sort((a, b) => a - b);
+    if (concurrencies.length < 2) return;
+    out[spec.suffix] = {
+      concurrencies,
+      series: shapeSeries.map(s => ({
+        label: s.label,
+        values: concurrencies.map(c => s.byConc.get(c) ?? null),
+      })),
+      title: spec.title,
+      unit: spec.unit,
+    };
+  });
+  return Object.keys(out).length ? out : null;
+}
+
+function makeChart(canvas, type, labels, datasets, unit, title) {
+  const ch = new Chart(canvas, {
+    type,
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: type === 'line' ? 'index' : 'nearest',
+        axis: type === 'line' ? 'x' : undefined,
+        intersect: false,
+      },
+      plugins: {
+        legend: { labels: { color: '#e8eaef', boxWidth: 12, font: { size: 11 } } },
+        title: title ? { display: true, text: title, color: '#9aa3b5', font: { size: 11, weight: '600' }, padding: { bottom: 8 } } : undefined,
+        tooltip: {
+          backgroundColor: '#2a3142',
+          borderColor: '#3a4255',
+          borderWidth: 1,
+          titleColor: '#e8eaef',
+          bodyColor: '#c8d0e0',
+        },
+        zoom: type === 'line' ? {
+          pan: { enabled: true, mode: 'x' },
+          zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+        } : {},
+      },
+      scales: {
+        x: { ticks: { color: '#9aa3b5', maxRotation: 0 }, grid: { color: '#2a2f3d' } },
+        y: { ticks: { color: '#9aa3b5' }, grid: { color: '#2a2f3d' },
+          title: unit ? { display: true, text: unit, color: '#9aa3b5', font: { size: 11 } } : undefined },
+      },
+    },
+  });
+  chartInstances.push(ch);
+  return ch;
+}
+
+function gateReferenceDataset(labels) {
+  return {
+    label: 'Gate (100%)',
+    data: labels.map(() => 100),
+    borderColor: 'rgba(154,163,181,0.65)',
+    backgroundColor: 'transparent',
+    borderDash: [6, 4],
+    borderWidth: 1.5,
+    pointRadius: 0,
+    fill: false,
+    order: 0,
+  };
+}
+
+function throughputMetricKey() {
+  return (reportData.report || {}).headline_metric || 'client.output_throughput';
+}
+
+function tpFromCellId(cellId) {
+  const match = String(cellId || '').match(/TP=(\d+)/i);
+  return match ? Number(match[1]) : null;
+}
+
+function ppFromCellId(cellId) {
+  const match = String(cellId || '').match(/PP=(\d+)/i);
+  return match ? Number(match[1]) : null;
+}
+
+function runCardMap() {
+  const map = {};
+  (reportData.run_card_display || []).forEach(row => {
+    if (Array.isArray(row) && row.length >= 2) map[String(row[0])] = row[1];
+  });
+  return map;
+}
+
+function runCardLink(label) {
+  const row = (reportData.run_card_display || []).find(r => r[0] === label);
+  return row && row[2] ? String(row[1]) : '';
+}
+
+function reportDateLabel() {
+  const raw = reportData.generated_at || '';
+  const m = String(raw).match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1];
+  return raw.split(' ')[0] || '—';
+}
+
+function precisionLabel(cell) {
+  const model = runCardMap().Model || (cell && cell.model) || '';
+  const m = String(model).match(/\b(fp4|fp8|bf16|fp16|int8|mxfp4|w4a8)\b/i);
+  if (m) return m[1].toUpperCase();
+  if (cell && cell.policy && /^(fp4|fp8|bf16|fp16|int8|mxfp4|w4a8)$/i.test(String(cell.policy))) {
+    return String(cell.policy).toUpperCase();
+  }
+  return '—';
+}
+
+function dpAttentionLabel() {
+  const launch = String((reportData.provenance || {}).launch_summary || '');
+  const server = String((reportData.panels || {}).launch?.server_cmd || '');
+  const blob = (launch + ' ' + server).toLowerCase();
+  if (/(-dp\b|dp_attention|atom_dp_size|--enable-dp)/.test(blob)) return 'True';
+  return 'False';
+}
+
+function ciRunLink() {
+  const upstream = runCardLink('Upstream');
+  if (upstream) return { href: upstream, label: 'GitHub Actions Run' };
+  const prov = reportData.provenance || {};
+  const href = prov.pytest_html_href || prov.pytest_html_path || '';
+  if (href) return { href, label: 'Test report' };
+  return null;
+}
+
+function fmtTooltipNum(v, digits) {
+  if (v == null || Number.isNaN(v)) return '—';
+  return Number(v).toLocaleString(undefined, {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: 0,
+  });
+}
+
+function gpusFromCell(cell) {
+  const tp = tpFromCellId(cell.cell_id) || Number(runCardMap().TP) || null;
+  if (!tp) return null;
+  const pp = ppFromCellId(cell.cell_id) || Number(runCardMap().PP) || 1;
+  return tp * pp;
+}
+
+function totalPerGpuThroughput(cell) {
+  const direct = metricNum(cell, 'client.per_gpu_throughput');
+  if (direct != null) return direct;
+  const tput = metricNum(cell, 'client.total_token_throughput');
+  const gpus = gpusFromCell(cell);
+  if (tput == null || !gpus) return null;
+  return tput / gpus;
+}
+
+function outputPerGpuThroughput(cell) {
+  const direct = metricNum(cell, 'client.output_tput_per_gpu');
+  if (direct != null) return direct;
+  const tput = metricNum(cell, 'client.output_throughput');
+  const gpus = gpusFromCell(cell);
+  if (tput == null || !gpus) return null;
+  return tput / gpus;
+}
+
+function inputPerGpuThroughput(cell, totalPg, outputPg) {
+  if (totalPg != null && outputPg != null) return totalPg - outputPg;
+  const total = metricNum(cell, 'client.total_token_throughput');
+  const output = metricNum(cell, 'client.output_throughput');
+  const gpus = gpusFromCell(cell);
+  if (total != null && output != null && gpus) return (total - output) / gpus;
+  return null;
+}
+
+function buildInteractivityTooltipMeta(cell, interactivity, totalPg) {
+  const rc = runCardMap();
+  const prov = reportData.provenance || {};
+  const tp = tpFromCellId(cell.cell_id) || Number(rc.TP) || null;
+  const pp = ppFromCellId(cell.cell_id) || Number(rc.PP) || 1;
+  const totalGpus = tp ? tp * pp : null;
+  const outputPg = outputPerGpuThroughput(cell);
+  const inputPg = inputPerGpuThroughput(cell, totalPg, outputPg);
+  const driver = rc.Driver || 'inference';
+  const gpu = cell.gpu || rc.GPU || 'Run';
+  return {
+    title: gpu + ' (' + driver + ')',
+    rows: [
+      ['Date', reportDateLabel()],
+      ['Image', prov.image_display || rc.Image || '—'],
+      ['Interactivity (tok/s/user)', fmtTooltipNum(interactivity, 3)],
+      ['Token Throughput per GPU (tok/s/gpu)', fmtTooltipNum(totalPg, 3)],
+      ['Input Token Throughput per GPU', fmtTooltipNum(inputPg, 3)],
+      ['Output Token Throughput per GPU', fmtTooltipNum(outputPg, 3)],
+      ['Total GPUs', totalGpus != null ? String(totalGpus) : '—'],
+      ['Tensor Parallelism', tp != null ? String(tp) : '—'],
+      ['Pipeline Parallelism', String(pp)],
+      ['Expert Parallelism', '1'],
+      ['DP Attention', dpAttentionLabel()],
+      ['Concurrency', String(cell.concurrency)],
+      ['Precision', precisionLabel(cell)],
+    ],
+    runLink: ciRunLink(),
+  };
+}
+
+function escHtml(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function renderInteractivityTooltip(meta, left, top, pinned) {
+  const el = $('interactivity-tooltip');
+  const wrap = $('interactivity-chart-wrap');
+  if (!el || !meta) return;
+  interactivityTooltipLastMeta = meta;
+  let html = '<div class="interactivity-tooltip-title">' + escHtml(meta.title) + '</div>';
+  meta.rows.forEach(([label, value]) => {
+    html += '<div class="interactivity-tooltip-row"><span>' + escHtml(label) + '</span><span>'
+      + escHtml(value) + '</span></div>';
+  });
+  if (meta.runLink && meta.runLink.href) {
+    html += '<a class="interactivity-tooltip-link" href="' + escHtml(meta.runLink.href)
+      + '" target="_blank" rel="noopener">' + escHtml(meta.runLink.label) + '</a>';
+  }
+  if (pinned) {
+    html += '<p class="interactivity-tooltip-hint">Pinned — click chart background to dismiss</p>';
+  } else {
+    html += '<p class="interactivity-tooltip-hint">Click point to pin · move onto card to open links</p>';
+  }
+  el.innerHTML = html;
+  el.classList.add('visible');
+  el.classList.toggle('pinned', !!pinned);
+  el.setAttribute('aria-hidden', 'false');
+  const pad = 8;
+  let x = left;
+  let y = top;
+  if (wrap) {
+    el.style.visibility = 'hidden';
+    el.style.left = '0px';
+    el.style.top = '0px';
+    const maxX = Math.max(pad, wrap.clientWidth - el.offsetWidth - pad);
+    const maxY = Math.max(pad, wrap.clientHeight - el.offsetHeight - pad);
+    x = Math.min(Math.max(pad, x), maxX);
+    y = Math.min(Math.max(pad, y), maxY);
+    el.style.visibility = '';
+  }
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+}
+
+function scheduleHideInteractivityTooltip() {
+  clearTimeout(interactivityTooltipHideTimer);
+  interactivityTooltipHideTimer = setTimeout(() => {
+    if (!interactivityTooltipPinned && !interactivityTooltipOver) {
+      hideInteractivityTooltip();
+    }
+  }, 160);
+}
+
+function hideInteractivityTooltip() {
+  const el = $('interactivity-tooltip');
+  if (!el) return;
+  el.classList.remove('visible', 'pinned');
+  el.setAttribute('aria-hidden', 'true');
+  interactivityTooltipPinned = false;
+  interactivityTooltipLastMeta = null;
+}
+
+function showInteractivityTooltipAtChartPoint(chart, caretX, caretY, meta, pinned) {
+  const wrap = $('interactivity-chart-wrap');
+  if (!wrap || !chart) return;
+  const canvasRect = chart.canvas.getBoundingClientRect();
+  const wrapRect = wrap.getBoundingClientRect();
+  const left = canvasRect.left - wrapRect.left + caretX + 14;
+  const top = canvasRect.top - wrapRect.top + caretY - 12;
+  renderInteractivityTooltip(meta, left, top, pinned);
+}
+
+function bindInteractivityTooltipHover() {
+  const el = $('interactivity-tooltip');
+  if (!el || el._hoverBound) return;
+  el._hoverBound = true;
+  el.addEventListener('mouseenter', () => {
+    interactivityTooltipOver = true;
+    clearTimeout(interactivityTooltipHideTimer);
+  });
+  el.addEventListener('mouseleave', () => {
+    interactivityTooltipOver = false;
+    if (!interactivityTooltipPinned) scheduleHideInteractivityTooltip();
+  });
+}
+
+function interactivityExternalTooltip(context) {
+  const tooltip = context.tooltip;
+  if (!tooltip || tooltip.opacity === 0) {
+    if (!interactivityTooltipPinned) scheduleHideInteractivityTooltip();
+    return;
+  }
+  if (interactivityTooltipPinned) return;
+  const item = tooltip.dataPoints && tooltip.dataPoints[0];
+  if (!item || !item.raw || !item.raw.tooltip) {
+    scheduleHideInteractivityTooltip();
+    return;
+  }
+  clearTimeout(interactivityTooltipHideTimer);
+  showInteractivityTooltipAtChartPoint(
+    context.chart,
+    tooltip.caretX,
+    tooltip.caretY,
+    item.raw.tooltip,
+    false,
+  );
+}
+
+function onInteractivityChartClick(evt, elements, chart) {
+  if (elements && elements.length) {
+    const raw = elements[0].element.$context.raw;
+    if (!raw || !raw.tooltip) return;
+    interactivityTooltipPinned = true;
+    clearTimeout(interactivityTooltipHideTimer);
+    const meta = chart.getDatasetMeta(elements[0].datasetIndex);
+    const pt = meta.data[elements[0].index];
+    showInteractivityTooltipAtChartPoint(chart, pt.x, pt.y, raw.tooltip, true);
+    return;
+  }
+  if (interactivityTooltipPinned) hideInteractivityTooltip();
+}
+
+function resetInteractivityChartZoom() {
+  if (interactivityChart && interactivityChart.resetZoom) interactivityChart.resetZoom();
+}
+
+function updateInteractivitySubtitle(rows) {
+  const sub = $('interactivity-subtitle');
+  if (!sub) return;
+  const rc = runCardMap();
+  const sample = rows[0] || {};
+  const model = rc.Model || sample.model || 'Model';
+  const precision = precisionLabel(sample);
+  const isl = sample.isl || '—';
+  const osl = sample.osl || '—';
+  const updated = reportDateLabel();
+  sub.textContent = model + ' · ' + precision + ' · ' + isl + ' / ' + osl
+    + ' · Source: CVS inference report · Updated: ' + updated;
+}
+
+function perGpuThroughput(cell) {
+  return totalPerGpuThroughput(cell) ?? outputPerGpuThroughput(cell);
+}
+
+function interactivityFromTpotMs(tpotMs) {
+  if (tpotMs == null || tpotMs <= 0) return null;
+  return 1000 / tpotMs;
+}
+
+function interactivityPointLabel(cell) {
+  const tp = tpFromCellId(cell.cell_id);
+  const conc = Number(cell.concurrency);
+  const tpPart = tp ? 'TP' + tp + ' ' : '';
+  return tpPart + 'C=' + conc;
+}
+
+const interactivityPointLabelPlugin = {
+  id: 'interactivityPointLabels',
+  afterDatasetsDraw(chart, _args, opts) {
+    if (!opts || !opts.enabled) return;
+    const { ctx } = chart;
+    chart.data.datasets.forEach((dataset, di) => {
+      const meta = chart.getDatasetMeta(di);
+      meta.data.forEach((element, index) => {
+        const raw = dataset.data[index];
+        if (!raw || !raw.pointLabel) return;
+        ctx.save();
+        ctx.fillStyle = '#c8d0e0';
+        ctx.font = '10px "Segoe UI", system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(raw.pointLabel, element.x, element.y - 10);
+        ctx.restore();
+      });
+    });
+  },
+};
+
+function makeInteractivityChart(canvas, datasets, logY, showLabels) {
+  const yScale = logY
+    ? {
+        type: 'logarithmic',
+        title: { display: true, text: 'Token Throughput per GPU (tok/s/gpu)', color: '#9aa3b5', font: { size: 11 } },
+        ticks: { color: '#9aa3b5' },
+        grid: { color: '#2a2f3d' },
+      }
+    : {
+        type: 'linear',
+        title: { display: true, text: 'Token Throughput per GPU (tok/s/gpu)', color: '#9aa3b5', font: { size: 11 } },
+        ticks: { color: '#9aa3b5' },
+        grid: { color: '#2a2f3d' },
+      };
+  const ch = new Chart(canvas, {
+    type: 'scatter',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'nearest', intersect: true },
+      onClick: onInteractivityChartClick,
+      plugins: {
+        legend: { labels: { color: '#e8eaef', boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          enabled: false,
+          external: interactivityExternalTooltip,
+        },
+        zoom: {
+          limits: {
+            x: { min: 'original', max: 'original' },
+            y: { min: 'original', max: 'original' },
+          },
+          pan: {
+            enabled: true,
+            mode: 'xy',
+            modifierKey: 'shift',
+            threshold: 8,
+          },
+          zoom: {
+            wheel: { enabled: true, speed: 0.09, modifierKey: null },
+            pinch: { enabled: true },
+            drag: {
+              enabled: true,
+              modifierKey: null,
+              backgroundColor: 'rgba(107,159,255,0.14)',
+              borderColor: 'rgba(107,159,255,0.55)',
+              borderWidth: 1,
+            },
+            mode: 'xy',
+          },
+        },
+        interactivityPointLabels: { enabled: showLabels },
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          title: {
+            display: true,
+            text: 'Interactivity (tok/s/user)',
+            color: '#9aa3b5',
+            font: { size: 11 },
+          },
+          ticks: { color: '#9aa3b5' },
+          grid: { color: '#2a2f3d' },
+        },
+        y: yScale,
+      },
+    },
+    plugins: [interactivityPointLabelPlugin],
+  });
+  canvas.addEventListener('dblclick', () => resetInteractivityChartZoom());
+  interactivityChart = ch;
+  bindInteractivityTooltipHover();
+  chartInstances.push(ch);
+  return ch;
+}
+
+function buildInteractivityChart(rows) {
+  const panel = $('interactivity-panel');
+  const block = $('interactivity-block');
+  const wrap = $('interactivity-chart-wrap');
+  if (!panel || !block || !wrap) return false;
+
+  wrap.innerHTML = '';
+  hideInteractivityTooltip();
+  panel.style.display = 'none';
+
+  const inter = viewerConfig().interactivity || {};
+  if (!inter.enabled) return false;
+
+  const tpotMetric = interactivityTpotMetric();
+  const shapes = [...shapeGroups(rows).entries()];
+  const datasets = [];
+
+  shapes.forEach(([shapeKey, shapeRows], index) => {
+    const parts = shapeKey.split('|');
+    const label = shapeLabelFromParts(parts);
+    const points = shapeRows
+      .map(c => {
+        const x = interactivityFromTpotMs(metricNum(c, tpotMetric));
+        const y = perGpuThroughput(c);
+        const conc = Number(c.concurrency);
+        if (x == null || y == null || y <= 0 || Number.isNaN(conc)) return null;
+        return {
+          x,
+          y,
+          conc,
+          status: cellStatus(c),
+          pointLabel: interactivityPointLabel(c),
+          tooltip: buildInteractivityTooltipMeta(c, x, y),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.conc - b.conc);
+    if (!points.length) return;
+
+    const color = CHART_COLORS[index % CHART_COLORS.length];
+    const dashed = LINE_DASHES[index % LINE_DASHES.length];
+    datasets.push({
+      label: label,
+      data: points,
+      showLine: points.length > 1,
+      tension: 0.15,
+      borderColor: color,
+      backgroundColor: color,
+      borderWidth: 2.5,
+      borderDash: dashed,
+      pointRadius: 5,
+      pointHoverRadius: 7,
+      pointStyle: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
+      pointBackgroundColor: points.map(p => (p.status === 'fail' ? '#ff5c6a' : color)),
+      pointBorderColor: '#1a1d27',
+      pointBorderWidth: 2,
+      order: dashed.length ? index : index + 10,
+    });
+  });
+
+  if (!datasets.length) return false;
+
+  updateInteractivitySubtitle(rows);
+  const canvas = document.createElement('canvas');
+  wrap.appendChild(canvas);
+  makeInteractivityChart(canvas, datasets, interactivityLogScale, interactivityShowLabels);
+  panel.style.display = 'block';
+  return true;
+}
+
+function buildMarginCharts(rows) {
+  const block = $('margin-block');
+  const grid = $('margin-grid');
+  if (!block || !grid) return;
+  grid.innerHTML = '';
+  block.style.display = 'none';
+
+  const shapes = [...shapeGroups(rows).entries()];
+  const allConcs = new Set();
+  const shapeSeries = [];
+
+  shapes.forEach(([shapeKey, shapeRows]) => {
+    const parts = shapeKey.split('|');
+    const points = pointsByConcurrency(shapeRows, c => cellBarPct(c, marginMetricKey));
+    if (points.length < 2) return;
+    points.forEach(p => allConcs.add(p[0]));
+    shapeSeries.push({
+      label: shapeLabelFromParts(parts),
+      points,
+    });
+  });
+
+  if (!shapeSeries.length) return;
+  const concurrencies = [...allConcs].sort((a, b) => a - b);
+  if (concurrencies.length < 2) return;
+
+  const labels = concurrencies.map(c => 'C=' + c);
+  const datasets = shapeSeries.map((s, i) => buildLineDataset({
+    label: s.label,
+    data: concurrencies.map(c => {
+      const hit = s.points.find(p => p[0] === c);
+      return hit ? hit[1] : null;
+    }),
+  }, i, CHART_COLORS[i % CHART_COLORS.length]));
+  datasets.push(gateReferenceDataset(labels));
+
+  const metricLabel = metricMeta(marginMetricKey).label || 'Gate margin';
+  const card = document.createElement('article');
+  card.className = 'chart-card chart-card-wide';
+  const cardTitle = document.createElement('h3');
+  cardTitle.className = 'chart-card-title';
+  cardTitle.textContent = metricLabel + ' gate margin (% of threshold)';
+  card.appendChild(cardTitle);
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-wrap';
+  const canvas = document.createElement('canvas');
+  wrap.appendChild(canvas);
+  card.appendChild(wrap);
+  grid.appendChild(card);
+  makeChart(canvas, 'line', labels, datasets, '% of gate', null);
+  block.style.display = 'block';
+}
+
+function buildComparisonCharts(rows) {
+  const comparison = buildChartComparisonFromRows(rows);
+  const comparisonGrid = $('comparison-grid');
+  const comparisonBlock = $('comparison-block');
+  if (!comparisonGrid || !comparisonBlock) return;
+  comparisonGrid.innerHTML = '';
+  comparisonBlock.style.display = 'none';
+  if (!comparison) return;
+
+  const chartType = comparisonChartMode === 'line' ? 'line' : 'bar';
+  let chartCount = 0;
+
+  Object.keys(comparison).sort().forEach(suffix => {
+    const entry = comparison[suffix];
+    const labels = entry.concurrencies.map(c => 'C=' + c);
+    const datasets = entry.series.map((s, i) => {
+      const color = CHART_COLORS[i % CHART_COLORS.length];
+      if (chartType === 'bar') {
+        return {
+          label: s.label,
+          data: s.values,
+          backgroundColor: color + 'cc',
+          borderColor: color,
+          borderWidth: 1,
+        };
+      }
+      return buildLineDataset(s, i, color);
+    });
+
+    const card = document.createElement('article');
+    card.className = 'chart-card';
+    const cardTitle = document.createElement('h3');
+    cardTitle.className = 'chart-card-title';
+    cardTitle.textContent = entry.title + (entry.unit ? ' (' + entry.unit + ')' : '');
+    card.appendChild(cardTitle);
+    const wrap = document.createElement('div');
+    wrap.className = 'chart-wrap';
+    const canvas = document.createElement('canvas');
+    wrap.appendChild(canvas);
+    card.appendChild(wrap);
+    comparisonGrid.appendChild(card);
+    makeChart(canvas, chartType, labels, datasets, entry.unit, null);
+    chartCount += 1;
+  });
+
+  if (chartCount) {
+    comparisonBlock.style.display = 'block';
+    updateComparisonToggleUI();
+  }
+}
+
+function buildCharts(rows) {
+  destroyCharts();
+  const chartsPanel = $('charts');
+
+  buildInteractivityChart(rows);
+  buildComparisonCharts(rows);
+  buildMarginCharts(rows);
+
+  const hasSweepCharts = ($('comparison-grid') && $('comparison-grid').children.length)
+    || ($('margin-grid') && $('margin-grid').children.length);
+  chartsPanel.style.display = hasSweepCharts ? 'block' : 'none';
+}
+
+function heatCellStyle(v, minV, maxV, higherBetter) {
+  const span = maxV - minV || 1;
+  const pct = higherBetter ? (v - minV) / span : 1 - (v - minV) / span;
+  const clamped = Math.max(0, Math.min(1, pct));
+  const r = Math.round(255 - clamped * 120);
+  const g = Math.round(80 + clamped * 120);
+  return 'background:rgba(' + r + ',' + g + ',100,0.35)';
+}
+
+function buildHeatmap(rows) {
+  const wrap = $('heatmap-wrap');
+  const panel = $('heatmap');
+  const hint = $('heatmap-hint');
+  const metricKey = heatmapMetricKey;
+  const meta = metricMeta(metricKey);
+  const rowFields = viewerConfig().heatmap_row_fields || groupByFields().concat(['policy']);
+  const groups = new Map();
+  rows.forEach(c => {
+    const key = rowFields.map(f => String(c[f] ?? '')).join('|');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(c);
+  });
+  if (!groups.size) {
+    panel.style.display = 'none';
+    return;
+  }
+  const concField = viewerConfig().concurrency_field || 'concurrency';
+  const allConcs = [...new Set(rows.map(c => Number(c[concField])))].sort((a, b) => a - b);
+  const values = [];
+  groups.forEach(cells => cells.forEach(c => {
+    const v = metricNum(c, metricKey);
+    if (v != null) values.push(v);
+  }));
+  if (!values.length) {
+    panel.style.display = 'none';
+    return;
+  }
+  const minV = Math.min(...values);
+  const maxV = Math.max(...values);
+  if (hint) {
+    hint.textContent = meta.label + ' · concurrency columns · greener is '
+      + (meta.higherBetter ? 'higher' : 'lower') + ' · filtered cells';
+  }
+  const rowHeader = rowFields.map(f => fieldLabel(f)).join(' / ');
+  let html = '<table class="data heat"><thead><tr><th>' + rowHeader + '</th>';
+  allConcs.forEach(c => { html += '<th>C=' + c + '</th>'; });
+  html += '</tr></thead><tbody>';
+  [...groups.entries()].sort().forEach(([key, cells]) => {
+    const parts = key.split('|');
+    html += '<tr><td>' + rowFields.map((f, i) => fieldLabel(f) + '=' + (parts[i] || '—')).join(' · ') + '</td>';
+    allConcs.forEach(conc => {
+      const cell = cells.find(c => Number(c[concField]) === conc);
+      const v = cell ? metricNum(cell, metricKey) : null;
+      if (v == null) {
+        html += '<td class="matrix-na">—</td>';
+      } else {
+        html += '<td style="' + heatCellStyle(v, minV, maxV, meta.higherBetter) + '" title="'
+          + meta.label + ': ' + metricVal(cell, metricKey) + '">'
+          + metricVal(cell, metricKey) + '</td>';
+      }
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+  panel.style.display = 'block';
+}
+
+function buildGateMatrix(rows) {
+  const matrix = reportData.gate_matrix || [];
+  const wrap = $('gate-wrap');
+  const panel = $('gates');
+  const rowIds = new Set(rows.map(c => c.cell_id));
+  const filtered = matrix.filter(row => rowIds.has(row.cell_id));
+  if (!filtered.length) {
+    panel.style.display = 'none';
+    return;
+  }
+  let html = '<table class="data"><thead><tr><th>Cell</th>';
+  tierOrder.forEach(t => { html += '<th>' + t + '</th>'; });
+  html += '</tr></thead><tbody>';
+  filtered.forEach(row => {
+    html += '<tr><td>' + (row.label || row.cell_id || '') + '</td>';
+    tierOrder.forEach(t => {
+      const st = (row.tiers || {})[t] || 'na';
+      html += '<td class="matrix-' + st + '">' + st + '</td>';
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+  panel.style.display = 'block';
+}
+
+function renderTable(rows) {
+  const passN = rows.filter(c => cellStatus(c) === 'pass').length;
+  const failN = rows.filter(c => cellStatus(c) === 'fail').length;
+  $('meta').innerHTML =
+    '<span>Showing <strong>' + rows.length + '</strong> of <strong>' + allCells.length + '</strong> cells</span>'
+    + '<span><strong>' + passN + '</strong> pass</span>'
+    + (failN ? '<span><strong>' + failN + '</strong> fail</span>' : '')
+    + '<span>Charts and heatmap follow filters</span>'
+    + (prevRunByKey ? '<span>baseline comparison active</span>' : '');
+
+  updateCellsHeader();
+  const tbody = $('rows');
+  tbody.innerHTML = rows.map(c => {
+    const st = cellStatus(c);
+    const prev = prevRunByKey ? prevRunByKey.get(cellMapKey(c)) : null;
+    let rowCls = st;
+    if (prev && prev.regression) rowCls = 'regression';
+    else if (prev && prev.changed) rowCls = 'changed';
+    let deltaCol = '';
+    if (prevRunByKey) {
+      const prevVal = prev && prev.previous_throughput != null
+        ? Number(prev.previous_throughput).toLocaleString(undefined, { maximumFractionDigits: 1 })
+        : '—';
+      const delta = prev && prev['compare.prev_run.throughput_delta_pct'] != null
+        ? (prev['compare.prev_run.throughput_delta_pct'] >= 0 ? '+' : '')
+          + Number(prev['compare.prev_run.throughput_delta_pct']).toFixed(1) + '%'
+        : '—';
+      deltaCol = '<td>' + prevVal + '</td><td>' + delta + '</td>';
+    }
+    const cols = tableColumns();
+    let html = '<tr class="' + rowCls + '">';
+    cols.forEach(col => {
+      if (prevRunByKey && col.computed === 'status') {
+        html += deltaCol;
+      }
+      html += cellColumnHtml(c, col);
+    });
+    html += '</tr>';
+    return html;
+  }).join('');
+}
+
+function render() {
+  const rows = filteredCells();
+  renderTable(rows);
+  buildCharts(rows);
+  buildHeatmap(rows);
+  buildGateMatrix(rows);
+}
+
+function exportCsv() {
+  const rows = filteredCells();
+  const cols = tableColumns();
+  const header = [];
+  cols.forEach(col => {
+    if (prevRunByKey && col.computed === 'status') {
+      header.push('prev_throughput', 'delta_pct');
+    }
+    header.push(col.label || col.field || col.metric || col.computed || '');
+  });
+  const lines = [header.join(',')];
+  rows.forEach(c => {
+    const prev = prevRunByKey ? prevRunByKey.get(cellMapKey(c)) : null;
+    const row = [];
+    cols.forEach(col => {
+      if (prevRunByKey && col.computed === 'status') {
+        row.push(prev && prev.previous_throughput != null ? prev.previous_throughput : '');
+        row.push(prev && prev['compare.prev_run.throughput_delta_pct'] != null
+          ? prev['compare.prev_run.throughput_delta_pct'] : '');
+      }
+      row.push(cellColumnCsv(c, col));
+    });
+    lines.push(row.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(','));
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (reportData.suite_id || 'suite') + '_filtered.csv';
+  a.click();
+}
+
+$('btn-export').addEventListener('click', exportCsv);
+$('btn-reset-zoom').addEventListener('click', () => {
+  chartInstances.forEach(ch => { if (ch.resetZoom) ch.resetZoom(); });
+});
+const compareModeBars = $('compare-mode-bars');
+const compareModeLines = $('compare-mode-lines');
+if (compareModeBars) {
+  compareModeBars.addEventListener('click', () => {
+    if (comparisonChartMode === 'bar') return;
+    comparisonChartMode = 'bar';
+    render();
+  });
+}
+if (compareModeLines) {
+  compareModeLines.addEventListener('click', () => {
+    if (comparisonChartMode === 'line') return;
+    comparisonChartMode = 'line';
+    render();
+  });
+}
+const interactivityLogSel = $('interactivity-log-scale');
+if (interactivityLogSel) {
+  interactivityLogSel.addEventListener('change', () => {
+    interactivityLogScale = interactivityLogSel.checked;
+    render();
+  });
+}
+const interactivityLabelsSel = $('interactivity-labels');
+if (interactivityLabelsSel) {
+  interactivityLabelsSel.addEventListener('change', () => {
+    interactivityShowLabels = interactivityLabelsSel.checked;
+    render();
+  });
+}
+const interactivityZoomReset = $('interactivity-zoom-reset');
+if (interactivityZoomReset) {
+  interactivityZoomReset.addEventListener('click', () => resetInteractivityChartZoom());
+}
+bindInteractivityTooltipHover();
+const heatmapMetricSel = $('heatmap-metric');
+if (heatmapMetricSel) {
+  heatmapMetricSel.addEventListener('change', () => {
+    heatmapMetricKey = heatmapMetricSel.value;
+    render();
+  });
+}
+const marginMetricSel = $('margin-metric');
+if (marginMetricSel) {
+  marginMetricSel.addEventListener('change', () => {
+    marginMetricKey = marginMetricSel.value;
+    render();
+  });
+}
+const deltaThresholdInput = $('f-delta-threshold');
+if (deltaThresholdInput) {
+  deltaThresholdInput.addEventListener('change', () => {
+    const baselineInput = $('f-baseline');
+    if (baselineInput && baselineInput.files && baselineInput.files[0]) {
+      baselineInput.dispatchEvent(new Event('change'));
+    } else if (reportData && reportData.panels && reportData.panels.prev_run) {
+      applyPrevRunPanel(reportData.panels.prev_run);
+      render();
+    }
+  });
+}
+const baselineInput = $('f-baseline');
+if (baselineInput) {
+  baselineInput.addEventListener('change', ev => {
+    const file = ev.target.files && ev.target.files[0];
+    if (!file) {
+      prevRunByKey = null;
+      if (reportData && reportData.panels && reportData.panels.prev_run) {
+        applyPrevRunPanel(reportData.panels.prev_run);
+      }
+      render();
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        buildPrevRunFromBaseline(JSON.parse(reader.result));
+        render();
+      } catch (err) {
+        $('meta').textContent = 'Invalid baseline JSON: ' + err;
+      }
+    };
+    reader.readAsText(file);
+  });
+}
+
+function loadReportData() {
+  const embedded = $('embedded-report-json');
+  if (embedded && embedded.textContent.trim()) {
+    return Promise.resolve(JSON.parse(embedded.textContent));
+  }
+  return fetch(JSON_PATH).then(r => {
+    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+    return r.json();
+  });
+}
+
+loadReportData().then(data => {
+  reportData = data;
+  allCells = data.cells || [];
+  if (data.panels && data.panels.prev_run) {
+    applyPrevRunPanel(data.panels.prev_run);
+  }
+  const runDeckLink = $('run-deck-link');
+  if (runDeckLink && JSON_PATH) {
+    runDeckLink.href = JSON_PATH.replace(/\.json$/i, '.html');
+    runDeckLink.style.display = '';
+  }
+  initViewerUi();
+  buildOverview();
+  populateFilters();
+  ['f-tier', 'f-search'].forEach(id => {
+    const el = $(id);
+    if (el) {
+      el.addEventListener('input', render);
+      el.addEventListener('change', render);
+    }
+  });
+  render();
+}).catch(err => {
+  $('meta').textContent = 'Failed to load report JSON: ' + err;
+});
+</script>
+</body>
+</html>

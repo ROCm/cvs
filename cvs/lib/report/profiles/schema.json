@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://amd.com/cvs/rundeck/profile.schema.json",
+  "title": "CVS Run Deck profile",
+  "type": "object",
+  "required": ["schema_version", "profile_id", "suite_id", "report_basename", "dataset_builder", "sources", "cards"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "profile_id": { "type": "string" },
+    "suite_id": { "type": "string" },
+    "report_basename": { "type": "string" },
+    "title": { "type": "string" },
+    "subtitle": { "type": "string" },
+    "footer": { "type": "string" },
+    "link_name": { "type": "string" },
+    "dataset_builder": { "enum": ["sweep", "series", "matrix"] },
+    "interactive_viewer": { "type": "boolean" },
+    "viewer_cell_threshold": { "type": "integer", "minimum": 1 },
+    "sources": {
+      "type": "object",
+      "required": ["results"],
+      "properties": {
+        "results": { "type": "string" },
+        "variant": { "type": "string" },
+        "lifecycle": { "type": "string" },
+        "reference": { "type": "string" }
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "properties": {
+        "tier_metric_specs": { "type": "string" },
+        "metric_units": { "type": "string" },
+        "run_card_display": { "type": "string" },
+        "launch_provenance": { "type": "string" }
+      }
+    },
+    "cards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "bind"],
+        "properties": {
+          "type": { "type": "string" },
+          "bind": { "type": "string" },
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "when_empty": { "enum": ["hide"] },
+          "columns_from": { "type": "string" }
+        }
+      }
+    },
+    "sweep": { "type": "object" },
+    "viewer": {
+      "type": "object",
+      "properties": {
+        "group_by": { "type": "array", "items": { "type": "string" } },
+        "filters": { "type": "array", "items": { "type": "string" } },
+        "heatmap_metrics": { "type": "array", "items": { "type": "string" } },
+        "margin_metrics": { "type": "array", "items": { "type": "string" } },
+        "default_heatmap_metric": { "type": "string" },
+        "default_margin_metric": { "type": "string" },
+        "heatmap_row_fields": { "type": "array", "items": { "type": "string" } },
+        "concurrency_field": { "type": "string" },
+        "comparison_hint": { "type": "string" },
+        "table_columns": { "type": "array" },
+        "metrics": { "type": "object" },
+        "interactivity": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "tpot_metric": { "type": "string" },
+            "title": { "type": "string" },
+            "hint": { "type": "string" }
+          }
+        }
+      }
+    },
+    "series": { "type": "object" },
+    "matrix": { "type": "object" },
+    "lifecycle": { "type": "object" },
+    "behavior": { "type": "object" }
+  }
+}
