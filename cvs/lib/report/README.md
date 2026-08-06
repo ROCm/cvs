@@ -53,7 +53,7 @@ Root `cvs/conftest.py` binds fixtures from profile `sources` via `pytest_hooks.p
 | `series` | Nested dict: collective → message size → metrics |
 | `matrix` | Current results + golden reference for compare rows |
 
-Use `unittests/_fixtures.generic_sweep_profile()` as a template when authoring a
+Use `testing/fixtures.generic_sweep_profile()` as a template when authoring a
 sweep profile. Schema: `profiles/schema.json`.
 
 ### 2. Add `profiles/<stem>.json`
@@ -98,7 +98,7 @@ Expose pytest fixtures named in profile `sources`. For matrix compare, also expo
 
 ```bash
 cvs run <stem> ... --html=~/cvs_results/run.html
-python -m pytest cvs/lib/report/unittests/ -q
+make ut
 python sample_reports/generate_sample_rundecks.py   # local smoke after adding profiles
 ```
 
@@ -144,11 +144,18 @@ cvs/lib/report/
 
 ## Tests
 
-Engine coverage lives in `cvs/lib/report/unittests/`:
+Library unit tests use `unittest` and live beside the module under test (see
+`AGENTS.md`). `make ut` discovers them via `run_all_unittests.py`.
 
-- `test_rundeck_foundation.py` — registry, builders, hooks
-- `test_rundeck_parity.py` — payload/render integration
-- `test_viewer_config.py` — interactive viewer config
+| Location | Covers |
+| -------- | ------ |
+| `report/unittests/` | registry, profile, cell_build, inference, provenance, … |
+| `report/rundeck/unittests/` | payload, viewer_config, config_builder, parity |
+| `report/render/unittests/` | cell card renderer |
+| `report/viewer/unittests/` | interactive viewer scaffold |
+| `report/panels/unittests/` | prev-run comparison panel |
+
+Shared test fixtures: `report/testing/fixtures.py`.
 
 Optional sweep pytest-html row extras may require suite-specific lifecycle helpers
 when enabled in a profile. The core engine does not require `cvs.lib.inference`.

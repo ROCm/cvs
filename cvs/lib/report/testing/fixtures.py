@@ -123,8 +123,8 @@ def generic_sweep_profile() -> dict:
             "lifecycle": "lifecycle",
         },
         "hooks": {
-            "tier_metric_specs": "cvs.lib.report.unittests._fixtures:generic_tier_metric_specs",
-            "metric_units": "cvs.lib.report.unittests._fixtures:GENERIC_METRIC_UNITS",
+            "tier_metric_specs": "cvs.lib.report.testing.fixtures:generic_tier_metric_specs",
+            "metric_units": "cvs.lib.report.testing.fixtures:GENERIC_METRIC_UNITS",
         },
         "sweep": {
             "metric_prefix": "client.",
