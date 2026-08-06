@@ -15,6 +15,13 @@ from cvs.lib.preflight.interface_consistency import InterfaceConsistencyCheck
 from cvs.lib.preflight.ifoe_l2_connectivity import IfoeL2ConnectivityCheck
 from cvs.lib.preflight.scaleup_fabric import NodeHealthCheck
 from cvs.lib.preflight.transferbench_smoke import TransferBenchSmokeCheck
+from cvs.lib.preflight.node_reachability import PingReachabilityCheck, UptimeCheck
+from cvs.lib.preflight.ssh_mesh_connectivity import SshMeshConnectivityCheck
+from cvs.lib.preflight.etc_hosts_consistency import EtcHostsConsistencyCheck
+from cvs.lib.preflight.limits_conf_check import LimitsConfCheck
+from cvs.lib.preflight.nic_firmware_check import NicFirmwareCheck
+from cvs.lib.preflight.ainic_pfc_qos_dcqcn import PfcValidationCheck, QosValidationCheck, DcqcnValidationCheck
+from cvs.lib.preflight.nic_driver_version import NicDriverVersionCheck
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
 from cvs.lib.preflight.report import PreflightReportGenerator
@@ -27,6 +34,76 @@ from cvs.parsers.schemas import normalize_legacy_preflight_rdma_config, validate
 from cvs.lib import globals
 
 log = globals.log
+
+_NIC_DRIVER_VERSION_VENDOR_KWARGS = {
+    'ainic': ('expected_ionic_driver_version', 'expected_ionic_rdma_driver_version'),
+    'broadcom': ('expected_bnxt_re_version', 'expected_bnxt_en_version'),
+    'mellanox': ('expected_mlx5_core_version', 'expected_ofed_version'),
+}
+
+_NIC_FIRMWARE_VENDOR_KWARGS = {
+    'ainic': ('expected_nic_count', 'expected_fw_version', 'expected_host_version'),
+    'broadcom': ('expected_nic_count', 'expected_fw_version'),
+    'mellanox': ('expected_nic_count', 'expected_fw_version'),
+}
+
+_VALID_NIC_VENDORS = {'ainic', 'broadcom', 'mellanox'}
+
+
+def _validate_nic_type(config, config_path, default):
+    """Validate the 'nic_type' vendor-selector list shared by nic_firmware/nic_driver_version config blocks."""
+    nic_type = config.get('nic_type', default)
+    if not isinstance(nic_type, list):
+        raise ValueError(f"{config_path}.nic_type must be a list")
+    unknown = sorted(set(nic_type) - _VALID_NIC_VENDORS)
+    if unknown:
+        raise ValueError(f"{config_path}.nic_type contains unknown vendor(s): " + ', '.join(unknown))
+    if len(nic_type) != len(set(nic_type)):
+        raise ValueError(f"{config_path}.nic_type must not contain duplicate vendor names")
+    if _config_flag_enabled(config.get('enabled'), default=False) and not nic_type:
+        raise ValueError(f"{config_path}.nic_type must not be empty when enabled is true")
+    for vendor in sorted(_VALID_NIC_VENDORS & set(config)):
+        vendor_block = config[vendor]
+        if not isinstance(vendor_block, dict):
+            raise ValueError(f"{config_path}.{vendor} must be an object")
+
+
+# (dotted key path, default nic_type) for the two vendor-selector config blocks; kept in
+# sync with the ``default`` arguments passed to ``_validate_nic_type`` by
+# ``_nic_driver_version_config``/``_nic_firmware_config`` below.
+_NIC_VENDOR_BLOCK_SPECS = (
+    (('node_check', 'nic_driver_version'), ['broadcom']),
+    (('connectivity_check', 'ifoe', 'nic_firmware'), ['ainic']),
+)
+
+
+def _inert_nic_vendor_skip_paths(config_dict):
+    """Dotted-path prefixes of vendor sub-blocks present but not selected by nic_type.
+
+    A vendor sub-block that isn't selected in its block's ``nic_type`` list is never read
+    by any check, so an unresolved ``<changeme>`` placeholder left inside it (e.g. a
+    mellanox block while ``nic_type: ["broadcom"]``) must not abort the run. Used to build
+    the ``skip_paths`` passed to ``resolve_test_config_placeholders``, which runs before
+    ``_validate_nic_type``/config-shape validation, directly against the raw config dict.
+    """
+    skip_paths = set()
+    for path_keys, default_nic_type in _NIC_VENDOR_BLOCK_SPECS:
+        block = config_dict
+        for key in path_keys:
+            if not isinstance(block, dict):
+                block = None
+                break
+            block = block.get(key)
+        if not isinstance(block, dict):
+            continue
+        nic_type = block.get('nic_type', default_nic_type)
+        if not isinstance(nic_type, list):
+            continue
+        selected = set(nic_type)
+        for vendor in sorted(_VALID_NIC_VENDORS - selected):
+            if vendor in block:
+                skip_paths.add('.'.join(path_keys + (vendor,)))
+    return skip_paths
 
 
 def get_nested_config(config_dict, section, key, default):
@@ -90,7 +167,19 @@ def _node_check_config(config_dict):
     if not isinstance(config, dict):
         raise ValueError("preflight.node_check must be an object")
     unknown = sorted(
-        key for key in set(config) - {'enabled', 'gpus_per_node', 'expected_rocm_version'} if not key.startswith('_')
+        key
+        for key in set(config)
+        - {
+            'enabled',
+            'gpus_per_node',
+            'expected_rocm_version',
+            'ping_check',
+            'uptime_check',
+            'etc_hosts',
+            'limits_conf',
+            'nic_driver_version',
+        }
+        if not key.startswith('_')
     )
     if unknown:
         raise ValueError("Unsupported preflight.node_check option(s): " + ', '.join(unknown))
@@ -104,7 +193,9 @@ def _ifoe_config(config_dict):
     if not isinstance(config, dict):
         raise ValueError("preflight.connectivity_check.ifoe must be an object")
     unknown = sorted(
-        key for key in set(config) - {'fabric_checks', 'l2ping', 'transferbench'} if not key.startswith('_')
+        key
+        for key in set(config) - {'fabric_checks', 'l2ping', 'transferbench', 'nic_firmware', 'pfc_qos_dcqcn'}
+        if not key.startswith('_')
     )
     if unknown:
         raise ValueError("Unsupported preflight.connectivity_check.ifoe option(s): " + ', '.join(unknown))
@@ -120,6 +211,197 @@ def _rdma_config(config_dict):
 
 def _rdma_enabled(config_dict):
     return str(_rdma_config(config_dict).get('connectivity_mode', 'basic')).strip().lower() != 'skip'
+
+
+def _ping_check_config(config_dict):
+    """Return the customer-facing ICMP ping reachability configuration."""
+    config = _node_check_config(config_dict).get('ping_check', {})
+    if not isinstance(config, dict):
+        raise ValueError("preflight.node_check.ping_check must be an object")
+    unknown = sorted(key for key in set(config) - {'enabled', 'count', 'timeout_sec'} if not key.startswith('_'))
+    if unknown:
+        raise ValueError("Unsupported preflight.node_check.ping_check option(s): " + ', '.join(unknown))
+    return config
+
+
+def _ping_check_enabled(config_dict):
+    return _config_flag_enabled(_ping_check_config(config_dict).get('enabled'), default=False)
+
+
+def _uptime_check_config(config_dict):
+    """Return the customer-facing informational uptime-collection configuration."""
+    config = _node_check_config(config_dict).get('uptime_check', {})
+    if not isinstance(config, dict):
+        raise ValueError("preflight.node_check.uptime_check must be an object")
+    unknown = sorted(key for key in set(config) - {'enabled'} if not key.startswith('_'))
+    if unknown:
+        raise ValueError("Unsupported preflight.node_check.uptime_check option(s): " + ', '.join(unknown))
+    return config
+
+
+def _uptime_check_enabled(config_dict):
+    return _config_flag_enabled(_uptime_check_config(config_dict).get('enabled'), default=False)
+
+
+def _ssh_mesh_config(config_dict):
+    """Return the customer-facing full node x node SSH mesh diagnostic configuration."""
+    config = get_nested_config(config_dict, 'connectivity_check', 'ssh_mesh', {})
+    if not isinstance(config, dict):
+        raise ValueError("preflight.connectivity_check.ssh_mesh must be an object")
+    unknown = sorted(key for key in set(config) - {'enabled', 'ssh_timeout_sec'} if not key.startswith('_'))
+    if unknown:
+        raise ValueError("Unsupported preflight.connectivity_check.ssh_mesh option(s): " + ', '.join(unknown))
+    return config
+
+
+def _ssh_mesh_enabled(config_dict):
+    return _config_flag_enabled(_ssh_mesh_config(config_dict).get('enabled'), default=False)
+
+
+def _etc_hosts_config(config_dict):
+    """Return the customer-facing /etc/hosts consistency configuration."""
+    config = _node_check_config(config_dict).get('etc_hosts', {})
+    if not isinstance(config, dict):
+        raise ValueError("preflight.node_check.etc_hosts must be an object")
+    unknown = sorted(key for key in set(config) - {'enabled', 'extra_entries'} if not key.startswith('_'))
+    if unknown:
+        raise ValueError("Unsupported preflight.node_check.etc_hosts option(s): " + ', '.join(unknown))
+    return config
+
+
+def _etc_hosts_enabled(config_dict):
+    return _config_flag_enabled(_etc_hosts_config(config_dict).get('enabled'), default=False)
+
+
+def _limits_conf_config(config_dict):
+    """Return the customer-facing /etc/security/limits.conf configuration."""
+    config = _node_check_config(config_dict).get('limits_conf', {})
+    if not isinstance(config, dict):
+        raise ValueError("preflight.node_check.limits_conf must be an object")
+    unknown = sorted(key for key in set(config) - {'enabled', 'required_lines'} if not key.startswith('_'))
+    if unknown:
+        raise ValueError("Unsupported preflight.node_check.limits_conf option(s): " + ', '.join(unknown))
+    return config
+
+
+def _limits_conf_enabled(config_dict):
+    return _config_flag_enabled(_limits_conf_config(config_dict).get('enabled'), default=False)
+
+
+def _nic_firmware_config(config_dict):
+    """Return the customer-facing per-vendor NIC firmware/host-software configuration."""
+    config = _ifoe_config(config_dict).get('nic_firmware', {})
+    if not isinstance(config, dict):
+        raise ValueError("preflight.connectivity_check.ifoe.nic_firmware must be an object")
+    unknown = sorted(
+        key for key in set(config) - {'enabled', 'nic_type', 'ainic', 'broadcom', 'mellanox'} if not key.startswith('_')
+    )
+    if unknown:
+        raise ValueError("Unsupported preflight.connectivity_check.ifoe.nic_firmware option(s): " + ', '.join(unknown))
+    _validate_nic_type(config, "preflight.connectivity_check.ifoe.nic_firmware", ['ainic'])
+    return config
+
+
+def _nic_firmware_enabled(config_dict):
+    return _config_flag_enabled(_nic_firmware_config(config_dict).get('enabled'), default=False)
+
+
+def _pfc_qos_dcqcn_config(config_dict):
+    """Return the customer-facing AINIC PFC/QoS/DCQCN configuration."""
+    config = _ifoe_config(config_dict).get('pfc_qos_dcqcn', {})
+    if not isinstance(config, dict):
+        raise ValueError("preflight.connectivity_check.ifoe.pfc_qos_dcqcn must be an object")
+    unknown = sorted(key for key in set(config) - {'enabled', 'pfc', 'qos', 'dcqcn'} if not key.startswith('_'))
+    if unknown:
+        raise ValueError("Unsupported preflight.connectivity_check.ifoe.pfc_qos_dcqcn option(s): " + ', '.join(unknown))
+
+    pfc = config.get('pfc', {})
+    if not isinstance(pfc, dict):
+        raise ValueError("preflight.connectivity_check.ifoe.pfc_qos_dcqcn.pfc must be an object")
+    unknown_pfc = sorted(
+        key for key in set(pfc) - {'expected_card_count', 'expected_pause_type'} if not key.startswith('_')
+    )
+    if unknown_pfc:
+        raise ValueError(
+            "Unsupported preflight.connectivity_check.ifoe.pfc_qos_dcqcn.pfc option(s): " + ', '.join(unknown_pfc)
+        )
+
+    qos = config.get('qos', {})
+    if not isinstance(qos, dict):
+        raise ValueError("preflight.connectivity_check.ifoe.pfc_qos_dcqcn.qos must be an object")
+    unknown_qos = sorted(
+        key
+        for key in set(qos)
+        - {
+            'expected_card_count',
+            'dscp24_priority',
+            'dscp46_priority',
+            'dscp46_purpose',
+            'pfc_priority_bitmap',
+            'pfc_no_drop_priorities',
+            'priority0_scheduling',
+            'priority3_scheduling',
+            'priority6_scheduling',
+        }
+        if not key.startswith('_')
+    )
+    if unknown_qos:
+        raise ValueError(
+            "Unsupported preflight.connectivity_check.ifoe.pfc_qos_dcqcn.qos option(s): " + ', '.join(unknown_qos)
+        )
+
+    dcqcn = config.get('dcqcn', {})
+    if not isinstance(dcqcn, dict):
+        raise ValueError("preflight.connectivity_check.ifoe.pfc_qos_dcqcn.dcqcn must be an object")
+    unknown_dcqcn = sorted(
+        key
+        for key in set(dcqcn)
+        - {
+            'expected_device_count',
+            'profile_id',
+            'status',
+            'ai_rate',
+            'byte_count',
+            'alpha_g',
+            'alpha_interval',
+            'hai_rate',
+            'initial_alpha',
+            'monitor_period',
+            'rate_threshold',
+            'rate_interval',
+            'token_bucket',
+            'cnp_dscp',
+        }
+        if not key.startswith('_')
+    )
+    if unknown_dcqcn:
+        raise ValueError(
+            "Unsupported preflight.connectivity_check.ifoe.pfc_qos_dcqcn.dcqcn option(s): " + ', '.join(unknown_dcqcn)
+        )
+
+    return config
+
+
+def _pfc_qos_dcqcn_enabled(config_dict):
+    return _config_flag_enabled(_pfc_qos_dcqcn_config(config_dict).get('enabled'), default=False)
+
+
+def _nic_driver_version_config(config_dict):
+    """Return the customer-facing per-vendor NIC driver-version configuration."""
+    config = _node_check_config(config_dict).get('nic_driver_version', {})
+    if not isinstance(config, dict):
+        raise ValueError("preflight.node_check.nic_driver_version must be an object")
+    unknown = sorted(
+        key for key in set(config) - {'enabled', 'nic_type', 'ainic', 'broadcom', 'mellanox'} if not key.startswith('_')
+    )
+    if unknown:
+        raise ValueError("Unsupported preflight.node_check.nic_driver_version option(s): " + ', '.join(unknown))
+    _validate_nic_type(config, "preflight.node_check.nic_driver_version", ['broadcom'])
+    return config
+
+
+def _nic_driver_version_enabled(config_dict):
+    return _config_flag_enabled(_nic_driver_version_config(config_dict).get('enabled'), default=False)
 
 
 def _node_health_enabled(config_dict):
@@ -283,8 +565,9 @@ def config_dict(config_file, cluster_dict):
     if compatibility_warning:
         log.warning(compatibility_warning)
 
-    # Resolve path placeholders
-    config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
+    # Resolve path placeholders, exempting vendor sub-blocks not selected by nic_type
+    skip_paths = _inert_nic_vendor_skip_paths(config_dict)
+    config_dict = resolve_test_config_placeholders(config_dict, cluster_dict, skip_paths=skip_paths)
     log.info("Loaded preflight configuration")
     log.info(config_dict)
 
@@ -365,6 +648,44 @@ def shdl(cluster_dict):
     return shdl
 
 
+def test_node_ping_reachability(phdl, config_dict, cluster_dict):
+    """
+    Test ICMP ping reachability from the CVS driver host to every cluster node.
+
+    Diagnostic only: this runs before SSH-based reachability and never prunes
+    nodes from ``phdl``, since ICMP may be firewalled independently of SSH
+    (and vice versa). Opt-in via ``preflight.node_check.ping_check.enabled``.
+    """
+    global preflight_results
+
+    if not _ping_check_enabled(config_dict):
+        preflight_results['ping_reachability'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'ICMP ping reachability check is not enabled',
+        }
+        preflight_update_test_result()
+        return
+
+    ping_config = _ping_check_config(config_dict)
+    count = int(ping_config.get('count', 4))
+    timeout_sec = int(ping_config.get('timeout_sec', 1))
+    node_ip_map = {node: node for node in cluster_dict.get('node_dict', {})}
+    log.info(f"Testing ICMP ping reachability to {len(node_ip_map)} node(s) (count={count}, timeout={timeout_sec}s)")
+
+    checker = PingReachabilityCheck(phdl, node_ip_map, count=count, timeout_sec=timeout_sec, config_dict=config_dict)
+    results = checker.run()
+    preflight_results['ping_reachability'] = results
+
+    failed_nodes = [node for node, result in results.items() if result.get('status') == 'FAIL']
+    if failed_nodes:
+        log.warning(f"ICMP ping unreachable on {len(failed_nodes)} node(s): {', '.join(sorted(failed_nodes))}")
+    else:
+        log.info("ICMP ping reachability check: all nodes responded")
+
+    preflight_update_test_result()
+
+
 def test_node_reachability(phdl):
     """
     Test basic SSH connectivity to all cluster nodes.
@@ -411,6 +732,250 @@ def test_node_reachability(phdl):
 
     # Drop all nodes that did not return SSH_OK from phdl (explicit prune; not only SSH client exceptions)
     _prune_nodes_from_phdl(phdl, failed_nodes, "Reachability:")
+
+    preflight_update_test_result()
+
+
+def test_ssh_mesh_connectivity(phdl, config_dict):
+    """
+    Test full node x node passwordless SSH mesh connectivity.
+
+    Diagnostic only (WARNING at worst): reports peers that a given node
+    cannot reach over SSH without pruning any node from ``phdl``. Opt-in via
+    ``preflight.connectivity_check.ssh_mesh.enabled``.
+    """
+    global preflight_results
+
+    if not _ssh_mesh_enabled(config_dict):
+        preflight_results['ssh_mesh_connectivity'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'SSH mesh diagnostic is not enabled',
+        }
+        preflight_update_test_result()
+        return
+
+    ssh_mesh_config = _ssh_mesh_config(config_dict)
+    ssh_timeout_sec = int(ssh_mesh_config.get('ssh_timeout_sec', 10))
+    peer_map = {node: node for node in phdl.reachable_hosts}
+    log.info(f"Testing full node x node SSH mesh connectivity across {len(peer_map)} reachable node(s)")
+
+    checker = SshMeshConnectivityCheck(phdl, peer_map, ssh_timeout_sec=ssh_timeout_sec, config_dict=config_dict)
+    results = checker.run()
+    preflight_results['ssh_mesh_connectivity'] = results
+
+    warned_nodes = [node for node, result in results.items() if result.get('status') == 'WARNING']
+    if warned_nodes:
+        log.warning(f"SSH mesh connectivity issues on {len(warned_nodes)} node(s): {', '.join(sorted(warned_nodes))}")
+    else:
+        log.info("SSH mesh connectivity check: all reachable node pairs connected successfully")
+
+    preflight_update_test_result()
+
+
+def test_node_uptime(phdl, config_dict):
+    """
+    Collect informational ``uptime`` output from every reachable node.
+
+    Purely informational (never gates preflight status). Opt-in via
+    ``preflight.node_check.uptime_check.enabled``.
+    """
+    global preflight_results
+
+    if not _uptime_check_enabled(config_dict):
+        preflight_results['node_uptime'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'Uptime collection is not enabled',
+        }
+        preflight_update_test_result()
+        return
+
+    log.info(f"Collecting uptime from {len(phdl.reachable_hosts)} reachable node(s)")
+    checker = UptimeCheck(phdl, config_dict=config_dict)
+    results = checker.run()
+    preflight_results['node_uptime'] = results
+
+    failed_nodes = [node for node, result in results.items() if result.get('status') == 'FAIL']
+    if failed_nodes:
+        log.warning(f"Uptime collection failed on {len(failed_nodes)} node(s): {', '.join(sorted(failed_nodes))}")
+    else:
+        log.info("Uptime collection completed on all reachable nodes")
+
+    preflight_update_test_result()
+
+
+def test_etc_hosts_consistency(phdl, config_dict, cluster_dict):
+    """
+    Test /etc/hosts consistency against the cluster inventory.
+
+    Non-blocking (WARNING at worst): verifies every cluster node address has
+    an entry in /etc/hosts, plus any operator-supplied ``extra_entries``.
+    Opt-in via ``preflight.node_check.etc_hosts.enabled``.
+    """
+    global preflight_results
+
+    if not _etc_hosts_enabled(config_dict):
+        preflight_results['etc_hosts_consistency'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': '/etc/hosts consistency check is not enabled',
+        }
+        preflight_update_test_result()
+        return
+
+    etc_hosts_config = _etc_hosts_config(config_dict)
+    expected_ips = sorted(set(cluster_dict.get('node_dict', {}).keys()))
+    extra_entries = etc_hosts_config.get('extra_entries', [])
+    log.info(f"Testing /etc/hosts consistency against {len(expected_ips)} cluster node address(es)")
+
+    checker = EtcHostsConsistencyCheck(phdl, expected_ips, extra_entries=extra_entries, config_dict=config_dict)
+    results = checker.run()
+    preflight_results['etc_hosts_consistency'] = results
+
+    warned_nodes = [node for node, result in results.items() if result.get('status') == 'WARNING']
+    if warned_nodes:
+        log.warning(f"/etc/hosts inconsistencies on {len(warned_nodes)} node(s): {', '.join(sorted(warned_nodes))}")
+    else:
+        log.info("/etc/hosts consistency check: all reachable nodes passed")
+
+    preflight_update_test_result()
+
+
+def test_limits_conf(phdl, config_dict):
+    """
+    Test that required lines are present in /etc/security/limits.conf.
+
+    Blocking (FAIL) when enabled, matching the original playbook's
+    cluster-wide gate. Opt-in via ``preflight.node_check.limits_conf.enabled``.
+    """
+    global preflight_results
+
+    if not _limits_conf_enabled(config_dict):
+        preflight_results['limits_conf'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': '/etc/security/limits.conf validation is not enabled',
+        }
+        preflight_update_test_result()
+        return
+
+    limits_conf_config = _limits_conf_config(config_dict)
+    required_lines = limits_conf_config.get('required_lines', [])
+    if not required_lines:
+        raise ValueError(
+            "preflight.node_check.limits_conf is enabled but 'required_lines' is empty; "
+            "an enabled limits_conf check must specify at least one required line, otherwise "
+            "it would silently PASS every node without validating anything"
+        )
+    log.info(f"Testing /etc/security/limits.conf for {len(required_lines)} required line(s)")
+
+    checker = LimitsConfCheck(phdl, required_lines, config_dict=config_dict)
+    results = checker.run()
+    preflight_results['limits_conf'] = results
+
+    failed_nodes = [node for node, result in results.items() if result.get('status') == 'FAIL']
+    if failed_nodes:
+        log.error(
+            f"/etc/security/limits.conf missing required line(s) on {len(failed_nodes)} node(s): {', '.join(sorted(failed_nodes))}"
+        )
+    else:
+        log.info("/etc/security/limits.conf check: all reachable nodes passed")
+
+    preflight_update_test_result()
+
+
+def test_nic_firmware(phdl, config_dict):
+    """
+    Test per-vendor NIC count (blocking) and firmware/host-software versions (non-blocking).
+
+    Activated per vendor via ``nic_type``; opt-in overall via
+    ``preflight.connectivity_check.ifoe.nic_firmware.enabled``.
+    """
+    global preflight_results
+
+    if not _nic_firmware_enabled(config_dict):
+        preflight_results['nic_firmware'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'NIC firmware validation is not enabled',
+        }
+        preflight_update_test_result()
+        return
+
+    nic_firmware_config = _nic_firmware_config(config_dict)
+    nic_types = nic_firmware_config.get('nic_type', ['ainic'])
+    vendor_configs = {
+        vendor: {
+            kwarg: nic_firmware_config.get(vendor, {}).get(kwarg)
+            for kwarg in kwargs
+            if kwarg in nic_firmware_config.get(vendor, {})
+        }
+        for vendor, kwargs in _NIC_FIRMWARE_VENDOR_KWARGS.items()
+        if vendor in nic_types
+    }
+    log.info(f"Testing NIC count/firmware/host-software for vendor(s): {', '.join(nic_types)}")
+
+    checker = NicFirmwareCheck(phdl, nic_types=nic_types, vendor_configs=vendor_configs, config_dict=config_dict)
+    results = checker.run()
+    preflight_results['nic_firmware'] = results
+
+    failed_nodes = [node for node, result in results.items() if result.get('status') == 'FAIL']
+    warned_nodes = [node for node, result in results.items() if result.get('status') == 'WARNING']
+    if failed_nodes:
+        log.error(f"NIC count mismatch on {len(failed_nodes)} node(s): {', '.join(sorted(failed_nodes))}")
+    if warned_nodes:
+        log.warning(
+            f"NIC firmware/host-software mismatch on {len(warned_nodes)} node(s): {', '.join(sorted(warned_nodes))}"
+        )
+    if not failed_nodes and not warned_nodes:
+        log.info("NIC firmware/count check: all reachable nodes passed")
+
+    preflight_update_test_result()
+
+
+def test_nic_driver_version(phdl, config_dict):
+    """
+    Test per-vendor NIC driver version (and, for Broadcom, DKMS provenance).
+
+    Nodes lacking the configured vendor's hardware are reported as SKIPPED so
+    this check can be safely left enabled on mixed-vendor fleets. Activated
+    per vendor via ``nic_type``; opt-in overall via
+    ``preflight.node_check.nic_driver_version.enabled``.
+    """
+    global preflight_results
+
+    if not _nic_driver_version_enabled(config_dict):
+        preflight_results['nic_driver_version'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'NIC driver version validation is not enabled',
+        }
+        preflight_update_test_result()
+        return
+
+    nic_driver_version_config = _nic_driver_version_config(config_dict)
+    nic_types = nic_driver_version_config.get('nic_type', ['broadcom'])
+    vendor_configs = {
+        vendor: {
+            kwarg: nic_driver_version_config.get(vendor, {}).get(kwarg)
+            for kwarg in kwargs
+            if kwarg in nic_driver_version_config.get(vendor, {})
+        }
+        for vendor, kwargs in _NIC_DRIVER_VERSION_VENDOR_KWARGS.items()
+        if vendor in nic_types
+    }
+    log.info(f"Testing NIC driver version for vendor(s): {', '.join(nic_types)}")
+
+    checker = NicDriverVersionCheck(phdl, nic_types=nic_types, vendor_configs=vendor_configs, config_dict=config_dict)
+    results = checker.run()
+    preflight_results['nic_driver_version'] = results
+
+    warned_nodes = [node for node, result in results.items() if result.get('status') == 'WARNING']
+    if warned_nodes:
+        log.warning(f"NIC driver version mismatch on {len(warned_nodes)} node(s): {', '.join(sorted(warned_nodes))}")
+    else:
+        log.info("NIC driver version check: all applicable nodes passed")
 
     preflight_update_test_result()
 
@@ -552,6 +1117,138 @@ def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     absent or separately configured RDMA NIC cannot suppress IFoE validation.
     """
     _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict)
+
+
+def test_ainic_pfc_qos_dcqcn(phdl, config_dict):
+    """Validate AINIC PFC/QoS/DCQCN control-plane state between L2 ping and TransferBench.
+
+    Blocking (FAIL gate) when enabled, matching the original bash scripts'
+    role as a mandatory admission check for the IFoE data path. Opt-in via
+    ``preflight.connectivity_check.ifoe.pfc_qos_dcqcn.enabled``.
+    """
+    global preflight_results
+
+    if _node_health_admission_failed(config_dict):
+        blocked = _blocked_by_node_health('AINIC PFC/QoS/DCQCN validation')
+        preflight_results['pfc_qos_dcqcn'] = blocked
+        log.warning(blocked['message'])
+        preflight_update_test_result()
+        return
+
+    if not _pfc_qos_dcqcn_enabled(config_dict):
+        preflight_results['pfc_qos_dcqcn'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': 'AINIC PFC/QoS/DCQCN validation is not enabled',
+        }
+        preflight_update_test_result()
+        return
+
+    if not phdl.reachable_hosts:
+        message = 'No reachable nodes available for AINIC PFC/QoS/DCQCN validation'
+        log.warning(message)
+        preflight_results['pfc_qos_dcqcn'] = {
+            'status': 'FAIL',
+            'skipped': False,
+            'message': message,
+        }
+        preflight_update_test_result()
+        pytest.fail(message)
+        return
+
+    pqd_config = _pfc_qos_dcqcn_config(config_dict)
+    pfc_config = pqd_config.get('pfc', {})
+    qos_config = pqd_config.get('qos', {})
+    dcqcn_config = pqd_config.get('dcqcn', {})
+
+    log.info(f"Testing AINIC PFC/QoS/DCQCN control-plane state on {len(phdl.reachable_hosts)} reachable node(s)")
+
+    pfc_checker = PfcValidationCheck(
+        phdl,
+        expected_card_count=int(pfc_config.get('expected_card_count', 8)),
+        expected_pause_type=pfc_config.get('expected_pause_type', 'PFC'),
+        config_dict=config_dict,
+    )
+    qos_checker = QosValidationCheck(
+        phdl,
+        expected_card_count=int(qos_config.get('expected_card_count', 8)),
+        dscp24_priority=qos_config.get('dscp24_priority', '3'),
+        dscp46_priority=qos_config.get('dscp46_priority', '6'),
+        dscp46_purpose=qos_config.get('dscp46_purpose', 'xccl-cts'),
+        pfc_priority_bitmap=qos_config.get('pfc_priority_bitmap', '0x8'),
+        pfc_no_drop_priorities=qos_config.get('pfc_no_drop_priorities', '3'),
+        priority0_scheduling=qos_config.get('priority0_scheduling', 'DWRR|1|N/A'),
+        priority3_scheduling=qos_config.get('priority3_scheduling', 'DWRR|99|N/A'),
+        priority6_scheduling=qos_config.get('priority6_scheduling', 'strict|N/A|10'),
+        config_dict=config_dict,
+    )
+    dcqcn_checker = DcqcnValidationCheck(
+        phdl,
+        expected_device_count=int(dcqcn_config.get('expected_device_count', 8)),
+        profile_id=int(dcqcn_config.get('profile_id', 1)),
+        status=dcqcn_config.get('status', 'Enabled'),
+        ai_rate=dcqcn_config.get('ai_rate', '160'),
+        byte_count=dcqcn_config.get('byte_count', '431068'),
+        alpha_g=dcqcn_config.get('alpha_g', '512'),
+        alpha_interval=dcqcn_config.get('alpha_interval', '1'),
+        hai_rate=dcqcn_config.get('hai_rate', '300'),
+        initial_alpha=dcqcn_config.get('initial_alpha', '64'),
+        monitor_period=dcqcn_config.get('monitor_period', '1'),
+        rate_threshold=dcqcn_config.get('rate_threshold', '1'),
+        rate_interval=dcqcn_config.get('rate_interval', '1'),
+        token_bucket=dcqcn_config.get('token_bucket', '800000'),
+        cnp_dscp=dcqcn_config.get('cnp_dscp', '46'),
+        config_dict=config_dict,
+    )
+
+    pfc_results = pfc_checker.run()
+    qos_results = qos_checker.run()
+    dcqcn_results = dcqcn_checker.run()
+
+    node_results = {}
+    failed_nodes = []
+    for node in phdl.reachable_hosts:
+        pfc_result = pfc_results.get(node, {})
+        qos_result = qos_results.get(node, {})
+        dcqcn_result = dcqcn_results.get(node, {})
+        sub_statuses = [pfc_result.get('status'), qos_result.get('status'), dcqcn_result.get('status')]
+        status = 'FAIL' if any(s == 'FAIL' for s in sub_statuses) else 'PASS'
+        errors = (
+            list(pfc_result.get('errors') or [])
+            + list(qos_result.get('errors') or [])
+            + list(dcqcn_result.get('errors') or [])
+        )
+        node_results[node] = {
+            'status': status,
+            'pfc': pfc_result,
+            'qos': qos_result,
+            'dcqcn': dcqcn_result,
+            'errors': errors,
+        }
+        if status == 'FAIL':
+            failed_nodes.append(node)
+
+    overall_status = 'FAIL' if failed_nodes else 'PASS'
+    preflight_results['pfc_qos_dcqcn'] = {
+        'status': overall_status,
+        'skipped': False,
+        'node_results': node_results,
+        'failed_nodes': failed_nodes,
+    }
+
+    if failed_nodes:
+        log.error(
+            f"AINIC PFC/QoS/DCQCN validation FAILED on {len(failed_nodes)} node(s): {', '.join(sorted(failed_nodes))}"
+        )
+        for node in failed_nodes:
+            for error in node_results[node]['errors']:
+                log.error(f"Node {node} PFC/QoS/DCQCN: {error}")
+    else:
+        log.info("AINIC PFC/QoS/DCQCN validation PASS on all reachable nodes")
+
+    preflight_update_test_result()
+    if overall_status == 'FAIL':
+        pytest.fail("AINIC PFC/QoS/DCQCN preflight gate failed; see preflight report")
 
 
 def test_ifoe_transferbench_smoke(phdl, config_dict):
@@ -1236,11 +1933,19 @@ def test_generate_preflight_report(phdl, config_dict, request):
 
     # Ensure we have results from all checks
     required_checks = [
+        'ping_reachability',
+        'ssh_mesh_connectivity',
+        'node_uptime',
+        'etc_hosts_consistency',
+        'limits_conf',
+        'nic_firmware',
+        'nic_driver_version',
         'node_health',
         'gid_consistency',
         'rocm_versions',
         'interface_names',
         'ifoe_l2_connectivity',
+        'pfc_qos_dcqcn',
         'transferbench_smoke',
         'rdma_connectivity',
     ]

@@ -260,7 +260,7 @@ def convert_hms_to_secs(time_string):
         return None
 
 
-def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
+def _resolve_placeholders_in_dict(target_dict, replacements, context_name="", skip_paths=None):
     """
     Internal helper function to recursively resolve placeholders in a dictionary.
     Also checks for unresolved manual placeholders like <changeme> and exits immediately.
@@ -270,12 +270,18 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
       replacements: Dictionary mapping placeholder strings to their replacement values
                    Example: {'{user-id}': 'master', '{home}': '/home/master'}
       context_name: Optional context name for logging (e.g., "cluster", "config")
+      skip_paths: Optional set of dotted-path prefixes (e.g. "node_check.nic_driver_version.mellanox")
+                  identifying inactive/inert subtrees that should still have their placeholders
+                  substituted, but must NOT be checked for unresolved <changeme> values. Callers
+                  use this for config subsections that are present but not currently selected/used
+                  (e.g. an unselected vendor block), so leaving them as a template placeholder is
+                  not an error.
 
     Returns:
       dict/list/str: Input structure with all placeholders replaced
 
     Raises:
-      SystemExit: If unresolved <changeme> or similar patterns are found
+      SystemExit: If unresolved <changeme> or similar patterns are found outside of skip_paths
 
     Example:
       target = {"path": "/home/{user-id}/files", "user": "{user-id}"}
@@ -283,6 +289,10 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
       result = _resolve_placeholders_in_dict(target, replacements)
       # Returns: {"path": "/home/john/files", "user": "john"}
     """
+    skip_paths = skip_paths or set()
+
+    def is_skipped(path):
+        return any(path == skip or path.startswith(skip + '.') for skip in skip_paths)
 
     def replace_in_string(value, path=""):
         """Replace all placeholders in a string and check for unresolved patterns."""
@@ -290,7 +300,7 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
             return value
 
         # Check for unresolved <changeme> pattern BEFORE replacement
-        has_changeme = '<changeme>' in value.lower() or '<changeme>' in path.lower()
+        has_changeme = not is_skipped(path) and ('<changeme>' in value.lower() or '<changeme>' in path.lower())
         if has_changeme:
             error_msg = f"\n{'=' * 70}\n"
             error_msg += f"ERROR: Unresolved placeholder found in {context_name}!\n"
@@ -376,7 +386,7 @@ def resolve_cluster_config_placeholders(cluster_dict):
     return resolved_cluster
 
 
-def resolve_test_config_placeholders(config_dict, cluster_dict):
+def resolve_test_config_placeholders(config_dict, cluster_dict, skip_paths=None):
     """
     Resolve path placeholders in test configuration dictionary.
 
@@ -389,12 +399,15 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     Args:
       config_dict: Configuration dictionary (can be nested dict/list/str)
       cluster_dict: Cluster dictionary containing username and other cluster info
+      skip_paths: Optional set of dotted-path prefixes to exempt from the unresolved
+                  <changeme> check (see _resolve_placeholders_in_dict); e.g. an inert,
+                  currently-unselected config subsection.
 
     Returns:
       dict/list/str: Configuration with resolved path placeholders
 
     Raises:
-      SystemExit: If any <changeme> patterns are found
+      SystemExit: If any <changeme> patterns are found outside of skip_paths
 
     Example:
       Input:  "/home/{user-id}/INSTALL"
@@ -427,7 +440,9 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
         '{node-dir-name}': node_dir_name,
     }
 
-    resolved_config = _resolve_placeholders_in_dict(config_dict, replacements, context_name="test config")
+    resolved_config = _resolve_placeholders_in_dict(
+        config_dict, replacements, context_name="test config", skip_paths=skip_paths
+    )
 
     return resolved_config
 

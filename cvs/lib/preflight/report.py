@@ -104,13 +104,29 @@ class PreflightReportGenerator(PreflightCheck):
         tb_smoke_results = self.results.get('transferbench_smoke', {})
         reachability_results = self.results.get('node_reachability')
         ssh_connectivity_results = self.results.get('ssh_connectivity')
+        ping_reachability_results = self.results.get('ping_reachability')
+        ssh_mesh_results = self.results.get('ssh_mesh_connectivity')
+        uptime_results = self.results.get('node_uptime')
+        etc_hosts_results = self.results.get('etc_hosts_consistency')
+        limits_conf_results = self.results.get('limits_conf')
+        nic_firmware_results = self.results.get('nic_firmware')
+        nic_driver_version_results = self.results.get('nic_driver_version')
+        pfc_qos_dcqcn_results = self.results.get('pfc_qos_dcqcn')
         summary = {
             'overall_status': 'PASS',
             'checks': {
+                'ping_reachability': self._summarize_ping_reachability_results(ping_reachability_results),
                 'ssh_reachability': self._summarize_reachability_results(reachability_results),
+                'ssh_mesh_connectivity': self._summarize_ssh_mesh_results(ssh_mesh_results),
+                'node_uptime': self._summarize_uptime_results(uptime_results),
+                'etc_hosts_consistency': self._summarize_etc_hosts_results(etc_hosts_results),
+                'limits_conf': self._summarize_limits_conf_results(limits_conf_results),
+                'nic_firmware': self._summarize_nic_firmware_results(nic_firmware_results),
+                'nic_driver_version': self._summarize_nic_driver_version_results(nic_driver_version_results),
                 'node_health': self._summarize_node_health_results(node_health_results),
                 'gid_consistency': self._summarize_gid_results(gid_results),
                 'ifoe_l2_connectivity': self._summarize_ifoe_l2_results(ifoe_l2_results),
+                'pfc_qos_dcqcn': self._summarize_pfc_qos_dcqcn_results(pfc_qos_dcqcn_results),
                 'transferbench_smoke': self._summarize_transferbench_smoke_results(tb_smoke_results),
                 'rdma_connectivity': self._summarize_connectivity_results(connectivity_results),
                 'rocm_versions': self._summarize_rocm_results(rocm_results),
@@ -164,6 +180,34 @@ class PreflightReportGenerator(PreflightCheck):
 
         if summary['checks']['interface_names']['status'] == 'FAIL':
             summary['recommendations'].append("Standardize RDMA interface naming across cluster nodes")
+
+        if summary['checks']['limits_conf']['status'] == 'FAIL':
+            summary['recommendations'].append("Add the required lines to /etc/security/limits.conf on affected nodes")
+
+        if summary['checks']['nic_firmware']['status'] == 'FAIL':
+            summary['recommendations'].append(
+                "Investigate missing/extra NIC devices reported for the configured vendor(s) (nic_type)"
+            )
+        elif summary['checks']['nic_firmware']['status'] == 'WARNING':
+            summary['recommendations'].append(
+                "Update NIC firmware/host-software to the expected version for the configured vendor(s) (nic_type)"
+            )
+
+        if summary['checks']['pfc_qos_dcqcn']['status'] == 'FAIL':
+            summary['recommendations'].append(
+                "Correct AINIC PFC/QoS/DCQCN control-plane configuration (nicctl) on affected nodes before benchmarking"
+            )
+
+        if summary['checks']['nic_driver_version']['status'] == 'WARNING':
+            summary['recommendations'].append(
+                "Install the expected driver version for the configured NIC vendor(s) (nic_type)"
+            )
+
+        if summary['checks']['etc_hosts_consistency']['status'] == 'WARNING':
+            summary['recommendations'].append("Reconcile /etc/hosts entries with the cluster inventory")
+
+        if summary['checks']['ssh_mesh_connectivity']['status'] == 'WARNING':
+            summary['recommendations'].append("Restore passwordless SSH between all node pairs")
 
         if summary['overall_status'] == 'PASS':
             summary['recommendations'].append("All preflight checks passed - cluster is ready for performance testing")
@@ -575,6 +619,145 @@ class PreflightReportGenerator(PreflightCheck):
             'summary': summary,
         }
 
+    def _summarize_simple_check_results(self, results, label, skip_message, demote_fail_to_warning=False):
+        """Generic summarizer for simple per-node dict-shaped check results.
+
+        Expects either:
+          - a skip wrapper: ``{'status': 'SKIPPED', 'skipped': True, 'message': ...}``
+          - a per-node dict: ``{node: {'status': 'PASS'|'WARNING'|'FAIL'|'SKIPPED', 'errors': [...]}}``
+
+        ``demote_fail_to_warning`` is used for purely diagnostic/informational
+        checks (e.g. ping reachability, uptime collection) whose per-node
+        FAIL status should not gate the overall preflight status.
+        """
+        if not results or (
+            isinstance(results, dict) and (results.get('skipped') or results.get('status') == 'SKIPPED')
+        ):
+            message = results.get('message', skip_message) if isinstance(results, dict) else skip_message
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'warning_nodes': [],
+                'skipped_nodes': [],
+                'summary': message or skip_message,
+            }
+
+        node_results = {node: result for node, result in results.items() if isinstance(result, dict)}
+        total_nodes = len(node_results)
+        failed_nodes = sorted(n for n, r in node_results.items() if r.get('status') == 'FAIL')
+        warning_nodes = sorted(n for n, r in node_results.items() if r.get('status') == 'WARNING')
+        skipped_nodes = sorted(n for n, r in node_results.items() if r.get('status') == 'SKIPPED')
+        passing_nodes = sorted(n for n, r in node_results.items() if r.get('status') == 'PASS')
+
+        if failed_nodes:
+            status = 'WARNING' if demote_fail_to_warning else 'FAIL'
+        elif warning_nodes:
+            status = 'WARNING'
+        else:
+            status = 'PASS'
+
+        summary_text = f"{len(passing_nodes)}/{total_nodes} nodes passed {label}"
+        if warning_nodes:
+            summary_text += f"; {len(warning_nodes)} with warnings"
+        if failed_nodes:
+            summary_text += f"; {len(failed_nodes)} failed"
+        if skipped_nodes:
+            summary_text += f"; {len(skipped_nodes)} not applicable"
+
+        return {
+            'status': status,
+            'total_nodes': total_nodes,
+            'passing_nodes': len(passing_nodes),
+            'failed_nodes': failed_nodes,
+            'warning_nodes': warning_nodes,
+            'skipped_nodes': skipped_nodes,
+            'summary': summary_text,
+        }
+
+    def _summarize_ping_reachability_results(self, results):
+        """Summarize ICMP ping reachability results (informational; never gates overall status)."""
+        return self._summarize_simple_check_results(
+            results,
+            'ICMP ping reachability',
+            'ICMP ping reachability check is not enabled',
+            demote_fail_to_warning=True,
+        )
+
+    def _summarize_uptime_results(self, results):
+        """Summarize informational uptime-collection results (never gates overall status)."""
+        return self._summarize_simple_check_results(
+            results, 'uptime collection', 'Uptime collection is not enabled', demote_fail_to_warning=True
+        )
+
+    def _summarize_ssh_mesh_results(self, results):
+        """Summarize full node x node SSH mesh diagnostic results (WARNING at worst)."""
+        return self._summarize_simple_check_results(
+            results, 'SSH mesh connectivity', 'SSH mesh diagnostic is not enabled'
+        )
+
+    def _summarize_etc_hosts_results(self, results):
+        """Summarize /etc/hosts consistency results (WARNING at worst)."""
+        return self._summarize_simple_check_results(
+            results, '/etc/hosts consistency', '/etc/hosts consistency check is not enabled'
+        )
+
+    def _summarize_limits_conf_results(self, results):
+        """Summarize /etc/security/limits.conf validation results (blocking FAIL when enabled)."""
+        return self._summarize_simple_check_results(
+            results, 'limits.conf validation', '/etc/security/limits.conf validation is not enabled'
+        )
+
+    def _summarize_nic_firmware_results(self, results):
+        """Summarize per-vendor NIC count (FAIL) / firmware / host-software (WARNING) results."""
+        return self._summarize_simple_check_results(
+            results, 'NIC firmware/count validation', 'NIC firmware validation is not enabled'
+        )
+
+    def _summarize_nic_driver_version_results(self, results):
+        """Summarize per-vendor NIC driver version results (WARNING/SKIPPED only)."""
+        return self._summarize_simple_check_results(
+            results, 'NIC driver version validation', 'NIC driver version validation is not enabled'
+        )
+
+    def _summarize_pfc_qos_dcqcn_results(self, pqd_results):
+        """Summarize AINIC PFC/QoS/DCQCN control-plane validation results."""
+        if pqd_results and (pqd_results.get('blocked') or pqd_results.get('status') == 'BLOCKED'):
+            return {
+                'status': 'BLOCKED',
+                'total_nodes': 0,
+                'failed_nodes': [],
+                'summary': pqd_results.get('message', 'AINIC PFC/QoS/DCQCN validation blocked by mandatory admission'),
+            }
+        if not pqd_results or pqd_results.get('skipped') or pqd_results.get('status') == 'SKIPPED':
+            msg = (
+                pqd_results.get('message')
+                if isinstance(pqd_results, dict)
+                else 'AINIC PFC/QoS/DCQCN validation not performed'
+            )
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'failed_nodes': [],
+                'summary': msg or 'AINIC PFC/QoS/DCQCN validation skipped',
+            }
+
+        node_results = pqd_results.get('node_results') or {}
+        total_nodes = len(node_results)
+        failed_nodes = list(
+            pqd_results.get('failed_nodes') or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+        )
+        passing_nodes = total_nodes - len(failed_nodes)
+        status = pqd_results.get('status') or ('FAIL' if failed_nodes else 'PASS')
+        return {
+            'status': status,
+            'total_nodes': total_nodes,
+            'passing_nodes': passing_nodes,
+            'failed_nodes': failed_nodes,
+            'summary': f"{passing_nodes}/{total_nodes} nodes passed AINIC PFC/QoS/DCQCN validation",
+        }
+
     def _generate_html_content(self):
         """Generate the complete HTML content for the preflight report."""
         from datetime import datetime
@@ -606,9 +789,16 @@ class PreflightReportGenerator(PreflightCheck):
             </header>
 
             {self._generate_executive_summary_html(summary)}
+            {self._generate_ping_reachability_html(results.get('ping_reachability', {}))}
+            {self._generate_ssh_mesh_html(results.get('ssh_mesh_connectivity', {}))}
+            {self._generate_etc_hosts_html(results.get('etc_hosts_consistency', {}))}
+            {self._generate_limits_conf_html(results.get('limits_conf', {}))}
+            {self._generate_nic_firmware_html(results.get('nic_firmware', {}))}
+            {self._generate_nic_driver_version_html(results.get('nic_driver_version', {}))}
             {self._generate_node_health_html(results.get('node_health', {}))}
             {self._generate_gid_consistency_html(results.get('gid_consistency', {}))}
             {self._generate_ifoe_l2_html(results.get('ifoe_l2_connectivity', {}))}
+            {self._generate_pfc_qos_dcqcn_html(results.get('pfc_qos_dcqcn', {}))}
             {self._generate_transferbench_smoke_html(results.get('transferbench_smoke', {}))}
             {self._generate_connectivity_html(results.get('rdma_connectivity', {}))}
             {self._generate_ssh_connectivity_html(results.get('ssh_connectivity', {}))}
@@ -2181,6 +2371,100 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
         return html
+
+    def _generate_simple_check_html(self, results, title):
+        """Generic HTML section for simple per-node dict-shaped check results.
+
+        Only renders nodes with a non-PASS status (FAIL/WARNING); returns ``""``
+        (no section) when the check was skipped or every node passed.
+        """
+        if not results or (
+            isinstance(results, dict) and (results.get('skipped') or results.get('status') == 'SKIPPED')
+        ):
+            return ""
+
+        node_results = {node: result for node, result in results.items() if isinstance(result, dict)}
+        problem_nodes = {
+            node: result for node, result in node_results.items() if result.get('status') in ('FAIL', 'WARNING')
+        }
+        if not problem_nodes:
+            return ""
+
+        rows = []
+        for node, result in sorted(problem_nodes.items()):
+            status = result.get('status', 'UNKNOWN')
+            status_class = 'status-fail' if status == 'FAIL' else 'status-skipped'
+            errors = result.get('errors') or []
+            issues = '; '.join(str(e) for e in errors) if errors else 'See details'
+            rows.append(
+                f"<tr><td><code>{html.escape(str(node))}</code></td>"
+                f"<td><span class=\"{status_class}\">{html.escape(str(status))}</span></td>"
+                f"<td>{html.escape(issues)}</td></tr>"
+            )
+
+        return f"""
+        <section>
+            <h2>{html.escape(title)}</h2>
+            <table>
+                <thead><tr><th>Node</th><th>Status</th><th>Issues</th></tr></thead>
+                <tbody>{''.join(rows)}</tbody>
+            </table>
+        </section>
+        """
+
+    def _generate_ping_reachability_html(self, results):
+        return self._generate_simple_check_html(results, "ICMP Ping Reachability Issues")
+
+    def _generate_ssh_mesh_html(self, results):
+        return self._generate_simple_check_html(results, "SSH Mesh Connectivity Issues")
+
+    def _generate_etc_hosts_html(self, results):
+        return self._generate_simple_check_html(results, "/etc/hosts Consistency Issues")
+
+    def _generate_limits_conf_html(self, results):
+        return self._generate_simple_check_html(results, "/etc/security/limits.conf Issues")
+
+    def _generate_nic_firmware_html(self, results):
+        return self._generate_simple_check_html(results, "NIC Firmware/Count Issues")
+
+    def _generate_nic_driver_version_html(self, results):
+        return self._generate_simple_check_html(results, "NIC Driver Version Issues")
+
+    def _generate_pfc_qos_dcqcn_html(self, pqd_results):
+        """Generate AINIC PFC/QoS/DCQCN section - only show failed nodes."""
+        if not pqd_results:
+            return ""
+        if pqd_results.get('blocked') or pqd_results.get('status') == 'BLOCKED':
+            return f"""
+        <section>
+            <h2>AINIC PFC/QoS/DCQCN Validation</h2>
+            <p class="error-summary">{html.escape(str(pqd_results.get('message', 'AINIC PFC/QoS/DCQCN validation blocked by mandatory admission')))}</p>
+        </section>
+        """
+        if pqd_results.get('skipped') or pqd_results.get('status') == 'SKIPPED':
+            return ""
+
+        node_results = pqd_results.get('node_results') or {}
+        failed_nodes = {node: result for node, result in node_results.items() if result.get('status') == 'FAIL'}
+        if not failed_nodes:
+            return ""
+
+        rows = []
+        for node, result in sorted(failed_nodes.items()):
+            errors = result.get('errors') or []
+            issues = '; '.join(str(e) for e in errors) if errors else 'PFC/QoS/DCQCN mismatch'
+            rows.append(f"<tr><td><code>{html.escape(str(node))}</code></td><td>{html.escape(issues)}</td></tr>")
+
+        return f"""
+        <section>
+            <h2>AINIC PFC/QoS/DCQCN Validation</h2>
+            <p class="error-summary">The following nodes failed PFC/QoS/DCQCN control-plane validation:</p>
+            <table>
+                <thead><tr><th>Node</th><th>Issues</th></tr></thead>
+                <tbody>{''.join(rows)}</tbody>
+            </table>
+        </section>
+        """
 
     def _generate_configuration_html(self, config_dict):
         """Generate configuration section."""

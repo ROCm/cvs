@@ -12,11 +12,107 @@
 
       "_example_expected_rocm_version": "6.2.0",
       "expected_rocm_version": "<changeme>",
-      "_comment_expected_rocm_version": "Expected ROCm version across all cluster nodes. Must match the output of 'amd-smi version' on all nodes. Format: 'major.minor.patch' (e.g., '6.2.0', '5.7.1')."
+      "_comment_expected_rocm_version": "Expected ROCm version across all cluster nodes. Must match the output of 'amd-smi version' on all nodes. Format: 'major.minor.patch' (e.g., '6.2.0', '5.7.1').",
+
+      "ping_check": {
+        "_comment": "ICMP ping reachability from the CVS driver host to every cluster node. Diagnostic only, opt-in, disabled by default.",
+
+        "enabled": false,
+        "_comment_enabled": "Enable ICMP ping reachability check.",
+
+        "count": 4,
+        "_comment_count": "Number of ICMP echo requests per node (ping -c).",
+
+        "timeout_sec": 1,
+        "_comment_timeout_sec": "Per-ping timeout in seconds (ping -W)."
+      },
+
+      "uptime_check": {
+        "_comment": "Informational 'uptime' collection across nodes. Never gates preflight status. Opt-in, disabled by default.",
+
+        "enabled": false,
+        "_comment_enabled": "Enable informational uptime collection."
+      },
+
+      "etc_hosts": {
+        "_comment": "/etc/hosts consistency against the cluster inventory (WARNING at worst). Opt-in, disabled by default.",
+
+        "enabled": false,
+        "_comment_enabled": "Enable /etc/hosts consistency validation.",
+
+        "extra_entries": [],
+        "_example_extra_entries": [{"hostname": "gpu-node-01", "ip": "10.0.0.1"}],
+        "_comment_extra_entries": "Optional list of {hostname, ip} pairs that must match exactly in /etc/hosts, in addition to validating that every cluster node address has some entry."
+      },
+
+      "limits_conf": {
+        "_comment": "/etc/security/limits.conf validation (blocking FAIL when enabled). Opt-in, disabled by default.",
+
+        "enabled": false,
+        "_comment_enabled": "Enable /etc/security/limits.conf validation.",
+
+        "required_lines": [
+          "root soft memlock unlimited",
+          "root hard memlock unlimited",
+          "root soft nofile 1048576",
+          "root hard nofile 1048576",
+          "ubuntu soft memlock unlimited",
+          "ubuntu hard memlock unlimited",
+          "ubuntu soft nofile 1048576",
+          "ubuntu hard nofile 1048576"
+        ],
+        "_comment_required_lines": "Exact lines that must be present (in any order, whitespace-insensitive) in /etc/security/limits.conf on every node."
+      },
+
+      "nic_driver_version": {
+        "_comment": "Per-vendor NIC driver version + provenance validation. Activate one or more vendor sub-blocks via nic_type. Opt-in, disabled by default.",
+
+        "enabled": false,
+        "_comment_enabled": "Enable NIC driver version validation.",
+
+        "nic_type": ["broadcom"],
+        "_comment_nic_type": "One or more of: ainic, broadcom, mellanox. Selects which vendor sub-block(s) below actually run. A node lacking the selected vendor's hardware is reported SKIPPED, not FAILed.",
+
+        "ainic": {
+          "expected_ionic_driver_version": "1.117.5-a-56",
+          "_comment_expected_ionic_driver_version": "Expected 'ionic' kernel module version (modinfo -F version ionic).",
+
+          "expected_ionic_rdma_driver_version": "1.117.5-a-56",
+          "_comment_expected_ionic_rdma_driver_version": "Expected 'ionic_rdma' kernel module version (modinfo -F version ionic_rdma)."
+        },
+
+        "broadcom": {
+          "expected_bnxt_re_version": "236.1.155.0",
+          "_comment_expected_bnxt_re_version": "Expected bnxt_re kernel module version.",
+
+          "expected_bnxt_en_version": "1.10.3-236.1.155.0",
+          "_comment_expected_bnxt_en_version": "Expected bnxt_en kernel module version."
+        },
+
+        "mellanox": {
+          "_comment": "NEW, UNVALIDATED against real Mellanox hardware -- no bash/ansible source material exists to port from; designed by analogy to the broadcom/ainic sub-blocks.",
+
+          "expected_mlx5_core_version": "<changeme>",
+          "_comment_expected_mlx5_core_version": "Expected mlx5_core kernel module version (modinfo -F version mlx5_core).",
+
+          "expected_ofed_version": "<changeme>",
+          "_comment_expected_ofed_version": "Expected MLNX_OFED stack version (ofed_info -s)."
+        }
+      }
     },
 
     "connectivity_check": {
       "_comment": "Inter-node connectivity tests by protocol",
+
+      "ssh_mesh": {
+        "_comment": "All-pairs passwordless SSH reachability mesh across reachable cluster nodes (WARNING at worst). Opt-in, disabled by default.",
+
+        "enabled": false,
+        "_comment_enabled": "Enable SSH mesh connectivity validation.",
+
+        "ssh_timeout_sec": 10,
+        "_comment_ssh_timeout_sec": "Per-connection SSH timeout in seconds used for each node-to-node probe."
+      },
 
       "rdma": {
         "_comment": "RDMA connectivity testing parameters using ibv_rc_pingpong (direct IB verbs) for RCCL-compatible testing",
@@ -109,6 +205,135 @@
 
           "warmup_iterations": 0,
           "_comment_warmup_iterations": "Warmup iterations performed before validation."
+        },
+
+        "nic_firmware": {
+          "_comment": "Per-vendor NIC firmware/host-software validation. Activate one or more vendor sub-blocks via nic_type. Opt-in, disabled by default.",
+
+          "enabled": false,
+          "_comment_enabled": "Enable NIC firmware/host-software validation.",
+
+          "nic_type": ["ainic"],
+          "_comment_nic_type": "One or more of: ainic, broadcom, mellanox. Selects which vendor sub-block(s) below actually run.",
+
+          "ainic": {
+            "expected_nic_count": 8,
+            "_comment_expected_nic_count": "Exact number of AINIC RDMA devices expected on every node (FAIL on mismatch). Unchanged from today's shipped behavior: no per-node vendor-presence SKIP for AINIC -- see Design decisions.",
+
+            "expected_fw_version": "1.117.5-a-56",
+            "_comment_expected_fw_version": "Expected AINIC firmware version (WARNING on mismatch).",
+
+            "expected_host_version": "1.117.5-a-56",
+            "_comment_expected_host_version": "Expected AINIC host-software version (WARNING on mismatch)."
+          },
+
+          "broadcom": {
+            "_comment": "NEW: not present in the original ansible/ainicfwcheck/fwcheck.yml (AINIC-only). Adds symmetric firmware validation for Broadcom NICs, detected per-node so mixed fleets don't false-FAIL on non-Broadcom nodes.",
+
+            "expected_nic_count": 2,
+            "_comment_expected_nic_count": "Exact number of Broadcom bnxt RDMA devices expected on every node with Broadcom hardware present (FAIL on mismatch).",
+
+            "expected_fw_version": "<changeme>",
+            "_comment_expected_fw_version": "Expected Broadcom NIC firmware version, e.g. from 'ethtool -i <bnxt_en iface>' firmware-version field (WARNING on mismatch)."
+          },
+
+          "mellanox": {
+            "_comment": "NEW, UNVALIDATED against real Mellanox hardware -- no bash/ansible source material exists to port from; designed by analogy to the ainic/broadcom sub-blocks.",
+
+            "expected_nic_count": 8,
+            "_comment_expected_nic_count": "Exact number of Mellanox mlx5 RDMA devices expected on every node with Mellanox hardware present (FAIL on mismatch).",
+
+            "expected_fw_version": "<changeme>",
+            "_comment_expected_fw_version": "Expected Mellanox NIC firmware version, e.g. from 'mlxfwmanager --query' or 'ethtool -i <mlx5 iface>' firmware-version field (WARNING on mismatch)."
+          }
+        },
+
+        "pfc_qos_dcqcn": {
+          "_comment": "AINIC PFC/QoS/DCQCN control-plane validation via 'nicctl'. Blocking FAIL gate when enabled, run alongside the IFoE L2/TransferBench gates. Opt-in, disabled by default. All golden values are generic AINIC defaults and fully overridable per deployment.",
+
+          "enabled": false,
+          "_comment_enabled": "Enable AINIC PFC/QoS/DCQCN control-plane validation.",
+
+          "pfc": {
+            "expected_card_count": 8,
+            "_comment_expected_card_count": "Number of AINIC cards expected to report PFC state on every node.",
+
+            "expected_pause_type": "PFC",
+            "_comment_expected_pause_type": "Expected pause/flow-control type reported per card."
+          },
+
+          "qos": {
+            "expected_card_count": 8,
+            "_comment_expected_card_count": "Number of AINIC cards expected to report QoS state on every node.",
+
+            "dscp24_priority": "3",
+            "_comment_dscp24_priority": "Expected priority mapped from DSCP 24.",
+
+            "dscp46_priority": "6",
+            "_comment_dscp46_priority": "Expected priority mapped from DSCP 46.",
+
+            "dscp46_purpose": "xccl-cts",
+            "_comment_dscp46_purpose": "Expected traffic-class label/purpose associated with DSCP 46.",
+
+            "pfc_priority_bitmap": "0x8",
+            "_comment_pfc_priority_bitmap": "Expected PFC-enabled priority bitmap.",
+
+            "pfc_no_drop_priorities": "3",
+            "_comment_pfc_no_drop_priorities": "Expected no-drop priority list under PFC.",
+
+            "priority0_scheduling": "DWRR|1|N/A",
+            "_comment_priority0_scheduling": "Expected scheduling algorithm|weight|rate-limit for priority 0.",
+
+            "priority3_scheduling": "DWRR|99|N/A",
+            "_comment_priority3_scheduling": "Expected scheduling algorithm|weight|rate-limit for priority 3.",
+
+            "priority6_scheduling": "strict|N/A|10",
+            "_comment_priority6_scheduling": "Expected scheduling algorithm|weight|rate-limit for priority 6."
+          },
+
+          "dcqcn": {
+            "expected_device_count": 8,
+            "_comment_expected_device_count": "Number of AINIC devices expected to report DCQCN state on every node.",
+
+            "profile_id": 1,
+            "_comment_profile_id": "Expected active DCQCN profile ID.",
+
+            "status": "Enabled",
+            "_comment_status": "Expected DCQCN enablement status.",
+
+            "ai_rate": "160",
+            "_comment_ai_rate": "Expected DCQCN additive-increase rate parameter.",
+
+            "byte_count": "431068",
+            "_comment_byte_count": "Expected DCQCN byte-count parameter.",
+
+            "alpha_g": "512",
+            "_comment_alpha_g": "Expected DCQCN alpha gain parameter.",
+
+            "alpha_interval": "1",
+            "_comment_alpha_interval": "Expected DCQCN alpha update interval.",
+
+            "hai_rate": "300",
+            "_comment_hai_rate": "Expected DCQCN hyper-additive-increase rate parameter.",
+
+            "initial_alpha": "64",
+            "_comment_initial_alpha": "Expected DCQCN initial alpha value.",
+
+            "monitor_period": "1",
+            "_comment_monitor_period": "Expected DCQCN monitor period.",
+
+            "rate_threshold": "1",
+            "_comment_rate_threshold": "Expected DCQCN rate threshold.",
+
+            "rate_interval": "1",
+            "_comment_rate_interval": "Expected DCQCN rate interval.",
+
+            "token_bucket": "800000",
+            "_comment_token_bucket": "Expected DCQCN token bucket size.",
+
+            "cnp_dscp": "46",
+            "_comment_cnp_dscp": "Expected DSCP value used for CNP (Congestion Notification Packet) marking."
+          }
         }
       }
     },

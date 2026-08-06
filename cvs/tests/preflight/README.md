@@ -6,16 +6,25 @@ A comprehensive validation system for GPU clusters before running performance te
 
 The preflight checks system validates essential cluster health and configuration consistency across all nodes. It performs the following validations:
 
-1. **Node Health** - Validates AMDGPU/KFD, GPU visibility, and kernel health, with optional MI4XX fabric admission
-2. **GID Consistency** - Ensures RDMA interfaces have valid Global Identifier entries
-3. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
-4. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
-5. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(opt-in)*
-6. **IFoE TransferBench Smoketest** - Runs the TransferBench candidate-branch `smoketest`
-   preset to validate the IFoE scale-up data path (using MI4XX AFM admission or,
-   for generic profiles, an `amd-smi fabric --json` single-vPod precondition)
-   *(AIMVT-181; opt-in)*
-7. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
+1. **Ping Reachability** - ICMP `ping` from the CVS driver host to every cluster node *(opt-in, diagnostic only)*
+2. **SSH Mesh Connectivity** - All-pairs passwordless SSH reachability across reachable nodes *(opt-in)*
+3. **Node Uptime** - Informational `uptime` collection across nodes *(opt-in, never gates status)*
+4. **/etc/hosts Consistency** - Validates `/etc/hosts` entries against the cluster inventory *(opt-in)*
+5. **limits.conf Validation** - Validates `/etc/security/limits.conf` required lines *(opt-in, blocking)*
+6. **NIC Firmware/Host-Software** - Per-vendor (AINIC/Broadcom/Mellanox, selected via `nic_type`) device count and firmware/host-software version validation *(opt-in)*
+7. **NIC Driver Version** - Per-vendor (AINIC/Broadcom/Mellanox, selected via `nic_type`) driver version and (Broadcom) DKMS provenance validation; nodes without the selected vendor's hardware are SKIPPED *(opt-in)*
+8. **Node Health** - Validates AMDGPU/KFD, GPU visibility, and kernel health, with optional MI4XX fabric admission
+9. **GID Consistency** - Ensures RDMA interfaces have valid Global Identifier entries
+10. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
+11. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
+12. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(opt-in)*
+13. **IFoE TransferBench Smoketest** - Runs the TransferBench candidate-branch `smoketest`
+    preset to validate the IFoE scale-up data path (using MI4XX AFM admission or,
+    for generic profiles, an `amd-smi fabric --json` single-vPod precondition)
+    *(AIMVT-181; opt-in)*
+14. **AINIC PFC/QoS/DCQCN** - Validates AINIC PFC, QoS, and DCQCN control-plane configuration via `nicctl`
+    *(opt-in, blocking gate run alongside the IFoE L2/TransferBench gates)*
+15. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Quick Start
 
@@ -70,9 +79,21 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
     "node_check": {
       "enabled": true,
       "gpus_per_node": 4,
-      "expected_rocm_version": "7.15.0"
+      "expected_rocm_version": "7.15.0",
+      "ping_check": { "enabled": false, "count": 4, "timeout_sec": 1 },
+      "uptime_check": { "enabled": false },
+      "etc_hosts": { "enabled": false, "extra_entries": [] },
+      "limits_conf": { "enabled": false },
+      "nic_driver_version": {
+        "enabled": false,
+        "nic_type": ["broadcom"],
+        "ainic": { "expected_ionic_driver_version": "1.117.5-a-56", "expected_ionic_rdma_driver_version": "1.117.5-a-56" },
+        "broadcom": { "expected_bnxt_re_version": "236.1.155.0", "expected_bnxt_en_version": "1.10.3-236.1.155.0" },
+        "mellanox": { "expected_mlx5_core_version": "<changeme>", "expected_ofed_version": "<changeme>" }
+      }
     },
     "connectivity_check": {
+      "ssh_mesh": { "enabled": false, "ssh_timeout_sec": 10 },
       "rdma": {
         "connectivity_mode": "skip"
       },
@@ -89,6 +110,16 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
           "message_sizes": ["1K", "16M"],
           "iterations": 2,
           "warmup_iterations": 0
+        },
+        "nic_firmware": {
+          "enabled": false,
+          "nic_type": ["ainic"],
+          "ainic": { "expected_nic_count": 8, "expected_fw_version": "1.117.5-a-56", "expected_host_version": "1.117.5-a-56" },
+          "broadcom": { "expected_nic_count": 2, "expected_fw_version": "<changeme>" },
+          "mellanox": { "expected_nic_count": 8, "expected_fw_version": "<changeme>" }
+        },
+        "pfc_qos_dcqcn": {
+          "enabled": false
         }
       }
     },
@@ -105,6 +136,17 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 
 - **`node_check.enabled`**: Run GPU node-health and ROCm validation
 - **`node_check.gpus_per_node`**: Exact GPU count expected on every node
+- **`node_check.ping_check.enabled`**: Run diagnostic ICMP ping reachability from the CVS driver host to every node
+- **`node_check.uptime_check.enabled`**: Collect informational `uptime` output across nodes (never gates status)
+- **`node_check.etc_hosts.enabled`**: Validate `/etc/hosts` against the cluster inventory (WARNING at worst)
+- **`node_check.etc_hosts.extra_entries`**: Additional `{hostname, ip}` pairs that must match exactly
+- **`node_check.limits_conf.enabled`**: Validate `/etc/security/limits.conf` required lines (blocking FAIL)
+- **`node_check.limits_conf.required_lines`**: Exact lines that must be present on every node. Required (non-empty) when `limits_conf.enabled` is `true` — the check raises rather than silently passing every node if this is left empty
+- **`node_check.nic_driver_version.enabled`**: Validate driver version (and, for Broadcom, DKMS provenance) for the vendor(s) selected via `nic_type`; SKIPPED on nodes without the selected vendor's hardware
+- **`node_check.nic_driver_version.nic_type`**: List of vendor(s) to activate — one or more of `ainic`, `broadcom`, `mellanox` (default `["broadcom"]`)
+- **`node_check.nic_driver_version.ainic`** / **`broadcom`** / **`mellanox`**: Per-vendor golden-value sub-blocks (`expected_*_version`); the `mellanox` sub-block is new and unvalidated against real Mellanox hardware — its `<changeme>` defaults must be filled in before enabling
+- **`connectivity_check.ssh_mesh.enabled`**: Validate all-pairs passwordless SSH reachability (WARNING at worst)
+- **`connectivity_check.ssh_mesh.ssh_timeout_sec`**: Per-connection SSH timeout for each node-to-node probe
 - **`connectivity_check.ifoe.fabric_checks`**: Add MI4XX AIFM/AFM/vPOD and IFoE station/port checks
 - **`connectivity_check.rdma.connectivity_mode`**: `"basic"`, `"full_mesh"`, or `"skip"`
 - **`connectivity_check.ifoe.l2ping.enabled`**: Run the strict IFoE L2 connectivity gate
@@ -113,6 +155,11 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 - **`connectivity_check.ifoe.transferbench.scope`**: `"node"` or `"cluster"`
 - **`connectivity_check.ifoe.transferbench.profile`**: CVS-supported profile (`"smoketest"`)
 - **`connectivity_check.ifoe.transferbench.message_sizes`**, **`iterations`**, **`warmup_iterations`**: Workload intensity
+- **`connectivity_check.ifoe.nic_firmware.enabled`**: Validate device count and firmware/host-software versions for the vendor(s) selected via `nic_type`
+- **`connectivity_check.ifoe.nic_firmware.nic_type`**: List of vendor(s) to activate — one or more of `ainic`, `broadcom`, `mellanox` (default `["ainic"]`)
+- **`connectivity_check.ifoe.nic_firmware.ainic`** / **`broadcom`** / **`mellanox`**: Per-vendor `expected_nic_count` (FAIL on mismatch) and `expected_fw_version` / `expected_host_version` (WARNING on mismatch, AINIC only has host-software); the `mellanox` sub-block and the `broadcom` firmware fields are new and unvalidated against real hardware — their `<changeme>` defaults must be filled in before enabling
+- **`connectivity_check.ifoe.pfc_qos_dcqcn.enabled`**: Run the AINIC PFC/QoS/DCQCN control-plane blocking gate
+- **`connectivity_check.ifoe.pfc_qos_dcqcn.pfc`**, **`qos`**, **`dcqcn`**: Golden-value overrides for each control-plane facet (generic AINIC defaults, fully overridable)
 - **`node_check.expected_rocm_version`**: ROCm version expected across all nodes
 - **`connectivity_check.rdma.interfaces`**: List of expected RDMA interface names
 - **`connectivity_check.rdma.gid_index`**: GID index validated on those interfaces
@@ -125,6 +172,83 @@ Legacy RDMA configurations may temporarily use `node_check.gid_index` and
 and emits a deprecation warning. The legacy paths will be removed in a future
 release. If legacy and canonical values are both supplied, they must match.
 New configurations should use only the canonical paths.
+
+## Diagnostic Node and Connectivity Checks
+
+These checks are opt-in (disabled by default) and independent of RDMA/IFoE
+eligibility pruning. Each reports a simple per-node `{status, errors}` result.
+
+- **Ping Reachability** (`node_check.ping_check`) — ICMP `ping -c <count> -W
+  <timeout_sec>` from the CVS driver host to every cluster node. Diagnostic
+  only: a node-level FAIL is demoted to WARNING in the summary and never
+  gates overall preflight status.
+- **SSH Mesh Connectivity** (`connectivity_check.ssh_mesh`) — all-pairs SSH
+  reachability probe between every reachable node (not just driver-host to
+  node). WARNING at worst; never prunes nodes.
+- **Node Uptime** (`node_check.uptime_check`) — collects `uptime` output per
+  node for the HTML report. Purely informational; never affects status.
+- **/etc/hosts Consistency** (`node_check.etc_hosts`) — validates that every
+  cluster node address has an `/etc/hosts` entry, plus any explicit
+  `extra_entries` `{hostname, ip}` pairs. WARNING at worst.
+- **limits.conf Validation** (`node_check.limits_conf`) — validates that all
+  `required_lines` are present (whitespace-insensitive, any order) in
+  `/etc/security/limits.conf` on every node. Blocking FAIL when enabled.
+- **NIC Firmware/Host-Software** (`connectivity_check.ifoe.nic_firmware`) —
+  per-vendor check, activated via `nic_type` (one or more of `ainic`,
+  `broadcom`, `mellanox`). Each configured vendor validates its device count
+  via `ibv_devices` (FAIL on mismatch) and firmware/host-software version via
+  `nicctl` (AINIC) or `ethtool -i` (Broadcom/Mellanox) (WARNING on mismatch).
+  A node without a configured vendor's hardware is SKIPPED for that vendor
+  rather than FAILed. The Broadcom firmware sub-block and the entire Mellanox
+  sub-block are new and unvalidated against real hardware.
+- **NIC Driver Version** (`node_check.nic_driver_version`) — per-vendor
+  check, activated via `nic_type` (one or more of `ainic`, `broadcom`,
+  `mellanox`). Broadcom validates `bnxt_re`/`bnxt_en` kernel module version
+  and DKMS provenance via `modinfo`; AINIC validates `ionic`/`ionic_rdma`
+  module version; Mellanox validates `mlx5_core` module version and the
+  MLNX_OFED stack version via `ofed_info -s`. Nodes without a configured
+  vendor's hardware (e.g. AINIC/Pollara fleets when only `broadcom` is
+  selected) report SKIPPED rather than FAIL, so this check is safe to leave
+  enabled cluster-wide on mixed fleets. The Mellanox sub-block is new and
+  unvalidated against real Mellanox hardware.
+
+### Example config block
+
+```json
+"node_check": {
+  "ping_check": { "enabled": true, "count": 4, "timeout_sec": 1 },
+  "uptime_check": { "enabled": true },
+  "etc_hosts": { "enabled": true, "extra_entries": [] },
+  "limits_conf": {
+    "enabled": true,
+    "required_lines": [
+      "root soft memlock unlimited",
+      "root hard memlock unlimited",
+      "root soft nofile 1048576",
+      "root hard nofile 1048576",
+      "ubuntu soft memlock unlimited",
+      "ubuntu hard memlock unlimited",
+      "ubuntu soft nofile 1048576",
+      "ubuntu hard nofile 1048576"
+    ]
+  },
+  "nic_driver_version": {
+    "enabled": true,
+    "nic_type": ["broadcom"],
+    "broadcom": { "expected_bnxt_re_version": "236.1.155.0", "expected_bnxt_en_version": "1.10.3-236.1.155.0" }
+  }
+},
+"connectivity_check": {
+  "ssh_mesh": { "enabled": true, "ssh_timeout_sec": 10 },
+  "ifoe": {
+    "nic_firmware": {
+      "enabled": true,
+      "nic_type": ["ainic"],
+      "ainic": { "expected_nic_count": 8, "expected_fw_version": "1.117.5-a-56", "expected_host_version": "1.117.5-a-56" }
+    }
+  }
+}
+```
 
 ## IFoE L2 Connectivity
 
@@ -238,6 +362,43 @@ Per-node verdict is derived as:
 To exercise the rack IFoE switch end-to-end, set `scope` to `"cluster"` and
 allow TCP port `31337` between every selected node.
 
+## AINIC PFC/QoS/DCQCN
+
+Validates AINIC PFC, QoS, and DCQCN control-plane configuration via `nicctl`
+on every reachable node, run alongside the IFoE L2/TransferBench gates
+(after the node-health admission gate, before RDMA connectivity). This is a
+blocking FAIL gate when enabled through
+`preflight.connectivity_check.ifoe.pfc_qos_dcqcn.enabled`.
+
+Three independent validators run per node and are combined into a single
+per-node verdict (FAIL if any sub-check fails):
+
+- **PFC** — validates the number of AINIC cards reporting PFC state and the
+  pause type (`pfc.expected_card_count`, `pfc.expected_pause_type`).
+- **QoS** — validates DSCP-to-priority mappings, the PFC-enabled priority
+  bitmap and no-drop priorities, and per-priority scheduling
+  (algorithm|weight|rate-limit) for priorities 0, 3, and 6.
+- **DCQCN** — validates the active DCQCN profile ID, enablement status, and
+  the full set of congestion-control tuning parameters (AI rate, byte count,
+  alpha gain, monitor period, token bucket, CNP DSCP marking, etc.).
+
+All golden values under `pfc`, `qos`, and `dcqcn` are generic AINIC defaults
+and fully overridable per deployment; none are hardcoded to a specific
+customer environment.
+
+### Example config block
+
+```json
+"ifoe": {
+  "pfc_qos_dcqcn": {
+    "enabled": true,
+    "pfc": { "expected_card_count": 8, "expected_pause_type": "PFC" },
+    "qos": { "expected_card_count": 8, "dscp24_priority": "3", "dscp46_priority": "6" },
+    "dcqcn": { "expected_device_count": 8, "profile_id": 1, "status": "Enabled" }
+  }
+}
+```
+
 ## Output and Reporting
 
 ### Console Output
@@ -297,18 +458,28 @@ cvs run pytorch_xdit_wan \
 
 ```
 1. Load and validate cluster + preflight configurations
-2. Test SSH connectivity to all nodes
-3. Run generic GPU node health and optional MI4XX AFM/vPOD admission when enabled
-4. Validate ROCm version consistency
-5. Run IFoE checks before RDMA-specific eligibility pruning:
+2. Elimination tier: opt-in diagnostic ping reachability (never prunes),
+   SSH echo reachability (prunes unreachable nodes), opt-in all-pairs SSH
+   mesh check (diagnostic, never prunes), opt-in uptime (informational)
+3. Static config tier: opt-in /etc/hosts consistency, opt-in limits.conf
+   (blocking FAIL when enabled), opt-in per-vendor NIC firmware/device-count
+   validation, opt-in per-vendor NIC driver version (SKIPPED on nodes
+   without the selected vendor's hardware) — none of these prune
+4. Run generic GPU node health and optional MI4XX AFM/vPOD admission when
+   enabled (mandatory FAIL gate)
+5. Validate ROCm version consistency
+6. Run IFoE/functional checks, each BLOCKED (not run) if node-health
+   admission failed:
    - L2 connectivity using `afmctl test ping` (opt-in)
+   - AINIC PFC/QoS/DCQCN control-plane validation using `nicctl` (opt-in)
    - TransferBench scale-up data-path smoketest (opt-in)
-6. Run RDMA checks:
-   - Interface naming and presence
-   - GID consistency
-   - RDMA connectivity using `ibv_rc_pingpong` (mode-dependent)
-7. Generate the comprehensive summary and HTML report
-8. Return overall PASS/FAIL status
+7. Run RDMA tier:
+   - Interface naming and presence (prunes)
+   - GID consistency (prunes)
+   - RDMA connectivity using `ibv_rc_pingpong` (mode-dependent, BLOCKED if
+     node-health admission failed)
+8. Generate the comprehensive summary and HTML report
+9. Return overall PASS/FAIL status
 ```
 
 ### Parallel Execution
@@ -362,6 +533,50 @@ ls /sys/class/infiniband/
 
 # Check interface details
 ibv_devinfo
+```
+
+#### limits.conf Failures
+```bash
+# Inspect current limits.conf
+cat /etc/security/limits.conf
+
+# Verify effective limits for the running shell
+ulimit -a
+```
+
+#### NIC Firmware/Host-Software Mismatches
+```bash
+# Count RDMA devices (AINIC/Broadcom/Mellanox)
+ibv_devices
+
+# AINIC: check firmware/host-software versions
+nicctl show version
+
+# Broadcom/Mellanox: check per-interface firmware version
+ethtool -i <iface>
+```
+
+#### NIC Driver Version Mismatches
+```bash
+# Broadcom: check bnxt_re/bnxt_en module version and DKMS provenance
+modinfo bnxt_re
+modinfo bnxt_en
+
+# AINIC: check ionic/ionic_rdma module version
+modinfo ionic
+modinfo ionic_rdma
+
+# Mellanox: check mlx5_core module version and OFED stack version
+modinfo mlx5_core
+ofed_info -s
+```
+
+#### PFC/QoS/DCQCN Failures
+```bash
+# Inspect AINIC control-plane state
+nicctl show pfc
+nicctl show qos
+nicctl show dcqcn
 ```
 
 ### Performance Considerations

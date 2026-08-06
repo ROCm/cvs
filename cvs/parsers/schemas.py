@@ -952,6 +952,148 @@ class PreflightDebugConfig(BaseModel):
     )
 
 
+class PreflightPingCheckConfig(BaseModel):
+    """ICMP ping reachability policy (driver-host -> node)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=False, description="Enable ICMP ping reachability check from the CVS driver host")
+    count: int = Field(default=4, ge=1, description="Number of ICMP echo requests per node (ping -c)")
+    timeout_sec: int = Field(default=1, ge=1, description="Per-ping timeout in seconds (ping -W)")
+
+
+class PreflightUptimeCheckConfig(BaseModel):
+    """Informational uptime collection policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=False, description="Enable informational 'uptime' collection across nodes")
+
+
+class PreflightEtcHostsExtraEntry(BaseModel):
+    """A single operator-supplied /etc/hosts entry that must match exactly."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    hostname: str = Field(description="Hostname that must be mapped to 'ip' in /etc/hosts")
+    ip: str = Field(description="IP address expected for 'hostname' in /etc/hosts")
+
+
+class PreflightEtcHostsConfig(BaseModel):
+    """/etc/hosts consistency policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False, description="Enable /etc/hosts consistency validation against cluster inventory"
+    )
+    extra_entries: List[PreflightEtcHostsExtraEntry] = Field(
+        default_factory=list,
+        description="Additional hostname/IP pairs expected in /etc/hosts beyond the cluster inventory",
+    )
+
+
+class PreflightLimitsConfConfig(BaseModel):
+    """/etc/security/limits.conf validation policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False, description="Enable /etc/security/limits.conf validation (blocking when enabled)"
+    )
+    required_lines: List[str] = Field(
+        default_factory=lambda: [
+            "root soft memlock unlimited",
+            "root hard memlock unlimited",
+            "root soft nofile 1048576",
+            "root hard nofile 1048576",
+            "ubuntu soft memlock unlimited",
+            "ubuntu hard memlock unlimited",
+            "ubuntu soft nofile 1048576",
+            "ubuntu hard nofile 1048576",
+        ],
+        min_length=1,
+        description="Lines required to be present verbatim (whitespace-normalized) in /etc/security/limits.conf",
+    )
+
+
+class PreflightAinicDriverVersionConfig(BaseModel):
+    """AINIC ionic/ionic_rdma driver version policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_ionic_driver_version: str = Field(
+        default="1.117.5-a-56", description="Expected 'ionic' kernel module version (modinfo -F version ionic)"
+    )
+    expected_ionic_rdma_driver_version: str = Field(
+        default="1.117.5-a-56",
+        description="Expected 'ionic_rdma' kernel module version (modinfo -F version ionic_rdma)",
+    )
+
+
+class PreflightBroadcomDriverVersionConfig(BaseModel):
+    """Broadcom bnxt_re/bnxt_en driver version policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_bnxt_re_version: str = Field(default="236.1.155.0", description="Expected bnxt_re driver version")
+    expected_bnxt_en_version: str = Field(default="1.10.3-236.1.155.0", description="Expected bnxt_en driver version")
+
+
+class PreflightMellanoxDriverVersionConfig(BaseModel):
+    """Mellanox mlx5_core/OFED driver version policy (new, unvalidated against real Mellanox hardware)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_mlx5_core_version: str = Field(
+        default="<changeme>", description="Expected mlx5_core kernel module version (modinfo -F version mlx5_core)"
+    )
+    expected_ofed_version: str = Field(
+        default="<changeme>", description="Expected MLNX_OFED stack version (ofed_info -s)"
+    )
+
+
+class PreflightNicDriverVersionConfig(BaseModel):
+    """Per-vendor NIC driver version validation, activated via 'nic_type'."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False,
+        description="Enable NIC driver version+DKMS validation on nodes with the selected vendor(s)' hardware",
+    )
+    nic_type: List[str] = Field(
+        default_factory=lambda: ["broadcom"],
+        description="Vendor sub-block(s) to activate: one or more of 'ainic', 'broadcom', 'mellanox'",
+    )
+    ainic: PreflightAinicDriverVersionConfig = Field(
+        default_factory=PreflightAinicDriverVersionConfig, description="AINIC driver version golden values"
+    )
+    broadcom: PreflightBroadcomDriverVersionConfig = Field(
+        default_factory=PreflightBroadcomDriverVersionConfig, description="Broadcom driver version golden values"
+    )
+    mellanox: PreflightMellanoxDriverVersionConfig = Field(
+        default_factory=PreflightMellanoxDriverVersionConfig, description="Mellanox driver version golden values"
+    )
+
+    @field_validator('nic_type')
+    @classmethod
+    def validate_nic_type(cls, value: List[str]) -> List[str]:
+        valid_vendors = {'ainic', 'broadcom', 'mellanox'}
+        unknown = sorted(set(value) - valid_vendors)
+        if unknown:
+            raise ValueError(f"nic_driver_version.nic_type contains unknown vendor(s): {', '.join(unknown)}")
+        if len(value) != len(set(value)):
+            raise ValueError("nic_driver_version.nic_type must not contain duplicate vendor names")
+        return value
+
+    @model_validator(mode='after')
+    def validate_nic_type_not_empty_when_enabled(self):
+        if self.enabled and not self.nic_type:
+            raise ValueError("nic_driver_version.nic_type must not be empty when enabled is true")
+        return self
+
+
 class PreflightNodeCheckConfig(BaseModel):
     """Individual node validation settings."""
 
@@ -960,6 +1102,21 @@ class PreflightNodeCheckConfig(BaseModel):
     enabled: bool = Field(default=True, description="Enable generic GPU node health and ROCm validation")
     gpus_per_node: int = Field(default=4, ge=1, description="Expected AMD GPU count on each node")
     expected_rocm_version: str = Field(default="6.2.0", description="Expected ROCm version across all cluster nodes")
+    ping_check: PreflightPingCheckConfig = Field(
+        default_factory=PreflightPingCheckConfig, description="ICMP ping reachability check"
+    )
+    uptime_check: PreflightUptimeCheckConfig = Field(
+        default_factory=PreflightUptimeCheckConfig, description="Informational uptime collection"
+    )
+    etc_hosts: PreflightEtcHostsConfig = Field(
+        default_factory=PreflightEtcHostsConfig, description="/etc/hosts consistency check"
+    )
+    limits_conf: PreflightLimitsConfConfig = Field(
+        default_factory=PreflightLimitsConfConfig, description="/etc/security/limits.conf validation"
+    )
+    nic_driver_version: PreflightNicDriverVersionConfig = Field(
+        default_factory=PreflightNicDriverVersionConfig, description="Per-vendor NIC driver version validation"
+    )
 
 
 class PreflightRdmaConfig(BaseModel):
@@ -1111,6 +1268,153 @@ class PreflightTransferBenchConfig(BaseModel):
         return normalized
 
 
+class PreflightAinicFirmwareConfig(BaseModel):
+    """AINIC NIC count / firmware / host-software version policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_nic_count: int = Field(default=8, ge=1, description="Expected count of ionic/AINIC RDMA devices per node")
+    expected_fw_version: str = Field(
+        default="1.117.5-a-56", description="Expected AINIC firmware version (Uboot-A and Firmware-A)"
+    )
+    expected_host_version: str = Field(
+        default="1.117.5-a-56", description="Expected AINIC host-software (nicctl, IPC driver) version"
+    )
+
+
+class PreflightBroadcomFirmwareConfig(BaseModel):
+    """Broadcom NIC count / firmware version policy (new)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_nic_count: int = Field(
+        default=2, ge=1, description="Expected count of Broadcom bnxt RDMA devices per node"
+    )
+    expected_fw_version: str = Field(
+        default="<changeme>",
+        description="Expected Broadcom NIC firmware version, e.g. from 'ethtool -i <bnxt_en iface>'",
+    )
+
+
+class PreflightMellanoxFirmwareConfig(BaseModel):
+    """Mellanox NIC count / firmware version policy (new, unvalidated against real Mellanox hardware)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_nic_count: int = Field(
+        default=8, ge=1, description="Expected count of Mellanox mlx5 RDMA devices per node"
+    )
+    expected_fw_version: str = Field(
+        default="<changeme>",
+        description="Expected Mellanox NIC firmware version, e.g. from 'mlxfwmanager --query' or 'ethtool -i'",
+    )
+
+
+class PreflightNicFirmwareConfig(BaseModel):
+    """Per-vendor NIC firmware/host-software validation, activated via 'nic_type'."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False, description="Enable NIC firmware/host-software version validation for the selected vendor(s)"
+    )
+    nic_type: List[str] = Field(
+        default_factory=lambda: ["ainic"],
+        description="Vendor sub-block(s) to activate: one or more of 'ainic', 'broadcom', 'mellanox'",
+    )
+    ainic: PreflightAinicFirmwareConfig = Field(
+        default_factory=PreflightAinicFirmwareConfig, description="AINIC firmware/host-software golden values"
+    )
+    broadcom: PreflightBroadcomFirmwareConfig = Field(
+        default_factory=PreflightBroadcomFirmwareConfig, description="Broadcom firmware golden values"
+    )
+    mellanox: PreflightMellanoxFirmwareConfig = Field(
+        default_factory=PreflightMellanoxFirmwareConfig, description="Mellanox firmware golden values"
+    )
+
+    @field_validator('nic_type')
+    @classmethod
+    def validate_nic_type(cls, value: List[str]) -> List[str]:
+        valid_vendors = {'ainic', 'broadcom', 'mellanox'}
+        unknown = sorted(set(value) - valid_vendors)
+        if unknown:
+            raise ValueError(f"nic_firmware.nic_type contains unknown vendor(s): {', '.join(unknown)}")
+        if len(value) != len(set(value)):
+            raise ValueError("nic_firmware.nic_type must not contain duplicate vendor names")
+        return value
+
+    @model_validator(mode='after')
+    def validate_nic_type_not_empty_when_enabled(self):
+        if self.enabled and not self.nic_type:
+            raise ValueError("nic_firmware.nic_type must not be empty when enabled is true")
+        return self
+
+
+class PreflightPfcConfig(BaseModel):
+    """Generic AINIC PFC pause-type golden values."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_card_count: int = Field(default=8, ge=1, description="Expected number of AINIC cards per node")
+    expected_pause_type: str = Field(default="PFC", description="Expected pause type reported by 'nicctl show port'")
+
+
+class PreflightQosConfig(BaseModel):
+    """Generic AINIC DSCP/QoS/scheduling golden values."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_card_count: int = Field(default=8, ge=1, description="Expected number of AINIC cards per node")
+    dscp24_priority: str = Field(default="3", description="Expected priority mapped from DSCP 24")
+    dscp46_priority: str = Field(default="6", description="Expected priority mapped from DSCP 46")
+    dscp46_purpose: str = Field(default="xccl-cts", description="Expected DSCP-to-purpose label for DSCP 46")
+    pfc_priority_bitmap: str = Field(default="0x8", description="Expected PFC priority bitmap")
+    pfc_no_drop_priorities: str = Field(default="3", description="Expected PFC no-drop priorities")
+    priority0_scheduling: str = Field(
+        default="DWRR|1|N/A", description="Expected 'type|bandwidth|rate-limit' scheduling for priority 0"
+    )
+    priority3_scheduling: str = Field(
+        default="DWRR|99|N/A", description="Expected 'type|bandwidth|rate-limit' scheduling for priority 3"
+    )
+    priority6_scheduling: str = Field(
+        default="strict|N/A|10", description="Expected 'type|bandwidth|rate-limit' scheduling for priority 6"
+    )
+
+
+class PreflightDcqcnConfig(BaseModel):
+    """Generic AINIC DCQCN congestion-control profile golden values."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_device_count: int = Field(
+        default=8, ge=1, description="Expected number of ionic/AINIC RDMA devices per node"
+    )
+    profile_id: int = Field(default=1, ge=0, description="DCQCN profile id passed to 'nicctl show dcqcn -i'")
+    status: str = Field(default="Enabled", description="Expected DCQCN 'Status' field")
+    ai_rate: str = Field(default="160", description="Expected 'Rate increase in AI phase' field")
+    byte_count: str = Field(default="431068", description="Expected 'Rate increase byte count' field")
+    alpha_g: str = Field(default="512", description="Expected 'Alpha update G value' field")
+    alpha_interval: str = Field(default="1", description="Expected 'Alpha update interval' field")
+    hai_rate: str = Field(default="300", description="Expected 'Rate increase in HAI phase' field")
+    initial_alpha: str = Field(default="64", description="Expected 'Initial alpha value' field")
+    monitor_period: str = Field(default="1", description="Expected 'Rate reduce monitor period' field")
+    rate_threshold: str = Field(default="1", description="Expected 'Rate increase threshold' field")
+    rate_interval: str = Field(default="1", description="Expected 'Rate increase interval' field")
+    token_bucket: str = Field(default="800000", description="Expected 'Token bucket size' field")
+    cnp_dscp: str = Field(default="46", description="Expected 'DSCP value used for CNP' field")
+
+
+class PreflightPfcQosDcqcnConfig(BaseModel):
+    """AINIC PFC / QoS / DCQCN control-plane validation policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=False, description="Enable AINIC PFC/QoS/DCQCN control-plane validation")
+    pfc: PreflightPfcConfig = Field(default_factory=PreflightPfcConfig, description="PFC golden values")
+    qos: PreflightQosConfig = Field(default_factory=PreflightQosConfig, description="QoS/DSCP golden values")
+    dcqcn: PreflightDcqcnConfig = Field(default_factory=PreflightDcqcnConfig, description="DCQCN golden values")
+
+
 class PreflightIfoeConfig(BaseModel):
     """MI4XX IFoE admission and data-path checks."""
 
@@ -1128,6 +1432,25 @@ class PreflightIfoeConfig(BaseModel):
         default_factory=PreflightTransferBenchConfig,
         description="TransferBench IFoE data-path validation",
     )
+    nic_firmware: PreflightNicFirmwareConfig = Field(
+        default_factory=PreflightNicFirmwareConfig,
+        description="Per-vendor NIC count / firmware / host-software version validation",
+    )
+    pfc_qos_dcqcn: PreflightPfcQosDcqcnConfig = Field(
+        default_factory=PreflightPfcQosDcqcnConfig,
+        description="AINIC PFC/QoS/DCQCN control-plane validation",
+    )
+
+
+class PreflightSshMeshConfig(BaseModel):
+    """Full node x node passwordless SSH mesh diagnostic policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False, description="Enable full node x node passwordless SSH mesh diagnostic (WARNING-only)"
+    )
+    ssh_timeout_sec: int = Field(default=10, ge=1, description="Per-peer SSH ConnectTimeout in seconds")
 
 
 class PreflightConnectivityCheckConfig(BaseModel):
@@ -1137,6 +1460,9 @@ class PreflightConnectivityCheckConfig(BaseModel):
 
     rdma: PreflightRdmaConfig = Field(default_factory=PreflightRdmaConfig, description="RDMA connectivity settings")
     ifoe: PreflightIfoeConfig = Field(default_factory=PreflightIfoeConfig, description="IFoE connectivity settings")
+    ssh_mesh: PreflightSshMeshConfig = Field(
+        default_factory=PreflightSshMeshConfig, description="Full node x node SSH mesh diagnostic"
+    )
 
 
 class PreflightReportingConfig(BaseModel):
