@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+from cvs.lib.report.rundeck.config_builder import _default_run_card
 from cvs.lib.report.types import InferenceReportConfig, ReportChartSeries
 
 
@@ -50,6 +51,7 @@ def generic_inference_report_config() -> InferenceReportConfig:
         cell_highlights=(("output_throughput", "Output tok/s"),),
         chart_series=(ReportChartSeries("output_throughput", "Output tok/s", "tok/s"),),
         inference_test_substring="test_inference",
+        run_card_display_builder=_default_run_card,
     )
 
 

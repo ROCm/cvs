@@ -32,7 +32,7 @@ class TestPytestHooks(unittest.TestCase):
         )
 
         def fake_getfixturevalue(name):
-            if name == "inf_res_dict":
+            if name in ("inf_res_dict", "cvs_results_dict"):
                 return {"k": 1}
             if name == "variant_config":
                 return object()

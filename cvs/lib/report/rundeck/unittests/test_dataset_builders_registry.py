@@ -7,7 +7,7 @@ from cvs.lib.report.rundeck.dataset_builders.registry import build_datasets, reg
 
 class TestDatasetBuildersRegistry(unittest.TestCase):
     def test_build_datasets_returns_empty_when_builder_missing(self):
-        self.assertEqual(build_datasets("sweep", {}, {}), {})
+        self.assertEqual(build_datasets("missing_builder_xyz", {}, {}), {})
 
     def test_register_dataset_builder(self):
         @register_dataset_builder("demo_ut_builder")
