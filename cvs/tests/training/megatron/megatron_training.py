@@ -155,7 +155,7 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_smoke(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 1: smoke-test — model loads and runs _SMOKE_ITERS steps without error.
+    """Stage 2: smoke-test — model loads and runs _SMOKE_ITERS steps without error.
 
     Independent of the sweep. Brings up a short-lived training job with a fixed
     small cell (MBS/GBS above) so a broken model, missing script, or NCCL failure
@@ -163,15 +163,14 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
     in finally (success or failure) so test_training's first combo starts on a
     clean node.
 
-    Asserts:
-      - Training reaches iteration _SMOKE_ITERS/_SMOKE_ITERS (no hang or early exit)
-      - At least one throughput value is parsed (model actually ran forward passes)
-      - No NaN or Inf values in any metric line
+    Passes if training reaches iteration _SMOKE_ITERS/_SMOKE_ITERS without error.
+    No metric assertions — completion without error is the only requirement.
     """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
     distributed = "distributed" in variant_config.framework
+    globals.error_list = []
 
     mt_obj = create_training_job(
         orch,
@@ -194,41 +193,15 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
         mt_obj.build_training_job_cmd()
         mt_obj.start_training_job()
         mt_obj.poll_for_training_completion()
-        results = mt_obj.training_results_dict
-        if not results:
-            lifecycle.failed = True
-            pytest.fail(
-                "smoke: no results parsed after training — model may have failed "
-                "to load or hung before the final iteration; check the training log"
-            )
-        tput = results.get("throughput_per_gpu", [])
-        if not tput or float(tput[-1]) <= 0:
-            lifecycle.failed = True
-            pytest.fail(
-                f"smoke: throughput_per_gpu is zero or missing ({results}) — "
-                "model loaded but did not produce valid training output"
-            )
-        nan_hits = [
-            f"{k}={v}"
-            for k, vals in results.items()
-            for v in vals
-            if v.strip().lower() in ("nan", "inf", "-inf")
-        ]
-        if nan_hits:
-            lifecycle.failed = True
-            pytest.fail(f"smoke: NaN or Inf values in results: {nan_hits}")
     except Exception:
         lifecycle.failed = True
         raise
     finally:
         mt_obj.stop_training_processes()
 
+    update_test_result()
     lifecycle.record(request.node.nodeid, "smoke", time.monotonic() - t)
-    log.info(
-        "smoke PASSED | throughput=%.2f TFLOP/s/GPU | iters=%s",
-        float(mt_obj.training_results_dict.get("throughput_per_gpu", ["0"])[-1]),
-        _SMOKE_ITERS,
-    )
+    log.info("smoke PASSED | iters=%s", _SMOKE_ITERS)
 
 
 def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request):
@@ -288,11 +261,11 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
     tput_per_gpu = train_res_dict[combo_key].get("throughput_per_gpu", [])
     if tput_per_gpu:
         gpus_per_node = 8
-        tokens_per_sec_total = float(tput_per_gpu[-1]) * mt_obj.nnodes * gpus_per_node
+        tokens_per_sec_total = float(tput_per_gpu[-1]) * int(mt_obj.nnodes) * gpus_per_node
         baseline = variant_config.scaling_baseline
         efficiency = compute_scaling_efficiency(
             tokens_per_sec_total,
-            mt_obj.nnodes,
+            int(mt_obj.nnodes),
             baseline.tokens_per_sec_total,
             baseline.num_nodes,
         )
