@@ -6,7 +6,7 @@ Standalone JAX MaxText training job driven by a ContainerOrchestrator.
 
 This class talks only to `orch.exec`, which already routes into the running
 container, and to a typed `TrainingVariantConfig` (see
-`cvs.lib.training.jax.utils.training_config_loader`).
+`cvs.lib.training.jaxmaxtext.utils.training_config_loader`).
 
 All container interaction goes through `orch.exec()`. No direct Pssh or
 docker_lib. The training command, env script, and MaxText YAML config are
@@ -24,7 +24,7 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.lib.training.jax.utils.maxtext_parsing import (
+from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     parse_training_log,
     extract_step_metrics,
     extract_eval_metrics,

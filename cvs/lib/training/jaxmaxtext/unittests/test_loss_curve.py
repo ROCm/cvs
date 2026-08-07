@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unit tests for cvs/lib/training/jax/utils/loss_curve.py::render_loss_curve_png.
+Unit tests for cvs/lib/training/jaxmaxtext/utils/loss_curve.py::render_loss_curve_png.
 The renderer must never raise: it returns a path on success and None on empty
 input or any failure (missing matplotlib, unwritable path).
 '''
@@ -11,7 +11,7 @@ import os
 import tempfile
 import unittest
 
-from cvs.lib.training.jax.utils.loss_curve import render_loss_curve_png
+from cvs.lib.training.jaxmaxtext.utils.loss_curve import render_loss_curve_png
 
 
 class RenderLossCurvePngTests(unittest.TestCase):

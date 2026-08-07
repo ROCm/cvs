@@ -2,14 +2,14 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unit tests for the pure parsers in cvs/lib/training/jax/utils/maxtext_parsing.py:
+Unit tests for the pure parsers in cvs/lib/training/jaxmaxtext/utils/maxtext_parsing.py:
 step/eval extraction, aggregate metrics, convergence (row 33), validation loss
 (row 34), and the loss-curve sampling + slope verdict (row 32).
 '''
 
 import unittest
 
-from cvs.lib.training.jax.utils.maxtext_parsing import (
+from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     compute_convergence,
     evaluate_loss_decreasing,
     extract_eval_metrics,

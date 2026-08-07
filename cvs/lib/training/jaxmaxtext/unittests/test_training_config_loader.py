@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unit tests for cvs/lib/training/jax/utils/training_config_loader.py: schema
+Unit tests for cvs/lib/training/jaxmaxtext/utils/training_config_loader.py: schema
 defaults for the metric add-ons (scaling_baseline / convergence / loss_curve),
 the cell_key / expected_cells contract, the threshold-coverage validator, and a
 round-trip load of a real jaxmaxtext config file.
@@ -12,7 +12,7 @@ import unittest
 import warnings
 from pathlib import Path
 
-from cvs.lib.training.jax.utils.training_config_loader import (
+from cvs.lib.training.jaxmaxtext.utils.training_config_loader import (
     Convergence,
     LossCurve,
     ScalingBaseline,
@@ -21,11 +21,11 @@ from cvs.lib.training.jax.utils.training_config_loader import (
 )
 
 # Repo package root (the inner `cvs/` dir that holds `input/`): the test lives at
-# cvs/lib/training/jax/unittests/, so parents[4] is that package root.
+# cvs/lib/training/jaxmaxtext/unittests/, so parents[4] is that package root.
 _PKG_ROOT = Path(__file__).resolve().parents[4]
 _SINGLE_CONFIG = (
     _PKG_ROOT
-    / "input/config_file/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single_config.json"
+    / "input/config_file/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single.json"
 )
 
 
