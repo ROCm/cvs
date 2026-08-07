@@ -28,12 +28,7 @@ from cvs.lib.report.types import ReportChartSeries
 
 _ATOM_CHART_SERIES = (
     *DEFAULT_PERF_CHART_SERIES,
-    ReportChartSeries(
-        "efficiency_pct",
-        "Scaling efficiency",
-        "%",
-        metric_key="scaling.efficiency_pct",
-    ),
+    ReportChartSeries("scaling.efficiency_pct", "Scaling efficiency", "%"),
 )
 
 
