@@ -212,7 +212,7 @@ def resolve_multinode_fabric(
     """Resolve ``NCCL_IB_HCA`` devices and the socket netdev for a multinode run.
 
     Used by ``test_discover_topology`` (once per lifecycle) and lazily by
-    ``InferenceXAtomJob.build_server_cmd`` when a partial ``-k`` filter skips
+    ``AtomJob.build_server_cmd`` when a partial ``-k`` filter skips
     the topology test.
     """
     discovered = discover_ib_hca_names(orch)

@@ -6,9 +6,30 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.lib import globals
-from cvs.lib.inference_max_lib import InferenceMaxJob, VllmJob
 
 log = globals.log
+
+
+class _LegacyVllmInferenceJobPlaceholder:
+    """``InferenceJobFactory`` no longer constructs a host+docker vLLM ``InferenceBaseJob``."""
+
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError(
+            "InferenceJobFactory no longer builds a host+docker vLLM InferenceBaseJob. "
+            "Use ``cvs.lib.inference.vllm_job.VllmJob`` with ``ContainerOrchestrator`` "
+            "from the tests under ``cvs.tests.inference.vllm``."
+        )
+
+
+class _LegacyAtomInferenceJobPlaceholder:
+    """``InferenceJobFactory`` no longer constructs a host+docker ATOM ``InferenceBaseJob``."""
+
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError(
+            "InferenceMax is deprecated. Use ``cvs.lib.inference.atom.atom_orch.AtomJob`` "
+            "with ``ContainerOrchestrator`` from the tests under ``cvs.tests.inference.atom`` "
+            "(``atom`` suite and schema_version 1 configs)."
+        )
 
 
 class InferenceJobFactory:
@@ -16,8 +37,9 @@ class InferenceJobFactory:
 
     # Registry of supported frameworks
     _FRAMEWORK_CLASSES = {
-        'vllm': VllmJob,
-        'inferencemax': InferenceMaxJob,
+        'vllm': _LegacyVllmInferenceJobPlaceholder,
+        'inferencemax': _LegacyAtomInferenceJobPlaceholder,
+        'atom': _LegacyAtomInferenceJobPlaceholder,
     }
 
     @classmethod
@@ -29,15 +51,18 @@ class InferenceJobFactory:
             inference_config_dict: Infrastructure configuration dictionary
 
         Returns:
-            Detected framework name ('vllm' or 'inferencemax')
+            Detected framework name ('vllm' or 'atom')
 
         Detection logic:
-            - If 'inferencemax_repo' is present → InferenceMAX
+            - If 'inferencemax_repo' is present → atom (InferenceMax deprecated)
             - If 'vllm_script_path' is present → vLLM
             - Otherwise → vLLM (default)
         """
         if 'inferencemax_repo' in inference_config_dict:
-            return 'inferencemax'
+            log.warning(
+                "inferencemax_repo detected; InferenceMax is deprecated — use the atom suite instead"
+            )
+            return 'atom'
         elif 'vllm_script_path' in inference_config_dict:
             return 'vllm'
         else:
@@ -69,35 +94,13 @@ class InferenceJobFactory:
             hf_token: HuggingFace token
             gpu_type: GPU type (default: 'mi300')
             distributed_inference: Whether to use distributed inference (default: False)
-            framework: Framework type ('vllm', 'inferencemax', or None for auto-detect)
+            framework: Framework type ('vllm', 'inferencemax', 'atom', or None for auto-detect)
 
         Returns:
-            Instance of VllmJob or InferenceMaxJob
+            A placeholder that raises — use suite jobs under ``cvs.tests.inference`` instead.
 
         Raises:
             ValueError: If framework is not supported
-
-        Examples:
-            # Auto-detect from config:
-            job = InferenceJobFactory.create_job(
-                c_phdl=client_handle,
-                s_phdl=server_handle,
-                model_name='qwen3-80b',
-                inference_config_dict=config,  # Contains 'inferencemax_repo' or 'vllm_script_path'
-                benchmark_params_dict=params,
-                hf_token=token
-            )
-
-            # Explicit framework:
-            job = InferenceJobFactory.create_job(
-                framework='vllm',
-                c_phdl=client_handle,
-                s_phdl=server_handle,
-                model_name='qwen3-80b',
-                inference_config_dict=config,
-                benchmark_params_dict=params,
-                hf_token=token
-            )
         """
         # Auto-detect framework if not specified
         if framework is None:
@@ -105,6 +108,9 @@ class InferenceJobFactory:
             log.info(f'Auto-detected framework: {framework}')
 
         framework_lower = framework.lower()
+        if framework_lower == 'inferencemax':
+            log.warning("framework='inferencemax' is deprecated; use atom")
+            framework_lower = 'atom'
 
         if framework_lower not in cls._FRAMEWORK_CLASSES:
             supported = ', '.join(cls._FRAMEWORK_CLASSES.keys())

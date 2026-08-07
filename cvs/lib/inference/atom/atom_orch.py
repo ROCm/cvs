@@ -653,6 +653,9 @@ class AtomJob:
                 "bash -c "
                 + shlex.quote("pkill -f 'atom.entrypoints.openai_server' || pkill -f 'openai_server' || true")
             )
+        elif self._uses_sglang_serve():
+            log.info("stopping sglang server")
+            self._exec_all("bash -c 'pkill -f \"sglang.launch_server\" || true'")
         else:
             log.info("stopping vllm server")
             self._exec_all("bash -c 'pkill -f \"vllm serve\" || true'")
