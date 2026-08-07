@@ -113,5 +113,8 @@
         "concurrency": 16
       }
     ]
+  },
+  "accuracy": {
+    "tasks": []
   }
 }
