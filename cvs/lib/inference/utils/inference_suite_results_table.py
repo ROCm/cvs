@@ -9,7 +9,7 @@ that uses the same column preset and ``inf_res_dict`` keys.
 
 Bind a column preset with ``make_print_results_table(columns)`` and export the
 returned callable as ``test_print_results_table`` from the suite module (see
-``cvs/tests/inference/inferencex_atom/_shared.py``). Other suites can supply
+``cvs/tests/inference/atom/_shared.py``). Other suites can supply
 their own ``(header_label, client.*_key)`` tuples without duplicating the
 tabulate loop.
 '''
@@ -23,7 +23,7 @@ log = globals.log
 # Column tuple: ``(header label, client.* metric key or None for fixed key fields)``.
 # First seven columns are always Model, GPU, ISL, OSL, Policy, Conc, Host.
 
-INFERENCEX_ATOM_RESULTS_COLUMNS = (
+ATOM_RESULTS_COLUMNS = (
     ("Model", None),
     ("GPU", None),
     ("ISL", None),

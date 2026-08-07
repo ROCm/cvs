@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Mapping, Optional
 
 from cvs.lib.report.formatting import fmt_num
 from cvs.lib.report.types import InferenceReportConfig
-from cvs.lib.utils.verdict import _check_one
+from cvs.lib.report.verdict import _check_one
 
 
 def metric_pass(metric: str, actual: Any, spec: Optional[dict]) -> str:
@@ -141,7 +141,7 @@ def build_cell_record(
                 "label": label,
                 "metric": full,
                 "actual": actual,
-                "unit": config.metric_units.get(short.rsplit(".", 1)[-1], ""),
+                "unit": config.metric_units.get(short, ""),
                 "spec": spec,
                 "status": metric_pass(full, actual, spec) if enforce and spec else "record",
                 "bar_pct": bar_pct(float(actual), spec) if spec is not None and actual is not None else None,

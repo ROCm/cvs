@@ -41,8 +41,8 @@ You can list available tests using either `cvs run` (with no arguments) or `cvs 
       • ib_perf_bw_test
       • install_ibperf_tools
   
-    cvs.tests.inference.inferencex_atom (1 test suite)
-      • inferencex_atom
+    cvs.tests.inference.atom (1 test suite)
+      • atom
   
     cvs.tests.inference.pytorch_xdit (2 test suites)
       • pytorch_xdit_flux1_dev_single
@@ -625,38 +625,38 @@ Use these scripts to run the Mori tests.
   cvs run mori_benchmark_test --cluster_file input/cluster_file/cluster.json --config_file input/config_file/mori/mi35x_mori_config.json --html=/var/www/html/cvs/mori.html --capture=tee-sys --self-contained-html --log-file=/tmp/mori.log -vvv -s
 
 
-InferenceX ATOM test scripts
+ATOM test scripts
 ------------------------------
 
-You can list all available InferenceX ATOM test cases using the CLI:
+You can list all available ATOM test cases using the CLI:
 
 .. code:: bash
 
-  cvs list inferencex_atom
+  cvs list atom
 
 .. code:: text
 
-  Available tests in inferencex_atom:
+  Available tests in atom:
     - test_launch_container
-    - test_inferencex_atom_inference
+    - test_atom_inference
     - test_print_results_table
     - test_teardown
 
-Use these scripts to run the InferenceX ATOM tests. Supply your own suite JSON
-(``schema_version: 1`` variant config); see :doc:`../reference/configuration-files/inferencex_atom`.
+Use these scripts to run the ATOM tests. Supply your own suite JSON
+(``schema_version: 1`` variant config); see :doc:`../reference/configuration-files/atom`.
 After ``cvs copy-config``, keep **one** ``*threshold.json`` in the same directory as the
-``--config_file`` you pass (per-variant subdirs under ``~/input/.../inferencex_atom/``).
-Copy-paste lab commands: ``cvs/input/config_file/inference/inferencex_atom/README.md``.
+``--config_file`` you pass (per-variant subdirs under ``~/input/.../atom/``).
+Copy-paste lab commands: ``cvs/input/config_file/inference/atom/README.md``.
 
 .. code:: bash
 
   TS=$(date +%Y%m%d_%H%M%S)
-  cvs run inferencex_atom \
-    --cluster_file ~/input/cluster_file/inferencex_atom_cluster.json \
-    --config_file ~/input/config_file/inference/inferencex_atom/single/mi300x_inferencex-atom_deepseek-r1_fp8_single.json \
-    --html=~/cvs_results/${TS}_ix-atom-single_mi300x.html \
+  cvs run atom \
+    --cluster_file ~/input/cluster_file/atom_cluster.json \
+    --config_file ~/input/config_file/inference/atom/single/mi300x_atom_deepseek-r1_fp8_single.json \
+    --html=~/cvs_results/${TS}_atom-single_mi300x.html \
     --self-contained-html \
-    --log-file=~/cvs_results/${TS}_ix-atom-single_mi300x.log \
+    --log-file=~/cvs_results/${TS}_atom-single_mi300x.log \
     -vvv -s
 
 
@@ -759,7 +759,7 @@ VLLM test scripts
 
 Single-node vLLM benchmarks use one parametrized suite, ``vllm_single``. Each **variant**
 is a directory under ``cvs/input/config_file/inference/vllm_single/<variant>/`` containing
-``*_config.json`` and a sibling ``*_threshold.json`` (see :func:`cvs.lib.inference.utils.inferencing_config_loader.load_variant` for vLLM, or :func:`cvs.lib.inference.inferencex_atom.inferencex_atom_config_loader.load_variant` for InferenceX ATOM).
+``*_config.json`` and a sibling ``*_threshold.json`` (see :func:`cvs.lib.inference.utils.inferencing_config_loader.load_variant` for vLLM, or :func:`cvs.lib.inference.atom.atom_config_loader.load_variant` for ATOM).
 Point ``--config_file`` at the variant's ``*_config.json`` and ``--cluster_file`` at a cluster
 JSON that matches your hardware (for example ``input/cluster_file/mi300x_vllm_single.json``).
 
