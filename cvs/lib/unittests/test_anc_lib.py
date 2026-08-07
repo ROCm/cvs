@@ -125,6 +125,77 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
         self.assertIn("/home/u/my/anc/anc/anc.py --version", phdl.cmd)
         self.assertTrue(result["node1"])
 
+    def test_direct_uses_content_list(self):
+        content_out = (
+            "Available content plugins (2):\n"
+            "  Name                      Version Description\n"
+            "  anc-release-helios-nda    1.5.5   Helios NDA Release\n"
+            "  base                      1.0.0   Base ANC items\n"
+        )
+
+        class FakePhdl:
+            def __init__(self):
+                self.cmd = None
+
+            def exec(self, cmd, timeout=None):
+                self.cmd = cmd
+                return {"node1": content_out}
+
+        phdl = FakePhdl()
+        with patch.object(anc_lib, "print_test_output"):
+            result = anc_lib.node_version_matches(phdl, "1.5.5", anc_bin="/opt/amdtools/anc/anc.py", is_direct=True)
+        self.assertIn("/opt/amdtools/anc/anc.py --content-list", phdl.cmd)
+        self.assertTrue(result["node1"])
+
+    def test_direct_mismatch_is_false(self):
+        content_out = "  anc-release-helios-nda    1.5.4   Helios NDA Release\n"
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return {"node1": content_out}
+
+        with patch.object(anc_lib, "print_test_output"):
+            result = anc_lib.node_version_matches(
+                FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py", is_direct=True
+            )
+        self.assertFalse(result["node1"])
+
+
+class TestParseReleaseVersionFromContentList(unittest.TestCase):
+    '''parse_release_version_from_content_list: read the anc-release-* version column.'''
+
+    def test_direct_155_output(self):
+        out = (
+            "Start Time: 2026-08-07 12:08:45\n"
+            "Available content plugins (5):\n"
+            "  Name                      Version Description\n"
+            "  anc-release-helios-nda    1.5.5   Helios NDA Release\n"
+            "  base                      1.0.0   Base ANC items\n"
+            "Program exiting with return code ANC_SUCCESS [0]\n"
+        )
+        self.assertEqual(anc_lib.parse_release_version_from_content_list(out), "1.5.5")
+
+    def test_legacy_two_column_returns_none(self):
+        # Legacy <=1.4.x has no version column and no anc-release-* plugin.
+        out = (
+            "Available content plugins (4):\n"
+            "  base - Base ANC items and utilities...\n"
+            "  helios_nda - Helios NDA Test Content\n"
+        )
+        self.assertIsNone(anc_lib.parse_release_version_from_content_list(out))
+
+    def test_hardware_discovery_failure_returns_none(self):
+        out = "FATAL: Error occurred during hardware discovery\n"
+        self.assertIsNone(anc_lib.parse_release_version_from_content_list(out))
+
+    def test_empty_returns_none(self):
+        self.assertIsNone(anc_lib.parse_release_version_from_content_list(""))
+        self.assertIsNone(anc_lib.parse_release_version_from_content_list(None))
+
+    def test_two_part_version(self):
+        out = "  anc-release-venice-nda    2.0   Venice NDA Release\n"
+        self.assertEqual(anc_lib.parse_release_version_from_content_list(out), "2.0")
+
 
 class TestDetectPackageFlavour(unittest.TestCase):
     '''detect_package_flavour: flavour + legacy/direct generation from the name.'''
