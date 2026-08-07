@@ -138,6 +138,11 @@ def aorta_runner_config(
     # Extract node list from validated cluster config
     node_list = list(validated_cluster_config.node_dict.keys())
 
+    # Each node's VPC/RDMA-fabric address (may differ from the SSH-reachable
+    # node_dict key on clusters with a dedicated VPC network). Used to resolve
+    # torchrun's master_addr so other nodes rendezvous over the fabric.
+    node_vpc_ips = {node: validated_cluster_config.node_dict[node].vpc_ip for node in node_list}
+
     # Build Docker config from validated aorta config
     docker_config = AortaDockerConfig(
         image=validated_aorta_config.docker.image,
@@ -205,6 +210,7 @@ def aorta_runner_config(
         environment=env_config,
         analysis=analysis_config,
         multi_node=multi_node_config,
+        node_vpc_ips=node_vpc_ips,
         build_script=validated_aorta_config.build_script,
         experiment_script=validated_aorta_config.experiment_script,
         gpus_per_node=validated_aorta_config.gpus_per_node,

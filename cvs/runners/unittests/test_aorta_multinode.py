@@ -8,7 +8,9 @@ end-to-end pytest suite that runs against a real cluster.
 """
 
 import socket
+import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -23,6 +25,7 @@ from cvs.runners.aorta import (
     RcclConfig,
     combined_traces_in,
 )
+from cvs.runners._base_runner import RunStatus
 
 
 def _make_runner(
@@ -82,25 +85,90 @@ class TestResolveLaunchMode(unittest.TestCase):
 
 
 class TestPickMasterPort(unittest.TestCase):
-    def test_returns_configured_port_when_set(self):
+    def test_returns_configured_port_when_set_without_ssh(self):
         mn = AortaMultiNodeConfig(master_port=29501)
         r = _make_runner(nodes=["10.0.0.1", "10.0.0.2"], aorta_path="/tmp/aorta", multi_node=mn)
-        self.assertEqual(r._pick_master_port(), 29501)
+        with patch.object(aorta_mod.subprocess, "run") as mock_run:
+            self.assertEqual(r._pick_master_port(), 29501)
+        mock_run.assert_not_called()
 
-    def test_returns_free_port_in_valid_range_when_unset(self):
+    def test_picks_free_port_on_head_node_via_ssh(self):
         r = _make_runner(nodes=["10.0.0.1", "10.0.0.2"], aorta_path="/tmp/aorta")
-        port = r._pick_master_port()
-        self.assertIsInstance(port, int)
-        self.assertGreater(port, 0)
-        self.assertLess(port, 65536)
-        # Port should be bindable right after we picked it (best-effort sanity).
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                s.bind(("", port))
-            except OSError:
-                # Race acceptable; we just want the value to look plausible.
-                pass
+        fake_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="29502\n", stderr="")
+        with patch.object(aorta_mod.subprocess, "run", return_value=fake_result) as mock_run:
+            port = r._pick_master_port()
+        self.assertEqual(port, 29502)
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("testuser@10.0.0.1", cmd)
+        self.assertNotIn("testuser@10.0.0.2", cmd)
+
+    def test_raises_when_ssh_port_pick_fails(self):
+        r = _make_runner(nodes=["10.0.0.1"], aorta_path="/tmp/aorta")
+        fake_result = subprocess.CompletedProcess(args=[], returncode=255, stdout="", stderr="Connection refused")
+        with patch.object(aorta_mod.subprocess, "run", return_value=fake_result):
+            with self.assertRaises(RuntimeError):
+                r._pick_master_port()
+
+
+class TestResolveMasterAddr(unittest.TestCase):
+    def test_uses_explicit_override_when_set(self):
+        mn = AortaMultiNodeConfig(master_addr="explicit.example.com")
+        r = _make_runner(nodes=["10.0.0.1", "10.0.0.2"], aorta_path="/tmp/aorta", multi_node=mn)
+        self.assertEqual(r._resolve_master_addr(), "explicit.example.com")
+
+    def test_falls_back_to_head_node_when_no_vpc_ip_known(self):
+        r = _make_runner(nodes=["10.0.0.1", "10.0.0.2"], aorta_path="/tmp/aorta")
+        self.assertEqual(r._resolve_master_addr(), "10.0.0.1")
+
+    def test_prefers_head_node_vpc_ip_when_known(self):
+        r = _make_runner(nodes=["10.0.0.1", "10.0.0.2"], aorta_path="/tmp/aorta")
+        r.config.node_vpc_ips = {"10.0.0.1": "192.168.100.1", "10.0.0.2": "192.168.100.2"}
+        self.assertEqual(r._resolve_master_addr(), "192.168.100.1")
+
+
+class TestRunMultiNodeTimeout(unittest.TestCase):
+    def test_hung_node_times_out_without_blocking_run(self):
+        r = _make_runner(nodes=["10.0.0.1", "10.0.0.2"], aorta_path="/tmp/aorta")
+        r.config.timeout_seconds = 0.05
+
+        def fake_run_single_node(*, node, node_rank, launch_cmd, env):
+            if node == "10.0.0.2":
+                time.sleep(0.3)
+            return (node, 0, "ok")
+
+        with (
+            patch.object(r, "_run_single_node", side_effect=fake_run_single_node),
+            patch.object(r, "_pick_master_port", return_value=29500),
+        ):
+            start = time.time()
+            result = r.run()
+            elapsed = time.time() - start
+
+        self.assertLess(elapsed, 0.25)
+        self.assertEqual(result.status, RunStatus.TIMEOUT)
+        self.assertEqual(result.exit_codes["10.0.0.1"], 0)
+        self.assertEqual(result.exit_codes["10.0.0.2"], -1)
+        self.assertIn("Timed out", result.stdout["10.0.0.2"])
+
+
+class TestSetupTimeout(unittest.TestCase):
+    def test_hung_node_times_out_without_blocking_setup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r = _make_runner(nodes=["10.0.0.1", "10.0.0.2"], aorta_path=tmp)
+            r.config.timeout_seconds = 0.05
+
+            def fake_setup_single_node(node):
+                if node == "10.0.0.2":
+                    time.sleep(0.3)
+                return (node, True, None)
+
+            with patch.object(r, "_setup_single_node", side_effect=fake_setup_single_node):
+                start = time.time()
+                ok = r.setup()
+                elapsed = time.time() - start
+
+            self.assertFalse(ok)
+            self.assertLess(elapsed, 0.25)
 
 
 class TestBuildTorchrunCommand(unittest.TestCase):

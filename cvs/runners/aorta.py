@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import logging
 import shlex
-import socket
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait as futures_wait
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
@@ -168,6 +167,13 @@ class AortaConfig(RunConfig):
 
     # Multi-node disaggregated launch configuration
     multi_node: AortaMultiNodeConfig = field(default_factory=AortaMultiNodeConfig)
+
+    # Maps a `nodes` entry to its VPC/RDMA-fabric address, when the cluster has one
+    # distinct from the orchestrator-reachable address. Used to resolve master_addr
+    # for torchrun rendezvous so other nodes connect over the fabric, not the
+    # (possibly orchestrator-only) SSH network. Empty by default: falls back to the
+    # plain node identifier, matching prior behavior for single-network clusters.
+    node_vpc_ips: Dict[str, str] = field(default_factory=dict)
 
     # Scripts to execute (relative to container mount)
     build_script: str = "scripts/build_rccl.sh"
@@ -720,13 +726,17 @@ class AortaRunner(BaseRunner):
 
         # Use ThreadPoolExecutor for parallel deployment
         # Max workers = number of nodes (each node gets its own thread)
-        with ThreadPoolExecutor(max_workers=num_nodes) as executor:
+        executor = ThreadPoolExecutor(max_workers=num_nodes)
+        try:
             # Submit all setup tasks
             futures = {executor.submit(self._setup_single_node, node): node for node in nodes}
 
-            # Collect results as they complete
+            # Collect results as they complete, bounded by timeout_seconds so a
+            # stuck image pull or RCCL build cannot hang setup() forever.
+            done, not_done = futures_wait(futures, timeout=self.config.timeout_seconds)
+
             failed_nodes = []
-            for future in as_completed(futures):
+            for future in done:
                 node = futures[future]
                 try:
                     node_name, success, error_msg = future.result()
@@ -738,6 +748,16 @@ class AortaRunner(BaseRunner):
                 except Exception as e:
                     log.exception(f"Unexpected error setting up {node}: {e}")
                     failed_nodes.append((node, str(e)))
+
+            for future in not_done:
+                node = futures[future]
+                log.error(f"Setup timed out on {node} after {self.config.timeout_seconds}s")
+                failed_nodes.append((node, f"Timed out after {self.config.timeout_seconds}s"))
+        finally:
+            # wait=False: don't block on threads stuck inside a blocking Docker/SSH
+            # call. Python threads can't be force-killed; this just stops CVS from
+            # hanging on top of the already-timed-out node(s).
+            executor.shutdown(wait=False)
 
         if failed_nodes:
             log.error(f"Setup failed on {len(failed_nodes)}/{num_nodes} nodes:")
@@ -763,21 +783,64 @@ class AortaRunner(BaseRunner):
             return "script" if len(self.config.nodes) <= 1 else "torchrun"
         return mode
 
+    def _pick_free_port_on(self, node: str) -> int:
+        """
+        Ask ``node`` over SSH for a free ephemeral port, bound and released
+        there. Used so the picked port is actually free on the host doing the
+        ``torchrun`` rendezvous, not on whichever host runs the orchestrator.
+
+        There is a small TOCTOU window between the remote bind/close and the
+        subsequent ``torchrun`` launch. Operators who care can pin
+        ``master_port`` explicitly in the config.
+        """
+        snippet = (
+            "import socket;"
+            "s=socket.socket(socket.AF_INET, socket.SOCK_STREAM);"
+            "s.bind(('', 0));"
+            "print(s.getsockname()[1]);"
+            "s.close()"
+        )
+        cmd = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=10",
+            f"{self.config.username}@{node}",
+            "python3",
+            "-c",
+            snippet,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode != 0 or not result.stdout.strip():
+            raise RuntimeError(f"Failed to pick a free port on {node}: {result.stderr.strip()}")
+        return int(result.stdout.strip())
+
     def _pick_master_port(self) -> int:
         """
         Return ``multi_node.master_port`` if set, otherwise a free ephemeral
-        port on the orchestrator host.
-
-        The bound socket is closed before the port is returned, so there is a
-        small TOCTOU window. Operators who care can pin ``master_port``
-        explicitly in the config.
+        port on the head node.
         """
         configured = self.config.multi_node.master_port
         if configured:
             return int(configured)
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", 0))
-            return int(s.getsockname()[1])
+        return self._pick_free_port_on(self.head_node)
+
+    def _resolve_master_addr(self) -> str:
+        """
+        Return the address other nodes should use to reach the head node for
+        torchrun rendezvous.
+
+        Precedence: explicit ``multi_node.master_addr`` override, then the
+        head node's VPC/RDMA-fabric address (``node_vpc_ips``) when known,
+        then the plain head node identifier (correct when the cluster has no
+        separate VPC network, i.e. the orchestrator-reachable address and the
+        inter-node address are the same).
+        """
+        configured = self.config.multi_node.master_addr
+        if configured:
+            return configured
+        return self.config.node_vpc_ips.get(self.head_node, self.head_node)
 
     def _build_base_env(self) -> Dict[str, str]:
         """Build the env dict shared by every node's launch."""
@@ -965,7 +1028,7 @@ class AortaRunner(BaseRunner):
                 mn = self.config.multi_node
                 nnodes = len(nodes)
                 nproc_per_node = mn.nproc_per_node or self.config.gpus_per_node
-                master_addr = mn.master_addr or self.head_node
+                master_addr = self._resolve_master_addr()
                 master_port = self._pick_master_port()
 
                 log.info(
@@ -975,7 +1038,8 @@ class AortaRunner(BaseRunner):
                 )
 
                 futures = {}
-                with ThreadPoolExecutor(max_workers=max(1, nnodes)) as executor:
+                executor = ThreadPoolExecutor(max_workers=max(1, nnodes))
+                try:
                     for rank, node in enumerate(nodes):
                         cmd = self._build_torchrun_command(
                             node_rank=rank,
@@ -993,7 +1057,12 @@ class AortaRunner(BaseRunner):
                         )
                         futures[fut] = (rank, node)
 
-                    for fut in as_completed(futures):
+                    # Bounded by timeout_seconds so a stalled NCCL collective (or any
+                    # other indefinite hang inside the container) cannot hang run()
+                    # forever with no CVS-level report.
+                    done, not_done = futures_wait(futures, timeout=self.config.timeout_seconds)
+
+                    for fut in done:
                         rank, node = futures[fut]
                         try:
                             n, ec, out = fut.result()
@@ -1005,11 +1074,24 @@ class AortaRunner(BaseRunner):
                         stdout_dict[n] = out
                         exit_codes[n] = ec
 
+                    for fut in not_done:
+                        rank, node = futures[fut]
+                        log.error(f"Node {node} (rank {rank}) timed out after {self.config.timeout_seconds}s")
+                        stdout_dict[node] = (
+                            f"Timed out after {self.config.timeout_seconds}s waiting for node to complete"
+                        )
+                        exit_codes[node] = -1
+                finally:
+                    # wait=False: threads stuck in a blocking Docker exec call can't be
+                    # force-killed. Don't let CVS itself hang waiting for them to finish.
+                    executor.shutdown(wait=False)
+
                 failed = {n: c for n, c in exit_codes.items() if c != 0}
                 if failed:
+                    status = RunStatus.TIMEOUT if not_done else RunStatus.FAILED
                     log.error(f"Disaggregated run failed on {len(failed)}/{nnodes} nodes: {failed}")
                     return RunResult(
-                        status=RunStatus.FAILED,
+                        status=status,
                         start_time=start_time,
                         end_time=time.time(),
                         stdout=stdout_dict,
