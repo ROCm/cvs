@@ -15,7 +15,7 @@ DEFAULT_GPU_MEM_THRESHOLD_MB = 5000
 AMD_SMI_METRIC_CMD = "sudo amd-smi metric --json"
 
 _SERVER_READY_RE = re.compile(
-    r"fired up and ready to roll|Uvicorn running|Application startup complete|200 OK",
+    r"server is fired up and ready to roll",
     re.I,
 )
 
