@@ -39,9 +39,6 @@ ATOM_RESULTS_COLUMNS = (
     ("Scaling eff. (%)", "scaling.efficiency_pct"),
 )
 
-# Deprecated alias kept for older docs/branches.
-INFERENCEX_ATOM_RESULTS_COLUMNS = ATOM_RESULTS_COLUMNS
-
 # Optional preset for suites that want vLLM-style columns (not wired in vllm_single yet).
 VLLM_SINGLE_RESULTS_COLUMNS = (
     ("Model", None),
