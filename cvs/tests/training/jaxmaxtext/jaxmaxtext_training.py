@@ -24,7 +24,7 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     evaluate_loss_decreasing,
 )
 from cvs.lib.training.jaxmaxtext.utils.loss_curve import render_loss_curve_png
-from cvs.lib.utils.verdict import evaluate_all
+from cvs.lib.utils.verdict import evaluate_all, ThresholdViolation
 
 import uuid as _uuid
 from pathlib import Path as _Path
@@ -149,8 +149,43 @@ def test_training_run(orch, variant_config, hf_token, training_res_dict, lifecyc
     training_res_dict["num_nodes"] = job.num_nodes
 
 
+def _format_expected(spec):
+    """Human-readable expected-threshold string for the console log + summary file."""
+    if not spec:
+        return "-"
+    kind = spec.get("kind")
+    value = spec.get("value")
+    if kind in ("min", "min_tok_s"):
+        return f">= {value}"
+    if kind == "max":
+        return f"<= {value}"
+    if kind == "max_ms":
+        return f"<= {value} ms"
+    if kind == "within":
+        return f"{value} +/-{spec.get('tolerance_pct')}%"
+    if kind == "min_ratio":
+        return f">= {value} x {spec.get('reference')}"
+    return str(spec)
+
+
+def _format_value(value):
+    if value is None:
+        return "None"
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    return str(value)
+
+
 def test_metric(metric, training_res_dict, variant_config, lifecycle, request):
-    """One HTML row per training metric. Record-only unless enforce_thresholds."""
+    """One test (row) per training metric.
+
+    Logs `expected | actual | PASS/FAIL` to the console and collects the same
+    into `training_res_dict['metric_rows']` (rendered as a single metric-results
+    HTML file by test_print_results_table and linked from every metric row).
+    PASS/FAIL is threshold-driven: a metric with a threshold spec and a non-None
+    value is asserted via `evaluate_all`; a metric with no value produced this
+    run is skipped (N/A), and gating is a no-op unless `enforce_thresholds`.
+    """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     results = training_res_dict.get("results")
@@ -160,17 +195,40 @@ def test_metric(metric, training_res_dict, variant_config, lifecycle, request):
     full = "training." + metric
     value = results.get(full)
     unit = TRAINING_METRIC_UNITS.get(metric, "-")
-    request.node.user_properties.append(("metric_value", value))
-    request.node.user_properties.append(("metric_unit", unit))
-
-    if not variant_config.enforce_thresholds:
-        return
     num_nodes = training_res_dict.get("num_nodes", 1)
     cell = variant_config.cell_key(num_nodes=num_nodes)
     spec = (variant_config.thresholds.get(cell) or {}).get(full)
-    if spec is None:
+    expected = _format_expected(spec)
+    actual = _format_value(value)
+
+    rows = training_res_dict.setdefault("metric_rows", [])
+
+    def _record(status):
+        rows.append(
+            {"metric": metric, "expected": expected, "actual": actual, "unit": unit, "status": status}
+        )
+
+    # Metric not produced this run (feature disabled, rampup, etc.) -> not a failure.
+    if value is None:
+        log.info("[metric] %-24s | expected %-14s | actual None | %s -> N/A", metric, expected, unit)
+        _record("N/A")
+        pytest.skip(f"{metric}: no value produced this run")
+
+    # No threshold, or gating disabled -> record the value without asserting.
+    if spec is None or not variant_config.enforce_thresholds:
+        log.info("[metric] %-24s | expected %-14s | actual %s | %s -> RECORD", metric, expected, actual, unit)
+        _record("RECORD")
         return
-    evaluate_all(results, {full: spec})
+
+    try:
+        evaluate_all(results, {full: spec})
+    except ThresholdViolation as e:
+        log.error("[metric] %-24s | expected %-14s | actual %s | %s -> FAIL", metric, expected, actual, unit)
+        _record("FAIL")
+        pytest.fail(str(e))
+    else:
+        log.info("[metric] %-24s | expected %-14s | actual %s | %s -> PASS", metric, expected, actual, unit)
+        _record("PASS")
 
 
 def test_loss_curve(training_res_dict, variant_config, lifecycle, request):
@@ -216,13 +274,9 @@ def test_loss_curve(training_res_dict, variant_config, lifecycle, request):
         except Exception as e:  # noqa: BLE001
             log.warning("loss curve: could not register report link (%s)", e)
 
-    if verdict is None:
-        slope = None
-    else:
-        _decreasing, slope, detail = verdict
+    if verdict is not None:
+        _decreasing, _slope, detail = verdict
         log.info("loss curve: %s", detail)
-    request.node.user_properties.append(("metric_value", slope))
-    request.node.user_properties.append(("metric_unit", "loss/step"))
 
     if verdict is None:
         pytest.skip(f"loss curve needs >= 2 sampled points (got {len(points)})")

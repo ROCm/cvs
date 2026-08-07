@@ -2,7 +2,7 @@
   "schema_version": 1,
   "framework": "jaxmaxtext",
   "gpu_arch": "mi325x",
-  "enforce_thresholds": false,
+  "enforce_thresholds": true,
   "threshold_json": "mi325x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json",
 
   "paths": {
