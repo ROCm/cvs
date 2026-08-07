@@ -4,7 +4,7 @@ All rights reserved.
 
 Reusable **lifecycle-as-tests** helpers for DTNI inference suites.
 
-``inferencex_atom`` imports the stage tests from here today; other suites
+``atom`` imports the stage tests from here today; other suites
 (``vllm_single``, future IX parity frameworks) can reuse the same module instead
 of copying launch / sshd / model-fetch / teardown blocks.
 
@@ -258,28 +258,23 @@ def attach_lifecycle_html_table(item, report):
     report.extras = extras
 
 
-def html_metric_table_header(cells):
-    cells.insert(-1, "<th>Value</th>")
-    cells.insert(-1, "<th>Unit</th>")
-
-
-def html_metric_table_row(report, cells):
-    user_properties = getattr(report, "user_properties", None)
-    if user_properties is None:
-        cells.insert(-1, "<td></td>")
-        cells.insert(-1, "<td></td>")
-        return
-    props = dict(user_properties)
-    has = "metric_value" in props
-    val = props.get("metric_value")
-    unit = props.get("metric_unit", "") if has else ""
-    if not has:
-        shown = ""
-    elif val is None:
-        shown = "-"
-    elif isinstance(val, float):
-        shown = f"{val:.3f}"
-    else:
-        shown = str(val)
-    cells.insert(-1, f"<td>{shown}</td>")
-    cells.insert(-1, f"<td>{unit}</td>")
+# def html_metric_table_header(cells):
+#     cells.insert(-1, "<th>Value</th>")
+#     cells.insert(-1, "<th>Unit</th>")
+#
+#
+# def html_metric_table_row(report, cells):
+#     props = dict(report.user_properties)
+#     has = "metric_value" in props
+#     val = props.get("metric_value")
+#     unit = props.get("metric_unit", "") if has else ""
+#     if not has:
+#         shown = ""
+#     elif val is None:
+#         shown = "-"
+#     elif isinstance(val, float):
+#         shown = f"{val:.3f}"
+#     else:
+#         shown = str(val)
+#     cells.insert(-1, f"<td>{shown}</td>")
+#     cells.insert(-1, f"<td>{unit}</td>")
