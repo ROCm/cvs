@@ -164,15 +164,16 @@ def _cmd_for_ip(ip: str) -> str:
 
 
 class TestNetdevShellSyntax(unittest.TestCase):
-    def test_netdev_cmds_use_command_substitution_not_arithmetic(self):
+    def test_netdev_cmds_use_valid_bash_subshell(self):
         ip_cmd = _cmd_for_ip("10.32.80.112")
         from cvs.lib.utils.ib_discovery import _netdev_via_route_cmd
 
         route_cmd = _netdev_via_route_cmd("10.32.80.112")
-        self.assertIn("IF=$(", ip_cmd)
+        self.assertIn("IF=$( (ip", ip_cmd)
         self.assertNotIn("IF=$((", ip_cmd)
-        self.assertIn("IF=$(", route_cmd)
-        self.assertNotIn("IF=$((", route_cmd)
+        self.assertNotIn("$({ip", ip_cmd)
+        self.assertIn("IF=$( (ip route", route_cmd)
+        self.assertNotIn("$({ip route", route_cmd)
 
 
 if __name__ == "__main__":
