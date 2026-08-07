@@ -57,10 +57,45 @@ distributed: ISL=1024,OSL=1024,TP=<tp>,PP=2,CONC=16
 
 ## Thresholds
 
-`enforce_thresholds` is **false** on every config, and each threshold file
-carries permissive placeholder values for all 25 gated `client.*` metrics.
-Nothing gates; metrics are recorded. Replace the placeholders with measured
-values after a calibration run before flipping `enforce_thresholds` to true.
+`enforce_thresholds` is **false** on every config, so nothing gates and metrics
+are only recorded. Each threshold file carries a placeholder for every metric
+the suite can gate on — 32 per file:
+
+| Family | Count | Source of the list |
+|---|---|---|
+| `client.*` | 23 | the suite's gated-metric set |
+| `gpu.*` | 5 | `cvs.lib.utils.gpu.GPU_METRICS` |
+| `prom.*` | 4 | `vllm_server_metrics.PROM_METRICS` |
+
+**Every value is `0`**, meaning *not yet measured* — not a real bound. On a
+`max`/`max_ms` kind, `0` is an impossible bound, so enabling enforcement before
+calibrating fails loudly rather than passing silently. Replace them with
+measured values from a calibration run before flipping `enforce_thresholds`.
+
+### Accuracy
+
+Accuracy is split across the two files, unlike the three families above:
+
+- **`config.json` → `accuracy.tasks`** selects *which* lm-eval tasks run.
+  Shipped empty, so no accuracy stage runs and the pytest node is auto-skipped.
+- **`threshold.json` → `accuracy`** holds the gating values, keyed by task id
+  then by lm-eval metric key. Shipped as `{}`.
+
+Because the threshold keys are derived from the task ids you choose, they
+cannot be pre-enumerated the way `client.*`/`gpu.*`/`prom.*` can — the two
+blocks must be filled in together:
+
+```jsonc
+// config.json
+"accuracy": {"tasks": [{"id": "gsm8k", "task": "gsm8k", "num_fewshot": 5}]}
+
+// threshold.json
+"accuracy": {"gsm8k": {"gsm8k.exact_match__strict-match": {"kind": "min", "value": 0}}}
+```
+
+The metric key is the lm-eval `results.json` key with commas replaced by `__`.
+The `accuracy` block is exempt from the sweep-cell coverage check via
+`NON_SWEEP_THRESHOLD_KEYS`, so it does not need a cell key.
 
 ## Before running — fill in the `<changeme>` fields
 
