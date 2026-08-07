@@ -253,11 +253,22 @@ class TestContainerOrchestrator(unittest.TestCase):
         orch, runtime = self._make(lifetime="per_run")
         orch.container_id = "cvs_iter_test"
         runtime.exec.return_value = {
-            "10.0.0.1": {"exit_code": 0},
-            "10.0.0.2": {"exit_code": 0},
+            "10.0.0.1": {"exit_code": 0, "stdout": "OK\n"},
+            "10.0.0.2": {"exit_code": 0, "stdout": "OK\n"},
         }
         self.assertTrue(orch.setup_sshd())
         self.assertTrue(runtime.exec.called)
+
+    def test_sshd_port_listen_probe_falls_back_to_dev_tcp(self):
+        cmd = __import__(
+            "cvs.core.orchestrators.container", fromlist=["sshd_port_listen_probe_cmd"]
+        ).sshd_port_listen_probe_cmd(2224)
+        self.assertIn("/dev/tcp/127.0.0.1/2224", cmd)
+        ok = __import__(
+            "cvs.core.orchestrators.container", fromlist=["sshd_port_listen_ok"]
+        ).sshd_port_listen_ok
+        self.assertTrue(ok({"stdout": "OK\n"}))
+        self.assertFalse(ok({"stdout": "NO\n"}))
 
     # ------------------------------------------------------------------
     # teardown_containers lifetime branching

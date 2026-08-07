@@ -100,6 +100,8 @@ def test_launch_container(orch, variant_config, lifecycle, request):
 def test_setup_sshd(orch, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
+    from cvs.core.orchestrators.container import sshd_port_listen_ok, sshd_port_listen_probe_cmd
+
     t = time.monotonic()
     ok = orch.setup_sshd()
     lifecycle.record(request.node.nodeid, "sshd_setup", time.monotonic() - t)
@@ -107,12 +109,8 @@ def test_setup_sshd(orch, lifecycle, request):
         lifecycle.failed = True
         pytest.fail("setup_sshd() returned False")
     if len(orch.hosts) > 1:
-        probe = orch.exec(
-            "bash -c '"
-            "(ss -ltn 2>/dev/null || netstat -lnt 2>/dev/null) | grep -q :2224 && echo OK || "
-            "(pgrep -f \"sshd.*2224\" >/dev/null && echo OK) || echo NO'"
-        )
-        if not any("OK" in (v or "") for v in (probe or {}).values()):
+        probe = orch.exec(sshd_port_listen_probe_cmd(getattr(orch, "ssh_port", 2224)))
+        if not any(sshd_port_listen_ok(v) for v in (probe or {}).values()):
             lifecycle.failed = True
             pytest.fail("sshd not listening on 2224 after setup_sshd()")
 

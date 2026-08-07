@@ -11,6 +11,29 @@ import re
 from cvs.core.runtimes import RuntimeFactory
 
 
+DEFAULT_SSHD_PORT = 2224
+
+
+def sshd_port_listen_probe_cmd(port: int = DEFAULT_SSHD_PORT) -> str:
+    """Shell probe that prints OK when TCP *port* accepts connections inside the container."""
+    return (
+        "bash -c '"
+        f"(ss -ltn 2>/dev/null | grep -q :{port}) || "
+        f"(netstat -ltn 2>/dev/null | grep -q :{port}) || "
+        f"(echo >/dev/tcp/127.0.0.1/{port}) "
+        "2>/dev/null && echo OK || echo NO'"
+    )
+
+
+def sshd_port_listen_ok(output) -> bool:
+    """Return True when a container exec result indicates the sshd port is open."""
+    if isinstance(output, dict):
+        text = output.get("stdout", "")
+    else:
+        text = output
+    return "OK" in (text or "")
+
+
 # Default container configuration - matches the original docker command
 DEFAULT_CONTAINER_ARGS = {
     "devices": [
@@ -503,6 +526,14 @@ class ContainerOrchestrator(BaremetalOrchestrator):
                 return False
             else:
                 self.log.info(f"SSH daemon started successfully on {hostname}")
+
+        listen_cmd = sshd_port_listen_probe_cmd(self.ssh_port)
+        listen_result = self.exec(listen_cmd, timeout=10, detailed=True)
+        for hostname, output in listen_result.items():
+            if output.get("exit_code") != 0 or not sshd_port_listen_ok(output):
+                self.log.error(f"SSH daemon not listening on port {self.ssh_port} on {hostname}")
+                return False
+            self.log.info(f"SSH daemon listening on port {self.ssh_port} on {hostname}")
 
         return True
 
