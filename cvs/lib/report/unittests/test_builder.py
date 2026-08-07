@@ -33,3 +33,21 @@ def test_make_inference_report_config_overrides():
     )
     assert cfg.inference_test_substring == "test_custom_inference"
     assert cfg.report_basename == "custom_report"
+
+
+def test_full_metric_preserves_scaling_namespace():
+    cfg = make_inference_report_config(
+        suite_id="atom",
+        results_columns=(),
+        metric_units={},
+        tier_metric_specs=lambda _c, _t: {},
+    )
+    assert cfg.full_metric("output_throughput") == "client.output_throughput"
+    assert cfg.full_metric("scaling.efficiency_pct") == "scaling.efficiency_pct"
+
+
+def test_atom_report_preset_imports():
+    from cvs.lib.report.presets import atom as atom_preset
+
+    assert atom_preset.ATOM_REPORT_CONFIG.suite_id == "atom"
+    assert any(ch.metric_suffix == "scaling.efficiency_pct" for ch in atom_preset.ATOM_REPORT_CONFIG.chart_series)

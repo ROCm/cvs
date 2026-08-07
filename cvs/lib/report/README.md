@@ -1,62 +1,161 @@
-# Suite reports (`cvs.lib.report`)
+# Run Deck (`cvs.lib.report`)
 
-CVS can attach an HTML/JSON **suite report** to pytest runs that use `--html`. Reports are
-generated at **session end** and bundled into the same results zip as the pytest HTML report.
-They are **render-only** — they do not change pass/fail or threshold enforcement.
+CVS **Run Deck** is the HTML/JSON suite dashboard produced when tests run with
+pytest `--html`. It is **not** the Rundeck job scheduler product.
 
-**IX-atom reference:** `presets/inferencex_atom.py` + shim `presets/inferencex_atom_single.py`
-(auto-loaded for `cvs run inferencex_atom_single`). Suite owners also see Step 8 in
-`cvs/lib/inference/ADDING_A_SUITE.md`.
+Suite owners enable Run Deck by adding `profiles/<stem>.json` (matching the
+`cvs run` stem) plus the session fixtures declared in the profile. Schema:
+`profiles/schema.json`.
 
-## Quick start
+## How it works
 
-1. Copy `presets/_inference_suite_template.py` → `presets/<cvs_run_stem>.py` (stem must match
-   `cvs run <stem>`).
-2. Fill `make_inference_report_config(...)` with your `results_columns`, `tier_metric_specs`, and
-   `metric_tier_order` (see `presets/inferencex_atom.py` for a full example).
-3. Run with `--html`. Root `cvs/conftest.py` auto-loads the preset and writes reports at session
-   end — no suite `conftest.py` wiring required.
+1. Tests fill **session fixtures** (`cvs_results_dict`, `variant_config`, `lifecycle`, …).
+2. Pytest auto-loads **`profiles/<stem>.json`** when present (matches `cvs run` stem).
+3. At session finish, **`rundeck/generate_rundeck.py`** builds datasets, renders HTML/JSON,
+   and optionally an interactive viewer for sweep suites.
 
-Your suite must already collect:
-
-| Data | Contract |
-|------|----------|
-| `inf_res_dict` | Module-scoped: cell key → `{host → {metric: value}}` |
-| `variant_config` | Thresholds, `enforce_thresholds`, `cell_key(isl, osl, conc)` |
-| `lifecycle` | `.record(nodeid, label, seconds)` on server/client stages |
-
-```bash
-cvs run inferencex_atom_single --cluster_file ... --config_file ... --html=~/cvs_results/run.html
-python -m pytest cvs/lib/report/unittests/ -q
+```mermaid
+flowchart LR
+  Tests --> Session[session store]
+  Profile[profiles/stem.json] --> Gen[generate_rundeck]
+  Session --> Gen
+  Gen --> HTML[basename.html + .json]
+  Gen --> Viewer[basename_viewer.html]
 ```
 
-## Outputs (`report_basename` from preset)
+| Layer | Location |
+| ----- | -------- |
+| Session store | `registry.py` |
+| Profile schema | `profiles/schema.json` |
+| Config resolution | `rundeck/config_adapter.py` |
+| Dataset builders | `rundeck/dataset_builders/` — `sweep`, `series`, `matrix` |
+| Card runtime | `rundeck/runtime/` |
+| Publish entry | `rundeck/generate_rundeck.py` |
 
-| File | Contents |
-|------|----------|
-| `{basename}.html` + `.json` | Static run deck + full payload |
-| `{basename}_viewer.html` | Interactive viewer (filters, charts, baseline upload, CSV) |
-| `{basename}_summary.html` | CI one-pager |
+## Session contract
 
-Provenance (CVS version, git commit, cluster/config paths) is included when generated via pytest.
+| Role | Standard key | Legacy alias |
+| ---- | ------------ | -------------- |
+| Results | `cvs_results_dict` | `inf_res_dict` |
+| Config / thresholds | `variant_config` | — |
+| Stage timings | `lifecycle` | — |
+| Golden reference | `golden_results` | `reference_results` |
 
-## Key preset fields
+Root `cvs/conftest.py` binds fixtures from profile `sources` via `pytest_hooks.py`.
 
-`suite_id`, `report_basename`, `results_columns`, `tier_metric_specs`, `chart_series`,
-`inference_test_substring`, `interactive_viewer`, `viewer_cell_threshold`, `prev_run_json`.
+## Adding a Run Deck (suite owner checklist)
 
-**Baseline comparison:** resolves preset path → `CVS_INFERENCE_PREV_REPORT_JSON` → sibling
-`{basename}_prev.json`. Payload includes `panels.prev_run`; the viewer can also upload any prior
-JSON and flag delta % regressions.
+### 1. Choose a `dataset_builder`
 
-## JSON sidecar
+| Builder | Results shape |
+| ------- | --------------- |
+| `sweep` | Cell-keyed dict → metric fields (ISL/OSL/concurrency sweeps) |
+| `series` | Nested dict: collective → message size → metrics |
+| `matrix` | Current results + golden reference for compare rows |
 
-`{basename}.json` uses `schema_version: 1`. Main keys: `cells`, `chart_series`, `sweep_summaries`,
-`gate_matrix`, `results_table`, `panels`, `overall_status`, `provenance`. Unknown keys should be
-ignored by external tools.
+Use `testing/fixtures.generic_sweep_profile()` as a template when authoring a
+sweep profile. Schema: `profiles/schema.json`.
 
-## See also
+### 2. Add `profiles/<stem>.json`
 
-- `presets/_inference_suite_template.py` — minimal starter
-- `presets/inferencex_atom.py` — full reference preset
-- `presets/builder.py` — `make_inference_report_config()`
+Filename must match the `cvs run` stem. Minimal skeleton:
+
+```json
+{
+  "schema_version": 1,
+  "profile_id": "my_suite_rundeck",
+  "suite_id": "my_suite",
+  "report_basename": "my_suite_run_deck",
+  "title": "My Suite Run Deck",
+  "dataset_builder": "sweep",
+  "interactive_viewer": true,
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "variant_config",
+    "lifecycle": "lifecycle"
+  },
+  "hooks": {
+    "tier_metric_specs": "my.hooks:tier_metric_specs",
+    "metric_units": "my.hooks:METRIC_UNITS"
+  },
+  "sweep": { "tier_order": ["throughput", "record"], "chart_series": [] },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}
+```
+
+Optional `hooks` under `profiles/hooks/` customize metric tiers, units, run card
+rows, and launch provenance.
+
+### 3. Wire suite fixtures
+
+Expose pytest fixtures named in profile `sources`. For matrix compare, also expose
+`golden_results` and set `sources.reference`.
+
+### 4. Verify
+
+```bash
+cvs run <stem> ... --html=~/cvs_results/run.html
+make ut
+python sample_reports/generate_sample_rundecks.py   # local smoke after adding profiles
+```
+
+Artifacts next to the pytest HTML report:
+
+| File | When |
+| ---- | ---- |
+| `{report_basename}.html` + `.json` | Profile registered and results present |
+| `{report_basename}_viewer.html` | Sweep + `interactive_viewer: true` |
+| `{report_basename}_summary.html` | CI one-pager |
+
+## Author tiers
+
+| Tier | You add | Core adds |
+| ---- | ------- | --------- |
+| **A** | JSON profile + session fixtures | — |
+| **B** | JSON + config hooks | — |
+| **C** | New result shape | New `dataset_builder` |
+| **D** | New panel type | New card in `rundeck/runtime/` |
+
+Tier A is the default. Open a core PR only when data does not fit `sweep`, `series`,
+or `matrix`, or you need a card type that does not exist.
+
+## Code layout
+
+```
+cvs/lib/report/
+  rundeck/
+    generate_rundeck.py      # production publish entry
+    publish_helpers.py       # artifact paths + provenance
+    payload.py               # build_rundeck_payload, apply_summary_meta
+    render.py                # static HTML
+    config_adapter.py        # JSON profile → RunDeckConfig
+    viewer_config.py         # interactive viewer config
+    dataset_builders/        # sweep, series, matrix
+    runtime/                 # card components + theme
+  profiles/schema.json
+  pytest_hooks.py            # session fixture binding
+  registry.py                # session store + profile registration
+  inference_payload.py       # sweep cell helpers (used by builders)
+  inference.py               # write_report test helper only
+```
+
+## Tests
+
+Library unit tests use `unittest` and live beside the module under test (see
+`AGENTS.md`). `make ut` discovers them via `run_all_unittests.py`.
+
+| Location | Covers |
+| -------- | ------ |
+| `report/unittests/` | registry, profile, cell_build, inference, provenance, … |
+| `report/rundeck/unittests/` | payload, viewer_config, config_builder, parity |
+| `report/render/unittests/` | cell card renderer |
+| `report/viewer/unittests/` | interactive viewer scaffold |
+| `report/panels/unittests/` | prev-run comparison panel |
+
+Shared test fixtures: `report/testing/fixtures.py`.
+
+Optional sweep pytest-html row extras may require suite-specific lifecycle helpers
+when enabled in a profile. The core engine does not require `cvs.lib.inference`.
