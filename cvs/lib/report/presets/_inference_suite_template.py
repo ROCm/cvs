@@ -5,9 +5,9 @@ All rights reserved.
 **Copy this file** to ``cvs/lib/report/presets/<cvs_run_stem>.py``.
 
 The filename must match the pytest module stem from ``cvs run <stem>`` (e.g.
-``inferencex_atom_single`` → ``presets/inferencex_atom_single.py``).
+``inferencex_atom`` → ``presets/inferencex_atom.py``).
 
-**Reference:** ``inferencex_atom.py`` (full preset) + ``inferencex_atom_single.py`` (auto-load shim).
+**Reference:** ``inferencex_atom.py`` (IX-atom preset; auto-loaded when ``cvs run inferencex_atom``).
 See ``cvs/lib/report/README.md`` for the IX-atom end-to-end example.
 
 Suite owners fill in the TODOs below, keep collecting ``inf_res_dict`` during tests,
