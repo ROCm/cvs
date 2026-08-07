@@ -54,7 +54,7 @@ class SglangDistributed:
         benchmark_params_dict,
         hf_token,
         orch=None,
-        gpu_type='mi300',
+        gpu_type='mi325',
         user_name=None,
         priv_key_file=None,
     ):
@@ -118,16 +118,8 @@ class SglangDistributed:
         )
 
     def _resolve_dist_init_addr(self) -> str:
-        addr = (
-            self.inf_dict.get('dist_init_addr')
-            or self.inf_dict.get('prefill_coordinator_addr')
-            or self.rank0_node
-        )
-        port = (
-            self.inf_dict.get('dist_init_port')
-            or self.inf_dict.get('prefill_coordinator_port')
-            or '40001'
-        )
+        addr = self.inf_dict.get('dist_init_addr') or self.rank0_node
+        port = self.inf_dict.get('dist_init_port') or '40001'
         return f"{addr}:{port}"
 
     def _resolve_benchmark_serv_node(self) -> str:
@@ -470,7 +462,7 @@ class SglangDistributed:
 
         tp = int(self.bp_dict.get('tensor_parallelism', 1))
         pp = int(self.bp_dict.get('pipeline_parallelism', 1))
-        num_gpus = self.nnodes * tp * pp
+        num_gpus = self.nnodes * tp
         peak_tflops = float(i_dict.get('peak_gpu_tflops', 1300))
         num_params = float(i_dict.get('model_num_params', 70e9))
         for node, m in (self.inference_results_dict or {}).items():
