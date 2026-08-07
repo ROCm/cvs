@@ -192,16 +192,8 @@ def _build_panels(
     config: InferenceReportConfig,
     cells: List[dict],
     report_dir: Optional[Path],
-    provenance: Optional[Mapping[str, str]] = None,
 ) -> dict:
     panels: dict = {}
-    prov = provenance or {}
-    if prov.get("launch_server_cmd"):
-        panels["launch"] = {
-            "example_cell": prov.get("launch_example_cell", ""),
-            "server_cmd": prov.get("launch_server_cmd", ""),
-            "bench_cmd": prov.get("launch_bench_cmd", ""),
-        }
     prev_run_path = resolve_prev_run_json_path(
         config.prev_run_json,
         report_basename=config.report_basename,
@@ -251,7 +243,7 @@ def build_inference_report_payload(
     run_card_display, run_card_notes, generated_at = _build_run_card_display(config, variant_config, prov)
 
     chart_series = build_chart_series(config, cells)
-    panels = _build_panels(config, cells, report_dir, prov)
+    panels = _build_panels(config, cells, report_dir)
 
     chart_config = [
         {
@@ -264,9 +256,7 @@ def build_inference_report_payload(
         for ch in config.chart_series
     ]
 
-    from cvs.lib.report.rundeck.viewer_config import build_viewer_config
-
-    payload = {
+    return {
         "schema_version": 1,
         "suite_id": config.suite_id,
         "generated_at": generated_at,
@@ -294,5 +284,3 @@ def build_inference_report_payload(
         "results_table": build_results_table(config, inf_res_dict),
         "panels": panels,
     }
-    payload["viewer_config"] = build_viewer_config({}, config)
-    return payload
