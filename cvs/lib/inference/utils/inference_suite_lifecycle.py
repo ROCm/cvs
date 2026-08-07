@@ -266,7 +266,12 @@ def html_metric_table_header(cells):
 
 
 def html_metric_table_row(report, cells):
-    props = dict(getattr(report, "user_properties", ()))
+    user_properties = getattr(report, "user_properties", None)
+    if user_properties is None:
+        cells.insert(-1, "<td></td>")
+        cells.insert(-1, "<td></td>")
+        return
+    props = dict(user_properties)
     has = "metric_value" in props
     val = props.get("metric_value")
     unit = props.get("metric_unit", "") if has else ""
