@@ -127,17 +127,30 @@ def pytest_runtest_makereport(item, call):
     report = outcome.get_result()
     if report.when != "call":
         return
-    lc = item.funcargs.get("lifecycle")
-    rows = getattr(lc, "report", {}).get(item.nodeid) if lc else None
-    artifacts = getattr(lc, "artifacts", {}).get(item.nodeid) if lc else None
-    if not rows and not artifacts:
-        return
     try:
         import pytest_html
     except ImportError:
         return
 
+    lc = item.funcargs.get("lifecycle")
+    rows = getattr(lc, "report", {}).get(item.nodeid) if lc else None
+    artifacts = getattr(lc, "artifacts", {}).get(item.nodeid) if lc else None
+
+    # Link every metric row to the single shared metric-results HTML file
+    # (written by test_print_results_table into the same report bundle dir).
+    metric_link = None
+    if (item.originalname or "") == "test_metric":
+        mgr = getattr(item.config, "_html_report_manager", None)
+        if mgr is not None and getattr(mgr, "is_enabled", False):
+            metric_link = f"{mgr._test_html_dir}/metric_results.html"
+
+    if not rows and not artifacts and not metric_link:
+        return
+
     extras = getattr(report, "extras", [])
+
+    if metric_link:
+        extras.append(pytest_html.extras.url(metric_link, name="Metric Results"))
 
     if rows:
         body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
@@ -158,26 +171,3 @@ def pytest_runtest_makereport(item, call):
             pass
 
     report.extras = extras
-
-
-def pytest_html_results_table_header(cells):
-    """Add Value + Unit columns just before the trailing Links column."""
-    cells.insert(-1, "<th>Value</th>")
-    cells.insert(-1, "<th>Unit</th>")
-
-
-def pytest_html_results_table_row(report, cells):
-    props = dict(report.user_properties)
-    has = "metric_value" in props
-    val = props.get("metric_value")
-    unit = props.get("metric_unit", "") if has else ""
-    if not has:
-        shown = ""
-    elif val is None:
-        shown = "-"
-    elif isinstance(val, float):
-        shown = f"{val:.3f}"
-    else:
-        shown = str(val)
-    cells.insert(-1, f"<td>{shown}</td>")
-    cells.insert(-1, f"<td>{unit}</td>")
