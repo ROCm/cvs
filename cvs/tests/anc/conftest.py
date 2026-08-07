@@ -97,6 +97,11 @@ def config_dict(config_file, cluster_dict, pytestconfig):
         # Broad: any leftover REPLACE_ME placeholder anywhere in the config.
         placeholders = anc_lib.find_replace_me_placeholders(config_dict)
         problems += [f'{p} is still "{anc_lib.REPLACE_ME_SENTINEL}"' for p in placeholders]
+        # Abort before contacting any node when the configured anc_version and
+        # the version in anc_release_url disagree (only when a version is set).
+        version_problem = anc_lib.check_version_matches_url(config_dict)
+        if version_problem:
+            problems.append(version_problem)
         # Group suites additionally require a usable log_folder_path prefix.
         if suite_name.startswith("anc_test"):
             problems += anc_lib.validate_anc_path_prefixes(config_dict)

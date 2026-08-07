@@ -13,8 +13,11 @@
         "_comment_anc_version": "Expected ANC version. The install pre-task skips (re)installation when this version is already present on the node, and post-verifies the install matches.",
         "anc_version": "1.4.9",
 
-        "_comment_anc_release_url": "URL of the ANC release archive to download and install. Flavour (deb/rpm/tar) is auto-detected from the filename.",
+        "_comment_anc_release_url": "URL of the ANC release archive to download and install. Both packaging generations are supported and auto-detected from the filename: LEGACY (<=1.4.x) outer tarballs carry a '-deb-'/'-rpm-'/'-tar-' token (e.g. anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz); DIRECT (1.5.0+) URLs point straight at a '.deb'/'.rpm'/'.tar.gz' with no flavour token (e.g. anc-release-helios-nda-1.5.5-x86_64.tar.gz). When anc_version is set it must match the version in this URL or the run aborts before contacting any node.",
         "anc_release_url": "REPLACE_ME",
+
+        "_comment_ANC_INSTALL_PATH": "TAR installs ONLY: relocatable install prefix ANC is extracted into (its anc/ dir, tool folders, and content live under here). A leading '{home}' expands to the runner user's home directory (e.g. '/home/{id}/my/anc/install/path'); a leading '~' is also expanded. Applies exclusively to tar releases -- deb/rpm packages carry predefined absolute locations baked into their archive and IGNORE this key entirely. Leave blank or omit to keep the legacy default (/opt/amdtools).",
+        "ANC_INSTALL_PATH": "",
 
         "_comment_print_all_to_console": "'True' echoes ANC group output to the console; 'False' suppresses it (install/ldconfig/version diagnostics still print).",
         "print_all_to_console": "True",
