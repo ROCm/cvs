@@ -168,7 +168,7 @@ def substitute_config(config_path, cluster_dict):
 
     Threshold discovery supports both layouts:
     - ``threshold_json`` in the config (literal path; vllm_single style), or
-    - a sole ``*threshold.json`` sibling next to the config (inferencex_atom style).
+    - a sole ``*threshold.json`` sibling next to the config (atom style).
 
     This is the framework-neutral body of the old `load_variant`: file read +
     3-pass substitution + threshold read. Per-framework loaders call it, attach
