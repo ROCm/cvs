@@ -152,29 +152,29 @@ def pytest_collection_modifyitems(items):
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
 
-def pytest_html_results_table_header(cells):
-    """Add Value + Unit columns just before the trailing Links column.
-
-    Populated for test_metric rows; blank for lifecycle/inference rows (they
-    record no metric_value user-property). Scoped to this suite's conftest, so
-    other suites' result tables are unaffected.
-    """
-    cells.insert(-1, "<th>Value</th>")
-    cells.insert(-1, "<th>Unit</th>")
-
-
-def pytest_html_results_table_row(report, cells):
-    props = dict(report.user_properties)
-    has = "metric_value" in props
-    val = props.get("metric_value")
-    unit = props.get("metric_unit", "") if has else ""
-    if not has:
-        shown = ""
-    elif val is None:
-        shown = "-"
-    elif isinstance(val, float):
-        shown = f"{val:.3f}"
-    else:
-        shown = str(val)
-    cells.insert(-1, f"<td>{shown}</td>")
-    cells.insert(-1, f"<td>{unit}</td>")
+# def pytest_html_results_table_header(cells):
+#     """Add Value + Unit columns just before the trailing Links column.
+#
+#     Populated for test_metric rows; blank for lifecycle/inference rows (they
+#     record no metric_value user-property). Scoped to this suite's conftest, so
+#     other suites' result tables are unaffected.
+#     """
+#     cells.insert(-1, "<th>Value</th>")
+#     cells.insert(-1, "<th>Unit</th>")
+#
+#
+# def pytest_html_results_table_row(report, cells):
+#     props = dict(report.user_properties)
+#     has = "metric_value" in props
+#     val = props.get("metric_value")
+#     unit = props.get("metric_unit", "") if has else ""
+#     if not has:
+#         shown = ""
+#     elif val is None:
+#         shown = "-"
+#     elif isinstance(val, float):
+#         shown = f"{val:.3f}"
+#     else:
+#         shown = str(val)
+#     cells.insert(-1, f"<td>{shown}</td>")
+#     cells.insert(-1, f"<td>{unit}</td>")
