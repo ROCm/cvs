@@ -26,6 +26,17 @@ from cvs.lib.report.presets.builder import (
 )
 from cvs.lib.report.types import ReportChartSeries
 
+# Stages recorded by atom lifecycle tests (shared helpers + atom.py).
+ATOM_SESSION_LIFECYCLE_LABELS = (
+    "container_launch",
+    "sshd_setup",
+    "topology_discovery",
+    "model_fetch",
+    "server_ready",
+    "client_complete",
+    "teardown",
+)
+
 _ATOM_CHART_SERIES = (
     *DEFAULT_PERF_CHART_SERIES,
     ReportChartSeries("scaling.efficiency_pct", "Scaling efficiency", "%"),
@@ -74,4 +85,5 @@ ATOM_REPORT_CONFIG = make_inference_report_config(
     row_card_test_names=("test_cell_metrics",),
     viewer_cell_threshold=16,
     run_card_display_builder=_atom_run_card_display,
+    session_lifecycle_labels=ATOM_SESSION_LIFECYCLE_LABELS,
 )

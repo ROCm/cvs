@@ -144,7 +144,7 @@ def validate_ib_hca_preflight(discovered: dict[str, list[str]], requested: list[
 
 def _netdev_for_ip_cmd(ip: str) -> str:
     inner = (
-        f"IF=$((ip -4 -o addr show 2>/dev/null || /sbin/ip -4 -o addr show 2>/dev/null) | "
+        f"IF=$({{ip -4 -o addr show 2>/dev/null || /sbin/ip -4 -o addr show 2>/dev/null;}} | "
         f"awk -v ip={shlex.quote(ip)} '{{split($4,a,\"/\"); if(a[1]==ip) {{print $2; exit}}}}'); "
         'echo "${IF}"'
     )
@@ -153,8 +153,8 @@ def _netdev_for_ip_cmd(ip: str) -> str:
 
 def _netdev_via_route_cmd(dest_ip: str) -> str:
     inner = (
-        f"IF=$((ip route get {shlex.quote(dest_ip)} 2>/dev/null || "
-        f"/sbin/ip route get {shlex.quote(dest_ip)} 2>/dev/null) | awk "
+        f"IF=$({{ip route get {shlex.quote(dest_ip)} 2>/dev/null || "
+        f"/sbin/ip route get {shlex.quote(dest_ip)} 2>/dev/null;}} | awk "
         "'{{for(i=1;i<=NF;i++) if($i==\"dev\") {{print $(i+1); exit}}}}'); "
         'echo "${IF}"'
     )
