@@ -46,11 +46,11 @@ def test_render_report_html_from_payload():
         variant_config=generic_variant(),
         inf_res_dict=two_cell_inf_res(),
         lifecycle_report={},
-        pytest_html_path="/out/ix_atom_run.html",
-        log_file_path="/out/ix_atom_run.log",
+        pytest_html_path="/out/atom_run.html",
+        log_file_path="/out/atom_run.log",
         provenance={
-            "pytest_html_href": "../ix_atom_run.html",
-            "log_file_href": "ix_atom_run.log",
+            "pytest_html_href": "../atom_run.html",
+            "log_file_href": "atom_run.log",
         },
     )
     doc = render_report_html(payload)
@@ -59,8 +59,8 @@ def test_render_report_html_from_payload():
     assert "Gate matrix" in doc
     assert "heatmap" in doc
     assert "Full results" in doc
-    assert '<a href="../ix_atom_run.html">Pytest report</a>' in doc
-    assert '<a href="ix_atom_run.log">Run log</a>' in doc
+    assert '<a href="../atom_run.html">Pytest report</a>' in doc
+    assert '<a href="atom_run.log">Run log</a>' in doc
     assert "class='notes'" not in doc
 
 

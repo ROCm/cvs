@@ -41,11 +41,11 @@ def test_prev_run_panel_flags_regression(tmp_path):
 
 
 def test_resolve_prev_run_json_path_sibling(tmp_path):
-    sibling = tmp_path / "inferencex_atom_report_prev.json"
+    sibling = tmp_path / "atom_report_prev.json"
     sibling.write_text("{}", encoding="utf-8")
     resolved = resolve_prev_run_json_path(
         "",
-        report_basename="inferencex_atom_report",
+        report_basename="atom_report",
         report_dir=tmp_path,
     )
     assert resolved == str(sibling)
