@@ -28,7 +28,7 @@ def sshd_port_listen_probe_cmd(port: int = DEFAULT_SSHD_PORT) -> str:
 def sshd_port_listen_ok(output) -> bool:
     """Return True when a container exec result indicates the sshd port is open."""
     if isinstance(output, dict):
-        text = output.get("stdout", "")
+        text = output.get("stdout") or output.get("output", "")
     else:
         text = output
     return "OK" in (text or "")

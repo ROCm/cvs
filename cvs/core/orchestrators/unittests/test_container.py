@@ -268,6 +268,7 @@ class TestContainerOrchestrator(unittest.TestCase):
             "cvs.core.orchestrators.container", fromlist=["sshd_port_listen_ok"]
         ).sshd_port_listen_ok
         self.assertTrue(ok({"stdout": "OK\n"}))
+        self.assertTrue(ok({"output": "OK\n"}))
         self.assertFalse(ok({"stdout": "NO\n"}))
 
     # ------------------------------------------------------------------
