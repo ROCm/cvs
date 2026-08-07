@@ -10,7 +10,7 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.training.jax.utils.training_config_loader import load_training_variant
+from cvs.lib.training.jaxmaxtext.utils.training_config_loader import load_training_variant
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 log = globals.log

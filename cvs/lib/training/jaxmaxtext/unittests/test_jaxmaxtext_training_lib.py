@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unit tests for cvs/lib/training/jax/jaxmaxtext_training_lib.py::MaxTextTrainingJob.
+Unit tests for cvs/lib/training/jaxmaxtext/jaxmaxtext_training_lib.py::MaxTextTrainingJob.
 
 The job talks to the outside world only through an injected orchestrator
 (`orch.exec` / `orch.exec_cmd_list`), so every test builds a job with a
@@ -14,7 +14,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from cvs.lib.training.jax.jaxmaxtext_training_lib import MaxTextTrainingJob
+from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import MaxTextTrainingJob
 
 
 def _training(**overrides):
@@ -222,7 +222,7 @@ class WriteMaxtextYamlTests(unittest.TestCase):
 
 
 class StartTrainingTests(unittest.TestCase):
-    @patch("cvs.lib.training.jax.jaxmaxtext_training_lib.time.sleep")
+    @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
     def test_launches_per_node_backgrounded(self, _sleep):
         job, orch = _make_job(hosts=["h0", "h1"])
         job.start_training()

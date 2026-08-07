@@ -14,8 +14,8 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.training.jax.jaxmaxtext_training_lib import MaxTextTrainingJob
-from cvs.lib.training.jax.utils.maxtext_parsing import (
+from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import MaxTextTrainingJob
+from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     TRAINING_METRICS,
     TRAINING_METRIC_UNITS,
     compute_scaling_efficiency,
@@ -23,7 +23,7 @@ from cvs.lib.training.jax.utils.maxtext_parsing import (
     sample_loss_curve,
     evaluate_loss_decreasing,
 )
-from cvs.lib.training.jax.utils.loss_curve import render_loss_curve_png
+from cvs.lib.training.jaxmaxtext.utils.loss_curve import render_loss_curve_png
 from cvs.lib.utils.verdict import evaluate_all
 
 import uuid as _uuid

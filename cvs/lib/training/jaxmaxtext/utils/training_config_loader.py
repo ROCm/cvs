@@ -23,7 +23,7 @@ import warnings
 from typing import Any, Dict, List, Literal
 
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Allow, _Forbid, substitute_config
-from cvs.lib.training.jax.utils.maxtext_parsing import GATED_METRICS
+from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import GATED_METRICS
 
 
 class Tokenizer(_Forbid):
