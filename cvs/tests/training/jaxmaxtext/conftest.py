@@ -136,8 +136,9 @@ def pytest_runtest_makereport(item, call):
     rows = getattr(lc, "report", {}).get(item.nodeid) if lc else None
     artifacts = getattr(lc, "artifacts", {}).get(item.nodeid) if lc else None
 
-    # Link every metric row to the single shared metric-results HTML file
-    # (written by test_print_results_table into the same report bundle dir).
+    # Each metric row gets an EXTRA "Metric Results" link to the single shared
+    # metric-results HTML file (written by test_print_results_table), in addition
+    # to its own per-test "Full Log" link (kept as-is). Two links per metric row.
     metric_link = None
     if (item.originalname or "") == "test_metric":
         mgr = getattr(item.config, "_html_report_manager", None)

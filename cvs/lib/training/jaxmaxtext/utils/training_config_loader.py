@@ -42,7 +42,7 @@ class NcclConfig(_Allow):
 
 
 class JaxDistributed(_Forbid):
-    coordinator_ip: str = ""
+    coordinator_ip: str = "auto"
     coordinator_port: str = "12346"
     initialization_timeout_seconds: str = "1800"
     heartbeat_timeout_seconds: str = "900"
@@ -101,6 +101,20 @@ class LossCurve(_Allow):
     enforce: bool = True
 
 
+class Sweep(_Allow):
+    """One sweep entry = one full training run with per-run maxtext overrides.
+
+    `name` is the canonical cell key (also the threshold-file key), e.g.
+    "NNODES=2,STEPS=30,PRECISION=BF16,BATCH=3,GBS=48,SEQLEN=8192". Only the
+    parameters that actually vary need a `maxtext_overrides` entry (for now just
+    precision, e.g. FP8 sets `quantization`); everything else falls back to the
+    base `maxtext_config`.
+    """
+
+    name: str
+    maxtext_overrides: Dict[str, Any] = {}
+
+
 class TrainingConfig(_Allow):
     distributed: bool = True
     steps: int = 30
@@ -117,6 +131,8 @@ class TrainingConfig(_Allow):
     scaling_baseline: ScalingBaseline = ScalingBaseline()
     convergence: Convergence = Convergence()
     loss_curve: LossCurve = LossCurve()
+    sweeps: List[Sweep] = []
+    enabled_sweep_list: List[str] = []
 
 
 def validate_thresholds_cover_training(
@@ -173,6 +189,27 @@ class TrainingVariantConfig(BaseVariantConfig):
     def expected_cells(self, num_nodes=1):
         """The single cell this training config produces."""
         return [self.cell_key(num_nodes=num_nodes)]
+
+    def enabled_sweeps(self):
+        """Return the Sweep objects selected to run.
+
+        `enabled_sweep_list` (if non-empty) selects a subset by name; otherwise
+        every declared sweep runs. A config with no `sweeps` degrades to a single
+        implicit sweep named "default" (its threshold cell, if any, is keyed
+        "default"), so the suite still runs unparametrized.
+        """
+        sweeps = self.training.sweeps
+        if not sweeps:
+            return [Sweep(name="default")]
+        by_name = {s.name: s for s in sweeps}
+        names = self.training.enabled_sweep_list or [s.name for s in sweeps]
+        selected = []
+        for n in names:
+            if n in by_name:
+                selected.append(by_name[n])
+            else:
+                warnings.warn(f"enabled_sweep_list references unknown sweep '{n}'", stacklevel=2)
+        return selected
 
 
 # ---------- public API (training) ----------

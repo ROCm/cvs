@@ -149,7 +149,7 @@
     },
 
     "jax_distributed": {
-      "coordinator_ip": "10.32.80.124",
+      "coordinator_ip": "auto",
       "coordinator_port": "12346",
       "initialization_timeout_seconds": "1800",
       "heartbeat_timeout_seconds": "900"
@@ -173,6 +173,34 @@
       "milestone_steps": [100, 500, 1000, 5000],
       "max_slope": 0.0,
       "enforce": true
-    }
+    },
+
+    "_sweeps_comment": "Each sweep = one full training run; `name` is the threshold cell key. FP8 on MI355X (CDNA4) uses quantization=fp8 (NOT nanoo_fp8, which is the MI300/MI325 value). STEPS/GBS/NNODES in the name are labels: steps comes from training.steps, GBS = per_device_batch_size * total GPUs, NNODES from the cluster. enabled_sweep_list selects which sweeps to run.",
+    "sweeps": [
+      {
+        "name": "NNODES=1,STEPS=30,PRECISION=BF16,BATCH=6,GBS=48,SEQLEN=8192",
+        "maxtext_overrides": {
+          "per_device_batch_size": 6,
+          "max_target_length": 8192,
+          "dtype": "bfloat16",
+          "weight_dtype": "bfloat16",
+          "quantization": ""
+        }
+      },
+      {
+        "name": "NNODES=1,STEPS=30,PRECISION=FP8,BATCH=6,GBS=48,SEQLEN=8192",
+        "maxtext_overrides": {
+          "per_device_batch_size": 6,
+          "max_target_length": 8192,
+          "dtype": "bfloat16",
+          "weight_dtype": "bfloat16",
+          "quantization": "fp8"
+        }
+      }
+    ],
+    "enabled_sweep_list": [
+      "NNODES=1,STEPS=30,PRECISION=BF16,BATCH=6,GBS=48,SEQLEN=8192",
+      "NNODES=1,STEPS=30,PRECISION=FP8,BATCH=6,GBS=48,SEQLEN=8192"
+    ]
   }
 }

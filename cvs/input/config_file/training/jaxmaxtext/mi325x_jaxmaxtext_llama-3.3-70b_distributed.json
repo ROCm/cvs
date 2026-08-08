@@ -149,7 +149,7 @@
     },
 
     "jax_distributed": {
-      "coordinator_ip": "10.32.80.124",
+      "coordinator_ip": "auto",
       "coordinator_port": "12346",
       "initialization_timeout_seconds": "1800",
       "heartbeat_timeout_seconds": "900"
@@ -173,6 +173,34 @@
       "milestone_steps": [100, 500, 1000, 5000],
       "max_slope": 0.0,
       "enforce": true
-    }
+    },
+
+    "_sweeps_comment": "Each sweep = one full training run with per-run maxtext overrides; `name` is the threshold cell key. BF16 uses the base maxtext_config as-is. FP8 on MI300X/MI325X (CDNA3) must use quantization=nanoo_fp8 (the plain 'fp8' value is the NVIDIA path, also used on MI355X/MI350X). weight_dtype stays bfloat16 (master weights). enabled_sweep_list selects which sweeps to run.",
+    "sweeps": [
+      {
+        "name": "NNODES=2,STEPS=30,PRECISION=BF16,BATCH=3,GBS=48,SEQLEN=8192",
+        "maxtext_overrides": {
+          "per_device_batch_size": 3,
+          "max_target_length": 8192,
+          "dtype": "bfloat16",
+          "weight_dtype": "bfloat16",
+          "quantization": ""
+        }
+      },
+      {
+        "name": "NNODES=2,STEPS=30,PRECISION=FP8,BATCH=3,GBS=48,SEQLEN=8192",
+        "maxtext_overrides": {
+          "per_device_batch_size": 3,
+          "max_target_length": 8192,
+          "dtype": "bfloat16",
+          "weight_dtype": "bfloat16",
+          "quantization": "nanoo_fp8"
+        }
+      }
+    ],
+    "enabled_sweep_list": [
+      "NNODES=2,STEPS=30,PRECISION=BF16,BATCH=3,GBS=48,SEQLEN=8192",
+      "NNODES=2,STEPS=30,PRECISION=FP8,BATCH=3,GBS=48,SEQLEN=8192"
+    ]
   }
 }
