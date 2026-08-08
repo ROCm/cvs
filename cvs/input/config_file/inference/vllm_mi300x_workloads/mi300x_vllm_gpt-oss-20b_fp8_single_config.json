@@ -1,0 +1,111 @@
+{
+  "_comment": "vllm single workload: gpt-oss-20b_fp8 on MI300X, TP=4 single node. Sweep carries conc16 1k1k/1k8k/8k1k; only 1k1k is selected in sweep.runs. Set container.image, model.id and the models mount before running.",
+  "schema_version": 1,
+  "framework": "vllm",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi300x_vllm_gpt-oss-20b_fp8_single_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "<changeme>",
+    "remote": 0
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "vllm_gpt-oss-20b_fp8_single_mi300x",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-models-mount>:/models:ro"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "serve_args": {},
+      "env": {
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1"
+      }
+    }
+  },
+  "params": {
+    "backend": "vllm",
+    "base_url": "http://0.0.0.0",
+    "port_no": "8888",
+    "dataset_name": "random",
+    "burstiness": "1.0",
+    "seed": "0",
+    "request_rate": "inf",
+    "random_range_ratio": "0.0",
+    "random_prefix_len": "0",
+    "tensor_parallelism": "4",
+    "pipeline_parallel_size": "1",
+    "nnodes": "1",
+    "tokenizer_mode": "auto",
+    "percentile_metrics": "ttft,tpot,itl,e2el",
+    "metric_percentiles": "50,90,95,99",
+    "num_prompts": "320",
+    "client_poll_count": "90"
+  },
+  "sweep": {
+    "sequence_combinations": [
+      {
+        "name": "w_gpt-oss-20b_fp8_1k1k",
+        "isl": "1024",
+        "osl": "1024",
+        "goodput_slo": {
+          "ttft_ms": 1000000000.0,
+          "tpot_ms": 1000000000.0,
+          "e2el_ms": 1000000000.0
+        }
+      },
+      {
+        "name": "w_gpt-oss-20b_fp8_1k8k",
+        "isl": "1024",
+        "osl": "8192",
+        "goodput_slo": {
+          "ttft_ms": 1000000000.0,
+          "tpot_ms": 1000000000.0,
+          "e2el_ms": 1000000000.0
+        }
+      },
+      {
+        "name": "w_gpt-oss-20b_fp8_8k1k",
+        "isl": "8192",
+        "osl": "1024",
+        "goodput_slo": {
+          "ttft_ms": 1000000000.0,
+          "tpot_ms": 1000000000.0,
+          "e2el_ms": 1000000000.0
+        }
+      }
+    ],
+    "runs": [
+      {
+        "combo": "w_gpt-oss-20b_fp8_1k1k",
+        "concurrency": 16
+      }
+    ]
+  },
+  "accuracy": {
+    "tasks": []
+  }
+}
