@@ -1,6 +1,6 @@
-# vllm MI325X workload configs
+# vllm MI300X workload configs
 
-14 inference workloads for the `vllm` suite on MI325X, each shipped as a
+14 inference workloads for the `vllm` suite on MI300X, each shipped as a
 `single` / `distributed` pair — 28 configs, 28 sibling thresholds.
 
 ## Layout
@@ -8,8 +8,8 @@
 Flat sibling pairs, same convention as `inferencex_atom_single`:
 
 ```text
-mi325x_vllm_{model}_{precision}_{topology}_config.json
-mi325x_vllm_{model}_{precision}_{topology}_threshold.json
+mi300x_vllm_{model}_{precision}_{topology}_config.json
+mi300x_vllm_{model}_{precision}_{topology}_threshold.json
 ```
 
 `topology` is `single` or `distributed`. Each config points `threshold_json` at
@@ -141,13 +141,13 @@ tokenizer.
 ```bash
 cd ~/cvs && source .cvs_venv/bin/activate
 
-VAR=mi325x_vllm_glm-51_fp8_single
-DIR=~/input/config_file/inference/vllm_mi325x_workloads/$VAR
+VAR=mi300x_vllm_glm-51_fp8_single
+DIR=~/input/config_file/inference/vllm_mi300x_workloads/$VAR
 mkdir -p "$DIR"
 
-cvs copy-config inference/vllm_mi325x_workloads/${VAR}_config.json \
+cvs copy-config inference/vllm_mi300x_workloads/${VAR}_config.json \
   --output "$DIR/${VAR}_config.json"
-cvs copy-config inference/vllm_mi325x_workloads/${VAR}_threshold.json \
+cvs copy-config inference/vllm_mi300x_workloads/${VAR}_threshold.json \
   --output "$DIR/${VAR}_threshold.json"
 # then edit "$DIR/${VAR}_config.json" and fill in every <changeme>
 

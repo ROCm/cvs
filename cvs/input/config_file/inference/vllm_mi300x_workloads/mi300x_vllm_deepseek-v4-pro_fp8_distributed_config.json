@@ -1,10 +1,10 @@
 {
-  "_comment": "vllm distributed workload: qwen35-397b-a17b_bf16 on MI325X, TP=8, PP=2 across 2 nodes. Sweep carries conc16 1k1k/1k8k/8k1k; only 1k1k is selected in sweep.runs. Set container.image, model.id and the models mount before running.",
+  "_comment": "vllm distributed workload: deepseek-v4-pro_fp8 on MI300X, TP=8, PP=2 across 2 nodes. Sweep carries conc16 1k1k/1k8k/8k1k; only 1k1k is selected in sweep.runs. Set container.image, model.id and the models mount before running.",
   "schema_version": 1,
   "framework": "vllm",
-  "gpu_arch": "mi325x",
+  "gpu_arch": "mi300x",
   "enforce_thresholds": false,
-  "threshold_json": "mi325x_vllm_qwen35-397b-a17b_bf16_distributed_threshold.json",
+  "threshold_json": "mi300x_vllm_deepseek-v4-pro_fp8_distributed_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/models",
@@ -17,7 +17,7 @@
   },
   "container": {
     "lifetime": "per_run",
-    "name": "vllm_qwen35-397b-a17b_bf16_distributed_mi325x",
+    "name": "vllm_deepseek-v4-pro_fp8_distributed_mi300x",
     "image": "<changeme>",
     "runtime": {
       "name": "docker",
@@ -40,11 +40,14 @@
   "roles": {
     "server": {
       "serve_args": {
-        "trust-remote-code": true
+        "trust-remote-code": true,
+        "kv-cache-dtype": "fp8"
       },
       "env": {
         "HF_HUB_OFFLINE": "1",
-        "TRANSFORMERS_OFFLINE": "1"
+        "TRANSFORMERS_OFFLINE": "1",
+        "VLLM_ROCM_USE_AITER": "1",
+        "GPU_ARCHS": "gfx942"
       },
       "ib_hca_devices": "auto",
       "ib_netdev": "<changeme>"
@@ -74,7 +77,7 @@
   "sweep": {
     "sequence_combinations": [
       {
-        "name": "w_qwen35-397b-a17b_bf16_1k1k",
+        "name": "w_deepseek-v4-pro_fp8_1k1k",
         "isl": "1024",
         "osl": "1024",
         "goodput_slo": {
@@ -84,7 +87,7 @@
         }
       },
       {
-        "name": "w_qwen35-397b-a17b_bf16_1k8k",
+        "name": "w_deepseek-v4-pro_fp8_1k8k",
         "isl": "1024",
         "osl": "8192",
         "goodput_slo": {
@@ -94,7 +97,7 @@
         }
       },
       {
-        "name": "w_qwen35-397b-a17b_bf16_8k1k",
+        "name": "w_deepseek-v4-pro_fp8_8k1k",
         "isl": "8192",
         "osl": "1024",
         "goodput_slo": {
@@ -106,7 +109,7 @@
     ],
     "runs": [
       {
-        "combo": "w_qwen35-397b-a17b_bf16_1k1k",
+        "combo": "w_deepseek-v4-pro_fp8_1k1k",
         "concurrency": 16
       }
     ]
