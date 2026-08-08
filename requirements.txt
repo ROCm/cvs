@@ -6,9 +6,12 @@ pytest-html
 pytest-repeat
 pytest-dependency
 xlsxwriter
-pydantic >= 2.0
+pydantic >= 2.8.2
 pandas
 tabulate
+
+# AMD node-scraper: offline dmesg/log parsing (see cvs/lib/node_scraper_adapter.py)
+amd-node-scraper
 
 # Docker SDK for container orchestration
 docker >= 7.0.0

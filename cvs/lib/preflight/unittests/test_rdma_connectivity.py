@@ -4,13 +4,18 @@
 import os
 import sys
 import unittest
+import warnings
 from unittest.mock import MagicMock, patch
+
+from pydantic import ValidationError
 
 # Add cvs package root (four levels up: unittests -> preflight -> lib -> cvs)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
 from cvs.lib.preflight.base import partition_nodes_into_groups
 from cvs.lib.preflight.rdma_connectivity import RdmaConnectivityCheck
+from cvs.lib.preflight.report import PreflightReportGenerator
+from cvs.parsers.schemas import PreflightConfigFile, normalize_legacy_preflight_rdma_config
 
 
 def _make_checker(
@@ -35,6 +40,235 @@ def _make_checker(
         parallel_group_size=parallel_group_size,
         config_dict=kwargs.get('config_dict', {}),
     )
+
+
+class TestPreflightRdmaConfigContract(unittest.TestCase):
+    def test_legacy_rdma_inventory_is_normalized_with_one_warning(self):
+        legacy = {
+            'node_check': {
+                'expected_rocm_version': '7.15.0',
+                'gid_index': '7',
+                'rdma_interfaces': ['enp4s0np0'],
+            },
+            'connectivity_check': {'rdma': {'connectivity_mode': 'basic'}},
+        }
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            config = PreflightConfigFile.model_validate(legacy)
+
+        self.assertEqual(len(caught), 1)
+        self.assertIs(caught[0].category, FutureWarning)
+        self.assertIn('legacy paths will be removed in a future release', str(caught[0].message))
+        self.assertEqual(config.connectivity_check.rdma.gid_index, '7')
+        self.assertEqual(config.connectivity_check.rdma.interfaces, ['enp4s0np0'])
+        self.assertNotIn('gid_index', config.node_check.model_dump())
+        self.assertNotIn('rdma_interfaces', config.node_check.model_dump())
+
+    def test_matching_legacy_and_canonical_rdma_values_are_accepted(self):
+        with self.assertWarns(FutureWarning):
+            config = PreflightConfigFile.model_validate(
+                {
+                    'node_check': {
+                        'gid_index': '7',
+                        'rdma_interfaces': ['enp4s0np0'],
+                    },
+                    'connectivity_check': {
+                        'rdma': {
+                            'gid_index': '7',
+                            'interfaces': ['enp4s0np0'],
+                        }
+                    },
+                }
+            )
+
+        self.assertEqual(config.connectivity_check.rdma.gid_index, '7')
+        self.assertEqual(config.connectivity_check.rdma.interfaces, ['enp4s0np0'])
+
+    def test_conflicting_legacy_and_canonical_rdma_values_are_rejected(self):
+        with self.assertRaisesRegex(ValidationError, 'Conflicting preflight RDMA options'):
+            PreflightConfigFile.model_validate(
+                {
+                    'node_check': {'gid_index': '3'},
+                    'connectivity_check': {'rdma': {'gid_index': '7'}},
+                }
+            )
+
+        with self.assertRaisesRegex(ValidationError, 'Conflicting preflight RDMA options'):
+            PreflightConfigFile.model_validate(
+                {
+                    'node_check': {'rdma_interfaces': ['enp4s0np0']},
+                    'connectivity_check': {'rdma': {'interfaces': ['mlx5_0']}},
+                }
+            )
+
+    def test_invalid_legacy_interface_value_uses_canonical_validation(self):
+        with self.assertWarns(FutureWarning):
+            with self.assertRaises(ValidationError):
+                PreflightConfigFile.model_validate(
+                    {
+                        'node_check': {'rdma_interfaces': 'enp4s0np0'},
+                    }
+                )
+
+    def test_normalized_legacy_inventory_is_used_by_runtime_checks(self):
+        from cvs.tests.preflight import preflight_checks
+
+        config, warning_message = normalize_legacy_preflight_rdma_config(
+            {
+                'node_check': {
+                    'gid_index': '7',
+                    'rdma_interfaces': ['enp4s0np0'],
+                },
+                'connectivity_check': {'rdma': {'connectivity_mode': 'basic'}},
+            }
+        )
+        self.assertIsNotNone(warning_message)
+
+        phdl = MagicMock()
+        phdl.reachable_hosts = ['nodeA', 'nodeB']
+        previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        try:
+            with (
+                patch.object(preflight_checks, 'InterfaceConsistencyCheck') as interface_checker,
+                patch.object(preflight_checks, 'GidConsistencyCheck') as gid_checker,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+                patch('cvs.lib.preflight.rdma_connectivity.RdmaConnectivityCheck') as rdma_checker,
+            ):
+                interface_checker.return_value.run.return_value = {
+                    'nodeA': {'status': 'PASS', 'errors': [], 'interfaces': []}
+                }
+                gid_checker.return_value.run.return_value = {
+                    'nodeA': {'status': 'PASS', 'errors': [], 'interfaces': {}}
+                }
+                rdma_checker.return_value.run.return_value = {
+                    'mode': 'basic',
+                    'skipped': False,
+                    'total_pairs': 1,
+                    'successful_pairs': 1,
+                    'failed_pairs': 0,
+                    'pair_results': {},
+                    'node_status': {},
+                }
+                preflight_checks.test_interface_name_consistency(phdl, config)
+                preflight_checks.test_gid_consistency(phdl, config)
+                preflight_checks.test_rdma_connectivity(
+                    phdl,
+                    {'node_dict': {'nodeA': {}, 'nodeB': {}}},
+                    config,
+                )
+
+            interface_checker.assert_called_once_with(phdl, ['enp4s0np0'], config)
+            gid_checker.assert_called_once_with(phdl, '7', ['enp4s0np0'], config)
+            rdma_args = rdma_checker.call_args.args
+            self.assertEqual(rdma_args[5], ['enp4s0np0'])
+            self.assertEqual(rdma_args[6], '7')
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
+    def test_schema_places_rdma_inventory_under_rdma(self):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            config = PreflightConfigFile.model_validate(
+                {
+                    'connectivity_check': {
+                        'rdma': {
+                            'connectivity_mode': 'skip',
+                            'gid_index': '7',
+                            'interfaces': ['enp4s0np0'],
+                        }
+                    },
+                    'reporting': {
+                        'generate_html_report': True,
+                        'generate_rdma_pairs_csv': False,
+                    },
+                }
+            )
+
+        self.assertEqual(caught, [])
+        self.assertEqual(config.connectivity_check.rdma.gid_index, '7')
+        self.assertEqual(config.connectivity_check.rdma.interfaces, ['enp4s0np0'])
+        self.assertIs(config.reporting.generate_html_report, True)
+        self.assertIs(config.reporting.generate_rdma_pairs_csv, False)
+
+    def test_skip_mode_skips_interface_and_gid_checks_and_reporting(self):
+        from cvs.tests.preflight import preflight_checks
+
+        config = {'connectivity_check': {'rdma': {'connectivity_mode': 'skip'}}}
+        previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        try:
+            with (
+                patch.object(preflight_checks, 'InterfaceConsistencyCheck') as interface_checker,
+                patch.object(preflight_checks, 'GidConsistencyCheck') as gid_checker,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+                patch.object(RdmaConnectivityCheck, 'run') as rdma_run,
+            ):
+                preflight_checks.test_interface_name_consistency(MagicMock(), config)
+                preflight_checks.test_gid_consistency(MagicMock(), config)
+                phdl = MagicMock()
+                phdl.reachable_hosts = ['nodeA']
+                preflight_checks.test_rdma_connectivity(phdl, {'node_dict': {'nodeA': {}}}, config)
+
+            interface_checker.assert_not_called()
+            gid_checker.assert_not_called()
+            rdma_run.assert_not_called()
+            interface_result = preflight_checks.preflight_results['interface_names']
+            gid_result = preflight_checks.preflight_results['gid_consistency']
+            rdma_result = preflight_checks.preflight_results['rdma_connectivity']
+            self.assertEqual(interface_result['status'], 'SKIPPED')
+            self.assertEqual(gid_result['status'], 'SKIPPED')
+            self.assertEqual(rdma_result['status'], 'SKIPPED')
+            self.assertTrue(rdma_result['skipped'])
+
+            report = PreflightReportGenerator(MagicMock(), {}, {})
+            self.assertEqual(report._summarize_interface_results(interface_result)['status'], 'SKIPPED')
+            self.assertEqual(report._summarize_gid_results(gid_result)['status'], 'SKIPPED')
+            self.assertEqual(report._summarize_connectivity_results(rdma_result)['status'], 'SKIPPED')
+            self.assertEqual(report._generate_interface_names_html(interface_result), '')
+            self.assertEqual(report._generate_gid_consistency_html(gid_result), '')
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
+    def test_enabled_checks_use_nested_rdma_inventory(self):
+        from cvs.tests.preflight import preflight_checks
+
+        phdl = MagicMock()
+        config = {
+            'connectivity_check': {
+                'rdma': {
+                    'connectivity_mode': 'basic',
+                    'gid_index': '7',
+                    'interfaces': ['enp4s0np0'],
+                }
+            }
+        }
+        previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        try:
+            with (
+                patch.object(preflight_checks, 'InterfaceConsistencyCheck') as interface_checker,
+                patch.object(preflight_checks, 'GidConsistencyCheck') as gid_checker,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+            ):
+                interface_checker.return_value.run.return_value = {
+                    'nodeA': {'status': 'PASS', 'errors': [], 'interfaces': []}
+                }
+                gid_checker.return_value.run.return_value = {
+                    'nodeA': {'status': 'PASS', 'errors': [], 'interfaces': {}}
+                }
+
+                preflight_checks.test_interface_name_consistency(phdl, config)
+                preflight_checks.test_gid_consistency(phdl, config)
+
+            interface_checker.assert_called_once_with(phdl, ['enp4s0np0'], config)
+            gid_checker.assert_called_once_with(phdl, '7', ['enp4s0np0'], config)
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
 
 
 class TestPartitionNodesIntoGroups(unittest.TestCase):

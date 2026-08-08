@@ -20,7 +20,22 @@ export NCCL_IB_SPLIT_DATA_ON_QPS=0
 export NCCL_PXN_DISABLE=0
 export IB_RX_QUEUE_LEN=8192
 export HCOLL_ENABLE_MCAST_ALL=0
-export NCCL_CUMEM_ENABLE=0
+# NCCL_CUMEM_ENABLE must be 1 on bnxt_re (Broadcom Thor2) + ROCm/RCCL builds where
+# HIP_VERSION >= 71260540 (ROCm 7.1+). RCCL's net.cc only compiles the ROCm-native
+# hsa_amd_portable_export_dmabuf() registration path when HIP_VERSION < 71260540;
+# on newer builds it takes the CUDA-style path instead, which is gated behind
+# ncclCuMemEnable(). With CUMEM_ENABLE=0 (this script's old default) that gate is
+# never satisfied, so RCCL silently falls back to a plain ibv_reg_mr_iova2() call
+# on a raw GPU pointer -- which bnxt_re's kernel driver rejects with
+# "ib_umem_get failed! rc = -14" (EFAULT / "Bad address"), symmetrically on every
+# node, because GPU VRAM isn't get_user_pages()-able without a peer-mem module.
+# Setting CUMEM_ENABLE=1 also lets NCCL recognize UALoE/scale-up-fabric GPUs as
+# directly P2P-reachable (P2P/CUMEMMNNVL), bypassing NET/IB entirely when a
+# scale-up fabric is present. Verified on a 2-node Helios (bnxt_re) cluster:
+# with CUMEM_ENABLE=0 all RCCL collectives failed at ncclCommInitRank; with
+# CUMEM_ENABLE=1 all collectives (AllReduce/AllGather/ReduceScatter/AllToAll/
+# Broadcast, fp32+bf16, 1KB-1GB) passed. See docs/reference/configuration-files/rccl.rst.
+export NCCL_CUMEM_ENABLE=1
 export HSA_NO_SCRATCH_RECLAIM=1
 export NCCL_IGNORE_CPU_AFFINITY=1
 export NCCL_DMABUF_ENABLE=1

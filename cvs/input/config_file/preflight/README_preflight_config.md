@@ -6,12 +6,12 @@ This document explains how to configure the GPU cluster preflight checks system.
 
 The preflight checks system validates essential cluster health before running performance tests like IB performance tests, RCCL training, and inference workloads. It performs the following validations:
 
-1. **GID Consistency** - Ensures RDMA interfaces have valid GID entries
-2. **RDMA Connectivity** - Tests node-to-node RDMA communication using ibv_rc_pingpong
-3. **ROCm Version Consistency** - Verifies consistent ROCm versions across nodes
-4. **Interface Name Consistency** - Validates RDMA interface naming patterns
-5. **IFoE L2 Connectivity (AIMVT-180; opt-in)** - Runs `afmctl test ping`
-   on each node and enforces per-port and Summary pass/fail accounting
+1. **Node Health** - Checks GPU visibility, AMDGPU/KFD, kernel health, and ROCm consistency
+2. **MI4XX Scale-up Fabric Admission** - Optionally validates AIFM/AFM/vPOD membership, station masks, and IFoE port state
+3. **IFoE L2 Connectivity** - Optionally runs strict `afmctl test ping` coverage before TransferBench and RDMA
+4. **TransferBench** - Optionally validates the IFoE data path per node or with a multi-rank cluster run
+5. **GID and Interface Consistency** - Ensures configured RDMA interfaces and GID entries are present and consistent
+6. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Configuration File Structure
 
@@ -20,27 +20,44 @@ The preflight configuration file follows this structure:
 ```json
 {
   "preflight": {
-    "debug": {
-      "scriptlet": false
-    },
     "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "6.2.0",
-      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+      "enabled": true,
+      "gpus_per_node": 4,
+      "expected_rocm_version": "7.15.0"
     },
     "connectivity_check": {
       "rdma": {
-        "connectivity_mode": "basic",
+        "connectivity_mode": "skip",
+        "gid_index": "3",
+        "interfaces": ["enp4s0np0"],
         "nodes_per_full_mesh_group": 128,
         "ibv_test_timeout": 90,
         "ibv_test_port_range": "10000-50000",
         "inter_full_mesh_group_pairs_per_wave": "auto"
+      },
+      "ifoe": {
+        "fabric_checks": true,
+        "l2ping": {
+          "enabled": true,
+          "pings_per_port": 3
+        },
+        "transferbench": {
+          "enabled": true,
+          "scope": "node",
+          "profile": "smoketest",
+          "message_sizes": ["1K", "16M"],
+          "iterations": 2,
+          "warmup_iterations": 0
+        }
       }
     },
     "reporting": {
-      "generate_html_report": "true",
+      "generate_html_report": true,
       "artifacts_root_dir": "/tmp/{user-id}/preflight",
-      "generate_rdma_pairs_csv": "true"
+      "generate_rdma_pairs_csv": false
+    },
+    "debug": {
+      "scriptlet": false
     }
   }
 }
@@ -48,25 +65,28 @@ The preflight configuration file follows this structure:
 
 ## Configuration Structure
 
-The preflight configuration uses a **nested structure organized by execution phase** for better organization and future extensibility:
+The preflight configuration uses a **nested structure organized by subsystem** for better organization and future extensibility:
 
 ### Structure Overview
 
 ```
 preflight/
-├── debug/                # Debug and troubleshooting options  
-├── node_check/           # Individual node validation parameters
-├── connectivity_check/   # Inter-node connectivity tests
-│   ├── rdma/             # RDMA-specific parameters (including nodes_per_full_mesh_group)
-│   └── ifoe/             # IFoE L2 ping parameters (AIMVT-180; opt-in)
-└── reporting/           # Output and report generation
+├── node_check/                 # Generation-independent node validation
+├── connectivity_check/        # Connectivity tests grouped by protocol
+│   ├── rdma/                  # RDMA inventory, GID, and pairwise connectivity
+│   └── ifoe/                  # MI4XX scale-up fabric checks
+│       ├── l2ping/            # Strict IFoE L2 connectivity gate
+│       └── transferbench/     # IFoE data-path validation
+├── reporting/                 # Output and report generation
+└── debug/                     # Debug and troubleshooting options
 ```
 
 ### Execution Flow
-1. **node_check** - Validate individual nodes in parallel
-2. **connectivity_check.rdma.nodes_per_full_mesh_group** - Configure RDMA batching resources
-3. **connectivity_check** - Test inter-node connectivity by protocol
-4. **reporting** - Generate reports and outputs
+1. **node_check** - Validate individual nodes and, when enabled, MI4XX scale-up fabric admission
+2. **connectivity_check.ifoe.l2ping** - Enforce strict L2 connectivity
+3. **connectivity_check.ifoe.transferbench** - Validate the IFoE data path
+4. **connectivity_check.rdma** - Validate RDMA inventory, GIDs, and connectivity unless skipped
+5. **reporting** - Generate reports and outputs
 
 ## Configuration Parameters
 
@@ -103,22 +123,18 @@ All parameters below are optional and have sensible defaults. The sample configu
 
 ### Node Check Settings (`node_check`)
 
-- **`gid_index`** (default: "3")
-  - GID index to check on all RDMA interfaces
-  - Typically "3" for RoCE (RDMA over Converged Ethernet)
-  - Must be a valid GID index for your InfiniBand/RoCE setup
+- **`enabled`** (default: `true`)
+  - Enables GPU visibility, AMDGPU/KFD, kernel-health, and ROCm validation
+  - Set to `false` to skip node-local health checks
+
+- **`gpus_per_node`** (default: `4`)
+  - Exact number of AMD GPUs expected on every node
+  - GPU visibility is generation-independent and can run on older or newer AMD hardware
 
 - **`expected_rocm_version`** (default: "6.2.0")
   - Expected ROCm version across all cluster nodes
   - Must match the output of `amd-smi version` on all nodes
   - Format: "major.minor.patch" (e.g., "6.2.0", "5.7.1")
-
-- **`rdma_interfaces`** (default: ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"])
-  - List of specific RDMA interface names that should be present on all cluster nodes
-  - Examples:
-    - `["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]` - Standard 4-interface setup
-    - `["mlx5_0", "mlx5_1"]` - Mellanox 2-interface setup
-    - `["ib0", "ib1", "ib2", "ib3"]` - Generic InfiniBand setup
 
 ### Connectivity Check Settings (`connectivity_check`)
 
@@ -127,7 +143,18 @@ All parameters below are optional and have sensible defaults. The sample configu
 - **`connectivity_mode`** (default: "basic")
   - **"basic"**: Test adjacent node pairs (fast, ~14% coverage for 8 nodes)
   - **"full_mesh"**: Test all possible node pairs (comprehensive, 100% coverage)
-  - **"skip"**: Skip RDMA connectivity testing entirely
+  - **"skip"**: Skip RDMA interface presence, GID validation, and pairwise connectivity
+
+- **`gid_index`** (default: "3")
+  - GID index to check on all configured RDMA interfaces
+  - Typically "3" for RoCE (RDMA over Converged Ethernet)
+  - Must be a valid GID index for your InfiniBand/RoCE setup
+
+- **`interfaces`** (default: `["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]`)
+  - List of RDMA device names that should be present on all cluster nodes
+  - Examples:
+    - `["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]` - Standard 4-interface setup
+    - `["mlx5_0", "mlx5_1"]` - Mellanox 2-interface setup
 
 - **`ibv_test_timeout`** (default: 90)
   - Timeout in seconds for each ibv_rc_pingpong connectivity test
@@ -165,54 +192,81 @@ All parameters below are optional and have sensible defaults. The sample configu
   - Legacy hint for reporting: preflight now prunes interface/GID-failed nodes automatically
   - Interface failures are excluded from mesh testing regardless of this flag
 
-#### IFoE Settings (`connectivity_check.ifoe`) — opt-in (AIMVT-180)
+##### Legacy RDMA paths — deprecated
 
-Runs `afmctl test ping` on each reachable node and validates the per-port
-pass/fail table plus the aggregate `Summary:` block in afmctl's output.
+Existing RDMA users may temporarily retain `node_check.gid_index` and
+`node_check.rdma_interfaces`. CVS normalizes them to
+`connectivity_check.rdma.gid_index` and `connectivity_check.rdma.interfaces`
+and emits a deprecation warning. If a legacy and canonical value are both
+present, they must match. New configurations should use the canonical RDMA
+paths; the compatibility paths will be removed in a future release.
 
-- **`connectivity_mode`** (default: `"skip"`)
-  - `"run"` — execute the L2 ping on every reachable node
-  - `"skip"` — preflight records a SKIPPED result and does not invoke afmctl
-- **`afmctl_path`** (default: `"afmctl"`)
-  - Absolute path or PATH-resolved binary name on each node
-- **`use_sudo`** (default: `false`)
-  - Prepend `sudo` to the afmctl invocation when the cluster image requires root
-- **`bdf_discovery`** (default: `"auto"`)
-  - `"auto"` — run `afmctl show device` on each node and use the reported BDFs
-  - `"config"` — use only the `bdfs` list below; nodes with no matching BDFs FAIL
-- **`bdfs`** (default: `[]`)
-  - Optional explicit list of accelerator BDFs to test on every node
-  - Example: `["0001:01:00.1"]`
-- **`dst_accelerators`** (default: `[0]`)
-  - One afmctl invocation is issued per `(bdf, dst_accelerator)` combination
-- **`ports`** (default: `"all"`)
-  - `"all"` (omit `-p`), a string like `"0-7"` or `"0,1,2"`, or a list `[0, 1, 2]`
-- **`pings_per_port`** (default: `1`)
-  - Passed to afmctl as `-c <count>`
-- **`per_ping_timeout`** (default: `null`)
-  - Optional afmctl `-t <seconds>` value; omitted when `null`
-- **`traffic_types`** (default: `["ifoe_req", "ifoe_resp", "non_ifoe"]`)
-  - Determines which afmctl traffic categories are required to pass
-  - When all three are selected, `--traffic-type` is omitted so afmctl runs them all
-- **`loss_threshold_pct`** (default: `0.0`)
-  - Maximum tolerated loss percentage per traffic type (Summary line)
-- **`ssh_timeout`** (default: `180`)
-  - Per-invocation SSH timeout (seconds); raise for high `pings_per_port`
+#### IFoE Settings (`connectivity_check.ifoe`) — MI4XX scale-up fabric
+
+IFoE validation is organized into fabric admission, strict L2 connectivity,
+and TransferBench data-path validation. CVS owns `afmctl` discovery, privilege
+handling, BDF and port discovery, strict coverage, traffic selection, timeout
+derivation, and result parsing.
+
+The earlier configuration shape exposed those implementation details directly.
+They now follow this fixed policy:
+
+| Previous setting | Current CVS behavior |
+|---|---|
+| `connectivity_mode` | Replaced by `l2ping.enabled` |
+| `afmctl_path` | Resolve `afmctl` from the node environment before privilege escalation |
+| `use_sudo` | Use the cluster's detected privilege policy |
+| `bdf_discovery` / `bdfs` | Discover admitted AFM devices and BDFs from live topology |
+| `dst_accelerators` | Build strict destination coverage from reconciled vPOD membership |
+| `ports` | Test admitted, station-mask-enabled ports that are operationally up |
+| `traffic_types` | Enforce IFoE request, IFoE response, and non-IFoE traffic |
+| `loss_threshold_pct` | Fail on any reported loss or incomplete coverage |
+| `per_ping_timeout` / `ssh_timeout` | Derive conservative timeouts from the requested workload |
+
+- **`fabric_checks`** (default: `false`)
+  - Adds AIFM/AFM/vPOD, station-mask, and IFoE port admission to node health
+  - Requires `node_check.enabled: true`
+
+##### L2 ping (`connectivity_check.ifoe.l2ping`)
+
+Runs `afmctl test ping` with strict full-mesh coverage on every admitted IFoE
+port and validates per-port and aggregate summary accounting.
+
+- **`enabled`** (default: `false`)
+  - Enables the mandatory L2 connectivity gate before TransferBench and RDMA
+- **`pings_per_port`** (default: `3`)
+  - Number of ping samples sent per selected IFoE port pair
+
+##### TransferBench (`connectivity_check.ifoe.transferbench`)
+
+- **`enabled`** (default: `false`)
+  - Enables the TransferBench IFoE data-path gate before RDMA
+- **`scope`** (default: `"node"`)
+  - `"node"` runs an independent smoketest on each node
+  - `"cluster"` runs one multi-rank test across the admitted cluster
+- **`profile`** (default: `"smoketest"`)
+  - Selects the CVS-supported test profile; `"smoketest"` is currently supported
+- **`message_sizes`** (default: `["1K", "16M"]`)
+  - Message sizes exercised by the selected profile
+- **`iterations`** (default: `2`)
+  - Validated iterations per test and message size
+- **`warmup_iterations`** (default: `0`)
+  - Warmup iterations performed before validation
 
 ### Reporting Settings (`reporting`)
 
-- **`generate_html_report`** (default: "true")
+- **`generate_html_report`** (default: `true`)
   - Whether to generate detailed HTML report
-  - Set to "false" to disable HTML report generation
+  - Set to `false` to disable HTML report generation
 
-- **`artifacts_root_dir`** (default: "/tmp/{user-id}/preflight")
+- **`artifacts_root_dir`** (default: `"/tmp/{user-id}/preflight"`)
   - Root directory where preflight artifacts are saved
   - Includes HTML reports and RDMA full_mesh workspace logs under `rdma_connectivity_workspace/`
   - Must be writable by the user running the tests
 
-- **`generate_rdma_pairs_csv`** (default: "true")
+- **`generate_rdma_pairs_csv`** (default: `true`)
   - Whether to generate CSV file with failed RDMA pairs alongside HTML report
-  - Set to "false" to disable CSV generation
+  - Set to `false` to disable CSV generation
 
 ## Usage Examples
 
@@ -222,13 +276,15 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
 {
   "preflight": {
     "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "6.2.0",
-      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+      "enabled": true,
+      "gpus_per_node": 8,
+      "expected_rocm_version": "6.2.0"
     },
     "connectivity_check": {
       "rdma": {
         "connectivity_mode": "basic",
+        "gid_index": "3",
+        "interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
         "ibv_test_timeout": 90,
         "ibv_test_port_range": "10000-50000"
       }
@@ -243,13 +299,15 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
 {
   "preflight": {
     "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "6.2.0",
-      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+      "enabled": true,
+      "gpus_per_node": 8,
+      "expected_rocm_version": "6.2.0"
     },
     "connectivity_check": {
       "rdma": {
         "connectivity_mode": "full_mesh",
+        "gid_index": "3",
+        "interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
         "ibv_test_timeout": 120,
         "ibv_test_port_range": "10000-50000"
       }
@@ -264,9 +322,9 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
 {
   "preflight": {
     "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "6.2.0",
-      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+      "enabled": true,
+      "gpus_per_node": 8,
+      "expected_rocm_version": "6.2.0"
     },
     "connectivity_check": {
       "rdma": {
@@ -286,13 +344,15 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
       "scriptlet": true
     },
     "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "7.2.0",
-      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"]
+      "enabled": true,
+      "gpus_per_node": 8,
+      "expected_rocm_version": "7.2.0"
     },
     "connectivity_check": {
       "rdma": {
         "connectivity_mode": "full_mesh",
+        "gid_index": "3",
+        "interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
         "nodes_per_full_mesh_group": 32,
         "ibv_test_timeout": 180,
         "ibv_test_port_range": "15000-20000",
@@ -303,9 +363,9 @@ pass/fail table plus the aggregate `Summary:` block in afmctl's output.
       }
     },
     "reporting": {
-      "generate_html_report": "true",
+      "generate_html_report": true,
       "artifacts_root_dir": "/tmp/{user-id}/preflight",
-      "generate_rdma_pairs_csv": "true"
+      "generate_rdma_pairs_csv": true
     }
   }
 }
@@ -348,8 +408,23 @@ cvs run preflight_checks \
 
 4. **Missing RDMA Interfaces**
    - List interfaces: `ls /sys/class/infiniband/`
-   - Update rdma_interfaces list to match your cluster setup
+   - Update `connectivity_check.rdma.interfaces` to match your cluster setup
    - Ensure all expected interfaces are present on each node
+
+5. **Node-Health Failures**
+   - Compare `gpus_per_node` with `amd-smi list`
+   - Verify AMDGPU and KFD are loaded and inspect kernel errors in `dmesg`
+   - Confirm `expected_rocm_version` matches `amd-smi version`
+
+6. **IFoE Fabric or L2 Failures**
+   - Confirm AIFM/AFM services and the in-band node agent are healthy
+   - Inspect the HTML report for vPOD, station-mask, down-port, and coverage errors
+   - Verify `afmctl` is installed and available through the cluster environment
+
+7. **TransferBench Failures**
+   - Review the captured TransferBench output and exit status in the report
+   - Confirm all admitted nodes resolve to one consistent vPOD
+   - Reduce to `scope: "node"` to isolate a failing host before retrying cluster scope
 
 ### Performance Considerations
 
@@ -397,3 +472,8 @@ cvs run rccl_multinode_default_cvs --cluster_file cluster.json --config_file rcc
 ```
 
 This ensures your cluster is healthy before running resource-intensive performance tests.
+
+Within preflight, the mandatory order is node health and optional scale-up
+fabric admission, then l2ping, then TransferBench, followed by RDMA checks.
+Setting `connectivity_check.rdma.connectivity_mode` to `"skip"` skips RDMA
+without disabling the independent IFoE gates.

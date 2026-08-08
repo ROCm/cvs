@@ -131,6 +131,73 @@ After installation, verify CVS is available:
 
 If you see a list of available test suites, CVS is installed correctly.
 
+Run CVS in a container
+=======================
+
+CVS can run as the head-node CLI in a Docker container. The image connects to
+the cluster over SSH; it does not contain ROCm or the workloads that CVS
+launches on cluster nodes.
+
+Prerequisites
+-------------
+
+- Docker Engine on the system from which you run CVS.
+- Network access from that system to every cluster node over SSH.
+- A cluster file and test configuration file prepared as described below.
+- An SSH private key that the cluster file references. Do not copy the key into
+  the image; mount it read-only at runtime.
+
+Build and verify the image
+--------------------------
+
+From the repository root, build the image and verify the installed CLI:
+
+.. code:: bash
+
+  docker build --tag cvs:local .
+  docker run --rm cvs:local --version
+  docker run --rm cvs:local copy-config --list
+
+Run a test suite
+----------------
+
+Copy the required configuration files to a directory outside the repository
+and update the cluster file to use the path where the key will be mounted in
+the container:
+
+.. code:: json
+
+  {
+    "priv_key_file": "/run/secrets/cvs_ssh_key"
+  }
+
+The following example runs the platform suite. It keeps input files and the
+private key read-only, while reports and logs are written to the host
+``results`` directory:
+
+.. code:: bash
+
+  mkdir -p results
+  docker run --rm --init --network host \
+    --mount type=bind,src="$(pwd)/cluster.json",dst=/workspace/cluster.json,readonly \
+    --mount type=bind,src="$(pwd)/host_config.json",dst=/workspace/host_config.json,readonly \
+    --mount type=bind,src="$HOME/.ssh/id_ed25519",dst=/run/secrets/cvs_ssh_key,readonly \
+    --mount type=bind,src="$(pwd)/results",dst=/results \
+    cvs:local run host_configs_cvs \
+      --cluster_file /workspace/cluster.json \
+      --config_file /workspace/host_config.json \
+      --html /results/host.html \
+      --self-contained-html \
+      --log-file /results/host.log \
+      --capture=tee-sys -vvv -s
+
+``--network host`` gives CVS the same network reachability as the Docker host
+on Linux. Remove it only after confirming the bridge network can reach all
+cluster nodes. CVS's normal bare-metal execution does not need a Docker socket
+inside this image. When the cluster file selects the CVS container backend,
+the image still communicates with the remote nodes over SSH; those remote SSH
+users need Docker access as documented in :doc:`/how-to/run-with-containers`.
+
 
 Configure the CVS cluster file
 ==============================

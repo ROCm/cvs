@@ -155,7 +155,8 @@ You can list all available host check test cases using the CLI:
     - test_check_numa_balancing
     - test_check_online_memory
     - test_check_pci_accelerators
-    - test_check_pci_speed_width
+    - test_check_gpu_pcie_speed_width
+    - test_check_be_nic_pcie_speed_width
     - test_check_pci_acs
     - test_check_dmesg_driver_errors
 

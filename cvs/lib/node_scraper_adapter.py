@@ -1,0 +1,126 @@
+'''
+Copyright 2025 Advanced Micro Devices, Inc.
+All rights reserved. This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
+The year included in the foregoing notice is the year of creation of the work.
+All code contained here is Property of Advanced Micro Devices, Inc.
+'''
+
+# Adapter around AMD node-scraper's offline dmesg analyzer.
+#
+# CVS continues to collect raw dmesg over its existing parallel-SSH layer; this
+# module only reuses node-scraper's curated error-pattern table to parse that
+# text in memory. No SSH or system connection is required for analysis, so the
+# adapter is a drop-in replacement for CVS's hand-maintained regex scanning
+# while keeping the existing collection path and the downstream
+# {node: [lines]} contract intact.
+#
+# Best results come from dmesg collected with `dmesg --time-format iso -x`,
+# which gives node-scraper ISO timestamps and the decoded facility/level prefix
+# its full pattern set expects. Plain `dmesg -T` output still matches message
+# bodies, but per-event timestamps will be empty.
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, List, Optional, Union
+
+from nodescraper.models import SystemInfo
+from nodescraper.plugins.inband.dmesg.analyzer_args import DmesgAnalyzerArgs
+from nodescraper.plugins.inband.dmesg.dmesg_plugin import DmesgPlugin
+
+log = logging.getLogger(__name__)
+
+DEFAULT_NODE_NAME = "cvs-node"
+
+EVENT_KEYS = (
+    "priority",
+    "category",
+    "description",
+    "match_content",
+    "count",
+    "timestamps",
+    "source",
+)
+
+
+def parse_dmesg(
+    dmesg_content: str,
+    node_name: Optional[str] = None,
+    analysis_args: Optional[Union[dict, DmesgAnalyzerArgs]] = None,
+) -> List[Dict[str, Any]]:
+    """Parse raw dmesg text using node-scraper's offline DmesgAnalyzer.
+
+    Args:
+        dmesg_content: Raw dmesg log text. Collect with
+            `dmesg --time-format iso -x` for full fidelity (ISO timestamps and
+            the decoded level prefix); plain `dmesg -T` still matches message
+            bodies but without per-event timestamps.
+        node_name: Optional system name used to tag the analysis.
+        analysis_args: Optional DmesgAnalyzerArgs instance or dict of analyzer
+            args, e.g. {"check_unknown_dmesg_errors": False} or
+            {"error_regex": [{"regex": "...", "message": "...",
+            "event_category": "NETWORK"}]} to extend the built-in pattern set.
+
+    Returns:
+        List of normalized event dicts, each with the keys in EVENT_KEYS:
+        priority, category, description, match_content, count, timestamps,
+        source.
+    """
+    plugin = DmesgPlugin(system_info=SystemInfo(name=node_name or DEFAULT_NODE_NAME))
+    # Use the common DataPlugin.run() entry point (collection=False) so the same
+    # DataPluginResult shape can be reused for other plugins (e.g. NicPlugin).
+    plugin_result = plugin.run(
+        collection=False,
+        data={"dmesg_content": dmesg_content or ""},
+        analysis_args=analysis_args,
+    )
+    return [_normalize_event(event) for event in _extract_analysis_events(plugin_result)]
+
+
+def _extract_analysis_events(plugin_result: Any) -> List[Any]:
+    """Return analyzer events from a DataPlugin.run() PluginResult."""
+    result_data = getattr(plugin_result, "result_data", None)
+    if result_data is None:
+        return []
+    analysis_result = getattr(result_data, "analysis_result", None)
+    if analysis_result is None:
+        return []
+    return list(getattr(analysis_result, "events", []) or [])
+
+
+def _normalize_event(event: Any) -> Dict[str, Any]:
+    """Convert a node-scraper Event into a plain, JSON-friendly dict."""
+    data = getattr(event, "data", {}) or {}
+    priority = getattr(event, "priority", None)
+    return {
+        "priority": getattr(priority, "name", str(priority)),
+        "category": getattr(event, "category", None),
+        "description": getattr(event, "description", None),
+        "match_content": data.get("match_content"),
+        "count": data.get("count", 1),
+        "timestamps": data.get("timestamps", []),
+        "source": data.get("source"),
+    }
+
+
+def event_match_lines(events: List[Dict[str, Any]]) -> List[str]:
+    """Flatten normalized events into matched-line strings.
+
+    Preserves the legacy `{node: [lines]}` contract used by CVS dmesg scans:
+    each detected error becomes a single human-readable line combining the
+    error label and the matched text.
+    """
+    lines: List[str] = []
+    for event in events:
+        match = event.get("match_content")
+        if isinstance(match, (list, tuple)):
+            text = " ".join(str(part) for part in match if part)
+        elif match is None:
+            text = ""
+        else:
+            text = str(match)
+        description = event.get("description") or ""
+        line = f"{description}: {text}".strip().rstrip(":").strip()
+        if line:
+            lines.append(line)
+    return lines

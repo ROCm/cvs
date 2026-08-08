@@ -467,3 +467,28 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
         # download_file should return merged host->path dict
         expected_result = {"host1": "/tmp/test.txt_host1", "host2": "/tmp/test.txt_host2"}
         self.assertEqual(result, expected_result)
+
+    def test_download_file_with_sharding_targets_one_host(self):
+        """A targeted download uses a one-host SFTP client, not every shard."""
+        config = ParallelConfig(hosts_per_shard=1, max_workers_per_cpu=1)
+        expected_result = {"host2": "/tmp/test.txt_host2"}
+
+        with patch(
+            'cvs.lib.parallel.multiprocess_pssh.Pssh.download_file', return_value=expected_result
+        ) as mock_download:
+            pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
+            result = pssh.download_file("/remote/test.txt", "/tmp/test.txt", hosts=["host2"])
+
+        self.assertEqual(result, expected_result)
+        self.mock_execute_sharded.assert_not_called()
+        self.mock_pssh_init.assert_called_once_with(
+            None,
+            ["host2"],
+            user="test",
+            password=None,
+            pkey="id_rsa",
+            host_key_check=False,
+            stop_on_errors=True,
+            env_vars=None,
+        )
+        mock_download.assert_called_once_with("/remote/test.txt", "/tmp/test.txt", recurse=False, suffix_separator="_")

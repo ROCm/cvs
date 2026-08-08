@@ -39,12 +39,20 @@ class ListPlugin(SubcommandPlugin):
             if os.path.exists(abs_path):
                 all_tests_dirs.append((config.get_package_name(), module_path, abs_path))
 
+        # Directories that hold suite-adjacent files, not runnable test suites.
+        # Pruned from the walk so e.g. tests/anc/resources/validate_exe_paths.py
+        # does not show up as a bogus "resources" suite in `cvs list`.
+        skip_dirs = {"resources", "__pycache__"}
+
         # Discover tests from all directories
         for pkg_name, tests_path, tests_dir in all_tests_dirs:
             test_map[pkg_name] = {}
             for root, dirs, files in os.walk(tests_dir):
+                # Prune non-suite dirs in place so os.walk skips descending them.
+                dirs[:] = [d for d in dirs if d not in skip_dirs]
                 for file in files:
-                    if file.endswith(".py") and file != "__init__.py":
+                    # conftest.py holds fixtures/hooks, not a runnable suite.
+                    if file.endswith(".py") and file not in ("__init__.py", "conftest.py"):
                         rel_path = os.path.relpath(os.path.join(root, file), tests_dir)
                         module_parts = os.path.splitext(rel_path)[0].split(os.sep)
                         # Module path: <tests_path>.<test_name>

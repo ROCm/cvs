@@ -68,6 +68,7 @@ def load_cluster_file(cluster_file_path):
 
 def general_health_checks(
     phdl,
+    start_time_dict=None,
 ):
     health_dict = {}
     print('Verify General Health Checks')
@@ -86,9 +87,10 @@ def general_health_checks(
         health_dict['driver_errors'] = verify_lib.verify_driver_errors(phdl)
     except Exception as e:
         print(f'ERROR running verify_driver_errors, due to exception {e}')
-    # journlctl scan
+    # journlctl scan - bounded to start_time_dict (via --since) when provided,
+    # instead of collecting the entire kernel journal since boot.
     try:
-        health_dict['journlctl_scan'] = verify_lib.full_journalctl_scan(phdl)
+        health_dict['journlctl_scan'] = verify_lib.full_journalctl_scan(phdl, start_time_dict=start_time_dict)
     except Exception as e:
         print(f'ERROR running full_journalctl_scan, due to exception {e}')
     # Check for any link flap evidence
@@ -281,7 +283,7 @@ def build_html_report(phdl, html_file, gen_health_dict, start_time, snapshot_err
 
     # Snapshot tables
     # Scan Dmesgs to see any new errors while running the passive health check
-    end_time = phdl.exec('date')
+    end_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
     dmesg_diff_dict = verify_lib.verify_dmesg_for_errors(phdl, start_time, end_time)
     html_lib.build_err_log_table(
         html_file, dmesg_diff_dict, 'New Dmesg Errors during snapshotting', 'snapdmesgtable', 'snapdmesgid'
@@ -477,10 +479,10 @@ class CheckClusterHealthMonitor(MonitorPlugin):
         else:
             phdl = parallel_ssh_lib.Pssh(log, node_list, user=username, password=password)
 
-        start_time = phdl.exec('date')
+        start_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
 
         # Run general health checks and scan historic errors
-        gen_health_dict = general_health_checks(phdl)
+        gen_health_dict = general_health_checks(phdl, start_time_dict=start_time)
 
         # Take cluster metrics snapshot before iterations
         snapshot_dict_before = verify_lib.create_cluster_metrics_snapshot(phdl)

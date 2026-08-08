@@ -1,3 +1,5 @@
+import datetime
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -73,6 +75,200 @@ class TestVerifyGpuPcieErrors(unittest.TestCase):
         result = verify_lib.verify_gpu_pcie_errors(phdl)
         self.assertEqual(len(result["node1"]), 3)
         mock_fail_test.assert_called()
+
+
+class TestFullDmesgScan(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    def test_legacy_path_matches_err_patterns(self, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            "node1": "Mar 1 00:00:00 host kernel: amdgpu page fault segfault at 0",
+        }
+
+        result = verify_lib.full_dmesg_scan(phdl)
+
+        # legacy path collects with human-readable `dmesg -T`
+        self.assertIn("dmesg -T", phdl.exec.call_args[0][0])
+        self.assertTrue(result["node1"])
+        mock_fail_test.assert_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    def test_node_scraper_path_uses_adapter(self, mock_parse, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = [
+            {
+                "priority": "ERROR",
+                "category": "SW_DRIVER",
+                "description": "Out of memory error",
+                "match_content": "Out of memory: Killed process 123 (foo)",
+                "count": 1,
+                "timestamps": [],
+                "source": "dmesg",
+            }
+        ]
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw dmesg text"}
+
+        result = verify_lib.full_dmesg_scan(phdl)
+
+        # node-scraper path collects with ISO timestamps + decoded prefix
+        self.assertIn("--time-format iso -x", phdl.exec.call_args[0][0])
+        mock_parse.assert_called_once()
+        self.assertEqual(len(result["node1"]), 1)
+        self.assertIn("Out of memory error", result["node1"][0])
+        mock_fail_test.assert_called()
+
+
+class TestDmesgMigrations(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
+
+    def test_parse_cvs_time(self):
+        dt = verify_lib._parse_cvs_time("Mon Jun  5 08:53")
+        self.assertIsNotNone(dt)
+        self.assertEqual((dt.month, dt.day, dt.hour, dt.minute, dt.second), (6, 5, 8, 53, 0))
+        self.assertIsNotNone(dt.tzinfo)
+        self.assertIsNone(verify_lib._parse_cvs_time(""))
+        self.assertIsNone(verify_lib._parse_cvs_time("garbage"))
+
+    def test_parse_cvs_time_with_seconds(self):
+        dt = verify_lib._parse_cvs_time("Mon Jun  5 08:53:27")
+        self.assertIsNotNone(dt)
+        self.assertEqual((dt.month, dt.day, dt.hour, dt.minute, dt.second), (6, 5, 8, 53, 27))
+
+    def test_cvs_dmesg_error_regex_shape(self):
+        regexes = verify_lib.cvs_dmesg_error_regex()
+        self.assertTrue(regexes)
+        for item in regexes:
+            self.assertIn("regex", item)
+            self.assertIn("message", item)
+            self.assertIn("event_category", item)
+            self.assertTrue(item["regex"].startswith("(?i)"))
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    def test_verify_dmesg_for_errors_uses_time_range(self, mock_parse, mock_fail):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = [{"description": "GPU Reset", "match_content": "GPU reset begin", "category": "RAS"}]
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw"}
+        start = {"node1": "Mon Jun  5 08:00"}
+        end = {"node1": "Mon Jun  5 09:00"}
+
+        result = verify_lib.verify_dmesg_for_errors(phdl, start, end, till_end_flag=False)
+
+        self.assertIn("--time-format iso -x", phdl.exec.call_args[0][0])
+        passed_args = mock_parse.call_args.kwargs["analysis_args"]
+        self.assertIn("analysis_range_start", passed_args)
+        self.assertIn("analysis_range_end", passed_args)
+        self.assertTrue(result["node1"])
+        mock_fail.assert_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    def test_verify_dmesg_for_errors_till_end_omits_end(self, mock_parse, mock_fail):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = []
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw"}
+        start = {"node1": "Mon Jun  5 08:00"}
+        end = {"node1": "Mon Jun  5 09:00"}
+
+        verify_lib.verify_dmesg_for_errors(phdl, start, end, till_end_flag=True)
+
+        passed_args = mock_parse.call_args.kwargs["analysis_args"]
+        self.assertIn("analysis_range_start", passed_args)
+        self.assertNotIn("analysis_range_end", passed_args)
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    def test_full_journalctl_scan_node_scraper(self, mock_parse, mock_fail):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = [
+            {"description": "Out of memory error", "match_content": "Out of memory: killed", "category": "OS"}
+        ]
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw"}
+
+        result = verify_lib.full_journalctl_scan(phdl)
+
+        self.assertIn("journalctl -k -o short-iso", phdl.exec.call_args[0][0])
+        self.assertNotIn("--since", phdl.exec.call_args[0][0])
+        self.assertTrue(result["node1"])
+        mock_fail.assert_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    def test_full_journalctl_scan_bounds_with_since(self, mock_parse, mock_fail):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = []
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw"}
+
+        verify_lib.full_journalctl_scan(phdl, start_time_dict={"node1": "Mon Jun  5 08:53:27"})
+
+        cmd = phdl.exec.call_args[0][0]
+        expected_year = datetime.datetime.now().astimezone().year
+        self.assertIn("journalctl -k -o short-iso", cmd)
+        self.assertIn(f'--since="{expected_year}-06-05 08:53:27"', cmd)
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    def test_verify_driver_errors_filters_to_driver(self, mock_parse, mock_fail):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = [
+            {
+                "description": "amdgpu Page Fault",
+                "match_content": "amdgpu 0000:01:00.0 page fault",
+                "category": "SW_DRIVER",
+            },
+            {
+                "description": "Filesystem corrupted!",
+                "match_content": "EXT4-fs error (device sda1):",
+                "category": "OS",
+            },
+        ]
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw"}
+
+        result = verify_lib.verify_driver_errors(phdl)
+
+        self.assertEqual(len(result["node1"]), 1)
+        self.assertIn("amdgpu", result["node1"][0].lower())
+        mock_fail.assert_called_once()
+
+
+class TestNodeScraperTimeRangeFiltering(unittest.TestCase):
+    """Exercises the real node-scraper analyzer (no mocking of parse_dmesg) to
+    guard against analysis_range_end silently dropping events that occurred
+    before a test's true end time but after that time got truncated to whole
+    minutes.
+    """
+
+    def test_analysis_range_end_keeps_events_up_to_the_real_second(self):
+        dmesg = "2026-07-17T10:16:30,000000+00:00 kern  :err   : [1.0] GPU reset begin on card0\n"
+
+        end_with_seconds = datetime.datetime(2026, 7, 17, 10, 16, 45, tzinfo=datetime.timezone.utc)
+        events = verify_lib.node_scraper_adapter.parse_dmesg(
+            dmesg, analysis_args={"analysis_range_end": end_with_seconds}
+        )
+        self.assertEqual(len(events), 1, "event before the real (second-precision) end time must be kept")
+
+        end_truncated_to_minute = datetime.datetime(2026, 7, 17, 10, 16, 0, tzinfo=datetime.timezone.utc)
+        events = verify_lib.node_scraper_adapter.parse_dmesg(
+            dmesg, analysis_args={"analysis_range_end": end_truncated_to_minute}
+        )
+        self.assertEqual(
+            len(events),
+            0,
+            "minute-truncated analysis_range_end reproduces the historical bug "
+            "(demonstrates why _parse_cvs_time must preserve seconds)",
+        )
 
 
 class TestVerifyHostLspci(unittest.TestCase):

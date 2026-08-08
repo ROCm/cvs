@@ -6,11 +6,16 @@ A comprehensive validation system for GPU clusters before running performance te
 
 The preflight checks system validates essential cluster health and configuration consistency across all nodes. It performs the following validations:
 
-1. **GID Consistency** - Ensures RDMA interfaces have valid Global Identifier entries
-2. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
-3. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
-4. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(AIMVT-180; opt-in)*
-5. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
+1. **Node Health** - Validates AMDGPU/KFD, GPU visibility, and kernel health, with optional MI4XX fabric admission
+2. **GID Consistency** - Ensures RDMA interfaces have valid Global Identifier entries
+3. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
+4. **ROCm Version Consistency** - Verifies consistent ROCm versions across all nodes
+5. **IFoE L2 Connectivity** - Validates L2 reachability of IFoE links via `afmctl test ping` *(opt-in)*
+6. **IFoE TransferBench Smoketest** - Runs the TransferBench candidate-branch `smoketest`
+   preset to validate the IFoE scale-up data path (using MI4XX AFM admission or,
+   for generic profiles, an `amd-smi fabric --json` single-vPod precondition)
+   *(AIMVT-181; opt-in)*
+7. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Quick Start
 
@@ -63,20 +68,34 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 {
   "preflight": {
     "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "6.2.0",
-      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+      "enabled": true,
+      "gpus_per_node": 4,
+      "expected_rocm_version": "7.15.0"
     },
     "connectivity_check": {
       "rdma": {
-        "connectivity_mode": "basic",
-        "ibv_test_timeout": "10",
-        "ibv_test_port_range": "10000-50000"
+        "connectivity_mode": "skip"
+      },
+      "ifoe": {
+        "fabric_checks": true,
+        "l2ping": {
+          "enabled": true,
+          "pings_per_port": 3
+        },
+        "transferbench": {
+          "enabled": true,
+          "scope": "node",
+          "profile": "smoketest",
+          "message_sizes": ["1K", "16M"],
+          "iterations": 2,
+          "warmup_iterations": 0
+        }
       }
     },
     "reporting": {
-      "generate_html_report": "true",
-      "artifacts_root_dir": "/tmp/preflight"
+      "generate_html_report": true,
+      "artifacts_root_dir": "/tmp/{user-id}/preflight",
+      "generate_rdma_pairs_csv": false
     }
   }
 }
@@ -84,14 +103,30 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 
 ### Key Parameters
 
+- **`node_check.enabled`**: Run GPU node-health and ROCm validation
+- **`node_check.gpus_per_node`**: Exact GPU count expected on every node
+- **`connectivity_check.ifoe.fabric_checks`**: Add MI4XX AIFM/AFM/vPOD and IFoE station/port checks
 - **`connectivity_check.rdma.connectivity_mode`**: `"basic"`, `"full_mesh"`, or `"skip"`
-- **`connectivity_check.ifoe.connectivity_mode`**: `"run"` or `"skip"` (default)
+- **`connectivity_check.ifoe.l2ping.enabled`**: Run the strict IFoE L2 connectivity gate
+- **`connectivity_check.ifoe.l2ping.pings_per_port`**: Samples per discovered UP port pair
+- **`connectivity_check.ifoe.transferbench.enabled`**: Run the TransferBench data-path gate
+- **`connectivity_check.ifoe.transferbench.scope`**: `"node"` or `"cluster"`
+- **`connectivity_check.ifoe.transferbench.profile`**: CVS-supported profile (`"smoketest"`)
+- **`connectivity_check.ifoe.transferbench.message_sizes`**, **`iterations`**, **`warmup_iterations`**: Workload intensity
 - **`node_check.expected_rocm_version`**: ROCm version expected across all nodes
-- **`node_check.rdma_interfaces`**: List of expected RDMA interface names
+- **`connectivity_check.rdma.interfaces`**: List of expected RDMA interface names
+- **`connectivity_check.rdma.gid_index`**: GID index validated on those interfaces
 - **`connectivity_check.rdma.ibv_test_timeout`**: Timeout in seconds for ibv_rc_pingpong tests
 - **`connectivity_check.rdma.ibv_test_port_range`**: Port range for parallel ibv_rc_pingpong tests
 
-## IFoE L2 Connectivity (AIMVT-180)
+Legacy RDMA configurations may temporarily use `node_check.gid_index` and
+`node_check.rdma_interfaces`. CVS maps them to
+`connectivity_check.rdma.gid_index` and `connectivity_check.rdma.interfaces`
+and emits a deprecation warning. The legacy paths will be removed in a future
+release. If legacy and canonical values are both supplied, they must match.
+New configurations should use only the canonical paths.
+
+## IFoE L2 Connectivity
 
 Validates L2 reachability of IFoE links by invoking `afmctl test ping` on
 each reachable node and parsing the per-port pass/fail counts and the
@@ -104,35 +139,104 @@ Each invocation issues:
     --dst-accelerator <accel_id> [-t <per_ping_timeout>] [--traffic-type ...]
 ```
 
-The check is **opt-in**: it defaults to `connectivity_mode: "skip"` so it
-will not run unless explicitly enabled. Enable it by setting
-`preflight.connectivity_check.ifoe.connectivity_mode` to `"run"` once the
-IFoE driver and `afmctl` are available on every node.
-
-When `bdfs` is empty and `bdf_discovery` is `"auto"` (default), preflight
-runs `afmctl show device` on every reachable node and uses the BDFs it
-reports. A node is marked **FAIL** if any enabled traffic type
-(`ifoe_req`, `ifoe_resp`, `non_ifoe`) exceeds `loss_threshold_pct` (default
-`0.0`), or if any per-port table entry reports `FAIL`.
+The check is opt-in through `preflight.connectivity_check.ifoe.l2ping.enabled`. When enabled, CVS
+discovers each node's source BDFs, vPOD peers, and operational ports, then
+tests every ordered non-self accelerator pair. It validates IFoE request,
+IFoE response, and non-IFoE traffic with a zero-loss policy and requires
+complete coverage. Discovery or connectivity failures fail the preflight gate.
 
 ### Example IFoE config block
 
 ```json
-"connectivity_check": {
-  "ifoe": {
-    "connectivity_mode": "run",
-    "afmctl_path": "/usr/local/bin/afmctl",
-    "use_sudo": true,
-    "bdf_discovery": "auto",
-    "dst_accelerators": [0, 1],
-    "ports": "all",
-    "pings_per_port": 5,
-    "traffic_types": ["ifoe_req", "ifoe_resp", "non_ifoe"],
-    "loss_threshold_pct": 0.0,
-    "ssh_timeout": 240
+"ifoe": {
+  "l2ping": {
+    "enabled": true,
+    "pings_per_port": 3
   }
 }
 ```
+
+## IFoE TransferBench Smoketest (AIMVT-181)
+
+Validates IFoE scale-up data-path one layer above L2 by invoking the
+TransferBench candidate-branch **`smoketest`** preset on every reachable
+node and reconciling the binary's exit code with per-cell
+`[PASS] / [FAIL] / [SKIP]` markers in its output.
+
+With node-health `fabric_checks` enabled, TransferBench consumes its mandatory
+`afmctl show device --json` vPOD admission and does not run a second AMD SMI
+topology query. Generic profiles enforce the single-vPod precondition with
+the CVS-managed `amd-smi` command:
+
+```
+sudo <resolved-amd-smi-binary> fabric --json
+```
+
+on every reachable node and verifying that every node reports exactly one
+`vpod_id` and all nodes share the same `vpod_id`. The TransferBench
+candidate-branch smoketest preset exits with `ERR_FATAL` (exit code `2`)
+when ranks span multiple virtual pods, so this precondition lets us surface
+the cause clearly rather than blaming the smoketest for an environment
+issue.
+
+Each TransferBench invocation issues:
+
+```
+[sudo] SIZE_LIST=<size1>,<size2> NUM_ITERATIONS=<n> NUM_WARMUPS=<n> ALWAYS_VALIDATE=1 RUN_PARALLEL=1 \
+  [TB_NUM_RANKS=<n> TB_RANK=<r> TB_MASTER_ADDR=<rank0> TB_MASTER_PORT=<port>] \
+  <resolved-tb_binary> smoketest
+```
+
+with a `__TB_SMOKE_EXIT__=$?` sentinel appended so we can recover the
+binary's exit code from stdout even when the parallel SSH transport
+discards process exit codes.
+
+CVS owns executable resolution, privilege handling, environment setup,
+validation flags, skip policy, and timeout derivation. The customer selects
+the workload through `profile`, `message_sizes`, `iterations`, and
+`warmup_iterations`.
+
+### Scopes
+
+- **`node`** (default) — one independent single-rank TransferBench per
+  reachable node, exercising intra-node AID↔MID IFoE.
+- **`cluster`** — every reachable node is wired into one socket-comm cluster
+  (`TB_NUM_RANKS=N`, `TB_RANK=0..N-1`, `TB_MASTER_ADDR=<rank0>`).
+  This is the closest thing to a full-mesh IFoE scale-up test the candidate
+  branch ships today; it traverses the rack IFoE switch end-to-end. Requires
+  bidirectional IP reachability on CVS-owned port `31337` between every pair
+  of nodes, and at least two reachable hosts (otherwise we degrade to
+  node scope automatically and log a warning).
+
+### Verdict logic
+
+Per-node verdict is derived as:
+
+1. No `__TB_SMOKE_EXIT__` sentinel observed → **FAIL** (orchestration broke)
+2. Exit code `2` → **FAIL** (TransferBench precondition fired; usually a
+   pod-membership or executor-symmetry issue inside the preset)
+3. Any non-zero exit code → **FAIL**
+4. Any parsed `FAIL` marker or fatal-keyword line in stdout → **FAIL**
+5. More than the CVS-owned skip budget → **WARNING**
+6. Otherwise → **PASS**
+
+### Example TransferBench config block
+
+```json
+"ifoe": {
+  "transferbench": {
+    "enabled": true,
+    "scope": "node",
+    "profile": "smoketest",
+    "message_sizes": ["1K", "16M"],
+    "iterations": 2,
+    "warmup_iterations": 0
+  }
+}
+```
+
+To exercise the rack IFoE switch end-to-end, set `scope` to `"cluster"` and
+allow TCP port `31337` between every selected node.
 
 ## Output and Reporting
 
@@ -194,13 +298,17 @@ cvs run pytorch_xdit_wan \
 ```
 1. Load and validate cluster + preflight configurations
 2. Test SSH connectivity to all nodes
-3. Run parallel preflight checks:
-   - GID consistency across all RDMA interfaces
-   - RDMA connectivity using rping (mode-dependent)
-   - ROCm version consistency via amd-smi
-   - Interface naming pattern compliance
-4. Generate comprehensive summary and HTML report
-5. Return overall PASS/FAIL status
+3. Run generic GPU node health and optional MI4XX AFM/vPOD admission when enabled
+4. Validate ROCm version consistency
+5. Run IFoE checks before RDMA-specific eligibility pruning:
+   - L2 connectivity using `afmctl test ping` (opt-in)
+   - TransferBench scale-up data-path smoketest (opt-in)
+6. Run RDMA checks:
+   - Interface naming and presence
+   - GID consistency
+   - RDMA connectivity using `ibv_rc_pingpong` (mode-dependent)
+7. Generate the comprehensive summary and HTML report
+8. Return overall PASS/FAIL status
 ```
 
 ### Parallel Execution
@@ -295,19 +403,24 @@ cvs/cvs/input/config_file/preflight/
 {
   "preflight": {
     "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "6.2.0",
-      "rdma_interfaces": ["mlx5_0", "mlx5_1"]
+      "enabled": true,
+      "gpus_per_node": 8,
+      "expected_rocm_version": "6.2.0"
     },
     "connectivity_check": {
       "rdma": {
         "connectivity_mode": "full_mesh",
-        "ibv_test_timeout": "15",
+        "gid_index": "3",
+        "interfaces": ["mlx5_0", "mlx5_1"],
+        "ibv_test_timeout": 15,
         "ibv_test_port_range": "10000-10999"
+      },
+      "ifoe": {
+        "fabric_checks": false
       }
     },
     "reporting": {
-      "generate_html_report": "true",
+      "generate_html_report": true,
       "artifacts_root_dir": "/shared/preflight_reports"
     }
   }

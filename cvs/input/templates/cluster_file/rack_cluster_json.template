@@ -1,0 +1,41 @@
+{
+  "username": "{{ username }}",
+  "priv_key_file": "{{ priv_key_file }}",
+  "head_node_dict": {
+    "mgmt_ip": "{{ head_node_ip }}"
+  },
+  "node_dict": {
+{%- set all_nodes = namespace(items=[]) %}
+{%- for rack_id, rack in racks.items() %}
+{%- for node in rack.compute_nodes %}
+{%- set _ = all_nodes.items.append((node, rack_id)) %}
+{%- endfor %}
+{%- endfor %}
+{%- for node, rack_id in all_nodes.items %}
+    "{{ node }}": {
+      "bmc_ip": "NA",
+      "vpc_ip": "{{ node }}",
+      "rack_id": "{{ rack_id }}"
+    }{% if not loop.last %},{% endif %}
+{%- endfor %}
+  },
+  "racks": {
+{%- if switch_ssh_user %}
+    "switch_ssh_user": "{{ switch_ssh_user }}",
+{%- endif %}
+{%- if switch_ssh_password %}
+    "switch_ssh_password": "{{ switch_ssh_password }}",
+{%- endif %}
+{%- if switch_ssh_key_file %}
+    "switch_ssh_key_file": "{{ switch_ssh_key_file }}",
+{%- endif %}
+{%- for rack_id, rack in racks.items() %}
+    "{{ rack_id }}": {
+      "platform": "{{ rack.platform }}"
+{%- if rack.switch_trays %},
+      "switch_trays": {{ rack.switch_trays | tojson }}
+{%- endif %}
+    }{% if not loop.last %},{% endif %}
+{%- endfor %}
+  }
+}
