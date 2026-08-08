@@ -39,6 +39,7 @@ def _training(**overrides):
             gloo_socket_ifname="eno0",
         ),
         jax_distributed=SimpleNamespace(
+            coordinator_ip="auto",
             coordinator_port="12346",
             initialization_timeout_seconds="1800",
             heartbeat_timeout_seconds="900",
@@ -206,6 +207,28 @@ class BuildTrainingCmdTests(unittest.TestCase):
         self.assertEqual(len(cmds), 1)
         self.assertIn("JAX_COORDINATOR_IP=localhost", cmds[0])
         self.assertIn("JAX_PROCESS_INDEX=0", cmds[0])
+
+    def test_auto_coordinator_uses_first_host(self):
+        # coordinator_ip "auto" -> first cluster node (orch.hosts[0]).
+        job, orch = _make_job(hosts=["10.0.0.5", "10.0.0.6"])
+        job.build_training_cmd()
+        cmds = orch.exec_cmd_list.call_args.args[0]
+        self.assertIn("JAX_COORDINATOR_IP=10.0.0.5", cmds[0])
+
+    def test_explicit_coordinator_ip_overrides_auto(self):
+        # A concrete coordinator_ip in the config wins over the first host.
+        job, orch = _make_job(
+            hosts=["10.0.0.5", "10.0.0.6"],
+            jax_distributed=SimpleNamespace(
+                coordinator_ip="10.9.9.9",
+                coordinator_port="12346",
+                initialization_timeout_seconds="1800",
+                heartbeat_timeout_seconds="900",
+            ),
+        )
+        job.build_training_cmd()
+        cmds = orch.exec_cmd_list.call_args.args[0]
+        self.assertIn("JAX_COORDINATOR_IP=10.9.9.9", cmds[0])
 
 
 class WriteMaxtextYamlTests(unittest.TestCase):

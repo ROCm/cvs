@@ -47,6 +47,11 @@ _COMPLETION_RE = re.compile(r'completed step:\s*(\d+)')
 _NAN_INF_RE = re.compile(r'(TFLOP/s/device|Tokens/s/device):\s*(NaN|Inf|-Inf)', re.I)
 
 
+def _sanitize(name):
+    """Filesystem/run-name-safe token from a sweep name (non-alnum -> '_')."""
+    return re.sub(r'[^A-Za-z0-9]+', '_', str(name)).strip('_') or "default"
+
+
 class MaxTextTrainingJob:
     """JAX MaxText training job driven by an injected ContainerOrchestrator.
 
@@ -59,13 +64,26 @@ class MaxTextTrainingJob:
     owned here.
     """
 
-    def __init__(self, orch, variant, hf_token):
+    def __init__(self, orch, variant, hf_token, sweep=None):
         self.orch = orch
         self.variant = variant
         self.hf_token = hf_token
         self.training = variant.training
+
+        # Per-sweep run: merge the sweep's maxtext overrides onto the base config,
+        # and namespace the output dir by the sweep so parallel sweeps' logs never
+        # clobber each other (is_complete/parse_results read this per-sweep dir).
+        self.sweep = sweep
+        self.sweep_tag = _sanitize(sweep.name) if sweep is not None else None
+        merged = dict(self.training.maxtext_config)
+        if sweep is not None and getattr(sweep, "maxtext_overrides", None):
+            merged.update(sweep.maxtext_overrides)
+        self.maxtext_config = merged
+
         self.log_dir = variant.paths.log_dir
-        self.out_dir = f"{self.log_dir}/jaxmaxtext"
+        self.out_dir = (
+            f"{self.log_dir}/jaxmaxtext/{self.sweep_tag}" if self.sweep_tag else f"{self.log_dir}/jaxmaxtext"
+        )
         self.num_nodes = len(orch.hosts)
         self.num_gpus = self.num_nodes * 8
 
@@ -130,9 +148,12 @@ class MaxTextTrainingJob:
 
     def _write_maxtext_yaml(self):
         """Write the MaxText YAML config into the container."""
-        mc = dict(self.training.maxtext_config)
+        mc = dict(self.maxtext_config)
 
-        mc["run_name"] = f"jaxmaxtext_{self.variant.model.id}"
+        run_name = f"jaxmaxtext_{self.variant.model.id}"
+        if self.sweep_tag:
+            run_name = f"{run_name}_{self.sweep_tag}"
+        mc["run_name"] = run_name
         mc["steps"] = self.training.steps
         mc["enable_checkpointing"] = self.training.enable_checkpointing
         mc["base_output_directory"] = self.out_dir
@@ -215,8 +236,13 @@ class MaxTextTrainingJob:
             ]
 
             if self.training.distributed:
-                coordinator_ip = self.orch.hosts[0]
                 jax_dist = self.training.jax_distributed
+                # "auto" (or empty) -> use the first cluster node (node_dict order,
+                # i.e. orch.hosts[0]) as the JAX coordinator; an explicit IP in the
+                # config overrides it.
+                coordinator_ip = (getattr(jax_dist, "coordinator_ip", "") or "").strip()
+                if not coordinator_ip or coordinator_ip.lower() == "auto":
+                    coordinator_ip = self.orch.hosts[0]
                 launcher_lines.extend(
                     [
                         f"export JAX_COORDINATOR_IP={shlex.quote(coordinator_ip)}",

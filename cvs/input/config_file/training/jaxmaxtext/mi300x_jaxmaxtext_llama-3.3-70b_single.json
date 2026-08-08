@@ -126,6 +126,34 @@
       "milestone_steps": [100, 500, 1000, 5000],
       "max_slope": 0.0,
       "enforce": true
-    }
+    },
+
+    "_sweeps_comment": "Each sweep = one full training run; `name` is the threshold cell key. FP8 on MI300X (CDNA3) uses quantization=nanoo_fp8. STEPS/GBS/NNODES in the name are labels: steps comes from training.steps, GBS = per_device_batch_size * total GPUs, NNODES from the cluster. enabled_sweep_list selects which sweeps to run.",
+    "sweeps": [
+      {
+        "name": "NNODES=1,STEPS=30,PRECISION=BF16,BATCH=2,GBS=16,SEQLEN=8192",
+        "maxtext_overrides": {
+          "per_device_batch_size": 2,
+          "max_target_length": 8192,
+          "dtype": "bfloat16",
+          "weight_dtype": "bfloat16",
+          "quantization": ""
+        }
+      },
+      {
+        "name": "NNODES=1,STEPS=30,PRECISION=FP8,BATCH=2,GBS=16,SEQLEN=8192",
+        "maxtext_overrides": {
+          "per_device_batch_size": 2,
+          "max_target_length": 8192,
+          "dtype": "bfloat16",
+          "weight_dtype": "bfloat16",
+          "quantization": "nanoo_fp8"
+        }
+      }
+    ],
+    "enabled_sweep_list": [
+      "NNODES=1,STEPS=30,PRECISION=BF16,BATCH=2,GBS=16,SEQLEN=8192",
+      "NNODES=1,STEPS=30,PRECISION=FP8,BATCH=2,GBS=16,SEQLEN=8192"
+    ]
   }
 }

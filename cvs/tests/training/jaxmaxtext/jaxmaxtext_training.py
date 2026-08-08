@@ -9,6 +9,9 @@ The config's `training.distributed` field drives skipping of distributed-only
 stages (RDMA, NIC setup).
 '''
 
+import json
+import os
+import re
 import time
 
 import pytest
@@ -40,11 +43,56 @@ test_print_results_table = _mod.test_print_results_table  # noqa: F841
 log = globals.log
 
 
+def _sweep_label(name):
+    """Short, readable id for a sweep (its PRECISION token, else a safe name)."""
+    m = re.search(r"PRECISION=([^,]+)", name or "")
+    if m:
+        return m.group(1)
+    return (re.sub(r"[^A-Za-z0-9]+", "_", name or "").strip("_")) or "default"
+
+
+def _enabled_sweep_names(config_file):
+    """Read sweep names to run from the raw config (collection time, no fixtures).
+
+    Honors training.enabled_sweep_list (subset selector); falls back to every
+    declared sweep, or a single implicit "default" when none are declared.
+    """
+    try:
+        with open(config_file) as fp:
+            raw = json.load(fp)
+    except Exception:
+        return ["default"]
+    training = raw.get("training", {})
+    names = [s.get("name") for s in training.get("sweeps", []) if s.get("name")]
+    if not names:
+        return ["default"]
+    enabled = training.get("enabled_sweep_list") or names
+    return [n for n in enabled if n in names] or names
+
+
 def pytest_generate_tests(metafunc):
-    """Parametrize test_metric over TRAINING_METRICS."""
-    if "metric" in metafunc.fixturenames:
-        ids = [short for short, _ in TRAINING_METRICS]
-        metafunc.parametrize("metric", ids, ids=ids)
+    """Parametrize per-sweep tests: training_run over sweeps, metric over
+    (sweep x TRAINING_METRICS), loss_curve over sweeps."""
+    config_file = metafunc.config.getoption("config_file")
+    names = _enabled_sweep_names(config_file) if config_file and os.path.isfile(config_file) else ["default"]
+    labels = [_sweep_label(n) for n in names]
+
+    if "metric" in metafunc.fixturenames and "sweep_name" in metafunc.fixturenames:
+        cases, ids = [], []
+        for name, label in zip(names, labels):
+            for short, _unit in TRAINING_METRICS:
+                cases.append((name, short))
+                ids.append(f"{label}-{short}")
+        metafunc.parametrize("sweep_name,metric", cases, ids=ids)
+    elif "sweep_name" in metafunc.fixturenames:
+        metafunc.parametrize("sweep_name", names, ids=labels)
+
+
+def _find_sweep(variant_config, sweep_name):
+    for s in variant_config.enabled_sweeps():
+        if s.name == sweep_name:
+            return s
+    return None
 
 
 def test_launch_container(orch, variant_config, lifecycle, request):
@@ -98,12 +146,18 @@ def test_setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     lifecycle.record(request.node.nodeid, "tokenizer_setup", time.monotonic() - t)
 
 
-def test_training_run(orch, variant_config, hf_token, training_res_dict, lifecycle, request):
-    """Stage 5: build training command, start training, poll for completion, parse results."""
+def test_training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, lifecycle, request):
+    """Stage 5 (per sweep): build the command, train, poll, parse results.
+
+    Runs once per enabled sweep with that sweep's maxtext overrides. A failure is
+    isolated to this sweep's row (it does NOT set lifecycle.failed) so the other
+    sweeps still run and report.
+    """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
-    job = MaxTextTrainingJob(orch, variant_config, hf_token)
+    sweep = _find_sweep(variant_config, sweep_name)
+    job = MaxTextTrainingJob(orch, variant_config, hf_token, sweep=sweep)
     try:
         job.setup_training_env()
         job.build_training_cmd()
@@ -112,9 +166,9 @@ def test_training_run(orch, variant_config, hf_token, training_res_dict, lifecyc
         job.poll_for_completion()
         wall_time = time.monotonic() - t
         results = job.parse_results()
-    except Exception:
-        lifecycle.failed = True
-        raise
+    except Exception as e:  # noqa: BLE001 - isolate the failure to this sweep
+        log.error("training run failed for sweep '%s': %s", sweep_name, e)
+        pytest.fail(f"training run failed for sweep '{sweep_name}': {e}")
 
     results["training.wall_time_seconds"] = wall_time
     results["training.convergence_steps"] = variant_config.training.steps
@@ -144,9 +198,12 @@ def test_training_run(orch, variant_config, hf_token, training_res_dict, lifecyc
     results["training.steps_to_target"] = steps_to_target
     results["training.time_to_target_seconds"] = time_to_target
 
-    training_res_dict["results"] = results
-    training_res_dict["step_metrics"] = job.step_metrics
-    training_res_dict["num_nodes"] = job.num_nodes
+    training_res_dict.setdefault("sweeps", {})[sweep_name] = {
+        "results": results,
+        "step_metrics": job.step_metrics,
+        "eval_metrics": job.eval_metrics,
+        "num_nodes": job.num_nodes,
+    }
 
 
 def _format_expected(spec):
@@ -155,6 +212,8 @@ def _format_expected(spec):
         return "-"
     kind = spec.get("kind")
     value = spec.get("value")
+    if kind == "info":
+        return f"info ({value})" if value is not None else "info"
     if kind in ("min", "min_tok_s"):
         return f">= {value}"
     if kind == "max":
@@ -176,28 +235,30 @@ def _format_value(value):
     return str(value)
 
 
-def test_metric(metric, training_res_dict, variant_config, lifecycle, request):
-    """One test (row) per training metric.
+def test_metric(sweep_name, metric, training_res_dict, variant_config, lifecycle, request):
+    """One test (row) per (sweep, metric).
 
-    Logs `expected | actual | PASS/FAIL` to the console and collects the same
-    into `training_res_dict['metric_rows']` (rendered as a single metric-results
-    HTML file by test_print_results_table and linked from every metric row).
-    PASS/FAIL is threshold-driven: a metric with a threshold spec and a non-None
-    value is asserted via `evaluate_all`; a metric with no value produced this
-    run is skipped (N/A), and gating is a no-op unless `enforce_thresholds`.
+    Logs `sweep | metric | expected | actual | PASS/FAIL` to the console and
+    collects the same into `training_res_dict['metric_rows']` (rendered as a
+    single metric-results HTML file by test_print_results_table and linked from
+    every metric row). PASS/FAIL is threshold-driven against the sweep's cell in
+    the threshold file: a metric with a spec and non-None value is asserted via
+    `evaluate_all` ("info" kind always passes); a metric with no value produced
+    is N/A; gating is a no-op unless `enforce_thresholds`.
     """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
-    results = training_res_dict.get("results")
+    rec = training_res_dict.get("sweeps", {}).get(sweep_name)
+    results = rec.get("results") if rec else None
     if not results:
-        pytest.skip("no training results (training_run did not complete)")
+        pytest.skip(f"no results for sweep '{sweep_name}' (training did not complete)")
 
+    label = _sweep_label(sweep_name)
     full = "training." + metric
     value = results.get(full)
     unit = TRAINING_METRIC_UNITS.get(metric, "-")
-    num_nodes = training_res_dict.get("num_nodes", 1)
-    cell = variant_config.cell_key(num_nodes=num_nodes)
-    spec = (variant_config.thresholds.get(cell) or {}).get(full)
+    # The sweep name IS the threshold cell key.
+    spec = (variant_config.thresholds.get(sweep_name) or {}).get(full)
     expected = _format_expected(spec)
     actual = _format_value(value)
 
@@ -205,45 +266,57 @@ def test_metric(metric, training_res_dict, variant_config, lifecycle, request):
 
     def _record(status):
         rows.append(
-            {"metric": metric, "expected": expected, "actual": actual, "unit": unit, "status": status}
+            {
+                "sweep": label,
+                "metric": metric,
+                "expected": expected,
+                "actual": actual,
+                "unit": unit,
+                "status": status,
+            }
         )
 
     # Metric not produced this run (feature disabled, rampup, etc.) -> not a failure.
     if value is None:
-        log.info("[metric] %-24s | expected %-14s | actual None | %s -> N/A", metric, expected, unit)
+        log.info("[metric] %-6s %-24s | expected %-14s | actual None | %s -> N/A", label, metric, expected, unit)
         _record("N/A")
         pytest.skip(f"{metric}: no value produced this run")
 
     # No threshold, or gating disabled -> record the value without asserting.
     if spec is None or not variant_config.enforce_thresholds:
-        log.info("[metric] %-24s | expected %-14s | actual %s | %s -> RECORD", metric, expected, actual, unit)
+        log.info("[metric] %-6s %-24s | expected %-14s | actual %s | %s -> RECORD", label, metric, expected, actual, unit)
         _record("RECORD")
         return
 
     try:
         evaluate_all(results, {full: spec})
     except ThresholdViolation as e:
-        log.error("[metric] %-24s | expected %-14s | actual %s | %s -> FAIL", metric, expected, actual, unit)
+        log.error("[metric] %-6s %-24s | expected %-14s | actual %s | %s -> FAIL", label, metric, expected, actual, unit)
         _record("FAIL")
+        training_res_dict.setdefault("metric_failures", []).append(
+            f"[{label}] {metric}: expected {expected}, actual {actual}"
+        )
         pytest.fail(str(e))
     else:
-        log.info("[metric] %-24s | expected %-14s | actual %s | %s -> PASS", metric, expected, actual, unit)
+        log.info("[metric] %-6s %-24s | expected %-14s | actual %s | %s -> PASS", label, metric, expected, actual, unit)
         _record("PASS")
 
 
-def test_loss_curve(training_res_dict, variant_config, lifecycle, request):
-    """Row 32: sample the training loss, render a PNG, and gate on a downward trend.
+def test_loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request):
+    """Row 32 (per sweep): sample the training loss, render a PNG, gate on trend.
 
     Samples per-step loss (every N steps + milestone steps), fits a least-squares
-    slope, renders a PNG linked in this row, and fails when the curve is not
-    decreasing (unless loss_curve.enforce is False, or there are too few points).
+    slope, renders a per-sweep PNG linked in this row, and fails when the curve is
+    not decreasing (unless loss_curve.enforce is False, or there are too few points).
     """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
-    step_metrics = training_res_dict.get("step_metrics")
+    label = _sweep_label(sweep_name)
+    rec = training_res_dict.get("sweeps", {}).get(sweep_name)
+    step_metrics = rec.get("step_metrics") if rec else None
     if not step_metrics:
-        pytest.skip("no step metrics (training_run did not complete)")
+        pytest.skip(f"no step metrics for sweep '{sweep_name}' (training did not complete)")
 
     cfg = variant_config.training.loss_curve
     points = sample_loss_curve(step_metrics, cfg.sample_every, cfg.milestone_steps)
@@ -260,9 +333,9 @@ def test_loss_curve(training_res_dict, variant_config, lifecycle, request):
     png_path = None
     try:
         _Path(out_dir).mkdir(parents=True, exist_ok=True)
-        fname = f"loss_curve_{variant_config.model.id}_{str(_uuid.uuid4()).split('-')[-1]}.png"
+        fname = f"loss_curve_{variant_config.model.id}_{label}_{str(_uuid.uuid4()).split('-')[-1]}.png"
         abs_path = _Path(out_dir) / fname
-        title = f"Training Loss Curve — {variant_config.model.id}"
+        title = f"Training Loss Curve — {variant_config.model.id} [{label}]"
         png_path = render_loss_curve_png(points, abs_path, title=title)
     except Exception as e:  # noqa: BLE001 - plotting must never break the verdict
         log.warning("loss curve: could not prepare PNG output (%s)", e)
@@ -270,7 +343,7 @@ def test_loss_curve(training_res_dict, variant_config, lifecycle, request):
     if png_path and mgr is not None and getattr(mgr, "is_enabled", False):
         try:
             rel_path = str(_Path(png_path).relative_to(mgr.htmlpath.parent))
-            lifecycle.add_artifact(request.node.nodeid, "Loss Curve", rel_path, str(png_path))
+            lifecycle.add_artifact(request.node.nodeid, f"Loss Curve [{label}]", rel_path, str(png_path))
         except Exception as e:  # noqa: BLE001
             log.warning("loss curve: could not register report link (%s)", e)
 
