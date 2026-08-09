@@ -470,21 +470,21 @@ def wan_hf_snapshot_offline_check_commands(snapshot_dir_host: str) -> dict:
     low_dir = shlex.quote(os.path.join(root, 'low_noise_model'))
     high_dir = shlex.quote(os.path.join(root, 'high_noise_model'))
     checks['low_noise diffusion shards (6 x >500MiB)'] = (
-        f's=$(find {low_dir} -maxdepth 1 -type f -name "diffusion_pytorch_model-*.safetensors" '
+        f's=$(find -L {low_dir} -maxdepth 1 -type f -name "diffusion_pytorch_model-*.safetensors" '
         f'-size +500M 2>/dev/null | wc -l); test "$s" -eq 6 && echo OK || echo MISSING'
     )
     checks['high_noise diffusion shards (6 x >500MiB)'] = (
-        f's=$(find {high_dir} -maxdepth 1 -type f -name "diffusion_pytorch_model-*.safetensors" '
+        f's=$(find -L {high_dir} -maxdepth 1 -type f -name "diffusion_pytorch_model-*.safetensors" '
         f'-size +500M 2>/dev/null | wc -l); test "$s" -eq 6 && echo OK || echo MISSING'
     )
 
     vae = shlex.quote(os.path.join(root, 'Wan2.1_VAE.pth'))
     t5 = shlex.quote(os.path.join(root, 'models_t5_umt5-xxl-enc-bf16.pth'))
     checks['Wan2.1_VAE.pth (>100MiB, not pointer-only)'] = (
-        f"test -f {vae} && test -n \"$(find {vae} -size +100M 2>/dev/null)\" && echo OK || echo MISSING"
+        f"test -f {vae} && test -n \"$(find -L {vae} -size +100M 2>/dev/null)\" && echo OK || echo MISSING"
     )
     checks['models_t5_umt5-xxl-enc-bf16.pth (>1GiB, not pointer-only)'] = (
-        f"test -f {t5} && test -n \"$(find {t5} -size +1G 2>/dev/null)\" && echo OK || echo MISSING"
+        f"test -f {t5} && test -n \"$(find -L {t5} -size +1G 2>/dev/null)\" && echo OK || echo MISSING"
     )
 
     return checks
