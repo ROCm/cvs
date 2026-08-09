@@ -10,10 +10,12 @@ All rights reserved.
 
 import json
 import pytest
+import queue
 import re
 import shlex
 import socket
 import subprocess
+import threading
 
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
@@ -124,23 +126,59 @@ class LocalPssh:
             log.info("%s", out)
         return {self.host_list[0]: out}
 
-    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True, inactivity_timeout=None):
         # Run different commands; map 1:1 with host_list ordering
         out = {}
         for host, cmd in zip(self.host_list, cmd_list):
-            completed = subprocess.run(
-                cmd,
-                shell=True,
-                text=True,
-                capture_output=True,
-                timeout=timeout if timeout is None else int(timeout),
-            )
-            out_str = (completed.stdout or "") + (completed.stderr or "")
-            if print_console:
-                log.info(f"cmd = {_redact_secrets(cmd)}")
-                log.info("%s", out_str)
+            if inactivity_timeout is not None:
+                out_str = self._exec_with_inactivity_timeout(cmd, inactivity_timeout, print_console)
+            else:
+                completed = subprocess.run(
+                    cmd,
+                    shell=True,
+                    text=True,
+                    capture_output=True,
+                    timeout=timeout if timeout is None else int(timeout),
+                )
+                out_str = (completed.stdout or "") + (completed.stderr or "")
+                if print_console:
+                    log.info(f"cmd = {_redact_secrets(cmd)}")
+                    log.info("%s", out_str)
             out[host] = out_str
         return out
+
+    def _exec_with_inactivity_timeout(self, cmd, inactivity_timeout, print_console):
+        # Mirrors Pssh's per-line inactivity timeout: resets on every output line, kills the
+        # process only when nothing is printed for `inactivity_timeout` seconds.
+        if print_console:
+            log.info(f"cmd = {_redact_secrets(cmd)}")
+        proc = subprocess.Popen(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        line_queue = queue.Queue()
+
+        def _reader():
+            for line in proc.stdout:
+                line_queue.put(line)
+            line_queue.put(None)
+
+        reader_thread = threading.Thread(target=_reader, daemon=True)
+        reader_thread.start()
+
+        lines = []
+        while True:
+            try:
+                line = line_queue.get(timeout=inactivity_timeout)
+            except queue.Empty:
+                proc.kill()
+                proc.wait()
+                lines.append(f"[LocalPssh] Command killed after {inactivity_timeout}s of inactivity\n")
+                break
+            if line is None:
+                break
+            lines.append(line)
+            if print_console:
+                log.info("%s", line.rstrip("\n"))
+        proc.wait()
+        return "".join(lines)
 
 
 def _redact_secrets(s: str) -> str:
@@ -609,7 +647,12 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     try:
         # Run benchmarks on all nodes in parallel
         log.info("Starting benchmarks (this may take several minutes)...")
-        benchmark_results = s_phdl.exec_cmd_list(docker_cmds, timeout=1800)  # 30 min timeout
+        # Measured live: the silent gap between checkpoint-shard loading and the next log
+        # line (torch.compile of the 14B WanModel, 8 ranks) varies with node/JIT-cache state
+        # and has been observed anywhere from ~5 to 15+ minutes; 300s and 900s both falsely
+        # killed healthy runs. 1800s gives margin above the worst case seen so far while still
+        # failing a genuine hang well before the SLURM allocation runs out.
+        benchmark_results = s_phdl.exec_cmd_list(docker_cmds, inactivity_timeout=1800)
 
         log.info("Benchmarks completed on all nodes")
 
@@ -657,6 +700,7 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
             )
 
     except Exception as e:
+        docker_lib.kill_docker_container(s_phdl, container_name)
         fail_test(f"Benchmark execution failed with exception: {e}")
 
     # Single-node: pin the run output dir so parse does not depend on probing hostnames later.
