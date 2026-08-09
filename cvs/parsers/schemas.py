@@ -615,7 +615,7 @@ class PytorchXditExpectedResults(BaseModel):
 class PytorchXditWan22Benchmarks(BaseModel):
     """Schema for wan22_i2v_a14b benchmark parameters."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")  # Allow comment fields
 
     prompt: str = Field(description="Text prompt for image-to-video generation")
     size: str = Field(default="720*1280", pattern=r"^\d+\*\d+$", description="Video resolution (format: height*width)")
@@ -651,7 +651,7 @@ class PytorchXditFluxExpectedResults(BaseModel):
 class PytorchXditFlux1DevBenchmarks(BaseModel):
     """Schema for flux1_dev_t2i benchmark parameters."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")  # Allow comment fields
 
     prompt: str = Field(description="Text prompt for text-to-image generation")
     seed: int = Field(default=42, description="Random seed for reproducibility")
