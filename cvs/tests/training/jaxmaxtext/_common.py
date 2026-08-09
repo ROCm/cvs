@@ -2,19 +2,29 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-JAX MaxText training suite — single test file for both single-node and distributed.
+Shared implementations for the JAX MaxText training suites. This is NOT a
+runnable suite (leading underscore -> excluded by `cvs list`/`cvs run`); the two
+thin suite files bind the `test_*` implementations here:
 
-The mode is determined by the config file passed at runtime via --config_file.
-The config's `training.distributed` field drives skipping of distributed-only
-stages (RDMA, NIC setup).
+  - jaxmaxtext_single.py       (single-node: no RDMA/NIC stages)
+  - jaxmaxtext_distributed.py  (adds test_setup_rdma / test_setup_nic)
+
+Kept deliberately simple: plain shared functions + a couple of small helpers,
+no framework-y generalization. The single vs distributed mode is recorded in
+`training_res_dict["mode"]` and reflected in the console tables, the metric
+results HTML title, and the loss-curve title/artifact.
 '''
 
+import html as _html
 import json
 import os
 import re
 import time
+import uuid as _uuid
+from pathlib import Path as _Path
 
 import pytest
+from tabulate import tabulate
 
 from cvs.lib import globals
 from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import MaxTextTrainingJob
@@ -28,27 +38,48 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
 )
 from cvs.lib.training.jaxmaxtext.utils.loss_curve import render_loss_curve_png
 from cvs.lib.utils.verdict import evaluate_all, ThresholdViolation
-
-import uuid as _uuid
-from pathlib import Path as _Path
-
-import importlib.util as _ilu
-import pathlib as _pl
-
-_spec = _ilu.spec_from_file_location("_training_shared", _pl.Path(__file__).with_name("_shared.py"))
-_mod = _ilu.module_from_spec(_spec)
-_spec.loader.exec_module(_mod)
-test_print_results_table = _mod.test_print_results_table  # noqa: F841
+from cvs.lib.utils_lib import fail_test, update_test_result
 
 log = globals.log
 
+_STATUS_COLORS = {
+    "PASS": "#2e7d32",
+    "FAIL": "#c62828",
+    "N/A": "#f9a825",
+    "RECORD": "#555555",
+}
+
+
+# ---------- small helpers ----------
+
 
 def _sweep_label(name):
-    """Short, readable id for a sweep (its PRECISION token, else a safe name)."""
-    m = re.search(r"PRECISION=([^,]+)", name or "")
-    if m:
-        return m.group(1)
-    return (re.sub(r"[^A-Za-z0-9]+", "_", name or "").strip("_")) or "default"
+    """Compact, unique-per-sweep id used in every parametrized test row and in
+    the reports: PRECISION[-SL<seqlen>][-B<batch>], e.g. "BF16-SL4096-B3".
+
+    The full sweep name still drives results/threshold lookups; this is only the
+    display label. Falls back to a sanitized full name when PRECISION is absent.
+    """
+    name = name or ""
+
+    def _tok(key):
+        m = re.search(rf"{key}=([^,]+)", name)
+        return m.group(1).strip() if m else None
+
+    precision = _tok("PRECISION")
+    seqlen = _tok("SEQLEN")
+    batch = _tok("BATCH")
+
+    parts = []
+    if precision:
+        parts.append(precision)
+    if seqlen:
+        parts.append(f"SL{seqlen}")
+    if batch:
+        parts.append(f"B{batch}")
+    if parts:
+        return "-".join(parts)
+    return (re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")) or "default"
 
 
 def _enabled_sweep_names(config_file):
@@ -70,24 +101,6 @@ def _enabled_sweep_names(config_file):
     return [n for n in enabled if n in names] or names
 
 
-def pytest_generate_tests(metafunc):
-    """Parametrize per-sweep tests: training_run over sweeps, metric over
-    (sweep x TRAINING_METRICS), loss_curve over sweeps."""
-    config_file = metafunc.config.getoption("config_file")
-    names = _enabled_sweep_names(config_file) if config_file and os.path.isfile(config_file) else ["default"]
-    labels = [_sweep_label(n) for n in names]
-
-    if "metric" in metafunc.fixturenames and "sweep_name" in metafunc.fixturenames:
-        cases, ids = [], []
-        for name, label in zip(names, labels):
-            for short, _unit in TRAINING_METRICS:
-                cases.append((name, short))
-                ids.append(f"{label}-{short}")
-        metafunc.parametrize("sweep_name,metric", cases, ids=ids)
-    elif "sweep_name" in metafunc.fixturenames:
-        metafunc.parametrize("sweep_name", names, ids=labels)
-
-
 def _find_sweep(variant_config, sweep_name):
     for s in variant_config.enabled_sweeps():
         if s.name == sweep_name:
@@ -95,115 +108,8 @@ def _find_sweep(variant_config, sweep_name):
     return None
 
 
-def test_launch_container(orch, variant_config, lifecycle, request):
-    """Stage 1: launch the container. Verify it is running."""
-    t = time.monotonic()
-    ok = orch.setup_containers()
-    lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - t)
-    if not ok:
-        lifecycle.failed = True
-        name = orch.get_container_name(orch.container_config, orch.container_config["image"])
-        pytest.fail(f"setup_containers() returned False for {name}")
-    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
-    if not orch.verify_containers_running(name):
-        lifecycle.failed = True
-        pytest.fail(f"container {name} not running after setup_containers()")
-
-
-def test_setup_rdma(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 2: copy RDMA library into container (distributed + thor2 NIC only)."""
-    if lifecycle.failed:
-        pytest.skip("a prior lifecycle stage failed")
-    if not variant_config.training.distributed:
-        pytest.skip("single-node: RDMA not needed")
-    if not variant_config.training.nic_type or "thor" not in variant_config.training.nic_type.lower():
-        pytest.skip(f"nic_type={variant_config.training.nic_type}: RDMA lib copy not needed")
-    t = time.monotonic()
-    job = MaxTextTrainingJob(orch, variant_config, hf_token)
-    job.setup_rdma_lib()
-    lifecycle.record(request.node.nodeid, "rdma_setup", time.monotonic() - t)
-
-
-def test_setup_nic(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 3: run NIC setup scripts (distributed only)."""
-    if lifecycle.failed:
-        pytest.skip("a prior lifecycle stage failed")
-    if not variant_config.training.distributed:
-        pytest.skip("single-node: NIC setup not needed")
-    t = time.monotonic()
-    job = MaxTextTrainingJob(orch, variant_config, hf_token)
-    job.exec_nic_setup_scripts()
-    lifecycle.record(request.node.nodeid, "nic_setup", time.monotonic() - t)
-
-
-def test_setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 4: download HF tokenizer into models dir."""
-    if lifecycle.failed:
-        pytest.skip("a prior lifecycle stage failed")
-    t = time.monotonic()
-    job = MaxTextTrainingJob(orch, variant_config, hf_token)
-    job.setup_tokenizer()
-    lifecycle.record(request.node.nodeid, "tokenizer_setup", time.monotonic() - t)
-
-
-def test_training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, lifecycle, request):
-    """Stage 5 (per sweep): build the command, train, poll, parse results.
-
-    Runs once per enabled sweep with that sweep's maxtext overrides. A failure is
-    isolated to this sweep's row (it does NOT set lifecycle.failed) so the other
-    sweeps still run and report.
-    """
-    if lifecycle.failed:
-        pytest.skip("a prior lifecycle stage failed")
-
-    sweep = _find_sweep(variant_config, sweep_name)
-    job = MaxTextTrainingJob(orch, variant_config, hf_token, sweep=sweep)
-    try:
-        job.setup_training_env()
-        job.build_training_cmd()
-        t = time.monotonic()
-        job.start_training()
-        job.poll_for_completion()
-        wall_time = time.monotonic() - t
-        results = job.parse_results()
-    except Exception as e:  # noqa: BLE001 - isolate the failure to this sweep
-        log.error("training run failed for sweep '%s': %s", sweep_name, e)
-        pytest.fail(f"training run failed for sweep '{sweep_name}': {e}")
-
-    results["training.wall_time_seconds"] = wall_time
-    results["training.convergence_steps"] = variant_config.training.steps
-    results["training.convergence_wall_time"] = wall_time
-
-    # Scaling efficiency % vs the configured 1-node throughput baseline. Cross-run
-    # metric: it needs num_nodes and the reference throughput, which the pure log
-    # parser does not have, so it is computed here after parse_results().
-    baseline = variant_config.training.scaling_baseline
-    results["training.scaling_efficiency_pct"] = compute_scaling_efficiency(
-        results.get("training.tokens_per_sec_total"),
-        job.num_nodes,
-        baseline.tokens_per_sec_total,
-        baseline.num_nodes,
-    )
-
-    # Convergence / time-to-target-accuracy (row 33). Cross-series metric: it
-    # needs the configured target and both the per-step and eval loss series,
-    # so it is computed here rather than in the pure log parser.
-    conv = variant_config.training.convergence
-    steps_to_target, time_to_target = compute_convergence(
-        job.step_metrics,
-        job.eval_metrics,
-        conv.target_metric,
-        conv.target_value,
-    )
-    results["training.steps_to_target"] = steps_to_target
-    results["training.time_to_target_seconds"] = time_to_target
-
-    training_res_dict.setdefault("sweeps", {})[sweep_name] = {
-        "results": results,
-        "step_metrics": job.step_metrics,
-        "eval_metrics": job.eval_metrics,
-        "num_nodes": job.num_nodes,
-    }
+def _mode(variant_config):
+    return "distributed" if variant_config.training.distributed else "single"
 
 
 def _format_expected(spec):
@@ -235,17 +141,121 @@ def _format_value(value):
     return str(value)
 
 
-def test_metric(sweep_name, metric, training_res_dict, variant_config, lifecycle, request):
-    """One test (row) per (sweep, metric).
+# ---------- lifecycle test implementations ----------
+# Named test_* so that when the suite files bind them (test_x = _common.test_x)
+# pytest's originalname matches the conftest rank map.
 
-    Logs `sweep | metric | expected | actual | PASS/FAIL` to the console and
-    collects the same into `training_res_dict['metric_rows']` (rendered as a
-    single metric-results HTML file by test_print_results_table and linked from
-    every metric row). PASS/FAIL is threshold-driven against the sweep's cell in
-    the threshold file: a metric with a spec and non-None value is asserted via
-    `evaluate_all` ("info" kind always passes); a metric with no value produced
-    is N/A; gating is a no-op unless `enforce_thresholds`.
+
+def test_launch_container(orch, variant_config, lifecycle, request):
+    """Stage 1: launch the container. Verify it is running."""
+    t = time.monotonic()
+    ok = orch.setup_containers()
+    lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - t)
+    if not ok:
+        lifecycle.failed = True
+        name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+        pytest.fail(f"setup_containers() returned False for {name}")
+    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+    if not orch.verify_containers_running(name):
+        lifecycle.failed = True
+        pytest.fail(f"container {name} not running after setup_containers()")
+
+
+def test_setup_rdma(orch, variant_config, hf_token, lifecycle, request):
+    """Distributed-only: copy RDMA library into container (thor2 NIC only)."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    if not variant_config.training.distributed:
+        pytest.skip("single-node: RDMA not needed")
+    if not variant_config.training.nic_type or "thor" not in variant_config.training.nic_type.lower():
+        pytest.skip(f"nic_type={variant_config.training.nic_type}: RDMA lib copy not needed")
+    t = time.monotonic()
+    job = MaxTextTrainingJob(orch, variant_config, hf_token)
+    job.setup_rdma_lib()
+    lifecycle.record(request.node.nodeid, "rdma_setup", time.monotonic() - t)
+
+
+def test_setup_nic(orch, variant_config, hf_token, lifecycle, request):
+    """Distributed-only: run NIC setup scripts."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    if not variant_config.training.distributed:
+        pytest.skip("single-node: NIC setup not needed")
+    t = time.monotonic()
+    job = MaxTextTrainingJob(orch, variant_config, hf_token)
+    job.exec_nic_setup_scripts()
+    lifecycle.record(request.node.nodeid, "nic_setup", time.monotonic() - t)
+
+
+def test_setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
+    """Download HF tokenizer into models dir."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    t = time.monotonic()
+    job = MaxTextTrainingJob(orch, variant_config, hf_token)
+    job.setup_tokenizer()
+    lifecycle.record(request.node.nodeid, "tokenizer_setup", time.monotonic() - t)
+
+
+def test_training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, lifecycle, request):
+    """Per sweep: build the command, train, poll, parse results.
+
+    Runs once per enabled sweep with that sweep's maxtext overrides. A failure is
+    isolated to this sweep's row (it does NOT set lifecycle.failed) so the other
+    sweeps still run and report.
     """
+    training_res_dict.setdefault("mode", _mode(variant_config))
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    sweep = _find_sweep(variant_config, sweep_name)
+    job = MaxTextTrainingJob(orch, variant_config, hf_token, sweep=sweep)
+    try:
+        job.setup_training_env()
+        job.build_training_cmd()
+        t = time.monotonic()
+        job.start_training()
+        job.poll_for_completion()
+        wall_time = time.monotonic() - t
+        results = job.parse_results()
+    except Exception as e:  # noqa: BLE001 - isolate the failure to this sweep
+        log.error("training run failed for sweep '%s': %s", sweep_name, e)
+        pytest.fail(f"training run failed for sweep '{sweep_name}': {e}")
+
+    results["training.wall_time_seconds"] = wall_time
+    results["training.convergence_steps"] = variant_config.training.steps
+    results["training.convergence_wall_time"] = wall_time
+
+    baseline = variant_config.training.scaling_baseline
+    results["training.scaling_efficiency_pct"] = compute_scaling_efficiency(
+        results.get("training.tokens_per_sec_total"),
+        job.num_nodes,
+        baseline.tokens_per_sec_total,
+        baseline.num_nodes,
+    )
+
+    conv = variant_config.training.convergence
+    steps_to_target, time_to_target = compute_convergence(
+        job.step_metrics,
+        job.eval_metrics,
+        conv.target_metric,
+        conv.target_value,
+    )
+    results["training.steps_to_target"] = steps_to_target
+    results["training.time_to_target_seconds"] = time_to_target
+
+    training_res_dict.setdefault("sweeps", {})[sweep_name] = {
+        "results": results,
+        "step_metrics": job.step_metrics,
+        "eval_metrics": job.eval_metrics,
+        "num_nodes": job.num_nodes,
+    }
+
+
+def test_metric(sweep_name, metric, training_res_dict, variant_config, lifecycle, request):
+    """One test (row) per (sweep, metric). Threshold-driven PASS/FAIL; logs
+    `sweep | metric | expected | actual | status` and collects rows for the
+    single metric-results HTML file (linked from every metric row)."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     rec = training_res_dict.get("sweeps", {}).get(sweep_name)
@@ -276,13 +286,11 @@ def test_metric(sweep_name, metric, training_res_dict, variant_config, lifecycle
             }
         )
 
-    # Metric not produced this run (feature disabled, rampup, etc.) -> not a failure.
     if value is None:
         log.info("[metric] %-6s %-24s | expected %-14s | actual None | %s -> N/A", label, metric, expected, unit)
         _record("N/A")
         pytest.skip(f"{metric}: no value produced this run")
 
-    # No threshold, or gating disabled -> record the value without asserting.
     if spec is None or not variant_config.enforce_thresholds:
         log.info("[metric] %-6s %-24s | expected %-14s | actual %s | %s -> RECORD", label, metric, expected, actual, unit)
         _record("RECORD")
@@ -303,16 +311,12 @@ def test_metric(sweep_name, metric, training_res_dict, variant_config, lifecycle
 
 
 def test_loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request):
-    """Row 32 (per sweep): sample the training loss, render a PNG, gate on trend.
-
-    Samples per-step loss (every N steps + milestone steps), fits a least-squares
-    slope, renders a per-sweep PNG linked in this row, and fails when the curve is
-    not decreasing (unless loss_curve.enforce is False, or there are too few points).
-    """
+    """Row 32 (per sweep): sample the training loss, render a PNG, gate on trend."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
     label = _sweep_label(sweep_name)
+    mode = _mode(variant_config)
     rec = training_res_dict.get("sweeps", {}).get(sweep_name)
     step_metrics = rec.get("step_metrics") if rec else None
     if not step_metrics:
@@ -322,9 +326,6 @@ def test_loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, re
     points = sample_loss_curve(step_metrics, cfg.sample_every, cfg.milestone_steps)
     verdict = evaluate_loss_decreasing(points, cfg.max_slope)
 
-    # Render the PNG into the HTML report bundle dir when reporting is enabled,
-    # else into the run's log_dir. The clickable link is attached by the conftest
-    # makereport hook from the artifact stashed on `lifecycle`.
     mgr = getattr(request.config, "_html_report_manager", None)
     if mgr is not None and getattr(mgr, "is_enabled", False):
         out_dir = mgr.log_dir
@@ -333,9 +334,9 @@ def test_loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, re
     png_path = None
     try:
         _Path(out_dir).mkdir(parents=True, exist_ok=True)
-        fname = f"loss_curve_{variant_config.model.id}_{label}_{str(_uuid.uuid4()).split('-')[-1]}.png"
+        fname = f"loss_curve_{variant_config.model.id}_{mode}_{label}_{str(_uuid.uuid4()).split('-')[-1]}.png"
         abs_path = _Path(out_dir) / fname
-        title = f"Training Loss Curve — {variant_config.model.id} [{label}]"
+        title = f"Training Loss Curve — {variant_config.model.id} [{mode}/{label}]"
         png_path = render_loss_curve_png(points, abs_path, title=title)
     except Exception as e:  # noqa: BLE001 - plotting must never break the verdict
         log.warning("loss curve: could not prepare PNG output (%s)", e)
@@ -343,7 +344,7 @@ def test_loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, re
     if png_path and mgr is not None and getattr(mgr, "is_enabled", False):
         try:
             rel_path = str(_Path(png_path).relative_to(mgr.htmlpath.parent))
-            lifecycle.add_artifact(request.node.nodeid, f"Loss Curve [{label}]", rel_path, str(png_path))
+            lifecycle.add_artifact(request.node.nodeid, f"Loss Curve [{mode}/{label}]", rel_path, str(png_path))
         except Exception as e:  # noqa: BLE001
             log.warning("loss curve: could not register report link (%s)", e)
 
@@ -356,6 +357,89 @@ def test_loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, re
     decreasing, _slope, detail = verdict
     if cfg.enforce and not decreasing:
         pytest.fail(f"training loss is not decreasing: {detail}")
+
+
+# ---------- reporting ----------
+
+
+def _write_metric_results_html(training_res_dict, request):
+    """Write ALL metric verdicts to ONE HTML file in the report bundle dir."""
+    metric_rows = training_res_dict.get("metric_rows") or []
+    mgr = getattr(request.config, "_html_report_manager", None)
+    if not metric_rows or mgr is None or not getattr(mgr, "is_enabled", False):
+        return
+    mode = training_res_dict.get("mode", "")
+    try:
+        out_dir = mgr.log_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / "metric_results.html"
+        body = ""
+        for r in metric_rows:
+            color = _STATUS_COLORS.get(r["status"], "#000000")
+            body += (
+                "<tr>"
+                f"<td>{_html.escape(str(r.get('sweep', '-')))}</td>"
+                f"<td>{_html.escape(str(r['metric']))}</td>"
+                f"<td>{_html.escape(str(r['expected']))}</td>"
+                f"<td>{_html.escape(str(r['actual']))}</td>"
+                f"<td>{_html.escape(str(r['unit']))}</td>"
+                f"<td style=\"color:{color};font-weight:bold;\">{_html.escape(str(r['status']))}</td>"
+                "</tr>"
+            )
+        title = f"Training Metric Results ({mode})" if mode else "Training Metric Results"
+        doc = (
+            f"<html><head><meta charset='utf-8'><title>{_html.escape(title)}</title></head>"
+            f"<body><h2>{_html.escape(title)}</h2>"
+            "<table border='1' cellpadding='6' cellspacing='0'>"
+            "<tr><th>Sweep</th><th>Metric</th><th>Expected</th><th>Actual</th><th>Unit</th><th>Status</th></tr>"
+            f"{body}</table></body></html>"
+        )
+        path.write_text(doc, encoding="utf-8")
+        log.info("wrote metric results HTML: %s", path)
+    except Exception as e:  # noqa: BLE001 - reporting must never break the run
+        log.warning("could not write metric results HTML: %s", e)
+
+
+def _print_sweep_tables(training_res_dict):
+    """Log a per-sweep metric table + loss curve to the console."""
+    sweeps = training_res_dict.get("sweeps", {})
+    mode = training_res_dict.get("mode", "")
+    if not sweeps:
+        log.info("no sweep results to print")
+        return
+    for sweep_name, rec in sweeps.items():
+        results = rec.get("results", {})
+        rows = []
+        for short, unit in TRAINING_METRICS:
+            val = results.get("training." + short)
+            rows.append([short, f"{val:.4f}" if isinstance(val, float) else str(val), unit])
+        log.info(
+            "\n[%s | sweep %s]\n%s",
+            mode,
+            sweep_name,
+            tabulate(rows, headers=["Metric", "Value", "Unit"], tablefmt="github"),
+        )
+        loss_rows = [[s["step"], f"{s['loss']:.6f}"] for s in rec.get("step_metrics", []) if "loss" in s]
+        if loss_rows:
+            log.info("\nLoss Curve [%s]:\n%s", sweep_name, tabulate(loss_rows, headers=["Step", "Loss"], tablefmt="github"))
+
+
+def test_print_results_table(training_res_dict, request):
+    """Summarize all sweeps: console tables, single metric-results HTML, and a
+    consolidated PASS/FAIL summary recorded via globals.error_list for the pytest
+    final summary."""
+    if not training_res_dict.get("sweeps"):
+        log.info("training_res_dict empty, nothing to print")
+        return
+
+    _print_sweep_tables(training_res_dict)
+    _write_metric_results_html(training_res_dict, request)
+
+    failures = training_res_dict.get("metric_failures", [])
+    globals.error_list = []
+    for f in failures:
+        fail_test(f)
+    update_test_result()
 
 
 def test_teardown(orch, lifecycle, request):

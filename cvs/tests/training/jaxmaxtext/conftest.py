@@ -10,10 +10,41 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
+from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import TRAINING_METRICS
 from cvs.lib.training.jaxmaxtext.utils.training_config_loader import load_training_variant
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
+import importlib.util as _ilu
+import pathlib as _pl
+
+# Shared sweep-name helpers live in _common.py (loaded by path since the tests
+# dir is imported by file, not as a package, at collection time).
+_cspec = _ilu.spec_from_file_location("_jaxmaxtext_common_conftest", _pl.Path(__file__).with_name("_common.py"))
+_common = _ilu.module_from_spec(_cspec)
+_cspec.loader.exec_module(_common)
+
 log = globals.log
+
+
+def pytest_generate_tests(metafunc):
+    """Parametrize per-sweep tests for BOTH suites (single + distributed):
+    training_run/loss_curve over sweeps, metric over (sweep x TRAINING_METRICS)."""
+    config_file = metafunc.config.getoption("config_file")
+    if config_file and os.path.isfile(config_file):
+        names = _common._enabled_sweep_names(config_file)
+    else:
+        names = ["default"]
+    labels = [_common._sweep_label(n) for n in names]
+
+    if "metric" in metafunc.fixturenames and "sweep_name" in metafunc.fixturenames:
+        cases, ids = [], []
+        for name, label in zip(names, labels):
+            for short, _unit in TRAINING_METRICS:
+                cases.append((name, short))
+                ids.append(f"{label}-{short}")
+        metafunc.parametrize("sweep_name,metric", cases, ids=ids)
+    elif "sweep_name" in metafunc.fixturenames:
+        metafunc.parametrize("sweep_name", names, ids=labels)
 
 
 def _deep_merge(base, override):
