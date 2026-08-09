@@ -45,6 +45,16 @@ Use the directory you want to put in `config.hf_home`. A common choice is:
 export HF_HOME="$HOME/.cache/huggingface"
 ```
 
+**Multi-node clusters**: `config.hf_home` is resolved and staged independently per
+node — it is not synchronized by the test. If `$HOME` is a per-node local disk
+(not NFS-mounted or otherwise shared across the cluster), each node downloads and
+stores its own full copy of the model, multiplying both download time and disk
+usage by the number of nodes. To download once and reuse it everywhere, point
+`hf_home` at a path backed by storage shared across every target node (e.g. an
+NFS-mounted home directory, or an explicit shared mount added via
+`container_config.volume_dict`), and run the `hf download` step only once against
+that shared path rather than once per node.
+
 If you use a gated model and have a token file:
 
 ```bash
@@ -182,7 +192,8 @@ Runs WAN 2.2 I2V-A14B inference inside the `amdsiloai/pytorch-xdit:v25.11.2` con
 3. **Targets** with Docker, the configured `container_image` already pulled locally, and ROCm device nodes as required by the container (sample configs use eight processes).
 
 4. **Storage requirements**:
-   - ~40GB for model cache (`hf_home`)
+   - ~118GB for model cache (`hf_home`) — measured from a real `hf download` of
+     `Wan-AI/Wan2.2-I2V-A14B`
    - ~10GB for output artifacts
 
 ### Running the Test
