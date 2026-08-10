@@ -14,11 +14,11 @@ import logging
 import shlex
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor, wait as futures_wait
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
-from threading import Lock
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from threading import Lock, Thread
+from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import docker
@@ -627,6 +627,47 @@ class AortaRunner(BaseRunner):
 
         return exit_code, '\n'.join(output_lines)
 
+    @staticmethod
+    def _run_bounded_parallel(
+        tasks: Dict[Any, Callable[[], Any]], timeout_seconds: float
+    ) -> Tuple[Dict[Any, Any], Dict[Any, Exception], List[Any]]:
+        """
+        Run each zero-arg callable in ``tasks`` in its own thread, bounded by a
+        single deadline shared across all of them.
+
+        ``ThreadPoolExecutor`` worker threads are non-daemon; CPython's atexit
+        hook joins every such thread at interpreter shutdown regardless of
+        ``executor.shutdown(wait=False)``, so a node genuinely stuck in a
+        blocking Docker/SSH call would still hang the whole process at exit,
+        not just this method. Daemon threads are exempt from that join, so a
+        stuck task here can never block CVS from exiting.
+
+        Returns ``(results, errors, timed_out_keys)`` keyed by ``tasks``' keys.
+        A key lands in exactly one of ``results``, ``errors``, or
+        ``timed_out_keys``.
+        """
+        results: Dict[Any, Any] = {}
+        errors: Dict[Any, Exception] = {}
+
+        def _worker(key: Any, fn: Callable[[], Any]) -> None:
+            try:
+                results[key] = fn()
+            except Exception as e:  # noqa: BLE001 - reported back per-key, not swallowed
+                errors[key] = e
+
+        threads = {key: Thread(target=_worker, args=(key, fn), daemon=True) for key, fn in tasks.items()}
+        for t in threads.values():
+            t.start()
+
+        deadline = time.monotonic() + timeout_seconds
+        timed_out = []
+        for key, t in threads.items():
+            t.join(timeout=max(0.0, deadline - time.monotonic()))
+            if t.is_alive():
+                timed_out.append(key)
+
+        return results, errors, timed_out
+
     def _setup_single_node(self, node: str) -> Tuple[str, bool, Optional[str]]:
         """
         Set up a single node (thread-safe helper for parallel deployment).
@@ -724,40 +765,27 @@ class AortaRunner(BaseRunner):
 
         log.info(f"Setting up {num_nodes} node(s) in parallel...")
 
-        # Use ThreadPoolExecutor for parallel deployment
-        # Max workers = number of nodes (each node gets its own thread)
-        executor = ThreadPoolExecutor(max_workers=num_nodes)
-        try:
-            # Submit all setup tasks
-            futures = {executor.submit(self._setup_single_node, node): node for node in nodes}
+        # Bounded by timeout_seconds so a stuck image pull or RCCL build cannot
+        # hang setup() forever; a still-stuck node's thread is abandoned (daemon)
+        # rather than joined, so it can't hang CVS itself either.
+        tasks = {node: partial(self._setup_single_node, node) for node in nodes}
+        results, errors, timed_out = self._run_bounded_parallel(tasks, self.config.timeout_seconds)
 
-            # Collect results as they complete, bounded by timeout_seconds so a
-            # stuck image pull or RCCL build cannot hang setup() forever.
-            done, not_done = futures_wait(futures, timeout=self.config.timeout_seconds)
-
-            failed_nodes = []
-            for future in done:
-                node = futures[future]
-                try:
-                    node_name, success, error_msg = future.result()
-                    if not success:
-                        log.error(f"Setup failed on {node_name}: {error_msg}")
-                        failed_nodes.append((node_name, error_msg))
-                    else:
-                        log.info(f"Setup completed on {node_name}")
-                except Exception as e:
-                    log.exception(f"Unexpected error setting up {node}: {e}")
-                    failed_nodes.append((node, str(e)))
-
-            for future in not_done:
-                node = futures[future]
+        failed_nodes = []
+        for node in nodes:
+            if node in timed_out:
                 log.error(f"Setup timed out on {node} after {self.config.timeout_seconds}s")
                 failed_nodes.append((node, f"Timed out after {self.config.timeout_seconds}s"))
-        finally:
-            # wait=False: don't block on threads stuck inside a blocking Docker/SSH
-            # call. Python threads can't be force-killed; this just stops CVS from
-            # hanging on top of the already-timed-out node(s).
-            executor.shutdown(wait=False)
+            elif node in errors:
+                log.exception(f"Unexpected error setting up {node}: {errors[node]}")
+                failed_nodes.append((node, str(errors[node])))
+            else:
+                node_name, success, error_msg = results[node]
+                if not success:
+                    log.error(f"Setup failed on {node_name}: {error_msg}")
+                    failed_nodes.append((node_name, error_msg))
+                else:
+                    log.info(f"Setup completed on {node_name}")
 
         if failed_nodes:
             log.error(f"Setup failed on {len(failed_nodes)}/{num_nodes} nodes:")
@@ -800,12 +828,12 @@ class AortaRunner(BaseRunner):
             "print(s.getsockname()[1]);"
             "s.close()"
         )
+        ssh_opts = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+        if self.config.pkey:
+            ssh_opts.extend(["-i", self.config.pkey])
         cmd = [
             "ssh",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=10",
+            *ssh_opts,
             f"{self.config.username}@{node}",
             "python3",
             "-c",
@@ -1039,54 +1067,44 @@ class AortaRunner(BaseRunner):
                     f"master={master_addr}:{master_port}"
                 )
 
-                futures = {}
-                executor = ThreadPoolExecutor(max_workers=max(1, nnodes))
-                try:
-                    for rank, node in enumerate(nodes):
-                        cmd = self._build_torchrun_command(
-                            node_rank=rank,
-                            nnodes=nnodes,
-                            master_addr=master_addr,
-                            master_port=master_port,
-                            nproc_per_node=nproc_per_node,
-                        )
-                        fut = executor.submit(
-                            self._run_single_node,
-                            node=node,
-                            node_rank=rank,
-                            launch_cmd=cmd,
-                            env=base_env,
-                        )
-                        futures[fut] = (rank, node)
+                tasks = {}
+                for rank, node in enumerate(nodes):
+                    cmd = self._build_torchrun_command(
+                        node_rank=rank,
+                        nnodes=nnodes,
+                        master_addr=master_addr,
+                        master_port=master_port,
+                        nproc_per_node=nproc_per_node,
+                    )
+                    tasks[(rank, node)] = partial(
+                        self._run_single_node,
+                        node=node,
+                        node_rank=rank,
+                        launch_cmd=cmd,
+                        env=base_env,
+                    )
 
-                    # Bounded by timeout_seconds so a stalled NCCL collective (or any
-                    # other indefinite hang inside the container) cannot hang run()
-                    # forever with no CVS-level report.
-                    done, not_done = futures_wait(futures, timeout=self.config.timeout_seconds)
+                # Bounded by timeout_seconds so a stalled NCCL collective (or any
+                # other indefinite hang inside the container) cannot hang run()
+                # forever with no CVS-level report; a still-stuck node's thread is
+                # abandoned (daemon) rather than joined, so it can't hang CVS itself.
+                results, errors, not_done = self._run_bounded_parallel(tasks, self.config.timeout_seconds)
 
-                    for fut in done:
-                        rank, node = futures[fut]
-                        try:
-                            n, ec, out = fut.result()
-                        except Exception as e:
-                            log.exception(f"Node {node} (rank {rank}) raised: {e}")
-                            stdout_dict[node] = str(e)
-                            exit_codes[node] = -1
-                            continue
-                        stdout_dict[n] = out
-                        exit_codes[n] = ec
-
-                    for fut in not_done:
-                        rank, node = futures[fut]
+                for rank, node in tasks:
+                    if (rank, node) in not_done:
                         log.error(f"Node {node} (rank {rank}) timed out after {self.config.timeout_seconds}s")
                         stdout_dict[node] = (
                             f"Timed out after {self.config.timeout_seconds}s waiting for node to complete"
                         )
                         exit_codes[node] = -1
-                finally:
-                    # wait=False: threads stuck in a blocking Docker exec call can't be
-                    # force-killed. Don't let CVS itself hang waiting for them to finish.
-                    executor.shutdown(wait=False)
+                    elif (rank, node) in errors:
+                        log.exception(f"Node {node} (rank {rank}) raised: {errors[(rank, node)]}")
+                        stdout_dict[node] = str(errors[(rank, node)])
+                        exit_codes[node] = -1
+                    else:
+                        n, ec, out = results[(rank, node)]
+                        stdout_dict[n] = out
+                        exit_codes[n] = ec
 
                 # A failed/timed-out node does not short-circuit trace collection below:
                 # surviving nodes may hold hours of otherwise-good profiler output, and

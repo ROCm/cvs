@@ -10,6 +10,7 @@ end-to-end pytest suite that runs against a real cluster.
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -102,6 +103,37 @@ class TestPickMasterPort(unittest.TestCase):
         self.assertIn("testuser@10.0.0.1", cmd)
         self.assertNotIn("testuser@10.0.0.2", cmd)
 
+    def test_port_pick_ssh_uses_configured_pkey(self):
+        r = _make_runner(nodes=["10.0.0.1"], aorta_path="/tmp/aorta")
+        fake_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="29502\n", stderr="")
+        with patch.object(aorta_mod.subprocess, "run", return_value=fake_result) as mock_run:
+            r._pick_master_port()
+        cmd = mock_run.call_args[0][0]
+        self.assertIn("-i", cmd)
+        self.assertIn("/home/testuser/.ssh/id_rsa", cmd)
+
+    def test_port_pick_ssh_omits_identity_flag_without_pkey(self):
+        cfg = AortaConfig(
+            nodes=["10.0.0.1"],
+            username="testuser",
+            aorta_path=Path("/tmp/aorta"),
+            base_config="config/distributed.yaml",
+            docker=AortaDockerConfig(),
+            rccl=RcclConfig(),
+            environment=AortaEnvironment(),
+            multi_node=AortaMultiNodeConfig(),
+            build_script="scripts/launch_rocm.sh",
+            experiment_script="scripts/launch_rocm.sh",
+            gpus_per_node=8,
+        )
+        with patch.object(aorta_mod, "DOCKER_SDK_AVAILABLE", True):
+            r = AortaRunner(cfg)
+        fake_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="29502\n", stderr="")
+        with patch.object(aorta_mod.subprocess, "run", return_value=fake_result) as mock_run:
+            r._pick_master_port()
+        cmd = mock_run.call_args[0][0]
+        self.assertNotIn("-i", cmd)
+
     def test_raises_when_ssh_port_pick_fails(self):
         r = _make_runner(nodes=["10.0.0.1"], aorta_path="/tmp/aorta")
         fake_result = subprocess.CompletedProcess(args=[], returncode=255, stdout="", stderr="Connection refused")
@@ -124,6 +156,62 @@ class TestResolveMasterAddr(unittest.TestCase):
         r = _make_runner(nodes=["10.0.0.1", "10.0.0.2"], aorta_path="/tmp/aorta")
         r.config.node_vpc_ips = {"10.0.0.1": "192.168.100.1", "10.0.0.2": "192.168.100.2"}
         self.assertEqual(r._resolve_master_addr(), "192.168.100.1")
+
+
+class TestRunBoundedParallel(unittest.TestCase):
+    def test_all_tasks_succeed(self):
+        tasks = {"a": lambda: 1, "b": lambda: 2}
+        results, errors, timed_out = AortaRunner._run_bounded_parallel(tasks, timeout_seconds=5)
+        self.assertEqual(results, {"a": 1, "b": 2})
+        self.assertEqual(errors, {})
+        self.assertEqual(timed_out, [])
+
+    def test_task_exception_is_captured_per_key(self):
+        def boom():
+            raise ValueError("bad")
+
+        tasks = {"good": lambda: "ok", "bad": boom}
+        results, errors, timed_out = AortaRunner._run_bounded_parallel(tasks, timeout_seconds=5)
+        self.assertEqual(results, {"good": "ok"})
+        self.assertIsInstance(errors["bad"], ValueError)
+        self.assertEqual(timed_out, [])
+
+    def test_hung_task_times_out_without_blocking_caller(self):
+        never_set = threading.Event()
+
+        def hang():
+            never_set.wait()
+            return "unreachable"
+
+        tasks = {"fast": lambda: "ok", "stuck": hang}
+        start = time.time()
+        results, errors, timed_out = AortaRunner._run_bounded_parallel(tasks, timeout_seconds=0.05)
+        elapsed = time.time() - start
+
+        self.assertLess(elapsed, 0.5)
+        self.assertEqual(results, {"fast": "ok"})
+        self.assertEqual(errors, {})
+        self.assertEqual(timed_out, ["stuck"])
+        never_set.set()
+
+    def test_hung_task_runs_on_daemon_thread(self):
+        # Proves a stuck node cannot hang the whole process at interpreter exit
+        # (CPython's atexit joins every non-daemon thread regardless of any
+        # shutdown(wait=False) call the caller might make on an executor).
+        captured = []
+        never_set = threading.Event()
+
+        def hang():
+            captured.append(threading.current_thread())
+            never_set.wait()
+
+        AortaRunner._run_bounded_parallel({"stuck": hang}, timeout_seconds=0.05)
+
+        self.assertEqual(len(captured), 1)
+        self.assertTrue(captured[0].daemon)
+        self.assertTrue(captured[0].is_alive())
+        never_set.set()
+        captured[0].join(timeout=1)
 
 
 class TestRunMultiNodeTimeout(unittest.TestCase):
