@@ -408,6 +408,7 @@ def _git_clone_source(hdl, repository, dest_dir, sparse_path=None, git_tag=""):
     sparse-checkout for a single rocm-systems project path.
     """
     hdl.exec(f"rm -rf {dest_dir}", timeout=60)
+    branch_arg = f"-b {git_tag} " if git_tag else ""
     if sparse_path:
         log.info(
             "Sparse clone %s -> %s (path=%s)",
@@ -417,7 +418,7 @@ def _git_clone_source(hdl, repository, dest_dir, sparse_path=None, git_tag=""):
         )
         hdl.exec(
             f"bash -c '"
-            f"git clone --depth 1 --filter=blob:none --sparse {repository} {dest_dir} && "
+            f"git clone --depth 1 --filter=blob:none {branch_arg} --sparse {repository} {dest_dir} && "
             f"cd {dest_dir} && git sparse-checkout set {sparse_path}"
             f"'",
             timeout=600,
@@ -426,14 +427,14 @@ def _git_clone_source(hdl, repository, dest_dir, sparse_path=None, git_tag=""):
         log.info("Full clone %s -> %s", repository, dest_dir)
         hdl.exec(f"git clone {repository} {dest_dir}", timeout=300)
 
-    if git_tag:
-        out_dict = hdl.exec(
-            f"bash -c 'cd {dest_dir} && git checkout {git_tag}'",
-            timeout=120,
-        )
-        for node, output in out_dict.items():
-            if re.search(r"error:|fatal:", output, re.I):
-                fail_test(f"git checkout {git_tag} failed on node {node}: {output.strip()}")
+        if git_tag:
+            out_dict = hdl.exec(
+                f"bash -c 'cd {dest_dir} && git checkout {git_tag}'",
+                timeout=120,
+            )
+            for node, output in out_dict.items():
+                if re.search(r"error:|fatal:", output, re.I):
+                    fail_test(f"git checkout {git_tag} failed on node {node}: {output.strip()}")
 
 
 def _check_ompi_installed(hdl, config_dict):
