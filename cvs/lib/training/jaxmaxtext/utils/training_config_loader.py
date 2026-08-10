@@ -117,6 +117,7 @@ class Sweep(_Allow):
 
 class TrainingConfig(_Allow):
     distributed: bool = True
+    gpus_per_node: int = 8  # do not assume a uniform topology; override per cluster
     steps: int = 30
     enable_checkpointing: bool = False
     train_script: str = "/workspace/maxtext/src/MaxText/train.py"

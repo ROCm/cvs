@@ -46,6 +46,7 @@
   "__maxtext_version>=26.4__train_script": "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
   "training": {
     "distributed": true,
+    "gpus_per_node": 8,
     "steps": 10,
     "enable_checkpointing": false,
     "train_script": "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",

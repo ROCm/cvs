@@ -8,8 +8,8 @@ Run with a distributed config (training.distributed = true), e.g.:
   cvs run jaxmaxtext_distributed --cluster_file <cluster>.json \
       --config_file .../mi325x_jaxmaxtext_llama-3.3-70b_distributed.json --html <out>.html
 
-This is the distributed variant: it adds the RDMA and NIC setup stages on top of
-the shared lifecycle. The per-sweep training, metric gating, loss curve, and
+This is the distributed variant: it adds the RDMA setup stage on top of the
+shared lifecycle. The per-sweep training, metric gating, loss curve, and
 reporting are the shared implementations in _common.py. pytest_generate_tests
 (sweep parametrization) and all fixtures/hooks live in conftest.py. The
 "distributed" mode is reflected in the test module name (this file), the
@@ -24,10 +24,9 @@ _c = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_c)
 
 # Bind the shared lifecycle stages as this module's tests (pytest collects these).
-# Distributed: includes the RDMA + NIC setup stages.
+# Distributed: includes the RDMA setup stage.
 test_launch_container = _c.test_launch_container
 test_setup_rdma = _c.test_setup_rdma
-test_setup_nic = _c.test_setup_nic
 test_setup_tokenizer = _c.test_setup_tokenizer
 test_training_run = _c.test_training_run
 test_metric = _c.test_metric

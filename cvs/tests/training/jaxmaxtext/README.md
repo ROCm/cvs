@@ -63,7 +63,7 @@ cvs run jaxmaxtext_distributed \
 | Suite (`cvs run <name>`) | File | Distributed stages | Use with |
 |---|---|---|---|
 | `jaxmaxtext_single` | `jaxmaxtext_single.py` | none | single-node config (`distributed: false`) |
-| `jaxmaxtext_distributed` | `jaxmaxtext_distributed.py` | `test_setup_rdma`, `test_setup_nic` | multi-node config (`distributed: true`) |
+| `jaxmaxtext_distributed` | `jaxmaxtext_distributed.py` | `test_setup_rdma` | multi-node config (`distributed: true`) |
 
 Both suites share their implementations from `_common.py`; sweep parametrization
 and all fixtures/hooks live in `conftest.py`. `_common.py` and `conftest.py` are
@@ -77,14 +77,16 @@ Tests run in this pinned order. `[sweep]` = one row per enabled sweep;
 | Order | Test | Runs on | Purpose |
 |---|---|---|---|
 | 1 | `test_launch_container` | once | Launch and verify the container |
-| 2 | `test_setup_rdma` | distributed only | Copy RDMA lib into container (thor2 NIC) |
-| 3 | `test_setup_nic` | distributed only | NIC setup scripts |
-| 4 | `test_setup_tokenizer` | once | Download the HF tokenizer |
-| 5 | `test_training_run[sweep]` | per sweep | Build cmd, train, poll, parse results |
-| 6 | `test_metric[sweep-metric]` | per sweep x metric | Threshold PASS/FAIL per metric |
-| 7 | `test_loss_curve[sweep]` | per sweep | Render loss PNG; gate on downward trend |
-| 8 | `test_print_results_table` | once | Console tables + metric results HTML + failure summary |
-| 9 | `test_teardown` | once | Tear the container down |
+| 2 | `test_setup_rdma` | distributed only | Copy RDMA lib into container (thor2 NIC) and verify `ibv_devinfo` |
+| 3 | `test_setup_tokenizer` | once | Download the HF tokenizer |
+| 4 | `test_training_run[sweep]` | per sweep | Build cmd, train, poll, parse results |
+| 5 | `test_metric[sweep-metric]` | per sweep x metric | Threshold PASS/FAIL per metric |
+| 6 | `test_loss_curve[sweep]` | per sweep | Render loss PNG; gate on downward trend |
+| 7 | `test_print_results_table` | once | Console tables + metric results HTML + failure summary |
+| 8 | `test_teardown` | once | Tear the container down |
+
+On a training failure/timeout, lingering ranks are killed (`stop_training`) so
+the next sweep does not launch on top of them.
 
 A training failure is isolated to that sweep's `test_training_run` row; other
 sweeps still run. When a sweep's training does not complete, its downstream
@@ -158,7 +160,8 @@ sibling threshold file named by its `threshold_json` field):
 | `mi300x_jaxmaxtext_llama-3.3-70b_single.json` | `..._single_threshold.json` | MI300X, single-node |
 | `mi300x_jaxmaxtext_llama-3.3-70b_distributed.json` | `..._distributed_threshold.json` | MI300X, distributed |
 | `mi325x_jaxmaxtext_llama-3.3-70b_distributed.json` | `..._distributed_threshold.json` | MI325X, distributed |
-| `mi355x_jaxmaxtext_llama-3.3-70b_distributed.json` | `..._distributed_threshold.json` | MI355X, distributed |
+
+(Add analogous configs for other archs, e.g. MI355X, as needed.)
 
 See `cvs/input/config_file/training/jaxmaxtext/README.md` for the full variable
 reference and the values you must change for your cluster and container image.

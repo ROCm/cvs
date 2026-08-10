@@ -89,6 +89,28 @@ class ConstructorTests(unittest.TestCase):
         self.assertIn("--xla_gpu_autotune_level=0", s)
         self.assertIn("--xla_gpu_enable_triton_gemm=False", s)
 
+    def test_gpus_per_node_from_config(self):
+        # num_gpus derives from config gpus_per_node, not a hardcoded 8.
+        job, _ = _make_job(hosts=["h0", "h1"], gpus_per_node=4)
+        self.assertEqual(job.gpus_per_node, 4)
+        self.assertEqual(job.num_gpus, 8)
+
+    def test_gpus_per_node_defaults_to_8(self):
+        job, _ = _make_job(hosts=["h0"])  # fake config has no gpus_per_node
+        self.assertEqual(job.gpus_per_node, 8)
+        self.assertEqual(job.num_gpus, 8)
+
+
+class StopTrainingTests(unittest.TestCase):
+    @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
+    def test_uses_bracketed_self_safe_pattern(self, _sleep):
+        job, orch = _make_job(hosts=["h0"])
+        job.stop_training()
+        cmd = orch.exec.call_args.args[0]
+        # Bracketed first char so the pkill wrapper's own cmdline is not matched.
+        self.assertIn("[m]axtext_config.yml", cmd)
+        self.assertIn("[t]raining_launcher_node", cmd)
+
 
 class IsCompleteTests(unittest.TestCase):
     def test_all_nodes_complete(self):

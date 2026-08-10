@@ -86,7 +86,11 @@ class MaxTextTrainingJob:
         self.log_dir = variant.paths.log_dir
         self.out_dir = f"{self.log_dir}/jaxmaxtext/{self.sweep_tag}" if self.sweep_tag else f"{self.log_dir}/jaxmaxtext"
         self.num_nodes = len(orch.hosts)
-        self.num_gpus = self.num_nodes * 8
+        # GPUs-per-node is config-driven -- do not assume a uniform 8-GPU topology.
+        # It feeds num_gpus -> tokens_per_sec_total -> scaling efficiency, so an
+        # implicit constant would silently skew a gated-adjacent metric.
+        self.gpus_per_node = int(getattr(self.training, "gpus_per_node", 8) or 8)
+        self.num_gpus = self.num_nodes * self.gpus_per_node
 
         # Training-log error signatures scanned during polling. Sourced from the
         # config (`training.error_patterns`) so users can add/remove signatures
@@ -195,10 +199,6 @@ class MaxTextTrainingJob:
         for host, output in (verify or {}).items():
             if not re.search(r'hca_id:\s+(bnxt_|rocep|rdma)', output or "", re.I):
                 raise RuntimeError(f"RDMA library not properly configured on {host}: {(output or '')[:300]}")
-
-    def exec_nic_setup_scripts(self):
-        """Run NIC setup scripts inside container (distributed only)."""
-        log.info("NIC setup for nic_type=%s", self.training.nic_type)
 
     # ---------- tokenizer ----------
 
@@ -419,7 +419,21 @@ class MaxTextTrainingJob:
     # ---------- cleanup ----------
 
     def stop_training(self):
-        """Kill any running training processes."""
-        log.info("stopping training processes")
-        self.orch.exec("bash -c 'pkill -f \"maxtext\" || true'")
-        time.sleep(5)
+        """Best-effort kill of lingering training processes on every node.
+
+        Called when a sweep fails/times out so the next sweep does not launch on
+        top of orphaned ranks (important for persistent containers, where per-run
+        teardown does not reap them).
+
+        Uses a bracketed first character in the pattern: a running rank's cmdline
+        contains ``maxtext_config.yml``/``training_launcher_node`` and matches,
+        but this ``pkill`` wrapper's own cmdline contains the literal
+        ``[m]axtext_config.yml`` / ``[t]raining_launcher_node`` which the regex
+        does not match -- so pkill never targets itself.
+        """
+        log.info("stopping lingering training processes")
+        self.orch.exec(
+            "bash -c "
+            + shlex.quote("pkill -9 -f '[m]axtext_config.yml' || true; pkill -9 -f '[t]raining_launcher_node' || true")
+        )
+        time.sleep(3)

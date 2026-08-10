@@ -140,13 +140,12 @@ def pytest_collection_modifyitems(items):
     rank = {
         "test_launch_container": 0,
         "test_setup_rdma": 1,
-        "test_setup_nic": 2,
-        "test_setup_tokenizer": 3,
-        "test_training_run": 4,
-        "test_metric": 5,
-        "test_loss_curve": 6,
-        "test_print_results_table": 7,
-        "test_teardown": 8,
+        "test_setup_tokenizer": 2,
+        "test_training_run": 3,
+        "test_metric": 4,
+        "test_loss_curve": 5,
+        "test_print_results_table": 6,
+        "test_teardown": 7,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 

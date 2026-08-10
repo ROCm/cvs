@@ -7,7 +7,7 @@ runnable suite (leading underscore -> excluded by `cvs list`/`cvs run`); the two
 thin suite files bind the `test_*` implementations here:
 
   - jaxmaxtext_single.py       (single-node: no RDMA/NIC stages)
-  - jaxmaxtext_distributed.py  (adds test_setup_rdma / test_setup_nic)
+  - jaxmaxtext_distributed.py  (adds the test_setup_rdma stage)
 
 Kept deliberately simple: plain shared functions + a couple of small helpers,
 no framework-y generalization. The single vs distributed mode is recorded in
@@ -174,18 +174,6 @@ def test_setup_rdma(orch, variant_config, hf_token, lifecycle, request):
     lifecycle.record(request.node.nodeid, "rdma_setup", time.monotonic() - t)
 
 
-def test_setup_nic(orch, variant_config, hf_token, lifecycle, request):
-    """Distributed-only: run NIC setup scripts."""
-    if lifecycle.failed:
-        pytest.skip("a prior lifecycle stage failed")
-    if not variant_config.training.distributed:
-        pytest.skip("single-node: NIC setup not needed")
-    t = time.monotonic()
-    job = MaxTextTrainingJob(orch, variant_config, hf_token)
-    job.exec_nic_setup_scripts()
-    lifecycle.record(request.node.nodeid, "nic_setup", time.monotonic() - t)
-
-
 def test_setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     """Download HF tokenizer into models dir."""
     if lifecycle.failed:
@@ -219,6 +207,12 @@ def test_training_run(orch, variant_config, hf_token, sweep_name, training_res_d
         results = job.parse_results()
     except Exception as e:  # noqa: BLE001 - isolate the failure to this sweep
         log.error("training run failed for sweep '%s': %s", sweep_name, e)
+        # Reap any lingering ranks so the next sweep does not launch on top of
+        # them (and so persistent containers are not left with orphan processes).
+        try:
+            job.stop_training()
+        except Exception:  # noqa: BLE001
+            pass
         pytest.fail(f"training run failed for sweep '{sweep_name}': {e}")
 
     results["training.wall_time_seconds"] = wall_time

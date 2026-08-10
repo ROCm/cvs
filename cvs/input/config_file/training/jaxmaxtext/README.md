@@ -13,7 +13,8 @@ field). One config = one GPU arch + mode (single or distributed).
 | `mi300x_jaxmaxtext_llama-3.3-70b_single.json` | `mi300x_jaxmaxtext_llama-3.3-70b_single_threshold.json` | MI300X, single-node |
 | `mi300x_jaxmaxtext_llama-3.3-70b_distributed.json` | `mi300x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json` | MI300X, distributed |
 | `mi325x_jaxmaxtext_llama-3.3-70b_distributed.json` | `mi325x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json` | MI325X, distributed |
-| `mi355x_jaxmaxtext_llama-3.3-70b_distributed.json` | `mi355x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json` | MI355X, distributed |
+
+Add analogous config + threshold pairs for other archs (e.g. MI355X) as needed.
 
 Keys prefixed with `_` (e.g. `_error_patterns_comment`) are inline comments and
 are ignored by the loader.
@@ -30,6 +31,7 @@ Start from the config closest to your target arch/mode and edit these:
 | `paths.hf_token_file` | HF token path | Location of your Hugging Face token file on the nodes |
 | `training.tokenizer.hf_model_id` | tokenizer repo | The HF tokenizer to download (matches the model) |
 | `training.tokenizer.tokenizer_path` | in-container tokenizer dir | Where the tokenizer is written (usually under `{paths.models_dir}`) |
+| `training.gpus_per_node` | GPUs per node | Your node's GPU count (default 8); feeds total-throughput/scaling metrics - do not assume a fixed topology |
 | `training.nic_type` | NIC type | `thor2` (Broadcom) etc. for distributed; `none` for single-node |
 | `training.rdma_lib.*` | RDMA lib paths | Host/container paths for the NIC's `libibverbs` provider (distributed) |
 | `training.nccl.ib_hca` / `ib_hca_list` | RDMA HCA devices | Your nodes' RDMA device names (e.g. `rdma0..rdma7`) |
@@ -74,7 +76,8 @@ Top-level (framework-agnostic) fields:
 
 | Field | Meaning |
 |---|---|
-| `distributed` | `true` for multi-node (adds RDMA/NIC stages), `false` for single-node |
+| `distributed` | `true` for multi-node (adds the RDMA setup stage), `false` for single-node |
+| `gpus_per_node` | GPUs per node (default 8); `num_gpus = num_nodes x gpus_per_node` feeds `tokens_per_sec_total` and scaling efficiency |
 | `steps` | Training steps; also drives completion detection and poll budget |
 | `enable_checkpointing` | Whether MaxText writes checkpoints |
 | `train_script` | In-container path to the MaxText train entrypoint |

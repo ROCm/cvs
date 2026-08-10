@@ -24,7 +24,7 @@ _c = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_c)
 
 # Bind the shared lifecycle stages as this module's tests (pytest collects these).
-# Single-node: intentionally NO test_setup_rdma / test_setup_nic.
+# Single-node: intentionally NO test_setup_rdma (distributed-only stage).
 test_launch_container = _c.test_launch_container
 test_setup_tokenizer = _c.test_setup_tokenizer
 test_training_run = _c.test_training_run
