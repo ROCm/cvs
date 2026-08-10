@@ -18,6 +18,26 @@ from cvs.lib import globals
 
 log = globals.log
 
+
+def cli_option_value(name, argv=None):
+    """Return the value passed for CLI option `name`, or None if absent.
+
+    Supports both `--name value` (space-separated) and `--name=value` (equals)
+    forms. Needed because callers invoke the suite either way (e.g. via
+    `cvs run ... --config_file=...`), and a plain `arg == name` scan silently
+    misses the equals form -- which is why the HTML Environment table showed
+    "Not specified" and the config files were never bundled/linked.
+    """
+    argv = sys.argv if argv is None else argv
+    prefix = name + "="
+    for i, arg in enumerate(argv):
+        if arg == name and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith(prefix):
+            return arg[len(prefix):]
+    return None
+
+
 REPORT_STYLE_OVERRIDES = """<style>
     .collapse { display: none !important; }
     .col-result:hover::after { content: none !important; }
@@ -37,7 +57,7 @@ class HtmlReportManager:
         self._htmlpath = getattr(config.option, "htmlpath", None)
         self._test_html_dir = getattr(config, "_test_html_dir", "test_html")
         self._custom_test_reports = []  # Track reports added via add_html_to_report
-        self._config_files = {}  # Track copied config files {original_path: relative_path}
+        self._config_files = {}  # {original_path: {"rel": relative_path, "kind": "cluster"|"config"}}
         # Per-test PASS/FAIL verdict lines rendered in the Reports section.
         # Each entry: {"name": test_name, "passed": bool, "detail": str}.
         self._anc_verdicts = []
@@ -227,7 +247,10 @@ class HtmlReportManager:
             # Ensure log directory exists
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
-            # Copy cluster file
+            # Copy cluster file. The "cluster_" prefix namespaces it in the
+            # bundle so it can't collide with a same-named config/artifact. The
+            # Environment-table link is keyed by `kind` (not a filename
+            # substring), so the prefix is purely for bundle hygiene.
             if cluster_file_path and cluster_file_path != "Not specified":
                 cluster_path = Path(cluster_file_path)
                 if cluster_path.exists():
@@ -235,12 +258,13 @@ class HtmlReportManager:
                     shutil.copy2(cluster_path, dest_cluster)
                     rel_cluster = dest_cluster.relative_to(self.htmlpath.parent)
                     copied_files['cluster'] = str(rel_cluster)
-                    self._config_files[cluster_file_path] = str(rel_cluster)
+                    self._config_files[cluster_file_path] = {"rel": str(rel_cluster), "kind": "cluster"}
                     log.info("Copied cluster file to bundle: %s -> %s", cluster_path, dest_cluster)
                 else:
                     log.warning("Cluster file not found: %s", cluster_path)
 
-            # Copy config file
+            # Copy config file with a "config_" prefix -- see the cluster-file
+            # note above.
             if config_file_path and config_file_path != "Not specified":
                 config_path = Path(config_file_path)
                 if config_path.exists():
@@ -248,7 +272,7 @@ class HtmlReportManager:
                     shutil.copy2(config_path, dest_config)
                     rel_config = dest_config.relative_to(self.htmlpath.parent)
                     copied_files['config'] = str(rel_config)
-                    self._config_files[config_file_path] = str(rel_config)
+                    self._config_files[config_file_path] = {"rel": str(rel_config), "kind": "config"}
                     log.info("Copied config file to bundle: %s -> %s", config_path, dest_config)
                 else:
                     log.warning("Config file not found: %s", config_path)
@@ -261,15 +285,12 @@ class HtmlReportManager:
     def copy_config_files_from_args(self):
         """Copy config files from command line arguments to bundle."""
 
-        # Parse command line arguments to get file paths
-        cluster_file_path = None
-        config_file_path = None
-
-        for i, arg in enumerate(sys.argv):
-            if arg == "--cluster_file" and i + 1 < len(sys.argv):
-                cluster_file_path = str(Path(sys.argv[i + 1]).resolve())
-            elif arg == "--config_file" and i + 1 < len(sys.argv):
-                config_file_path = str(Path(sys.argv[i + 1]).resolve())
+        # Parse command line arguments to get file paths.
+        # Handles both `--opt value` and `--opt=value` forms.
+        cluster_arg = cli_option_value("--cluster_file")
+        config_arg = cli_option_value("--config_file")
+        cluster_file_path = str(Path(cluster_arg).resolve()) if cluster_arg else None
+        config_file_path = str(Path(config_arg).resolve()) if config_arg else None
 
         # Copy files to bundle if we found them
         if cluster_file_path or config_file_path:
@@ -344,15 +365,16 @@ class HtmlReportManager:
         try:
             data = json.loads(json_str)
 
-            # Update environment data with clickable links for config files
-            for original_path, relative_path in self._config_files.items():
+            # Update environment data with clickable links for config files.
+            # Keyed by the recorded `kind` (cluster/config), not a filename
+            # substring -- so a config file whose name no longer contains
+            # "config" (e.g. mi325x_..._distributed.json) still gets linked.
+            row_by_kind = {"cluster": "Cluster File", "config": "Config File"}
+            for original_path, info in self._config_files.items():
                 filename = Path(original_path).name
-                if "cluster" in filename.lower():
-                    # Replace plain filename with HTML link
-                    data["environment"]["Cluster File"] = f'<a href="{relative_path}" target="_blank">{filename}</a>'
-                elif "config" in filename.lower():
-                    # Replace plain filename with HTML link
-                    data["environment"]["Config File"] = f'<a href="{relative_path}" target="_blank">{filename}</a>'
+                row = row_by_kind.get(info["kind"])
+                if row:
+                    data["environment"][row] = f'<a href="{info["rel"]}" target="_blank">{filename}</a>'
 
             # Re-encode the JSON and update the HTML
             updated_json = json.dumps(data)
