@@ -38,6 +38,7 @@ def render_loss_curve_png(points, out_path, title=None):
 
     try:
         import matplotlib
+
         matplotlib.use("Agg")  # headless: no display needed on the CVS host
         import matplotlib.pyplot as plt
     except Exception as e:  # noqa: BLE001 - plotting must never break the run

@@ -84,9 +84,7 @@ class MaxTextTrainingJob:
         self.maxtext_config = merged
 
         self.log_dir = variant.paths.log_dir
-        self.out_dir = (
-            f"{self.log_dir}/jaxmaxtext/{self.sweep_tag}" if self.sweep_tag else f"{self.log_dir}/jaxmaxtext"
-        )
+        self.out_dir = f"{self.log_dir}/jaxmaxtext/{self.sweep_tag}" if self.sweep_tag else f"{self.log_dir}/jaxmaxtext"
         self.num_nodes = len(orch.hosts)
         self.num_gpus = self.num_nodes * 8
 
@@ -94,9 +92,7 @@ class MaxTextTrainingJob:
         # config (`training.error_patterns`) so users can add/remove signatures
         # without code changes; falls back to the built-in defaults when the
         # config omits them.
-        self.error_patterns = dict(getattr(self.training, "error_patterns", None) or {}) or dict(
-            _TRAINING_ERR_PATTERNS
-        )
+        self.error_patterns = dict(getattr(self.training, "error_patterns", None) or {}) or dict(_TRAINING_ERR_PATTERNS)
 
         self.step_metrics = []
         self.eval_metrics = []

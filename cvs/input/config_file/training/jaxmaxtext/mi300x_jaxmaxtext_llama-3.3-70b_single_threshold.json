@@ -1,9 +1,9 @@
 {
   "_comment": "Thresholds for Llama-3.3-70B on MI300X single-node, keyed by sweep name. Gated metrics (min/max) drive PASS/FAIL; kind='info' metrics always PASS (record-only) but retain a default `value` as a placeholder to calibrate later. Requires enforce_thresholds=true.",
 
-  "NNODES=1,STEPS=30,PRECISION=BF16,BATCH=2,GBS=16,SEQLEN=8192": {
-    "training.tflops_per_sec_per_gpu": { "kind": "min", "value": 350.0 },
-    "training.tokens_per_sec_per_gpu": { "kind": "min", "value": 700.0 },
+  "NNODES=1,STEPS=30,PRECISION=BF16,BATCH=5,GBS=40,SEQLEN=8192": {
+    "training.tflops_per_sec_per_gpu": { "kind": "min", "value": 260.0 },
+    "training.tokens_per_sec_per_gpu": { "kind": "min", "value": 962.0 },
     "training.tokens_per_sec_total":   { "kind": "info", "value": 0 },
     "training.scaling_efficiency_pct": { "kind": "info", "value": 80.0 },
     "training.step_time_seconds":      { "kind": "info", "value": 3600.0 },
@@ -17,9 +17,9 @@
     "training.time_to_target_seconds": { "kind": "info", "value": 1000000.0 }
   },
 
-  "NNODES=1,STEPS=30,PRECISION=FP8,BATCH=2,GBS=16,SEQLEN=8192": {
-    "training.tflops_per_sec_per_gpu": { "kind": "min", "value": 350.0 },
-    "training.tokens_per_sec_per_gpu": { "kind": "min", "value": 700.0 },
+  "NNODES=1,STEPS=30,PRECISION=FP8,BATCH=5,GBS=40,SEQLEN=8192": {
+    "training.tflops_per_sec_per_gpu": { "kind": "min", "value": 300.0 },
+    "training.tokens_per_sec_per_gpu": { "kind": "min", "value": 1472.0 },
     "training.tokens_per_sec_total":   { "kind": "info", "value": 0 },
     "training.scaling_efficiency_pct": { "kind": "info", "value": 80.0 },
     "training.step_time_seconds":      { "kind": "info", "value": 3600.0 },

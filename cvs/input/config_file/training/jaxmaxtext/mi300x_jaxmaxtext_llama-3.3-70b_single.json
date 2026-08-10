@@ -38,6 +38,8 @@
     }
   },
 
+  "__maxtext_version<=26.3__train_script": "/workspace/maxtext/src/MaxText/train.py",
+  "__maxtext_version>=26.4__train_script": "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
   "training": {
     "distributed": false,
     "steps": 30,
@@ -120,7 +122,7 @@
       "target_value": 0.0
     },
 
-    "_loss_curve_comment": "Row 32: sample training loss every `sample_every` steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
+    "_loss_curve_comment": "sample training loss every `sample_every` steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
     "loss_curve": {
       "sample_every": 10,
       "milestone_steps": [100, 500, 1000, 5000],
@@ -143,9 +145,9 @@
     "_sweeps_comment": "Each sweep = one full training run; `name` is the threshold cell key. FP8 on MI300X (CDNA3) uses quantization=nanoo_fp8. STEPS/GBS/NNODES in the name are labels: steps comes from training.steps, GBS = per_device_batch_size * total GPUs, NNODES from the cluster. enabled_sweep_list selects which sweeps to run.",
     "sweeps": [
       {
-        "name": "NNODES=1,STEPS=30,PRECISION=BF16,BATCH=2,GBS=16,SEQLEN=8192",
+        "name": "NNODES=1,STEPS=30,PRECISION=BF16,BATCH=5,GBS=40,SEQLEN=8192",
         "maxtext_overrides": {
-          "per_device_batch_size": 2,
+          "per_device_batch_size": 5,
           "max_target_length": 8192,
           "dtype": "bfloat16",
           "weight_dtype": "bfloat16",
@@ -153,9 +155,9 @@
         }
       },
       {
-        "name": "NNODES=1,STEPS=30,PRECISION=FP8,BATCH=2,GBS=16,SEQLEN=8192",
+        "name": "NNODES=1,STEPS=30,PRECISION=FP8,BATCH=5,GBS=40,SEQLEN=8192",
         "maxtext_overrides": {
-          "per_device_batch_size": 2,
+          "per_device_batch_size": 5,
           "max_target_length": 8192,
           "dtype": "bfloat16",
           "weight_dtype": "bfloat16",
@@ -164,8 +166,8 @@
       }
     ],
     "enabled_sweep_list": [
-      "NNODES=1,STEPS=30,PRECISION=BF16,BATCH=2,GBS=16,SEQLEN=8192",
-      "NNODES=1,STEPS=30,PRECISION=FP8,BATCH=2,GBS=16,SEQLEN=8192"
+      "NNODES=1,STEPS=30,PRECISION=BF16,BATCH=5,GBS=40,SEQLEN=8192",
+      "NNODES=1,STEPS=30,PRECISION=FP8,BATCH=5,GBS=40,SEQLEN=8192"
     ]
   }
 }

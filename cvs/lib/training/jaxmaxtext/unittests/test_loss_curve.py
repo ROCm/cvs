@@ -34,9 +34,7 @@ class RenderLossCurvePngTests(unittest.TestCase):
     def test_unwritable_path_returns_none(self):
         # A path under a non-existent directory makes savefig fail; the helper
         # must swallow it and return None rather than raising.
-        out = render_loss_curve_png(
-            [(0, 1.0), (1, 0.5)], "/nonexistent_dir_xyz/does/not/exist/curve.png"
-        )
+        out = render_loss_curve_png([(0, 1.0), (1, 0.5)], "/nonexistent_dir_xyz/does/not/exist/curve.png")
         self.assertIsNone(out)
 
 

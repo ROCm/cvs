@@ -63,35 +63,25 @@ class ExtractEvalMetricsTests(unittest.TestCase):
 class ComputeConvergenceTests(unittest.TestCase):
     def setUp(self):
         # loss falls 10, 8, 6, 4, 2 over 5 steps of 1.0s each.
-        self.steps = [
-            {"step": i, "seconds": 1.0, "loss": 10.0 - 2 * i} for i in range(5)
-        ]
+        self.steps = [{"step": i, "seconds": 1.0, "loss": 10.0 - 2 * i} for i in range(5)]
         self.evals = [
             {"step": 2, "eval_loss": 6.5},
             {"step": 4, "eval_loss": 3.5},
         ]
 
     def test_disabled_when_target_non_positive(self):
-        self.assertEqual(
-            compute_convergence(self.steps, self.evals, "auto", 0.0), (None, None)
-        )
-        self.assertEqual(
-            compute_convergence(self.steps, self.evals, "train_loss", -1.0), (None, None)
-        )
+        self.assertEqual(compute_convergence(self.steps, self.evals, "auto", 0.0), (None, None))
+        self.assertEqual(compute_convergence(self.steps, self.evals, "train_loss", -1.0), (None, None))
 
     def test_train_loss_target(self):
         # First step with loss <= 5.0 is step 3 (loss 4.0); cumulative time = 4.0s.
-        steps_to_target, time_to_target = compute_convergence(
-            self.steps, self.evals, "train_loss", 5.0
-        )
+        steps_to_target, time_to_target = compute_convergence(self.steps, self.evals, "train_loss", 5.0)
         self.assertEqual(steps_to_target, 3)
         self.assertAlmostEqual(time_to_target, 4.0)
 
     def test_eval_loss_target(self):
         # First eval point with eval_loss <= 4.0 is step 4; cumulative time = 5.0s.
-        steps_to_target, time_to_target = compute_convergence(
-            self.steps, self.evals, "eval_loss", 4.0
-        )
+        steps_to_target, time_to_target = compute_convergence(self.steps, self.evals, "eval_loss", 4.0)
         self.assertEqual(steps_to_target, 4)
         self.assertAlmostEqual(time_to_target, 5.0)
 
@@ -104,9 +94,7 @@ class ComputeConvergenceTests(unittest.TestCase):
         self.assertEqual(steps_to_target, 3)
 
     def test_target_never_reached(self):
-        self.assertEqual(
-            compute_convergence(self.steps, self.evals, "train_loss", 0.5), (None, None)
-        )
+        self.assertEqual(compute_convergence(self.steps, self.evals, "train_loss", 0.5), (None, None))
 
     def test_never_raises_on_empty(self):
         self.assertEqual(compute_convergence([], [], "auto", 1.0), (None, None))

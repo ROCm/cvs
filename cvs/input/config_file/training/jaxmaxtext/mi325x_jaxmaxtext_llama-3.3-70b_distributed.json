@@ -20,8 +20,8 @@
 
   "container": {
     "lifetime": "per_run",
-    "name": "rocm-jaxmaxtext-llama3.3-70b_primus",
-    "image": "amdaccelcloud/jax:7.15.0a20260721-ubuntu24.04-jax0.10.0-TE2.10",
+    "name": "rocm-jaxmaxtext-llama3.3-70b",
+    "image": "rocm/jax-training:maxtext-v26.4",
     "runtime": {
       "name": "docker",
       "args": {
@@ -41,6 +41,8 @@
     }
   },
 
+  "__maxtext_version<=26.3__train_script": "/workspace/maxtext/src/MaxText/train.py",
+  "__maxtext_version>=26.4__train_script": "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
   "training": {
     "distributed": true,
     "steps": 30,

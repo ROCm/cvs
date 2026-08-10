@@ -23,10 +23,7 @@ from cvs.lib.training.jaxmaxtext.utils.training_config_loader import (
 # Repo package root (the inner `cvs/` dir that holds `input/`): the test lives at
 # cvs/lib/training/jaxmaxtext/unittests/, so parents[4] is that package root.
 _PKG_ROOT = Path(__file__).resolve().parents[4]
-_SINGLE_CONFIG = (
-    _PKG_ROOT
-    / "input/config_file/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single.json"
-)
+_SINGLE_CONFIG = _PKG_ROOT / "input/config_file/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single.json"
 
 
 class SchemaDefaultsTests(unittest.TestCase):

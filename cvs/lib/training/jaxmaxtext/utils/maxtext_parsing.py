@@ -168,8 +168,7 @@ def sample_loss_curve(step_metrics, sample_every=10, milestone_steps=None):
     every = sample_every if sample_every and sample_every > 0 else 1
 
     loss_steps = [
-        s for s in (step_metrics or [])
-        if s.get("step") is not None and isinstance(s.get("loss"), (int, float))
+        s for s in (step_metrics or []) if s.get("step") is not None and isinstance(s.get("loss"), (int, float))
     ]
     if not loss_steps:
         return []

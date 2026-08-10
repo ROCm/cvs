@@ -173,17 +173,13 @@ class SetupRdmaLibTests(unittest.TestCase):
         orch.exec.assert_not_called()
 
     def test_raises_when_devinfo_mismatch(self):
-        job, orch = _make_job(
-            rdma_lib=SimpleNamespace(container_mount_file="/src.so", container_dest_file="/dst.so")
-        )
+        job, orch = _make_job(rdma_lib=SimpleNamespace(container_mount_file="/src.so", container_dest_file="/dst.so"))
         orch.exec.return_value = {"h0": "no matching hca here"}
         with self.assertRaises(RuntimeError):
             job.setup_rdma_lib()
 
     def test_ok_when_devinfo_matches(self):
-        job, orch = _make_job(
-            rdma_lib=SimpleNamespace(container_mount_file="/src.so", container_dest_file="/dst.so")
-        )
+        job, orch = _make_job(rdma_lib=SimpleNamespace(container_mount_file="/src.so", container_dest_file="/dst.so"))
         orch.exec.return_value = {"h0": "hca_id: bnxt_re0\n"}
         job.setup_rdma_lib()  # should not raise
 
@@ -197,9 +193,7 @@ class SetupTokenizerTests(unittest.TestCase):
         self.assertNotIn("huggingface-cli", joined)
 
     def test_downloads_when_model_id_set(self):
-        job, orch = _make_job(
-            tokenizer=SimpleNamespace(hf_model_id="org/model", tokenizer_path="/models/tok")
-        )
+        job, orch = _make_job(tokenizer=SimpleNamespace(hf_model_id="org/model", tokenizer_path="/models/tok"))
         job.setup_tokenizer()
         joined = " ".join(str(c.args[0]) for c in orch.exec.call_args_list)
         self.assertIn("huggingface-cli download", joined)

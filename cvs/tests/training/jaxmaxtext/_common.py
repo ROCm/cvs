@@ -17,7 +17,6 @@ results HTML title, and the loss-curve title/artifact.
 
 import html as _html
 import json
-import os
 import re
 import time
 import uuid as _uuid
@@ -292,14 +291,18 @@ def test_metric(sweep_name, metric, training_res_dict, variant_config, lifecycle
         pytest.skip(f"{metric}: no value produced this run")
 
     if spec is None or not variant_config.enforce_thresholds:
-        log.info("[metric] %-6s %-24s | expected %-14s | actual %s | %s -> RECORD", label, metric, expected, actual, unit)
+        log.info(
+            "[metric] %-6s %-24s | expected %-14s | actual %s | %s -> RECORD", label, metric, expected, actual, unit
+        )
         _record("RECORD")
         return
 
     try:
         evaluate_all(results, {full: spec})
     except ThresholdViolation as e:
-        log.error("[metric] %-6s %-24s | expected %-14s | actual %s | %s -> FAIL", label, metric, expected, actual, unit)
+        log.error(
+            "[metric] %-6s %-24s | expected %-14s | actual %s | %s -> FAIL", label, metric, expected, actual, unit
+        )
         _record("FAIL")
         training_res_dict.setdefault("metric_failures", []).append(
             f"[{label}] {metric}: expected {expected}, actual {actual}"
@@ -421,7 +424,9 @@ def _print_sweep_tables(training_res_dict):
         )
         loss_rows = [[s["step"], f"{s['loss']:.6f}"] for s in rec.get("step_metrics", []) if "loss" in s]
         if loss_rows:
-            log.info("\nLoss Curve [%s]:\n%s", sweep_name, tabulate(loss_rows, headers=["Step", "Loss"], tablefmt="github"))
+            log.info(
+                "\nLoss Curve [%s]:\n%s", sweep_name, tabulate(loss_rows, headers=["Step", "Loss"], tablefmt="github")
+            )
 
 
 def test_print_results_table(training_res_dict, request):
