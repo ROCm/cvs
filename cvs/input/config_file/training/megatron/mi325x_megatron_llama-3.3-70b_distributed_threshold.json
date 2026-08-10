@@ -1,6 +1,6 @@
 {
-  "_comment": "Llama 3.3 70B single-node thresholds for MI325X Megatron. Cell keys must match MegatronVariantConfig.cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>.",
-  "MBS=3,GBS=96,PRECISION=FP8": {
+  "_comment": "Llama 3.3 70B distributed thresholds for MI325X Megatron. Cell keys must match MegatronVariantConfig.cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>.",
+  "MBS=1,GBS=64,PRECISION=BF16": {
     "training.throughput_per_gpu": {
       "kind": "min",
       "value": 100
@@ -17,8 +17,12 @@
       "kind": "max",
       "value": 0
     },
+    "training.scaling_efficiency_pct": {
+      "kind": "min",
+      "value": 85.0
+    }
   },
-  "MBS=3,GBS=96,PRECISION=BF16": {
+  "MBS=1,GBS=64,PRECISION=FP8": {
     "training.throughput_per_gpu": {
       "kind": "min",
       "value": 100
@@ -35,5 +39,9 @@
       "kind": "max",
       "value": 0
     },
+    "training.scaling_efficiency_pct": {
+      "kind": "min",
+      "value": 85.0
+    }
   }
 }

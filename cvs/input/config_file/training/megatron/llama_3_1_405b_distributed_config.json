@@ -3,6 +3,7 @@
   "framework": "megatron_distributed",
   "gpu_arch": "MI325X",
   "enforce_thresholds": false,
+  "threshold_json": "llama_3_1_405b_distributed_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOGS/megatron",
@@ -64,25 +65,13 @@
         "name": "llama3_1_405b_mbs1_gbs64_FP8",
         "global_batch_size": "64",
         "micro_batch_size": "1",
-        "precision": "FP8",
-        "result_dict": {
-          "throughput_per_gpu": "100",
-          "elapsed_time_per_iteration": "500",
-          "tokens_per_gpu": "1000",
-          "mem_usage": "0"
-        }
+        "precision": "FP8"
       },
       "llama3_1_405b-mi325-bs64-mbs1-bf16": {
         "name": "llama3_1_405b_mbs1_gbs64_BF16",
         "global_batch_size": "64",
         "micro_batch_size": "1",
-        "precision": "BF16",
-        "result_dict": {
-          "throughput_per_gpu": "100",
-          "elapsed_time_per_iteration": "500",
-          "tokens_per_gpu": "1000",
-          "mem_usage": "0"
-        }
+        "precision": "BF16"
       }
     },
     "runs": [

@@ -17,10 +17,6 @@
       "kind": "max",
       "value": 0
     },
-    "training.scaling_efficiency_pct": {
-      "kind": "min",
-      "value": 85.0
-    }
   },
   "MBS=4,GBS=128,PRECISION=FP8": {
     "training.throughput_per_gpu": {
@@ -39,9 +35,5 @@
       "kind": "max",
       "value": 0
     },
-    "training.scaling_efficiency_pct": {
-      "kind": "min",
-      "value": 85.0
-    }
   }
 }

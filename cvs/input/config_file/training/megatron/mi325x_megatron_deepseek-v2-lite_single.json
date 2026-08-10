@@ -3,12 +3,7 @@
   "framework": "megatron_single",
   "gpu_arch": "MI325X",
   "enforce_thresholds": false,
-  "threshold_json": "deepseek_v2_lite_single_threshold.json",
-  "_scaling_baseline_comment": "Single-node baseline for scaling-efficiency %. tokens_per_sec_total=0.0 means disabled (record-only). Populate from this run's tok/s/GPU * 8 to use as reference for multi-node comparisons.",
-  "scaling_baseline": {
-    "tokens_per_sec_total": 0.0,
-    "num_nodes": 1
-  },
+  "threshold_json": "mi325x_megatron_deepseek-v2-lite_single_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOGS/megatron",
