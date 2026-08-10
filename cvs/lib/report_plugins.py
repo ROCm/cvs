@@ -34,7 +34,7 @@ def cli_option_value(name, argv=None):
         if arg == name and i + 1 < len(argv):
             return argv[i + 1]
         if arg.startswith(prefix):
-            return arg[len(prefix):]
+            return arg[len(prefix) :]
     return None
 
 
