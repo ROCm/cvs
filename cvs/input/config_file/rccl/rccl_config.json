@@ -4,14 +4,26 @@
             "nfs_install": "True",
             "_comment_nfs_install": "If nfs_install is True, rccl-tests and rccl library (optional) will be installed in NFS. Otherwise, all nodes will have local installation",
             "rccl_lib_install": "False",
-            "_comment_rccl_lib_install": "False indicates RCCL library will not be built, change to True if you want to build it outside ROCm",
-            "rccl_lib_install_dir": "/opt/rocm/lib",
-            "_comment_rccl_lib_install_dir": "Either provide the RCCL lib from ROCm installation (/opt/rocm/lib) or provide the path where your want it to build and install",
+            "_comment_rccl_lib_install": "Set True to sparse-clone projects/rccl from rocm-systems and build RCCL for rccl-tests (e.g. when bundled ROCm RCCL mismatches rccl-tests). rccl-tests then builds with CUSTOM_RCCL_LIB.",
+            "rccl_lib_build_timeout": "14400",
+            "_comment_rccl_lib_build_timeout": "SSH exec timeout in seconds for RCCL library source build (cmake + make -j, default 14400).",
+            "rccl_lib_install_dir": "<changeme>",
+            "_comment_rccl_lib_install_dir": "RCCL install prefix (lib/librccl.so). Not the ROCm system path unless you intend to overwrite it.",
             "rccl_tests_install_dir": "<changeme>",
-            "_comment_rccl_tests_install_dir": "Provide path where rccl-tests need to be installed",
+            "_comment_rccl_tests_install_dir": "Directory for sparse/full clone of rccl-tests (rocm-systems root). Binaries: <this-dir>/projects/rccl-tests/build when using rocm-systems sparse checkout.",
             "rccl_repository": "https://github.com/ROCm/rocm-systems.git",
+            "_comment_rccl_repository": "Monorepo URL; install_rccl_tools sparse-checkouts projects/rccl and projects/rccl-tests automatically.",
+            "rccl_sparse_path": "projects/rccl",
+            "rccl_tests_sparse_path": "projects/rccl-tests",
+            "_comment_rccl_sparse": "Optional overrides for git sparse-checkout paths. Omit or leave as-is for rocm-systems defaults.",
+            "rccl_git_tag": "",
+            "rccl_tests_git_tag": "",
+            "rocm_path": "<changeme>",
+            "_comment_rocm_path": "ROCm root for builds (e.g. /opt/rocm-7.2.0). <changeme> auto-detects on cluster nodes.",
+            "rccl_tests_use_amdclang": "True",
+            "_comment_rccl_tests_use_amdclang": "If True, rccl-tests builds with HIPCC/CXX set to $ROCM_PATH/llvm/bin/amdclang++ (recommended; avoids hipcc -x hip mis-linking libnccl_test_os.a). If False, uses $ROCM_PATH/bin/hipcc.",
             "ompi_install_dir": "<changeme>",
-            "_comment_ompi_install_dir": "Provide path where ompi is installed, the path will be tested for valid ompi installation, if missing rccl-tests will not be built"
+            "_comment_ompi_install_dir": "Open MPI install prefix (OMPI_PREFIX / MPI_HOME). Required for rccl-tests MPI build."
         },
 
         "mpi_params": {
@@ -23,7 +35,7 @@
             "mpi_oob_port": "eth0"
         },
 
-        "_comment_env_script": "RCCL/NCCL/UCX tuning parameters. Path configurations (mpi_dir, rccl_tests_dir) are now in mpi_params and rccl_test_params respectively.",
+        "_comment_env_script": "Shell script sourced on cluster nodes before mpirun (templates: input/env_file/rccl/). Use for RCCL/NCCL/UCX tuning. For a custom RCCL build (see installation_params.rccl_lib_install / rccl_lib_install_dir), set RCCL_HOME to that install prefix and prepend RCCL_HOME/lib to LD_LIBRARY_PATH so librccl.so is loaded instead of the system ROCm copy. mpi_dir and rccl_tests_dir are in mpi_params and rccl_test_params.",
         "env_source_script": "/home/{user-id}/thor2_env_script.sh",
 
         "rccl_test_params": {
