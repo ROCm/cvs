@@ -126,6 +126,10 @@ class TrainingConfig(_Allow):
     rdma_lib: RdmaLib = RdmaLib()
     env_vars: Dict[str, str] = {}
     xla_flags: Dict[str, str] = {}
+    # {name: regex} error signatures scanned in the training log during polling.
+    # Empty -> the driver falls back to its built-in default set. Lets users
+    # add/remove signatures per config without touching code.
+    error_patterns: Dict[str, str] = {}
     nccl: NcclConfig = NcclConfig()
     jax_distributed: JaxDistributed = JaxDistributed()
     scaling_baseline: ScalingBaseline = ScalingBaseline()

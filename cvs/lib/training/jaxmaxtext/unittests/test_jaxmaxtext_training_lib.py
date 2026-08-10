@@ -130,6 +130,25 @@ class ScanForErrorsTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             job._scan_for_errors()
 
+    def test_config_error_patterns_replace_defaults(self):
+        # A config-provided error_patterns set fully REPLACES the built-in defaults.
+        job, orch = _make_job(hosts=["h0"], error_patterns={"custom": "MY_CUSTOM_ERR"})
+        # The default NCCL signature is no longer active -> no raise.
+        orch.exec_cmd_list.return_value = {"h0": "some log\nNCCL ERROR: unhandled\n"}
+        job._scan_for_errors()
+        # The custom signature IS active -> raises.
+        orch.exec_cmd_list.return_value = {"h0": "boom MY_CUSTOM_ERR here\n"}
+        with self.assertRaises(RuntimeError):
+            job._scan_for_errors()
+
+    def test_default_error_patterns_used_when_config_empty(self):
+        # No config error_patterns -> built-in defaults apply (segfault added in configs
+        # is a config-only entry, so the default set still flags NCCL here).
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec_cmd_list.return_value = {"h0": "RESOURCE_EXHAUSTED: Out of memory\n"}
+        with self.assertRaises(RuntimeError):
+            job._scan_for_errors()
+
 
 class ParseResultsTests(unittest.TestCase):
     def test_parses_from_node0_log(self):

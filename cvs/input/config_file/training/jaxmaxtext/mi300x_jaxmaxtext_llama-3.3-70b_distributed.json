@@ -178,6 +178,18 @@
       "enforce": true
     },
 
+    "_error_patterns_comment": "Regexes (name -> pattern) scanned in each node's training.log during polling; a match fails that sweep's training_run with the matched name. Add/remove entries as you find new error signatures. Remove this block to use the built-in defaults. Escape backslashes per JSON (e.g. two backslashes for a regex \\d).",
+    "error_patterns": {
+      "NCCL ERROR": "NCCL ERROR|NCCL timeout|local work queue catastrophic error",
+      "GPU HW ERROR": "HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset",
+      "AssertionError": "AssertionError|ValueError:|JaxStackTrace|During handling of the above exception|triggered the following exception",
+      "rocm Err": "FAILED_PRECONDITION: No visible GPU devices|failed call to hipInit: HIP_ERROR_NoDevice|librocm reported version is: NOT_FOUND",
+      "python err": "ModuleNotFoundError: No module named|Fatal Python error:",
+      "tensorflow": "tensorflow.CoordinationServiceError|tensorflow.BarrierError|CoordinationServiceError",
+      "resource": "RESOURCE_EXHAUSTED: Out of memory|failed: RESOURCE_EXHAUSTED",
+      "segfault": "Segmentation fault|SIGSEGV|core dumped|std::bad_alloc"
+    },
+
     "_sweeps_comment": "Each sweep = one full training run; `name` is the threshold cell key. Add more sweeps (e.g. FP8) and list them in enabled_sweep_list to run them.",
     "sweeps": [
       {

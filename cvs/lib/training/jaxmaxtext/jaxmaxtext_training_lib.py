@@ -32,7 +32,10 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
 
 log = globals.log
 
-# Known training error patterns (from existing jax_training_lib).
+# Default training-log error signatures (name -> regex). Used as the fallback
+# when a config does not define `training.error_patterns`; a config's patterns
+# fully replace this set. Kept here so the suite still detects common failures
+# out of the box.
 _TRAINING_ERR_PATTERNS = {
     'NCCL ERROR': r'NCCL ERROR|NCCL timeout|local work queue catastrophic error',
     'GPU HW ERROR': r'HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset',
@@ -86,6 +89,14 @@ class MaxTextTrainingJob:
         )
         self.num_nodes = len(orch.hosts)
         self.num_gpus = self.num_nodes * 8
+
+        # Training-log error signatures scanned during polling. Sourced from the
+        # config (`training.error_patterns`) so users can add/remove signatures
+        # without code changes; falls back to the built-in defaults when the
+        # config omits them.
+        self.error_patterns = dict(getattr(self.training, "error_patterns", None) or {}) or dict(
+            _TRAINING_ERR_PATTERNS
+        )
 
         self.step_metrics = []
         self.eval_metrics = []
@@ -351,7 +362,9 @@ class MaxTextTrainingJob:
             i = node_of.get(host, "?")
             if _NAN_INF_RE.search(text):
                 raise RuntimeError(f"NaN/Inf in training metrics on {host} (node {i}): {text[-500:]}")
-            for err_name, err_pattern in _TRAINING_ERR_PATTERNS.items():
+            for err_name, err_pattern in self.error_patterns.items():
+                if not err_pattern:
+                    continue
                 if re.search(err_pattern, text, re.I):
                     raise RuntimeError(f"Training error '{err_name}' on {host} (node {i}): {text[-500:]}")
 
