@@ -139,6 +139,7 @@ class TestRunMultiNodeTimeout(unittest.TestCase):
         with (
             patch.object(r, "_run_single_node", side_effect=fake_run_single_node),
             patch.object(r, "_pick_master_port", return_value=29500),
+            patch.object(r, "_collect_multi_node_traces", return_value=None),
         ):
             start = time.time()
             result = r.run()
@@ -149,6 +150,32 @@ class TestRunMultiNodeTimeout(unittest.TestCase):
         self.assertEqual(result.exit_codes["10.0.0.1"], 0)
         self.assertEqual(result.exit_codes["10.0.0.2"], -1)
         self.assertIn("Timed out", result.stdout["10.0.0.2"])
+
+
+class TestRunPartialNodeFailureStillCollectsTraces(unittest.TestCase):
+    def test_failed_node_does_not_block_trace_collection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            aorta_path = Path(tmp)
+            combined_root = aorta_path / "combined_traces"
+            combined_root.mkdir()
+            r = _make_runner(nodes=["10.0.0.1", "10.0.0.2"], aorta_path=aorta_path)
+
+            def fake_run_single_node(*, node, node_rank, launch_cmd, env):
+                if node == "10.0.0.2":
+                    return (node, 1, "boom")
+                return (node, 0, "ok")
+
+            with (
+                patch.object(r, "_run_single_node", side_effect=fake_run_single_node),
+                patch.object(r, "_pick_master_port", return_value=29500),
+                patch.object(r, "_collect_multi_node_traces", return_value=combined_root) as mock_collect,
+            ):
+                result = r.run()
+
+            mock_collect.assert_called_once_with(["10.0.0.1", "10.0.0.2"])
+            self.assertEqual(result.status, RunStatus.FAILED)
+            self.assertIn("10.0.0.2", result.error_message)
+            self.assertEqual(result.get_artifact("torch_traces"), combined_root)
 
 
 class TestSetupTimeout(unittest.TestCase):

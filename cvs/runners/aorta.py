@@ -966,6 +966,8 @@ class AortaRunner(BaseRunner):
         stderr_dict: Dict[str, str] = {}
         exit_codes: Dict[str, int] = {}
         artifacts: Dict[str, Path] = {}
+        partial_failure_status: Optional[RunStatus] = None
+        partial_failure_message: Optional[str] = None
 
         try:
             launch_mode = self._resolve_launch_mode()
@@ -1086,18 +1088,16 @@ class AortaRunner(BaseRunner):
                     # force-killed. Don't let CVS itself hang waiting for them to finish.
                     executor.shutdown(wait=False)
 
+                # A failed/timed-out node does not short-circuit trace collection below:
+                # surviving nodes may hold hours of otherwise-good profiler output, and
+                # forcing a full rerun (or a manual TraceLensParser salvage) to recover it
+                # is exactly the failure mode this is meant to avoid. The failure is still
+                # reported via partial_failure_status/message on the final RunResult.
                 failed = {n: c for n, c in exit_codes.items() if c != 0}
                 if failed:
-                    status = RunStatus.TIMEOUT if not_done else RunStatus.FAILED
+                    partial_failure_status = RunStatus.TIMEOUT if not_done else RunStatus.FAILED
+                    partial_failure_message = f"Disaggregated experiment failed on nodes: {sorted(failed.keys())}"
                     log.error(f"Disaggregated run failed on {len(failed)}/{nnodes} nodes: {failed}")
-                    return RunResult(
-                        status=status,
-                        start_time=start_time,
-                        end_time=time.time(),
-                        stdout=stdout_dict,
-                        exit_codes=exit_codes,
-                        error_message=(f"Disaggregated experiment failed on nodes: {sorted(failed.keys())}"),
-                    )
 
                 if mn.collect_traces:
                     combined = self._collect_multi_node_traces(nodes)
@@ -1215,13 +1215,14 @@ class AortaRunner(BaseRunner):
                     break
 
             return RunResult(
-                status=RunStatus.COMPLETED,
+                status=partial_failure_status or RunStatus.COMPLETED,
                 start_time=start_time,
                 end_time=time.time(),
                 stdout=stdout_dict,
                 stderr=stderr_dict,
                 exit_codes=exit_codes,
                 artifacts=artifacts,
+                error_message=partial_failure_message,
                 metadata={
                     "nodes": len(self.config.nodes),
                     "gpus_per_node": self.config.gpus_per_node,
