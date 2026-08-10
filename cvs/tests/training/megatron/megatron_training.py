@@ -11,13 +11,14 @@ suite. The topology is determined entirely by the config file:
   framework=megatron_distributed  -> multi-node   (distributed_training=True)
  
 Lifecycle (each stage is a separate test):
-  test_launch_container  — launch the container once for all sweep combos
-  test_smoke             — fixed small cell: model loads and runs N steps without error
-  test_training          — parametrized: one test per sweep combo; kills GPU
+  test_launch_container  — Stage 0: launch the container once for all sweep combos
+  test_download_tokenizer— Stage 1: download tokenizer if the model family requires it
+  test_smoke             — Stage 2: fixed small cell: model loads and runs N steps without error
+  test_training          — Stage 3: parametrized: one test per sweep combo; kills GPU
                            processes in finally so VRAM is free for the next combo
-  test_metric            — parametrized: threshold check per combo via evaluate_all
-  test_loss_curve        — parametrized: loss decreases smoothly at steps 100/500/1k/5k
-  test_teardown          — tear down the container once after all combos
+  test_metric            — Stage 4: parametrized: threshold check per combo via evaluate_all
+  test_loss_curve        — Stage 5: parametrized: loss decreases smoothly at steps 100/500/1k/5k
+  test_teardown          — Stage 6: tear down the container once after all combos
 '''
  
 import json
@@ -205,7 +206,7 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request):
-    """Stage 1 (parametrized): run one sweep combo inside the shared container.
+    """Stage 3 (parametrized): run one sweep combo inside the shared container.
  
     distributed_training is derived from the config framework field:
       megatron_distributed -> True
@@ -281,7 +282,7 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
  
  
 def test_metric(variant_config, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request):
-    """Stage 2 (parametrized): compare each combo's metrics against thresholds.
+    """Stage 4 (parametrized): compare each combo's metrics against thresholds.
  
     No container interaction — reads results saved by test_training.
     Skips if training did not record results or enforce_thresholds is false.
@@ -313,7 +314,7 @@ def test_metric(variant_config, micro_batch_size, global_batch_size, precision, 
  
  
 def test_loss_curve(orch, variant_config, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request):
-    """Parametrized: verify lm_loss decreases smoothly at steps 100, 500, 1k, 5k.
+    """Stage 5 (parametrized): verify lm_loss decreases smoothly at steps 100, 500, 1k, 5k.
 
     Reads the full training log written by test_training (no container interaction
     needed — the log file already exists on disk). Skips gracefully when the run
@@ -368,7 +369,7 @@ def test_loss_curve(orch, variant_config, micro_batch_size, global_batch_size, p
 
 
 def test_teardown(orch, lifecycle, request):
-    """Stage 3: tear down the container once after all combos have run."""
+    """Stage 6: tear down the container once after all combos have run."""
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])
     t = time.monotonic()
     orch.teardown_containers()

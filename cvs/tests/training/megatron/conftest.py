@@ -121,8 +121,8 @@ def pytest_collection_modifyitems(items):
         "test_smoke": 2,
         "test_training": 3,
         "test_metric": 4,
-        "test_loss_curve": 4,
-        "test_teardown": 5,
+        "test_loss_curve": 5,
+        "test_teardown": 6,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
@@ -158,25 +158,25 @@ def pytest_runtest_makereport(item, call):
     report.extras = extras
 
 
-def pytest_html_results_table_header(cells):
-    cells.insert(-1, "<th>Value</th>")
-    cells.insert(-1, "<th>Unit</th>")
+# def pytest_html_results_table_header(cells):
+#     cells.insert(-1, "<th>Value</th>")
+#     cells.insert(-1, "<th>Unit</th>")
 
 
-def pytest_html_results_table_row(report, cells):
-    if not hasattr(report, 'user_properties'):
-        return
-    props = dict(report.user_properties)
-    has = "metric_value" in props
-    val = props.get("metric_value")
-    unit = props.get("metric_unit", "") if has else ""
-    if not has:
-        shown = ""
-    elif val is None:
-        shown = "-"
-    elif isinstance(val, float):
-        shown = f"{val:.3f}"
-    else:
-        shown = str(val)
-    cells.insert(-1, f"<td>{shown}</td>")
-    cells.insert(-1, f"<td>{unit}</td>")
+# def pytest_html_results_table_row(report, cells):
+#     if not hasattr(report, 'user_properties'):
+#         return
+#     props = dict(report.user_properties)
+#     has = "metric_value" in props
+#     val = props.get("metric_value")
+#     unit = props.get("metric_unit", "") if has else ""
+#     if not has:
+#         shown = ""
+#     elif val is None:
+#         shown = "-"
+#     elif isinstance(val, float):
+#         shown = f"{val:.3f}"
+#     else:
+#         shown = str(val)
+#     cells.insert(-1, f"<td>{shown}</td>")
+#     cells.insert(-1, f"<td>{unit}</td>")
