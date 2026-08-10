@@ -82,7 +82,9 @@ class TestPrimusSetupCommands(unittest.TestCase):
         self.assertIn("import torch", cmd)
 
     def test_pathspec_error_is_git_not_pip(self):
-        parsed = parse_setup_output("error: pathspec 'dev/preflight-direct-test' did not match any file(s) known to git\n")
+        parsed = parse_setup_output(
+            "error: pathspec 'dev/preflight-direct-test' did not match any file(s) known to git\n"
+        )
         self.assertEqual(parsed["status"], "FAIL")
         self.assertIn("git", parsed["errors"][0])
 
