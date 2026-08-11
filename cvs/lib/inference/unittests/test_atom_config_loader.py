@@ -279,7 +279,14 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertFalse(reuse_server_flag(SimpleNamespace()))
         variant = SimpleNamespace(
             model=SimpleNamespace(id="m"),
-            params=SimpleNamespace(driver="atom", tensor_parallelism="8"),
+            params=SimpleNamespace(
+                driver="atom",
+                tensor_parallelism="8",
+                nnodes="1",
+                pipeline_parallel_size="1",
+                master_addr="",
+                master_port="29501",
+            ),
             roles=SimpleNamespace(server=SimpleNamespace(atom_args=("-tp", "8"))),
         )
         self.assertNotEqual(server_session_key(variant, "1", "2"), server_session_key(variant, "3", "4"))
