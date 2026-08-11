@@ -16,6 +16,23 @@ from cvs.lib.inference.atom.atom_config_loader import (
 from cvs.lib.inference.atom.atom_parsing import METRIC_TIER_ORDER
 
 
+def _session_key_variant(*, model_id="model-a", **params_kw):
+    params = {
+        "driver": "atom",
+        "tensor_parallelism": "8",
+        "nnodes": "1",
+        "pipeline_parallel_size": "1",
+        "master_addr": "",
+        "master_port": "29501",
+    }
+    params.update(params_kw)
+    return SimpleNamespace(
+        model=SimpleNamespace(id=model_id),
+        params=SimpleNamespace(**params),
+        roles=SimpleNamespace(server=SimpleNamespace(atom_args=("-tp", "8"))),
+    )
+
+
 class TestServerReuseHelpers(unittest.TestCase):
     def test_reuse_server_flag_truthy_values(self):
         for raw in ("true", "1", "yes", "TRUE", " Yes "):
@@ -31,26 +48,14 @@ class TestServerReuseHelpers(unittest.TestCase):
         self.assertFalse(reuse_server_flag(SimpleNamespace()))
 
     def test_server_session_key_differs_for_model(self):
-        base = SimpleNamespace(
-            model=SimpleNamespace(id="model-a"),
-            params=SimpleNamespace(driver="atom", tensor_parallelism="8"),
-            roles=SimpleNamespace(server=SimpleNamespace(atom_args=("-tp", "8"))),
-        )
-        other = SimpleNamespace(
-            model=SimpleNamespace(id="model-b"),
-            params=SimpleNamespace(driver="atom", tensor_parallelism="8"),
-            roles=SimpleNamespace(server=SimpleNamespace(atom_args=("-tp", "8"))),
-        )
+        base = _session_key_variant(model_id="model-a")
+        other = _session_key_variant(model_id="model-b")
         k1 = server_session_key(base, "1024", "1024")
         k2 = server_session_key(other, "1024", "1024")
         self.assertNotEqual(k1, k2)
 
     def test_server_session_key_differs_for_shape(self):
-        variant = SimpleNamespace(
-            model=SimpleNamespace(id="model-a"),
-            params=SimpleNamespace(driver="atom", tensor_parallelism="8"),
-            roles=SimpleNamespace(server=SimpleNamespace(atom_args=("-tp", "8"))),
-        )
+        variant = _session_key_variant()
         self.assertNotEqual(
             server_session_key(variant, "1024", "1024"),
             server_session_key(variant, "2048", "2048"),
