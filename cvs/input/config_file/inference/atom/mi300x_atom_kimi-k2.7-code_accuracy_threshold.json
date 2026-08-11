@@ -34,5 +34,10 @@
     "mbpp": {
       "mbpp.pass@1": {"kind": "min", "value": 0}
     }
+  },
+  "long_context_accuracy": {
+    "niah_8k": {
+      "accuracy.niah_pass_rate__niah_8k": {"kind": "info", "value": 1.0}
+    }
   }
 }
