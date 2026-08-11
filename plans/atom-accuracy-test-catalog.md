@@ -21,12 +21,13 @@ emits **lm-eval-native keys** like `gsm8k.exact_match__flexible-extract` (see
 
 ## Implementation todos
 
-- [ ] Add `AccuracyConfig` to `atom_config_loader` + accuracy threshold key support
-- [ ] Import `test_accuracy_eval` in `atom.py`; parametrize `accuracy_task`; update `LIFECYCLE_RANK`
-- [ ] Ship `mi300x_atom_deepseek-r1_fp8_accuracy` config + threshold (ACC-1 gate ≥ 0.94 flexible-extract)
-- [ ] Add ACC-2 strict-match and ACC-3 stderr as record-only tasks in same variant
-- [ ] When W2/W3/W13/W17 land: add workload-specific ACC-6/8/9/10 variants and floors
-- [ ] Post-M1 MTP: ACC-4/5/13 via log scrape + chat template hash (not lm-eval)
+- [x] Add `AccuracyConfig` to `atom_config_loader` + accuracy threshold key support
+- [x] Import `test_accuracy_eval` in `atom.py`; parametrize `accuracy_task`; update `LIFECYCLE_RANK`
+- [x] Ship `mi300x_atom_deepseek-r1_fp8_accuracy` config + threshold (ACC-1 gate ≥ 0.94 flexible-extract)
+- [x] Add ACC-2 strict-match and ACC-3 stderr as record-only tasks in same variant
+- [x] W2/W3/W13/W17 accuracy scaffolds + Phase C perf stems (lab gates pending)
+- [x] ACC-4/5/13 via `atom_mtp_quality.py`; FUNC-1 API smoke; FUNC-2 health check; ACC-12 NIAH
+- [ ] M2 lab confirm on MI300X; flip M3 perf/accuracy `enforce_thresholds` after lab
 
 ---
 
