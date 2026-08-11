@@ -62,7 +62,18 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize("micro_batch_size,global_batch_size,precision,result_dict", cases, ids=ids)
 
 
-def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch_size, precision, result_dict, train_res_dict, lifecycle, request):
+def test_training(
+    orch,
+    variant_config,
+    hf_token,
+    micro_batch_size,
+    global_batch_size,
+    precision,
+    result_dict,
+    train_res_dict,
+    lifecycle,
+    request,
+):
     """Run the full per-combo lifecycle in a dedicated container.
 
     Launches a fresh container for this combo, runs single-node TorchTitan
@@ -171,7 +182,9 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
             lifecycle.torn_down = True
 
 
-def test_throughput(variant_config, micro_batch_size, global_batch_size, precision, result_dict, train_res_dict, lifecycle, request):
+def test_throughput(
+    variant_config, micro_batch_size, global_batch_size, precision, result_dict, train_res_dict, lifecycle, request
+):
     """Threshold check using variant_config.cell_key() and threshold_dict.
 
     Uses cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>
@@ -208,6 +221,7 @@ def test_throughput(variant_config, micro_batch_size, global_batch_size, precisi
 
     # Evaluate thresholds using evaluate_all
     from cvs.lib.utils.verdict import evaluate_all
+
     actuals = train_res_dict[combo_key]
     evaluate_all(
         threshold_specs,

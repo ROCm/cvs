@@ -11,10 +11,8 @@ Adapted from megatron_lib.py with TorchTitan-specific implementation:
 - Supports single-node and multi-node distributed training
 '''
 
-import os
 import re
 import shlex
-import textwrap
 import time
 
 from cvs.lib import globals
@@ -216,7 +214,8 @@ class TorchTitanTrainingJob:
         # HF assets path for model downloads
         self.hf_assets_path = self.model_params.get(
             'hf_assets_path',
-            f'./assets/hf/{self.model_config["hf_assets_subdir"]}/{self.tokenizer_path.split("/")[-1]}')
+            f'./assets/hf/{self.model_config["hf_assets_subdir"]}/{self.tokenizer_path.split("/")[-1]}',
+        )
 
         # Other training params with defaults from DEFAULT_TRAINING_PARAMS
         for key, default_val in DEFAULT_TRAINING_PARAMS.items():
@@ -232,7 +231,9 @@ class TorchTitanTrainingJob:
         self.context_parallel_degree = str(self.model_params.get('context_parallel_degree', '1'))
         self.expert_parallel_degree = str(self.model_params.get('expert_parallel_degree', '1'))
         self.enable_async_tensor_parallel = str(self.model_params.get('enable_async_tensor_parallel', 'false')).lower()
-        self.precompute_float8_dynamic_scale_for_fsdp = str(self.model_params.get('precompute_float8_dynamic_scale_for_fsdp', 'false')).lower()
+        self.precompute_float8_dynamic_scale_for_fsdp = str(
+            self.model_params.get('precompute_float8_dynamic_scale_for_fsdp', 'false')
+        ).lower()
 
         # Result expectations
         self.expected_result_dict = result_dict or {}
@@ -321,7 +322,7 @@ class TorchTitanTrainingJob:
         hf_path = self.hf_assets_path
 
         # Build quantization converters list
-        converters_str = self.converters if isinstance(self.converters, str) else '[]'
+        self.converters if isinstance(self.converters, str) else '[]'
 
         lines = [
             "[model]",
@@ -508,7 +509,7 @@ class TorchTitanTrainingJob:
 
         for iteration in range(max_iters):
             time.sleep(time_between_iters)
-            log.info(f'Polling iteration {iteration+1}/{max_iters}')
+            log.info(f'Polling iteration {iteration + 1}/{max_iters}')
 
             out_dict = self.orch.exec(f'tail -500 {log_file}')
             for host, output in out_dict.items():

@@ -63,9 +63,7 @@ def validate_sweep_selector(combo_keys, run_refs):
     known = set(counts)
     unknown = sorted(r for r in run_refs if r not in known)
     if unknown:
-        raise ValueError(
-            f"sweep.runs references unknown combinations: {unknown} (known: {sorted(known)})"
-        )
+        raise ValueError(f"sweep.runs references unknown combinations: {unknown} (known: {sorted(known)})")
 
 
 def validate_thresholds_cover_sweep(
@@ -132,7 +130,7 @@ class TorchTitanVariantConfig(_Forbid):
     enforce_thresholds: bool = True
     threshold_json: str = ""
     scaling_baseline: ScalingBaseline = Field(default_factory=ScalingBaseline)
-    config: Dict[str, Any]        # training knobs: torchtitan_root, nccl_*, nic_type, ...
+    config: Dict[str, Any]  # training knobs: torchtitan_root, nccl_*, nic_type, ...
     model_params: Dict[str, Any]  # model knobs: model_name, precision, tp, pp, ...
     container: ContainerSpec
     sweep: TorchTitanSweep
@@ -187,9 +185,7 @@ def _check_no_changeme(node, path="", _offenders=None):
         _offenders.append(path)
     if not path:
         if _offenders:
-            raise ValueError(
-                f"config has unfilled placeholder '<changeme>' in: {', '.join(_offenders)}"
-            )
+            raise ValueError(f"config has unfilled placeholder '<changeme>' in: {', '.join(_offenders)}")
 
 
 def load_training_variant(config_path, cluster_dict) -> TorchTitanVariantConfig:
@@ -212,4 +208,3 @@ def load_training_variant(config_path, cluster_dict) -> TorchTitanVariantConfig:
     known = {k: v for k, v in raw.items() if k in TorchTitanVariantConfig.model_fields}
     known["thresholds"] = thresholds
     return TorchTitanVariantConfig(**known)
- 

@@ -63,7 +63,18 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize("micro_batch_size,global_batch_size,precision,result_dict", cases, ids=ids)
 
 
-def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch_size, precision, result_dict, train_res_dict, lifecycle, request):
+def test_training(
+    orch,
+    variant_config,
+    hf_token,
+    micro_batch_size,
+    global_batch_size,
+    precision,
+    result_dict,
+    train_res_dict,
+    lifecycle,
+    request,
+):
     """Run the full per-combo lifecycle in a dedicated container set.
 
     Launches fresh containers for this combo, runs distributed TorchTitan training
@@ -181,7 +192,9 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
             lifecycle.torn_down = True
 
 
-def test_throughput(variant_config, micro_batch_size, global_batch_size, precision, result_dict, train_res_dict, lifecycle, request):
+def test_throughput(
+    variant_config, micro_batch_size, global_batch_size, precision, result_dict, train_res_dict, lifecycle, request
+):
     """Assert each metric in the combo's result_dict threshold spec is met.
 
     Reads results saved by test_training (containers are already gone; no
@@ -210,6 +223,5 @@ def test_throughput(variant_config, micro_batch_size, global_batch_size, precisi
         for val in measured:
             if float(val) < float(threshold):
                 pytest.fail(
-                    f"metric '{metric}' below threshold for combo '{combo_key}': "
-                    f"expected >= {threshold}, got {val}"
+                    f"metric '{metric}' below threshold for combo '{combo_key}': expected >= {threshold}, got {val}"
                 )
