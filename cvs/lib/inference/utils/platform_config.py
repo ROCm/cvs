@@ -12,3 +12,4 @@ from cvs.lib.utils.config_loader import _Forbid
 
 class PlatformConfig(_Forbid):
     dmesg_scan: bool = False
+    gpu_metrics_poll: bool = False

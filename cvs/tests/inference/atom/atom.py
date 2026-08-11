@@ -19,6 +19,11 @@ from cvs.lib.inference.utils.inference_suite_lifecycle import (
     test_setup_sshd,  # noqa: F401
     test_teardown,  # noqa: F401
 )
+from cvs.lib.inference.atom.atom_gpu_metrics import (
+    capture_gpu_snap,
+    gpu_results_from_poll,
+    merge_gpu_into_results,
+)
 from cvs.lib.inference.atom.atom_dmesg import verify_dmesg_window
 from cvs.lib.inference.atom.atom_orch import AtomJob
 from cvs.lib.inference.atom.atom_niah_job import run_niah_cell
@@ -229,29 +234,65 @@ def test_atom_inference(
 
     session_key = server_session_key(variant_config, isl, osl)
     reuse = reuse_server_flag(p) and server_session.get("key") == session_key
+    poll_gpu = variant_config.platform.gpu_metrics_poll
+    poll_readings = []
+    load_s = None
+    load_mb = None
 
     try:
         if not reuse:
             job.stop_server()
             job.build_server_cmd()
+            pre_snap = capture_gpu_snap(orch) if poll_gpu else {}
             t = time.monotonic()
             job.start_server()
             job.wait_ready()
             ready_s = time.monotonic() - t
             lifecycle.record(request.node.nodeid, "server_ready", ready_s)
             lifecycle.record(request.node.nodeid, "server.time_to_ready_s", ready_s, "s")
+            if poll_gpu:
+                load_s = ready_s
+                post_snap = capture_gpu_snap(orch)
+                load_mb = ((post_snap.get("gpu.used_vram") or 0) - (pre_snap.get("gpu.used_vram") or 0)) or None
             if reuse_server_flag(p):
                 server_session["key"] = session_key
         else:
             log.info("reusing ATOM server across sweep cell (key=%s)", session_key)
             job.prepare_cell_out_dir()
+        poller = None
+        if poll_gpu:
+            from cvs.lib.utils.gpu import start_gpu_poller, stop_and_collect_gpu_poller
+
+            poller = start_gpu_poller(
+                orch,
+                run_id=f"{request.node.nodeid}_{isl}_{osl}_{concurrency}",
+                nodes=None if int(p.nnodes) <= 1 else list(orch.hosts),
+            )
         t_client = time.monotonic()
-        job.run_client()
-        job.wait_client_complete()
-        results = job.parse_results()
+        try:
+            job.run_client()
+            job.wait_client_complete()
+            results = job.parse_results()
+        finally:
+            if poller is not None:
+                from cvs.lib.utils.gpu import stop_and_collect_gpu_poller
+
+                poll_readings = stop_and_collect_gpu_poller(
+                    orch,
+                    poller,
+                    model_load_s=load_s,
+                    model_load_memory_mb=load_mb,
+                )
     except Exception:
         lifecycle.failed = True
         raise
+
+    if poll_gpu and poll_readings:
+        gpu_results = gpu_results_from_poll(poll_readings, load_s=load_s, load_mb=load_mb)
+        merge_gpu_into_results(results, gpu_results)
+        peak = gpu_results.get("gpu.peak_gpu_memory_mb")
+        if peak is not None:
+            lifecycle.record(request.node.nodeid, "gpu.peak_gpu_memory_mb", peak, "MB")
 
     inf_res_dict[sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency)] = results
     client_s = time.monotonic() - t_client
