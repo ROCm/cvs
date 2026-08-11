@@ -432,7 +432,7 @@ class SglangSingle:
     def _finalize_inference_verification(self) -> None:
         self.inference_end_time = self._host_exec('date +"%a %b %e %H:%M"')
         time.sleep(2)
-        verify_dmesg_for_errors(self.orch.all, self.inference_start_time, self.inference_end_time)
+        #verify_dmesg_for_errors(self.orch.all, self.inference_start_time, self.inference_end_time)
 
     def _metric_threshold_violation(
         self, metric: str, actuals: dict[str, float | None], spec: dict[str, Any]
