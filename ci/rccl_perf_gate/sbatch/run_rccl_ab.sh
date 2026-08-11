@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Shared RCCL A/B regression runner (no #SBATCH directives).
 # Invoked by sbatch/rccl_ab.sbatch or manually via srun inside an allocation.
+#
+# Optional (per-run workspace isolation — see sbatch/lib/workspace.sh):
+#   RCCL_CI_WORKSPACE=1  run out of runs/<run_key>/ (own cvs worktree, own
+#                        cvs-sbatch copy, own artifacts and logs) instead of the
+#                        shared trees. Default 0 = legacy shared behaviour.
 
 set -euo pipefail
 
@@ -20,14 +25,36 @@ if [[ -n "${SLURM_JOB_ID:-}" && -n "${SLURM_STEP_ID:-}" ]]; then
   exit 1
 fi
 
-export RUN_LOG_DIR="${RCCL_CI_ROOT}/logs/run_${TIMESTAMP}_${JOB_TAG}"
-mkdir -p "${RUN_LOG_DIR}"
+# --- per-run workspace (no-op unless RCCL_CI_WORKSPACE=1) ---------------------
+# shellcheck source=/dev/null
+source "${RCCL_CI_ROOT}/sbatch/lib/workspace.sh"
+
+# ws_init is idempotent: the build job created this workspace, we re-enter it.
+# It is also safe if detect runs without a preceding build (manual submission) —
+# the workspace is created fresh and the config's lib paths are whatever the
+# caller set.
+if ws_enabled; then
+  ws_init || { echo "[ERROR] workspace init failed" >&2; exit 1; }
+  ws_begin
+  trap 'ws_end' EXIT
+fi
+
+if ws_enabled; then
+  export RUN_LOG_DIR="$(ws_root)/logs"
+  export CVS_DIR="$(ws_root)/cvs"
+  export CVS_SBATCH_DIR="$(ws_root)/cvs-sbatch"
+  AB_ARTIFACT_DIR="$(ws_root)/artifacts"
+else
+  export RUN_LOG_DIR="${RCCL_CI_ROOT}/logs/run_${TIMESTAMP}_${JOB_TAG}"
+  export CVS_DIR="${RCCL_CI_ROOT}/cvs"
+  export CVS_SBATCH_DIR="${RCCL_CI_ROOT}/cvs-sbatch"
+  AB_ARTIFACT_DIR="${RCCL_CI_ROOT}/ab_artifacts"
+fi
+mkdir -p "${RUN_LOG_DIR}" "${AB_ARTIFACT_DIR}"
 
 readonly SLURM_LOG_DIR="${RCCL_CI_ROOT}/logs"
 mkdir -p "${SLURM_LOG_DIR}"
 
-export CVS_DIR="${RCCL_CI_ROOT}/cvs"
-export CVS_SBATCH_DIR="${RCCL_CI_ROOT}/cvs-sbatch"
 export SKIP_CVS_SETUP=1
 export CONFIG_JSON="${CONFIG_JSON:-${RCCL_CI_ROOT}/configs/ab_robustness.json}"
 # Normalise to an absolute path. run.sh runs from cvs-sbatch/ and resolves the
@@ -42,6 +69,11 @@ if [[ "${CONFIG_JSON}" != /* ]]; then
   export CONFIG_JSON
 fi
 [[ -f "${CONFIG_JSON}" ]] || { echo "[ERROR] CONFIG_JSON not found: ${CONFIG_JSON}" >&2; exit 1; }
+
+# Point output_dir and the /tmp sweep scratch at this run. Idempotent — the
+# build job already did this, but detect may run standalone.
+ws_config_retarget "${CONFIG_JSON}" || true
+
 export TEST_PATH="${TEST_PATH:-./cvs/tests/rccl/rccl_ab_regression.py}"
 export LOG_FILE="${RUN_LOG_DIR}/pytest.log"
 
@@ -61,6 +93,11 @@ echo "  Job ID       : ${SLURM_JOB_ID:-N/A}"
 echo "  Nodes        : ${SLURM_NNODES:-N/A} (${SLURM_NODELIST:-N/A})"
 echo "  Config       : ${CONFIG_JSON}"
 echo "  Run log dir  : ${RUN_LOG_DIR}"
+if ws_enabled; then
+echo "  Workspace    : $(ws_root)"
+echo "  Artifacts    : ${AB_ARTIFACT_DIR}"
+echo "  CVS worktree : ${CVS_DIR}"
+fi
 echo "========================================================================"
 
 # Per-PR builds of reference + candidate librccl.so now happen in a separate,
@@ -95,8 +132,11 @@ if [[ ! -x run.sh ]]; then chmod +x run.sh 2>/dev/null || true; fi
 ./run.sh
 pytest_exit=$?
 
-if [[ -d "${RCCL_CI_ROOT}/ab_artifacts" ]]; then
-  cp -a "${RCCL_CI_ROOT}/ab_artifacts" "${RUN_LOG_DIR}/"
+# In workspace mode artifacts already live inside the workspace next to logs/,
+# so there is nothing to copy. In legacy mode snapshot the shared dir into the
+# per-run log dir before the next run overwrites it.
+if ! ws_enabled && [[ -d "${AB_ARTIFACT_DIR}" ]]; then
+  cp -a "${AB_ARTIFACT_DIR}" "${RUN_LOG_DIR}/"
 fi
 
 if [[ -f "${SLURM_LOG_DIR}/sp_tests-${JOB_TAG}.out" ]]; then
@@ -111,7 +151,7 @@ ln -sfn "${RUN_LOG_DIR}" "${RCCL_CI_ROOT}/logs/latest"
 # when the regression detector found 0 confirmed regressions — those are cluster
 # noise, not actual regressions. Re-read the report and derive the gate exit code
 # from the confirmed-regression count so the SLURM job only fails on real issues.
-_REPORT="${RCCL_CI_ROOT}/ab_artifacts/ab_regression_report.json"
+_REPORT="${AB_ARTIFACT_DIR}/ab_regression_report.json"
 if [[ -f "${_REPORT}" ]]; then
   _confirmed=$(python3 -c "
 import json, sys
@@ -136,6 +176,8 @@ else
   echo "[WARN] Report not found at ${_REPORT}; using pytest exit code ${pytest_exit}"
   exit_code="${pytest_exit}"
 fi
+
+ws_record verdict_exit_code "${exit_code}" || true
 
 echo "[INFO] A/B run finished with exit code ${exit_code} (pytest_exit=${pytest_exit})"
 echo "[INFO] Artifacts: ${RUN_LOG_DIR}"
