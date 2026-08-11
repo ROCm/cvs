@@ -381,12 +381,23 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_accuracy.json"
         variant = load_variant(config, _cluster_dict())
-        self.assertEqual(len(variant.accuracy.tasks), 4)
+        self.assertEqual(len(variant.accuracy.tasks), 5)
         self.assertEqual(variant.accuracy.tasks[0].id, "gsm8k_flex")
+        task_ids = {t.id for t in variant.accuracy.tasks}
+        self.assertIn("hellaswag", task_ids)
+        self.assertIn("mmlu_pro", task_ids)
         self.assertTrue(variant.enforce_thresholds)
         self.assertIn(
             "gsm8k.exact_match__flexible-extract",
             variant.thresholds["accuracy"]["gsm8k_flex"],
+        )
+        self.assertIn(
+            "hellaswag.acc_norm__none",
+            variant.thresholds["accuracy"]["hellaswag"],
+        )
+        self.assertIn(
+            "mmlu_pro.exact_match__custom-extract",
+            variant.thresholds["accuracy"]["mmlu_pro"],
         )
 
     def test_load_mtp3_variant_mtp_quality_enabled(self):
@@ -469,6 +480,32 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.params.driver, "sglang")
         self.assertIn("--kv-cache-dtype", variant.roles.server.sglang_args)
+
+    def test_load_qwen397b_fp8_single(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_qwen3.5-397b-a17b_fp8_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.model.id, "amd/Qwen3.5-397B-A17B-FP8")
+        self.assertEqual(variant.expected_cells()[0], "ISL=1024,OSL=8192,TP=8,CONC=32")
+
+    def test_load_kimi_k26_thinking_single_tp4(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_kimi-k2.6-thinking_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.tensor_parallelism, "4")
+        self.assertIn("TP=4", variant.expected_cells()[0])
+
+    def test_load_kimi_k27_longctx_single(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_kimi-k2.7-code_longctx_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.expected_cells()[0], "ISL=8192,OSL=1024,TP=8,CONC=32")
+
+    def test_load_w1_single_gpu_metrics_poll(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertTrue(variant.platform.gpu_metrics_poll)
 
     def test_w1_gsm8k_threshold_fails_below_floor(self):
         from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all

@@ -48,6 +48,14 @@ In the CVS repo, variants are flat sibling pairs in **this directory**:
 | `mi355x_atom_deepseek-r1_fp8_baseline_sweep` | `…_baseline_sweep_threshold.json` | MI355X | `atom` | DTNI baseline matrix; record-only |
 | `mi355x_atom_deepseek-r1_fp8_distributed` | `…_distributed_threshold.json` | MI355X | `vllm_atom` | W1 2-node PP=2; record-only until lab confirm |
 | `mi355x_atom_deepseek-r1_fp8_mtp3` | `…_mtp3_threshold.json` | MI355X | `atom` | W1 FP8 + MTP3 |
+| `mi300x_atom_qwen3.5-397b-a17b_fp8_single` | `…_fp8_single_threshold.json` | MI300X | `atom` | **P1** Qwen3.5-397B 1K/8K |
+| `mi355x_atom_qwen3.5-397b-a17b_fp8_single` | `…_fp8_single_threshold.json` | MI355X | `atom` | **P1** Qwen3.5-397B MI355X seed |
+| `mi300x_atom_kimi-k2.6-thinking_single` | `…_thinking_single_threshold.json` | MI300X | `atom` | W7 Kimi K2.6 thinking perf (TP4) |
+| `mi355x_atom_kimi-k2.6-thinking_single` | `…_thinking_single_threshold.json` | MI355X | `atom` | W7 MI355X seed |
+| `mi300x_atom_kimi-k2.7-code_longctx_single` | `…_longctx_single_threshold.json` | MI300X | `atom` | K2.7 **8K ISL** perf (agentic / long-seq) |
+| `mi355x_atom_deepseek-r1_mxfp4_accuracy` | `…_mxfp4_accuracy_threshold.json` | MI355X | `atom` | W17 MXFP4 gsm8k accuracy seed |
+
+See also [plans/atom-workload-tracker.md](../../../plans/atom-workload-tracker.md) for full tracker reconciliation.
 
 Add analogous config + threshold pairs for other archs or models as needed.
 
@@ -203,7 +211,8 @@ then run lm-eval tasks via `test_accuracy_eval`. Threshold gates live under the 
 | `functional.api_smoke` | When `true`, runs `test_openai_compatible_smoke` (FUNC-1) before the sweep |
 | `functional.health_check` | When `true`, runs `test_server_health` (FUNC-2) before the sweep |
 | `platform.dmesg_scan` | When `true`, runs `test_verify_dmesg` (INF-6) before teardown |
-| `accuracy.tasks[]` | lm-eval tasks (`id`, `task`, `num_fewshot`, optional `metadata`, `apply_chat_template`) |
+| `platform.gpu_metrics_poll` | When `true`, polls amd-smi during inference → `gpu.peak_gpu_memory_mb` (INF-7) |
+| `accuracy.tasks[]` | lm-eval tasks (`id`, `task`, `num_fewshot`, optional `metadata`, `apply_chat_template`) — P1 W1 includes `gsm8k`, `hellaswag` (0-shot), `mmlu_pro` (5-shot) |
 | `long_context_accuracy.cells[]` | NIAH long-context cells (`id`, `isl`, `osl`, `num_prompts`, `seed`) — ACC-12 |
 | `mtp_quality` | MTP acceptance / chat-template checks on `*_mtp3` variants (ACC-4/5/13) |
 
