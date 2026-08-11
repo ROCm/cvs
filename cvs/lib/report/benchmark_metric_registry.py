@@ -163,17 +163,43 @@ def _apply_benchmark_entry_patch(entry: dict[str, Any], rows: list[dict[str, Any
         entry['resultsTableRow'][0] = _mark_collapsible_result_cell(result_cell)
 
 
-def _dedupe_benchmark_call_entries(entries: list[dict[str, Any]], nodeid: str) -> list[dict[str, Any]]:
+def _dedupe_benchmark_call_entries(
+    entries: list[dict[str, Any]], nodeid: str
+) -> tuple[list[dict[str, Any]], int]:
     main_calls = [entry for entry in entries if _is_main_call_entry(entry, nodeid)]
     if len(main_calls) <= 1:
-        return entries
+        return entries, 0
 
     failed = [entry for entry in main_calls if _entry_outcome(entry) == 'failed']
     passed = [entry for entry in main_calls if _entry_outcome(entry) == 'passed']
     if failed and passed:
         drop = set(map(id, passed))
-        return [entry for entry in entries if id(entry) not in drop]
-    return entries
+        return [entry for entry in entries if id(entry) not in drop], len(passed)
+    return entries, 0
+
+
+def _adjust_passed_outcome_in_html(content: str, decrement: int) -> str:
+    """Drop phantom Passed counts left by pytest-html subtest call reports."""
+    if decrement <= 0:
+        return content
+
+    def _dec_passed(match: re.Match[str]) -> str:
+        value = max(0, int(match.group(1)) - decrement)
+        return f'<span class="passed">{value} Passed,</span>'
+
+    content = re.sub(r'<span class="passed">(\d+) Passed,</span>', _dec_passed, content, count=1)
+
+    def _dec_run_count(match: re.Match[str]) -> str:
+        value = max(0, int(match.group(1)) - decrement)
+        label = 'tests' if value != 1 else 'test'
+        return f'<p class="run-count">{value} {label} took {match.group(3)}</p>'
+
+    return re.sub(
+        r'<p class="run-count">(\d+) (tests|test) took ([^<]+)</p>',
+        _dec_run_count,
+        content,
+        count=1,
+    )
 
 
 def _subtests_filter_summary_html(total: int, failed: int, passed: int) -> str:
@@ -242,6 +268,7 @@ def patch_benchmark_metrics_into_html(
     data = json.loads(html.unescape(match.group(1)))
     tests: dict[str, list[dict[str, Any]]] = data.get('tests') or {}
     patched = False
+    phantom_passed = 0
 
     for nodeid, rows in all_benchmark_metric_rows().items():
         if benchmark_test_name not in nodeid:
@@ -251,7 +278,8 @@ def patch_benchmark_metrics_into_html(
             continue
 
         record_benchmark_metric_summary(nodeid, rows)
-        entries = _dedupe_benchmark_call_entries(entries, nodeid)
+        entries, dropped_passed = _dedupe_benchmark_call_entries(entries, nodeid)
+        phantom_passed += dropped_passed
         tests[nodeid] = entries
 
         for entry in entries:
@@ -264,6 +292,10 @@ def patch_benchmark_metrics_into_html(
     total, failed, passed = benchmark_subtest_summary()
     if total:
         content = _inject_subtest_summary_into_filters(content, total, failed, passed)
+        patched = True
+
+    if phantom_passed:
+        content = _adjust_passed_outcome_in_html(content, phantom_passed)
         patched = True
 
     if not patched:
