@@ -35,7 +35,7 @@ from cvs.lib.inference.sglang.sglang_common import (
 )
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import fail_test
-from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
+from cvs.lib.utils.verdict import ThresholdViolation, _check_one, evaluate_all
 from cvs.lib.verify_lib import verify_dmesg_for_errors
 
 log = globals.log
@@ -311,7 +311,7 @@ class SglangSingle:
             return OpenAIProbe.summarize_results(results, ok, err)
         return OpenAIProbe.summarize_results(results, ok, err)
 
-    def benchserv_test_random(self, d_type='auto') -> None:
+    def benchserv_test_random(self, d_type='auto', *, verify=True) -> None:
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
         self._bench_num_prompts = int(i_dict['num_prompts'])
         inner = (
@@ -346,7 +346,8 @@ class SglangSingle:
                 peak = peak_tflops * 1e12 * num_gpus * duration
                 m['mfu'] = f'{achieved / peak:.6f}'
 
-        self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
+        if verify:
+            self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
 
     def get_inference_results_dict(self, out_dict):
         self.inference_results_dict = {}
@@ -413,26 +414,85 @@ class SglangSingle:
             time.sleep(30 + int(waittime_between_iters))
         return {"status": "stuck_in_progress", "reason": "benchmark did not complete"}
 
-    def verify_inference_results(self, test_name, expected_result_dict):
-        thresholds = {
+    def _thresholds_from_expected(self, expected_result_dict: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        return {
             metric: normalize_sglang_threshold_spec(metric, spec)
             for metric, spec in expected_result_dict.items()
         }
+
+    def _node_threshold_actuals(
+        self, node: str, thresholds: dict[str, dict[str, Any]]
+    ) -> dict[str, float | None]:
+        return {
+            metric: coerce_sglang_actual(value)
+            for metric, value in self.inference_results_dict[node].items()
+            if metric in thresholds
+        }
+
+    def _finalize_inference_verification(self) -> None:
+        self.inference_end_time = self._host_exec('date +"%a %b %e %H:%M"')
+        time.sleep(2)
+        verify_dmesg_for_errors(self.orch.all, self.inference_start_time, self.inference_end_time)
+
+    def _metric_threshold_violation(
+        self, metric: str, actuals: dict[str, float | None], spec: dict[str, Any]
+    ) -> str | None:
+        if metric not in actuals:
+            return f"{metric}: missing from actuals"
+        if actuals[metric] is None:
+            return f"{metric}: value is None (metric unavailable for this run)"
+        spec_with_actuals = dict(spec)
+        if spec.get("kind") == "min_ratio":
+            spec_with_actuals["_actuals"] = actuals
+        return _check_one(metric, actuals[metric], spec_with_actuals)
+
+    def verify_inference_results(self, test_name, expected_result_dict):
+        thresholds = self._thresholds_from_expected(expected_result_dict)
         for node in self.inference_results_dict:
-            actuals = {
-                metric: coerce_sglang_actual(value)
-                for metric, value in self.inference_results_dict[node].items()
-                if metric in thresholds
-            }
+            actuals = self._node_threshold_actuals(node, thresholds)
             try:
                 evaluate_all(actuals, thresholds)
             except ThresholdViolation as exc:
                 for msg in exc.violations:
                     fail_test(f"FAIL - {msg}")
 
-        self.inference_end_time = self._host_exec('date +"%a %b %e %H:%M"')
-        time.sleep(2)
-        verify_dmesg_for_errors(self.orch.all, self.inference_start_time, self.inference_end_time)
+        self._finalize_inference_verification()
+
+    def verify_inference_results_subtests(
+        self,
+        subtests,
+        test_name,
+        expected_result_dict,
+        *,
+        lifecycle=None,
+        report_nodeid=None,
+    ) -> bool:
+        """Verify each metric on each node as its own pytest subtest."""
+        thresholds = self._thresholds_from_expected(expected_result_dict)
+        all_passed = True
+        if lifecycle is not None and report_nodeid:
+            metric_rows: list[dict[str, Any]] = []
+            lifecycle.perf_metric_rows[report_nodeid] = metric_rows
+        else:
+            metric_rows = None
+
+        for node in self.inference_results_dict:
+            actuals = self._node_threshold_actuals(node, thresholds)
+            for metric, spec in thresholds.items():
+                violation = self._metric_threshold_violation(metric, actuals, spec)
+                if metric_rows is not None:
+                    metric_rows.append({
+                        'node': node,
+                        'metric': metric,
+                        'status': 'pass' if violation is None else 'fail',
+                    })
+                if violation is not None:
+                    all_passed = False
+                with subtests.test(test_name=test_name, node=node, metric=metric):
+                    assert violation is None, violation
+
+        self._finalize_inference_verification()
+        return all_passed
 
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type='auto'):
         return self.run_lm_eval_benchmark_test('lm_eval_hellaswag', _d_type=_d_type)

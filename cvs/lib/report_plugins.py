@@ -20,14 +20,144 @@ from cvs.lib import globals
 log = globals.log
 
 REPORT_STYLE_OVERRIDES = """<style>
-    .collapse { display: none !important; }
     .col-result:hover::after { content: none !important; }
     .col-result.collapsed:hover::after { content: none !important; }
-    .collapsible td:not(.col-links) { cursor: default !important; }
+    tr.collapsible .col-result {
+        display: flex !important;
+        align-items: center;
+        gap: 0.45em;
+        padding-left: 0.35em;
+        box-sizing: border-box;
+    }
+    tr.collapsible .col-result::before {
+        content: "+";
+        visibility: hidden;
+        flex: 0 0 1em;
+        width: 1em;
+        font-weight: bold;
+        text-align: center;
+        line-height: 1;
+        color: #333;
+    }
+    tr.collapsible .col-result.cvs-benchmark-collapsible::before {
+        visibility: visible;
+    }
+    tr.collapsible .col-result.cvs-benchmark-collapsible:not(.collapsed)::before {
+        content: "\\2212";
+    }
+    tr.collapsible .col-result.cvs-benchmark-collapsible.collapsed::before {
+        content: "+";
+    }
+    tr.collapsible .col-result.cvs-benchmark-collapsible {
+        cursor: pointer !important;
+    }
     .extras-row { display: none !important; }
+    tr.extras-row.cvs-benchmark-metrics-source { display: none !important; }
+    tr.cvs-benchmark-metric-detail-row { display: table-row !important; }
+    tr.cvs-benchmark-metric-detail-row.hidden { display: none !important; }
+    tr.cvs-benchmark-metric-detail-row td {
+        padding: 5px;
+        border: 1px solid #e6e6e6;
+        text-align: left;
+        vertical-align: top;
+        font-size: 12px;
+        font-family: Helvetica, Arial, sans-serif;
+        color: #999;
+    }
+    tr.cvs-benchmark-metric-detail-row .col-result {
+        width: 130px;
+        max-width: 130px;
+        padding-left: calc(0.35em + 1em + 0.45em);
+        box-sizing: border-box;
+        font-weight: normal;
+        white-space: nowrap;
+    }
+    tr.cvs-benchmark-metric-detail-row .col-testId {
+        color: #999;
+        font-weight: normal;
+    }
+    tr.cvs-benchmark-metric-pass .col-result span { color: green; }
+    tr.cvs-benchmark-metric-fail .col-result span { color: red; }
     /* Separate the per-node links in the Links column with a "|" divider. */
     .col-links a + a::before { content: " | "; color: #888; }
 </style>"""
+
+REPORT_BENCHMARK_METRICS_SCRIPT = """<script>
+(function () {
+    const METRIC_COLUMNS = ['col-result', 'col-testId', 'col-duration', 'col-links'];
+
+    function flattenBenchmarkMetrics() {
+        document.querySelectorAll('#results-table tbody.results-table-row').forEach((tbody) => {
+            if (tbody.querySelector('.cvs-benchmark-metric-detail-row')) {
+                return;
+            }
+            const wrap = tbody.querySelector('.cvs-benchmark-metrics-wrap');
+            if (!wrap) {
+                return;
+            }
+            const collapsible = tbody.querySelector('tr.collapsible');
+            if (!collapsible) {
+                return;
+            }
+
+            const collapsed = tbody.querySelector('.collapsible > .col-result.collapsed') !== null;
+            let insertAfter = collapsible;
+            wrap.querySelectorAll('tr.cvs-benchmark-metric-row').forEach((srcRow) => {
+                const row = document.createElement('tr');
+                row.className = srcRow.className.replace(
+                    'cvs-benchmark-metric-row',
+                    'cvs-benchmark-metric-detail-row extras-row',
+                );
+                if (!row.classList.contains('extras-row')) {
+                    row.classList.add('extras-row');
+                }
+                if (collapsed) {
+                    row.classList.add('hidden');
+                }
+
+                METRIC_COLUMNS.forEach((columnClass) => {
+                    const cell = document.createElement('td');
+                    const srcCell = srcRow.querySelector('.' + columnClass);
+                    cell.className = srcCell ? srcCell.className : columnClass;
+                    if (srcCell) {
+                        cell.innerHTML = srcCell.innerHTML;
+                    }
+                    row.appendChild(cell);
+                });
+
+                insertAfter.insertAdjacentElement('afterend', row);
+                insertAfter = row;
+            });
+
+            const sourceRow = tbody.querySelector('tr.extras-row:not(.cvs-benchmark-metric-detail-row)');
+            if (sourceRow) {
+                sourceRow.classList.add('hidden', 'cvs-benchmark-metrics-source');
+            }
+        });
+    }
+
+    function scheduleFlatten() {
+        window.requestAnimationFrame(flattenBenchmarkMetrics);
+    }
+
+    document.addEventListener('DOMContentLoaded', scheduleFlatten);
+    if (document.readyState !== 'loading') {
+        scheduleFlatten();
+    }
+
+    let flattenTimer;
+    const observer = new MutationObserver(() => {
+        window.clearTimeout(flattenTimer);
+        flattenTimer = window.setTimeout(scheduleFlatten, 0);
+    });
+    document.addEventListener('DOMContentLoaded', () => {
+        const table = document.getElementById('results-table');
+        if (table && table.parentNode) {
+            observer.observe(table.parentNode, { childList: true, subtree: true });
+        }
+    });
+})();
+</script>"""
 
 
 class HtmlReportManager:
@@ -491,7 +621,7 @@ class HtmlReportManager:
     @staticmethod
     def inject_style_overrides(prefix):
         """Inject CSS to hide show/hide details UI elements."""
-        prefix.extend([REPORT_STYLE_OVERRIDES])
+        prefix.extend([REPORT_STYLE_OVERRIDES, REPORT_BENCHMARK_METRICS_SCRIPT])
 
     def create_zip_bundle(self, session):
         """Bundle the HTML report and per-test log files into a timestamped zip archive."""
