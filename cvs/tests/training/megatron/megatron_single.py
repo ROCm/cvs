@@ -28,7 +28,7 @@ from cvs.lib import globals
 from cvs.lib.training.megatron.megatron_lib import MegatronTrainingJob
 from cvs.lib.training.megatron.utils.loss_curve import parse_loss_at_steps, check_loss_decreasing
 from cvs.lib.training.megatron.utils.scaling import compute_scaling_efficiency
-from cvs.lib.utils.verdict import evaluate_all, _check_one, ThresholdViolation
+from cvs.lib.utils.verdict import _check_one, ThresholdViolation
 from cvs.lib.utils_lib import update_test_result
 
 log = globals.log
@@ -176,7 +176,9 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
     log.info("smoke PASSED | iters=%s", _SMOKE_ITERS)
 
 
-def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request):
+def test_training(
+    orch, variant_config, hf_token, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request
+):
     """Stage 3 (parametrized): run one sweep combo inside the shared container.
 
     stop_training_processes() runs in a finally block after every combo so GPU
@@ -263,11 +265,7 @@ def test_metric(variant_config, micro_batch_size, global_batch_size, precision, 
 
     actuals_raw = train_res_dict[combo_key]
     request.node.user_properties.append(("training_log_tail", actuals_raw.get("_log_tail", "")))
-    actuals = {
-        f"training.{k}": float(v[-1])
-        for k, v in actuals_raw.items()
-        if v and not k.startswith("_")
-    }
+    actuals = {f"training.{k}": float(v[-1]) for k, v in actuals_raw.items() if v and not k.startswith("_")}
 
     log.info("--- Threshold check for combo '%s' ---", combo_key)
     violations = []
@@ -302,7 +300,9 @@ def test_metric(variant_config, micro_batch_size, global_batch_size, precision, 
     request.node.user_properties.append(("threshold_comparison", "PASSED"))
 
 
-def test_loss_curve(orch, variant_config, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request):
+def test_loss_curve(
+    orch, variant_config, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request
+):
     """Parametrized: verify lm_loss decreases smoothly at steps 100, 500, 1k, 5k."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -334,7 +334,8 @@ def test_loss_curve(orch, variant_config, micro_batch_size, global_batch_size, p
         log.warning(
             "fewer than 2 loss checkpoints found (steps checked: %s); "
             "training needs at least %d iterations — skipping loss curve check",
-            _LOSS_CURVE_STEPS, _LOSS_CURVE_STEPS[1],
+            _LOSS_CURVE_STEPS,
+            _LOSS_CURVE_STEPS[1],
         )
         pytest.skip(
             f"fewer than 2 loss checkpoints found in log "
@@ -357,9 +358,7 @@ def test_loss_curve(orch, variant_config, micro_batch_size, global_batch_size, p
             log.error("  FAILED  %s", f)
         log.error("--- Loss curve FAILED for combo '%s' ---", combo_key)
         pytest.fail(
-            f"loss not smoothly decreasing for combo '{combo_key}':\n"
-            + "\n".join(failures)
-            + f"\nfull curve: {losses}"
+            f"loss not smoothly decreasing for combo '{combo_key}':\n" + "\n".join(failures) + f"\nfull curve: {losses}"
         )
 
     log.info("--- Loss is decreasing smoothly for combo '%s' ---", combo_key)

@@ -74,6 +74,7 @@ def _parse_mean_from_iterations(log_text, pattern, skip_warmup=True):
         values = values[1:]
     return str(sum(values) / len(values))
 
+
 TRAINING_PROGRESS_PATTERNS = [
     r'throughput per GPU(?:\s*\([^)]*\))?\s*:|tokens\/GPU\/s\s+[0-9]+',
     r'throughput per GPU:|tokens\/GPU\/s\s+[0-9]+',
@@ -85,6 +86,7 @@ TRAINING_NAN_PATTERNS = [
     r'tokens\/GPU\/s:\s+(?:NaN|Inf)',
     r'mem usages:\s+(?:NaN|Inf)',
 ]
+
 
 def _parse_training_results(output, full_log=None):
     """Extract metric values from training-log text using ordered fallback chains.
@@ -376,12 +378,12 @@ class MegatronTrainingJob:
             self.tp_env = 'TP'
             self.pp_env = 'PP'
             self.seq_env = 'SEQ_LENGTH'
- 
+
         if re.search('mixtral|deepseek|qwen3', self.tokenizer_model, re.I):
             self.iters_env = 'TRAIN_ITERS'
         else:
             self.iters_env = 'TOTAL_ITERS'
- 
+
         # Remove and recreate the scripts dir on the bare host (volume-mounted path)
         self.orch.all.exec(f'rm -rf {self.scripts_dir}')
         self.orch.all.exec(f'mkdir -p {self.scripts_dir}')
@@ -395,20 +397,20 @@ class MegatronTrainingJob:
                 if int(self.global_batch_size) % 32 == 0:
                     per_gpu_batch_size = int(self.global_batch_size) / 32
                     self.global_batch_size = per_gpu_batch_size * int(self.nnodes) * 8
-                    
+
     def _needs_local_tokenizer(self):
         return bool(re.search(r'deepseek|mixtral', self.tokenizer_model, re.I))
- 
+
     def download_tokenizer_model(self):
         """Download tokenizer.model locally for models that require a file path instead of an HF repo ID.
- 
+
         No-op for llama/qwen (their training scripts accept the HF repo ID directly).
         For deepseek/mixtral, downloads the tokenizer.model file into data_cache_dir
         and stores the known local path in self.local_tokenizer_path.
         """
         if not self._needs_local_tokenizer():
             return
- 
+
         local_dir = f'{self.data_cache_dir}/{self.model_name}'
         log.info('Downloading tokenizer.model for %s into %s', self.model_name, local_dir)
         self.orch.exec(
@@ -419,10 +421,10 @@ class MegatronTrainingJob:
         )
         self.local_tokenizer_path = f'{local_dir}/tokenizer.model'
         log.info('tokenizer.model path: %s', self.local_tokenizer_path)
- 
+
     def stop_training_processes(self):
         """Check GPU VRAM after a training combo and free memory if any processes remain.
- 
+
         After normal training completion VRAM% is 0 and no KFD PIDs are present —
         returns immediately in that case. If processes are still holding GPU memory
         (crash or hang), extracts their PIDs from rocm-smi --showpids, kills them
@@ -430,7 +432,7 @@ class MegatronTrainingJob:
         """
         log.info('Checking GPU memory state after training combo')
         out_dict = self.orch.exec('rocm-smi --showpids 2>/dev/null')
- 
+
         has_pids = False
         for node, output in (out_dict or {}).items():
             if 'No KFD PIDs currently running' in (output or ''):
@@ -438,10 +440,10 @@ class MegatronTrainingJob:
             else:
                 log.warning('Node %s: GPU processes still holding VRAM, will kill', node)
                 has_pids = True
- 
+
         if not has_pids:
             return
- 
+
         # Extract PIDs (lines starting with a number) and SIGKILL on all nodes
         self.orch.exec(
             "rocm-smi --showpids 2>/dev/null "
@@ -449,7 +451,7 @@ class MegatronTrainingJob:
             "| xargs -r kill -9 2>/dev/null || true; "
             "sleep 10"
         )
- 
+
         # Verify VRAM is now free
         out_dict = self.orch.exec('rocm-smi --showpids 2>/dev/null')
         for node, output in (out_dict or {}).items():
@@ -457,7 +459,7 @@ class MegatronTrainingJob:
                 log.info('Node %s: VRAM successfully freed', node)
             else:
                 log.warning('Node %s: GPU processes may still be running after kill attempt', node)
- 
+
     def run_pretraining_tasks(
         self,
     ):
@@ -567,7 +569,8 @@ class MegatronTrainingJob:
                 + f'{self.tp_env}={self.tensor_parallelism} '
                 + f'{self.pp_env}={self.pipeline_parallelism} FSDP={self.fsdp} '
                 + f'MODEL_SIZE={self.model_size} {self.iters_env}={self.iterations} '
-                + self.precision_env + ' '
+                + self.precision_env
+                + ' '
                 + f'MASTER_ADDR={self.master_address} NNODES={self.nnodes} '
             )
 
@@ -620,20 +623,18 @@ class MegatronTrainingJob:
         log.info('start training job')
         log.info('%s', self.job_cmd_list)
         log.info("%s", self.job_cmd)
-        cmd_list=[]
         n = len(self.orch.hosts)
 
         # Create per-node log dirs inside container on all hosts in parallel
-        self.orch.exec_cmd_list([
-            f'mkdir -p {self.combo_log_dir}/out-node{i}'
-            for i in range(n)
-        ])
+        self.orch.exec_cmd_list([f'mkdir -p {self.combo_log_dir}/out-node{i}' for i in range(n)])
 
         # Patch TRAIN_LOG path in training script on all hosts in parallel (inside container)
-        self.orch.exec_cmd_list([
-            f'sed -i "/^TRAIN_LOG=/c\\TRAIN_LOG={self.combo_log_dir}/out-node{i}/training.log" {self.training_script}'
-            for i in range(n)
-        ])
+        self.orch.exec_cmd_list(
+            [
+                f'sed -i "/^TRAIN_LOG=/c\\TRAIN_LOG={self.combo_log_dir}/out-node{i}/training.log" {self.training_script}'
+                for i in range(n)
+            ]
+        )
 
         if self.distributed_training:
             # Run any required NIC setup steps inside containers (e.g., Broadcom workaround)
@@ -642,7 +643,7 @@ class MegatronTrainingJob:
 
             self.orch.all.exec_cmd_list(self.job_cmd_list)
             # Write per-node wrapper scripts on bare host in parallel (scripts_dir is a volume mount)
-                        
+
             # self.orch.all.exec_cmd_list([
             #     f'echo {shlex.quote(self.job_cmd + f"NODE_RANK={i} nohup bash {self.training_script} &")} > '
             #     f'{self.scripts_dir}/distributed_wrapper_script_{i}.sh '
@@ -651,11 +652,13 @@ class MegatronTrainingJob:
             # ])
 
             # Launch wrapper scripts inside container on all nodes in parallel
-            self.orch.exec_cmd_list([
-                f'nohup {self.scripts_dir}/distributed_wrapper_script_{i}.sh > '
-                f'{self.combo_log_dir}/out-node{i}/training.log 2>&1 &'
-                for i in range(n)
-            ])
+            self.orch.exec_cmd_list(
+                [
+                    f'nohup {self.scripts_dir}/distributed_wrapper_script_{i}.sh > '
+                    f'{self.combo_log_dir}/out-node{i}/training.log 2>&1 &'
+                    for i in range(n)
+                ]
+            )
         else:
             # Write single-node wrapper script on bare host
             self.orch.all.exec(
@@ -680,9 +683,7 @@ class MegatronTrainingJob:
         """
         n = len(self.orch.hosts)
         tail_suffix = f' | tail -{tail_lines}' if tail_lines > 0 else ''
-        out_dict = self.orch.exec(
-            f'cat {self.combo_log_dir}/out-node{n-1}/training.log{tail_suffix}'
-        )
+        out_dict = self.orch.exec(f'cat {self.combo_log_dir}/out-node{n - 1}/training.log{tail_suffix}')
         return list(out_dict.values())[-1]
 
     def get_training_results_dict(self):

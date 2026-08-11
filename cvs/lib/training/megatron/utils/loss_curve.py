@@ -72,10 +72,7 @@ def check_loss_decreasing(losses: Dict[int, float]) -> List[str]:
         curr_loss = losses[curr_step]
 
         if curr_loss > prev_loss:
-            messages.append(
-                f'step {prev_step}→{curr_step}: loss increased '
-                f'{prev_loss:.6f} → {curr_loss:.6f}'
-            )
+            messages.append(f'step {prev_step}→{curr_step}: loss increased {prev_loss:.6f} → {curr_loss:.6f}')
         elif prev_loss > 0 and (prev_loss - curr_loss) / prev_loss < 0.01:
             messages.append(
                 f'WARN: step {prev_step}→{curr_step}: loss nearly flat '

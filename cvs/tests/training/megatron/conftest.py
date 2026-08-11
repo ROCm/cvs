@@ -52,7 +52,6 @@ def variant_config(pytestconfig, cluster_dict):
     return load_training_variant(config_file, cluster_dict)
 
 
-
 @pytest.fixture(scope="module")
 def hf_token(variant_config):
     path = variant_config.config['hf_token_file']
@@ -64,7 +63,7 @@ def hf_token(variant_config):
 
 class _Lifecycle:
     """Cross-test state for the lifecycle-as-tests model.
- 
+
     The container is launched once (test_launch_container), all sweep combos
     run inside it (test_training), GPU memory is freed between combos via
     stop_training_processes(), and the container is torn down once at the end
@@ -112,7 +111,6 @@ def orch(cluster_dict, variant_config, lifecycle):
         o.teardown_containers()
 
 
-
 def pytest_collection_modifyitems(items):
     """Pin lifecycle order: launch → training combos → metric → teardown."""
     rank = {
@@ -144,10 +142,7 @@ def pytest_runtest_makereport(item, call):
         return
     extras = getattr(report, "extras", [])
     if rows:
-        body = "".join(
-            f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>"
-            for label, value, unit in rows
-        )
+        body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
         html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
         extras.append(pytest_html.extras.html(html))
     if report.failed:
