@@ -6,10 +6,23 @@
 #   RCCL_CI_WORKSPACE=1  run out of runs/<run_key>/ (own cvs worktree, own
 #                        cvs-sbatch copy, own artifacts and logs) instead of the
 #                        shared trees. Default 0 = legacy shared behaviour.
+#
+#   RCCL_CI_CAPABILITY_GATE=0  skip the pre-flight transport capability check
+#                        (lib/check_dmabuf.sh). Default 1 = check.
 
 set -euo pipefail
 
 readonly RCCL_CI_ROOT="${RCCL_CI_ROOT:-/it-share/rccl-ci}"
+
+# Helper libs ship next to this script in ROCm/cvs. Prefer that copy so a fresh
+# checkout is self-contained; fall back to the legacy NFS deploy path for the
+# hand-maintained /it-share/rccl-ci/sbatch/ copies.
+_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -d "${_SELF_DIR}/lib" ]]; then
+  readonly RCCL_CI_LIB="${_SELF_DIR}/lib"
+else
+  readonly RCCL_CI_LIB="${RCCL_CI_ROOT}/sbatch/lib"
+fi
 readonly TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 readonly JOB_TAG="${SLURM_JOB_ID:-local}"
 
@@ -27,7 +40,7 @@ fi
 
 # --- per-run workspace (no-op unless RCCL_CI_WORKSPACE=1) ---------------------
 # shellcheck source=/dev/null
-source "${RCCL_CI_ROOT}/sbatch/lib/workspace.sh"
+source "${RCCL_CI_LIB}/workspace.sh"
 
 # ws_init is idempotent: the build job created this workspace, we re-enter it.
 # It is also safe if detect runs without a preceding build (manual submission) —
@@ -99,6 +112,55 @@ echo "  Artifacts    : ${AB_ARTIFACT_DIR}"
 echo "  CVS worktree : ${CVS_DIR}"
 fi
 echo "========================================================================"
+
+# --- transport capability pre-flight ------------------------------------------
+# A ~10s check that both A/B sides resolve ROCr and end up with DMA-BUF. It
+# catches two failure modes that are otherwise completely silent:
+#
+#   1. DMA-BUF disabled on a side -> multi-node collectives fall back to a path
+#      that hangs on this fabric, so every sweep burns the full rccl_timeout and
+#      a 25min run becomes hours. This is precisely what a flattened ROCm dist
+#      caused before lib/normalize_rocm_dist.sh existed.
+#   2. reference/candidate ASYMMETRY -> worse than slow. The two sides use
+#      different transports, so the measured delta reflects the environment
+#      rather than the code change, and the candidate scores a large fake
+#      improvement. A green verdict from an asymmetric pair is a false negative,
+#      which is the one outcome a regression gate must never produce.
+#
+# Runs directly in the batch-script process, which holds the job's GPU cgroup
+# (verified: the .batch step is allocated gres/gpu=8 under plain --exclusive).
+# Do NOT wrap this in srun — an srun step without its own --gres gets no
+# /dev/kfd and the probe reports "no ROCm-capable device is detected".
+if [[ "${RCCL_CI_CAPABILITY_GATE:-1}" == "1" && -x "${RCCL_CI_LIB}/check_dmabuf.sh" ]]; then
+  echo "[INFO] Pre-flight: RCCL transport capability check..."
+  set +e
+  timeout 600s bash "${RCCL_CI_LIB}/check_dmabuf.sh" --config "${CONFIG_JSON}"
+  _gate_rc=$?
+  set -e
+  case "${_gate_rc}" in
+    0)
+      echo "[INFO] Capability gate PASSED."
+      ws_record capability_gate pass || true
+      ;;
+    1)
+      echo "[ERROR] Capability gate FAILED — refusing to start a 4-node A/B that" >&2
+      echo "        would either hang or produce an invalid comparison." >&2
+      echo "        Check the ROCm dist layout first:" >&2
+      echo "          ${RCCL_CI_LIB}/normalize_rocm_dist.sh --check" >&2
+      ws_record capability_gate fail || true
+      exit 1
+      ;;
+    *)
+      # Inconclusive (2), or the timeout tripped (124). Do not block on a probe
+      # that could not reach a verdict: the detector has its own hang
+      # protection, and a flaky pre-flight must never be able to fail a good PR.
+      echo "[WARN] Capability gate inconclusive (exit ${_gate_rc}); continuing." >&2
+      ws_record capability_gate "inconclusive:${_gate_rc}" || true
+      ;;
+  esac
+else
+  echo "[INFO] Capability gate skipped (RCCL_CI_CAPABILITY_GATE=${RCCL_CI_CAPABILITY_GATE:-1})."
+fi
 
 # Per-PR builds of reference + candidate librccl.so now happen in a separate,
 # earlier sbatch (sbatch/rccl_build.sbatch, single build-node allocation) so the

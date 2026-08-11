@@ -19,6 +19,16 @@ set -euo pipefail
 
 readonly RCCL_CI_ROOT="${RCCL_CI_ROOT:-/it-share/rccl-ci}"
 
+# Helper libs ship next to this script in ROCm/cvs. Prefer that copy so a fresh
+# checkout is self-contained; fall back to the legacy NFS deploy path for the
+# hand-maintained /it-share/rccl-ci/sbatch/ copies.
+_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -d "${_SELF_DIR}/lib" ]]; then
+  readonly RCCL_CI_LIB="${_SELF_DIR}/lib"
+else
+  readonly RCCL_CI_LIB="${RCCL_CI_ROOT}/sbatch/lib"
+fi
+
 : "${CANDIDATE_SRC:?run_rccl_build.sh requires CANDIDATE_SRC (RCCL PR checkout)}"
 : "${BASE_REF:?run_rccl_build.sh requires BASE_REF (e.g. origin/develop)}"
 export CONFIG_JSON="${CONFIG_JSON:-${RCCL_CI_ROOT}/configs/ci_detect.json}"
@@ -36,7 +46,7 @@ export CONFIG_JSON="${CONFIG_JSON:-${RCCL_CI_ROOT}/configs/ci_detect.json}"
 # This is a ~1s read-only check. It runs before the ~30min build so a re-flattened
 # dist (any SDK reinstall reintroduces it) fails here with a named cause, rather
 # than surfacing hours later as an unexplained timeout.
-_norm="${RCCL_CI_ROOT}/sbatch/lib/normalize_rocm_dist.sh"
+_norm="${RCCL_CI_LIB}/normalize_rocm_dist.sh"
 if [[ -x "${_norm}" ]]; then
   if ! _norm_out="$("${_norm}" --check 2>&1)"; then
     echo "${_norm_out}" >&2
@@ -52,7 +62,7 @@ mkdir -p "${RCCL_CI_ROOT}/logs"
 
 # --- per-run workspace (no-op unless RCCL_CI_WORKSPACE=1) ---------------------
 # shellcheck source=/dev/null
-source "${RCCL_CI_ROOT}/sbatch/lib/workspace.sh"
+source "${RCCL_CI_LIB}/workspace.sh"
 
 if ws_enabled; then
   ws_init || { echo "[ERROR] workspace init failed" >&2; exit 1; }
