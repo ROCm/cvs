@@ -485,7 +485,15 @@ ws_gc() {
         rm -rf "${candidate}" && reaped=$(( reaped + 1 ))
       fi
     done < <(ls -1dt "${runs_dir}"/*/ 2>/dev/null | tail -n "+$(( RCCL_CI_WS_KEEP_RUNS + 1 ))")
-    (( reaped > 0 )) && ws_log "gc: removed ${reaped} old workspace(s)"
+    # Log unconditionally, including the zero case. "removed 0" and silence look
+    # the same in a log file only if you already know the GC ran -- and the whole
+    # reason to read janitor.log is that you don't. Say what was kept too, so a
+    # keep-threshold that has quietly stopped reclaiming anything is visible.
+    local kept
+    kept="$(ls -1d "${runs_dir}"/*/ 2>/dev/null | wc -l)"
+    ws_log "gc: workspaces: removed ${reaped} (older than ${RCCL_CI_WS_KEEP_DAYS}d beyond the newest ${RCCL_CI_WS_KEEP_RUNS}), ${kept} kept"
+  else
+    ws_log "gc: workspaces: no runs dir at ${runs_dir}, nothing to reclaim"
   fi
 
   ws_gc_build_cache
@@ -502,7 +510,10 @@ ws_gc() {
 # ---------------------------------------------------------------------------
 ws_gc_build_cache() {
   local cache_dir="${RCCL_CI_ROOT}/builds/by-rev"
-  [[ -d "${cache_dir}" ]] || return 0
+  if [[ ! -d "${cache_dir}" ]]; then
+    ws_log "gc: build cache: no cache dir at ${cache_dir}, nothing to reclaim"
+    return 0
+  fi
 
   local keep="${RCCL_CI_CACHE_KEEP:-40}" reaped=0 entry
   while IFS= read -r entry; do
@@ -514,7 +525,9 @@ ws_gc_build_cache() {
   # Half-written entries from a job that died between mkdir and the atomic move.
   find "${cache_dir}" -maxdepth 1 -name '.tmp-*' -mmin +1440 -exec rm -rf {} + 2>/dev/null || true
 
-  (( reaped > 0 )) && ws_log "gc: removed ${reaped} build-cache entr(ies), keeping newest ${keep}"
+  local kept
+  kept="$(ls -1d "${cache_dir}"/*/ 2>/dev/null | grep -cv '/\.tmp-' || true)"
+  ws_log "gc: build cache: removed ${reaped}, ${kept:-0} kept (limit ${keep})"
   return 0
 }
 
