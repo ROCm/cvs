@@ -201,6 +201,8 @@ then run lm-eval tasks via `test_accuracy_eval`. Threshold gates live under the 
 | Block | Meaning |
 |---|---|
 | `functional.api_smoke` | When `true`, runs `test_openai_compatible_smoke` (FUNC-1) before the sweep |
+| `functional.health_check` | When `true`, runs `test_server_health` (FUNC-2) before the sweep |
+| `platform.dmesg_scan` | When `true`, runs `test_verify_dmesg` (INF-6) before teardown |
 | `accuracy.tasks[]` | lm-eval tasks (`id`, `task`, `num_fewshot`, optional `metadata`, `apply_chat_template`) |
 | `long_context_accuracy.cells[]` | NIAH long-context cells (`id`, `isl`, `osl`, `num_prompts`, `seed`) — ACC-12 |
 | `mtp_quality` | MTP acceptance / chat-template checks on `*_mtp3` variants (ACC-4/5/13) |
@@ -296,6 +298,20 @@ To start gating a metric currently marked `info`: replace `"kind": "info"` with
 `min`/`max`/etc. and set a calibrated `value`. The threshold cell key must match
 the sweep cell exactly (including `PP` and `NNODES` on multinode), or the metric
 falls back to record-only.
+
+### Run deck comparison (no lab)
+
+The ATOM run deck JSON/HTML can compare against prior runs when env vars or sibling
+files are set (render-only; does not affect pytest gates):
+
+| Env / file | Panel | Purpose |
+|---|---|---|
+| `CVS_INFERENCE_PREV_REPORT_JSON` | `panels.prev_run` | Per-cell throughput delta vs baseline |
+| same + baseline `accuracy` block | `panels.accuracy_prev_run` | gsm8k flexible-extract delta (`compare.prev_run.gsm8k_delta`) |
+| `CVS_ATOM_PARITY_REF_JSON` | `panels.framework_parity` | M4 driver parity ratios (`compare.vllm.*` / `compare.sglang.*`) |
+
+Accuracy metrics are also exported at the top level as `accuracy` in the run-deck JSON
+(from `test_accuracy_eval` lifecycle rows).
 
 ## Cluster file
 
