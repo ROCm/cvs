@@ -26,6 +26,20 @@ class TestUtilsLib(unittest.TestCase):
         self.assertEqual(utils_lib.cluster_target_output_label("a/b"), "a_b")
         self.assertEqual(utils_lib.cluster_target_output_label(""), "unknown_node")
 
+    def test_get_model_from_rocm_smi_output_matches_marketing_name(self):
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI300X'), 'mi300x')
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI325X'), 'mi325')
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI350X'), 'mi350')
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI355X'), 'mi355')
+
+    def test_get_model_from_rocm_smi_output_falls_back_to_device_id_for_mi350(self):
+        smi_output = 'Device Name:        AMD Radeon Graphics\nDevice ID:          0x75a0\nGFX Version:        gfx950\n'
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output(smi_output), 'mi350')
+
+    def test_get_model_from_rocm_smi_output_defaults_to_mi300x_when_unrecognized(self):
+        smi_output = 'Device Name:        AMD Radeon Graphics\nDevice ID:          0x1234\n'
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output(smi_output), 'mi300x')
+
     def test_wan_hf_snapshot_offline_check_commands_paths_quoted(self):
         snap_root = '/data/my hf cache/snapshots/abc123'
         cmds = utils_lib.wan_hf_snapshot_offline_check_commands(snap_root)
