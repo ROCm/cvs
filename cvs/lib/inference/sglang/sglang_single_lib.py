@@ -36,7 +36,6 @@ from cvs.lib.inference.sglang.sglang_common import (
 from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import fail_test
 from cvs.lib.utils.verdict import ThresholdViolation, _check_one, evaluate_all
-from cvs.lib.verify_lib import verify_dmesg_for_errors
 
 log = globals.log
 
@@ -432,7 +431,6 @@ class SglangSingle:
     def _finalize_inference_verification(self) -> None:
         self.inference_end_time = self._host_exec('date +"%a %b %e %H:%M"')
         time.sleep(2)
-        #verify_dmesg_for_errors(self.orch.all, self.inference_start_time, self.inference_end_time)
 
     def _metric_threshold_violation(
         self, metric: str, actuals: dict[str, float | None], spec: dict[str, Any]

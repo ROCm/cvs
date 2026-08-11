@@ -23,6 +23,7 @@ import pytest
 import time
 from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
 from cvs.lib import globals
+from cvs.lib.verify_lib import verify_dmesg_for_errors
 #from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
 
 log = globals.log
@@ -162,6 +163,16 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request
     )
     inf_res_dict[key] = dict(im_obj.inference_results_dict or {})
     lifecycle.complete_stage(request, f"bench_serv_random[{perf_cell['isl']}/{perf_cell['osl']}]", t0)
+
+
+def test_verify_dmesg_after_benchmark(im_obj, lifecycle, request):
+    globals.error_list = []
+    t0 = time.monotonic()
+    time.sleep(2)
+    verify_dmesg_for_errors(
+        im_obj.orch.all, im_obj.inference_start_time, im_obj.inference_end_time
+    )
+    lifecycle.complete_stage(request, "verify_dmesg", t0)
 
 
 def test_print_results_table(inf_res_dict, lifecycle, variant_config):

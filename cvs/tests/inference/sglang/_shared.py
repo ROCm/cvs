@@ -100,8 +100,9 @@ SGLANG_SINGLE_TEST_ORDER = {
     "test_run_lm_eval_hellaswag_benchmark_test": 5,
     "test_run_lm_eval_gsm8k_benchmark_test": 6,
     "test_run_performance_benchmark_test": 7,
-    "test_print_results_table": 8,
-    "test_teardown": 9,
+    "test_verify_dmesg_after_benchmark": 8,
+    "test_print_results_table": 9,
+    "test_teardown": 10,
 }
 
 # Stable test order for sglang_distributed (unified multi-node server, no PD).
