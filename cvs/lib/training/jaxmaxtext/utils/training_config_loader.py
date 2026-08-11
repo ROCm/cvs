@@ -120,6 +120,16 @@ class TrainingConfig(_Allow):
     gpus_per_node: int = 8  # do not assume a uniform topology; override per cluster
     steps: int = 30
     enable_checkpointing: bool = False
+    # MaxText moved the train entrypoint across versions; list candidates and the
+    # job picks whichever exists in the running container (first match wins).
+    # v26.4+: .../src/maxtext/trainers/pre_train/train.py
+    # v26.3 and earlier: .../src/MaxText/train.py
+    train_script_paths: List[str] = [
+        "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
+        "/workspace/maxtext/src/MaxText/train.py",
+    ]
+    # Deprecated single-path form; kept for backward compatibility and used as a
+    # final fallback candidate when train_script_paths is empty.
     train_script: str = "/workspace/maxtext/src/MaxText/train.py"
     maxtext_config: Dict[str, Any] = {}
     tokenizer: Tokenizer

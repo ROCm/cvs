@@ -4,9 +4,9 @@ All rights reserved.
 
 Shared implementations for the JAX MaxText training suites. This is NOT a
 runnable suite (leading underscore -> excluded by `cvs list`/`cvs run`); the two
-thin suite files bind the `test_*` implementations here:
+suite files import these helpers and wrap each as an explicit `test_*` method:
 
-  - jaxmaxtext_single.py       (single-node: no RDMA/NIC stages)
+  - jaxmaxtext_single.py       (single-node: no RDMA stage)
   - jaxmaxtext_distributed.py  (adds the test_setup_rdma stage)
 
 Kept deliberately simple: plain shared functions + a couple of small helpers,
@@ -18,6 +18,7 @@ results HTML title, and the loss-curve title/artifact.
 import html as _html
 import json
 import re
+import shlex
 import time
 import uuid as _uuid
 from pathlib import Path as _Path
@@ -140,14 +141,49 @@ def _format_value(value):
     return str(value)
 
 
-# ---------- lifecycle test implementations ----------
-# Named test_* so that when the suite files bind them (test_x = _common.test_x)
-# pytest's originalname matches the conftest rank map.
+# ---------- lifecycle stage implementations ----------
+# Plain helpers (no test_ prefix): the suite files wrap each as a `test_*`
+# method with a docstring so the suites read as self-documenting.
 
 
-def test_launch_container(orch, variant_config, lifecycle, request):
+def _precreate_tmp_bind_mounts(orch):
+    """Create host-side ``/tmp/...`` bind-mount source dirs before launch.
+
+    Docker auto-creates a missing bind-mount source directory owned by root; a
+    leftover root-owned dir (``docker system prune`` does not remove host bind
+    dirs) then blocks the next user on a shared GPU node with a permission
+    error. Creating them here over SSH -- via ``exec_on_host``, which runs on
+    the cluster host OS as the invoking user -- makes them user-owned instead.
+
+    Only ``/tmp/`` sources are touched so device/system mounts (``/dev/*``,
+    ``/lib/*``) are never created.
+    """
+    exec_host = getattr(orch, "exec_on_host", None)
+    if not callable(exec_host):
+        return
+    try:
+        volumes = orch.get_volumes()
+    except Exception:  # noqa: BLE001 - best-effort; docker still auto-creates
+        return
+    sources, seen = [], set()
+    for vol in volumes or []:
+        src = str(vol).split(":", 1)[0].strip()
+        if src.startswith("/tmp/") and src not in seen:
+            seen.add(src)
+            sources.append(src)
+    if not sources:
+        return
+    quoted = " ".join(shlex.quote(p) for p in sources)
+    try:
+        exec_host(f"mkdir -p {quoted}")
+    except Exception:  # noqa: BLE001 - non-fatal; fall back to docker auto-create
+        pass
+
+
+def launch_container(orch, variant_config, lifecycle, request):
     """Stage 1: launch the container. Verify it is running."""
     t = time.monotonic()
+    _precreate_tmp_bind_mounts(orch)
     ok = orch.setup_containers()
     lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - t)
     if not ok:
@@ -160,7 +196,7 @@ def test_launch_container(orch, variant_config, lifecycle, request):
         pytest.fail(f"container {name} not running after setup_containers()")
 
 
-def test_setup_rdma(orch, variant_config, hf_token, lifecycle, request):
+def setup_rdma(orch, variant_config, hf_token, lifecycle, request):
     """Distributed-only: copy RDMA library into container (thor2 NIC only)."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -174,7 +210,7 @@ def test_setup_rdma(orch, variant_config, hf_token, lifecycle, request):
     lifecycle.record(request.node.nodeid, "rdma_setup", time.monotonic() - t)
 
 
-def test_setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
+def setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     """Download HF tokenizer into models dir."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -184,7 +220,7 @@ def test_setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     lifecycle.record(request.node.nodeid, "tokenizer_setup", time.monotonic() - t)
 
 
-def test_training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, lifecycle, request):
+def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, lifecycle, request):
     """Per sweep: build the command, train, poll, parse results.
 
     Runs once per enabled sweep with that sweep's maxtext overrides. A failure is
@@ -245,7 +281,7 @@ def test_training_run(orch, variant_config, hf_token, sweep_name, training_res_d
     }
 
 
-def test_metric(sweep_name, metric, training_res_dict, variant_config, lifecycle, request):
+def metric(sweep_name, metric, training_res_dict, variant_config, lifecycle, request):
     """One test (row) per (sweep, metric). Threshold-driven PASS/FAIL; logs
     `sweep | metric | expected | actual | status` and collects rows for the
     single metric-results HTML file (linked from every metric row)."""
@@ -307,7 +343,7 @@ def test_metric(sweep_name, metric, training_res_dict, variant_config, lifecycle
         _record("PASS")
 
 
-def test_loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request):
+def loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request):
     """Row 32 (per sweep): sample the training loss, render a PNG, gate on trend."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -423,7 +459,7 @@ def _print_sweep_tables(training_res_dict):
             )
 
 
-def test_print_results_table(training_res_dict, request):
+def print_results_table(training_res_dict, request):
     """Summarize all sweeps: console tables, single metric-results HTML, and a
     consolidated PASS/FAIL summary recorded via globals.error_list for the pytest
     final summary."""
@@ -441,7 +477,7 @@ def test_print_results_table(training_res_dict, request):
     update_test_result()
 
 
-def test_teardown(orch, lifecycle, request):
+def teardown(orch, lifecycle, request):
     """Final stage: explicit container teardown."""
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])
     t = time.monotonic()

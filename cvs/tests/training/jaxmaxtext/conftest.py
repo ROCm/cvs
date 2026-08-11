@@ -13,15 +13,7 @@ from cvs.lib import globals
 from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import TRAINING_METRICS
 from cvs.lib.training.jaxmaxtext.utils.training_config_loader import load_training_variant
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
-
-import importlib.util as _ilu
-import pathlib as _pl
-
-# Shared sweep-name helpers live in _common.py (loaded by path since the tests
-# dir is imported by file, not as a package, at collection time).
-_cspec = _ilu.spec_from_file_location("_jaxmaxtext_common_conftest", _pl.Path(__file__).with_name("_common.py"))
-_common = _ilu.module_from_spec(_cspec)
-_cspec.loader.exec_module(_common)
+from cvs.tests.training.jaxmaxtext import _common
 
 log = globals.log
 

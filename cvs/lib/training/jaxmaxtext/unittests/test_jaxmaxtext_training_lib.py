@@ -66,6 +66,25 @@ def _make_job(hosts=None, **training_overrides):
     return MaxTextTrainingJob(orch, variant, hf_token="dummy"), orch
 
 
+def _wire_container_exec(orch, user="tester", script="/workspace/maxtext/src/MaxText/train.py"):
+    """Answer the in-container probes the job runs before building launchers.
+
+    ``build_training_cmd`` resolves the scratch dir (``id -un``) and the train
+    script (a ``[ -f ... ]`` probe) via ``orch.exec``; without wiring these the
+    default empty response would make ``_resolve_train_script`` raise.
+    """
+
+    def _side(cmd, *a, **k):
+        text = str(cmd)
+        if "id -un" in text:
+            return {h: user for h in orch.hosts}
+        if "train.py" in text:
+            return {h: script for h in orch.hosts}
+        return {}
+
+    orch.exec.side_effect = _side
+
+
 def _log(steps=3):
     lines = []
     for i in range(steps):
@@ -225,6 +244,7 @@ class SetupTokenizerTests(unittest.TestCase):
 class BuildTrainingCmdTests(unittest.TestCase):
     def test_distributed_per_rank_indices(self):
         job, orch = _make_job(hosts=["h0", "h1"])
+        _wire_container_exec(orch)
         job.build_training_cmd()
         cmds = orch.exec_cmd_list.call_args.args[0]
         self.assertEqual(len(cmds), 2)
@@ -234,9 +254,14 @@ class BuildTrainingCmdTests(unittest.TestCase):
         self.assertIn("NODE_RANK=1", cmds[1])
         # coordinator IP is host 0
         self.assertIn("JAX_COORDINATOR_IP=h0", cmds[0])
+        # resolved train script and user-namespaced scratch dir are wired in
+        self.assertIn("/workspace/maxtext/src/MaxText/train.py", cmds[0])
+        self.assertIn("/tmp/tester/jax/maxtext_env.sh", cmds[0])
+        self.assertIn("/tmp/tester/jax/maxtext_config.yml", cmds[0])
 
     def test_single_node_localhost_coordinator(self):
         job, orch = _make_job(hosts=["h0"], distributed=False)
+        _wire_container_exec(orch)
         job.build_training_cmd()
         cmds = orch.exec_cmd_list.call_args.args[0]
         self.assertEqual(len(cmds), 1)
@@ -246,6 +271,7 @@ class BuildTrainingCmdTests(unittest.TestCase):
     def test_auto_coordinator_uses_first_host(self):
         # coordinator_ip "auto" -> first cluster node (orch.hosts[0]).
         job, orch = _make_job(hosts=["10.0.0.5", "10.0.0.6"])
+        _wire_container_exec(orch)
         job.build_training_cmd()
         cmds = orch.exec_cmd_list.call_args.args[0]
         self.assertIn("JAX_COORDINATOR_IP=10.0.0.5", cmds[0])
@@ -261,9 +287,55 @@ class BuildTrainingCmdTests(unittest.TestCase):
                 heartbeat_timeout_seconds="900",
             ),
         )
+        _wire_container_exec(orch)
         job.build_training_cmd()
         cmds = orch.exec_cmd_list.call_args.args[0]
         self.assertIn("JAX_COORDINATOR_IP=10.9.9.9", cmds[0])
+
+
+class TrainScriptResolveTests(unittest.TestCase):
+    def test_returns_first_existing_probed_path(self):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        v264 = "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py"
+        orch.exec.side_effect = lambda cmd, *a, **k: (
+            {h: v264 for h in orch.hosts} if "train.py" in str(cmd) else {}
+        )
+        self.assertEqual(job._resolve_train_script(), v264)
+
+    def test_raises_when_no_candidate_exists(self):
+        job, orch = _make_job()
+        orch.exec.return_value = {"h0": ""}
+        with self.assertRaises(RuntimeError):
+            job._resolve_train_script()
+
+    def test_result_is_cached(self):
+        job, orch = _make_job()
+        orch.exec.return_value = {"h0": "/workspace/maxtext/src/MaxText/train.py"}
+        first = job._resolve_train_script()
+        count_after_first = orch.exec.call_count
+        second = job._resolve_train_script()
+        self.assertEqual(first, second)
+        self.assertEqual(orch.exec.call_count, count_after_first)
+
+
+class ScratchDirTests(unittest.TestCase):
+    def test_user_namespaced(self):
+        job, orch = _make_job()
+        orch.exec.return_value = {"h0": "alice"}
+        self.assertEqual(job._get_scratch_dir(), "/tmp/alice/jax")
+
+    def test_falls_back_to_default_when_unresolved(self):
+        job, orch = _make_job()
+        orch.exec.return_value = {}
+        self.assertEqual(job._get_scratch_dir(), "/tmp/cvs/jax")
+
+    def test_result_is_cached(self):
+        job, orch = _make_job()
+        orch.exec.return_value = {"h0": "bob"}
+        job._get_scratch_dir()
+        count_after_first = orch.exec.call_count
+        job._get_scratch_dir()
+        self.assertEqual(orch.exec.call_count, count_after_first)
 
 
 class WriteMaxtextYamlTests(unittest.TestCase):

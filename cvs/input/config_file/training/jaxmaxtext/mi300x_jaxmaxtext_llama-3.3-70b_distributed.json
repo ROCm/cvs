@@ -36,7 +36,7 @@
           "/dev/infiniband:/dev/infiniband",
           "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
           "/lib/libibverbs.d:/lib/libibverbs.d",
-          "/tmp/TRAINING_LOGS:/workspace/maxtext/output"
+          "/tmp/{user-id}/jax/TRAINING_LOGS:/workspace/maxtext/output"
         ]
       }
     }
@@ -49,7 +49,10 @@
     "gpus_per_node": 8,
     "steps": 10,
     "enable_checkpointing": false,
-    "train_script": "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
+    "train_script_paths": [
+      "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
+      "/workspace/maxtext/src/MaxText/train.py"
+    ],
 
     "maxtext_config": {
       "base_config": "base.yml",

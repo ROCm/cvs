@@ -2,33 +2,72 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-JAX MaxText SINGLE-NODE training suite.
+JAX MaxText Single-Node Training Validation Suite.
 
-Run with a single-node config (training.distributed = false), e.g.:
+Tests performed (in order):
+1. test_launch_container      - Launch the training container
+2. test_setup_tokenizer       - Download the HuggingFace tokenizer
+3. test_training_run[sweep]   - Run MaxText training per sweep (e.g. BF16, FP8)
+4. test_metric[sweep-metric]  - Validate each metric against its threshold
+5. test_loss_curve[sweep]     - Render the loss curve and check it decreases
+6. test_print_results_table   - Console tables + metric-results HTML + summary
+7. test_teardown              - Tear the container down
+
+Metrics validated per sweep (namespace training.*): tflops_per_sec_per_gpu,
+tokens_per_sec_per_gpu, tokens_per_sec_total, scaling_efficiency_pct,
+step_time_{seconds,mean_ms,p50_ms,p95_ms}, final_loss, loss_decreased,
+eval_loss, steps_to_target, time_to_target_seconds.
+
+This is the SINGLE-NODE variant - no RDMA setup stage. Sweeps are parametrized
+in conftest.py from the config's `enabled_sweep_list`; the shared stage logic
+lives in _common.py.
+
+Example usage:
   cvs run jaxmaxtext_single --cluster_file <cluster>.json \
-      --config_file .../mi300x_jaxmaxtext_llama-3.3-70b_single.json --html <out>.html
-
-This is the single-node variant: no RDMA / NIC setup stages. The lifecycle,
-per-sweep training, metric gating, loss curve, and reporting are the shared
-implementations in _common.py. pytest_generate_tests (sweep parametrization) and
-all fixtures/hooks live in conftest.py. The "single" mode is reflected in the
-test module name (this file), the metric-results HTML title, and loss-curve
-titles/artifacts.
+      --config_file <mi300x_..._single.json> --html log_dir/<out>.html --self-contained-html \
+      --log-file=log_dir/log.txt
 '''
 
-import importlib.util as _ilu
-import pathlib as _pl
+from cvs.tests.training.jaxmaxtext import _common
 
-_spec = _ilu.spec_from_file_location("_jaxmaxtext_common", _pl.Path(__file__).with_name("_common.py"))
-_c = _ilu.module_from_spec(_spec)
-_spec.loader.exec_module(_c)
 
-# Bind the shared lifecycle stages as this module's tests (pytest collects these).
-# Single-node: intentionally NO test_setup_rdma (distributed-only stage).
-test_launch_container = _c.test_launch_container
-test_setup_tokenizer = _c.test_setup_tokenizer
-test_training_run = _c.test_training_run
-test_metric = _c.test_metric
-test_loss_curve = _c.test_loss_curve
-test_print_results_table = _c.test_print_results_table
-test_teardown = _c.test_teardown
+def test_launch_container(orch, variant_config, lifecycle, request):
+    """Launch and verify the MaxText training container is running."""
+    return _common.launch_container(orch, variant_config, lifecycle, request)
+
+
+def test_setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
+    """Download the HuggingFace tokenizer for the model into the models dir."""
+    return _common.setup_tokenizer(orch, variant_config, hf_token, lifecycle, request)
+
+
+def test_training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, lifecycle, request):
+    """Run one full MaxText training for this sweep, then parse its metrics.
+
+    Parametrized per sweep in conftest.py (e.g. BF16, FP8). A failure is isolated
+    to this sweep's row so other sweeps still run.
+    """
+    return _common.training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, lifecycle, request)
+
+
+def test_metric(sweep_name, metric, training_res_dict, variant_config, lifecycle, request):
+    """One row per (sweep, metric): assert the parsed value against the sweep's
+    threshold cell and record PASS / FAIL / N/A / RECORD."""
+    return _common.metric(sweep_name, metric, training_res_dict, variant_config, lifecycle, request)
+
+
+def test_loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request):
+    """Sample the training loss, render a per-sweep PNG, and fail if the curve is
+    not decreasing (least-squares slope check)."""
+    return _common.loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request)
+
+
+def test_print_results_table(training_res_dict, request):
+    """Log per-sweep result tables, write the consolidated metric-results HTML,
+    and record the aggregated failure summary for the pytest final summary."""
+    return _common.print_results_table(training_res_dict, request)
+
+
+def test_teardown(orch, lifecycle, request):
+    """Tear the container down and verify it is gone."""
+    return _common.teardown(orch, lifecycle, request)

@@ -21,7 +21,7 @@
   "container": {
     "lifetime": "per_run",
     "name": "rocm-jaxmaxtext-llama3.3-70b-single",
-    "image": "rocm/jax-training:maxtext-v26.3",
+    "image": "rocm/jax-training:maxtext-v26.4",
     "runtime": {
       "name": "docker",
       "args": {
@@ -32,7 +32,7 @@
         "ulimit": ["nofile=65535:65535"],
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
-          "/tmp/TRAINING_LOGS:/workspace/maxtext/output"
+          "/tmp/{user-id}/jax/TRAINING_LOGS:/workspace/maxtext/output"
         ]
       }
     }
@@ -45,7 +45,10 @@
     "gpus_per_node": 8,
     "steps": 30,
     "enable_checkpointing": false,
-    "train_script": "/workspace/maxtext/src/MaxText/train.py",
+    "train_script_paths": [
+      "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
+      "/workspace/maxtext/src/MaxText/train.py"
+    ],
 
     "maxtext_config": {
       "base_config": "base.yml",

@@ -106,11 +106,68 @@ class MaxTextTrainingJob:
         self._poll_count = int(self.training.steps * 10)
         self._initial_wait_s = 60
 
+        self._scratch_dir = None   # resolved lazily to /tmp/<user>/jax
+        self._train_script = None  # resolved lazily to the first existing candidate
+
+    def _get_scratch_dir(self):
+        """User-namespaced in-container scratch base (``/tmp/<user>/jax``).
+
+        Namespacing by the container user avoids /tmp ownership collisions on
+        shared GPU nodes: a scratch dir left behind by one user would otherwise
+        block a different user's run with a permission error. Resolved once
+        (via ``id -un``) and cached.
+        """
+        if self._scratch_dir:
+            return self._scratch_dir
+        user = "cvs"
+        try:
+            out = self.orch.exec("bash -c " + shlex.quote("id -un 2>/dev/null || true"))
+            raw = (out or {}).get(self.orch.hosts[0], "")
+            text = raw if isinstance(raw, str) else (raw or {}).get("output", "")
+            text = (text or "").strip()
+            if text:
+                user = text.splitlines()[-1].strip() or "cvs"
+        except Exception:  # noqa: BLE001 - fall back to a safe default
+            pass
+        self._scratch_dir = f"/tmp/{user}/jax"
+        return self._scratch_dir
+
+    def _resolve_train_script(self):
+        """Return the first configured train-script path that exists in the container.
+
+        MaxText moved the train entrypoint across versions (v26.3 and earlier:
+        ``.../src/MaxText/train.py``; v26.4+: ``.../src/maxtext/trainers/pre_train/
+        train.py``). The config lists candidates in ``train_script_paths`` and we
+        pick whichever the running image ships, so the same config works across
+        versions. Resolved once and cached.
+        """
+        if self._train_script:
+            return self._train_script
+        candidates = list(getattr(self.training, "train_script_paths", None) or [])
+        single = getattr(self.training, "train_script", None)
+        if single and single not in candidates:
+            candidates.append(single)
+        if not candidates:
+            raise RuntimeError("no train_script_paths (or train_script) configured")
+
+        probe = "".join(
+            f"if [ -f {shlex.quote(p)} ]; then echo {shlex.quote(p)}; exit 0; fi; " for p in candidates
+        )
+        out = self.orch.exec("bash -c " + shlex.quote(probe))
+        raw = (out or {}).get(self.orch.hosts[0], "")
+        text = raw if isinstance(raw, str) else (raw or {}).get("output", "")
+        resolved = (text or "").strip().splitlines()[0].strip() if (text or "").strip() else ""
+        if not resolved:
+            raise RuntimeError(f"none of the configured train_script_paths exist in the container: {candidates}")
+        log.info("resolved train_script: %s", resolved)
+        self._train_script = resolved
+        return resolved
+
     # ---------- setup ----------
 
     def setup_training_env(self):
         """Write env script and MaxText YAML config into the container."""
-        self.orch.exec("mkdir -p /tmp/jax")
+        self.orch.exec(f"mkdir -p {shlex.quote(self._get_scratch_dir())}")
         self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}")
         for i in range(self.num_nodes):
             self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}/out-node{i}")
@@ -155,7 +212,8 @@ class MaxTextTrainingJob:
             lines.append("export NCCL_P2P_DISABLE=0")
 
         env_script = "\n".join(lines) + "\n"
-        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/jax/maxtext_env.sh"))
+        env_path = f"{self._get_scratch_dir()}/maxtext_env.sh"
+        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > {env_path}"))
 
     def _write_maxtext_yaml(self):
         """Write the MaxText YAML config into the container."""
@@ -180,7 +238,8 @@ class MaxTextTrainingJob:
                 yml_lines.append(f"{k}: {v}")
 
         yml_content = "\n".join(yml_lines) + "\n"
-        self.orch.exec("bash -c " + shlex.quote(f"cat > /tmp/jax/maxtext_config.yml <<'YMLEOF'\n{yml_content}YMLEOF"))
+        yml_path = f"{self._get_scratch_dir()}/maxtext_config.yml"
+        self.orch.exec("bash -c " + shlex.quote(f"cat > {yml_path} <<'YMLEOF'\n{yml_content}YMLEOF"))
 
     # ---------- RDMA / NIC setup ----------
 
@@ -235,11 +294,13 @@ class MaxTextTrainingJob:
         ``orch.exec_cmd_list`` call where ``cmd_list[i]`` runs on ``hosts[i]`` --
         so rank i's launcher only ever lands on host i.
         """
+        scratch = self._get_scratch_dir()
+        train_script = self._resolve_train_script()
         write_cmds = []
         for i in range(self.num_nodes):
             launcher_lines = [
                 "#!/bin/bash",
-                "source /tmp/jax/maxtext_env.sh",
+                f"source {scratch}/maxtext_env.sh",
             ]
 
             if self.training.distributed:
@@ -275,12 +336,12 @@ class MaxTextTrainingJob:
             launcher_lines.append("export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/")
             log_file = f"{self.out_dir}/out-node{i}/training.log"
             launcher_lines.append(
-                f"cd /workspace/maxtext && python {shlex.quote(self.training.train_script)} "
-                f"/tmp/jax/maxtext_config.yml 2>&1 | tee {shlex.quote(log_file)}"
+                f"cd /workspace/maxtext && python {shlex.quote(train_script)} "
+                f"{scratch}/maxtext_config.yml 2>&1 | tee {shlex.quote(log_file)}"
             )
 
             script_content = "\n".join(launcher_lines) + "\n"
-            script_path = f"/tmp/jax/training_launcher_node{i}.sh"
+            script_path = f"{scratch}/training_launcher_node{i}.sh"
             write_cmds.append(
                 "bash -c "
                 + shlex.quote(f"printf '%s' {shlex.quote(script_content)} > {script_path} && chmod +x {script_path}")
@@ -301,9 +362,10 @@ class MaxTextTrainingJob:
         """
         log.info("starting training on %d node(s)", self.num_nodes)
 
+        scratch = self._get_scratch_dir()
         launch_cmds = []
         for i in range(self.num_nodes):
-            script_path = f"/tmp/jax/training_launcher_node{i}.sh"
+            script_path = f"{scratch}/training_launcher_node{i}.sh"
             redirect_log = f"{self.out_dir}/out-node{i}/training_redirect_logs"
             inner = f"nohup bash {script_path} > {shlex.quote(redirect_log)} 2>&1 &"
             launch_cmds.append("bash -c " + shlex.quote(inner))

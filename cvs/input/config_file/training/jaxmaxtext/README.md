@@ -80,7 +80,7 @@ Top-level (framework-agnostic) fields:
 | `gpus_per_node` | GPUs per node (default 8); `num_gpus = num_nodes x gpus_per_node` feeds `tokens_per_sec_total` and scaling efficiency |
 | `steps` | Training steps; also drives completion detection and poll budget |
 | `enable_checkpointing` | Whether MaxText writes checkpoints |
-| `train_script` | In-container path to the MaxText train entrypoint |
+| `train_script_paths` | Candidate in-container paths to the MaxText train entrypoint; the job picks the first one that exists in the running container. List them newest-first (e.g. v26.4+ path before the v26.3 path) so a version bump only needs a new entry, not an edit. `train_script` (single path) is still accepted as a deprecated fallback. |
 | `maxtext_config` | MaxText YAML params written verbatim (see below) |
 | `tokenizer` | `hf_model_id` (download source), `tokenizer_path` (in-container dir) |
 | `nic_type` | NIC family; `thor2` triggers the RDMA-lib copy, `none` skips it |
