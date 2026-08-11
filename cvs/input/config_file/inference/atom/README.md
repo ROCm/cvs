@@ -21,16 +21,76 @@ In the CVS repo, variants are flat sibling pairs in **this directory**:
 | Config | Threshold | GPU | Driver | Notes |
 |---|---|---|---|---|
 | `mi300x_atom_deepseek-r1_fp8_single` | `…_single_threshold.json` | MI300X | `atom` | W1 single-node; portable min-SLO thresholds; server reuse |
+| `mi300x_atom_deepseek-r1_fp8_vllm_single` | `…_vllm_single_threshold.json` | MI300X | `vllm_atom` | **M4** W1 single-node parity (vLLM-ATOM) |
+| `mi300x_atom_deepseek-r1_fp8_sglang_single` | `…_sglang_single_threshold.json` | MI300X | `sglang` | **M4** W1 single-node parity (SGLang) |
+| `mi300x_atom_gpt-oss-120b_mxfp4_single` | `…_mxfp4_single_threshold.json` | MI300X | `atom` | **W2** P1 perf (8K/1K, TP4 MXFP4) |
+| `mi300x_atom_glm-5.1_single` | `…_glm-5.1_single_threshold.json` | MI300X | `atom` | **W3** P1 perf (1K/8K BF16) |
+| `mi300x_atom_kimi-k2.7-code_single` | `…_kimi-k2.7-code_single_threshold.json` | MI300X | `atom` | **W13** P1 code perf |
+| `mi300x_atom_deepseek-r1_mxfp4_single` | `…_mxfp4_single_threshold.json` | MI300X | `atom` | **W17** P1 MXFP4 perf |
+| `mi300x_atom_gpt-oss-120b_bf16` | `…_bf16_threshold.json` | MI300X | `vllm` | **Interim uplift** — use `…_mxfp4_single` for W2 ATOM |
 | `mi300x_atom_deepseek-r1_fp8_baseline_sweep` | `…_baseline_sweep_threshold.json` | MI300X | `atom` | DTNI baseline: 1K/1K + 8K/1K × C=4–256 (14 cells) |
 | `mi300x_atom_deepseek-r1_fp8_baseline_sweep_distributed` | `…_baseline_sweep_distributed_threshold.json` | MI300X | `vllm_atom` | 2-node DTNI baseline (14 cells); PP=2, scaling gates |
 | `mi300x_atom_deepseek-r1_fp8_distributed` | `…_distributed_threshold.json` | MI300X | `vllm_atom` | W1 2-node PP=2; lab-calibrated thresholds |
 | `mi300x_atom_deepseek-r1_fp8_mtp3` | `…_mtp3_threshold.json` | MI300X | `atom` | W1 FP8 + MTP3 |
+| `mi300x_atom_deepseek-r1_fp8_accuracy` | `…_accuracy_threshold.json` | MI300X | `atom` | W1 gsm8k ACC-1/2/3 + HellaSwag (M2) |
+| `mi300x_atom_deepseek-r1_fp8_mtp3_accuracy` | `…_mtp3_accuracy_threshold.json` | MI300X | `atom` | W1 MTP3 gsm8k + mtp_quality |
+| `mi355x_atom_deepseek-r1_fp8_accuracy` | `…_accuracy_threshold.json` | MI355X | `atom` | W1 gsm8k (record-only until lab) |
+| `mi300x_atom_deepseek-r1_mxfp4_accuracy` | `…_mxfp4_accuracy_threshold.json` | MI300X | `atom` | W17 gsm8k scaffold |
+| `mi300x_atom_gpt-oss-120b_mxfp4_accuracy` | `…_mxfp4_accuracy_threshold.json` | MI300X | `atom` | W2 gsm8k + NIAH long-context |
+| `mi300x_atom_glm-5.1_accuracy` | `…_glm-5.1_accuracy_threshold.json` | MI300X | `atom` | W3 gsm8k + MMLU |
+| `mi300x_atom_kimi-k2.7-code_accuracy` | `…_code_accuracy_threshold.json` | MI300X | `atom` | W13 HumanEval + MBPP |
+| `mi300x_atom_kimi-k2.6-thinking_accuracy` | `…_thinking_accuracy_threshold.json` | MI300X | `atom` | W7 gsm8k + hendrycks_math |
 | `mi355x_atom_deepseek-r1_fp8_single` | `…_single_threshold.json` | MI355X | `atom` | W1 single-node; CI seeds, `enforce_thresholds: false` |
+| `mi355x_atom_gpt-oss-120b_mxfp4_single` | `…_mxfp4_single_threshold.json` | MI355X | `atom` | W2 P1 perf seed |
+| `mi355x_atom_glm-5.1_single` | `…_glm-5.1_single_threshold.json` | MI355X | `atom` | W3 P1 perf seed |
+| `mi355x_atom_kimi-k2.7-code_single` | `…_kimi-k2.7-code_single_threshold.json` | MI355X | `atom` | W13 P1 perf seed |
+| `mi355x_atom_deepseek-r1_mxfp4_single` | `…_mxfp4_single_threshold.json` | MI355X | `atom` | W17 P1 perf seed |
 | `mi355x_atom_deepseek-r1_fp8_baseline_sweep` | `…_baseline_sweep_threshold.json` | MI355X | `atom` | DTNI baseline matrix; record-only |
 | `mi355x_atom_deepseek-r1_fp8_distributed` | `…_distributed_threshold.json` | MI355X | `vllm_atom` | W1 2-node PP=2; record-only until lab confirm |
 | `mi355x_atom_deepseek-r1_fp8_mtp3` | `…_mtp3_threshold.json` | MI355X | `atom` | W1 FP8 + MTP3 |
 
 Add analogous config + threshold pairs for other archs or models as needed.
+
+## Variant suffix guide — one model, many configs?
+
+**Yes, by design.** Each stem is one **job shape** (driver + sweep + thresholds), not one file per Hugging Face model. Pass the stem you want to `cvs run atom --config_file …`.
+
+### W1 DeepSeek R1 FP8 — quick reference
+
+| Stem | Driver | Use when |
+|------|--------|----------|
+| `…_single` | `atom` | **Daily M1 perf gate** (2 cells) |
+| `…_baseline_sweep` | `atom` | DTNI 14-cell matrix / calibration (**optional**; demote to nightly later) |
+| `…_baseline_sweep_distributed` | `vllm_atom` | Multinode 14-cell matrix |
+| `…_distributed` | `vllm_atom` | **M5** PP=2 perf (lab-tuned cells) |
+| `…_sglang_distributed` | `sglang` | M5 PP=2 via SGLang |
+| `…_vllm_single` | `vllm_atom` | **M4** single-node parity vs ATOM (**W1 only**) |
+| `…_sglang_single` | `sglang` | **M4** single-node parity vs ATOM (**W1 only**) |
+| `…_mtp3` | `atom` | Speculative-decode perf |
+| `…_accuracy` | `atom` | **M2** gsm8k / quality (**separate CI job**) |
+| `…_mtp3_accuracy` | `atom` | MTP + gsm8k quality job |
+
+### `_single` vs `_baseline_sweep`
+
+- **`_single`**: fast gate — keep.
+- **`_baseline_sweep`**: full concurrency curve — useful for calibration and tracker alignment; **safe to remove or nightly-only later** once thresholds are stable or `params.mode` replaces the extra JSON.
+
+### `_vllm_single` is not legacy `vllm_single`
+
+- `…_vllm_single` = **`atom` suite**, `driver=vllm_atom`, same sweep as `…_single` — for **M4 engine comparison**.
+- `…_distributed` = same driver family but **multinode PP=2** (M5), not interchangeable.
+- `mi300x_atom_gpt-oss-120b_bf16` uses `driver=vllm` (interim uplift) — **not** M4 parity; use `…_gpt-oss-120b_mxfp4_single` for W2 ATOM.
+- Do **not** confuse with the old **`vllm_single`** pytest suite under `cvs/tests/inference/vllm/`.
+
+### Minimum per P1 workload
+
+| Workload | Ship in repo | Optional |
+|----------|--------------|----------|
+| W1 | `_single`, `_accuracy` | `_mtp3`, `_baseline_sweep`, `_vllm_single`, `_sglang_single`, `_distributed` |
+| W2, W3, W13, W17 | `{gpu}_…_single` | `…_accuracy` when quality gates land |
+| All | **Separate `mi300x_*` and `mi355x_*`** | Never share thresholds across GPU arch |
+
+See also the parent automation plan **Section 12.1.1** (`atom-cvs-automation-plan.md`).
 
 Keys prefixed with `_` (e.g. `_comment`) are inline comments and are ignored by
 the loader.
@@ -131,6 +191,21 @@ Top-level (framework-agnostic) fields:
 | `scaling_baseline_output_throughput` | Single-node output tok/s baseline for `scaling.efficiency_pct` |
 | `bench_extra_args` | Extra bench client tokens (MTP3 variants) |
 | `server_*` / `client_*` poll waits | Timeouts for server ready and client completion |
+
+### Accuracy / quality blocks (optional)
+
+Accuracy variants use a minimal warmup sweep (`num_prompts: 1`) to start the server,
+then run lm-eval tasks via `test_accuracy_eval`. Threshold gates live under the top-level
+`accuracy` key in the sibling threshold file (not per sweep cell).
+
+| Block | Meaning |
+|---|---|
+| `functional.api_smoke` | When `true`, runs `test_openai_compatible_smoke` (FUNC-1) before the sweep |
+| `accuracy.tasks[]` | lm-eval tasks (`id`, `task`, `num_fewshot`, optional `metadata`, `apply_chat_template`) |
+| `long_context_accuracy.cells[]` | NIAH long-context cells (`id`, `isl`, `osl`, `num_prompts`, `seed`) — ACC-12 |
+| `mtp_quality` | MTP acceptance / chat-template checks on `*_mtp3` variants (ACC-4/5/13) |
+
+Threshold top-level keys (non-sweep): `accuracy`, `long_context_accuracy`, `mtp_quality`.
 
 ### `roles.server` block
 
