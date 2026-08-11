@@ -2,9 +2,8 @@
 
 Branch: `hnimrama/atom-accuracy`
 
-Inventory of accuracy/quality tests to add to the ATOM suite, reconciled with
-[atom-cvs-automation-plan.md](atom-cvs-automation-plan.md) (Section 5 / 12.2) and
-current CVS code.
+Inventory of accuracy/quality tests for the **atom** suite, reconciled with
+[atom-workload-tracker.md](atom-workload-tracker.md) and current CVS code.
 
 **Repo state (2026-08-11, branch `hnimrama/atom-accuracy`):**
 
@@ -27,7 +26,9 @@ emits **lm-eval-native keys** like `gsm8k.exact_match__flexible-extract` (see
 - [x] Add ACC-2 strict-match and ACC-3 stderr as record-only tasks in same variant
 - [x] W2/W3/W13/W17 accuracy scaffolds + Phase C perf stems (lab gates pending)
 - [x] ACC-4/5/13 via `atom_mtp_quality.py`; FUNC-1 API smoke; FUNC-2 health check; ACC-12 NIAH
-- [ ] M2 lab confirm on MI300X; flip M3 perf/accuracy `enforce_thresholds` after lab
+- [x] ACC-14 HellaSwag + ACC-15 MMLU-PRO P1 scaffolds on W1 `*_accuracy` stems (lab gates pending)
+- [ ] M2 lab confirm on MI300X; flip P1 gates (`gsm8k`, `hellaswag`, `mmlu_pro`) after lab
+- [ ] M3 lab confirm; flip M3 perf/accuracy `enforce_thresholds` on W2/W3/W13/W17
 
 ---
 
@@ -38,8 +39,10 @@ emits **lm-eval-native keys** like `gsm8k.exact_match__flexible-extract` (see
 | **ACC-1** | GSM8K flexible-extract | lm-eval `gsm8k`, 5-shot, `flexible-extract` filter | W1 FP8, W17 MXFP4, W2 MXFP4, W3 BF16 | **Gate** | FP8/BF16 ≥ **0.94**; MXFP4 ≥ **0.93** |
 | **ACC-2** | GSM8K strict-match | Same run, second metric | W1+ (all reasoning paths) | Record-only | Reference ~0.954 (W1 lab) |
 | **ACC-3** | GSM8K stderr bound | lm-eval stderr on exact_match | W1 | Record → optional nightly flag if stderr > 0.02 | — |
+| **ACC-14** | HellaSwag | lm-eval `hellaswag`, **0-shot** | W1+ (chat/reasoning) | **Gate P1** (tracker supplementary) | `hellaswag.acc_norm__none` — **info → min after lab** |
+| **ACC-15** | MMLU-PRO | lm-eval `mmlu_pro`, **5-shot** | W1+ (broad knowledge) | **Gate P1** (tracker; prefer over legacy MMLU) | `mmlu_pro.exact_match__custom-extract` — **info → min after lab** |
 
-**Reference baseline (W1, 8×GPU FP8):** flexible-extract **0.9553**, strict-match **0.9538**.
+**Reference baseline (W1, 8×GPU FP8):** flexible-extract **0.9553**, strict-match **0.9538**. HellaSwag / MMLU-PRO floors TBD on first W1 accuracy lab run.
 
 **Variant shape:** Dedicated stems such as `mi300x_atom_deepseek-r1_fp8_accuracy` (no perf sweep cells) with:
 
@@ -47,7 +50,9 @@ emits **lm-eval-native keys** like `gsm8k.exact_match__flexible-extract` (see
 "accuracy": {
   "tasks": [
     { "id": "gsm8k_flex", "task": "gsm8k", "num_fewshot": 5 },
-    { "id": "gsm8k_strict", "task": "gsm8k", "num_fewshot": 5, "metadata": { "filter": "strict-match" } }
+    { "id": "gsm8k_strict", "task": "gsm8k", "num_fewshot": 5, "metadata": { "filter": "strict-match" } },
+    { "id": "hellaswag", "task": "hellaswag", "num_fewshot": 0 },
+    { "id": "mmlu_pro", "task": "mmlu_pro", "num_fewshot": 5 }
   ]
 }
 ```
@@ -66,7 +71,7 @@ emits **lm-eval-native keys** like `gsm8k.exact_match__flexible-extract` (see
 | **ACC-8** | Long-context GSM8K slice | lm-eval with length filter | **W2** (8K ISL MXFP4) | Record → gate when W2 lands | lm-eval task metric |
 | **ACC-9** | HumanEval | lm-eval `humaneval` | **W13** (code) | **Gate W13** | `humaneval.pass@1` |
 | **ACC-10** | MBPP | lm-eval `mbpp` | **W13** | **Gate W13** | `mbpp.pass@1` |
-| **ACC-6** | MMLU subset | lm-eval `mmlu`, 5-shot | **W3**, W10/W12 | Record → gate later | `mmlu.acc__none` |
+| **ACC-6** | MMLU (legacy) | lm-eval `mmlu`, 5-shot | **W3**, W10/W12 | Record → gate later (superseded by ACC-15 on W1) | `mmlu.acc__none` |
 | **ACC-11** | MATH-500 subset | lm-eval | **W7** (thinking) | Record-only P2 | task-specific acc key |
 | **ACC-12** | Needle / RULER | Custom NIAH or lm-eval RULER group | **W5/W6** (long-context MoE) | Record-only P2 | per-length recall metrics |
 
@@ -93,8 +98,31 @@ These are **not lm-eval** — they need AtomJob log/telemetry parsing (`mtp.acce
 | ID | Test | Purpose | Workloads |
 |----|------|---------|-----------|
 | **ACC-7** | Quant logit parity vs BF16 reference | Catch catastrophic quant regressions | FP8/MXFP4 paths |
-| **HellaSwag** | lm-eval `hellaswag` | General commonsense sanity | Any chat model — record-only |
 | **compare.prev_run.gsm8k_delta** | Regression vs last green run | CI drift detection | All gated gsm8k variants |
+
+(HellaSwag and MMLU-PRO moved to **Tier 1** as ACC-14 / ACC-15.)
+
+---
+
+## Tracker alignment (Open LLM Leaderboard / LightEval)
+
+Status on branch `hnimrama/atom-accuracy` as of 2026-08-11:
+
+| Benchmark | Tracker P | CVS ID | Status |
+|-----------|-----------|--------|--------|
+| GSM8K | P1 | ACC-1..3 | **In progress** — gate scaffold ≥ 0.94; lab pending |
+| HellaSwag | P1 supplementary | ACC-14 | **In progress** — task + info threshold on W1; flip to min after lab |
+| MMLU-PRO | P1 | ACC-15 | **In progress** — task + info threshold on W1; flip to min after lab |
+| MMLU (legacy) | P2 | ACC-6 | **In progress** — W3 scaffold only; prefer ACC-15 |
+| MATH Level 5 | P2 | ACC-11 | **Partial** — `hendrycks_math` on W7 thinking; not level-5 filter |
+| BBH | P2 | — | **Not included** |
+| GPQA | P2 | — | **Not included** (gated HF dataset) |
+| MuSR | P2 | — | **Not included** |
+| ARC-Challenge | P2 | — | **Not included** |
+| WinoGrande | P2 | — | **Not included** |
+| Scale parity – accuracy | P2 | — | **Not included** (M4 is perf parity only; multinode PP accuracy deferred) |
+
+**Lab follow-up (W1 accuracy job):** run `mi300x_atom_deepseek-r1_fp8_accuracy`, record HellaSwag + MMLU-PRO baselines, replace `"kind": "info"` with `"kind": "min"` and calibrated floors in the threshold file.
 
 ---
 
@@ -122,7 +150,7 @@ needle-in-haystack at tracker ISL rather than a truncated gsm8k slice.
 
 ```mermaid
 flowchart LR
-  M2["M2: ACC-1 ACC-2 ACC-3 on W1"]
+  M2["M2: ACC-1..3 ACC-14 ACC-15 on W1"]
   M3a["M3: ACC-1 floors on W17 W2 W3"]
   M3b["M3: ACC-9 ACC-10 on W13"]
   M3c["M3: ACC-6 ACC-8 on W3 W2"]

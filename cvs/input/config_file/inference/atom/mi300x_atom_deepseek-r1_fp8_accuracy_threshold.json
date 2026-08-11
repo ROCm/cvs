@@ -33,6 +33,11 @@
     },
     "gsm8k_strict": {},
     "gsm8k_stderr": {},
-    "hellaswag": {}
+    "hellaswag": {
+      "hellaswag.acc_norm__none": {"kind": "info", "value": 0.0}
+    },
+    "mmlu_pro": {
+      "mmlu_pro.exact_match__custom-extract": {"kind": "info", "value": 0.0}
+    }
   }
 }

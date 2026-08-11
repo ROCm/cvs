@@ -7,7 +7,7 @@
   "threshold_json": "mi300x_atom_deepseek-r1_fp8_accuracy_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "ACC-1 gate gsm8k flexible-extract >= 0.94; ACC-2/3 record-only"
+    "notes": "ACC-1 gate gsm8k >= 0.94; ACC-14/15 hellaswag + mmlu_pro info until lab"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -99,6 +99,12 @@
         "id": "hellaswag",
         "task": "hellaswag",
         "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "mmlu_pro",
+        "task": "mmlu_pro",
+        "num_fewshot": 5,
         "num_concurrent": 4
       }
     ]

@@ -57,7 +57,8 @@
     "tasks": [
       {"id": "gsm8k_flex", "task": "gsm8k", "num_fewshot": 5, "num_concurrent": 4},
       {"id": "gsm8k_strict", "task": "gsm8k", "num_fewshot": 5, "num_concurrent": 4, "metadata": {"filter": "strict-match"}},
-      {"id": "hellaswag", "task": "hellaswag", "num_fewshot": 0, "num_concurrent": 4}
+      {"id": "hellaswag", "task": "hellaswag", "num_fewshot": 0, "num_concurrent": 4},
+      {"id": "mmlu_pro", "task": "mmlu_pro", "num_fewshot": 5, "num_concurrent": 4}
     ]
   },
   "sweep": {
