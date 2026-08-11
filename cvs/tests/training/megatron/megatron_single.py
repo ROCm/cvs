@@ -25,7 +25,7 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.training.factory import create_training_job
+from cvs.lib.training.megatron.megatron_lib import MegatronTrainingJob
 from cvs.lib.training.megatron.utils.loss_curve import parse_loss_at_steps, check_loss_decreasing
 from cvs.lib.training.megatron.utils.scaling import compute_scaling_efficiency
 from cvs.lib.utils.verdict import evaluate_all, _check_one, ThresholdViolation
@@ -101,7 +101,7 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
-    mt_obj = create_training_job(
+    mt_obj = MegatronTrainingJob(
         orch,
         variant_config,
         hf_token=hf_token,
@@ -144,7 +144,7 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
 
     globals.error_list = []
 
-    mt_obj = create_training_job(
+    mt_obj = MegatronTrainingJob(
         orch,
         variant_config,
         hf_token=hf_token,
@@ -188,7 +188,7 @@ def test_training(orch, variant_config, hf_token, micro_batch_size, global_batch
     nodeid = request.node.nodeid
     combo_key = request.node.callspec.id
     globals.error_list = []
-    mt_obj = create_training_job(
+    mt_obj = MegatronTrainingJob(
         orch,
         variant_config,
         hf_token=hf_token,

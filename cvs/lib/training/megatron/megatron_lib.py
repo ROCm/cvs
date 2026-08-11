@@ -14,7 +14,7 @@ from cvs.lib import globals
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
-from cvs.lib.training.megatron.model_registry import TRAINING_SCRIPTS, PRECISION_FLAGS, BATCH_SIZE_FLAGS
+from cvs.lib.training.megatron.utils.model_registry import TRAINING_SCRIPTS, PRECISION_FLAGS, BATCH_SIZE_FLAGS
 
 log = globals.log
 
