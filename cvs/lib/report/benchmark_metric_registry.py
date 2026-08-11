@@ -28,6 +28,8 @@ BENCHMARK_METRIC_ROWS_USER_PROPERTY = 'cvs_benchmark_metric_rows'
 DEFAULT_BENCHMARK_TEST_NAME = 'test_run_performance_benchmark_test'
 
 _ROWS_BY_NODEID: dict[str, list[dict[str, Any]]] = {}
+_SUBTEST_SUMMARY = {'failed': 0, 'passed': 0}
+_SUBTEST_SUMMARY_COUNTED: set[str] = set()
 
 
 def record_benchmark_metric_rows(node, rows: list[dict[str, Any]]) -> None:
@@ -65,6 +67,23 @@ def stamp_benchmark_metric_rows_on_report(report, rows: list[dict[str, Any]]) ->
     props = [(k, v) for k, v in report.user_properties if k != BENCHMARK_METRIC_ROWS_USER_PROPERTY]
     props.append((BENCHMARK_METRIC_ROWS_USER_PROPERTY, deduped))
     report.user_properties[:] = props
+
+
+def record_benchmark_metric_summary(nodeid: str, rows: list[dict[str, Any]]) -> None:
+    if nodeid in _SUBTEST_SUMMARY_COUNTED:
+        return
+    _SUBTEST_SUMMARY_COUNTED.add(nodeid)
+    for row in dedupe_metric_rows(rows):
+        if str(row.get('status') or '').lower() == 'pass':
+            _SUBTEST_SUMMARY['passed'] += 1
+        else:
+            _SUBTEST_SUMMARY['failed'] += 1
+
+
+def benchmark_subtest_summary() -> tuple[int, int, int]:
+    failed = _SUBTEST_SUMMARY['failed']
+    passed = _SUBTEST_SUMMARY['passed']
+    return failed + passed, failed, passed
 
 
 def benchmark_metrics_extra(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -157,18 +176,51 @@ def _dedupe_benchmark_call_entries(entries: list[dict[str, Any]], nodeid: str) -
     return entries
 
 
-def _strip_filter_metrics_summary(content: str) -> str:
+def _subtests_filter_summary_html(total: int, failed: int, passed: int) -> str:
+    failed_cls = 'failed' if failed else 'filter'
+    passed_cls = 'passed' if passed else 'filter'
+    return (
+        '<span class="filter"> | </span>'
+        f'<span class="filter">{total} subtests,</span>'
+        f'<span class="{failed_cls}"> {failed} failed,</span>'
+        f'<span class="{passed_cls}"> {passed} passed</span>'
+    )
+
+
+def _strip_legacy_subtest_summary(content: str) -> str:
     content = re.sub(
         r'<span class="filter"> \| \d+ subtests ran</span>.*?passed</span>',
         '',
         content,
     )
-    return re.sub(
+    content = re.sub(
+        r'<span class="filter"> \| </span>\s*'
+        r'<span class="filter">\d+ subtests,</span>.*?passed</span>',
+        '',
+        content,
+    )
+    content = re.sub(
         r'<span class="filter"> \| </span>\s*'
         r'<span class="filter">\d+ metrics,</span>.*?passed</span>',
         '',
         content,
     )
+    return content
+
+
+def _inject_subtest_summary_into_filters(content: str, total: int, failed: int, passed: int) -> str:
+    content = _strip_legacy_subtest_summary(content)
+    summary_html = _subtests_filter_summary_html(total, failed, passed)
+    filters_match = re.search(r'(<div class="filters">.*?)(</div>\s*<div class="collapse">)', content, re.DOTALL)
+    if not filters_match:
+        return content
+    if summary_html.strip() in filters_match.group(1):
+        return content
+    return content.replace(filters_match.group(0), f'{filters_match.group(1)}{summary_html}{filters_match.group(2)}', 1)
+
+
+def _strip_filter_metrics_summary(content: str) -> str:
+    return _strip_legacy_subtest_summary(content)
 
 
 def patch_benchmark_metrics_into_html(
@@ -198,6 +250,7 @@ def patch_benchmark_metrics_into_html(
         if not entries:
             continue
 
+        record_benchmark_metric_summary(nodeid, rows)
         entries = _dedupe_benchmark_call_entries(entries, nodeid)
         tests[nodeid] = entries
 
@@ -208,10 +261,14 @@ def patch_benchmark_metrics_into_html(
             patched = True
 
     data['tests'] = tests
+    total, failed, passed = benchmark_subtest_summary()
+    if total:
+        content = _inject_subtest_summary_into_filters(content, total, failed, passed)
+        patched = True
+
     if not patched:
         return False
 
-    content = _strip_filter_metrics_summary(content)
     encoded = html.escape(json.dumps(data), quote=True)
     updated = re.sub(json_pattern, lambda _m: f'data-jsonblob="{encoded}"', content)
     path.write_text(updated, encoding='utf-8')
