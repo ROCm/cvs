@@ -1,8 +1,8 @@
 # ATOM Inference Suite (single-node and multinode)
 
-Cluster validation suite that runs **ATOM** (and ATOM-coordinated vLLM / SGLang)
-serving benchmarks on AMD Instinct GPUs and gates each sweep cell on tiered
-performance and health metrics with a PASS/FAIL HTML report.
+Cluster validation suite that runs **ATOM** serving benchmarks on AMD Instinct
+GPUs and gates each sweep cell on tiered performance and health metrics with a
+PASS/FAIL HTML report.
 
 ## Overview
 
@@ -12,9 +12,8 @@ metrics and verdicts. It provides:
 
 1. **One unified suite** — `atom` handles single-node and multinode PP from the
    same entry point; topology and driver behaviour come from the variant config.
-2. **Execution drivers** — `params.driver` selects the server/client stack:
-   `atom` (native openai_server), `vllm_atom` (vLLM PP coordinator + ATOM
-   kernels), `sglang`, or interim `vllm`.
+2. **Execution drivers** — `params.driver` is `atom` on single-node variants
+   (native `openai_server`) or `vllm_atom` on shipped multinode PP stems.
 3. **Parameter sweeps** — one benchmark run per sweep cell (ISL/OSL shape ×
    concurrency), each with its own result rows in the report.
 4. **Tiered metric gating** — one pytest row per **metric tier** per cell
@@ -59,7 +58,7 @@ cvs run atom \
   the ATOM Run Deck artifacts.
 
 > Use a **single-host** cluster file with `nnodes=1` variants and a **two-host**
-> cluster file with multinode PP variants (`vllm_atom` or `sglang`). The config's
+> cluster file with multinode PP variants (`driver=vllm_atom`). The config's
 > `params.driver` and `params.nnodes` must match the intended topology.
 
 For smoke runs, filter with `-k`, for example `-k "w1_1k_1k-conc128"`.
@@ -171,7 +170,6 @@ discovery is unambiguous (see the input-config README).
 | `mi300x_atom_deepseek-r1_fp8_single` | single-node W1 | `atom` |
 | `mi300x_atom_deepseek-r1_fp8_baseline_sweep` | DTNI baseline matrix | `atom` |
 | `mi300x_atom_deepseek-r1_fp8_distributed` | 2-node PP W1 | `vllm_atom` |
-| `mi300x_atom_deepseek-r1_fp8_sglang_distributed` | 2-node PP W1 | `sglang` |
 | `mi300x_atom_deepseek-r1_fp8_mtp3` | single-node MTP3 | `atom` |
 
 See `cvs/input/config_file/inference/atom/README.md` for the full variant
@@ -182,8 +180,8 @@ recipes.
 
 - Passwordless SSH from the control host to each cluster node (key in the
   cluster file), and Docker available on the GPU nodes.
-- A container image with ATOM (and vLLM or SGLang when using those drivers);
-  shipped configs use `<changeme>` until pinned for your lab.
+- A container image with ATOM; shipped multinode configs use `<changeme>` until
+  pinned for your lab.
 - A Hugging Face token file at `paths.hf_token_file` when fetching models.
 - Model cache at `paths.models_dir` on GPU nodes when `model.remote: 0`.
 - For multinode runs: a shared or reachable log path, matching host count in

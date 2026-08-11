@@ -24,23 +24,16 @@ In the CVS repo, variants are flat sibling pairs in **this directory**:
 | `mi300x_atom_deepseek-r1_fp8_baseline_sweep` | `…_baseline_sweep_threshold.json` | MI300X | `atom` | DTNI baseline: 1K/1K + 8K/1K × C=4–256 (14 cells) |
 | `mi300x_atom_deepseek-r1_fp8_baseline_sweep_distributed` | `…_baseline_sweep_distributed_threshold.json` | MI300X | `vllm_atom` | 2-node DTNI baseline (14 cells); PP=2, scaling gates |
 | `mi300x_atom_deepseek-r1_fp8_distributed` | `…_distributed_threshold.json` | MI300X | `vllm_atom` | W1 2-node PP=2; lab-calibrated thresholds |
-| `mi300x_atom_deepseek-r1_fp8_sglang_distributed` | `…_sglang_distributed_threshold.json` | MI300X | `sglang` | W1 2-node PP=2 SGLang path; record-only until lab confirm |
 | `mi300x_atom_deepseek-r1_fp8_mtp3` | `…_mtp3_threshold.json` | MI300X | `atom` | W1 FP8 + MTP3 |
 | `mi355x_atom_deepseek-r1_fp8_single` | `…_single_threshold.json` | MI355X | `atom` | W1 single-node; CI seeds, `enforce_thresholds: false` |
 | `mi355x_atom_deepseek-r1_fp8_baseline_sweep` | `…_baseline_sweep_threshold.json` | MI355X | `atom` | DTNI baseline matrix; record-only |
 | `mi355x_atom_deepseek-r1_fp8_distributed` | `…_distributed_threshold.json` | MI355X | `vllm_atom` | W1 2-node PP=2; record-only until lab confirm |
 | `mi355x_atom_deepseek-r1_fp8_mtp3` | `…_mtp3_threshold.json` | MI355X | `atom` | W1 FP8 + MTP3 |
-| `mi300x_atom_gpt-oss-120b_bf16` | `…_threshold.json` | MI300X | `vllm` | GPT-OSS uplift placeholder |
-| `mi355x_atom_gpt-oss-120b_bf16` | `…_threshold.json` | MI355X | `vllm` | GPT-OSS uplift placeholder |
 
 Add analogous config + threshold pairs for other archs or models as needed.
 
 Keys prefixed with `_` (e.g. `_comment`) are inline comments and are ignored by
 the loader.
-
-**Removed:** `*_smoke` variants — use `-k` on a full variant for a one-cell smoke.
-**Removed:** bare `driver=atom` multinode PP — use `vllm_atom` or `sglang`
-distributed stems above.
 
 ## What you MUST change for your cluster / setup
 
@@ -49,7 +42,7 @@ these:
 
 | Where | Variable | Change to |
 |---|---|---|
-| `container.image` | container image | Your ATOM / vLLM+ATOM / SGLang ROCm image on the nodes |
+| `container.image` | container image | Your ATOM ROCm image on the nodes |
 | `container.name` | container name | Any unique name (optional) |
 | `paths.shared_fs` | base path | A path reachable from all nodes; `{user-id}` resolves to the cluster/OS user |
 | `paths.models_dir` | model cache | Host path to the staged model (shipped configs use `/home/models`) |
@@ -57,18 +50,17 @@ these:
 | `paths.hf_token_file` | HF token path | Location of your Hugging Face token file |
 | `model.id` | model repo id | The model under test (W1: `deepseek-ai/DeepSeek-R1-0528`) |
 | `model.remote` | fetch mode | `0` = already cached on nodes; `1` = not implemented |
-| `params.driver` | execution stack | `atom`, `vllm_atom`, `sglang`, or interim `vllm` (see below) |
+| `params.driver` | execution stack | `atom` (single-node) or `vllm_atom` (multinode PP); see below |
 | `params.nnodes` | node count | `1` single-node; `2` for shipped multinode PP variants |
 | `params.master_addr` | PP coordinator | Head node VPC IP (replace `{head-node-ip}` on multinode stems) |
 | `params.master_port` | PP coordinator port | Usually `29501` |
 | `params.pipeline_parallel_size` | PP size | `2` on shipped multinode stems |
 | `params.scaling_baseline_output_throughput` | 1-node baseline | Measured single-node output tok/s for `scaling.efficiency_pct` (multinode) |
 | `roles.server.atom_args` | ATOM server CLI | Tokens after `--model` / `--server-port` when `driver=atom` |
-| `roles.server.serve_args` | vLLM serve flags | Dict of `vllm serve` flags when `driver=vllm_atom` or `vllm` |
-| `roles.server.sglang_args` | SGLang server CLI | Args for `sglang.launch_server` when `driver=sglang` |
+| `roles.server.serve_args` | multinode serve flags | Dict merged into the multinode server argv when `driver=vllm_atom` |
 | `roles.server.ib_hca_devices` | RDMA HCAs | `"auto"` (default) or explicit list; probed in `test_discover_topology` |
 | `roles.server.ib_netdev` | socket netdev | `"auto"` (default on distributed) or explicit name; **not** `mlx5_*` |
-| `roles.server.env` | server env | Driver-specific env (ATOM mmap, vLLM AITER flags, …) |
+| `roles.server.env` | server env | ATOM / multinode env (e.g. mmap, AITER flags) |
 | `.json` gated values | thresholds | Calibrated PASS/FAIL bounds for your hardware |
 | cluster file `node_dict` | node IPs | Your node IPs; **host count must equal `params.nnodes`** |
 | cluster template | `atom_cluster.json` | Copy from `cvs/input/cluster_file/atom_cluster.json` |
@@ -83,8 +75,7 @@ into its **own subdirectory** so threshold discovery is unambiguous:
 
 ```text
 ~/input/.../atom/single/              # single-node config + threshold only
-~/input/.../atom/distributed/         # vllm_atom PP=2
-~/input/.../atom/sglang_distributed/  # sglang PP=2
+~/input/.../atom/distributed/         # multinode PP=2 (driver=vllm_atom)
 ~/input/.../atom/baseline_sweep/      # DTNI single-node matrix
 ```
 
@@ -126,11 +117,11 @@ Top-level (framework-agnostic) fields:
 
 | Field | Meaning |
 |---|---|
-| `driver` | `atom`, `vllm_atom`, `sglang`, or interim `vllm` |
+| `driver` | `atom` (single-node) or `vllm_atom` (multinode PP) |
 | `tensor_parallelism` | TP size (W1: `8`) |
 | `pipeline_parallel_size` | PP size (`1` single-node; `2` on multinode stems) |
 | `nnodes` | Node count (`1` or `2` on shipped variants) |
-| `master_addr` / `master_port` | Multinode coordinator (vLLM / SGLang) |
+| `master_addr` / `master_port` | Multinode PP coordinator address/port |
 | `port_no` | Server HTTP port (default `8000`) |
 | `num_prompts` | Benchmark prompt count per cell |
 | `max_model_length` | Server MML; must cover `(ISL+OSL) × (1+random_range_ratio)` |
@@ -146,23 +137,21 @@ Top-level (framework-agnostic) fields:
 | Field | Meaning |
 |---|---|
 | `atom_args` | Extra CLI tokens for `python -m atom.entrypoints.openai_server` (`driver=atom`) |
-| `serve_args` | Dict merged into `vllm serve` argv (`driver=vllm_atom` / `vllm`) |
-| `sglang_args` | Args for `sglang.launch_server` (`driver=sglang`) |
+| `serve_args` | Multinode server flags when `driver=vllm_atom` |
 | `env` | Exported in `/tmp/server_env_script.sh` (orchestrator-managed NCCL keys are stripped) |
 | `ib_hca_devices` | `"auto"` or explicit HCA list for `NCCL_IB_HCA` |
 | `ib_netdev` | `"auto"` or explicit socket interface for `NCCL/GLOO/TP_SOCKET_IFNAME` |
 
 ### Execution drivers (`params.driver`)
 
-Standalone ATOM has **no native pipeline parallel**. Multinode PP requires a
-framework coordinator:
+Standalone ATOM has **no native pipeline parallel**. Single-node variants use
+the native ATOM server; shipped multinode PP stems use `vllm_atom` (same ATOM
+bench client and ROCm env, with a PP coordinator for 2-node runs):
 
-| Driver | When to use | Server | Multinode PP |
+| Driver | When to use | Server entrypoint | Multinode PP |
 |---|---|---|---|
 | `atom` | Single-node W1, baseline sweep, MTP3 | `atom.entrypoints.openai_server` | No |
-| `vllm_atom` | Shipped 2-node PP stems | `vllm serve` + ATOM ROCm env | Yes |
-| `sglang` | Shipped SGLang multinode stem | `sglang.launch_server` | Yes |
-| `vllm` | GPT-OSS placeholder | `vllm serve` | When PP flags configured |
+| `vllm_atom` | Shipped 2-node PP stems | Multinode serve path + ATOM ROCm env | Yes |
 
 Multinode fabric is probed once per run in `test_discover_topology` (on the
 **cluster host OS**, not inside the container). Probes can be skipped on
@@ -242,7 +231,7 @@ Template: `cvs/input/cluster_file/atom_cluster.json`. Copy to
 | Variant type | `params.nnodes` | `node_dict` |
 |---|---|---|
 | Single-node (`*_single`, baseline sweep, MTP3) | `1` | Head node only |
-| Multinode PP (`*_distributed`, `*_baseline_sweep_distributed`, `*_sglang_distributed`) | `2` | Head + worker |
+| Multinode PP (`*_distributed`, `*_baseline_sweep_distributed`) | `2` | Head + worker |
 
 `test_setup_sshd` runs when `len(node_dict) > 1`.
 
@@ -291,20 +280,12 @@ cvs run atom \
 ```
 
 For multinode PP variants, use a two-host cluster file, copy the matching
-`*_distributed*` (or `*_sglang_distributed*`) config pair into its own
-subdirectory, set `container.image`, `params.master_addr`, and verify fabric
-discovery (or set `roles.server.ib_netdev` explicitly).
+`*_distributed*` config pair into its own subdirectory, set `container.image`,
+`params.master_addr`, and verify fabric discovery (or set `roles.server.ib_netdev`
+explicitly).
 
 Smoke a single cell with `-k`, for example `-k "w1_1k_1k-conc128"`.
 
 When `--html` is set, the **ATOM Run Deck** is generated at session end and
 bundled into the pytest zip (render-only; does not affect gates). See
 `cvs/lib/report/README.md`.
-
-## Related docs
-
-| Doc | Purpose |
-|---|---|
-| `cvs/tests/inference/atom/README.md` | Suite lifecycle, sweeps, metric tiers, quick start |
-| `cvs/lib/inference/utils/docs/atom-parsing.md` | `client.*` metric vocabulary and tiers |
-| `docs/reference/configuration-files/atom.rst` | Published config reference (Sphinx) |
