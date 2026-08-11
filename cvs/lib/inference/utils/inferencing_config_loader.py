@@ -80,7 +80,7 @@ class Run(_Forbid):
     concurrency: int
 
 
-NON_SWEEP_THRESHOLD_KEYS = {"accuracy", "mtp_quality"}
+NON_SWEEP_THRESHOLD_KEYS = {"accuracy", "mtp_quality", "long_context_accuracy"}
 
 
 def validate_thresholds_cover_sweep(

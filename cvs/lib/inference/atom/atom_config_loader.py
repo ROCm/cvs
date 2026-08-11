@@ -18,6 +18,8 @@ from pydantic import Field, field_validator, model_validator
 from typing_extensions import Literal
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
+from cvs.lib.inference.utils.functional_config import FunctionalConfig
+from cvs.lib.inference.utils.long_context_accuracy_config import LongContextAccuracyConfig
 
 ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
 ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
@@ -153,6 +155,8 @@ class AtomVariantConfig(BaseVariantConfig):
     sweep: Sweep
     accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
     mtp_quality: MtpQualityConfig = Field(default_factory=MtpQualityConfig)
+    functional: FunctionalConfig = Field(default_factory=FunctionalConfig)
+    long_context_accuracy: LongContextAccuracyConfig = Field(default_factory=LongContextAccuracyConfig)
 
     def cell_key(self, isl, osl, concurrency):
         p = self.params
