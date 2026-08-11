@@ -480,8 +480,7 @@ class AtomJob:
         if self._uses_sglang_serve():
             return self._sglang_server_argv(rank)
         raise RuntimeError(
-            f"unsupported params.driver={self.driver!r}; "
-            "expected 'atom', 'vllm', 'vllm_atom', or 'sglang'"
+            f"unsupported params.driver={self.driver!r}; expected 'atom', 'vllm', 'vllm_atom', or 'sglang'"
         )
 
     def _atom_server_argv(self, rank=0):
@@ -576,9 +575,7 @@ class AtomJob:
                     for line in (output or "").splitlines():
                         log.info("[%s rank%d server.log] %s", h, rank, line)
                 if self.EARLY_FAILURE_RE.search(output or ""):
-                    raise RuntimeError(
-                        f"{label} server early failure on {h} (rank {rank}): {(output or '')[-500:]}"
-                    )
+                    raise RuntimeError(f"{label} server early failure on {h} (rank {rank}): {(output or '')[-500:]}")
             out = self.orch.exec(
                 f"grep -m1 -iE {shlex.quote(self.FATAL_LOG_RE.pattern)} {shlex.quote(rank_log)}",
                 detailed=True,
@@ -586,9 +583,7 @@ class AtomJob:
             )
             for h, r in (out or {}).items():
                 if r.get("exit_code") == 0 and r.get("output", "").strip():
-                    raise RuntimeError(
-                        f"{label} server fatal error on {h} (rank {rank}): {r['output'].strip()[-500:]}"
-                    )
+                    raise RuntimeError(f"{label} server fatal error on {h} (rank {rank}): {r['output'].strip()[-500:]}")
 
     def _tail_server_logs(self, lines=30):
         if self.distributed:

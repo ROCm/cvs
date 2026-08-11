@@ -23,7 +23,14 @@ _TP = 8
 
 
 def _fake_variant(
-    *, driver="vllm", nnodes="1", pipeline_parallel_size="1", master_addr="", scaling_baseline_output_throughput="", ib_netdev="eth0", ib_hca_devices=None
+    *,
+    driver="vllm",
+    nnodes="1",
+    pipeline_parallel_size="1",
+    master_addr="",
+    scaling_baseline_output_throughput="",
+    ib_netdev="eth0",
+    ib_hca_devices=None,
 ):
     params = SimpleNamespace(
         driver=driver,
@@ -372,9 +379,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
 
     def test_distributed_vllm_atom_pp2_passes_vllm_executor_flags(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
-        variant = _fake_variant(
-            driver="vllm_atom", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1"
-        )
+        variant = _fake_variant(driver="vllm_atom", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1")
         job = AtomJob(
             orch=orch,
             variant=variant,
@@ -400,9 +405,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
 
     def test_distributed_sglang_pp2_passes_sglang_dist_flags(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
-        variant = _fake_variant(
-            driver="sglang", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1"
-        )
+        variant = _fake_variant(driver="sglang", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1")
         variant.roles.server.sglang_args = ["--trust-remote-code"]
         job = AtomJob(
             orch=orch,

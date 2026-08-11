@@ -59,9 +59,7 @@ class InferenceJobFactory:
             - Otherwise → vLLM (default)
         """
         if 'inferencemax_repo' in inference_config_dict:
-            log.warning(
-                "inferencemax_repo detected; InferenceMax is deprecated — use the atom suite instead"
-            )
+            log.warning("inferencemax_repo detected; InferenceMax is deprecated — use the atom suite instead")
             return 'atom'
         elif 'vllm_script_path' in inference_config_dict:
             return 'vllm'
