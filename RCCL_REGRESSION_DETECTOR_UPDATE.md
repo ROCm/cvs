@@ -102,10 +102,21 @@ spikes do not.
 
 ### Safety rails
 - **Median** (not mean) over repeats → robust to outlier runs.
-- **`min_bandwidth_floor` (0.5 GB/s)**: the smallest sizes (~1K–64K) where busBw is
-  near zero and relative noise explodes are marked **`inconclusive`** and excluded
-  from pass/fail — we refuse to judge the region where no judgment is safe.
+- **`min_bandwidth_floor`, now per tier** (`{small: 0.005, mid: 0.05, large: 0.5}`
+  GB/s): sizes whose busBw sits under the floor for their tier are marked
+  **`inconclusive`** and excluded from pass/fail — we refuse to judge the region
+  where no judgment is safe. A single scalar `0.5` is still accepted for old
+  configs, but it was a mistake: 0.5 GB/s is a *large-message* floor, and applying
+  it flat silently excluded the entire small tier, so the gate was scoring the
+  small band against thresholds calibrated on no small-band data at all.
 - **`min_repeats`**: too few samples → `inconclusive`, never a regression.
+- **`require_balanced_samples`**: A and B must have the same number of surviving
+  repeats for a key, or it is `inconclusive`. Unequal counts mean the two sides
+  were not measured under the same conditions, so the comparison is not paired.
+- **`max_inconclusive_frac`** (0.1): if more than this fraction of a group's keys
+  came back inconclusive, the *group* is untrustworthy. A detector that abstained
+  on most of what it looked at has not established anything, and must not be
+  allowed to report "0 regressions" as though it had.
 - Direction-aware: only flags **B worse than A**, never improvements.
 
 ### Output
@@ -122,20 +133,42 @@ Thresholds are **measured on the actual hardware**, not picked by hand.
 1. Run in **control mode** (`control_mode: true`): the *reference* build is used as
    **both** A and B.
 2. Since A and B are the same build, any spread is pure run-to-run noise. We compute
-   the per-tier coefficient of variation and set:
+   the per-key coefficient of variation and set:
 
    ```
-   threshold[tier] = safety_factor (default 2.0) × p95(CV[tier])    # floored per tier
+   threshold[tier] = safety_factor × (median(CV[tier]) + mad_k × MAD(CV[tier]))
+   threshold[tier] = min(threshold[tier], max_thresholds[tier])      # policy ceiling
    ```
 
-3. The control run **must report 0 regressions** (A vs A). If it doesn't, the
-   detector/thresholds are not trustworthy on this hardware and the job fails loudly.
+   This used to be `safety_factor × p95(CV[tier])`. p95 of a CV distribution *is*
+   an outlier statistic — one flaky key in a tier dragged the whole tier's
+   threshold up and blinded the gate for every other key in it. `median + k·MAD`
+   (MAD scaled by 1.4826) is the robust equivalent: it tracks the bulk of the
+   distribution and a few bad keys cannot move it far.
+
+   Thresholds are derived **per collective**, not globally, so the noisiest
+   collective no longer sets the bar for the quietest.
+
+3. `max_thresholds` is a hand-set ceiling. Calibration can only ever make the gate
+   *tighter* than this; a pathologically noisy control run cannot loosen the gate
+   into uselessness. It is the one threshold knob that is meant to be edited by
+   hand — see `ci/rccl_perf_gate/configs/README.md`.
+
+4. The control run **must report 0 regressions** (A vs A) **and** must be
+   trustworthy. A control run that tripped the circuit breaker, came back mostly
+   inconclusive, or failed to score every group does **not** publish its
+   calibration: it writes only into its own run artifacts, and logs loudly that it
+   withheld. Publishing from a run that failed its own checks would poison every
+   later detect run with a threshold nobody chose, and because that run also
+   reports NO VERDICT, nobody would think to go look at what it had published.
 
 Re-run control calibration whenever the **hardware, RCCL build, or cluster config**
 changes. Calibrated values are written to `ab_derived_thresholds.json`.
 
-> Measured on 4-node MI350X (full matrix): `p95 CV` ≈ small 10% / mid 7% / large 3.7%
-> → adopted thresholds **small 20% / mid 15% / large 7.5%**.
+> Measured on 4-node MI355X (full matrix, job 16131): derived
+> **small 12.5% / mid 6.1% / large 3.0%**, all under the `max_thresholds` ceiling
+> of 15% / 8% / 6% — so the ceiling was not binding and the measured noise is what
+> the gate actually uses.
 
 ---
 
@@ -174,12 +207,58 @@ meaningful, and is the foundation the A/B detector builds on.
   docker/podman containers. Best-effort — never fails the job.
 - On exclusively-allocated nodes, any leftover process is stale by definition.
 
+### Refuse to answer rather than answer wrongly
+
+The organising rule of the CI wrapper: **0 confirmed regressions is only a PASS if
+the detector actually looked.** Every layer that could turn "we did not measure"
+into "✅ PASS" has been closed:
+
+- Each group carries `summary.trustworthy`. A group that tripped the circuit
+  breaker, exceeded `max_inconclusive_frac`, or had unbalanced A/B sample counts
+  is not trustworthy.
+- The report carries a top-level `trustworthy` and `untrustworthy_reasons`, plus
+  `groups_scored` / `groups_expected` so a silently-dropped group is visible.
+- `format_report.py` renders **⚠️ NO VERDICT (not measured)** and exits **2** for
+  an untrustworthy report — neither a pass nor a regression. The workflow gate
+  step propagates exit 2, and the PR comment says so in as many words.
+- Reports predating the flag are treated as untrustworthy, not as passes.
+
+### Transport capability pre-flight
+
+`run_rccl_ab.sh` checks the A/B transport capabilities before spending an
+allocation. A run whose interconnect quietly fell back to a slower path measures
+something real, but not the thing the gate is supposed to be gating.
+
+### Circuit breaker and right-sized timeouts
+
+`circuit_breaker_failures` (2) abandons a group after consecutive failures instead
+of grinding through the whole matrix at the per-collective timeout.
+`per_collective_timeout_sec` is 360s, not the 1800s it was: with 8 groups × 7
+repeats × 2 sides, the old value put the all-timeout path well past a working day.
+The Slurm wall clock, the poller's run and queue budgets, and the Actions job
+timeout are now nested innermost-first so the inner layer always fires first and
+gets to say *why* — see the table in `submit_and_poll.sh`.
+
+### Per-run workspace isolation
+
+Every run gets its own directory under `runs/<run_key>/`: an immutable `cvs/`
+snapshot (so a mid-flight deploy cannot change the code a running job executes),
+its own config copy, build output, artifacts and logs. Concurrent runs cannot
+read or clobber each other's state, and the report records which detector commit
+produced it. A cron janitor reclaims old runs, old build-cache entries and old
+Slurm logs, reporting what it kept as well as what it removed.
+
 ---
 
 ## 8. Architecture / code layout
 
 Pure decision logic is separated from cluster orchestration so it can be
-exhaustively unit-tested on a login node (no GPUs) — **61 unit tests**.
+exhaustively unit-tested on a login node (no GPUs).
+
+**Test inventory** (all runnable without an allocation): 34 collected pytest cases
+across `test_regression_lib.py` + `test_ci_robustness_lib.py`, 8 more in
+`ci/rccl_perf_gate/tests/test_regression_lib.py`, and 21 shell assertions across
+the two `.sh` tests below.
 
 | File | Role |
 |------|------|
@@ -190,9 +269,37 @@ exhaustively unit-tested on a login node (no GPUs) — **61 unit tests**.
 | `cvs/cvs/lib/unittests/test_regression_lib.py` | Detector tests incl. Monte-Carlo FP/detection sweeps. |
 | `cvs/cvs/lib/unittests/test_ci_robustness_lib.py` | Retry + cleanup tests. |
 | `cvs-sbatch/env/thor_rccl_env.sh` | NCCL/IB transport env (cv350 / MI350X + Broadcom Thor RoCE). |
+| `cvs-sbatch/env/ainic_rccl_env.sh` | NCCL/IB transport env (tensorwave / MI355X + AINIC). |
 | `cvs-sbatch/config_ab*.json` | A/B run configs. |
 | `cvs-sbatch/sbatch/ab_regression.sbatch` | SLURM job (`sp_tests`, 4 nodes / 32 ranks). |
 | `cvs-sbatch/run.sh`, `lib/python_env.sh` | Orchestrator: cluster.json gen, per-job uv venv. |
+
+### The CI wrapper (`cvs/ci/rccl_perf_gate/`)
+
+Everything the GitHub gate needs that is not detection logic. Added after the
+detector itself, and version-controlled here rather than living loose on NFS.
+
+| File | Role |
+|------|------|
+| `submit_and_poll.sh` | Submits `rccl_ab.sbatch`, polls to a terminal state, maps the job's exit code to the step's. Owns the run/queue budgets and a `scancel` trap so a killed step never orphans an allocation. |
+| `format_report.py` | Renders the PR comment. Exit **0** pass / **1** regression / **2** NO VERDICT. |
+| `sbatch/rccl_ab.sbatch` | Detect job: 4 pinned nodes, `--exclusive`, 4h wall clock. |
+| `sbatch/rccl_build.sbatch` | Build job: single node, CPU compile. Deliberately **not** in the detect reservation — see below. |
+| `sbatch/run_rccl_ab.sh` | In-allocation orchestration: transport pre-flight, workspace setup, detector invocation, verdict recount. |
+| `sbatch/run_rccl_build.sh` | Content-addressed build of reference + candidate `librccl.so`, keyed on git rev + recipe hash. |
+| `sbatch/lib/workspace.sh` | Per-run workspace creation, build cache, GC, and the cron janitor. |
+| `configs/*.json` | Snapshots of the live NFS configs, so the gate's decision boundary has version history. **NFS is still what runs** — see `configs/README.md`. |
+| `tests/test_regression_lib.py` | 8 detector tests aimed at the trustworthiness paths. |
+| `tests/test_workspace_gc.sh` | 13 assertions; runs GC against a throwaway root. |
+| `tests/test_build_submit_trap.sh` | 8 assertions; kills the build step mid-flight and checks the allocation is released. |
+| `tests/lint_workflow.py` | `bash -n` over every `run:` block in the workflow. |
+
+> **Reservations.** `rccl_ci` is exactly the four pinned detect nodes
+> (`mia1-p01-g[22,26,28,32]`) and the detect job takes all four `--exclusive`, so
+> it has no slack. The build must therefore stay out of it: it is a single-node
+> CPU compile that needs no GPU, and it runs in `rccl_dev` via
+> `SLURM_BUILD_RESERVATION`. It used to pin `--nodelist=mia1-p01-g28`, inside the
+> detect set, where it queued behind — and delayed — anything using the pool.
 
 ---
 
@@ -218,16 +325,30 @@ exhaustively unit-tested on a login node (no GPUs) — **61 unit tests**.
     "ab_regression": {
       "repeats": 7,
       "control_mode": false,            // true = reference-vs-itself calibration/stability proof
-      "safety_factor": 2.0,             // thresholds = safety_factor x p95 noise (control mode)
-      "thresholds": { "small": 0.20, "mid": 0.15, "large": 0.075 },
+      "safety_factor": 2.0,
+      "mad_k": 3.0,                     // thresholds = safety_factor x (median + mad_k x MAD)
+      "thresholds":     { "small": 0.15, "mid": 0.08, "large": 0.06 },
+      "max_thresholds": { "small": 0.15, "mid": 0.08, "large": 0.06 },  // hand-set ceiling
       "tier_boundaries": { "small_max_bytes": 1048576, "mid_max_bytes": 67108864 },
       "adjacency_min_run": 2,
       "min_repeats": 2,
-      "min_bandwidth_floor": 0.5,
+      "min_bandwidth_floor": { "small": 0.005, "mid": 0.05, "large": 0.5 },  // per tier
+
+      // Trustworthiness gates -- see section 7.
+      "circuit_breaker_failures": 2,    // abandon a group after N consecutive failures
+      "require_balanced_samples": true, // A and B must have equal surviving repeats
+      "max_inconclusive_frac": 0.1,     // a group that abstained on >10% is untrustworthy
+      "publish_derived_thresholds": true, // control mode only; withheld if untrustworthy
+
+      // alltoall is excluded: pooling it inflated the derived large-tier threshold
+      // by 60-100x, blinding the gate for every other collective. Per-collective
+      // thresholds make re-enabling it possible, but only after a fresh calibration.
+      "skip_keys": [["alltoall_perf", "float"], ["alltoall_perf", "bfloat16"]],
+
       "metric": "busBw", "higher_is_better": true,
-      "output_dir": "/apps/sp/AIMVT-196/ab_artifacts",
-      "reference": { "label": "ref",  "rccl_tests_dir": ".../reference/.../rccl-tests/build" },
-      "candidate": { "label": "cand", "rccl_tests_dir": ".../candidate/.../rccl-tests/build" }
+      "output_dir": "/it-share/rccl-ci/runs/<run_key>/artifacts",   // per-run, not shared
+      "reference": { "label": "ref",  "rccl_tests_dir": "...", "ld_library_path": "..." },
+      "candidate": { "label": "cand", "rccl_tests_dir": "...", "ld_library_path": "..." }
     }
   }
 }
@@ -317,11 +438,15 @@ sbatch --export=ALL,CONFIG_JSON=config_ab_full.json \
 | Paired A/B, interleaved | Cancels common-mode noise; stable even for small messages |
 | Triple gate (threshold ∧ separation ∧ adjacency) | A false positive needs three unlikely things at once |
 | Median + percentile separation | Resistant to single bad/straggler runs |
-| Thresholds derived from measured noise (2× p95) | Bar provably sits above real run-to-run spread |
-| `min_bandwidth_floor` → inconclusive | Abstains on the region where no judgment is safe |
+| Thresholds from measured noise (`median + 3·MAD`, per collective) | Bar sits above real run-to-run spread, and a few flaky keys cannot move it |
+| `max_thresholds` ceiling | Calibration can only tighten the gate, never loosen it into uselessness |
+| Per-tier `min_bandwidth_floor` → inconclusive | Abstains on the region where no judgment is safe, *per tier* |
 | Correct full-key group-by | Compares like-for-like; no hidden/spurious signals |
-| Pure, unit-tested core (61 tests) | Deterministic, auditable, regression-proof logic |
+| Pure, unit-tested core (42 pytest cases + 21 shell assertions) | Deterministic, auditable, regression-proof logic |
 | A=A control = 0 regressions | Empirically measures the false-positive rate on real HW |
+| **Trustworthiness propagated to the verdict** | "0 regressions" cannot be reported unless the detector actually measured; otherwise NO VERDICT (exit 2) |
+| Calibration withheld from an untrustworthy control run | A control run that failed its own checks cannot poison later detect runs |
+| Immutable per-run `cvs/` snapshot + provenance in the report | The verdict names the exact detector commit and both builds that produced it |
 
 ### Evidence collected
 - **Monte-Carlo (simulated noise):** 0/400 false positives; 400/400 detection of an
@@ -337,10 +462,11 @@ sbatch --export=ALL,CONFIG_JSON=config_ab_full.json \
 
 ## 12. Limitations & future work
 
-- **Global per-tier thresholds** are set by the noisiest collective. A *global*
-  `large = 7.5%` (driven by alltoall/broadcast noise) means a ~6% large-message
-  all_reduce regression is missed. **Per-collective thresholds** would recover that
-  sensitivity without sacrificing stability.
+- ~~**Global per-tier thresholds** are set by the noisiest collective.~~
+  **Done.** Thresholds are now derived per collective, and the estimator is
+  `median + k·MAD` rather than `p95`, so one flaky key no longer sets the bar for
+  its whole tier. `alltoall_perf` remains in `skip_keys` and can be re-enabled
+  after a fresh calibration.
 - **Sub-floor tiny messages (1K–64K)** are `inconclusive` (busBw ≈ 0). A
   **latency-based comparison** (`metric: "time"`, already supported by the detector)
   would extend trustworthy coverage to the smallest sizes, where latency is the
@@ -351,6 +477,20 @@ sbatch --export=ALL,CONFIG_JSON=config_ab_full.json \
   validated path is multi-node under `sbatch` (which is the CI path anyway).
 - Periodic **A=A canary** runs in CI are recommended to continuously confirm the
   false-positive rate stays 0 as the cluster/software evolves.
+- **`sbatch --wait` instead of polling.** `submit_and_poll.sh` polls `squeue` on a
+  30s interval. `--wait` would remove the polling loop, but it also removes the
+  per-state visibility the budgets are built on (queued-vs-running is what lets
+  the run budget be charged against run time only). Deliberately deferred.
+- **The configs are hand-synced.** The gate loads from `/it-share/rccl-ci/configs/`
+  on NFS; `ci/rccl_perf_gate/configs/` is a snapshot for history that nothing reads.
+  Pointing the readers at the repo checkout would close the drift window but
+  changes where a live gate loads from, so it is a follow-up, not part of a
+  robustness pass. Diff before trusting either copy.
+- **The detect reservation is shared.** `rccl_ci` is four nodes and the detect job
+  needs all four; a neighbouring single-node pipeline occupying one of them is
+  enough to stall the gate, and its declared `TimeLimit` (not its real runtime) is
+  what Slurm's backfill scheduler plans around. Node contention, not detector
+  runtime, is now the dominant term in end-to-end latency.
 
 ---
 
@@ -359,4 +499,5 @@ sbatch --export=ALL,CONFIG_JSON=config_ab_full.json \
 **Trust = paired design to cancel noise + a triple gate and robust statistics to
 resist what's left + thresholds calibrated from measured on-hardware noise + an A=A
 control that empirically proves zero false positives — all in a pure, unit-tested,
-auditable core, wrapped with retry and stale-GPU cleanup for CI resilience.**
+auditable core, wrapped with retry and stale-GPU cleanup for CI resilience — and a
+gate that refuses to say PASS when it did not actually measure.**
