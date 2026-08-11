@@ -1,5 +1,5 @@
 {
-  "_comment": "RCCL CI calibration / A=A control. Derives ab_derived_thresholds.json and MUST report 0 regressions. Both ref+cand point at builds/_fixed/lib (rebuilt 2026-07-14 from rocm-systems develop HEAD 8a7d08d925, which fixes the gfx950 DDA alltoall segfault, the large-message (>=1G) alltoall OOB/abort/hang, and the alltoall bfloat16 correctness bug -- see CI_PIPELINE_PLAN.md caveats #1/#1b; confirmed via node_health_test.sh smallmsg+largemsg+bf16 sweeps, 0 wrong across all). RCCL_DDA_ENABLE override REMOVED from ainic_rccl_env.sh (RCCL default DdaEnable=1 applies). alltoall_perf re-enabled (removed from skip_keys). Recalibrate on any HW/ROCm/RCCL-build/matrix/node/env change. | UPDATE 2026-07-13: alltoall correctness bugs (DDA segfault c59673fc, bf16 correctness, large-msg >=1G OOB/abort/hang) confirmed FIXED on develop HEAD 8a7d08d925 -- lib rebuilt/repinned, RCCL_DDA_ENABLE override removed from ainic_rccl_env.sh entirely. HOWEVER control-mode calibration (job 12389, 2026-07-13) revealed alltoall_perf has severe reproducible large-message (128MB-4G) PERFORMANCE INSTABILITY (up to ~5-6x swings between identical A=A repeats), unique among the 5 gated collectives (others show <1 pct variance at same sizes); boundary aligns exactly with the 64MB DDA_THRESHOLD, suggesting a separate still-present perf bug in the alltoall large-message non-DDA path, independent of the fixed correctness bugs. Config has no per-collective threshold override, so including alltoall in the shared large tier pool inflated the derived threshold ~60-100x (0.126 -> 8.41), which would blind the gate to real large-message regressions in ALL 5 collectives. Decision: alltoall_perf stays in rccl_collective (runs, for visibility) but is skip_keys out of ab_regression comparison/gating until root-caused or per-collective thresholds are implemented. See CI_PIPELINE_PLAN.md for full writeup.",
+  "_comment": "Control (A=A) calibration counterpart to ci_detect_prod.json. Everything that affects measurement -- size sweep, collectives, skip_keys, repeats, timeouts, min_bandwidth_floor -- MUST match ci_detect_prod.json, otherwise the derived thresholds describe a different experiment than the one being gated. min_bandwidth_floor in particular: a scalar 0.5 GB/s floor here would leave the small tier calibrated on nothing while detect measures it. Thresholds derived by this run are published to configs/ab_derived_thresholds.json only if the run clears its own trustworthiness checks. | RCCL CI calibration / A=A control. Derives ab_derived_thresholds.json and MUST report 0 regressions. Both ref+cand point at builds/_fixed/lib (rebuilt 2026-07-14 from rocm-systems develop HEAD 8a7d08d925, which fixes the gfx950 DDA alltoall segfault, the large-message (>=1G) alltoall OOB/abort/hang, and the alltoall bfloat16 correctness bug -- see CI_PIPELINE_PLAN.md caveats #1/#1b; confirmed via node_health_test.sh smallmsg+largemsg+bf16 sweeps, 0 wrong across all). RCCL_DDA_ENABLE override REMOVED from ainic_rccl_env.sh (RCCL default DdaEnable=1 applies). alltoall_perf re-enabled (removed from skip_keys). Recalibrate on any HW/ROCm/RCCL-build/matrix/node/env change. | UPDATE 2026-07-13: alltoall correctness bugs (DDA segfault c59673fc, bf16 correctness, large-msg >=1G OOB/abort/hang) confirmed FIXED on develop HEAD 8a7d08d925 -- lib rebuilt/repinned, RCCL_DDA_ENABLE override removed from ainic_rccl_env.sh entirely. HOWEVER control-mode calibration (job 12389, 2026-07-13) revealed alltoall_perf has severe reproducible large-message (128MB-4G) PERFORMANCE INSTABILITY (up to ~5-6x swings between identical A=A repeats), unique among the 5 gated collectives (others show <1 pct variance at same sizes); boundary aligns exactly with the 64MB DDA_THRESHOLD, suggesting a separate still-present perf bug in the alltoall large-message non-DDA path, independent of the fixed correctness bugs. Config has no per-collective threshold override, so including alltoall in the shared large tier pool inflated the derived threshold ~60-100x (0.126 -> 8.41), which would blind the gate to real large-message regressions in ALL 5 collectives. Decision: alltoall_perf stays in rccl_collective (runs, for visibility) but is skip_keys out of ab_regression comparison/gating until root-caused or per-collective thresholds are implemented. See CI_PIPELINE_PLAN.md for full writeup.",
   "rccl": {
     "mpi_params": {
       "no_of_nodes": "4",
@@ -20,8 +20,8 @@
       "no_of_iterations": "20",
       "no_of_cycles": "1",
       "check_iteration_count": "1",
-      "rccl_timeout": "1800",
-      "per_collective_timeout_sec": 1800,
+      "rccl_timeout": "360",
+      "per_collective_timeout_sec": 360,
       "output_algo_proto_channels": false
     },
     "cvs_params": {
@@ -67,16 +67,20 @@
           "bfloat16"
         ]
       ],
-      "safety_factor": 2,
+      "safety_factor": 2.0,
       "adjacency_min_run": 2,
       "min_repeats": 2,
-      "min_bandwidth_floor": 0.5,
+      "min_bandwidth_floor": {
+        "small": 0.005,
+        "mid": 0.05,
+        "large": 0.5
+      },
       "metric": "busBw",
       "higher_is_better": true,
       "thresholds": {
-        "small": 0.2,
-        "mid": 0.15,
-        "large": 0.075
+        "small": 0.15,
+        "mid": 0.08,
+        "large": 0.06
       },
       "tier_boundaries": {
         "small_max_bytes": 1048576,
@@ -92,7 +96,16 @@
         "label": "cand",
         "rccl_tests_dir": "/it-share/rccl-ci/rccl-tests-2.30.4/bin",
         "ld_library_path": "/it-share/rccl-ci/builds/_fixed/lib:/it-share/ompi-5.0.8/lib:/it-share/rccl-ci/rocm_devel/lib:/it-share/rccl-ci/lib/libionic"
-      }
+      },
+      "max_thresholds": {
+        "small": 0.15,
+        "mid": 0.08,
+        "large": 0.06
+      },
+      "mad_k": 3.0,
+      "circuit_breaker_failures": 2,
+      "require_balanced_samples": true,
+      "max_inconclusive_frac": 0.1
     }
   }
 }

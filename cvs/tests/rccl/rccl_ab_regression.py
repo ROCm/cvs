@@ -318,7 +318,7 @@ def _sides_identical(ab_cfg):
     return None
 
 
-def _publish_derived_thresholds(derived, ab_cfg, out_dir):
+def _publish_derived_thresholds(derived, ab_cfg, out_dir, publish=True):
     """
     Write a calibration to the run's artifacts AND to the stable location that
     later detect runs read from.
@@ -329,10 +329,17 @@ def _publish_derived_thresholds(derived, ab_cfg, out_dir):
     never a half-written one -- these live on shared NFS with no other locking.
     Publishing is best-effort: a calibration run that cannot write the shared path
     should still finish and still leave its numbers in its own artifacts.
+
+    ``publish=False`` writes only the artifact copy. The caller uses this for a
+    control run that did not clear its own checks: the numbers are still worth
+    looking at, they are just not fit to widen the gate for every later run.
     """
     local = os.path.join(out_dir, 'ab_derived_thresholds.json')
     with open(local, 'w') as fp:
         json.dump(derived, fp, indent=2)
+
+    if not publish:
+        return
 
     if not ab_cfg.get('publish_derived_thresholds', True):
         log.info("publish_derived_thresholds=false; calibration left in %s only", local)
@@ -655,6 +662,7 @@ def test_ab_analyze(request, config_dict):
         untrustworthy.append("no group completed its full set of repeats")
 
     # Control mode: derive thresholds from the combined A+B (same build) data.
+    pending_publish = None
     if control_mode:
         control_runs = []
         for g in scored_runs.values():
@@ -669,7 +677,11 @@ def test_ab_analyze(request, config_dict):
             )
             log.info("Derived thresholds from control run: %s", derived["thresholds"])
             log.info("Measured noise: %s", derived["noise"])
-            _publish_derived_thresholds(derived, ab_cfg, out_dir)
+            # Publishing is deferred until after the per-group checks below.
+            # These numbers go to a shared path that every future detect run
+            # reads, so a control run that measured badly must not be allowed to
+            # widen the gate for everyone before anyone notices it measured badly.
+            pending_publish = derived
             # Apply derived thresholds for the (sanity) detection below.
             detector_overrides = {**detector_overrides, "thresholds": derived["thresholds"]}
             thresholds_source = "this control run"
@@ -700,6 +712,18 @@ def test_ab_analyze(request, config_dict):
             if summary.get("inconclusive_exceeded"):
                 reasons.append(f"{summary['inconclusive_frac'] * 100:.1f}% inconclusive")
             untrustworthy.append(f"{group_key}: {', '.join(reasons) or 'untrustworthy'}")
+
+    # Calibration is only published once the run that produced it has cleared
+    # every check. A control run that tripped the breaker, lost a group, or came
+    # back mostly inconclusive still writes its numbers to the run's own
+    # artifacts for inspection -- it just does not get to hand them to the gate.
+    if pending_publish is not None:
+        if untrustworthy:
+            log.warning("NOT publishing derived thresholds: this control run is untrustworthy (%s). "
+                        "They remain in this run's artifacts only.", "; ".join(untrustworthy[:5]))
+            _publish_derived_thresholds(pending_publish, ab_cfg, out_dir, publish=False)
+        else:
+            _publish_derived_thresholds(pending_publish, ab_cfg, out_dir)
 
     with open(os.path.join(out_dir, 'ab_regression_report.json'), 'w') as fp:
         json.dump({
