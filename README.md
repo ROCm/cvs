@@ -347,21 +347,49 @@ The `exec` command supports the following options:
 
 ```bash
 $ cvs --help
-usage: cvs [-h] [--version] {run,list,generate,monitor,exec} ...
+usage: cvs [-h] [--version]
+           {copy-config,generate,list,man,run,scp,monitor,exec} ...
 
 Cluster Validation Suite (CVS)
 
 positional arguments:
-  {run,list,generate,monitor,exec}
-    run                 Run a specific test (wrapper over pytest)
-    list                List available tests
+  {copy-config,generate,list,man,run,scp,monitor,exec}
+                        Available commands
+    copy-config         List or copy config files from CVS package. Lists
+                        configs if --output not specified.
     generate            Generate configuration files or templates
+    list                List available tests
+    man                 Explain the config parameters for a test
+    run                 Run a specific test (wrapper over pytest)
+    scp                 Copy files to all nodes in the cluster
     monitor             Run cluster monitoring scripts
     exec                Execute a command on all nodes in the cluster
 
 options:
   -h, --help            show this help message and exit
   --version             show program's version number and exit
+```
+
+Config parameters are documented by `cvs man` rather than by comments inside
+the sample config files:
+
+```bash
+$ cvs man rccl_perf nic_model
+
+cvs man rccl_perf nic_model
+================================================================================
+
+Sweeps RCCL collectives across the cluster and checks bandwidth and latency.
+
+  rccl.cvs_params
+  ------------------------------------------------------------------------------
+
+  • nic_model  [string, default 'ainic']
+      NIC family used to select model-specific validations.
+      example: 'thor', 'ainic', 'connectx'
+
+================================================================================
+Total: 1 parameter
 ```
 
 ```bash

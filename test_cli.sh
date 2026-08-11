@@ -1,6 +1,6 @@
 #!/bin/bash
 # Test script for CVS package
-# This script tests the cvs list, generate, copy-config, monitor, and exec commands
+# This script tests the cvs list, generate, copy-config, man, monitor, and exec commands
 
 # Use the CVS environment variable if set, otherwise default to 'cvs'
 CVS="${CVS:-cvs}"
@@ -84,6 +84,17 @@ done
 
 # Test: cvs copy-config --list
 run_test "cvs copy-config --list" "$CVS copy-config --list"
+
+# Test: cvs man (list tests with a config parameter reference)
+run_test "cvs man" "$CVS man"
+
+# Test: cvs man <test> for each documented test, in both output formats
+echo "Testing: cvs man <test> for each documented test"
+echo "===================="
+for test in $($CVS man | grep "•" | awk '{print $2}'); do
+    run_test "cvs man $test" "$CVS man $test"
+    run_test "cvs man $test --json" "$CVS man $test --json"
+done
 
 # Test: cvs monitor (list all monitors)
 run_test "cvs monitor" "$CVS monitor"

@@ -31,10 +31,9 @@ def resolve_runner_results_base(run_config: dict) -> str:
 
 
 def _cvs_baseline_data_dir() -> str:
-    import cvs
+    from cvs.lib.utils_lib import cvs_package_root
 
-    root = os.path.dirname(os.path.abspath(cvs.__file__))
-    return os.path.normpath(os.path.join(root, "baseline_data"))
+    return os.path.normpath(os.path.join(cvs_package_root(), "baseline_data"))
 
 
 def resolve_baseline_csv_folder(run_config: dict) -> Optional[str]:

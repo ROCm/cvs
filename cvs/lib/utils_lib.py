@@ -16,6 +16,18 @@ from cvs.lib import globals
 log = globals.log
 
 
+def cvs_package_root():
+    """Absolute path to the installed/editable cvs package directory.
+
+    This is the root cvs/input/, cvs/tests/, cvs/baseline_data/, etc. hang off
+    of -- not the repo root and not the process cwd -- so it resolves the same
+    way whether cvs was pip-installed or run from an editable checkout.
+    """
+    import cvs
+
+    return os.path.dirname(os.path.abspath(cvs.__file__))
+
+
 def fail_test(msg):
     """
     Record and report a test failure without immediately raising an exception.
@@ -299,7 +311,8 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
             error_msg += f"{'=' * 70}\n"
             error_msg += "ACTION REQUIRED:\n"
             error_msg += "Please edit your configuration file and replace all the '<changeme>' placeholders\n"
-            error_msg += "with an appropriate value before running the tests.\n"
+            error_msg += "with an appropriate value before running the tests.\n\n"
+            error_msg += "Run 'cvs man <test>' to see what each config parameter expects.\n"
             error_msg += f"{'=' * 70}\n"
 
             log.error("%s", error_msg)

@@ -25,7 +25,6 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
             "path": "/opt/amd/agfhc",
             "package_tar_ball": "/home/{user-id}/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
             "install_dir": "/home/{user-id}/INSTALL/agfhc/",
-            "_comments_log_dir": "log_dir has to be a NON NFS local file system",
             "log_dir": "/root/agfhc_logs",
             "hbm_test_duration": "00:01:30"
         },
@@ -35,7 +34,6 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
           "git_install_path": "/home/{user-id}/INSTALL/",
           "git_url": "https://github.com/ROCm/TransferBench.git",
           "git_tag": "v1.67.00",
-          "_comment_rocm_path": "ROCm installation path. Set the placeholder changeme to auto-detect from /opt/rocm or /opt/rocm/core-*",
           "rocm_path": "<changeme>",
           "results":
           {
@@ -60,11 +58,9 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
             "git_install_path": "/home/{user-id}/INSTALL/rvs",
             "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
             "nfs_install": "True",
-            "_comment_rocm_path": "ROCm installation path.Set to placeholder changeme auto-detect from /opt/rocm or /opt/rocm/core-*",
             "rocm_path": "<changeme>",            
             "config_path_mi300x": "/opt/rocm/share/rocm-validation-suite/conf/MI300X",
             "config_path_default": "/opt/rocm/share/rocm-validation-suite/conf",
-            "_comment_rvs_test_level": "RVS test level configuration (0-5). 0: Run individual tests (skip level test), 1-5: Run LEVEL config test if RVS >= 1.3.0, else run individual tests. Default is 4.",
             "rvs_test_level": 4,
             "tests": [
                 {
@@ -166,9 +162,6 @@ AGFHC
    * - ``install_dir``
      - ``/home/{user-id}/INSTALL/agfhc/``
      - Path where AGFHC runs
-   * - ``_comments_log_dir``
-     - ``/home/{user-id}/INSTALL/agfhc/``
-     - Path where AGFHC runs
    * - ``log_dir``
      - ``/root/agfhc_logs``
      - Log directory
@@ -266,9 +259,6 @@ ROCm Validation Suite (RVS)
    * - ``config_path_default``
      - ``/opt/rocm/share/`` |br| ``rocm-validation`` |br| ``-suite/conf``
      -  Default path for RVS
-   * - ``_comment_rvs_test_level``
-     - "RVS test level configuration (0-5). 0: Run individual tests (skip level test), 1-5: Run LEVEL config test if RVS >= 1.3.0, else run individual tests. Default is 4."
-     -  RVS test comments
    * - ``rvs_test_level``
      - 4
      - Test level

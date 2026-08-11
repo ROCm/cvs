@@ -90,9 +90,19 @@ preflight/
 
 ## Configuration Parameters
 
-### Complete Parameter Reference
+Every parameter -- with its type, real default, constraints and an example --
+is documented by `cvs man`:
 
-All parameters below are optional and have sensible defaults. The sample configuration file includes all available parameters with their default values and inline comments explaining their purpose.
+```bash
+cvs man preflight_checks              # every parameter
+cvs man preflight_checks gid_index    # a single parameter
+cvs man preflight_checks --json       # machine-readable
+```
+
+That reference is generated from `PreflightConfigFile` in
+`cvs/parsers/schemas.py`, so it cannot drift from the code the way a
+hand-written table does. All parameters are optional and have sensible
+defaults.
 
 ### Important Update: RDMA Connectivity Testing
 
@@ -106,93 +116,7 @@ All parameters below are optional and have sensible defaults. The sample configu
 
 **Updated parameter names**: Configuration parameters now use accurate names (`ibv_test_timeout`, `ibv_test_port_range`) that reflect the use of `ibv_rc_pingpong` for testing.
 
-### RDMA Batching (`connectivity_check.rdma`)
-
-- **`nodes_per_full_mesh_group`** (default: 128)
-  - Group size for parallel RDMA connectivity testing (2-512 nodes per group)
-  - Smaller groups use fewer resources per node but require more rounds
-  - Adjust based on cluster size and resource constraints
-
-### Debug Settings (`debug`)
-
-- **`scriptlet`** (default: false)
-  - Enable ScriptLet debug mode: preserve generated scripts/logs on remote nodes
-  - For RDMA connectivity, wraps each ibv_rc_pingpong server in strace
-  - Creates per-test traces under /tmp/preflight/strace_server_<iface>_<port>.log
-  - **Warning**: Can be expensive at scale due to strace overhead
-
-### Node Check Settings (`node_check`)
-
-- **`enabled`** (default: `true`)
-  - Enables GPU visibility, AMDGPU/KFD, kernel-health, and ROCm validation
-  - Set to `false` to skip node-local health checks
-
-- **`gpus_per_node`** (default: `4`)
-  - Exact number of AMD GPUs expected on every node
-  - GPU visibility is generation-independent and can run on older or newer AMD hardware
-
-- **`expected_rocm_version`** (default: "6.2.0")
-  - Expected ROCm version across all cluster nodes
-  - Must match the output of `amd-smi version` on all nodes
-  - Format: "major.minor.patch" (e.g., "6.2.0", "5.7.1")
-
-### Connectivity Check Settings (`connectivity_check`)
-
-#### RDMA Settings (`connectivity_check.rdma`)
-
-- **`connectivity_mode`** (default: "basic")
-  - **"basic"**: Test adjacent node pairs (fast, ~14% coverage for 8 nodes)
-  - **"full_mesh"**: Test all possible node pairs (comprehensive, 100% coverage)
-  - **"skip"**: Skip RDMA interface presence, GID validation, and pairwise connectivity
-
-- **`gid_index`** (default: "3")
-  - GID index to check on all configured RDMA interfaces
-  - Typically "3" for RoCE (RDMA over Converged Ethernet)
-  - Must be a valid GID index for your InfiniBand/RoCE setup
-
-- **`interfaces`** (default: `["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]`)
-  - List of RDMA device names that should be present on all cluster nodes
-  - Examples:
-    - `["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]` - Standard 4-interface setup
-    - `["mlx5_0", "mlx5_1"]` - Mellanox 2-interface setup
-
-- **`ibv_test_timeout`** (default: 90)
-  - Timeout in seconds for each ibv_rc_pingpong connectivity test
-  - Integer value (seconds), used directly as configured
-  - Uses `ibv_rc_pingpong` (direct InfiniBand verbs) for RCCL-compatible testing
-  - Increase for slower networks or high-latency connections
-
-- **`ibv_test_port_range`** (default: "10000-50000")
-  - Port range for ibv_rc_pingpong tests to avoid conflicts
-  - Format: "start-end" (e.g., "10000-50000", "10000-10999")
-  - Ensure ports are not blocked by firewalls
-
-- **`inter_full_mesh_group_pairs_per_wave`** (default: "auto")
-  - Max ordered group-pairs (Gi→Gj keys) per wave during inter-group RDMA testing
-  - "auto" calculates as max(1, num_groups - 1)
-  - Can be set to a specific integer to control wave size and reduce memory/CPU load
-
-- **`prune_failure_threshold`** (default: 0.5)
-  - Prune nodes whose fraction of peers with ≥1 FAIL intra test is ≥ this value
-  - Range: 0.0 to 1.0 (0.5 = 50% failure threshold)
-  - Helps remove problematic nodes before inter-group testing
-  - Lower values (0.2-0.3) are more aggressive at removing problematic nodes
-
-- **`port_retry_max`** (default: 3)
-  - Max retry attempts for pairs whose logs show PORT_LISTEN_FAILED
-  - Range: 0-10 retries with new TCP ports after each wave
-  - Helps handle port conflicts during large-scale testing
-
-- **`port_retry_gap`** (default: 1000)
-  - Port gap when remapping ports for PORT_LISTEN_FAILED retries
-  - Range: 1-65535
-  - Starts at (max port in batch) + this gap to reduce overlap with ephemeral ports
-
-- **`exclude_failed_interface_nodes`** (default: "true")
-  - Legacy hint for reporting: preflight now prunes interface/GID-failed nodes automatically
-  - Interface failures are excluded from mesh testing regardless of this flag
-
-##### Legacy RDMA paths — deprecated
+### Legacy RDMA paths — deprecated
 
 Existing RDMA users may temporarily retain `node_check.gid_index` and
 `node_check.rdma_interfaces`. CVS normalizes them to
@@ -201,15 +125,12 @@ and emits a deprecation warning. If a legacy and canonical value are both
 present, they must match. New configurations should use the canonical RDMA
 paths; the compatibility paths will be removed in a future release.
 
-#### IFoE Settings (`connectivity_check.ifoe`) — MI4XX scale-up fabric
+### IFoE settings that are no longer configurable
 
-IFoE validation is organized into fabric admission, strict L2 connectivity,
-and TransferBench data-path validation. CVS owns `afmctl` discovery, privilege
-handling, BDF and port discovery, strict coverage, traffic selection, timeout
-derivation, and result parsing.
-
-The earlier configuration shape exposed those implementation details directly.
-They now follow this fixed policy:
+IFoE validation (`connectivity_check.ifoe`) used to expose implementation
+details -- fabric discovery, privilege handling, port selection, timeouts --
+directly as config keys. Those keys are no longer read; CVS now derives all
+of this automatically and follows a fixed policy:
 
 | Previous setting | Current CVS behavior |
 |---|---|
@@ -222,51 +143,6 @@ They now follow this fixed policy:
 | `traffic_types` | Enforce IFoE request, IFoE response, and non-IFoE traffic |
 | `loss_threshold_pct` | Fail on any reported loss or incomplete coverage |
 | `per_ping_timeout` / `ssh_timeout` | Derive conservative timeouts from the requested workload |
-
-- **`fabric_checks`** (default: `false`)
-  - Adds AIFM/AFM/vPOD, station-mask, and IFoE port admission to node health
-  - Requires `node_check.enabled: true`
-
-##### L2 ping (`connectivity_check.ifoe.l2ping`)
-
-Runs `afmctl test ping` with strict full-mesh coverage on every admitted IFoE
-port and validates per-port and aggregate summary accounting.
-
-- **`enabled`** (default: `false`)
-  - Enables the mandatory L2 connectivity gate before TransferBench and RDMA
-- **`pings_per_port`** (default: `3`)
-  - Number of ping samples sent per selected IFoE port pair
-
-##### TransferBench (`connectivity_check.ifoe.transferbench`)
-
-- **`enabled`** (default: `false`)
-  - Enables the TransferBench IFoE data-path gate before RDMA
-- **`scope`** (default: `"node"`)
-  - `"node"` runs an independent smoketest on each node
-  - `"cluster"` runs one multi-rank test across the admitted cluster
-- **`profile`** (default: `"smoketest"`)
-  - Selects the CVS-supported test profile; `"smoketest"` is currently supported
-- **`message_sizes`** (default: `["1K", "16M"]`)
-  - Message sizes exercised by the selected profile
-- **`iterations`** (default: `2`)
-  - Validated iterations per test and message size
-- **`warmup_iterations`** (default: `0`)
-  - Warmup iterations performed before validation
-
-### Reporting Settings (`reporting`)
-
-- **`generate_html_report`** (default: `true`)
-  - Whether to generate detailed HTML report
-  - Set to `false` to disable HTML report generation
-
-- **`artifacts_root_dir`** (default: `"/tmp/{user-id}/preflight"`)
-  - Root directory where preflight artifacts are saved
-  - Includes HTML reports and RDMA full_mesh workspace logs under `rdma_connectivity_workspace/`
-  - Must be writable by the user running the tests
-
-- **`generate_rdma_pairs_csv`** (default: `true`)
-  - Whether to generate CSV file with failed RDMA pairs alongside HTML report
-  - Set to `false` to disable CSV generation
 
 ## Usage Examples
 

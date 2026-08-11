@@ -959,7 +959,14 @@ class PreflightNodeCheckConfig(BaseModel):
 
     enabled: bool = Field(default=True, description="Enable generic GPU node health and ROCm validation")
     gpus_per_node: int = Field(default=4, ge=1, description="Expected AMD GPU count on each node")
-    expected_rocm_version: str = Field(default="6.2.0", description="Expected ROCm version across all cluster nodes")
+    expected_rocm_version: str = Field(
+        default="6.2.0",
+        description=(
+            "Expected ROCm version across all cluster nodes. Must match the output of 'amd-smi version' on "
+            "every node. Format: 'major.minor.patch'."
+        ),
+        examples=["6.2.0", "5.7.1"],
+    )
 
 
 class PreflightRdmaConfig(BaseModel):
@@ -967,12 +974,30 @@ class PreflightRdmaConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    connectivity_mode: str = Field(default="basic", description="RDMA connectivity testing: basic, full_mesh, or skip")
-    gid_index: str = Field(default="3", description="GID index to check on all RDMA interfaces (typically 3 for RoCE)")
+    connectivity_mode: str = Field(
+        default="basic",
+        description=(
+            "RDMA connectivity testing mode. 'basic' tests adjacent node pairs, which is fast but covers only "
+            "about 14 percent of pairs on an 8-node cluster; 'full_mesh' tests every possible node pair for "
+            "complete coverage; 'skip' disables RDMA connectivity testing entirely."
+        ),
+        examples=["basic", "full_mesh", "skip"],
+    )
+    gid_index: str = Field(
+        default="3",
+        description=(
+            "GID index to check on all RDMA interfaces. Typically '3' for RoCE. Must be a valid GID index for "
+            "your InfiniBand or RoCE setup."
+        ),
+    )
     interfaces: List[str] = Field(
         default_factory=lambda: ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
         min_length=1,
-        description="RDMA device names checked for presence, GID consistency, and connectivity",
+        description=(
+            "RDMA device names that must be present on every node, checked for presence, GID consistency and "
+            "connectivity."
+        ),
+        examples=[["rocep28s0", "rocep62s0"], ["mlx5_0", "mlx5_1"], ["ib0", "ib1"]],
     )
     nodes_per_full_mesh_group: int = Field(
         default=128,
@@ -992,13 +1017,26 @@ class PreflightRdmaConfig(BaseModel):
     ibv_test_timeout: int = Field(
         default=90,
         ge=1,
-        description="Timeout in seconds for RDMA connectivity tests using ibv_rc_pingpong",
+        description=(
+            "Timeout in seconds for each connectivity test. ibv_rc_pingpong is used rather than rping so the "
+            "test exercises the same direct IB verbs path as RCCL. Increase for slow or high-latency networks."
+        ),
     )
     ibv_test_port_range: str = Field(
-        default="10000-50000", description="Port range for RDMA connectivity tests (format: start-end)"
+        default="10000-50000",
+        description=(
+            "Port range for ibv_rc_pingpong tests, as 'start-end'. Choose a range that is not blocked by "
+            "firewalls and does not collide with other services."
+        ),
+        examples=["10000-50000", "10000-10999"],
     )
     inter_full_mesh_group_pairs_per_wave: str = Field(
-        default="auto", description="Max ordered group-pairs per wave during inter-group testing ('auto' or integer)"
+        default="auto",
+        description=(
+            "Maximum ordered full-mesh group pairs tested per wave during inter-group RDMA testing. 'auto' "
+            "resolves to max(1, num_groups - 1). Set an integer to shrink waves and reduce memory and CPU load."
+        ),
+        examples=["auto", "4"],
     )
     inter_group_wave_pairs: str = Field(
         default="auto",
@@ -1112,7 +1150,12 @@ class PreflightTransferBenchConfig(BaseModel):
 
 
 class PreflightIfoeConfig(BaseModel):
-    """MI4XX IFoE admission and data-path checks."""
+    """MI4XX IFoE admission and data-path checks.
+
+    CVS owns afmctl discovery, privilege handling, BDF and port discovery,
+    coverage, traffic selection and timeout derivation, so none of those are
+    exposed as config parameters.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -1144,7 +1187,10 @@ class PreflightReportingConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    generate_html_report: bool = Field(default=True, description="Whether to generate HTML report")
+    generate_html_report: bool = Field(
+        default=True,
+        description="Generate the detailed HTML report. Set to false to skip HTML report generation.",
+    )
     artifacts_root_dir: str = Field(
         default="/tmp/preflight",
         description=(
@@ -1154,7 +1200,10 @@ class PreflightReportingConfig(BaseModel):
     )
     generate_rdma_pairs_csv: bool = Field(
         default=True,
-        description="If true, write preflight_report_*_rdma_pairs.csv beside the HTML report (failed pairs only)",
+        description=(
+            "Write preflight_report_*_rdma_pairs.csv beside the HTML report, listing failed pairs only. Useful "
+            "for analysing connectivity patterns and failures. Set to false to skip CSV generation."
+        ),
     )
 
 
