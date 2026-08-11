@@ -11,9 +11,9 @@
 #   SBATCH_SCRIPT   sbatch entry point (default: cvs/ci/rccl_perf_gate/sbatch/rccl_ab.sbatch)
 #   POLL_INTERVAL   seconds between status polls (default: 30)
 #   MAX_WAIT_SEC    hard timeout on RUN time, measured from the job's StartTime
-#                   (default: 28800 = 8h). Queue time is NOT charged against it.
+#                   (default: 15000 = 4h10m). Queue time is NOT charged here.
 #   MAX_QUEUE_SEC   hard timeout on QUEUE time, from submission until the job
-#                   starts (default: 86400 = 24h). 0 disables.
+#                   starts (default: 14400 = 4h). 0 disables.
 #   NODELIST        override pinned nodes (passed to sbatch --nodelist)
 #
 # Exit codes:
@@ -27,8 +27,21 @@ readonly RCCL_CI_ROOT="${RCCL_CI_ROOT:-/it-share/rccl-ci}"
 readonly CONFIG_JSON="${1:-${CONFIG_JSON:-${RCCL_CI_ROOT}/configs/ci_detect.json}}"
 readonly SBATCH_SCRIPT="${SBATCH_SCRIPT:-${RCCL_CI_ROOT}/cvs/ci/rccl_perf_gate/sbatch/rccl_ab.sbatch}"
 readonly POLL_INTERVAL="${POLL_INTERVAL:-30}"
-readonly MAX_WAIT_SEC="${MAX_WAIT_SEC:-28800}"
-readonly MAX_QUEUE_SEC="${MAX_QUEUE_SEC:-86400}"
+# These have to nest inside each other, innermost first, or the outer layer
+# fires and the inner one never gets to say why:
+#
+#   rccl_ab.sbatch --time    4h00m   Slurm kills; job state becomes TIMEOUT
+#   MAX_WAIT_SEC             4h10m   backstop if slurmctld never enforces it
+#   MAX_QUEUE_SEC            4h00m   never started -> report a queue starvation
+#   detect timeout-minutes   8h30m   > 4h00 queue + 4h10 run, so it fires last
+#
+# The previous numbers were 8h / 8h / 24h / 9h, which is not a nesting at all:
+# the 24h queue budget sat outside the 9h GitHub timeout, so a job stuck in the
+# queue was killed by Actions with a bare "exceeded the maximum execution time"
+# and this script's own diagnostic -- the one that says the job never started
+# and cancels it -- was unreachable code. Keep this table true if you retune.
+readonly MAX_WAIT_SEC="${MAX_WAIT_SEC:-15000}"
+readonly MAX_QUEUE_SEC="${MAX_QUEUE_SEC:-14400}"
 # squeue talks to slurmctld over the network. A single empty reply is not proof
 # the job is gone -- it is equally consistent with a controller restart, an RPC
 # timeout, or a momentarily unreachable host. Treating one empty reply as

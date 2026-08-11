@@ -28,7 +28,19 @@
 # Pin to a fixed 4-node set so calibration and detection share identical hardware
 # (keeps derived thresholds valid across runs). Override with --nodelist at submit.
 #SBATCH --nodelist=mia1-p01-g[22,26,28,32]
-#SBATCH --time=08:00:00
+# 4h, not the 8h this used to ask for. A healthy full-matrix run is ~25min
+# (jobs 16092 and 16108 both took 00:25:2x). The pathological path is bounded
+# too: 8 active (collective,dtype) groups, a 360s per-collective timeout and a
+# circuit breaker that abandons a group after 2 consecutive failures caps the
+# all-timeouts case at ~3.2h.
+#
+# 8h was not a safety margin, it was a hostage window. This job holds four
+# nodes --exclusive, and the GitHub runner polling it holds one of the two
+# runner slots the whole time, so a wedged run took the pinned pool and the
+# pipeline down with it for a working day. 4h is ~9x the healthy runtime and
+# still above the breaker-bounded worst case; anything slower than that is a
+# fault to be reported, not waited out.
+#SBATCH --time=04:00:00
 #SBATCH --chdir=/it-share/rccl-ci
 
 #SBATCH --output=/it-share/rccl-ci/logs/sp_tests-%j.out
