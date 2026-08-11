@@ -181,7 +181,7 @@ def _subtests_filter_summary_html(total: int, failed: int, passed: int) -> str:
     passed_cls = 'passed' if passed else 'filter'
     return (
         '<span class="filter"> | </span>'
-        f'<span class="filter">{total} subtests,</span>'
+        f'<span class="filter cvs-subtests-count">{total} subtests,</span>'
         f'<span class="{failed_cls}"> {failed} Failed,</span>'
         f'<span class="{passed_cls}"> {passed} Passed</span>'
     )
@@ -195,13 +195,13 @@ def _strip_legacy_subtest_summary(content: str) -> str:
     )
     content = re.sub(
         r'<span class="filter"> \| </span>\s*'
-        r'<span class="filter">\d+ subtests,</span>.*?passed</span>',
+        r'<span class="filter cvs-subtests-count">\d+ subtests,</span>.*?Passed</span>',
         '',
         content,
     )
     content = re.sub(
         r'<span class="filter"> \| </span>\s*'
-        r'<span class="filter">\d+ metrics,</span>.*?passed</span>',
+        r'<span class="filter">\d+ subtests,</span>.*?Passed</span>',
         '',
         content,
     )

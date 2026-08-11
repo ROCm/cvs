@@ -90,6 +90,9 @@ REPORT_STYLE_OVERRIDES = """<style>
     tr.cvs-benchmark-metric-detail-row.failed .col-result {
         color: red !important;
     }
+    .filters .cvs-subtests-count {
+        color: #1565c0;
+    }
     /* Separate the per-node links in the Links column with a "|" divider. */
     .col-links a + a::before { content: " | "; color: #888; }
 </style>"""
