@@ -32,13 +32,13 @@
             "ring_degree": 1,
             "use_torch_compile": true,
             "torchrun_nproc": 8,
-            "_expected_results_comment": "mi350 is measured (avg 0.92s/pipe over 25 repetitions, consistent across two separate MI350 runs on Ruby with use_torch_compile: true, ~2x margin applied); auto/mi300x/mi355 remain unvalidated placeholders. Tune them for your target cluster, software stack, and benchmark conditions before using them as pass/fail criteria.",
+            "_expected_results_comment": "mi300x is measured (avg 1.39s/pipe over 25 repetitions on MI300X on OCI with use_torch_compile: true, ~2x margin applied); mi350 is measured (avg 0.92s/pipe over 25 repetitions, consistent across two separate MI350 runs on Ruby with use_torch_compile: true, ~2x margin applied); auto/mi355 remain unvalidated placeholders. Tune them for your target cluster, software stack, and benchmark conditions before using them as pass/fail criteria.",
             "expected_results": {
                 "auto": {
                     "max_avg_pipe_time_s": 10.0
                 },
                 "mi300x": {
-                    "max_avg_pipe_time_s": 8.0
+                    "max_avg_pipe_time_s": 3.0
                 },
                 "mi350": {
                     "max_avg_pipe_time_s": 2.0
