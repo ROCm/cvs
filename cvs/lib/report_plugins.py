@@ -65,12 +65,20 @@ REPORT_STYLE_OVERRIDES = """<style>
         color: #999;
     }
     tr.cvs-benchmark-metric-detail-row .col-result {
+        display: flex !important;
+        align-items: center;
+        gap: 0.45em;
         width: 130px;
         max-width: 130px;
-        padding-left: calc(0.35em + 1em + 0.45em);
+        padding-left: 0.35em;
         box-sizing: border-box;
         font-weight: normal;
         white-space: nowrap;
+    }
+    tr.cvs-benchmark-metric-detail-row .col-result::before {
+        content: "";
+        flex: 0 0 1em;
+        width: 1em;
     }
     tr.cvs-benchmark-metric-detail-row .col-testId {
         font-weight: normal;
