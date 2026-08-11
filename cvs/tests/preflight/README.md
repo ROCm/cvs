@@ -77,7 +77,7 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
         "connectivity_mode": "skip"
       },
       "ifoe": {
-        "fabric_checks": true,
+        "fabric_checks": false,
         "l2ping": {
           "enabled": true,
           "pings_per_port": 3
@@ -105,7 +105,7 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 
 - **`node_check.enabled`**: Run GPU node-health and ROCm validation
 - **`node_check.gpus_per_node`**: Exact GPU count expected on every node
-- **`connectivity_check.ifoe.fabric_checks`**: Add MI4XX AIFM/AFM/vPOD and IFoE station/port checks
+- **`connectivity_check.ifoe.fabric_checks`**: Opt in to MI4XX AIFM/AFM/vPOD and IFoE station/port checks; disabled by default
 - **`connectivity_check.rdma.connectivity_mode`**: `"basic"`, `"full_mesh"`, or `"skip"`
 - **`connectivity_check.ifoe.l2ping.enabled`**: Run the strict IFoE L2 connectivity gate
 - **`connectivity_check.ifoe.l2ping.pings_per_port`**: Samples per discovered UP port pair

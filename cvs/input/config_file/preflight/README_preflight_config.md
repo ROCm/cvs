@@ -36,7 +36,7 @@ The preflight configuration file follows this structure:
         "inter_full_mesh_group_pairs_per_wave": "auto"
       },
       "ifoe": {
-        "fabric_checks": true,
+        "fabric_checks": false,
         "l2ping": {
           "enabled": true,
           "pings_per_port": 3
@@ -224,7 +224,8 @@ They now follow this fixed policy:
 | `per_ping_timeout` / `ssh_timeout` | Derive conservative timeouts from the requested workload |
 
 - **`fabric_checks`** (default: `false`)
-  - Adds AIFM/AFM/vPOD, station-mask, and IFoE port admission to node health
+  - Enables MI4XX-only AIFM/AFM/vPOD, station-mask, and IFoE port admission checks
+  - Set to `true` only on MI4XX systems; it remains disabled for MI3XX systems
   - Requires `node_check.enabled: true`
 
 ##### L2 ping (`connectivity_check.ifoe.l2ping`)

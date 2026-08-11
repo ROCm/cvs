@@ -74,8 +74,8 @@
         "_comment_loss_threshold_pct": "Maximum tolerated packet loss percentage per traffic type. Defaults to 0.0 (any failure marks the node as FAIL).",
         "_comment_ssh_timeout": "Overall SSH timeout (seconds) for each afmctl invocation. Increase for large port counts or high pings_per_port values.",
 
-        "fabric_checks": true,
-        "_comment_fabric_checks": "Add AIFM/AFM/vPOD, station-mask, and IFoE port admission to node health.",
+        "fabric_checks": false,
+        "_comment_fabric_checks": "Enable MI4XX-only AIFM/AFM/vPOD, station-mask, and IFoE port admission checks.",
 
         "_comment_policy": "CVS owns afmctl discovery, privilege handling, BDF and port discovery, strict coverage, traffic selection, and timeout derivation.",
 
