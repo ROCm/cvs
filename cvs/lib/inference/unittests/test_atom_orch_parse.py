@@ -10,6 +10,7 @@ import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import patch
 
 from cvs.lib.inference.atom.atom_orch import AtomJob
@@ -554,7 +555,7 @@ class TestATOMAtomBuildServerCmd(unittest.TestCase):
 
 
 class _RecordingOrch:
-    hosts = ["10.0.0.1", "10.0.0.2"]
+    hosts: ClassVar[list[str]] = ["10.0.0.1", "10.0.0.2"]
 
     def __init__(self, responder=None, hosts=None):
         self.calls = []
