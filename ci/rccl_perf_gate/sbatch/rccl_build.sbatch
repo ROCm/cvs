@@ -22,10 +22,19 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --exclusive
-# Build is single-node CPU compile only (no RDMA/MPI) -- pin to one of the
-# reserved nodes. Override with --nodelist at submit if g28 is unavailable
-# (e.g. mia1-p01-g32).
-#SBATCH --nodelist=mia1-p01-g28
+# Build is a single-node CPU compile (no RDMA/MPI), so it does not care which
+# node it lands on -- and it must NOT land on one of the detect nodes.
+#
+# This used to pin --nodelist=mia1-p01-g28, which is inside the 4-node rccl_ci
+# detect reservation. The build is submitted with `sbatch --wait` and takes the
+# node --exclusive, so for up to an hour it held a quarter of the pool that the
+# detect job then needs all of. Build and detect were serialised against each
+# other on the same four nodes for no reason: a self-inflicted contribution to
+# the multi-hour end-to-end times.
+#
+# No --nodelist here. The caller picks the pool via --reservation (the workflow
+# uses SLURM_BUILD_RESERVATION=rccl_dev), and Slurm picks a free node from it.
+# Pass --nodelist at submit only if you need a specific machine.
 #SBATCH --time=01:00:00
 #SBATCH --chdir=/it-share/rccl-ci
 
