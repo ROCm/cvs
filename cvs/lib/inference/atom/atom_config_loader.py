@@ -20,6 +20,7 @@ from typing_extensions import Literal
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
 from cvs.lib.inference.utils.functional_config import FunctionalConfig
 from cvs.lib.inference.utils.long_context_accuracy_config import LongContextAccuracyConfig
+from cvs.lib.inference.utils.platform_config import PlatformConfig
 
 ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
 ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
@@ -157,6 +158,7 @@ class AtomVariantConfig(BaseVariantConfig):
     mtp_quality: MtpQualityConfig = Field(default_factory=MtpQualityConfig)
     functional: FunctionalConfig = Field(default_factory=FunctionalConfig)
     long_context_accuracy: LongContextAccuracyConfig = Field(default_factory=LongContextAccuracyConfig)
+    platform: PlatformConfig = Field(default_factory=PlatformConfig)
 
     def cell_key(self, isl, osl, concurrency):
         p = self.params

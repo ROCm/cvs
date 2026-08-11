@@ -19,6 +19,7 @@ from cvs.lib.inference.utils.inference_suite_lifecycle import (
     test_setup_sshd,  # noqa: F401
     test_teardown,  # noqa: F401
 )
+from cvs.lib.inference.atom.atom_dmesg import verify_dmesg_window
 from cvs.lib.inference.atom.atom_orch import AtomJob
 from cvs.lib.inference.atom.atom_niah_job import run_niah_cell
 from cvs.lib.inference.atom.atom_mtp_quality import (
@@ -419,3 +420,17 @@ def test_atom_mtp_quality(orch, variant_config, lifecycle, request):
         specs = {k: v for k, v in mtp_thresholds.items() if k in actuals and actuals[k] is not None}
         if specs:
             evaluate_all(actuals, specs)
+
+
+def test_verify_dmesg(orch, variant_config, lifecycle, request):
+    """INF-6: time-bounded kernel log scan when ``platform.dmesg_scan`` is enabled."""
+    if not variant_config.platform.dmesg_scan:
+        pytest.skip("platform.dmesg_scan not enabled for this variant")
+    start_time = getattr(lifecycle, "dmesg_start", None)
+    if not start_time:
+        pytest.skip("dmesg start timestamps were not captured")
+
+    t = time.monotonic()
+    end_time = orch.exec('date +"%a %b %e %H:%M:%S"') or {}
+    verify_dmesg_window(orch, start_time, end_time)
+    lifecycle.record(request.node.nodeid, "dmesg_scan", time.monotonic() - t)
