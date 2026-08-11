@@ -14,7 +14,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import cvs.runners.aorta as aorta_mod
 from cvs.runners.aorta import (
@@ -140,6 +140,20 @@ class TestPickMasterPort(unittest.TestCase):
         with patch.object(aorta_mod.subprocess, "run", return_value=fake_result):
             with self.assertRaises(RuntimeError):
                 r._pick_master_port()
+
+    def test_port_pick_remote_command_is_a_single_quoted_argument(self):
+        # ssh joins every trailing argv element after the destination into one
+        # remote-shell string; passing "python3", "-c", snippet as three
+        # separate elements lets the remote shell reinterpret the snippet's
+        # semicolons as its own command separators.
+        r = _make_runner(nodes=["10.0.0.1"], aorta_path="/tmp/aorta")
+        fake_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="29502\n", stderr="")
+        with patch.object(aorta_mod.subprocess, "run", return_value=fake_result) as mock_run:
+            r._pick_master_port()
+        cmd = mock_run.call_args[0][0]
+        dest_index = cmd.index("testuser@10.0.0.1")
+        self.assertEqual(len(cmd) - dest_index - 1, 1)
+        self.assertTrue(cmd[-1].startswith("python3 -c "))
 
 
 class TestResolveMasterAddr(unittest.TestCase):
@@ -272,7 +286,7 @@ class TestSetupTimeout(unittest.TestCase):
             r = _make_runner(nodes=["10.0.0.1", "10.0.0.2"], aorta_path=tmp)
             r.config.timeout_seconds = 0.05
 
-            def fake_setup_single_node(node):
+            def fake_setup_single_node(node, cancel_event):
                 if node == "10.0.0.2":
                     time.sleep(0.3)
                 return (node, True, None)
@@ -284,6 +298,45 @@ class TestSetupTimeout(unittest.TestCase):
 
             self.assertFalse(ok)
             self.assertLess(elapsed, 0.25)
+
+
+class TestSetupSingleNodeCancelledLate(unittest.TestCase):
+    def test_container_launched_after_cancel_is_torn_down_not_registered(self):
+        r = _make_runner(nodes=["10.0.0.1"], aorta_path="/tmp/aorta")
+        fake_container = Mock()
+        cancel_event = threading.Event()
+        cancel_event.set()
+
+        with (
+            patch.object(r, "_connect_docker", return_value=Mock()),
+            patch.object(r, "_cleanup_existing_containers"),
+            patch.object(r, "_launch_container", return_value=fake_container),
+        ):
+            node, success, error = r._setup_single_node("10.0.0.1", cancel_event)
+
+        self.assertFalse(success)
+        self.assertIn("timed out", error.lower())
+        self.assertNotIn("10.0.0.1", r._containers)
+        fake_container.stop.assert_called_once()
+        fake_container.remove.assert_called_once()
+
+    def test_container_launched_before_cancel_is_registered_normally(self):
+        r = _make_runner(nodes=["10.0.0.1"], aorta_path="/tmp/aorta")
+        r.config.skip_rccl_build = True
+        fake_container = Mock()
+        cancel_event = threading.Event()
+
+        with (
+            patch.object(r, "_connect_docker", return_value=Mock()),
+            patch.object(r, "_cleanup_existing_containers"),
+            patch.object(r, "_launch_container", return_value=fake_container),
+        ):
+            node, success, error = r._setup_single_node("10.0.0.1", cancel_event)
+
+        self.assertTrue(success)
+        self.assertIsNone(error)
+        self.assertIs(r._containers["10.0.0.1"], fake_container)
+        fake_container.stop.assert_not_called()
 
 
 class TestBuildTorchrunCommand(unittest.TestCase):

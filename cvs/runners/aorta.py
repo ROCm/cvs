@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 from typing import Any, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -668,12 +668,18 @@ class AortaRunner(BaseRunner):
 
         return results, errors, timed_out
 
-    def _setup_single_node(self, node: str) -> Tuple[str, bool, Optional[str]]:
+    def _setup_single_node(self, node: str, cancel_event: Event) -> Tuple[str, bool, Optional[str]]:
         """
         Set up a single node (thread-safe helper for parallel deployment).
 
         Args:
             node: Hostname or IP of the node
+            cancel_event: set by ``setup()`` once its overall deadline has
+                passed. A node that finishes launching its container after
+                that point tears the container down itself instead of
+                registering it into ``self._containers`` — ``teardown()``'s
+                single unsynchronized pass over that dict already ran and
+                won't see it otherwise, orphaning the container.
 
         Returns:
             Tuple of (node, success, error_message)
@@ -694,6 +700,15 @@ class AortaRunner(BaseRunner):
 
             # Launch container
             container = self._launch_container(client, node)
+
+            if cancel_event.is_set():
+                log.warning(f"Setup on {node} finished after the deadline; cleaning up its container")
+                try:
+                    container.stop(timeout=30)
+                    container.remove(force=True)
+                except Exception as e:
+                    log.warning(f"Error removing late container on {node}: {e}")
+                return (node, False, f"Setup timed out after {self.config.timeout_seconds}s")
 
             # Thread-safe update of shared state
             with self._lock:
@@ -768,8 +783,12 @@ class AortaRunner(BaseRunner):
         # Bounded by timeout_seconds so a stuck image pull or RCCL build cannot
         # hang setup() forever; a still-stuck node's thread is abandoned (daemon)
         # rather than joined, so it can't hang CVS itself either.
-        tasks = {node: partial(self._setup_single_node, node) for node in nodes}
+        cancel_event = Event()
+        tasks = {node: partial(self._setup_single_node, node, cancel_event) for node in nodes}
         results, errors, timed_out = self._run_bounded_parallel(tasks, self.config.timeout_seconds)
+        # Deadline has now passed for anyone still running; tell them to clean
+        # up their own container instead of registering it after the fact.
+        cancel_event.set()
 
         failed_nodes = []
         for node in nodes:
@@ -831,14 +850,8 @@ class AortaRunner(BaseRunner):
         ssh_opts = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
         if self.config.pkey:
             ssh_opts.extend(["-i", self.config.pkey])
-        cmd = [
-            "ssh",
-            *ssh_opts,
-            f"{self.config.username}@{node}",
-            "python3",
-            "-c",
-            snippet,
-        ]
+        remote_cmd = f"python3 -c {shlex.quote(snippet)}"
+        cmd = ["ssh", *ssh_opts, f"{self.config.username}@{node}", remote_cmd]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         if result.returncode != 0 or not result.stdout.strip():
             raise RuntimeError(f"Failed to pick a free port on {node}: {result.stderr.strip()}")
