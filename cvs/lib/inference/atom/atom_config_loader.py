@@ -33,9 +33,7 @@ from cvs.lib import globals
 log = globals.log
 
 # Written by test_discover_topology / resolve_multinode_fabric — not user env.
-_ORCH_MANAGED_NETWORK_ENV = frozenset(
-    {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME", "NCCL_IB_HCA"}
-)
+_ORCH_MANAGED_NETWORK_ENV = frozenset({"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME", "NCCL_IB_HCA"})
 _IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.I)
 
 
@@ -217,8 +215,7 @@ class AtomVariantConfig(BaseVariantConfig):
             )
         if pp > 1 and nn == 1:
             raise ValueError(
-                f"pipeline_parallel_size={pp} > 1 requires nnodes > 1 (got nnodes={nn}) "
-                f"for params.driver={driver!r}"
+                f"pipeline_parallel_size={pp} > 1 requires nnodes > 1 (got nnodes={nn}) for params.driver={driver!r}"
             )
         return self
 
