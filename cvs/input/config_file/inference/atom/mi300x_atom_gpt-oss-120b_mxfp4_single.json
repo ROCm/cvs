@@ -1,0 +1,69 @@
+{
+  "_comment": "W2 GPT-OSS 120B MXFP4 on 4x MI300X (8K ISL / 1K OSL). Replaces interim mi300x_atom_gpt-oss-120b_bf16 uplift.",
+  "schema_version": 1,
+  "framework": "atom",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi300x_atom_gpt-oss-120b_mxfp4_single_threshold.json",
+  "run_card": {
+    "atom_image_pin": "rocm/atom-dev:latest",
+    "notes": "W2 P1 perf (Phase C); calibrate thresholds after lab confirm"
+  },
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/home/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "openai/gpt-oss-120b",
+    "remote": 0,
+    "precision": "mxfp4"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "atom_mi300x",
+    "image": "rocm/atom-dev:latest",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
+        ],
+        "devices": ["/dev/dri", "/dev/kfd"]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "atom_args": ["-tp", "4", "--trust-remote-code"],
+      "env": {"ATOM_DISABLE_MMAP": "true"}
+    }
+  },
+  "params": {
+    "driver": "atom",
+    "port_no": "8000",
+    "tensor_parallelism": "4",
+    "random_range_ratio": "0.8",
+    "num_prompts": "1000",
+    "max_model_length": "12288",
+    "metric_percentiles": "95,99",
+    "reuse_server_across_sweep": "true",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60"
+  },
+  "sweep": {
+    "sequence_combinations": [
+      {"name": "w2_8k_1k", "isl": "8192", "osl": "1024"}
+    ],
+    "runs": [
+      {"combo": "w2_8k_1k", "concurrency": 32},
+      {"combo": "w2_8k_1k", "concurrency": 64}
+    ]
+  }
+}

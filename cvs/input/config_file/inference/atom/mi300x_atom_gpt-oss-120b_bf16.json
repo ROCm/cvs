@@ -1,5 +1,5 @@
 {
-  "_comment": "Single-node ATOM (schema_version 1). Set container.image and container.name. ISL+OSL must fit params.max_model_length. Volume bind home only; ContainerOrchestrator adds /home/<user>:/workspace.",
+  "_comment": "INTERIM vLLM uplift only — not final W2. Use mi300x_atom_gpt-oss-120b_mxfp4_single for W2 ATOM (MXFP4 TP4, 8K/1K).",
   "schema_version": 1,
   "framework": "atom",
   "gpu_arch": "mi300x",
