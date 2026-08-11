@@ -73,11 +73,8 @@ REPORT_STYLE_OVERRIDES = """<style>
         white-space: nowrap;
     }
     tr.cvs-benchmark-metric-detail-row .col-testId {
-        color: #999;
         font-weight: normal;
     }
-    tr.cvs-benchmark-metric-pass .col-result span { color: green; }
-    tr.cvs-benchmark-metric-fail .col-result span { color: red; }
     /* Separate the per-node links in the Links column with a "|" divider. */
     .col-links a + a::before { content: " | "; color: #888; }
 </style>"""

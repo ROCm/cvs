@@ -182,8 +182,8 @@ def _subtests_filter_summary_html(total: int, failed: int, passed: int) -> str:
     return (
         '<span class="filter"> | </span>'
         f'<span class="filter">{total} subtests,</span>'
-        f'<span class="{failed_cls}"> {failed} failed,</span>'
-        f'<span class="{passed_cls}"> {passed} passed</span>'
+        f'<span class="{failed_cls}"> {failed} Failed,</span>'
+        f'<span class="{passed_cls}"> {passed} Passed</span>'
     )
 
 

@@ -8,6 +8,17 @@ from typing import Any, Mapping, Sequence
 _BENCHMARK_METRICS_WRAP = 'cvs-benchmark-metrics-wrap'
 
 
+def _metric_display_label(metric_key: str) -> str:
+    from cvs.lib.inference.sglang.sglang_parsing import SGLANG_RESULTS_COLUMNS
+
+    for label, key in SGLANG_RESULTS_COLUMNS:
+        if key == metric_key:
+            return label
+    if not metric_key:
+        return ''
+    return metric_key[0].upper() + metric_key[1:]
+
+
 def dedupe_metric_rows(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     """Keep one pass/fail row per (node, metric) pair."""
     seen: set[tuple[str, str]] = set()
@@ -27,15 +38,13 @@ def render_benchmark_metrics_html(rows: Sequence[Mapping[str, Any]]) -> str:
     for row in dedupe_metric_rows(rows):
         status = str(row.get('status') or '').lower()
         passed = status == 'pass'
-        label = html.escape(str(row.get('metric') or ''))
-        status_text = 'PASS' if passed else 'FAIL'
-        row_cls = 'cvs-benchmark-metric-pass' if passed else 'cvs-benchmark-metric-fail'
-        status_cls = 'passed' if passed else 'failed'
+        label = html.escape(_metric_display_label(str(row.get('metric') or '')))
+        outcome = 'Passed' if passed else 'Failed'
+        outcome_cls = 'passed' if passed else 'failed'
         body_rows.append(
-            f"<tr class='cvs-benchmark-metric-row {row_cls}'>"
-            f"<td class='col-result cvs-benchmark-metric-result'>"
-            f"<span class='{status_cls}'>{status_text}</span></td>"
-            f"<td class='col-testId cvs-benchmark-metric-name'>{label}</td>"
+            f"<tr class='cvs-benchmark-metric-row cvs-benchmark-metric-{outcome_cls} {outcome_cls}'>"
+            f"<td class='col-result'>{outcome}</td>"
+            f"<td class='col-testId'>{label}</td>"
             f"<td class='col-duration'></td>"
             f"<td class='col-links'></td>"
             f'</tr>'
