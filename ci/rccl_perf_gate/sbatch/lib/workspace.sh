@@ -13,10 +13,13 @@
 # reference and the verdict is meaningless but looks legitimate. This module
 # gives every run its own workspace so that cannot happen.
 #
-# OPT-IN: everything here is gated on RCCL_CI_WORKSPACE=1. Unset or 0 and every
-# function is a no-op that returns success, so this file is safe to source
-# unconditionally from the existing scripts and legacy shared-path behaviour is
-# unchanged.
+# DEFAULT-ON: everything here is gated on RCCL_CI_WORKSPACE, which now defaults
+# to 1. Set it to 0 for the legacy shared-path behaviour -- every function then
+# becomes a no-op that returns success, so this file is safe to source
+# unconditionally from the existing scripts.
+#
+# ws_janitor is the one exception: it reaps regardless of the mode, because the
+# rollback switch is exactly when nobody is watching the disk.
 #
 # LAYOUT (RCCL_CI_WORKSPACE=1):
 #   runs/<run_key>/
@@ -89,6 +92,11 @@ ws_cache_enabled() {
 # GITHUB_RUN_ID is the only id both Slurm jobs of one PR run see, so it is the
 # primary key. RUN_ATTEMPT is included because a re-run of a failed workflow
 # should get a clean workspace rather than inherit half-written state.
+#
+# The local-<ts>-<pid> fallback exists so a hand-run works, but it INVENTS an
+# identity: it is only ever correct for a run that is about to create that
+# workspace. A read-only query that lands on it is asking "where did this run's
+# artifacts go?" while holding no idea which run it is -- see ws_run_key_known.
 # ---------------------------------------------------------------------------
 ws_run_key() {
   if [[ -n "${RCCL_CI_RUN_KEY:-}" ]]; then
@@ -102,6 +110,12 @@ ws_run_key() {
   fi
 }
 
+# True only when the run key comes from the environment rather than from the
+# invented fallback.
+ws_run_key_known() {
+  [[ -n "${RCCL_CI_RUN_KEY:-}" || -n "${GITHUB_RUN_ID:-}" || -n "${SLURM_JOB_ID:-}" ]]
+}
+
 ws_root() {
   echo "${RCCL_CI_ROOT}/runs/$(ws_run_key)"
 }
@@ -111,16 +125,59 @@ ws_root() {
 #
 # build_rccl.sh stamps only the git rev in .built_rev, so a lib built with an
 # older ROCm dist or a different gfx target would look like a cache hit. Fold the
-# things that actually change codegen into the cache key. ROCM_DIST is resolved
-# through its symlink on purpose: rocm_devel -> 7.14.0a<date>/... so a dist bump
-# changes the hash even though the symlink path is constant.
+# things that actually change codegen into the cache key.
+#
+# Everything below is here because it can silently change the emitted code while
+# leaving the rev and the dist path identical:
+#
+#   ROCM_DIST     resolved through its symlink -- rocm_devel -> 7.14.0a<date>/...
+#                 so a dist bump changes the hash even though the symlink path is
+#                 constant. But the path alone is not enough either: the SDK is
+#                 refreshed IN PLACE (and re-flattens the DMA-BUF symlinks each
+#                 time), so we also fold in a cheap content stamp of the compiler.
+#   compiler id   hipcc's own version string. Two dists can share a directory name
+#                 across a rebuild; they cannot share a clang version banner.
+#   cmake         a cmake upgrade on the build host changes flags and link lines.
+#   build_rccl.sh the recipe itself. This was the biggest hole: editing the cmake
+#                 arguments in that script -- adding -DCMAKE_BUILD_TYPE, changing
+#                 GPU targets, switching generator -- produced a completely
+#                 different library that the cache happily served as a hit.
 # ---------------------------------------------------------------------------
+_WS_RECIPE_HASH_CACHE=""
 ws_recipe_hash() {
-  local rocm_dist gpu_targets resolved
+  # hipcc --version is a second or so; this is called on every cache lookup and
+  # store. Memoise per process -- nothing in a single job can change it midway.
+  if [[ -n "${_WS_RECIPE_HASH_CACHE}" ]]; then
+    printf '%s' "${_WS_RECIPE_HASH_CACHE}"
+    return 0
+  fi
+
+  local rocm_dist gpu_targets resolved recipe recipe_hash hipcc_id cmake_id p
   rocm_dist="${ROCM_DIST:-${RCCL_CI_ROOT}/rocm_devel}"
   gpu_targets="${GPU_TARGETS:-gfx950}"
   resolved="$(readlink -f "${rocm_dist}" 2>/dev/null || echo "${rocm_dist}")"
-  printf '%s|%s' "${resolved}" "${gpu_targets}" | sha256sum | cut -c1-12
+
+  recipe=""
+  for p in "$(ws_root)/cvs-sbatch/lib/build_rccl.sh" \
+           "${RCCL_CI_ROOT}/cvs-sbatch/lib/build_rccl.sh"; do
+    [[ -f "${p}" ]] && { recipe="${p}"; break; }
+  done
+  recipe_hash="norecipe"
+  if [[ -n "${recipe}" ]]; then
+    recipe_hash="$(sha256sum "${recipe}" 2>/dev/null | cut -c1-16)"
+  else
+    ws_warn "build_rccl.sh not found; recipe changes will NOT invalidate the build cache"
+  fi
+
+  hipcc_id="$("${resolved}/bin/hipcc" --version 2>/dev/null | head -3 | tr -d '\n')"
+  [[ -n "${hipcc_id}" ]] || hipcc_id="hipcc-unknown"
+  cmake_id="$(cmake --version 2>/dev/null | head -1)"
+  [[ -n "${cmake_id}" ]] || cmake_id="cmake-unknown"
+
+  _WS_RECIPE_HASH_CACHE="$(printf '%s|%s|%s|%s|%s' \
+    "${resolved}" "${gpu_targets}" "${recipe_hash}" "${hipcc_id}" "${cmake_id}" \
+    | sha256sum | cut -c1-12)"
+  printf '%s' "${_WS_RECIPE_HASH_CACHE}"
 }
 
 ws_cache_dir_for() {
@@ -297,6 +354,10 @@ ws_cache_fetch() {
   mkdir -p "$(dirname "${lib_dir}")"
   rm -rf "${lib_dir}"
   if cp -al "${cache}/lib" "${lib_dir}" 2>/dev/null || cp -a "${cache}/lib" "${lib_dir}"; then
+    # Bump mtime so ws_gc_build_cache's LRU sees this entry as recently used. A
+    # base revision that every PR builds against would otherwise age out on
+    # creation date alone and get rebuilt from scratch.
+    touch "${cache}" 2>/dev/null || true
     ws_log "[${label}] build cache HIT for ${rev:0:10} (${cache})"
     return 0
   fi
@@ -393,35 +454,92 @@ ws_prune_build() {
 }
 
 # ---------------------------------------------------------------------------
-# ws_gc — reap old workspaces. Keeps the newest N and anything younger than
-# KEEP_DAYS. Prunes the cvs worktree registry afterwards or git accumulates
-# stale administrative entries in cvs/.git/worktrees/.
+# ws_gc — reap old workspaces and old build-cache entries.
+#
+# Retention is "newest N OR younger than KEEP_DAYS", not AND. The original code
+# required both, which meant a workspace had to be outside the newest 20 *and*
+# older than 14 days before it could go: on a busy week the newest-20 window is
+# only a day or two wide, so nothing was ever both, and the directory grew without
+# bound. Either condition alone is a sufficient reason to keep something; neither
+# holding is a sufficient reason to reap it.
+#
+# builds/by-rev is reaped too, by LRU. It is content-addressed and therefore never
+# self-limiting: every new commit and every recipe change adds an entry that
+# nothing will ever look up again.
+#
+# Prunes the cvs worktree registry afterwards or git accumulates stale
+# administrative entries in cvs/.git/worktrees/.
 # ---------------------------------------------------------------------------
 ws_gc() {
   ws_enabled || return 0
 
   local runs_dir="${RCCL_CI_ROOT}/runs"
-  [[ -d "${runs_dir}" ]] || return 0
-
   local reaped=0 candidate
-  # Newest-first, skip the newest N, then delete anything older than KEEP_DAYS.
-  while IFS= read -r candidate; do
-    [[ -n "${candidate}" ]] || continue
-    # Never reap a workspace whose run is still going.
-    [[ -e "${candidate}/.active" ]] && continue
-    if [[ -n "$(find "${candidate}" -maxdepth 0 -mtime "+${RCCL_CI_WS_KEEP_DAYS}" 2>/dev/null)" ]]; then
-      rm -rf "${candidate}" && reaped=$(( reaped + 1 ))
-    fi
-  done < <(ls -1dt "${runs_dir}"/*/ 2>/dev/null | tail -n "+$(( RCCL_CI_WS_KEEP_RUNS + 1 ))")
 
-  (( reaped > 0 )) && ws_log "gc: removed ${reaped} old workspace(s)"
+  if [[ -d "${runs_dir}" ]]; then
+    # Newest-first, skip the newest N, then delete anything older than KEEP_DAYS.
+    while IFS= read -r candidate; do
+      [[ -n "${candidate}" ]] || continue
+      ws_is_active "${candidate}" && continue
+      if [[ -n "$(find "${candidate}" -maxdepth 0 -mtime "+${RCCL_CI_WS_KEEP_DAYS}" 2>/dev/null)" ]]; then
+        rm -rf "${candidate}" && reaped=$(( reaped + 1 ))
+      fi
+    done < <(ls -1dt "${runs_dir}"/*/ 2>/dev/null | tail -n "+$(( RCCL_CI_WS_KEEP_RUNS + 1 ))")
+    (( reaped > 0 )) && ws_log "gc: removed ${reaped} old workspace(s)"
+  fi
+
+  ws_gc_build_cache
   git -C "${RCCL_CI_ROOT}/cvs" worktree prune 2>/dev/null || true
   return 0
 }
 
 # ---------------------------------------------------------------------------
-# ws_begin / ws_end — mark a workspace in use so gc leaves it alone.
+# ws_gc_build_cache — keep the N most recently USED build-cache entries.
+#
+# Recency of use, not of creation: ws_cache_lookup touches an entry on a hit, so a
+# long-lived base revision that every PR builds against stays hot instead of being
+# aged out and rebuilt from scratch.
 # ---------------------------------------------------------------------------
+ws_gc_build_cache() {
+  local cache_dir="${RCCL_CI_ROOT}/builds/by-rev"
+  [[ -d "${cache_dir}" ]] || return 0
+
+  local keep="${RCCL_CI_CACHE_KEEP:-40}" reaped=0 entry
+  while IFS= read -r entry; do
+    [[ -n "${entry}" ]] || continue
+    case "${entry}" in *"/.tmp-"*) continue ;; esac
+    rm -rf "${entry}" && reaped=$(( reaped + 1 ))
+  done < <(ls -1dt "${cache_dir}"/*/ 2>/dev/null | tail -n "+$(( keep + 1 ))")
+
+  # Half-written entries from a job that died between mkdir and the atomic move.
+  find "${cache_dir}" -maxdepth 1 -name '.tmp-*' -mmin +1440 -exec rm -rf {} + 2>/dev/null || true
+
+  (( reaped > 0 )) && ws_log "gc: removed ${reaped} build-cache entr(ies), keeping newest ${keep}"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# ws_begin / ws_end — mark a workspace in use so gc leaves it alone.
+#
+# ws_is_active exists because .active is a lie whenever a job dies without running
+# its EXIT trap -- which is exactly how Slurm ends a job that hits --time or gets
+# scancel'd, since bash does not run EXIT traps for untrapped fatal signals. A
+# leaked marker pins its workspace forever and, worse, teaches gc to skip it
+# silently. Nothing legitimately runs longer than the sbatch wall clock, so treat
+# a marker older than that as debris.
+# ---------------------------------------------------------------------------
+ws_is_active() {
+  local marker="${1}/.active"
+  [[ -e "${marker}" ]] || return 1
+  local stale_min="${RCCL_CI_WS_ACTIVE_STALE_MIN:-600}"   # 10h > the 8h --time
+  if [[ -n "$(find "${marker}" -maxdepth 0 -mmin "+${stale_min}" 2>/dev/null)" ]]; then
+    ws_warn "stale .active marker in $1 (older than ${stale_min}m); its job did not exit cleanly"
+    rm -f "${marker}" 2>/dev/null || true
+    return 1
+  fi
+  return 0
+}
+
 ws_begin() { ws_enabled || return 0; touch "$(ws_root)/.active" 2>/dev/null || true; }
 ws_end()   { ws_enabled || return 0; rm -f "$(ws_root)/.active" 2>/dev/null || true; }
 
@@ -515,6 +633,59 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# ws_janitor — everything that needs reaping, in one call a cron can make.
+#
+# ws_gc alone was only ever reached from run_rccl_build.sh, i.e. only on runs that
+# actually build. A run that hits the build cache, a run that fails before the
+# build, and every manual detect submission all skipped it -- so the cleanup
+# depended on the workload doing the exact thing that produces the least garbage.
+# Cleanup that only runs when the pipeline is healthy is not cleanup.
+#
+# Install (as the CI user):
+#   crontab -l 2>/dev/null | { cat; echo '17 4 * * * /it-share/rccl-ci/cvs/ci/rccl_perf_gate/sbatch/lib/workspace.sh --janitor >> /it-share/rccl-ci/logs/janitor.log 2>&1'; } | crontab -
+#
+# Safe to run at any time, including while jobs are in flight: workspaces in use
+# are protected by .active, and every path below is age-gated well beyond the
+# 8h sbatch wall clock.
+# ---------------------------------------------------------------------------
+ws_janitor() {
+  local root="${RCCL_CI_ROOT}"
+  ws_log "janitor: starting (root=${root})"
+
+  # Force workspace mode for the GC pass only. ws_gc is a no-op when the mode is
+  # off, which would mean that flipping RCCL_CI_WORKSPACE=0 as a rollback also
+  # silently switches off disk reclamation -- leaving runs/ and builds/by-rev to
+  # grow unbounded at the exact moment nobody is watching them.
+  ( RCCL_CI_WORKSPACE=1 ws_gc )
+
+  # Per-run config copies from runs whose GitHub job died before its cleanup step.
+  local n
+  n="$(find "${root}/configs" -maxdepth 1 -name 'ci_detect_run_*.json' -mmin +1440 \
+         -print -delete 2>/dev/null | wc -l)"
+  (( n > 0 )) && ws_log "janitor: removed ${n} orphaned per-run config(s)"
+
+  # Slurm stdout/stderr in logs/. These are the only record of a failed run, so
+  # they get a long rope -- but not an infinite one. Report what was deleted,
+  # not what was present: a janitor that says "332 files" and then silently
+  # removes 104 of them is the kind of log nobody reads twice.
+  local keep_days="${RCCL_CI_LOG_KEEP_DAYS:-30}"
+  n="$(find "${root}/logs" -maxdepth 1 \( -name 'sp_tests-*.out' -o -name 'sp_tests-*.err' \) \
+         -mtime "+${keep_days}" -print -delete 2>/dev/null | wc -l)"
+  local kept
+  kept="$(find "${root}/logs" -maxdepth 1 \( -name 'sp_tests-*.out' -o -name 'sp_tests-*.err' \) \
+            2>/dev/null | wc -l)"
+  ws_log "janitor: slurm logs: removed ${n} older than ${keep_days}d, ${kept} kept"
+
+  # A dangling logs/latest is confusing rather than harmful; drop it if its
+  # target was reaped above.
+  [[ -L "${root}/logs/latest" && ! -e "${root}/logs/latest" ]] \
+    && { rm -f "${root}/logs/latest"; ws_log "janitor: removed dangling logs/latest"; }
+
+  ws_log "janitor: done"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Executable entry point (this file is normally sourced; running it directly
 # turns it into a small query CLI).
 #
@@ -532,8 +703,19 @@ PY
 # run, so a workflow that read the wrong path would happily render a MONTHS-OLD
 # verdict and post it on the PR as if it were this run's result.
 # ---------------------------------------------------------------------------
+#
+# The query modes refuse (exit 3, print nothing) when the run key would have to
+# be invented, because a caller that cannot say which run it is must not be
+# handed a confident-looking path. Callers already treat empty output as "fall
+# back to the legacy shared dir", which is the honest answer here.
+# ---------------------------------------------------------------------------
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   case "${1:-}" in
+    --print-artifacts|--print-root|--print-key)
+      if ws_enabled && ! ws_run_key_known; then
+        ws_warn "no run identity in the environment (RCCL_CI_RUN_KEY / GITHUB_RUN_ID / SLURM_JOB_ID all unset); refusing to guess a workspace path"
+        exit 3
+      fi ;;&
     --print-artifacts)
       if ws_enabled; then echo "$(ws_root)/artifacts"; else echo "${RCCL_CI_ROOT}/ab_artifacts"; fi ;;
     --print-root)
@@ -542,8 +724,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
       ws_enabled && ws_run_key || echo "" ;;
     --gc)
       ws_gc ;;
+    --janitor)
+      ws_janitor ;;
     *)
-      echo "usage: workspace.sh --print-artifacts|--print-root|--print-key|--gc" >&2
+      echo "usage: workspace.sh --print-artifacts|--print-root|--print-key|--gc|--janitor" >&2
       exit 2 ;;
   esac
   exit 0

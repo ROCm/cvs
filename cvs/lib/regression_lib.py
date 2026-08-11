@@ -51,8 +51,20 @@ which is what makes the detector trustworthy in CI:
    same ``(collective, type, inPlace)`` group.
 
 Additional safety: keys whose reference bandwidth is below ``min_bandwidth_floor``
-or that have fewer than ``min_repeats`` samples per side are reported as
-INCONCLUSIVE (never as a regression).
+(per tier), that have fewer than ``min_repeats`` samples per side, or whose two
+sides have unequal sample counts are reported as INCONCLUSIVE (never as a
+regression).
+
+Trustworthiness vs. verdict
+---------------------------
+``summary.has_regression`` answers "is the candidate slower?". It is only
+meaningful when ``summary.trustworthy`` is also true, which answers the prior
+question "did we actually measure the thing?". A report is untrustworthy when no
+keys were compared, when keys are present on only one side (a truncated sweep),
+or when more than ``max_inconclusive_frac`` of the matrix was excluded. Callers
+MUST gate on both: a green ``has_regression`` over an untrustworthy report is
+the single worst output a regression gate can produce, because it looks
+identical to a real pass.
 """
 
 import statistics
@@ -74,10 +86,27 @@ DEFAULT_CONFIG = {
     "higher_is_better": True,
 
     # Relative regression thresholds per size tier (fraction of A).
+    #
+    # May also be given per collective, which is how a calibration run writes
+    # them now:  {"all_reduce_perf": {"small": .., "mid": .., "large": ..}, ...}
+    # A bare {tier: value} dict is still accepted and applies to every
+    # collective. See threshold_for().
     "thresholds": {
         "small": 0.20,
         "mid": 0.10,
         "large": 0.05,
+    },
+    # Hard ceiling on a *derived* threshold, per tier. A calibration run that
+    # sees one pathologically noisy key must not be able to raise the bar to a
+    # level that hides real regressions: the large tier is bandwidth-bound and
+    # stable (measured median CV ~0.24%), so a 12.9% threshold there — which is
+    # what safety_factor * p95(CV) produced — is 50x the actual noise and blind
+    # to any plausible regression. Derived values are clamped into
+    # [min_thresholds, max_thresholds]; config-supplied values are not touched.
+    "max_thresholds": {
+        "small": 0.15,
+        "mid": 0.08,
+        "large": 0.06,
     },
     # Inclusive upper byte boundaries for the small / mid tiers.
     "tier_boundaries": {
@@ -95,10 +124,42 @@ DEFAULT_CONFIG = {
 
     # Keys whose reference (A) median metric is below this floor are skipped
     # (relative deltas explode near zero). Units match the metric (GB/s).
-    "min_bandwidth_floor": 0.5,
+    #
+    # PER TIER, and deliberately much lower for small messages than the single
+    # 0.5 GB/s value this used to be. That flat floor silently excluded the
+    # ENTIRE 1 KiB - 8 KiB band on every single run (measured: 83 of 368 keys,
+    # 22.6%, all with reason "reference median below floor 0.5") because a
+    # 32-rank collective simply cannot reach 0.5 GB/s busbw at those sizes. The
+    # small-message band is latency-bound and is exactly where a protocol or
+    # launch-path regression shows up first, so excluding it by accident made
+    # the gate blind to a whole class of regression while still reporting PASS.
+    #
+    # The floor's only real job is to stop _relative_drop() dividing by a number
+    # near zero. These values are ~2 orders of magnitude above the measurement
+    # quantisation at each tier, which is enough for that and nothing more.
+    # A bare scalar is still accepted and applies to every tier.
+    "min_bandwidth_floor": {
+        "small": 0.005,
+        "mid": 0.05,
+        "large": 0.5,
+    },
 
     # Minimum repeats per side; below this a key is INCONCLUSIVE.
     "min_repeats": 2,
+
+    # Require both sides to have the SAME number of samples for a key. A sweep
+    # that dies at repeat 4 of 7 still reaches the analysis, and both remaining
+    # gates degrade toward PASS with small n (the separation gate in particular
+    # almost never fires at n=2), so unequal or truncated samples bias the
+    # verdict green. Off => legacy behaviour.
+    "require_balanced_samples": True,
+
+    # Fraction of compared keys allowed to be INCONCLUSIVE before the run is
+    # considered untrustworthy. Inconclusive keys are not regressions, but a run
+    # where most keys were excluded is not a pass either -- it is a run that
+    # measured nothing. Reported as summary.inconclusive_exceeded; the caller
+    # decides whether to fail. Set to 1.0 to disable.
+    "max_inconclusive_frac": 0.10,
 }
 
 
@@ -109,7 +170,17 @@ def merge_config(overrides=None):
         return cfg
     for key, value in overrides.items():
         if isinstance(value, dict) and isinstance(cfg.get(key), dict):
-            cfg[key] = {**cfg[key], **value}
+            # A one-level merge is wrong when the override changes the dict's
+            # SHAPE rather than some of its entries. Per-collective thresholds
+            # ({collective: {tier: v}}) merged into the default {tier: v} would
+            # yield a mixed dict that is neither shape, and threshold_for()
+            # would silently fall back to the default tier values -- i.e. a
+            # calibrated per-collective table would be accepted and then
+            # ignored. Replace outright in that case.
+            if key == "thresholds" and _is_per_collective(value) != _is_per_collective(cfg[key]):
+                cfg[key] = deepcopy(value)
+            else:
+                cfg[key] = {**cfg[key], **value}
         else:
             cfg[key] = value
     return cfg
@@ -169,10 +240,51 @@ def size_tier(size_bytes, config=None):
     return "large"
 
 
-def threshold_for(size_bytes, config=None):
-    """Return the relative regression threshold (fraction) for a message size."""
+def _is_per_collective(thresholds):
+    """True if ``thresholds`` is {collective: {tier: value}} rather than {tier: value}."""
+    return bool(thresholds) and all(isinstance(v, dict) for v in thresholds.values())
+
+
+def threshold_for(size_bytes, config=None, collective=None):
+    """
+    Return the relative regression threshold (fraction) for a message size.
+
+    Accepts both threshold shapes:
+      {tier: value}                     -- applies to every collective
+      {collective: {tier: value}}       -- per-collective calibration
+
+    For the per-collective shape an unknown collective falls back to a
+    "__default__" entry if present, else to the tightest (smallest) threshold
+    across the known collectives for that tier. Falling back to the *tightest*
+    rather than the loosest is deliberate: an uncalibrated collective should
+    err toward reporting a regression for a human to look at, never toward
+    silently passing one.
+    """
     cfg = config or DEFAULT_CONFIG
-    return cfg["thresholds"][size_tier(size_bytes, cfg)]
+    tier = size_tier(size_bytes, cfg)
+    thresholds = cfg["thresholds"]
+
+    if not _is_per_collective(thresholds):
+        return thresholds[tier]
+
+    if collective is not None and collective in thresholds:
+        return thresholds[collective][tier]
+    if "__default__" in thresholds:
+        return thresholds["__default__"][tier]
+    return min(v[tier] for v in thresholds.values() if tier in v)
+
+
+def floor_for(size_bytes, config=None):
+    """
+    Return the minimum reference bandwidth for a size, honouring per-tier floors.
+
+    Accepts a scalar (legacy, one floor for every tier) or a {tier: value} dict.
+    """
+    cfg = config or DEFAULT_CONFIG
+    floor = cfg["min_bandwidth_floor"]
+    if isinstance(floor, dict):
+        return float(floor[size_tier(size_bytes, cfg)])
+    return float(floor)
 
 
 def _group_runs_by_key(runs, metric):
@@ -213,7 +325,7 @@ def _relative_drop(a_value, b_value, higher_is_better):
     return (b_value - a_value) / a_value
 
 
-def compare_key(a_samples, b_samples, size_bytes, config=None):
+def compare_key(a_samples, b_samples, size_bytes, config=None, collective=None):
     """
     Evaluate a single fully-qualified key and return a candidate verdict dict.
 
@@ -227,12 +339,14 @@ def compare_key(a_samples, b_samples, size_bytes, config=None):
 
     a_stats = summarize_samples(a_samples)
     b_stats = summarize_samples(b_samples)
+    floor = floor_for(size_bytes, cfg)
 
     result = {
         "metric": metric,
         "size": int(size_bytes),
         "tier": size_tier(size_bytes, cfg),
-        "threshold": threshold_for(size_bytes, cfg),
+        "threshold": threshold_for(size_bytes, cfg, collective),
+        "floor": floor,
         "a": a_stats,
         "b": b_stats,
         "rel_drop": _relative_drop(a_stats["median"], b_stats["median"], hib),
@@ -249,11 +363,26 @@ def compare_key(a_samples, b_samples, size_bytes, config=None):
         )
         return result
 
-    # Guard: reference too small to compare reliably.
-    if a_stats["median"] < cfg["min_bandwidth_floor"]:
+    # Guard: unequal sample counts between the sides.
+    #
+    # This means one side's sweep died partway (the harness appends per repeat,
+    # and the analysis test runs even when the pair test failed). Comparing 7
+    # A-samples against 3 B-samples is not a paired comparison: the sides no
+    # longer share the same thermal/neighbour conditions, and the separation
+    # gate's percentiles are computed over different-width distributions. Call
+    # it inconclusive rather than quietly returning a green verdict from it.
+    if cfg.get("require_balanced_samples", True) and a_stats["n"] != b_stats["n"]:
         result["verdict"] = INCONCLUSIVE
         result["reasons"].append(
-            f"reference median {a_stats['median']:.3f} below floor {cfg['min_bandwidth_floor']}"
+            f"unbalanced samples (A={a_stats['n']}, B={b_stats['n']}) — a sweep did not complete"
+        )
+        return result
+
+    # Guard: reference too small to compare reliably.
+    if a_stats["median"] < floor:
+        result["verdict"] = INCONCLUSIVE
+        result["reasons"].append(
+            f"reference median {a_stats['median']:.4f} below {result['tier']} floor {floor}"
         )
         return result
 
@@ -316,11 +445,28 @@ def detect_regressions(a_runs, b_runs, config=None):
 
     common_keys = set(a_samples) & set(b_samples)
 
+    # Keys present on exactly one side.
+    #
+    # These used to be dropped by the set intersection with no trace anywhere.
+    # That is a silent-wrong-verdict path: if the candidate aborts after
+    # printing the smaller sizes, the largest messages — where bandwidth
+    # regressions matter most and the threshold is tightest — simply vanish
+    # from the comparison, and the report says "0 regressions" over a smaller
+    # keys_compared that nothing checks. Surface them as a first-class count so
+    # the caller can refuse to issue a verdict.
+    missing_keys = []
+    for key in sorted(set(a_samples) ^ set(b_samples)):
+        name, size, dtype, in_place = key
+        missing_keys.append({
+            "key": {"name": name, "size": size, "type": dtype, "inPlace": in_place},
+            "present_in": "reference" if key in a_samples else "candidate",
+        })
+
     # Evaluate each common key for candidacy.
     per_key = {}
     for key in common_keys:
         name, size, dtype, in_place = key
-        verdict = compare_key(a_samples[key], b_samples[key], size, cfg)
+        verdict = compare_key(a_samples[key], b_samples[key], size, cfg, collective=name)
         verdict["key"] = {"name": name, "size": size, "type": dtype, "inPlace": in_place}
         verdict["confirmed"] = False
         per_key[key] = verdict
@@ -364,17 +510,40 @@ def detect_regressions(a_runs, b_runs, config=None):
     inconclusive = [v for v in keys_list if v["verdict"] == INCONCLUSIVE]
     candidates = [v for v in keys_list if v["candidate"]]
 
+    # A run where most keys were excluded measured nothing; that is not a pass.
+    max_frac = float(cfg.get("max_inconclusive_frac", 1.0))
+    total = len(keys_list)
+    inconclusive_frac = (len(inconclusive) / total) if total else 0.0
+    inconclusive_exceeded = total > 0 and inconclusive_frac > max_frac
+
+    # Distinct from has_regression on purpose. has_regression means "we measured
+    # this and the candidate is slower". trustworthy=False means "do not read a
+    # verdict off this report at all" — no data, half the keys missing, or so
+    # much of the matrix excluded that a green result is meaningless. Callers
+    # must gate on both; only one of them is about the code under test.
+    trustworthy = (
+        total > 0
+        and not missing_keys
+        and not inconclusive_exceeded
+    )
+
     report = {
         "config": cfg,
         "summary": {
-            "keys_compared": len(keys_list),
+            "keys_compared": total,
             "regressions": len(regressions),
             "inconclusive": len(inconclusive),
+            "inconclusive_frac": round(inconclusive_frac, 4),
+            "inconclusive_exceeded": inconclusive_exceeded,
+            "max_inconclusive_frac": max_frac,
+            "missing_keys": len(missing_keys),
             "candidates": len(candidates),
             "has_regression": len(regressions) > 0,
+            "trustworthy": trustworthy,
         },
         "keys": keys_list,
         "regressions": regressions,
+        "missing_keys_detail": missing_keys[:50],
     }
     return report
 
@@ -398,60 +567,127 @@ def measure_noise(control_runs, config=None):
     cfg = merge_config(config)
     samples = _group_runs_by_key(control_runs, cfg["metric"])
     per_tier = {"small": [], "mid": [], "large": []}
+    per_collective = {}
     for (name, size, dtype, in_place), vals in samples.items():
         if len(vals) < 2:
             continue
         med = median(vals)
-        if med < cfg["min_bandwidth_floor"]:
+        if med < floor_for(size, cfg):
             continue
         cv = statistics.pstdev(vals) / med if med else 0.0
         rel_range = (max(vals) - min(vals)) / med if med else 0.0
-        per_tier[size_tier(size, cfg)].append((cv, rel_range))
+        tier = size_tier(size, cfg)
+        per_tier[tier].append((cv, rel_range))
+        per_collective.setdefault(name, {"small": [], "mid": [], "large": []})[tier].append((cv, rel_range))
 
-    out = {}
-    for tier, lst in per_tier.items():
+    def _stats(lst):
         if not lst:
-            out[tier] = None
-            continue
+            return None
         cvs = [x[0] for x in lst]
         ranges = [x[1] for x in lst]
-        out[tier] = {
+        return {
             "n_keys": len(lst),
             "cv_median": percentile(cvs, 50),
+            "cv_mad": _mad(cvs),
             "cv_p95": percentile(cvs, 95),
             "rel_range_p95": percentile(ranges, 95),
         }
+
+    out = {tier: _stats(lst) for tier, lst in per_tier.items()}
+    out["by_collective"] = {
+        name: {tier: _stats(lst) for tier, lst in tiers.items()}
+        for name, tiers in per_collective.items()
+    }
     return out
 
 
-def derive_thresholds(control_runs, config=None, safety_factor=2.0, min_thresholds=None):
+def _mad(values):
     """
-    Recommend per-tier regression thresholds from a control (A=B) dataset.
+    Median absolute deviation, scaled to be comparable to a standard deviation
+    for normally-distributed data (x1.4826).
 
-    The recommended threshold for a tier is ``safety_factor * p95(CV)`` of that
-    tier's measured run-to-run noise, clamped to a sensible minimum. Sitting the
-    threshold a couple of noise-widths above the observed spread is what keeps
-    the detector from firing on noise while still catching real shifts.
+    Used instead of p95 as the spread estimator when deriving thresholds. p95 of
+    a per-key CV distribution is dominated by its worst few keys: on this
+    cluster the large tier has a median CV of 0.24% but a p95 of 6.45%, so a
+    p95-based threshold ends up ~50x the typical noise and blind to any real
+    regression. MAD ignores that tail by construction, which is the whole point
+    — the tail is a handful of flaky keys, not the noise level of the tier.
+    """
+    data = sorted(float(v) for v in values)
+    if not data:
+        return 0.0
+    med = median(data)
+    return 1.4826 * median([abs(v - med) for v in data])
+
+
+def derive_thresholds(control_runs, config=None, safety_factor=2.0, min_thresholds=None,
+                      max_thresholds=None, mad_k=3.0, per_collective=True):
+    """
+    Recommend regression thresholds from a control (A=B) dataset.
+
+    A tier's threshold is ``safety_factor * (median(CV) + mad_k * MAD(CV))``,
+    clamped into ``[min_thresholds, max_thresholds]``.
+
+    This replaces the previous ``safety_factor * p95(CV)``. p95 is an outlier
+    statistic: it tracks the noisiest key in a tier, not the tier's noise. On
+    this cluster that produced a 12.9% threshold for the large tier whose median
+    CV is 0.24% — a ~54x gap that would let a genuine 10% bandwidth loss on
+    every large size pass silently. ``median + k*MAD`` is the robust equivalent:
+    it describes where the bulk of the keys actually sit and ignores the tail,
+    and the explicit max clamp guarantees no calibration run can ever raise the
+    bar past the point of usefulness.
 
     Args:
       control_runs: control dataset (same build run repeatedly).
       config: optional config overrides.
-      safety_factor: multiple of the p95 noise CV to use as the threshold.
+      safety_factor: multiple of the robust spread to use as the threshold.
       min_thresholds: per-tier floors; defaults to small=0.10, mid=0.05, large=0.03.
+      max_thresholds: per-tier ceilings; defaults to config["max_thresholds"].
+      mad_k: how many MADs above the median CV to sit.
+      per_collective: also emit a per-collective threshold table. Collectives
+        differ in noise by more than tiers do (alltoall in particular), so
+        pooling them lets the noisiest collective set the bar for all of them.
 
     Returns:
-      dict {'thresholds': {tier: value}, 'noise': <measure_noise output>,
-            'safety_factor': ...}
+      dict {'thresholds': ..., 'noise': ..., 'safety_factor', 'mad_k',
+            'estimator': 'median+k*MAD'}
     """
     cfg = merge_config(config)
     noise = measure_noise(control_runs, cfg)
     mins = min_thresholds or {"small": 0.10, "mid": 0.05, "large": 0.03}
-    thresholds = {}
-    for tier in ("small", "mid", "large"):
-        tier_noise = noise.get(tier)
-        base = tier_noise["cv_p95"] * safety_factor if tier_noise else mins[tier]
-        thresholds[tier] = round(max(base, mins[tier]), 3)
-    return {"thresholds": thresholds, "noise": noise, "safety_factor": safety_factor}
+    maxes = max_thresholds or cfg.get("max_thresholds") or {"small": 0.15, "mid": 0.08, "large": 0.06}
+
+    def _from_noise(tier_noise, tier):
+        if not tier_noise:
+            return mins[tier]
+        spread = tier_noise["cv_median"] + mad_k * tier_noise["cv_mad"]
+        return spread * safety_factor
+
+    def _table(noise_by_tier):
+        out = {}
+        for tier in ("small", "mid", "large"):
+            base = _from_noise(noise_by_tier.get(tier), tier)
+            out[tier] = round(min(max(base, mins[tier]), maxes[tier]), 4)
+        return out
+
+    result = {
+        "thresholds": _table(noise),
+        "noise": noise,
+        "safety_factor": safety_factor,
+        "mad_k": mad_k,
+        "estimator": "median+k*MAD",
+        "min_thresholds": mins,
+        "max_thresholds": maxes,
+    }
+
+    if per_collective and noise.get("by_collective"):
+        table = {name: _table(tiers) for name, tiers in noise["by_collective"].items()}
+        # Keep the pooled table as the fallback for any collective that was not
+        # present in the control dataset.
+        table["__default__"] = result["thresholds"]
+        result["thresholds_by_collective"] = table
+
+    return result
 
 
 def format_report(report, max_rows=50):
@@ -464,7 +700,30 @@ def format_report(report, max_rows=50):
         f"confirmed regressions : {s['regressions']}   "
         f"inconclusive : {s['inconclusive']}"
     )
-    lines.append(f"verdict       : {'REGRESSION DETECTED' if s['has_regression'] else 'PASS'}")
+
+    # Print why the report cannot be trusted BEFORE the verdict line, so a human
+    # skimming the log cannot read "PASS" without also seeing that it is unsafe.
+    if not s.get("trustworthy", True):
+        why = []
+        if not s["keys_compared"]:
+            why.append("no keys were compared at all")
+        if s.get("missing_keys"):
+            why.append(f"{s['missing_keys']} key(s) present on only one side")
+        if s.get("inconclusive_exceeded"):
+            why.append(
+                f"{s['inconclusive_frac'] * 100:.1f}% inconclusive "
+                f"(budget {s['max_inconclusive_frac'] * 100:.0f}%)"
+            )
+        lines.append(f"UNTRUSTWORTHY : {'; '.join(why)}")
+        lines.append("                a PASS from this report is not evidence of anything.")
+
+    if not s.get("trustworthy", True):
+        verdict = "NO VERDICT (untrustworthy)"
+    elif s["has_regression"]:
+        verdict = "REGRESSION DETECTED"
+    else:
+        verdict = "PASS"
+    lines.append(f"verdict       : {verdict}")
     if report["regressions"]:
         lines.append("")
         lines.append("Confirmed regressions:")

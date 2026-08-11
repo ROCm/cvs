@@ -17,6 +17,10 @@
 
 set -euo pipefail
 
+# Shared NFS tree operated by several people by hand; build caches and workspaces
+# must be deletable by whoever runs the janitor, not only by their creator.
+umask 002
+
 readonly RCCL_CI_ROOT="${RCCL_CI_ROOT:-/it-share/rccl-ci}"
 
 # Helper libs ship next to this script in ROCm/cvs. Prefer that copy so a fresh
@@ -68,7 +72,10 @@ if ws_enabled; then
   ws_init || { echo "[ERROR] workspace init failed" >&2; exit 1; }
   ws_begin
   # Release the in-use marker however we exit, so gc can reap this run later.
-  trap 'ws_end' EXIT
+  # Signals as well as EXIT: bash skips EXIT traps on untrapped fatal signals,
+  # which is how Slurm ends a job at --time or on scancel -- exactly the runs that
+  # would otherwise leave a marker pinning this workspace forever.
+  trap 'ws_end' EXIT INT TERM HUP
 
   ws_config_retarget "${CONFIG_JSON}" || true
 

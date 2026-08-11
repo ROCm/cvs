@@ -12,6 +12,13 @@
 
 set -euo pipefail
 
+# Everything this job writes lands on a shared NFS tree that several people
+# operate by hand. A default umask of 022 (or 077 under some runner setups) left
+# artifacts and per-run configs that only their creator could delete, so cleanup
+# by anyone else failed silently and the files accumulated. Group-writable is the
+# correct mode for shared CI state.
+umask 002
+
 readonly RCCL_CI_ROOT="${RCCL_CI_ROOT:-/it-share/rccl-ci}"
 
 # Helper libs ship next to this script in ROCm/cvs. Prefer that copy so a fresh
@@ -49,7 +56,12 @@ source "${RCCL_CI_LIB}/workspace.sh"
 if ws_enabled; then
   ws_init || { echo "[ERROR] workspace init failed" >&2; exit 1; }
   ws_begin
-  trap 'ws_end' EXIT
+  # EXIT alone is not enough. Bash runs EXIT traps when the script returns or
+  # calls exit -- not when it is killed by an untrapped signal, which is precisely
+  # how a job ends when it hits --time or someone runs scancel. Those are the runs
+  # that leak a .active marker and pin their workspace against gc forever.
+  # Trapping the signals explicitly makes the EXIT trap fire on those paths too.
+  trap 'ws_end' EXIT INT TERM HUP
 fi
 
 if ws_enabled; then
@@ -57,6 +69,13 @@ if ws_enabled; then
   export CVS_DIR="$(ws_root)/cvs"
   export CVS_SBATCH_DIR="$(ws_root)/cvs-sbatch"
   AB_ARTIFACT_DIR="$(ws_root)/artifacts"
+  # Stamp the report with the code that produced it. The shared cvs checkout is
+  # edited between runs, so "the detector" is not a fixed thing -- without the SHA
+  # a report on NFS cannot be attributed to a version afterwards.
+  RCCL_CI_RUN_KEY="$(ws_run_key)"; export RCCL_CI_RUN_KEY
+  RCCL_CI_CVS_SHA="$(git -C "${CVS_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)"
+  export RCCL_CI_CVS_SHA
+  echo "[INFO] detector code: ${CVS_DIR} @ ${RCCL_CI_CVS_SHA}"
 else
   export RUN_LOG_DIR="${RCCL_CI_ROOT}/logs/run_${TIMESTAMP}_${JOB_TAG}"
   export CVS_DIR="${RCCL_CI_ROOT}/cvs"
@@ -191,8 +210,18 @@ cd "${CVS_SBATCH_DIR}" || { echo "[ERROR] cannot cd ${CVS_SBATCH_DIR}" >&2; exit
 
 if [[ ! -x run.sh ]]; then chmod +x run.sh 2>/dev/null || true; fi
 
+# `set -e` is on for this whole script, which means a bare `./run.sh` that exits
+# non-zero terminates the script THERE -- `pytest_exit=$?` never runs, and neither
+# does anything below it: no artifact snapshot, no slurm.out copy, no logs/latest,
+# no verdict recount, no ws_record. Every failing run since this was written has
+# silently skipped all of it (165 job logs, only 39 ever reached the tail, and all
+# 39 had pytest_exit=0 -- the recount block below has never once executed on a
+# failure, which is the only case it exists for). Disable errexit across the call
+# so a non-zero exit is data, not a control-flow event.
+set +e
 ./run.sh
 pytest_exit=$?
+set -e
 
 # In workspace mode artifacts already live inside the workspace next to logs/,
 # so there is nothing to copy. In legacy mode snapshot the shared dir into the
@@ -201,30 +230,68 @@ if ! ws_enabled && [[ -d "${AB_ARTIFACT_DIR}" ]]; then
   cp -a "${AB_ARTIFACT_DIR}" "${RUN_LOG_DIR}/"
 fi
 
-if [[ -f "${SLURM_LOG_DIR}/sp_tests-${JOB_TAG}.out" ]]; then
-  cp -f "${SLURM_LOG_DIR}/sp_tests-${JOB_TAG}.out" "${RUN_LOG_DIR}/slurm.out" 2>/dev/null || true
-  cp -f "${SLURM_LOG_DIR}/sp_tests-${JOB_TAG}.err" "${RUN_LOG_DIR}/slurm.err" 2>/dev/null || true
-fi
+# Link, don't copy. These are the job's own stdout/stderr and they are still open
+# and being appended to right now, so a copy captures a truncated prefix and then
+# diverges from the real file forever -- the "slurm.out" in the run dir was always
+# missing its own tail, including the verdict lines printed below. A symlink into
+# logs/ always reads current, costs nothing, and cannot go stale.
+for _s in out err; do
+  _src="${SLURM_LOG_DIR}/sp_tests-${JOB_TAG}.${_s}"
+  [[ -e "${_src}" ]] && ln -sfn "${_src}" "${RUN_LOG_DIR}/slurm.${_s}"
+done
 
-ln -sfn "${RUN_LOG_DIR}" "${RCCL_CI_ROOT}/logs/latest"
+# logs/latest is a global "most recent run" convenience pointer, and with runs no
+# longer serialised by a single GitHub lock, two jobs can reach this line at once.
+# ln -sfn on an existing symlink is not atomic (unlink + symlink), so a reader can
+# catch the gap and see no such file. Create it under a temp name and rename over:
+# rename(2) on the same filesystem is atomic, so a reader sees old or new, never
+# nothing. It is still last-writer-wins as to WHICH run it points at -- that is
+# inherent to a single global pointer, which is why nothing in the gate reads it.
+_latest_tmp="${RCCL_CI_ROOT}/logs/.latest.$$"
+ln -sfn "${RUN_LOG_DIR}" "${_latest_tmp}" 2>/dev/null \
+  && mv -Tf "${_latest_tmp}" "${RCCL_CI_ROOT}/logs/latest" 2>/dev/null \
+  || rm -f "${_latest_tmp}" 2>/dev/null || true
 
 # Gate on confirmed regressions, not on pytest exit code.
 # Pytest exits 1 on intermittent harness failures (empty output, SSH blips) even
 # when the regression detector found 0 confirmed regressions — those are cluster
 # noise, not actual regressions. Re-read the report and derive the gate exit code
 # from the confirmed-regression count so the SLURM job only fails on real issues.
+#
+# The dangerous half of that reasoning is "0 confirmed regressions => PASS". It is
+# only true if the detector actually looked. A run that measured nothing, dropped
+# half its keys, or died at repeat 4 of 7 also reports 0 confirmed regressions, and
+# this block would happily convert its pytest failure into a green gate. So the
+# report now carries an explicit `trustworthy` flag and we refuse to override
+# pytest's verdict unless it is set.
 _REPORT="${AB_ARTIFACT_DIR}/ab_regression_report.json"
 if [[ -f "${_REPORT}" ]]; then
-  _confirmed=$(python3 -c "
+  _verdict=$(python3 -c "
 import json, sys
 try:
     d = json.load(open('${_REPORT}'))
-    n = sum(r.get('summary', {}).get('regressions', 0) for r in d.get('reports', {}).values())
-    print(n)
-except Exception as e:
-    print('ERR', file=sys.stderr); sys.exit(2)
-" 2>/dev/null)
-  if [[ "${_confirmed}" == "0" ]]; then
+    reports = d.get('reports', {}) or {}
+    n = sum(r.get('summary', {}).get('regressions', 0) for r in reports.values())
+    # Trust the top-level flag when present. Fall back to the per-group flags so a
+    # report written by an older detector still can't claim more than it knows.
+    top = d.get('trustworthy')
+    if top is None:
+        top = bool(reports) and all(
+            r.get('summary', {}).get('trustworthy', False) for r in reports.values())
+    print('%d %s' % (n, 'trustworthy' if top else 'untrustworthy'))
+    print(' | '.join(str(x) for x in (d.get('untrustworthy_reasons') or [])[:5]), file=sys.stderr)
+except Exception:
+    print('ERR ERR')
+")
+  _confirmed="${_verdict%% *}"
+  _trust="${_verdict##* }"
+  if [[ "${_trust}" != "trustworthy" ]]; then
+    echo "[ERROR] Verdict: NO VERDICT — the report is not trustworthy (${_trust})."
+    echo "[ERROR] 0 confirmed regressions here means 'we could not look', not 'nothing broke'."
+    echo "[ERROR] Failing the job rather than reporting a green gate. See ${_REPORT}."
+    exit_code="${pytest_exit}"
+    (( exit_code == 0 )) && exit_code=1
+  elif [[ "${_confirmed}" == "0" ]]; then
     echo "[INFO] Verdict: PASS — 0 confirmed regressions (pytest_exit=${pytest_exit})"
     exit_code=0
   elif [[ "${_confirmed}" =~ ^[0-9]+$ ]]; then
@@ -237,9 +304,18 @@ except Exception as e:
 else
   echo "[WARN] Report not found at ${_REPORT}; using pytest exit code ${pytest_exit}"
   exit_code="${pytest_exit}"
+  # No report at all is an infra failure, not a pass — never let a missing report
+  # exit 0 just because run.sh happened to return 0.
+  (( exit_code == 0 )) && { echo "[ERROR] run.sh exited 0 but produced no report."; exit_code=1; }
 fi
 
 ws_record verdict_exit_code "${exit_code}" || true
+
+# Opportunistic cleanup. The cron janitor is the real mechanism (see ws_janitor),
+# but a detect run is the one thing guaranteed to happen on this cluster, so it
+# also sweeps -- that way the disk stays bounded even if nobody ever installs the
+# cron entry. Best-effort: a gc failure must never change the verdict.
+ws_gc || true
 
 echo "[INFO] A/B run finished with exit code ${exit_code} (pytest_exit=${pytest_exit})"
 echo "[INFO] Artifacts: ${RUN_LOG_DIR}"
