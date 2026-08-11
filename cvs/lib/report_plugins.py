@@ -83,6 +83,13 @@ REPORT_STYLE_OVERRIDES = """<style>
     tr.cvs-benchmark-metric-detail-row .col-testId {
         font-weight: normal;
     }
+    /* Override tbody.failed/.passed — color each subtest row by its own outcome. */
+    tr.cvs-benchmark-metric-detail-row.passed .col-result {
+        color: green !important;
+    }
+    tr.cvs-benchmark-metric-detail-row.failed .col-result {
+        color: red !important;
+    }
     /* Separate the per-node links in the Links column with a "|" divider. */
     .col-links a + a::before { content: " | "; color: #888; }
 </style>"""
