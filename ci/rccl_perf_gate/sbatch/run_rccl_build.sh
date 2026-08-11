@@ -114,10 +114,14 @@ bash "${RCCL_CI_ROOT}/cvs-sbatch/lib/build_rccl.sh" "${build_args[@]}"
 # cached. ws_prune_build refuses to prune a side that has no librccl.so, so a
 # failed build keeps its full tree for post-mortem.
 if ws_enabled; then
-  ws_cache_publish reference
-  ws_cache_publish candidate
-  ws_prune_build reference
-  ws_prune_build candidate
+  # Housekeeping must never fail a build that already produced good libraries.
+  # Caching and pruning are optimisations: losing either costs disk or a rebuild,
+  # whereas aborting here throws away a successful ~10min compile and, via the
+  # afterok dependency, silently cancels the detect job behind it.
+  ws_cache_publish reference || ws_warn "cache publish (reference) failed — non-fatal"
+  ws_cache_publish candidate || ws_warn "cache publish (candidate) failed — non-fatal"
+  ws_prune_build reference   || ws_warn "prune (reference) failed — non-fatal"
+  ws_prune_build candidate   || ws_warn "prune (candidate) failed — non-fatal"
 
   echo "[INFO] workspace: $(ws_root)"
   du -sh "$(ws_root)" 2>/dev/null || true
