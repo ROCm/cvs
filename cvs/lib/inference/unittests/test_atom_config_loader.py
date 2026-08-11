@@ -377,6 +377,32 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         )
         self.assertEqual(variant.roles.server.env, {"NCCL_IB_GID_INDEX": "1"})
 
+    def test_load_w1_accuracy_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_accuracy.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(len(variant.accuracy.tasks), 3)
+        self.assertEqual(variant.accuracy.tasks[0].id, "gsm8k_flex")
+        self.assertTrue(variant.enforce_thresholds)
+        self.assertIn(
+            "gsm8k.exact_match__flexible-extract",
+            variant.thresholds["accuracy"]["gsm8k_flex"],
+        )
+
+    def test_load_mtp3_variant_mtp_quality_enabled(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_mtp3.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertTrue(variant.mtp_quality.enabled)
+        self.assertIn("mtp.acceptance_rate", variant.thresholds["mtp_quality"])
+
+    def test_mtp_quality_threshold_key_not_sweep_cell(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_mtp3.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertIn("mtp_quality", variant.thresholds)
+        self.assertEqual(len(variant.expected_cells()), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

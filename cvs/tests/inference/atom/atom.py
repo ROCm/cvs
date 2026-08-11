@@ -5,6 +5,7 @@ All rights reserved.
 
 import json
 import os
+import shlex
 import time
 
 import pytest
@@ -12,12 +13,20 @@ import pytest
 from cvs.lib import globals
 from cvs.lib.inference.utils.inference_suite_lifecycle import (
     sweep_cell_result_key,
+    test_accuracy_eval,  # noqa: F401
     test_launch_container,  # noqa: F401
     test_model_fetch,  # noqa: F401
     test_setup_sshd,  # noqa: F401
     test_teardown,  # noqa: F401
 )
 from cvs.lib.inference.atom.atom_orch import AtomJob
+from cvs.lib.inference.atom.atom_mtp_quality import (
+    chat_template_ok,
+    chat_template_sha256,
+    degenerate_decode_ratio,
+    extract_completion_text,
+    parse_mtp_log_metrics,
+)
 from cvs.lib.inference.atom.atom_config_loader import (
     expand_sweep_parametrize,
     reuse_server_flag,
@@ -80,12 +89,24 @@ def test_discover_topology(orch, variant_config, lifecycle, request):
     )
 
 
+def _mtp_quality_requested(variant_config) -> bool:
+    if variant_config.mtp_quality.enabled:
+        return True
+    args = variant_config.roles.server.atom_args or []
+    joined = " ".join(str(a) for a in args).lower()
+    return "--method" in joined and "mtp" in joined
+
+
 def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
         raise pytest.UsageError(f"--config_file not found or not specified: {config_file!r}")
     with open(config_file) as fp:
         raw = json.load(fp)
+    if "accuracy_task" in metafunc.fixturenames:
+        task_ids = [t["id"] for t in raw.get("accuracy", {}).get("tasks", [])]
+        metafunc.parametrize("accuracy_task", task_ids, ids=task_ids)
+        return
     spec = expand_sweep_parametrize(raw.get("sweep", {}), metafunc.fixturenames)
     if spec:
         argnames, argvalues, ids = spec
@@ -203,3 +224,66 @@ def test_cell_metrics(
             f"(metrics missing from benchmark artifact)"
         )
     evaluate_all(actuals, specs)
+
+
+def test_atom_mtp_quality(orch, variant_config, lifecycle, request):
+    """ACC-4/5/13: MTP acceptance, degenerate decode, and chat-template checks."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    if not _mtp_quality_requested(variant_config):
+        pytest.skip("mtp_quality not enabled for this variant")
+
+    p = variant_config.params
+    mq = variant_config.mtp_quality
+    combo = variant_config.sweep.sequence_combinations[0]
+    run = variant_config.sweep.runs[0]
+    job = AtomJob.from_variant(
+        orch=orch,
+        variant=variant_config,
+        hf_token="",
+        isl=combo.isl,
+        osl=combo.osl,
+        concurrency=run.concurrency,
+    )
+    base = f"{p.base_url}:{p.port_no}".replace("0.0.0.0", "127.0.0.1")
+    model_id = variant_config.model.id
+
+    t = time.monotonic()
+    log_out = orch.exec_on_head(f"tail -500 {shlex.quote(job.server_log)} 2>/dev/null || true", timeout=30)
+    log_text = next(iter(log_out.values()), "") or ""
+    client_out = orch.exec_on_head(f"tail -500 {shlex.quote(job.client_log)} 2>/dev/null || true", timeout=30)
+    client_text = next(iter(client_out.values()), "") or ""
+
+    actuals = parse_mtp_log_metrics(log_text + "\n" + client_text)
+    actuals["mtp.empty_or_repeat_ratio"] = degenerate_decode_ratio(client_text)
+
+    probe_body = json.dumps(
+        {
+            "model": model_id,
+            "messages": [{"role": "user", "content": mq.chat_template_prompt}],
+            "max_tokens": 64,
+        }
+    )
+    curl_cmd = (
+        f"curl -sS -X POST {shlex.quote(base + '/v1/chat/completions')} "
+        f"-H 'Content-Type: application/json' -d {shlex.quote(probe_body)}"
+    )
+    probe_out = orch.exec_on_head(curl_cmd, timeout=120)
+    probe_text = next(iter(probe_out.values()), "") or ""
+    completion = extract_completion_text(probe_text)
+    actuals["accuracy.chat_template_sha256"] = chat_template_sha256(completion)
+    ok = chat_template_ok(completion, mq.chat_template_expected_sha256)
+    if ok is not None:
+        actuals["accuracy.chat_template_ok"] = ok
+
+    lifecycle.record(request.node.nodeid, "mtp_quality", time.monotonic() - t)
+    for metric_key, value in actuals.items():
+        lifecycle.record(request.node.nodeid, metric_key, value, "")
+
+    if not variant_config.enforce_thresholds:
+        return
+    mtp_thresholds = (variant_config.thresholds or {}).get("mtp_quality", {})
+    if mtp_thresholds:
+        specs = {k: v for k, v in mtp_thresholds.items() if k in actuals and actuals[k] is not None}
+        if specs:
+            evaluate_all(actuals, specs)

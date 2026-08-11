@@ -12,10 +12,15 @@ Generic paths/model/container/threshold plumbing lives in
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from typing_extensions import Literal
+
+from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
+
+ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
+ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
 
 from cvs.lib.inference.utils.inferencing_config_loader import (
     RoleServer,
@@ -26,9 +31,6 @@ from cvs.lib.inference.utils.inferencing_config_loader import (
 from cvs.lib.inference.atom.atom_parsing import GATED_METRICS
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
 from cvs.lib import globals
-
-ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
-ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
 
 log = globals.log
 
@@ -132,6 +134,12 @@ class AtomRunCard(_Forbid):
     notes: str = ""
 
 
+class MtpQualityConfig(_Forbid):
+    enabled: bool = False
+    chat_template_prompt: str = "Say hello in one short sentence."
+    chat_template_expected_sha256: str = ""
+
+
 ATOM_FRAMEWORKS = ("atom",)
 
 
@@ -143,6 +151,8 @@ class AtomVariantConfig(BaseVariantConfig):
     roles: AtomRoles = AtomRoles()
     params: AtomParams
     sweep: Sweep
+    accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
+    mtp_quality: MtpQualityConfig = Field(default_factory=MtpQualityConfig)
 
     def cell_key(self, isl, osl, concurrency):
         p = self.params

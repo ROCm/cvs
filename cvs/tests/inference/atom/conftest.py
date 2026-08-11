@@ -60,8 +60,10 @@ LIFECYCLE_RANK = {
     "test_model_fetch": 3,
     "test_atom_inference": 4,
     "test_cell_metrics": 5,
-    "test_print_results_table": 6,
-    "test_teardown": 7,
+    "test_accuracy_eval": 6,
+    "test_atom_mtp_quality": 6,
+    "test_print_results_table": 7,
+    "test_teardown": 8,
 }
 
 

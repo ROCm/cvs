@@ -53,5 +53,10 @@
     "client.p99_e2el_ms": {"kind": "max_ms", "value": 1000000},
     "client.success_rate": {"kind": "min", "value": 0},
     "client.failed": {"kind": "max", "value": 1000000000}
+  },
+  "mtp_quality": {
+    "mtp.acceptance_rate": {"kind": "min", "value": 0},
+    "mtp.empty_or_repeat_ratio": {"kind": "max", "value": 1},
+    "accuracy.chat_template_ok": {"kind": "min", "value": 0}
   }
 }

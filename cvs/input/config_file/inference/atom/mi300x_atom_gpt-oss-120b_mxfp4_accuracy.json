@@ -1,0 +1,71 @@
+{
+  "_comment": "W2 GPT-OSS MXFP4 accuracy (M3 scaffold): gsm8k + long-context slice (ACC-8 record).",
+  "schema_version": 1,
+  "framework": "atom",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi300x_atom_gpt-oss-120b_mxfp4_accuracy_threshold.json",
+  "run_card": {
+    "atom_image_pin": "rocm/atom-dev:latest",
+    "notes": "W2 ACC-1 floor 0.93; ACC-8 longctx record-only"
+  },
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/home/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "openai/gpt-oss-120b",
+    "remote": 0,
+    "precision": "mxfp4"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "atom_mi300x",
+    "image": "rocm/atom-dev:latest",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
+        ],
+        "devices": ["/dev/dri", "/dev/kfd"]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "atom_args": ["-tp", "4", "--trust-remote-code"],
+      "env": {"ATOM_DISABLE_MMAP": "true"}
+    }
+  },
+  "params": {
+    "driver": "atom",
+    "port_no": "8000",
+    "tensor_parallelism": "4",
+    "num_prompts": "1",
+    "max_model_length": "8192"
+  },
+  "accuracy": {
+    "tasks": [
+      {"id": "gsm8k_flex", "task": "gsm8k", "num_fewshot": 5, "num_concurrent": 4},
+      {
+        "id": "gsm8k_longctx",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 2,
+        "metadata": {"filter": "flexible-extract", "max_length": 8192}
+      }
+    ]
+  },
+  "sweep": {
+    "sequence_combinations": [{"name": "acc_warmup", "isl": "128", "osl": "32"}],
+    "runs": [{"combo": "acc_warmup", "concurrency": 1}]
+  }
+}
