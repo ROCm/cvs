@@ -52,6 +52,21 @@
     "num_prompts": "1",
     "max_model_length": "8192"
   },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
+  "long_context_accuracy": {
+    "cells": [
+      {
+        "id": "niah_8k",
+        "isl": 8192,
+        "osl": 32,
+        "num_prompts": 4,
+        "seed": 42
+      }
+    ]
+  },
   "accuracy": {
     "tasks": [
       {"id": "gsm8k_flex", "task": "gsm8k", "num_fewshot": 5, "num_concurrent": 4},

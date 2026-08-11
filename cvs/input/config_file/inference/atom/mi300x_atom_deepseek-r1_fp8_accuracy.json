@@ -65,6 +65,10 @@
     "client_poll_count": "20",
     "client_poll_wait_time": "60"
   },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
   "accuracy": {
     "tasks": [
       {
@@ -90,6 +94,12 @@
         "metadata": {
           "filter": "flexible-extract"
         }
+      },
+      {
+        "id": "hellaswag",
+        "task": "hellaswag",
+        "num_fewshot": 0,
+        "num_concurrent": 4
       }
     ]
   },

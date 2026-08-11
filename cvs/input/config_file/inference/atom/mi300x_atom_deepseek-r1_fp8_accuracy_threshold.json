@@ -32,6 +32,7 @@
       "gsm8k.exact_match__flexible-extract": {"kind": "min", "value": 0.94}
     },
     "gsm8k_strict": {},
-    "gsm8k_stderr": {}
+    "gsm8k_stderr": {},
+    "hellaswag": {}
   }
 }

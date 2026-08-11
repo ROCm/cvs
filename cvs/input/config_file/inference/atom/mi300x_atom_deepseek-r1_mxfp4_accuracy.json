@@ -52,6 +52,7 @@
     "num_prompts": "1",
     "max_model_length": "4096"
   },
+  "functional": {"api_smoke": true, "health_check": true},
   "accuracy": {
     "tasks": [
       {"id": "gsm8k_flex", "task": "gsm8k", "num_fewshot": 5, "num_concurrent": 4}

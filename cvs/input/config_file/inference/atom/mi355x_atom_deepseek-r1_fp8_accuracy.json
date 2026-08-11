@@ -1,13 +1,13 @@
 {
-  "_comment": "W3 GLM 5.1 BF16 accuracy (M3 scaffold): gsm8k ACC-1 + MMLU ACC-6 record.",
+  "_comment": "MI355X W1 FP8 gsm8k accuracy (record-only until MI355X lab). Mirror of mi300x accuracy stem.",
   "schema_version": 1,
   "framework": "atom",
-  "gpu_arch": "mi300x",
+  "gpu_arch": "mi355x",
   "enforce_thresholds": false,
-  "threshold_json": "mi300x_atom_glm-5.1_accuracy_threshold.json",
+  "threshold_json": "mi355x_atom_deepseek-r1_fp8_accuracy_threshold.json",
   "run_card": {
-    "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "W3 ACC-1 floor 0.94 BF16; ACC-6 MMLU record-only"
+    "atom_image_pin": "rocm/atom-dev:nightly_202606211542",
+    "notes": "MI355X ACC-1 seeds; enforce after lab confirm"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -16,14 +16,14 @@
     "hf_token_file": "{shared_fs}/.hf_token"
   },
   "model": {
-    "id": "zai-org/GLM-5.1",
+    "id": "deepseek-ai/DeepSeek-R1-0528",
     "remote": 0,
-    "precision": "bf16"
+    "precision": "fp8"
   },
   "container": {
     "lifetime": "per_run",
-    "name": "atom_mi300x",
-    "image": "rocm/atom-dev:latest",
+    "name": "atom_mi355x",
+    "image": "rocm/atom-dev:nightly_202606211542",
     "runtime": {
       "name": "docker",
       "args": {
@@ -41,7 +41,7 @@
   },
   "roles": {
     "server": {
-      "atom_args": ["-tp", "8", "--trust-remote-code"],
+      "atom_args": ["-tp", "8", "--kv_cache_dtype", "fp8", "--trust-remote-code"],
       "env": {"ATOM_DISABLE_MMAP": "true"}
     }
   },
@@ -56,7 +56,8 @@
   "accuracy": {
     "tasks": [
       {"id": "gsm8k_flex", "task": "gsm8k", "num_fewshot": 5, "num_concurrent": 4},
-      {"id": "mmlu", "task": "mmlu", "num_fewshot": 5, "num_concurrent": 4}
+      {"id": "gsm8k_strict", "task": "gsm8k", "num_fewshot": 5, "num_concurrent": 4, "metadata": {"filter": "strict-match"}},
+      {"id": "hellaswag", "task": "hellaswag", "num_fewshot": 0, "num_concurrent": 4}
     ]
   },
   "sweep": {

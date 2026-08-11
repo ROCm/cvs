@@ -1,5 +1,5 @@
 {
-  "_comment": "W2 MXFP4 accuracy thresholds (ACC-1 gate 0.93; ACC-8 record-only until lab).",
+  "_comment": "W7 thinking accuracy thresholds (record-only).",
   "ISL=128,OSL=32,TP=4,CONC=1": {
     "client.output_throughput": {"kind": "min_tok_s", "value": 0},
     "client.total_token_throughput": {"kind": "min_tok_s", "value": 0},
@@ -29,13 +29,8 @@
   },
   "accuracy": {
     "gsm8k_flex": {
-      "gsm8k.exact_match__flexible-extract": {"kind": "min", "value": 0.93}
+      "gsm8k.exact_match__flexible-extract": {"kind": "min", "value": 0.94}
     },
-    "gsm8k_longctx": {}
-  },
-  "long_context_accuracy": {
-    "niah_8k": {
-      "accuracy.niah_pass_rate__niah_8k": {"kind": "min", "value": 0.75}
-    }
+    "hendrycks_math": {}
   }
 }
