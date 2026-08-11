@@ -24,6 +24,7 @@ Does NOT subclass :class:`cvs.lib.inference.base.InferenceBaseJob`.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import shlex
@@ -31,6 +32,7 @@ import time
 
 from cvs.lib import globals
 from cvs.lib.inference.atom.atom_parsing import to_client_metrics
+from cvs.lib.utils.model_query_lib import OpenAIProbe
 
 log = globals.log
 
@@ -640,6 +642,79 @@ class AtomJob:
                     return
                 time.sleep(30)
             raise RuntimeError("atom server warmup did not complete before timeout")
+
+    def dump_server_log(self, lines=200):
+        out = self._tail_server_logs(lines)
+        for host, text in (out or {}).items():
+            log.error("server log tail (%s):\n%s", host, text)
+
+    def probe_openai_endpoints(self):
+        probe_src = OpenAIProbe.probe_script(int(self.port_no), self.model_id)
+        b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
+        probe_path = f"{self.out_dir}/openai_probe.py"
+        cmd = (
+            f"mkdir -p {shlex.quote(self.out_dir)} && "
+            f"echo {shlex.quote(b64)} | base64 -d > {shlex.quote(probe_path)} && "
+            f"python3 {shlex.quote(probe_path)}"
+        )
+        out = self.orch.exec_on_head("bash -c " + shlex.quote(cmd))
+        raw = next(iter(out.values()), None) if out else None
+        if not raw or not str(raw).strip():
+            raise RuntimeError(f"OpenAI-compatible probe produced no output: {out!r}")
+        last_line = str(raw).strip().splitlines()[-1]
+        try:
+            parsed = json.loads(last_line)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw!r}") from e
+        if not isinstance(parsed, dict):
+            raise RuntimeError(f"OpenAI-compatible probe expected JSON object, got {type(parsed).__name__!r}")
+        results = {}
+        for step, val in parsed.items():
+            if not (isinstance(val, (list, tuple)) and len(val) == 2):
+                raise RuntimeError(f"OpenAI-compatible probe bad shape at {step!r}: {val!r}")
+            results[step] = (int(val[0]), val[1])
+        OpenAIProbe.log_results(results, log)
+        ok, err = OpenAIProbe.check_results(results, port=self.port_no, logger=log)
+        summary = OpenAIProbe.summarize_results(results, ok, err)
+        if not ok:
+            raise RuntimeError(err)
+        return summary
+
+    def probe_server_health(self):
+        """FUNC-2: /health, /v1/models, and max_tokens=1 completion liveness."""
+        summary = []
+        health_url = f"http://localhost:{self.port_no}/health"
+        health_probe = f"curl -sf {shlex.quote(health_url)} -o /dev/null && echo OK || echo NO"
+        health_out = self._exec_head("bash -c " + shlex.quote(health_probe))
+        if not health_out or not all("OK" in (v or "") for v in health_out.values()):
+            raise RuntimeError(f"/health check failed: {health_out!r}")
+        summary.append(f"health {health_url}: OK")
+
+        models_url = f"http://localhost:{self.port_no}/v1/models"
+        models_probe = f"curl -sf {shlex.quote(models_url)} -o /dev/null && echo OK || echo NO"
+        models_out = self._exec_head("bash -c " + shlex.quote(models_probe))
+        if not models_out or not all("OK" in (v or "") for v in models_out.values()):
+            raise RuntimeError(f"/v1/models check failed: {models_out!r}")
+        summary.append(f"models {models_url}: OK")
+
+        if self.driver == "atom":
+            if not self._atom_warmup_ok():
+                raise RuntimeError("max_tokens=1 completion check failed")
+        else:
+            payload = json.dumps(
+                {"model": self.model_id, "prompt": "hi", "max_tokens": 1},
+                separators=(",", ":"),
+            )
+            comp_url = f"http://localhost:{self.port_no}/v1/completions"
+            comp_probe = (
+                f"curl -sf {shlex.quote(comp_url)} -H 'Content-Type: application/json' "
+                f"-d {shlex.quote(payload)} -o /dev/null --max-time 120 && echo OK || echo NO"
+            )
+            comp_out = self._exec_head("bash -c " + shlex.quote(comp_probe))
+            if not comp_out or not all("OK" in (v or "") for v in comp_out.values()):
+                raise RuntimeError(f"max_tokens=1 completion failed: {comp_out!r}")
+        summary.append("completion max_tokens=1: OK")
+        return summary
 
     def stop_server(self):
         if self.driver == "atom":

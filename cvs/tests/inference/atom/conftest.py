@@ -58,12 +58,15 @@ LIFECYCLE_RANK = {
     "test_setup_sshd": 1,
     "test_discover_topology": 2,
     "test_model_fetch": 3,
-    "test_atom_inference": 4,
-    "test_cell_metrics": 5,
-    "test_accuracy_eval": 6,
-    "test_atom_mtp_quality": 6,
-    "test_print_results_table": 7,
-    "test_teardown": 8,
+    "test_openai_compatible_smoke": 4,
+    "test_server_health": 4,
+    "test_atom_inference": 5,
+    "test_cell_metrics": 6,
+    "test_accuracy_eval": 7,
+    "test_atom_long_context_accuracy": 7,
+    "test_atom_mtp_quality": 7,
+    "test_print_results_table": 8,
+    "test_teardown": 9,
 }
 
 

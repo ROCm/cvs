@@ -20,6 +20,7 @@ from cvs.lib.inference.utils.inference_suite_lifecycle import (
     test_teardown,  # noqa: F401
 )
 from cvs.lib.inference.atom.atom_orch import AtomJob
+from cvs.lib.inference.atom.atom_niah_job import run_niah_cell
 from cvs.lib.inference.atom.atom_mtp_quality import (
     chat_template_ok,
     chat_template_sha256,
@@ -43,6 +44,10 @@ from cvs.lib.utils.verdict import evaluate_all
 from cvs.tests.inference.atom._shared import test_print_results_table  # noqa: F401
 
 log = globals.log
+
+_SMOKE_ISL = 128
+_SMOKE_OSL = 32
+_SMOKE_MAX_MODEL_LEN = 512
 
 
 def _tier_display_metric(tier):
@@ -107,10 +112,90 @@ def pytest_generate_tests(metafunc):
         task_ids = [t["id"] for t in raw.get("accuracy", {}).get("tasks", [])]
         metafunc.parametrize("accuracy_task", task_ids, ids=task_ids)
         return
+    if "long_context_acc_cell" in metafunc.fixturenames:
+        cell_ids = [c["id"] for c in raw.get("long_context_accuracy", {}).get("cells", [])]
+        metafunc.parametrize("long_context_acc_cell", cell_ids, ids=cell_ids)
+        return
     spec = expand_sweep_parametrize(raw.get("sweep", {}), metafunc.fixturenames)
     if spec:
         argnames, argvalues, ids = spec
         metafunc.parametrize(argnames, argvalues, ids=ids)
+
+
+def test_openai_compatible_smoke(orch, variant_config, hf_token, lifecycle, request):
+    """FUNC-1: OpenAI-compatible HTTP smoke when ``functional.api_smoke`` is enabled."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    if not variant_config.functional.api_smoke:
+        pytest.skip("functional.api_smoke not enabled for this variant")
+
+    job = AtomJob.from_variant(
+        orch=orch,
+        variant=variant_config,
+        hf_token=hf_token,
+        isl=_SMOKE_ISL,
+        osl=_SMOKE_OSL,
+        concurrency=1,
+        num_prompts=1,
+    )
+    if variant_config.params.driver == "atom" and "--max-model-len" not in job.atom_server_args:
+        job.atom_server_args = list(job.atom_server_args) + [
+            "--max-model-len",
+            str(_SMOKE_MAX_MODEL_LEN),
+        ]
+    t = time.monotonic()
+    try:
+        job.stop_server()
+        job.build_server_cmd()
+        job.start_server()
+        job.wait_ready()
+        summary = job.probe_openai_endpoints()
+    except Exception:
+        lifecycle.failed = True
+        job.dump_server_log()
+        raise
+    finally:
+        job.stop_server()
+    lifecycle.record(request.node.nodeid, "openai_smoke", time.monotonic() - t)
+    log.info("OpenAI-compatible smoke results:\n%s", "\n".join(summary))
+
+
+def test_server_health(orch, variant_config, hf_token, lifecycle, request):
+    """FUNC-2: /health, model list, and max_tokens=1 liveness when ``functional.health_check`` is enabled."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    if not variant_config.functional.health_check:
+        pytest.skip("functional.health_check not enabled for this variant")
+
+    job = AtomJob.from_variant(
+        orch=orch,
+        variant=variant_config,
+        hf_token=hf_token,
+        isl=_SMOKE_ISL,
+        osl=_SMOKE_OSL,
+        concurrency=1,
+        num_prompts=1,
+    )
+    if variant_config.params.driver == "atom" and "--max-model-len" not in job.atom_server_args:
+        job.atom_server_args = list(job.atom_server_args) + [
+            "--max-model-len",
+            str(_SMOKE_MAX_MODEL_LEN),
+        ]
+    t = time.monotonic()
+    try:
+        job.stop_server()
+        job.build_server_cmd()
+        job.start_server()
+        job.wait_ready()
+        summary = job.probe_server_health()
+    except Exception:
+        lifecycle.failed = True
+        job.dump_server_log()
+        raise
+    finally:
+        job.stop_server()
+    lifecycle.record(request.node.nodeid, "server_health", time.monotonic() - t)
+    log.info("Server health check results:\n%s", "\n".join(summary))
 
 
 def test_atom_inference(
@@ -151,7 +236,9 @@ def test_atom_inference(
             t = time.monotonic()
             job.start_server()
             job.wait_ready()
-            lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t)
+            ready_s = time.monotonic() - t
+            lifecycle.record(request.node.nodeid, "server_ready", ready_s)
+            lifecycle.record(request.node.nodeid, "server.time_to_ready_s", ready_s, "s")
             if reuse_server_flag(p):
                 server_session["key"] = session_key
         else:
@@ -166,7 +253,9 @@ def test_atom_inference(
         raise
 
     inf_res_dict[sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency)] = results
-    lifecycle.record(request.node.nodeid, "client_complete", time.monotonic() - t_client)
+    client_s = time.monotonic() - t_client
+    lifecycle.record(request.node.nodeid, "client_complete", client_s)
+    lifecycle.record(request.node.nodeid, "server.client_wall_s", client_s, "s")
 
 
 def test_cell_metrics(
@@ -224,6 +313,49 @@ def test_cell_metrics(
             f"(metrics missing from benchmark artifact)"
         )
     evaluate_all(actuals, specs)
+
+
+def test_atom_long_context_accuracy(orch, variant_config, long_context_acc_cell, lifecycle, request):
+    """ACC-12: needle-in-a-haystack long-context accuracy (NIAH) per configured cell."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    lca = variant_config.long_context_accuracy
+    cells_by_id = {c.id: c for c in (lca.cells if lca else [])}
+    cell = cells_by_id.get(long_context_acc_cell)
+    if cell is None:
+        pytest.skip(f"long_context_accuracy cell {long_context_acc_cell!r} not configured")
+
+    lc_thresholds = (variant_config.thresholds or {}).get("long_context_accuracy", {})
+    cell_specs = lc_thresholds.get(long_context_acc_cell, {})
+    metric_key = f"accuracy.niah_pass_rate__{cell.id}"
+    expected = 1.0
+    min_spec = cell_specs.get(metric_key)
+    if isinstance(min_spec, dict) and min_spec.get("kind") == "min":
+        expected = float(min_spec["value"])
+
+    output_dir = f"{variant_config.paths.log_dir}/long_context_accuracy"
+    t = time.monotonic()
+    try:
+        actuals = run_niah_cell(
+            orch=orch,
+            variant=variant_config,
+            cell=cell,
+            expected_pass_rate=expected,
+            output_dir=output_dir,
+        )
+    except RuntimeError as e:
+        lifecycle.record(request.node.nodeid, "long_context_accuracy", time.monotonic() - t)
+        pytest.fail(str(e))
+    lifecycle.record(request.node.nodeid, "long_context_accuracy", time.monotonic() - t)
+    for key, value in actuals.items():
+        lifecycle.record(request.node.nodeid, key, value, "")
+
+    if not variant_config.enforce_thresholds or not cell_specs:
+        return
+    specs = {k: v for k, v in cell_specs.items() if k in actuals and actuals[k] is not None}
+    if specs:
+        evaluate_all(actuals, specs)
 
 
 def test_atom_mtp_quality(orch, variant_config, lifecycle, request):
