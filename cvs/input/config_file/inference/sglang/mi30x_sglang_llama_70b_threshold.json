@@ -8,7 +8,7 @@
     "mfu": { "kind": "min", "value": 0.02 }
   },
   "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128": {
-    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 200 },
+    "output_throughput_per_sec": { "kind": "min_tok_s", "value": 3000 },
     "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
     "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
     "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
