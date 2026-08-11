@@ -2,7 +2,7 @@
   "schema_version": 1,
   "framework": "megatron_single",
   "gpu_arch": "MI325X",
-  "enforce_thresholds": false,
+  "enforce_thresholds": true,
   "threshold_json": "mi325x_megatron_llama-3.1-8b_single_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",

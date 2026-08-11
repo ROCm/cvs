@@ -2,8 +2,8 @@
   "schema_version": 1,
   "framework": "megatron_single",
   "gpu_arch": "MI325X",
-  "enforce_thresholds": false,
-  "threshold_json": "llama3_3_70b_single_threshold.json",
+  "enforce_thresholds": true,
+  "threshold_json": "mi325x_megatron_llama-3.3-70b_single_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOGS/megatron",
@@ -26,9 +26,9 @@
     "tokenizer_model": "meta-llama/Llama-3.3-70B-Instruct",
     "model_size": "70",
     "sequence_length": "8192",
-    "recompute": "1",
-    "fsdp": "1",
-    "tensor_parallelism": "1",
+    "recompute": "0",
+    "fsdp": "0",
+    "tensor_parallelism": "8",
     "pipeline_parallelism": "1",
     "precision": "FP8"
   },
