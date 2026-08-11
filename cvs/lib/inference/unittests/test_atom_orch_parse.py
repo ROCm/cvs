@@ -20,6 +20,8 @@ _FIXTURES = _HERE / "fixtures"
 _ISL = 7168
 _OSL = 1024
 _TP = 8
+# Prefill fabric so build_server_cmd skips lazy IB discovery in FakeOrch tests.
+_PREFILLED_FABRIC = {"ib_hcas": ["mlx5_0"], "ib_netdev": "eth0"}
 
 
 def _fake_variant(
@@ -278,6 +280,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
             osl="1024",
             concurrency=128,
             num_prompts=100,
+            **_PREFILLED_FABRIC,
         )
         job.build_server_cmd(clear_atom_cache=False)
         job.start_server()
@@ -451,7 +454,8 @@ class TestATOMAtomBuildServerCmd(unittest.TestCase):
     def _env_script(orch):
         return orch.commands[0][0]
 
-    def test_nccl_ib_hca_line_present_only_when_ib_hcas_supplied(self):
+    @patch("cvs.lib.utils.ib_discovery.resolve_multinode_fabric", return_value=([], "eth0"))
+    def test_nccl_ib_hca_line_present_only_when_ib_hcas_supplied(self, _mock_resolve):
         cases = [
             (["mlx5_0", "mlx5_1"], True),
             ([], False),
@@ -499,6 +503,7 @@ class TestATOMAtomBuildServerCmd(unittest.TestCase):
             osl="1024",
             concurrency=128,
             num_prompts=100,
+            **_PREFILLED_FABRIC,
         )
         job.build_server_cmd()
         script = self._env_script(orch)
