@@ -55,8 +55,8 @@
     "client.failed": {"kind": "max", "value": 1000000000}
   },
   "mtp_quality": {
-    "mtp.acceptance_rate": {"kind": "min", "value": 0},
-    "mtp.empty_or_repeat_ratio": {"kind": "max", "value": 1},
-    "accuracy.chat_template_ok": {"kind": "min", "value": 0}
+    "mtp.acceptance_rate": {"kind": "info", "value": 0.0},
+    "mtp.empty_or_repeat_ratio": {"kind": "info", "value": 0.0},
+    "accuracy.chat_template_ok": {"kind": "info", "value": 0.0}
   }
 }

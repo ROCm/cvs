@@ -1,5 +1,5 @@
 {
-  "_comment": "INTERIM vLLM uplift only — not final W2. Use mi300x_atom_gpt-oss-120b_mxfp4_single for W2 ATOM (MXFP4 TP4, 8K/1K).",
+  "_comment": "INTERIM vLLM uplift only \u2014 not final W2. Use mi300x_atom_gpt-oss-120b_mxfp4_single for W2 ATOM (MXFP4 TP4, 8K/1K).",
   "schema_version": 1,
   "framework": "atom",
   "gpu_arch": "mi300x",
@@ -87,5 +87,8 @@
         "concurrency": 64
       }
     ]
+  },
+  "platform": {
+    "gpu_metrics_poll": true
   }
 }

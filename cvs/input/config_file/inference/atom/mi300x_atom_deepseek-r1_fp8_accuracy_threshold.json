@@ -38,6 +38,21 @@
     },
     "mmlu_pro": {
       "mmlu_pro.exact_match__custom-extract": {"kind": "info", "value": 0.0}
+    },
+    "bbh": {
+      "bbh.acc_norm__none": {"kind": "info", "value": 0.0}
+    },
+    "musr": {
+      "musr.acc_norm__none": {"kind": "info", "value": 0.0}
+    },
+    "arc_challenge": {
+      "arc_challenge.acc_norm__none": {"kind": "info", "value": 0.0}
+    },
+    "winogrande": {
+      "winogrande.acc__none": {"kind": "info", "value": 0.0}
     }
+  },
+  "quant_parity": {
+    "quant_parity.probe_match": {"kind": "info", "value": 0.0}
   }
 }

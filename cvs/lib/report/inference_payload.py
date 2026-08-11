@@ -9,7 +9,9 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from cvs.lib.report.cell_build import build_all_cells
 from cvs.lib.report.accuracy_lifecycle import (
     build_accuracy_prev_run_panel,
+    build_scale_accuracy_panel,
     extract_accuracy_from_lifecycle,
+    resolve_scale_accuracy_ref_json_path,
 )
 from cvs.lib.report.json_io import load_report_json
 from cvs.lib.report.panels.framework_parity import (
@@ -231,6 +233,15 @@ def _build_panels(
             )
             if accuracy_prev:
                 panels["accuracy_prev_run"] = accuracy_prev
+
+            scale_ref = resolve_scale_accuracy_ref_json_path(
+                getattr(config, "scale_accuracy_ref_json", "")
+            )
+            if scale_ref and lifecycle_report:
+                scale_payload = load_report_json(Path(scale_ref)) or {}
+                scale_panel = build_scale_accuracy_panel(current_accuracy, scale_payload)
+                if scale_panel:
+                    panels["scale_accuracy"] = scale_panel
 
     parity_path = resolve_parity_ref_json_path(config.framework_parity_ref_json)
     if parity_path:

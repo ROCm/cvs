@@ -66,6 +66,7 @@ LIFECYCLE_RANK = {
     "test_accuracy_eval": 7,
     "test_atom_long_context_accuracy": 7,
     "test_atom_mtp_quality": 7,
+    "test_atom_quant_parity": 7,
     "test_verify_dmesg": 8,
     "test_print_results_table": 8,
     "test_teardown": 9,

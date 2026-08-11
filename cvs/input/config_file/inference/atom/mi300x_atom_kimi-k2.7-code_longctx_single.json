@@ -7,7 +7,7 @@
   "threshold_json": "mi300x_atom_kimi-k2.7-code_longctx_single_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "K2.7 long ISL perf; pair with …_code_accuracy NIAH cells"
+    "notes": "K2.7 long ISL perf; pair with \u2026_code_accuracy NIAH cells"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -35,14 +35,23 @@
           "/home/{user-id}:/home/{user-id}",
           "/home/models:/home/models"
         ],
-        "devices": ["/dev/dri", "/dev/kfd"]
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
       }
     }
   },
   "roles": {
     "server": {
-      "atom_args": ["-tp", "8", "--trust-remote-code"],
-      "env": {"ATOM_DISABLE_MMAP": "true"}
+      "atom_args": [
+        "-tp",
+        "8",
+        "--trust-remote-code"
+      ],
+      "env": {
+        "ATOM_DISABLE_MMAP": "true"
+      }
     }
   },
   "params": {
@@ -59,11 +68,24 @@
   },
   "sweep": {
     "sequence_combinations": [
-      {"name": "k27_8k_1k", "isl": "8192", "osl": "1024"}
+      {
+        "name": "k27_8k_1k",
+        "isl": "8192",
+        "osl": "1024"
+      }
     ],
     "runs": [
-      {"combo": "k27_8k_1k", "concurrency": 32},
-      {"combo": "k27_8k_1k", "concurrency": 64}
+      {
+        "combo": "k27_8k_1k",
+        "concurrency": 32
+      },
+      {
+        "combo": "k27_8k_1k",
+        "concurrency": 64
+      }
     ]
+  },
+  "platform": {
+    "gpu_metrics_poll": true
   }
 }

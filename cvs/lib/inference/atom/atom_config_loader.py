@@ -143,6 +143,12 @@ class MtpQualityConfig(_Forbid):
     chat_template_expected_sha256: str = ""
 
 
+class QuantParityConfig(_Forbid):
+    enabled: bool = False
+    probe_prompt: str = "The capital of France is"
+    reference_config_stem: str = ""
+
+
 ATOM_FRAMEWORKS = ("atom",)
 
 
@@ -156,6 +162,7 @@ class AtomVariantConfig(BaseVariantConfig):
     sweep: Sweep
     accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
     mtp_quality: MtpQualityConfig = Field(default_factory=MtpQualityConfig)
+    quant_parity: QuantParityConfig = Field(default_factory=QuantParityConfig)
     functional: FunctionalConfig = Field(default_factory=FunctionalConfig)
     long_context_accuracy: LongContextAccuracyConfig = Field(default_factory=LongContextAccuracyConfig)
     platform: PlatformConfig = Field(default_factory=PlatformConfig)

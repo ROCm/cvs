@@ -35,14 +35,23 @@
           "/home/{user-id}:/home/{user-id}",
           "/home/models:/home/models"
         ],
-        "devices": ["/dev/dri", "/dev/kfd"]
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
       }
     }
   },
   "roles": {
     "server": {
-      "atom_args": ["-tp", "4", "--trust-remote-code"],
-      "env": {"ATOM_DISABLE_MMAP": "true"}
+      "atom_args": [
+        "-tp",
+        "4",
+        "--trust-remote-code"
+      ],
+      "env": {
+        "ATOM_DISABLE_MMAP": "true"
+      }
     }
   },
   "params": {
@@ -59,11 +68,24 @@
   },
   "sweep": {
     "sequence_combinations": [
-      {"name": "w2_8k_1k", "isl": "8192", "osl": "1024"}
+      {
+        "name": "w2_8k_1k",
+        "isl": "8192",
+        "osl": "1024"
+      }
     ],
     "runs": [
-      {"combo": "w2_8k_1k", "concurrency": 32},
-      {"combo": "w2_8k_1k", "concurrency": 64}
+      {
+        "combo": "w2_8k_1k",
+        "concurrency": 32
+      },
+      {
+        "combo": "w2_8k_1k",
+        "concurrency": 64
+      }
     ]
+  },
+  "platform": {
+    "gpu_metrics_poll": true
   }
 }

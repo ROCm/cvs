@@ -7,7 +7,7 @@
   "threshold_json": "mi300x_atom_kimi-k2.6-thinking_single_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "W7 thinking perf; pair with …_thinking_accuracy for ACC-11"
+    "notes": "W7 thinking perf; pair with \u2026_thinking_accuracy for ACC-11"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -35,14 +35,23 @@
           "/home/{user-id}:/home/{user-id}",
           "/home/models:/home/models"
         ],
-        "devices": ["/dev/dri", "/dev/kfd"]
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
       }
     }
   },
   "roles": {
     "server": {
-      "atom_args": ["-tp", "4", "--trust-remote-code"],
-      "env": {"ATOM_DISABLE_MMAP": "true"}
+      "atom_args": [
+        "-tp",
+        "4",
+        "--trust-remote-code"
+      ],
+      "env": {
+        "ATOM_DISABLE_MMAP": "true"
+      }
     }
   },
   "params": {
@@ -59,11 +68,24 @@
   },
   "sweep": {
     "sequence_combinations": [
-      {"name": "k26_1k_1k", "isl": "1024", "osl": "1024"}
+      {
+        "name": "k26_1k_1k",
+        "isl": "1024",
+        "osl": "1024"
+      }
     ],
     "runs": [
-      {"combo": "k26_1k_1k", "concurrency": 128},
-      {"combo": "k26_1k_1k", "concurrency": 256}
+      {
+        "combo": "k26_1k_1k",
+        "concurrency": 128
+      },
+      {
+        "combo": "k26_1k_1k",
+        "concurrency": 256
+      }
     ]
+  },
+  "platform": {
+    "gpu_metrics_poll": true
   }
 }

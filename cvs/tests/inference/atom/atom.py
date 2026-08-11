@@ -34,6 +34,10 @@ from cvs.lib.inference.atom.atom_mtp_quality import (
     extract_completion_text,
     parse_mtp_log_metrics,
 )
+from cvs.lib.inference.atom.atom_quant_parity import (
+    extract_completion_text as quant_extract_completion_text,
+    run_quant_parity_probe,
+)
 from cvs.lib.inference.atom.atom_config_loader import (
     expand_sweep_parametrize,
     reuse_server_flag,
@@ -106,6 +110,10 @@ def _mtp_quality_requested(variant_config) -> bool:
     args = variant_config.roles.server.atom_args or []
     joined = " ".join(str(a) for a in args).lower()
     return "--method" in joined and "mtp" in joined
+
+
+def _quant_parity_requested(variant_config) -> bool:
+    return bool(variant_config.quant_parity.enabled)
 
 
 def pytest_generate_tests(metafunc):
@@ -459,6 +467,60 @@ def test_atom_mtp_quality(orch, variant_config, lifecycle, request):
     mtp_thresholds = (variant_config.thresholds or {}).get("mtp_quality", {})
     if mtp_thresholds:
         specs = {k: v for k, v in mtp_thresholds.items() if k in actuals and actuals[k] is not None}
+        if specs:
+            evaluate_all(actuals, specs)
+
+
+def test_atom_quant_parity(orch, variant_config, lifecycle, request):
+    """ACC-7: fixed-prompt completion fingerprint for quant parity (reference pairing TBD)."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    if not _quant_parity_requested(variant_config):
+        pytest.skip("quant_parity not enabled for this variant")
+
+    p = variant_config.params
+    qp = variant_config.quant_parity
+    combo = variant_config.sweep.sequence_combinations[0]
+    run = variant_config.sweep.runs[0]
+    job = AtomJob.from_variant(
+        orch=orch,
+        variant=variant_config,
+        hf_token="",
+        isl=combo.isl,
+        osl=combo.osl,
+        concurrency=run.concurrency,
+    )
+    base = f"{p.base_url}:{p.port_no}".replace("0.0.0.0", "127.0.0.1")
+    model_id = variant_config.model.id
+
+    t = time.monotonic()
+    probe_body = json.dumps(
+        {
+            "model": model_id,
+            "messages": [{"role": "user", "content": qp.probe_prompt}],
+            "max_tokens": 32,
+            "temperature": 0,
+        }
+    )
+    curl_cmd = (
+        f"curl -sS -X POST {shlex.quote(base + '/v1/chat/completions')} "
+        f"-H 'Content-Type: application/json' -d {shlex.quote(probe_body)}"
+    )
+    probe_out = orch.exec_on_head(curl_cmd, timeout=120)
+    probe_text = next(iter(probe_out.values()), "") or ""
+    completion = quant_extract_completion_text(probe_text)
+    actuals = run_quant_parity_probe(probe_text=completion)
+    actuals["quant_parity.reference_config_stem"] = qp.reference_config_stem or ""
+
+    lifecycle.record(request.node.nodeid, "quant_parity", time.monotonic() - t)
+    for metric_key, value in actuals.items():
+        lifecycle.record(request.node.nodeid, metric_key, value, "")
+
+    if not variant_config.enforce_thresholds:
+        return
+    qp_thresholds = (variant_config.thresholds or {}).get("quant_parity", {})
+    if qp_thresholds:
+        specs = {k: v for k, v in qp_thresholds.items() if k in actuals and actuals[k] is not None}
         if specs:
             evaluate_all(actuals, specs)
 

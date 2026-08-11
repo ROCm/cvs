@@ -106,8 +106,37 @@
         "task": "mmlu_pro",
         "num_fewshot": 5,
         "num_concurrent": 4
+      },
+      {
+        "id": "bbh",
+        "task": "bbh",
+        "num_fewshot": 3,
+        "num_concurrent": 4
+      },
+      {
+        "id": "musr",
+        "task": "musr",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "arc_challenge",
+        "task": "arc_challenge",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "winogrande",
+        "task": "winogrande",
+        "num_fewshot": 0,
+        "num_concurrent": 4
       }
     ]
+  },
+  "quant_parity": {
+    "enabled": true,
+    "probe_prompt": "The capital of France is",
+    "reference_config_stem": ""
   },
   "sweep": {
     "sequence_combinations": [

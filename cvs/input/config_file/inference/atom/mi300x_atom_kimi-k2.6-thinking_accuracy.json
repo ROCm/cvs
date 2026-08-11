@@ -56,7 +56,7 @@
   "accuracy": {
     "tasks": [
       {"id": "gsm8k_flex", "task": "gsm8k", "num_fewshot": 5, "num_concurrent": 4},
-      {"id": "hendrycks_math", "task": "hendrycks_math", "num_fewshot": 4, "num_concurrent": 4}
+      {"id": "hendrycks_math", "task": "hendrycks_math", "num_fewshot": 4, "num_concurrent": 4, "metadata": {"level": "Level 5"}}
     ]
   },
   "sweep": {

@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Mapping, Optional
+
+SCALE_ACCURACY_REF_ENV = "CVS_ATOM_SCALE_ACCURACY_REF_JSON"
+
+
+def resolve_scale_accuracy_ref_json_path(config_path: str = "") -> str:
+    return (config_path or os.environ.get(SCALE_ACCURACY_REF_ENV, "")).strip()
 
 
 def extract_accuracy_from_lifecycle(lifecycle_report: Mapping[str, list]) -> Dict[str, float]:
@@ -49,4 +56,51 @@ def build_accuracy_prev_run_panel(
         "baseline": baseline_val,
         "compare.prev_run.gsm8k_delta": delta,
         "regression": regression,
+    }
+
+
+def build_scale_accuracy_panel(
+    current: Mapping[str, float],
+    reference_payload: Mapping[str, Any],
+    *,
+    metric_keys: tuple[str, ...] = (
+        "gsm8k_flex.gsm8k.exact_match__flexible-extract",
+        "hellaswag.hellaswag.acc_norm__none",
+        "mmlu_pro.mmlu_pro.exact_match__custom-extract",
+    ),
+    max_drop: float = 0.01,
+) -> Optional[dict]:
+    """Compare accuracy metrics across topologies (tracker #50 scaffold)."""
+    baseline = reference_payload.get("accuracy") or {}
+    if not isinstance(baseline, dict):
+        return None
+    rows = []
+    any_regression = False
+    for metric_key in metric_keys:
+        current_val = current.get(metric_key)
+        baseline_val = baseline.get(metric_key)
+        if current_val is None or baseline_val is None:
+            continue
+        try:
+            delta = float(current_val) - float(baseline_val)
+        except (TypeError, ValueError):
+            continue
+        regression = delta < -max_drop
+        any_regression = any_regression or regression
+        rows.append(
+            {
+                "metric_key": metric_key,
+                "current": current_val,
+                "baseline": baseline_val,
+                "delta": delta,
+                "regression": regression,
+            }
+        )
+    if not rows:
+        return None
+    return {
+        "max_drop": max_drop,
+        "rows": rows,
+        "regression": any_regression,
+        "compare.scale_accuracy.regression": any_regression,
     }

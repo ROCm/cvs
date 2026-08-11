@@ -115,12 +115,12 @@ Status on branch `hnimrama/atom-accuracy` as of 2026-08-11:
 | MMLU-PRO | P1 | ACC-15 | **In progress** — task + info threshold on W1; flip to min after lab |
 | MMLU (legacy) | P2 | ACC-6 | **In progress** — W3 scaffold only; prefer ACC-15 |
 | MATH Level 5 | P2 | ACC-11 | **Partial** — `hendrycks_math` on W7 thinking; not level-5 filter |
-| BBH | P2 | — | **Not included** |
+| BBH | P2 | ACC-16 | **In progress** — lm-eval `bbh` on W1 `*_accuracy`; info threshold |
 | GPQA | P2 | — | **Not included** (gated HF dataset) |
-| MuSR | P2 | — | **Not included** |
-| ARC-Challenge | P2 | — | **Not included** |
-| WinoGrande | P2 | — | **Not included** |
-| Scale parity – accuracy | P2 | — | **Not included** (M4 is perf parity only; multinode PP accuracy deferred) |
+| MuSR | P2 | ACC-17 | **In progress** — lm-eval `musr` on W1 `*_accuracy`; info threshold |
+| ARC-Challenge | P2 | ACC-18 | **In progress** — lm-eval `arc_challenge` on W1 `*_accuracy`; info threshold |
+| WinoGrande | P2 | ACC-19 | **In progress** — lm-eval `winogrande` on W1 `*_accuracy`; info threshold |
+| Scale parity – accuracy | P2 | ACC-20 | **In progress** — `*_distributed_accuracy` + scale panel scaffold |
 
 **Lab follow-up (W1 accuracy job):** run `mi300x_atom_deepseek-r1_fp8_accuracy`, record HellaSwag + MMLU-PRO baselines, replace `"kind": "info"` with `"kind": "min"` and calibrated floors in the threshold file.
 
