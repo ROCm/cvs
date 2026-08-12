@@ -1,5 +1,5 @@
 {
-  "_comment": "vllm single workload: llama33-70b_fp8 on MI300X, TP=8 single node. Sweep carries conc16 1k1k/1k8k/8k1k; only 1k1k is selected in sweep.runs. Set container.image, model.id and the models mount before running.",
+  "_comment": "vllm single workload: llama33-70b_fp8 on MI300X, TP=8 single node. Sweep carries conc16 1k1k/1k8k/8k1k; only 1k1k is selected in sweep.runs. num_prompts is 320, not the 3200 schema default, to keep this a characterization pass rather than a full-length benchmark -- raise it to 3200 for comparable published numbers. Set container.image, model.id and the models mount before running.",
   "schema_version": 1,
   "framework": "vllm",
   "gpu_arch": "mi300x",

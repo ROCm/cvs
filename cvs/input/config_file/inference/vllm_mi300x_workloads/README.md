@@ -55,11 +55,20 @@ distributed: ISL=1024,OSL=1024,TP=<tp>,PP=2,CONC=16
 
 `random_range_ratio` is `0.0` so ISL/OSL are exact rather than jittered ±80%.
 
+`num_prompts` is **320**, not the `3200` schema default used by the configs in
+`cvs/input/config_file/inference/vllm/`. That makes each cell a characterization
+pass — enough to shake out topology, AITER and kv-cache settings on new
+hardware, at roughly a tenth the wall-clock. Raise it to `3200` before quoting
+numbers that need to line up with the shipped examples.
+
 ## Thresholds
 
 `enforce_thresholds` is **false** on every config, so nothing gates and metrics
 are only recorded. Each threshold file carries a placeholder for every metric
-the suite can gate on — 32 per file:
+the suite can gate on — 32 per file. That full grid is a convenience for later
+calibration, **not** a loader requirement: the vLLM loader checks cell coverage
+only, and an absent metric spec means "don't gate this metric". A threshold file
+may gate just the handful of metrics you care about.
 
 | Family | Count | Source of the list |
 |---|---|---|
@@ -162,3 +171,12 @@ cvs run vllm \
 ```
 
 Do not pass pytest function names — let the suite's default tests run.
+
+## See also
+
+This file covers only what is specific to this workload set. For the vLLM suite
+itself — threshold kinds, cell-key format, multinode prerequisites, accuracy
+metric keys — see the suite reference and how-to:
+
+- `docs/reference/configuration-files/vllm.rst`
+- `docs/how-to/run-vllm-benchmarks.rst`
