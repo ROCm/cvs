@@ -30,17 +30,25 @@ readonly POLL_INTERVAL="${POLL_INTERVAL:-30}"
 # These have to nest inside each other, innermost first, or the outer layer
 # fires and the inner one never gets to say why:
 #
-#   rccl_ab.sbatch --time    4h00m   Slurm kills; job state becomes TIMEOUT
-#   MAX_WAIT_SEC             4h10m   backstop if slurmctld never enforces it
+#   rccl_ab.sbatch --time    5h00m   Slurm kills; job state becomes TIMEOUT
+#   MAX_WAIT_SEC             5h10m   backstop if slurmctld never enforces it
 #   MAX_QUEUE_SEC            4h00m   never started -> report a queue starvation
-#   detect timeout-minutes   8h30m   > 4h00 queue + 4h10 run, so it fires last
+#   detect timeout-minutes   9h20m   > 4h00 queue + 5h10 run, so it fires last
+#
+# The run budget went 4h -> 5h when alltoall_perf was re-enabled (2026-08-12).
+# The breaker abandons a group after 2 consecutive failures at a 360s
+# per-collective timeout, so the all-timeouts bound is
+# groups x 2 sides x 2 failures x 360s. At 8 groups that is 3.2h; at 10 it is
+# exactly 4.0h, which is not a bound at all when --time is 4h -- Slurm would
+# kill the job at the moment the breaker was about to explain itself. A healthy
+# 10-group run is ~35min (job 16368), so this is still ~8x headroom.
 #
 # The previous numbers were 8h / 8h / 24h / 9h, which is not a nesting at all:
 # the 24h queue budget sat outside the 9h GitHub timeout, so a job stuck in the
 # queue was killed by Actions with a bare "exceeded the maximum execution time"
 # and this script's own diagnostic -- the one that says the job never started
 # and cancels it -- was unreachable code. Keep this table true if you retune.
-readonly MAX_WAIT_SEC="${MAX_WAIT_SEC:-15000}"
+readonly MAX_WAIT_SEC="${MAX_WAIT_SEC:-18600}"
 readonly MAX_QUEUE_SEC="${MAX_QUEUE_SEC:-14400}"
 # squeue talks to slurmctld over the network. A single empty reply is not proof
 # the job is gone -- it is equally consistent with a controller restart, an RPC

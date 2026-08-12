@@ -675,7 +675,8 @@ def test_ab_analyze(request, config_dict):
                 safety_factor=float(ab_cfg.get('safety_factor', 2.0)),
                 mad_k=float(ab_cfg.get('mad_k', 3.0)),
             )
-            log.info("Derived thresholds from control run: %s", derived["thresholds"])
+            log.info("Derived thresholds from control run: pooled=%s per-collective=%s",
+                     derived["thresholds"], derived.get("thresholds_by_collective"))
             log.info("Measured noise: %s", derived["noise"])
             # Publishing is deferred until after the per-group checks below.
             # These numbers go to a shared path that every future detect run
@@ -683,7 +684,19 @@ def test_ab_analyze(request, config_dict):
             # widen the gate for everyone before anyone notices it measured badly.
             pending_publish = derived
             # Apply derived thresholds for the (sanity) detection below.
-            detector_overrides = {**detector_overrides, "thresholds": derived["thresholds"]}
+            #
+            # Prefer the per-collective table. Detect mode resolves
+            # thresholds_by_collective, so scoring the control run with the
+            # pooled per-tier dict checks A=A against numbers production never
+            # uses -- looser than production for some collectives (large tier
+            # 0.0498 pooled against 0.0300 per-collective) and tighter for
+            # others. A control run's whole job is to be a faithful dry run of
+            # the gate, and it cannot be one while the two disagree.
+            detector_overrides = {
+                **detector_overrides,
+                "thresholds": (derived.get("thresholds_by_collective")
+                               or derived["thresholds"]),
+            }
             thresholds_source = "this control run"
     else:
         # Detect mode: prefer thresholds calibrated on THIS hardware (written by a
