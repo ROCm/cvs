@@ -26,7 +26,11 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.training.megatron.megatron_lib import MegatronTrainingJob
-from cvs.lib.training.megatron.utils.loss_curve import parse_all_loss_points, sample_loss_curve, evaluate_loss_decreasing
+from cvs.lib.training.megatron.utils.loss_curve import (
+    parse_all_loss_points,
+    sample_loss_curve,
+    evaluate_loss_decreasing,
+)
 from cvs.lib.training.megatron.utils.loss_curve_plot import render_loss_curve_png
 from cvs.lib.training.megatron.utils.scaling import compute_scaling_efficiency
 from cvs.lib.utils.verdict import _check_one, ThresholdViolation
@@ -330,6 +334,7 @@ def test_loss_curve(
     try:
         from pathlib import Path as _Path
         import uuid as _uuid
+
         _Path(out_dir).mkdir(parents=True, exist_ok=True)
         fname = f"loss_curve_{combo_key}_{str(_uuid.uuid4()).split('-')[-1]}.png"
         png_path = _Path(out_dir) / fname

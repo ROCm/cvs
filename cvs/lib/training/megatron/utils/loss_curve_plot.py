@@ -31,6 +31,7 @@ def render_loss_curve_png(points, out_path, title=None):
 
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except Exception as e:

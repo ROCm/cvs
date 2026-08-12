@@ -75,7 +75,7 @@ class _Lifecycle:
     def __init__(self):
         self.failed = False
         self.torn_down = False
-        self.report = {}     # nodeid -> list[(label, value, unit)]
+        self.report = {}  # nodeid -> list[(label, value, unit)]
         self.artifacts = {}  # nodeid -> list[(link_name, rel_path)]
 
     def record(self, nodeid, label, value, unit="s"):
