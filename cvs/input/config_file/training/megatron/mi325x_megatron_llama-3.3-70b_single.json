@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "framework": "megatron_single",
+  "gpu_arch": "MI325X",
+  "enforce_thresholds": true,
+  "loss_curve": {
+    "sample_every": 10,
+    "milestone_steps": [100, 500, 1000, 5000],
+    "max_slope": 0.0,
+    "enforce": true
+  },
+  "threshold_json": "mi325x_megatron_llama-3.3-70b_single_threshold.json",
+  "config": {
+    "hf_token_file": "/home/{user-id}/.hf_token",
+    "log_dir": "/home/{user-id}/LOGS/megatron",
+    "scripts_dir": "/home/{user-id}/SCRIPTS/megatron",
+    "data_cache_dir": "/home/{user-id}/cache",
+    "rocm_dir": "",
+    "megatron_root": "/workspace/Megatron-LM",
+    "training_iterations": "10",
+    "nnodes": "1",
+    "nic_type": "thor2",
+    "nccl_socket_ifname": "ensf1np1",
+    "gloo_socket_ifname": "ensf1np1",
+    "nccl_ib_gid_index": "3",
+    "nccl_debug": "ERROR",
+    "master_address": "127.0.0.1",
+    "verify_network_errors": "False"
+  },
+  "model_params": {
+    "model_name": "llama3.3_70B",
+    "tokenizer_model": "meta-llama/Llama-3.3-70B-Instruct",
+    "model_size": "70",
+    "sequence_length": "8192",
+    "recompute": "0",
+    "fsdp": "0",
+    "tensor_parallelism": "8",
+    "pipeline_parallelism": "1",
+    "precision": "FP8"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "megatron_llama3_3_70b_single",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/dev/infiniband:/dev/infiniband"
+        ],
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri"
+        ]
+      }
+    }
+  },
+  "sweep": {
+    "combinations": {
+      "llama3_3_70b-mi325-bs96-mbs3-fp8": {
+        "name": "llama3_3_70b_mbs3_gbs96_FP8",
+        "global_batch_size": "96",
+        "micro_batch_size": "3",
+        "precision": "FP8"
+      },
+      "llama3_3_70b-mi325-bs96-mbs3-bf16": {
+        "name": "llama3_3_70b_mbs3_gbs96_BF16",
+        "global_batch_size": "96",
+        "micro_batch_size": "3",
+        "precision": "BF16"
+      }
+    },
+    "runs": [
+      "llama3_3_70b-mi325-bs96-mbs3-fp8",
+      "llama3_3_70b-mi325-bs96-mbs3-bf16"
+    ]
+  }
+}
