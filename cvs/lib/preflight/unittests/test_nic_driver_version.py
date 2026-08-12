@@ -1,7 +1,10 @@
 """Unit tests for the per-vendor NIC driver version preflight checks."""
 
 import os
+import stat
+import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -15,34 +18,72 @@ from cvs.lib.preflight.nic_driver_version import (
 )
 
 
-EXPECTED_RE = "236.1.155.0"
-EXPECTED_EN = "1.10.3-236.1.155.0"
-EXPECTED_IONIC = "1.117.5-a-56"
-EXPECTED_IONIC_RDMA = "1.117.5-a-56"
+EXPECTED_PKG_VER = "233.0.150.0"
+EXPECTED_FW_VER = "1.117.5-a-56"
 EXPECTED_MLX5 = "24.10.1000"
 EXPECTED_OFED = "MLNX_OFED_LINUX-24.10-1.1.4.0"
 
+# Real ``niccli --list`` output right-justifies the index column (e.g. "  1)", " 16)"),
+# which caught out an earlier awk pattern anchored to '^[0-9]+\\)' -- it silently
+# matched zero rows against real output while still passing against the
+# hand-built ``_broadcom_output`` fixture below. This fixture is fed through the
+# actual embedded shell/awk (via a stubbed niccli/lsmod/sudo on PATH) rather than
+# mocking phdl.exec's return value, so a regression here fails the same way it
+# did against real hardware.
+_REAL_NICCLI_LIST_OUTPUT = """
+     BoardId(Rev)    MAC Address        FwVersion    PCIAddr        Type   Mode
+  1) BCM57608(B1)    22:D2:00:F3:1B:17  237.1.148.0  0000:06:00.0   NIC    PCI
+  2) BCM57608(B1)    22:D2:00:F3:1B:17  237.1.148.0  0000:06:00.1   NIC    PCI
+ 10) BCM57608(B1)    DA:EB:78:11:87:A8  237.1.148.0  0000:86:00.1   NIC    PCI
+ 16) BCM57608(B1)    BE:DD:72:A3:1F:1A  237.1.148.0  0000:E6:00.1   NIC    PCI
+"""
 
-def _broadcom_output(re_version, re_file, en_version, en_file):
-    return "\n".join(
-        [
-            "VENDOR:BROADCOM",
-            f"RE_VERSION:{re_version}",
-            f"RE_FILE:{re_file}",
-            f"EN_VERSION:{en_version}",
-            f"EN_FILE:{en_file}",
-        ]
-    )
+
+def _write_executable(path, contents):
+    with open(path, 'w') as f:
+        f.write(contents)
+    os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
 
 
-def _ainic_output(ionic_version, ionic_rdma_version):
-    return "\n".join(
-        [
-            "VENDOR:AINIC",
-            f"IONIC_VERSION:{ionic_version}",
-            f"IONIC_RDMA_VERSION:{ionic_rdma_version}",
-        ]
-    )
+def _run_command_with_fake_niccli(command, niccli_list_output, pkg_version):
+    """Execute ``command`` (the real for-loop/awk pipeline) with stubbed
+    ``lsmod``/``sudo``/``niccli`` on PATH, so the actual parsing logic runs
+    against realistic output instead of a hand-mocked parsed string. The fake
+    ``niccli`` handles both ``--list`` (index enumeration) and
+    ``-i <idx> show --pkg_ver`` (per-NIC package version) invocations."""
+    with tempfile.TemporaryDirectory() as bindir:
+        _write_executable(os.path.join(bindir, 'lsmod'), '#!/bin/bash\necho "bnxt_re 12345 0"\n')
+        _write_executable(os.path.join(bindir, 'sudo'), '#!/bin/bash\nexec "$@"\n')
+        _write_executable(
+            os.path.join(bindir, 'niccli'),
+            (
+                '#!/bin/bash\n'
+                'if [ "$1" = "--list" ]; then\n'
+                f'cat <<\'NICCLI_EOF\'\n{niccli_list_output}NICCLI_EOF\n'
+                'elif [ "$1" = "-i" ]; then\n'
+                f'echo "Active Package Version : {pkg_version}"\n'
+                'fi\n'
+            ),
+        )
+        env = dict(os.environ)
+        env['PATH'] = f"{bindir}:{env['PATH']}"
+        result = subprocess.run(['bash', '-c', command], capture_output=True, text=True, env=env, check=False)
+        return result.stdout
+
+
+def _broadcom_output(*pkg_versions):
+    """Build fake ``niccli``-driven output: one ``PKG:<idx>:<version>`` line per NIC."""
+    lines = ["VENDOR:BROADCOM"]
+    lines.extend(f"PKG:{idx}:{version}" for idx, version in enumerate(pkg_versions, start=1))
+    return "\n".join(lines)
+
+
+def _ainic_output(*fw_versions):
+    """Build fake ``nicctl show version firmware``-driven output: one
+    ``FW:<nic>:<uboot>:<firmware>`` line per NIC (uboot/firmware always equal)."""
+    lines = ["VENDOR:AINIC"]
+    lines.extend(f"FW:ionic_{idx}:{version}:{version}" for idx, version in enumerate(fw_versions))
+    return "\n".join(lines)
 
 
 def _mellanox_output(mlx5_version, ofed_version):
@@ -66,62 +107,35 @@ class TestBroadcomDriverVersionCheck(unittest.TestCase):
         self.assertEqual(results['node1']['vendor'], 'NOT_BROADCOM')
         self.assertEqual(results['node1']['errors'], [])
 
-    def test_matching_dkms_versions_pass(self):
+    def test_matching_package_version_pass(self):
         phdl = MagicMock()
-        phdl.exec.return_value = {
-            'node1': _broadcom_output(
-                EXPECTED_RE,
-                "/lib/modules/5.15.0/updates/dkms/bnxt_re.ko",
-                EXPECTED_EN,
-                "/lib/modules/5.15.0/updates/dkms/bnxt_en.ko",
-            ),
-        }
-        checker = BroadcomDriverVersionCheck(
-            phdl, expected_bnxt_re_version=EXPECTED_RE, expected_bnxt_en_version=EXPECTED_EN
-        )
+        phdl.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER, EXPECTED_PKG_VER)}
+        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'PASS')
         self.assertEqual(results['node1']['vendor'], 'BROADCOM')
-        self.assertTrue(results['node1']['bnxt_re']['dkms'])
-        self.assertTrue(results['node1']['bnxt_en']['dkms'])
+        self.assertEqual(results['node1']['packages'], {'1': EXPECTED_PKG_VER, '2': EXPECTED_PKG_VER})
         self.assertEqual(results['node1']['errors'], [])
 
     def test_version_mismatch_warns(self):
         phdl = MagicMock()
-        phdl.exec.return_value = {
-            'node1': _broadcom_output(
-                "999.0.0.0",
-                "/lib/modules/5.15.0/updates/dkms/bnxt_re.ko",
-                EXPECTED_EN,
-                "/lib/modules/5.15.0/updates/dkms/bnxt_en.ko",
-            ),
-        }
-        checker = BroadcomDriverVersionCheck(
-            phdl, expected_bnxt_re_version=EXPECTED_RE, expected_bnxt_en_version=EXPECTED_EN
-        )
+        phdl.exec.return_value = {'node1': _broadcom_output("999.0.0.0")}
+        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
-        self.assertTrue(any('bnxt_re version=999.0.0.0' in e for e in results['node1']['errors']))
+        self.assertTrue(any('NIC 1 package version=999.0.0.0' in e for e in results['node1']['errors']))
 
-    def test_non_dkms_module_warns(self):
+    def test_one_of_several_nics_mismatched_warns_only_that_nic(self):
         phdl = MagicMock()
-        phdl.exec.return_value = {
-            'node1': _broadcom_output(
-                EXPECTED_RE,
-                "/lib/modules/5.15.0/kernel/drivers/infiniband/hw/bnxt_re/bnxt_re.ko",
-                EXPECTED_EN,
-                "/lib/modules/5.15.0/updates/dkms/bnxt_en.ko",
-            ),
-        }
-        checker = BroadcomDriverVersionCheck(
-            phdl, expected_bnxt_re_version=EXPECTED_RE, expected_bnxt_en_version=EXPECTED_EN
-        )
+        phdl.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER, "999.0.0.0")}
+        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
-        self.assertTrue(any('dkms=False' in e for e in results['node1']['errors']))
+        self.assertEqual(len(results['node1']['errors']), 1)
+        self.assertIn('NIC 2 package version=999.0.0.0', results['node1']['errors'][0])
 
     def test_malformed_empty_output_skipped(self):
         phdl = MagicMock()
@@ -132,18 +146,58 @@ class TestBroadcomDriverVersionCheck(unittest.TestCase):
         # No VENDOR field at all -> not BROADCOM -> SKIPPED (mirrors non-broadcom nodes).
         self.assertEqual(results['node1']['status'], 'SKIPPED')
 
-    def test_broadcom_vendor_with_missing_modinfo_fields_warns_unknown(self):
+    def test_niccli_missing_warns(self):
         phdl = MagicMock()
-        phdl.exec.return_value = {
-            'node1': "VENDOR:BROADCOM\nRE_VERSION:\nRE_FILE:\nEN_VERSION:\nEN_FILE:",
-        }
-        checker = BroadcomDriverVersionCheck(
-            phdl, expected_bnxt_re_version=EXPECTED_RE, expected_bnxt_en_version=EXPECTED_EN
-        )
+        phdl.exec.return_value = {'node1': "VENDOR:BROADCOM\nNICCLI:MISSING"}
+        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
-        self.assertTrue(any('UNKNOWN' in e for e in results['node1']['errors']))
+        self.assertEqual(results['node1']['packages'], {})
+        self.assertTrue(any('niccli not found' in e for e in results['node1']['errors']))
+
+    def test_broadcom_vendor_with_no_packages_reported_warns(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': "VENDOR:BROADCOM"}
+        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER)
+        results = checker.run()
+
+        self.assertEqual(results['node1']['status'], 'WARNING')
+        self.assertTrue(any('niccli not found' in e for e in results['node1']['errors']))
+
+    def test_niccli_invoked_with_sudo_by_default(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER)}
+        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER)
+        checker.run()
+
+        command = phdl.exec.call_args[0][0]
+        self.assertIn('sudo niccli --list', command)
+        self.assertIn('sudo niccli -i', command)
+
+    def test_niccli_invoked_without_sudo_when_disabled(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER)}
+        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER, use_sudo=False)
+        checker.run()
+
+        command = phdl.exec.call_args[0][0]
+        self.assertNotIn('sudo niccli --list', command)
+        self.assertNotIn('sudo niccli -i', command)
+        self.assertIn('niccli --list', command)
+        self.assertIn('niccli -i', command)
+
+    def test_real_shell_command_parses_right_justified_niccli_index_column(self):
+        checker = BroadcomDriverVersionCheck(MagicMock(), expected_package_version=EXPECTED_PKG_VER)
+        output = _run_command_with_fake_niccli(checker._build_command(), _REAL_NICCLI_LIST_OUTPUT, EXPECTED_PKG_VER)
+        result = checker._parse_and_evaluate(output)
+
+        self.assertEqual(result['status'], 'PASS')
+        self.assertEqual(
+            result['packages'],
+            {'1': EXPECTED_PKG_VER, '2': EXPECTED_PKG_VER, '10': EXPECTED_PKG_VER, '16': EXPECTED_PKG_VER},
+        )
+        self.assertEqual(result['errors'], [])
 
 
 class TestAinicDriverVersionCheck(unittest.TestCase):
@@ -157,32 +211,41 @@ class TestAinicDriverVersionCheck(unittest.TestCase):
         self.assertEqual(results['node1']['vendor'], 'NOT_AINIC')
         self.assertEqual(results['node1']['errors'], [])
 
-    def test_matching_versions_pass(self):
+    def test_matching_fw_version_pass(self):
         phdl = MagicMock()
-        phdl.exec.return_value = {'node1': _ainic_output(EXPECTED_IONIC, EXPECTED_IONIC_RDMA)}
-        checker = AinicDriverVersionCheck(
-            phdl,
-            expected_ionic_driver_version=EXPECTED_IONIC,
-            expected_ionic_rdma_driver_version=EXPECTED_IONIC_RDMA,
-        )
+        phdl.exec.return_value = {'node1': _ainic_output(EXPECTED_FW_VER, EXPECTED_FW_VER)}
+        checker = AinicDriverVersionCheck(phdl, expected_fw_version=EXPECTED_FW_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'PASS')
         self.assertEqual(results['node1']['vendor'], 'AINIC')
+        self.assertEqual(
+            results['node1']['fw_entries'],
+            [
+                {'nic': 'ionic_0', 'uboot': EXPECTED_FW_VER, 'firmware': EXPECTED_FW_VER},
+                {'nic': 'ionic_1', 'uboot': EXPECTED_FW_VER, 'firmware': EXPECTED_FW_VER},
+            ],
+        )
         self.assertEqual(results['node1']['errors'], [])
 
     def test_version_mismatch_warns(self):
         phdl = MagicMock()
-        phdl.exec.return_value = {'node1': _ainic_output("0.0.0-a-1", EXPECTED_IONIC_RDMA)}
-        checker = AinicDriverVersionCheck(
-            phdl,
-            expected_ionic_driver_version=EXPECTED_IONIC,
-            expected_ionic_rdma_driver_version=EXPECTED_IONIC_RDMA,
-        )
+        phdl.exec.return_value = {'node1': _ainic_output("0.0.0-a-1")}
+        checker = AinicDriverVersionCheck(phdl, expected_fw_version=EXPECTED_FW_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
-        self.assertTrue(any('ionic version=0.0.0-a-1' in e for e in results['node1']['errors']))
+        self.assertTrue(any('NIC ionic_0' in e and 'uboot=0.0.0-a-1' in e for e in results['node1']['errors']))
+
+    def test_one_of_several_nics_mismatched_warns_only_that_nic(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': _ainic_output(EXPECTED_FW_VER, "0.0.0-a-1")}
+        checker = AinicDriverVersionCheck(phdl, expected_fw_version=EXPECTED_FW_VER)
+        results = checker.run()
+
+        self.assertEqual(results['node1']['status'], 'WARNING')
+        self.assertEqual(len(results['node1']['errors']), 1)
+        self.assertIn('NIC ionic_1', results['node1']['errors'][0])
 
     def test_malformed_empty_output_skipped(self):
         phdl = MagicMock()
@@ -191,6 +254,25 @@ class TestAinicDriverVersionCheck(unittest.TestCase):
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'SKIPPED')
+
+    def test_nicctl_missing_warns(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': "VENDOR:AINIC\nNICCTL:MISSING"}
+        checker = AinicDriverVersionCheck(phdl, expected_fw_version=EXPECTED_FW_VER)
+        results = checker.run()
+
+        self.assertEqual(results['node1']['status'], 'WARNING')
+        self.assertEqual(results['node1']['fw_entries'], [])
+        self.assertTrue(any('nicctl not found' in e for e in results['node1']['errors']))
+
+    def test_ainic_vendor_with_no_nics_reported_warns(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': "VENDOR:AINIC"}
+        checker = AinicDriverVersionCheck(phdl, expected_fw_version=EXPECTED_FW_VER)
+        results = checker.run()
+
+        self.assertEqual(results['node1']['status'], 'WARNING')
+        self.assertTrue(any('nicctl not found' in e for e in results['node1']['errors']))
 
 
 class TestMellanoxDriverVersionCheck(unittest.TestCase):
@@ -239,20 +321,11 @@ class TestMellanoxDriverVersionCheck(unittest.TestCase):
 class TestNicDriverVersionCheckDispatcher(unittest.TestCase):
     def test_single_vendor_matches_underlying_check(self):
         phdl = MagicMock()
-        phdl.exec.return_value = {
-            'node1': _broadcom_output(
-                EXPECTED_RE,
-                "/lib/modules/5.15.0/updates/dkms/bnxt_re.ko",
-                EXPECTED_EN,
-                "/lib/modules/5.15.0/updates/dkms/bnxt_en.ko",
-            ),
-        }
+        phdl.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER)}
         checker = NicDriverVersionCheck(
             phdl,
             nic_types=['broadcom'],
-            vendor_configs={
-                'broadcom': {'expected_bnxt_re_version': EXPECTED_RE, 'expected_bnxt_en_version': EXPECTED_EN}
-            },
+            vendor_configs={'broadcom': {'expected_package_version': EXPECTED_PKG_VER}},
         )
         results = checker.run()
 
@@ -265,25 +338,29 @@ class TestNicDriverVersionCheckDispatcher(unittest.TestCase):
         phdl = MagicMock()
 
         def fake_exec(cmd):
-            if 'bnxt_re' in cmd:
-                return {'node1': _broadcom_output("999.0.0.0", "dkms/bnxt_re.ko", EXPECTED_EN, "dkms/bnxt_en.ko")}
-            if 'ionic' in cmd:
+            if 'niccli' in cmd:
+                return {'node1': _broadcom_output("999.0.0.0")}
+            if 'nicctl' in cmd:
                 return {'node1': "VENDOR:NOT_AINIC"}
             return {'node1': ''}
 
         phdl.exec.side_effect = fake_exec
-        checker = NicDriverVersionCheck(phdl, nic_types=['ainic', 'broadcom'])
+        checker = NicDriverVersionCheck(
+            phdl,
+            nic_types=['ainic', 'broadcom'],
+            vendor_configs={'broadcom': {'expected_package_version': EXPECTED_PKG_VER}},
+        )
         results = checker.run()
 
         # broadcom WARNING, ainic SKIPPED (no hardware) -> merged WARNING, not all-SKIPPED.
         self.assertEqual(results['node1']['status'], 'WARNING')
         self.assertEqual(results['node1']['ainic']['status'], 'SKIPPED')
         self.assertEqual(results['node1']['broadcom']['status'], 'WARNING')
-        self.assertTrue(any('bnxt_re version=999.0.0.0' in e for e in results['node1']['errors']))
+        self.assertTrue(any('NIC 1 package version=999.0.0.0' in e for e in results['node1']['errors']))
 
     def test_all_vendors_skipped_surfaces_skipped(self):
         phdl = MagicMock()
-        phdl.exec.side_effect = lambda cmd: {'node1': "VENDOR:NOT_AINIC" if 'ionic' in cmd else "VENDOR:NOT_BROADCOM"}
+        phdl.exec.side_effect = lambda cmd: {'node1': "VENDOR:NOT_AINIC" if 'nicctl' in cmd else "VENDOR:NOT_BROADCOM"}
         checker = NicDriverVersionCheck(phdl, nic_types=['ainic', 'broadcom'])
         results = checker.run()
 
@@ -329,7 +406,7 @@ class TestNicDriverVersionConfigVendorSubBlockValidation(unittest.TestCase):
                 'nic_driver_version': {
                     'enabled': True,
                     'nic_type': ['broadcom'],
-                    'broadcom': {'expected_bnxt_re_version': EXPECTED_RE},
+                    'broadcom': {'expected_package_version': EXPECTED_PKG_VER},
                     'mellanox': 'oops',
                 },
             },
@@ -353,7 +430,7 @@ class TestInertNicVendorSkipPaths(unittest.TestCase):
             'node_check': {
                 'nic_driver_version': {
                     'nic_type': ['broadcom'],
-                    'broadcom': {'expected_bnxt_re_version': '236.1.155.0'},
+                    'broadcom': {'expected_package_version': '233.0.150.0'},
                     'mellanox': {'expected_mlx5_core_version': '<changeme>'},
                 },
             },
@@ -365,7 +442,7 @@ class TestInertNicVendorSkipPaths(unittest.TestCase):
             'node_check': {
                 'nic_driver_version': {
                     'nic_type': ['broadcom'],
-                    'broadcom': {'expected_bnxt_re_version': '<changeme>'},
+                    'broadcom': {'expected_package_version': '<changeme>'},
                 },
             },
         }
@@ -385,7 +462,7 @@ class TestInertNicVendorSkipPaths(unittest.TestCase):
         config = {
             'node_check': {
                 'nic_driver_version': {
-                    'ainic': {'expected_ionic_driver_version': '<changeme>'},
+                    'ainic': {'expected_fw_version': '<changeme>'},
                 },
             },
         }

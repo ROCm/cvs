@@ -84,6 +84,34 @@ class TestEtcHostsConsistencyCheck(unittest.TestCase):
 
         self.assertEqual(results['node1']['status'], 'PASS')
 
+    def test_hostname_expected_address_present_pass(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            'node1': "10.0.212.208 smci300x-ccs-aus-e04-19\n10.0.212.203 smci300x-ccs-aus-e07-03\n",
+        }
+        checker = EtcHostsConsistencyCheck(
+            phdl,
+            expected_ips=['smci300x-ccs-aus-e04-19', 'smci300x-ccs-aus-e07-03'],
+        )
+        results = checker.run()
+
+        self.assertEqual(results['node1']['status'], 'PASS')
+        self.assertEqual(results['node1']['missing_ips'], [])
+
+    def test_hostname_expected_address_missing_warning(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            'node1': "10.0.212.208 smci300x-ccs-aus-e04-19\n",
+        }
+        checker = EtcHostsConsistencyCheck(
+            phdl,
+            expected_ips=['smci300x-ccs-aus-e04-19', 'smci300x-ccs-aus-e07-03'],
+        )
+        results = checker.run()
+
+        self.assertEqual(results['node1']['status'], 'WARNING')
+        self.assertEqual(results['node1']['missing_ips'], ['smci300x-ccs-aus-e07-03'])
+
 
 if __name__ == '__main__':
     unittest.main()
