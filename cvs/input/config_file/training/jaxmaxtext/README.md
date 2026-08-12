@@ -78,6 +78,7 @@ Top-level (framework-agnostic) fields:
 |---|---|
 | `distributed` | `true` for multi-node (adds the RDMA setup stage), `false` for single-node |
 | `gpus_per_node` | GPUs per node (default 8); `num_gpus = num_nodes x gpus_per_node` feeds `tokens_per_sec_total` and scaling efficiency |
+| `verify_dmesg` | Scan host `dmesg` on all nodes for GPU/HW/kernel faults over the training window (default `true`); set `false` on clusters without passwordless `sudo` for `dmesg` |
 | `steps` | Training steps; also drives completion detection and poll budget |
 | `enable_checkpointing` | Whether MaxText writes checkpoints |
 | `train_script_paths` | Candidate in-container paths to the MaxText train entrypoint; the job picks the first one that exists in the running container. List them newest-first (e.g. v26.4+ path before the v26.3 path) so a version bump only needs a new entry, not an edit. `train_script` (single path) is still accepted as a deprecated fallback. |

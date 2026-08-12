@@ -367,6 +367,59 @@ class StartTrainingTests(unittest.TestCase):
         self.assertTrue(all("nohup bash" in c for c in cmds))
         _sleep.assert_called_once()
 
+    @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
+    def test_captures_host_start_time(self, _sleep):
+        # start_training records the host-side start time (via orch.all) so the
+        # later dmesg scan can bound its window.
+        job, orch = _make_job(hosts=["h0", "h1"])
+        orch.all = MagicMock()
+        orch.all.exec = MagicMock(return_value={"h0": "Mon Jan  2 03:04", "h1": "Mon Jan  2 03:04"})
+        _wire_container_exec(orch)
+        job.start_training()
+        self.assertEqual(job.training_start_time, {"h0": "Mon Jan  2 03:04", "h1": "Mon Jan  2 03:04"})
+
+
+class ScanDmesgForErrorsTests(unittest.TestCase):
+    _LIB = "cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib"
+
+    def _job_with_host(self, **overrides):
+        job, orch = _make_job(hosts=["h0", "h1"], **overrides)
+        orch.all = MagicMock()
+        orch.all.exec = MagicMock(return_value={"h0": "Mon Jan  2 03:04", "h1": "Mon Jan  2 03:04"})
+        return job, orch
+
+    @patch(f"{_LIB}.time.sleep")
+    @patch(f"{_LIB}._verify_dmesg_for_errors")
+    def test_scans_when_enabled_and_started(self, mock_verify, _sleep):
+        job, orch = self._job_with_host()
+        job.training_start_time = {"h0": "Mon Jan  2 03:00", "h1": "Mon Jan  2 03:00"}
+        job.scan_dmesg_for_errors()
+        mock_verify.assert_called_once()
+        args = mock_verify.call_args.args
+        self.assertIs(args[0], orch.all)                    # phdl = baremetal handle
+        self.assertEqual(args[1], job.training_start_time)  # start of the window
+
+    @patch(f"{_LIB}._verify_dmesg_for_errors")
+    def test_skipped_when_disabled(self, mock_verify):
+        job, _ = self._job_with_host(verify_dmesg=False)
+        job.training_start_time = {"h0": "t"}
+        job.scan_dmesg_for_errors()
+        mock_verify.assert_not_called()
+
+    @patch(f"{_LIB}._verify_dmesg_for_errors")
+    def test_skipped_when_no_start_time(self, mock_verify):
+        job, _ = self._job_with_host()
+        job.training_start_time = None
+        job.scan_dmesg_for_errors()
+        mock_verify.assert_not_called()
+
+    @patch(f"{_LIB}.time.sleep")
+    @patch(f"{_LIB}._verify_dmesg_for_errors", side_effect=RuntimeError("no passwordless sudo"))
+    def test_swallows_scan_failure(self, _mock_verify, _sleep):
+        job, _ = self._job_with_host()
+        job.training_start_time = {"h0": "t"}
+        job.scan_dmesg_for_errors()  # infra failure must not propagate
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -137,6 +137,9 @@ class Sweep(_Allow):
 class TrainingConfig(_Allow):
     distributed: bool = True
     gpus_per_node: int = 8  # do not assume a uniform topology; override per cluster
+    # Scan host dmesg (all nodes) for GPU/HW/kernel faults over the training
+    # window. Set false on clusters without passwordless sudo for `dmesg`.
+    verify_dmesg: bool = True
     steps: int = 30
     enable_checkpointing: bool = False
     # MaxText moved the train entrypoint across versions; list candidates and the

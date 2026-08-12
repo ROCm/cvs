@@ -32,6 +32,15 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
 
 log = globals.log
 
+# Bound lazily to cvs.lib.verify_lib.verify_dmesg_for_errors on first use so this
+# module stays importable without the broader utils stack that verify_lib pulls
+# in (rocm_plib, node_scraper, pytest, ...). Tests patch this symbol directly.
+_verify_dmesg_for_errors = None
+
+# Host-side timestamp used to bound the dmesg scan to this training window.
+# Format matches what verify_dmesg_for_errors() expects (dmesg -T style).
+_DMESG_TIME_CMD = 'date +"%a %b %e %H:%M"'
+
 # Default training-log error signatures (name -> regex). Used as the fallback
 # when a config does not define `training.error_patterns`; a config's patterns
 # fully replace this set. Kept here so the suite still detects common failures
@@ -101,6 +110,10 @@ class MaxTextTrainingJob:
         self.step_metrics = []
         self.eval_metrics = []
         self.summary_metrics = {}
+
+        # Host-side timestamp ({node: str}) captured when training launches, so
+        # scan_dmesg_for_errors() can slice the kernel log to this run's window.
+        self.training_start_time = None
 
         self._poll_wait_s = 60
         self._poll_count = int(self.training.steps * 10)
@@ -362,6 +375,10 @@ class MaxTextTrainingJob:
         """
         log.info("starting training on %d node(s)", self.num_nodes)
 
+        # Record the host-side start time so a later dmesg scan only looks at
+        # kernel messages emitted during this training run.
+        self.training_start_time = self._host_date()
+
         scratch = self._get_scratch_dir()
         launch_cmds = []
         for i in range(self.num_nodes):
@@ -477,6 +494,59 @@ class MaxTextTrainingJob:
         self.eval_metrics = extract_eval_metrics(log_text)
         self.summary_metrics = parse_training_log(log_text, self.num_gpus)
         return dict(self.summary_metrics)
+
+    # ---------- system checks ----------
+
+    def _host_date(self):
+        """Return {host: timestamp} from the cluster host OS (not the container).
+
+        Uses the baremetal fan-out handle (``orch.all``) so the timestamp lines
+        up with ``dmesg -T`` on the same hosts. Best-effort: returns None if the
+        handle/exec is unavailable so callers can skip the dmesg scan cleanly.
+        """
+        allh = getattr(self.orch, "all", None)
+        if allh is None or not hasattr(allh, "exec"):
+            return None
+        try:
+            return allh.exec(_DMESG_TIME_CMD)
+        except Exception as e:  # noqa: BLE001 - infra probe, never fatal
+            log.warning("could not capture host time for dmesg scan: %s", e)
+            return None
+
+    def scan_dmesg_for_errors(self):
+        """Scan host kernel logs (dmesg) on all nodes for GPU/HW/kernel faults.
+
+        Ports the sglang flow to the training suite: over the [start, end] window
+        captured around the training loop, the shared ``verify_dmesg_for_errors``
+        scanner flags HW/crash/driver/network signatures via ``fail_test`` (these
+        roll up into the suite's aggregated failure summary) and logs
+        perf-degradation signatures as warnings only.
+
+        Best-effort by design: gated on ``training.verify_dmesg`` (default on) and
+        wrapped so an infra failure of the scan itself (no passwordless sudo, an
+        unexpected ``date`` format, a missing baremetal handle) is logged and
+        swallowed -- it must never mask or replace the actual training result.
+        Requires a captured start time (i.e. ``start_training`` ran).
+        """
+        if not getattr(self.training, "verify_dmesg", True):
+            log.info("dmesg verification disabled (training.verify_dmesg=false)")
+            return
+        if not self.training_start_time:
+            log.warning("dmesg verification skipped: no training start time captured")
+            return
+        allh = getattr(self.orch, "all", None)
+        if allh is None or not hasattr(allh, "exec"):
+            log.warning("dmesg verification skipped: no baremetal host handle (orch.all)")
+            return
+        try:
+            verify = _verify_dmesg_for_errors
+            if verify is None:
+                from cvs.lib.verify_lib import verify_dmesg_for_errors as verify
+            end_time = self._host_date()
+            time.sleep(2)
+            verify(allh, self.training_start_time, end_time)
+        except Exception as e:  # noqa: BLE001 - scan infra failure is non-fatal
+            log.warning("dmesg verification skipped (scan failed): %s", e)
 
     # ---------- cleanup ----------
 

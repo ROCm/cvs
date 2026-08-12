@@ -241,6 +241,10 @@ def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, 
         job.poll_for_completion()
         wall_time = time.monotonic() - t
         results = job.parse_results()
+        # Scan host dmesg over this run's window for GPU/HW/kernel faults. Uses
+        # fail_test internally (rolled into the aggregated failure summary) and
+        # is best-effort, so it never raises here.
+        job.scan_dmesg_for_errors()
     except Exception as e:  # noqa: BLE001 - isolate the failure to this sweep
         log.error("training run failed for sweep '%s': %s", sweep_name, e)
         # Reap any lingering ranks so the next sweep does not launch on top of
