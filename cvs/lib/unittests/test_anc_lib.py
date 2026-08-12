@@ -452,5 +452,255 @@ class TestRunAncGroupsUsesCachedPath(unittest.TestCase):
         self.assertIn("cd '/home/u/anc/anc' && sudo ./anc.py -g cpu_sanity", captured["cmd"])
 
 
+class TestAssertShellSafe(unittest.TestCase):
+    '''_assert_shell_safe rejects every shell-metacharacter that can subvert the
+    remote command, not just a single quote.'''
+
+    def test_accepts_clean_value(self):
+        anc_lib._assert_shell_safe({"k": "/home/u/my/anc"}, ("k",))  # no raise
+
+    def test_accepts_missing_key(self):
+        anc_lib._assert_shell_safe({}, ("k",))  # None value is skipped, no raise
+
+    def test_rejects_each_unsafe_char(self):
+        for ch in ("'", '"', "`", "$", "\\", "\n"):
+            with self.subTest(ch=ch):
+                with self.assertRaises(ValueError):
+                    anc_lib._assert_shell_safe({"k": f"/home/u{ch}anc"}, ("k",))
+
+    def test_rejects_command_substitution(self):
+        with self.assertRaises(ValueError):
+            anc_lib._assert_shell_safe({"ANC_INSTALL_PATH": "/home/$(whoami)/anc"}, ("ANC_INSTALL_PATH",))
+
+
+class TestResolveAncInstallPrefixValidation(unittest.TestCase):
+    '''resolve_anc_install_prefix rejects unsafe/degenerate prefixes.'''
+
+    def test_rejects_shell_unsafe_prefix(self):
+        cfg = {"anc": {"ANC_INSTALL_PATH": "/home/u/a$b"}}
+        with self.assertRaises(ValueError):
+            anc_lib.resolve_anc_install_prefix(cfg, "tar")
+
+    def test_rejects_quote_prefix(self):
+        cfg = {"anc": {"ANC_INSTALL_PATH": "/home/o'brien/anc"}}
+        with self.assertRaises(ValueError):
+            anc_lib.resolve_anc_install_prefix(cfg, "tar")
+
+    def test_rejects_root_prefix(self):
+        cfg = {"anc": {"ANC_INSTALL_PATH": "/"}}
+        with self.assertRaises(ValueError):
+            anc_lib.resolve_anc_install_prefix(cfg, "tar")
+
+    def test_rejects_double_slash_root(self):
+        # abspath preserves a leading "//" (POSIX-special); it is still root.
+        for value in ("//", "///", "//x/.."):
+            with self.subTest(value=value):
+                cfg = {"anc": {"ANC_INSTALL_PATH": value}}
+                with self.assertRaises(ValueError):
+                    anc_lib.resolve_anc_install_prefix(cfg, "tar")
+
+    def test_rejects_root_after_normalisation(self):
+        cfg = {"anc": {"ANC_INSTALL_PATH": "/home/u/.."}}  # abspath -> "/home" not "/"
+        # "/home/u/.." normalises to "/home", which is allowed; a value that
+        # normalises to "/" (e.g. "/..") is rejected.
+        cfg_root = {"anc": {"ANC_INSTALL_PATH": "/.."}}
+        with self.assertRaises(ValueError):
+            anc_lib.resolve_anc_install_prefix(cfg_root, "tar")
+        self.assertEqual(anc_lib.resolve_anc_install_prefix(cfg, "tar"), "/home")
+
+    def test_deb_ignores_unsafe_install_path(self):
+        # deb/rpm never read ANC_INSTALL_PATH, so an unsafe value there is moot.
+        cfg = {"anc": {"ANC_INSTALL_PATH": "/home/u/a$b"}}
+        self.assertEqual(anc_lib.resolve_anc_install_prefix(cfg, "deb"), anc_lib.ANC_TOOLS_PREFIX)
+
+
+class TestSedReplacementSafe(unittest.TestCase):
+    '''_sed_replacement_safe escapes sed-replacement metacharacters (# & \\).'''
+
+    def test_escapes_delimiter_and_ampersand(self):
+        self.assertEqual(anc_lib._sed_replacement_safe("/home/a#b&c"), "/home/a\\#b\\&c")
+
+    def test_escapes_backslash_first(self):
+        self.assertEqual(anc_lib._sed_replacement_safe("a\\b"), "a\\\\b")
+
+    def test_plain_value_unchanged(self):
+        self.assertEqual(anc_lib._sed_replacement_safe("/home/u/anc"), "/home/u/anc")
+
+
+class TestRmRfSinkIsSingleQuoted(unittest.TestCase):
+    '''The top-level cleanup loop single-quotes the (untrusted) prefix so a
+    double-quoted expansion can never command-substitute or mis-target.'''
+
+    CLUSTER = {"node_dict": {"node1": {}}, "username": "u", "priv_key_file": "k"}
+
+    def _run_direct_tar(self, install_path):
+        cfg = {"anc": {"anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz", "ANC_INSTALL_PATH": install_path}}
+        phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
+        with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "_validate_exe_paths"):
+            anc_lib._install_anc_tar_direct(phdl, self.CLUSTER, cfg)
+        return phdl.cmd
+
+    def test_prefix_single_quoted_name_double_quoted(self):
+        cmd = self._run_direct_tar("/home/u/anc")
+        # prefix single-quoted, archive-derived $name double-quoted.
+        self.assertIn("rm -rf '/home/u/anc'/\"$name\"", cmd)
+        # The old double-quoted "{prefix}/$name" form must be gone.
+        self.assertNotIn('rm -rf "/home/u/anc/$name"', cmd)
+
+
+class TestPerUserTmpNamespacing(unittest.TestCase):
+    '''Remote temp paths are namespaced under /tmp/<user> to avoid cross-user
+    ownership collisions on shared nodes.'''
+
+    def test_remote_user_tmp(self):
+        self.assertEqual(anc_lib._remote_user_tmp("alice"), "/tmp/alice")
+
+    def test_remote_user_tmp_sanitizes(self):
+        # A user value with a path separator collapses to one safe component.
+        self.assertEqual(anc_lib._remote_user_tmp("a/b"), "/tmp/a_b")
+
+    def test_validate_exe_paths_uses_per_user_tmp(self):
+        cluster = {"node_dict": {"node1": {}}, "username": "alice", "priv_key_file": "k"}
+        cmds = []
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):  # noqa: ARG002
+                cmds.append(cmd)
+                return {"node1": "VALIDATION_SUCCESS"}
+
+            def upload_file(self, local, remote):
+                cmds.append(f"UPLOAD {remote}")
+
+        with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib.globals, "error_list", []):
+            anc_lib._validate_exe_paths(FakePhdl(), cluster, "/opt/amdtools/anc/content")
+
+        joined = "\n".join(cmds)
+        self.assertIn("mkdir -p '/tmp/alice'", joined)
+        self.assertIn("/tmp/alice/validate_exe_paths.py", joined)
+
+    def test_run_anc_groups_quiet_uses_per_user_tmp(self):
+        anc_lib._ANC_INSTALL_PATHS = anc_lib.AncPaths("/opt/amdtools", "/opt/amdtools/anc", "/opt/amdtools/anc/anc.py")
+        self.addCleanup(setattr, anc_lib, "_ANC_INSTALL_PATHS", None)
+        cluster = {"node_dict": {"node1": {}}, "username": "bob", "priv_key_file": "k"}
+        cfg = {"anc": {"print_all_to_console": "False", "log_folder_path": "/tmp/logs"}}
+        captured = {}
+
+        class FakePhdl:
+            def exec(self, cmd, inactivity_timeout=None):  # noqa: ARG002
+                captured["cmd"] = cmd
+                return {}
+
+        with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
+            anc_lib.run_anc_groups(FakePhdl(), cluster, cfg, ["cpu_sanity"], "test_cpu_sanity")
+
+        self.assertIn("/tmp/bob/anc_run_$$.out", captured["cmd"])
+        self.assertIn("mkdir -p '/tmp/bob'", captured["cmd"])
+
+
+class TestValidateClusterUsername(unittest.TestCase):
+    '''validate_cluster_username rejects usernames unsafe for shell interpolation.'''
+
+    def test_clean_username_ok(self):
+        self.assertIsNone(anc_lib.validate_cluster_username({"username": "ashmishr"}))
+
+    def test_missing_or_blank_is_deferred(self):
+        self.assertIsNone(anc_lib.validate_cluster_username({}))
+        self.assertIsNone(anc_lib.validate_cluster_username({"username": "  "}))
+
+    def test_rejects_space(self):
+        self.assertIsNotNone(anc_lib.validate_cluster_username({"username": "a b"}))
+
+    def test_rejects_command_injection(self):
+        problem = anc_lib.validate_cluster_username({"username": "x; rm -rf /root"})
+        self.assertIsNotNone(problem)
+
+
+class TestValidateAncConfig(unittest.TestCase):
+    '''validate_anc_config aggregates the fail-fast config problems.'''
+
+    def _cfg(self, **anc):
+        base = {"anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz", "ANC_INSTALL_PATH": ""}
+        base.update(anc)
+        return {"anc": base}
+
+    def _cluster(self, username="ashmishr"):
+        return {"username": username}
+
+    def test_clean_config_no_problems(self):
+        problems = anc_lib.validate_anc_config(self._cfg(), self._cluster(), require_log_folder=False)
+        self.assertEqual(problems, [])
+
+    def test_blank_url_flagged(self):
+        problems = anc_lib.validate_anc_config(self._cfg(anc_release_url=""), self._cluster(), require_log_folder=False)
+        self.assertTrue(any("anc_release_url" in p for p in problems))
+
+    def test_version_mismatch_flagged(self):
+        cfg = self._cfg(anc_version="1.5.4")  # url is 1.5.5
+        problems = anc_lib.validate_anc_config(cfg, self._cluster(), require_log_folder=False)
+        self.assertTrue(any("does not match" in p for p in problems))
+
+    def test_unsafe_prefix_flagged_cleanly(self):
+        cfg = self._cfg(ANC_INSTALL_PATH="//")
+        problems = anc_lib.validate_anc_config(cfg, self._cluster(), require_log_folder=False)
+        # The resolve_anc_paths_from_config ValueError is surfaced, not raised.
+        self.assertTrue(any("root" in p.lower() for p in problems))
+
+    def test_bad_username_flagged(self):
+        problems = anc_lib.validate_anc_config(self._cfg(), self._cluster(username="a b"), require_log_folder=False)
+        self.assertTrue(any("username" in p for p in problems))
+
+    def test_log_folder_required_for_group_suites(self):
+        cfg = self._cfg(log_folder_path="")
+        without = anc_lib.validate_anc_config(cfg, self._cluster(), require_log_folder=False)
+        with_req = anc_lib.validate_anc_config(cfg, self._cluster(), require_log_folder=True)
+        self.assertFalse(any("log_folder_path" in p for p in without))
+        self.assertTrue(any("log_folder_path" in p for p in with_req))
+
+
+class TestTarCleanupFiltersDotDot(unittest.TestCase):
+    '''Both tar installers filter '.'/'..' from the top-level cleanup list.'''
+
+    CLUSTER = {"node_dict": {"node1": {}}, "username": "u", "priv_key_file": "k"}
+
+    def _cmd(self, installer, url):
+        cfg = {"anc": {"anc_release_url": url, "ANC_INSTALL_PATH": ""}}
+        phdl = _RecordingPhdl({"node1": "ANC_INSTALL_SUCCESS"})
+        with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "_validate_exe_paths"):
+            installer(phdl, self.CLUSTER, cfg)
+        return phdl.cmd
+
+    def test_direct_tar_filters_and_guards(self):
+        cmd = self._cmd(anc_lib._install_anc_tar_direct, "http://x/anc-1.5.5-x86_64.tar.gz")
+        # tops filter drops '.' and '..'
+        self.assertIn("grep -vE '^([.]{1,2})?$'", cmd)
+        # per-name defensive guard against a path-separator/dot component
+        self.assertIn('case "$name" in */*|.|..) continue;; esac', cmd)
+
+    def test_legacy_tar_filters_and_guards(self):
+        cmd = self._cmd(anc_lib._install_anc_tar, "http://x/anc-1.4.9-tar-linux-x64.tar.gz")
+        self.assertIn("grep -vE '^([.]{1,2})?$'", cmd)
+        self.assertIn('case "$name" in */*|.|..) continue;; esac', cmd)
+
+
+class TestChownArgumentQuoted(unittest.TestCase):
+    '''_pull_log_dir single-quotes the chown user argument (defense in depth).'''
+
+    def test_chown_user_single_quoted(self):
+        captured = {}
+
+        class FakeSingle:
+            def exec(self, cmd, timeout=None):  # noqa: ARG002
+                captured.setdefault("first", cmd)
+                return {}
+
+            def download_file(self, remote, local):  # noqa: ARG002
+                return {}
+
+        # download_file returns {} so _pull_log_dir bails after the archive_cmd;
+        # we only care that the archive command quotes the user.
+        anc_lib._pull_log_dir(FakeSingle(), "node1", "alice", "/root/logs/run1", "/tmp/dest")
+        self.assertIn("sudo chown 'alice'", captured["first"])
+
+
 if __name__ == "__main__":
     unittest.main()

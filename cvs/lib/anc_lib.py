@@ -138,10 +138,6 @@ ERRORS_JSON = "errors.json"
 # diagnostics always print. Default: print everything.
 PRINT_ALL_TO_CONSOLE_KEY = "print_all_to_console"
 
-# Sentinel a user must overwrite in the config before running. Values left at
-# this literal are treated as "unset" and fail the run with a clear message.
-REPLACE_ME_SENTINEL = "REPLACE_ME"
-
 # config anc.log_folder_path is the single user-supplied PREFIX directory for all
 # ANC artifacts (collected logs AND the HTML report). The fixed layout appended
 # under it is owned by the code (below), not the config: the config just says
@@ -223,47 +219,18 @@ def cluster_node_label_from_file(cluster_dict):
 def _prefix_problem(config_dict, key):
     '''
     Return a human-readable problem string if config anc.<key> is not a usable
-    path prefix (missing, blank, or still the REPLACE_ME sentinel), else None.
+    path prefix (missing or blank), else None.
 
-    Used both by the fail-fast fixture check (validate_anc_path_prefixes) and by
-    _resolve_prefix so the two agree on what "unset" means.
+    The ``<changeme>`` placeholder is caught earlier and globally by the standard
+    config resolver (_resolve_placeholders_in_dict hard-exits on it), so it does
+    not need handling here. Used both by the fail-fast fixture check
+    (validate_anc_path_prefixes) and by _resolve_prefix so the two agree on what
+    "unset" means.
     '''
     prefix = config_dict.get("anc", {}).get(key)
-    if not prefix or not str(prefix).strip() or str(prefix).strip() == REPLACE_ME_SENTINEL:
-        return (
-            f'config anc.{key} is unset (still "{REPLACE_ME_SENTINEL}"); set it to the '
-            f"directory prefix where ANC artifacts should be written"
-        )
+    if not prefix or not str(prefix).strip():
+        return f"config anc.{key} is unset; set it to the directory prefix where ANC artifacts should be written"
     return None
-
-
-def find_replace_me_placeholders(config, _path=""):
-    '''
-    Recursively scan a loaded config for any value still left at the REPLACE_ME
-    sentinel and return a sorted list of dotted paths to them (empty when none).
-
-    Documentation keys (those whose name starts with "_comment") are skipped:
-    the shipped config's own "_comment_*" strings literally say
-    'replace "REPLACE_ME" before running', which are instructions, not unset
-    values. Only an exact value match (after stripping) counts, so a longer
-    string that merely mentions REPLACE_ME is not flagged.
-
-    Used by the ANC conftest to abort the whole run up front when ANY required
-    field is still a placeholder, instead of failing partway through.
-    '''
-    found = []
-    if isinstance(config, dict):
-        for key, value in config.items():
-            if isinstance(key, str) and key.startswith("_comment"):
-                continue
-            child_path = f"{_path}.{key}" if _path else str(key)
-            found.extend(find_replace_me_placeholders(value, child_path))
-    elif isinstance(config, list):
-        for idx, value in enumerate(config):
-            found.extend(find_replace_me_placeholders(value, f"{_path}[{idx}]"))
-    elif isinstance(config, str) and config.strip() == REPLACE_ME_SENTINEL:
-        found.append(_path)
-    return sorted(found)
 
 
 def validate_anc_path_prefixes(config_dict):
@@ -271,30 +238,23 @@ def validate_anc_path_prefixes(config_dict):
     Validate the ANC path prefix up front, before any ANC command runs. Returns a
     list of problem strings (empty when set).
 
-    Only anc.log_folder_path is checked here, and only for the MISSING/BLANK case:
-    it is the single prefix for all ANC artifacts (collected logs and the derived
-    HTML report). The REPLACE_ME sentinel is caught separately and more broadly by
-    find_replace_me_placeholders, so it is deliberately excluded here to avoid
-    reporting the same field twice.
+    Only anc.log_folder_path is checked here, for the MISSING/BLANK case: it is
+    the single prefix for all ANC artifacts (collected logs and the derived HTML
+    report). The ``<changeme>`` placeholder is caught earlier by the standard
+    config resolver, so only the empty/unset case remains for this check.
     '''
-    prefix = config_dict.get("anc", {}).get(LOG_FOLDER_PATH_KEY)
-    if not prefix or not str(prefix).strip():
-        return [
-            f"config anc.{LOG_FOLDER_PATH_KEY} is not set; set it to the directory "
-            f"prefix where ANC artifacts should be written"
-        ]
-    return []
+    return [p for p in (_prefix_problem(config_dict, LOG_FOLDER_PATH_KEY),) if p]
 
 
 def _resolve_prefix(config_dict, key):
     '''
     Read a user-supplied prefix directory from config anc.<key> and normalise it.
 
-    The prefix is a plain filesystem path (leading "~" expanded); it does NOT
-    accept "{home}"/"{runner_log_folder}" tokens -- only the fixed suffix the
-    code owns carries "<node>"/"<test_name>"/"<timestamp>". A missing prefix or
-    one still left at the REPLACE_ME sentinel RAISES ValueError so a bad config
-    can never silently resolve to a path containing the literal sentinel. The
+    The prefix is a plain filesystem path (leading "~" expanded); "{home}"/
+    "{user-id}" tokens are already substituted by the config placeholder pass in
+    the ANC conftest, and only the fixed suffix the code owns carries
+    "<node>"/"<test_name>"/"<timestamp>". A missing or blank prefix RAISES
+    ValueError so a bad config can never silently resolve to a garbage path. The
     fail-fast fixture (validate_anc_path_prefixes) normally catches this first;
     this raise is the last-line guard for any direct caller.
     '''
@@ -446,24 +406,92 @@ LDCONFIG_TARGET_LIB = "librocblas"
 # =========================================================================
 # Package installation
 # =========================================================================
+# Characters that make a config value unsafe to interpolate into the remote
+# shell strings the installers build. A single quote breaks single-quoted
+# interpolations; a double quote, backtick, ``$`` or backslash can be expanded
+# or command-substituted inside a DOUBLE-quoted interpolation (e.g. the
+# ``"<prefix>/$name"`` rm target); a newline splits the command. Config is
+# trusted, so rather than shell-escape everywhere we reject these at the
+# boundary and fail fast with a clear message.
+SHELL_UNSAFE_CHARS = ("'", '"', "`", "$", "\\", "\n")
+
+
 def _assert_shell_safe(anc_cfg, keys):
     '''
-    Reject config values that would break the single-quoted remote shell strings.
+    Reject config values that would break or subvert the remote shell strings.
 
-    The install commands wrap config values (anc_release_url, ...) in single
-    quotes when interpolating them into the remote command. A value that itself
-    contains a single quote would break that quoting. Config is trusted, so
-    rather than shell-escape everywhere we validate at this boundary and fail
-    fast with a clear message.
+    The install commands interpolate config values (anc_release_url,
+    ANC_INSTALL_PATH, ...) into the remote command, both inside single quotes
+    (which only a ``'`` breaks) and inside double quotes (where ``$``/backtick/
+    ``\\`` still expand). A value containing any SHELL_UNSAFE_CHARS is rejected
+    here so it can never reach the shell verbatim.
     '''
     for key in keys:
         value = anc_cfg.get(key)
-        if value is not None and "'" in str(value):
+        if value is None:
+            continue
+        text = str(value)
+        bad = [c for c in SHELL_UNSAFE_CHARS if c in text]
+        if bad:
+            shown = ", ".join(repr(c) for c in bad)
             raise ValueError(
-                f"ANC config value {key}={value!r} contains a single quote, "
-                f"which is not supported (it would break the remote shell "
-                f"command quoting). Remove the quote from the value."
+                f"ANC config value {key}={value!r} contains unsafe shell "
+                f"character(s) {shown}, which are not supported (they would break "
+                f"or subvert the remote shell command). Remove them from the value."
             )
+
+
+def validate_cluster_username(cluster_dict):
+    '''
+    Return a problem string if the cluster file's ``username`` is unsafe to
+    interpolate into remote shell commands, else None.
+
+    The username comes from the cluster file (not the anc config), so it never
+    passes through _assert_shell_safe, yet it is interpolated into remote
+    commands (e.g. the ``sudo chown <user>`` in _pull_log_dir). A value with a
+    space would split into two chown args; one with shell metacharacters could
+    inject a command under sudo. Validate it at the fixture boundary. An
+    empty/missing username is left to the connection layer to report.
+    '''
+    username = cluster_dict.get("username")
+    if username is None or not str(username).strip():
+        return None
+    text = str(username)
+    bad = [c for c in SHELL_UNSAFE_CHARS + (" ", "\t") if c in text]
+    if bad:
+        shown = ", ".join(repr(c) for c in bad)
+        return (
+            f"cluster file username={username!r} contains unsafe character(s) {shown}; "
+            f"ANC interpolates the username into remote shell commands (e.g. chown), "
+            f"so it must be a plain user name"
+        )
+    return None
+
+
+def _remote_user_tmp(user):
+    '''
+    Return a per-user remote temp DIRECTORY (``/tmp/<user>``) for ANC scratch
+    files, so concurrent users running ANC on the same node do not collide on a
+    shared, fixed-name path they cannot overwrite (another user's root/other
+    ownership under /tmp/<file> would raise a permission error). Callers are
+    responsible for ``mkdir -p`` before writing. The user is sanitised to a
+    single safe path component.
+    '''
+    return f"/tmp/{_sanitize_path_component(str(user))}"
+
+
+def _sed_replacement_safe(value):
+    '''
+    Escape a string for safe use as the REPLACEMENT half of ``sed 's#...#REPL#g'``.
+
+    ``#`` is our sed delimiter and ``&`` means "the whole match" in a sed
+    replacement, so an unescaped one in the install prefix would break the
+    expression or silently corrupt the rewritten exe_path. Backslash is escaped
+    first so we do not double-escape the escapes we add. (Shell-unsafe
+    characters are rejected earlier by _assert_shell_safe; this guards the
+    sed-specific metacharacters that are legal in a filesystem path.)
+    '''
+    return value.replace("\\", "\\\\").replace("&", "\\&").replace("#", "\\#")
 
 
 def _expected_nodes(cluster_dict):
@@ -608,6 +636,55 @@ def check_version_matches_url(config_dict):
     return None
 
 
+def validate_anc_config(config_dict, cluster_dict, require_log_folder):
+    '''
+    Collect all fail-fast ANC config problems, before any node is contacted.
+
+    Returns a list of human-readable problem strings (empty when the config is
+    usable). The caller (the ANC conftest fixture) aborts the run if non-empty,
+    so a bad config costs seconds instead of a partial run on the cluster. The
+    ``<changeme>`` placeholder is caught even earlier by the standard resolver;
+    this covers the checks that resolver does not:
+
+      - anc.anc_release_url present and non-blank (an empty URL would otherwise
+        crash install_anc with an uncaught error);
+      - anc.anc_version, when set, matches the version in the URL;
+      - anc.ANC_INSTALL_PATH resolves to a safe, non-root prefix (the shell-safe
+        + non-root guards in resolve_anc_install_prefix are surfaced here as a
+        clean message rather than a mid-run traceback);
+      - the cluster username is safe to interpolate into remote commands;
+      - anc.log_folder_path is set for the group suites (require_log_folder).
+    '''
+    problems = []
+
+    anc_cfg = config_dict.get("anc", {}) or {}
+    url = anc_cfg.get("anc_release_url")
+    if not url or not str(url).strip():
+        problems.append("config anc.anc_release_url is not set; set it to the ANC release archive URL")
+
+    version_problem = check_version_matches_url(config_dict)
+    if version_problem:
+        problems.append(version_problem)
+
+    # Pre-resolve the install prefix so a shell-unsafe or root-resolving
+    # ANC_INSTALL_PATH aborts here with a clear message instead of raising a raw
+    # traceback deep in install / group-run. Only meaningful for tar URLs, but
+    # resolving unconditionally is harmless (deb/rpm ignore the key).
+    try:
+        resolve_anc_paths_from_config(config_dict)
+    except ValueError as exc:
+        problems.append(str(exc))
+
+    username_problem = validate_cluster_username(cluster_dict)
+    if username_problem:
+        problems.append(username_problem)
+
+    if require_log_folder:
+        problems += validate_anc_path_prefixes(config_dict)
+
+    return problems
+
+
 # Install paths for one run: the prefix ANC is extracted under, plus the derived
 # anc/ dir and anc.py entrypoint. For deb/rpm these are always the fixed default
 # layout; for tar they honour a relocated config anc.ANC_INSTALL_PATH.
@@ -627,13 +704,31 @@ def resolve_anc_install_prefix(config_dict, pkg_type):
 
     The returned prefix is normalised to an absolute path with no trailing slash
     so it composes cleanly into "<prefix>/anc/anc.py".
+
+    The user-supplied value is validated here (the single chokepoint every
+    consumer -- install, group run, version check -- reaches): shell-unsafe
+    characters are rejected (expanduser/abspath normalise but do NOT sanitise),
+    and a resolved prefix of "/" is rejected because the installer's cleanup
+    loop would then ``rm -rf`` top-level system directories. Raises ValueError
+    on either.
     '''
     prefix = ANC_TOOLS_PREFIX
     if pkg_type == "tar":
         raw = config_dict.get("anc", {}).get(ANC_INSTALL_PATH_KEY)
         if raw and str(raw).strip():
+            _assert_shell_safe(config_dict.get("anc", {}), (ANC_INSTALL_PATH_KEY,))
             prefix = os.path.expanduser(str(raw).strip())
-    return os.path.abspath(prefix)
+    resolved = os.path.abspath(prefix)
+    # abspath preserves a leading "//" (POSIX-special), so an exact "== '/'"
+    # check misses "//" / "//x/.." which are ALSO filesystem root. Test the
+    # slash-stripped form so every all-slash resolution (/, //, ///) is rejected;
+    # otherwise the installer's cleanup loop would rm -rf top-level system dirs.
+    if not resolved.strip("/"):
+        raise ValueError(
+            f"config anc.{ANC_INSTALL_PATH_KEY} resolves to filesystem root ({resolved!r}), which is not a "
+            f"valid ANC install prefix (the installer would rm -rf top-level system directories)"
+        )
+    return resolved
 
 
 def resolve_anc_paths(config_dict, pkg_type):
@@ -767,9 +862,11 @@ def install_anc(phdl, cluster_dict, config_dict):
     globals.error_list = []
 
     anc_cfg = config_dict["anc"]
-    # Values interpolated into single-quoted remote shell strings by the
-    # sub-installers; reject quotes up front (config is trusted, boundary check).
-    _assert_shell_safe(anc_cfg, ("anc_release_url",))
+    # Values interpolated into remote shell strings by the sub-installers; reject
+    # unsafe characters up front (config is trusted, boundary check). Both the
+    # release URL and the relocatable install prefix reach the shell, so both are
+    # guarded here (the prefix is re-checked at its resolve chokepoint too).
+    _assert_shell_safe(anc_cfg, ("anc_release_url", ANC_INSTALL_PATH_KEY))
     anc_version = anc_cfg.get("anc_version")
     anc_release_url = anc_cfg["anc_release_url"]
     flavour = detect_package_flavour(anc_release_url)
@@ -1149,7 +1246,7 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
         rewrite_snippet = (
             f"echo 'Rewriting exe_path entries {ANC_TOOLS_PREFIX} -> {prefix}...'; "
             f"$SUDO find '{content_dir}' -type f \\( -name '*.yml' -o -name '*.yaml' \\) "
-            f"-exec sed -i 's#{ANC_TOOLS_PREFIX}#{prefix}#g' {{}} +; "
+            f"-exec sed -i 's#{ANC_TOOLS_PREFIX}#{_sed_replacement_safe(prefix)}#g' {{}} +; "
         )
 
     install_cmd = (
@@ -1165,13 +1262,17 @@ def _install_anc_tar(phdl, cluster_dict, config_dict):
         f"echo 'Extracting outer archive...'; "
         f"tar -xzf 'outer.tar.gz'; "
         # Top-level folders shipped by either payload; strip the content
-        # tarball's './' prefix and drop the '.' root entry.
+        # tarball's './' prefix and drop the '.'/'..' entries so a malicious or
+        # corrupt archive name cannot make the cleanup rm -rf outside the prefix.
         f"echo 'Determining top-level tool folders...'; "
         f"tops=$( {{ tar -tzf anc-tool*.tar.gz; tar -tzf anc-content*.tar.gz; }} "
-        f"| sed 's#^\\./##' | awk -F/ '{{print $1}}' | grep -vE '^[.]?$' | sort -u ); "
+        f"| sed 's#^\\./##' | awk -F/ '{{print $1}}' | grep -vE '^([.]{{1,2}})?$' | sort -u ); "
         f"$SUDO mkdir -p '{prefix}'; "
         f"echo 'Replacing top-level folders under {prefix}...'; "
-        f"for name in $tops; do echo \"  {prefix}/$name\"; $SUDO rm -rf \"{prefix}/$name\"; done; "
+        # Defensive: skip any name that is not a single plain path component
+        # (belt-and-braces alongside the tops filter above).
+        f"for name in $tops; do case \"$name\" in */*|.|..) continue;; esac; "
+        f"echo \"  {prefix}/$name\"; $SUDO rm -rf '{prefix}'/\"$name\"; done; "
         f"echo 'Extracting anc-tool archive to {prefix}...'; "
         f"$SUDO tar -xzf anc-tool*.tar.gz -C '{prefix}'; "
         f"echo 'Extracting anc-content archive to {prefix}...'; "
@@ -1213,17 +1314,21 @@ def _validate_exe_paths(phdl, cluster_dict, content_dir):
         return
 
     local_script = os.path.join(RESOURCES_DIR, "validate_exe_paths.py")
-    remote_script = "/tmp/validate_exe_paths.py"
+    # Per-user remote path so concurrent users on the same node do not collide on
+    # a shared /tmp/validate_exe_paths.py they cannot overwrite.
+    user_tmp = _remote_user_tmp(cluster_dict.get("username", ""))
+    remote_script = f"{user_tmp}/validate_exe_paths.py"
 
     log.info("Uploading validation script to remote nodes...")
+    phdl.exec(f"mkdir -p '{user_tmp}'", timeout=30)
     phdl.upload_file(local_script, remote_script)
 
     log.info("Validating exe_path entries from %s", content_dir)
-    validate_dict = phdl.exec(f"python3 {remote_script} '{content_dir}'", timeout=60)
+    validate_dict = phdl.exec(f"python3 '{remote_script}' '{content_dir}'", timeout=60)
     print_test_output(log, validate_dict)
 
     log.info("Removing validation script from remote nodes...")
-    phdl.exec(f"rm -f {remote_script}", timeout=10)
+    phdl.exec(f"rm -f '{remote_script}'", timeout=10)
 
     for host, output in validate_dict.items():
         if "VALIDATION_FAILED" in output:
@@ -1288,7 +1393,7 @@ def _install_anc_tar_direct(phdl, cluster_dict, config_dict):
         rewrite_snippet = (
             f"echo 'Rewriting exe_path entries {ANC_TOOLS_PREFIX} -> {prefix}...'; "
             f"$SUDO find '{content_dir}' -type f \\( -name '*.yml' -o -name '*.yaml' \\) "
-            f"-exec sed -i 's#{ANC_TOOLS_PREFIX}#{prefix}#g' {{}} +; "
+            f"-exec sed -i 's#{ANC_TOOLS_PREFIX}#{_sed_replacement_safe(prefix)}#g' {{}} +; "
         )
 
     install_cmd = (
@@ -1300,12 +1405,16 @@ def _install_anc_tar_direct(phdl, cluster_dict, config_dict):
         f"echo 'Downloading ANC release...'; "
         f"{_download_with_progress_snippet(anc_release_url, 'anc.tar.gz')}; "
         # Top-level folders shipped by the archive; strip a leading './' and drop
-        # the '.' root entry so only real folder names remain.
+        # the '.'/'..' entries so a malicious or corrupt archive name cannot make
+        # the cleanup rm -rf outside the prefix.
         f"echo 'Determining top-level tool folders...'; "
-        f"tops=$( tar -tzf anc.tar.gz | sed 's#^\\./##' | awk -F/ '{{print $1}}' | grep -vE '^[.]?$' | sort -u ); "
+        f"tops=$( tar -tzf anc.tar.gz | sed 's#^\\./##' | awk -F/ '{{print $1}}' | grep -vE '^([.]{{1,2}})?$' | sort -u ); "
         f"$SUDO mkdir -p '{prefix}'; "
         f"echo 'Replacing top-level folders under {prefix}...'; "
-        f"for name in $tops; do echo \"  {prefix}/$name\"; $SUDO rm -rf \"{prefix}/$name\"; done; "
+        # Defensive: skip any name that is not a single plain path component
+        # (belt-and-braces alongside the tops filter above).
+        f"for name in $tops; do case \"$name\" in */*|.|..) continue;; esac; "
+        f"echo \"  {prefix}/$name\"; $SUDO rm -rf '{prefix}'/\"$name\"; done; "
         f"echo 'Extracting archive to {prefix}...'; "
         f"$SUDO tar -xzf anc.tar.gz -C '{prefix}'; "
         f"{rewrite_snippet}"
@@ -1603,13 +1712,19 @@ def _pull_log_dir(single, host, user, log_dir, dest_dir):
     log_dir = log_dir.rstrip("/")
     base = os.path.basename(log_dir)
     parent = os.path.dirname(log_dir)
-    remote_tar = f"/tmp/anc_{base}.tar.gz"
+    # Per-user remote path so concurrent users on the same node do not collide on
+    # a shared /tmp/anc_<base>.tar.gz owned by another user.
+    user_tmp = _remote_user_tmp(user)
+    remote_tar = f"{user_tmp}/anc_{base}.tar.gz"
 
     # ANC ran under sudo, so log_dir (and its parents, e.g. /root/logs) are
     # root-owned and unreadable by the plain SSH user. Build the archive under
     # sudo, then chown it back so SFTP can pull it. `&&` so a tar failure aborts
     # before the (silent-on-nonzero) exec proceeds to download a missing file.
-    archive_cmd = f"sudo tar -czf '{remote_tar}' -C '{parent}' '{base}' && sudo chown {user} '{remote_tar}'"
+    archive_cmd = (
+        f"mkdir -p '{user_tmp}' && sudo tar -czf '{remote_tar}' -C '{parent}' '{base}' "
+        f"&& sudo chown '{user}' '{remote_tar}'"
+    )
     try:
         single.exec(archive_cmd, timeout=600)
     except Exception as exc:
@@ -2000,9 +2115,12 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
         # print_all_to_console=true mode. ``last=-1`` seeds the loop so the first
         # tick always emits once (arming the timer through ANC's startup / time to
         # first output, which would otherwise look like silence).
-        remote_stdout = "/tmp/anc_run_$$.out"
+        # Per-user remote scratch ($$ keeps it per-run) so concurrent users on
+        # the same node never collide on ownership of a shared /tmp path.
+        user_tmp = _remote_user_tmp(cluster_dict.get("username", ""))
+        remote_stdout = f"{user_tmp}/anc_run_$$.out"
         cmd = (
-            f"cd '{anc_dir}' && "
+            f"mkdir -p '{user_tmp}' && cd '{anc_dir}' && "
             f"( sudo ./anc.py -g {groups_arg} > '{remote_stdout}' 2>&1 ) & "
             f"anc_pid=$! && "
             f"last=-1; "
