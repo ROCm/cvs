@@ -183,10 +183,16 @@ class ScanForErrorsTests(unittest.TestCase):
             job._scan_for_errors()
 
     def test_default_error_patterns_used_when_config_empty(self):
-        # No config error_patterns -> built-in defaults apply (segfault added in configs
-        # is a config-only entry, so the default set still flags NCCL here).
+        # No config error_patterns -> built-in defaults apply.
         job, orch = _make_job(hosts=["h0"])
         orch.exec_cmd_list.return_value = {"h0": "RESOURCE_EXHAUSTED: Out of memory\n"}
+        with self.assertRaises(RuntimeError):
+            job._scan_for_errors()
+
+    def test_default_segfault_pattern_raises(self):
+        # segfault is part of the built-in default signatures.
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec_cmd_list.return_value = {"h0": "worker: Segmentation fault (core dumped)\n"}
         with self.assertRaises(RuntimeError):
             job._scan_for_errors()
 

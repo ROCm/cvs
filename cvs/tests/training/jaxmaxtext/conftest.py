@@ -11,7 +11,10 @@ import pytest
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
 from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import TRAINING_METRICS
-from cvs.lib.training.jaxmaxtext.utils.training_config_loader import load_training_variant
+from cvs.lib.training.jaxmaxtext.utils.training_config_loader import (
+    load_training_variant,
+    validate_thresholds_cover_training,
+)
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 from cvs.tests.training.jaxmaxtext import _common
 
@@ -64,7 +67,43 @@ def variant_config(pytestconfig, cluster_dict):
     config_file = pytestconfig.getoption("config_file")
     if not config_file:
         pytest.fail("--config_file is required")
-    return load_training_variant(config_file, cluster_dict)
+    variant = load_training_variant(config_file, cluster_dict)
+    # Fail fast on a sweep-name/threshold-key mismatch: otherwise metric() would
+    # silently take the "spec is None" path and emit non-gating RECORD rows, so
+    # the suite would report green while gating nothing. Raises when
+    # enforce_thresholds is true; warns otherwise.
+    validate_thresholds_cover_training(
+        expected_cells=variant.expected_cells(),
+        thresholds=variant.thresholds,
+        enforce_thresholds=variant.enforce_thresholds,
+    )
+    return variant
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _guard_suite_matches_config(request, variant_config):
+    """Fail fast when the suite and the config disagree on distributed mode.
+
+    Both jaxmaxtext_single and jaxmaxtext_distributed share this conftest. Without
+    this guard a mismatched pairing -- e.g. `cvs run jaxmaxtext_single` with a
+    distributed config (skips RDMA, still launches multi-node JAX), or
+    `jaxmaxtext_distributed` with a single-node config -- would start and fail
+    late with confusing errors. Catch it at setup instead.
+    """
+    mod = (request.module.__name__ or "").rsplit(".", 1)[-1]
+    distributed = variant_config.training.distributed
+    if mod.endswith("_single") and distributed:
+        pytest.fail(
+            "suite/config mismatch: jaxmaxtext_single requires a single-node config "
+            "(training.distributed=false), but this config has distributed=true. "
+            "Run jaxmaxtext_distributed or point at a single-node config."
+        )
+    if mod.endswith("_distributed") and not distributed:
+        pytest.fail(
+            "suite/config mismatch: jaxmaxtext_distributed requires a distributed config "
+            "(training.distributed=true), but this config has distributed=false. "
+            "Run jaxmaxtext_single or point at a distributed config."
+        )
 
 
 class _Lifecycle:

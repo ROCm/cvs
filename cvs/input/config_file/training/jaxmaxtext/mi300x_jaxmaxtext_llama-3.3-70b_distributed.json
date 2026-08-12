@@ -145,11 +145,16 @@
       "xla_gpu_enable_all_gather_combine_by_dim": "FALSE"
     },
 
+    "_nccl_comment": "Cluster-specific RDMA/NIC devices. Replace every '<changeme>' with your node's values (see the sibling _example_* entries); distributed runs hard-exit at config load until you do. Discover them with `ibv_devices` (HCAs) and `ip -br link` (host interface).",
     "nccl": {
-      "ib_hca_list": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
-      "ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
-      "socket_ifname": "eno0",
-      "gloo_socket_ifname": "eno0",
+      "_example_ib_hca_list": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "ib_hca_list": "<changeme>",
+      "_example_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "ib_hca": "<changeme>",
+      "_example_socket_ifname": "eno0",
+      "socket_ifname": "<changeme>",
+      "_example_gloo_socket_ifname": "eno0",
+      "gloo_socket_ifname": "<changeme>",
       "ib_tc": "41",
       "ib_sl": "0",
       "ib_gid_index": "3"

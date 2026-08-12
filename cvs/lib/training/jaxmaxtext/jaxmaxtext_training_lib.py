@@ -44,9 +44,9 @@ _TRAINING_ERR_PATTERNS = {
     'python err': r'ModuleNotFoundError: No module named|Fatal Python error:',
     'tensorflow': r'tensorflow.CoordinationServiceError|tensorflow.BarrierError|CoordinationServiceError',
     'resource': r'RESOURCE_EXHAUSTED: Out of memory|failed: RESOURCE_EXHAUSTED',
+    'segfault': r'Segmentation fault|SIGSEGV|signal 11|core dumped',
 }
 
-_COMPLETION_RE = re.compile(r'completed step:\s*(\d+)')
 _NAN_INF_RE = re.compile(r'(TFLOP/s/device|Tokens/s/device):\s*(NaN|Inf|-Inf)', re.I)
 
 

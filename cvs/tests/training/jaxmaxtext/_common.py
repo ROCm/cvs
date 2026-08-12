@@ -251,9 +251,12 @@ def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, 
             pass
         pytest.fail(f"training run failed for sweep '{sweep_name}': {e}")
 
-    results["training.wall_time_seconds"] = wall_time
-    results["training.convergence_steps"] = variant_config.training.steps
-    results["training.convergence_wall_time"] = wall_time
+    # wall_time is this sweep's measured wall-clock; logged for diagnostics only.
+    # Convergence is surfaced/asserted via the registered steps_to_target /
+    # time_to_target_seconds metrics below -- the old ad-hoc
+    # training.wall_time_seconds / convergence_* keys were never in
+    # TRAINING_METRICS, so nothing displayed or gated them.
+    log.info("[training] sweep '%s' wall-clock: %.1fs", sweep_name, wall_time)
 
     baseline = variant_config.training.scaling_baseline
     results["training.scaling_efficiency_pct"] = compute_scaling_efficiency(

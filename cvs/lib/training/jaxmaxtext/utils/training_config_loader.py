@@ -8,19 +8,21 @@ The framework-agnostic machinery (paths/model/container schema, the 3-pass
 placeholder substitution, the `enforce_thresholds` gate, and the
 `substitute_config` file-read helper) lives in `cvs.lib.utils.config_loader`.
 This module holds the training half: the MaxText config, tokenizer, NCCL,
-JAX distributed settings, RDMA lib, and `TrainingVariantConfig(BaseVariantConfig)`
-with the STEPS/BATCH/SEQLEN/NODES `cell_key`.
+JAX distributed settings, RDMA lib, and `TrainingVariantConfig(BaseVariantConfig)`.
 
 A training suite does not sweep cells the way inference does (no NxM matrix of
-ISL/OSL/concurrency). Instead, a single training run produces one cell key
-derived from steps, batch size, sequence length, and node count. The node count
-is injected at runtime from `len(orch.hosts)` via `cell_key(num_nodes=...)`.
+ISL/OSL/concurrency). Instead each declared `sweep` is one full training run and
+its `name` IS the threshold-file key (also the key `metric()` looks up at
+runtime). `expected_cells()` therefore returns the declared sweep names, and the
+coverage check validates the threshold file against those names directly.
 '''
 
 from __future__ import annotations
 
 import warnings
 from typing import Any, Dict, List, Literal
+
+from pydantic import field_validator
 
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Allow, _Forbid, substitute_config
 from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import GATED_METRICS
@@ -39,6 +41,23 @@ class NcclConfig(_Allow):
     ib_tc: str = "41"
     ib_sl: str = "0"
     ib_gid_index: str = "3"
+
+    @field_validator("ib_hca_list", "ib_hca", "socket_ifname", "gloo_socket_ifname")
+    @classmethod
+    def _reject_changeme(cls, v, info):
+        """Hard-exit when a cluster-specific RDMA/NIC field is left as '<changeme>'.
+
+        These device/interface names are cluster-specific and shipped as
+        '<changeme>' placeholders (see the sibling _example_* values). Running a
+        distributed job with them unresolved would silently use the wrong
+        NIC/RDMA devices, so fail loudly at config load instead.
+        """
+        if isinstance(v, str) and "<changeme>" in v.lower():
+            raise ValueError(
+                f"nccl.{info.field_name} is still '<changeme>'. Set your cluster's RDMA/NIC "
+                "device/interface (see the sibling _example_* value) before running distributed training."
+            )
+        return v
 
 
 class JaxDistributed(_Forbid):
@@ -159,7 +178,9 @@ def validate_thresholds_cover_training(
 ) -> None:
     """Shared training threshold/cell coverage check."""
     expected = set(expected_cells)
-    present = set(thresholds.keys())
+    # Skip "_"-prefixed metadata keys (e.g. "_comment") so they are not mistaken
+    # for a threshold cell that matches no training sweep.
+    present = {k for k in thresholds.keys() if not str(k).startswith("_")}
     missing = sorted(expected - present)
     extra = sorted(present - expected)
     problems = []
@@ -189,21 +210,19 @@ class TrainingVariantConfig(BaseVariantConfig):
     gpu_arch: str
     training: TrainingConfig
 
-    def cell_key(self, num_nodes=1):
-        """Canonical threshold key for this training run.
+    def expected_cells(self):
+        """Threshold cell keys this config expects: one per declared sweep.
 
-        `num_nodes` is injected at runtime from `len(orch.hosts)` so the same
-        config works on different cluster sizes without editing the JSON.
+        The sweep `name` IS the threshold-file key and the key `metric()` looks
+        up at runtime (see cvs/tests/training/jaxmaxtext/_common.py::metric), so
+        coverage is checked against the declared sweep names directly -- not a
+        synthesized key. `enabled_sweep_list` only selects which of these
+        actually run; the threshold file still carries an entry per declared
+        sweep. A config with no sweeps degrades to a single implicit "default"
+        cell.
         """
-        t = self.training
-        mc = t.maxtext_config
-        batch = mc.get("per_device_batch_size", "-")
-        seqlen = mc.get("max_target_length", "-")
-        return f"STEPS={t.steps},BATCH={batch},SEQLEN={seqlen},NODES={num_nodes}"
-
-    def expected_cells(self, num_nodes=1):
-        """The single cell this training config produces."""
-        return [self.cell_key(num_nodes=num_nodes)]
+        names = [s.name for s in self.training.sweeps]
+        return names or ["default"]
 
     def enabled_sweeps(self):
         """Return the Sweep objects selected to run.

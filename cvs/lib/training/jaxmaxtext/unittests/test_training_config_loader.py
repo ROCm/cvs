@@ -4,8 +4,8 @@ All rights reserved.
 
 Unit tests for cvs/lib/training/jaxmaxtext/utils/training_config_loader.py: schema
 defaults for the metric add-ons (scaling_baseline / convergence / loss_curve),
-the cell_key / expected_cells contract, the threshold-coverage validator, and a
-round-trip load of a real jaxmaxtext config file.
+the expected_cells (sweep-name) contract, the threshold-coverage validator, and
+a round-trip load of a real jaxmaxtext config file.
 '''
 
 import unittest
@@ -49,6 +49,8 @@ class ValidateThresholdsCoverTrainingTests(unittest.TestCase):
     _GATED = {
         "training.tflops_per_sec_per_gpu": {"kind": "min", "value": 1},
         "training.tokens_per_sec_per_gpu": {"kind": "min", "value": 1},
+        "training.final_loss": {"kind": "max", "value": 15},
+        "training.loss_decreased": {"kind": "min", "value": 1},
     }
 
     def test_missing_cell_raises_when_enforced(self):
@@ -102,11 +104,15 @@ class RealConfigRoundTripTests(unittest.TestCase):
         self.assertIsInstance(t.convergence, Convergence)
         self.assertIsInstance(t.loss_curve, LossCurve)
 
-    def test_cell_key_and_expected_cells(self):
-        key = self.cfg.cell_key(num_nodes=1)
-        self.assertIn("STEPS=", key)
-        self.assertIn("NODES=1", key)
-        self.assertEqual(self.cfg.expected_cells(num_nodes=1), [key])
+    def test_expected_cells_are_declared_sweep_names(self):
+        # expected_cells() returns the declared sweep names verbatim -- the same
+        # keys used in the threshold file and looked up at runtime by metric().
+        expected = self.cfg.expected_cells()
+        declared = [s.name for s in self.cfg.training.sweeps]
+        self.assertEqual(expected, declared)
+        # And every expected cell has a matching threshold entry (coverage).
+        for cell in expected:
+            self.assertIn(cell, self.cfg.thresholds)
 
     def test_eval_defaults_disabled(self):
         # The config plumbs eval flags but leaves them disabled by default.

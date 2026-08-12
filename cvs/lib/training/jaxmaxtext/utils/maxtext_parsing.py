@@ -37,12 +37,17 @@ TRAINING_METRICS = [
 ]
 TRAINING_METRIC_UNITS = dict(TRAINING_METRICS)
 
-# The perf SLO contract: the subset of TRAINING_METRICS a calibrated run must
-# assert. Membership = "out of range means FAILURE". Record-only by default:
-# a NEW metric is record-only until its name is added here.
+# The SLO contract: the subset of TRAINING_METRICS a calibrated run must assert.
+# Membership = "out of range means FAILURE". Record-only by default: a NEW metric
+# is record-only until its name is added here. Covers throughput (perf) plus the
+# two correctness gates -- final_loss (sane loss ceiling) and loss_decreased
+# (training actually reduced the loss) -- which every shipped threshold file
+# already specs with max/min.
 GATED_METRICS = {
     "tflops_per_sec_per_gpu",
     "tokens_per_sec_per_gpu",
+    "final_loss",
+    "loss_decreased",
 }
 
 # Regex for a completed training step line.
