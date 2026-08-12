@@ -102,7 +102,8 @@ class TestRunPlugin(unittest.TestCase):
         mock_pytest_main.return_value = 0
 
         with patch.object(self.plugin, "get_test_file", return_value="/mock/path/test.py"):
-            self.plugin.run(args)
+            with patch.object(self.plugin, "_validate_json_config"):
+                self.plugin.run(args)
 
         expected_args = [
             "/mock/path/test.py",
