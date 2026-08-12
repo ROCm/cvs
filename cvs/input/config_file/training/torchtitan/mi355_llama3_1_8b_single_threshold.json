@@ -1,0 +1,38 @@
+{
+  "_comment": "Llama 3.1 8B single-node thresholds for MI355 TorchTitan. Cell keys must match TorchTitanVariantConfig.cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>.",
+  "_note": "Based on actual MI355 test results: BF16: 11,767 TPS, FP8: 11,724 TPS. Thresholds set at actual - 10%.",
+  "MBS=1,GBS=8,PRECISION=bf16": {
+    "training.throughput_per_gpu": {
+      "kind": "min",
+      "value": 10590,
+      "_calculation": "11767 * 0.90 = 10590.3"
+    },
+    "training.tokens_per_gpu": {
+      "kind": "min",
+      "value": 84720,
+      "_calculation": "10590 * 8 (batch size) = 84720"
+    },
+    "training.loss": {
+      "kind": "max",
+      "value": 12.77,
+      "_calculation": "10.64 * 1.20 = 12.768"
+    }
+  },
+  "MBS=1,GBS=8,PRECISION=fp8": {
+    "training.throughput_per_gpu": {
+      "kind": "min",
+      "value": 10552,
+      "_calculation": "11724 * 0.90 = 10551.6"
+    },
+    "training.tokens_per_gpu": {
+      "kind": "min",
+      "value": 84416,
+      "_calculation": "10552 * 8 (batch size) = 84416"
+    },
+    "training.loss": {
+      "kind": "max",
+      "value": 12.10,
+      "_calculation": "10.08 * 1.20 = 12.096"
+    }
+  }
+}
