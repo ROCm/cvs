@@ -21,3 +21,6 @@ orjson
 openpyxl
 netmiko
 jinja2
+
+# Headless plotting for training loss-curve PNGs (Agg backend; see cvs/lib/training/jaxmaxtext/utils/loss_curve.py)
+matplotlib
