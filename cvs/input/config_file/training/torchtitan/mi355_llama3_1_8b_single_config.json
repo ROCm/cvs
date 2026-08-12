@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "framework": "torchtitan_single",
+  "gpu_arch": "mi355",
+  "enforce_thresholds": false,
+  "config": {
+    "hf_token_file": "/home/{user-id}/.hf_token",
+    "log_dir": "/home/{user-id}/LOG_DIR",
+    "scripts_dir": "/home/{user-id}/SCRIPTS",
+    "data_cache_dir": "/home/{user-id}/cache",
+    "rocm_dir": "",
+    "torchtitan_root": "/workspace/Primus/third_party/torchtitan",
+    "training_iterations": "10",
+    "nnodes": "1",
+    "nic_type": "thor2",
+    "nccl_socket_ifname": "enp49s0f0np0",
+    "gloo_socket_ifname": "enp49s0f0np0",
+    "nccl_ib_gid_index": "3",
+    "nccl_debug": "ERROR",
+    "master_address": "127.0.0.1",
+    "verify_network_errors": "False",
+    "use_generated_config": "True"
+  },
+  "model_params": {
+    "model_name": "llama3_1_8b",
+    "hf_model_name": "meta-llama/Llama-3.1-8B",
+    "sequence_length": "8192",
+    "dataset": "c4",
+    "lr": "3e-4",
+    "warmup_steps": "200",
+    "activation_checkpointing": "selective",
+    "compile": "false",
+    "tensor_parallel_degree": "1",
+    "pipeline_parallel_degree": "1",
+    "context_parallel_degree": "1",
+    "expert_parallel_degree": "1",
+    "enable_async_tensor_parallel": "false",
+    "precompute_float8_dynamic_scale_for_fsdp": "false",
+    "data_parallel_shard_degree": "8"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "torchtitan_llama3_1_8b_bf16",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/dev/infiniband:/dev/infiniband"
+        ],
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri"
+        ]
+      }
+    }
+  },
+  "sweep": {
+    "combinations": {
+      "llama3_1_8b-mi355-bs8-mbs1-bf16": {
+        "name": "llama3_1_8b_mbs1_gbs8_bf16",
+        "global_batch_size": "8",
+        "micro_batch_size": "1",
+        "precision": "bf16"
+      },
+      "llama3_1_8b-mi355-bs8-mbs1-fp8": {
+        "name": "llama3_1_8b_mbs1_gbs8_fp8",
+        "global_batch_size": "8",
+        "micro_batch_size": "1",
+        "precision": "fp8"
+      }
+    },
+    "runs": [
+      "llama3_1_8b-mi355-bs8-mbs1-bf16",
+      "llama3_1_8b-mi355-bs8-mbs1-fp8"
+    ]
+  },
+  "threshold_json": "mi355_llama3_1_8b_single_threshold.json"
+}
