@@ -161,7 +161,7 @@ Example cell:
   "training.throughput_per_gpu":        { "kind": "min", "value": 100 },
   "training.tokens_per_gpu":            { "kind": "min", "value": 1000 },
   "training.elapsed_time_per_iteration":{ "kind": "max", "value": 500 },
-  "training.mem_usage":                 { "kind": "max", "value": 0 }
+  "training.mem_usage":                 { "kind": "max", "value": 0.85 }
 }
 ```
 

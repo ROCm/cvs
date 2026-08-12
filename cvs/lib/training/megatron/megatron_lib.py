@@ -576,7 +576,7 @@ class MegatronTrainingJob:
 
             for i in range(len(self.orch.hosts)):
                 full_cmd = cmd + f'NODE_RANK={i} nohup bash {self.training_script} &'
-                script_cmd = f'echo {shlex.quote(full_cmd)} > {self.scripts_dir}/distributed_wrapper_script_{i}.sh && chmod 700 {self.scripts_dir}/distributed_wrapper_script_{i}.sh'
+                script_cmd = f'umask 077; echo {shlex.quote(full_cmd)} > {self.scripts_dir}/distributed_wrapper_script_{i}.sh && chmod 700 {self.scripts_dir}/distributed_wrapper_script_{i}.sh'
                 self.job_cmd_list.append(script_cmd)
 
         else:
@@ -662,7 +662,7 @@ class MegatronTrainingJob:
         else:
             # Write single-node wrapper script on bare host
             self.orch.all.exec(
-                f'echo {shlex.quote(self.job_cmd)} > {self.scripts_dir}/single_node_wrapper_script.sh '
+                f'umask 077; echo {shlex.quote(self.job_cmd)} > {self.scripts_dir}/single_node_wrapper_script.sh '
                 f'&& chmod 700 {self.scripts_dir}/single_node_wrapper_script.sh'
             )
             # Launch inside container
@@ -682,9 +682,12 @@ class MegatronTrainingJob:
             str: Log text from the last node.
         """
         n = len(self.orch.hosts)
+        last_host = self.orch.hosts[-1]
         tail_suffix = f' | tail -{tail_lines}' if tail_lines > 0 else ''
-        out_dict = self.orch.exec(f'cat {self.combo_log_dir}/out-node{n - 1}/training.log{tail_suffix}')
-        return list(out_dict.values())[-1]
+        out_dict = self.orch.exec(
+            f'cat {self.combo_log_dir}/out-node{n - 1}/training.log{tail_suffix}', hosts=[last_host]
+        )
+        return out_dict.get(last_host) or ''
 
     def get_training_results_dict(self):
         """Parse training log from the last node and extract key performance metrics.
