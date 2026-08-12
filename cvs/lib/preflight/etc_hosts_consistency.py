@@ -10,7 +10,15 @@ address (from ``cluster_dict['node_dict']``) has *some* entry in
 been provisioned for the whole cluster -- plus any operator-supplied
 ``extra_entries`` that must match an exact ``ip -> hostname`` pair (e.g. for
 out-of-cluster infrastructure hosts).
+
+Per ``ClusterNodeConfig`` (``cvs/parsers/schemas.py``), a cluster node
+address may be either an IP literal or a hostname (``vpc_ip`` is documented
+as "VPC IP or hostname for inter-node communication"). An IP-literal address
+is matched against the IP column of ``/etc/hosts``; a hostname address is
+matched against the hostname column(s) of any entry.
 """
+
+import ipaddress
 
 from cvs.lib.preflight.base import PreflightCheck
 
@@ -50,6 +58,15 @@ class EtcHostsConsistencyCheck(PreflightCheck):
             ip_to_hostnames.setdefault(ip, set()).update(hostnames)
         return ip_to_hostnames
 
+    @staticmethod
+    def _is_ip_literal(value):
+        """Return True if ``value`` parses as an IPv4/IPv6 address literal."""
+        try:
+            ipaddress.ip_address(value)
+            return True
+        except ValueError:
+            return False
+
     def run(self):
         """
         Execute the /etc/hosts consistency check on every reachable node.
@@ -63,8 +80,15 @@ class EtcHostsConsistencyCheck(PreflightCheck):
 
         for node, output in out_dict.items():
             ip_to_hostnames = self._parse_hosts_file(output)
+            all_hostnames = set().union(*ip_to_hostnames.values()) if ip_to_hostnames else set()
 
-            missing_ips = [ip for ip in self.expected_ips if ip not in ip_to_hostnames]
+            missing_ips = []
+            for expected in self.expected_ips:
+                if self._is_ip_literal(expected):
+                    if expected not in ip_to_hostnames:
+                        missing_ips.append(expected)
+                elif expected not in all_hostnames:
+                    missing_ips.append(expected)
             missing_extra = []
             for entry in self.extra_entries:
                 ip = entry.get('ip')

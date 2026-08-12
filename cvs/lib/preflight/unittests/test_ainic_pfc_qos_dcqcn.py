@@ -3,7 +3,9 @@
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
@@ -194,6 +196,69 @@ class TestDcqcnValidationCheck(unittest.TestCase):
 
         self.assertEqual(results['node1']['status'], 'FAIL')
         self.assertIn('malformed or empty output', results['node1']['errors'][0])
+
+
+class TestPfcQosDcqcnNicTypeGating(unittest.TestCase):
+    """The pfc_qos_dcqcn test function must not run on non-AINIC fleets.
+
+    ``pfc_qos_dcqcn`` has no ``nic_type`` field of its own; it is guarded by
+    the sibling ``nic_firmware.nic_type`` (both live under
+    ``connectivity_check.ifoe``), which already defaults to ``['ainic']``.
+    """
+
+    def _run(self, config):
+        from cvs.tests.preflight import preflight_checks
+
+        previous_results = dict(preflight_checks.preflight_results)
+        try:
+            with patch.object(preflight_checks, 'preflight_update_test_result'):
+                preflight_checks.test_ainic_pfc_qos_dcqcn(MagicMock(), config)
+            return dict(preflight_checks.preflight_results)
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
+    def test_skipped_when_nic_type_is_not_ainic(self):
+        config = {
+            'connectivity_check': {
+                'ifoe': {
+                    'pfc_qos_dcqcn': {'enabled': True},
+                    'nic_firmware': {'nic_type': ['broadcom']},
+                },
+            },
+        }
+        results = self._run(config)
+
+        self.assertEqual(results['pfc_qos_dcqcn']['status'], 'SKIPPED')
+        self.assertIn("not ['ainic']", results['pfc_qos_dcqcn']['message'])
+
+    def test_not_skipped_by_nic_type_when_ainic_selected(self):
+        # nic_firmware.nic_type defaults to ['ainic'], so an explicit
+        # ['ainic'] selection (or omitting nic_type) must fall through past
+        # the nic_type gate -- reaching the "no reachable nodes" FAIL path
+        # (via pytest.fail) confirms the nic_type gate did not short-circuit.
+        config = {
+            'connectivity_check': {
+                'ifoe': {
+                    'pfc_qos_dcqcn': {'enabled': True},
+                    'nic_firmware': {'nic_type': ['ainic']},
+                },
+            },
+        }
+        phdl = MagicMock()
+        phdl.reachable_hosts = []
+
+        from cvs.tests.preflight import preflight_checks
+
+        previous_results = dict(preflight_checks.preflight_results)
+        try:
+            with patch.object(preflight_checks, 'preflight_update_test_result'):
+                with self.assertRaises(pytest.fail.Exception):
+                    preflight_checks.test_ainic_pfc_qos_dcqcn(phdl, config)
+            self.assertEqual(preflight_checks.preflight_results['pfc_qos_dcqcn']['status'], 'FAIL')
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
 
 
 if __name__ == '__main__':

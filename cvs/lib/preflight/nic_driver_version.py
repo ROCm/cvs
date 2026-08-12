@@ -1,12 +1,12 @@
 """
 Per-Vendor NIC Driver Version Checking Module
 
-Ports the ``pdsh/clschkbrcm`` script (Broadcom ``bnxt_re``/``bnxt_en``), and
-generalizes it to AINIC (``ionic``/``ionic_rdma``) and Mellanox
-(``mlx5_core``/OFED) NICs. Since fleets may mix vendors, each vendor check
-detects hardware presence per node and reports SKIPPED (not FAIL) on nodes
-without that vendor's hardware, so the dispatcher can be safely left enabled
-cluster-wide on mixed fleets.
+Ports the ``pdsh/clschkbrcm`` script (Broadcom, via ``niccli``) and the
+``ansible/ainicfwcheck/fwcheck.yml`` playbook (AINIC, via ``nicctl``), and
+generalizes to Mellanox (``mlx5_core``/OFED, via ``modinfo``/``ofed_info``).
+Since fleets may mix vendors, each vendor check detects hardware presence per
+node and reports SKIPPED (not FAIL) on nodes without that vendor's hardware,
+so the dispatcher can be safely left enabled cluster-wide on mixed fleets.
 
 ``NicDriverVersionCheck`` is the public dispatcher: it takes the configured
 ``nic_type`` vendor list and per-vendor golden-value configs, runs only the
@@ -36,41 +36,52 @@ class _VendorDriverVersionCheck(PreflightCheck):
 
 
 class BroadcomDriverVersionCheck(_VendorDriverVersionCheck):
-    """Validate Broadcom bnxt_re/bnxt_en driver version and DKMS provenance."""
+    """Validate the Broadcom NIC package version via ``niccli``, the CLI tool installed
+    alongside the Broadcom driver package (not to be confused with the kernel module
+    version reported by ``modinfo`` -- ``niccli`` does not report that at all).
+    ``niccli`` requires root, so it is run with ``sudo`` by default
+    (``use_sudo=False`` to disable).
+    """
 
     def __init__(
         self,
         phdl,
-        expected_bnxt_re_version="236.1.155.0",
-        expected_bnxt_en_version="1.10.3-236.1.155.0",
+        expected_package_version="<changeme>",
+        use_sudo=True,
         config_dict=None,
     ):
         super().__init__(phdl, config_dict)
-        self.expected_bnxt_re_version = expected_bnxt_re_version
-        self.expected_bnxt_en_version = expected_bnxt_en_version
+        self.expected_package_version = expected_package_version
+        self.use_sudo = use_sudo
 
-    @staticmethod
-    def _build_command():
-        return """
+    def _build_command(self):
+        sudo = "sudo " if self.use_sudo else ""
+        return f"""
         if ! lsmod 2>/dev/null | grep -q '^bnxt_re'; then
             echo "VENDOR:NOT_BROADCOM"
             exit 0
         fi
         echo "VENDOR:BROADCOM"
-        RE_VER=$(modinfo -F version bnxt_re 2>/dev/null)
-        RE_FILE=$(modinfo -F filename bnxt_re 2>/dev/null)
-        EN_VER=$(modinfo -F version bnxt_en 2>/dev/null)
-        EN_FILE=$(modinfo -F filename bnxt_en 2>/dev/null)
-        echo "RE_VERSION:$RE_VER"
-        echo "RE_FILE:$RE_FILE"
-        echo "EN_VERSION:$EN_VER"
-        echo "EN_FILE:$EN_FILE"
+        if ! command -v niccli >/dev/null 2>&1; then
+            echo "NICCLI:MISSING"
+            exit 0
+        fi
+        for idx in $({sudo}niccli --list 2>/dev/null | awk '$1 ~ /^[0-9]+\\)/{{gsub(/\\)/,"",$1); print $1}}'); do
+            PKG_VER=$({sudo}niccli -i "$idx" show --pkg_ver 2>/dev/null | grep -i "Active Package Version" | awk -F':' '{{print $2}}' | xargs)
+            echo "PKG:$idx:$PKG_VER"
+        done
         """
 
     def _parse_and_evaluate(self, output):
         fields = {}
+        packages = {}
         for line in (output or '').strip().split('\n'):
-            if ':' in line:
+            if not line or ':' not in line:
+                continue
+            if line.startswith('PKG:'):
+                _, idx, version = line.split(':', 2)
+                packages[idx] = version.strip()
+            else:
                 key, _, value = line.partition(':')
                 fields[key] = value
 
@@ -78,55 +89,47 @@ class BroadcomDriverVersionCheck(_VendorDriverVersionCheck):
             return {
                 'status': 'SKIPPED',
                 'vendor': 'NOT_BROADCOM',
-                'bnxt_re': {},
-                'bnxt_en': {},
+                'packages': {},
                 'errors': [],
             }
 
-        re_version = fields.get('RE_VERSION', '').strip()
-        re_file = fields.get('RE_FILE', '').strip()
-        en_version = fields.get('EN_VERSION', '').strip()
-        en_file = fields.get('EN_FILE', '').strip()
-
-        re_dkms = 'dkms' in re_file.lower()
-        en_dkms = 'dkms' in en_file.lower()
-        re_ok = re_version == self.expected_bnxt_re_version and re_dkms
-        en_ok = en_version == self.expected_bnxt_en_version and en_dkms
+        if fields.get('NICCLI') == 'MISSING' or not packages:
+            return {
+                'status': 'WARNING',
+                'vendor': 'BROADCOM',
+                'packages': {},
+                'errors': ["niccli not found or reported no NIC(s) (expected installed alongside the Broadcom driver)"],
+            }
 
         errors = []
-        if not re_ok:
-            errors.append(
-                f"bnxt_re version={re_version or 'UNKNOWN'} dkms={re_dkms} "
-                f"(expected version={self.expected_bnxt_re_version}, dkms=True)"
-            )
-        if not en_ok:
-            errors.append(
-                f"bnxt_en version={en_version or 'UNKNOWN'} dkms={en_dkms} "
-                f"(expected version={self.expected_bnxt_en_version}, dkms=True)"
-            )
+        for idx, version in sorted(packages.items()):
+            if version != self.expected_package_version:
+                errors.append(
+                    f"NIC {idx} package version={version or 'UNKNOWN'} (expected {self.expected_package_version})"
+                )
 
         return {
-            'status': 'PASS' if re_ok and en_ok else 'WARNING',
+            'status': 'PASS' if not errors else 'WARNING',
             'vendor': 'BROADCOM',
-            'bnxt_re': {'version': re_version, 'dkms': re_dkms},
-            'bnxt_en': {'version': en_version, 'dkms': en_dkms},
+            'packages': packages,
             'errors': errors,
         }
 
 
 class AinicDriverVersionCheck(_VendorDriverVersionCheck):
-    """Validate AINIC ionic/ionic_rdma driver version."""
+    """Validate AINIC per-NIC firmware version via ``nicctl show version firmware`` (the CLI
+    tool installed alongside the AINIC driver), checking both the ``Uboot-A`` and
+    ``Firmware-A`` fields for every NIC on the node.
+    """
 
     def __init__(
         self,
         phdl,
-        expected_ionic_driver_version="1.117.5-a-56",
-        expected_ionic_rdma_driver_version="1.117.5-a-56",
+        expected_fw_version="1.117.5-a-56",
         config_dict=None,
     ):
         super().__init__(phdl, config_dict)
-        self.expected_ionic_driver_version = expected_ionic_driver_version
-        self.expected_ionic_rdma_driver_version = expected_ionic_rdma_driver_version
+        self.expected_fw_version = expected_fw_version
 
     @staticmethod
     def _build_command():
@@ -136,16 +139,28 @@ class AinicDriverVersionCheck(_VendorDriverVersionCheck):
             exit 0
         fi
         echo "VENDOR:AINIC"
-        IONIC_VER=$(modinfo -F version ionic 2>/dev/null)
-        IONIC_RDMA_VER=$(modinfo -F version ionic_rdma 2>/dev/null)
-        echo "IONIC_VERSION:$IONIC_VER"
-        echo "IONIC_RDMA_VERSION:$IONIC_RDMA_VER"
+        if ! command -v nicctl >/dev/null 2>&1; then
+            echo "NICCTL:MISSING"
+            exit 0
+        fi
+        nicctl show version firmware 2>/dev/null | awk '
+            /^NIC/{nic=$3}
+            /Uboot-A/{uboot=$NF}
+            /Firmware-A/{fw=$NF; print "FW:"nic":"uboot":"fw}
+        '
         """
 
     def _parse_and_evaluate(self, output):
         fields = {}
+        fw_entries = []
         for line in (output or '').strip().split('\n'):
-            if ':' in line:
+            if not line or ':' not in line:
+                continue
+            if line.startswith('FW:'):
+                parts = line.split(':')
+                if len(parts) >= 4:
+                    fw_entries.append({'nic': parts[1], 'uboot': parts[2], 'firmware': parts[3]})
+            else:
                 key, _, value = line.partition(':')
                 fields[key] = value
 
@@ -153,33 +168,30 @@ class AinicDriverVersionCheck(_VendorDriverVersionCheck):
             return {
                 'status': 'SKIPPED',
                 'vendor': 'NOT_AINIC',
-                'ionic': {},
-                'ionic_rdma': {},
+                'fw_entries': [],
                 'errors': [],
             }
 
-        ionic_version = fields.get('IONIC_VERSION', '').strip()
-        ionic_rdma_version = fields.get('IONIC_RDMA_VERSION', '').strip()
-
-        ionic_ok = ionic_version == self.expected_ionic_driver_version
-        ionic_rdma_ok = ionic_rdma_version == self.expected_ionic_rdma_driver_version
+        if fields.get('NICCTL') == 'MISSING' or not fw_entries:
+            return {
+                'status': 'WARNING',
+                'vendor': 'AINIC',
+                'fw_entries': [],
+                'errors': ["nicctl not found or reported no NIC(s) (expected installed alongside the AINIC driver)"],
+            }
 
         errors = []
-        if not ionic_ok:
-            errors.append(
-                f"ionic version={ionic_version or 'UNKNOWN'} (expected version={self.expected_ionic_driver_version})"
-            )
-        if not ionic_rdma_ok:
-            errors.append(
-                f"ionic_rdma version={ionic_rdma_version or 'UNKNOWN'} "
-                f"(expected version={self.expected_ionic_rdma_driver_version})"
-            )
+        for entry in fw_entries:
+            if entry['uboot'] != self.expected_fw_version or entry['firmware'] != self.expected_fw_version:
+                errors.append(
+                    f"NIC {entry['nic']}: uboot={entry['uboot']} firmware={entry['firmware']} "
+                    f"(expected {self.expected_fw_version})"
+                )
 
         return {
-            'status': 'PASS' if ionic_ok and ionic_rdma_ok else 'WARNING',
+            'status': 'PASS' if not errors else 'WARNING',
             'vendor': 'AINIC',
-            'ionic': {'version': ionic_version},
-            'ionic_rdma': {'version': ionic_rdma_version},
+            'fw_entries': fw_entries,
             'errors': errors,
         }
 

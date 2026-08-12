@@ -1,11 +1,12 @@
 """
 Per-Vendor NIC Firmware Checking Module
 
-Ports the ``ansible/ainicfwcheck/fwcheck.yml`` playbook (AINIC), and
-generalizes it to Broadcom and Mellanox NICs. Each vendor check detects
-hardware presence per node (via ``lsmod``) before evaluating device count
-and firmware/host-software version, so a node lacking the vendor's hardware
-reports SKIPPED rather than a false FAIL.
+Ports the ``ansible/ainicfwcheck/fwcheck.yml`` playbook (AINIC, via
+``nicctl``), and generalizes it to Broadcom (via ``niccli``) and Mellanox
+(via ``ethtool -i``) NICs. Each vendor check detects hardware presence per
+node (via ``lsmod``) before evaluating device count and firmware/host-software
+version, so a node lacking the vendor's hardware reports SKIPPED rather than
+a false FAIL.
 
 NIC-count mismatches on a node with the vendor's hardware present are treated
 as FAIL (mirrors the original playbook's blocking ``fail:`` task), while
@@ -174,43 +175,60 @@ class AinicFirmwareCheck(_VendorFirmwareCheck):
 
 
 class BroadcomFirmwareCheck(_VendorFirmwareCheck):
-    """Validate Broadcom bnxt RDMA device count and (non-blocking) firmware version."""
+    """Validate Broadcom NIC count and (non-blocking) firmware version via ``niccli``, the
+    CLI tool installed alongside the Broadcom driver package. ``niccli --list`` reports one
+    row per device with a ``FwVersion`` column, giving both NIC count and per-NIC firmware
+    version from a single command. ``niccli --list`` requires root, so it is run with
+    ``sudo`` by default (``use_sudo=False`` to disable). Note that a dual-port card reports
+    one row per PCI function/port, not one row per physical card -- e.g. 8 dual-port cards
+    show up as 16 rows.
+    """
 
     def __init__(
         self,
         phdl,
         expected_nic_count=2,
         expected_fw_version="<changeme>",
+        use_sudo=True,
         config_dict=None,
     ):
         super().__init__(phdl, config_dict)
         self.expected_nic_count = expected_nic_count
         self.expected_fw_version = expected_fw_version
+        self.use_sudo = use_sudo
 
-    @staticmethod
-    def _build_command():
-        return """
+    def _build_command(self):
+        sudo = "sudo " if self.use_sudo else ""
+        return f"""
         if ! lsmod 2>/dev/null | grep -q '^bnxt_re'; then
             echo "VENDOR:NOT_BROADCOM"
             exit 0
         fi
         echo "VENDOR:BROADCOM"
-
-        NIC_COUNT=$(ibv_devices 2>/dev/null | awk '/bnxt_re[0-9]+/ {c++} END{print c+0}')
-        echo "NIC_COUNT:$NIC_COUNT"
-
-        for iface in $(ls /sys/class/net 2>/dev/null); do
-            driver=$(basename "$(readlink -f /sys/class/net/$iface/device/driver 2>/dev/null)" 2>/dev/null)
-            if [ "$driver" = "bnxt_en" ]; then
-                fw=$(ethtool -i "$iface" 2>/dev/null | awk -F': ' '/firmware-version/{print $2}')
-                echo "FW:$iface:$fw"
-            fi
-        done
+        if ! command -v niccli >/dev/null 2>&1; then
+            echo "NICCLI:MISSING"
+            exit 0
+        fi
+        {sudo}niccli --list 2>/dev/null | awk '$1 ~ /^[0-9]+\\)/{{idx=$1; gsub(/\\)/,"",idx); print "FW:"idx":"$4":"$5}}'
         """
 
     def _parse_and_evaluate(self, output):
-        lines = (output or '').strip().split('\n')
-        if lines and lines[0].strip() == 'VENDOR:NOT_BROADCOM':
+        fields = {}
+        fw_entries = []
+        for line in (output or '').strip().split('\n'):
+            if not line or ':' not in line:
+                continue
+            if line.startswith('FW:'):
+                parts = line.split(':', 3)
+                if len(parts) >= 3:
+                    fw_entries.append(
+                        {'nic': parts[1], 'firmware': parts[2], 'pci_addr': parts[3] if len(parts) > 3 else ''}
+                    )
+            else:
+                key, _, value = line.partition(':')
+                fields[key] = value
+
+        if fields.get('VENDOR') != 'BROADCOM':
             return {
                 'status': 'SKIPPED',
                 'vendor': 'NOT_BROADCOM',
@@ -221,35 +239,33 @@ class BroadcomFirmwareCheck(_VendorFirmwareCheck):
                 'warnings': [],
             }
 
-        nic_count = 0
-        fw_entries = []
-        for line in lines:
-            if line == 'VENDOR:BROADCOM':
-                continue
-            if line.startswith('NIC_COUNT:'):
-                try:
-                    nic_count = int(line.split(':', 1)[1])
-                except (ValueError, IndexError):
-                    nic_count = 0
-            elif line.startswith('FW:'):
-                parts = line.split(':', 2)
-                if len(parts) >= 3:
-                    fw_entries.append({'iface': parts[1], 'firmware': parts[2]})
+        if fields.get('NICCLI') == 'MISSING':
+            return {
+                'status': 'WARNING',
+                'vendor': 'BROADCOM',
+                'nic_count': 0,
+                'expected_nic_count': self.expected_nic_count,
+                'fw_entries': [],
+                'errors': [],
+                'warnings': ["niccli not found (expected installed alongside the Broadcom driver)"],
+            }
 
+        nic_count = len(fw_entries)
         errors = []
         warnings = []
 
         if nic_count != self.expected_nic_count:
-            errors.append(f"Expected {self.expected_nic_count} Broadcom bnxt RDMA device(s), found {nic_count}")
+            errors.append(f"Expected {self.expected_nic_count} Broadcom NIC(s), found {nic_count}")
 
         for entry in fw_entries:
             if entry['firmware'] != self.expected_fw_version:
                 warnings.append(
-                    f"Interface {entry['iface']}: firmware={entry['firmware']} (expected {self.expected_fw_version})"
+                    f"NIC {entry['nic']} ({entry['pci_addr']}): firmware={entry['firmware']} "
+                    f"(expected {self.expected_fw_version})"
                 )
 
         if not fw_entries:
-            warnings.append("Unable to parse firmware version output from 'ethtool -i'")
+            warnings.append("Unable to parse firmware version output from 'niccli --list'")
 
         status = 'FAIL' if errors else ('WARNING' if warnings else 'PASS')
         return {

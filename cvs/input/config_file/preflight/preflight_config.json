@@ -52,14 +52,10 @@
         "_comment_enabled": "Enable /etc/security/limits.conf validation.",
 
         "required_lines": [
-          "root soft memlock unlimited",
-          "root hard memlock unlimited",
-          "root soft nofile 1048576",
-          "root hard nofile 1048576",
-          "ubuntu soft memlock unlimited",
-          "ubuntu hard memlock unlimited",
-          "ubuntu soft nofile 1048576",
-          "ubuntu hard nofile 1048576"
+          "* soft memlock unlimited",
+          "* hard memlock unlimited",
+          "* soft nofile 1048576",
+          "* hard nofile 1048576"
         ],
         "_comment_required_lines": "Exact lines that must be present (in any order, whitespace-insensitive) in /etc/security/limits.conf on every node."
       },
@@ -74,19 +70,13 @@
         "_comment_nic_type": "One or more of: ainic, broadcom, mellanox. Selects which vendor sub-block(s) below actually run. A node lacking the selected vendor's hardware is reported SKIPPED, not FAILed.",
 
         "ainic": {
-          "expected_ionic_driver_version": "1.117.5-a-56",
-          "_comment_expected_ionic_driver_version": "Expected 'ionic' kernel module version (modinfo -F version ionic).",
-
-          "expected_ionic_rdma_driver_version": "1.117.5-a-56",
-          "_comment_expected_ionic_rdma_driver_version": "Expected 'ionic_rdma' kernel module version (modinfo -F version ionic_rdma)."
+          "expected_fw_version": "1.117.5-a-56",
+          "_comment_expected_fw_version": "Expected AINIC per-NIC version -- both the 'Uboot-A' and 'Firmware-A' fields from 'nicctl show version firmware' must match this value. nicctl is installed alongside the AINIC driver."
         },
 
         "broadcom": {
-          "expected_bnxt_re_version": "236.1.155.0",
-          "_comment_expected_bnxt_re_version": "Expected bnxt_re kernel module version.",
-
-          "expected_bnxt_en_version": "1.10.3-236.1.155.0",
-          "_comment_expected_bnxt_en_version": "Expected bnxt_en kernel module version."
+          "expected_package_version": "<changeme>",
+          "_comment_expected_package_version": "Expected Broadcom NIC package version -- the 'Active Package Version' field from 'niccli -i <idx> show --pkg_ver'. niccli is installed alongside the Broadcom driver package and does not report kernel module (modinfo) version at all."
         },
 
         "mellanox": {
@@ -231,10 +221,10 @@
             "_comment": "NEW: not present in the original ansible/ainicfwcheck/fwcheck.yml (AINIC-only). Adds symmetric firmware validation for Broadcom NICs, detected per-node so mixed fleets don't false-FAIL on non-Broadcom nodes.",
 
             "expected_nic_count": 2,
-            "_comment_expected_nic_count": "Exact number of Broadcom bnxt RDMA devices expected on every node with Broadcom hardware present (FAIL on mismatch).",
+            "_comment_expected_nic_count": "Exact number of Broadcom NIC devices expected on every node with Broadcom hardware present (FAIL on mismatch), counted via 'niccli --list' (requires sudo). Note: a dual-port card shows up as 2 rows/devices, one per PCI function -- e.g. 8 dual-port cards = 16.",
 
             "expected_fw_version": "<changeme>",
-            "_comment_expected_fw_version": "Expected Broadcom NIC firmware version, e.g. from 'ethtool -i <bnxt_en iface>' firmware-version field (WARNING on mismatch)."
+            "_comment_expected_fw_version": "Expected Broadcom NIC firmware version -- the 'FwVersion' column from 'niccli --list' (WARNING on mismatch). niccli is installed alongside the Broadcom driver."
           },
 
           "mellanox": {

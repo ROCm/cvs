@@ -36,8 +36,8 @@ from cvs.lib import globals
 log = globals.log
 
 _NIC_DRIVER_VERSION_VENDOR_KWARGS = {
-    'ainic': ('expected_ionic_driver_version', 'expected_ionic_rdma_driver_version'),
-    'broadcom': ('expected_bnxt_re_version', 'expected_bnxt_en_version'),
+    'ainic': ('expected_fw_version',),
+    'broadcom': ('expected_package_version',),
     'mellanox': ('expected_mlx5_core_version', 'expected_ofed_version'),
 }
 
@@ -1140,6 +1140,18 @@ def test_ainic_pfc_qos_dcqcn(phdl, config_dict):
             'status': 'SKIPPED',
             'skipped': True,
             'message': 'AINIC PFC/QoS/DCQCN validation is not enabled',
+        }
+        preflight_update_test_result()
+        return
+
+    nic_types = _nic_firmware_config(config_dict).get('nic_type', ['ainic'])
+    if 'ainic' not in nic_types:
+        message = f"AINIC PFC/QoS/DCQCN validation skipped: configured nic_type is {nic_types}, not ['ainic']"
+        log.info(message)
+        preflight_results['pfc_qos_dcqcn'] = {
+            'status': 'SKIPPED',
+            'skipped': True,
+            'message': message,
         }
         preflight_update_test_result()
         return

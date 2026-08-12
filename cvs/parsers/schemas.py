@@ -1003,14 +1003,10 @@ class PreflightLimitsConfConfig(BaseModel):
     )
     required_lines: List[str] = Field(
         default_factory=lambda: [
-            "root soft memlock unlimited",
-            "root hard memlock unlimited",
-            "root soft nofile 1048576",
-            "root hard nofile 1048576",
-            "ubuntu soft memlock unlimited",
-            "ubuntu hard memlock unlimited",
-            "ubuntu soft nofile 1048576",
-            "ubuntu hard nofile 1048576",
+            "* soft memlock unlimited",
+            "* hard memlock unlimited",
+            "* soft nofile 1048576",
+            "* hard nofile 1048576",
         ],
         min_length=1,
         description="Lines required to be present verbatim (whitespace-normalized) in /etc/security/limits.conf",
@@ -1018,26 +1014,28 @@ class PreflightLimitsConfConfig(BaseModel):
 
 
 class PreflightAinicDriverVersionConfig(BaseModel):
-    """AINIC ionic/ionic_rdma driver version policy."""
+    """AINIC per-NIC firmware version policy, checked via the ``nicctl`` tool installed alongside the AINIC driver."""
 
     model_config = ConfigDict(extra="forbid")
 
-    expected_ionic_driver_version: str = Field(
-        default="1.117.5-a-56", description="Expected 'ionic' kernel module version (modinfo -F version ionic)"
-    )
-    expected_ionic_rdma_driver_version: str = Field(
+    expected_fw_version: str = Field(
         default="1.117.5-a-56",
-        description="Expected 'ionic_rdma' kernel module version (modinfo -F version ionic_rdma)",
+        description=(
+            "Expected AINIC per-NIC version -- both the 'Uboot-A' and 'Firmware-A' fields from "
+            "'nicctl show version firmware' must match this value"
+        ),
     )
 
 
 class PreflightBroadcomDriverVersionConfig(BaseModel):
-    """Broadcom bnxt_re/bnxt_en driver version policy."""
+    """Broadcom NIC package version policy, checked via the ``niccli`` tool installed alongside the Broadcom driver."""
 
     model_config = ConfigDict(extra="forbid")
 
-    expected_bnxt_re_version: str = Field(default="236.1.155.0", description="Expected bnxt_re driver version")
-    expected_bnxt_en_version: str = Field(default="1.10.3-236.1.155.0", description="Expected bnxt_en driver version")
+    expected_package_version: str = Field(
+        default="<changeme>",
+        description="Expected Broadcom NIC package version ('Active Package Version' from 'niccli -i <idx> show --pkg_ver')",
+    )
 
 
 class PreflightMellanoxDriverVersionConfig(BaseModel):
@@ -1060,14 +1058,14 @@ class PreflightNicDriverVersionConfig(BaseModel):
 
     enabled: bool = Field(
         default=False,
-        description="Enable NIC driver version+DKMS validation on nodes with the selected vendor(s)' hardware",
+        description="Enable NIC driver/package version validation on nodes with the selected vendor(s)' hardware",
     )
     nic_type: List[str] = Field(
         default_factory=lambda: ["broadcom"],
         description="Vendor sub-block(s) to activate: one or more of 'ainic', 'broadcom', 'mellanox'",
     )
     ainic: PreflightAinicDriverVersionConfig = Field(
-        default_factory=PreflightAinicDriverVersionConfig, description="AINIC driver version golden values"
+        default_factory=PreflightAinicDriverVersionConfig, description="AINIC firmware version golden values"
     )
     broadcom: PreflightBroadcomDriverVersionConfig = Field(
         default_factory=PreflightBroadcomDriverVersionConfig, description="Broadcom driver version golden values"
@@ -1283,16 +1281,14 @@ class PreflightAinicFirmwareConfig(BaseModel):
 
 
 class PreflightBroadcomFirmwareConfig(BaseModel):
-    """Broadcom NIC count / firmware version policy (new)."""
+    """Broadcom NIC count / firmware version policy, checked via ``niccli --list``."""
 
     model_config = ConfigDict(extra="forbid")
 
-    expected_nic_count: int = Field(
-        default=2, ge=1, description="Expected count of Broadcom bnxt RDMA devices per node"
-    )
+    expected_nic_count: int = Field(default=2, ge=1, description="Expected count of Broadcom NIC devices per node")
     expected_fw_version: str = Field(
         default="<changeme>",
-        description="Expected Broadcom NIC firmware version, e.g. from 'ethtool -i <bnxt_en iface>'",
+        description="Expected Broadcom NIC firmware version -- the 'FwVersion' column from 'niccli --list'",
     )
 
 

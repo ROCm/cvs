@@ -12,7 +12,7 @@ The preflight checks system validates essential cluster health and configuration
 4. **/etc/hosts Consistency** - Validates `/etc/hosts` entries against the cluster inventory *(opt-in)*
 5. **limits.conf Validation** - Validates `/etc/security/limits.conf` required lines *(opt-in, blocking)*
 6. **NIC Firmware/Host-Software** - Per-vendor (AINIC/Broadcom/Mellanox, selected via `nic_type`) device count and firmware/host-software version validation *(opt-in)*
-7. **NIC Driver Version** - Per-vendor (AINIC/Broadcom/Mellanox, selected via `nic_type`) driver version and (Broadcom) DKMS provenance validation; nodes without the selected vendor's hardware are SKIPPED *(opt-in)*
+7. **NIC Driver Version** - Per-vendor (AINIC/Broadcom/Mellanox, selected via `nic_type`) driver/package version validation (Broadcom via `niccli`); nodes without the selected vendor's hardware are SKIPPED *(opt-in)*
 8. **Node Health** - Validates AMDGPU/KFD, GPU visibility, and kernel health, with optional MI4XX fabric admission
 9. **GID Consistency** - Ensures RDMA interfaces have valid Global Identifier entries
 10. **RDMA Interface Presence** - Validates that expected RDMA interfaces are present and link-up
@@ -87,8 +87,8 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
       "nic_driver_version": {
         "enabled": false,
         "nic_type": ["broadcom"],
-        "ainic": { "expected_ionic_driver_version": "1.117.5-a-56", "expected_ionic_rdma_driver_version": "1.117.5-a-56" },
-        "broadcom": { "expected_bnxt_re_version": "236.1.155.0", "expected_bnxt_en_version": "1.10.3-236.1.155.0" },
+        "ainic": { "expected_fw_version": "1.117.5-a-56" },
+        "broadcom": { "expected_package_version": "<changeme>" },
         "mellanox": { "expected_mlx5_core_version": "<changeme>", "expected_ofed_version": "<changeme>" }
       }
     },
@@ -142,9 +142,9 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 - **`node_check.etc_hosts.extra_entries`**: Additional `{hostname, ip}` pairs that must match exactly
 - **`node_check.limits_conf.enabled`**: Validate `/etc/security/limits.conf` required lines (blocking FAIL)
 - **`node_check.limits_conf.required_lines`**: Exact lines that must be present on every node. Required (non-empty) when `limits_conf.enabled` is `true` — the check raises rather than silently passing every node if this is left empty
-- **`node_check.nic_driver_version.enabled`**: Validate driver version (and, for Broadcom, DKMS provenance) for the vendor(s) selected via `nic_type`; SKIPPED on nodes without the selected vendor's hardware
+- **`node_check.nic_driver_version.enabled`**: Validate driver/package version for the vendor(s) selected via `nic_type`; SKIPPED on nodes without the selected vendor's hardware
 - **`node_check.nic_driver_version.nic_type`**: List of vendor(s) to activate — one or more of `ainic`, `broadcom`, `mellanox` (default `["broadcom"]`)
-- **`node_check.nic_driver_version.ainic`** / **`broadcom`** / **`mellanox`**: Per-vendor golden-value sub-blocks (`expected_*_version`); the `mellanox` sub-block is new and unvalidated against real Mellanox hardware — its `<changeme>` defaults must be filled in before enabling
+- **`node_check.nic_driver_version.ainic`** / **`broadcom`** / **`mellanox`**: Per-vendor golden-value sub-blocks. `ainic.expected_fw_version` is checked via `nicctl show version firmware` (the CLI tool installed alongside the AINIC driver); `broadcom.expected_package_version` is checked via `niccli` (the CLI tool installed alongside the Broadcom driver); `mellanox` uses `modinfo`-reported module versions (`expected_*_version`). The `mellanox` sub-block is new and unvalidated against real Mellanox hardware — its `<changeme>` defaults must be filled in before enabling
 - **`connectivity_check.ssh_mesh.enabled`**: Validate all-pairs passwordless SSH reachability (WARNING at worst)
 - **`connectivity_check.ssh_mesh.ssh_timeout_sec`**: Per-connection SSH timeout for each node-to-node probe
 - **`connectivity_check.ifoe.fabric_checks`**: Add MI4XX AIFM/AFM/vPOD and IFoE station/port checks
@@ -157,7 +157,7 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
 - **`connectivity_check.ifoe.transferbench.message_sizes`**, **`iterations`**, **`warmup_iterations`**: Workload intensity
 - **`connectivity_check.ifoe.nic_firmware.enabled`**: Validate device count and firmware/host-software versions for the vendor(s) selected via `nic_type`
 - **`connectivity_check.ifoe.nic_firmware.nic_type`**: List of vendor(s) to activate — one or more of `ainic`, `broadcom`, `mellanox` (default `["ainic"]`)
-- **`connectivity_check.ifoe.nic_firmware.ainic`** / **`broadcom`** / **`mellanox`**: Per-vendor `expected_nic_count` (FAIL on mismatch) and `expected_fw_version` / `expected_host_version` (WARNING on mismatch, AINIC only has host-software); the `mellanox` sub-block and the `broadcom` firmware fields are new and unvalidated against real hardware — their `<changeme>` defaults must be filled in before enabling
+- **`connectivity_check.ifoe.nic_firmware.ainic`** / **`broadcom`** / **`mellanox`**: Per-vendor `expected_nic_count` (FAIL on mismatch) and `expected_fw_version` / `expected_host_version` (WARNING on mismatch, AINIC only has host-software); `broadcom.expected_fw_version` is checked against the `FwVersion` column of `niccli --list`; the `mellanox` sub-block is new and unvalidated against real hardware — its `<changeme>` defaults must be filled in before enabling
 - **`connectivity_check.ifoe.pfc_qos_dcqcn.enabled`**: Run the AINIC PFC/QoS/DCQCN control-plane blocking gate
 - **`connectivity_check.ifoe.pfc_qos_dcqcn.pfc`**, **`qos`**, **`dcqcn`**: Golden-value overrides for each control-plane facet (generic AINIC defaults, fully overridable)
 - **`node_check.expected_rocm_version`**: ROCm version expected across all nodes
@@ -195,18 +195,26 @@ eligibility pruning. Each reports a simple per-node `{status, errors}` result.
   `/etc/security/limits.conf` on every node. Blocking FAIL when enabled.
 - **NIC Firmware/Host-Software** (`connectivity_check.ifoe.nic_firmware`) —
   per-vendor check, activated via `nic_type` (one or more of `ainic`,
-  `broadcom`, `mellanox`). Each configured vendor validates its device count
-  via `ibv_devices` (FAIL on mismatch) and firmware/host-software version via
-  `nicctl` (AINIC) or `ethtool -i` (Broadcom/Mellanox) (WARNING on mismatch).
-  A node without a configured vendor's hardware is SKIPPED for that vendor
-  rather than FAILed. The Broadcom firmware sub-block and the entire Mellanox
-  sub-block are new and unvalidated against real hardware.
+  `broadcom`, `mellanox`). AINIC validates device count via `ibv_devices`
+  (FAIL on mismatch) and firmware/host-software version via `nicctl show
+  version {firmware,host-software}` (WARNING on mismatch); Broadcom
+  validates both device count and firmware version from a single `niccli
+  --list` command (the CLI tool installed alongside the Broadcom driver;
+  count mismatch FAILs, firmware mismatch WARNs); Mellanox validates device
+  count via `ibv_devices` and firmware version via `ethtool -i` (WARNING on
+  mismatch). A node without a configured vendor's hardware is SKIPPED for
+  that vendor rather than FAILed. The entire Mellanox sub-block is new and
+  unvalidated against real hardware.
 - **NIC Driver Version** (`node_check.nic_driver_version`) — per-vendor
   check, activated via `nic_type` (one or more of `ainic`, `broadcom`,
-  `mellanox`). Broadcom validates `bnxt_re`/`bnxt_en` kernel module version
-  and DKMS provenance via `modinfo`; AINIC validates `ionic`/`ionic_rdma`
-  module version; Mellanox validates `mlx5_core` module version and the
-  MLNX_OFED stack version via `ofed_info -s`. Nodes without a configured
+  `mellanox`). AINIC validates the per-NIC firmware version via `nicctl
+  show version firmware` (`Uboot-A`/`Firmware-A` fields, the CLI tool
+  installed alongside the AINIC driver); Broadcom validates the NIC
+  package version via `niccli` (`niccli -i <idx> show --pkg_ver`'s "Active
+  Package Version", the CLI tool installed alongside the Broadcom driver --
+  it does not report kernel module/`modinfo` version at all); Mellanox
+  validates `mlx5_core` module version and the MLNX_OFED stack version via
+  `ofed_info -s`. Nodes without a configured
   vendor's hardware (e.g. AINIC/Pollara fleets when only `broadcom` is
   selected) report SKIPPED rather than FAIL, so this check is safe to leave
   enabled cluster-wide on mixed fleets. The Mellanox sub-block is new and
@@ -222,20 +230,16 @@ eligibility pruning. Each reports a simple per-node `{status, errors}` result.
   "limits_conf": {
     "enabled": true,
     "required_lines": [
-      "root soft memlock unlimited",
-      "root hard memlock unlimited",
-      "root soft nofile 1048576",
-      "root hard nofile 1048576",
-      "ubuntu soft memlock unlimited",
-      "ubuntu hard memlock unlimited",
-      "ubuntu soft nofile 1048576",
-      "ubuntu hard nofile 1048576"
+      "* soft memlock unlimited",
+      "* hard memlock unlimited",
+      "* soft nofile 1048576",
+      "* hard nofile 1048576"
     ]
   },
   "nic_driver_version": {
     "enabled": true,
     "nic_type": ["broadcom"],
-    "broadcom": { "expected_bnxt_re_version": "236.1.155.0", "expected_bnxt_en_version": "1.10.3-236.1.155.0" }
+    "broadcom": { "expected_package_version": "<changeme>" }
   }
 },
 "connectivity_check": {
@@ -369,6 +373,13 @@ on every reachable node, run alongside the IFoE L2/TransferBench gates
 (after the node-health admission gate, before RDMA connectivity). This is a
 blocking FAIL gate when enabled through
 `preflight.connectivity_check.ifoe.pfc_qos_dcqcn.enabled`.
+
+This check is AINIC-specific (it drives `nicctl`) and is additionally
+guarded by the sibling `connectivity_check.ifoe.nic_firmware.nic_type`
+selector (which defaults to `["ainic"]`): if `nic_type` does not include
+`"ainic"`, the check is SKIPPED regardless of `pfc_qos_dcqcn.enabled`, since
+running AINIC-only tooling against a Broadcom/Mellanox fleet would otherwise
+produce a false failure rather than a meaningful result.
 
 Three independent validators run per node and are combined into a single
 per-node verdict (FAIL if any sub-check fails):
@@ -546,25 +557,27 @@ ulimit -a
 
 #### NIC Firmware/Host-Software Mismatches
 ```bash
-# Count RDMA devices (AINIC/Broadcom/Mellanox)
+# Count RDMA devices (AINIC/Mellanox)
 ibv_devices
 
 # AINIC: check firmware/host-software versions
 nicctl show version
 
-# Broadcom/Mellanox: check per-interface firmware version
+# Broadcom: check NIC count and per-NIC firmware version in one command
+niccli --list
+
+# Mellanox: check per-interface firmware version
 ethtool -i <iface>
 ```
 
 #### NIC Driver Version Mismatches
 ```bash
-# Broadcom: check bnxt_re/bnxt_en module version and DKMS provenance
-modinfo bnxt_re
-modinfo bnxt_en
+# Broadcom: check NIC package version via niccli
+niccli --list
+niccli -i <idx> show --pkg_ver
 
-# AINIC: check ionic/ionic_rdma module version
-modinfo ionic
-modinfo ionic_rdma
+# AINIC: check per-NIC firmware version via nicctl
+nicctl show version firmware
 
 # Mellanox: check mlx5_core module version and OFED stack version
 modinfo mlx5_core

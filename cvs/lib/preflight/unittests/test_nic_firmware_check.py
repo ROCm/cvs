@@ -1,7 +1,10 @@
 """Unit tests for the per-vendor NIC firmware/host-software preflight checks."""
 
 import os
+import stat
+import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -14,6 +17,44 @@ from cvs.lib.preflight.nic_firmware_check import (
     NicFirmwareCheck,
 )
 
+# Real ``niccli --list`` output right-justifies the index column (e.g. "  1)", " 16)"),
+# which caught out an earlier awk pattern anchored to '^[0-9]+\\)' -- it silently
+# matched zero rows against real output while still passing against the
+# hand-built ``_broadcom_output`` fixture below. This fixture is fed through the
+# actual embedded shell/awk (via a stubbed niccli/lsmod/sudo on PATH) rather than
+# mocking phdl.exec's return value, so a regression here fails the same way it
+# did against real hardware.
+_REAL_NICCLI_LIST_OUTPUT = """
+     BoardId(Rev)    MAC Address        FwVersion    PCIAddr        Type   Mode
+  1) BCM57608(B1)    22:D2:00:F3:1B:17  237.1.148.0  0000:06:00.0   NIC    PCI
+  2) BCM57608(B1)    22:D2:00:F3:1B:17  237.1.148.0  0000:06:00.1   NIC    PCI
+ 10) BCM57608(B1)    DA:EB:78:11:87:A8  237.1.148.0  0000:86:00.1   NIC    PCI
+ 16) BCM57608(B1)    BE:DD:72:A3:1F:1A  237.1.148.0  0000:E6:00.1   NIC    PCI
+"""
+
+
+def _write_executable(path, contents):
+    with open(path, 'w') as f:
+        f.write(contents)
+    os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+
+
+def _run_command_with_fake_niccli(command, niccli_list_output):
+    """Execute ``command`` (a real shell/awk pipeline) with stubbed
+    ``lsmod``/``sudo``/``niccli`` on PATH, so the actual parsing logic runs
+    against realistic output instead of a hand-mocked parsed string."""
+    with tempfile.TemporaryDirectory() as bindir:
+        _write_executable(os.path.join(bindir, 'lsmod'), '#!/bin/bash\necho "bnxt_re 12345 0"\n')
+        _write_executable(os.path.join(bindir, 'sudo'), '#!/bin/bash\nexec "$@"\n')
+        _write_executable(
+            os.path.join(bindir, 'niccli'),
+            f'#!/bin/bash\nif [ "$1" = "--list" ]; then\ncat <<\'NICCLI_EOF\'\n{niccli_list_output}NICCLI_EOF\nfi\n',
+        )
+        env = dict(os.environ)
+        env['PATH'] = f"{bindir}:{env['PATH']}"
+        result = subprocess.run(['bash', '-c', command], capture_output=True, text=True, env=env, check=False)
+        return result.stdout
+
 
 def _ainic_output(nic_count, fw_lines, host_line):
     lines = ["VENDOR:AINIC", f"NIC_COUNT:{nic_count}"]
@@ -25,6 +66,13 @@ def _ainic_output(nic_count, fw_lines, host_line):
 def _vendor_iface_output(vendor_line, nic_count, fw_lines):
     lines = [vendor_line, f"NIC_COUNT:{nic_count}"]
     lines.extend(fw_lines)
+    return "\n".join(lines)
+
+
+def _broadcom_output(fw_versions):
+    lines = ["VENDOR:BROADCOM"]
+    for idx, fw in enumerate(fw_versions):
+        lines.append(f"FW:{idx}:{fw}:0000:0{idx}:00.0")
     return "\n".join(lines)
 
 
@@ -145,7 +193,7 @@ class TestBroadcomFirmwareCheck(unittest.TestCase):
     def test_all_matching_pass(self):
         phdl = MagicMock()
         phdl.exec.return_value = {
-            'node1': _vendor_iface_output("VENDOR:BROADCOM", 2, ["FW:eth0:1.2.3", "FW:eth1:1.2.3"]),
+            'node1': _broadcom_output(["1.2.3", "1.2.3"]),
         }
         checker = BroadcomFirmwareCheck(phdl, expected_nic_count=2, expected_fw_version="1.2.3")
         results = checker.run()
@@ -157,36 +205,76 @@ class TestBroadcomFirmwareCheck(unittest.TestCase):
     def test_nic_count_mismatch_fails(self):
         phdl = MagicMock()
         phdl.exec.return_value = {
-            'node1': _vendor_iface_output("VENDOR:BROADCOM", 1, ["FW:eth0:1.2.3"]),
+            'node1': _broadcom_output(["1.2.3"]),
         }
         checker = BroadcomFirmwareCheck(phdl, expected_nic_count=2, expected_fw_version="1.2.3")
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'FAIL')
-        self.assertIn('Expected 2 Broadcom bnxt RDMA device(s), found 1', results['node1']['errors'][0])
+        self.assertIn('Expected 2 Broadcom NIC(s), found 1', results['node1']['errors'][0])
 
     def test_firmware_version_mismatch_warns(self):
         phdl = MagicMock()
         phdl.exec.return_value = {
-            'node1': _vendor_iface_output("VENDOR:BROADCOM", 2, ["FW:eth0:9.9.9", "FW:eth1:1.2.3"]),
+            'node1': _broadcom_output(["9.9.9", "1.2.3"]),
         }
         checker = BroadcomFirmwareCheck(phdl, expected_nic_count=2, expected_fw_version="1.2.3")
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
-        self.assertTrue(any('eth0: firmware=9.9.9' in w for w in results['node1']['warnings']))
+        self.assertTrue(any('NIC 0' in w and 'firmware=9.9.9' in w for w in results['node1']['warnings']))
+
+    def test_niccli_missing_warns(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': "VENDOR:BROADCOM\nNICCLI:MISSING"}
+        checker = BroadcomFirmwareCheck(phdl, expected_nic_count=2)
+        results = checker.run()
+
+        self.assertEqual(results['node1']['status'], 'WARNING')
+        self.assertTrue(any('niccli not found' in w for w in results['node1']['warnings']))
 
     def test_malformed_empty_output_fails_unparseable(self):
         phdl = MagicMock()
-        phdl.exec.return_value = {'node1': ''}
+        phdl.exec.return_value = {'node1': "VENDOR:BROADCOM"}
         checker = BroadcomFirmwareCheck(phdl, expected_nic_count=2)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'FAIL')
-        self.assertIn('Expected 2 Broadcom bnxt RDMA device(s), found 0', results['node1']['errors'][0])
+        self.assertIn('Expected 2 Broadcom NIC(s), found 0', results['node1']['errors'][0])
         self.assertTrue(
-            any("Unable to parse firmware version output from 'ethtool -i'" in w for w in results['node1']['warnings'])
+            any(
+                "Unable to parse firmware version output from 'niccli --list'" in w
+                for w in results['node1']['warnings']
+            )
         )
+
+    def test_niccli_invoked_with_sudo_by_default(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': _broadcom_output(["1.2.3", "1.2.3"])}
+        checker = BroadcomFirmwareCheck(phdl, expected_nic_count=2, expected_fw_version="1.2.3")
+        checker.run()
+
+        command = phdl.exec.call_args[0][0]
+        self.assertIn('sudo niccli --list', command)
+
+    def test_niccli_invoked_without_sudo_when_disabled(self):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': _broadcom_output(["1.2.3", "1.2.3"])}
+        checker = BroadcomFirmwareCheck(phdl, expected_nic_count=2, expected_fw_version="1.2.3", use_sudo=False)
+        checker.run()
+
+        command = phdl.exec.call_args[0][0]
+        self.assertNotIn('sudo niccli --list', command)
+        self.assertIn('niccli --list', command)
+
+    def test_real_shell_command_parses_right_justified_niccli_index_column(self):
+        checker = BroadcomFirmwareCheck(MagicMock(), expected_nic_count=4, expected_fw_version="237.1.148.0")
+        output = _run_command_with_fake_niccli(checker._build_command(), _REAL_NICCLI_LIST_OUTPUT)
+        result = checker._parse_and_evaluate(output)
+
+        self.assertEqual(result['status'], 'PASS')
+        self.assertEqual(result['nic_count'], 4)
+        self.assertEqual(result['errors'], [])
 
 
 class TestMellanoxFirmwareCheck(unittest.TestCase):
