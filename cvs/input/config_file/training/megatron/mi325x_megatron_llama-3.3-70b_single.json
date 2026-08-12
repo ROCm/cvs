@@ -3,6 +3,12 @@
   "framework": "megatron_single",
   "gpu_arch": "MI325X",
   "enforce_thresholds": true,
+  "loss_curve": {
+    "sample_every": 10,
+    "milestone_steps": [100, 500, 1000, 5000],
+    "max_slope": 0.0,
+    "enforce": true
+  },
   "threshold_json": "mi325x_megatron_llama-3.3-70b_single_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",

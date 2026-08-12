@@ -15,8 +15,8 @@
     },
     "training.mem_usage": {
       "kind": "max",
-      "value": 0
-    },
+      "value": 0.85
+    }
   },
   "MBS=4,GBS=128,PRECISION=BF16": {
     "training.throughput_per_gpu": {
@@ -33,8 +33,8 @@
     },
     "training.mem_usage": {
       "kind": "max",
-      "value": 0
-    },
+      "value": 0.85
+    }
   },
   "MBS=4,GBS=128,PRECISION=MXFP4": {
     "training.throughput_per_gpu": {
@@ -51,8 +51,8 @@
     },
     "training.mem_usage": {
       "kind": "max",
-      "value": 0
-    },
+      "value": 0.85
+    }
   },
   "MBS=4,GBS=128,PRECISION=MXFP8": {
     "training.throughput_per_gpu": {
@@ -69,7 +69,7 @@
     },
     "training.mem_usage": {
       "kind": "max",
-      "value": 0
-    },
+      "value": 0.85
+    }
   }
 }

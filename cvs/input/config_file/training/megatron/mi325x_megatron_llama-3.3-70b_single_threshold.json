@@ -15,8 +15,8 @@
     },
     "training.mem_usage": {
       "kind": "max",
-      "value": 0
-    },
+      "value": 0.85
+    }
   },
   "MBS=3,GBS=96,PRECISION=BF16": {
     "training.throughput_per_gpu": {
@@ -33,7 +33,7 @@
     },
     "training.mem_usage": {
       "kind": "max",
-      "value": 0
-    },
+      "value": 0.85
+    }
   }
 }

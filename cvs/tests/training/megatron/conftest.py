@@ -75,10 +75,14 @@ class _Lifecycle:
     def __init__(self):
         self.failed = False
         self.torn_down = False
-        self.report = {}  # nodeid -> list[(label, value, unit)]
+        self.report = {}     # nodeid -> list[(label, value, unit)]
+        self.artifacts = {}  # nodeid -> list[(link_name, rel_path)]
 
     def record(self, nodeid, label, value, unit="s"):
         self.report.setdefault(nodeid, []).append((label, value, unit))
+
+    def add_artifact(self, nodeid, link_name, rel_path, abs_path=None):
+        self.artifacts.setdefault(nodeid, []).append((link_name, rel_path))
 
 
 @pytest.fixture(scope="module")
@@ -133,8 +137,11 @@ def pytest_runtest_makereport(item, call):
     if report.when != "call":
         return
     lc = item.funcargs.get("lifecycle")
-    rows = getattr(lc, "report", {}).get(item.nodeid) if lc else None
-    if not rows:
+    if not lc:
+        return
+    rows = getattr(lc, "report", {}).get(item.nodeid)
+    artifacts = getattr(lc, "artifacts", {}).get(item.nodeid)
+    if not rows and not artifacts and not report.failed:
         return
     try:
         import pytest_html
@@ -145,6 +152,9 @@ def pytest_runtest_makereport(item, call):
         body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
         html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
         extras.append(pytest_html.extras.html(html))
+    if artifacts:
+        for link_name, rel_path in artifacts:
+            extras.append(pytest_html.extras.url(rel_path, name=link_name))
     if report.failed:
         props = dict(item.user_properties)
         log_tail = props.get("training_log_tail")

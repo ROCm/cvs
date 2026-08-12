@@ -387,7 +387,7 @@ class MegatronTrainingJob:
         # Remove and recreate the scripts dir on the bare host (volume-mounted path)
         self.orch.all.exec(f'rm -rf {self.scripts_dir}')
         self.orch.all.exec(f'mkdir -p {self.scripts_dir}')
-        self.orch.all.exec(f'sudo chmod 777 {self.scripts_dir}')
+        self.orch.all.exec(f'sudo chmod 700 {self.scripts_dir}')
 
         # Let us override some of the params based on number of nodes and platform
         # if override flag set ..
@@ -414,10 +414,10 @@ class MegatronTrainingJob:
         local_dir = f'{self.data_cache_dir}/{self.model_name}'
         log.info('Downloading tokenizer.model for %s into %s', self.model_name, local_dir)
         self.orch.exec(
+            f'export HF_TOKEN={shlex.quote(self.hf_token)}; '
             f'huggingface-cli download {self.tokenizer_model} '
             f'--include "tokenizer.model" '
-            f'--local-dir {local_dir} '
-            f'--token {self.hf_token}'
+            f'--local-dir {local_dir}'
         )
         self.local_tokenizer_path = f'{local_dir}/tokenizer.model'
         log.info('tokenizer.model path: %s', self.local_tokenizer_path)
@@ -552,7 +552,7 @@ class MegatronTrainingJob:
             cmd = (
                 cmd
                 + f'export NCCL_IB_HCA_LIST={self.nccl_ib_hca_list}; '
-                + f'export NCCL_IB_HCA={self.nccl_ib_hca_list}; '
+                + f'export NCCL_IB_HCA={self.nccl_ib_hca}; '
                 + f'export NCCL_SOCKET_IFNAME={self.nccl_socket_ifname}; '
                 + f'export GLOO_SOCKET_IFNAME={self.gloo_socket_ifname}; '
                 + f'export NCCL_DEBUG={self.nccl_debug}; '
@@ -576,7 +576,7 @@ class MegatronTrainingJob:
 
             for i in range(len(self.orch.hosts)):
                 full_cmd = cmd + f'NODE_RANK={i} nohup bash {self.training_script} &'
-                script_cmd = f'echo {shlex.quote(full_cmd)} > {self.scripts_dir}/distributed_wrapper_script_{i}.sh && chmod 777 {self.scripts_dir}/distributed_wrapper_script_{i}.sh'
+                script_cmd = f'echo {shlex.quote(full_cmd)} > {self.scripts_dir}/distributed_wrapper_script_{i}.sh && chmod 700 {self.scripts_dir}/distributed_wrapper_script_{i}.sh'
                 self.job_cmd_list.append(script_cmd)
 
         else:
@@ -663,7 +663,7 @@ class MegatronTrainingJob:
             # Write single-node wrapper script on bare host
             self.orch.all.exec(
                 f'echo {shlex.quote(self.job_cmd)} > {self.scripts_dir}/single_node_wrapper_script.sh '
-                f'&& chmod 777 {self.scripts_dir}/single_node_wrapper_script.sh'
+                f'&& chmod 700 {self.scripts_dir}/single_node_wrapper_script.sh'
             )
             # Launch inside container
             self.orch.exec(
@@ -709,10 +709,10 @@ class MegatronTrainingJob:
         return training_results_dict
 
     def scan_for_training_errors(self):
-        """Scan training logs from ALL nodes for known error patterns.
+        """Scan training logs from the last node for known error patterns.
 
         Returns:
-            bool: True if no error patterns found on any node; False otherwise.
+            bool: True if no error patterns found; False otherwise.
         """
         log.info('Scan for training errors')
         training_pass = True

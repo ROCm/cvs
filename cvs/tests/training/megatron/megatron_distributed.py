@@ -14,7 +14,7 @@ Lifecycle (each stage is a separate test):
   test_training          — parametrized: one test per sweep combo; kills GPU
                            processes in finally so VRAM is free for the next combo
   test_metric            — parametrized: threshold check per combo via evaluate_all
-  test_loss_curve        — parametrized: loss decreases smoothly at steps 100/500/1k/5k
+  test_loss_curve        — parametrized: slope-based loss decrease check with PNG render
   test_teardown          — tear down the container once after all combos
 '''
 
@@ -26,15 +26,13 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.training.megatron.megatron_lib import MegatronTrainingJob
-from cvs.lib.training.megatron.utils.loss_curve import parse_loss_at_steps, check_loss_decreasing
+from cvs.lib.training.megatron.utils.loss_curve import parse_all_loss_points, sample_loss_curve, evaluate_loss_decreasing
+from cvs.lib.training.megatron.utils.loss_curve_plot import render_loss_curve_png
 from cvs.lib.training.megatron.utils.scaling import compute_scaling_efficiency
 from cvs.lib.utils.verdict import _check_one, ThresholdViolation
 from cvs.lib.utils_lib import update_test_result
 
 log = globals.log
-
-# Loss curve checkpoints: iteration numbers at which lm_loss is sampled.
-_LOSS_CURVE_STEPS = [100, 500, 1000, 5000]
 
 # Smoke cell: smallest fixed parameters that confirm the model loads and trains.
 _SMOKE_MBS = "1"
@@ -303,7 +301,7 @@ def test_metric(variant_config, micro_batch_size, global_batch_size, precision, 
 def test_loss_curve(
     orch, variant_config, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request
 ):
-    """Parametrized: verify lm_loss decreases smoothly at steps 100, 500, 1k, 5k."""
+    """Parametrized: slope-based loss curve check with PNG render."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
@@ -318,52 +316,46 @@ def test_loss_curve(
 
     n = len(orch.hosts)
     last_host = orch.hosts[-1]
-    steps_pattern = "|".join(str(s) for s in _LOSS_CURVE_STEPS)
     log_path = f"{combo_log_dir}/out-node{n - 1}/training.log"
-    out_dict = orch.exec(f"grep -E 'iteration\\s+({steps_pattern})\\s*/' {log_path}", hosts=[last_host])
+    out_dict = orch.exec(f"cat {log_path}", hosts=[last_host])
     log_text = out_dict.get(last_host) or ""
 
-    losses = parse_loss_at_steps(log_text, _LOSS_CURVE_STEPS)
+    lc = variant_config.loss_curve
+    step_metrics = parse_all_loss_points(log_text)
+    points = sample_loss_curve(step_metrics, lc.sample_every, lc.milestone_steps)
 
-    log.info("--- Loss curve check for combo '%s' ---", combo_key)
-    for step in _LOSS_CURVE_STEPS:
-        if step in losses:
-            log.info("  step %5d: lm_loss = %.6f", step, losses[step])
-        else:
-            log.info("  step %5d: lm_loss = <not found in log>", step)
+    log.info("--- Loss curve check for combo '%s' (%d points sampled) ---", combo_key, len(points))
 
-    if len(losses) < 2:
-        log.warning(
-            "fewer than 2 loss checkpoints found (steps checked: %s); "
-            "training needs at least %d iterations — skipping loss curve check",
-            _LOSS_CURVE_STEPS,
-            _LOSS_CURVE_STEPS[1],
-        )
-        pytest.skip(
-            f"fewer than 2 loss checkpoints found in log "
-            f"(steps checked: {_LOSS_CURVE_STEPS}) — "
-            f"training needs at least {_LOSS_CURVE_STEPS[1]} iterations for this test"
-        )
+    mgr = getattr(request.config, "_html_report_manager", None)
+    mgr_enabled = mgr is not None and getattr(mgr, "is_enabled", False)
+    out_dir = mgr.log_dir if mgr_enabled else "/tmp"
+    try:
+        from pathlib import Path as _Path
+        import uuid as _uuid
+        _Path(out_dir).mkdir(parents=True, exist_ok=True)
+        fname = f"loss_curve_{combo_key}_{str(_uuid.uuid4()).split('-')[-1]}.png"
+        png_path = _Path(out_dir) / fname
+        title = f"Training Loss Curve — {variant_config.model_params.get('model_name', '')} [{combo_key}]"
+        rendered = render_loss_curve_png(points, png_path, title=title)
+        if rendered and mgr_enabled:
+            rel_path = str(_Path(rendered).relative_to(mgr.htmlpath.parent))
+            lifecycle.add_artifact(request.node.nodeid, f"Loss Curve [{combo_key}]", rel_path, rendered)
+    except Exception as e:
+        log.warning("loss curve: could not render PNG (%s)", e)
 
-    request.node.user_properties.append(("metric_value", losses.get(max(losses))))
-    request.node.user_properties.append(("metric_unit", "lm_loss"))
+    verdict = evaluate_loss_decreasing(points, lc.max_slope)
+    if verdict is None:
+        pytest.skip(f"loss curve needs >= 2 sampled points (got {len(points)}); increase training_iterations")
 
-    messages = check_loss_decreasing(losses)
-    warnings = [m for m in messages if m.startswith("WARN:")]
-    failures = [m for m in messages if not m.startswith("WARN:")]
+    decreasing, slope, detail = verdict
+    log.info("loss curve: %s", detail)
 
-    for w in warnings:
-        log.warning("  %s", w)
+    if points:
+        request.node.user_properties.append(("metric_value", points[-1][1]))
+        request.node.user_properties.append(("metric_unit", "lm_loss"))
 
-    if failures:
-        for f in failures:
-            log.error("  FAILED  %s", f)
-        log.error("--- Loss curve FAILED for combo '%s' ---", combo_key)
-        pytest.fail(
-            f"loss not smoothly decreasing for combo '{combo_key}':\n" + "\n".join(failures) + f"\nfull curve: {losses}"
-        )
-
-    log.info("--- Loss is decreasing smoothly for combo '%s' ---", combo_key)
+    if lc.enforce and not decreasing:
+        pytest.fail(f"training loss is not decreasing for combo '{combo_key}': {detail}")
 
 
 def test_teardown(orch, lifecycle, request):
