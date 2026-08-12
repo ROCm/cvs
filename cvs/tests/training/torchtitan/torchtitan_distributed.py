@@ -23,6 +23,7 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.training.torchtitan import torchtitan_lib
+from cvs.lib.utils.verdict import evaluate_all
 from cvs.lib.utils_lib import update_test_result
 
 log = globals.log
@@ -119,16 +120,16 @@ def test_training(
         if not orch.verify_containers_running(name):
             pytest.fail(f"container {name} not running after setup_containers()")
 
-        # Stage 2: start sshd — distributed runs always require inter-node MPI
-        # so sshd on 2224 is mandatory on all nodes.
-        # t = time.monotonic()
-        # ok = orch.setup_sshd()
-        # lifecycle.record(nodeid, "sshd_setup", time.monotonic() - t)
-        # if not ok:
-        #     pytest.fail("setup_sshd() returned False")
-        # probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
-        # if not any("OK" in (v or "") for v in (probe or {}).values()):
-        #     pytest.fail("sshd not listening on 2224 after setup_sshd()")
+        # Stage 2: start sshd. TorchTitan uses torchrun with c10d (not MPI),
+        # but we set up sshd for consistency with other training frameworks.
+        t = time.monotonic()
+        ok = orch.setup_sshd()
+        lifecycle.record(nodeid, "sshd_setup", time.monotonic() - t)
+        if not ok:
+            pytest.fail("setup_sshd() returned False")
+        probe = orch.exec("bash -c 'ss -ltn 2>/dev/null | grep -q :2224 && echo OK || echo NO'")
+        if not any("OK" in (v or "") for v in (probe or {}).values()):
+            pytest.fail("sshd not listening on 2224 after setup_sshd()")
 
         # Stage 3: download HF model assets (TorchTitan-specific).
         # Creates a temporary TorchTitanTrainingJob just for downloading.
@@ -167,6 +168,7 @@ def test_training(
         )
 
         t = time.monotonic()
+        tt_obj.run_pretraining_tasks()
         tt_obj.build_training_job_cmd()
         tt_obj.start_training_job()
         tt_obj.poll_for_training_completion()
@@ -195,33 +197,35 @@ def test_training(
 def test_throughput(
     variant_config, micro_batch_size, global_batch_size, precision, result_dict, train_res_dict, lifecycle, request
 ):
-    """Assert each metric in the combo's result_dict threshold spec is met.
+    """Threshold check using variant_config.cell_key() and thresholds.
 
-    Reads results saved by test_training (containers are already gone; no
-    container is needed here). Thresholds are inline per combo in the config file
-    under sweep.combinations.<id>.result_dict. Skips cleanly if training did not
-    record results for this combo or enforce_thresholds is false.
+    Uses cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>
+    Thresholds loaded from external *_threshold.json file via variant_config.thresholds
+    Supports both new thresholds (preferred) and legacy result_dict (backwards compat)
     """
     combo_key = request.node.callspec.id
     if combo_key not in train_res_dict:
-        pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run)")
+        pytest.skip(f"no recorded results for combo {combo_key} (training did not run)")
 
     if not variant_config.enforce_thresholds:
-        log.info("enforce_thresholds=false; recorded metrics for combo '%s', skipping verdict", combo_key)
+        log.info("enforce_thresholds=false; recorded metrics for combo %s, skipping verdict", combo_key)
         return
 
-    if not result_dict:
-        log.warning("no thresholds defined for combo '%s'; skipping threshold checks", combo_key)
+    # Use new cell_key format for threshold lookup
+    cell_key = variant_config.cell_key(combo_key)
+
+    # Prefer external thresholds, fallback to legacy result_dict
+    if variant_config.thresholds:
+        if cell_key not in variant_config.thresholds:
+            log.warning("no threshold entry for cell %s; skipping", cell_key)
+            return
+        threshold_specs = variant_config.thresholds[cell_key]
+    elif result_dict:
+        # Legacy mode: inline result_dict - convert to threshold spec format
+        threshold_specs = {f"training.{k}": {"kind": "min", "value": v} for k, v in result_dict.items()}
+    else:
+        log.warning("no thresholds defined for combo %s; skipping threshold checks", combo_key)
         return
 
-    actuals = train_res_dict[combo_key]
-    for metric, threshold in result_dict.items():
-        measured = actuals.get(metric, [])
-        if not measured:
-            log.warning("metric '%s' not found in training results for combo '%s'", metric, combo_key)
-            continue
-        for val in measured:
-            if float(val) < float(threshold):
-                pytest.fail(
-                    f"metric '{metric}' below threshold for combo '{combo_key}': expected >= {threshold}, got {val}"
-                )
+    # Evaluate thresholds (raises ThresholdViolation on failure)
+    evaluate_all(train_res_dict[combo_key], threshold_specs)

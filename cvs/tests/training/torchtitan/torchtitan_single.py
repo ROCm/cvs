@@ -22,6 +22,7 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.training.torchtitan import torchtitan_lib
+from cvs.lib.utils.verdict import evaluate_all
 from cvs.lib.utils_lib import update_test_result
 
 log = globals.log
@@ -154,6 +155,7 @@ def test_training(
         )
 
         t = time.monotonic()
+        tt_obj.run_pretraining_tasks()
         tt_obj.exec_nic_setup_scripts()
         tt_obj.build_training_job_cmd()
         tt_obj.start_training_job()
@@ -200,18 +202,14 @@ def test_throughput(
         return
 
     # Use new cell_key format for threshold lookup
-    cell_key = variant_config.cell_key(
-        micro_batch_size=micro_batch_size,
-        global_batch_size=global_batch_size,
-        precision=precision,
-    )
+    cell_key = variant_config.cell_key(combo_key)
 
-    # Prefer external threshold_dict, fallback to legacy result_dict
-    if variant_config.threshold_dict:
-        if cell_key not in variant_config.threshold_dict:
+    # Prefer external thresholds, fallback to legacy result_dict
+    if variant_config.thresholds:
+        if cell_key not in variant_config.thresholds:
             log.warning("no threshold entry for cell %s; skipping", cell_key)
             return
-        threshold_specs = variant_config.threshold_dict[cell_key]
+        threshold_specs = variant_config.thresholds[cell_key]
     elif result_dict:
         # Legacy mode: inline result_dict - convert to threshold spec format
         threshold_specs = {f"training.{k}": {"kind": "min", "value": v} for k, v in result_dict.items()}
@@ -219,13 +217,5 @@ def test_throughput(
         log.warning("no thresholds defined for combo %s; skipping threshold checks", combo_key)
         return
 
-    # Evaluate thresholds using evaluate_all
-    from cvs.lib.utils.verdict import evaluate_all
-
-    actuals = train_res_dict[combo_key]
-    evaluate_all(
-        threshold_specs,
-        actuals,
-        cell_key,
-        tolerance_pct=5.0,
-    )
+    # Evaluate thresholds (raises ThresholdViolation on failure)
+    evaluate_all(train_res_dict[combo_key], threshold_specs)

@@ -72,7 +72,7 @@ def _parse_training_results(output):
 
 def _is_training_complete(output, iterations):
     """Return True if training log shows the configured final step."""
-    final_step_pattern = rf'step:\s+{iterations}'
+    final_step_pattern = rf'step:\s+{iterations}\b'
     return bool(re.search(final_step_pattern, output, re.I))
 
 
@@ -243,13 +243,15 @@ class TorchTitanTrainingJob:
         self.ethtool_stats_dict_before = {}
         self.rdma_stats_dict_after = {}
         self.ethtool_stats_dict_after = {}
+        self.training_start_time = None
+        self.training_end_time = None
 
-        # Create scripts directory
+        # Create scripts directory (owner-only for security - contains HF tokens)
         self.orch.exec(f'rm -rf {self.scripts_dir}')
         time.sleep(1)
         self.orch.exec(f'mkdir -p {self.scripts_dir}')
         time.sleep(1)
-        self.orch.exec(f'chmod 777 {self.scripts_dir}')
+        self.orch.exec(f'chmod 700 {self.scripts_dir}')
 
         # Adjust batch size for distributed if needed
         if self.tune_model_params and self.distributed_training:
@@ -427,7 +429,7 @@ class TorchTitanTrainingJob:
                 script_cmd = (
                     f"cat > {self.scripts_dir}/distributed_wrapper_script_{i}.sh << 'WRAPPER_EOF'\n"
                     f"#!/bin/bash\n{full_cmd}\nWRAPPER_EOF\n; "
-                    f'chmod 777 {self.scripts_dir}/distributed_wrapper_script_{i}.sh'
+                    f'chmod 600 {self.scripts_dir}/distributed_wrapper_script_{i}.sh'
                 )
                 self.job_cmd_list.append(script_cmd)
         else:
@@ -446,6 +448,9 @@ class TorchTitanTrainingJob:
 
     def start_training_job(self, timeout=500):
         """Launch the training job."""
+        # Capture start time for dmesg verification
+        self.training_start_time = self.orch.exec('date')
+
         if self.distributed_training:
             for i, cmd in enumerate(self.job_cmd_list):
                 log.info(f'Writing wrapper script for node {i}')
@@ -524,6 +529,9 @@ class TorchTitanTrainingJob:
 
     def verify_training_results(self):
         """Verify training results meet expectations."""
+        # Capture end time for dmesg verification
+        self.training_end_time = self.orch.exec('date')
+
         self.training_results_dict = self.get_training_results_dict()
         log.info(f'Training results: {self.training_results_dict}')
 
@@ -545,15 +553,33 @@ class TorchTitanTrainingJob:
             self.rdma_stats_dict_after = linux_utils.get_rdma_stats_dict(self.orch)
             self.ethtool_stats_dict_after = linux_utils.get_nic_ethtool_stats_dict(self.orch)
 
-            # Verify no significant error increments
-            for node in self.rdma_stats_dict_before:
-                before = self.rdma_stats_dict_before[node]
-                after = self.rdma_stats_dict_after.get(node, {})
-                for counter, before_val in before.items():
-                    after_val = after.get(counter, before_val)
-                    if re.search(err_counters_pattern, counter, re.I):
-                        delta = int(after_val) - int(before_val)
-                        if delta > 100:
-                            log.warning(f'RDMA counter {counter} increased by {delta} on {node}')
+            # Compare RDMA error counters; fail if any error counter increased
+            for node in self.rdma_stats_dict_after.keys():
+                for counter_name in self.rdma_stats_dict_after[node]:
+                    if re.search(err_counters_pattern, counter_name, re.I):
+                        if int(self.rdma_stats_dict_after[node][counter_name]) > int(
+                            self.rdma_stats_dict_before[node][counter_name]
+                        ):
+                            fail_test(
+                                f'Error counter {counter_name} has gone up after training on node {node} '
+                                f'Before = {self.rdma_stats_dict_before[node][counter_name]}, '
+                                f'After = {self.rdma_stats_dict_after[node][counter_name]}'
+                            )
+
+            # Compare NIC error counters; fail if any error counter increased
+            for node in self.ethtool_stats_dict_after.keys():
+                for counter_name in self.ethtool_stats_dict_after[node]:
+                    if re.search(err_counters_pattern, counter_name, re.I):
+                        if int(self.ethtool_stats_dict_after[node][counter_name]) > int(
+                            self.ethtool_stats_dict_before[node][counter_name]
+                        ):
+                            fail_test(
+                                f'Error counter {counter_name} has gone up after training on node {node} '
+                                f'Before = {self.ethtool_stats_dict_before[node][counter_name]}, '
+                                f'After = {self.ethtool_stats_dict_after[node][counter_name]}'
+                            )
+
+        # Scan dmesg for errors during training window
+        verify_dmesg_for_errors(self.orch, self.training_start_time, self.training_end_time, till_end_flag=False)
 
         update_test_result()
