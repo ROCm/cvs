@@ -110,7 +110,6 @@ def config_dict(config_file, cluster_dict):
         config_dict_t = json.load(json_file)
 
     rccl_install_cfg = config_dict_t['rccl']['installation_params']
-    rccl_install_cfg = resolve_test_config_placeholders(rccl_install_cfg, cluster_dict)
     if not rccl_install_cfg.get("rccl_tests_repository"):
         rccl_install_cfg["rccl_tests_repository"] = rccl_install_cfg["rccl_repository"]
     log.info("%s", rccl_install_cfg)
@@ -328,37 +327,6 @@ def _resolve_rccl_shared_lib(hdl, search_roots):
         roots = " ".join(search_roots)
         fail_test(f"RCCL shared library not found under {roots} after make -j")
     return lib_path
-
-
-def _resolve_existing_rccl_for_tests(hdl, config_dict):
-    """
-    Use a pre-built RCCL under rccl_lib_install_dir when rccl_lib_install is False.
-
-    Returns:
-      tuple[str, str] | tuple[None, None]: (NCCL_HOME, CUSTOM_RCCL_LIB) or (None, None)
-    """
-    install_dir = config_dict.get("rccl_lib_install_dir", "").strip().rstrip("/")
-    if not install_dir or install_dir == "<changeme>":
-        return None, None
-
-    install_prefix, rccl_project_dir, rccl_build_dir = _rccl_source_layout(config_dict)
-    search_roots = [rccl_build_dir, rccl_project_dir, f"{install_prefix}/lib", install_prefix]
-    custom_lib = _find_rccl_shared_lib(hdl, search_roots)
-    if not custom_lib:
-        return None, None
-
-    out_dict = hdl.exec(
-        f"bash -c 'test -d {rccl_build_dir} && echo BUILD_OK'",
-        timeout=30,
-    )
-    first_out = next(iter(out_dict.values())).strip()
-    nccl_home = rccl_build_dir if "BUILD_OK" in first_out else install_prefix
-    log.info(
-        "Using existing RCCL under rccl_lib_install_dir (no source build): NCCL_HOME=%s CUSTOM_RCCL_LIB=%s",
-        nccl_home,
-        custom_lib,
-    )
-    return nccl_home, custom_lib
 
 
 def _rocm_amdclang_pp(rocm_path):
@@ -651,8 +619,8 @@ def test_install_rccl_tests(phdl, shdl, config_dict):
       2. Verify the user-supplied OMPI installation is present and functional.
          Bail out immediately if the check fails.
       3. If rccl_lib_install=True, clone and build the RCCL library from
-         source for rccl-tests. If rccl_lib_install=False, use librccl under
-         rccl_lib_install_dir when present; otherwise use bundled ROCm RCCL.
+         source for rccl-tests. If rccl_lib_install=False, use bundled ROCm
+         RCCL from rocm_path/lib (rccl_lib_install_dir is ignored).
       4. Clone and build rccl-tests against the resolved RCCL and OMPI paths.
       5. Verify the build artifacts exist on every node reached by the handle.
     """
@@ -683,8 +651,8 @@ def test_install_rccl_tests(phdl, shdl, config_dict):
         log.info("RCCL lib dir       : %s", rccl_lib_install_dir)
     else:
         log.info(
-            "RCCL lib dir       : %s (existing lib if present, else bundled ROCm)",
-            rccl_lib_install_dir,
+            "RCCL lib dir       : bundled ROCm under %s/lib (rccl_lib_install_dir ignored)",
+            config_dict.get("rocm_path", "<changeme>"),
         )
 
     # Verify OMPI is present and functional before doing any work
@@ -705,15 +673,9 @@ def test_install_rccl_tests(phdl, shdl, config_dict):
         rccl_lib_prefix, custom_rccl_lib_path = _install_rccl_lib(hdl, config_dict)
         use_custom_rccl_lib = True
     else:
-        rccl_lib_prefix = detect_rocm_path(hdl, config_dict.get('rocm_path', '<changeme>'))
+        rccl_lib_prefix = detect_rocm_path(hdl, config_dict.get("rocm_path", "<changeme>"))
         use_custom_rccl_lib = False
-        existing_nccl_home, existing_custom_lib = _resolve_existing_rccl_for_tests(hdl, config_dict)
-        if existing_custom_lib:
-            rccl_lib_prefix = existing_nccl_home
-            custom_rccl_lib_path = existing_custom_lib
-            use_custom_rccl_lib = True
-        else:
-            log.info("Using bundled RCCL from ROCm at: %s", rccl_lib_prefix)
+        log.info("Using bundled RCCL from ROCm at: %s/lib", rccl_lib_prefix)
 
     # Clone and build rccl-tests
     rccl_tests_build_dir = _install_rccl_tests(
