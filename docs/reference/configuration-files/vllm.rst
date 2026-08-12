@@ -797,19 +797,20 @@ An unrecognized ``kind`` is a violation, not a silent skip. A metric that is mis
 
 For ``min_ratio``, the ``reference`` names another metric in the same cell. If that reference is missing, ``None``, or zero, the check fails with a message naming the reason.
 
+.. _vllm-threshold-coverage:
+
 Coverage checking
 -----------------
 
-Threshold files are validated against the sweep on two axes:
+At load time the threshold file is checked on one axis: **cell coverage**. Every sweep cell must have a threshold entry, and no threshold key may name a cell that the sweep does not produce. This catches keys left behind after a sweep edit.
 
-1. **Cell coverage** — every sweep cell must have a threshold entry, and no threshold key may name a cell that the sweep does not produce. This catches keys left behind after a sweep edit.
-2. **Metric coverage** — every cell must carry a spec for each gated metric.
+There is no per-metric coverage requirement. A cell's entry may spec a single metric or two dozen — a threshold file is free to gate only the metrics you care about rather than every member of every family.
 
 The ``accuracy`` key is exempt from cell-coverage checking, since it is keyed by task rather than by cell.
 
-Setting ``enforce_thresholds`` to ``false`` downgrades **both** axes to warnings and stops threshold violations from failing tests. The run still measures and records everything, which makes it the right setting for a first calibration run on new hardware.
+Setting ``enforce_thresholds`` to ``false`` downgrades coverage problems to warnings and stops threshold violations from failing tests. The run still measures and records everything, which makes it the right setting for a first calibration run on new hardware.
 
-A metric whose spec is ``null`` is explicitly record-only: it is measured and reported but never asserted.
+Which metrics are asserted is then decided per metric at evaluation time, not at load time. A metric is checked only when its cell carries a spec for it; with no spec it is measured and reported but never asserted. A spec of ``null`` is the explicit way to say the same thing.
 
 .. _vllm-threshold-discovery:
 
@@ -829,7 +830,7 @@ Metrics live in namespaces. Each numeric metric becomes one test, and therefore 
 Client metrics
 --------------
 
-Measured by the load generator (``vllm bench serve``) and namespaced ``client.*``. **Gated** metrics require a threshold spec in every cell; the rest are record-only by design.
+Measured by the load generator (``vllm bench serve``) and namespaced ``client.*``. **Gated** marks the metrics designated as pass/fail criteria: they populate the report's gate matrix and they are the ones a threshold file normally specs. The mark does not make a metric mandatory — any metric, gated or not, is asserted only when its cell carries a spec for it (see :ref:`vllm-threshold-coverage`).
 
 .. list-table::
    :widths: 4 1 1 4
@@ -1005,7 +1006,7 @@ Every division is guarded: a missing, ``None``, or zero divisor yields ``None`` 
 
   ``client.request_rate`` is not surfaced as a metric row, because the stock benchmark emits the string ``inf`` rather than a number.
 
-  A new metric is **record-only by default**. It stays informational until its name is explicitly added to the gated set, at which point every cell must supply a spec for it.
+  A new metric is **record-only by default**. Adding its name to the gated set marks it as a pass/fail criterion and files it under one of the report's gate-matrix tiers; it still only fails a run in those cells whose threshold entry specs it.
 
 GPU metrics
 -----------
