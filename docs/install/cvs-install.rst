@@ -387,19 +387,21 @@ CVS provides comprehensive inference testing configurations for various LLM serv
    - ``container_image``: Docker image with vLLM
    - ``nnodes``: Number of nodes in the cluster
 
-**vLLM Single-Node (MI355X)**
+**vLLM Inference**
 
-1. Copy the vLLM single-node configuration file:
+1. Copy the vLLM configuration file matching your topology:
 
    .. code:: bash
 
-     cvs copy-config inference/mi355x_singlenode_vllm.json --output ~/my_vllm_config.json
+     cvs copy-config inference/vllm/mi300x_vllm_llama31-70b_fp8_single.json --output ~/my_vllm_config.json
+     cvs copy-config inference/vllm/mi300x_vllm_llama31-70b_fp8_distributed.json --output ~/my_vllm_multinode_config.json
 
 2. Edit the file and configure:
 
-   - ``container_image``: vLLM container for MI355X
-   - ``nnodes``: Number of nodes in the cluster     
-   - ``data_cache_dir``: Model cache directory
+   - ``container.image``: Docker image with vLLM
+   - ``paths.shared_fs``: Shared filesystem root
+   - ``paths.models_dir``: Model weights directory
+   - ``params.nnodes``: Number of nodes in the cluster
 
 **SGLang Disaggregated Prefill-Decode**
 
