@@ -12,31 +12,28 @@ container).
 
 from __future__ import annotations
 
-import base64
-import json
 import os
 import re
 import shlex
 import time
-from typing import Any, Optional
 
 from cvs.lib import globals
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.lib.inference.sglang.sglang_common import (
-    LM_EVAL_SPECS,
     add_cli_flags_block,
     add_export_env_block,
     as_node_list,
-    coerce_sglang_actual,
-    first_float,
-    normalize_sglang_threshold_spec,
+    first_output,
+    parse_inference_bench_results,
+    poll_for_inference_completion as poll_for_inference_completion_common,
     resolve_client_host,
+    run_lm_eval_benchmark_test as run_lm_eval_benchmark_test_common,
+    verify_inference_results as verify_inference_results_common,
+    verify_inference_results_subtests as verify_inference_results_subtests_common,
+    verify_openai_compatible_endpoints as verify_openai_compatible_endpoints_common,
     _SERVER_READY_RE,
 )
-from cvs.lib.utils.model_query_lib import LmEvalBenchmark, OpenAIProbe
 from cvs.lib.utils_lib import fail_test
-from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
-from cvs.lib.verify_lib import verify_dmesg_for_errors
 
 log = globals.log
 
@@ -119,18 +116,12 @@ class SglangSingle:
         """HTTP client target when smoke/bench/lm-eval run inside the same container."""
         return resolve_client_host(self.inf_dict, unified_server=True)
 
-    @staticmethod
-    def _first_output(out_dict: dict) -> str:
-        if not out_dict:
-            return ""
-        return next(iter(out_dict.values())) or ""
-
     def _container_exec(self, cmd: str, *, timeout: int | None = None) -> dict:
         """Run ``cmd`` inside the container."""
         return self.orch.exec(cmd, timeout=timeout)
 
     def _container_exec_text(self, cmd: str, *, timeout: int | None = None) -> str:
-        return self._first_output(self._container_exec(cmd, timeout=timeout))
+        return first_output(self._container_exec(cmd, timeout=timeout))
 
     def _host_exec(self, cmd: str, *, timeout: int | None = None) -> dict:
         """Run ``cmd`` on ``benchmark_serv_node`` (baremetal), e.g. amd-smi / dmesg."""
@@ -140,7 +131,7 @@ class SglangSingle:
         return BaremetalOrchestrator.exec(self.orch, cmd, hosts=[host], timeout=timeout)
 
     def _host_exec_text(self, cmd: str, *, timeout: int | None = None) -> str:
-        return self._first_output(self._host_exec(cmd, timeout=timeout))
+        return first_output(self._host_exec(cmd, timeout=timeout))
 
     def _apply_inf_defaults(self) -> None:
         self.inf_dict.setdefault('container_image', 'lmsysorg/sglang:dev')
@@ -246,6 +237,7 @@ class SglangSingle:
                 fail_test(f'Some failures observed in test rmsnorm on node {node}')
 
     def verify_openai_compatible_endpoints(self) -> list[str]:
+<<<<<<< HEAD
         port = int(self.router_serv_port)
         probe_src = OpenAIProbe.probe_script(port, self.bp_dict['model'], host=self.client_host)
         b64 = base64.b64encode(probe_src.encode('utf-8')).decode('ascii')
@@ -295,6 +287,18 @@ class SglangSingle:
         return OpenAIProbe.summarize_results(results, ok, err)
 
     def benchserv_test_random(self, d_type='auto') -> None:
+=======
+        return verify_openai_compatible_endpoints_common(
+            port=int(self.router_serv_port),
+            model_name=self.bp_dict['model'],
+            client_host=self.client_host,
+            log_dir=self.log_dir,
+            exec_probe=lambda cmd, timeout: self._container_exec(cmd, timeout=timeout),
+            probe_host_key=self._head_host,
+        )
+
+    def benchserv_test_random(self, d_type='auto', *, verify=True) -> None:
+>>>>>>> c3cd5f47 (Add Llama SGLang configs, perf subtests, and shared sglang helpers)
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
         self._bench_num_prompts = int(i_dict['num_prompts'])
         inner = (
@@ -329,74 +333,39 @@ class SglangSingle:
                 peak = peak_tflops * 1e12 * num_gpus * duration
                 m['mfu'] = f'{achieved / peak:.6f}'
 
-        self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
+        if verify:
+            self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
 
     def get_inference_results_dict(self, out_dict):
-        self.inference_results_dict = {}
-        for node, text in out_dict.items():
-            self.inference_results_dict[node] = {}
-            patterns = [
-                (r'Successful requests:\s+([0-9]+)', 'successful_requests'),
-                (r'Benchmark duration\s+\(s\):\s+([0-9]+)', 'benchmark_duration'),
-                (r'Total input tokens:\s+([0-9\.]+)', 'total_input_tokens'),
-                (r'Total generated tokens:\s+([0-9\.]+)', 'total_generated_tokens'),
-                (r'Request throughput \(req/s\):\s+([0-9\.]+)', 'request_throughput_per_sec'),
-                (r'Output token throughput \(tok/s\):\s+([0-9\.]+)', 'output_throughput_per_sec'),
-                (r'Mean TTFT \(ms\):\s+([0-9\.]+)', 'mean_ttft_ms'),
-                (r'Median TTFT \(ms\):\s+([0-9\.]+)', 'median_ttft_ms'),
-                (r'P99 TTFT \(ms\):\s+([0-9\.]+)', 'p99_ttft_ms'),
-                (r'Mean TPOT \(ms\):\s+([0-9\.]+)', 'mean_tpot_ms'),
-                (r'Median TPOT \(ms\):\s+([0-9]+)', 'median_tpot_ms'),
-                (r'P99 TPOT \(ms\):\s+([0-9\.]+)', 'p99_tpot_ms'),
-            ]
-            for pattern, key in patterns:
-                match = re.search(pattern, text, re.I)
-                if match:
-                    self.inference_results_dict[node][key] = match.group(1)
-            for pattern, key in (
-                (r'Mean E2E Latency \(ms\):\s+([0-9\.]+)', 'mean_e2e_latency_ms'),
-                (r'Median E2E Latency \(ms\):\s+([0-9\.]+)', 'median_e2e_latency_ms'),
-                (r'P99 E2E Latency \(ms\):\s+([0-9\.]+)', 'p99_e2e_latency_ms'),
-            ):
-                val = first_float(pattern, text)
-                if val:
-                    self.inference_results_dict[node][key] = val
-
-            total_req = first_float(r'Total requests:\s+([0-9]+)', text)
-            failed_req = first_float(r'Failed requests:\s+([0-9]+)', text)
-            succ = self.inference_results_dict[node].get('successful_requests')
-            if total_req:
-                self.inference_results_dict[node]['total_requests'] = total_req
-            elif succ is not None and failed_req is not None:
-                self.inference_results_dict[node]['total_requests'] = str(int(succ) + int(failed_req))
-            elif succ is not None and getattr(self, '_bench_num_prompts', None) is not None:
-                self.inference_results_dict[node]['total_requests'] = str(int(self._bench_num_prompts))
-            if succ and self.inference_results_dict[node].get('total_requests'):
-                s, t = int(succ), int(self.inference_results_dict[node]['total_requests'])
-                self.inference_results_dict[node]['goodput'] = f'{(s / t):.6f}' if t else None
-
+        self.inference_results_dict = parse_inference_bench_results(
+            out_dict,
+            bench_num_prompts=getattr(self, '_bench_num_prompts', None),
+        )
         return self.inference_results_dict
 
     def poll_for_inference_completion(
         self, iterations=10, waittime_between_iters=60, total_timeout=3600, require_all_nodes=True
     ):
-        time.sleep(60)
-        start_time = time.time()
-        completed_pattern = re.compile('Serving Benchmark Result', re.I)
         log_path = f"{self.log_dir}/benchmark_node/benchmark_results.log"
 
-        for _itr in range(1, iterations + 1):
-            out_dict = self._container_exec(f"tail -1000 {shlex.quote(log_path)}")
-            done = all(completed_pattern.search(o or '') for o in out_dict.values()) if out_dict else False
-            if done:
-                self.get_inference_results_dict(out_dict)
-                return {"status": "success", "results": self.inference_results_dict}
-            if total_timeout and (time.time() - start_time) >= total_timeout:
-                return {"status": "timeout", "reason": "benchmark timed out"}
-            time.sleep(30 + int(waittime_between_iters))
-        return {"status": "stuck_in_progress", "reason": "benchmark did not complete"}
+        def fetch_log_tail():
+            return self._container_exec(f"tail -1000 {shlex.quote(log_path)}")
+
+        result = poll_for_inference_completion_common(
+            fetch_log_tail,
+            self.get_inference_results_dict,
+            iterations=iterations,
+            waittime_between_iters=waittime_between_iters,
+            total_timeout=total_timeout,
+            require_all_nodes=require_all_nodes,
+            inference_poll_iterations=self.inference_poll_iterations,
+        )
+        if result.get('status') == 'success':
+            self.inference_results_dict = result['results']
+        return result
 
     def verify_inference_results(self, test_name, expected_result_dict):
+<<<<<<< HEAD
         thresholds = {
             metric: normalize_sglang_threshold_spec(metric, spec) for metric, spec in expected_result_dict.items()
         }
@@ -411,10 +380,34 @@ class SglangSingle:
             except ThresholdViolation as exc:
                 for msg in exc.violations:
                     fail_test(f"FAIL - {msg}")
+=======
+        self.inference_end_time = verify_inference_results_common(
+            self.inference_results_dict,
+            expected_result_dict,
+            self._host_exec,
+            test_name=test_name,
+        )
+>>>>>>> c3cd5f47 (Add Llama SGLang configs, perf subtests, and shared sglang helpers)
 
-        self.inference_end_time = self._host_exec('date +"%a %b %e %H:%M"')
-        time.sleep(2)
-        verify_dmesg_for_errors(self.orch.all, self.inference_start_time, self.inference_end_time)
+    def verify_inference_results_subtests(
+        self,
+        subtests,
+        test_name,
+        expected_result_dict,
+        *,
+        lifecycle=None,
+        report_nodeid=None,
+    ) -> bool:
+        all_passed, self.inference_end_time = verify_inference_results_subtests_common(
+            self.inference_results_dict,
+            expected_result_dict,
+            self._host_exec,
+            subtests,
+            test_name,
+            lifecycle=lifecycle,
+            report_nodeid=report_nodeid,
+        )
+        return all_passed
 
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type='auto'):
         return self.run_lm_eval_benchmark_test('lm_eval_hellaswag', _d_type=_d_type)
@@ -423,22 +416,16 @@ class SglangSingle:
         return self.run_lm_eval_benchmark_test('lm_eval_gsm8k', _d_type=_d_type)
 
     def run_lm_eval_benchmark_test(self, bench_key: str, _d_type='auto'):
-        spec = LM_EVAL_SPECS[bench_key]
-        task_name = bench_key.removeprefix('lm_eval_')
-        i_dict = self.bp_dict['inference_tests'][bench_key]
-        inner_cmd, scoring = LmEvalBenchmark.prepare(
-            i_dict,
-            port=int(self.router_serv_port),
-            host=self.client_host,
-            model_id=self.bp_dict['model'],
-            task_name=task_name,
-            default_tasks=task_name,
-            default_metric=spec['default_metric'],
-            default_metric_key=spec['default_metric_key'],
+        return run_lm_eval_benchmark_test_common(
+            bench_key,
+            bp_dict=self.bp_dict,
+            router_serv_port=self.router_serv_port,
+            client_host=self.client_host,
             log_dir=self.log_dir,
-            log_basename=f'{bench_key}.log',
-            default_num_concurrent=spec['default_num_concurrent'],
+            env_script='/tmp/server_env_script.sh',
+            exec_bench=lambda cmd, timeout: self._container_exec(cmd, timeout=timeout),
         )
+<<<<<<< HEAD
         inner = f"mkdir -p {self.log_dir}/benchmark_node && source /tmp/server_env_script.sh && {inner_cmd}"
         out_dict = self._container_exec(
             "bash -c " + shlex.quote(inner),
@@ -466,3 +453,5 @@ class SglangSingle:
         for msg in errors:
             fail_test(msg)
         return summary
+=======
+>>>>>>> c3cd5f47 (Add Llama SGLang configs, perf subtests, and shared sglang helpers)

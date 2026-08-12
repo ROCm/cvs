@@ -1,0 +1,118 @@
+{
+    "config":
+    {
+        "container_image": "rocm/sgl-dev:v0.5.12.post1-rocm720-mi30x-20260603",
+        "_container_image": "rocm/sgl-dev:v0.5.12.post1-rocm720-mi30x-20260601",
+        "container_name": "sglang_container",
+        "nnodes": "2",
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "shm_size": "128G",
+        "_log_dir_comments": "Provide some common file system that is accessible from any node",
+        "log_dir": "/home/{user-id}/LOGS/sglang",
+        "log_level": "info",
+        "nic_type": "thor2",
+        "_example_nccl_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+        "nccl_ib_hca": "<changeme>",
+        "hca_id_prefix": "<changeme>",
+        "mount_vol": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so",
+        "_example_nccl_socket_ifname": "eno0",
+        "nccl_socket_ifname": "<changeme>",
+        "_example_gloo_socket_ifname": "eno0",
+        "gloo_socket_ifname": "<changeme>",
+        "nccl_ib_gid_index": "3",
+        "nccl_debug": "ERROR",
+        "_example_server_node_list": "Two MI30X nodes; TP=8 per node, PP=2 across nodes",
+        "server_node_list": ["<changeme>", "<changeme>"],
+        "_dist_init_comments": "dist-init binds to rank-0 (first server_node_list entry) on dist_init_port unless dist_init_addr is set",
+        "dist_init_port": "40001",
+        "benchmark_serv_node": "<changeme>",
+        "proxy_router_serv_port": "8000",
+        "container_config":
+        {
+            "device_list": [ "/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm" ],
+            "volume_dict":
+            {
+                "/home/{user-id}": "/home/{user-id}",
+                "/mnt/dtni/models": "/root/models",
+                "/dev/infiniband": "/dev/infiniband",
+                "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+                "/lib/libibverbs.d": "/lib/libibverbs.d"
+            },
+            "env_dict":
+            {
+            }
+        }
+    },
+    "active_benchmark": "llama-70b",
+    "benchmark_params":
+    {
+        "llama-70b":
+        {
+            "backend": "sglang",
+            "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_llama_70b_threshold.json",
+            "max_concurrency": "256",
+            "_comments_model": "If the model is local, specify the full path of the model",
+            "model": "meta-llama/Llama-3.1-70B-Instruct",
+            "tensor_parallelism": "8",
+            "pipeline_parallelism": "2",
+            "memory_fraction": "0.85",
+            "tokenizer_mode": "auto",
+            "inference_poll_iterations": "16",
+            "context_length": "205000",
+            "add_export_env": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8"],
+            "add_flags": ["--attention-backend aiter"],
+            "inference_tests":
+            {
+                "bench_serv_random":
+                {
+                    "backend": "sglang",
+                    "data_set_name": "random",
+                    "num_prompts": "100",
+                    "random_range_ratio": "0.5",
+                    "model_num_params": "70000000000",
+                    "peak_gpu_tflops": "2615"
+                },
+                "bench_serv_generated_shared_prefix":
+                {
+                    "backend": "sglang",
+                    "gsp_num_groups": "1",
+                    "gsp_prompts_per_group": "16",
+                    "gsp_system_prompt_len": "0",
+                    "gsp_question_len": "1024",
+                    "gsp_output_len": "1024"
+                },
+                "long_ctx_niah": {
+                    "num_prompts": "6",
+                    "seed": "42",
+                    "request_timeout_sec": "7200",
+                    "exec_timeout_sec": "21600",
+                    "tolerance_frac": "0.05"
+                },
+                "lm_eval_hellaswag":
+                {
+                    "backend": "sglang",
+                    "lm_eval_model": "local-completions",
+                    "tasks": "hellaswag",
+                    "num_fewshot": "0",
+                    "batch_size": "auto",
+                    "limit": "100",
+                    "num_concurrent": "1",
+                    "exec_timeout_sec": "7200",
+                    "extra_model_args": "tokenizer_backend=huggingface"
+                },
+                "lm_eval_gsm8k":
+                {
+                    "backend": "sglang",
+                    "lm_eval_model": "local-completions",
+                    "tasks": "gsm8k",
+                    "num_fewshot": "5",
+                    "batch_size": "auto",
+                    "limit": "100",
+                    "num_concurrent": "4",
+                    "exec_timeout_sec": "7200",
+                    "extra_model_args": "tokenizer_backend=huggingface"
+                }
+            }
+        }
+    }
+}
