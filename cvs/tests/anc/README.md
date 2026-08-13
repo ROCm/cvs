@@ -132,18 +132,20 @@ The ANC config lives at `cvs/input/config_file/anc/anc_config.json`:
         "inactivity_timeout": 900,
         "install_timeout": 1800,
         "anc_version": "1.4.9",
-        "anc_release_url": "REPLACE_ME",
+        "anc_release_url": "<changeme>",
         "ANC_INSTALL_PATH": "",
         "print_all_to_console": "True",
-        "log_folder_path": "REPLACE_ME",
+        "log_folder_path": "<changeme>",
         "ADD_ANC_LOGS_TO_HTML_REPORTS": "False",
         "COLLECT_HTML_REPORTS": "True"
     }
 }
 ```
 
-`anc_release_url` and `log_folder_path` ship as the `REPLACE_ME` sentinel and
-**must** be replaced before running; an unresolved sentinel aborts the run.
+`anc_release_url` and `log_folder_path` ship as the `<changeme>` placeholder and
+**must** be replaced before running; an unresolved `<changeme>` aborts the run
+up front (the standard config resolver hard-exits on it, before any node is
+contacted).
 
 Each key is documented inline in the shipped config via a matching
 `_comment_<key>` sibling (keys prefixed with `_comment` are ignored at runtime).
@@ -154,15 +156,17 @@ Each key is documented inline in the shipped config via a matching
 | `install_timeout` | Package download+install **inactivity** timeout in seconds (default 1800 = 30 min), used only by `anc_installation` / the install pre-task. It is a per-read (no-output) timeout, not a total budget: the download emits a periodic progress heartbeat so a slow link never trips it, while a genuine stall still fails. Independent of `inactivity_timeout`. |
 | `anc_version` | Expected ANC version; install pre-task skips (re)install when already present and post-verifies the match. When set, it must equal the version in `anc_release_url` or the run aborts before contacting any node. The version is read per node via `anc.py --content-list` (the `anc-release-*` plugin's version column) for **direct 1.5.0+** packaging, and via `anc.py --version` for **legacy ≤1.4.x** (whose `--version` reports the release version; 1.5.0+ does not). |
 | `anc_release_url` | ANC release archive URL (used by `anc_installation`). Both packaging generations are auto-detected from the filename: **legacy (≤1.4.x)** outer tarballs carry a `-deb-`/`-rpm-`/`-tar-` token (e.g. `anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz`); **direct (1.5.0+)** URLs point straight at a `.deb`/`.rpm`/`.tar.gz` with no flavour token (e.g. `anc-release-helios-nda-1.5.5-x86_64.tar.gz`). The download/unpack is staged in a private temp dir on each node and removed after install (success or failure). deb/rpm install to `/opt/amdtools/anc`; tar installs to `ANC_INSTALL_PATH` (default `/opt/amdtools`). |
-| `ANC_INSTALL_PATH` | **Tar installs only:** relocatable prefix ANC is extracted into (its `anc/` dir, tool folders, and content live under here), giving `<prefix>/anc/anc.py`. A leading `~` is expanded. deb/rpm packages carry absolute locations baked into their archive and **ignore** this key. Leave blank or omit to keep the default `/opt/amdtools`. |
+| `ANC_INSTALL_PATH` | **Tar installs only:** relocatable prefix ANC is extracted into (its `anc/` dir, tool folders, and content live under here), giving `<prefix>/anc/anc.py`. A leading `~` is expanded and the `{home}`/`{user-id}` placeholders are resolved during config load. The value is validated up front: shell-metacharacters (`'`, `"`, `` ` ``, `$`, `\`, newline) and a prefix that resolves to filesystem root (`/`, `//`) are rejected before any node is contacted. deb/rpm packages carry absolute locations baked into their archive and **ignore** this key. Leave blank or omit to keep the default `/opt/amdtools`. |
 | `print_all_to_console` | `True` echoes ANC group output to console; `False` suppresses it (diagnostics still print). |
-| `log_folder_path` | Controller-side destination **prefix** for **all** ANC artifacts — collected logs and the auto-collected HTML report. A plain directory path (leading `~` expanded); **required** — replace the shipped `REPLACE_ME`. CVS appends its own fixed structure under it: logs at `anc_logs/<node>/<test_name>/<timestamp>` and the report at `html_reports/<node>/<test_name>/<timestamp>/<test_name>.html` (`<node>` → the node's `<ip>_<hostname>` label, `<test_name>` → the group's test name, `<timestamp>` → per-run stamp). |
+| `log_folder_path` | Controller-side destination **prefix** for **all** ANC artifacts — collected logs and the auto-collected HTML report. A plain directory path (leading `~` expanded); **required** — replace the shipped `<changeme>`. CVS appends its own fixed structure under it: logs at `anc_logs/<node>/<test_name>/<timestamp>` and the report at `html_reports/<node>/<test_name>/<timestamp>/<test_name>.html` (`<node>` → the node's `<ip>_<hostname>` label, `<test_name>` → the group's test name, `<timestamp>` → per-run stamp). |
 | `ADD_ANC_LOGS_TO_HTML_REPORTS` | Governs the per-node **ANC logs** tarball links. `True` always bundles each node's collected log tree (one `.tar.gz` + link per node) into the pytest-html report zip. `False` (default) bundles them **only when the test fails**. The per-node `errors.json` links appear regardless of this flag. |
 | `COLLECT_HTML_REPORTS` | `True` (default) auto-generates a pytest-html report even when no `--html` is passed, written under `log_folder_path`. `False` disables auto-collection. An explicit `--html` on the command line always overrides the auto-collected path. |
 
-`log_folder_path` is a plain directory prefix (it does **not** accept
-`{home}`/`{runner_log_folder}` tokens). With a `log_folder_path` of
-`/home/user/cvs_logs`, logs land at
+`log_folder_path` is a directory prefix. Leading `~` is expanded, and the
+standard config placeholders `{home}`/`{user-id}` are resolved during config
+load (it does **not** accept the CVS-owned `<node>`/`<test_name>`/`<timestamp>`
+tokens — those name the fixed structure CVS appends under the prefix). With a
+`log_folder_path` of `/home/user/cvs_logs`, logs land at
 `/home/user/cvs_logs/anc_logs/<node>/<test_name>/<timestamp>` and the HTML report
 at `/home/user/cvs_logs/html_reports/<node>/<test_name>/<timestamp>/<test_name>.html`,
 where `<node>` is that node's `<ip>_<hostname>` label. To send the report
