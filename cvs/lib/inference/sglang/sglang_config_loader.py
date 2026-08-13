@@ -45,9 +45,7 @@ log = globals.log
 _LEGACY_FRAMEWORK = "sglang_single"
 _UNIFIED_FRAMEWORK = "sglang_single"
 
-_PERF_CELL_RE = re.compile(
-    r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$"
-)
+_PERF_CELL_RE = re.compile(r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$")
 
 
 # ---------- threshold / variant helpers (moved out of conftest) ----------
@@ -63,8 +61,7 @@ def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> 
     if env_key:
         if env_key not in bp:
             raise ValueError(
-                f"SGLANG_BENCHMARK_KEY={env_key!r} not found in benchmark_params "
-                f"({config_path}); valid: {sorted(bp)!r}"
+                f"SGLANG_BENCHMARK_KEY={env_key!r} not found in benchmark_params ({config_path}); valid: {sorted(bp)!r}"
             )
         log.info("Using benchmark variant from env SGLANG_BENCHMARK_KEY=%r", env_key)
         return env_key
@@ -73,8 +70,7 @@ def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> 
     if explicit is not None:
         if explicit not in bp:
             raise ValueError(
-                f"active_benchmark={explicit!r} not found in benchmark_params "
-                f"({config_path}); valid: {sorted(bp)!r}"
+                f"active_benchmark={explicit!r} not found in benchmark_params ({config_path}); valid: {sorted(bp)!r}"
             )
         log.info("Using benchmark variant from active_benchmark=%r", explicit)
         return str(explicit)
@@ -123,14 +119,16 @@ def perf_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, 
         m = _PERF_CELL_RE.match(str(cell_key))
         if not m:
             continue
-        cells.append({
-            "cell_key": cell_key,
-            "isl": m.group("isl"),
-            "osl": m.group("osl"),
-            "tp": m.group("tp"),
-            "conc": m.group("conc"),
-            "specs": specs,
-        })
+        cells.append(
+            {
+                "cell_key": cell_key,
+                "isl": m.group("isl"),
+                "osl": m.group("osl"),
+                "tp": m.group("tp"),
+                "conc": m.group("conc"),
+                "specs": specs,
+            }
+        )
     cells.sort(key=lambda c: (int(c["isl"]), int(c["osl"]), int(c["conc"])))
     return cells
 
@@ -204,7 +202,7 @@ def _volume_dict_to_mounts(volume_dict: Mapping[str, Any]) -> list[str]:
 
 
 def _infer_models_dir(inference: Mapping[str, Any]) -> str:
-    volume_dict = ((inference.get("container_config") or {}).get("volume_dict") or {})
+    volume_dict = (inference.get("container_config") or {}).get("volume_dict") or {}
     for host, container in volume_dict.items():
         host_s, container_s = str(host), str(container)
         if "models" in host_s.lower() or "models" in container_s.lower():
@@ -214,8 +212,7 @@ def _infer_models_dir(inference: Mapping[str, Any]) -> str:
     if log_dir:
         return str(Path(log_dir).parent / "models")
     raise ValueError(
-        "cannot infer models_dir from legacy config; add a models volume mount "
-        "or migrate to unified paths.models_dir"
+        "cannot infer models_dir from legacy config; add a models volume mount or migrate to unified paths.models_dir"
     )
 
 
@@ -245,7 +242,7 @@ def _legacy_server_env(inference: Mapping[str, Any], bp: Mapping[str, Any]) -> d
     _put("GLOO_SOCKET_IFNAME", "gloo_socket_ifname")
     _put("GLOO_TCP_IFNAME", "gloo_tcp_ifname")
 
-    cc_env = ((inference.get("container_config") or {}).get("env_dict") or {})
+    cc_env = (inference.get("container_config") or {}).get("env_dict") or {}
     for k, v in cc_env.items():
         if v is not None:
             env[str(k)] = str(v)
@@ -375,9 +372,7 @@ def _load_legacy_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> S
 
     threshold_path_str = _threshold_file_path(bp)
     if not threshold_path_str:
-        raise ValueError(
-            f"benchmark_params[{variant_key!r}] missing 'threshold_file' in {config_path!r}"
-        )
+        raise ValueError(f"benchmark_params[{variant_key!r}] missing 'threshold_file' in {config_path!r}")
 
     threshold_path = _resolve_threshold_path(threshold_path_str, config_path=path)
     thresholds = _load_thresholds_file(threshold_path)
@@ -409,9 +404,7 @@ def _load_legacy_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> S
             "server": {
                 "env": server_env,
                 "serve_port": str(
-                    inference.get("proxy_router_serv_port")
-                    or inference.get("proxy_router_port")
-                    or "8000"
+                    inference.get("proxy_router_serv_port") or inference.get("proxy_router_port") or "8000"
                 ),
             }
         },
@@ -456,8 +449,7 @@ def load_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> SglangSin
 
     if peek.get("framework") not in (None, _UNIFIED_FRAMEWORK):
         raise ValueError(
-            f"unsupported framework {peek.get('framework')!r} in {config_path!r}; "
-            f"expected {_UNIFIED_FRAMEWORK!r}"
+            f"unsupported framework {peek.get('framework')!r} in {config_path!r}; expected {_UNIFIED_FRAMEWORK!r}"
         )
 
     return _load_unified_variant(config_path, cluster_dict)

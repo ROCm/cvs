@@ -119,7 +119,7 @@ class MaxTextTrainingJob:
         self._poll_count = int(self.training.steps * 10)
         self._initial_wait_s = 60
 
-        self._scratch_dir = None   # resolved lazily to /tmp/<user>/jax
+        self._scratch_dir = None  # resolved lazily to /tmp/<user>/jax
         self._train_script = None  # resolved lazily to the first existing candidate
 
     def _get_scratch_dir(self):
@@ -163,9 +163,7 @@ class MaxTextTrainingJob:
         if not candidates:
             raise RuntimeError("no train_script_paths (or train_script) configured")
 
-        probe = "".join(
-            f"if [ -f {shlex.quote(p)} ]; then echo {shlex.quote(p)}; exit 0; fi; " for p in candidates
-        )
+        probe = "".join(f"if [ -f {shlex.quote(p)} ]; then echo {shlex.quote(p)}; exit 0; fi; " for p in candidates)
         out = self.orch.exec("bash -c " + shlex.quote(probe))
         raw = (out or {}).get(self.orch.hosts[0], "")
         text = raw if isinstance(raw, str) else (raw or {}).get("output", "")

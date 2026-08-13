@@ -174,6 +174,7 @@ def coerce_sglang_actual(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
 
+
 def build_log_dir_cleanup_cmd(log_dir: str, user: str) -> str:
     """Shell command: rm -rf, recreate, chown (host namespace, not in-container)."""
     if not log_dir or not str(log_dir).strip():
@@ -181,11 +182,9 @@ def build_log_dir_cleanup_cmd(log_dir: str, user: str) -> str:
     log_dir = str(log_dir).strip()
     quser = shlex.quote(str(user))
     qdir = shlex.quote(log_dir)
-    return (
-        f"sudo rm -rf {qdir} && "
-        f"sudo mkdir -p {qdir} && "
-        f"sudo chown -R {quser}:{quser} {qdir}"
-    )
+    return f"sudo rm -rf {qdir} && sudo mkdir -p {qdir} && sudo chown -R {quser}:{quser} {qdir}"
+
+
 def cleanup_sglang_log_dir(
     orch: Any,
     log_dir: str,
@@ -202,6 +201,7 @@ def cleanup_sglang_log_dir(
     else:
         orch.head.exec(cmd, timeout=timeout)
 
+
 LM_EVAL_SPECS = {
     'lm_eval_hellaswag': {
         'display': 'HellaSwag',
@@ -216,6 +216,7 @@ LM_EVAL_SPECS = {
         'default_num_concurrent': '4',
     },
 }
+
 
 def _parse_amd_smi_gpu_entries(payload: str | None) -> list[dict]:
     """Unwrap amd-smi --json (list or {"gpu_data": [...]}) -> GPU entry list."""
@@ -253,9 +254,7 @@ def count_occupied_gpus_per_node(
             per_node[node] = 0
             continue
         try:
-            per_node[node] = count_occupied_gpus_on_node(
-                payload, mem_threshold_mb=mem_threshold_mb
-            )
+            per_node[node] = count_occupied_gpus_on_node(payload, mem_threshold_mb=mem_threshold_mb)
         except (TypeError, ValueError, AttributeError):
             log.warning("Failed to parse amd-smi JSON on node %s", node)
             per_node[node] = 0

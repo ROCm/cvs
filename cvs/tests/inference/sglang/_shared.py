@@ -29,6 +29,7 @@ __all__ = [
 
 _SMOKE_LINE_RE = re.compile(r"^(.+) -> (Pass|Fail) \((\d+)\)$")
 
+
 def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> str:
     """Pick which ``benchmark_params`` entry to run.
 
@@ -47,8 +48,7 @@ def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> 
     if env_key:
         if env_key not in bp:
             raise ValueError(
-                f"SGLANG_BENCHMARK_KEY={env_key!r} not found in benchmark_params "
-                f"({config_path}); valid: {sorted(bp)!r}"
+                f"SGLANG_BENCHMARK_KEY={env_key!r} not found in benchmark_params ({config_path}); valid: {sorted(bp)!r}"
             )
         log.info("Using benchmark variant from env SGLANG_BENCHMARK_KEY=%r", env_key)
         return env_key
@@ -57,8 +57,7 @@ def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> 
     if explicit is not None:
         if explicit not in bp:
             raise ValueError(
-                f"active_benchmark={explicit!r} not found in benchmark_params "
-                f"({config_path}); valid: {sorted(bp)!r}"
+                f"active_benchmark={explicit!r} not found in benchmark_params ({config_path}); valid: {sorted(bp)!r}"
             )
         log.info("Using benchmark variant from active_benchmark=%r", explicit)
         return str(explicit)
@@ -73,9 +72,10 @@ def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> 
         "Set top-level \"active_benchmark\" to one of them, or export SGLANG_BENCHMARK_KEY."
     )
 
+
 # Stable test order for sglang_disagg_distributed (PD prefill/decode/router).
 SGLANG_TEST_ORDER = {
-    "test_launch_container": 0, 
+    "test_launch_container": 0,
     "test_rms_norm": 1,
     "test_launch_prefill_servers": 2,
     "test_launch_decode_servers": 3,
@@ -224,13 +224,15 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                 continue
             key = f"accuracy_long_ctx_{m.group('isl')}"
             e = phase_labels.get(key) or {}
-            long_ctx_rows.append([
-                f"ISL={m.group('isl')}",
-                m.group("osl"),
-                f"{float(e['actual']):.4f}" if e.get("actual") is not None else "-",
-                f"{float(e['expected']):.4f}" if e.get("expected") is not None else "-",
-                result,
-            ])
+            long_ctx_rows.append(
+                [
+                    f"ISL={m.group('isl')}",
+                    m.group("osl"),
+                    f"{float(e['actual']):.4f}" if e.get("actual") is not None else "-",
+                    f"{float(e['expected']):.4f}" if e.get("expected") is not None else "-",
+                    result,
+                ]
+            )
         if long_ctx_rows:
             log.info(
                 "\n\n\n\n======== Long-context accuracy (NIAH) ========\n%s",
@@ -241,29 +243,29 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                 ),
             )
 
-    _CELL_RE = re.compile(
-        r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$"
-    )
+    _CELL_RE = re.compile(r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$")
     bp = (getattr(variant_config, "benchmark_params", None) or {}) if variant_config else {}
     performance_by_cell = phase_labels.get("performance_by_cell") or {}
     if performance_by_cell:
         summary_rows = []
         for cell_id, result in sorted(
             performance_by_cell.items(),
-            key=lambda kv: (
-                int(m.group("isl")), int(m.group("osl")), int(m.group("conc"))
-            ) if (m := _CELL_RE.match(str(kv[0]))) else (0, 0, 0),
+            key=lambda kv: (int(m.group("isl")), int(m.group("osl")), int(m.group("conc")))
+            if (m := _CELL_RE.match(str(kv[0])))
+            else (0, 0, 0),
         ):
             m = _CELL_RE.match(str(cell_id))
             if m:
-                summary_rows.append([
-                    m.group("isl"),
-                    m.group("osl"),
-                    m.group("tp"),
-                    m.group("pp"),
-                    m.group("conc"),
-                    result,
-                ])
+                summary_rows.append(
+                    [
+                        m.group("isl"),
+                        m.group("osl"),
+                        m.group("tp"),
+                        m.group("pp"),
+                        m.group("conc"),
+                        result,
+                    ]
+                )
             else:
                 summary_rows.append(["-", "-", tp, pp, str(cell_id), result])
 
@@ -289,9 +291,7 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
     ]
 
     perf_items = [
-        (k, v)
-        for k, v in inf_res_dict.items()
-        if isinstance(k, tuple) and len(k) == 6 and isinstance(v, dict)
+        (k, v) for k, v in inf_res_dict.items() if isinstance(k, tuple) and len(k) == 6 and isinstance(v, dict)
     ]
 
     perf_rows = []

@@ -68,7 +68,6 @@ class SglangSingle:
         self.inf_dict = inference_config_dict
         self.bp_dict = benchmark_params_dict
 
-
         self.inference_results_dict = {}
         log.info("%s", self.gpu_type)
 
@@ -96,14 +95,10 @@ class SglangSingle:
     def _resolve_benchmark_serv_node(self) -> str:
         raw = self.inf_dict.get('benchmark_serv_node')
         if not raw:
-            raise ValueError(
-                "SglangSingle requires benchmark_serv_node in the inference config"
-            )
+            raise ValueError("SglangSingle requires benchmark_serv_node in the inference config")
         hosts = as_node_list(raw)
         if len(hosts) != 1:
-            raise ValueError(
-                f"SglangSingle requires exactly one benchmark_serv_node, got {hosts!r}"
-            )
+            raise ValueError(f"SglangSingle requires exactly one benchmark_serv_node, got {hosts!r}")
         return hosts[0]
 
     @property
@@ -213,10 +208,7 @@ class SglangSingle:
     def poll_for_server_ready(self, no_of_iterations=16) -> None:
         for iteration in range(1, no_of_iterations):
             log.info('Starting server readiness poll iteration %d', iteration)
-            grep_cmd = (
-                f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} "
-                f"{shlex.quote(self.server_log_path)} || true"
-            )
+            grep_cmd = f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} {shlex.quote(self.server_log_path)} || true"
             text = self._container_exec_text(grep_cmd)
             if _SERVER_READY_RE.search(text):
                 log.info('Wait 60 secs before serving traffic')
@@ -224,10 +216,7 @@ class SglangSingle:
                 return
             log.info('Wait 120 secs and continue polling')
             time.sleep(120)
-        fail_test(
-            f'Single-node server on {self._head_host} did not reach ready state '
-            f'in {no_of_iterations} iterations'
-        )
+        fail_test(f'Single-node server on {self._head_host} did not reach ready state in {no_of_iterations} iterations')
 
     def poll_and_check_server_ready(self) -> None:
         log.info('Waiting 120 secs after launching server')
@@ -239,14 +228,13 @@ class SglangSingle:
 
     def install_container_packages(self) -> None:
         self._container_exec(
-            "bash -c " + shlex.quote(
-                "sudo apt -y update && sudo apt install -y iputils-ping iproute2 net-tools"
-            )
+            "bash -c " + shlex.quote("sudo apt -y update && sudo apt install -y iputils-ping iproute2 net-tools")
         )
 
     def run_test_rmsnorm(self, max_jobs=192) -> None:
         self._container_exec(
-            "bash -c " + shlex.quote(
+            "bash -c "
+            + shlex.quote(
                 f"MAX_JOBS={max_jobs} python /sgl-workspace/aiter/op_tests/test_rmsnorm2d.py "
                 f"> /tmp/rsmnorm_test.log 2>&1 &"
             )
@@ -259,9 +247,7 @@ class SglangSingle:
 
     def verify_openai_compatible_endpoints(self) -> list[str]:
         port = int(self.router_serv_port)
-        probe_src = OpenAIProbe.probe_script(
-            port, self.bp_dict['model'], host=self.client_host
-        )
+        probe_src = OpenAIProbe.probe_script(port, self.bp_dict['model'], host=self.client_host)
         b64 = base64.b64encode(probe_src.encode('utf-8')).decode('ascii')
         inner = (
             f"mkdir -p {self.log_dir}/benchmark_node && "
@@ -288,10 +274,7 @@ class SglangSingle:
                 probe_err = f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}"
             else:
                 if not isinstance(parsed, dict):
-                    probe_err = (
-                        f"OpenAI-compatible probe expected JSON object, got "
-                        f"{type(parsed).__name__!r}"
-                    )
+                    probe_err = f"OpenAI-compatible probe expected JSON object, got {type(parsed).__name__!r}"
                 else:
                     for step, val in parsed.items():
                         if isinstance(val, (list, tuple)) and len(val) == 2:
@@ -415,8 +398,7 @@ class SglangSingle:
 
     def verify_inference_results(self, test_name, expected_result_dict):
         thresholds = {
-            metric: normalize_sglang_threshold_spec(metric, spec)
-            for metric, spec in expected_result_dict.items()
+            metric: normalize_sglang_threshold_spec(metric, spec) for metric, spec in expected_result_dict.items()
         }
         for node in self.inference_results_dict:
             actuals = {
@@ -457,10 +439,7 @@ class SglangSingle:
             log_basename=f'{bench_key}.log',
             default_num_concurrent=spec['default_num_concurrent'],
         )
-        inner = (
-            f"mkdir -p {self.log_dir}/benchmark_node && "
-            f"source /tmp/server_env_script.sh && {inner_cmd}"
-        )
+        inner = f"mkdir -p {self.log_dir}/benchmark_node && source /tmp/server_env_script.sh && {inner_cmd}"
         out_dict = self._container_exec(
             "bash -c " + shlex.quote(inner),
             timeout=scoring['exec_timeout_sec'],

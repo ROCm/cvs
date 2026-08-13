@@ -127,16 +127,16 @@ class TestAccuracyTaskIntCoercion(unittest.TestCase):
         cases = [
             ("num_fewshot", "5", 5),
             ("num_fewshot", 5, 5),
-            ("num_fewshot", 5.0, 5),      # whole-number float coerces (vs 1.9 which rejects)
-            ("num_fewshot", -1, -1),      # AC16: negative allowed, no ge
+            ("num_fewshot", 5.0, 5),  # whole-number float coerces (vs 1.9 which rejects)
+            ("num_fewshot", -1, -1),  # AC16: negative allowed, no ge
             ("num_fewshot", 0, 0),
-            ("num_fewshot", True, 1),     # pydantic lax int: bool coerces to 1/0
+            ("num_fewshot", True, 1),  # pydantic lax int: bool coerces to 1/0
             ("num_concurrent", "3", 3),
             ("num_concurrent", 3, 3),
-            ("num_concurrent", 4.0, 4),   # whole-number float coerces (vs 2.5 which rejects)
-            ("num_concurrent", 0, 0),     # AC16: zero allowed, no gt
+            ("num_concurrent", 4.0, 4),  # whole-number float coerces (vs 2.5 which rejects)
+            ("num_concurrent", 0, 0),  # AC16: zero allowed, no gt
             ("num_concurrent", -1, -1),
-            ("num_concurrent", False, 0), # pydantic lax int: bool coerces to 1/0
+            ("num_concurrent", False, 0),  # pydantic lax int: bool coerces to 1/0
         ]
         for field, value, expected in cases:
             with self.subTest(field=field, value=value):
@@ -148,7 +148,7 @@ class TestAccuracyTaskIntCoercion(unittest.TestCase):
     def test_int_coercion_failure_raises(self):
         cases = [
             ("num_fewshot", "not-an-int"),
-            ("num_fewshot", 1.9),          # float with fractional part
+            ("num_fewshot", 1.9),  # float with fractional part
             ("num_concurrent", "bad"),
             ("num_concurrent", 2.5),
         ]
@@ -212,8 +212,8 @@ class TestAccuracyTaskStringTyping(unittest.TestCase):
             {"id": 123, "task": "gsm8k"},
             {"id": "a", "task": 123},
             {"id": 1.5, "task": "gsm8k"},
-            {"id": True, "task": "gsm8k"},   # bool is a non-str scalar; not coerced to str
-            {"id": "a", "task": False},     # bool is a non-str scalar; not coerced to str
+            {"id": True, "task": "gsm8k"},  # bool is a non-str scalar; not coerced to str
+            {"id": "a", "task": False},  # bool is a non-str scalar; not coerced to str
         ]
         for kwargs in cases:
             with self.subTest(kwargs=kwargs):
@@ -262,9 +262,7 @@ class TestAccuracyConfigConstruction(unittest.TestCase):
 
     def test_mixed_dicts_and_instances(self):
         # AC26: every element ends up an AccuracyTask.
-        cfg = AccuracyConfig(
-            tasks=[AccuracyTask(id="a", task="gsm8k"), {"id": "b", "task": "gsm8k"}]
-        )
+        cfg = AccuracyConfig(tasks=[AccuracyTask(id="a", task="gsm8k"), {"id": "b", "task": "gsm8k"}])
         self.assertTrue(all(isinstance(t, AccuracyTask) for t in cfg.tasks))
         self.assertEqual([t.id for t in cfg.tasks], ["a", "b"])
 

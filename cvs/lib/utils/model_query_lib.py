@@ -35,13 +35,9 @@ class OpenAIProbe:
 
     CHAT_USER = "Reply with exactly one word: OK."
     COMPLETION_PROMPT = "The capital of France is"
-    STRUCTURED_BOOK_SYSTEM = (
-        "Respond with a single JSON object only. "
-        "No markdown or text outside the JSON."
-    )
+    STRUCTURED_BOOK_SYSTEM = "Respond with a single JSON object only. No markdown or text outside the JSON."
     STRUCTURED_BOOK_USER = (
-        "Return one book as a JSON object with keys: "
-        "title (string), author (string), year (integer), genre (string)."
+        "Return one book as a JSON object with keys: title (string), author (string), year (integer), genre (string)."
     )
 
     STEP_TITLES: dict[str, str] = {
@@ -49,8 +45,7 @@ class OpenAIProbe:
         "chat_completion_endpoint": "Chat completion endpoint — POST /v1/chat/completions",
         "completion_endpoint": "Completion endpoint — POST /v1/completions",
         "structured_output_book": (
-            "Structured output (book) — POST /v1/chat/completions "
-            "(response_format: json_object)"
+            "Structured output (book) — POST /v1/chat/completions (response_format: json_object)"
         ),
     }
 
@@ -187,9 +182,7 @@ class OpenAIProbe:
                     _fail(f"{title}: missing or empty models list")
                     continue
                 first = data[0]
-                if not isinstance(first, dict) or not str(
-                    first.get("id") or first.get("model") or ""
-                ).strip():
+                if not isinstance(first, dict) or not str(first.get("id") or first.get("model") or "").strip():
                     _fail(f"{title}: no model id in models response")
                 continue
 
@@ -262,9 +255,7 @@ class OpenAIProbe:
             rest = err[len(cls._FAILURE_MARKER) :]
             colon_idx = rest.find(": ")
             if colon_idx != -1:
-                failure_parts = [
-                    p.strip() for p in rest[colon_idx + 2 :].split("|")
-                ]
+                failure_parts = [p.strip() for p in rest[colon_idx + 2 :].split("|")]
 
         summary: list[str] = []
         for step, (status, _content) in results.items():
@@ -273,10 +264,7 @@ class OpenAIProbe:
                 outcome = "Pass" if status == 200 else "Fail"
             elif status != 200:
                 outcome = "Fail"
-            elif any(
-                p.startswith(title) or p.startswith(f"{title} (step=")
-                for p in failure_parts
-            ):
+            elif any(p.startswith(title) or p.startswith(f"{title} (step=") for p in failure_parts):
                 outcome = "Fail"
             else:
                 outcome = "Pass"
@@ -307,11 +295,7 @@ class LmEvalBenchmark:
     @staticmethod
     def openai_base_url(port: int, lm_eval_model: str, host: str = "0.0.0.0") -> str:
         """Build base_url for lm-eval's local-completions / local-chat-completions."""
-        path = (
-            "/v1/chat/completions"
-            if "chat" in lm_eval_model.lower()
-            else "/v1/completions"
-        )
+        path = "/v1/chat/completions" if "chat" in lm_eval_model.lower() else "/v1/completions"
         return f"http://{host}:{int(port)}{path}"
 
     @classmethod
@@ -323,10 +307,7 @@ class LmEvalBenchmark:
         num_concurrent: str,
         extra_model_args: str = "",
     ) -> str:
-        model_args = (
-            f"model={model_id},base_url={base_url},num_concurrent={num_concurrent},"
-            f"tokenized_requests=False"
-        )
+        model_args = f"model={model_id},base_url={base_url},num_concurrent={num_concurrent},tokenized_requests=False"
         extra = str(extra_model_args or "").strip()
         if extra:
             model_args = f"{model_args},{extra}"
@@ -422,11 +403,7 @@ class LmEvalBenchmark:
 
         expected_f = float(expected)
         if abs(actual - expected_f) > tolerance_frac * abs(expected_f):
-            short_metric = (
-                "flexible-extract"
-                if "flexible" in metric_key.lower()
-                else parse_metric
-            )
+            short_metric = "flexible-extract" if "flexible" in metric_key.lower() else parse_metric
             err = (
                 f"{task_name} {short_metric} {actual:.4f} not within "
                 f"{tolerance_frac * 100:.0f}% of expected {expected_f:.4f}"
@@ -488,9 +465,7 @@ class LmEvalBenchmark:
         if not isinstance(task_expected, Mapping):
             raise ValueError(f"expected_results[{task_name!r}] must be a mapping")
         if default_metric_key not in task_expected:
-            raise KeyError(
-                f"expected_results[{task_name!r}][{default_metric_key!r}] missing"
-            )
+            raise KeyError(f"expected_results[{task_name!r}][{default_metric_key!r}] missing")
         expected = float(task_expected[default_metric_key])
 
         inner_cmd = cls.build_command(
@@ -734,8 +709,7 @@ class LongContextNiahBenchmark:
         return (
             False,
             summary,
-            f"{display} pass_rate {actual_f:.4f} below expected {expected_f:.4f} "
-            f"(tol={tolerance_frac * 100:.0f}%)",
+            f"{display} pass_rate {actual_f:.4f} below expected {expected_f:.4f} (tol={tolerance_frac * 100:.0f}%)",
         )
 
     @classmethod
@@ -754,9 +728,7 @@ class LongContextNiahBenchmark:
         num_prompts = int(i_dict.get("num_prompts", 16))
         seed = int(i_dict.get("seed", 42))
         exec_timeout_sec = int(i_dict.get("exec_timeout_sec", cls.DEFAULT_EXEC_TIMEOUT_SEC))
-        request_timeout_sec = int(
-            i_dict.get("request_timeout_sec", cls.DEFAULT_REQUEST_TIMEOUT_SEC)
-        )
+        request_timeout_sec = int(i_dict.get("request_timeout_sec", cls.DEFAULT_REQUEST_TIMEOUT_SEC))
         tolerance_frac = float(i_dict.get("tolerance_frac", cls.DEFAULT_TOLERANCE_FRAC))
         log_path = f"{log_dir.rstrip('/')}/benchmark_node/{log_basename}"
 
@@ -766,9 +738,7 @@ class LongContextNiahBenchmark:
             raise KeyError(f"expected_results.auto[{cls.DEFAULT_METRIC_KEY!r}] missing")
         expected = float(auto_expected[cls.DEFAULT_METRIC_KEY])
 
-        inner_cmd = (
-            f"python3 /tmp/long_ctx_niah_probe.py 2>&1 | tee {shlex.quote(log_path)}"
-        )
+        inner_cmd = f"python3 /tmp/long_ctx_niah_probe.py 2>&1 | tee {shlex.quote(log_path)}"
         scoring = {
             "task_name": cls.DEFAULT_TASK_NAME,
             "metric_key": cls.DEFAULT_METRIC_KEY,

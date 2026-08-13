@@ -38,25 +38,25 @@ class TestIsRealNumber(unittest.TestCase):
         # unambiguous.
         cases = [
             # real numbers -> True
-            (1, True),                 # AC1 int
-            (1.5, True),               # AC1 float
-            (0, True),                 # boundary: zero int is a real number
-            (0.0, True),               # boundary: zero float is a real number
-            (-3, True),                # AC22 negative int
-            (-1.25, True),             # AC22 negative float
-            (float("inf"), True),      # AC4 +inf is a real number
-            (float("-inf"), True),     # AC4 -inf is a real number
+            (1, True),  # AC1 int
+            (1.5, True),  # AC1 float
+            (0, True),  # boundary: zero int is a real number
+            (0.0, True),  # boundary: zero float is a real number
+            (-3, True),  # AC22 negative int
+            (-1.25, True),  # AC22 negative float
+            (float("inf"), True),  # AC4 +inf is a real number
+            (float("-inf"), True),  # AC4 -inf is a real number
             # not real numbers -> False
-            (True, False),             # AC2 bool excluded despite subclass of int
-            (False, False),            # AC2 bool excluded
-            (float("nan"), False),     # AC3 NaN excluded
-            ("0.71", False),           # AC5 numeric-looking string excluded
-            (None, False),             # AC5 None excluded
-            ({}, False),               # AC5 dict excluded
-            ([], False),               # AC5 list excluded
-            (complex(1, 2), False),    # complex number is numeric but NOT real
-            (1 + 2j, False),           # same boundary, literal form
-            (complex(3, 0), False),    # zero-imaginary complex is still not real
+            (True, False),  # AC2 bool excluded despite subclass of int
+            (False, False),  # AC2 bool excluded
+            (float("nan"), False),  # AC3 NaN excluded
+            ("0.71", False),  # AC5 numeric-looking string excluded
+            (None, False),  # AC5 None excluded
+            ({}, False),  # AC5 dict excluded
+            ([], False),  # AC5 list excluded
+            (complex(1, 2), False),  # complex number is numeric but NOT real
+            (1 + 2j, False),  # same boundary, literal form
+            (complex(3, 0), False),  # zero-imaginary complex is still not real
         ]
         for value, expected in cases:
             with self.subTest(value=repr(value)):
@@ -67,8 +67,21 @@ class TestIsRealNumber(unittest.TestCase):
         # non-bool. `type(...) is bool` is stricter than isinstance and would
         # reject e.g. returning the int 0/1 or the object itself.
         samples = [
-            1, 1.5, 0, -3, -1.25, float("inf"), float("-inf"), float("nan"),
-            True, False, "0.71", None, {}, [], object(),
+            1,
+            1.5,
+            0,
+            -3,
+            -1.25,
+            float("inf"),
+            float("-inf"),
+            float("nan"),
+            True,
+            False,
+            "0.71",
+            None,
+            {},
+            [],
+            object(),
         ]
         for value in samples:
             with self.subTest(value=repr(value)):
@@ -130,10 +143,10 @@ class TestProject(unittest.TestCase):
                 {
                     "results": {
                         "t": {
-                            "alias_score,none": 0.9,   # prefix substring, survives
-                            "task_alias": 0.8,          # suffix substring, survives
-                            "has_alias,none": 0.7,      # infix substring, survives
-                            "alias": "mmlu",            # exact key, excluded
+                            "alias_score,none": 0.9,  # prefix substring, survives
+                            "task_alias": 0.8,  # suffix substring, survives
+                            "has_alias,none": 0.7,  # infix substring, survives
+                            "alias": "mmlu",  # exact key, excluded
                         }
                     }
                 },
@@ -215,13 +228,9 @@ class TestProject(unittest.TestCase):
     def test_project_infinity_included_nan_excluded(self):
         # inf/-inf are real numbers and survive coercion; NaN is dropped.
         result = project(
-            {"results": {"t": {"good,none": float("inf"),
-                               "bad,none": float("nan"),
-                               "neg,none": float("-inf")}}}
+            {"results": {"t": {"good,none": float("inf"), "bad,none": float("nan"), "neg,none": float("-inf")}}}
         )
-        self.assertEqual(
-            set(result.keys()), {"t.good__none", "t.neg__none"}
-        )
+        self.assertEqual(set(result.keys()), {"t.good__none", "t.neg__none"})
         self.assertEqual(result["t.good__none"], float("inf"))
         self.assertEqual(result["t.neg__none"], float("-inf"))
         self.assertNotIn("t.bad__none", result)
@@ -239,9 +248,7 @@ class TestProject(unittest.TestCase):
         # Invariant (AC17): every output value is a native float, even when the
         # source was an int. isinstance(3, float) is False, so this distinguishes
         # real coercion from a same-type passthrough.
-        out = project(
-            {"results": {"t": {"i,none": 3, "f,none": 0.71, "neg": -2}}}
-        )
+        out = project({"results": {"t": {"i,none": 3, "f,none": 0.71, "neg": -2}}})
         self.assertEqual(set(out.keys()), {"t.i__none", "t.f__none", "t.neg"})
         for key, val in out.items():
             with self.subTest(key=key):
@@ -319,9 +326,7 @@ class TestProject(unittest.TestCase):
         # AC23: with builtins.open patched to raise, project still works ->
         # proves the flattener performs no file I/O.
         with patch("builtins.open", side_effect=AssertionError("no I/O allowed")):
-            out = project(
-                {"results": {"mmlu": {"acc,none": 0.71, "alias": "mmlu"}}}
-            )
+            out = project({"results": {"mmlu": {"acc,none": 0.71, "alias": "mmlu"}}})
             self.assertEqual(out, {"mmlu.acc__none": 0.71})
             self.assertIs(_is_real_number(1), True)
 
@@ -338,19 +343,14 @@ class TestSignaturePreservation(unittest.TestCase):
     def test_project_type_hints(self):
         self.assertEqual(
             typing.get_type_hints(project),
-            {"payload": typing.Dict[str, typing.Any],
-             "return": typing.Dict[str, float]},
+            {"payload": typing.Dict[str, typing.Any], "return": typing.Dict[str, float]},
         )
 
     def test_is_real_number_parameter_names(self):
-        self.assertEqual(
-            list(inspect.signature(_is_real_number).parameters), ["value"]
-        )
+        self.assertEqual(list(inspect.signature(_is_real_number).parameters), ["value"])
 
     def test_project_parameter_names(self):
-        self.assertEqual(
-            list(inspect.signature(project).parameters), ["payload"]
-        )
+        self.assertEqual(list(inspect.signature(project).parameters), ["payload"])
 
 
 if __name__ == "__main__":
