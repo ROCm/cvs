@@ -25,7 +25,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, Mapping
 
 from pydantic import Field, model_validator
 from typing_extensions import Literal
@@ -33,8 +33,6 @@ from typing_extensions import Literal
 from cvs.lib import globals
 from cvs.lib.utils.config_loader import (
     BaseVariantConfig,
-    ContainerSpec,
-    RuntimeSpec,
     _Forbid,
     substitute_config,
 )

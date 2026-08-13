@@ -12,13 +12,10 @@ Generic paths/model/container/threshold plumbing lives in
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Union
 
 from pydantic import field_validator, model_validator
 from typing_extensions import Literal
-
-ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
-ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
 
 from cvs.lib.inference.utils.inferencing_config_loader import (
     RoleServer,
@@ -29,6 +26,9 @@ from cvs.lib.inference.utils.inferencing_config_loader import (
 from cvs.lib.inference.atom.atom_parsing import GATED_METRICS
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
 from cvs.lib import globals
+
+ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
+ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
 
 log = globals.log
 

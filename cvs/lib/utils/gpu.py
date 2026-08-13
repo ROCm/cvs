@@ -10,7 +10,6 @@ import logging
 import pathlib
 import re
 import shlex
-import time
 from dataclasses import dataclass
 
 # Sentinel line delimiting per-iteration amd-smi chunks in the remote poller's

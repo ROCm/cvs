@@ -442,7 +442,7 @@ class SglangDistributed:
         self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
 
         tp = int(self.bp_dict.get('tensor_parallelism', 1))
-        pp = int(self.bp_dict.get('pipeline_parallelism', 1))
+        int(self.bp_dict.get('pipeline_parallelism', 1))
         num_gpus = self.nnodes * tp
         peak_tflops = float(i_dict.get('peak_gpu_tflops', 1300))
         num_params = float(i_dict.get('model_num_params', 70e9))
