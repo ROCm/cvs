@@ -195,21 +195,30 @@ class TestGatedMetricCoverage(unittest.TestCase):
         self.assertIn("client.num_prompts", vc.thresholds[self._CELL])
 
 
-class TestModelSpecNoPrecision(unittest.TestCase):
-    """precision must not be accepted by ModelSpec (removed field)."""
+class TestModelSpecPrecision(unittest.TestCase):
+    """precision is an accepted optional field on ModelSpec (default '')."""
 
-    def test_precision_field_is_rejected(self):
-        with self.assertRaises(ValidationError):
-            ModelSpec(id="amd/Llama-3.1-70B", remote=0, precision="fp8")
+    def test_precision_field_is_accepted(self):
+        ms = ModelSpec(id="amd/Llama-3.1-70B", remote=0, precision="fp8")
+        self.assertEqual(ms.precision, "fp8")
 
     def test_valid_model_spec_without_precision(self):
         ms = ModelSpec(id="amd/Llama-3.1-70B", remote=0)
         self.assertEqual(ms.id, "amd/Llama-3.1-70B")
         self.assertEqual(ms.remote, 0)
+        # precision is optional and defaults to empty.
+        self.assertEqual(ms.precision, "")
+
+    def test_unknown_field_is_rejected(self):
+        # ModelSpec is _Forbid: a truly unknown field still fails validation.
+        with self.assertRaises(ValidationError):
+            ModelSpec(id="amd/Llama-3.1-70B", remote=0, bogus="x")
 
 
 class TestThresholdJsonField(unittest.TestCase):
-    """threshold_json is a required field on BaseVariantConfig / VariantConfig."""
+    """threshold_json is an optional field on BaseVariantConfig / VariantConfig
+    (default ''); when absent, threshold discovery falls back to the sibling
+    *threshold.json next to the config."""
 
     def _base_kwargs(self):
         sw = Sweep(
@@ -234,11 +243,11 @@ class TestThresholdJsonField(unittest.TestCase):
             thresholds={},
         )
 
-    def test_missing_threshold_json_raises(self):
+    def test_missing_threshold_json_defaults_to_empty(self):
         kwargs = self._base_kwargs()
-        # threshold_json deliberately absent
-        with self.assertRaises(ValidationError):
-            VariantConfig(**kwargs)
+        # threshold_json deliberately absent -> optional, defaults to "".
+        vc = VariantConfig(**kwargs)
+        self.assertEqual(vc.threshold_json, "")
 
     def test_threshold_json_present_constructs(self):
         kwargs = self._base_kwargs()
