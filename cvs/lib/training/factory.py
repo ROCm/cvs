@@ -9,7 +9,7 @@ import re
 
 from cvs.lib import globals
 from cvs.lib.training.primus.primus_lib import PrimusTrainingJob
-
+from cvs.lib.training.megatron.megatron_lib import MegatronTrainingJob
 log = globals.log
 
 def create_training_job(orch, variant_config, **kwargs):

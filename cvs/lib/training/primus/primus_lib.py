@@ -29,21 +29,25 @@ err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_bu
 
 
 # Primus iteration logs have two formats depending on the iteration:
-#   - Early iterations (warm-up, e.g. iter 1-2): single value  "45.9"
-#   - Steady-state iterations (iter 3+):          current/avg   "121.7/121.7"
-# Each metric lists the current/avg pattern first (preferred) then the single-value
-# fallback so that the first non-empty match wins.
+#   - Warmup  (iter 1-2): single value  "throughput per GPU (TFLOP/s/GPU): 72.7"
+#   - Steady  (iter 3+):  current/avg   "throughput per GPU (TFLOP/s/GPU): 491.8/492.9"
+#
+# Primary patterns capture the running-average (second number in X/Y) from the last
+# steady-state iteration — this avg is computed by Primus across all steady-state
+# iterations and naturally excludes warmup, so `float(v[-1])` in test_metric gives
+# the best single summary value.
+# Single-value fallback handles runs that have only warmup lines in the tail.
 TRAINING_RESULT_PATTERNS = {
     'throughput_per_gpu': [
-        r'throughput per GPU \(TFLOP/s/GPU\):\s+([0-9.]+)/[0-9.]+',  # current/avg (iter 3+)
-        r'throughput per GPU \(TFLOP/s/GPU\):\s+([0-9.]+)(?:[^/\d]|$)',  # single value (iter 1-2)
+        r'throughput per GPU \(TFLOP/s/GPU\):\s+[0-9.]+/([0-9.]+)',   # avg from X/Y (iter 3+)
+        r'throughput per GPU \(TFLOP/s/GPU\):\s+([0-9.]+)(?:\s|$|\|)',  # single value (iter 1-2)
     ],
     'tokens_per_gpu': [
-        r'tokens per GPU \(tokens/s/GPU\):\s+([0-9.]+)/[0-9.]+',
+        r'tokens/s/GPU inst/harmonic mean:\s+[0-9.]+/([0-9.]+)',      # harmonic mean from X/Y (iter 3+)
     ],
     'elapsed_time_per_iteration': [
-        r'elapsed time per iteration \(ms\):\s+([0-9.]+)/[0-9.]+',   # current/avg (iter 3+)
-        r'elapsed time per iteration \(ms\):\s+([0-9.]+)(?:[^/\d]|$)',  # single value (iter 1-2)
+        r'elapsed time per iteration \(ms\):\s+[0-9.]+/([0-9.]+)',    # avg from X/Y (iter 3+)
+        r'elapsed time per iteration \(ms\):\s+([0-9.]+)(?:\s|$|\|)',   # single value (iter 1-2)
     ],
     'lm_loss': [
         r'lm loss:\s+([0-9.E+\-]+)',
@@ -59,29 +63,67 @@ TRAINING_RESULT_PATTERNS = {
     ],
 }
 
-# Matches both log formats:
-#   iter 1-2 (single value):   "throughput per GPU (TFLOP/s/GPU): 45.9"
-#   iter 3+  (current/avg):    "throughput per GPU (TFLOP/s/GPU): 121.7/121.7"
+# Per-iteration patterns for computing mean across all steady-state iterations
+# from the full log. Used as fallback in _parse_training_results when primary
+# tail patterns return no match.
+TRAINING_ITERATION_PATTERNS = {
+    'throughput_per_gpu': r'throughput per GPU \(TFLOP/s/GPU\):\s+([0-9.]+)',
+    'tokens_per_gpu': r'tokens/s/GPU inst/harmonic mean:\s+([0-9.]+)',
+    'elapsed_time_per_iteration': r'elapsed time per iteration \(ms\):\s+([0-9.]+)',
+    'lm_loss': r'lm loss:\s+([0-9.E+\-]+)',
+    'grad_norm': r'grad norm:\s+([0-9.]+)',
+    'hip_mem_usage_ratio': r'hip mem usage/free/total/usage_ratio:\s+[0-9.]+GB/[0-9.]+GB/[0-9.]+GB/([0-9.]+)%',
+    'rocm_mem_usage_ratio': r'rocm mem usage/free/total/usage_ratio:\s+[0-9.]+GB/[0-9.]+GB/[0-9.]+GB/([0-9.]+)%',
+}
+
+# Matches both log formats for progress detection (no capture group needed).
 TRAINING_PROGRESS_PATTERNS = [
     r'throughput per GPU \(TFLOP/s/GPU\):\s+[0-9.]+(?:/[0-9.]+)?',
-    r'tokens per GPU \(tokens/s/GPU\):\s+[0-9.]+(?:/[0-9.]+)?',
+    r'tokens/s/GPU inst/harmonic mean:\s+[0-9.]+(?:/[0-9.]+)?',
 ]
 
 TRAINING_NAN_PATTERNS = [
     r'throughput per GPU \(TFLOP/s/GPU\):\s+(?:NaN|Inf)',
-    r'tokens per GPU \(tokens/s/GPU\):\s+(?:NaN|Inf)',
+    r'tokens/s/GPU inst/harmonic mean:\s+(?:NaN|Inf)',
     r'lm loss:\s+(?:NaN|Inf)',
 ]
 
 
-def _parse_training_results(output):
-    """Extract metric values from Primus training-log text.
-
-    For each metric in TRAINING_RESULT_PATTERNS, try each pattern in order
-    and return the first non-empty list of matches.
+def _parse_mean_from_iterations(log_text, pattern, skip_warmup=True):
+    """Parse per-iteration metric values from full log and return their mean.
 
     Args:
-        output (str): Raw training-log text to parse.
+        log_text:     Full training log text.
+        pattern:      Regex with one capture group for the numeric value.
+        skip_warmup:  If True and more than one value found, drop the first match
+                      (iteration 1 is artificially slow due to JIT compilation).
+
+    Returns:
+        Mean value as a string, or None if no values were found.
+    """
+    matches = re.findall(pattern, log_text, re.I)
+    if not matches:
+        return None
+    values = [float(m) for m in matches]
+    if skip_warmup and len(values) > 1:
+        values = values[1:]
+    return str(sum(values) / len(values))
+
+
+def _parse_training_results(output, full_log=None):
+    """Extract metric values from Primus training-log text.
+
+    Primary: tries each pattern in TRAINING_RESULT_PATTERNS against `output`
+    (tail of the log). For steady-state iterations the patterns capture the
+    running-average column (X/Y → Y) from the last iteration line.
+
+    Fallback: when a metric is still empty and `full_log` is provided, computes
+    the mean of all per-iteration values from the full log using
+    TRAINING_ITERATION_PATTERNS, skipping the first (warmup) iteration.
+
+    Args:
+        output (str):        Tail of the training log.
+        full_log (str|None): Full training log for per-iteration fallback.
 
     Returns:
         dict: {metric_name: list[str]} for every key in TRAINING_RESULT_PATTERNS.
@@ -94,20 +136,30 @@ def _parse_training_results(output):
             if matches:
                 out[metric] = matches
                 break
+        if not out[metric] and full_log is not None:
+            pattern = TRAINING_ITERATION_PATTERNS.get(metric)
+            if pattern:
+                mean = _parse_mean_from_iterations(full_log, pattern, skip_warmup=True)
+                if mean:
+                    out[metric] = [mean]
+                    log.info('per-iteration fallback: %s = %s', metric, mean)
     return out
 
 
 def _is_training_complete(output, total_iters):
-    """Return True when the Primus run has fully finished.
+    """Return True when training is complete.
 
-    Checks for the explicit Primus launcher exit message first, then falls
-    back to the Megatron-style final iteration line which Primus also emits
-    when using the megatron backend.
+    Two signals are checked (either is sufficient):
+      1. Final iteration N/N line emitted by the megatron/torchtitan backend.
+      2. "torchrun finished successfully" written by primus-cli after torchrun exits.
+         This is the definitive end-of-run marker and always appears last in the log.
     """
-    if re.search(r'primus launcher exited with code 0', output, re.I):
-        return True
     n = int(total_iters)
-    return bool(re.search(rf'iteration\s+{n}\s*/\s*{n}\b', output))
+    if re.search(rf'iteration\s+{n}\s*/\s*{n}\b', output):
+        return True
+    if re.search(r'torchrun finished successfully', output, re.I):
+        return True
+    return False
 
 
 def _has_nan_inf_results(output):
@@ -161,7 +213,6 @@ class PrimusTrainingJob:
         global_batch_size,
         primus_framework=None,
         precision=None,
-        result_dict=None,
         distributed_training=False,
         tune_model_params=False,
         scripts_dir=None,
@@ -176,6 +227,7 @@ class PrimusTrainingJob:
         self.job_cmd = ''
         self.job_cmd_list = []
         self.training_results_dict = {}
+        self.local_tokenizer_path = None
 
         self.rdma_stats_dict_before = {}
         self.ethtool_stats_dict_before = {}
@@ -192,8 +244,8 @@ class PrimusTrainingJob:
         tdict.setdefault('hca_id_pattern', 'bnxt_|rocep')
         tdict.setdefault('nccl_ib_hca_list', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
         tdict.setdefault('nccl_ib_hca', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
-        tdict.setdefault('nccl_socket_ifname', 'ensf1np1')
-        tdict.setdefault('gloo_socket_ifname', 'ensf1np1')
+        tdict.setdefault('nccl_socket_ifname', 'enp49s0f1np1')
+        tdict.setdefault('gloo_socket_ifname', 'enp49s0f1np1')
         tdict.setdefault('nccl_ib_gid_index', '3')
         tdict.setdefault('nccl_debug', 'ERROR')
         tdict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
@@ -255,8 +307,6 @@ class PrimusTrainingJob:
         self.global_batch_size = pdict['global_batch_size']
         self.precision = pdict['precision']
 
-        self.expected_result_dict = result_dict or {}
-
         raw_label = run_label or f"{self.model_name}_mbs{micro_batch_size}_gbs{global_batch_size}_{self.precision}"
         self.run_label = re.sub(r'[^A-Za-z0-9._-]', '_', str(raw_label))
         self.combo_log_dir = f'{self.log_dir}/primus-logs/{self.run_label}'
@@ -264,6 +314,10 @@ class PrimusTrainingJob:
         self.orch.all.exec(f'rm -rf {self.scripts_dir}')
         self.orch.all.exec(f'mkdir -p {self.scripts_dir}')
         self.orch.all.exec(f'sudo chmod 777 {self.scripts_dir}')
+
+    def _needs_local_tokenizer(self):
+        """Primus reads tokenizer directly from the HF repo — no local file needed."""
+        return False
 
     def _batch_size_args(self):
         """Return batch size CLI args for the primus-cli command.
@@ -294,6 +348,41 @@ class PrimusTrainingJob:
         if self.distributed_training is True:
             self.rdma_stats_dict_before = linux_utils.get_rdma_stats_dict(self.orch.all)
             self.ethtool_stats_dict_before = linux_utils.get_nic_ethtool_stats_dict(self.orch.all)
+
+    def stop_training_processes(self):
+        """Check GPU VRAM after a training combo and free memory if any processes remain.
+
+        After normal completion VRAM% is 0 and no KFD PIDs are present — returns
+        immediately in that case. If processes are still holding GPU memory (crash
+        or hang), kills them with SIGKILL then verifies VRAM is clear.
+        """
+        log.info('Checking GPU memory state after training combo')
+        out_dict = self.orch.exec('rocm-smi --showpids 2>/dev/null')
+
+        has_pids = False
+        for node, output in (out_dict or {}).items():
+            if 'No KFD PIDs currently running' in (output or ''):
+                log.info('Node %s: VRAM already free, no GPU processes running', node)
+            else:
+                log.warning('Node %s: GPU processes still holding VRAM, will kill', node)
+                has_pids = True
+
+        if not has_pids:
+            return
+
+        self.orch.exec(
+            "rocm-smi --showpids 2>/dev/null "
+            "| awk '/^[0-9]+[[:space:]]/{print $1}' "
+            "| xargs -r kill -9 2>/dev/null || true; "
+            "sleep 10"
+        )
+
+        out_dict = self.orch.exec('rocm-smi --showpids 2>/dev/null')
+        for node, output in (out_dict or {}).items():
+            if 'No KFD PIDs currently running' in (output or ''):
+                log.info('Node %s: VRAM successfully freed', node)
+            else:
+                log.warning('Node %s: GPU processes may still be running after kill attempt', node)
 
     def exec_nic_setup_scripts(self):
         """Apply in-container NIC setup steps for distributed Primus runs.
@@ -347,14 +436,20 @@ class PrimusTrainingJob:
         env_exports = (
             f'export HF_TOKEN="{self.hf_token}"; '
             f'export LOG_DIR={self.log_dir}; '
+            f'export NCCL_SOCKET_IFNAME={self.nccl_socket_ifname}; '
+            f'export GLOO_SOCKET_IFNAME={self.gloo_socket_ifname}; '
         )
+
+        if re.search(r'MI3(00|25)X', self.gpu_arch, re.I):
+            env_exports += (
+                'export PRIMUS_TURBO_ATTN_V3_ATOMIC_FP32=1; '
+                'export NVTE_CK_IS_V3_ATOMIC_FP32=1; '
+            )
 
         if self.distributed_training:
             env_exports += (
                 f'export NCCL_IB_HCA_LIST={self.nccl_ib_hca_list}; '
                 f'export NCCL_IB_HCA={self.nccl_ib_hca_list}; '
-                f'export NCCL_SOCKET_IFNAME={self.nccl_socket_ifname}; '
-                f'export GLOO_SOCKET_IFNAME={self.gloo_socket_ifname}; '
                 f'export NCCL_DEBUG={self.nccl_debug}; '
                 f'export NCCL_IB_GID_INDEX={self.nccl_ib_gid_index}; '
             )
@@ -455,63 +550,79 @@ class PrimusTrainingJob:
             for i in range(n)
         ])
 
+    def _read_last_node_log(self, tail_lines=0):
+        """Read the training log from the last node using orch.exec() and return its text.
+
+        Uses orch.exec() (not exec_cmd_list) so the output is returned as a string,
+        not just streamed to the logger. Iteration stats are emitted by the last rank
+        which runs on the last node, so this is the authoritative log for completion
+        detection and metric parsing.
+
+        Args:
+            tail_lines (int): If > 0, only the last N lines of the log are read.
+
+        Returns:
+            str: Log text from the last node.
+        """
+        n = len(self.orch.hosts)
+        tail_suffix = f' | tail -{tail_lines}' if tail_lines > 0 else ''
+        out_dict = self.orch.exec(
+            f'cat {self.combo_log_dir}/out-node{n - 1}/training.log{tail_suffix}'
+        )
+        return list(out_dict.values())[-1] if out_dict else ''
+
     def get_training_results_dict(self):
         """Parse training log from the last node and extract performance metrics.
 
-        Iteration stats (throughput, tokens/s, etc.) are logged by the last rank,
-        which runs on the last node. Reading node 0's log would miss these lines
-        in a multi-node run.
-
-        Reads the last 30 lines; uses a slightly larger tail than Megatron because
-        Primus emits two log lines per iteration (utils.py:425 and utils.py:429).
+        Reads both a tail (summary/last-iteration values) and the full log.
+        The tail primary patterns capture the running-average column from the
+        last iteration line. The full log is passed as fallback so that
+        _parse_training_results can compute per-iteration means for any metric
+        whose primary pattern produces no match.
 
         Returns:
             dict: {metric_name: list[str]} — see TRAINING_RESULT_PATTERNS for keys.
         """
-        out_dict = self._read_all_node_logs(tail_lines=30)
-        # Iteration stats are on the last node (last rank)
-        output = list(out_dict.values())[-1]
+        tail_output = self._read_last_node_log(tail_lines=30)
 
         log.info('Extracting results from logs')
         log.info('#===========================#')
-        log.info('%s', output)
+        log.info('%s', tail_output)
         log.info('#===========================#')
 
-        training_results_dict = _parse_training_results(output)
+        full_log = self._read_last_node_log()
+        training_results_dict = _parse_training_results(tail_output, full_log)
         log.info('%s', training_results_dict)
         return training_results_dict
 
     def scan_for_training_errors(self):
-        """Scan training logs from ALL nodes for known error patterns.
-
-        Errors (NCCL timeouts, GPU hangs, etc.) can appear on any node, so every
-        node's log is checked. Returns False on the first error found.
+        """Scan the last node's training log for known error patterns.
 
         Returns:
-            bool: True if no error patterns are found on any node; False otherwise.
+            tuple[bool, str]: (True if no errors found, log text from last node).
         """
         log.info('Scan for training errors')
         training_pass = True
 
-        out_dict = self._read_all_node_logs()
-        for node, output in out_dict.items():
-            for err_key in training_err_dict:
-                if re.search(training_err_dict[err_key], output):
-                    fail_test(f'ERROR {err_key} seen in training logs on {node} ..')
-                    log.error('Aborting training log polling')
-                    training_pass = False
-        return training_pass
+        output = self._read_last_node_log()
+        for err_key in training_err_dict:
+            if re.search(training_err_dict[err_key], output):
+                fail_test(f'ERROR {training_err_dict[err_key]} seen in training logs ..')
+                log.error('Aborting training log polling')
+                training_pass = False
+        return training_pass, output
 
     def poll_for_training_completion(self, time_between_iters=120):
         """Periodically poll logs to detect completion, surface errors, and
         extract results.
 
-        Reads the last node's log for completion and NaN checks because iteration
-        stats are emitted by the last rank. All nodes are scanned for errors.
+        scan_for_training_errors() reads the last node's log via
+        _read_last_node_log() and returns the text alongside the pass/fail
+        result. The same log text is reused for completion and NaN detection,
+        avoiding a redundant second read.
 
-        Completion is detected by either:
-          - "primus launcher exited with code 0" in the log, or
-          - the final "iteration N/N" line (emitted by megatron/torchtitan backends).
+        Completion is detected by the final "iteration N/N" line in the log
+        (emitted by the last rank on the last node).
 
         Args:
             time_between_iters (int): Seconds to sleep between polling loops.
@@ -521,13 +632,10 @@ class PrimusTrainingJob:
 
         for i in range(1, int(self.iterations) + 10):
             log.info(f'Starting Iteration {i}')
-            if not self.scan_for_training_errors():
+            training_pass, output = self.scan_for_training_errors()
+            if not training_pass:
                 fail_test('Failures seen in training logs, Aborting!!!')
                 return
-
-            # Completion and NaN checks use the last node's log (last rank)
-            out_dict = self._read_all_node_logs()
-            output = list(out_dict.values())[-1]
 
             if not _is_training_complete(output, self.iterations):
                 log.info('Training still in progress')
@@ -535,7 +643,7 @@ class PrimusTrainingJob:
                 if _has_nan_inf_results(output):
                     fail_test(f'ERROR - NaN or Inf values seen in training results {output}')
                     return
-                time.sleep(5)
+                time.sleep(30)
                 self.training_results_dict = self.get_training_results_dict()
                 log.info('Completed Training, returning !!!')
                 return
@@ -546,8 +654,8 @@ class PrimusTrainingJob:
         """Validate collected training results and environment health.
 
         Checks for NaN/Inf values, optionally verifies RDMA/NIC error counters
-        (distributed only), scans dmesg, and compares metrics against expected
-        thresholds from the sweep combo's result_dict.
+        (distributed only), and scans dmesg. Threshold evaluation is handled by
+        test_metric via the threshold JSON files.
         """
         self.training_end_time = self.orch.all.exec('date')
 
@@ -561,18 +669,18 @@ class PrimusTrainingJob:
                 'Failed to populate training results, training_results_dict is empty '
                 '- please check logs for failures'
             )
+            return
 
         for result_key in self.training_results_dict.keys():
-            for result_list in self.training_results_dict[result_key]:
-                for result_val in result_list:
-                    if re.search('nan|inf', result_val):
-                        fail_test(
-                            f'Failures seen in training_result dict for {result_key}, '
-                            f'numbers are either NaN or Inf - {result_val}'
-                        )
+            for result_val in self.training_results_dict[result_key]:
+                if re.search('nan|inf', result_val, re.I):
+                    fail_test(
+                        f'Failures seen in training_result dict for {result_key}, '
+                        f'numbers are either NaN or Inf - {result_val}'
+                    )
 
         if self.distributed_training is True:
-            if self.verify_network_errors is True:
+            if self.verify_network_errors.lower() == 'true':
                 self.rdma_stats_dict_after = linux_utils.get_rdma_stats_dict(self.orch.all)
                 self.ethtool_stats_dict_after = linux_utils.get_nic_ethtool_stats_dict(self.orch.all)
 
@@ -601,21 +709,3 @@ class PrimusTrainingJob:
                                 )
 
         verify_dmesg_for_errors(self.orch.all, self.training_start_time, self.training_end_time, till_end_flag=False)
-
-        log.info('^^^^^^^^^^^^^^^^^^^^')
-        log.info('training_results_dict')
-        log.info('^^^^^^^^^^^^^^^^^^^^')
-        log.info('%s', self.training_results_dict)
-
-        for result_key in self.training_results_dict.keys():
-            if result_key in self.expected_result_dict:
-                log.info('%s', self.training_results_dict[result_key])
-                for actual_perf in self.training_results_dict[result_key]:
-                    if float(actual_perf) < float(self.expected_result_dict[result_key]):
-                        fail_test(
-                            f'The Training performance numbers are below expected numbers for '
-                            f'{result_key}, expected = {self.expected_result_dict[result_key]}, '
-                            f'actual = {actual_perf}'
-                        )
-            else:
-                log.warning(f'Perf result key {result_key} not provided in input JSON file, so will not be checked')

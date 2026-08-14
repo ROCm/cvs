@@ -20,12 +20,13 @@ Lifecycle (each stage is a separate test):
 
 import json
 import os
+import re
 import time
 
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.training.megatron.megatron_lib import MegatronTrainingJob
+from cvs.lib.training.factory import create_training_job
 from cvs.lib.training.megatron.utils.loss_curve import (
     parse_all_loss_points,
     sample_loss_curve,
@@ -103,7 +104,11 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
-    mt_obj = MegatronTrainingJob(
+    if re.search(r'primus', orch.container_config.get("image", ""), re.I):
+        lifecycle.tokenizer_path = None
+        return
+
+    mt_obj = create_training_job(
         orch,
         variant_config,
         hf_token=hf_token,
@@ -146,7 +151,7 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
 
     globals.error_list = []
 
-    mt_obj = MegatronTrainingJob(
+    mt_obj = create_training_job(
         orch,
         variant_config,
         hf_token=hf_token,
@@ -192,7 +197,7 @@ def test_training(
     nodeid = request.node.nodeid
     combo_key = request.node.callspec.id
     globals.error_list = []
-    mt_obj = MegatronTrainingJob(
+    mt_obj = create_training_job(
         orch,
         variant_config,
         hf_token=hf_token,
