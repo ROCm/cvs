@@ -22,6 +22,20 @@ class TestUtilsLib(unittest.TestCase):
         utils_lib.scan_test_results(out_dict)
         mock_fail_test.assert_not_called()
 
+    def test_get_model_from_rocm_smi_output_matches_marketing_name(self):
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI300X'), 'mi300x')
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI325X'), 'mi325')
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI350X'), 'mi350')
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI355X'), 'mi355')
+
+    def test_get_model_from_rocm_smi_output_falls_back_to_device_id_for_mi350(self):
+        smi_output = 'Device Name:        AMD Radeon Graphics\nDevice ID:          0x75a0\nGFX Version:        gfx950\n'
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output(smi_output), 'mi350')
+
+    def test_get_model_from_rocm_smi_output_defaults_to_mi300x_when_unrecognized(self):
+        smi_output = 'Device Name:        AMD Radeon Graphics\nDevice ID:          0x1234\n'
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output(smi_output), 'mi300x')
+
 
 class TestResolveTestConfigPlaceholdersAorta(unittest.TestCase):
     """Aorta benchmark YAML uses the same resolver as other CVS test suites (see tests/benchmark/test_aorta.py)."""
