@@ -51,14 +51,8 @@ class ListPlugin(SubcommandPlugin):
                 # Prune non-suite dirs in place so os.walk skips descending them.
                 dirs[:] = [d for d in dirs if d not in skip_dirs]
                 for file in files:
-                    # Skip pytest infra (conftest.py) and private helpers
-                    # (e.g. _shared.py): they are not selectable suites.
-                    if (
-                        file.endswith(".py")
-                        and file != "__init__.py"
-                        and file != "conftest.py"
-                        and not file.startswith("_")
-                    ):
+                    # conftest.py holds fixtures/hooks, not a runnable suite.
+                    if file.endswith(".py") and file not in ("__init__.py", "conftest.py"):
                         rel_path = os.path.relpath(os.path.join(root, file), tests_dir)
                         module_parts = os.path.splitext(rel_path)[0].split(os.sep)
                         # Module path: <tests_path>.<test_name>
@@ -93,7 +87,21 @@ class ListPlugin(SubcommandPlugin):
             sys.exit(1)
 
     def __init__(self):
-        self.test_map = self.discover_tests()  # Nested: {pkg_name: {test_name: module_path}}
+        self._test_map = None
+
+    @property
+    def test_map(self):
+        """Nested {pkg_name: {test_name: module_path}}, walked lazily on first use.
+
+        main.py's discover_plugins() instantiates every plugin on every CLI
+        invocation to build the argparse structure, regardless of which
+        subcommand is actually run; computing this eagerly in __init__ would
+        walk cvs/tests/ once per ListPlugin subclass (list, run, man) even
+        when none of them end up executing.
+        """
+        if self._test_map is None:
+            self._test_map = self.discover_tests()
+        return self._test_map
 
     def _find_test(self, test_name):
         """Find test module path by name across all packages."""

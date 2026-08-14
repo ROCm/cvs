@@ -123,7 +123,8 @@ class TestListPluginExtension(unittest.TestCase):
             mock_config.get_package_name.return_value = "ext_pkg"
 
             with patch("cvs.cli_plugins.list_plugin.ExtensionConfig", return_value=mock_config):
-                ListPlugin()
+                plugin = ListPlugin()
+                _ = plugin.test_map  # test_map is walked lazily on first access, not at construction
                 # The plugin should have called get_tests_dirs and get_package_name
                 mock_config.get_tests_dirs.assert_called()
                 mock_config.get_package_name.assert_called()
