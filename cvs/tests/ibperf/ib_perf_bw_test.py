@@ -262,7 +262,7 @@ def test_ib_bw_perf(shdl, phdl, bw_test, config_dict):
                     config_dict['expected_results'],
                 )
 
-    log.info('%%%%%%%%% ib_bw_dict %%%%%%%%%%')
+    log.info('========= ib_bw_dict ==========')
     log.info("%s", ib_bw_dict)
     update_test_result()
 

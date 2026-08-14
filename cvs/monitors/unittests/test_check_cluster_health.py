@@ -61,8 +61,10 @@ class TestLoadClusterFile(unittest.TestCase):
         self.assertEqual(pkey, "/home/bob/.ssh/id_rsa")
 
     def test_missing_file_raises(self):
-        with self.assertRaises(FileNotFoundError):
-            load_cluster_file("/nonexistent/path/cluster.json")
+        with tempfile.TemporaryDirectory() as tmp:
+            missing_path = os.path.join(tmp, "does-not-exist", "cluster.json")
+            with self.assertRaises(FileNotFoundError):
+                load_cluster_file(missing_path)
 
     def test_invalid_json_raises_value_error(self):
         with tempfile.TemporaryDirectory() as tmp:
