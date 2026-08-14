@@ -2,9 +2,9 @@
     "config": {
         "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
         "container_name": "wan22-benchmark",
-        "hf_token_file": "/home/{user-id}/.hf_token",
-        "hf_home": "/home/{user-id}",
-        "output_base_dir": "/home/{user-id}/cvs_outputs",
+        "hf_token_file": "{home}/.hf_token",
+        "hf_home": "{home}/.cache/huggingface",
+        "output_base_dir": "{home}/cvs_outputs",
         "model_repo": "Wan-AI/Wan2.2-I2V-A14B",
         "model_rev": "206a9ee1b7bfaaf8f7e4d81335650533490646a3",
         "container_config": {
@@ -24,12 +24,16 @@
             "num_benchmark_steps": 5,
             "compile": true,
             "torchrun_nproc": 8,
+            "_expected_results_comment": "mi300x is measured (avg 161.03s/step across 5 clean steps on MI300X with compile: true, ~25% margin applied); mi350 is measured (avg 86.10s-90.99s/step across two MI350 nodes on Ruby with compile: true, ~30% margin applied over the higher observed value); auto and mi355 remain unvalidated placeholders. Tune them for your target cluster, software stack, and benchmark conditions before using them as pass/fail criteria.",
             "expected_results": {
                 "auto": {
                     "max_avg_total_time_s": 15.0
                 },
                 "mi300x": {
-                    "max_avg_total_time_s": 12.0
+                    "max_avg_total_time_s": 200.0
+                },
+                "mi350": {
+                    "max_avg_total_time_s": 120.0
                 },
                 "mi355": {
                     "max_avg_total_time_s": 10.0
