@@ -69,6 +69,42 @@ analysis:
   gemm_script: scripts/gemm_analysis/run_tracelens_analysis.sh
   skip_if_exists: false
 
+# Multi-node disaggregated launch.
+#
+# When the cluster file has more than one node entry, the runner launches a
+# `torchrun` rank-group on every node in parallel (one per node), all
+# rendezvous-ing on the head node. Mirrors aorta's own
+# scripts/multi_node/local_launch.sh pattern, so a single cluster.json with N
+# host entries is enough -- you no longer need N cluster files.
+#
+# `master_launch_mode: auto` keeps current single-node behavior (delegates to
+# experiment_script) for 1-node clusters and switches to disaggregated
+# torchrun for >1-node clusters. Force one or the other with `script` /
+# `torchrun` if you want to override the auto-detection.
+#
+# When master_launch_mode resolves to torchrun, `experiment_script` is NOT
+# used -- the runner builds:
+#   torchrun --nnodes <N> --node_rank <R> --nproc_per_node <P>
+#            --master_addr <head> --master_port <PORT>
+#            <container_mount_path>/<train_script>
+#            --config <container_mount_path>/<base_config>
+#            [--override training_overrides...]
+#
+# extra_env is exported inside each container before torchrun -- use it for
+# transport-specific knobs that depend on the cluster (NCCL_SOCKET_IFNAME,
+# NCCL_IB_HCA, NCCL_IB_GID_INDEX, ...). On a single ethernet network you can
+# usually leave it empty.
+multi_node:
+  master_launch_mode: auto
+  # nproc_per_node: 8       # defaults to gpus_per_node
+  # master_port: 29500      # default: pick a free ephemeral port
+  # master_addr: 10.0.0.1   # default: head node from cluster.json
+  train_script: train.py
+  extra_torchrun_args: []
+  extra_train_args: []
+  extra_env: {}
+  collect_traces: true
+
 # Expected results: default thresholds for gfx942 (e.g. MI300). Change these as per your
 # testing config (GPU, node count, workload); see docs/reference/configuration-files/aorta.rst.
 # Tuned for host raw-trace parsing; use stricter values (e.g. min_compute_ratio 0.5+) with TraceLens Excel reports.
