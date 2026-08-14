@@ -311,7 +311,8 @@ def _resolve_placeholders_in_dict(target_dict, replacements, context_name=""):
             error_msg += f"{'=' * 70}\n"
             error_msg += "ACTION REQUIRED:\n"
             error_msg += "Please edit your configuration file and replace all the '<changeme>' placeholders\n"
-            error_msg += "with an appropriate value before running the tests.\n"
+            error_msg += "with an appropriate value before running the tests.\n\n"
+            error_msg += "Run 'cvs man <test>' to see what each config parameter expects.\n"
             error_msg += f"{'=' * 70}\n"
 
             log.error("%s", error_msg)
