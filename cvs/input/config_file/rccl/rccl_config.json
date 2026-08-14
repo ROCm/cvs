@@ -7,9 +7,7 @@
             "mpi_dir": "/home/{user-id}/openmpi/bin",
             "mpi_oob_port": "eth0",
             "ucx_tls": "rc,self,sm,tcp",
-            "_comment_ucx_tls": "When user requested UCX either leave this parameter value blank for auto assignment or assign values e.g. rc,self,sm,tcp..",
-            "net_dev_list": "",
-            "_comment_net_dev_list": "Leave empty for auto-detection from backend NICs, or set explicitly e.g. bnxt_re0:1,bnxt_re1:1,.."
+            "net_dev_list": ""
         },
 
         "env_source_script": "/home/{user-id}/thor2_env_script.sh",
