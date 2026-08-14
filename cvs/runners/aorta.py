@@ -39,6 +39,19 @@ from cvs.runners._base_runner import BaseRunner, RunConfig, RunResult, RunStatus
 log = logging.getLogger(__name__)
 
 
+def combined_traces_in(path: Path, root: Path) -> bool:
+    """Return True if ``path`` lives under ``root/combined_traces``.
+
+    Used to skip already-collected traces when rescanning the head node so
+    repeated runs do not nest combined_traces inside itself.
+    """
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return False
+    return rel.parts and rel.parts[0] == "combined_traces"
+
+
 @dataclass
 class RcclConfig:
     """RCCL build and runtime configuration."""
@@ -279,6 +292,156 @@ class AortaRunner(BaseRunner):
             pass  # Container doesn't exist, that's fine
         except Exception as e:
             log.warning(f"Error cleaning up container on {node}: {e}")
+
+    def _collect_multi_node_traces(self, nodes: List[str]) -> Optional[Path]:
+        """
+        Collect torch_profiler trees from every node into a single tree on the
+        head node and return the parent directory.
+
+        Layout::
+
+            <aorta_path>/combined_traces/node_<rank>/<orig_subpath>/torch_profiler/...
+
+        The head node is rsynced locally; non-head nodes are pulled with rsync
+        over SSH (``rsync -az`` with the configured ``priv_key_file``). When
+        rsync is unavailable we fall back to ``scp -r``. Failures on
+        individual nodes are logged but do not abort the overall collection;
+        the returned directory is the best-effort union.
+
+        Returns ``None`` only when nothing could be collected at all.
+        """
+        head = self.head_node
+        combined_root = self.config.aorta_path / "combined_traces"
+        try:
+            combined_root.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            log.error(f"Cannot create {combined_root}: {e}")
+            return None
+
+        any_collected = False
+        for rank, node in enumerate(nodes):
+            dest = combined_root / f"node_{rank}"
+            dest.mkdir(parents=True, exist_ok=True)
+
+            try:
+                # First pass: copy from the orchestrator's local filesystem. This handles
+                # the head==orchestrator case and any NFS-shared aorta_path.
+                found = False
+                if node == head:
+                    found = self._copy_local_torch_profilers(self.config.aorta_path, dest)
+                # Pull over SSH for non-head nodes, and also for the head when the
+                # orchestrator's local fs didn't actually have the head's traces (i.e.
+                # orchestrator is a separate login node from the head).
+                if not found:
+                    found = self._copy_remote_torch_profilers(node, dest)
+                if found:
+                    any_collected = True
+                    log.info(f"Collected traces for node_{rank} ({node}) -> {dest}")
+                else:
+                    log.warning(f"No torch_profiler artifacts found for node {node} (rank {rank})")
+            except Exception as e:
+                log.warning(f"Failed to collect traces for node {node} (rank {rank}): {e}")
+
+        return combined_root if any_collected else None
+
+    def _copy_local_torch_profilers(self, src_root: Path, dest: Path) -> bool:
+        """
+        Copy any ``torch_profiler/`` trees under ``src_root`` into ``dest``,
+        preserving the relative path. Used for the head node.
+        """
+        import shutil
+
+        copied = False
+        for tp in src_root.glob("**/torch_profiler"):
+            if not tp.is_dir():
+                continue
+            if combined_traces_in(tp, src_root):
+                continue
+            rel = tp.relative_to(src_root)
+            target = dest / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                if target.exists():
+                    shutil.rmtree(target)
+                shutil.copytree(tp, target, symlinks=True, dirs_exist_ok=False)
+                copied = True
+            except OSError as e:
+                log.warning(f"Local copy {tp} -> {target} failed: {e}")
+        return copied
+
+    def _copy_remote_torch_profilers(self, node: str, dest: Path) -> bool:
+        """
+        Pull every ``torch_profiler/`` tree under the remote ``aorta_path`` to
+        ``dest`` using rsync over SSH. Falls back to ``scp -r`` if rsync is
+        unavailable.
+        """
+        ssh_user = self.config.username
+        remote_root = str(self.config.aorta_path)
+
+        ssh_opts = ["-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
+        if self.config.pkey:
+            ssh_opts.extend(["-i", self.config.pkey])
+        ssh_cmd = "ssh " + " ".join(shlex.quote(p) for p in ssh_opts)
+
+        list_cmd = [
+            "ssh",
+            *ssh_opts,
+            f"{ssh_user}@{node}",
+            f"find {shlex.quote(remote_root)} -type d -name torch_profiler -not -path '*/combined_traces/*'",
+        ]
+        try:
+            r = subprocess.run(list_cmd, capture_output=True, text=True, timeout=120)
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            log.warning(f"Listing remote torch_profiler dirs on {node} failed: {e}")
+            return False
+
+        if r.returncode != 0:
+            log.warning(f"find on {node} returned {r.returncode}: {r.stderr.strip()}")
+            return False
+
+        remote_paths = [p.strip() for p in r.stdout.splitlines() if p.strip()]
+        if not remote_paths:
+            return False
+
+        copied = False
+        rsync_available = (
+            subprocess.run(
+                ["bash", "-lc", "command -v rsync >/dev/null"],
+                capture_output=True,
+            ).returncode
+            == 0
+        )
+        for rp in remote_paths:
+            try:
+                rel = Path(rp).relative_to(remote_root)
+            except ValueError:
+                rel = Path(Path(rp).name)
+            target_parent = dest / rel.parent
+            target_parent.mkdir(parents=True, exist_ok=True)
+
+            if rsync_available:
+                cmd = [
+                    "rsync",
+                    "-az",
+                    "-e",
+                    ssh_cmd,
+                    f"{ssh_user}@{node}:{rp}/",
+                    str(target_parent / rel.name) + "/",
+                ]
+            else:
+                cmd = ["scp", "-r", *ssh_opts, f"{ssh_user}@{node}:{rp}", str(target_parent)]
+
+            log.info(f"[{node}] copying {rp} -> {target_parent / rel.name}")
+            try:
+                rr = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+                if rr.returncode == 0:
+                    copied = True
+                else:
+                    log.warning(f"copy of {rp} from {node} failed (exit {rr.returncode}): {rr.stderr.strip()}")
+            except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+                log.warning(f"copy of {rp} from {node} failed: {e}")
+
+        return copied
 
     def _get_remote_uid_gid(self, node: str) -> Optional[Tuple[int, int]]:
         """
@@ -721,7 +884,7 @@ class AortaRunner(BaseRunner):
         return self.config.node_vpc_ips.get(self.head_node, self.head_node)
 
     def _build_base_env(self) -> Dict[str, str]:
-        """Build the environment dict exported into the container before launch."""
+        """Build the env dict shared by every node's launch."""
         env = self.config.environment.to_dict()
 
         rccl_path = self.config.rccl.build_path
@@ -833,15 +996,21 @@ class AortaRunner(BaseRunner):
           ``scripts/multi_node/local_launch.sh`` pattern. ``auto`` picks
           ``script`` for single-node clusters and ``torchrun`` for
           multi-node clusters.
+
+        Profiling artifacts (``torch_profiler/`` trees) from every node are
+        collected into ``<aorta_path>/combined_traces/node_<rank>/`` on the
+        head node when running multi-node, and exposed via the
+        ``torch_traces`` artifact for downstream parsers.
         """
         start_time = time.time()
         stdout_dict: Dict[str, str] = {}
         stderr_dict: Dict[str, str] = {}
         exit_codes: Dict[str, int] = {}
         artifacts: Dict[str, Path] = {}
+        partial_failure_status: Optional[RunStatus] = None
+        partial_failure_message: Optional[str] = None
 
         try:
-            # For now, run on head node only (single node v1)
             launch_mode = self._resolve_launch_mode()
             nodes = list(self.config.nodes)
 
@@ -874,8 +1043,6 @@ class AortaRunner(BaseRunner):
                         error_message=f"No container found for {node}",
                     )
 
-                # Pass the base config file to the experiment script
-                # launch_rocm.sh expects: CONFIG=${1:-default.yaml}
                 config_path = f"{self.config.container_mount_path}/{self.config.base_config}"
                 exp_cmd = f"bash {self.config.container_mount_path}/{self.config.experiment_script} {config_path}"
                 log.info(f"Running experiment: {exp_cmd}")
@@ -885,7 +1052,7 @@ class AortaRunner(BaseRunner):
                     container,
                     exp_cmd,
                     environment=base_env,
-                    stream=True,  # Stream output for real-time feedback
+                    stream=True,
                 )
                 stdout_dict[node] = output
                 exit_codes[node] = exit_code
@@ -952,17 +1119,22 @@ class AortaRunner(BaseRunner):
                         stdout_dict[n] = out
                         exit_codes[n] = ec
 
+                # A failed/timed-out node does not short-circuit trace collection below:
+                # surviving nodes may hold hours of otherwise-good profiler output, and
+                # forcing a full rerun (or a manual TraceLensParser salvage) to recover it
+                # is exactly the failure mode this is meant to avoid. The failure is still
+                # reported via partial_failure_status/message on the final RunResult.
                 failed = {n: c for n, c in exit_codes.items() if c != 0}
                 if failed:
+                    partial_failure_status = RunStatus.TIMEOUT if not_done else RunStatus.FAILED
+                    partial_failure_message = f"Disaggregated experiment failed on nodes: {sorted(failed.keys())}"
                     log.error(f"Disaggregated run failed on {len(failed)}/{nnodes} nodes: {failed}")
-                    return RunResult(
-                        status=RunStatus.TIMEOUT if not_done else RunStatus.FAILED,
-                        start_time=start_time,
-                        end_time=time.time(),
-                        stdout=stdout_dict,
-                        exit_codes=exit_codes,
-                        error_message=f"Disaggregated experiment failed on nodes: {sorted(failed.keys())}",
-                    )
+
+                if mn.collect_traces:
+                    combined = self._collect_multi_node_traces(nodes)
+                    if combined is not None:
+                        artifacts["torch_traces"] = combined
+                        log.info(f"Combined per-node traces collected at {combined}")
 
             # Find torch_profiler directory - Aorta saves traces to output_dir/torch_profiler
             # The output_dir is configured in the YAML config (e.g., "overlap_debug_repro")
@@ -970,34 +1142,53 @@ class AortaRunner(BaseRunner):
             nch = self.config.environment.NCCL_MAX_NCHANNELS
             compute_ch = 256 - nch
 
-            trace_dir = None
-            output_dir = None
+            trace_dir: Optional[Path] = None
+            output_dir: Optional[Path] = None
+            trace_mtime: float = -1.0
 
-            # Search for torch_profiler directories in aorta_path (handles nested dirs like artifacts/*/torch_profiler)
+            if "torch_traces" in artifacts:
+                trace_dir = artifacts["torch_traces"]
+                output_dir = trace_dir.parent
+                # Multi-node combined_traces should win unless a fresher single-node tree
+                # is discovered below; seed mtime from this tree so the comparison is valid.
+                try:
+                    latest_file = max(
+                        trace_dir.glob("**/*"),
+                        key=lambda p: p.stat().st_mtime if p.is_file() else 0,
+                        default=None,
+                    )
+                    if latest_file is not None and latest_file.is_file():
+                        trace_mtime = latest_file.stat().st_mtime
+                    else:
+                        trace_mtime = trace_dir.stat().st_mtime
+                except (ValueError, OSError):
+                    trace_mtime = trace_dir.stat().st_mtime
+
+            # Search for torch_profiler directories in aorta_path (handles nested dirs like artifacts/*/torch_profiler).
+            # Skip anything inside the combined_traces tree we just collected so the
+            # original (older) per-node copies don't shadow the consolidated set.
+            combined_root = self.config.aorta_path / "combined_traces"
             for candidate in self.config.aorta_path.glob("**/torch_profiler"):
-                if candidate.is_dir():
-                    # Use the most recently modified one (check mtime of rank subdirs or files inside)
-                    try:
-                        # Get mtime of most recent file in the directory
-                        latest_file = max(
-                            candidate.glob("**/*"), key=lambda p: p.stat().st_mtime if p.is_file() else 0, default=None
-                        )
-                        candidate_mtime = (
-                            latest_file.stat().st_mtime
-                            if latest_file and latest_file.is_file()
-                            else candidate.stat().st_mtime
-                        )
-                    except (ValueError, OSError):
-                        candidate_mtime = candidate.stat().st_mtime
+                if not candidate.is_dir():
+                    continue
+                if combined_traces_in(candidate, combined_root):
+                    continue
+                try:
+                    latest_file = max(
+                        candidate.glob("**/*"), key=lambda p: p.stat().st_mtime if p.is_file() else 0, default=None
+                    )
+                    candidate_mtime = (
+                        latest_file.stat().st_mtime
+                        if latest_file and latest_file.is_file()
+                        else candidate.stat().st_mtime
+                    )
+                except (ValueError, OSError):
+                    candidate_mtime = candidate.stat().st_mtime
 
-                    if trace_dir is None:
-                        trace_dir = candidate
-                        output_dir = candidate.parent
-                        trace_mtime = candidate_mtime
-                    elif candidate_mtime > trace_mtime:
-                        trace_dir = candidate
-                        output_dir = candidate.parent
-                        trace_mtime = candidate_mtime
+                if trace_dir is None or candidate_mtime > trace_mtime:
+                    trace_dir = candidate
+                    output_dir = candidate.parent
+                    trace_mtime = candidate_mtime
 
             # Required artifact for host-side parsing: torch_traces (parse runs on host, not in container)
             if trace_dir and trace_dir.exists():
@@ -1055,13 +1246,14 @@ class AortaRunner(BaseRunner):
                     break
 
             return RunResult(
-                status=RunStatus.COMPLETED,
+                status=partial_failure_status or RunStatus.COMPLETED,
                 start_time=start_time,
                 end_time=time.time(),
                 stdout=stdout_dict,
                 stderr=stderr_dict,
                 exit_codes=exit_codes,
                 artifacts=artifacts,
+                error_message=partial_failure_message,
                 metadata={
                     "nodes": len(self.config.nodes),
                     "gpus_per_node": self.config.gpus_per_node,
