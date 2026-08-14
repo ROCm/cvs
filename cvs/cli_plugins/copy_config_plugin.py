@@ -1,5 +1,6 @@
 from .base import SubcommandPlugin
 from cvs.extension import ExtensionConfig
+from cvs.lib.utils_lib import cvs_package_root
 import os
 import shutil
 
@@ -49,8 +50,7 @@ Copy-Config Commands:
         1. Core cvs package (cvs/input/config_file, cvs/input/cluster_file, cvs/input/env_file)
         2. Extension packages configured via extension.ini (e.g., cvs_extension/input)
         """
-        plugin_dir = os.path.dirname(__file__)
-        cvs_dir = os.path.dirname(plugin_dir)  # cvs/
+        cvs_dir = cvs_package_root()
         config_root = os.path.join(cvs_dir, "input", "config_file")
         cluster_root = os.path.join(cvs_dir, "input", "cluster_file")
         env_root = os.path.join(cvs_dir, "input", "env_file")

@@ -16,6 +16,18 @@ from cvs.lib import globals
 log = globals.log
 
 
+def cvs_package_root():
+    """Absolute path to the installed/editable cvs package directory.
+
+    This is the root cvs/input/, cvs/tests/, cvs/baseline_data/, etc. hang off
+    of -- not the repo root and not the process cwd -- so it resolves the same
+    way whether cvs was pip-installed or run from an editable checkout.
+    """
+    import cvs
+
+    return os.path.dirname(os.path.abspath(cvs.__file__))
+
+
 def fail_test(msg):
     """
     Record and report a test failure without immediately raising an exception.
