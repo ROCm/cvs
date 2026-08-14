@@ -51,8 +51,14 @@ class ListPlugin(SubcommandPlugin):
                 # Prune non-suite dirs in place so os.walk skips descending them.
                 dirs[:] = [d for d in dirs if d not in skip_dirs]
                 for file in files:
-                    # conftest.py holds fixtures/hooks, not a runnable suite.
-                    if file.endswith(".py") and file not in ("__init__.py", "conftest.py"):
+                    # Skip pytest infra (conftest.py) and private helpers
+                    # (e.g. _shared.py): they are not selectable suites.
+                    if (
+                        file.endswith(".py")
+                        and file != "__init__.py"
+                        and file != "conftest.py"
+                        and not file.startswith("_")
+                    ):
                         rel_path = os.path.relpath(os.path.join(root, file), tests_dir)
                         module_parts = os.path.splitext(rel_path)[0].split(os.sep)
                         # Module path: <tests_path>.<test_name>
