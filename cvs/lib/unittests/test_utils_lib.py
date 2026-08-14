@@ -22,6 +22,11 @@ class TestUtilsLib(unittest.TestCase):
         utils_lib.scan_test_results(out_dict)
         mock_fail_test.assert_not_called()
 
+    def test_cluster_target_output_label_strips_and_sanitizes(self):
+        self.assertEqual(utils_lib.cluster_target_output_label("  node1.example.com  "), "node1.example.com")
+        self.assertEqual(utils_lib.cluster_target_output_label("a/b"), "a_b")
+        self.assertEqual(utils_lib.cluster_target_output_label(""), "unknown_node")
+
     def test_get_model_from_rocm_smi_output_matches_marketing_name(self):
         self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI300X'), 'mi300x')
         self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI325X'), 'mi325')
