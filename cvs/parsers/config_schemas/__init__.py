@@ -10,10 +10,20 @@ validation, so an existing customer config is never rejected on account of them.
 """
 
 from .health import AgfhcConfigFile, RvsConfigFile, RvsTestConfig, TransferBenchConfigFile
+from .megatron import (
+    MegatronConfigFile,
+    MegatronModelVariant,
+    MegatronMultiNodeModelParams,
+    MegatronSingleNodeModelParams,
+)
 from .rccl import RcclConfigFile
 
 __all__ = [
     "AgfhcConfigFile",
+    "MegatronConfigFile",
+    "MegatronModelVariant",
+    "MegatronMultiNodeModelParams",
+    "MegatronSingleNodeModelParams",
     "RcclConfigFile",
     "RvsConfigFile",
     "RvsTestConfig",
