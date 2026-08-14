@@ -80,6 +80,10 @@ class Pssh:
             self.log.info("%s", self.reachable_hosts)
             self.log.info("%s", self.user)
             self.log.info("%s", self.pkey)
+        self._recreate_parallel_client()
+
+    def _recreate_parallel_client(self):
+        if self.password is None:
             self.client = ParallelSSHClient(
                 self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30, **self.ssh_client_kwargs
             )
@@ -91,6 +95,18 @@ class Pssh:
                 keepalive_seconds=30,
                 **self.ssh_client_kwargs,
             )
+
+    def _run_command_with_session_retry(self, *args, **kwargs):
+        try:
+            return self.client.run_command(*args, **kwargs)
+        except SessionError as e:
+            self.log.info(
+                "ParallelSSH: SessionError on first attempt; recreating client and retrying once (%s).",
+                e,
+            )
+            self.log.debug("ParallelSSH session retry detail", exc_info=True)
+            self._recreate_parallel_client()
+            return self.client.run_command(*args, **kwargs)
 
     def check_connectivity(self, hosts):
         """
@@ -333,11 +349,13 @@ class Pssh:
         # With an inactivity timeout the total read_timeout must be disabled, so
         # the per-line gevent timer in _process_output is the only limiter.
         if inactivity_timeout is not None:
-            output = self.client.run_command(full_cmd, stop_on_errors=self.stop_on_errors)
+            output = self._run_command_with_session_retry(full_cmd, stop_on_errors=self.stop_on_errors)
         elif timeout is None:
-            output = self.client.run_command(full_cmd, stop_on_errors=self.stop_on_errors)
+            output = self._run_command_with_session_retry(full_cmd, stop_on_errors=self.stop_on_errors)
         else:
-            output = self.client.run_command(full_cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors)
+            output = self._run_command_with_session_retry(
+                full_cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors
+            )
         cmd_output = self._process_output(
             output,
             cmd=full_cmd,
@@ -353,11 +371,19 @@ class Pssh:
 
         return cmd_output
 
-    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True, inactivity_timeout=None):
         """
         Run different commands on different hosts compared to to exec
         which runs the same command on all hosts.
         Returns a dictionary of host as key and command output as values
+
+        timeout is parallel-ssh's read_timeout: a TOTAL wall-clock cap on reading
+        the command's output (it is NOT reset by activity). inactivity_timeout is
+        an alternative that measures the gap between output lines instead: the
+        command may run arbitrarily long as long as it keeps producing output, and
+        is aborted only after inactivity_timeout seconds of silence. When
+        inactivity_timeout is set, the underlying read_timeout is disabled so there
+        is no total cap. Pass at most one of the two.
         """
         if self.env_prefix:
             cmd_list = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
@@ -368,19 +394,30 @@ class Pssh:
 
         # Log command list execution
         if self.log:
-            if timeout is not None:
+            if inactivity_timeout is not None:
+                self.log.debug(
+                    f"Executing command list on {len(self.reachable_hosts)} host(s) "
+                    f"[inactivity_timeout={inactivity_timeout}s]"
+                )
+            elif timeout is not None:
                 self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]")
             else:
                 self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s)")
 
-        if timeout is None:
-            output = self.client.run_command('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
+        # With an inactivity timeout the total read_timeout must be disabled, so
+        # the per-line gevent timer in _process_output is the only limiter.
+        if inactivity_timeout is not None:
+            output = self._run_command_with_session_retry('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
+        elif timeout is None:
+            output = self._run_command_with_session_retry('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
         else:
-            output = self.client.run_command(
+            output = self._run_command_with_session_retry(
                 '%s', host_args=cmd_list, read_timeout=timeout, stop_on_errors=self.stop_on_errors
             )
 
-        cmd_output = self._process_output(output, cmd_list=cmd_list, print_console=print_console)
+        cmd_output = self._process_output(
+            output, cmd_list=cmd_list, print_console=print_console, inactivity_timeout=inactivity_timeout
+        )
 
         # Log per-host command execution (only for processed output)
         if self.process_output and self.log and isinstance(cmd_output, dict):

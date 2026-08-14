@@ -9,6 +9,7 @@ import re
 import os
 import sys
 import json
+import shlex
 
 import pytest
 from cvs.lib import globals
@@ -202,7 +203,10 @@ def get_model_from_rocm_smi_output(smi_output):
       - Performs case-insensitive regex searches for specific model tokens in the provided
         rocm-smi output (e.g., "MI300X", "MI325", "MI350", "MI355").
       - Returns the corresponding normalized lowercase token (e.g., 'mi300x').
-      - Falls back to 'mi300x' if no pattern matches (conservative default).
+      - Some driver/rocm-smi versions emit no marketing-name string at all (observed on
+        MI350: only "Device ID: 0x75a0" and "GFX Version: gfx950", no "MI350" substring
+        anywhere in `rocm-smi -a`); in that case, falls back to matching the known Device ID.
+      - Falls back to 'mi300x' if nothing matches (conservative default).
 
     """
     if re.search('MI300X', smi_output, re.I):
@@ -213,6 +217,8 @@ def get_model_from_rocm_smi_output(smi_output):
         model = 'mi350'
     elif re.search('MI355', smi_output, re.I):
         model = 'mi355'
+    elif re.search(r'Device ID:\s*0x75a0', smi_output, re.I):
+        model = 'mi350'
     else:
         model = 'mi300x'
     return model
@@ -428,6 +434,63 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     resolved_config = _resolve_placeholders_in_dict(config_dict, replacements, context_name="test config")
 
     return resolved_config
+
+
+def cluster_target_output_label(cluster_node_key: str) -> str:
+    """
+    Stable label for per-node benchmark output directories.
+
+    Uses the cluster ``node_dict`` key (the SSH target string) instead of the remote
+    ``hostname`` command, so the same node does not produce multiple output trees when
+    short and fully-qualified hostnames vary across environments.
+    """
+    if not cluster_node_key:
+        return "unknown_node"
+    return str(cluster_node_key).strip().replace("/", "_")
+
+
+def wan_hf_snapshot_offline_check_commands(snapshot_dir_host: str) -> dict:
+    """
+    Remote-shell checks for a Wan2.2 I2V-A14B-style Hugging Face snapshot (host path).
+
+    Each command prints OK on success and MISSING on failure. This catches the common
+    false positive where the snapshot directory exists while `hf download` is still
+    running or LFS pointer files were not fully materialized.
+
+    Intended for snapshots of `Wan-AI/Wan2.2-I2V-A14B` (and forks with the same tree).
+    Callers should only run these when `model_repo` is known to use this layout.
+    """
+    root = snapshot_dir_host.rstrip('/')
+    checks = {}
+
+    def ok_file(rel: str) -> str:
+        return f"test -f {shlex.quote(os.path.join(root, *rel.split('/')))} && echo OK || echo MISSING"
+
+    checks['configuration.json'] = ok_file('configuration.json')
+    checks['low_noise_model/config.json'] = ok_file('low_noise_model/config.json')
+    checks['high_noise_model/config.json'] = ok_file('high_noise_model/config.json')
+
+    low_dir = shlex.quote(os.path.join(root, 'low_noise_model'))
+    high_dir = shlex.quote(os.path.join(root, 'high_noise_model'))
+    checks['low_noise diffusion shards (6 x >500MiB)'] = (
+        f's=$(find -L {low_dir} -maxdepth 1 -type f -name "diffusion_pytorch_model-*.safetensors" '
+        f'-size +500M 2>/dev/null | wc -l); test "$s" -eq 6 && echo OK || echo MISSING'
+    )
+    checks['high_noise diffusion shards (6 x >500MiB)'] = (
+        f's=$(find -L {high_dir} -maxdepth 1 -type f -name "diffusion_pytorch_model-*.safetensors" '
+        f'-size +500M 2>/dev/null | wc -l); test "$s" -eq 6 && echo OK || echo MISSING'
+    )
+
+    vae = shlex.quote(os.path.join(root, 'Wan2.1_VAE.pth'))
+    t5 = shlex.quote(os.path.join(root, 'models_t5_umt5-xxl-enc-bf16.pth'))
+    checks['Wan2.1_VAE.pth (>100MiB, not pointer-only)'] = (
+        f"test -f {vae} && test -n \"$(find -L {vae} -size +100M 2>/dev/null)\" && echo OK || echo MISSING"
+    )
+    checks['models_t5_umt5-xxl-enc-bf16.pth (>1GiB, not pointer-only)'] = (
+        f"test -f {t5} && test -n \"$(find -L {t5} -size +1G 2>/dev/null)\" && echo OK || echo MISSING"
+    )
+
+    return checks
 
 
 def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, env_vars=None):

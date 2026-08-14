@@ -1,4 +1,6 @@
 # cvs/lib/unittests/test_utils_lib.py
+import os
+import shlex
 import unittest
 from unittest.mock import patch
 
@@ -18,6 +20,36 @@ class TestUtilsLib(unittest.TestCase):
         out_dict = {'host1': 'some output success'}
         utils_lib.scan_test_results(out_dict)
         mock_fail_test.assert_not_called()
+
+    def test_cluster_target_output_label_strips_and_sanitizes(self):
+        self.assertEqual(utils_lib.cluster_target_output_label("  node1.example.com  "), "node1.example.com")
+        self.assertEqual(utils_lib.cluster_target_output_label("a/b"), "a_b")
+        self.assertEqual(utils_lib.cluster_target_output_label(""), "unknown_node")
+
+    def test_get_model_from_rocm_smi_output_matches_marketing_name(self):
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI300X'), 'mi300x')
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI325X'), 'mi325')
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI350X'), 'mi350')
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output('Card series: AMD Instinct MI355X'), 'mi355')
+
+    def test_get_model_from_rocm_smi_output_falls_back_to_device_id_for_mi350(self):
+        smi_output = 'Device Name:        AMD Radeon Graphics\nDevice ID:          0x75a0\nGFX Version:        gfx950\n'
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output(smi_output), 'mi350')
+
+    def test_get_model_from_rocm_smi_output_defaults_to_mi300x_when_unrecognized(self):
+        smi_output = 'Device Name:        AMD Radeon Graphics\nDevice ID:          0x1234\n'
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output(smi_output), 'mi300x')
+
+    def test_wan_hf_snapshot_offline_check_commands_paths_quoted(self):
+        snap_root = '/data/my hf cache/snapshots/abc123'
+        cmds = utils_lib.wan_hf_snapshot_offline_check_commands(snap_root)
+        self.assertIn('configuration.json', cmds)
+        self.assertIn('low_noise diffusion shards (6 x >500MiB)', cmds)
+        quoted_cfg = shlex.quote(os.path.join(snap_root, 'configuration.json'))
+        self.assertIn(quoted_cfg, cmds['configuration.json'])
+        for label, cmd in cmds.items():
+            self.assertIn('OK', cmd, msg=label)
+            self.assertIn('MISSING', cmd, msg=label)
 
 
 class TestResolveTestConfigPlaceholdersAorta(unittest.TestCase):
