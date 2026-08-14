@@ -10,10 +10,12 @@ All rights reserved.
 
 import json
 import pytest
+import queue
 import re
 import socket
 import shlex
 import subprocess
+import threading
 
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
@@ -136,23 +138,59 @@ class LocalPssh:
             log.info("%s", out)
         return {self.host_list[0]: out}
 
-    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True, inactivity_timeout=None):
         # Run different commands; map 1:1 with host_list ordering
         out = {}
         for host, cmd in zip(self.host_list, cmd_list):
-            completed = subprocess.run(
-                cmd,
-                shell=True,
-                text=True,
-                capture_output=True,
-                timeout=timeout if timeout is None else int(timeout),
-            )
-            out_str = (completed.stdout or "") + (completed.stderr or "")
-            if print_console:
-                log.info(f"cmd = {_redact_secrets(cmd)}")
-                log.info("%s", out_str)
+            if inactivity_timeout is not None:
+                out_str = self._exec_with_inactivity_timeout(cmd, inactivity_timeout, print_console)
+            else:
+                completed = subprocess.run(
+                    cmd,
+                    shell=True,
+                    text=True,
+                    capture_output=True,
+                    timeout=timeout if timeout is None else int(timeout),
+                )
+                out_str = (completed.stdout or "") + (completed.stderr or "")
+                if print_console:
+                    log.info(f"cmd = {_redact_secrets(cmd)}")
+                    log.info("%s", out_str)
             out[host] = out_str
         return out
+
+    def _exec_with_inactivity_timeout(self, cmd, inactivity_timeout, print_console):
+        # Mirrors Pssh's per-line inactivity timeout: resets on every output line, kills the
+        # process only when nothing is printed for `inactivity_timeout` seconds.
+        if print_console:
+            log.info(f"cmd = {_redact_secrets(cmd)}")
+        proc = subprocess.Popen(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        line_queue = queue.Queue()
+
+        def _reader():
+            for line in proc.stdout:
+                line_queue.put(line)
+            line_queue.put(None)
+
+        reader_thread = threading.Thread(target=_reader, daemon=True)
+        reader_thread.start()
+
+        lines = []
+        while True:
+            try:
+                line = line_queue.get(timeout=inactivity_timeout)
+            except queue.Empty:
+                proc.kill()
+                proc.wait()
+                lines.append(f"[LocalPssh] Command killed after {inactivity_timeout}s of inactivity\n")
+                break
+            if line is None:
+                break
+            lines.append(line)
+            if print_console:
+                log.info("%s", line.rstrip("\n"))
+        proc.wait()
+        return "".join(lines)
 
 
 # =============================================================================
@@ -510,6 +548,9 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     """
     Run FLUX.1-dev text-to-image benchmark inside pytorch-xdit container on all nodes in parallel.
 
+    On success, verifies non-empty ``results/timing.json`` and at least one non-empty ``flux_*.png``
+    under each node's output tree so a pass is meaningful before parse/threshold validation.
+
     Executes torchrun with configured parameters and mounts:
     - HF cache to /hf_home
     - Output directory to /outputs
@@ -671,7 +712,12 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     try:
         # Run benchmarks on all nodes in parallel
         log.info("Starting benchmarks (this may take several minutes)...")
-        benchmark_results = s_phdl.exec_cmd_list(docker_cmds, timeout=1800)  # 30 min timeout
+        # Measured live on the WAN22 benchmark (same load/compile pattern): the silent gap
+        # between checkpoint-shard loading and the next log line (torch.compile) varies with
+        # node/JIT-cache state and has been observed anywhere from ~5 to 15+ minutes; 300s and
+        # 900s both falsely killed healthy runs. 1800s gives margin above the worst case seen
+        # so far while still failing a genuine hang well before the SLURM allocation runs out.
+        benchmark_results = s_phdl.exec_cmd_list(docker_cmds, inactivity_timeout=1800)
 
         log.info("Benchmarks completed on all nodes")
 
@@ -693,8 +739,32 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
 
         if failed_nodes:
             fail_test(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
+        else:
+            art_verify_cmds = []
+            for node in s_phdl.host_list:
+                od = f"{output_base_dir}/flux_{node_to_out_label[node]}_outputs"
+                odq = shlex.quote(od)
+                art_verify_cmds.append(
+                    f'tj=$(find {odq} -type f -path \'*/results/timing.json\' 2>/dev/null | head -1); '
+                    f'pf=$(find {odq} -type f -name \'flux_*.png\' 2>/dev/null | head -1); '
+                    f'test -n "$tj" && test -s "$tj" && test -n "$pf" && test -s "$pf" '
+                    f"&& echo ART_OK || echo ART_MISSING"
+                )
+            art_res = s_phdl.exec_cmd_list(art_verify_cmds, print_console=False)
+            missing_art = [n for n, out in art_res.items() if "ART_OK" not in (out or "")]
+            if missing_art:
+                fail_test(
+                    f"Benchmark logs looked clean but expected artifacts were missing on {len(missing_art)} node(s): "
+                    f"{', '.join(missing_art)}. Expected non-empty results/timing.json and at least one non-empty "
+                    f"flux_*.png under each node's flux_<cluster_target>_outputs directory."
+                )
+            log.info(
+                "Run step verified: non-empty timing.json and flux_*.png present on all %s node(s).",
+                len(s_phdl.host_list),
+            )
 
     except Exception as e:
+        docker_lib.kill_docker_container(s_phdl, container_name)
         fail_test(f"Benchmark execution failed with exception: {e}")
 
     # For convenience, store the single-node output dir so parsing can be strict and avoid
