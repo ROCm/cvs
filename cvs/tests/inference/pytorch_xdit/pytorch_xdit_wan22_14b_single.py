@@ -17,6 +17,7 @@ import subprocess
 
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
+    cluster_target_output_label,
     fail_test,
     update_test_result,
     get_model_from_rocm_smi_output,
@@ -421,10 +422,13 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     compile_flag = "--compile" if wan_params['compile'] else ""
     torchrun_nproc = wan_params['torchrun_nproc']
 
-    # Get hostnames from all nodes
-    log.info(f"Getting hostnames from {len(s_phdl.host_list)} node(s)")
-    hostname_result = s_phdl.exec('hostname')
-    node_to_hostname = {node: hostname_result[node].strip() for node in s_phdl.host_list}
+    # Output dirs use cluster SSH targets (node_dict keys), not `hostname`, to avoid FQDN drift.
+    log.info(f"Resolving output directory labels for {len(s_phdl.host_list)} node(s)")
+    hostname_result = s_phdl.exec('hostname', print_console=False)
+    node_to_hostname = {node: (hostname_result.get(node, "") or "").strip() or node for node in s_phdl.host_list}
+    node_to_out_label = {node: cluster_target_output_label(node) for node in s_phdl.host_list}
+    for node in s_phdl.host_list:
+        log.info(f"Node {node}: output label '{node_to_out_label[node]}' (hostname: {node_to_hostname[node]})")
 
     # Prefer the resolved checkpoint dir computed in test_verify_hf_cache_or_download.
     ckpt_dir = inference_dict.get("_resolved_ckpt_dir_container")
@@ -475,8 +479,8 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     docker_cmds = []
 
     for node in s_phdl.host_list:
-        hostname = node_to_hostname[node]
-        output_dir = f"{output_base_dir}/wan_22_{hostname}_outputs"
+        out_label = node_to_out_label[node]
+        output_dir = f"{output_base_dir}/wan_22_{out_label}_outputs"
         outputs_dir = f"{output_dir}/outputs"
 
         # Create output directory command
@@ -511,7 +515,7 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
             f"{torchrun_cmd}"
         )
         docker_cmds.append(docker_cmd)
-        log.info(f"Node {node} ({hostname}) will write to: {output_dir}")
+        log.info(f"Node {node} will write to: {output_dir}")
 
     # Create output directories on all nodes in parallel
     log.info(f"Creating output directories on {len(s_phdl.host_list)} node(s)")
@@ -550,8 +554,10 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     except Exception as e:
         fail_test(f"Benchmark execution failed with exception: {e}")
 
-    # Note: _test_output_dir is no longer set since we run on multiple nodes.
-    # The parsing test will use output_base_dir to find all wan_22_*_outputs directories.
+    # Single-node: pin the run output dir so parse does not depend on probing hostnames later.
+    if len(getattr(s_phdl, "host_list", []) or []) == 1:
+        only_node = s_phdl.host_list[0]
+        inference_dict["_test_output_dir"] = f"{output_base_dir}/wan_22_{node_to_out_label[only_node]}_outputs"
 
     update_test_result()
 
@@ -571,15 +577,13 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
 
     output_dir = inference_dict.get('_test_output_dir')
     if not output_dir:
-        # Allow running this test standalone by deriving the output directory
-        # from the configured output_base_dir and current hostname.
+        # Standalone parse: derive from cluster target keys (same as run step).
         try:
             head_node = s_phdl.host_list[0]
-            hostname_out = s_phdl.exec('hostname', print_console=False)
-            hostname = hostname_out.get(head_node, '').strip() or head_node
+            out_label = cluster_target_output_label(head_node)
             output_base_dir = inference_dict.get('output_base_dir')
             if output_base_dir:
-                output_dir = f"{output_base_dir}/wan_22_{hostname}_outputs"
+                output_dir = f"{output_base_dir}/wan_22_{out_label}_outputs"
                 log.info(f"Derived output directory: {output_dir}")
         except Exception:
             output_dir = None
@@ -601,15 +605,7 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
     agg, agg_errors = None, []
     if base_dir and node_count > 1:
         # Filter aggregation to the current nodes only (avoid mixing with stale dirs).
-        try:
-            hostnames = s_phdl.exec("hostname", print_console=False)
-            expected_dirnames = []
-            for _, hn in (hostnames or {}).items():
-                h = (hn or "").strip()
-                if h:
-                    expected_dirnames.append(f"wan_22_{h}_outputs")
-        except Exception:
-            expected_dirnames = []
+        expected_dirnames = [f"wan_22_{cluster_target_output_label(n)}_outputs" for n in s_phdl.host_list]
 
         agg, agg_errors = WanOutputParser.parse_runs_under_base_dir(
             base_dir=base_dir,
