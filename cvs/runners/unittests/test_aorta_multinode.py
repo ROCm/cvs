@@ -12,11 +12,14 @@ All rights reserved.
 
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import cvs.runners.aorta as aorta_mod
+from cvs.runners._base_runner import RunStatus
 from cvs.runners.aorta import (
     AortaConfig,
     AortaDockerConfig,
@@ -266,6 +269,146 @@ class TestValidateConfigChecksTrainScriptInTorchrunMode(unittest.TestCase):
                 any("train_script" in e for e in errors),
                 f"train_script should not be required in script mode, got: {errors}",
             )
+
+
+class TestRunBoundedParallel(unittest.TestCase):
+    def test_all_tasks_succeed(self):
+        tasks = {"a": lambda: 1, "b": lambda: 2}
+        results, errors, timed_out = AortaRunner._run_bounded_parallel(tasks, timeout_seconds=5)
+        self.assertEqual(results, {"a": 1, "b": 2})
+        self.assertEqual(errors, {})
+        self.assertEqual(timed_out, [])
+
+    def test_task_exception_is_captured_per_key(self):
+        def boom():
+            raise ValueError("bad")
+
+        tasks = {"good": lambda: "ok", "bad": boom}
+        results, errors, timed_out = AortaRunner._run_bounded_parallel(tasks, timeout_seconds=5)
+        self.assertEqual(results, {"good": "ok"})
+        self.assertIsInstance(errors["bad"], ValueError)
+        self.assertEqual(timed_out, [])
+
+    def test_hung_task_times_out_without_blocking_caller(self):
+        never_set = threading.Event()
+
+        def hang():
+            never_set.wait()
+            return "unreachable"
+
+        tasks = {"fast": lambda: "ok", "stuck": hang}
+        start = time.time()
+        results, errors, timed_out = AortaRunner._run_bounded_parallel(tasks, timeout_seconds=0.05)
+        elapsed = time.time() - start
+
+        self.assertLess(elapsed, 0.5)
+        self.assertEqual(results, {"fast": "ok"})
+        self.assertEqual(errors, {})
+        self.assertEqual(timed_out, ["stuck"])
+        never_set.set()
+
+    def test_hung_task_runs_on_daemon_thread(self):
+        # Proves a stuck node cannot hang the whole process at interpreter exit
+        # (CPython's atexit joins every non-daemon thread regardless of any
+        # shutdown(wait=False) call the caller might make on an executor).
+        captured = []
+        never_set = threading.Event()
+
+        def hang():
+            captured.append(threading.current_thread())
+            never_set.wait()
+
+        AortaRunner._run_bounded_parallel({"stuck": hang}, timeout_seconds=0.05)
+
+        self.assertEqual(len(captured), 1)
+        self.assertTrue(captured[0].daemon)
+        self.assertTrue(captured[0].is_alive())
+        never_set.set()
+        captured[0].join(timeout=1)
+
+
+class TestRunMultiNodeTimeout(unittest.TestCase):
+    def test_hung_node_times_out_without_blocking_run(self):
+        r = _make_runner(nodes=["10.0.0.1", "10.0.0.2"], aorta_path="/tmp/aorta")
+        r.config.timeout_seconds = 0.05
+
+        def fake_run_single_node(*, node, node_rank, launch_cmd, env):
+            if node == "10.0.0.2":
+                time.sleep(0.3)
+            return (node, 0, "ok")
+
+        with (
+            patch.object(r, "_run_single_node", side_effect=fake_run_single_node),
+            patch.object(r, "_pick_master_port", return_value=29500),
+        ):
+            start = time.time()
+            result = r.run()
+            elapsed = time.time() - start
+
+        self.assertLess(elapsed, 0.25)
+        self.assertEqual(result.status, RunStatus.TIMEOUT)
+        self.assertEqual(result.exit_codes["10.0.0.1"], 0)
+        self.assertEqual(result.exit_codes["10.0.0.2"], -1)
+        self.assertIn("Timed out", result.stdout["10.0.0.2"])
+
+
+class TestSetupTimeout(unittest.TestCase):
+    def test_hung_node_times_out_without_blocking_setup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r = _make_runner(nodes=["10.0.0.1", "10.0.0.2"], aorta_path=tmp)
+            r.config.timeout_seconds = 0.05
+
+            def fake_setup_single_node(node, cancel_event):
+                if node == "10.0.0.2":
+                    time.sleep(0.3)
+                return (node, True, None)
+
+            with patch.object(r, "_setup_single_node", side_effect=fake_setup_single_node):
+                start = time.time()
+                ok = r.setup()
+                elapsed = time.time() - start
+
+            self.assertFalse(ok)
+            self.assertLess(elapsed, 0.25)
+
+
+class TestSetupSingleNodeCancelledLate(unittest.TestCase):
+    def test_container_launched_after_cancel_is_torn_down_not_registered(self):
+        r = _make_runner(nodes=["10.0.0.1"], aorta_path="/tmp/aorta")
+        fake_container = Mock()
+        cancel_event = threading.Event()
+        cancel_event.set()
+
+        with (
+            patch.object(r, "_connect_docker", return_value=Mock()),
+            patch.object(r, "_cleanup_existing_containers"),
+            patch.object(r, "_launch_container", return_value=fake_container),
+        ):
+            node, success, error = r._setup_single_node("10.0.0.1", cancel_event)
+
+        self.assertFalse(success)
+        self.assertIn("timed out", error.lower())
+        self.assertNotIn("10.0.0.1", r._containers)
+        fake_container.stop.assert_called_once()
+        fake_container.remove.assert_called_once()
+
+    def test_container_launched_before_cancel_is_registered_normally(self):
+        r = _make_runner(nodes=["10.0.0.1"], aorta_path="/tmp/aorta")
+        r.config.skip_rccl_build = True
+        fake_container = Mock()
+        cancel_event = threading.Event()
+
+        with (
+            patch.object(r, "_connect_docker", return_value=Mock()),
+            patch.object(r, "_cleanup_existing_containers"),
+            patch.object(r, "_launch_container", return_value=fake_container),
+        ):
+            node, success, error = r._setup_single_node("10.0.0.1", cancel_event)
+
+        self.assertTrue(success)
+        self.assertIsNone(error)
+        self.assertIs(r._containers["10.0.0.1"], fake_container)
+        fake_container.stop.assert_not_called()
 
 
 if __name__ == "__main__":
