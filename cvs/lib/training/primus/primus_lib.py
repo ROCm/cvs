@@ -44,6 +44,7 @@ TRAINING_RESULT_PATTERNS = {
     ],
     'tokens_per_gpu': [
         r'tokens/s/GPU inst/harmonic mean:\s+[0-9.]+/([0-9.]+)',      # harmonic mean from X/Y (iter 3+)
+        r'tokens per GPU \(tokens/s/GPU\):\s+[0-9.]+/([0-9.]+)',      # avg from X/Y (iter 3+)
     ],
     'elapsed_time_per_iteration': [
         r'elapsed time per iteration \(ms\):\s+[0-9.]+/([0-9.]+)',    # avg from X/Y (iter 3+)
@@ -68,7 +69,7 @@ TRAINING_RESULT_PATTERNS = {
 # tail patterns return no match.
 TRAINING_ITERATION_PATTERNS = {
     'throughput_per_gpu': r'throughput per GPU \(TFLOP/s/GPU\):\s+([0-9.]+)',
-    'tokens_per_gpu': r'tokens/s/GPU inst/harmonic mean:\s+([0-9.]+)',
+    'tokens_per_gpu': r'(?:tokens/s/GPU inst/harmonic mean|tokens per GPU \(tokens/s/GPU\)):\s+([0-9.]+)',
     'elapsed_time_per_iteration': r'elapsed time per iteration \(ms\):\s+([0-9.]+)',
     'lm_loss': r'lm loss:\s+([0-9.E+\-]+)',
     'grad_norm': r'grad norm:\s+([0-9.]+)',
@@ -79,12 +80,12 @@ TRAINING_ITERATION_PATTERNS = {
 # Matches both log formats for progress detection (no capture group needed).
 TRAINING_PROGRESS_PATTERNS = [
     r'throughput per GPU \(TFLOP/s/GPU\):\s+[0-9.]+(?:/[0-9.]+)?',
-    r'tokens/s/GPU inst/harmonic mean:\s+[0-9.]+(?:/[0-9.]+)?',
+    r'(?:tokens/s/GPU inst/harmonic mean|tokens per GPU \(tokens/s/GPU\)):\s+[0-9.]+(?:/[0-9.]+)?',
 ]
 
 TRAINING_NAN_PATTERNS = [
     r'throughput per GPU \(TFLOP/s/GPU\):\s+(?:NaN|Inf)',
-    r'tokens/s/GPU inst/harmonic mean:\s+(?:NaN|Inf)',
+    r'(?:tokens/s/GPU inst/harmonic mean|tokens per GPU \(tokens/s/GPU\)):\s+(?:NaN|Inf)',
     r'lm loss:\s+(?:NaN|Inf)',
 ]
 
@@ -319,19 +320,26 @@ class PrimusTrainingJob:
         """Primus reads tokenizer directly from the HF repo — no local file needed."""
         return False
 
-    def _batch_size_args(self):
-        """Return batch size CLI args for the primus-cli command.
+    def _training_args(self):
+        """Return per-framework CLI args (batch sizes + training iterations) for primus-cli.
 
-        megatron:   --micro_batch_size <mbs> --global_batch_size <gbs>
-        torchtitan: --training.local_batch_size=<mbs>
-        jax:        --per_device_batch_size <mbs>
+        megatron:   --micro_batch_size <mbs> --global_batch_size <gbs> --train_iters <n>
+        torchtitan: --training.local_batch_size=<mbs> --training.steps <n>
+        jax:        --per_device_batch_size <mbs> --steps <n>
         """
         if self.primus_framework == 'megatron':
-            return f'--micro_batch_size {self.micro_batch_size} --global_batch_size {self.global_batch_size}'
+            return (
+                f'--micro_batch_size {self.micro_batch_size} '
+                f'--global_batch_size {self.global_batch_size} '
+                f'--train_iters {self.iterations}'
+            )
         if self.primus_framework == 'torchtitan':
-            return f'--training.local_batch_size={self.micro_batch_size}'
+            return (
+                f'--training.local_batch_size={self.micro_batch_size} '
+                f'--training.steps {self.iterations}'
+            )
         if self.primus_framework == 'jax':
-            return f'--per_device_batch_size {self.micro_batch_size}'
+            return f'--per_device_batch_size {self.micro_batch_size} --steps {self.iterations}'
         return ''
 
     def _exp_config_path(self):
@@ -456,7 +464,7 @@ class PrimusTrainingJob:
 
             for i in range(len(self.orch.hosts)):
                 log_file = f'{self.combo_log_dir}/out-node{i}/training.log'
-                batch_args = self._batch_size_args()
+                batch_args = self._training_args()
                 full_cmd = (
                     env_exports
                     + f'cd {self.primus_root} && '
@@ -476,7 +484,7 @@ class PrimusTrainingJob:
                 self.job_cmd_list.append(script_cmd)
         else:
             log_file = f'{self.combo_log_dir}/out-node0/training.log'
-            batch_args = self._batch_size_args()
+            batch_args = self._training_args()
             self.job_cmd = (
                 env_exports
                 + f'cd {self.primus_root} && '
@@ -498,6 +506,15 @@ class PrimusTrainingJob:
         log.info('start training job')
         log.info('%s', self.job_cmd_list)
         log.info('%s', self.job_cmd)
+
+        exp_full_path = f'{self.primus_root}/{self._exp_config_path()}'
+        out_dict = self.orch.exec(f'test -f {exp_full_path} && echo EXISTS || echo MISSING')
+        output = list((out_dict or {}).values())[0] if out_dict else ''
+        if 'MISSING' in output:
+            log.error('Primus EXP config path: %s', exp_full_path)
+            fail_test(f'Primus EXP config not found in container: {exp_full_path}')
+            return
+
         n = len(self.orch.hosts)
 
         self.orch.exec_cmd_list([

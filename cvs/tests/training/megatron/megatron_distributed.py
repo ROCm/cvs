@@ -255,8 +255,14 @@ def test_metric(variant_config, micro_batch_size, global_batch_size, precision, 
     if combo_key not in train_res_dict:
         pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run)")
 
+    actuals_raw = train_res_dict[combo_key]
+    request.node.user_properties.append(("training_log_tail", actuals_raw.get("_log_tail", "")))
+    actuals = {f"training.{k}": float(v[-1]) for k, v in actuals_raw.items() if v and not k.startswith("_")}
+
     if not variant_config.enforce_thresholds:
-        log.info("enforce_thresholds=false; skipping verdict for combo '%s'", combo_key)
+        log.info("enforce_thresholds=false; record-only for combo '%s'", combo_key)
+        for metric, value in actuals.items():
+            log.info("  RECORD  %s: actual=%s", metric, value)
         return
 
     cell = variant_config.cell_key(combo_key)
@@ -264,10 +270,6 @@ def test_metric(variant_config, micro_batch_size, global_batch_size, precision, 
     if not thresholds:
         log.warning("no thresholds defined for cell '%s'; skipping threshold checks", cell)
         return
-
-    actuals_raw = train_res_dict[combo_key]
-    request.node.user_properties.append(("training_log_tail", actuals_raw.get("_log_tail", "")))
-    actuals = {f"training.{k}": float(v[-1]) for k, v in actuals_raw.items() if v and not k.startswith("_")}
 
     log.info("--- Threshold check for combo '%s' ---", combo_key)
     violations = []
