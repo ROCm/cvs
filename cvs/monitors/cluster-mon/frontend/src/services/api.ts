@@ -107,6 +107,39 @@ class ApiClient {
   async installPackage(packageId: string) {
     return this.post('/packages/install', { package: packageId })
   }
+
+  async getRCCLStatus() {
+    return this.request('/rccl/status')
+  }
+
+  async getRCCLCommunicators() {
+    return this.request('/rccl/communicators')
+  }
+
+  async getRCCLCommunicator(commHash: string) {
+    return this.request(`/rccl/communicators/${commHash}`)
+  }
+
+  async getRCCLEvents(since?: number, until?: number, type?: string) {
+    const params = new URLSearchParams()
+    if (since) params.set('since', since.toString())
+    if (until) params.set('until', until.toString())
+    if (type) params.set('type', type)
+    const query = params.toString()
+    return this.request(`/rccl/events${query ? '?' + query : ''}`)
+  }
+
+  async getCollectorsStatus() {
+    return this.request('/collectors/status')
+  }
+
+  async getRCCLPerformance() {
+    return this.request('/rccl/performance')
+  }
+
+  async getRCCLPerformanceHistory(count = 50) {
+    return this.request(`/rccl/performance/history?count=${count}`)
+  }
 }
 
 export const api = new ApiClient(API_BASE_URL)

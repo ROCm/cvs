@@ -858,3 +858,55 @@ def get_gpu_numa_dict(phdl):
 
     log.info("%s", gpu_numa_dict)
     return gpu_numa_dict
+
+
+def get_ucx_net_devices(phdl):
+    """
+    Build UCX_NET_DEVICES string from backend NIC RDMA device names.
+
+    Uses get_gpu_nic_mapping_dict() which maps each GPU card to its nearest
+    backend NIC. The 'rdma_dev' key gives the IB/RDMA device name (e.g. bnxt_re0).
+    UCX_NET_DEVICES requires IB device names with port suffix ':1'
+    (e.g. bnxt_re0:1), NOT ethernet names (ens20np0).
+
+    Raises:
+        ValueError: if the GPU-NIC topology map is empty, if any card is
+            missing an rdma_dev mapping, or if the resulting device list
+            would be empty.
+
+    Returns:
+        str: Comma-separated UCX_NET_DEVICES string,
+             e.g. 'bnxt_re0:1,bnxt_re1:1,bnxt_re2:1,...'
+    """
+    out_dict = get_gpu_nic_mapping_dict(phdl)
+    if not out_dict:
+        raise ValueError(
+            'get_gpu_nic_mapping_dict() returned an empty topology map; '
+            'cannot determine UCX_NET_DEVICES (no nodes found).'
+        )
+
+    # Use node_0 as representative — NFS/homogeneous cluster, all nodes identical
+    node_0 = next(iter(out_dict))
+    card_dict = out_dict[node_0]
+    if not card_dict:
+        raise ValueError(
+            f'No GPU cards found for node {node_0!r} in the topology map; cannot determine UCX_NET_DEVICES.'
+        )
+
+    ucx_net_devices_list = []
+    for card_no, mapping in card_dict.items():
+        rdma_dev = mapping.get('rdma_dev')
+        if not rdma_dev:
+            raise ValueError(
+                f'Card {card_no!r} on node {node_0!r} has no rdma_dev mapping '
+                '(PCI-bus match to a backend NIC failed); cannot determine '
+                'UCX_NET_DEVICES.'
+            )
+        ucx_net_devices_list.append(f'{rdma_dev}:1')  # UCX needs port suffix :1
+
+    if not ucx_net_devices_list:
+        raise ValueError('Resolved zero UCX net devices; refusing to build an empty UCX_NET_DEVICES value.')
+
+    ucx_net_devices = ','.join(ucx_net_devices_list)
+    log.info(f'Auto-detected UCX_NET_DEVICES: {ucx_net_devices}')
+    return ucx_net_devices

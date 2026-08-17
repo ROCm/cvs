@@ -1,0 +1,23 @@
+RCCL version 2.28.3 compiled with ROCm "7.2.0.0-43-fc0010cf6a"
+HIP runtime version 70226015, amdgpu driver version 70226015
+
+Job summary
+===========
+
+  Nodes  Processes         GPUs  Processes     GPUs
+(total)   per node  per process    (total)  (total)
+      1          8            1          8        8
+
+Communicators... (0.00s)
+=============
+
+Group     Comms     Nodes     Ranks     Ranks     Ranks    Status  Errors
+    #  in group  per comm  per node  per comm  in group
+    0         1         1         8         8         8   RUNNING      OK
+
+Errors
+======
+
+Warnings
+========
+

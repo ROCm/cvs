@@ -12,11 +12,13 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 """
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
+import math
 from pathlib import Path
 from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
-import math
+import warnings
 
 from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 
@@ -237,7 +239,7 @@ class AortaBenchmarkResult(BaseModel):
 class ClusterNodeConfig(BaseModel):
     """Schema for a single node entry in cluster.json node_dict."""
 
-    model_config = ConfigDict(extra="allow")  # Allow extra fields like bmc_ip
+    model_config = ConfigDict(extra="allow")  # Allow extra fields like bmc_ip, rack_id
 
     vpc_ip: str = Field(description="VPC IP or hostname for inter-node communication")
     bmc_ip: Optional[str] = Field(default=None, description="BMC IP for out-of-band management")
@@ -249,6 +251,66 @@ class HeadNodeConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     mgmt_ip: str = Field(description="Management IP of head node")
+
+
+class RackConfig(BaseModel):
+    """
+    Schema for a single rack entry inside the 'racks' block of cluster.json.
+
+    A rack groups compute trays (referenced via node_dict rack_id) and the
+    switch trays physically associated with that rack.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    platform: Optional[str] = Field(default=None, description="ARC platform name, e.g. 'HeliosP' or 'HeliosR'")
+    arc_controller: Optional[str] = Field(
+        default=None,
+        description="IP of the ARC controller node. Defaults to first sorted node_dict entry with matching rack_id.",
+    )
+    switch_trays: List[str] = Field(
+        default_factory=list,
+        description="IPs of switch trays in this rack",
+    )
+    rmc: Optional[str] = Field(default=None, description="IP of the Rack Management Controller")
+
+
+class RacksBlock(BaseModel):
+    """
+    Schema for the top-level 'racks' field in cluster.json.
+
+    Holds optional global switch credentials and one RackConfig entry per rack
+    (keyed by rack ID, e.g. 'rack-01'). Extra keys (rack IDs) are accepted via
+    extra='allow' and retrieved via get_racks().
+
+    Switch credentials are fleet-wide (homogeneous across all racks). Per-rack
+    overrides are not supported in the current exec path; add them to RackConfig
+    when that need arises.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    switch_ssh_user: Optional[str] = Field(
+        default=None,
+        description="SSH username for all switch trays in every rack.",
+    )
+    switch_ssh_password: Optional[str] = Field(
+        default=None,
+        description="SSH password for all switch trays. Ignored when switch_ssh_key_file is set.",
+    )
+    switch_ssh_key_file: Optional[str] = Field(
+        default=None,
+        description="Path to SSH private key for all switch trays. Takes priority over switch_ssh_password when set.",
+    )
+
+    def get_racks(self) -> Dict[str, RackConfig]:
+        """Return only the rack entries, excluding credential fields."""
+        skip = {'switch_ssh_user', 'switch_ssh_password', 'switch_ssh_key_file'}
+        result = {}
+        for key, value in (self.__pydantic_extra__ or {}).items():
+            if key not in skip and isinstance(value, dict):
+                result[key] = RackConfig(**value)
+        return result
 
 
 class ClusterConfigFile(BaseModel):
@@ -270,6 +332,18 @@ class ClusterConfigFile(BaseModel):
     )
     head_node_dict: Optional[HeadNodeConfig] = Field(default=None, description="Head node configuration")
 
+    racks: Optional[RacksBlock] = Field(
+        default=None,
+        description=(
+            "Rack topology block. Contains optional global switch credentials and one entry per rack "
+            "(keyed by rack ID) listing switch_trays and platform."
+        ),
+    )
+    rack_groups: Optional[RacksBlock] = Field(
+        default=None,
+        description="Deprecated alias for 'racks'. Use 'racks' instead.",
+    )
+
     # Optional fields that may be present
     home_mount_dir_name: Optional[str] = Field(default="home")
     node_dir_name: Optional[str] = Field(default="root")
@@ -287,6 +361,23 @@ class ClusterConfigFile(BaseModel):
         if not self.node_dict:
             raise ValueError("No nodes configured in 'node_dict' - at least one node is required")
         return self
+
+    @model_validator(mode='after')
+    def warn_rack_groups_deprecated(self):
+        """Emit a deprecation warning when the old 'rack_groups' key is used."""
+        import warnings
+
+        if self.rack_groups is not None and self.racks is None:
+            warnings.warn(
+                "'rack_groups' in cluster.json is deprecated. Rename it to 'racks'.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return self
+
+    def get_racks_block(self) -> Optional[RacksBlock]:
+        """Return the active racks block, preferring 'racks' over the deprecated 'rack_groups'."""
+        return self.racks if self.racks is not None else self.rack_groups
 
     @field_validator('username')
     @classmethod
@@ -754,6 +845,85 @@ class PytorchXditFluxConfig(BaseModel):
 # =============================================================================
 
 
+LEGACY_PREFLIGHT_RDMA_PATHS = {
+    "gid_index": "gid_index",
+    "rdma_interfaces": "interfaces",
+}
+
+PREFLIGHT_METADATA_PREFIXES = ("_comment", "_example")
+
+
+def strip_preflight_metadata(value):
+    """Remove documentation-only pseudo-fields before schema validation.
+
+    Preflight JSON files conventionally carry ``_comment*`` and ``_example*``
+    keys so that the files remain self-documenting. They are not runtime
+    options. Strip only those reserved prefixes recursively, preserving strict
+    rejection of every other unknown customer-facing option.
+    """
+    if isinstance(value, dict):
+        return {
+            key: strip_preflight_metadata(item)
+            for key, item in value.items()
+            if not (isinstance(key, str) and key.startswith(PREFLIGHT_METADATA_PREFIXES))
+        }
+    if isinstance(value, list):
+        return [strip_preflight_metadata(item) for item in value]
+    return value
+
+
+def normalize_legacy_preflight_rdma_config(value):
+    """Move the two deprecated node-check RDMA keys to their canonical block.
+
+    Returns a deep-copied configuration and one consolidated warning message,
+    or the original value and ``None`` when no legacy keys are present.
+    Conflicting legacy and canonical values fail rather than silently choosing
+    which RDMA inventory should be tested.
+    """
+    if not isinstance(value, dict):
+        return value, None
+
+    node_check = value.get("node_check")
+    if not isinstance(node_check, dict):
+        return value, None
+
+    legacy_keys = [key for key in LEGACY_PREFLIGHT_RDMA_PATHS if key in node_check]
+    if not legacy_keys:
+        return value, None
+
+    normalized = deepcopy(value)
+    normalized_node_check = normalized["node_check"]
+    connectivity_check = normalized.setdefault("connectivity_check", {})
+    if not isinstance(connectivity_check, dict):
+        raise ValueError(
+            "preflight.connectivity_check must be an object when deprecated node_check RDMA options are used"
+        )
+    rdma = connectivity_check.setdefault("rdma", {})
+    if not isinstance(rdma, dict):
+        raise ValueError(
+            "preflight.connectivity_check.rdma must be an object when deprecated node_check RDMA options are used"
+        )
+
+    migrations = []
+    for legacy_key in legacy_keys:
+        canonical_key = LEGACY_PREFLIGHT_RDMA_PATHS[legacy_key]
+        legacy_value = normalized_node_check.pop(legacy_key)
+        if canonical_key in rdma and rdma[canonical_key] != legacy_value:
+            raise ValueError(
+                f"Conflicting preflight RDMA options: preflight.node_check.{legacy_key} and "
+                f"preflight.connectivity_check.rdma.{canonical_key} must have the same value when both are provided"
+            )
+        rdma.setdefault(canonical_key, legacy_value)
+        migrations.append(f"preflight.node_check.{legacy_key} -> preflight.connectivity_check.rdma.{canonical_key}")
+
+    warning_message = (
+        "Deprecated preflight RDMA configuration detected: "
+        + ", ".join(migrations)
+        + ". Use the preflight.connectivity_check.rdma paths; legacy paths will be removed in a future release."
+    )
+    return normalized, warning_message
+
+
 class PreflightParallelismConfig(BaseModel):
     """Legacy parallelism settings for preflight checks."""
 
@@ -785,14 +955,11 @@ class PreflightDebugConfig(BaseModel):
 class PreflightNodeCheckConfig(BaseModel):
     """Individual node validation settings."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
-    gid_index: str = Field(default="3", description="GID index to check on all RDMA interfaces (typically 3 for RoCE)")
+    enabled: bool = Field(default=True, description="Enable generic GPU node health and ROCm validation")
+    gpus_per_node: int = Field(default=4, ge=1, description="Expected AMD GPU count on each node")
     expected_rocm_version: str = Field(default="6.2.0", description="Expected ROCm version across all cluster nodes")
-    rdma_interfaces: List[str] = Field(
-        default_factory=lambda: ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
-        description="List of specific RDMA interface names to check and test",
-    )
 
 
 class PreflightRdmaConfig(BaseModel):
@@ -801,6 +968,12 @@ class PreflightRdmaConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     connectivity_mode: str = Field(default="basic", description="RDMA connectivity testing: basic, full_mesh, or skip")
+    gid_index: str = Field(default="3", description="GID index to check on all RDMA interfaces (typically 3 for RoCE)")
+    interfaces: List[str] = Field(
+        default_factory=lambda: ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
+        min_length=1,
+        description="RDMA device names checked for presence, GID consistency, and connectivity",
+    )
     nodes_per_full_mesh_group: int = Field(
         default=128,
         ge=2,
@@ -888,12 +1061,222 @@ class PreflightRdmaConfig(BaseModel):
         return v
 
 
+class PreflightL2PingConfig(BaseModel):
+    """Small customer-facing IFoE L2 ping policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=False, description="Enable the mandatory IFoE L2 connectivity gate")
+    pings_per_port: int = Field(default=3, ge=1, description="Ping samples per selected IFoE port pair")
+
+
+class PreflightTransferBenchConfig(BaseModel):
+    """Small customer-facing TransferBench preflight policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=False, description="Enable the mandatory TransferBench preflight gate")
+    scope: str = Field(default="node", description="node for independent runs or cluster for one multi-rank run")
+    profile: str = Field(default="smoketest", description="CVS-supported TransferBench validation profile")
+    message_sizes: List[str] = Field(
+        default_factory=lambda: ["1K", "16M"],
+        min_length=1,
+        description="Message sizes exercised by the selected profile",
+    )
+    iterations: int = Field(default=2, ge=1, description="Validated iterations per test and message size")
+    warmup_iterations: int = Field(default=0, ge=0, description="Warmup iterations before validation")
+
+    @field_validator('scope')
+    @classmethod
+    def validate_transferbench_scope(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in ('node', 'cluster'):
+            raise ValueError("TransferBench scope must be one of: node, cluster")
+        return normalized
+
+    @field_validator('profile')
+    @classmethod
+    def validate_transferbench_profile(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized != 'smoketest':
+            raise ValueError("TransferBench profile must be a CVS-supported profile: smoketest")
+        return normalized
+
+    @field_validator('message_sizes')
+    @classmethod
+    def validate_transferbench_message_sizes(cls, value: List[str]) -> List[str]:
+        normalized = [str(size).strip() for size in value]
+        if any(not size for size in normalized):
+            raise ValueError("TransferBench message_sizes entries must not be empty")
+        return normalized
+
+
+class PreflightIfoeConfig(BaseModel):
+    """MI4XX IFoE admission and data-path checks."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fabric_checks: bool = Field(
+        default=False,
+        description="Enable MI4XX AIFM, AFM, vPOD, station-mask, and IFoE port admission",
+    )
+    l2ping: PreflightL2PingConfig = Field(
+        default_factory=PreflightL2PingConfig,
+        description="Strict IFoE L2 connectivity admission",
+    )
+    transferbench: PreflightTransferBenchConfig = Field(
+        default_factory=PreflightTransferBenchConfig,
+        description="TransferBench IFoE data-path validation",
+    )
+
+
 class PreflightConnectivityCheckConfig(BaseModel):
     """Connectivity check settings by protocol."""
 
     model_config = ConfigDict(extra="allow")
 
     rdma: PreflightRdmaConfig = Field(default_factory=PreflightRdmaConfig, description="RDMA connectivity settings")
+    ifoe: PreflightIfoeConfig = Field(default_factory=PreflightIfoeConfig, description="IFoE connectivity settings")
+
+
+class PreflightNodeSmokeConfig(BaseModel):
+    """Primus node_smoke settings (primus-cli direct -- node_smoke)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    connectivity_mode: str = Field(
+        default="skip",
+        description="Primus node_smoke mode: 'run' (host/GPU/RDMA roll-call) or 'skip' (default)",
+    )
+    auto_setup: bool = Field(
+        default=True,
+        description="Clone/update Primus and prepare venv on each node before node_smoke",
+    )
+    setup_timeout: int = Field(default=600, ge=60, description="SSH timeout in seconds for Primus auto_setup")
+    force_reclone: bool = Field(
+        default=False,
+        description="Remove primus_dir and clone fresh on every run (destructive)",
+    )
+    shared_install: bool = Field(
+        default=True,
+        description=(
+            "When true (default), clone and venv setup run only on the first reachable node; "
+            "other nodes wait for the shared NFS home install. Set false only if each node has "
+            "a local primus_dir/venv_activate path."
+        ),
+    )
+    pip_install_mode: str = Field(
+        default="minimal",
+        description="Venv deps: minimal (torch only), requirements, or skip",
+    )
+    torch_pip_index_url: str = Field(
+        default="https://download.pytorch.org/whl/rocm6.2",
+        description="PyTorch ROCm wheel index URL for minimal pip_install_mode",
+    )
+    primus_git_url: str = Field(
+        default="https://github.com/AMD-AIG-AIMA/Primus.git",
+        description="Primus repository URL for auto_setup clone",
+    )
+    primus_git_branch: str = Field(
+        default="dev/preflight-direct-test",
+        description="Git branch to checkout during auto_setup",
+    )
+    primus_git_recurse_submodules: bool = Field(
+        default=False,
+        description="Clone git submodules during auto_setup (not required for node_smoke)",
+    )
+    primus_dir: str = Field(
+        default="/home/{user-id}/INSTALL/Primus",
+        description="Path to cloned Primus repo under the user's home directory (required when connectivity_mode is 'run')",
+    )
+    venv_activate: str = Field(
+        default="/home/{user-id}/envs/preflight/.venv/bin/activate",
+        description="Path to Python venv activate script on each node (required when connectivity_mode is 'run')",
+    )
+    gpus_per_node: int = Field(default=8, ge=1, description="GPUs per node for node_smoke")
+    master_port: int = Field(default=1234, ge=1024, le=65535, description="Distributed master port for node_smoke")
+    dump_path: str = Field(
+        default="",
+        description="Per-node dump directory for smoke JSON (default: <artifacts_root_dir>/node_smoke)",
+    )
+    expected_rdma_nics: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Hard-fail when training RDMA NIC count differs (default: len(node_check.rdma_interfaces))",
+    )
+    ulimit_l_min_gb: float = Field(default=32.0, ge=0, description="Minimum RLIMIT_MEMLOCK in GiB (0 disables)")
+    shm_min_gb: float = Field(default=8.0, ge=0, description="Minimum /dev/shm size in GiB (0 disables)")
+    skip_dmesg: bool = Field(default=False, description="Skip dmesg error scan (e.g. unprivileged containers)")
+    allow_foreign_procs: bool = Field(
+        default=False,
+        description="Do not FAIL nodes with foreign GPU processes (still reported)",
+    )
+    allowed_procs: str = Field(
+        default="gpuagent,rocm-smi-daemon,amd-smi,dcgm-exporter",
+        description="Comma-separated process names allowed to hold GPUs",
+    )
+    require_tools: str = Field(
+        default="",
+        description="Comma-separated CLI tools that must exist in PATH (empty = warn only)",
+    )
+    nccl_socket_ifname: str = Field(default="", description="NCCL_SOCKET_IFNAME override for node_smoke")
+    gloo_socket_ifname: str = Field(
+        default="", description="GLOO_SOCKET_IFNAME override (defaults to nccl_socket_ifname)"
+    )
+    nccl_ib_hca: str = Field(default="", description="NCCL_IB_HCA override (defaults to node_check.rdma_interfaces)")
+    nccl_ib_gid_index: Optional[int] = Field(
+        default=None,
+        description="NCCL_IB_GID_INDEX override (defaults to node_check.gid_index)",
+    )
+    rdma_nic_allowlist: str = Field(
+        default="",
+        description="Training NIC allowlist for node_smoke (defaults to node_check.rdma_interfaces)",
+    )
+    ssh_timeout: int = Field(default=300, ge=30, description="SSH timeout in seconds for each node_smoke run")
+    tier2_perf: bool = Field(
+        default=False,
+        description=(
+            "Enable Primus node_smoke Tier 2 perf sanity (--tier2-perf): "
+            "8192³ GEMM TFLOPS floor, HBM D2D bandwidth, local multi-GPU RCCL all-reduce"
+        ),
+    )
+    gemm_tflops_min: float = Field(
+        default=600.0,
+        ge=0,
+        description="Tier 2 large GEMM TFLOPS floor (--gemm-tflops-min); used when tier2_perf is true",
+    )
+    hbm_gbs_min: float = Field(
+        default=2000.0,
+        ge=0,
+        description="Tier 2 HBM device-to-device bandwidth floor in GB/s (--hbm-gbs-min)",
+    )
+    rccl_gbs_min: float = Field(
+        default=100.0,
+        ge=0,
+        description="Tier 2 local multi-GPU RCCL all-reduce bandwidth floor in GB/s (--rccl-gbs-min)",
+    )
+    rccl_size_mb: int = Field(
+        default=64,
+        ge=1,
+        description="Tier 2 local RCCL all-reduce message size in MB (--rccl-size-mb)",
+    )
+    rccl_timeout_sec: int = Field(
+        default=120,
+        ge=30,
+        description="Tier 2 local RCCL all-reduce hard timeout in seconds (--rccl-timeout-sec)",
+    )
+    extra_args: List[str] = Field(
+        default_factory=list,
+        description="Additional node_smoke CLI flags forwarded to primus-cli",
+    )
+
+    @field_validator("connectivity_mode")
+    @classmethod
+    def validate_node_smoke_mode(cls, v: str) -> str:
+        valid_modes = ["run", "skip"]
+        if v not in valid_modes:
+            raise ValueError(f"node_smoke.connectivity_mode must be one of: {', '.join(valid_modes)}")
+        return v
 
 
 class PreflightReportingConfig(BaseModel):
@@ -901,7 +1284,7 @@ class PreflightReportingConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    generate_html_report: str = Field(default="true", description="Whether to generate HTML report")
+    generate_html_report: bool = Field(default=True, description="Whether to generate HTML report")
     artifacts_root_dir: str = Field(
         default="/tmp/preflight",
         description=(
@@ -909,8 +1292,8 @@ class PreflightReportingConfig(BaseModel):
             "<artifacts_root_dir>/rdma_connectivity_workspace/<session>/<round>/ on each node (NFS-friendly)."
         ),
     )
-    generate_rdma_pairs_csv: str = Field(
-        default="true",
+    generate_rdma_pairs_csv: bool = Field(
+        default=True,
         description="If true, write preflight_report_*_rdma_pairs.csv beside the HTML report (failed pairs only)",
     )
 
@@ -936,9 +1319,36 @@ class PreflightConfigFile(BaseModel):
     connectivity_check: PreflightConnectivityCheckConfig = Field(
         default_factory=PreflightConnectivityCheckConfig, description="Inter-node connectivity tests"
     )
+    node_smoke: PreflightNodeSmokeConfig = Field(
+        default_factory=PreflightNodeSmokeConfig, description="Primus node_smoke checks"
+    )
     reporting: PreflightReportingConfig = Field(
         default_factory=PreflightReportingConfig, description="Report generation and output settings"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_flat_preflight_checks(cls, value):
+        if not isinstance(value, dict):
+            return value
+        cleaned = strip_preflight_metadata(value)
+        removed = sorted(set(cleaned) & {"node_health", "l2ping", "transferbench"})
+        if removed:
+            raise ValueError(
+                "Unsupported flat preflight block(s): "
+                + ", ".join(removed)
+                + "; use node_check and connectivity_check.ifoe"
+            )
+        normalized, warning_message = normalize_legacy_preflight_rdma_config(cleaned)
+        if warning_message:
+            warnings.warn(warning_message, FutureWarning, stacklevel=2)
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_fabric_prerequisites(self):
+        if self.connectivity_check.ifoe.fabric_checks and not self.node_check.enabled:
+            raise ValueError("connectivity_check.ifoe.fabric_checks requires node_check.enabled=true")
+        return self
 
 
 def validate_config_file(

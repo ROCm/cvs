@@ -41,8 +41,8 @@ You can list available tests using either `cvs run` (with no arguments) or `cvs 
       • ib_perf_bw_test
       • install_ibperf_tools
   
-    cvs.tests.inference.inferencemax (1 test suite)
-      • inferencemax_gpt_oss_120b_single
+    cvs.tests.inference.atom (1 test suite)
+      • atom
   
     cvs.tests.inference.pytorch_xdit (2 test suites)
       • pytorch_xdit_flux1_dev_single
@@ -52,11 +52,8 @@ You can list available tests using either `cvs run` (with no arguments) or `cvs 
       • sglang_deepseek_r1_671b_distributed
       • sglang_llama_70b_distributed
   
-    cvs.tests.inference.vllm (4 test suites)
-      • vllm_deepseek31_685b_single
-      • vllm_gpt_oss_120b_single
-      • vllm_qwen3_235b_single
-      • vllm_qwen3_80b_single
+    cvs.tests.inference.vllm (1 test suite)
+      • vllm
   
     cvs.tests.mori (1 test suite)
       • mori_benchmark_test
@@ -80,7 +77,7 @@ You can list available tests using either `cvs run` (with no arguments) or `cvs 
       • megatron_llama3_1_8b_single
   
   ================================================================================
-  Total: 34 test suites across 1 package(s)
+  Total: 29 test suites across 1 package(s)
 
 
 Run all tests in a file:
@@ -155,7 +152,8 @@ You can list all available host check test cases using the CLI:
     - test_check_numa_balancing
     - test_check_online_memory
     - test_check_pci_accelerators
-    - test_check_pci_speed_width
+    - test_check_gpu_pcie_speed_width
+    - test_check_be_nic_pcie_speed_width
     - test_check_pci_acs
     - test_check_dmesg_driver_errors
 
@@ -267,7 +265,6 @@ You can list all available TransferBench test cases using the CLI:
 .. code:: text
 
   Available tests in transferbench_cvs:
-    - test_transfer_bench_example_tests_1_6_t
     - test_transfer_bench_a2a
     - test_transfer_bench_p2p
     - test_transfer_bench_healthcheck
@@ -628,27 +625,39 @@ Use these scripts to run the Mori tests.
   cvs run mori_benchmark_test --cluster_file input/cluster_file/cluster.json --config_file input/config_file/mori/mi35x_mori_config.json --html=/var/www/html/cvs/mori.html --capture=tee-sys --self-contained-html --log-file=/tmp/mori.log -vvv -s
 
 
-Inferencemax test scripts
+ATOM test scripts
 ------------------------------
 
-You can list all available Inferencemax test cases using the CLI:
+You can list all available ATOM test cases using the CLI:
 
 .. code:: bash
 
-  cvs list inferencemax_gpt_oss_120b_single
+  cvs list atom
 
 .. code:: text
 
-  Available tests in inferencemax_gpt_oss_120b_single:
-    - test_cleanup_stale_containers
-    - test_gpt_oss_120_single_node
-    - test_launch_inference_containers
+  Available tests in atom:
+    - test_launch_container
+    - test_atom_inference
+    - test_print_results_table
+    - test_teardown
 
-Use these scripts to run the Inferencemax tests.
+Use these scripts to run the ATOM tests. Supply your own suite JSON
+(``schema_version: 1`` variant config); see :doc:`../reference/configuration-files/atom`.
+After ``cvs copy-config``, keep **one** ``*threshold.json`` in the same directory as the
+``--config_file`` you pass (per-variant subdirs under ``~/input/.../atom/``).
+Copy-paste lab commands: ``cvs/input/config_file/inference/atom/README.md``.
 
 .. code:: bash
 
-  cvs run inferencemax_gpt_oss_120b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/inferencemax/mi300x_inferencemax_gpt_oss_120b_single.json --html=/var/www/html/cvs/inferencemax.html --capture=tee-sys --self-contained-html --log-file=/tmp/inferencemax.log -vvv -s
+  TS=$(date +%Y%m%d_%H%M%S)
+  cvs run atom \
+    --cluster_file ~/input/cluster_file/atom_cluster.json \
+    --config_file ~/input/config_file/inference/atom/single/mi300x_atom_deepseek-r1_fp8_single.json \
+    --html=~/cvs_results/${TS}_atom-single_mi300x.html \
+    --self-contained-html \
+    --log-file=~/cvs_results/${TS}_atom-single_mi300x.log \
+    -vvv -s
 
 
 Pytorch xdit test scripts
@@ -748,73 +757,45 @@ Use these scripts to run the Sglang tests.
 VLLM test scripts
 ------------------------------
 
-You can list all available VLLM test cases using the CLI:
+vLLM benchmarks use one parametrized suite, ``vllm``, covering both single-node and
+multinode runs — the topology comes from the configuration file, not from the suite name.
+Configuration files live in ``cvs/input/config_file/inference/vllm/``, each with a sibling
+threshold file (see :func:`cvs.lib.inference.utils.vllm_config_loader.load_variant`, or
+:func:`cvs.lib.inference.atom.atom_config_loader.load_variant` for ATOM). Point
+``--config_file`` at one of them and ``--cluster_file`` at a cluster JSON that matches
+your hardware.
 
 .. code:: bash
 
-  cvs list vllm_deepseek31_685b_single
+  cvs list vllm
 
 .. code:: text
 
-  Available tests in vllm_deepseek31_685b_single:
-    - test_cleanup_stale_containers
-    - test_launch_inference_containers
-    - test_print_results_table
-    - test_vllm_inference
+  Available tests in vllm:
+    • test_accuracy_eval
+    • test_discover_topology
+    • test_gpu_metric
+    • test_launch_container
+    • test_metric
+    • test_model_fetch
+    • test_openai_compatible_smoke
+    • test_print_results_table
+    • test_prom_metric
+    • test_setup_sshd
+    • test_teardown
+    • test_vllm_inference
+
+At run time, ``test_vllm_inference`` and the metric tests are parametrized per sweep cell,
+producing names such as ``test_vllm_inference[balanced-conc64]`` from the ``sweep`` block in
+your configuration file.
 
 .. code:: bash
 
-  cvs list vllm_gpt_oss_120b_single
+  cvs run vllm --cluster_file input/cluster_file/cluster_container.json --config_file input/config_file/inference/vllm/mi300x_vllm_llama31-70b_fp8_single.json --html=/var/www/html/cvs/vllm.html --capture=tee-sys --self-contained-html --log-file=/tmp/vllm.log -vvv -s
 
-.. code:: text
-
-  Available tests in vllm_gpt_oss_120b_single:
-    - test_cleanup_stale_containers
-    - test_launch_inference_containers
-    - test_print_results_table
-    - test_vllm_inference
-    
-.. code:: bash
-
-  cvs list vllm_qwen3_235b_single
-
-.. code:: text
-
-  Available tests in vllm_qwen3_235b_single:
-    - test_cleanup_stale_containers
-    - test_launch_inference_containers
-    - test_print_results_table
-    - test_vllm_inference
-
-.. code:: bash
-
-  cvs list vllm_qwen3_80b_single
-
-.. code:: text
-
-  Available tests in vllm_qwen3_80b_single:
-    - test_cleanup_stale_containers
-    - test_launch_inference_containers
-    - test_print_results_table
-    - test_vllm_inference
-
-Use these scripts to run the VLLM tests.
-
-.. code:: bash
-
-  cvs run vllm_deepseek31_685b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/vllm/mi355x_vllm_single.json --html=/var/www/html/cvs/deepseek.html --capture=tee-sys --self-contained-html --log-file=/tmp/deepseek.log -vvv -s
-
-.. code:: bash
-
-  cvs run vllm_gpt_oss_120b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/vllm/mi355x_vllm_single.json --html=/var/www/html/cvs/gpt.html --capture=tee-sys --self-contained-html --log-file=/tmp/gpt.log -vvv -s
-
-.. code:: bash
-
-  cvs run vllm_qwen3_235b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/vllm/mi355x_vllm_single.json --html=/var/www/html/cvs/qwen235.html --capture=tee-sys --self-contained-html --log-file=/tmp/qwen235.log -vvv -s
-
-.. code:: bash
-
-  cvs run vllm_qwen3_80b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/inference/vllm/mi355x_vllm_single.json --html=/var/www/html/cvs/qwen80.html --capture=tee-sys --self-contained-html --log-file=/tmp/qwen80.log -vvv -s
+For the full configuration schema, metrics, and thresholds see
+:doc:`/reference/configuration-files/vllm`; for a step-by-step first run including multinode,
+see :doc:`/how-to/run-vllm-benchmarks`.
 
 
 Test results

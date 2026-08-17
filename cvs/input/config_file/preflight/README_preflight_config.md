@@ -4,12 +4,15 @@ This document explains how to configure the GPU cluster preflight checks system.
 
 ## Overview
 
-The preflight checks system validates essential cluster health before running performance tests like IB performance tests, RCCL training, and inference workloads. It performs four key validations:
+The preflight checks system validates essential cluster health before running performance tests like IB performance tests, RCCL training, and inference workloads. It performs the following validations:
 
-1. **GID Consistency** - Ensures RDMA interfaces have valid GID entries
-2. **RDMA Connectivity** - Tests node-to-node RDMA communication using ibv_rc_pingpong
-3. **ROCm Version Consistency** - Verifies consistent ROCm versions across nodes
-4. **Interface Name Consistency** - Validates RDMA interface naming patterns
+1. **Node Health** - Checks GPU visibility, AMDGPU/KFD, kernel health, and ROCm consistency
+2. **MI4XX Scale-up Fabric Admission** - Optionally validates AIFM/AFM/vPOD membership, station masks, and IFoE port state
+3. **IFoE L2 Connectivity (AIMVT-180; opt-in)** - Optionally runs strict `afmctl test ping` coverage before TransferBench and RDMA
+4. **TransferBench** - Optionally validates the IFoE data path per node or with a multi-rank cluster run
+5. **Primus Node Smoke (opt-in)** - Per-node host / GPU / RDMA roll-call via `primus-cli direct -- node_smoke`
+6. **GID and Interface Consistency** - Ensures configured RDMA interfaces and GID entries are present and consistent
+7. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Configuration File Structure
 
@@ -18,27 +21,51 @@ The preflight configuration file follows this structure:
 ```json
 {
   "preflight": {
-    "debug": {
-      "scriptlet": false
-    },
     "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "6.2.0",
-      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+      "enabled": true,
+      "gpus_per_node": 4,
+      "expected_rocm_version": "7.15.0"
     },
     "connectivity_check": {
       "rdma": {
-        "connectivity_mode": "basic",
+        "connectivity_mode": "skip",
+        "gid_index": "3",
+        "interfaces": ["enp4s0np0"],
         "nodes_per_full_mesh_group": 128,
         "ibv_test_timeout": 90,
         "ibv_test_port_range": "10000-50000",
         "inter_full_mesh_group_pairs_per_wave": "auto"
+      },
+      "ifoe": {
+        "fabric_checks": false,
+        "l2ping": {
+          "enabled": true,
+          "pings_per_port": 3
+        },
+        "transferbench": {
+          "enabled": true,
+          "scope": "node",
+          "profile": "smoketest",
+          "message_sizes": ["1K", "16M"],
+          "iterations": 2,
+          "warmup_iterations": 0
+        }
       }
     },
+    "node_smoke": {
+      "connectivity_mode": "skip",
+      "auto_setup": true,
+      "primus_dir": "/home/{user-id}/INSTALL/Primus",
+      "venv_activate": "/home/{user-id}/envs/preflight/.venv/bin/activate",
+      "gpus_per_node": 8
+    },
     "reporting": {
-      "generate_html_report": "true",
+      "generate_html_report": true,
       "artifacts_root_dir": "/tmp/{user-id}/preflight",
-      "generate_rdma_pairs_csv": "true"
+      "generate_rdma_pairs_csv": false
+    },
+    "debug": {
+      "scriptlet": false
     }
   }
 }
@@ -46,25 +73,29 @@ The preflight configuration file follows this structure:
 
 ## Configuration Structure
 
-The preflight configuration uses a **nested structure organized by execution phase** for better organization and future extensibility:
+The preflight configuration uses a **nested structure organized by subsystem** for better organization and future extensibility:
 
 ### Structure Overview
 
 ```
 preflight/
-├── debug/                # Debug and troubleshooting options  
-├── node_check/           # Individual node validation parameters
-├── connectivity_check/   # Inter-node connectivity tests
-│   └── rdma/             # RDMA-specific parameters (including nodes_per_full_mesh_group)
-│   └── ifoe/            # (Future: IFoE parameters)
-└── reporting/           # Output and report generation
+├── node_check/                 # Generation-independent node validation
+├── connectivity_check/        # Connectivity tests grouped by protocol
+│   ├── rdma/                  # RDMA inventory, GID, and pairwise connectivity
+│   └── ifoe/                  # MI4XX scale-up fabric checks
+│       ├── l2ping/            # Strict IFoE L2 connectivity gate
+│       └── transferbench/     # IFoE data-path validation
+├── node_smoke/                # Primus node_smoke per-node health screening (opt-in)
+├── reporting/                 # Output and report generation
+└── debug/                     # Debug and troubleshooting options
 ```
 
 ### Execution Flow
-1. **node_check** - Validate individual nodes in parallel
-2. **connectivity_check.rdma.nodes_per_full_mesh_group** - Configure RDMA batching resources
-3. **connectivity_check** - Test inter-node connectivity by protocol
-4. **reporting** - Generate reports and outputs
+1. **node_check** - Validate individual nodes and, when enabled, MI4XX scale-up fabric admission
+2. **connectivity_check.ifoe.l2ping** - Enforce strict L2 connectivity
+3. **connectivity_check.ifoe.transferbench** - Validate the IFoE data path
+4. **connectivity_check.rdma** - Validate RDMA inventory, GIDs, and connectivity unless skipped
+5. **reporting** - Generate reports and outputs
 
 ## Configuration Parameters
 
@@ -101,22 +132,18 @@ All parameters below are optional and have sensible defaults. The sample configu
 
 ### Node Check Settings (`node_check`)
 
-- **`gid_index`** (default: "3")
-  - GID index to check on all RDMA interfaces
-  - Typically "3" for RoCE (RDMA over Converged Ethernet)
-  - Must be a valid GID index for your InfiniBand/RoCE setup
+- **`enabled`** (default: `true`)
+  - Enables GPU visibility, AMDGPU/KFD, kernel-health, and ROCm validation
+  - Set to `false` to skip node-local health checks
+
+- **`gpus_per_node`** (default: `4`)
+  - Exact number of AMD GPUs expected on every node
+  - GPU visibility is generation-independent and can run on older or newer AMD hardware
 
 - **`expected_rocm_version`** (default: "6.2.0")
   - Expected ROCm version across all cluster nodes
   - Must match the output of `amd-smi version` on all nodes
   - Format: "major.minor.patch" (e.g., "6.2.0", "5.7.1")
-
-- **`rdma_interfaces`** (default: ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"])
-  - List of specific RDMA interface names that should be present on all cluster nodes
-  - Examples:
-    - `["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]` - Standard 4-interface setup
-    - `["mlx5_0", "mlx5_1"]` - Mellanox 2-interface setup
-    - `["ib0", "ib1", "ib2", "ib3"]` - Generic InfiniBand setup
 
 ### Connectivity Check Settings (`connectivity_check`)
 
@@ -125,7 +152,18 @@ All parameters below are optional and have sensible defaults. The sample configu
 - **`connectivity_mode`** (default: "basic")
   - **"basic"**: Test adjacent node pairs (fast, ~14% coverage for 8 nodes)
   - **"full_mesh"**: Test all possible node pairs (comprehensive, 100% coverage)
-  - **"skip"**: Skip RDMA connectivity testing entirely
+  - **"skip"**: Skip RDMA interface presence, GID validation, and pairwise connectivity
+
+- **`gid_index`** (default: "3")
+  - GID index to check on all configured RDMA interfaces
+  - Typically "3" for RoCE (RDMA over Converged Ethernet)
+  - Must be a valid GID index for your InfiniBand/RoCE setup
+
+- **`interfaces`** (default: `["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]`)
+  - List of RDMA device names that should be present on all cluster nodes
+  - Examples:
+    - `["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]` - Standard 4-interface setup
+    - `["mlx5_0", "mlx5_1"]` - Mellanox 2-interface setup
 
 - **`ibv_test_timeout`** (default: 90)
   - Timeout in seconds for each ibv_rc_pingpong connectivity test
@@ -163,20 +201,147 @@ All parameters below are optional and have sensible defaults. The sample configu
   - Legacy hint for reporting: preflight now prunes interface/GID-failed nodes automatically
   - Interface failures are excluded from mesh testing regardless of this flag
 
+##### Legacy RDMA paths — deprecated
+
+Existing RDMA users may temporarily retain `node_check.gid_index` and
+`node_check.rdma_interfaces`. CVS normalizes them to
+`connectivity_check.rdma.gid_index` and `connectivity_check.rdma.interfaces`
+and emits a deprecation warning. If a legacy and canonical value are both
+present, they must match. New configurations should use the canonical RDMA
+paths; the compatibility paths will be removed in a future release.
+
+#### IFoE Settings (`connectivity_check.ifoe`) — MI4XX scale-up fabric
+
+IFoE validation is organized into fabric admission, strict L2 connectivity,
+and TransferBench data-path validation. CVS owns `afmctl` discovery, privilege
+handling, BDF and port discovery, strict coverage, traffic selection, timeout
+derivation, and result parsing.
+
+The earlier configuration shape exposed those implementation details directly.
+They now follow this fixed policy:
+
+| Previous setting | Current CVS behavior |
+|---|---|
+| `connectivity_mode` | Replaced by `l2ping.enabled` |
+| `afmctl_path` | Resolve `afmctl` from the node environment before privilege escalation |
+| `use_sudo` | Use the cluster's detected privilege policy |
+| `bdf_discovery` / `bdfs` | Discover admitted AFM devices and BDFs from live topology |
+| `dst_accelerators` | Build strict destination coverage from reconciled vPOD membership |
+| `ports` | Test admitted, station-mask-enabled ports that are operationally up |
+| `traffic_types` | Enforce IFoE request, IFoE response, and non-IFoE traffic |
+| `loss_threshold_pct` | Fail on any reported loss or incomplete coverage |
+| `per_ping_timeout` / `ssh_timeout` | Derive conservative timeouts from the requested workload |
+
+- **`fabric_checks`** (default: `false`)
+  - Enables MI4XX-only AIFM/AFM/vPOD, station-mask, and IFoE port admission checks
+  - Set to `true` only on MI4XX systems; it remains disabled for MI3XX systems
+  - Requires `node_check.enabled: true`
+
+##### L2 ping (`connectivity_check.ifoe.l2ping`)
+
+Runs `afmctl test ping` with strict full-mesh coverage on every admitted IFoE
+port and validates per-port and aggregate summary accounting.
+
+- **`enabled`** (default: `false`)
+  - Enables the mandatory L2 connectivity gate before TransferBench and RDMA
+- **`pings_per_port`** (default: `3`)
+  - Number of ping samples sent per selected IFoE port pair
+
+##### TransferBench (`connectivity_check.ifoe.transferbench`)
+
+- **`enabled`** (default: `false`)
+  - Enables the TransferBench IFoE data-path gate before RDMA
+- **`scope`** (default: `"node"`)
+  - `"node"` runs an independent smoketest on each node
+  - `"cluster"` runs one multi-rank test across the admitted cluster
+- **`profile`** (default: `"smoketest"`)
+  - Selects the CVS-supported test profile; `"smoketest"` is currently supported
+- **`message_sizes`** (default: `["1K", "16M"]`)
+  - Message sizes exercised by the selected profile
+- **`iterations`** (default: `2`)
+  - Validated iterations per test and message size
+- **`warmup_iterations`** (default: `0`)
+  - Warmup iterations performed before validation
+
+#### Node Smoke Settings (`node_smoke`) — opt-in (Primus Tier 1)
+
+Runs Primus `node_smoke` on each reachable node via `primus-cli direct --single -- node_smoke`
+over parallel SSH (no Slurm required). Reference: Primus `docs/node-smoke-test-instruction.md`
+on branch `dev/preflight-direct-test`.
+
+- **`connectivity_mode`** (default: `"skip"`)
+  - `"run"` — execute node_smoke on every reachable node
+  - `"skip"` — preflight records a SKIPPED result and does not invoke Primus
+- **`auto_setup`** (default: `true`)
+  - Clone/update Primus and create the venv with minimal deps (ROCm PyTorch) before node_smoke
+- **`setup_timeout`** (default: `600`)
+  - SSH timeout (seconds) for the per-node Primus auto_setup step
+- **`force_reclone`** (default: `false`)
+  - Remove `primus_dir` and clone fresh on every run (destructive)
+- **`shared_install`** (default: `true`)
+  - Leader node clones/installs on shared NFS home; other nodes wait (recommended for shared home)
+- **`pip_install_mode`** (default: `"minimal"`)
+  - `"minimal"` — ROCm PyTorch only; `"requirements"` — `pip install -r requirements.txt`; `"skip"` — venv only
+- **`torch_pip_index_url`** (default: `"https://download.pytorch.org/whl/rocm6.2"`)
+  - PyTorch wheel index for minimal install; match your ROCm version
+- **`primus_git_url`** (default: `"https://github.com/AMD-AIG-AIMA/Primus.git"`)
+- **`primus_git_branch`** (default: `"dev/preflight-direct-test"`)
+- **`primus_git_recurse_submodules`** (default: `false`)
+- **`primus_dir`** (default: `"/home/{user-id}/INSTALL/Primus"`)
+  - Required when `connectivity_mode` is `"run"`; `{user-id}` is resolved at runtime
+- **`venv_activate`** (default: `"/home/{user-id}/envs/preflight/.venv/bin/activate"`)
+  - Required when `connectivity_mode` is `"run"`
+- **`gpus_per_node`** (default: `8`)
+- **`master_port`** (default: `1234`)
+- **`dump_path`** (default: `""`)
+  - Per-node smoke JSON output; empty uses `<reporting.artifacts_root_dir>/node_smoke`
+- **`expected_rdma_nics`** (default: `null`)
+  - Defaults to `len(node_check.rdma_interfaces)` when null
+- **`ulimit_l_min_gb`** (default: `32`) — FAIL below this memlock limit; `0` disables
+- **`shm_min_gb`** (default: `8`) — FAIL below this `/dev/shm` size; `0` disables
+- **`skip_dmesg`** (default: `false`)
+- **`allow_foreign_procs`** (default: `false`)
+- **`allowed_procs`** (default: `"gpuagent,rocm-smi-daemon,amd-smi,dcgm-exporter"`)
+- **`require_tools`** (default: `""`) — empty = warn only
+- **`nccl_socket_ifname`** / **`gloo_socket_ifname`** (default: `""`)
+- **`nccl_ib_hca`** (default: `""`) — defaults to comma-joined `node_check.rdma_interfaces`
+- **`nccl_ib_gid_index`** (default: `null`) — defaults to `node_check.gid_index`
+- **`ssh_timeout`** (default: `300`)
+- **`extra_args`** (default: `[]`) — additional flags forwarded to primus-cli
+
+#### Tier 2 perf sanity (`node_smoke.tier2_perf`) — optional
+
+When `tier2_perf` is `true`, preflight forwards `--tier2-perf` to Primus `node_smoke`, enabling all three Tier 2 checks on each node (same as `launch_nodesmoke_ssh.sh -- --tier2-perf`):
+
+1. **Large GEMM TFLOPS floor** — 8192³ bf16 `torch.matmul`; FAIL below `gemm_tflops_min` (default 600)
+2. **HBM D2D bandwidth** — 512 MB device-to-device copy; FAIL below `hbm_gbs_min` (default 2000 GB/s)
+3. **Local multi-GPU RCCL all-reduce** — node-local only; FAIL below `rccl_gbs_min` (default 100 GB/s)
+
+Set `NCCL_IB_HCA`, `NCCL_SOCKET_IFNAME`, and `NCCL_IB_GID_INDEX` (via `node_smoke` config or cluster `env_vars`) before enabling Tier 2 — RCCL init enumerates every transport even though the all-reduce is local-only.
+
+- **`tier2_perf`** (default: `false`) — master switch; maps to `--tier2-perf`
+- **`gemm_tflops_min`** (default: `600`) — `--gemm-tflops-min`
+- **`hbm_gbs_min`** (default: `2000`) — `--hbm-gbs-min`
+- **`rccl_gbs_min`** (default: `100`) — `--rccl-gbs-min`
+- **`rccl_size_mb`** (default: `64`) — `--rccl-size-mb`
+- **`rccl_timeout_sec`** (default: `120`) — `--rccl-timeout-sec`
+
+Tier 2 runs need a longer SSH budget; when `tier2_perf` is enabled the effective timeout is at least 600 seconds even if `ssh_timeout` is lower.
+
 ### Reporting Settings (`reporting`)
 
-- **`generate_html_report`** (default: "true")
+- **`generate_html_report`** (default: `true`)
   - Whether to generate detailed HTML report
-  - Set to "false" to disable HTML report generation
+  - Set to `false` to disable HTML report generation
 
-- **`artifacts_root_dir`** (default: "/tmp/{user-id}/preflight")
+- **`artifacts_root_dir`** (default: `"/tmp/{user-id}/preflight"`)
   - Root directory where preflight artifacts are saved
   - Includes HTML reports and RDMA full_mesh workspace logs under `rdma_connectivity_workspace/`
   - Must be writable by the user running the tests
 
-- **`generate_rdma_pairs_csv`** (default: "true")
+- **`generate_rdma_pairs_csv`** (default: `true`)
   - Whether to generate CSV file with failed RDMA pairs alongside HTML report
-  - Set to "false" to disable CSV generation
+  - Set to `false` to disable CSV generation
 
 ## Usage Examples
 
@@ -186,13 +351,15 @@ All parameters below are optional and have sensible defaults. The sample configu
 {
   "preflight": {
     "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "6.2.0",
-      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+      "enabled": true,
+      "gpus_per_node": 8,
+      "expected_rocm_version": "6.2.0"
     },
     "connectivity_check": {
       "rdma": {
         "connectivity_mode": "basic",
+        "gid_index": "3",
+        "interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
         "ibv_test_timeout": 90,
         "ibv_test_port_range": "10000-50000"
       }
@@ -207,13 +374,15 @@ All parameters below are optional and have sensible defaults. The sample configu
 {
   "preflight": {
     "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "6.2.0",
-      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+      "enabled": true,
+      "gpus_per_node": 8,
+      "expected_rocm_version": "6.2.0"
     },
     "connectivity_check": {
       "rdma": {
         "connectivity_mode": "full_mesh",
+        "gid_index": "3",
+        "interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"],
         "ibv_test_timeout": 120,
         "ibv_test_port_range": "10000-50000"
       }
@@ -228,14 +397,65 @@ All parameters below are optional and have sensible defaults. The sample configu
 {
   "preflight": {
     "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "6.2.0",
-      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0"]
+      "enabled": true,
+      "gpus_per_node": 8,
+      "expected_rocm_version": "6.2.0"
     },
     "connectivity_check": {
       "rdma": {
         "connectivity_mode": "skip"
       }
+    }
+  }
+}
+```
+
+### Enable Primus Node Smoke with Tier 2 perf
+
+```json
+{
+  "preflight": {
+    "node_check": {
+      "gid_index": "3",
+      "expected_rocm_version": "6.4.2",
+      "rdma_interfaces": ["rdma0", "rdma1", "rdma2", "rdma3", "rdma4", "rdma5", "rdma6", "rdma7"]
+    },
+    "node_smoke": {
+      "connectivity_mode": "run",
+      "auto_setup": true,
+      "shared_install": true,
+      "primus_dir": "/home/{user-id}/INSTALL/Primus",
+      "venv_activate": "/home/{user-id}/envs/preflight/.venv/bin/activate",
+      "gpus_per_node": 8,
+      "tier2_perf": true,
+      "gemm_tflops_min": 700,
+      "hbm_gbs_min": 4500,
+      "rccl_gbs_min": 180,
+      "nccl_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "nccl_ib_gid_index": 3,
+      "ssh_timeout": 600
+    }
+  }
+}
+```
+
+### Enable Primus Node Smoke
+
+```json
+{
+  "preflight": {
+    "node_check": {
+      "gid_index": "3",
+      "expected_rocm_version": "6.4.2",
+      "rdma_interfaces": ["rdma0", "rdma1", "rdma2", "rdma3", "rdma4", "rdma5", "rdma6", "rdma7"]
+    },
+    "node_smoke": {
+      "connectivity_mode": "run",
+      "auto_setup": true,
+      "shared_install": true,
+      "primus_dir": "/home/{user-id}/INSTALL/Primus",
+      "venv_activate": "/home/{user-id}/envs/preflight/.venv/bin/activate",
+      "gpus_per_node": 8
     }
   }
 }
@@ -250,13 +470,15 @@ All parameters below are optional and have sensible defaults. The sample configu
       "scriptlet": true
     },
     "node_check": {
-      "gid_index": "3",
-      "expected_rocm_version": "7.2.0",
-      "rdma_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"]
+      "enabled": true,
+      "gpus_per_node": 8,
+      "expected_rocm_version": "7.2.0"
     },
     "connectivity_check": {
       "rdma": {
         "connectivity_mode": "full_mesh",
+        "gid_index": "3",
+        "interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
         "nodes_per_full_mesh_group": 32,
         "ibv_test_timeout": 180,
         "ibv_test_port_range": "15000-20000",
@@ -267,9 +489,9 @@ All parameters below are optional and have sensible defaults. The sample configu
       }
     },
     "reporting": {
-      "generate_html_report": "true",
+      "generate_html_report": true,
       "artifacts_root_dir": "/tmp/{user-id}/preflight",
-      "generate_rdma_pairs_csv": "true"
+      "generate_rdma_pairs_csv": true
     }
   }
 }
@@ -280,6 +502,11 @@ All parameters below are optional and have sensible defaults. The sample configu
 ```bash
 # Basic usage with default config
 cvs run preflight_checks --cluster_file cluster.json --config_file preflight_config.json
+
+# Run only the node_smoke check
+cvs run preflight_checks test_node_smoke \
+  --cluster_file cluster.json \
+  --config_file preflight_config.json
 
 # With custom HTML output
 cvs run preflight_checks \
@@ -312,8 +539,30 @@ cvs run preflight_checks \
 
 4. **Missing RDMA Interfaces**
    - List interfaces: `ls /sys/class/infiniband/`
-   - Update rdma_interfaces list to match your cluster setup
+   - Update `connectivity_check.rdma.interfaces` to match your cluster setup
    - Ensure all expected interfaces are present on each node
+
+5. **Node-Health Failures**
+   - Compare `gpus_per_node` with `amd-smi list`
+   - Verify AMDGPU and KFD are loaded and inspect kernel errors in `dmesg`
+   - Confirm `expected_rocm_version` matches `amd-smi version`
+
+6. **IFoE Fabric or L2 Failures**
+   - Confirm AIFM/AFM services and the in-band node agent are healthy
+   - Inspect the HTML report for vPOD, station-mask, down-port, and coverage errors
+   - Verify `afmctl` is installed and available through the cluster environment
+
+7. **TransferBench Failures**
+   - Review the captured TransferBench output and exit status in the report
+   - Confirm all admitted nodes resolve to one consistent vPOD
+   - Reduce to `scope: "node"` to isolate a failing host before retrying cluster scope
+
+8. **Node Smoke Failures**
+   - Set `node_smoke.connectivity_mode` to `"run"` (default is `"skip"`)
+   - Verify `primus_dir` and `venv_activate`, or enable `auto_setup: true`
+   - On shared NFS home, use `shared_install: true` to avoid parallel clone races
+   - Match `torch_pip_index_url` to your ROCm version
+   - Review per-node fail reasons in the preflight HTML report
 
 ### Performance Considerations
 
@@ -321,6 +570,10 @@ cvs run preflight_checks \
 - **Basic mode**: ~30 seconds for 8 nodes
 - **Full mesh mode**: ~5-10 minutes for 8 nodes
 - **Skip mode**: fastest path when validating only node-local checks
+
+**Node Smoke Testing Times:**
+- **First run with auto_setup**: several minutes per node (clone + ROCm PyTorch install)
+- **Subsequent runs**: ~30–60 seconds per node
 
 **Parallel Processing Impact:**
 - **Small nodes_per_full_mesh_group (16-32)**: More rounds, less resource usage per node, better for resource-constrained environments
@@ -361,3 +614,8 @@ cvs run rccl_multinode_default_cvs --cluster_file cluster.json --config_file rcc
 ```
 
 This ensures your cluster is healthy before running resource-intensive performance tests.
+
+Within preflight, the mandatory order is node health and optional scale-up
+fabric admission, then l2ping, then TransferBench, followed by RDMA checks.
+Setting `connectivity_check.rdma.connectivity_mode` to `"skip"` skips RDMA
+without disabling the independent IFoE gates.

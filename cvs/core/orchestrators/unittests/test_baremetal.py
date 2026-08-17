@@ -6,8 +6,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 # Unit tests for cvs/core/orchestrators/baremetal.py: BaremetalOrchestrator construction
-# and command-dispatch surface (exec, exec_on_head, cleanup) used by the migrated
-# rvs_cvs.py orch fixture. Mocks Pssh so tests run with no SSH.
+# and command-dispatch surface (exec, exec_on_head, cleanup, sudo_prefix) used by the
+# migrated rvs_cvs.py orch fixture. Mocks Pssh so tests run with no SSH.
 
 import unittest
 from unittest.mock import MagicMock, patch
@@ -54,7 +54,7 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.all = MagicMock()
         orch.all.exec.return_value = {"10.0.0.1": "ok", "10.0.0.2": "ok"}
         result = orch.exec("ls", timeout=5)
-        orch.all.exec.assert_called_once_with("ls", timeout=5, detailed=False)
+        orch.all.exec.assert_called_once_with("ls", timeout=5, detailed=False, print_console=True)
         self.assertEqual(result, {"10.0.0.1": "ok", "10.0.0.2": "ok"})
 
     @patch("cvs.core.orchestrators.baremetal.Pssh")
@@ -63,13 +63,279 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.head = MagicMock()
         orch.head.exec.return_value = {"10.0.0.1": "ok"}
         result = orch.exec_on_head("hostname", timeout=10)
-        orch.head.exec.assert_called_once_with("hostname", timeout=10, detailed=False)
+        orch.head.exec.assert_called_once_with("hostname", timeout=10, detailed=False, print_console=True)
         self.assertEqual(result, {"10.0.0.1": "ok"})
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_exec_forwards_print_console_false_to_all(self, _mock_pssh):
+        """print_console=False must reach the pssh handle, not be swallowed here.
+
+        A dropped kwarg is silent -- the command still works, it just logs
+        hundreds of MB -- so this is pinned explicitly.
+        """
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        orch.exec("cat /tmp/huge", print_console=False)
+        self.assertIs(orch.all.exec.call_args.kwargs["print_console"], False)
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_exec_forwards_print_console_false_to_host_subset(self, mock_pssh):
+        """The subset branch builds its own Pssh; it must forward too.
+
+        orch.all is stubbed with a distinct mock so that falling through to the
+        all-hosts branch would fail this test rather than silently satisfy it
+        -- both handles would otherwise be the same patched Pssh return value.
+        """
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        mock_pssh.reset_mock()
+        orch.exec("cat /tmp/huge", hosts=["10.0.0.2"], print_console=False)
+        # A subset handle was constructed for exactly the requested host...
+        mock_pssh.assert_called_once()
+        self.assertEqual(mock_pssh.call_args.args[1], ["10.0.0.2"])
+        # ...the all-hosts handle was bypassed...
+        orch.all.exec.assert_not_called()
+        # ...and the kwarg reached the subset handle.
+        subset_handle = mock_pssh.return_value
+        self.assertIs(subset_handle.exec.call_args.kwargs["print_console"], False)
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_exec_on_head_forwards_print_console_false(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        orch.exec_on_head("cat /tmp/huge", print_console=False)
+        self.assertIs(orch.head.exec.call_args.kwargs["print_console"], False)
 
     @patch("cvs.core.orchestrators.baremetal.Pssh")
     def test_cleanup_returns_true(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         self.assertTrue(orch.cleanup(orch.hosts))
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_build_mpi_cmd_hostfile_cleanup_uses_sudo_prefix(self, _mock_pssh):
+        # The stale-hostfile `rm -f` on the head node must be built from a single
+        # deterministic prefix (via sudo_prefix()), never the old `cmd || sudo -n
+        # cmd` retry form -- which double-runs the command whenever it fails for
+        # any reason, not just permission-denied.
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        orch.head.exec.return_value = {"10.0.0.1": {"output": "", "exit_code": 0}}
+
+        for label, sudo_prefix in [("no_sudo", ""), ("passwordless_sudo", "sudo -n ")]:
+            with self.subTest(scenario=label):
+                orch.head.exec.reset_mock()
+                with patch.object(orch, "sudo_prefix", return_value=sudo_prefix):
+                    orch.build_mpi_cmd(
+                        rank_cmd="echo hi",
+                        mpi_hosts=["10.0.0.1", "10.0.0.2"],
+                        ranks_per_host=1,
+                        env_vars={},
+                        mpi_install_dir="/opt/mpi",
+                    )
+
+                first_call_cmd = orch.head.exec.call_args_list[0][0][0]
+                self.assertNotIn(
+                    "||", first_call_cmd, f"[{label}] must not use the old fallback form: {first_call_cmd!r}"
+                )
+                self.assertEqual(first_call_cmd, f"{sudo_prefix}rm -f /tmp/mpi_hosts.txt")
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_build_mpi_cmd_hostfile_write_uses_same_sudo_prefix_as_removal(self, _mock_pssh):
+        # Regression test: the hostfile write must use the SAME sudo_prefix() as
+        # the removal. If a prior run left /tmp/mpi_hosts.txt root-owned (sudo
+        # was needed then) and this run's probe resolves no-sudo, an unprefixed
+        # write would silently fail against the sticky-bit-protected /tmp entry
+        # left by a DIFFERENT owner, launching MPI against a stale hostfile.
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        orch.head.exec.return_value = {"10.0.0.1": {"output": "", "exit_code": 0}}
+
+        with patch.object(orch, "sudo_prefix", return_value="sudo -n "):
+            orch.build_mpi_cmd(
+                rank_cmd="echo hi",
+                mpi_hosts=["10.0.0.1"],
+                ranks_per_host=1,
+                env_vars={},
+                mpi_install_dir="/opt/mpi",
+            )
+
+        remove_cmd, write_cmd = (call[0][0] for call in orch.head.exec.call_args_list[:2])
+        self.assertTrue(remove_cmd.startswith("sudo -n "))
+        self.assertTrue(write_cmd.startswith("sudo -n "))
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_build_mpi_cmd_raises_on_hostfile_removal_failure(self, _mock_pssh):
+        # A failed removal (e.g. permission denied against a stale, differently
+        # -owned file) must abort loudly instead of silently proceeding to launch
+        # MPI against whatever hostfile is left on disk.
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        orch.head.exec.return_value = {"10.0.0.1": {"output": "", "exit_code": 1}}
+
+        with patch.object(orch, "sudo_prefix", return_value=""):
+            with self.assertRaises(RuntimeError):
+                orch.build_mpi_cmd(
+                    rank_cmd="echo hi",
+                    mpi_hosts=["10.0.0.1"],
+                    ranks_per_host=1,
+                    env_vars={},
+                    mpi_install_dir="/opt/mpi",
+                )
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_build_mpi_cmd_raises_on_hostfile_write_failure(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        # First call (rm) succeeds, second call (write) fails.
+        orch.head.exec.side_effect = [
+            {"10.0.0.1": {"output": "", "exit_code": 0}},
+            {"10.0.0.1": {"output": "", "exit_code": 1}},
+        ]
+
+        with patch.object(orch, "sudo_prefix", return_value=""):
+            with self.assertRaises(RuntimeError):
+                orch.build_mpi_cmd(
+                    rank_cmd="echo hi",
+                    mpi_hosts=["10.0.0.1"],
+                    ranks_per_host=1,
+                    env_vars={},
+                    mpi_install_dir="/opt/mpi",
+                )
+
+
+class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
+    """Covers BaremetalOrchestrator.sudo_prefix(): the probe-once mechanism that
+    replaced with_sudo_fallback's per-command `cmd || sudo -n cmd` retry."""
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_sudo_prefix_returns_sudo_prefix_when_passwordless_sudo_available(self, mock_pssh):
+        pssh_instance = MagicMock()
+        pssh_instance.exec.return_value = {"10.0.0.1": "0", "10.0.0.2": "0"}
+        mock_pssh.return_value = pssh_instance
+
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+
+        self.assertEqual(orch.sudo_prefix(), "sudo -n ")
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_sudo_prefix_returns_empty_when_sudo_unavailable(self, mock_pssh):
+        pssh_instance = MagicMock()
+        pssh_instance.exec.return_value = {"10.0.0.1": "1", "10.0.0.2": "1"}
+        mock_pssh.return_value = pssh_instance
+
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+
+        self.assertEqual(orch.sudo_prefix(), "")
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_sudo_prefix_warns_on_host_disagreement_but_still_returns_a_value(self, mock_pssh):
+        # AC: hosts disagreeing on sudo need must log a warning but must NOT
+        # raise or branch per-host -- the fleet-wide answer is the head node's
+        # (10.0.0.1 per _make_orch_config), not an arbitrary dict-order pick.
+        pssh_instance = MagicMock()
+        pssh_instance.exec.return_value = {"10.0.0.1": "0", "10.0.0.2": "1"}
+        mock_pssh.return_value = pssh_instance
+
+        log = MagicMock()
+        orch = BaremetalOrchestrator(log, _make_orch_config())
+
+        self.assertEqual(orch.sudo_prefix(), "sudo -n ")
+        log.warning.assert_called_once()
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_sudo_prefix_disagreement_uses_head_node_not_dict_order(self, mock_pssh):
+        # Regression test: the fleet-wide answer must come specifically from
+        # the head node, not from whichever host the probe dict happens to
+        # iterate first. Here the head node (10.0.0.1) says sudo is NOT
+        # needed while a non-head worker says it IS -- if this incorrectly
+        # picked "first in dict order" or "any True wins", the result would
+        # flip to 'sudo -n ' and privileged commands on the head node (e.g.
+        # exec_on_head, used by build_mpi_cmd) would run under an
+        # unnecessary and potentially unavailable sudo.
+        pssh_instance = MagicMock()
+        pssh_instance.exec.return_value = {"10.0.0.1": "1", "10.0.0.2": "0"}
+        mock_pssh.return_value = pssh_instance
+
+        log = MagicMock()
+        orch = BaremetalOrchestrator(log, _make_orch_config())
+
+        self.assertEqual(orch.sudo_prefix(), "")
+        log.warning.assert_called_once()
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_sudo_prefix_probes_at_most_once_across_multiple_calls(self, mock_pssh):
+        # Regression test for the bug being fixed: the passwordless-sudo probe
+        # must fire ONCE per orchestrator instance for its whole lifetime, no
+        # matter how many times sudo_prefix() is subsequently called.
+        pssh_instance = MagicMock()
+        pssh_instance.exec.return_value = {"10.0.0.1": "0", "10.0.0.2": "0"}
+        mock_pssh.return_value = pssh_instance
+
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+
+        results = [orch.sudo_prefix() for _ in range(3)]
+
+        self.assertEqual(results, ["sudo -n "] * 3)
+        pssh_instance.exec.assert_called_once_with("sudo -n true >/dev/null 2>&1; echo $?")
+
+
+class TestBaremetalOrchestratorSubsetHandleCleanup(unittest.TestCase):
+    """The subset branch builds a throwaway Pssh; it must be destroyed.
+
+    Left to refcounting, a call whose exec timed out keeps its SSH session
+    open on the target host, so a polling suite accumulates sessions until
+    sshd's limit is hit.
+    """
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_exec_destroys_subset_handle(self, mock_pssh):
+        # The timeout path is the one that leaks, so cleanup must not depend
+        # on a clean return.
+        for label, side_effect in (("returns", None), ("raises", RuntimeError("timed out"))):
+            with self.subTest(label):
+                orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+                orch.all = MagicMock()
+                mock_pssh.reset_mock()
+                mock_pssh.return_value.exec.side_effect = side_effect
+
+                if side_effect is None:
+                    orch.exec("hostname", hosts=["10.0.0.2"])
+                else:
+                    with self.assertRaises(RuntimeError):
+                        orch.exec("sleep 300", hosts=["10.0.0.2"], timeout=1)
+
+                mock_pssh.return_value.destroy_clients.assert_called_once_with()
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_setup_env_destroys_subset_handle(self, mock_pssh):
+        # Same subset branch as exec(); it has no callers today, but it is an
+        # abstractmethod on the base class, so an implementation could reach it.
+        for label, side_effect in (("returns", None), ("raises", RuntimeError("timed out"))):
+            with self.subTest(label):
+                orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+                orch.all = MagicMock()
+                mock_pssh.reset_mock()
+                if side_effect is None:
+                    mock_pssh.return_value.exec.return_value = {"10.0.0.2": {"exit_code": 0}}
+                    mock_pssh.return_value.exec.side_effect = None
+                    orch.setup_env(["10.0.0.2"], env_script="/tmp/env.sh")
+                else:
+                    mock_pssh.return_value.exec.side_effect = side_effect
+                    with self.assertRaises(RuntimeError):
+                        orch.setup_env(["10.0.0.2"], env_script="/tmp/env.sh")
+
+                mock_pssh.return_value.destroy_clients.assert_called_once_with()
+
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_exec_does_not_destroy_shared_all_handle(self, _mock_pssh):
+        # self.all is long-lived and reused; tearing it down would break
+        # every later call.
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+
+        orch.exec("hostname")
+
+        orch.all.destroy_clients.assert_not_called()
 
 
 if __name__ == "__main__":

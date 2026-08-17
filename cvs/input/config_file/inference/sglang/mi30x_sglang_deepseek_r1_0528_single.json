@@ -1,0 +1,103 @@
+{
+    "config":
+    {
+        "container_image": "rocm/sgl-dev:v0.5.12.post1-rocm720-mi30x-20260603",
+        "_container_image": "rocm/sgl-dev:v0.5.12.post1-rocm720-mi30x-20260601",
+        "container_name": "sglang_container",
+        "nnodes": "1",
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "shm_size": "128G",
+        "_log_dir_comments": "Provide some common file system that is accessible from any node",
+        "log_dir": "/home/{user-id}/LOGS/sglang",
+        "log_level": "info",
+        "nccl_debug": "ERROR",
+        "benchmark_serv_node": "<changeme>",
+        "proxy_router_serv_port": "8000",
+        "container_config":
+        {
+            "device_list": [ "/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm" ],
+            "volume_dict":
+            {
+                "/home/{user-id}": "/home/{user-id}",
+                "/mnt/dtni/models": "/root/models",
+                "/dev/infiniband": "/dev/infiniband",
+                "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+                "/lib/libibverbs.d": "/lib/libibverbs.d"
+            },
+            "env_dict":
+            {
+            }
+        }
+    },
+    "active_benchmark": "deepseek-r1",
+    "benchmark_params":
+    {
+        "deepseek-r1":
+        {
+            "backend": "sglang",
+            "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_deepseek_r1_0528_threshold.json",
+            "max_concurrency": "256",
+            "_comments_model": "If the model is local, specify the full path of the model",
+            "model": "/root/models/DeepSeek-R1-0528",
+            "tensor_parallelism": "8",
+            "pipeline_parallelism": "1",
+            "memory_fraction": "0.7",
+            "tokenizer_mode": "auto",
+            "inference_poll_iterations": "16",
+            "add_export_env": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8", "GPU_ARCHS=gfx942"],
+            "add_flags": ["--attention-backend aiter"],
+            "inference_tests":
+            {
+                "bench_serv_random":
+                {
+                    "backend": "sglang",
+                    "data_set_name": "random",
+                    "num_prompts": "25",
+                    "random_range_ratio": "0.5",
+                    "model_num_params": "671000000000",
+                    "peak_gpu_tflops": "2615"
+                },
+                "bench_serv_generated_shared_prefix":
+                {
+                    "backend": "sglang",
+                    "gsp_num_groups": "1",
+                    "gsp_prompts_per_group": "16",
+                    "gsp_system_prompt_len": "0",
+                    "gsp_question_len": "1024",
+                    "gsp_output_len": "1024"
+                },
+                "long_ctx_niah": {
+                    "num_prompts": "6",
+                    "seed": "42",
+                    "request_timeout_sec": "7200",
+                    "exec_timeout_sec": "21600",
+                    "tolerance_frac": "0.05"
+                },
+                "lm_eval_hellaswag":
+                {
+                    "backend": "sglang",
+                    "lm_eval_model": "local-completions",
+                    "tasks": "hellaswag",
+                    "num_fewshot": "0",
+                    "batch_size": "auto",
+                    "limit": "100",
+                    "num_concurrent": "1",
+                    "exec_timeout_sec": "7200",
+                    "extra_model_args": "tokenizer_backend=huggingface"
+                },
+                "lm_eval_gsm8k":
+                {
+                    "backend": "sglang",
+                    "lm_eval_model": "local-completions",
+                    "tasks": "gsm8k",
+                    "num_fewshot": "5",
+                    "batch_size": "auto",
+                    "limit": "100",
+                    "num_concurrent": "4",
+                    "exec_timeout_sec": "7200",
+                    "extra_model_args": "tokenizer_backend=huggingface"
+                }
+            }
+        }
+    }
+}

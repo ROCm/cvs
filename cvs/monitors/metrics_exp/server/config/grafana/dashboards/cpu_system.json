@@ -1,0 +1,366 @@
+{
+  "uid": "cpu-system",
+  "title": "CPU & System",
+  "description": "Host CPU, memory, disk, and network metrics from Node Exporter",
+  "tags": ["gpu-fleet", "system", "cpu", "memory"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "nodegroup",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(up{job=\"node_exporter\"}, node_group)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      },
+      {
+        "name": "hostname",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(up{job=\"node_exporter\", node_group=~\"$nodegroup\"}, hostname)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Overview",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "type": "gauge",
+      "title": "Avg CPU Usage",
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 1},
+      "targets": [
+        {
+          "expr": "100 - avg(irate(node_cpu_seconds_total{mode=\"idle\", node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m])) * 100",
+          "legendFormat": "CPU"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "red", "value": 90}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "gauge",
+      "title": "Avg Memory Usage",
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 1},
+      "targets": [
+        {
+          "expr": "avg((1 - node_memory_MemAvailable_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} / node_memory_MemTotal_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}) * 100)",
+          "legendFormat": "Memory"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 80},
+              {"color": "red", "value": 95}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Total Memory",
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 1},
+      "targets": [
+        {
+          "expr": "sum(node_memory_MemTotal_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Total"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "bytes"}}
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Avg Load (1m)",
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 1},
+      "targets": [
+        {
+          "expr": "avg(node_load1{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Load1"
+        }
+      ],
+      "fieldConfig": {"defaults": {"decimals": 2}}
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "CPU",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 6}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "CPU Usage by Host",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 7},
+      "targets": [
+        {
+          "expr": "100 - avg by (hostname) (irate(node_cpu_seconds_total{mode=\"idle\", node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m])) * 100",
+          "legendFormat": "{{hostname}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 1, "fillOpacity": 15}
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "System Load",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 7},
+      "targets": [
+        {
+          "expr": "node_load1{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} 1m"
+        },
+        {
+          "expr": "node_load5{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} 5m"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"lineWidth": 1}
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "Memory",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15}
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Memory Usage by Host",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "expr": "(1 - node_memory_MemAvailable_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} / node_memory_MemTotal_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}) * 100",
+          "legendFormat": "{{hostname}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 1, "fillOpacity": 15}
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Memory Breakdown",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "expr": "avg(node_memory_MemTotal_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} - node_memory_MemAvailable_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Used"
+        },
+        {
+          "expr": "avg(node_memory_Cached_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Cached"
+        },
+        {
+          "expr": "avg(node_memory_Buffers_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Buffers"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {"lineWidth": 1, "fillOpacity": 30, "stacking": {"mode": "normal"}}
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Disk",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24}
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Disk I/O",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 25},
+      "targets": [
+        {
+          "expr": "sum by (hostname) (rate(node_disk_read_bytes_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m]))",
+          "legendFormat": "{{hostname}} Read"
+        },
+        {
+          "expr": "sum by (hostname) (rate(node_disk_written_bytes_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m]))",
+          "legendFormat": "{{hostname}} Write"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {"lineWidth": 1}
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "bargauge",
+      "title": "Filesystem Usage",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 25},
+      "targets": [
+        {
+          "expr": "(1 - node_filesystem_avail_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", fstype!~\"tmpfs|overlay\"} / node_filesystem_size_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", fstype!~\"tmpfs|overlay\"}) * 100",
+          "legendFormat": "{{hostname}} {{mountpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 80},
+              {"color": "red", "value": 95}
+            ]
+          }
+        }
+      },
+      "options": {"orientation": "horizontal", "displayMode": "gradient"}
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "Top 10 Nodes",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 33}
+    },
+    {
+      "id": 20,
+      "type": "barchart",
+      "title": "Top 10 Nodes by CPU Usage",
+      "description": "Nodes with highest CPU utilization",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 34},
+      "targets": [
+        {
+          "expr": "topk(10, 100 - avg by (hostname) (irate(node_cpu_seconds_total{mode=\"idle\", node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m])) * 100)",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "red", "value": 90}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "barchart",
+      "title": "Top 10 Nodes by Memory Usage",
+      "description": "Nodes with highest memory utilization",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 34},
+      "targets": [
+        {
+          "expr": "topk(10, (1 - node_memory_MemAvailable_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} / node_memory_MemTotal_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}) * 100)",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 80},
+              {"color": "red", "value": 95}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "Network",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 42}
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Network Traffic",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 43},
+      "targets": [
+        {
+          "expr": "sum by (hostname) (rate(node_network_receive_bytes_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device!~\"lo|veth.*|docker.*|br-.*\"}[5m]))",
+          "legendFormat": "{{hostname}} RX"
+        },
+        {
+          "expr": "sum by (hostname) (rate(node_network_transmit_bytes_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device!~\"lo|veth.*|docker.*|br-.*\"}[5m]))",
+          "legendFormat": "{{hostname}} TX"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {"lineWidth": 1}
+        }
+      }
+    }
+  ]
+}

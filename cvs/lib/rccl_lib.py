@@ -154,6 +154,28 @@ rccl_err_dict = {
 }
 
 
+def _cleanup_stale_rccl_processes(phdl, test_name, reason):
+    """
+    Best-effort kill of leftover mpirun/prterun/rccl-tests processes on every
+    host phdl can reach.
+
+    Pssh.exec()'s `timeout` (cvs/lib/parallel/pssh.py) maps to parallel-ssh's
+    `read_timeout` — a client-side timeout on reading the SSH channel's output.
+    It does not signal the remote process. So when the mpirun invocation in
+    rccl_perf/rccl_regression exceeds cvs_exec_timeout, the remote mpirun and
+    the rccl-tests ranks it launched on every participating node keep running
+    (and holding GPUs) indefinitely. Without this cleanup, the next pairwise/
+    incremental sub-test starts while those ranks are still alive, causing GPU
+    oversubscription and cascading failures on subsequent node pairs.
+    """
+    log.warning(f'Cleaning up stale RCCL/mpirun processes on all reachable hosts ({reason})')
+    for pattern in ('prterun', 'mpirun.*rccl_hosts_file', test_name):
+        try:
+            phdl.exec(f"pkill -9 -f '{pattern}' || true", timeout=30)
+        except Exception as kill_exc:
+            log.warning(f'Cleanup pkill for pattern {pattern!r} raised {kill_exc!r} (continuing)')
+
+
 def _is_severe_wrong_corruption_error(err: ValidationError) -> bool:
     """
     Detect the rccl-tests '#wrong' corruption failure from a pydantic ValidationError.
@@ -251,11 +273,12 @@ def _read_json_from_head_node(shdl, head_node, remote_path, log_label):
       log_label: Short label used in log lines (e.g. 'all_reduce_perf_float').
 
     Returns:
-      The parsed JSON object.
+      The parsed JSON object; the first value only if the file holds valid JSON
+      followed by trailing junk; or [] if it cannot be parsed at all (a clear
+      diagnostic is logged and the test is failed in that case).
 
     Raises:
       IOError: If the SFTP transfer fails.
-      json.JSONDecodeError: If the downloaded file is not valid JSON.
     """
     with tempfile.TemporaryDirectory(prefix='cvs_rccl_dl_') as tmpdir:
         local_prefix = os.path.join(tmpdir, os.path.basename(remote_path))
@@ -263,17 +286,36 @@ def _read_json_from_head_node(shdl, head_node, remote_path, log_label):
         local_path = paths[head_node]
         log.info('SFTP download succeeded for %s <- %s:%s', log_label, head_node, remote_path)
         with open(local_path, 'r', encoding='utf-8') as f:
-            content = f.read().strip()
+            raw_output = f.read()
         try:
-            return json.loads(content)
+            return json.loads(raw_output)
         except json.JSONDecodeError as e:
-            # Legacy rccl-tests (-x) occasionally append duplicate JSON blobs;
-            # accept the first valid value so paired A/B runs can proceed.
+            # Two different failures arrive as the same exception type, and they
+            # deserve opposite treatment.
+            #
+            # 'Extra data' means the file opened with a complete, valid JSON
+            # value and then carried trailing bytes -- legacy rccl-tests (-x)
+            # occasionally appends duplicate blobs. The measurement is present
+            # and correct, so recovering the first value is right; failing here
+            # would discard a good run over output the binary appended after it.
+            #
+            # Anything else means there is no parseable measurement at all, and
+            # the run must be failed rather than silently scored as empty.
+            #
+            # raw_decode() does not skip leading whitespace -- it decodes from
+            # index 0 -- so it is given the stripped text. json.loads() above
+            # tolerates surrounding whitespace on its own.
             if 'Extra data' in str(e):
-                obj, _ = json.JSONDecoder().raw_decode(content)
+                obj, _ = json.JSONDecoder().raw_decode(raw_output.strip())
                 log.warning('Parsed first JSON value only for %s; trailing data ignored', log_label)
                 return obj
-            raise
+            msg = (
+                f'Unable to parse RCCL JSON result file {remote_path} on {head_node}. '
+                f'Raw content: {raw_output.strip() or "<empty>"}'
+            )
+            log.error(msg)
+            fail_test(msg)
+            return []
 
 
 def is_ucx_available_in_mpi(shdl, mpi_path, head_node):
@@ -343,46 +385,64 @@ def detect_rccl_output_flag(shdl, rccl_test_binary_path, head_node):
         return '-x'
 
 
-def determine_mpi_pml_config(mpi_pml, shdl, mpi_path, head_node, net_dev_list, ucx_tls):
+def determine_mpi_pml_config(mpi_pml, mpi_params, phdl, shdl, mpi_dir, head_node, ucx_tls):
     """
     Determine MPI PML (Point-to-Point Messaging Layer) configuration based on user config or auto-detection.
 
     Parameters:
       mpi_pml: User-specified PML mode ('auto', 'ucx', or 'ob1').
+      mpi_params: Dict containing MPI configuration
+      phdl: Parallel ssh handle to run commands on all nodes.
       shdl: SSH handle to execute commands on the remote node.
-      mpi_path: Path to the MPI installation directory.
+      mpi_dir: Path to the MPI installation directory.
       head_node: The head node hostname for retrieving command output.
-      net_dev_list: UCX network device(s) to use (UCX_NET_DEVICES).
       ucx_tls: UCX transport layer to use (UCX_TLS).
 
     Returns:
       tuple: (pml_param, ucx_params) where:
-        - pml_param: MCA parameter string for mpirun (e.g., '--mca pml ob1' or '')
-        - ucx_params: UCX environment parameter string for mpirun (e.g., '-x UCX_...' or '')
+        - pml_param: MCA parameter string for mpirun (e.g., '--mca pml ob1' or '--mca pml ucx')
+        - ucx_params: UCX parameter string when ucx (UCX_UNIFIED_MODE, UCX_NET_DEVICES and UCX_TLS) or ''
+    UCX_TLS notes:
+      - 'rc,self,sm,tcp' — rc provides tag matching required by PML UCX
+      - 'tcp' alone causes pml init failure (no tag-capable transport)
+      - UCX_NET_DEVICES must use IB names with port suffix (e.g. bnxt_re0:1)
     """
-    if mpi_pml.lower() == "auto":
-        # Auto-detect UCX availability
-        ucx_available = is_ucx_available_in_mpi(shdl, mpi_path, head_node)
-        pml_param = "--mca pml ob1" if not ucx_available else ""
-    elif mpi_pml.lower() == "ucx":
-        # User explicitly requested UCX
-        ucx_available = True
-        pml_param = ""
-        log.info("Using UCX (user-specified)")
-    elif mpi_pml.lower() == "ob1":
-        # User explicitly requested ob1 fallback
-        ucx_available = False
-        pml_param = "--mca pml ob1"
-        log.info("Using pml ob1 (user-specified)")
+    mpi_pml = mpi_pml.lower()
+    pml_ob1 = '--mca pml ob1'
+
+    # ob1 explicitly requested, or an unrecognized value — both fall back to ob1
+    if mpi_pml not in ('ucx', 'auto'):
+        if mpi_pml == 'ob1':
+            log.info('mpi_pml val in config is ob1')
+        else:
+            log.warning(f'mpi_pml val in config is {mpi_pml} (incorrect), falling back to pml ob1')
+        log.info(f'PML: {pml_ob1}  UCX params: ')
+        return pml_ob1, ''
+
+    # 'ucx' or 'auto' both require checking whether UCX is actually usable
+    log.info(f'mpi_pml val in config is {mpi_pml}')
+    if not is_ucx_available_in_mpi(shdl, mpi_dir, head_node):
+        log.warning('UCX not detected — falling back to pml ob1')
+        log.info(f'PML: {pml_ob1}  UCX params: ')
+        return pml_ob1, ''
+
+    log.info('UCX detected in libmpi.so — using pml ucx')
+    net_dev_list = mpi_params.get('net_dev_list', '')
+    if not net_dev_list:
+        log.warning("'net_dev_list' missing or empty — auto-detecting from backend NICs...")
+        try:
+            net_dev_list = linux_utils.get_ucx_net_devices(phdl)
+        except ValueError as exc:
+            log.error(f'UCX net device auto-detection failed: {exc}')
+            log.warning('Falling back to pml ob1 due to auto-detection failure')
+            log.info(f'PML: {pml_ob1}  UCX params: ')
+            return pml_ob1, ''
     else:
-        log.warning(f"Unknown mpi_pml value '{mpi_pml}', defaulting to auto-detection")
-        ucx_available = is_ucx_available_in_mpi(shdl, mpi_path, head_node)
-        pml_param = "--mca pml ob1" if not ucx_available else ""
+        log.info(f'Using net_dev_list from mpi_params: {net_dev_list}')
 
-    ucx_params = (
-        f"-x UCX_UNIFIED_MODE=y -x UCX_NET_DEVICES={net_dev_list} -x UCX_TLS={ucx_tls} " if ucx_available else ""
-    )
-
+    pml_param = '--mca pml ucx'
+    ucx_params = f'-x UCX_UNIFIED_MODE=y -x UCX_NET_DEVICES={net_dev_list} -x UCX_TLS={ucx_tls}'
+    log.info(f'PML: {pml_param}  UCX params: {ucx_params}')
     return pml_param, ucx_params
 
 
@@ -787,6 +847,7 @@ def rccl_regression(
     no_of_local_ranks = int(mpi_params.get('no_of_local_ranks', 8))
     mpi_pml = mpi_params.get('mpi_pml', 'auto')
     mpi_oob_port = mpi_params.get('mpi_oob_port', 'eth0')
+    ucx_tls = mpi_params.get('ucx_tls', 'rc,self,sm,tcp') or 'rc,self,sm,tcp'
 
     no_of_global_ranks = no_of_nodes * no_of_local_ranks
 
@@ -800,16 +861,15 @@ def rccl_regression(
     for node in vpc_node_list:
         host_file_params = f'{host_file_params}{node} slots={proc_per_node}\n'
 
-    cmd = 'rm -f /tmp/rccl_hosts_file.txt'
+    hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
+    cmd = f'rm -f {hosts_file_path}'
     shdl.exec(cmd)
 
-    cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
+    cmd = f'echo "{host_file_params}" > {hosts_file_path}'
     shdl.exec(cmd)
 
     # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
-    pml_param, ucx_params = determine_mpi_pml_config(
-        mpi_pml, shdl, mpi_dir, head_node, mpi_params.get('net_dev_list', ''), mpi_params.get('ucx_tls', 'tcp')
-    )
+    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, mpi_params, phdl, shdl, mpi_dir, head_node, ucx_tls)
 
     # Build RCCL test command
     rccl_tests_dir = rccl_test_params.get('rccl_tests_dir', '/usr/local/rccl-tests/build')
@@ -888,7 +948,7 @@ def rccl_regression(
     cmd = f'''{timeout_prefix}{mpi_dir}/bin/mpirun \
         --allow-run-as-root \
         -np {no_of_global_ranks} \
-        --hostfile /tmp/rccl_hosts_file.txt \
+        --hostfile {hosts_file_path} \
         --mca plm_rsh_args "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
         --bind-to numa \
         {ucx_params} \
@@ -918,6 +978,7 @@ def rccl_regression(
         _maybe_write_run_command_log(cvs_params, test_name, env_overrides, rccl_result_file, cmd, output)
     except Exception as e:
         log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+        _cleanup_stale_rccl_processes(phdl, test_name, f'exception in rccl_regression: {repr(e)}')
         fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
     # Read the JSON results emitted by the RCCL test binary via SFTP
@@ -1004,6 +1065,7 @@ def rccl_perf(
     no_of_local_ranks = int(mpi_params.get('no_of_local_ranks', 8))
     mpi_pml = mpi_params.get('mpi_pml', 'auto')
     mpi_oob_port = mpi_params.get('mpi_oob_port', 'eth0')
+    ucx_tls = mpi_params.get('ucx_tls', 'rc,self,sm,tcp') or 'rc,self,sm,tcp'
 
     no_of_global_ranks = no_of_nodes * no_of_local_ranks
 
@@ -1024,16 +1086,15 @@ def rccl_perf(
     for node in vpc_node_list:
         host_file_params = f'{host_file_params}' + f'{node} slots={proc_per_node}\n'
 
-    cmd = 'rm -f /tmp/rccl_hosts_file.txt'
+    hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
+    cmd = f'rm -f {hosts_file_path}'
     shdl.exec(cmd)
 
-    cmd = f'echo "{host_file_params}" > /tmp/rccl_hosts_file.txt'
+    cmd = f'echo "{host_file_params}" > {hosts_file_path}'
     shdl.exec(cmd)
 
     # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
-    pml_param, ucx_params = determine_mpi_pml_config(
-        mpi_pml, shdl, mpi_dir, head_node, mpi_params.get('net_dev_list', ''), mpi_params.get('ucx_tls', 'tcp')
-    )
+    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, mpi_params, phdl, shdl, mpi_dir, head_node, ucx_tls)
 
     # Extract RCCL test parameters
     rccl_tests_dir = rccl_test_params.get('rccl_tests_dir', '/usr/local/rccl-tests/build')
@@ -1093,10 +1154,9 @@ def rccl_perf(
             # Always wrap in bash to interpret && shell operator
             test_cmd = f'bash -c "{test_cmd}"'
 
-        # Build mpirun command
         cmd = f'''{timeout_prefix}{mpi_dir}/bin/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
-        --hostfile /tmp/rccl_hosts_file.txt \
+        --hostfile {hosts_file_path} \
         --bind-to numa \
         {ucx_params} \
         --mca btl ^vader,openib \
@@ -1116,6 +1176,7 @@ def rccl_perf(
             scan_rccl_logs(output)
         except Exception as e:
             log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+            _cleanup_stale_rccl_processes(phdl, test_name, f'exception in rccl_perf ({dtype}): {repr(e)}')
             fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
         # Read the JSON results emitted by the RCCL test binary via SFTP
@@ -1124,7 +1185,7 @@ def rccl_perf(
         # Validate the results against the schema fail if results are not valid
         try:
             validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
-            log.info(f'Validation passed: {len(validated)} RcclTests schema validation passed')
+            log.info(f'{dtype}: {len(validated)} rccl-tests row(s) passed schema validation')
             all_validated_results.extend(validated)
             all_raw_results.extend(dtype_result_out)
         except ValidationError as e:
@@ -1192,7 +1253,7 @@ def rccl_perf(
         nic_type = 'ainic'
     elif re.search('broadcom|thor|bnxt', nic_model, re.I):
         nic_type = 'thor'
-    elif re.search('mellanox|cx|nvidia', nic_model, re.I):
+    elif re.search('mellanox|connectx|cx|nvidia', nic_model, re.I):
         nic_type = 'connectx'
     else:
         nic_type = 'ainic'

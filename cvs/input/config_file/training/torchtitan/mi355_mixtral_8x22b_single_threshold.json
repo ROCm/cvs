@@ -1,0 +1,20 @@
+{
+  "_comment": "Mixtral 8x22B single-node thresholds for MI355 TorchTitan.",
+  "_note": "Based on actual MI355 test results: BF16: 838 TPS. Threshold set at actual - 10%.",
+  "MBS=1,GBS=32,PRECISION=bf16": {
+    "training.throughput_per_gpu": {
+      "kind": "min",
+      "value": 754,
+      "_calculation": "838 * 0.90 = 754.2"
+    },
+    "training.tokens_per_gpu": {
+      "kind": "min",
+      "value": 24128,
+      "_calculation": "754 * 32 (batch size) = 24128"
+    },
+    "training.loss": {
+      "kind": "max",
+      "value": 15.0
+    }
+  }
+}

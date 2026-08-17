@@ -1,0 +1,354 @@
+{
+  "uid": "thermal-power",
+  "title": "Thermal & Power",
+  "description": "GPU temperature and power consumption monitoring",
+  "tags": ["gpu-fleet", "thermal", "power"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": {"from": "now-3h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "nodegroup",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(gpu_junction_temperature, node_group)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      },
+      {
+        "name": "hostname",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(gpu_junction_temperature{node_group=~\"$nodegroup\"}, hostname)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Temperature Overview",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "type": "gauge",
+      "title": "Max Junction Temperature",
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 1},
+      "targets": [
+        {
+          "expr": "max(gpu_junction_temperature{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Max"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "min": 0,
+          "max": 110,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 75},
+              {"color": "orange", "value": 85},
+              {"color": "red", "value": 95}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "gauge",
+      "title": "Avg Junction Temperature",
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 1},
+      "targets": [
+        {
+          "expr": "avg(gpu_junction_temperature{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Avg"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "min": 0,
+          "max": 110,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "orange", "value": 80},
+              {"color": "red", "value": 90}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "gauge",
+      "title": "Max Memory Temperature",
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 1},
+      "targets": [
+        {
+          "expr": "max(gpu_memory_temperature{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Max"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "min": 0,
+          "max": 110,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 80},
+              {"color": "orange", "value": 90},
+              {"color": "red", "value": 100}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "gauge",
+      "title": "Total Power Draw",
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 1},
+      "targets": [
+        {
+          "expr": "sum(gpu_power_usage{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})",
+          "legendFormat": "Total"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "red", "value": 90}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "Temperature Trends",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 6}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Junction Temperature",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 7},
+      "targets": [
+        {
+          "expr": "gpu_junction_temperature{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "custom": {"lineWidth": 1, "fillOpacity": 10}
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Memory Temperature",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 7},
+      "targets": [
+        {
+          "expr": "gpu_memory_temperature{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "custom": {"lineWidth": 1, "fillOpacity": 10}
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "Power Consumption",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15}
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "GPU Power Usage",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "expr": "gpu_power_usage{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "custom": {"lineWidth": 1, "fillOpacity": 10}
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Energy Consumed",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "expr": "gpu_energy_consumed{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "joule",
+          "custom": {"lineWidth": 2, "fillOpacity": 20}
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Clock Speeds",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24}
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "GPU Clock",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 25},
+      "targets": [
+        {
+          "expr": "gpu_clock{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "hertz",
+          "custom": {"lineWidth": 1}
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "GPU Voltage",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 25},
+      "targets": [
+        {
+          "expr": "gpu_voltage{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "mvolt",
+          "custom": {"lineWidth": 1}
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "Top 10 Nodes",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 33}
+    },
+    {
+      "id": 20,
+      "type": "barchart",
+      "title": "Top 10 Nodes by Max Temperature",
+      "description": "Nodes with highest maximum junction temperature",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 34},
+      "targets": [
+        {
+          "expr": "topk(10, max by (hostname) (gpu_junction_temperature{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}))",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 75},
+              {"color": "orange", "value": 85},
+              {"color": "red", "value": 95}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "barchart",
+      "title": "Top 10 Nodes by Max Power Draw",
+      "description": "Nodes with highest maximum GPU power consumption",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 34},
+      "targets": [
+        {
+          "expr": "topk(10, max by (hostname) (gpu_power_usage{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}))",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt",
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "Temperature Heatmap",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 42}
+    },
+    {
+      "id": 17,
+      "type": "heatmap",
+      "title": "Junction Temperature Distribution",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 43},
+      "targets": [
+        {
+          "expr": "gpu_junction_temperature{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "{{hostname}} GPU{{gpu}}"
+        }
+      ],
+      "options": {
+        "calculate": false,
+        "yAxis": {"unit": "celsius"}
+      }
+    }
+  ]
+}

@@ -34,7 +34,6 @@ pytest -vvv -log-file=/tmp/agfhc_test.log -s ./tests/health/agfhc_cvs.py --clust
 ```
 In the config file, cvs/input/config_file/health/mi300_health_config.json, change the value of parameters(/tmp/cvs):
 "path": "/tmp/cvs/INSTALL/TransferBench",
-"example_tests_path": "/tmp/cvs/INSTALL/TransferBench/examples",
 "git_install_path": "/tmp/cvs/INSTALL/", to desired location.
 
 pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_agfhc.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html

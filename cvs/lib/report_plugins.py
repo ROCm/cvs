@@ -6,6 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 import datetime
+import html
 import re
 import shutil
 import sys
@@ -18,12 +19,34 @@ from cvs.lib import globals
 
 log = globals.log
 
+
+def cli_option_value(name, argv=None):
+    """Return the value passed for CLI option `name`, or None if absent.
+
+    Supports both `--name value` (space-separated) and `--name=value` (equals)
+    forms. Needed because callers invoke the suite either way (e.g. via
+    `cvs run ... --config_file=...`), and a plain `arg == name` scan silently
+    misses the equals form -- which is why the HTML Environment table showed
+    "Not specified" and the config files were never bundled/linked.
+    """
+    argv = sys.argv if argv is None else argv
+    prefix = name + "="
+    for i, arg in enumerate(argv):
+        if arg == name and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith(prefix):
+            return arg[len(prefix) :]
+    return None
+
+
 REPORT_STYLE_OVERRIDES = """<style>
     .collapse { display: none !important; }
     .col-result:hover::after { content: none !important; }
     .col-result.collapsed:hover::after { content: none !important; }
     .collapsible td:not(.col-links) { cursor: default !important; }
     .extras-row { display: none !important; }
+    /* Separate the per-node links in the Links column with a "|" divider. */
+    .col-links a + a::before { content: " | "; color: #888; }
 </style>"""
 
 
@@ -35,7 +58,10 @@ class HtmlReportManager:
         self._htmlpath = getattr(config.option, "htmlpath", None)
         self._test_html_dir = getattr(config, "_test_html_dir", "test_html")
         self._custom_test_reports = []  # Track reports added via add_html_to_report
-        self._config_files = {}  # Track copied config files {original_path: relative_path}
+        self._config_files = {}  # {original_path: {"rel": relative_path, "kind": "cluster"|"config"}}
+        # Per-test PASS/FAIL verdict lines rendered in the Reports section.
+        # Each entry: {"name": test_name, "passed": bool, "detail": str}.
+        self._anc_verdicts = []
 
         # Store reference for access from pytest hooks
         HtmlReportManager._current_instance = self
@@ -92,12 +118,12 @@ class HtmlReportManager:
 
         log_content = []
         for section_name, section_content in report.sections:
-            log_content.append(f"<h3>{section_name}</h3><pre>{section_content}</pre>")
+            log_content.append(f"<h3>{html.escape(section_name)}</h3><pre>{html.escape(section_content)}</pre>")
 
         if log_content:
             # Persist a standalone html log page per test.
             log_path.write_text(
-                f"<html><body><h1>{report.nodeid}</h1>{''.join(log_content)}</body></html>",
+                f"<html><body><h1>{html.escape(report.nodeid)}</h1>{''.join(log_content)}</body></html>",
                 encoding="utf-8",
             )
             log.info("Wrote external test log: %s", log_path)
@@ -124,13 +150,32 @@ class HtmlReportManager:
 
         return extras
 
-    def add_html_to_report(self, html_file, link_name=None, request=None):
-        """Copy an external HTML file to the report directory for inclusion in ZIP bundle.
+    def add_html_to_report(
+        self,
+        html_file,
+        link_name=None,
+        request=None,
+        dest_name=None,
+        track_in_reports=True,
+        test_name=None,
+        passed=None,
+    ):
+        """Copy an external file into the report directory for inclusion in the ZIP bundle.
 
         Args:
-            html_file (str or Path): Path to the HTML file to include in the report
+            html_file (str or Path): Path to the file to include in the report
             link_name (str, optional): If provided, adds a clickable link in the pytest-html report
             request (pytest request fixture, optional): Required if link_name is provided
+            dest_name (str, optional): Filename to copy to inside the report dir. Defaults to the
+                source filename. Use a unique name (e.g. "<node>_<test>_<ts>_errors.json") to avoid
+                one node's artifact overwriting another's when several land in the same directory.
+            track_in_reports (bool): When True (default) the file is listed in the Reports section
+                bullet list. Set False for per-row artifacts (errors.json, per-node ANC tarballs)
+                that are already linked from the results table and would clutter Reports.
+            test_name (str, optional): Owning test function name; lets the Reports section group
+                this artifact under its test's verdict line.
+            passed (bool, optional): Whether the owning test passed; the Reports section lists
+                artifacts only for FAILED tests, so passing-test artifacts are skipped there.
 
         Returns:
             str: Relative path to the copied file (for linking), or None if copying failed
@@ -142,29 +187,32 @@ class HtmlReportManager:
         try:
             source_path = Path(html_file)
             if not source_path.exists():
-                log.warning("HTML file not found, cannot add to report: %s", source_path)
+                log.warning("File not found, cannot add to report: %s", source_path)
                 return None
 
             # Ensure log directory exists
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
-            # Copy file to log directory with same name
-            dest_path = self.log_dir / source_path.name
+            # Copy file to log directory (optionally under a caller-supplied unique name)
+            dest_path = self.log_dir / (dest_name or source_path.name)
             shutil.copy2(source_path, dest_path)
 
-            log.info("Added HTML file to report bundle: %s -> %s", source_path, dest_path)
+            log.info("Added file to report bundle: %s -> %s", source_path, dest_path)
 
             # Return relative path for potential linking
             rel_path = dest_path.relative_to(self.htmlpath.parent)
             rel_path_str = str(rel_path)
 
-            # Track the added report
-            report_info = {
-                'name': link_name or source_path.name,
-                'path': rel_path_str,
-                'original_path': str(source_path),
-            }
-            self._custom_test_reports.append(report_info)
+            # Track the added report (unless it's a per-row artifact linked elsewhere)
+            if track_in_reports:
+                report_info = {
+                    'name': link_name or source_path.name,
+                    'path': rel_path_str,
+                    'original_path': str(source_path),
+                    'test_name': test_name,
+                    'passed': passed,
+                }
+                self._custom_test_reports.append(report_info)
 
             # Add clickable link to pytest-html report if requested
             if link_name and request:
@@ -200,7 +248,10 @@ class HtmlReportManager:
             # Ensure log directory exists
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
-            # Copy cluster file
+            # Copy cluster file. The "cluster_" prefix namespaces it in the
+            # bundle so it can't collide with a same-named config/artifact. The
+            # Environment-table link is keyed by `kind` (not a filename
+            # substring), so the prefix is purely for bundle hygiene.
             if cluster_file_path and cluster_file_path != "Not specified":
                 cluster_path = Path(cluster_file_path)
                 if cluster_path.exists():
@@ -208,12 +259,13 @@ class HtmlReportManager:
                     shutil.copy2(cluster_path, dest_cluster)
                     rel_cluster = dest_cluster.relative_to(self.htmlpath.parent)
                     copied_files['cluster'] = str(rel_cluster)
-                    self._config_files[cluster_file_path] = str(rel_cluster)
+                    self._config_files[cluster_file_path] = {"rel": str(rel_cluster), "kind": "cluster"}
                     log.info("Copied cluster file to bundle: %s -> %s", cluster_path, dest_cluster)
                 else:
                     log.warning("Cluster file not found: %s", cluster_path)
 
-            # Copy config file
+            # Copy config file with a "config_" prefix -- see the cluster-file
+            # note above.
             if config_file_path and config_file_path != "Not specified":
                 config_path = Path(config_file_path)
                 if config_path.exists():
@@ -221,7 +273,7 @@ class HtmlReportManager:
                     shutil.copy2(config_path, dest_config)
                     rel_config = dest_config.relative_to(self.htmlpath.parent)
                     copied_files['config'] = str(rel_config)
-                    self._config_files[config_file_path] = str(rel_config)
+                    self._config_files[config_file_path] = {"rel": str(rel_config), "kind": "config"}
                     log.info("Copied config file to bundle: %s -> %s", config_path, dest_config)
                 else:
                     log.warning("Config file not found: %s", config_path)
@@ -234,15 +286,12 @@ class HtmlReportManager:
     def copy_config_files_from_args(self):
         """Copy config files from command line arguments to bundle."""
 
-        # Parse command line arguments to get file paths
-        cluster_file_path = None
-        config_file_path = None
-
-        for i, arg in enumerate(sys.argv):
-            if arg == "--cluster_file" and i + 1 < len(sys.argv):
-                cluster_file_path = str(Path(sys.argv[i + 1]).resolve())
-            elif arg == "--config_file" and i + 1 < len(sys.argv):
-                config_file_path = str(Path(sys.argv[i + 1]).resolve())
+        # Parse command line arguments to get file paths.
+        # Handles both `--opt value` and `--opt=value` forms.
+        cluster_arg = cli_option_value("--cluster_file")
+        config_arg = cli_option_value("--config_file")
+        cluster_file_path = str(Path(cluster_arg).resolve()) if cluster_arg else None
+        config_file_path = str(Path(config_arg).resolve()) if config_arg else None
 
         # Copy files to bundle if we found them
         if cluster_file_path or config_file_path:
@@ -317,15 +366,16 @@ class HtmlReportManager:
         try:
             data = json.loads(json_str)
 
-            # Update environment data with clickable links for config files
-            for original_path, relative_path in self._config_files.items():
+            # Update environment data with clickable links for config files.
+            # Keyed by the recorded `kind` (cluster/config), not a filename
+            # substring -- so a config file whose name no longer contains
+            # "config" (e.g. mi325x_..._distributed.json) still gets linked.
+            row_by_kind = {"cluster": "Cluster File", "config": "Config File"}
+            for original_path, info in self._config_files.items():
                 filename = Path(original_path).name
-                if "cluster" in filename.lower():
-                    # Replace plain filename with HTML link
-                    data["environment"]["Cluster File"] = f'<a href="{relative_path}" target="_blank">{filename}</a>'
-                elif "config" in filename.lower():
-                    # Replace plain filename with HTML link
-                    data["environment"]["Config File"] = f'<a href="{relative_path}" target="_blank">{filename}</a>'
+                row = row_by_kind.get(info["kind"])
+                if row:
+                    data["environment"][row] = f'<a href="{info["rel"]}" target="_blank">{filename}</a>'
 
             # Re-encode the JSON and update the HTML
             updated_json = json.dumps(data)
@@ -351,21 +401,114 @@ class HtmlReportManager:
         else:
             data.append("<div class='empty log'>Log externalized (see link above).</div>")
 
+    def record_anc_verdict(self, test_name, passed, detail=""):
+        """Record a per-test PASS/FAIL verdict for the Reports section.
+
+        Args:
+            test_name (str): The test function name (e.g. "test_cpu_all").
+            passed (bool): True if the test passed on every node.
+            detail (str): On pass, the node list ("PASS on all nodes [...]"); on fail,
+                which node(s) failed and a short reason.
+        """
+        self._anc_verdicts.append({"name": test_name, "passed": bool(passed), "detail": detail})
+
+    @staticmethod
+    def _escape(text):
+        """Minimal HTML escaping for text injected into the Reports section."""
+        import html as _html
+
+        return _html.escape(str(text), quote=True)
+
     def generate_reports_section(self):
-        """Generate HTML for the Reports section showing added HTML reports only."""
-        if not self._custom_test_reports:
+        """Generate HTML for the Reports section.
+
+        Failure-focused: lists ONLY the FAILED tests, and under each failed test's
+        red verdict line, nests that test's failed-node ANC log zip(s) so the item
+        and its archive sit together. Passing tests (and passing-node zips) are
+        omitted here on purpose — the Summary table's Links column already carries
+        them. When every ANC test passed, a single green "All tests passed" note is
+        shown instead. Non-ANC artifacts (rccl/preflight, which carry no test_name)
+        keep their existing flat bullet list.
+        """
+        if not self._anc_verdicts and not self._custom_test_reports:
             return ""
 
-        # Simple Reports section - only test reports, no config files
-        html = '<div><h2>Reports</h2><ul>'
+        failed_verdicts = [v for v in self._anc_verdicts if not v["passed"]]
+        # ANC log zips are tagged with their owning test_name; everything else
+        # (rccl/preflight artifacts) has no test_name and stays in the flat list.
+        anc_artifacts = [r for r in self._custom_test_reports if r.get("test_name")]
+        other_artifacts = [r for r in self._custom_test_reports if not r.get("test_name")]
 
-        # Add test reports only
-        for report in self._custom_test_reports:
-            html += f'<li><a href="{report["path"]}" target="_blank">{report["name"]}</a></li>'
+        html = '<div><h2>Reports</h2>'
 
-        html += '</ul></div>'
+        if self._anc_verdicts:
+            if failed_verdicts:
+                html += '<ul>'
+                for v in failed_verdicts:
+                    status = '<span style="color:#c62828;font-weight:bold;">FAILED</span>'
+                    name = self._escape(v["name"])
+                    detail = f' &mdash; {self._escape(v["detail"])}' if v["detail"] else ''
+                    html += f'<li>{name}: {status}{detail}'
+                    # Nest this test's failed-node zip(s) directly under its verdict.
+                    zips = [r for r in anc_artifacts if r.get("test_name") == v["name"] and r.get("passed") is False]
+                    if zips:
+                        html += '<ul>'
+                        for z in zips:
+                            html += f'<li><a href="{z["path"]}" target="_blank">{self._escape(z["name"])}</a></li>'
+                        html += '</ul>'
+                    html += '</li>'
+                html += '</ul>'
+            else:
+                html += '<ul><li><span style="color:#2e7d32;font-weight:bold;">All tests passed</span></li></ul>'
+
+        # Non-ANC attached artifacts (e.g. rccl/preflight) kept as a flat list.
+        if other_artifacts:
+            html += '<ul>'
+            for report in other_artifacts:
+                html += f'<li><a href="{report["path"]}" target="_blank">{self._escape(report["name"])}</a></li>'
+            html += '</ul>'
+
+        html += '</div>'
 
         return html
+
+    def generate_suite_reports(self, session):
+        """Write registered suite report HTML/JSON into the pytest bundle before zip."""
+        if not self.is_enabled:
+            return
+
+        from cvs.lib.report.inference import publish_inference_suite_report
+        from cvs.lib.report.registry import get_session_results, get_suite_report_config
+        from cvs.lib.report.types import InferenceReportConfig
+
+        report_config = get_suite_report_config(session.config)
+        if report_config is None:
+            suite_name = getattr(session.config, "_suite_name", "unknown")
+            log.info(
+                "Skipping suite report generation: no preset registered for suite '%s'",
+                suite_name,
+            )
+            return
+
+        store = get_session_results()
+
+        if not isinstance(report_config, InferenceReportConfig):
+            log.warning("Unknown suite report config type: %s", type(report_config).__name__)
+            return
+
+        inf_res_dict = store.get("inf_res_dict")
+        if not inf_res_dict:
+            log.info("Skipping suite report generation: no results in session store")
+            return
+
+        publish_inference_suite_report(
+            report_config,
+            variant_config=store.get("variant_config"),
+            inf_res_dict=inf_res_dict,
+            lifecycle_report=store.get("lifecycle_report") or {},
+            report_manager=self,
+            pytest_config=session.config,
+        )
 
     @staticmethod
     def inject_style_overrides(prefix):

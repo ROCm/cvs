@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "framework": "vllm",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "threshold_json": "<changeme>",
+  "paths": {
+    "shared_fs": "/mnt/dtni/{user-id}",
+    "models_dir": "{shared_fs}/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.cache/huggingface/token"
+  },
+  "model": {
+    "id": "amd/Llama-3.1-70B-Instruct-FP8-KV",
+    "remote": 0
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "w1_llama31_70b_fp8kv_perf_inference_rocm",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/mnt/dtni:/mnt/dtni",
+          "{paths.models_dir}:/models"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "serve_args": {
+        "kv-cache-dtype": "fp8",
+        "enforce-eager": true
+      },
+      "env": {
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1"
+      }
+    }
+  },
+  "params": {
+    "backend": "vllm",
+    "base_url": "http://0.0.0.0",
+    "port_no": "8888",
+    "dataset_name": "random",
+    "burstiness": "1.0",
+    "seed": "0",
+    "request_rate": "inf",
+    "random_range_ratio": "0.8",
+    "random_prefix_len": "0",
+    "tensor_parallelism": "8",
+    "pipeline_parallel_size": "1",
+    "nnodes": "1",
+    "tokenizer_mode": "auto",
+    "percentile_metrics": "ttft,tpot,itl,e2el",
+    "metric_percentiles": "50,90,95,99",
+    "num_prompts": "3200",
+    "client_poll_count": "90"
+  },
+  "sweep": {
+    "sequence_combinations": [
+      {
+        "name": "w1_isl=1000_osl=1000",
+        "isl": "1000",
+        "osl": "1000",
+        "goodput_slo": {
+          "ttft_ms": 1000000000.0,
+          "tpot_ms": 1000000000.0,
+          "e2el_ms": 1000000000.0
+        }
+      }
+    ],
+    "runs": [
+      { "combo": "w1_isl=1000_osl=1000", "concurrency": 16 }
+    ]
+  }
+}

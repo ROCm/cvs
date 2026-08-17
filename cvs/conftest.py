@@ -6,16 +6,84 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 """
 
 import importlib.metadata
-import sys
+import json
+import logging
 from pathlib import Path
 
 import pytest
 
-from cvs.lib.report_plugins import HtmlReportManager
+from cvs.lib.report_plugins import HtmlReportManager, cli_option_value
+
+log = logging.getLogger(__name__)
 
 
-@pytest.hookimpl(tryfirst=True)
-def pytest_configure(config):
+def _maybe_autocollect_html(config, suite_name):
+    '''
+    Enable pytest-html for ANC suites without an explicit --html.
+
+    When the ANC config has COLLECT_HTML_REPORTS truthy (default) and the user
+    did not pass --html on the command line, derive the report path from
+    anc.log_folder_path and set config.option.htmlpath so pytest-html generates
+    the report anyway. Runs at
+    tryfirst pytest_configure time (before pytest-html's own configure and before
+    HtmlReportManager reads config.option.htmlpath). An explicit --html always
+    wins. Best-effort: any failure leaves HTML reporting exactly as the command
+    line specified.
+    '''
+    # Explicit --html wins; do nothing.
+    if getattr(config.option, "htmlpath", None):
+        return
+
+    cluster_file = config.getoption("cluster_file", default=None)
+    config_file = config.getoption("config_file", default=None)
+    if not cluster_file or not config_file:
+        return
+
+    try:
+        from cvs.lib.utils_lib import (
+            resolve_cluster_config_placeholders,
+            resolve_test_config_placeholders,
+        )
+        from cvs.lib.anc_lib import (
+            COLLECT_HTML_REPORTS_KEY,
+            _as_bool,
+            new_run_timestamp,
+            resolve_anc_html_report_path,
+        )
+
+        with open(config_file) as fh:
+            config_dict = json.load(fh)
+        # Only ANC suites participate in this auto-collection.
+        if "anc" not in config_dict:
+            return
+
+        with open(cluster_file) as fh:
+            cluster_dict = json.load(fh)
+        cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
+        config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
+
+        if not _as_bool(config_dict["anc"].get(COLLECT_HTML_REPORTS_KEY), default=True):
+            return
+
+        timestamp = new_run_timestamp()
+        # Match the per-node log folder naming (test_<group>), whose suite files
+        # are named anc_test_<group>; drop the leading "anc_".
+        report_name = suite_name
+        if report_name.startswith("anc_"):
+            report_name = report_name[len("anc_") :]
+        html_path = resolve_anc_html_report_path(config_dict, cluster_dict, report_name, timestamp)
+        Path(html_path).parent.mkdir(parents=True, exist_ok=True)
+        config.option.htmlpath = html_path
+        # Portable single-file report (matches the usual manual invocation).
+        if hasattr(config.option, "self_contained_html"):
+            config.option.self_contained_html = True
+    except Exception:
+        # Never let report auto-setup break test collection/run.
+        return
+
+
+def _sync_suite_name_from_args(config):
+    """Derive suite stem from the first ``*.py`` target in ``config.args``."""
     suite_name = "test"
     for arg in config.args:
         bare = arg.split("::")[0]
@@ -24,7 +92,97 @@ def pytest_configure(config):
             break
     config._suite_name = suite_name
     config._test_html_dir = f"{suite_name}_html"
+
+
+def _ensure_html_report_manager(config):
+    """Create ``HtmlReportManager`` once; safe if ``pytest_configure`` did not run."""
+    _sync_suite_name_from_args(config)
+    mgr = getattr(config, "_html_report_manager", None)
+    if mgr is not None:
+        return mgr
+
+    _maybe_autocollect_html(config, config._suite_name)
     config._html_report_manager = HtmlReportManager(config)
+    return config._html_report_manager
+
+
+def _auto_register_inference_suite_report(config):
+    from cvs.lib.report.auto_register import try_auto_register_inference_suite_report
+
+    _sync_suite_name_from_args(config)
+    return try_auto_register_inference_suite_report(config)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config):
+    _ensure_html_report_manager(config)
+    _auto_register_inference_suite_report(config)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _cvs_inference_suite_report_session(request):
+    """Initialize the session report store when a suite preset is registered."""
+    from cvs.lib.report.registry import clear_session_results, get_suite_report_config
+    from cvs.lib.report.types import InferenceReportConfig
+
+    if not isinstance(get_suite_report_config(request.config), InferenceReportConfig):
+        yield
+        return
+
+    clear_session_results()
+    yield
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _cvs_inference_suite_report_bind_module(request, _cvs_inference_suite_report_session):
+    """Bind module-scoped suite fixtures into the session store at module teardown."""
+    from cvs.lib.report.registry import bind_session_results, get_suite_report_config
+    from cvs.lib.report.types import InferenceReportConfig
+
+    if not isinstance(get_suite_report_config(request.config), InferenceReportConfig):
+        yield
+        return
+
+    inf_res_dict = None
+    variant_config = None
+    lifecycle = None
+    try:
+        inf_res_dict = request.getfixturevalue("inf_res_dict")
+    except pytest.FixtureLookupError:
+        log.warning(
+            "Inference suite report preset registered but inf_res_dict fixture is missing; "
+            "session-end report will be skipped"
+        )
+        yield
+        return
+    try:
+        variant_config = request.getfixturevalue("variant_config")
+    except pytest.FixtureLookupError:
+        log.warning(
+            "Inference suite report preset registered but variant_config fixture is missing; "
+            "session-end report will be skipped"
+        )
+        yield
+        return
+    try:
+        lifecycle = request.getfixturevalue("lifecycle")
+    except pytest.FixtureLookupError:
+        log.warning(
+            "Inference suite report preset registered but lifecycle fixture is missing; "
+            "session-end report will be skipped"
+        )
+        yield
+        return
+
+    def _bind_at_module_end():
+        bind_session_results(
+            inf_res_dict=inf_res_dict,
+            variant_config=variant_config,
+            lifecycle=lifecycle,
+        )
+
+    request.addfinalizer(_bind_at_module_end)
+    yield
 
 
 # Add all additional cmd line arguments for the script
@@ -67,15 +225,12 @@ def pytest_metadata(metadata):
         except Exception as e:
             cvs_version = f"Unknown (Error: {e})"
 
-    # Parse command line arguments to get our custom options (just for display)
-    cluster_file = "Not specified"
-    config_file = "Not specified"
-
-    for i, arg in enumerate(sys.argv):
-        if arg == "--cluster_file" and i + 1 < len(sys.argv):
-            cluster_file = Path(sys.argv[i + 1]).name  # Just filename for display
-        elif arg == "--config_file" and i + 1 < len(sys.argv):
-            config_file = Path(sys.argv[i + 1]).name  # Just filename for display
+    # Parse command line arguments to get our custom options (just for display).
+    # Handles both `--opt value` and `--opt=value` forms.
+    cluster_arg = cli_option_value("--cluster_file")
+    config_arg = cli_option_value("--config_file")
+    cluster_file = Path(cluster_arg).name if cluster_arg else "Not specified"
+    config_file = Path(config_arg).name if config_arg else "Not specified"
 
     # Add custom metadata
     metadata["CVS version"] = cvs_version
@@ -93,7 +248,8 @@ def pytest_metadata(metadata):
 
 # Prepare a clean per-run log directory before tests start.
 def pytest_sessionstart(session):
-    session.config._html_report_manager.setup_log_dir()
+    _auto_register_inference_suite_report(session.config)
+    _ensure_html_report_manager(session.config).setup_log_dir()
 
 
 # Capture each test report and attach a per-test external log link.
@@ -101,7 +257,19 @@ def pytest_sessionstart(session):
 def pytest_runtest_makereport(item, call):  # noqa: ARG001
     outcome = yield
     report = outcome.get_result()
-    report.extras = item.config._html_report_manager.write_test_log(report, item.originalname)
+    report.extras = _ensure_html_report_manager(item.config).write_test_log(report, item.originalname)
+
+    from cvs.lib.report.registry import get_suite_report_config
+    from cvs.lib.report.types import InferenceReportConfig
+
+    if isinstance(get_suite_report_config(item.config), InferenceReportConfig):
+        from cvs.lib.report.inference_wiring import (
+            attach_inference_suite_lifecycle_table,
+            attach_inference_suite_report_row_extra,
+        )
+
+        attach_inference_suite_lifecycle_table(item, report)
+        attach_inference_suite_report_row_extra(item, report)
 
 
 # Replace inline pytest-html log content with a short externalized-log message.
@@ -118,4 +286,6 @@ def pytest_html_results_summary(prefix, summary, postfix):
 @pytest.hookimpl(hookwrapper=True)
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
     yield  # wait for pytest-html and all other plugins to finish writing the report
-    session.config._html_report_manager.create_zip_bundle(session)
+    mgr = _ensure_html_report_manager(session.config)
+    mgr.generate_suite_reports(session)
+    mgr.create_zip_bundle(session)

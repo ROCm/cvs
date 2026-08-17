@@ -29,12 +29,17 @@ class ContainerRuntime(Protocol):
         """
         ...
 
-    def exec(self, container_name, cmd, hosts=None, timeout=None):
-        """Execute command in running containers."""
+    def exec(self, container_name, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+        """Execute command in running containers.
+
+        print_console=False returns the output without logging it; use for bulk
+        data the caller parses itself.
+        """
         ...
 
-    def exec_on_head(self, container_name, cmd, timeout=None):
-        """Execute command directly on head node (baremetal)."""
+    def exec_on_head(self, container_name, cmd, timeout=None, detailed=False, print_console=True):
+        """Execute command directly on head node (baremetal). See exec() for
+        the detailed and print_console semantics."""
         ...
 
     def load_image(self, tar_path, timeout=None):

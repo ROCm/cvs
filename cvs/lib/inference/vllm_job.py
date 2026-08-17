@@ -1,0 +1,690 @@
+'''
+Copyright 2025 Advanced Micro Devices, Inc.
+All rights reserved.
+
+Unified vLLM benchmark job for single-node and multinode distributed runs.
+
+Routing contract:
+  - build_server_cmd: BROADCAST env-script write + mkdir to ALL nodes.
+    On single-node (nnodes=1) broadcast and targeted exec are equivalent.
+  - start_server: one targeted orch.exec(..., hosts=[host]) per host, with
+    per-rank --node-rank. On single-node this yields one (0, head) iteration.
+  - run_client / wait_client_complete / parse_results: HEAD-ONLY via
+    orch.exec_on_head. Semantically correct for both topologies: the client
+    always connects to http://head:port. Using broadcast exec here would
+    launch N competing clients on multinode.
+  - wait_ready / is_ready: BROADCAST so every shard is checked.
+  - stop_server: BROADCAST pkill to all nodes.
+
+Distributed vs single-node branching is localised to _server_argv only:
+distributed flags (--node-rank, --master-addr, --master-port, --nnodes,
+--pipeline-parallel-size, --distributed-executor-backend) are added iff
+int(nnodes) > 1. Everything else is topology-blind.
+
+IB device config (distributed only):
+  ib_hcas: discovered HCA names for NCCL_IB_HCA, passed in from the
+      test_discover_topology lifecycle step. Written into the per-node env
+      script.
+  ib_netdev: explicit Linux netdev name for NCCL_SOCKET_IFNAME /
+      GLOO_SOCKET_IFNAME. Read directly from variant.roles.server.ib_netdev.
+      Required when nnodes > 1 (enforced by VariantConfig validator).
+'''
+
+from __future__ import annotations
+
+import base64
+import json
+import math
+import re
+import shlex
+import time
+from typing import Optional
+
+from cvs.lib import globals
+from cvs.lib.inference.utils.vllm_parsing import to_client_metrics
+from cvs.lib.utils.model_query_lib import OpenAIProbe
+
+log = globals.log
+
+
+def scrape_vllm_metrics(orch, base_url: str, port_no: str, timeout_s: "float | None" = None) -> "str | None":
+    """One-shot scrape of vLLM's `/metrics` Prometheus endpoint, head-only.
+
+    Mirrors capture_gpu_metrics()'s one-shot-exec shape (gpu.py): a single,
+    synchronous, main-thread orch.exec_on_head call, never backgrounded. Two
+    calls to this function (one before, one after a cell's client run) bracket
+    test_vllm_inference the same way start_gpu_poller/stop_and_collect_gpu_poller
+    do, but this only needs point-in-time reads, not a continuous poll -- a
+    background thread/poller must never be used here (the same SSH-session
+    race that the GPU poller has to guard against applies to this bracket
+    too).
+
+    Returns the raw exposition-format text, or None if the curl fails
+    (endpoint down, timeout, non-2xx) or comes back empty -- never raises.
+    """
+    kwargs = {"timeout": timeout_s} if timeout_s is not None else {}
+    try:
+        out = orch.exec_on_head(f"curl -sf {base_url}:{port_no}/metrics", **kwargs)
+    except Exception as exc:
+        log.warning("scrape_vllm_metrics: exec_on_head failed: %s", exc)
+        return None
+    text = next(iter(out.values()), None) if out else None
+    if not text or not str(text).strip():
+        log.warning("scrape_vllm_metrics: empty/failed scrape from %s:%s/metrics", base_url, port_no)
+        return None
+    return text
+
+
+class VllmJob:
+    """Unified vLLM benchmark job for single-node and multinode distributed runs.
+
+    Construct with the result of test_discover_topology (ib_hcas) for distributed
+    runs; pass None (or omit) for single-node.
+
+    The ``orch`` instance is expected to already have ``setup_containers()`` and
+    (for multinode) ``setup_sshd()`` called against it by the test lifecycle.
+    """
+
+    READINESS_RE = re.compile(r"Application startup complete|Uvicorn running|Started server", re.I)
+    COMPLETION_RE = re.compile(r"Serving Benchmark Result", re.I)
+    FAILED_REQUESTS_RE = re.compile(r"Failed requests:\s+([0-9]+)", re.I)
+    SUCCESSFUL_REQUESTS_RE = re.compile(r"Successful requests:\s+([0-9]+)", re.I)
+    # A benchmark cell with a few transient request drops is still a usable perf
+    # data point; only abort the sweep when the failure FRACTION exceeds this.
+    MAX_FAILED_REQUEST_FRACTION = 0.01
+    CLIENT_CRASH_RE = re.compile(r"Traceback \(most recent call last\)", re.I)
+    CLIENT_LAUNCH_FAIL_RE = re.compile(
+        r"unrecognized arguments|invalid choice|error: argument |command not found|: No such file or directory",
+        re.I,
+    )
+    EARLY_FAILURE_RE = re.compile(
+        r"no such file or directory|command not found|cannot access|failed to start"
+        r"|unrecognized arguments|invalid choice|error: argument "
+        r"|Free memory on device.*less than desired"
+        r"|Engine core initialization failed"
+        r"|WorkerProc failed to start",
+        re.I,
+    )
+    FATAL_LOG_RE = re.compile(
+        r"Free memory on device.{0,80}less than desired"
+        r"|Engine core initialization failed"
+        r"|RuntimeError:.*[Ee]ngine",
+        re.I,
+    )
+
+    def __init__(
+        self,
+        orch,
+        variant,
+        hf_token,
+        isl,
+        osl,
+        concurrency,
+        num_prompts,
+        ib_hcas: Optional[list] = None,
+        goodput_slo=None,
+        log_subdir="vllm",
+        server_precheck_wait_s=30,
+        server_warmup_wait_s=330,
+        server_poll_count=60,
+        server_poll_wait_s=60,
+        client_initial_wait_s=120,
+        client_poll_count=20,
+        client_poll_wait_s=60,
+    ):
+        self.orch = orch
+        self.variant = variant
+        self.hf_token = hf_token
+        self.isl = str(isl)
+        self.osl = str(osl)
+        self.concurrency = str(concurrency)
+        self.num_prompts = str(num_prompts)
+        # Discovered HCA names for NCCL_IB_HCA (multinode only). Passed in from
+        # test_discover_topology so discovery runs once per lifecycle, not per cell.
+        self.ib_hcas = ib_hcas or []
+        self.goodput_slo = goodput_slo
+        self.log_subdir = log_subdir
+
+        p = variant.params
+        self.tp = p.tensor_parallelism
+        self.pp = p.pipeline_parallel_size
+        self.master_addr = p.master_addr
+        self.master_port = p.master_port
+        self.nnodes = p.nnodes
+        self.port_no = p.port_no
+        self.random_range_ratio = p.random_range_ratio
+        self.random_prefix_len = p.random_prefix_len
+        self.burstiness = p.burstiness
+        self.seed = p.seed
+        self.request_rate = p.request_rate
+        self.tokenizer_mode = p.tokenizer_mode
+        self.percentile_metrics = p.percentile_metrics
+        self.metric_percentiles = p.metric_percentiles
+        self.base_url = p.base_url
+        self.dataset_name = p.dataset_name
+        self.backend = p.backend
+
+        self.model_id = variant.model.id
+        self.log_dir = variant.paths.log_dir
+        self.serve_args = dict(variant.roles.server.serve_args)
+        self.server_env = dict(variant.roles.server.env)
+        self.models_dir = variant.paths.models_dir
+        self.ib_netdev = variant.roles.server.ib_netdev
+
+        self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
+        self.server_log = f"{self.out_dir}/vllm_serve_server.log"
+        self.client_log = f"{self.out_dir}/client.log"
+
+        self._precheck_wait = server_precheck_wait_s
+        self._warmup_wait = server_warmup_wait_s
+        self._server_poll_count = server_poll_count
+        self._server_poll_wait = server_poll_wait_s
+        self._client_initial_wait = client_initial_wait_s
+        self._client_poll_count = client_poll_count
+        self._client_poll_wait = client_poll_wait_s
+
+    # ---------- derived builders ----------
+
+    @property
+    def _is_ray_backend(self):
+        """True iff the server is configured to use the ray distributed executor.
+
+        Checks serve_args at call time (not a cached snapshot) so callers that
+        mutate serve_args after construction see the updated value.  Only the
+        exact lowercase string 'ray' matches (AC6/AC8 case-sensitivity).
+        """
+        return self.serve_args.get("distributed-executor-backend") == "ray"
+
+    _MML_PAD = 8
+
+    def _derive_max_model_len(self):
+        r = float(self.random_range_ratio)
+        worst = (int(self.isl) + int(self.osl)) * (1.0 + r)
+        return str(math.ceil(worst) + int(self.random_prefix_len) + self._MML_PAD)
+
+    @staticmethod
+    def _flatten_serve_args(mapping):
+        """Convert {flag: value} serve-args map to a flat vllm serve arg list."""
+        argv = []
+        for flag, value in mapping.items():
+            opt = f"--{flag}"
+            if value is True:
+                argv.append(opt)
+            elif value is False:
+                pass  # boolean False → omit the flag entirely
+            elif isinstance(value, (list, tuple)):
+                for v in value:
+                    argv.extend([opt, str(v)])
+            else:
+                argv.extend([opt, str(value)])
+        return argv
+
+    def _server_argv(self, rank: int) -> list:
+        """vllm serve arg list for a specific node rank.
+
+        Distributed flags added iff nnodes > 1. On single-node (nnodes=1)
+        this yields a plain single-node vllm serve command.
+        """
+        argv = [
+            "vllm",
+            "serve",
+            self.model_id,
+            "--tensor-parallel-size",
+            str(self.tp),
+            "--port",
+            str(self.port_no),
+        ]
+        # Emit a derived --max-model-len ONLY when the config did not set one in
+        # serve_args. Emitting both makes vllm see the flag twice (the serve_args
+        # value silently wins); the explicit config value takes precedence here.
+        if "max-model-len" not in self.serve_args:
+            argv += ["--max-model-len", self._derive_max_model_len()]
+        if int(self.nnodes) > 1 and not self._is_ray_backend:
+            # mp multi-node: inject the full distributed-executor block.
+            # Ray multi-node omits all of these (AC16); the backend flag arrives
+            # via _flatten_serve_args below (AC17).
+            argv += [
+                "--node-rank",
+                str(rank),
+                "--master-addr",
+                str(self.master_addr),
+                "--master-port",
+                str(self.master_port),
+                "--nnodes",
+                str(self.nnodes),
+                "--pipeline-parallel-size",
+                str(self.pp),
+                "--distributed-executor-backend",
+                "mp",
+            ]
+            if rank > 0:
+                argv.append("--headless")
+        if int(self.nnodes) > 1 and self._is_ray_backend and int(self.pp) > 1:
+            argv += ["--pipeline-parallel-size", str(self.pp)]
+        argv.extend(self._flatten_serve_args(self.serve_args))
+        return argv
+
+    def _rank_log(self, rank: int) -> str:
+        return self.server_log.replace("out-node0", f"out-node{rank}")
+
+    def server_signature(self):
+        """Identity of the vllm server for this cell, independent of rank, the
+        client-only knobs (concurrency, num_prompts), and per-cell log paths.
+
+        Two cells with the same signature are served by an identical server, so
+        the running server can be reused without a stop/start/reload. Built from
+        the rank-0 argv with the rank-specific --node-rank stripped, plus the
+        server env map (which build_server_cmd writes into the env script).
+        Concurrency is a client arg only and never appears here, so cells that
+        differ only in concurrency share a signature.
+        """
+        argv = list(self._server_argv(0))
+        # Drop the rank token so rank-0 vs rank-N argvs compare equal; the rest
+        # of the distributed flags (master/nnodes/pp) are identical across cells.
+        if "--node-rank" in argv:
+            i = argv.index("--node-rank")
+            del argv[i : i + 2]
+        env_items = tuple(sorted((str(k), str(v)) for k, v in self.server_env.items()))
+        return (tuple(argv), env_items)
+
+    # ---------- server side ----------
+
+    def build_server_cmd(self):
+        """Write per-node env scripts and create per-rank output directories.
+
+        Broadcast to ALL nodes so every rank has its env script and out-dir
+        before start_server launches the per-host processes. On single-node
+        the broadcast and targeted exec are equivalent.
+
+        IB devices (ib_hcas, ib_netdev) are written into the env script only
+        when present — they come from test_discover_topology (ib_hcas) and
+        directly from the config (ib_netdev). No runtime patches, no probing.
+        """
+        env_lines = [
+            f"export HF_TOKEN={shlex.quote(self.hf_token)}",
+            f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
+            "export VLLM_USE_AITER_UNIFIED_ATTENTION=1",
+            "export VLLM_ROCM_USE_AITER_MHA=0",
+            "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
+        ]
+        if self.ib_hcas:
+            env_lines.append(f"export NCCL_IB_HCA={shlex.quote(','.join(self.ib_hcas))}")
+        if self.ib_netdev:
+            env_lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
+            env_lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
+            env_lines.append(f"export TP_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
+        for k, v in self.server_env.items():
+            env_lines.append(f"export {k}={shlex.quote(str(v))}")
+        env_script = "\n".join(env_lines) + "\n"
+        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh"))
+        for rank in range(int(self.nnodes)):
+            rank_dir = self.out_dir.replace("out-node0", f"out-node{rank}")
+            self.orch.exec(f"mkdir -p {shlex.quote(rank_dir)}")
+
+    def _bootstrap_ray_cluster(self):
+        """Bootstrap a Ray cluster across all hosts before launching vllm serve.
+
+        Sequence (AC9-11, AC26-27):
+          1. Head: ``ray start --head --port=<master_port>``
+          2. Workers: ``ray start --address=<head>:<port>`` (one per worker rank)
+          3. Any non-zero exit code OR EARLY_FAILURE_RE match in output raises
+             RuntimeError before serve is attempted.
+        """
+        head = self.orch.hosts[0]
+        # Step 1: bootstrap head node.
+        head_cmd = f"ray start --head --port={self.master_port}"
+        out = self.orch.exec(head_cmd, hosts=[head], detailed=True)
+        for h, result in (out or {}).items():
+            if result.get("exit_code", 0) != 0 or self.EARLY_FAILURE_RE.search(result.get("output", "") or ""):
+                raise RuntimeError(f"ray bootstrap failed on {h} rank 0")
+        # Step 2: bootstrap each worker node.
+        for rank, host in enumerate(self.orch.hosts):
+            if rank == 0:
+                continue
+            worker_cmd = f"ray start --address={self.master_addr}:{self.master_port}"
+            out = self.orch.exec(worker_cmd, hosts=[host], detailed=True)
+            for h, result in (out or {}).items():
+                if result.get("exit_code", 0) != 0 or self.EARLY_FAILURE_RE.search(result.get("output", "") or ""):
+                    raise RuntimeError(f"ray bootstrap failed on {h} rank {rank}")
+
+    def start_server(self):
+        """Launch vllm serve on each host with the correct --node-rank.
+
+        For ray multi-node: bootstrap the Ray cluster first (head then workers),
+        then launch vllm serve on the head node only (AC9-15).
+        For mp or single-node: launch vllm serve on every host in rank order.
+        """
+        if self._is_ray_backend and int(self.nnodes) > 1:
+            # Ray multi-node: cluster bootstrap then head-only serve (AC12).
+            self._bootstrap_ray_cluster()
+            head = self.orch.hosts[0]
+            serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv(0))
+            rank_log = self._rank_log(0)
+            inner = f"source /tmp/server_env_script.sh && nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
+            out = self.orch.exec("bash -c " + shlex.quote(inner), hosts=[head])
+            for h, output in (out or {}).items():
+                if self.EARLY_FAILURE_RE.search(output or ""):
+                    raise RuntimeError(f"vllm server failed to launch on {h} (rank 0): {output[-500:]}")
+        else:
+            # mp multi-node or single-node (any backend): serve on every host.
+            for rank, host in enumerate(self.orch.hosts):
+                serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv(rank))
+                rank_log = self._rank_log(rank)
+                inner = f"source /tmp/server_env_script.sh && nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
+                out = self.orch.exec("bash -c " + shlex.quote(inner), hosts=[host])
+                for h, output in (out or {}).items():
+                    if self.EARLY_FAILURE_RE.search(output or ""):
+                        raise RuntimeError(f"vllm server failed to launch on {h} (rank {rank}): {output[-500:]}")
+
+    def is_ready(self):
+        """Check readiness on each node using its own per-rank log path.
+
+        Headless worker nodes (rank > 0) never log 'Application startup
+        complete' — they have no API server. Only check the head (rank 0)
+        for the startup pattern; worker ranks are considered ready implicitly
+        once the head is up.
+        """
+        pattern = self.READINESS_RE.pattern
+        for rank, host in enumerate(self.orch.hosts):
+            if rank > 0 and int(self.nnodes) > 1:
+                continue
+            rank_log = self._rank_log(rank)
+            out = self.orch.exec(
+                f"grep -qiE {shlex.quote(pattern)} {shlex.quote(rank_log)}",
+                detailed=True,
+                hosts=[host],
+            )
+            if not out or not all(r["exit_code"] == 0 for r in out.values()):
+                return False
+        return True
+
+    def _check_early_failure(self, emit_tail: bool = False):
+        """Check per-rank logs on each host for early failure / fatal patterns.
+
+        Ray worker nodes (rank > 0 under ray multi-node) do not produce a
+        per-rank server log because vllm serve only runs on the head under ray.
+        Tailing/grepping a non-existent log on a worker would spuriously fail
+        or hang, so workers are skipped entirely (AC22).
+        """
+        for rank, host in enumerate(self.orch.hosts):
+            if self._is_ray_backend and int(self.nnodes) > 1 and rank > 0:
+                continue
+            rank_log = self._rank_log(rank)
+            # print_console=False: the tail is re-emitted below under emit_tail
+            # with host+rank+provenance labels, which is the copy worth keeping.
+            # Without this the same 30 lines land in the log on every poll.
+            out = self.orch.exec(f"tail -30 {shlex.quote(rank_log)}", hosts=[host], print_console=False)
+            for h, output in (out or {}).items():
+                if emit_tail:
+                    for line in (output or "").splitlines():
+                        log.info("[%s rank%d server.log] %s", h, rank, line)
+                if self.EARLY_FAILURE_RE.search(output or ""):
+                    raise RuntimeError(f"vllm server early failure on {h} (rank {rank}): {(output or '')[-500:]}")
+            out = self.orch.exec(
+                f"grep -m1 -iE {shlex.quote(self.FATAL_LOG_RE.pattern)} {shlex.quote(rank_log)}",
+                detailed=True,
+                hosts=[host],
+                print_console=False,
+            )
+            for h, r in (out or {}).items():
+                if r.get("exit_code") == 0 and r.get("output", "").strip():
+                    raise RuntimeError(f"vllm server fatal error on {h} (rank {rank}): {r['output'].strip()[-500:]}")
+
+    def wait_ready(self):
+        log.info("waiting %ds for server log to materialise", self._precheck_wait)
+        time.sleep(self._precheck_wait)
+
+        self._check_early_failure(emit_tail=True)
+
+        log.info("warmup wait %ds", self._warmup_wait)
+        time.sleep(self._warmup_wait)
+
+        self._check_early_failure(emit_tail=True)
+
+        for it in range(self._server_poll_count):
+            log.info("readiness poll iter=%d/%d", it, self._server_poll_count - 1)
+            if self.is_ready():
+                log.info("server ready (iter=%d)", it)
+                return
+            self._check_early_failure()
+            time.sleep(self._server_poll_wait)
+        raise RuntimeError("vllm server did not become ready before timeout")
+
+    def stop_server(self):
+        """Broadcast pkill to ALL nodes so no stray shard lingers.
+
+        For ray multi-node, additionally broadcasts ``ray stop`` after the pkill
+        to tear down the Ray cluster (AC18-19).  Idempotent: can be called
+        multiple times without raising (AC21, t35).
+        """
+        log.info("stopping vllm server")
+        self.orch.exec("bash -c 'pkill -f \"vllm serve\" || true'")
+        time.sleep(5)
+        if self._is_ray_backend and int(self.nnodes) > 1:
+            self.orch.exec("ray stop")
+
+    # ---------- smoke ----------
+
+    def probe_openai_endpoints(self):
+        """Smoke-test the server's OpenAI-compatible HTTP API via `orch.exec_on_head`.
+
+        Reuses the framework-agnostic `OpenAIProbe` (shared with the sglang
+        suite's `docker exec`-based probe): GET /v1/models, POST
+        /v1/chat/completions, POST /v1/completions, and a structured-JSON
+        chat completion. The probe script is stdlib-only Python, base64'd
+        into a heredoc-free `exec` so no file needs staging/cleanup outside
+        the one temp path. Runs on the HEAD node only (like run_client /
+        parse_results): the client always talks to http://head:port, so
+        broadcasting the probe to every node would needlessly recheck the
+        same endpoint N times on multinode.
+
+        Returns the per-step "<title> -> Pass|Fail (<code>)" summary lines.
+        Raises RuntimeError on a malformed/missing probe response or a
+        failed check (mirrors parse_results: hard-fail rather than a
+        silently-green empty result).
+        """
+        probe_src = OpenAIProbe.probe_script(int(self.port_no), self.model_id)
+        b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
+        probe_path = f"{self.out_dir}/openai_probe.py"
+        cmd = (
+            f"mkdir -p {shlex.quote(self.out_dir)} && "
+            f"echo {shlex.quote(b64)} | base64 -d > {shlex.quote(probe_path)} && "
+            f"python3 {shlex.quote(probe_path)}"
+        )
+        out = self.orch.exec_on_head("bash -c " + shlex.quote(cmd))
+
+        raw = next(iter(out.values()), None) if out else None
+        if not raw or not str(raw).strip():
+            raise RuntimeError(f"OpenAI-compatible probe produced no output: {out!r}")
+
+        last_line = str(raw).strip().splitlines()[-1]
+        try:
+            parsed = json.loads(last_line)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw!r}") from e
+        if not isinstance(parsed, dict):
+            raise RuntimeError(f"OpenAI-compatible probe expected JSON object, got {type(parsed).__name__!r}")
+
+        results = {}
+        for step, val in parsed.items():
+            if not (isinstance(val, (list, tuple)) and len(val) == 2):
+                raise RuntimeError(f"OpenAI-compatible probe bad shape at {step!r}: {val!r}")
+            results[step] = (int(val[0]), val[1])
+
+        OpenAIProbe.log_results(results, log)
+        ok, err = OpenAIProbe.check_results(results, port=self.port_no, logger=log)
+        summary = OpenAIProbe.summarize_results(results, ok, err)
+        if not ok:
+            raise RuntimeError(err)
+        return summary
+
+    # ---------- client side (head-only) ----------
+
+    def run_client(self):
+        """Launch bench serve on the HEAD node only via exec_on_head.
+
+        exec_on_head is required (not orch.exec broadcast): on multinode,
+        broadcast would launch N competing clients, each connecting to the same
+        server endpoint and inflating load.
+        """
+        # Ensure this cell's head output dir exists. build_server_cmd creates it
+        # on a fresh bringup, but the server-reuse path skips build_server_cmd,
+        # so the client (which writes client.log + results here) must guarantee
+        # the directory itself.
+        self.orch.exec_on_head(f"mkdir -p {shlex.quote(self.out_dir)}")
+        args = [
+            "vllm",
+            "bench",
+            "serve",
+            "--model",
+            self.model_id,
+            "--backend",
+            self.backend,
+            "--base-url",
+            f"{self.base_url}:{self.port_no}",
+            "--dataset-name",
+            self.dataset_name,
+            "--num-prompts",
+            self.num_prompts,
+            "--random-input-len",
+            self.isl,
+            "--random-output-len",
+            self.osl,
+            "--max-concurrency",
+            self.concurrency,
+            "--request-rate",
+            self.request_rate,
+            "--burstiness",
+            self.burstiness,
+            "--tokenizer-mode",
+            self.tokenizer_mode,
+            "--seed",
+            self.seed,
+            "--random-range-ratio",
+            self.random_range_ratio,
+            "--random-prefix-len",
+            self.random_prefix_len,
+            "--percentile-metrics",
+            self.percentile_metrics,
+            "--metric-percentiles",
+            self.metric_percentiles,
+            "--ignore-eos",
+            "--save-result",
+            "--result-dir",
+            self.out_dir,
+            "--result-filename",
+            "results",
+        ]
+        # The bench client loads the tokenizer from --model to count tokens. Some
+        # models (e.g. Kimi-K2.6) ship a custom tokenizer via tokenizer_config
+        # auto_map, which transformers refuses to load without trust-remote-code.
+        # Mirror the server's setting so the client can load the same tokenizer.
+        if self.serve_args.get("trust-remote-code") is True:
+            args.append("--trust-remote-code")
+        if self.goodput_slo:
+            args.append("--goodput")
+            for metric, key in (("ttft", "ttft_ms"), ("tpot", "tpot_ms"), ("e2el", "e2el_ms")):
+                val = self.goodput_slo.get(key)
+                if val is not None:
+                    args.append(f"{metric}:{val}")
+        bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
+        client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
+        self.orch.exec_on_head("bash -c " + shlex.quote(client_cmd))
+
+    def wait_client_complete(self):
+        """Poll the client log on the HEAD node only via exec_on_head.
+
+        Polls silently (no per-iteration log dump) to keep the captured section
+        clean. After completion, dump_client_log() emits the full log once.
+        """
+        log.info("client initial wait %ds", self._client_initial_wait)
+        time.sleep(self._client_initial_wait)
+        for it in range(self._client_poll_count):
+            # print_console=False: this poll re-reads the same growing log every
+            # iteration. dump_client_log() emits it in full on every exit path
+            # below, so logging each poll only duplicates that.
+            out = self.orch.exec_on_head(f"tail -2000 {shlex.quote(self.client_log)}", print_console=False)
+            failed = []
+            done = []
+            for host, output in out.items():
+                txt = output or ""
+                done.append(bool(self.COMPLETION_RE.search(txt)))
+                if self.CLIENT_CRASH_RE.search(txt) or self.CLIENT_LAUNCH_FAIL_RE.search(txt):
+                    failed.append((host, txt[-500:]))
+                else:
+                    fm = self.FAILED_REQUESTS_RE.search(txt)
+                    n_failed = int(fm.group(1)) if fm else 0
+                    if n_failed > 0:
+                        sm = self.SUCCESSFUL_REQUESTS_RE.search(txt)
+                        n_ok = int(sm.group(1)) if sm else 0
+                        total = n_ok + n_failed
+                        frac = (n_failed / total) if total else 1.0
+                        if frac > self.MAX_FAILED_REQUEST_FRACTION:
+                            failed.append((host, f"Failed requests: {n_failed}/{total} ({frac:.1%}) -- {txt[-500:]}"))
+                        else:
+                            log.warning(
+                                "%s: %d/%d requests failed (%.2f%%) — within tolerance (<=%.0f%%), continuing",
+                                host,
+                                n_failed,
+                                total,
+                                frac * 100,
+                                self.MAX_FAILED_REQUEST_FRACTION * 100,
+                            )
+            if failed:
+                self.dump_client_log()
+                raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
+            if done and all(done):
+                log.info("client complete (iter=%d)", it)
+                self.dump_client_log()
+                return
+            time.sleep(self._client_poll_wait)
+        self.dump_client_log()
+        raise RuntimeError("client did not complete before poll cap")
+
+    def dump_client_log(self):
+        """Emit the full client log to the captured section once after completion."""
+        out = self.orch.exec_on_head(f"cat {shlex.quote(self.client_log)}", print_console=False)
+        for host, text in (out or {}).items():
+            for line in (text or "").splitlines():
+                log.info("[%s client.log] %s", host, line)
+
+    def dump_server_log(self):
+        """Emit each rank's full server log to the captured section once.
+
+        Mirrors dump_client_log(), but per-rank since every node (other than
+        ray-backend headless workers, which never run vllm serve) has its own
+        server log. Call this after the benchmark finishes -- success or
+        failure -- so a mid-run server crash (e.g. EngineDeadError) is
+        preserved in the captured output even though _check_early_failure()
+        stops tailing this log once startup is confirmed.
+        """
+        for rank, host in enumerate(self.orch.hosts):
+            if self._is_ray_backend and int(self.nnodes) > 1 and rank > 0:
+                continue
+            rank_log = self._rank_log(rank)
+            out = self.orch.exec(f"cat {shlex.quote(rank_log)}", hosts=[host], print_console=False)
+            for h, text in (out or {}).items():
+                for line in (text or "").splitlines():
+                    log.info("[%s rank%d server.log] %s", h, rank, line)
+
+    def parse_results(self):
+        """Fetch and parse the results artifact from the HEAD node via exec_on_head."""
+        artifact = f"{self.out_dir}/results"
+        out = self.orch.exec_on_head(f"cat {shlex.quote(artifact)}", print_console=False)
+        results = {}
+        for host, text in out.items():
+            text = (text or "").strip()
+            if not text:
+                raise RuntimeError(f"empty/missing results artifact on {host}: {artifact}")
+            try:
+                raw = json.loads(text)
+            except (json.JSONDecodeError, ValueError) as e:
+                # The artifact is read with print_console=False, so its content
+                # is nowhere else in the log -- carry a slice into the error or
+                # the failure is undiagnosable.
+                # repr() keeps the snippet on one line: the artifact can be a
+                # stack trace or an HTML error page, and raw newlines there
+                # would break up CI output and pasted ticket bodies.
+                raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}: {text[:500]!r}") from e
+            results[host] = to_client_metrics(raw, tp=self.tp, isl=self.isl, pp=self.pp)
+        return results

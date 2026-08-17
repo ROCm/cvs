@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 from cvs.core.orchestrators.base import Orchestrator
 from cvs.lib.parallel_ssh_lib import Pssh
+from cvs.lib.utils_lib import get_passwordless_sudo_status
 
 
 class BaremetalOrchestrator(Orchestrator):
@@ -32,6 +33,9 @@ class BaremetalOrchestrator(Orchestrator):
 
         # Set orchestrator type for runtime identification
         self.orchestrator_type = "baremetal"
+
+        # Cached result of the passwordless-sudo probe; None means not yet probed.
+        self._needs_sudo = None
 
         # SSH port for MPI communication (overridable by subclasses)
         self.ssh_port = 22
@@ -71,7 +75,7 @@ class BaremetalOrchestrator(Orchestrator):
             stop_on_errors=self.stop_on_errors,
         )
 
-    def exec(self, cmd, hosts=None, timeout=None, detailed=False):
+    def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """
         Execute command across hosts via SSH (baremetal execution).
 
@@ -81,6 +85,8 @@ class BaremetalOrchestrator(Orchestrator):
             timeout: Command timeout
             detailed: If True, return detailed execution info including
                 exit_code (mirrors ContainerOrchestrator.exec).
+            print_console: If False, the command's output is returned but not
+                logged. Use for bulk data the caller parses itself.
 
         Returns:
             Dictionary mapping hosts to execution results
@@ -90,7 +96,7 @@ class BaremetalOrchestrator(Orchestrator):
 
         # Use appropriate handle based on target hosts
         if set(hosts) == set(self.hosts):
-            return self.all.exec(cmd, timeout=timeout, detailed=detailed)
+            return self.all.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
         else:
             # For arbitrary subset (including head node), create temporary handle
             pssh = Pssh(
@@ -102,9 +108,34 @@ class BaremetalOrchestrator(Orchestrator):
                 host_key_check=False,
                 stop_on_errors=self.stop_on_errors,
             )
-            return pssh.exec(cmd, timeout=timeout, detailed=detailed)
+            try:
+                return pssh.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+            finally:
+                pssh.destroy_clients()
 
-    def exec_on_head(self, cmd, timeout=None, detailed=False):
+    def sudo_prefix(self):
+        """
+        Return the command prefix needed for privileged commands, probing
+        passwordless-sudo availability at most once per orchestrator instance.
+
+        CVS's sudo model is passwordless-or-none, so a single boolean answer
+        (rather than per-command retry) is sufficient. The fleet-wide answer
+        is taken from the head node's result specifically (not an arbitrary
+        dict-iteration-order pick) since exec_on_head is the dominant caller
+        of privileged commands; if hosts disagree, a warning is logged but the
+        head-node answer is still used for every command on every host.
+
+        Returns:
+            str: 'sudo -n ' if passwordless sudo is available, else ''.
+        """
+        if self._needs_sudo is None:
+            sudo_status = get_passwordless_sudo_status(self.all)
+            if len(set(sudo_status.values())) > 1:
+                self.log.warning(f"Hosts disagree on passwordless sudo availability: {sudo_status}")
+            self._needs_sudo = sudo_status.get(self.head_node, False)
+        return 'sudo -n ' if self._needs_sudo else ''
+
+    def exec_on_head(self, cmd, timeout=None, detailed=False, print_console=True):
         """
         Execute command on head node only via SSH.
 
@@ -112,11 +143,12 @@ class BaremetalOrchestrator(Orchestrator):
             cmd: Command to execute
             timeout: Command timeout
             detailed: See exec().
+            print_console: See exec().
 
         Returns:
             Dictionary mapping head node to execution result
         """
-        return self.head.exec(cmd, timeout=timeout, detailed=detailed)
+        return self.head.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
 
     def setup_env(self, hosts, env_script=None):
         """Set up environment on hosts."""
@@ -141,7 +173,10 @@ class BaremetalOrchestrator(Orchestrator):
                 host_key_check=False,
                 stop_on_errors=self.stop_on_errors,
             )
-            result = pssh.exec(f"bash {env_script}", timeout=60, detailed=True)
+            try:
+                result = pssh.exec(f"bash {env_script}", timeout=60, detailed=True)
+            finally:
+                pssh.destroy_clients()
 
         # Check if all hosts succeeded
         success = all(output['exit_code'] == 0 for output in result.values())
@@ -188,12 +223,25 @@ class BaremetalOrchestrator(Orchestrator):
         for host in mpi_hosts:
             host_file_params += f'{host} slots={ranks_per_host}\n'
 
-        # Create hostfile on head node
-        cmd = 'sudo rm -f /tmp/mpi_hosts.txt'
-        self.exec_on_head(cmd)
+        # Create hostfile on head node. Both the removal and the write use the
+        # same sudo_prefix() so a hostfile left root-owned by a prior run (when
+        # sudo was needed) can't cause an unprivileged write here to fail
+        # silently against a stale file -- the exit codes are also checked so a
+        # write failure surfaces immediately instead of launching MPI against a
+        # leftover hostfile.
+        sudo_prefix = self.sudo_prefix()
 
-        cmd = f'bash -c \'echo "{host_file_params}" > /tmp/mpi_hosts.txt\''
-        self.exec_on_head(cmd)
+        cmd = f'{sudo_prefix}rm -f /tmp/mpi_hosts.txt'
+        result = self.exec_on_head(cmd, detailed=True)
+        failed = [host for host, res in result.items() if res.get('exit_code') != 0]
+        if failed:
+            raise RuntimeError(f"Failed to remove stale MPI hostfile on hosts: {failed}")
+
+        cmd = f'{sudo_prefix}bash -c \'echo "{host_file_params}" > /tmp/mpi_hosts.txt\''
+        result = self.exec_on_head(cmd, detailed=True)
+        failed = [host for host, res in result.items() if res.get('exit_code') != 0]
+        if failed:
+            raise RuntimeError(f"Failed to write MPI hostfile on hosts: {failed}")
 
         # Build MPI runner arguments
         if no_of_global_ranks is None:

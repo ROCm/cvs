@@ -99,13 +99,21 @@ class PreflightReportGenerator(PreflightCheck):
         connectivity_results = self.results.get('rdma_connectivity', {})
         rocm_results = self.results.get('rocm_versions', {})
         interface_results = self.results.get('interface_names', {})
+        node_health_results = self.results.get('node_health', {})
+        ifoe_l2_results = self.results.get('ifoe_l2_connectivity', {})
+        tb_smoke_results = self.results.get('transferbench_smoke', {})
+        node_smoke_results = self.results.get('node_smoke', {})
         reachability_results = self.results.get('node_reachability')
         ssh_connectivity_results = self.results.get('ssh_connectivity')
         summary = {
             'overall_status': 'PASS',
             'checks': {
                 'ssh_reachability': self._summarize_reachability_results(reachability_results),
+                'node_health': self._summarize_node_health_results(node_health_results),
                 'gid_consistency': self._summarize_gid_results(gid_results),
+                'node_smoke': self._summarize_node_smoke_results(node_smoke_results),
+                'ifoe_l2_connectivity': self._summarize_ifoe_l2_results(ifoe_l2_results),
+                'transferbench_smoke': self._summarize_transferbench_smoke_results(tb_smoke_results),
                 'rdma_connectivity': self._summarize_connectivity_results(connectivity_results),
                 'rocm_versions': self._summarize_rocm_results(rocm_results),
                 'interface_names': self._summarize_interface_results(interface_results),
@@ -118,13 +126,34 @@ class PreflightReportGenerator(PreflightCheck):
 
         # Determine overall status (skipped tests don't affect overall status)
         for check_name, check_summary in summary['checks'].items():
-            if check_summary['status'] == 'FAIL':
+            if check_summary['status'] in ('FAIL', 'BLOCKED'):
                 summary['overall_status'] = 'FAIL'
 
         # Generate recommendations
         if summary['checks']['gid_consistency']['status'] == 'FAIL':
             summary['recommendations'].append(
                 "Fix GID configuration on RDMA interfaces before running performance tests"
+            )
+
+        if summary['checks']['node_health']['status'] == 'FAIL':
+            summary['recommendations'].append(
+                "Restore GPU node health and, when enabled, MI4XX AIFM/AFM/vPOD fabric state before scale-up"
+            )
+
+        if summary['checks']['ifoe_l2_connectivity']['status'] == 'FAIL':
+            summary['recommendations'].append(
+                "Address IFoE L2 ping failures via afmctl on affected nodes before benchmarking"
+            )
+
+        if summary['checks']['transferbench_smoke']['status'] == 'FAIL':
+            summary['recommendations'].append(
+                "Investigate TransferBench smoketest failures (likely IFoE data-path or pod-membership "
+                "issue) on affected nodes before benchmarking"
+            )
+        elif summary['checks']['transferbench_smoke']['status'] == 'WARNING':
+            summary['recommendations'].append(
+                "Review TransferBench smoketest skip-budget warnings -- some tests were skipped beyond "
+                "the configured tolerance"
             )
 
         if summary['checks']['rdma_connectivity']['status'] == 'FAIL':
@@ -137,6 +166,15 @@ class PreflightReportGenerator(PreflightCheck):
 
         if summary['checks']['interface_names']['status'] == 'FAIL':
             summary['recommendations'].append("Standardize RDMA interface naming across cluster nodes")
+
+        if summary['checks']['node_smoke']['status'] == 'FAIL':
+            summary['recommendations'].append(
+                "Review Primus node_smoke failures (GPU health, RDMA roll-call, host limits) before benchmarking"
+            )
+        elif summary['checks']['node_smoke']['status'] == 'SKIPPED':
+            summary['recommendations'].append(
+                "Consider enabling node_smoke.connectivity_mode='run' for per-node GPU/RDMA health screening"
+            )
 
         if summary['overall_status'] == 'PASS':
             summary['recommendations'].append("All preflight checks passed - cluster is ready for performance testing")
@@ -178,6 +216,14 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_gid_results(self, gid_results):
         """Summarize GID consistency check results."""
+        if not gid_results or gid_results.get('skipped') or gid_results.get('status') == 'SKIPPED':
+            return {
+                'status': 'SKIPPED',
+                'total_interfaces': 0,
+                'ok_interfaces': 0,
+                'failed_nodes': [],
+                'summary': gid_results.get('message', 'RDMA GID validation skipped') if gid_results else 'Not run',
+            }
         total_interfaces = 0
         ok_interfaces = 0
         failed_nodes = []
@@ -199,8 +245,61 @@ class PreflightReportGenerator(PreflightCheck):
             'summary': f"{ok_interfaces}/{total_interfaces} interfaces have valid GID",
         }
 
+    def _summarize_node_health_results(self, health_results):
+        """Summarize mandatory GPU and optional MI4XX fabric admission."""
+        if not health_results or health_results.get('skipped') or health_results.get('status') == 'SKIPPED':
+            message = (
+                health_results.get('message', 'Node-health admission is not enabled')
+                if isinstance(health_results, dict)
+                else ''
+            )
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': message or 'Node-health admission skipped',
+            }
+
+        node_results = health_results.get('node_results') or {}
+        total_nodes = len(node_results)
+        failed_nodes = list(health_results.get('failed_nodes') or [])
+        if not failed_nodes:
+            failed_nodes = sorted(node for node, result in node_results.items() if result.get('status') == 'FAIL')
+        coverage = health_results.get('coverage') or {}
+        missing_nodes = list(coverage.get('missing_nodes') or [])
+        membership = health_results.get('vpod_membership') or {}
+        status = health_results.get('status') or ('FAIL' if failed_nodes or missing_nodes else 'PASS')
+        passing_nodes = total_nodes - len(failed_nodes)
+        fabric_checks = bool(health_results.get('fabric_checks'))
+        summary = f"{passing_nodes}/{total_nodes} nodes passed node-health admission"
+        if fabric_checks and membership.get('status') == 'PASS':
+            accelerators = membership.get('vpod_accelerators') or []
+            summary += f"; AFM vPOD accelerator membership {accelerators}"
+        if missing_nodes:
+            summary += f"; {len(missing_nodes)} declared node(s) were not admitted"
+        return {
+            'status': status,
+            'total_nodes': total_nodes,
+            'passing_nodes': passing_nodes,
+            'failed_nodes': failed_nodes,
+            'missing_nodes': missing_nodes,
+            'vpod_accelerators': membership.get('vpod_accelerators') or [],
+            'fabric_checks': fabric_checks,
+            'summary': summary,
+        }
+
     def _summarize_connectivity_results(self, connectivity_results):
         """Summarize RDMA connectivity check results."""
+        if connectivity_results.get('blocked') or connectivity_results.get('status') == 'BLOCKED':
+            return {
+                'status': 'BLOCKED',
+                'total_pairs': 0,
+                'successful_pairs': 0,
+                'failed_pairs': 0,
+                'mode': connectivity_results.get('mode', 'blocked'),
+                'summary': connectivity_results.get('message', 'RDMA connectivity blocked by mandatory admission'),
+            }
         # Handle skipped tests (either by configuration or due to failures)
         if connectivity_results.get('skipped', False) or connectivity_results.get('status') == 'SKIPPED':
             msg = connectivity_results.get('message', 'RDMA connectivity test skipped')
@@ -256,6 +355,14 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_rocm_results(self, rocm_results):
         """Summarize ROCm version check results."""
+        if not rocm_results or rocm_results.get('skipped') or rocm_results.get('status') == 'SKIPPED':
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'consistent_nodes': 0,
+                'failed_nodes': [],
+                'summary': rocm_results.get('message', 'ROCm validation skipped') if rocm_results else 'Not run',
+            }
         total_nodes = len(rocm_results)
         consistent_nodes = sum(1 for result in rocm_results.values() if result['status'] == 'PASS')
         failed_nodes = [node for node, result in rocm_results.items() if result['status'] == 'FAIL']
@@ -270,6 +377,18 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _summarize_interface_results(self, interface_results):
         """Summarize interface name check results."""
+        if not interface_results or interface_results.get('skipped') or interface_results.get('status') == 'SKIPPED':
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'compliant_nodes': 0,
+                'failed_nodes': [],
+                'summary': (
+                    interface_results.get('message', 'RDMA interface validation skipped')
+                    if interface_results
+                    else 'Not run'
+                ),
+            }
         total_nodes = len(interface_results)
         compliant_nodes = sum(1 for result in interface_results.values() if result['status'] == 'PASS')
         failed_nodes = [node for node, result in interface_results.items() if result['status'] == 'FAIL']
@@ -280,6 +399,169 @@ class PreflightReportGenerator(PreflightCheck):
             'compliant_nodes': compliant_nodes,
             'failed_nodes': failed_nodes,
             'summary': f"{compliant_nodes}/{total_nodes} nodes have compliant interface names",
+        }
+
+    def _summarize_ifoe_l2_results(self, ifoe_results):
+        """Summarize IFoE L2 connectivity (afmctl) check results."""
+        if ifoe_results and (ifoe_results.get('blocked') or ifoe_results.get('status') == 'BLOCKED'):
+            return {
+                'status': 'BLOCKED',
+                'total_nodes': 0,
+                'failed_nodes': [],
+                'total_invocations': 0,
+                'failed_invocations': 0,
+                'summary': ifoe_results.get('message', 'IFoE L2 connectivity blocked by mandatory admission'),
+            }
+        if not ifoe_results or ifoe_results.get('skipped'):
+            msg = (
+                ifoe_results.get('message')
+                if isinstance(ifoe_results, dict)
+                else 'IFoE L2 connectivity test not performed'
+            )
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'failed_nodes': [],
+                'total_invocations': 0,
+                'failed_invocations': 0,
+                'summary': msg or 'IFoE L2 connectivity test skipped',
+            }
+
+        node_results = ifoe_results.get('node_results') or {}
+        total_nodes = len(node_results)
+        failed_nodes = list(
+            ifoe_results.get('failed_nodes') or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+        )
+        coverage = ifoe_results.get('coverage') or {}
+        missing_nodes = list(coverage.get('missing_nodes') or [])
+        incomplete_nodes = list(coverage.get('incomplete_nodes') or [])
+        coverage_complete = coverage.get('complete', not missing_nodes and not incomplete_nodes)
+        passing_nodes = total_nodes - len(failed_nodes)
+        total_invocations = int(ifoe_results.get('total_invocations', 0))
+        failed_invocations = int(ifoe_results.get('failed_invocations', 0))
+        status = 'PASS' if not failed_nodes and coverage_complete else 'FAIL'
+        summary_text = f"{passing_nodes}/{total_nodes} nodes passed IFoE L2 ping"
+        if total_invocations:
+            summary_text += (
+                f"; {total_invocations - failed_invocations}/{total_invocations} afmctl invocations succeeded"
+            )
+        if missing_nodes:
+            summary_text += f"; {len(missing_nodes)} required node(s) not tested"
+        if incomplete_nodes:
+            summary_text += f"; {len(incomplete_nodes)} node(s) had incomplete coverage"
+        return {
+            'status': status,
+            'total_nodes': total_nodes,
+            'passing_nodes': passing_nodes,
+            'failed_nodes': failed_nodes,
+            'total_invocations': total_invocations,
+            'failed_invocations': failed_invocations,
+            'missing_nodes': missing_nodes,
+            'incomplete_nodes': incomplete_nodes,
+            'coverage_complete': coverage_complete,
+            'summary': summary_text,
+        }
+
+    def _summarize_transferbench_smoke_results(self, tb_results):
+        """Summarize TransferBench smoketest results (AIMVT-181)."""
+        if tb_results and (tb_results.get('blocked') or tb_results.get('status') == 'BLOCKED'):
+            return {
+                'status': 'BLOCKED',
+                'nodes_total': 0,
+                'nodes_pass': 0,
+                'nodes_warning': 0,
+                'nodes_fail': 0,
+                'failed_nodes': [],
+                'summary': tb_results.get('message', 'TransferBench smoketest blocked by mandatory admission'),
+            }
+        if not tb_results or tb_results.get('skipped'):
+            msg = tb_results.get('message') if isinstance(tb_results, dict) else 'TransferBench smoketest not performed'
+            return {
+                'status': 'SKIPPED',
+                'nodes_total': 0,
+                'nodes_pass': 0,
+                'nodes_warning': 0,
+                'nodes_fail': 0,
+                'failed_nodes': [],
+                'summary': msg or 'TransferBench smoketest skipped',
+            }
+
+        totals = tb_results.get('totals') or {}
+        nodes = tb_results.get('nodes') or {}
+        failed_nodes = sorted(n for n, r in nodes.items() if r.get('status') == 'FAIL')
+        warning_nodes = sorted(n for n, r in nodes.items() if r.get('status') == 'WARNING')
+
+        status = tb_results.get('status') or ('FAIL' if failed_nodes else ('WARNING' if warning_nodes else 'PASS'))
+        summary_text = (
+            f"{totals.get('nodes_pass', 0)}/{totals.get('nodes_total', 0)} nodes passed TransferBench smoketest"
+        )
+        if warning_nodes:
+            summary_text += f" ({len(warning_nodes)} with skip-budget warnings)"
+        if totals.get('tests_fail', 0) or totals.get('tests_skip', 0):
+            summary_text += (
+                f"; tests pass/fail/skip = "
+                f"{totals.get('tests_pass', 0)}/{totals.get('tests_fail', 0)}/"
+                f"{totals.get('tests_skip', 0)}"
+            )
+        return {
+            'status': status,
+            'nodes_total': totals.get('nodes_total', 0),
+            'nodes_pass': totals.get('nodes_pass', 0),
+            'nodes_warning': totals.get('nodes_warning', 0),
+            'nodes_fail': totals.get('nodes_fail', 0),
+            'failed_nodes': failed_nodes,
+            'warning_nodes': warning_nodes,
+            'rank_mode': tb_results.get('rank_mode'),
+            'scope': tb_results.get('scope'),
+            'profile': tb_results.get('profile'),
+            'summary': summary_text,
+        }
+
+    def _summarize_node_smoke_results(self, node_smoke_results):
+        """Summarize Primus node_smoke check results."""
+        if not node_smoke_results or node_smoke_results.get('skipped'):
+            msg = (
+                node_smoke_results.get('message')
+                if isinstance(node_smoke_results, dict)
+                else 'Primus node_smoke check not performed'
+            )
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': msg or 'Primus node_smoke check skipped',
+            }
+
+        node_results = node_smoke_results.get('node_results') or {}
+        total_nodes = len(node_results)
+        failed_nodes = list(
+            node_smoke_results.get('failed_nodes') or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+        )
+        unknown_nodes = list(
+            node_smoke_results.get('unknown_nodes')
+            or [n for n, r in node_results.items() if r.get('status') not in ('PASS', 'FAIL')]
+        )
+        passing_nodes = total_nodes - len(failed_nodes) - len(unknown_nodes)
+        status = 'FAIL' if failed_nodes or unknown_nodes else 'PASS'
+        summary_text = f"{passing_nodes}/{total_nodes} nodes passed Primus node_smoke"
+        if node_smoke_results.get('tier2_perf'):
+            thresholds = node_smoke_results.get('tier2_thresholds') or {}
+            summary_text += (
+                f" (Tier 2: GEMM>={thresholds.get('gemm_tflops_min', '?')} TFLOPS, "
+                f"HBM>={thresholds.get('hbm_gbs_min', '?')} GB/s, "
+                f"RCCL>={thresholds.get('rccl_gbs_min', '?')} GB/s)"
+            )
+        if unknown_nodes:
+            summary_text += f"; {len(unknown_nodes)} unknown"
+        return {
+            'status': status,
+            'total_nodes': total_nodes,
+            'passing_nodes': passing_nodes,
+            'failed_nodes': failed_nodes,
+            'unknown_nodes': unknown_nodes,
+            'tier2_perf': bool(node_smoke_results.get('tier2_perf')),
+            'summary': summary_text,
         }
 
     def _summarize_reachability_results(self, reachability_results):
@@ -382,7 +664,11 @@ class PreflightReportGenerator(PreflightCheck):
             </header>
 
             {self._generate_executive_summary_html(summary)}
+            {self._generate_node_health_html(results.get('node_health', {}))}
             {self._generate_gid_consistency_html(results.get('gid_consistency', {}))}
+            {self._generate_node_smoke_html(results.get('node_smoke', {}))}
+            {self._generate_ifoe_l2_html(results.get('ifoe_l2_connectivity', {}))}
+            {self._generate_transferbench_smoke_html(results.get('transferbench_smoke', {}))}
             {self._generate_connectivity_html(results.get('rdma_connectivity', {}))}
             {self._generate_ssh_connectivity_html(results.get('ssh_connectivity', {}))}
             {self._generate_rocm_versions_html(results.get('rocm_versions', {}))}
@@ -445,6 +731,10 @@ class PreflightReportGenerator(PreflightCheck):
                 color: #6c757d;
                 font-weight: bold;
             }
+            .status-blocked {
+                color: #a45b00;
+                font-weight: bold;
+            }
             .error-summary {
                 color: #dc3545;
                 font-weight: bold;
@@ -505,6 +795,11 @@ class PreflightReportGenerator(PreflightCheck):
                 color: #6c757d;
                 border: 1px solid #d6d8db;
             }
+            .status-badge.status-blocked {
+                background-color: #fff3cd;
+                color: #856404;
+                border: 1px solid #ffeeba;
+            }
             .results-cell {
                 text-align: center;
                 font-weight: 600;
@@ -523,6 +818,9 @@ class PreflightReportGenerator(PreflightCheck):
             }
             .summary-row-skipped {
                 border-left: 4px solid #6c757d;
+            }
+            .summary-row-blocked {
+                border-left: 4px solid #d39e00;
             }
             table {
                 width: 100%;
@@ -697,6 +995,9 @@ class PreflightReportGenerator(PreflightCheck):
             elif status == 'FAIL':
                 status_class = 'fail'
                 status_icon = '❌'
+            elif status == 'BLOCKED':
+                status_class = 'blocked'
+                status_icon = '⛔'
             else:  # SKIPPED
                 status_class = 'skipped'
                 status_icon = '⏭️'
@@ -738,7 +1039,7 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _generate_gid_consistency_html(self, gid_results):
         """Generate GID inconsistencies section - only show failed nodes."""
-        if not gid_results:
+        if not gid_results or gid_results.get('skipped') or gid_results.get('status') == 'SKIPPED':
             return ""
 
         # Filter to only failed nodes
@@ -795,6 +1096,587 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
         return html
+
+    def _generate_node_health_html(self, health_results):
+        """Render generic GPU and optional MI4XX fabric health diagnostics."""
+        if not health_results:
+            return ""
+        if health_results.get('skipped') or health_results.get('status') == 'SKIPPED':
+            message = health_results.get('message', 'Node-health admission is not enabled')
+            return f"""
+        <section>
+            <h2>Node-Health Admission</h2>
+            <p><em>{html.escape(str(message))}</em></p>
+        </section>
+        """
+
+        node_results = health_results.get('node_results') or {}
+        membership = health_results.get('vpod_membership') or {}
+        fabric_checks = bool(health_results.get('fabric_checks'))
+        coverage = health_results.get('coverage') or {}
+        shared_vpod = membership.get('vpod_accelerators') or []
+        missing_nodes = coverage.get('missing_nodes') or []
+        status = health_results.get('status', 'UNKNOWN')
+        status_class = 'status-pass' if status == 'PASS' else 'status-fail'
+        vpod_text = (
+            f"shared AFM accelerator membership <code>{html.escape(str(shared_vpod))}</code>"
+            if shared_vpod
+            else ('AFM vPOD accelerator membership unavailable' if fabric_checks else 'fabric checks disabled')
+        )
+        coverage_text = ''
+        if missing_nodes:
+            coverage_text = (
+                '<p class="error-summary">Declared node(s) not admitted: '
+                + html.escape(', '.join(map(str, missing_nodes)))
+                + '</p>'
+            )
+        membership_errors = membership.get('errors') or []
+        membership_error_html = ''
+        if membership_errors:
+            membership_error_html = (
+                '<ul class="error-list">'
+                + ''.join(f'<li>{html.escape(str(error))}</li>' for error in membership_errors)
+                + '</ul>'
+            )
+
+        rows = []
+        for node in sorted(node_results):
+            result = node_results[node]
+            devices = result.get('afm_devices') or []
+            device_states = (
+                '; '.join(
+                    f"{device.get('bdf', '?')}: {device.get('config_phase', '?')}/"
+                    f"{device.get('virtualization_mode', '?')}"
+                    for device in devices
+                )
+                or 'not reported'
+            )
+            masks = result.get('station_masks') or {}
+            mask_text = '; '.join(f"{bdf}: {mask}" for bdf, mask in sorted(masks.items())) or 'not reported'
+            port_inventory = result.get('afm_port_inventory') or {}
+            up_port_text = (
+                '; '.join(
+                    f"{bdf}: {entry.get('enabled_station_up_ports', 0)}/"
+                    f"{entry.get('expected_enabled_ports', 0)} mask-enabled UP "
+                    f"({entry.get('up_ports', 0)} physical UP)"
+                    for bdf, entry in sorted(port_inventory.items())
+                )
+                or 'not reported'
+            )
+            errors = result.get('errors') or []
+            error_html = (
+                '—'
+                if not errors
+                else '<ul style="margin:0;color:#721c24;">'
+                + ''.join(f'<li>{html.escape(str(error))}</li>' for error in errors)
+                + '</ul>'
+            )
+            node_status = result.get('status', 'UNKNOWN')
+            fabric_cells = ''
+            if fabric_checks:
+                fabric_cells = (
+                    f'<td>{html.escape(device_states)}</td>'
+                    f'<td><code>{html.escape(mask_text)}</code></td>'
+                    f'<td>{html.escape(up_port_text)}</td>'
+                )
+            rows.append(
+                '<tr>'
+                f'<td><code>{html.escape(str(node))}</code></td>'
+                f'<td><span class="status-{"pass" if node_status == "PASS" else "fail"}">{html.escape(str(node_status))}</span></td>'
+                f'<td>{len(result.get("gpu_inventory") or [])}</td>'
+                f'{fabric_cells}'
+                f'<td>{error_html}</td>'
+                '</tr>'
+            )
+
+        fabric_headers = (
+            '<th>AFM devices</th><th>Station masks</th><th>AFM enabled-station ports</th>' if fabric_checks else ''
+        )
+        return f"""
+        <section>
+            <h2>Node-Health Admission</h2>
+            <p><span class="{status_class}">{html.escape(str(status))}</span>. This mandatory, read-only gate validates
+            AMDGPU/KFD, GPU inventory, and kernel health{'; with fabric checks enabled it also validates AIFM, AFM ACTIVE bare-metal vPOD state, and IFoE station/port coherence' if fabric_checks else ''}.
+            vPOD: {vpod_text}.</p>
+            {coverage_text}
+            {membership_error_html}
+            <table>
+                <thead>
+                    <tr><th>Node</th><th>Status</th><th>GPUs</th>{fabric_headers}<th>Issues</th></tr>
+                </thead>
+                <tbody>{''.join(rows)}</tbody>
+            </table>
+        </section>
+        """
+
+    def _generate_node_smoke_html(self, node_smoke_results):
+        """Generate Primus node_smoke section — failed nodes and fail reasons."""
+        if not node_smoke_results:
+            return ""
+
+        if node_smoke_results.get('skipped'):
+            msg = node_smoke_results.get('message', 'Primus node_smoke check skipped')
+            return f"""
+        <section>
+            <h2>Primus Node Smoke</h2>
+            <p><em>{html.escape(msg)}</em></p>
+        </section>
+        """
+
+        node_results = node_smoke_results.get('node_results') or {}
+        if not node_results:
+            return ""
+
+        failed_nodes = {n: r for n, r in node_results.items() if r.get('status') in ('FAIL', 'UNKNOWN')}
+        dump_path = node_smoke_results.get('dump_path', '')
+
+        if not failed_nodes:
+            passing = len([n for n, r in node_results.items() if r.get('status') == 'PASS'])
+            tier2_html = ""
+            if node_smoke_results.get('tier2_perf'):
+                thresholds = node_smoke_results.get('tier2_thresholds') or {}
+                tier2_html = f"""
+            <p>Tier 2 perf enabled: GEMM &ge; {html.escape(str(thresholds.get('gemm_tflops_min', '?')))} TFLOPS,
+            HBM &ge; {html.escape(str(thresholds.get('hbm_gbs_min', '?')))} GB/s,
+            local RCCL &ge; {html.escape(str(thresholds.get('rccl_gbs_min', '?')))} GB/s.</p>"""
+            return f"""
+        <section>
+            <h2>Primus Node Smoke</h2>
+            <p>All <code>{passing}</code> node(s) passed Primus node_smoke.</p>{tier2_html}
+        </section>
+        """
+
+        html_out = """
+        <section>
+            <h2>Primus Node Smoke — Failures</h2>
+            <p class="error-summary">The following nodes failed Primus node_smoke checks:</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Node</th>
+                        <th>Status</th>
+                        <th>Fail Reasons</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+
+        for node, result in sorted(failed_nodes.items()):
+            reasons = result.get('fail_reasons') or []
+            if not reasons and result.get('node_payload'):
+                reasons = list(result['node_payload'].get('fail_reasons') or [])
+            reasons_str = html.escape('; '.join(str(r) for r in reasons) if reasons else 'See node logs')
+            status = html.escape(str(result.get('status', 'FAIL')))
+            html_out += f"""
+                <tr>
+                    <td>{html.escape(node)}</td>
+                    <td>{status}</td>
+                    <td>{reasons_str}</td>
+                </tr>
+            """
+
+        html_out += """
+                </tbody>
+            </table>
+        """
+        if dump_path:
+            html_out += (
+                f"<p>Per-node JSON written under <code>{html.escape(str(dump_path))}/smoke/</code> on each node.</p>"
+            )
+        html_out += """
+        </section>
+        """
+        return html_out
+
+    def _generate_ifoe_l2_html(self, ifoe_results):
+        """Generate IFoE L2 connectivity section - failure details and a per-node breakdown."""
+        if not ifoe_results:
+            return ""
+
+        if ifoe_results.get('blocked') or ifoe_results.get('status') == 'BLOCKED':
+            return f"""
+        <section>
+            <h2>IFoE L2 Connectivity (afmctl)</h2>
+            <p class="error-summary">{html.escape(str(ifoe_results.get('message', 'IFoE L2 connectivity blocked by mandatory admission')))}</p>
+        </section>
+        """
+
+        if ifoe_results.get('skipped'):
+            msg = ifoe_results.get('message', 'IFoE L2 connectivity test skipped')
+            return f"""
+        <section>
+            <h2>IFoE L2 Connectivity (afmctl)</h2>
+            <p><em>{html.escape(msg)}</em></p>
+        </section>
+        """
+
+        node_results = ifoe_results.get('node_results') or {}
+        if not node_results:
+            return ""
+
+        failed_nodes = sorted(n for n, r in node_results.items() if r.get('status') == 'FAIL')
+        total_invocations = int(ifoe_results.get('total_invocations', 0))
+        failed_invocations = int(ifoe_results.get('failed_invocations', 0))
+        pings_per_port = int(ifoe_results.get('pings_per_port', 3))
+        loss_threshold = ifoe_results.get('loss_threshold_pct', 0.0)
+        traffic_types = ifoe_results.get('traffic_types') or []
+        mesh_mode = ifoe_results.get('mesh_mode', 'full_mesh')
+        ports = ifoe_results.get('ports', 'up')
+        failure_mode = ifoe_results.get('failure_mode', 'gate')
+        coverage = ifoe_results.get('coverage') or {}
+        missing_nodes = coverage.get('missing_nodes') or []
+        incomplete_nodes = coverage.get('incomplete_nodes') or []
+        coverage_complete = coverage.get('complete', not missing_nodes and not incomplete_nodes)
+
+        header = f"""
+        <section>
+            <h2>IFoE L2 Connectivity (afmctl)</h2>
+            <p>Tested via <code>afmctl test ping</code>.
+            Mesh mode: <code>{html.escape(str(mesh_mode))}</code>;
+            port selection: <code>{html.escape(str(ports))}</code>;
+            pings per port: <code>{pings_per_port}</code>;
+            result mode: <code>{html.escape(str(failure_mode))}</code>;
+            Traffic types enforced: <code>{html.escape(", ".join(str(t) for t in traffic_types))}</code>;
+            loss threshold: <code>{html.escape(str(loss_threshold))}%</code>;
+            invocations: <code>{total_invocations - failed_invocations}/{total_invocations}</code> succeeded.</p>
+        """
+
+        coverage_rows = []
+        for node in sorted(node_results):
+            node_block = node_results[node]
+            node_coverage = node_block.get('coverage') or {}
+            port_inventory = node_block.get('port_inventory') or {}
+            up_port_parts = []
+            for bdf, port_info in sorted(port_inventory.items()):
+                up_ports = port_info.get('up_ports') or []
+                up_port_parts.append(f"{bdf}: {len(up_ports)} UP")
+            up_ports_text = "; ".join(up_port_parts) or "not discovered"
+            coverage_rows.append(
+                "<tr>"
+                f"<td><code>{html.escape(str(node))}</code></td>"
+                f"<td>{html.escape(str(node_block.get('status', 'UNKNOWN')))}</td>"
+                f"<td>{html.escape(str(node_coverage.get('expected_pairs', '—')))}</td>"
+                f"<td>{html.escape(str(node_coverage.get('planned_pairs', '—')))}</td>"
+                f"<td>{html.escape(str(node_coverage.get('expected_invocations', '—')))}</td>"
+                f"<td>{html.escape(str(node_coverage.get('completed_invocations', '—')))}</td>"
+                f"<td>{html.escape(up_ports_text)}</td>"
+                f"<td>{'complete' if node_coverage.get('complete', True) else 'incomplete'}</td>"
+                "</tr>"
+            )
+        coverage_note = "complete" if coverage_complete else "incomplete"
+        coverage_detail = []
+        if missing_nodes:
+            coverage_detail.append("missing required nodes: " + ", ".join(str(n) for n in missing_nodes))
+        if incomplete_nodes:
+            coverage_detail.append("incomplete node coverage: " + ", ".join(str(n) for n in incomplete_nodes))
+        coverage_table = f"""
+            <h3>Mesh and Port Coverage</h3>
+            <p><strong>Overall coverage:</strong> <span class="status-{'pass' if coverage_complete else 'fail'}">{coverage_note}</span>
+            {html.escape('; '.join(coverage_detail))}</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Node</th><th>Result</th><th>Expected pairs</th><th>Planned pairs</th>
+                        <th>Expected invocations</th><th>Completed invocations</th><th>Selected source ports</th><th>Coverage</th>
+                    </tr>
+                </thead>
+                <tbody>{''.join(coverage_rows)}</tbody>
+            </table>
+        """
+
+        if not failed_nodes and coverage_complete:
+            return (
+                header
+                + coverage_table
+                + """
+            <p class="status-pass">All reachable nodes passed IFoE L2 ping.</p>
+        </section>
+        """
+            )
+
+        if not failed_nodes:
+            return (
+                header
+                + coverage_table
+                + """
+            <p class="error-summary">IFoE L2 execution completed, but the required mesh coverage was incomplete.</p>
+        </section>
+        """
+            )
+
+        rows = []
+        for node in failed_nodes:
+            node_block = node_results[node]
+            node_errors = node_block.get('errors') or []
+            node_has_failed_invocation = False
+            for bdf, invocations in (node_block.get('accelerators') or {}).items():
+                for dst, invocation in invocations.items():
+                    if invocation.get('status') != 'FAIL':
+                        continue
+                    node_has_failed_invocation = True
+                    parsed = invocation.get('parsed') or {}
+                    summary_lines = []
+                    for ttype, label in (
+                        ('ifoe_req', 'IFoE Request'),
+                        ('ifoe_resp', 'IFoE Response'),
+                        ('non_ifoe', 'Non-IFoE'),
+                    ):
+                        s = (parsed.get('summary') or {}).get(ttype)
+                        if not s:
+                            continue
+                        summary_lines.append(
+                            f"{html.escape(label)}: {s['pass']}/{s['total']} "
+                            f"PASS, {s['fail']}/{s['total']} fail ({s['loss_pct']:.2f}% loss)"
+                        )
+                    failed_ports = []
+                    for port, port_result in (parsed.get('ports') or {}).items():
+                        bad = [
+                            (label, port_result[k])
+                            for k, label in (
+                                ('ifoe_req', 'IFoE Req'),
+                                ('ifoe_resp', 'IFoE Rsp'),
+                                ('non_ifoe', 'Non-IFoE'),
+                            )
+                            if isinstance(port_result.get(k), dict) and port_result[k].get('status') == 'FAIL'
+                        ]
+                        if bad:
+                            parts = ", ".join(f"{lbl}={rr['pass']}/{rr['total']}" for lbl, rr in bad)
+                            failed_ports.append(f"port {html.escape(str(port))} ({parts})")
+
+                    detail_html = ""
+                    if summary_lines:
+                        detail_html += "<ul style='margin:6px 0;'>"
+                        for line in summary_lines:
+                            detail_html += f"<li>{line}</li>"
+                        detail_html += "</ul>"
+                    if failed_ports:
+                        detail_html += "<p><strong>Failed ports:</strong> " + "; ".join(failed_ports) + "</p>"
+                    invocation_errors = invocation.get('errors') or []
+                    if invocation_errors:
+                        detail_html += "<ul style='margin:6px 0;color:#721c24;'>"
+                        for err in invocation_errors[:20]:
+                            detail_html += f"<li>{html.escape(str(err))}</li>"
+                        detail_html += "</ul>"
+
+                    raw = invocation.get('raw_output') or ''
+                    if raw.strip():
+                        snippet = raw if len(raw) <= 4000 else raw[:4000] + "\n... (truncated) ..."
+                        detail_html += (
+                            "<details><summary>afmctl output</summary>"
+                            f"<pre style='white-space:pre-wrap;'>{html.escape(snippet)}</pre>"
+                            "</details>"
+                        )
+
+                    rows.append(f"""
+                <tr>
+                    <td><code>{html.escape(str(node))}</code></td>
+                    <td><code>{html.escape(str(bdf))}</code></td>
+                    <td>{html.escape(str(dst))}</td>
+                    <td><code>{html.escape(invocation.get('command', ''))}</code></td>
+                    <td>{detail_html}</td>
+                </tr>
+                """)
+            if not node_has_failed_invocation and node_errors:
+                node_err_html = (
+                    "<ul style='margin:6px 0;color:#721c24;'>"
+                    + "".join(f"<li>{html.escape(str(e))}</li>" for e in node_errors)
+                    + "</ul>"
+                )
+                rows.append(f"""
+                <tr>
+                    <td><code>{html.escape(str(node))}</code></td>
+                    <td colspan='3'><em>No failed afmctl invocation was recorded</em></td>
+                    <td>{node_err_html}</td>
+                </tr>
+                """)
+
+        table = (
+            """
+            <p class="error-summary">The following IFoE L2 ping invocations failed:</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Node</th>
+                        <th>BDF</th>
+                        <th>--dst-accelerator</th>
+                        <th>Command</th>
+                        <th>Failure Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+            + "".join(rows)
+            + """
+                </tbody>
+            </table>
+        </section>
+        """
+        )
+
+        return header + coverage_table + table
+
+    def _generate_transferbench_smoke_html(self, tb_results):
+        """Generate TransferBench smoketest section (AIMVT-181)."""
+        if not tb_results:
+            return ""
+
+        if tb_results.get('blocked') or tb_results.get('status') == 'BLOCKED':
+            return f"""
+        <section>
+            <h2>IFoE TransferBench Smoketest</h2>
+            <p class="error-summary">{html.escape(str(tb_results.get('message', 'TransferBench smoketest blocked by mandatory admission')))}</p>
+        </section>
+        """
+
+        if tb_results.get('skipped'):
+            msg = tb_results.get('message', 'TransferBench smoketest skipped')
+            return f"""
+        <section>
+            <h2>IFoE TransferBench Smoketest</h2>
+            <p><em>{html.escape(msg)}</em></p>
+        </section>
+        """
+
+        nodes = tb_results.get('nodes') or {}
+        totals = tb_results.get('totals') or {}
+        pod_membership = tb_results.get('pod_membership') or {}
+        scope = tb_results.get('scope') or 'node'
+        profile = tb_results.get('profile') or 'smoketest'
+        message_sizes = tb_results.get('message_sizes') or ['1K', '16M']
+        iterations = int(tb_results.get('iterations', 2))
+        warmup_iterations = int(tb_results.get('warmup_iterations', 0))
+        rank_mode = tb_results.get('rank_mode') or 'per_node'
+        max_skip = tb_results.get('max_skip_pct', 25.0)
+        cluster_errors = tb_results.get('errors') or []
+
+        pod_summary_parts = []
+        if isinstance(pod_membership, dict):
+            if pod_membership.get('status') == 'SKIPPED':
+                pod_summary_parts.append('<em>pod-membership precondition skipped by config</em>')
+            else:
+                vpod_id = pod_membership.get('vpod_id')
+                ppod_id = pod_membership.get('ppod_id')
+                if vpod_id is not None:
+                    pod_summary_parts.append(f'shared vpod_id=<code>{html.escape(str(vpod_id))}</code>')
+                if ppod_id is not None:
+                    pod_summary_parts.append(f'shared ppod_id=<code>{html.escape(str(ppod_id))}</code>')
+                if pod_membership.get('status') == 'FAIL':
+                    pod_summary_parts.append('<span class="status-fail">precondition FAILED</span>')
+        pod_summary_html = '; '.join(pod_summary_parts) if pod_summary_parts else 'pod-membership info unavailable'
+
+        header_html = f"""
+        <section>
+            <h2>IFoE TransferBench Smoketest</h2>
+            <p>Tested via TransferBench profile <code>{html.escape(str(profile))}</code>.
+            Scope: <code>{html.escape(str(scope))}</code>
+            (effective rank mode: <code>{html.escape(rank_mode)}</code>);
+            message sizes: <code>{html.escape(', '.join(str(size) for size in message_sizes))}</code>;
+            iterations/warmups: <code>{iterations}/{warmup_iterations}</code>;
+            skip budget: <code>{html.escape(str(max_skip))}%</code>;
+            nodes pass/warn/fail: <code>{totals.get('nodes_pass', 0)}/{totals.get('nodes_warning', 0)}/{totals.get('nodes_fail', 0)}</code>
+            (of {totals.get('nodes_total', 0)} total);
+            tests pass/fail/skip: <code>{totals.get('tests_pass', 0)}/{totals.get('tests_fail', 0)}/{totals.get('tests_skip', 0)}</code>.
+            Pod membership: {pod_summary_html}.</p>
+        """
+
+        cluster_err_html = ''
+        if cluster_errors:
+            err_items = ''.join(f'<li>{html.escape(str(e))}</li>' for e in cluster_errors)
+            cluster_err_html = (
+                f'<div class="error-list"><strong>Cluster-level errors:</strong><ul>{err_items}</ul></div>'
+            )
+
+        failing = sorted(
+            (n for n, r in nodes.items() if r.get('status') in ('FAIL', 'WARNING')),
+            key=str,
+        )
+
+        if not failing:
+            return (
+                header_html
+                + cluster_err_html
+                + ('<p class="status-pass">All reachable nodes passed TransferBench smoketest.</p></section>')
+            )
+
+        rows = []
+        for node in failing:
+            entry = nodes[node]
+            verdict = entry.get('status', 'FAIL')
+            exit_code = entry.get('exit_code')
+            parsed = entry.get('parsed') or {}
+            errors = entry.get('errors') or []
+            warnings = parsed.get('warnings') or []
+            stdout_errors = parsed.get('errors') or []
+
+            detail_bits = []
+            counts = (
+                f"pass={parsed.get('num_pass', 0)}, "
+                f"fail={parsed.get('num_fail', 0)}, "
+                f"skip={parsed.get('num_skip', 0)}, "
+                f"total={parsed.get('num_tests', 0)}"
+            )
+            detail_bits.append(f'<p><strong>Test marker counts:</strong> <code>{html.escape(counts)}</code></p>')
+            if exit_code is not None:
+                detail_bits.append(f'<p><strong>Exit code:</strong> <code>{html.escape(str(exit_code))}</code></p>')
+            if errors:
+                detail_bits.append(
+                    '<p><strong>Verdict errors:</strong></p><ul style="color:#721c24;margin:6px 0;">'
+                    + ''.join(f'<li>{html.escape(str(e))}</li>' for e in errors)
+                    + '</ul>'
+                )
+            if stdout_errors:
+                detail_bits.append(
+                    '<details><summary>stdout fatal lines</summary><ul>'
+                    + ''.join(f'<li>{html.escape(str(e))}</li>' for e in stdout_errors[:25])
+                    + '</ul></details>'
+                )
+            if warnings:
+                detail_bits.append(
+                    '<details><summary>stdout warning lines</summary><ul>'
+                    + ''.join(f'<li>{html.escape(str(w))}</li>' for w in warnings[:25])
+                    + '</ul></details>'
+                )
+            raw = entry.get('raw_output') or ''
+            if raw.strip():
+                snippet = raw if len(raw) <= 4000 else raw[:4000] + '\n... (truncated) ...'
+                detail_bits.append(
+                    '<details><summary>TransferBench output</summary>'
+                    f'<pre style="white-space:pre-wrap;">{html.escape(snippet)}</pre>'
+                    '</details>'
+                )
+
+            status_class = 'status-fail' if verdict == 'FAIL' else 'status-skipped'
+            rows.append(f"""
+                <tr>
+                    <td><code>{html.escape(str(node))}</code></td>
+                    <td><span class="status-badge {status_class}">{html.escape(verdict)}</span></td>
+                    <td><code>{html.escape(entry.get('command', '') or '')}</code></td>
+                    <td>{''.join(detail_bits)}</td>
+                </tr>
+            """)
+
+        table_html = (
+            """
+            <p class="error-summary">The following nodes failed or warned on the TransferBench smoketest:</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Node</th>
+                        <th>Status</th>
+                        <th>Command</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+            + ''.join(rows)
+            + """
+                </tbody>
+            </table>
+        </section>
+        """
+        )
+        return header_html + cluster_err_html + table_html
 
     @staticmethod
     def _rdma_pair_row_fields(pair_key, pair_result):
@@ -1068,6 +1950,14 @@ class PreflightReportGenerator(PreflightCheck):
         if not connectivity_results:
             return ""
 
+        if connectivity_results.get('blocked') or connectivity_results.get('status') == 'BLOCKED':
+            return f"""
+        <section>
+            <h2>RDMA connectivity</h2>
+            <p class="error-summary">{html.escape(str(connectivity_results.get('message', 'RDMA connectivity blocked by mandatory admission')))}</p>
+        </section>
+        """
+
         if connectivity_results.get('skipped', False):
             ex_if = connectivity_results.get('excluded_nodes_interface_check') or []
             ex_gid = connectivity_results.get('excluded_nodes_gid') or []
@@ -1335,7 +2225,7 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _generate_rocm_versions_html(self, rocm_results):
         """Generate ROCm version inconsistencies section - only show failed nodes."""
-        if not rocm_results:
+        if not rocm_results or rocm_results.get('skipped') or rocm_results.get('status') == 'SKIPPED':
             return ""
 
         # Filter to only failed nodes
@@ -1381,7 +2271,7 @@ class PreflightReportGenerator(PreflightCheck):
 
     def _generate_interface_names_html(self, interface_results):
         """Generate RDMA interface inconsistencies section - only show failed nodes."""
-        if not interface_results:
+        if not interface_results or interface_results.get('skipped') or interface_results.get('status') == 'SKIPPED':
             return ""
 
         # Filter to only failed nodes

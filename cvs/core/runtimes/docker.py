@@ -17,10 +17,45 @@ class DockerRuntime:
 
     def check_image_exists(self, image_name):
         """Check if the Docker image exists on all nodes."""
-        cmd = f"sudo docker images --format '{{{{.Repository}}}}:{{{{.Tag}}}}' | grep -q '^{image_name}$'"
+        cmd = f"{self.orchestrator.sudo_prefix()}docker images --format '{{{{.Repository}}}}:{{{{.Tag}}}}' | grep -q '^{image_name}$'"
         result = self.orchestrator.all.exec(cmd, timeout=30, detailed=True)
         # If grep succeeds (exit 0), image exists; if not, not found
         return all(res.get('exit_code') == 0 for res in result.values())
+
+    def registry_login(self, registry_config):
+        """Log in to a Docker registry on all nodes ahead of a pull.
+
+        Args:
+            registry_config: dict with ``username`` and ``password_file`` (path
+                to a file on each remote host containing the password/token) and
+                optional ``server`` (registry hostname; omit for Docker Hub).
+                The password is piped via stdin (``--password-stdin``) so it
+                never appears in a command line, process list, or log line.
+
+        Returns:
+            bool: True if login succeeded on every host.
+        """
+        username = registry_config.get('username')
+        password_file = registry_config.get('password_file')
+        if not username or not password_file:
+            self.log.error("registry_login requires 'username' and 'password_file'")
+            return False
+
+        server = registry_config.get('server', '')
+        # `docker login` (the stage that needs sudo for daemon-socket access) is
+        # the SECOND stage of this pipe, so wrap the whole pipeline in `sh -c`
+        # and prefix that so sudo applies to all of it, not just the first token.
+        inner = (
+            f"cat {shlex.quote(password_file)} | docker login {shlex.quote(server)} "
+            f"--username {shlex.quote(username)} --password-stdin"
+        )
+        cmd = f"{self.orchestrator.sudo_prefix()}sh -c {shlex.quote(inner)}"
+        result = self.orchestrator.all.exec(cmd, timeout=30, print_console=False, detailed=True)
+        success = all(res.get('exit_code') == 0 for res in result.values())
+        if not success:
+            failed = [host for host, res in result.items() if res.get('exit_code') != 0]
+            self.log.error(f"docker login failed on hosts: {failed}")
+        return success
 
     def setup_containers(
         self,
@@ -44,8 +79,8 @@ class DockerRuntime:
 
         Args:
             container_config: Container configuration dictionary. Recognized
-                top-level keys include ``image``, ``launch``, ``runtime`` (with
-                nested ``args``), and ``env``.
+                top-level keys include ``image``, ``runtime`` (with nested
+                ``args``), and ``env``.
             container_name: Name to assign to the containers
             volumes: Optional list of volume mounts (overrides config)
             devices: Optional list of device passthroughs (overrides config)
@@ -59,11 +94,6 @@ class DockerRuntime:
         if not container_config or not container_config.get('image'):
             self.log.warning("No container config or image specified, skipping container start")
             return False
-
-        launch = container_config.get('launch', False)
-        if not launch:
-            self.log.info("Container launch disabled, assuming containers are already running")
-            return True
 
         image = container_config['image']
 
@@ -125,17 +155,31 @@ class DockerRuntime:
                     return False
             else:
                 self.log.info(f"Image {container_config['image']} already exists, skipping tar load")
+        elif runtime_args_config.get('registry'):
+            # No local tar to load: this run needs a registry pull, so log in
+            # first for private images (e.g. rocm/ufb-private).
+            self.log.info("Logging in to Docker registry before pulling image")
+            if not self.registry_login(runtime_args_config['registry']):
+                return False
 
-        cmd = f"sudo docker run -d --name {container_name} {all_args_str} {image} sleep infinity"
+        if not self.check_image_exists(image):
+            self.log.info(f"Image {image} not present on all hosts; pulling before start")
+            pull_result = self.pull_image(image, timeout=600)
+            failed_pull = [host for host, res in pull_result.items() if res.get('exit_code') != 0]
+            if failed_pull:
+                self.log.error(f"Failed to pull image on hosts: {failed_pull}")
+                return False
+
+        cmd = f"{self.orchestrator.sudo_prefix()}docker run -d --name {container_name} {all_args_str} {image} sleep infinity"
 
         self.log.info(f"Starting long-running containers on {len(self.orchestrator.hosts)} nodes: {container_name}")
         self.log.debug(f"Container start command: {cmd}")
 
         # Remove any existing container with the same name
-        remove_cmd = f"sudo docker rm -f {container_name} || true"
+        remove_cmd = f"{self.orchestrator.sudo_prefix()}docker rm -f {container_name} || true"
         self.orchestrator.all.exec(remove_cmd, timeout=30, print_console=False)
 
-        result = self.orchestrator.all.exec(cmd, timeout=60, detailed=True)
+        result = self.orchestrator.all.exec(cmd, timeout=120, detailed=True)
 
         # Check if all hosts started successfully
         success = all(output['exit_code'] == 0 for output in result.values())
@@ -161,7 +205,7 @@ class DockerRuntime:
             actually-running container name found on that host, or empty), and
             'exit_code' (int, exit code of the underlying ``docker ps`` probe).
         """
-        cmd = f"sudo docker ps --filter name=^{container_name}$ --filter status=running --format '{{{{.Names}}}}'"
+        cmd = f"{self.orchestrator.sudo_prefix()}docker ps --filter name=^{container_name}$ --filter status=running --format '{{{{.Names}}}}'"
         raw = self.orchestrator.all.exec(cmd, timeout=30, detailed=True)
         out = {}
         for host, res in raw.items():
@@ -182,8 +226,7 @@ class DockerRuntime:
 
         self.log.info(f"Stopping containers: {container_name}")
 
-        # Force remove container (stops if running)
-        cmd = f"sudo docker rm -f {container_name} 2>/dev/null || true"
+        cmd = f"{self.orchestrator.sudo_prefix()}docker rm -f {container_name} 2>/dev/null || true"
         result = self.orchestrator.all.exec(cmd, timeout=30, print_console=False, detailed=True)
 
         success = all(output['exit_code'] == 0 for output in result.values())
@@ -192,14 +235,17 @@ class DockerRuntime:
 
         return success
 
-    def exec(self, container_name, cmd, hosts=None, timeout=None, detailed=False):
+    def exec(self, container_name, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """Execute command in running Docker containers.
 
         cmd is wrapped in `bash -c` so shell features (cd, ;, &&, |, globs,
         redirects) run inside the container -- docker exec uses execve with
         no implicit shell.
+
+        print_console=False returns the output without logging it; use for bulk
+        data the caller parses itself.
         """
-        exec_cmd = f"sudo docker exec {container_name} bash -c {shlex.quote(cmd)}"
+        exec_cmd = f"{self.orchestrator.sudo_prefix()}docker exec {container_name} bash -c {shlex.quote(cmd)}"
         if hosts:
             # Build a fresh Pssh for the host subset, mirroring
             # BaremetalOrchestrator.exec's subset branch.
@@ -214,15 +260,37 @@ class DockerRuntime:
                 host_key_check=False,
                 stop_on_errors=self.orchestrator.stop_on_errors,
             )
-            return pssh.exec(exec_cmd, timeout=timeout, detailed=detailed)
+            try:
+                return pssh.exec(exec_cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+            finally:
+                pssh.destroy_clients()
 
-        return self.orchestrator.all.exec(exec_cmd, timeout=timeout, detailed=detailed)
+        return self.orchestrator.all.exec(exec_cmd, timeout=timeout, detailed=detailed, print_console=print_console)
 
-    def exec_on_head(self, container_name, cmd, timeout=None):
+    def exec_cmd_list(self, container_name, cmd_list, timeout=None):
+        """Execute different commands on different hosts inside the container.
+
+        Each command is wrapped in `docker exec bash -c` — the parallel
+        per-host equivalent of exec(). Positional correspondence between
+        cmd_list and reachable_hosts is the caller's responsibility.
+
+        Args:
+            container_name: Running container name
+            cmd_list: List of commands, one per host in host order
+            timeout: Command timeout
+
+        Returns:
+            Dictionary mapping hosts to execution results
+        """
+        sudo_prefix = self.orchestrator.sudo_prefix()
+        exec_cmd_list = [f"{sudo_prefix}docker exec {container_name} bash -c {shlex.quote(cmd)}" for cmd in cmd_list]
+        return self.orchestrator.all.exec_cmd_list(exec_cmd_list, timeout=timeout)
+
+    def exec_on_head(self, container_name, cmd, timeout=None, detailed=False, print_console=True):
         """Execute command directly on head node (container). See exec() for
-        the bash -c wrap rationale."""
-        exec_cmd = f"sudo docker exec {container_name} bash -c {shlex.quote(cmd)}"
-        return self.orchestrator.head.exec(exec_cmd, timeout=timeout)
+        the bash -c wrap rationale and the print_console semantics."""
+        exec_cmd = f"{self.orchestrator.sudo_prefix()}docker exec {container_name} bash -c {shlex.quote(cmd)}"
+        return self.orchestrator.head.exec(exec_cmd, timeout=timeout, detailed=detailed, print_console=print_console)
 
     @staticmethod
     def _build_runtime_args(runtime_args_config):
@@ -283,9 +351,24 @@ class DockerRuntime:
 
         return args
 
+    def pull_image(self, image_name, timeout=None):
+        """Pull container image on all hosts.
+
+        Uses sudo_prefix() like every other docker call in this class. A
+        hardcoded `sudo` would pull as root while registry_login() -- which
+        does honor sudo_prefix() -- authenticated as the SSH user, so a private
+        image would fail with "pull access denied" on any cluster without
+        passwordless sudo. Bare `sudo` also drops the `-n`, letting a password
+        prompt block until the timeout instead of failing fast.
+        """
+        timeout = timeout or 600
+        cmd = f"{self.orchestrator.sudo_prefix()}docker pull {shlex.quote(image_name)}"
+        self.log.info(f"Pulling image on all hosts: {image_name}")
+        return self.orchestrator.all.exec(cmd, timeout=timeout, detailed=True)
+
     def load_image(self, tar_path, timeout=None):
         """Load container image from tar file on all hosts."""
-        cmd = f"sudo docker load < {tar_path}"
+        cmd = f"{self.orchestrator.sudo_prefix()}docker load < {tar_path}"
         timeout = timeout or 600  # Default 10 minutes
 
         # Load on all hosts for image distribution

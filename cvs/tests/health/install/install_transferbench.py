@@ -183,6 +183,7 @@ def test_install_transferbench(orch, config_dict):
     Steps:
       - Ensure git_install_path exists on all nodes.
       - Clone TransferBench repo under git_install_path on every node.
+      - Checkout the configured git tag.
       - Build on all nodes using detected ROCM_PATH and HIPCC.
       - Verify the build artifact is present on each node.
 
@@ -193,6 +194,7 @@ def test_install_transferbench(orch, config_dict):
       config_dict (dict): Includes:
         - git_install_path: directory to clone/build
         - git_url: repository URL
+        - git_tag: git tag to checkout after clone
     """
 
     globals.error_list = []
@@ -200,6 +202,11 @@ def test_install_transferbench(orch, config_dict):
     log.info('Testcase install transferbench')
     git_install_path = config_dict['git_install_path']
     git_url = config_dict['git_url']
+    git_tag = config_dict.get('git_tag')
+    if not git_tag:
+        fail_test('TransferBench config is missing the required "git_tag" field')
+        update_test_result()
+        return
 
     out_dict = orch.exec(f'ls -ld {git_install_path}')
     for node in out_dict.keys():
@@ -213,6 +220,27 @@ def test_install_transferbench(orch, config_dict):
         timeout=120,
     )
 
+    tb_src = f'{git_install_path}/TransferBench'
+    out_dict = orch.exec(
+        f"bash -c 'cd {tb_src} && git checkout {git_tag}'",
+        timeout=120,
+    )
+    scan_test_results(out_dict)
+    for node, output in out_dict.items():
+        if re.search(r'error:|fatal:', output, re.I):
+            fail_test(f'git checkout {git_tag} failed on node {node}: {output.strip()}')
+
+    out_dict = orch.exec(
+        f"bash -c 'cd {tb_src} && git describe --tags --exact-match'",
+        timeout=60,
+    )
+    for node, output in out_dict.items():
+        actual_tag = output.strip()
+        if actual_tag != git_tag:
+            fail_test(
+                f'TransferBench not at git tag {git_tag} on node {node} after checkout (git describe: {actual_tag!r})'
+            )
+
     # Detect ROCm path and compiler
     rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
     hip_compiler = detect_hip_compiler(orch, rocm_path)
@@ -221,7 +249,6 @@ def test_install_transferbench(orch, config_dict):
     # uses cwd-relative paths so cwd MUST be the source tree; we wrap the
     # build in `bash -c` explicitly to make the cwd dependency visible
     # at the call site rather than via an implicit `cd X; cmd` chain.
-    tb_src = f'{git_install_path}/TransferBench'
     out_dict = orch.exec(
         f"bash -c 'cd {tb_src} && ROCM_PATH={rocm_path} HIPCC={hip_compiler} make'",
         timeout=500,

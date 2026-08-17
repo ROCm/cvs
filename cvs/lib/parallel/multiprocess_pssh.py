@@ -6,7 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.lib.env_lib import build_env_prefix
-from cvs.lib.parallel.pssh import Pssh
+from cvs.lib.parallel.pssh import Pssh, _select_reachable_hosts
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.pssh_sharder import PsshSharder
 from cvs.lib.parallel.interfaces import ShardableSshInterface
@@ -183,10 +183,21 @@ class MultiProcessPssh(ShardableSshInterface):
             for line in cmd_output[host].splitlines():
                 self.log.info("%s", line)
 
-    def exec(self, cmd, timeout=None, print_console=True, detailed=False):
-        """Execute command with automatic sharding if needed."""
+    def exec(self, cmd, timeout=None, print_console=True, detailed=False, inactivity_timeout=None):
+        """Execute command with automatic sharding if needed.
+
+        inactivity_timeout (see Pssh.exec) is threaded through to both the direct
+        single-process path and the sharded worker path, so a per-line inactivity
+        timeout applies regardless of host count.
+        """
         if self.pssh is not None:
-            result = self.pssh.exec(cmd, timeout=timeout, print_console=print_console, detailed=detailed)
+            result = self.pssh.exec(
+                cmd,
+                timeout=timeout,
+                print_console=print_console,
+                detailed=detailed,
+                inactivity_timeout=inactivity_timeout,
+            )
             self._sync_pssh_state()
             return result
 
@@ -199,7 +210,12 @@ class MultiProcessPssh(ShardableSshInterface):
 
         # Log command execution
         if self.log:
-            if timeout is not None:
+            if inactivity_timeout is not None:
+                self.log.debug(
+                    f"Executing command on {len(self.reachable_hosts)} host(s) "
+                    f"[inactivity_timeout={inactivity_timeout}s]: {full_cmd}"
+                )
+            elif timeout is not None:
                 self.log.debug(
                     f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
                 )
@@ -209,7 +225,13 @@ class MultiProcessPssh(ShardableSshInterface):
         # Use sharder for sharded execution
         host_chunks = list(self.sharder.chunk_hosts(self.reachable_hosts))
         payloads = self.sharder.create_payloads(
-            'exec', host_chunks, self._shard_init_kwargs(), cmd=cmd, timeout=timeout, detailed=detailed
+            'exec',
+            host_chunks,
+            self._shard_init_kwargs(),
+            cmd=cmd,
+            timeout=timeout,
+            detailed=detailed,
+            inactivity_timeout=inactivity_timeout,
         )
         shard_returns = self.sharder.execute_sharded(payloads)
 
@@ -327,10 +349,33 @@ class MultiProcessPssh(ShardableSshInterface):
         shard_returns = self.sharder.execute_sharded(payloads)
         return self._merge_shard_returns(shard_returns)
 
-    def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_'):
-        """Download file with automatic sharding if needed."""
+    def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_', hosts=None):
+        """Download a file, optionally from an exact subset of reachable hosts."""
         if self.pssh is not None:
-            return self.pssh.download_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
+            result = self.pssh.download_file(
+                remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator, hosts=hosts
+            )
+            self._sync_pssh_state()
+            return result
+
+        if hosts is not None:
+            target_hosts = _select_reachable_hosts(self.reachable_hosts, hosts)
+            if not target_hosts:
+                return {}
+            target_pssh = Pssh(
+                None,
+                target_hosts,
+                user=self.user,
+                password=self.password,
+                pkey=self.pkey,
+                host_key_check=self.host_key_check,
+                stop_on_errors=self.stop_on_errors,
+                env_vars=self.env_vars,
+                **self.ssh_client_kwargs,
+            )
+            return target_pssh.download_file(
+                remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator
+            )
 
         self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, self.reachable_hosts)
 
