@@ -123,6 +123,13 @@ class ScalingBaseline(_Forbid):
     num_nodes: int = 1
 
 
+class LossCurveConfig(_Forbid):
+    sample_every: int = 10
+    milestone_steps: List[int] = Field(default_factory=lambda: [100, 500, 1000, 5000])
+    max_slope: float = 0.0
+    enforce: bool = True
+
+
 class TorchTitanVariantConfig(_Forbid):
     schema_version: Literal[1]
     framework: Literal["torchtitan_single", "torchtitan_distributed"]
@@ -130,6 +137,7 @@ class TorchTitanVariantConfig(_Forbid):
     enforce_thresholds: bool = True
     threshold_json: str = ""
     scaling_baseline: ScalingBaseline = Field(default_factory=ScalingBaseline)
+    loss_curve: LossCurveConfig = Field(default_factory=LossCurveConfig)
     config: Dict[str, Any]  # training knobs: torchtitan_root, nccl_*, nic_type, ...
     model_params: Dict[str, Any]  # model knobs: model_name, precision, tp, pp, ...
     container: ContainerSpec

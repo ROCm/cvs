@@ -69,7 +69,7 @@ MODEL_FLAVORS = {
         'flavor': '32B',
         'module': 'qwen3',
         'model_size': '32B',
-        'tokenizer_path': 'Qwen/Qwen2.5-32B',
+        'tokenizer_path': 'Qwen/Qwen3-32B',
         'hf_assets_subdir': 'qwen',
     },
     'mixtral_8x22b': {

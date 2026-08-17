@@ -13,7 +13,7 @@ import pytest
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
-from cvs.lib.training.torchtitan.training_config_loader import load_training_variant
+from cvs.lib.training.torchtitan.utils.training_config_loader import load_training_variant
 
 log = globals.log
 
@@ -62,22 +62,27 @@ def hf_token(variant_config):
 
 
 class _Lifecycle:
-    """Cross-test state for the per-combo lifecycle model.
+    """Cross-test state for the lifecycle-as-tests model.
 
-    Each combo's container launch, training, and teardown are timed sub-stages
-    of test_training. `report` maps each nodeid to its recorded (label, value,
-    unit) rows, which pytest_runtest_makereport renders into the HTML detail
-    panel. `torn_down` suppresses the orch fixture leak-guard: test_training
-    sets it True after its own teardown so the module-end finalizer does not
-    tear down a second time.
+    The container is launched once (test_launch_container), all sweep combos
+    run inside it (test_training), GPU memory is freed between combos via
+    stop_training_processes(), and the container is torn down once at the end
+    (test_teardown). `failed` lets a broken stage skip the rest. `torn_down`
+    suppresses the orch fixture leak-guard when test_teardown already ran.
+    `report` maps each nodeid to its recorded (label, value, unit) rows.
     """
 
     def __init__(self):
+        self.failed = False
         self.torn_down = False
         self.report = {}  # nodeid -> list[(label, value, unit)]
+        self.artifacts = {}  # nodeid -> list[(link_name, rel_path)]
 
     def record(self, nodeid, label, value, unit="s"):
         self.report.setdefault(nodeid, []).append((label, value, unit))
+
+    def add_artifact(self, nodeid, link_name, rel_path, abs_path=None):
+        self.artifacts.setdefault(nodeid, []).append((link_name, rel_path))
 
 
 @pytest.fixture(scope="module")
@@ -94,11 +99,11 @@ def train_res_dict():
 def orch(cluster_dict, variant_config, lifecycle):
     """Construct a ContainerOrchestrator and own a final teardown safety net.
 
-    Each combo's test_training launches and tears down its own container in a
-    finally block, setting lifecycle.torn_down=True afterwards. This finalizer
-    only fires when torn_down is False -- i.e. a combo crashed hard before its
-    own teardown ran -- so nothing leaks past the module without double-tearing
-    down in the normal case.
+    The container is launched once in test_launch_container and torn down once
+    in test_teardown, which sets lifecycle.torn_down=True. This finalizer only
+    fires when torn_down is False -- i.e. test_teardown did not run (e.g. a
+    crash before teardown) -- so nothing leaks past the module without
+    double-tearing down in the normal case.
     """
     container_block = _deep_merge(cluster_dict.get("container", {}), variant_config.container.model_dump())
     testsuite_config = {"orchestrator": "container", "container": container_block}
@@ -111,11 +116,16 @@ def orch(cluster_dict, variant_config, lifecycle):
 
 
 def pytest_collection_modifyitems(items):
-    """Pin test order: each combo's test_training (which owns the full container
-    lifecycle) runs before any test_throughput, which only reads saved results."""
+    """Pin lifecycle order: launch → training combos → metric → teardown."""
     rank = {
-        "test_training": 0,
-        "test_throughput": 1,
+        "test_launch_container": 0,
+        "test_download_tokenizer": 1,
+        "test_setup_rdma": 1,
+        "test_smoke": 2,
+        "test_training": 3,
+        "test_metric": 4,
+        "test_loss_curve": 5,
+        "test_teardown": 6,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
@@ -128,37 +138,27 @@ def pytest_runtest_makereport(item, call):
     if report.when != "call":
         return
     lc = item.funcargs.get("lifecycle")
-    rows = getattr(lc, "report", {}).get(item.nodeid) if lc else None
-    if not rows:
+    if not lc:
+        return
+    rows = getattr(lc, "report", {}).get(item.nodeid)
+    artifacts = getattr(lc, "artifacts", {}).get(item.nodeid)
+    if not rows and not artifacts and not report.failed:
         return
     try:
         import pytest_html
     except ImportError:
         return
-    body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
-    html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
     extras = getattr(report, "extras", [])
-    extras.append(pytest_html.extras.html(html))
+    if rows:
+        body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
+        html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
+        extras.append(pytest_html.extras.html(html))
+    if artifacts:
+        for link_name, rel_path in artifacts:
+            extras.append(pytest_html.extras.url(rel_path, name=link_name))
+    if report.failed:
+        props = dict(item.user_properties)
+        log_tail = props.get("training_log_tail")
+        if log_tail:
+            extras.append(pytest_html.extras.text(log_tail, name="Training Log (tail)"))
     report.extras = extras
-
-
-def pytest_html_results_table_header(cells):
-    cells.insert(-1, "<th>Value</th>")
-    cells.insert(-1, "<th>Unit</th>")
-
-
-def pytest_html_results_table_row(report, cells):
-    props = dict(report.user_properties)
-    has = "metric_value" in props
-    val = props.get("metric_value")
-    unit = props.get("metric_unit", "") if has else ""
-    if not has:
-        shown = ""
-    elif val is None:
-        shown = "-"
-    elif isinstance(val, float):
-        shown = f"{val:.3f}"
-    else:
-        shown = str(val)
-    cells.insert(-1, f"<td>{shown}</td>")
-    cells.insert(-1, f"<td>{unit}</td>")
