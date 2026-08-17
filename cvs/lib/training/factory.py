@@ -49,7 +49,7 @@ def create_training_job(orch, variant_config, **kwargs):
         PrimusTrainingJob | MegatronTrainingJob | JaxTrainingJob | TorchTitanTrainingJob
     """
     image = orch.container_config.get("image", "")
-    framework = re.sub(r'_(single|distributed)$', '', variant_config.framework)
+    framework = kwargs.pop('primus_framework', None) or re.sub(r'_(single|distributed)$', '', variant_config.framework)
 
     if re.search(r'primus', image, re.I):
         log.info(
