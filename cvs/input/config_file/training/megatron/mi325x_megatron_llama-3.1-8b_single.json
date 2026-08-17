@@ -9,6 +9,10 @@
     "max_slope": 0.0,
     "enforce": true
   },
+  "convergence": {
+    "target_metric": "auto",
+    "target_value": 2.0
+  },
   "threshold_json": "mi325x_megatron_llama-3.1-8b_single_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
