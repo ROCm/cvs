@@ -245,6 +245,12 @@ class MaxTextTrainingJob:
                 yml_lines.append(f'{k}: {v}')
             elif isinstance(v, bool):
                 yml_lines.append(f"{k}: {'true' if v else 'false'}")
+            elif isinstance(v, str) and v == "":
+                # Emit an explicit empty string ('key: ""'), not a bare 'key:'.
+                # A bare value parses as YAML null -> Python None, which breaks
+                # MaxText fields that are strict enums over "" (e.g. `profiler`
+                # accepts only '', 'xplane', 'nsys'; None raises a ValidationError).
+                yml_lines.append(f'{k}: ""')
             else:
                 yml_lines.append(f"{k}: {v}")
 

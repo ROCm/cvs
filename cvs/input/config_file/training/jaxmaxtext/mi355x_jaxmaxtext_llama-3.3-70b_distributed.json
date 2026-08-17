@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "framework": "jaxmaxtext",
-  "gpu_arch": "mi300x",
+  "gpu_arch": "mi355x",
   "enforce_thresholds": true,
-  "threshold_json": "mi300x_jaxmaxtext_llama-3.3-70b_single_threshold.json",
+  "threshold_json": "mi355x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json",
 
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -20,7 +20,7 @@
 
   "container": {
     "lifetime": "per_run",
-    "name": "rocm-jaxmaxtext-llama3.3-70b-single",
+    "name": "rocm-jaxmaxtext-mi355x-llama3.3-70b",
     "image": "rocm/jax-training:maxtext-v26.4",
     "runtime": {
       "name": "docker",
@@ -32,6 +32,9 @@
         "ulimit": ["nofile=65535:65535"],
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
+          "/dev/infiniband:/dev/infiniband",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+          "/lib/libibverbs.d:/lib/libibverbs.d",
           "/tmp/{user-id}/jax/TRAINING_LOGS:/workspace/maxtext/output"
         ]
       }
@@ -41,7 +44,7 @@
   "__maxtext_version<=26.3__train_script": "/workspace/maxtext/src/MaxText/train.py",
   "__maxtext_version>=26.4__train_script": "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
   "training": {
-    "distributed": false,
+    "distributed": true,
     "gpus_per_node": 8,
     "steps": 30,
     "enable_checkpointing": false,
@@ -61,7 +64,7 @@
       "remat_policy": "full",
       "use_iota_embed": true,
       "scan_layers": true,
-      "per_device_batch_size": 2,
+      "per_device_batch_size": 6,
       "max_target_length": 8192,
       "async_checkpointing": false,
       "quantization": "",
@@ -79,6 +82,12 @@
       "ici_sequence_parallelism": 1,
       "ici_tensor_parallelism": 1,
       "ici_pipeline_parallelism": 1,
+      "ici_tensor_sequence_parallelism": -1,
+      "dcn_data_parallelism": -1,
+      "dcn_fsdp_parallelism": 1,
+      "dcn_pipeline_parallelism": 1,
+      "dcn_tensor_parallelism": 1,
+      "dcn_sequence_parallelism": 1,
       "profiler": "",
       "quantize_kvcache": false,
       "kv_quant_axis": "heads_and_dkv",
@@ -92,20 +101,31 @@
       "tokenizer_path": "{paths.models_dir}/Meta-Llama-70-B"
     },
 
-    "nic_type": "none",
+    "nic_type": "thor2",
 
-    "_NCCL_IB_DISABLE_comment": "Single-node run uses intra-node RCCL (no inter-node IB), so this is a no-op here; kept for parity with the distributed configs where IB/RoCE over Broadcom bnxt_re segfaults and TCP is required.",
+    "rdma_lib": {
+      "host_source_file": "/usr/local/lib/libbnxt_re-rdmav34.so",
+      "container_mount_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+      "container_dest_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so"
+    },
+
+    "_NCCL_IB_DISABLE_comment": "IB/RoCE over Broadcom bnxt_re segfaults in RCCL QP setup on these nodes (crashes on the first inter-node channel, independent of GDR / matched rdma-core / channel-count). TCP works. Remove this once the image ships an RCCL build validated against the bnxt_re RoCE stack.",
     "__comment_NNODES_": "NNODES is 'auto': the real node count is injected at runtime from the cluster_file (the training launcher exports NNODES=<num_nodes>), so this value is a placeholder and is overridden.",
     "env_vars": {
       "NNODES": "auto",
-      "NODE_RANK": "0",
       "GPU_MAX_HW_QUEUES": "2",
       "HSA_FORCE_FINE_GRAIN_PCIE": "1",
       "HIP_FORCE_DEV_KERNARG": "1",
-      "HSA_NO_SCRATCH_RECLAIM": "1",
+      "RCCL_WARP_SPEED_AUTO": "0",
       "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.97",
       "NCCL_DEBUG": "VERSION",
       "NCCL_IB_DISABLE": "1",
+      "NCCL_PROTO": "Simple",
+      "NCCL_IB_TC": "41",
+      "NCCL_IB_SL": "0",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_CHECKS_DISABLE": "1",
+      "NCCL_CROSS_NIC": "0",
       "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "1",
       "NVTE_USE_HIPBLASLT": "1",
       "NVTE_FUSED_ATTN": "1",
@@ -129,13 +149,41 @@
       "xla_gpu_enable_all_gather_combine_by_dim": "FALSE"
     },
 
+    "_nccl_comment": "Cluster-specific RDMA/NIC devices. Replace every '<changeme>' with your node's values (see the sibling _example_* entries); distributed runs hard-exit at config load until you do. Discover them with `ibv_devices` (HCAs) and `ip -br link` (host interface).",
+    "nccl": {
+      "_example_ib_hca_list": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "ib_hca_list": "<changeme>",
+      "_example_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "ib_hca": "<changeme>",
+      "_example_socket_ifname": "eno0",
+      "socket_ifname": "<changeme>",
+      "_example_gloo_socket_ifname": "eno0",
+      "gloo_socket_ifname": "<changeme>",
+      "ib_tc": "41",
+      "ib_sl": "0",
+      "ib_gid_index": "3"
+    },
+
+    "jax_distributed": {
+      "coordinator_ip": "auto",
+      "coordinator_port": "12346",
+      "initialization_timeout_seconds": "1800",
+      "heartbeat_timeout_seconds": "900"
+    },
+
+    "_scaling_baseline_comment": "1-node total tokens/sec baseline for scaling-efficiency %. 0.0 = disabled (record-only). Populate from a prior MI355X single-node run (tok/s/GPU * 8) to enable the metric.",
+    "scaling_baseline": {
+      "tokens_per_sec_total": 0.0,
+      "num_nodes": 1
+    },
+
     "_convergence_comment": "to enable validation loss set eval_interval > 0 (and eval_steps) in maxtext_config; this needs a validation dataset (eval_split/eval_dataset_name). target_value <= 0 disables convergence (record-only). target_metric 'auto' uses eval_loss when eval runs, else training loss.",
     "convergence": {
       "target_metric": "auto",
-      "target_value": 0.0
+      "target_value": 10.0
     },
 
-    "_loss_curve_comment": "sample training loss every `sample_every` steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
+    "_loss_curve_comment": "Row 32: sample training loss every `sample_every` steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
     "loss_curve": {
       "sample_every": 10,
       "milestone_steps": [100, 500, 1000, 5000],
@@ -155,12 +203,12 @@
       "segfault": "Segmentation fault|SIGSEGV|core dumped|std::bad_alloc"
     },
 
-    "_sweeps_comment": "Each sweep = one full training run; `name` is the threshold cell key. FP8 on MI300X (CDNA3) uses quantization=nanoo_fp8. STEPS/GBS/NNODES in the name are labels: steps comes from training.steps, GBS = per_device_batch_size * total GPUs, NNODES from the cluster. enabled_sweep_list selects which sweeps to run.",
+    "_sweeps_comment": "Each sweep = one full training run with per-run maxtext overrides; `name` is the threshold cell key. NNODES/GBS in the name are informational labels (matching the reference); per_device_batch_size drives the run and the real global batch = per_device_batch_size * (nodes * gpus_per_node) at runtime. BF16 uses the base maxtext_config as-is. FP8 on MI355X/MI350X (CDNA4) uses quantization=fp8 (MI300X/MI325X CDNA3 use nanoo_fp8). weight_dtype stays bfloat16 (master weights). enabled_sweep_list selects which sweeps to run.",
     "sweeps": [
       {
-        "name": "NNODES=1,STEPS=30,PRECISION=BF16,BATCH=5,GBS=40,SEQLEN=8192",
+        "name": "NNODES=2,STEPS=30,PRECISION=BF16,BATCH=6,GBS=48,SEQLEN=8192",
         "maxtext_overrides": {
-          "per_device_batch_size": 5,
+          "per_device_batch_size": 6,
           "max_target_length": 8192,
           "dtype": "bfloat16",
           "weight_dtype": "bfloat16",
@@ -168,19 +216,19 @@
         }
       },
       {
-        "name": "NNODES=1,STEPS=30,PRECISION=FP8,BATCH=5,GBS=40,SEQLEN=8192",
+        "name": "NNODES=2,STEPS=30,PRECISION=FP8,BATCH=4,GBS=32,SEQLEN=8192",
         "maxtext_overrides": {
-          "per_device_batch_size": 5,
+          "per_device_batch_size": 4,
           "max_target_length": 8192,
           "dtype": "bfloat16",
           "weight_dtype": "bfloat16",
-          "quantization": "nanoo_fp8"
+          "quantization": "fp8"
         }
       }
     ],
     "enabled_sweep_list": [
-      "NNODES=1,STEPS=30,PRECISION=BF16,BATCH=5,GBS=40,SEQLEN=8192",
-      "NNODES=1,STEPS=30,PRECISION=FP8,BATCH=5,GBS=40,SEQLEN=8192"
+      "NNODES=2,STEPS=30,PRECISION=BF16,BATCH=6,GBS=48,SEQLEN=8192",
+      "NNODES=2,STEPS=30,PRECISION=FP8,BATCH=4,GBS=32,SEQLEN=8192"
     ]
   }
 }

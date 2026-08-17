@@ -54,8 +54,10 @@
       "/workspace/maxtext/src/MaxText/train.py"
     ],
 
+    "_model_name_comment": "model_name selects the MaxText model preset (layers/heads/dims). Kept in maxtext_config so the run trains Llama-3.3-70B rather than base.yml defaults.",
     "maxtext_config": {
       "base_config": "base.yml",
+      "model_name": "llama3.3-70b",
       "hardware": "gpu",
       "attention": "cudnn_flash_te",
       "dtype": "bfloat16",
@@ -68,7 +70,7 @@
       "async_checkpointing": false,
       "quantization": "",
       "weight_dtype": "bfloat16",
-      "shardy": false,
+      "shardy": true,
       "logits_dot_in_fp32": false,
       "megablox": false,
       "packing": true,
@@ -86,10 +88,12 @@
       "dcn_pipeline_parallelism": 1,
       "dcn_tensor_parallelism": 1,
       "dcn_sequence_parallelism": 1,
-      "max_segments_per_seq": 32,
-      "skip_first_n_steps_for_profiler": 3,
-      "eval_interval": -1,
-      "eval_steps": -1
+      "profiler": "",
+      "quantize_kvcache": false,
+      "kv_quant_axis": "heads_and_dkv",
+      "kv_quant_dtype": "int8",
+      "checkpoint_is_quantized": false,
+      "max_segments_per_seq": 32
     },
 
     "tokenizer": {
@@ -106,13 +110,15 @@
     },
 
     "_NCCL_IB_DISABLE_comment": "IB/RoCE over Broadcom bnxt_re segfaults in RCCL QP setup on these nodes (crashes on the first inter-node channel, independent of GDR / matched rdma-core / channel-count). TCP works. Remove this once the image ships an RCCL build validated against the bnxt_re RoCE stack.",
+    "__comment_NNODES_": "NNODES is 'auto': the real node count is injected at runtime from the cluster_file (the training launcher exports NNODES=<num_nodes>), so this value is a placeholder and is overridden.",
     "env_vars": {
-      "NNODES": "2",
+      "NNODES": "auto",
       "GPU_MAX_HW_QUEUES": "2",
       "HSA_FORCE_FINE_GRAIN_PCIE": "1",
       "HIP_FORCE_DEV_KERNARG": "1",
-      "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.93",
-      "NCCL_DEBUG": "ERROR",
+      "HSA_NO_SCRATCH_RECLAIM": "1",
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.97",
+      "NCCL_DEBUG": "VERSION",
       "NCCL_IB_DISABLE": "1",
       "NCCL_PROTO": "Simple",
       "NCCL_IB_TC": "41",
@@ -132,16 +138,14 @@
     },
 
     "xla_flags": {
-      "xla_gpu_enable_latency_hiding_scheduler": "True",
-      "xla_gpu_enable_triton_gemm": "False",
       "xla_gpu_memory_limit_slop_factor": "95",
-      "xla_gpu_enable_command_buffer": "''",
-      "xla_gpu_enable_cublaslt": "True",
-      "xla_gpu_autotune_level": "0",
-      "xla_gpu_enable_reduce_scatter_combine_by_dim": "false",
       "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592",
-      "xla_gpu_all_reduce_combine_threshold_bytes": "8589934592",
+      "xla_gpu_enable_command_buffer": "",
+      "xla_gpu_enable_latency_hiding_scheduler": "True",
       "xla_gpu_all_gather_combine_threshold_bytes": "8589934592",
+      "xla_gpu_enable_triton_gemm": "False",
+      "xla_gpu_enable_cublaslt": "True",
+      "xla_gpu_autotune_level": "4",
       "xla_gpu_enable_all_gather_combine_by_dim": "FALSE"
     },
 

@@ -354,6 +354,16 @@ class WriteMaxtextYamlTests(unittest.TestCase):
         # scan_layers True -> lowercase bool
         self.assertIn("scan_layers: true", written)
 
+    def test_empty_string_rendered_as_quoted_not_bare(self):
+        # An empty-string maxtext param (e.g. profiler) must render as 'key: ""',
+        # never bare 'key:' (which YAML reads as null and breaks MaxText enums).
+        job, orch = _make_job()
+        job.maxtext_config["profiler"] = ""
+        job._write_maxtext_yaml()
+        written = "\n".join(str(c.args[0]) for c in orch.exec.call_args_list)
+        self.assertIn('profiler: ""', written)
+        self.assertNotIn("profiler: \n", written)
+
 
 class StartTrainingTests(unittest.TestCase):
     @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
