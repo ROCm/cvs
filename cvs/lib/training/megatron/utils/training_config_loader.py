@@ -130,6 +130,11 @@ class LossCurveConfig(_Forbid):
     enforce: bool = True
 
 
+class ConvergenceConfig(_Forbid):
+    target_metric: Literal["auto", "train_loss", "eval_loss"] = "auto"
+    target_value: float = 0.0
+
+
 class MegatronVariantConfig(_Forbid):
     schema_version: Literal[1]
     framework: Literal["megatron_single", "megatron_distributed"]
@@ -138,6 +143,7 @@ class MegatronVariantConfig(_Forbid):
     threshold_json: str = ""
     scaling_baseline: ScalingBaseline = Field(default_factory=ScalingBaseline)
     loss_curve: LossCurveConfig = Field(default_factory=LossCurveConfig)
+    convergence: ConvergenceConfig = Field(default_factory=ConvergenceConfig)
     config: Dict[str, Any]  # training knobs: megatron_root, nccl_*, nic_type, ...
     model_params: Dict[str, Any]  # model knobs: model_name, precision, tp, pp, ...
     container: ContainerSpec
