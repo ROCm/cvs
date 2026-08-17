@@ -18,11 +18,133 @@ import pandas as pd
 from pydantic import ValidationError
 
 from cvs.lib import globals
+from cvs.lib import ci_robustness_lib
 from cvs.schema.rccl import RcclTests, RcclTestsAggregated, RcclTestsMultinodeRaw
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
 log = globals.log
+
+
+def cleanup_gpus_on_nodes(
+    phdl,
+    process_patterns=None,
+    kill_gpu_pids=True,
+    kill_containers=False,
+    use_sudo=False,
+    timeout=120,
+):
+    """
+    Kill stale RCCL/MPI processes (and optionally GPU-holding PIDs / containers)
+    on every node reachable through ``phdl`` before launching a test.
+
+    Intended to be run on exclusively-allocated compute nodes, where any leftover
+    rccl-tests/mpirun/orted process is stale from a prior or cancelled job and can
+    otherwise hold GPUs / NIC state and make the next run flaky.
+
+    Best-effort: failures are logged but never raise (cleanup must not break a run).
+
+    Returns:
+      dict[node] -> command output (for logging/auditing).
+    """
+    # Log what is currently holding the GPUs (audit trail), best-effort.
+    try:
+        discover = phdl.exec('rocm-smi --showpids 2>/dev/null || true')
+        for node, out in (discover or {}).items():
+            pids = ci_robustness_lib.parse_gpu_pids(out)
+            if pids:
+                log.warning('Pre-clean GPU PIDs on %s: %s', node, pids)
+            else:
+                log.info('No GPU PIDs reported on %s before cleanup', node)
+    except Exception as e:
+        log.warning('GPU PID discovery failed (ignored): %r', e)
+
+    script = ci_robustness_lib.build_gpu_cleanup_script(
+        process_patterns=process_patterns,
+        kill_gpu_pids=kill_gpu_pids,
+        kill_containers=kill_containers,
+        use_sudo=use_sudo,
+    )
+    # Wrap in bash -c so the multi-line script runs as one command per node.
+    cmd = "bash -c " + _shell_single_quote(script)
+    try:
+        out_dict = phdl.exec(cmd, timeout=timeout)
+        log.info('Stale-GPU cleanup completed on %d node(s)', len(out_dict or {}))
+        return out_dict
+    except Exception as e:
+        log.warning('Stale-GPU cleanup exec failed (ignored): %r', e)
+        return {}
+
+
+def _shell_single_quote(s):
+    """Single-quote a string for safe embedding in a bash -c argument."""
+    return "'" + s.replace("'", "'\"'\"'") + "'"
+
+
+def format_run_command_log_entry(label, command, output):
+    """
+    Build one clean, reproducible log section for a single rccl-tests run.
+
+    The MPI launch command is normalized to a single copy/paste-able line and
+    placed at the top, followed by the raw rccl-tests output (the perf table, and
+    NCCL INFO lines when NCCL_DEBUG=INFO). This is the high-signal content people
+    actually want, separated from the verbose per-line parallel-ssh logging.
+
+    Args:
+      label: short description of the run (collective / env / result file).
+      command: the mpirun launch command (may contain shell line continuations).
+      output: the raw rccl-tests stdout/stderr captured from the head node.
+
+    Returns:
+      str: a formatted section (begins with a blank line + separator).
+    """
+    from datetime import datetime
+
+    # Collapse shell line-continuations and runs of whitespace into a single line
+    # so the command can be copied and re-run as-is.
+    one_line = re.sub(r'\\\s*\n', ' ', command or '')
+    one_line = re.sub(r'\s+', ' ', one_line).strip()
+
+    sep = '=' * 100
+    parts = [
+        '',
+        sep,
+        f'# RUN : {label}',
+        f'# TIME: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
+        sep,
+        '# ---- MPI launch command (copy/paste to reproduce) ----',
+        one_line,
+        '',
+        '# ---- rccl-tests output (perf table; NCCL INFO when NCCL_DEBUG=INFO) ----',
+        (output or '').rstrip(),
+        '',
+    ]
+    return '\n'.join(parts)
+
+
+def _maybe_write_run_command_log(cvs_params, test_name, env_overrides, rccl_result_file, command, output):
+    """
+    Append a clean run record (launch command + rccl-tests output) to the file at
+    ``cvs_params['rccl_command_log']`` if configured. Best-effort: never raises.
+
+    This is intentionally separate from (and in addition to) the verbose parallel-ssh
+    logging, which is preserved unchanged.
+    """
+    log_path = cvs_params.get('rccl_command_log')
+    if not log_path:
+        return
+    params_summary = ' '.join(f'{k}={v}' for k, v in (env_overrides or {}).items())
+    label = test_name
+    if params_summary:
+        label += f' [{params_summary}]'
+    label += f' -> {os.path.basename(rccl_result_file)}'
+    try:
+        entry = format_run_command_log_entry(label, command, output)
+        with open(log_path, 'a', encoding='utf-8') as fp:
+            fp.write(entry)
+        log.info('Appended reproducible run record to %s', log_path)
+    except Exception as e:
+        log.warning('Failed to write rccl command log %s: %r', log_path, e)
 
 
 rccl_err_dict = {
@@ -151,8 +273,9 @@ def _read_json_from_head_node(shdl, head_node, remote_path, log_label):
       log_label: Short label used in log lines (e.g. 'all_reduce_perf_float').
 
     Returns:
-      The parsed JSON object, or [] if the downloaded file is not valid JSON
-      (a clear diagnostic is logged and the test is failed in that case).
+      The parsed JSON object; the first value only if the file holds valid JSON
+      followed by trailing junk; or [] if it cannot be parsed at all (a clear
+      diagnostic is logged and the test is failed in that case).
 
     Raises:
       IOError: If the SFTP transfer fails.
@@ -166,7 +289,26 @@ def _read_json_from_head_node(shdl, head_node, remote_path, log_label):
             raw_output = f.read()
         try:
             return json.loads(raw_output)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            # Two different failures arrive as the same exception type, and they
+            # deserve opposite treatment.
+            #
+            # 'Extra data' means the file opened with a complete, valid JSON
+            # value and then carried trailing bytes -- legacy rccl-tests (-x)
+            # occasionally appends duplicate blobs. The measurement is present
+            # and correct, so recovering the first value is right; failing here
+            # would discard a good run over output the binary appended after it.
+            #
+            # Anything else means there is no parseable measurement at all, and
+            # the run must be failed rather than silently scored as empty.
+            #
+            # raw_decode() does not skip leading whitespace -- it decodes from
+            # index 0 -- so it is given the stripped text. json.loads() above
+            # tolerates surrounding whitespace on its own.
+            if 'Extra data' in str(e):
+                obj, _ = json.JSONDecoder().raw_decode(raw_output.strip())
+                log.warning('Parsed first JSON value only for %s; trailing data ignored', log_label)
+                return obj
             msg = (
                 f'Unable to parse RCCL JSON result file {remote_path} on {head_node}. '
                 f'Raw content: {raw_output.strip() or "<empty>"}'
@@ -391,38 +533,34 @@ def check_bus_bw(test_name, output, exp_res_dict):
 
     tolerance = 0.95  # 5% tolerance
 
-    # New hierarchical structure: {msg_size: {'bus_bw': bw_value}}
-    msg_size_list = list(exp_res_dict.keys())
+    # Reference structure: {msg_size: {'bus_bw': bw_value}}. The reference carries
+    # no data-type dimension, so we look it up purely by message size and only
+    # compare the rows for the inPlace orientation that is meaningful for this
+    # collective. Grouping by (type, inPlace) keeps each data type's rows distinct
+    # so the comparison is reported per data type instead of being silently mixed.
+    ref_by_size = {str(size): float(metrics['bus_bw']) for size, metrics in exp_res_dict.items()}
 
     log.info("%s", test_name)
-    # act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
-    act_res_dict = output
-    if re.search('alltoall|all_to_all', test_name, re.I):
-        for act_dict in act_res_dict:
-            if act_dict['inPlace'] == 0:
-                for msg_size in msg_size_list:
-                    if str(msg_size) == str(act_dict['size']):
-                        expected_bw = float(exp_res_dict[msg_size]['bus_bw'])
-                        actual_bw = float(act_dict['busBw'])
-                        threshold = expected_bw * tolerance
-                        log.info(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
-                        if actual_bw < threshold:
-                            fail_test(
-                                f"The actual out-of-place bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})"
-                            )
-    else:
-        for act_dict in act_res_dict:
-            if act_dict['inPlace'] == 1:
-                for msg_size in msg_size_list:
-                    if str(msg_size) == str(act_dict['size']):
-                        expected_bw = float(exp_res_dict[msg_size]['bus_bw'])
-                        actual_bw = float(act_dict['busBw'])
-                        threshold = expected_bw * tolerance
-                        log.info(f"Comparing: actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
-                        if actual_bw < threshold:
-                            fail_test(
-                                f"The actual in-place bus BW {actual_bw} for msg size {act_dict['size']} is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})"
-                            )
+    place_word = 'out-of-place' if re.search('alltoall|all_to_all', test_name, re.I) else 'in-place'
+    target_inplace = 0 if place_word == 'out-of-place' else 1
+
+    for (dtype, in_place), rows in group_rccl_results(output).items():
+        if in_place != target_inplace:
+            continue
+        for act_dict in rows:
+            expected_bw = ref_by_size.get(str(act_dict['size']))
+            if expected_bw is None:
+                continue
+            actual_bw = float(act_dict['busBw'])
+            threshold = expected_bw * tolerance
+            log.info(
+                f"Comparing (type={dtype}): actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}"
+            )
+            if actual_bw < threshold:
+                fail_test(
+                    f"The actual {place_word} bus BW {actual_bw} for msg size {act_dict['size']} (type={dtype}) "
+                    f"is lower than expected bus BW {expected_bw} (threshold with 5% tolerance: {threshold:.2f})"
+                )
 
 
 def check_bw_dip(test_name, output, exp_res_dict=None):
@@ -430,13 +568,13 @@ def check_bw_dip(test_name, output, exp_res_dict=None):
     Check for bandwidth dips as message size increases.
     Only fails if bandwidth drops by more than 5%.
     Only validates message sizes specified in the reference. If no reference provided, skips validation.
-    """
-    # act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
-    act_res_dict = output
-    tolerance = 0.95  # 5% tolerance
 
-    # Get reference message sizes if provided
-    # If no reference data, skip validation entirely
+    Rows are grouped by (data type, inPlace) and sorted ascending by message size
+    before the consecutive comparison. Without this grouping a result list that
+    contains more than one data type would compare the largest size of one data
+    type against the smallest size of the next, manufacturing a spurious "dip"
+    at every data-type boundary (a false positive).
+    """
     if not exp_res_dict:
         log.warning(f"No reference data provided for BW dip check, skipping validation for {test_name}")
         return
@@ -444,40 +582,30 @@ def check_bw_dip(test_name, output, exp_res_dict=None):
     ref_msg_sizes = set(str(size) for size in exp_res_dict.keys())
     log.info(f"Validating BW dip only for reference message sizes: {ref_msg_sizes}")
 
-    if re.search('alltoall|all_to_all', test_name, re.I):
-        last_bw = 0.0
-        last_msg_size = act_res_dict[0]['size']
-        for act_dict in act_res_dict:
-            if act_dict['inPlace'] == 0:
-                # Skip validation if this message size is not in reference
-                if str(act_dict['size']) not in ref_msg_sizes:
-                    continue
+    # alltoall reports the meaningful number out-of-place (inPlace == 0); every
+    # other collective is validated in-place (inPlace == 1).
+    target_inplace = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
+    tolerance = 0.95  # 5% tolerance
 
-                current_bw = float(act_dict['busBw'])
-                threshold = float(last_bw) * tolerance
-                if last_bw > 0 and current_bw < threshold:
-                    fail_test(
-                        f"The BusBW for msg size {act_dict['size']} = {current_bw} is less than the earlier msg size {last_msg_size} = BW {last_bw} (threshold with 5% tolerance: {threshold:.2f})"
-                    )
-                last_bw = act_dict['busBw']
-                last_msg_size = act_dict['size']
-    else:
+    for (dtype, in_place), rows in group_rccl_results(output).items():
+        if in_place != target_inplace:
+            continue
         last_bw = 0.0
-        last_msg_size = act_res_dict[0]['size']
-        for act_dict in act_res_dict:
-            if act_dict['inPlace'] == 1:
-                # Skip validation if this message size is not in reference
-                if str(act_dict['size']) not in ref_msg_sizes:
-                    continue
+        last_msg_size = None
+        for act_dict in rows:
+            # Skip validation if this message size is not in reference
+            if str(act_dict['size']) not in ref_msg_sizes:
+                continue
 
-                current_bw = float(act_dict['busBw'])
-                threshold = float(last_bw) * tolerance
-                if last_bw > 0 and current_bw < threshold:
-                    fail_test(
-                        f"The BusBW for msg size {act_dict['size']} = {current_bw} is less than the earlier msg size {last_msg_size} = BW {last_bw} (threshold with 5% tolerance: {threshold:.2f})"
-                    )
-                last_bw = act_dict['busBw']
-                last_msg_size = act_dict['size']
+            current_bw = float(act_dict['busBw'])
+            threshold = float(last_bw) * tolerance
+            if last_bw > 0 and current_bw < threshold:
+                fail_test(
+                    f"The BusBW for msg size {act_dict['size']} = {current_bw} (type={dtype}) is less than the "
+                    f"earlier msg size {last_msg_size} = BW {last_bw} (threshold with 5% tolerance: {threshold:.2f})"
+                )
+            last_bw = current_bw
+            last_msg_size = act_dict['size']
 
 
 def check_lat_dip(test_name, output, exp_res_dict=None):
@@ -485,13 +613,10 @@ def check_lat_dip(test_name, output, exp_res_dict=None):
     Check for latency decreases as message size increases (which would be unexpected).
     Only fails if latency drops by more than 5%.
     Only validates message sizes specified in the reference. If no reference provided, skips validation.
-    """
-    # act_res_dict = json.loads(output.replace( '\n', '').replace( '\r', ''))
-    act_res_dict = output
-    tolerance = 0.95  # 5% tolerance
 
-    # Get reference message sizes if provided
-    # If no reference data, skip validation entirely
+    Rows are grouped by (data type, inPlace) and sorted ascending by message size
+    before comparison, for the same reason described in ``check_bw_dip``.
+    """
     if not exp_res_dict:
         log.warning(f"No reference data provided for latency dip check, skipping validation for {test_name}")
         return
@@ -499,60 +624,102 @@ def check_lat_dip(test_name, output, exp_res_dict=None):
     ref_msg_sizes = set(str(size) for size in exp_res_dict.keys())
     log.info(f"Validating latency dip only for reference message sizes: {ref_msg_sizes}")
 
-    if re.search('alltoall|all_to_all', test_name, re.I):
-        last_time = 0.0
-        last_msg_size = act_res_dict[0]['size']
-        for act_dict in act_res_dict:
-            if act_dict['inPlace'] == 0:
-                # Skip validation if this message size is not in reference
-                if str(act_dict['size']) not in ref_msg_sizes:
-                    continue
+    target_inplace = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
+    tolerance = 0.95  # 5% tolerance
 
-                current_time = float(act_dict['time'])
-                threshold = float(last_time) * tolerance
-                if last_time > 0 and current_time < threshold:
-                    fail_test(
-                        f"The latency for msg size {act_dict['size']} = {current_time} is less than the earlier msg size {last_msg_size} = latency {last_time} (threshold with 5% tolerance: {threshold:.2f})"
-                    )
-                last_time = act_dict['time']
-                last_msg_size = act_dict['size']
-    else:
+    for (dtype, in_place), rows in group_rccl_results(output).items():
+        if in_place != target_inplace:
+            continue
         last_time = 0.0
-        last_msg_size = act_res_dict[0]['size']
-        for act_dict in act_res_dict:
-            if act_dict['inPlace'] == 1:
-                # Skip validation if this message size is not in reference
-                if str(act_dict['size']) not in ref_msg_sizes:
-                    continue
+        last_msg_size = None
+        for act_dict in rows:
+            # Skip validation if this message size is not in reference
+            if str(act_dict['size']) not in ref_msg_sizes:
+                continue
 
-                current_time = float(act_dict['time'])
-                threshold = float(last_time) * tolerance
-                if last_time > 0 and current_time < threshold:
-                    fail_test(
-                        f"The latency for msg size {act_dict['size']} = {current_time} is less than the earlier msg size {last_msg_size} = latency {last_time} (threshold with 5% tolerance: {threshold:.2f})"
-                    )
-                last_time = act_dict['time']
-                last_msg_size = act_dict['size']
+            current_time = float(act_dict['time'])
+            threshold = float(last_time) * tolerance
+            if last_time > 0 and current_time < threshold:
+                fail_test(
+                    f"The latency for msg size {act_dict['size']} = {current_time} (type={dtype}) is less than the "
+                    f"earlier msg size {last_msg_size} = latency {last_time} (threshold with 5% tolerance: {threshold:.2f})"
+                )
+            last_time = current_time
+            last_msg_size = act_dict['size']
+
+
+def _inplace_label(in_place):
+    """Human-readable label for an inPlace flag used in series names / logs."""
+    if in_place == 1:
+        return 'in_place'
+    if in_place == 0:
+        return 'out_of_place'
+    return f'inPlace={in_place}'
+
+
+def group_rccl_results(results):
+    """
+    Group raw rccl-test rows by their full identity key ``(type, inPlace)`` and
+    return each group sorted ascending by message size.
+
+    Why this exists:
+      A single rccl-test JSON result contains, for every message size, one row
+      per (data type, inPlace) combination. Any logic that walks the flat list
+      while tracking "previous" values (dip checks) or that buckets rows by
+      message size alone (graph/report building) will silently mix or overwrite
+      rows from different data types / in-place vs out-of-place measurements.
+      That both hides real regressions (overwritten rows disappear) and
+      manufactures fake ones (a dtype boundary looks like a giant bandwidth dip).
+
+      Grouping on the full key and sorting within each group is the canonical
+      fix shared by every consumer so the behaviour is consistent.
+
+    Args:
+      results (list[dict]): rccl-test rows, each with at least 'size', 'type',
+        and 'inPlace' keys.
+
+    Returns:
+      dict[tuple, list[dict]]: mapping of (type, inPlace) -> rows sorted by size.
+    """
+    groups = {}
+    for row in results:
+        key = (row.get('type', 'NA'), row.get('inPlace', 'NA'))
+        groups.setdefault(key, []).append(row)
+    for key in groups:
+        groups[key].sort(key=lambda r: int(r['size']))
+    return groups
 
 
 def convert_to_graph_dict(result_dict):
+    """
+    Convert raw per-series RCCL results into a graph-friendly nested dict.
+
+    Each input series (keyed by '<collective>-<params>') typically contains
+    multiple rows per message size: one per (data type, inPlace) combination.
+    The previous implementation keyed the output only by message size, so the
+    last row written for a size silently overwrote every earlier row - collapsing
+    in-place vs out-of-place (and multiple data types) into a single value and
+    hiding regressions in whichever dimension lost the race.
+
+    To preserve every dimension we expand each (type, inPlace) pair into its own
+    output series. The inner ``{msg_size: {bus_bw, alg_bw, time}}`` mapping then
+    has exactly one row per size, which is what the HTML report builders expect.
+    """
     graph_dict = {}
     for graph_series_name in result_dict.keys():
         log.info("%s", graph_series_name)
-        graph_dict[graph_series_name] = {}
         dict_list = result_dict[graph_series_name]
         log.info("%s", dict_list)
-        for dict_item in dict_list:
-            msg_size = dict_item['size']
-            graph_dict[graph_series_name][msg_size] = {}
-            if re.search('alltoall', dict_item['name'], re.I) and dict_item['inPlace'] == 1:
-                graph_dict[graph_series_name][msg_size]['bus_bw'] = dict_item['busBw']
-                graph_dict[graph_series_name][msg_size]['alg_bw'] = dict_item['algBw']
-                graph_dict[graph_series_name][msg_size]['time'] = dict_item['time']
-            else:
-                graph_dict[graph_series_name][msg_size]['bus_bw'] = dict_item['busBw']
-                graph_dict[graph_series_name][msg_size]['alg_bw'] = dict_item['algBw']
-                graph_dict[graph_series_name][msg_size]['time'] = dict_item['time']
+        for (dtype, in_place), rows in group_rccl_results(dict_list).items():
+            series_key = f'{graph_series_name} type={dtype} {_inplace_label(in_place)}'
+            bucket = graph_dict.setdefault(series_key, {})
+            for dict_item in rows:
+                msg_size = dict_item['size']
+                bucket[msg_size] = {
+                    'bus_bw': dict_item['busBw'],
+                    'alg_bw': dict_item['algBw'],
+                    'time': dict_item['time'],
+                }
     log.info("%s", graph_dict)
     return graph_dict
 
@@ -720,6 +887,16 @@ def rccl_regression(
     rccl_result_file = cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
     cvs_exec_timeout = int(cvs_params.get('cvs_exec_timeout', 2400))
 
+    # Per-collective wall-clock timeout (seconds). A hung collective (e.g. an
+    # alltoall MPI/kernel deadlock) is NOT stopped by the parallel-ssh read
+    # timeout — that only abandons the SSH read and leaves mpirun + ranks alive,
+    # holding GPUs and wedging the whole CI. We therefore wrap the REMOTE mpirun
+    # in coreutils `timeout`, so the compute node kills the process tree itself.
+    # On expiry mpirun exits 124, the result file is absent/partial, and the
+    # caller's retry/cleanup path takes over (instead of hanging indefinitely).
+    # Configurable via rccl_test_params.per_collective_timeout_sec (0 disables).
+    per_collective_timeout = int(rccl_test_params.get('per_collective_timeout_sec', 900))
+
     # Detect which output file argument is supported by the RCCL test binary
     rccl_test_binary_path = f'{rccl_tests_dir}/{test_name}'
     output_flag = detect_rccl_output_flag(shdl, rccl_test_binary_path, head_node)
@@ -730,27 +907,49 @@ def rccl_regression(
     if output_algo_proto_channels:
         extra_flags += ' -A 1'
 
+    # Optional per-run library path (used by paired A/B testing to load a specific
+    # librccl.so build without rebuilding rccl-tests). Prepended to LD_LIBRARY_PATH
+    # inside the bash wrapper so it takes precedence for this run only.
+    ld_library_path = rccl_test_params.get('ld_library_path')
+    ld_prefix = f'export LD_LIBRARY_PATH={ld_library_path}:$LD_LIBRARY_PATH && ' if ld_library_path else ''
+
+    # Optional data type (-d). When omitted the rccl-tests binary uses its default
+    # (float). Used by paired A/B testing to sweep multiple data types.
+    data_type = rccl_test_params.get('data_type')
+    dtype_flag = f' -d {data_type}' if data_type else ''
+
     test_cmd = f'{rccl_tests_dir}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
         -t {threads_per_gpu} -w {warmup_iterations} -n {no_of_iterations} \
-        -N {no_of_cycles} -c {check_iteration_count}{extra_flags} -Z json {output_flag} {rccl_result_file}'
+        -N {no_of_cycles} -c {check_iteration_count}{dtype_flag}{extra_flags} -Z json {output_flag} {rccl_result_file}'
 
     # Wrap with env file sourcing
     if env_file and str(env_file).lower() != 'none':
-        test_cmd = f'bash -c "source {env_file} && {test_cmd}"'
+        test_cmd = f'bash -c "source {env_file} && {ld_prefix}{test_cmd}"'
     else:
         # Always wrap in bash to interpret && shell operator
-        test_cmd = f'bash -c "{test_cmd}"'
+        test_cmd = f'bash -c "{ld_prefix}{test_cmd}"'
 
     # Build env override parameters for regression testing
     env_override_params = ''
     if env_overrides:
         env_override_params = ' '.join([f'-x {k}={v}' for k, v in env_overrides.items()])
 
-    # Build mpirun command
-    cmd = f'''{mpi_dir}/bin/mpirun \
+    # Per-collective timeout wrapper around the REMOTE mpirun. --kill-after sends
+    # SIGKILL if mpirun ignores the initial SIGTERM (a wedged PRRTE often does).
+    # 0/negative disables the wrapper.
+    timeout_prefix = ''
+    if per_collective_timeout > 0:
+        timeout_prefix = f'timeout --signal=TERM --kill-after=30s {per_collective_timeout}s '
+
+    # Build mpirun command.
+    # plm_rsh_args disables interactive host-key prompts so PRRTE can ssh-launch
+    # ranks on the other allocated nodes non-interactively (required for multi-node
+    # runs; harmless single-node). Mirrors the older working recipe.
+    cmd = f'''{timeout_prefix}{mpi_dir}/bin/mpirun \
         --allow-run-as-root \
         -np {no_of_global_ranks} \
         --hostfile {hosts_file_path} \
+        --mca plm_rsh_args "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
         --bind-to numa \
         {ucx_params} \
         --mca btl ^vader,openib \
@@ -764,10 +963,19 @@ def rccl_regression(
     log.info("%s", cmd)
     log.info('%%%%%%%%%%%%%%%%')
 
+    # Let the remote coreutils `timeout` fire FIRST (clean kill + 124), so keep the
+    # SSH read timeout comfortably larger than the per-collective budget.
+    exec_timeout = cvs_exec_timeout
+    if per_collective_timeout > 0:
+        exec_timeout = max(cvs_exec_timeout, per_collective_timeout + 120)
+
     try:
-        out_dict = shdl.exec(cmd, timeout=cvs_exec_timeout)
+        out_dict = shdl.exec(cmd, timeout=exec_timeout)
         output = out_dict[head_node]
         scan_rccl_logs(output)
+        # Write a clean, reproducible record (launch command + rccl-tests output)
+        # to a dedicated log file, separate from the verbose parallel-ssh logging.
+        _maybe_write_run_command_log(cvs_params, test_name, env_overrides, rccl_result_file, cmd, output)
     except Exception as e:
         log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
         _cleanup_stale_rccl_processes(phdl, test_name, f'exception in rccl_regression: {repr(e)}')
@@ -905,6 +1113,17 @@ def rccl_perf(
     rccl_result_file = cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
     cvs_exec_timeout = int(cvs_params.get('cvs_exec_timeout', 2400))
 
+    # Per-collective wall-clock timeout — see rccl_regression() for rationale. The
+    # remote mpirun is wrapped in coreutils `timeout` so a hung collective is killed
+    # on the node instead of leaking ranks/GPUs. 0 disables.
+    per_collective_timeout = int(rccl_test_params.get('per_collective_timeout_sec', 900))
+    exec_timeout = cvs_exec_timeout
+    if per_collective_timeout > 0:
+        exec_timeout = max(cvs_exec_timeout, per_collective_timeout + 120)
+    timeout_prefix = ''
+    if per_collective_timeout > 0:
+        timeout_prefix = f'timeout --signal=TERM --kill-after=30s {per_collective_timeout}s '
+
     all_raw_results = []
     all_validated_results = []
     base_path = Path(rccl_result_file)
@@ -935,7 +1154,7 @@ def rccl_perf(
             # Always wrap in bash to interpret && shell operator
             test_cmd = f'bash -c "{test_cmd}"'
 
-        cmd = f'''{mpi_dir}/bin/mpirun --np {no_of_global_ranks} \
+        cmd = f'''{timeout_prefix}{mpi_dir}/bin/mpirun --np {no_of_global_ranks} \
         --allow-run-as-root \
         --hostfile {hosts_file_path} \
         --bind-to numa \
@@ -951,7 +1170,7 @@ def rccl_perf(
         log.info("%s", cmd)
         log.info('%%%%%%%%%%%%%%%%')
         try:
-            out_dict = shdl.exec(cmd, timeout=cvs_exec_timeout)
+            out_dict = shdl.exec(cmd, timeout=exec_timeout)
             output = out_dict[head_node]
             # print(output)
             scan_rccl_logs(output)
