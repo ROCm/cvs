@@ -19,7 +19,7 @@ from cvs.lib import globals
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
-from cvs.lib.training.torchtitan.model_registry import (
+from cvs.lib.training.torchtitan.utils.model_registry import (
     TORCHTITAN_MODELS,
     PRECISION_FLAGS,
     DEFAULT_TRAINING_PARAMS,
@@ -149,6 +149,7 @@ class TorchTitanTrainingJob:
         self.job_cmd = ''
         self.job_cmd_list = []
         self.training_results_dict = {}
+        self.local_tokenizer_path = None
 
         # Get config and model params
         self.config = variant_config.config
@@ -177,6 +178,11 @@ class TorchTitanTrainingJob:
         self.rocm_path = detect_rocm_path(self.orch, self.config.get('rocm_dir', ''))
         self.use_generated_config = self.config.get('use_generated_config', 'True') == 'True'
         self.hf_token_file = self.config.get('hf_token_file', '/tmp/.hf_token')
+
+        # Per-combo log dir so sweep combos don't overwrite each other's training.log
+        raw_label = run_label or "torchtitan_training"
+        self.run_label_sanitized = re.sub(r'[^A-Za-z0-9._-]', '_', str(raw_label))
+        self.combo_log_dir = f'{self.log_dir}/torchtitan-logs/{self.run_label_sanitized}'
 
         # Model params with defaults
         model_name = self.model_params.get('model_name', 'llama3_3_70b')
@@ -421,7 +427,7 @@ class TorchTitanTrainingJob:
                     f'--module torchtitan.train --job.config_file {config_file_path}'
                 )
 
-                log_path = f'{self.log_dir}/torchtitan-logs/out-node{i}/training.log'
+                log_path = f'{self.combo_log_dir}/out-node{i}/training.log'
                 self.orch.exec(f'mkdir -p $(dirname {log_path})')
 
                 full_cmd = cmd + f': > {log_path}; nohup {torchrun_cmd} > {log_path} 2>&1 & disown'
@@ -441,7 +447,7 @@ class TorchTitanTrainingJob:
                 f'--module torchtitan.train --job.config_file {config_file_path}'
             )
 
-            log_path = f'{self.log_dir}/torchtitan-logs/out-node0/training.log'
+            log_path = f'{self.combo_log_dir}/out-node0/training.log'
             self.orch.exec(f'mkdir -p $(dirname {log_path})')
 
             self.job_cmd = cmd + f': > {log_path}; nohup {torchrun_cmd} > {log_path} 2>&1 & disown'
@@ -583,3 +589,72 @@ class TorchTitanTrainingJob:
         verify_dmesg_for_errors(self.orch, self.training_start_time, self.training_end_time, till_end_flag=False)
 
         update_test_result()
+
+    def _needs_local_tokenizer(self):
+        """TorchTitan uses HF download script, so always downloads tokenizer.
+
+        Returns False since we use download_hf_assets() instead of download_tokenizer_model().
+        """
+        return False
+
+    def download_tokenizer_model(self):
+        """Download tokenizer model (wrapper for download_hf_assets).
+
+        For compatibility with test suite expecting this method name.
+        """
+        self.download_hf_assets()
+        self.local_tokenizer_path = self.hf_assets_path
+
+    def stop_training_processes(self):
+        """Check GPU VRAM after a training combo and free memory if any processes remain.
+
+        After normal training completion VRAM% is 0 and no KFD PIDs are present —
+        returns immediately in that case. If processes are still holding GPU memory
+        (crash or hang), extracts their PIDs from rocm-smi --showpids, kills them
+        with SIGKILL, then waits and verifies VRAM is clear before the next combo.
+        """
+        log.info('Checking GPU memory state after training combo')
+        out_dict = self.orch.exec('rocm-smi --showpids 2>/dev/null')
+
+        has_pids = False
+        for node, output in (out_dict or {}).items():
+            if 'No KFD PIDs currently running' in (output or ''):
+                log.info('Node %s: VRAM already free, no GPU processes running', node)
+            else:
+                log.warning('Node %s: GPU processes still holding VRAM, will kill', node)
+                has_pids = True
+
+        if not has_pids:
+            return
+
+        # Extract PIDs (lines starting with a number) and SIGKILL on all nodes
+        self.orch.exec(
+            "rocm-smi --showpids 2>/dev/null "
+            "| awk '/^[0-9]+[[:space:]]/{print $1}' "
+            "| xargs -r kill -9 2>/dev/null || true; "
+            "sleep 10"
+        )
+
+        # Verify VRAM is now free
+        out_dict = self.orch.exec('rocm-smi --showpids 2>/dev/null')
+        for node, output in (out_dict or {}).items():
+            if 'No KFD PIDs currently running' in (output or ''):
+                log.info('Node %s: VRAM successfully freed', node)
+            else:
+                log.warning('Node %s: GPU processes may still be running after kill attempt', node)
+
+    def _read_last_node_log(self, tail_lines=0):
+        """Read the training log from the last node and return its output.
+
+        Args:
+            tail_lines (int): If > 0, only the last N lines of the log are read.
+
+        Returns:
+            str: Log text from the last node.
+        """
+        n = len(self.orch.hosts)
+        last_host = self.orch.hosts[-1]
+        tail_suffix = f' | tail -{tail_lines}' if tail_lines > 0 else ''
+        log_path = f'{self.combo_log_dir}/out-node{n - 1}/training.log'
+        out_dict = self.orch.exec(f'cat {log_path}{tail_suffix}', hosts=[last_host])
+        return out_dict.get(last_host) or ''
