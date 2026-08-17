@@ -258,8 +258,8 @@ def s_phdl(cluster_dict):
     # Single-node mode: execute locally ONLY when the target actually refers to this machine.
     #
     # Rationale: users often specify a remote node IP/hostname in cluster.json even for a
-    # single-node run. Forcing local execution when the target is not this machine would run
-    # benchmarks without the remote node’s GPUs/ROCm and fail in confusing ways.
+    # single-node run. Without this check, that target would run on this host instead of the
+    # target node's GPUs/ROCm, and fail in confusing ways.
     if len(node_list) == 1:
         target = node_list[0]
         if _is_local_target(target):
