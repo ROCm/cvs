@@ -24,7 +24,7 @@
             "num_benchmark_steps": 5,
             "compile": true,
             "torchrun_nproc": 8,
-            "_expected_results_comment": "mi300x is measured (avg 161.03s/step across 5 clean steps on MI300X with compile: true, ~25% margin applied); mi350 is measured (avg 86.10s-90.99s/step across two MI350 nodes on Ruby with compile: true, ~30% margin applied over the higher observed value); auto and mi355 remain unvalidated placeholders. Tune them for your target cluster, software stack, and benchmark conditions before using them as pass/fail criteria.",
+            "_expected_results_comment": "mi300x is measured (avg 161.03s/step across 5 clean steps on MI300X with compile: true, ~25% margin applied); mi350 is measured (avg 86.10s-90.99s/step across two MI350 nodes with compile: true, ~30% margin applied over the higher observed value); auto and mi355 remain unvalidated placeholders. Tune them for your target cluster, software stack, and benchmark conditions before using them as pass/fail criteria.",
             "expected_results": {
                 "auto": {
                     "max_avg_total_time_s": 15.0
