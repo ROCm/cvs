@@ -20,13 +20,12 @@ Lifecycle (each stage is a separate test):
 
 import json
 import os
-import re
 import time
 
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.training.factory import create_training_job
+from cvs.lib.training.megatron.megatron_lib import MegatronTrainingJob
 from cvs.lib.training.megatron.utils.loss_curve import (
     parse_all_loss_points,
     sample_loss_curve,
@@ -104,11 +103,7 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
-    if re.search(r'primus', orch.container_config.get("image", ""), re.I):
-        lifecycle.tokenizer_path = None
-        return
-
-    mt_obj = create_training_job(
+    mt_obj = MegatronTrainingJob(
         orch,
         variant_config,
         hf_token=hf_token,
@@ -151,7 +146,7 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
 
     globals.error_list = []
 
-    mt_obj = create_training_job(
+    mt_obj = MegatronTrainingJob(
         orch,
         variant_config,
         hf_token=hf_token,
@@ -197,7 +192,7 @@ def test_training(
     nodeid = request.node.nodeid
     combo_key = request.node.callspec.id
     globals.error_list = []
-    mt_obj = create_training_job(
+    mt_obj = MegatronTrainingJob(
         orch,
         variant_config,
         hf_token=hf_token,
@@ -260,14 +255,8 @@ def test_metric(variant_config, micro_batch_size, global_batch_size, precision, 
     if combo_key not in train_res_dict:
         pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run)")
 
-    actuals_raw = train_res_dict[combo_key]
-    request.node.user_properties.append(("training_log_tail", actuals_raw.get("_log_tail", "")))
-    actuals = {f"training.{k}": float(v[-1]) for k, v in actuals_raw.items() if v and not k.startswith("_")}
-
     if not variant_config.enforce_thresholds:
-        log.info("enforce_thresholds=false; record-only for combo '%s'", combo_key)
-        for metric, value in actuals.items():
-            log.info("  RECORD  %s: actual=%s", metric, value)
+        log.info("enforce_thresholds=false; skipping verdict for combo '%s'", combo_key)
         return
 
     cell = variant_config.cell_key(combo_key)
@@ -275,6 +264,10 @@ def test_metric(variant_config, micro_batch_size, global_batch_size, precision, 
     if not thresholds:
         log.warning("no thresholds defined for cell '%s'; skipping threshold checks", cell)
         return
+
+    actuals_raw = train_res_dict[combo_key]
+    request.node.user_properties.append(("training_log_tail", actuals_raw.get("_log_tail", "")))
+    actuals = {f"training.{k}": float(v[-1]) for k, v in actuals_raw.items() if v and not k.startswith("_")}
 
     log.info("--- Threshold check for combo '%s' ---", combo_key)
     violations = []
