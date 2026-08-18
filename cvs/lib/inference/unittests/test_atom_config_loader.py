@@ -530,13 +530,37 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertIn("PP=2", variant.expected_cells()[0])
         self.assertIn("accuracy", variant.thresholds)
 
-    def test_load_v4_pro_longctx_p2_stem(self):
+    def test_load_v4_pro_longctx_stem(self):
         root = Path(__file__).resolve().parents[3]
         config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-v4-pro_longctx_single.json"
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Pro")
         self.assertEqual(variant.expected_cells()[0], "ISL=5000,OSL=1024,TP=8,CONC=16")
         self.assertTrue(variant.platform.gpu_metrics_poll)
+
+    def test_load_v4_pro_vllm_single_stem(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-v4-pro_vllm_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.tokenizer_mode, "deepseek_v4")
+        self.assertFalse(variant.roles.server.serve_args.get("enforce-eager"))
+        self.assertEqual(variant.roles.server.serve_args.get("moe-backend"), "triton_unfused")
+
+    def test_load_v4_pro_sglang_single_stem(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-v4-pro_sglang_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.driver, "sglang")
+        self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Pro")
+
+    def test_load_v4_pro_distributed_stem(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-v4-pro_distributed.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertIn("PP=2", variant.expected_cells()[0])
 
     def test_load_w2_m4_vllm_parity(self):
         root = Path(__file__).resolve().parents[3]
