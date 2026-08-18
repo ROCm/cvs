@@ -58,7 +58,7 @@ def _normalize_mode(mode) -> str:
 
 def _resolve_dump_path(cfg: dict) -> str:
     """Return node_smoke dump directory; empty config uses reporting artifacts root."""
-    artifacts_root = get_nested_config(cfg, "reporting", "artifacts_root_dir", "/tmp/preflight")
+    artifacts_root = get_nested_config(cfg, "reporting", "artifacts_root_dir", "/home/{user-id}/preflight")
     default_dump = f"{str(artifacts_root).rstrip('/')}/node_smoke"
     configured = get_nested_config(cfg, "node_smoke", "dump_path", default_dump)
     configured_s = str(configured or "").strip()

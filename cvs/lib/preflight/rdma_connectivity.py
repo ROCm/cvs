@@ -103,7 +103,7 @@ class RdmaConnectivityCheck(PreflightCheck):
 
     def _artifacts_root_dir(self) -> str:
         cfg = self.config_dict or {}
-        root = get_nested_config(cfg, 'reporting', 'artifacts_root_dir', '/tmp/preflight')
+        root = get_nested_config(cfg, 'reporting', 'artifacts_root_dir', '/home/{user-id}/preflight')
         return str(root).rstrip('/')
 
     def _remote_rdma_workspace_root(self) -> str:

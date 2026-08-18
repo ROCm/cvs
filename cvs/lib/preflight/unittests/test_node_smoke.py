@@ -29,10 +29,10 @@ class TestBuildNodeSmokeFlags(unittest.TestCase):
 
     def test_resolve_dump_path_from_empty_config_value(self):
         cfg = {
-            "reporting": {"artifacts_root_dir": "/tmp/{user-id}/preflight"},
+            "reporting": {"artifacts_root_dir": "/home/{user-id}/preflight"},
             "node_smoke": {"dump_path": ""},
         }
-        self.assertEqual(_resolve_dump_path(cfg), "/tmp/{user-id}/preflight/node_smoke")
+        self.assertEqual(_resolve_dump_path(cfg), "/home/{user-id}/preflight/node_smoke")
 
     def test_rdma_and_host_limits(self):
         flags = build_node_smoke_flags(
