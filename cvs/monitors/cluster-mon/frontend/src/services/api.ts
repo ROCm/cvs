@@ -140,6 +140,26 @@ class ApiClient {
   async getRCCLPerformanceHistory(count = 50) {
     return this.request(`/rccl/performance/history?count=${count}`)
   }
+
+  async listSnapshots() {
+    return this.request('/snapshots')
+  }
+
+  async captureSnapshot(label?: string) {
+    return this.post('/snapshots', label ? { label } : {})
+  }
+
+  async deleteSnapshot(id: string) {
+    return this.request(`/snapshots/${id}`, { method: 'DELETE' })
+  }
+
+  async deleteAllSnapshots() {
+    return this.request('/snapshots', { method: 'DELETE' })
+  }
+
+  async diffSnapshots(beforeId: string, afterId: string) {
+    return this.post('/snapshots/diff', { before_id: beforeId, after_id: afterId })
+  }
 }
 
 export const api = new ApiClient(API_BASE_URL)

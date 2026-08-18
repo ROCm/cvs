@@ -30,6 +30,8 @@ backend_wrapper.log
 # Config (with secrets)
 config/cluster.yaml
 config/nodes.txt
+config/snapshots.json
+config/snapshots.json.tmp
 .env
 !.env.example
 

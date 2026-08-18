@@ -117,6 +117,10 @@ class AppState:
         # Redis client
         self.redis: Optional[object] = None
 
+        # On-demand metrics snapshot gallery (max 5, persisted to config/snapshots.json)
+        self.snapshot_store = None  # SnapshotStore, set in lifespan
+        self.snapshot_in_progress: bool = False
+
         # RCCL state
         self.rccl_data_store = None  # RCCLDataStore, set in lifespan
         self.latest_rccl_snapshot: Optional[dict] = None
@@ -940,6 +944,17 @@ async def lifespan(app: FastAPI):
 
     # Initialize probe_requested event (before collectors start)
     app_state.probe_requested = asyncio.Event()
+
+    from app.core.snapshot import MAX_SNAPSHOTS, SnapshotStore, snapshots_file_path
+
+    app_state.snapshot_store = SnapshotStore(snapshots_file_path())
+    app_state.snapshot_store.load()
+    logger.info(
+        "Snapshot gallery loaded: %d/%d from %s",
+        app_state.snapshot_store.count(),
+        MAX_SNAPSHOTS,
+        app_state.snapshot_store.path,
+    )
 
     # Load nodes from file
     nodes = settings.load_nodes_from_file()

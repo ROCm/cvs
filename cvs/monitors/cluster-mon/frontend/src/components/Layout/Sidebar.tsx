@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Settings, Cpu, Network, Activity, Package, HardDrive, Share2, FileText, Clock, GitFork, Zap } from 'lucide-react'
+import { LayoutDashboard, Settings, Cpu, Network, Activity, Package, HardDrive, Share2, FileText, Clock, GitFork, Zap, GitCompare } from 'lucide-react'
 import { cn } from '@/utils/cn'
 
 const mainNav = [
@@ -11,6 +11,7 @@ const mainNav = [
   { name: 'GPU SW', href: '/gpu-software', icon: Package },
   { name: 'NIC SW', href: '/nic-software', icon: HardDrive },
   { name: 'Logs', href: '/logs', icon: FileText },
+  { name: 'Snapshot Diff', href: '/snapshot-diff', icon: GitCompare },
 ]
 
 const rcclNav = [
