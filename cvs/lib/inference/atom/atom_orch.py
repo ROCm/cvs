@@ -248,6 +248,11 @@ class AtomJob:
         else:
             self._exec_all(f"mkdir -p {shlex.quote(self.out_dir)}")
 
+    @staticmethod
+    def _is_deepseek_v4_model(model_id):
+        mid = (model_id or "").lower()
+        return "deepseek-v4" in mid or "deepseek_v4" in mid
+
     @classmethod
     def _merged_serve_args(cls, variant):
         merged = dict(cls._DEFAULT_SERVE_ARGS)
@@ -256,7 +261,7 @@ class AtomJob:
         gpu_mem = env.get("CVS_GPU_MEMORY_UTIL") or env.get("VLLM_GPU_MEMORY_UTIL")
         if gpu_mem is not None and "gpu-memory-utilization" not in merged:
             merged["gpu-memory-utilization"] = str(gpu_mem)
-        if "enforce-eager" not in merged:
+        if "enforce-eager" not in merged and not cls._is_deepseek_v4_model(variant.model.id):
             merged["enforce-eager"] = True
         return merged
 
@@ -267,6 +272,8 @@ class AtomJob:
             opt = f"--{flag}"
             if value is True:
                 argv.append(opt)
+            elif value is False:
+                pass
             elif isinstance(value, (list, tuple)):
                 for v in value:
                     argv.extend([opt, str(v)])
@@ -382,7 +389,7 @@ class AtomJob:
             f"export HF_TOKEN={shlex.quote(self.hf_token)}",
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
         ]
-        if self._uses_vllm_serve():
+        if self._uses_vllm_serve() and not self._is_deepseek_v4_model(self.model_id):
             env_lines.extend(
                 [
                     "export VLLM_USE_AITER_UNIFIED_ATTENTION=1",
