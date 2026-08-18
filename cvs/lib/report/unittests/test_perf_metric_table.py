@@ -33,9 +33,7 @@ class TestPerfMetricTable(unittest.TestCase):
         self.assertIn('Failed', html_out)
 
     def test_is_benchmark_metrics_extra_detects_wrapped_table(self):
-        html_out = render_benchmark_metrics_html(
-            [{'node': 'n1', 'metric': 'goodput', 'status': 'pass'}]
-        )
+        html_out = render_benchmark_metrics_html([{'node': 'n1', 'metric': 'goodput', 'status': 'pass'}])
         extra = {'format_type': 'html', 'content': html_out}
         self.assertTrue(is_benchmark_metrics_extra(extra))
         self.assertFalse(is_benchmark_metrics_extra({'format_type': 'html', 'content': '<p>x</p>'}))

@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import pytest
+
 try:
     from _pytest.subtests import SubtestReport as _BuiltinSubtestReport
 except ImportError:
@@ -62,7 +63,6 @@ from cvs.lib.report.render.perf_metric_table import (
     is_benchmark_metrics_extra,
     render_benchmark_metrics_html,
 )
-from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
