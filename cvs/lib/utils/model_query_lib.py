@@ -68,6 +68,44 @@ class OpenAIProbe:
         return str(msg.get("reasoning_content") or "").strip()
 
     @classmethod
+    def _extract_json_object(cls, text: str) -> dict[str, Any] | None:
+        """Parse a JSON object from assistant text, including ```json fences."""
+        raw = str(text or "").strip()
+        if not raw:
+            return None
+        candidates = [raw]
+        fenced = re.match(
+            r"^```(?:json)?\s*\n?(.*?)\n?```\s*$",
+            raw,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        if fenced:
+            candidates.insert(0, fenced.group(1).strip())
+        for candidate in candidates:
+            try:
+                obj = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                return obj
+        return None
+
+    @classmethod
+    def _validate_book_json(cls, obj: Mapping[str, Any]) -> str | None:
+        for key in ("title", "author", "year", "genre"):
+            if key not in obj:
+                return f"JSON missing {key!r}"
+            v = obj[key]
+            if key == "year":
+                if isinstance(v, (int, float)):
+                    continue
+                if not str(v).strip():
+                    return "JSON year empty"
+            elif not str(v).strip():
+                return f"JSON field {key!r} empty"
+        return None
+
+    @classmethod
     def _is_reasoning_model(cls, model_id: str) -> bool:
         mid = (model_id or "").lower()
         return any(marker in mid for marker in cls._REASONING_MODEL_MARKERS)
@@ -237,29 +275,13 @@ class OpenAIProbe:
                 if step == "structured_output_book":
                     content_raw = str(msg.get("content") or "").strip()
                     model_id = str(body.get("model") or "")
-                    if content_raw:
-                        try:
-                            obj = json.loads(content_raw)
-                        except json.JSONDecodeError as e:
-                            _fail(f"{title}: assistant content is not JSON ({e!r})")
-                            continue
-                        if not isinstance(obj, dict):
-                            _fail(f"{title}: parsed content is not a JSON object")
-                            continue
-                        for key in ("title", "author", "year", "genre"):
-                            if key not in obj:
-                                _fail(f"{title}: JSON missing {key!r}")
-                                break
-                            v = obj[key]
-                            if key == "year":
-                                if isinstance(v, (int, float)):
-                                    continue
-                                if not str(v).strip():
-                                    _fail(f"{title}: JSON year empty")
-                                    break
-                            elif not str(v).strip():
-                                _fail(f"{title}: JSON field {key!r} empty")
-                                break
+                    obj = cls._extract_json_object(content_raw) if content_raw else None
+                    if obj is not None:
+                        book_err = cls._validate_book_json(obj)
+                        if book_err:
+                            _fail(f"{title}: {book_err}")
+                    elif content_raw:
+                        _fail(f"{title}: assistant content is not JSON")
                     elif not cls._is_reasoning_model(model_id):
                         _fail(f"{title}: empty assistant content")
                 continue

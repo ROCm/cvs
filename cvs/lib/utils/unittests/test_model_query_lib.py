@@ -74,6 +74,29 @@ class TestOpenAIProbeReasoningModels(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("empty assistant content", err or "")
 
+    def test_structured_book_accepts_markdown_fenced_json(self):
+        fenced = (
+            '```json\n{"title": "To Kill a Mockingbird", '
+            '"author": "Harper Lee", "year": 1960, "genre": "Southern Gothic"}\n```'
+        )
+        results = {
+            "model_endpoint": (200, {"data": [{"id": "deepseek-ai/DeepSeek-R1-0528"}]}),
+            "chat_completion_endpoint": (
+                200,
+                _chat_body(
+                    model="deepseek-ai/DeepSeek-R1-0528",
+                    reasoning_content="Hmm, the user just",
+                ),
+            ),
+            "completion_endpoint": (200, {"model": "m", "choices": [{"text": " Paris"}]}),
+            "structured_output_book": (
+                200,
+                _chat_body(model="deepseek-ai/DeepSeek-R1-0528", content=fenced),
+            ),
+        }
+        ok, err = OpenAIProbe.check_results(results, port=8000)
+        self.assertTrue(ok, err)
+
 
 if __name__ == "__main__":
     unittest.main()
