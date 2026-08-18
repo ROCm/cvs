@@ -20,9 +20,6 @@ import re
 import shlex
 import time
 
-from typing import Any, Optional
-from typing import Any
-
 from cvs.lib import globals
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.lib.inference.sglang.sglang_common import (
@@ -931,13 +928,7 @@ class SglangDisaggPD:
         return result
 
     def verify_inference_results(self, test_name, expected_result_dict):
-        """
-        Validate inference benchmark results against expected performance thresholds.
-        """
-
-        thresholds = {
-            metric: normalize_sglang_threshold_spec(metric, spec) for metric, spec in expected_result_dict.items()
-        }
+        """Validate inference benchmark results against expected performance thresholds."""
         self.inference_end_time = verify_inference_results_common(
             self.inference_results_dict,
             expected_result_dict,
@@ -1016,59 +1007,6 @@ class SglangDisaggPD:
             log_label='OpenAI endpoint probe inside benchmark container, same pattern as GSM8K/benchserv',
         )
 
-        log.info(
-            "OpenAI endpoint probe inside benchmark container (%s:%r), same pattern as GSM8K/benchserv",
-            self.client_host,
-            port,
-        )
-        out_dict = self._container_exec(
-            "bash -c " + shlex.quote(inner),
-            hosts=self.benchmark_serv_node,
-            timeout=min(900, 480 + 180),
-        )
-        bench_host = self.benchmark_serv_node[0]
-        raw_out = out_dict.get(bench_host) or self._first_output(out_dict)
-
-        probe_err: Optional[str] = None
-        results: dict[str, tuple[int, Any]] = {}
-        if not raw_out or not str(raw_out).strip():
-            probe_err = f"OpenAI-compatible probe produced no output on {bench_host!r}: {out_dict!r}"
-        else:
-            lines_out = str(raw_out).strip().splitlines()
-            if not lines_out:
-                probe_err = f"OpenAI-compatible probe empty lines after strip on node {bench_host!r}: {raw_out!r}"
-            else:
-                last_line = lines_out[-1]
-                try:
-                    parsed = json.loads(last_line)
-                except json.JSONDecodeError as e:
-                    probe_err = f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}"
-                else:
-                    if not isinstance(parsed, dict):
-                        probe_err = f"OpenAI-compatible probe expected JSON object, got {type(parsed).__name__!r}"
-                    else:
-                        for step, val in parsed.items():
-                            if isinstance(val, (list, tuple)) and len(val) == 2:
-                                results[step] = (int(val[0]), val[1])
-                            else:
-                                probe_err = f"OpenAI-compatible probe bad shape at {step!r}: {val!r}"
-                                break
-
-        if probe_err is not None:
-            fail_test(probe_err)
-            return []
-
-        OpenAIProbe.log_results(results, log)
-
-        ok, err = OpenAIProbe.check_results(results, port=port, logger=log)
-        if not ok:
-            summary = OpenAIProbe.summarize_results(results, ok, err)
-            fail_test(f"{err}")
-            return summary
-
-        summary = OpenAIProbe.summarize_results(results, ok, err)
-        return summary
-
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type="auto"):
         return self.run_lm_eval_benchmark_test("lm_eval_hellaswag", _d_type=_d_type)
 
@@ -1085,38 +1023,6 @@ class SglangDisaggPD:
             env_script='/tmp/benchmark_env_script.sh',
             exec_bench=lambda cmd, timeout: self._container_exec(cmd, hosts=self.benchmark_serv_node, timeout=timeout),
         )
-
-        inner = f"mkdir -p {self.log_dir}/benchmark_node && source /tmp/benchmark_env_script.sh && {inner_cmd}"
-        out_dict = self._container_exec(
-            "bash -c " + shlex.quote(inner),
-            hosts=self.benchmark_serv_node,
-            timeout=scoring["exec_timeout_sec"],
-        )
-        time.sleep(5)
-
-        check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
-        summary = None
-        errors: list[str] = []
-
-        for node, text in out_dict.items():
-            ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
-            if node_summary is not None:
-                summary = node_summary
-            if not ok:
-                errors.append(f"lm-eval {spec['display']} on node {node!r}: {err}")
-
-        if summary is None:
-            summary = LmEvalBenchmark.fallback_summary(
-                scoring,
-                error=errors[-1] if errors else "no benchmark nodes produced output to score",
-            )
-            errors.append(f"lm-eval {spec['display']}: no benchmark nodes produced output to score")
-
-        for msg in errors:
-            fail_test(msg)
-
-        return summary
-
 
     def run_long_context_niah_accuracy(self, *, isl: int, osl: int, d_type: str = "auto"):
         """NIAH long-context accuracy at fixed ISL/OSL via /v1/chat/completions."""

@@ -237,55 +237,6 @@ class SglangSingle:
                 fail_test(f'Some failures observed in test rmsnorm on node {node}')
 
     def verify_openai_compatible_endpoints(self) -> list[str]:
-        port = int(self.router_serv_port)
-        probe_src = OpenAIProbe.probe_script(port, self.bp_dict['model'], host=self.client_host)
-        b64 = base64.b64encode(probe_src.encode('utf-8')).decode('ascii')
-        inner = (
-            f"mkdir -p {self.log_dir}/benchmark_node && "
-            f"echo {shlex.quote(b64)} | base64 -d > /tmp/openai_mq_probe.py && "
-            f"python3 /tmp/openai_mq_probe.py && rm -f /tmp/openai_mq_probe.py"
-        )
-        log.info(
-            'OpenAI endpoint probe inside container (%s:%r)',
-            self.client_host,
-            port,
-        )
-        out_dict = self._container_exec("bash -c " + shlex.quote(inner), timeout=min(900, 480 + 180))
-        raw_out = out_dict.get(self._head_host) or self._first_output(out_dict)
-
-        probe_err: Optional[str] = None
-        results: dict[str, tuple[int, Any]] = {}
-        if not raw_out or not str(raw_out).strip():
-            probe_err = f"OpenAI-compatible probe produced no output on {self._head_host!r}: {out_dict!r}"
-        else:
-            last_line = str(raw_out).strip().splitlines()[-1]
-            try:
-                parsed = json.loads(last_line)
-            except json.JSONDecodeError as e:
-                probe_err = f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}"
-            else:
-                if not isinstance(parsed, dict):
-                    probe_err = f"OpenAI-compatible probe expected JSON object, got {type(parsed).__name__!r}"
-                else:
-                    for step, val in parsed.items():
-                        if isinstance(val, (list, tuple)) and len(val) == 2:
-                            results[step] = (int(val[0]), val[1])
-                        else:
-                            probe_err = f"OpenAI-compatible probe bad shape at {step!r}: {val!r}"
-                            break
-
-        if probe_err is not None:
-            fail_test(probe_err)
-            return []
-
-        OpenAIProbe.log_results(results, log)
-        ok, err = OpenAIProbe.check_results(results, port=port, logger=log)
-        if not ok:
-            fail_test(f"{err}")
-            return OpenAIProbe.summarize_results(results, ok, err)
-        return OpenAIProbe.summarize_results(results, ok, err)
-
-    def benchserv_test_random(self, d_type='auto') -> None:
         return verify_openai_compatible_endpoints_common(
             port=int(self.router_serv_port),
             model_name=self.bp_dict['model'],
@@ -362,21 +313,6 @@ class SglangSingle:
         return result
 
     def verify_inference_results(self, test_name, expected_result_dict):
-        thresholds = {
-            metric: normalize_sglang_threshold_spec(metric, spec) for metric, spec in expected_result_dict.items()
-        }
-        for node in self.inference_results_dict:
-            actuals = {
-                metric: coerce_sglang_actual(value)
-                for metric, value in self.inference_results_dict[node].items()
-                if metric in thresholds
-            }
-            try:
-                evaluate_all(actuals, thresholds)
-            except ThresholdViolation as exc:
-                for msg in exc.violations:
-                    fail_test(f"FAIL - {msg}")
-
         self.inference_end_time = verify_inference_results_common(
             self.inference_results_dict,
             expected_result_dict,
@@ -420,30 +356,3 @@ class SglangSingle:
             env_script='/tmp/server_env_script.sh',
             exec_bench=lambda cmd, timeout: self._container_exec(cmd, timeout=timeout),
         )
-        inner = f"mkdir -p {self.log_dir}/benchmark_node && source /tmp/server_env_script.sh && {inner_cmd}"
-        out_dict = self._container_exec(
-            "bash -c " + shlex.quote(inner),
-            timeout=scoring['exec_timeout_sec'],
-        )
-        time.sleep(5)
-
-        check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
-        summary = None
-        errors: list[str] = []
-        for node, text in out_dict.items():
-            ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
-            if node_summary is not None:
-                summary = node_summary
-            if not ok:
-                errors.append(f"lm-eval {spec['display']} on node {node!r}: {err}")
-
-        if summary is None:
-            summary = LmEvalBenchmark.fallback_summary(
-                scoring,
-                error=errors[-1] if errors else 'no benchmark nodes produced output to score',
-            )
-            errors.append(f"lm-eval {spec['display']}: no benchmark nodes produced output to score")
-
-        for msg in errors:
-            fail_test(msg)
-        return summary

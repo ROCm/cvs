@@ -180,8 +180,6 @@ def coerce_sglang_actual(value: Any) -> float | None:
         return None
 
 
-<<<<<<< HEAD
-=======
 def first_output(out_dict: dict) -> str:
     if not out_dict:
         return ""
@@ -548,7 +546,6 @@ def run_lm_eval_benchmark_test(
     return summary
 
 
->>>>>>> c3cd5f47 (Add Llama SGLang configs, perf subtests, and shared sglang helpers)
 def build_log_dir_cleanup_cmd(log_dir: str, user: str) -> str:
     """Shell command: rm -rf, recreate, chown (host namespace, not in-container)."""
     if not log_dir or not str(log_dir).strip():

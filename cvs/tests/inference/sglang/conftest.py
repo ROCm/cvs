@@ -28,7 +28,14 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import pytest
-from _pytest.subtests import SubtestReport
+try:
+    from _pytest.subtests import SubtestReport as _BuiltinSubtestReport
+except ImportError:
+    _BuiltinSubtestReport = None
+try:
+    from pytest_subtests.plugin import SubTestReport as _PluginSubtestReport
+except ImportError:
+    _PluginSubtestReport = None
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
@@ -505,7 +512,11 @@ def _is_full_log_extra(extra: object) -> bool:
 
 
 def _is_subtest_report(report) -> bool:
-    return isinstance(report, SubtestReport)
+    if _BuiltinSubtestReport is not None and isinstance(report, _BuiltinSubtestReport):
+        return True
+    if _PluginSubtestReport is not None and isinstance(report, _PluginSubtestReport):
+        return True
+    return False
 
 
 def _benchmark_rows_for_report(report) -> list[dict[str, Any]]:
