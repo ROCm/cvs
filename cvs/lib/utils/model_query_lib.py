@@ -51,6 +51,27 @@ class OpenAIProbe:
 
     _FAILURE_MARKER = "OpenAI-compatible probe failed port="
 
+    _REASONING_MODEL_MARKERS = (
+        "deepseek-r1",
+        "deepseek_r1",
+        "qwq",
+        "o1-",
+        "o3-",
+        "reasoning",
+    )
+
+    @classmethod
+    def _assistant_text(cls, msg: Mapping[str, Any]) -> str:
+        content = str(msg.get("content") or "").strip()
+        if content:
+            return content
+        return str(msg.get("reasoning_content") or "").strip()
+
+    @classmethod
+    def _is_reasoning_model(cls, model_id: str) -> bool:
+        mid = (model_id or "").lower()
+        return any(marker in mid for marker in cls._REASONING_MODEL_MARKERS)
+
     @classmethod
     def probe_script(
         cls,
@@ -209,33 +230,38 @@ class OpenAIProbe:
                 if not isinstance(msg, dict):
                     _fail(f"{title}: choices[0].message is not an object")
                     continue
-                content = msg.get("content")
-                if content is None or not str(content).strip():
+                text = cls._assistant_text(msg)
+                if not text:
                     _fail(f"{title}: empty assistant content")
                     continue
                 if step == "structured_output_book":
-                    try:
-                        obj = json.loads(str(content))
-                    except json.JSONDecodeError as e:
-                        _fail(f"{title}: assistant content is not JSON ({e!r})")
-                        continue
-                    if not isinstance(obj, dict):
-                        _fail(f"{title}: parsed content is not a JSON object")
-                        continue
-                    for key in ("title", "author", "year", "genre"):
-                        if key not in obj:
-                            _fail(f"{title}: JSON missing {key!r}")
-                            break
-                        v = obj[key]
-                        if key == "year":
-                            if isinstance(v, (int, float)):
-                                continue
-                            if not str(v).strip():
-                                _fail(f"{title}: JSON year empty")
+                    content_raw = str(msg.get("content") or "").strip()
+                    model_id = str(body.get("model") or "")
+                    if content_raw:
+                        try:
+                            obj = json.loads(content_raw)
+                        except json.JSONDecodeError as e:
+                            _fail(f"{title}: assistant content is not JSON ({e!r})")
+                            continue
+                        if not isinstance(obj, dict):
+                            _fail(f"{title}: parsed content is not a JSON object")
+                            continue
+                        for key in ("title", "author", "year", "genre"):
+                            if key not in obj:
+                                _fail(f"{title}: JSON missing {key!r}")
                                 break
-                        elif not str(v).strip():
-                            _fail(f"{title}: JSON field {key!r} empty")
-                            break
+                            v = obj[key]
+                            if key == "year":
+                                if isinstance(v, (int, float)):
+                                    continue
+                                if not str(v).strip():
+                                    _fail(f"{title}: JSON year empty")
+                                    break
+                            elif not str(v).strip():
+                                _fail(f"{title}: JSON field {key!r} empty")
+                                break
+                    elif not cls._is_reasoning_model(model_id):
+                        _fail(f"{title}: empty assistant content")
                 continue
 
         if failures:
