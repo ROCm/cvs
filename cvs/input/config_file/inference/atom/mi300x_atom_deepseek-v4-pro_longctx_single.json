@@ -1,5 +1,5 @@
 {
-  "_comment": "Tracker #10 deepseek-ai/DeepSeek-V4-Pro perf stem (mi300x).",
+  "_comment": "Tracker #10 DeepSeek V4 Pro — ATOM longctx (5000/1024, TP8, driver=atom).",
   "schema_version": 1,
   "framework": "atom",
   "gpu_arch": "mi300x",
@@ -7,7 +7,7 @@
   "threshold_json": "mi300x_atom_deepseek-v4-pro_longctx_single_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "P2 workload tracker #10; lab pending"
+    "notes": "P1 tracker #10 ATOM path; lab pending"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",

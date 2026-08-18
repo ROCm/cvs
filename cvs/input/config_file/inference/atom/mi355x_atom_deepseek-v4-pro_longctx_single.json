@@ -7,7 +7,7 @@
   "threshold_json": "mi355x_atom_deepseek-v4-pro_longctx_single_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "P2 workload tracker #10; lab pending"
+    "notes": "P1 tracker #10 ATOM path; lab pending"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
