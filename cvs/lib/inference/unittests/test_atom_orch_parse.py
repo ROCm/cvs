@@ -176,6 +176,35 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         merged = AtomJob._merged_serve_args(variant)
         self.assertEqual(merged["gpu-memory-utilization"], "0.75")
 
+    def test_merged_serve_args_skips_enforce_eager_for_deepseek_v4(self):
+        variant = _fake_variant(driver="vllm_atom")
+        variant.model.id = "deepseek-ai/DeepSeek-V4-Pro"
+        merged = AtomJob._merged_serve_args(variant)
+        self.assertNotIn("enforce-eager", merged)
+
+    def test_build_server_cmd_skips_r1_aiter_env_for_deepseek_v4(self):
+        orch = FakeOrch()
+        variant = _fake_variant(driver="vllm_atom")
+        variant.model.id = "deepseek-ai/DeepSeek-V4-Pro"
+        job = AtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.build_server_cmd()
+        env_cmd = orch.commands[0][0]
+        self.assertNotIn("VLLM_USE_AITER_UNIFIED_ATTENTION", env_cmd)
+        self.assertNotIn("VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4", env_cmd)
+
+    def test_flatten_serve_args_omits_false_flags(self):
+        argv = AtomJob._flatten_serve_args({"enforce-eager": False, "trust-remote-code": True})
+        self.assertNotIn("--enforce-eager", argv)
+        self.assertIn("--trust-remote-code", argv)
+
     def test_build_server_cmd_suppresses_gpu_memory_env_vars(self):
         orch = FakeOrch()
         variant = _fake_variant(driver="vllm")
