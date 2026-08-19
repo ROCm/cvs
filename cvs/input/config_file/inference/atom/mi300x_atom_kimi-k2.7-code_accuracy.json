@@ -1,5 +1,5 @@
 {
-  "_comment": "W13 Kimi K2.7 Code accuracy (M3 scaffold): HumanEval ACC-9 + MBPP ACC-10.",
+  "_comment": "W13 Kimi K2.7 Code MXFP4 accuracy (M3 scaffold): HumanEval ACC-9 + MBPP ACC-10.",
   "schema_version": 1,
   "framework": "atom",
   "gpu_arch": "mi300x",
@@ -18,7 +18,7 @@
   "model": {
     "id": "moonshotai/Kimi-K2.7-Code",
     "remote": 0,
-    "precision": "bf16"
+    "precision": "mxfp4"
   },
   "container": {
     "lifetime": "per_run",
@@ -42,7 +42,11 @@
   "roles": {
     "server": {
       "atom_args": ["-tp", "8", "--trust-remote-code"],
-      "env": {"ATOM_DISABLE_MMAP": "true"}
+      "env": {
+        "ATOM_DISABLE_MMAP": "true",
+        "ATOM_USE_TRITON_MOE": "true",
+        "ATOM_USE_TRITON_GEMM": "true"
+      }
     }
   },
   "params": {

@@ -66,7 +66,7 @@ def _fake_variant(
         )
     )
     paths = SimpleNamespace(log_dir="/LOGS", models_dir="/models")
-    model = SimpleNamespace(id="openai/gpt-oss-120b")
+    model = SimpleNamespace(id="openai/gpt-oss-120b", precision="")
     return SimpleNamespace(params=params, roles=roles, paths=paths, model=model)
 
 
@@ -231,6 +231,24 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertNotIn("VLLM_GPU_MEMORY_UTIL", env_cmd)
         self.assertNotIn("VLLM_ENFORCE_EAGER", env_cmd)
         self.assertIn("CUSTOM_FLAG", env_cmd)
+
+    def test_build_server_cmd_exports_mxfp4_triton_env(self):
+        orch = FakeOrch()
+        variant = _fake_variant(driver="atom")
+        variant.model.precision = "mxfp4"
+        job = AtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.build_server_cmd()
+        env_cmd = orch.commands[0][0]
+        self.assertIn("ATOM_USE_TRITON_MOE=true", env_cmd)
+        self.assertIn("ATOM_USE_TRITON_GEMM=true", env_cmd)
 
     def test_client_log_failures_traceback(self):
         job = AtomJob(
@@ -436,6 +454,38 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertIn("ATOM_DP_RANK=0", launch_cmds[0])
         self.assertIn("ATOM_DP_RANK=1", launch_cmds[1])
         self.assertIn("ATOM_DP_SIZE=2", launch_cmds[0])
+
+    def test_atom_server_argv_injects_max_model_len_from_params(self):
+        job = AtomJob(
+            orch=FakeOrch(hosts=["10.0.0.1"]),
+            variant=_fake_variant(driver="atom"),
+            hf_token="tok",
+            isl="128",
+            osl="32",
+            concurrency=1,
+            num_prompts=1,
+        )
+        argv = job._atom_server_argv()
+        idxs = [i for i, a in enumerate(argv) if a == "--max-model-len"]
+        self.assertEqual(len(idxs), 1)
+        self.assertEqual(argv[idxs[0] + 1], "8192")
+
+    def test_atom_server_argv_respects_config_pinned_max_model_len(self):
+        variant = _fake_variant(driver="atom")
+        variant.roles.server.atom_args = ["-tp", "8", "--max-model-len", "4096"]
+        job = AtomJob(
+            orch=FakeOrch(hosts=["10.0.0.1"]),
+            variant=variant,
+            hf_token="tok",
+            isl="128",
+            osl="32",
+            concurrency=1,
+            num_prompts=1,
+        )
+        argv = job._atom_server_argv()
+        idxs = [i for i, a in enumerate(argv) if a == "--max-model-len"]
+        self.assertEqual(len(idxs), 1)
+        self.assertEqual(argv[idxs[0] + 1], "4096")
 
     def test_distributed_atom_tp8_multinode_never_passes_vllm_flags(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])

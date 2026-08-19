@@ -35,14 +35,25 @@
           "/home/{user-id}:/home/{user-id}",
           "/home/models:/home/models"
         ],
-        "devices": ["/dev/dri", "/dev/kfd"]
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
       }
     }
   },
   "roles": {
     "server": {
-      "atom_args": ["-tp", "4", "--trust-remote-code"],
-      "env": {"ATOM_DISABLE_MMAP": "true"}
+      "atom_args": [
+        "-tp",
+        "4",
+        "--trust-remote-code"
+      ],
+      "env": {
+        "ATOM_DISABLE_MMAP": "true",
+        "ATOM_USE_TRITON_MOE": "true",
+        "ATOM_USE_TRITON_GEMM": "true"
+      }
     }
   },
   "params": {
@@ -69,18 +80,37 @@
   },
   "accuracy": {
     "tasks": [
-      {"id": "gsm8k_flex", "task": "gsm8k", "num_fewshot": 5, "num_concurrent": 4},
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      },
       {
         "id": "gsm8k_longctx",
         "task": "gsm8k",
         "num_fewshot": 5,
         "num_concurrent": 2,
-        "metadata": {"filter": "flexible-extract", "max_length": 8192}
+        "metadata": {
+          "filter": "flexible-extract",
+          "max_length": 8192
+        }
       }
     ]
   },
   "sweep": {
-    "sequence_combinations": [{"name": "acc_warmup", "isl": "128", "osl": "32"}],
-    "runs": [{"combo": "acc_warmup", "concurrency": 1}]
+    "sequence_combinations": [
+      {
+        "name": "acc_warmup",
+        "isl": "128",
+        "osl": "32"
+      }
+    ],
+    "runs": [
+      {
+        "combo": "acc_warmup",
+        "concurrency": 1
+      }
+    ]
   }
 }

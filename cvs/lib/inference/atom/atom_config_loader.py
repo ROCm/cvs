@@ -33,6 +33,20 @@ from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_c
 
 ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
 ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
+# MI300X MXFP4 MoE + A4W4 GEMM require Triton; aiter A4W4 is unsupported on gfx942.
+_MXFP4_TRITON_ENV = {
+    "ATOM_USE_TRITON_MOE": "true",
+    "ATOM_USE_TRITON_GEMM": "true",
+}
+
+
+def merge_mxfp4_triton_env(precision: str, env: dict[str, str]) -> dict[str, str]:
+    """Return server env with MXFP4 Triton defaults applied when unset."""
+    merged = dict(env or {})
+    if (precision or "").lower() == "mxfp4":
+        for key, value in _MXFP4_TRITON_ENV.items():
+            merged.setdefault(key, value)
+    return merged
 
 log = globals.log
 
@@ -184,6 +198,11 @@ class AtomVariantConfig(BaseVariantConfig):
     def expected_cells(self) -> list[str]:
         by_name = {c.name: c for c in self.sweep.sequence_combinations}
         return [self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency) for r in self.sweep.runs]
+
+    @model_validator(mode="after")
+    def _apply_mxfp4_triton_env_defaults(self):
+        self.roles.server.env = merge_mxfp4_triton_env(self.model.precision, self.roles.server.env)
+        return self
 
     @model_validator(mode="after")
     def _check_thresholds_cover_sweep(self):

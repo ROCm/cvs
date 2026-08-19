@@ -31,6 +31,7 @@ import shlex
 import time
 
 from cvs.lib import globals
+from cvs.lib.inference.atom.atom_config_loader import merge_mxfp4_triton_env
 from cvs.lib.inference.atom.atom_parsing import sglang_bench_jsonl_to_raw, to_client_metrics
 from cvs.lib.utils.model_query_lib import OpenAIProbe
 
@@ -143,7 +144,10 @@ class AtomJob:
         self.serve_args = self._merged_serve_args(variant)
         self.atom_server_args = list(variant.roles.server.atom_args)
         self.sglang_server_args = list(variant.roles.server.sglang_args)
-        self.server_env = dict(variant.roles.server.env)
+        self.server_env = merge_mxfp4_triton_env(
+            getattr(variant.model, "precision", ""),
+            variant.roles.server.env,
+        )
         configured_netdev = (getattr(variant.roles.server, "ib_netdev", None) or "").strip()
         if ib_netdev:
             self.ib_netdev = str(ib_netdev).strip()
@@ -506,7 +510,10 @@ class AtomJob:
             "--server-port",
             str(self.port_no),
         ]
-        argv.extend(self._without_vllm_distributed_flags(self.atom_server_args))
+        atom_argv = self._without_vllm_distributed_flags(self.atom_server_args)
+        if not self._argv_has_flag(atom_argv, "--max-model-len", "-m"):
+            atom_argv = list(atom_argv) + ["--max-model-len", self.max_model_length]
+        argv.extend(atom_argv)
         argv.extend(self._atom_multinode_argv())
         return argv
 
