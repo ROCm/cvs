@@ -16,7 +16,7 @@ The shipped sample is ``cvs/input/config_file/aorta/aorta_benchmark.yaml`` (path
 Path placeholders
 -----------------
 
-When you run ``test_aorta``, the suite loads the cluster file, resolves cluster placeholders (e.g. ``{user-id}`` in ``username``), then resolves **Aorta YAML** placeholders with the same helper used by other CVS test configs: ``{user-id}``, ``{user}``, ``{home}``, ``{home-mount-dir}``, ``{node-dir-name}``. Replacement values come from the validated cluster model (username and optional ``home_mount_dir_name`` / ``node_dir_name``). Manual ``<changeme>`` markers are rejected.
+When you run ``test_aorta``, the suite loads the cluster file, resolves cluster placeholders (e.g. ``{user-id}`` in ``username``), then resolves **Aorta YAML** placeholders with the same helper used by other CVS test configs: ``{user-id}``, ``{user}``, ``{home}``, ``{home-mount-dir}``, ``{node-dir-name}``, ``{run_dir}``. Replacement values come from the validated cluster model (username and optional ``home_mount_dir_name`` / ``node_dir_name``), except ``{run_dir}``, which is this run's directory as published by ``cvs run`` (see ``--workspace``); using it outside ``cvs run`` is an error. Manual ``<changeme>`` markers are rejected.
 
 You may instead use fully absolute paths with no placeholders. Other entry points that validate YAML directly (without ``test_aorta``) do not perform this step unless they call the resolver explicitly.
 
