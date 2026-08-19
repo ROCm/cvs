@@ -190,6 +190,8 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request
 
 def test_verify_dmesg_after_benchmark(im_obj, lifecycle, request):
     globals.error_list = []
+    if not im_obj.inference_end_time:
+        pytest.skip("benchmark did not complete; no dmesg window")
     t0 = time.monotonic()
     time.sleep(2)
     verify_dmesg_for_errors(im_obj.orch.all, im_obj.inference_start_time, im_obj.inference_end_time)

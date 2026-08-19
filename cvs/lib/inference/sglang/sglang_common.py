@@ -289,7 +289,7 @@ def verify_inference_results_subtests(
 
 _BENCH_METRIC_PATTERNS: tuple[tuple[str, str], ...] = (
     (r'Successful requests:\s+([0-9]+)', 'successful_requests'),
-    (r'Benchmark duration\s+\(s\):\s+([0-9]+)', 'benchmark_duration'),
+    (r'Benchmark duration\s+\(s\):\s+([0-9\.]+)', 'benchmark_duration'),
     (r'Total input tokens:\s+([0-9\.]+)', 'total_input_tokens'),
     (r'Total generated tokens:\s+([0-9\.]+)', 'total_generated_tokens'),
     (r'Request throughput \(req/s\):\s+([0-9\.]+)', 'request_throughput_per_sec'),
@@ -298,7 +298,7 @@ _BENCH_METRIC_PATTERNS: tuple[tuple[str, str], ...] = (
     (r'Median TTFT \(ms\):\s+([0-9\.]+)', 'median_ttft_ms'),
     (r'P99 TTFT \(ms\):\s+([0-9\.]+)', 'p99_ttft_ms'),
     (r'Mean TPOT \(ms\):\s+([0-9\.]+)', 'mean_tpot_ms'),
-    (r'Median TPOT \(ms\):\s+([0-9]+)', 'median_tpot_ms'),
+    (r'Median TPOT \(ms\):\s+([0-9\.]+)', 'median_tpot_ms'),
     (r'P99 TPOT \(ms\):\s+([0-9\.]+)', 'p99_tpot_ms'),
 )
 
