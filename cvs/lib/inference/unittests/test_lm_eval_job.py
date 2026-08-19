@@ -57,7 +57,7 @@ class TestBuildLmEvalCmd(unittest.TestCase):
             "--model_args base_url=http://127.0.0.1:8000/v1/completions,"
             "model=meta-llama/Llama-3-8b,tokenizer=/data/models/Llama-3-8b,"
             "tokenizer_backend=huggingface,num_concurrent=8,max_retries=3,"
-            "trust_remote_code=True",
+            "tokenized_requests=False,trust_remote_code=True",
             cmd,
         )
         self.assertIn("--tasks mmlu", cmd)
@@ -71,6 +71,12 @@ class TestBuildLmEvalCmd(unittest.TestCase):
         # models that don't need it.
         cmd = build_lm_eval_cmd(_task(), _ctx())
         self.assertIn("trust_remote_code=True", cmd)
+
+    def test_tokenized_requests_disabled_for_string_prompts(self):
+        # lm-eval defaults tokenized_requests=True, which POSTs token-id arrays
+        # to /v1/completions; vLLM/ATOM expect a string prompt and return 422.
+        cmd = build_lm_eval_cmd(_task(), _ctx())
+        self.assertIn("tokenized_requests=False", cmd)
 
     def test_apply_chat_template_switches_model_flag(self):
         cmd = build_lm_eval_cmd(_task(apply_chat_template=True), _ctx())

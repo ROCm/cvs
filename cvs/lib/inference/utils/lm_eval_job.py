@@ -45,6 +45,7 @@ def build_lm_eval_cmd(task: AccuracyTask, ctx: LmEvalCtx) -> str:
             "tokenizer_backend=huggingface",
             f"num_concurrent={task.num_concurrent}",
             "max_retries=3",
+            "tokenized_requests=False",
             "trust_remote_code=True",
         ]
     )
