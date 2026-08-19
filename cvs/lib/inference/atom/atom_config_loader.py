@@ -12,49 +12,48 @@ Generic paths/model/container/threshold plumbing lives in
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 from typing_extensions import Literal
 
+from cvs.lib import globals
+from cvs.lib.inference.atom.atom_parsing import GATED_METRICS
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
 from cvs.lib.inference.utils.functional_config import FunctionalConfig
-from cvs.lib.inference.utils.long_context_accuracy_config import LongContextAccuracyConfig
-from cvs.lib.inference.utils.platform_config import PlatformConfig
-
-ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
-ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
-
 from cvs.lib.inference.utils.inferencing_config_loader import (
     RoleServer,
     Sweep,
     validate_sweep_selector,
     validate_thresholds_cover_sweep,
 )
-from cvs.lib.inference.atom.atom_parsing import GATED_METRICS
+from cvs.lib.inference.utils.long_context_accuracy_config import LongContextAccuracyConfig
+from cvs.lib.inference.utils.platform_config import PlatformConfig
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
-from cvs.lib import globals
+
+ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
+ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
 
 log = globals.log
 
 # Written by test_discover_topology / resolve_multinode_fabric — not user env.
 _ORCH_MANAGED_NETWORK_ENV = frozenset({"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME", "NCCL_IB_HCA"})
-_IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.I)
+_IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.IGNORECASE)
 
 
 class AtomRoleServer(RoleServer):
     # Extra CLI tokens for ``python -m atom.entrypoints.openai_server`` after
     # ``--model`` / ``--server-port`` (e.g. ``-tp``, ``--kv_cache_dtype``).
-    atom_args: List[str] = []
+    atom_args: list[str] = []
     # Extra CLI tokens appended to ``python3 -m sglang.launch_server`` (driver=sglang).
-    sglang_args: List[str] = []
+    sglang_args: list[str] = []
     # IB HCA devices for NCCL_IB_HCA (multinode only).
     # absent or "auto" -> use whatever ibv_devinfo -l reports (test_discover_topology).
     # explicit list -> validated at preflight against ibv_devinfo output.
-    ib_hca_devices: Union[Literal["auto"], List[str], None] = None
+    ib_hca_devices: Literal["auto"] | list[str] | None = None
     # Linux netdev for NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME on multinode PP runs.
     # absent or "auto" -> resolved at runtime by test_discover_topology from cluster IPs.
-    ib_netdev: Union[Literal["auto"], str, None] = None
+    ib_netdev: Literal["auto"] | str | None = None
 
     @field_validator("ib_netdev", mode="after")
     @classmethod
@@ -182,7 +181,7 @@ class AtomVariantConfig(BaseVariantConfig):
                 key += f",NNODES={p.nnodes}"
         return f"{key},CONC={concurrency}"
 
-    def expected_cells(self) -> List[str]:
+    def expected_cells(self) -> list[str]:
         by_name = {c.name: c for c in self.sweep.sequence_combinations}
         return [self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency) for r in self.sweep.runs]
 
@@ -340,7 +339,7 @@ def placeholder_gated_threshold_cell(
     p95_tpot_max_ms: float = 1_000_000,
     failed_max: int = 1_000_000_000,
     success_rate_min: float = 0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return one sweep cell's ``client.*`` specs covering every ``GATED_METRICS`` member."""
     loose_ms = {"kind": "max_ms", "value": 1_000_000}
     return {
@@ -372,7 +371,7 @@ def placeholder_gated_threshold_cell(
     }
 
 
-def orchestrator_container_from_variant(variant: AtomVariantConfig) -> Dict[str, Any]:
+def orchestrator_container_from_variant(variant: AtomVariantConfig) -> dict[str, Any]:
     """``container`` block for :class:`OrchestratorConfig` (includes server env)."""
     block = variant.container.model_dump()
     server_env = variant.roles.server.env

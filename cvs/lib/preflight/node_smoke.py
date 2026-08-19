@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from cvs.lib.preflight.base import PreflightCheck
 
@@ -260,7 +260,6 @@ class NodeSmokeCheck(PreflightCheck):
         self.master_port = int(get_nested_config(cfg, "node_smoke", "master_port", 1234))
         self.ssh_timeout = int(get_nested_config(cfg, "node_smoke", "ssh_timeout", 300))
 
-        artifacts_root = get_nested_config(cfg, "reporting", "artifacts_root_dir", "/tmp/preflight")
         self.dump_path = _resolve_dump_path(cfg)
 
         rdma_ifaces = node_check.get("rdma_interfaces") or []

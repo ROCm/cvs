@@ -42,7 +42,6 @@ from cvs.lib.inference.sglang.sglang_config_loader import (
 from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
 from cvs.lib.inference.sglang.sglang_distributed_lib import SglangDistributed
 from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
-from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,

@@ -11,22 +11,17 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.inference.utils.inference_suite_lifecycle import (
-    sweep_cell_result_key,
-    test_accuracy_eval,  # noqa: F401
-    test_launch_container,  # noqa: F401
-    test_model_fetch,  # noqa: F401
-    test_setup_sshd,  # noqa: F401
-    test_teardown,  # noqa: F401
+from cvs.lib.inference.atom.atom_config_loader import (
+    expand_sweep_parametrize,
+    reuse_server_flag,
+    server_session_key,
 )
+from cvs.lib.inference.atom.atom_dmesg import verify_dmesg_window
 from cvs.lib.inference.atom.atom_gpu_metrics import (
     capture_gpu_snap,
     gpu_results_from_poll,
     merge_gpu_into_results,
 )
-from cvs.lib.inference.atom.atom_dmesg import verify_dmesg_window
-from cvs.lib.inference.atom.atom_orch import AtomJob
-from cvs.lib.inference.atom.atom_niah_job import run_niah_cell
 from cvs.lib.inference.atom.atom_mtp_quality import (
     chat_template_ok,
     chat_template_sha256,
@@ -34,21 +29,30 @@ from cvs.lib.inference.atom.atom_mtp_quality import (
     extract_completion_text,
     parse_mtp_log_metrics,
 )
-from cvs.lib.inference.atom.atom_quant_parity import (
-    extract_completion_text as quant_extract_completion_text,
-    run_quant_parity_probe,
-)
-from cvs.lib.inference.atom.atom_config_loader import (
-    expand_sweep_parametrize,
-    reuse_server_flag,
-    server_session_key,
-)
+from cvs.lib.inference.atom.atom_niah_job import run_niah_cell
+from cvs.lib.inference.atom.atom_orch import AtomJob
 from cvs.lib.inference.atom.atom_parsing import (
     CLIENT_METRIC_UNITS as _METRIC_UNITS,
+)
+from cvs.lib.inference.atom.atom_parsing import (
     METRIC_TIERS,
     RECORD_METRICS,
     SCALING_METRIC_UNITS,
     tier_metric_specs,
+)
+from cvs.lib.inference.atom.atom_quant_parity import (
+    extract_completion_text as quant_extract_completion_text,
+)
+from cvs.lib.inference.atom.atom_quant_parity import (
+    run_quant_parity_probe,
+)
+from cvs.lib.inference.utils.inference_suite_lifecycle import (
+    sweep_cell_result_key,
+    test_accuracy_eval,  # noqa: F401
+    test_launch_container,  # noqa: F401
+    test_model_fetch,  # noqa: F401
+    test_setup_sshd,  # noqa: F401
+    test_teardown,  # noqa: F401
 )
 from cvs.lib.utils.verdict import evaluate_all
 from cvs.tests.inference.atom._shared import test_print_results_table  # noqa: F401
@@ -480,16 +484,6 @@ def test_atom_quant_parity(orch, variant_config, lifecycle, request):
 
     p = variant_config.params
     qp = variant_config.quant_parity
-    combo = variant_config.sweep.sequence_combinations[0]
-    run = variant_config.sweep.runs[0]
-    job = AtomJob.from_variant(
-        orch=orch,
-        variant=variant_config,
-        hf_token="",
-        isl=combo.isl,
-        osl=combo.osl,
-        concurrency=run.concurrency,
-    )
     base = f"{p.base_url}:{p.port_no}".replace("0.0.0.0", "127.0.0.1")
     model_id = variant_config.model.id
 

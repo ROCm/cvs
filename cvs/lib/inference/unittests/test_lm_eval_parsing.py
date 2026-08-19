@@ -20,10 +20,8 @@ was not read. Written greenfield (RED before implementation).
 
 import copy
 import inspect
-import math
 import typing
 import unittest
-from typing import Any, Dict
 from unittest.mock import patch
 
 from cvs.lib.inference.utils.lm_eval_parsing import _is_real_number, project

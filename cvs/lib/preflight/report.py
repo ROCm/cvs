@@ -1246,7 +1246,7 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
 
-        html_out = f"""
+        html_out = """
         <section>
             <h2>Primus Node Smoke — Failures</h2>
             <p class="error-summary">The following nodes failed Primus node_smoke checks:</p>

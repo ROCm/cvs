@@ -20,7 +20,7 @@ import os
 import re
 import shlex
 import time
-from typing import Any, Mapping, Optional
+from typing import Any, Optional
 
 from cvs.lib import globals
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
