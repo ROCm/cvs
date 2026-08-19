@@ -303,7 +303,7 @@ class TrainScriptResolveTests(unittest.TestCase):
     def test_returns_first_existing_probed_path(self):
         job, orch = _make_job(hosts=["h0", "h1"])
         v264 = "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py"
-        orch.exec.side_effect = lambda cmd, *a, **k: {h: v264 for h in orch.hosts} if "train.py" in str(cmd) else {}
+        orch.exec.side_effect = lambda cmd, *a, **k: ({h: v264 for h in orch.hosts} if "train.py" in str(cmd) else {})
         self.assertEqual(job._resolve_train_script(), v264)
 
     def test_raises_when_no_candidate_exists(self):

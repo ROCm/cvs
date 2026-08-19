@@ -250,11 +250,9 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
         summary_rows = []
         for cell_id, result in sorted(
             performance_by_cell.items(),
-            key=lambda kv: (
-                (int(m.group("isl")), int(m.group("osl")), int(m.group("conc")))
-                if (m := _CELL_RE.match(str(kv[0])))
-                else (0, 0, 0)
-            ),
+            key=lambda kv: (int(m.group("isl")), int(m.group("osl")), int(m.group("conc")))
+            if (m := _CELL_RE.match(str(kv[0])))
+            else (0, 0, 0),
         ):
             m = _CELL_RE.match(str(cell_id))
             if m:
