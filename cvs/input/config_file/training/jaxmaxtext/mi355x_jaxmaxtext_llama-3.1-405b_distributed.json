@@ -202,11 +202,11 @@
       "segfault": "Segmentation fault|SIGSEGV|core dumped|std::bad_alloc"
     },
 
-    "__comment_NNODES_": "NNODES is 'auto': the real node count is injected at runtime from the cluster_file (the training launcher exports NNODES=<num_nodes>), so this value is a placeholder and is overridden. The NNODES=8 in the sweep names is only a label (405B needs ~8 nodes with full FSDP).",
-    "_sweeps_comment": "Each sweep = one full training run with per-run maxtext overrides; `name` is the threshold cell key. NNODES/GBS in the name are informational labels (405B assumed on 8 nodes = 64 GPUs); per_device_batch_size drives the run and the real global batch = per_device_batch_size * (nodes * gpus_per_node) at runtime. FP8 on MI355X/MI350X (CDNA4) uses quantization=fp8 (MI300X/MI325X CDNA3 use nanoo_fp8). BF16 uses a smaller per-device batch than FP8 (higher memory). enabled_sweep_list selects which sweeps to run.",
+    "__comment_NNODES_": "NNODES is 'auto': the real node count is injected at runtime from the cluster_file (the training launcher exports NNODES=<num_nodes>), so this value is a placeholder and is overridden. The NNODES=4 in the sweep names is only a label (405B on 4 nodes = 32 GPUs with full FSDP; per MAD, per_device_batch_size 3 for 4 nodes / 5 for 8 nodes).",
+    "_sweeps_comment": "Each sweep = one full training run with per-run maxtext overrides; `name` is the threshold cell key. NNODES/GBS in the name are informational labels (405B on 4 nodes = 32 GPUs); per_device_batch_size drives the run and the real global batch = per_device_batch_size * (nodes * gpus_per_node) at runtime. FP8 on MI355X/MI350X (CDNA4) uses quantization=fp8 (MI300X/MI325X CDNA3 use nanoo_fp8). BF16 uses a smaller per-device batch than FP8 (higher memory). enabled_sweep_list selects which sweeps to run.",
     "sweeps": [
       {
-        "name": "NNODES=8,STEPS=30,PRECISION=BF16,BATCH=2,GBS=128,SEQLEN=8192",
+        "name": "NNODES=4,STEPS=30,PRECISION=BF16,BATCH=2,GBS=64,SEQLEN=8192",
         "maxtext_overrides": {
           "per_device_batch_size": 2,
           "max_target_length": 8192,
@@ -216,9 +216,9 @@
         }
       },
       {
-        "name": "NNODES=8,STEPS=30,PRECISION=FP8,BATCH=5,GBS=320,SEQLEN=8192",
+        "name": "NNODES=4,STEPS=30,PRECISION=FP8,BATCH=3,GBS=96,SEQLEN=8192",
         "maxtext_overrides": {
-          "per_device_batch_size": 5,
+          "per_device_batch_size": 3,
           "max_target_length": 8192,
           "dtype": "bfloat16",
           "weight_dtype": "bfloat16",
@@ -227,8 +227,8 @@
       }
     ],
     "enabled_sweep_list": [
-      "NNODES=8,STEPS=30,PRECISION=BF16,BATCH=2,GBS=128,SEQLEN=8192",
-      "NNODES=8,STEPS=30,PRECISION=FP8,BATCH=5,GBS=320,SEQLEN=8192"
+      "NNODES=4,STEPS=30,PRECISION=BF16,BATCH=2,GBS=64,SEQLEN=8192",
+      "NNODES=4,STEPS=30,PRECISION=FP8,BATCH=3,GBS=96,SEQLEN=8192"
     ]
   }
 }

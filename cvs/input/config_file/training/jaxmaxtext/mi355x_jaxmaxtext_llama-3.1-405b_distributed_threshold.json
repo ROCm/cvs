@@ -1,7 +1,7 @@
 {
   "_comment": "APPROXIMATE placeholder thresholds for Llama-3.1-405B on MI355X distributed, keyed by sweep name. Gated metrics (min/max) drive PASS/FAIL; kind='info' metrics always PASS (record-only) but keep a default `value` to calibrate later. tflops/tokens mins are rough estimates (405B: high tflops/GPU, low tokens/s/GPU) -- replace with measured MI355X numbers. Requires enforce_thresholds=true.",
 
-  "NNODES=8,STEPS=30,PRECISION=BF16,BATCH=2,GBS=128,SEQLEN=8192": {
+  "NNODES=4,STEPS=30,PRECISION=BF16,BATCH=2,GBS=64,SEQLEN=8192": {
     "training.tflops_per_sec_per_gpu": { "kind": "min", "value": 400.0 },
     "training.tokens_per_sec_per_gpu": { "kind": "min", "value": 250.0 },
     "training.tokens_per_sec_total":   { "kind": "info", "value": 0 },
@@ -17,7 +17,7 @@
     "training.time_to_target_seconds": { "kind": "info", "value": 1000000.0 }
   },
 
-  "NNODES=8,STEPS=30,PRECISION=FP8,BATCH=5,GBS=320,SEQLEN=8192": {
+  "NNODES=4,STEPS=30,PRECISION=FP8,BATCH=3,GBS=96,SEQLEN=8192": {
     "training.tflops_per_sec_per_gpu": { "kind": "min", "value": 600.0 },
     "training.tokens_per_sec_per_gpu": { "kind": "min", "value": 400.0 },
     "training.tokens_per_sec_total":   { "kind": "info", "value": 0 },

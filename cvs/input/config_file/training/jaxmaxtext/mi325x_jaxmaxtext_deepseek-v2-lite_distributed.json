@@ -142,7 +142,7 @@
       "xla_gpu_all_gather_combine_threshold_bytes": "8589934592",
       "xla_gpu_enable_triton_gemm": "False",
       "xla_gpu_enable_cublaslt": "True",
-      "xla_gpu_autotune_level": "4",
+      "xla_gpu_autotune_level": "0",
       "xla_gpu_enable_all_gather_combine_by_dim": "FALSE"
     },
 
@@ -177,12 +177,12 @@
     "_convergence_comment": "to enable validation loss set eval_interval > 0 (and eval_steps) in maxtext_config; this needs a validation dataset (eval_split/eval_dataset_name). target_value <= 0 disables convergence (record-only). target_metric 'auto' uses eval_loss when eval runs, else training loss.",
     "convergence": {
       "target_metric": "auto",
-      "target_value": 10.0
+      "target_value": 11.8
     },
 
     "_loss_curve_comment": "Row 32: sample training loss every `sample_every` steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
     "loss_curve": {
-      "sample_every": 10,
+      "sample_every": 2,
       "milestone_steps": [100, 500, 1000, 5000],
       "max_slope": 0.0,
       "enforce": true

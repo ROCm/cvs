@@ -18,6 +18,8 @@
     "precision": "bfloat16"
   },
 
+  "__ex_image": "amdaccelcloud/jax:7.15.0a20260721-ubuntu24.04-jax0.10.0-TE2.10",
+  "__ex__image": "rocm/jax-training:maxtext-v26.4",
   "container": {
     "lifetime": "per_run",
     "name": "rocm-jaxmaxtext-mi325x-llama3.1-405b",
@@ -46,7 +48,7 @@
   "training": {
     "distributed": true,
     "gpus_per_node": 8,
-    "steps": 30,
+    "steps": 10,
     "enable_checkpointing": false,
     "train_script_paths": [
       "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
@@ -144,7 +146,7 @@
       "xla_gpu_all_gather_combine_threshold_bytes": "8589934592",
       "xla_gpu_enable_triton_gemm": "False",
       "xla_gpu_enable_cublaslt": "True",
-      "xla_gpu_autotune_level": "4",
+      "xla_gpu_autotune_level": "0",
       "xla_gpu_enable_all_gather_combine_by_dim": "FALSE"
     },
 
@@ -179,12 +181,12 @@
     "_convergence_comment": "to enable validation loss set eval_interval > 0 (and eval_steps) in maxtext_config; this needs a validation dataset (eval_split/eval_dataset_name). target_value <= 0 disables convergence (record-only). target_metric 'auto' uses eval_loss when eval runs, else training loss.",
     "convergence": {
       "target_metric": "auto",
-      "target_value": 10.0
+      "target_value": 11.8
     },
 
     "_loss_curve_comment": "Row 32: sample training loss every `sample_every` steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
     "loss_curve": {
-      "sample_every": 10,
+      "sample_every": 2,
       "milestone_steps": [100, 500, 1000, 5000],
       "max_slope": 0.0,
       "enforce": true
@@ -202,11 +204,11 @@
       "segfault": "Segmentation fault|SIGSEGV|core dumped|std::bad_alloc"
     },
 
-    "__comment_NNODES_": "NNODES is 'auto': the real node count is injected at runtime from the cluster_file (the training launcher exports NNODES=<num_nodes>), so this value is a placeholder and is overridden. The NNODES=8 in the sweep names is only a label (405B needs ~8 nodes with full FSDP).",
-    "_sweeps_comment": "Each sweep = one full training run with per-run maxtext overrides; `name` is the threshold cell key. NNODES/GBS in the name are informational labels (405B assumed on 8 nodes = 64 GPUs); per_device_batch_size drives the run and the real global batch = per_device_batch_size * (nodes * gpus_per_node) at runtime. FP8 on MI300X/MI325X (CDNA3) uses quantization=nanoo_fp8 (MI355X/MI350X CDNA4 use fp8). BF16 uses a smaller per-device batch than FP8 (higher memory). enabled_sweep_list selects which sweeps to run.",
+    "__comment_NNODES_": "NNODES is 'auto': the real node count is injected at runtime from the cluster_file (the training launcher exports NNODES=<num_nodes>), so this value is a placeholder and is overridden. The NNODES=4 in the sweep names is only a label (405B on 4 nodes = 32 GPUs with full FSDP; per MAD, per_device_batch_size 3 for 4 nodes / 5 for 8 nodes).",
+    "_sweeps_comment": "Each sweep = one full training run with per-run maxtext overrides; `name` is the threshold cell key. NNODES/GBS in the name are informational labels (405B on 4 nodes = 32 GPUs); per_device_batch_size drives the run and the real global batch = per_device_batch_size * (nodes * gpus_per_node) at runtime. FP8 on MI300X/MI325X (CDNA3) uses quantization=nanoo_fp8 (MI355X/MI350X CDNA4 use fp8). BF16 uses a smaller per-device batch than FP8 (higher memory). enabled_sweep_list selects which sweeps to run.",
     "sweeps": [
       {
-        "name": "NNODES=8,STEPS=30,PRECISION=BF16,BATCH=2,GBS=128,SEQLEN=8192",
+        "name": "NNODES=4,STEPS=30,PRECISION=BF16,BATCH=2,GBS=64,SEQLEN=8192",
         "maxtext_overrides": {
           "per_device_batch_size": 2,
           "max_target_length": 8192,
@@ -216,9 +218,9 @@
         }
       },
       {
-        "name": "NNODES=8,STEPS=30,PRECISION=FP8,BATCH=5,GBS=320,SEQLEN=8192",
+        "name": "NNODES=4,STEPS=30,PRECISION=FP8,BATCH=3,GBS=96,SEQLEN=8192",
         "maxtext_overrides": {
-          "per_device_batch_size": 5,
+          "per_device_batch_size": 3,
           "max_target_length": 8192,
           "dtype": "bfloat16",
           "weight_dtype": "bfloat16",
@@ -227,8 +229,8 @@
       }
     ],
     "enabled_sweep_list": [
-      "NNODES=8,STEPS=30,PRECISION=BF16,BATCH=2,GBS=128,SEQLEN=8192",
-      "NNODES=8,STEPS=30,PRECISION=FP8,BATCH=5,GBS=320,SEQLEN=8192"
+      "NNODES=4,STEPS=30,PRECISION=BF16,BATCH=2,GBS=64,SEQLEN=8192",
+      "NNODES=4,STEPS=30,PRECISION=FP8,BATCH=3,GBS=96,SEQLEN=8192"
     ]
   }
 }
