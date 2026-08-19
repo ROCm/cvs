@@ -127,19 +127,10 @@ def build_remote_preflight_info_command(
     primus_cli = f"{primus_q}/runner/primus-cli"
     run_cmd = f"{primus_cli} direct -- preflight {preflight_flags}"
 
-    report_cat = (
-        f"echo '{_REPORT_BEGIN}'; "
-        f'if [ -f {report_md_q} ]; then cat {report_md_q}; fi; '
-        f"echo '{_REPORT_END}'"
-    )
+    report_cat = f"echo '{_REPORT_BEGIN}'; if [ -f {report_md_q} ]; then cat {report_md_q}; fi; echo '{_REPORT_END}'"
 
     if node_rank == 0:
-        return (
-            f"cd {primus_q} && "
-            f"{' && '.join(env_lines)} && "
-            f"{run_cmd}; "
-            f"rc=$?; {report_cat}; exit $rc"
-        )
+        return f"cd {primus_q} && {' && '.join(env_lines)} && {run_cmd}; rc=$?; {report_cat}; exit $rc"
 
     return f"cd {primus_q} && {' && '.join(env_lines)} && {run_cmd}"
 
@@ -248,9 +239,7 @@ class Tier3InfoCheck(PreflightCheck):
 
         rdma_ifaces = node_check.get("rdma_interfaces") or []
         self.nccl_socket_ifname = resolve_tier3_setting(cfg, "nccl_socket_ifname", "") or None
-        self.gloo_socket_ifname = (
-            resolve_tier3_setting(cfg, "gloo_socket_ifname", self.nccl_socket_ifname) or None
-        )
+        self.gloo_socket_ifname = resolve_tier3_setting(cfg, "gloo_socket_ifname", self.nccl_socket_ifname) or None
 
         nccl_ib_hca = resolve_tier3_setting(cfg, "nccl_ib_hca", None)
         if not nccl_ib_hca and rdma_ifaces:

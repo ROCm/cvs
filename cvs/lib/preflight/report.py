@@ -202,7 +202,9 @@ class PreflightReportGenerator(PreflightCheck):
 
         if output_path is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_dir = get_nested_config(self.config_dict, 'reporting', 'artifacts_root_dir', '/home/{user-id}/preflight')
+            output_dir = get_nested_config(
+                self.config_dict, 'reporting', 'artifacts_root_dir', '/home/{user-id}/preflight'
+            )
             Path(output_dir).mkdir(parents=True, exist_ok=True)
             output_path = Path(output_dir) / f"preflight_report_{timestamp}.html"
         else:
@@ -1370,9 +1372,7 @@ class PreflightReportGenerator(PreflightCheck):
             <p>All <code>{passing}</code> launcher node(s) passed <code>preflight --host --gpu --network</code>.</p>
         """
             if dump_path:
-                html_out += (
-                    f"<p>Markdown report: <code>{html.escape(str(dump_path))}/{html.escape(str(report_name))}.md</code></p>"
-                )
+                html_out += f"<p>Markdown report: <code>{html.escape(str(dump_path))}/{html.escape(str(report_name))}.md</code></p>"
             if report_md:
                 preview = report_md[:4000]
                 if len(report_md) > 4000:
@@ -1415,9 +1415,7 @@ class PreflightReportGenerator(PreflightCheck):
             </table>
         """
         if dump_path:
-            html_out += (
-                f"<p>Report directory: <code>{html.escape(str(dump_path))}/{html.escape(str(report_name))}.md</code></p>"
-            )
+            html_out += f"<p>Report directory: <code>{html.escape(str(dump_path))}/{html.escape(str(report_name))}.md</code></p>"
         html_out += """
         </section>
         """
