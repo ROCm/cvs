@@ -14,7 +14,9 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from cvs.core.scheduler import Scheduler, detect_scheduler, is_managed_compute
+from cvs.core.scheduler import Scheduler, _running_in_job_step, detect_scheduler, is_managed_compute
+
+JOB_STEP_ENV = {"SLURM_JOB_ID": "123", "SLURM_STEP_ID": "0", "SLURM_PROCID": "0"}
 
 
 def _which_only(*present):
@@ -101,17 +103,61 @@ class TestDetectScheduler(unittest.TestCase):
             detect_scheduler()
 
 
+class TestRunningInJobStep(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.dict(os.environ, {}, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @patch.dict(os.environ, JOB_STEP_ENV)
+    def test_true_when_all_three_vars_present(self):
+        self.assertTrue(_running_in_job_step())
+
+    def test_false_when_no_vars_present(self):
+        self.assertFalse(_running_in_job_step())
+
+    @patch.dict(os.environ, {"SLURM_STEP_ID": "0", "SLURM_PROCID": "0"})
+    def test_false_when_job_id_missing(self):
+        # e.g. plain SSH login to a scheduler-managed head node with scheduler
+        # tooling installed, but no srun step actually launched this process.
+        self.assertFalse(_running_in_job_step())
+
+    @patch.dict(os.environ, {"SLURM_JOB_ID": "123", "SLURM_PROCID": "0"})
+    def test_false_when_step_id_missing(self):
+        # e.g. salloc grants a bare allocation without launching a step.
+        self.assertFalse(_running_in_job_step())
+
+    @patch.dict(os.environ, {"SLURM_JOB_ID": "123", "SLURM_STEP_ID": "0"})
+    def test_false_when_procid_missing(self):
+        self.assertFalse(_running_in_job_step())
+
+
 class TestIsManagedCompute(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.dict(os.environ, {}, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     @patch("cvs.core.scheduler.detect_scheduler", return_value=Scheduler.SPUR)
-    def test_true_for_spur(self, _mock_detect):
+    @patch.dict(os.environ, JOB_STEP_ENV)
+    def test_true_for_spur_in_job_step(self, _mock_detect):
         self.assertTrue(is_managed_compute())
 
     @patch("cvs.core.scheduler.detect_scheduler", return_value=Scheduler.SLURM)
-    def test_true_for_slurm(self, _mock_detect):
+    @patch.dict(os.environ, JOB_STEP_ENV)
+    def test_true_for_slurm_in_job_step(self, _mock_detect):
         self.assertTrue(is_managed_compute())
 
     @patch("cvs.core.scheduler.detect_scheduler", return_value=Scheduler.BARE_METAL)
-    def test_false_for_bare_metal(self, _mock_detect):
+    @patch.dict(os.environ, JOB_STEP_ENV)
+    def test_false_for_bare_metal_even_in_job_step(self, _mock_detect):
+        self.assertFalse(is_managed_compute())
+
+    @patch("cvs.core.scheduler.detect_scheduler", return_value=Scheduler.SLURM)
+    def test_false_when_scheduler_managed_but_not_in_job_step(self, _mock_detect):
+        # The exact scenario from the PR review: scheduler tooling works (e.g. a
+        # plain SSH login to a managed head node) but this process was never
+        # launched via srun, so it must not be treated as managed compute.
         self.assertFalse(is_managed_compute())
 
 

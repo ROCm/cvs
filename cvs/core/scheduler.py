@@ -55,6 +55,25 @@ def detect_scheduler() -> Scheduler:
     return Scheduler.BARE_METAL
 
 
+def _running_in_job_step() -> bool:
+    """True if this process was itself launched by srun as part of a job step.
+
+    scontrol/spur version succeeding only means scheduler tooling is installed
+    and the controller is reachable from wherever this process happens to run
+    (e.g. a plain SSH login to a scheduler-managed head node) - it says nothing
+    about whether this invocation is actually a step srun launched. SLURM_JOB_ID
+    alone is also insufficient: salloc sets it for a bare allocation with no
+    step. SLURM_STEP_ID/SLURM_PROCID are only set once srun has launched a step,
+    which is what "managed compute" actually needs to gate on. Verified
+    identical on SPUR (SLURM_JOB_ID/SLURM_STEP_ID/SLURM_PROCID) and real SLURM.
+    """
+    return (
+        os.environ.get("SLURM_JOB_ID") is not None
+        and os.environ.get("SLURM_STEP_ID") is not None
+        and os.environ.get("SLURM_PROCID") is not None
+    )
+
+
 def is_managed_compute() -> bool:
-    """True if compute nodes are managed by a scheduler (SPUR/SLURM), False for baremetal SSH."""
-    return detect_scheduler() != Scheduler.BARE_METAL
+    """True if this process is running inside a scheduler-launched job step, False otherwise."""
+    return detect_scheduler() != Scheduler.BARE_METAL and _running_in_job_step()
