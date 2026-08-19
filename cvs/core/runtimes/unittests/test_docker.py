@@ -20,7 +20,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 #     retry, which double-runs the caller's payload whenever it fails for any
 #     reason (not just permission-denied).
 
-import shlex
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -138,8 +137,7 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
                     f"[{label}] '--gpus all' must never appear in docker cmd:\n{captured[0]}",
                 )
 
-    def _run_missing_image_setup(self, sudo_prefix):
-        """setup_containers with the image absent, returning every rendered cmd."""
+    def test_pulls_image_when_missing_before_run(self):
         calls = []
 
         def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
@@ -151,7 +149,6 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
         orchestrator = MagicMock()
         orchestrator.hosts = ["host1"]
         orchestrator.all.exec.side_effect = _fake_exec
-        orchestrator.sudo_prefix.return_value = sudo_prefix
         rt = DockerRuntime(MagicMock(), orchestrator)
 
         result = rt.setup_containers(
@@ -159,36 +156,9 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
             container_name="cvs_iter_test",
             volumes=["/home/u:/workspace"],
         )
-        return result, calls
-
-    def test_pulls_image_when_missing_before_run(self):
-        result, calls = self._run_missing_image_setup("sudo -n ")
-
         self.assertTrue(result)
         self.assertTrue(any("docker pull" in c for c in calls))
-        self.assertTrue(any(c.startswith("sudo -n docker run") for c in calls))
-
-    def test_pull_uses_sudo_prefix_not_hardcoded_sudo(self):
-        """The pull must carry the same prefix as every other docker call.
-
-        A hardcoded `sudo docker pull` pulls as root while registry_login --
-        which honors sudo_prefix() -- authenticated as the SSH user, so root
-        reads an empty /root/.docker/config.json and a private image fails with
-        "pull access denied" on any cluster without passwordless sudo. Bare
-        `sudo` also loses the `-n`, so a password prompt blocks until timeout.
-        """
-        for sudo_prefix in ("", "sudo -n "):
-            with self.subTest(sudo_prefix=sudo_prefix or "<none>"):
-                _, calls = self._run_missing_image_setup(sudo_prefix)
-
-                pulls = [c for c in calls if "docker pull" in c]
-                self.assertEqual(len(pulls), 1, f"expected exactly one pull, got: {pulls}")
-                self.assertEqual(pulls[0], f"{sudo_prefix}docker pull {shlex.quote('img:test')}")
-                self.assertNotIn(
-                    "sudo docker pull",
-                    pulls[0],
-                    "pull must use sudo_prefix(), never a hardcoded unconditional `sudo`",
-                )
+        self.assertTrue(any(c.startswith("sudo docker run") for c in calls))
 
 
 class TestDockerRuntimeRegistryLogin(unittest.TestCase):

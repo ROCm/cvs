@@ -264,7 +264,9 @@ class TestContainerOrchestrator(unittest.TestCase):
             "cvs.core.orchestrators.container", fromlist=["sshd_port_listen_probe_cmd"]
         ).sshd_port_listen_probe_cmd(2224)
         self.assertIn("/dev/tcp/127.0.0.1/2224", cmd)
-        ok = __import__("cvs.core.orchestrators.container", fromlist=["sshd_port_listen_ok"]).sshd_port_listen_ok
+        ok = __import__(
+            "cvs.core.orchestrators.container", fromlist=["sshd_port_listen_ok"]
+        ).sshd_port_listen_ok
         self.assertTrue(ok({"stdout": "OK\n"}))
         self.assertTrue(ok({"output": "OK\n"}))
         self.assertFalse(ok({"stdout": "NO\n"}))

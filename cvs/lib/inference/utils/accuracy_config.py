@@ -37,7 +37,6 @@ class AccuracyConfig(_Forbid):
     @model_validator(mode="after")
     def _check_unique_task_ids(self):
         from collections import Counter
-
         counts = Counter(t.id for t in self.tasks)
         dupes = sorted(i for i, n in counts.items() if n > 1)
         if dupes:

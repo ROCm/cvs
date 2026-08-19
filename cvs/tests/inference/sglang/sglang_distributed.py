@@ -49,7 +49,6 @@ def test_launch_container(orch, variant_config, lifecycle, request):
 
     lifecycle.complete_stage(request, "container_launch", t0)
 
-
 # def test_setup_ibv_devices(im_obj, lifecycle, request):
 #     globals.error_list = []
 #     t0 = time.monotonic()

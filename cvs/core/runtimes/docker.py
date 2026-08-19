@@ -352,17 +352,9 @@ class DockerRuntime:
         return args
 
     def pull_image(self, image_name, timeout=None):
-        """Pull container image on all hosts.
-
-        Uses sudo_prefix() like every other docker call in this class. A
-        hardcoded `sudo` would pull as root while registry_login() -- which
-        does honor sudo_prefix() -- authenticated as the SSH user, so a private
-        image would fail with "pull access denied" on any cluster without
-        passwordless sudo. Bare `sudo` also drops the `-n`, letting a password
-        prompt block until the timeout instead of failing fast.
-        """
+        """Pull container image on all hosts."""
         timeout = timeout or 600
-        cmd = f"{self.orchestrator.sudo_prefix()}docker pull {shlex.quote(image_name)}"
+        cmd = f"sudo docker pull {shlex.quote(image_name)}"
         self.log.info(f"Pulling image on all hosts: {image_name}")
         return self.orchestrator.all.exec(cmd, timeout=timeout, detailed=True)
 

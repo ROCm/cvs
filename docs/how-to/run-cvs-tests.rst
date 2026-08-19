@@ -53,7 +53,7 @@ You can list available tests using either `cvs run` (with no arguments) or `cvs 
       • sglang_llama_70b_distributed
   
     cvs.tests.inference.vllm (1 test suite)
-      • vllm
+      • vllm_single
   
     cvs.tests.mori (1 test suite)
       • mori_benchmark_test
@@ -757,45 +757,34 @@ Use these scripts to run the Sglang tests.
 VLLM test scripts
 ------------------------------
 
-vLLM benchmarks use one parametrized suite, ``vllm``, covering both single-node and
-multinode runs — the topology comes from the configuration file, not from the suite name.
-Configuration files live in ``cvs/input/config_file/inference/vllm/``, each with a sibling
-threshold file (see :func:`cvs.lib.inference.utils.vllm_config_loader.load_variant`, or
-:func:`cvs.lib.inference.atom.atom_config_loader.load_variant` for ATOM). Point
-``--config_file`` at one of them and ``--cluster_file`` at a cluster JSON that matches
-your hardware.
+Single-node vLLM benchmarks use one parametrized suite, ``vllm_single``. Each **variant**
+is a directory under ``cvs/input/config_file/inference/vllm_single/<variant>/`` containing
+``*_config.json`` and a sibling ``*_threshold.json`` (see :func:`cvs.lib.inference.utils.inferencing_config_loader.load_variant` for vLLM, or :func:`cvs.lib.inference.atom.atom_config_loader.load_variant` for ATOM).
+Point ``--config_file`` at the variant's ``*_config.json`` and ``--cluster_file`` at a cluster
+JSON that matches your hardware (for example ``input/cluster_file/mi300x_vllm_single.json``).
 
 .. code:: bash
 
-  cvs list vllm
+  cvs list vllm_single
 
 .. code:: text
 
-  Available tests in vllm:
-    • test_accuracy_eval
-    • test_discover_topology
-    • test_gpu_metric
-    • test_launch_container
-    • test_metric
-    • test_model_fetch
-    • test_openai_compatible_smoke
-    • test_print_results_table
-    • test_prom_metric
-    • test_setup_sshd
-    • test_teardown
-    • test_vllm_inference
+  Available tests in vllm_single:
+    - test_launch_container
+    - test_setup_sshd
+    - test_model_fetch
+    - test_vllm_inference[throughput-conc64]
+    - test_vllm_inference[throughput-conc128]
+    - test_vllm_inference[throughput-conc256]
+    - test_print_results_table
+    - test_teardown
 
-At run time, ``test_vllm_inference`` and the metric tests are parametrized per sweep cell,
-producing names such as ``test_vllm_inference[balanced-conc64]`` from the ``sweep`` block in
-your configuration file.
+The ``test_vllm_inference[...]`` names come from the ``sweep`` block in the variant config
+(sequence combination ``name`` plus ``conc``); your list may differ if you use another variant.
 
 .. code:: bash
 
-  cvs run vllm --cluster_file input/cluster_file/cluster_container.json --config_file input/config_file/inference/vllm/mi300x_vllm_llama31-70b_fp8_single.json --html=/var/www/html/cvs/vllm.html --capture=tee-sys --self-contained-html --log-file=/tmp/vllm.log -vvv -s
-
-For the full configuration schema, metrics, and thresholds see
-:doc:`/reference/configuration-files/vllm`; for a step-by-step first run including multinode,
-see :doc:`/how-to/run-vllm-benchmarks`.
+  cvs run vllm_single --cluster_file input/cluster_file/mi300x_vllm_single.json --config_file input/config_file/inference/vllm_single/w1_llama31_70b_fp8kv/w1_llama31_70b_fp8kv_config.json --html=/var/www/html/cvs/vllm_single.html --capture=tee-sys --self-contained-html --log-file=/tmp/vllm_single.log -vvv -s
 
 
 Test results

@@ -102,7 +102,7 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
     results = im_obj.verify_openai_compatible_endpoints()
     lifecycle.smoke_results = results
     lifecycle.complete_stage(request, "smoke_endpoints", t0)
-
+    
 
 # def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
 #     globals.error_list = []
@@ -177,7 +177,6 @@ def test_disagg_gpu_topology(im_obj, lifecycle, request):
     t0 = time.monotonic()
     im_obj.sglang_disagg_gpu_counts()
     lifecycle.complete_stage(request, "gpu_topology", t0)
-
 
 def test_print_results_table(inf_res_dict, lifecycle, variant_config):
     from cvs.lib.report.registry import bind_session_results

@@ -8,14 +8,14 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import importlib.metadata
 import json
 import logging
+import sys
 from pathlib import Path
 
 import pytest
 
-from cvs.lib.report_plugins import HtmlReportManager, cli_option_value
+from cvs.lib.report_plugins import HtmlReportManager
 
 log = logging.getLogger(__name__)
-
 
 def _maybe_autocollect_html(config, suite_name):
     '''
@@ -225,12 +225,15 @@ def pytest_metadata(metadata):
         except Exception as e:
             cvs_version = f"Unknown (Error: {e})"
 
-    # Parse command line arguments to get our custom options (just for display).
-    # Handles both `--opt value` and `--opt=value` forms.
-    cluster_arg = cli_option_value("--cluster_file")
-    config_arg = cli_option_value("--config_file")
-    cluster_file = Path(cluster_arg).name if cluster_arg else "Not specified"
-    config_file = Path(config_arg).name if config_arg else "Not specified"
+    # Parse command line arguments to get our custom options (just for display)
+    cluster_file = "Not specified"
+    config_file = "Not specified"
+
+    for i, arg in enumerate(sys.argv):
+        if arg == "--cluster_file" and i + 1 < len(sys.argv):
+            cluster_file = Path(sys.argv[i + 1]).name  # Just filename for display
+        elif arg == "--config_file" and i + 1 < len(sys.argv):
+            config_file = Path(sys.argv[i + 1]).name  # Just filename for display
 
     # Add custom metadata
     metadata["CVS version"] = cvs_version

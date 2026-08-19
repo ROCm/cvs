@@ -82,21 +82,21 @@ class TestGpuCount(unittest.TestCase):
     def test_gpu_count_grid(self):
         cases = [
             # (tp, pp, expected)
-            ("8", "2", 16),  # both numeric strings -> product
-            (8, 2, 16),  # both ints
-            (8, "2", 16),  # mixed int/str (no str-repetition trap)
-            ("8", 2, 16),  # mixed str/int
-            ("1", "8", 8),  # single-node style
+            ("8", "2", 16),          # both numeric strings -> product
+            (8, 2, 16),              # both ints
+            (8, "2", 16),            # mixed int/str (no str-repetition trap)
+            ("8", 2, 16),            # mixed str/int
+            ("1", "8", 8),           # single-node style
             ("16", "1", 16),
-            ("0", "8", 0),  # zero is a real product, not None
+            ("0", "8", 0),           # zero is a real product, not None
             ("8", "0", 0),
-            (None, "8", None),  # missing/None -> None
+            (None, "8", None),       # missing/None -> None
             ("8", None, None),
             (None, None, None),
-            ("auto", "8", None),  # non-numeric -> None (int('auto') raises)
+            ("auto", "8", None),     # non-numeric -> None (int('auto') raises)
             ("8", "auto", None),
-            ("", "8", None),  # empty string -> None
-            ("2.5", "8", None),  # int('2.5') raises ValueError -> None
+            ("", "8", None),         # empty string -> None
+            ("2.5", "8", None),      # int('2.5') raises ValueError -> None
         ]
         for tp, pp, expected in cases:
             with self.subTest(tp=tp, pp=pp):
@@ -138,10 +138,10 @@ class TestSafeDiv(unittest.TestCase):
         cases = [
             (10, 2, 5.0),
             (9, 4, 2.25),
-            (0, 5, 0.0),  # zero numerator -> real 0.0, NOT None
-            (10, 0, None),  # zero divisor -> None
-            (10, None, None),  # None divisor -> None
-            (None, 5, None),  # None numerator -> None
+            (0, 5, 0.0),        # zero numerator -> real 0.0, NOT None
+            (10, 0, None),      # zero divisor -> None
+            (10, None, None),   # None divisor -> None
+            (None, 5, None),    # None numerator -> None
             (None, None, None),
         ]
         for num, den, expected in cases:
@@ -170,22 +170,24 @@ class TestPerGpuThroughput(unittest.TestCase):
         T = 4800.0
         cases = [
             # (tp, pp, expected)  -- expected None means degrade-to-None
-            ("8", "1", T / 8),  # AC4: single-node, == pre-fix ttot/tp
-            ("8", "2", T / 16),  # AC3/AC5: pp accounted -> ttot/(tp*pp)
-            (8, "2", T / 16),  # mixed int tp
-            ("8", 2, T / 16),  # mixed int pp
-            (8, 2, T / 16),  # both int
+            ("8", "1", T / 8),      # AC4: single-node, == pre-fix ttot/tp
+            ("8", "2", T / 16),     # AC3/AC5: pp accounted -> ttot/(tp*pp)
+            (8, "2", T / 16),       # mixed int tp
+            ("8", 2, T / 16),       # mixed int pp
+            (8, 2, T / 16),         # both int
             ("16", "1", T / 16),
             ("4", "4", T / 16),
-            ("8", None, None),  # pp None -> None
-            ("8", "auto", None),  # pp non-numeric -> None
-            ("auto", "1", None),  # tp non-numeric -> None
-            ("0", "8", None),  # zero gpu count -> _safe_div guards -> None
-            ("8", "0", None),  # zero gpu count -> None
+            ("8", None, None),      # pp None -> None
+            ("8", "auto", None),    # pp non-numeric -> None
+            ("auto", "1", None),    # tp non-numeric -> None
+            ("0", "8", None),       # zero gpu count -> _safe_div guards -> None
+            ("8", "0", None),       # zero gpu count -> None
         ]
         for tp, pp, expected in cases:
             with self.subTest(tp=tp, pp=pp):
-                m = vllm_parsing.to_client_metrics(_raw(total_token_throughput=T), tp=tp, isl=_ISL, pp=pp)
+                m = vllm_parsing.to_client_metrics(
+                    _raw(total_token_throughput=T), tp=tp, isl=_ISL, pp=pp
+                )
                 if expected is None:
                     self.assertIsNone(m[self.KEY])
                 else:
@@ -207,7 +209,9 @@ class TestPerGpuThroughput(unittest.TestCase):
     def test_per_gpu_throughput_monotonic_decreasing_in_pp(self):
         # Invariant: with tp and ttot fixed, more pipeline stages -> strictly
         # lower per-GPU throughput.
-        vals = [_metrics(_raw(), tp="8", pp=str(pp))[self.KEY] for pp in (1, 2, 4, 8)]
+        vals = [
+            _metrics(_raw(), tp="8", pp=str(pp))[self.KEY] for pp in (1, 2, 4, 8)
+        ]
         for higher, lower in zip(vals, vals[1:]):
             self.assertGreater(higher, lower)
 
@@ -321,7 +325,9 @@ class TestStockScalarNamespacing(unittest.TestCase):
                 continue
             with self.subTest(key=key):
                 self.assertEqual(m1[key], m2[key])
-        self.assertNotEqual(m1["client.per_gpu_throughput"], m2["client.per_gpu_throughput"])
+        self.assertNotEqual(
+            m1["client.per_gpu_throughput"], m2["client.per_gpu_throughput"]
+        )
 
 
 # ===========================================================================
@@ -402,7 +408,9 @@ class TestModuleConstants(unittest.TestCase):
         self.assertEqual(len(short_names), len(set(short_names)))
 
     def test_client_metric_units_matches_client_metrics(self):
-        self.assertEqual(vllm_parsing.CLIENT_METRIC_UNITS["total_token_throughput"], "tok/s")
+        self.assertEqual(
+            vllm_parsing.CLIENT_METRIC_UNITS["total_token_throughput"], "tok/s"
+        )
         self.assertEqual(vllm_parsing.CLIENT_METRIC_UNITS["mean_ttft_ms"], "ms")
 
     def test_gated_metrics_subset_of_client_metrics(self):

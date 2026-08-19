@@ -172,7 +172,9 @@ class TestNodeSmokeCheckRun(unittest.TestCase):
         checker = NodeSmokeCheck(phdl, ["node0"], cfg)
         checker.run()
 
-        timeout = phdl.exec_cmd_list.call_args.kwargs.get("timeout") or phdl.exec_cmd_list.call_args[1].get("timeout")
+        timeout = phdl.exec_cmd_list.call_args.kwargs.get("timeout") or phdl.exec_cmd_list.call_args[1].get(
+            "timeout"
+        )
         self.assertEqual(timeout, 600)
         cmd = phdl.exec_cmd_list.call_args[0][0][0]
         self.assertIn("--tier2-perf", cmd)
@@ -183,3 +185,4 @@ class TestNodeSmokeCheckRun(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

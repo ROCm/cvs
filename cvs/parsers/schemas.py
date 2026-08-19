@@ -1220,9 +1220,7 @@ class PreflightNodeSmokeConfig(BaseModel):
         description="Comma-separated CLI tools that must exist in PATH (empty = warn only)",
     )
     nccl_socket_ifname: str = Field(default="", description="NCCL_SOCKET_IFNAME override for node_smoke")
-    gloo_socket_ifname: str = Field(
-        default="", description="GLOO_SOCKET_IFNAME override (defaults to nccl_socket_ifname)"
-    )
+    gloo_socket_ifname: str = Field(default="", description="GLOO_SOCKET_IFNAME override (defaults to nccl_socket_ifname)")
     nccl_ib_hca: str = Field(default="", description="NCCL_IB_HCA override (defaults to node_check.rdma_interfaces)")
     nccl_ib_gid_index: Optional[int] = Field(
         default=None,

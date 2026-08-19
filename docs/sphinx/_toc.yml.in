@@ -19,8 +19,6 @@ subtrees:
     title: Run tests
   - file: how-to/run-with-containers
     title: Run tests with the container backend
-  - file: how-to/run-vllm-benchmarks
-    title: Run vLLM inference benchmarks
   - file: how-to/run-cluster
     title: Monitor the health of GPU clusters
 
@@ -50,8 +48,8 @@ subtrees:
         title: Aorta
       - file: reference/configuration-files/atom
         title: ATOM
-      - file: reference/configuration-files/vllm
-        title: vLLM Inference
+      - file: reference/configuration-files/vllm_singlenode_mi355x
+        title: vLLM Single-Node MI355X
       - file: reference/configuration-files/sglang
         title: SGLang Disaggregated
       - file: reference/configuration-files/flux1_t2i

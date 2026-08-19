@@ -128,7 +128,9 @@ class SglangDistributed:
             return self.rank0_node
         hosts = as_node_list(raw)
         if len(hosts) != 1:
-            raise ValueError(f"SglangDistributed requires exactly one benchmark_serv_node, got {hosts!r}")
+            raise ValueError(
+                f"SglangDistributed requires exactly one benchmark_serv_node, got {hosts!r}"
+            )
         return hosts[0]
 
     @property
@@ -301,7 +303,9 @@ class SglangDistributed:
                 f"{flags_block}\n"
                 f"    --log-level {self.inf_dict['log_level']}\n"
             )
-            write_cmd = "bash -c " + shlex.quote(f"cat > /tmp/server_launch_script.sh <<'EOF'\n{launch_body}EOF")
+            write_cmd = "bash -c " + shlex.quote(
+                f"cat > /tmp/server_launch_script.sh <<'EOF'\n{launch_body}EOF"
+            )
             self._container_exec(write_cmd, hosts=[node])
 
         for i, node in enumerate(self.server_node_list):
@@ -318,7 +322,10 @@ class SglangDistributed:
         log_path = self.server_log_path(0)
         for iteration in range(1, no_of_iterations):
             log.info('Starting rank-0 server readiness poll iteration %d', iteration)
-            grep_cmd = f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} {shlex.quote(log_path)} || true"
+            grep_cmd = (
+                f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} "
+                f"{shlex.quote(log_path)} || true"
+            )
             text = self._container_exec_text(grep_cmd, hosts=[self.rank0_node])
             if _SERVER_READY_RE.search(text):
                 log.info('Wait 60 secs before serving traffic')
@@ -327,7 +334,8 @@ class SglangDistributed:
             log.info('Wait 120 secs and continue polling')
             time.sleep(120)
         fail_test(
-            f'Distributed rank-0 server on {self.rank0_node} did not reach ready state in {no_of_iterations} iterations'
+            f'Distributed rank-0 server on {self.rank0_node} did not reach ready state '
+            f'in {no_of_iterations} iterations'
         )
 
     def poll_and_check_server_ready(self) -> None:
@@ -337,13 +345,17 @@ class SglangDistributed:
 
     def install_container_packages(self) -> None:
         self._container_exec(
-            "bash -c " + shlex.quote("sudo apt -y update && sudo apt install -y iputils-ping iproute2 net-tools")
+            "bash -c " + shlex.quote(
+                "sudo apt -y update && sudo apt install -y iputils-ping iproute2 net-tools"
+            )
         )
 
     def exec_nic_setup_scripts(self) -> None:
         if re.search('broadcom|thor', self.nic_type, re.I):
             self.inf_dict['nccl_ib_gid_index'] = 3
-            cmd = "bash -c " + shlex.quote(f"cp {self.mount_vol}.host {self.mount_vol}; sleep 2; ibv_devinfo; sleep 2;")
+            cmd = "bash -c " + shlex.quote(
+                f"cp {self.mount_vol}.host {self.mount_vol}; sleep 2; ibv_devinfo; sleep 2;"
+            )
             out_dict = self._container_exec(cmd)
             hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
             for node, out in out_dict.items():
@@ -358,8 +370,7 @@ class SglangDistributed:
 
     def run_test_rmsnorm(self, max_jobs=192) -> None:
         self._container_exec(
-            "bash -c "
-            + shlex.quote(
+            "bash -c " + shlex.quote(
                 f"MAX_JOBS={max_jobs} python /sgl-workspace/aiter/op_tests/test_rmsnorm2d.py "
                 f"> /tmp/rsmnorm_test.log 2>&1 &"
             )
@@ -372,7 +383,9 @@ class SglangDistributed:
 
     def verify_openai_compatible_endpoints(self) -> list[str]:
         port = int(self.router_serv_port)
-        probe_src = OpenAIProbe.probe_script(port, self.bp_dict['model'], host=self.client_host)
+        probe_src = OpenAIProbe.probe_script(
+            port, self.bp_dict['model'], host=self.client_host
+        )
         b64 = base64.b64encode(probe_src.encode('utf-8')).decode('ascii')
         inner = (
             f"mkdir -p {self.log_dir}/benchmark_node && "
@@ -390,7 +403,10 @@ class SglangDistributed:
         probe_err: Optional[str] = None
         results: dict[str, tuple[int, Any]] = {}
         if not raw_out or not str(raw_out).strip():
-            probe_err = f"OpenAI-compatible probe produced no output on {self.benchmark_serv_node!r}: {out_dict!r}"
+            probe_err = (
+                f"OpenAI-compatible probe produced no output on "
+                f"{self.benchmark_serv_node!r}: {out_dict!r}"
+            )
         else:
             last_line = str(raw_out).strip().splitlines()[-1]
             try:
@@ -399,7 +415,10 @@ class SglangDistributed:
                 probe_err = f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}"
             else:
                 if not isinstance(parsed, dict):
-                    probe_err = f"OpenAI-compatible probe expected JSON object, got {type(parsed).__name__!r}"
+                    probe_err = (
+                        f"OpenAI-compatible probe expected JSON object, got "
+                        f"{type(parsed).__name__!r}"
+                    )
                 else:
                     for step, val in parsed.items():
                         if isinstance(val, (list, tuple)) and len(val) == 2:
@@ -442,7 +461,7 @@ class SglangDistributed:
         self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
 
         tp = int(self.bp_dict.get('tensor_parallelism', 1))
-        int(self.bp_dict.get('pipeline_parallelism', 1))
+        pp = int(self.bp_dict.get('pipeline_parallelism', 1))
         num_gpus = self.nnodes * tp
         peak_tflops = float(i_dict.get('peak_gpu_tflops', 1300))
         num_params = float(i_dict.get('model_num_params', 70e9))
@@ -524,7 +543,8 @@ class SglangDistributed:
 
     def verify_inference_results(self, test_name, expected_result_dict):
         thresholds = {
-            metric: normalize_sglang_threshold_spec(metric, spec) for metric, spec in expected_result_dict.items()
+            metric: normalize_sglang_threshold_spec(metric, spec)
+            for metric, spec in expected_result_dict.items()
         }
         for node in self.inference_results_dict:
             actuals = {
@@ -560,16 +580,12 @@ class SglangDistributed:
             "server_per_node": server["per_node"],
             "total_occupied_gpus": topo["total_occupied_gpus"],
         }
-        log.info(
-            "\n".join(
-                format_sglang_gpu_topology_lines(
-                    configured_tp=tp,
-                    configured_pp=pp,
-                    configured_nnodes=self.nnodes,
-                    groups={"Server nodes": server},
-                )
-            )
-        )
+        log.info("\n".join(format_sglang_gpu_topology_lines(
+            configured_tp=tp,
+            configured_pp=pp,
+            configured_nnodes=self.nnodes,
+            groups={"Server nodes": server},
+        )))
         return result
 
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type='auto'):
@@ -595,7 +611,10 @@ class SglangDistributed:
             log_basename=f'{bench_key}.log',
             default_num_concurrent=spec['default_num_concurrent'],
         )
-        inner = f"mkdir -p {self.log_dir}/benchmark_node && source /tmp/server_env_script.sh && {inner_cmd}"
+        inner = (
+            f"mkdir -p {self.log_dir}/benchmark_node && "
+            f"source /tmp/server_env_script.sh && {inner_cmd}"
+        )
         out_dict = self._bench_exec(
             "bash -c " + shlex.quote(inner),
             timeout=scoring['exec_timeout_sec'],

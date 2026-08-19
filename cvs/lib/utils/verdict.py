@@ -18,10 +18,6 @@ def _to_float(x):
 
 def _check_one(metric, actual_raw, spec):
     kind = spec["kind"]
-    # "info": record-only, never gates -- always passes. Used for metrics that
-    # should appear with a PASS status but carry no threshold to enforce.
-    if kind == "info":
-        return None
     actual = _to_float(actual_raw)
     if kind == "min":
         target = _to_float(spec["value"])

@@ -1138,7 +1138,7 @@ class TestStopAndCollectGpuPollerMultiNode(unittest.TestCase):
             run_id="r1",
             marker="cvs_gpu_poll_r1",
             nodes=nodes,
-            paths={h: "/tmp/cvs_gpu_poll_r1.log" for h in nodes},
+            paths={h: f"/tmp/cvs_gpu_poll_r1.log" for h in nodes},
         )
 
     def test_round_alignment_longer_host_extends_not_truncates(self):
