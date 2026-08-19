@@ -114,11 +114,13 @@ class RealConfigRoundTripTests(unittest.TestCase):
         for cell in expected:
             self.assertIn(cell, self.cfg.thresholds)
 
-    def test_eval_defaults_disabled(self):
-        # The config plumbs eval flags but leaves them disabled by default.
+    def test_eval_not_overridden(self):
+        # After aligning with the MAD scripts, the config no longer sets
+        # eval_interval / eval_steps explicitly -- eval is left to MaxText's
+        # default (disabled). Assert the keys are absent rather than pinned.
         mc = self.cfg.training.maxtext_config
-        self.assertEqual(mc.get("eval_interval"), -1)
-        self.assertEqual(mc.get("eval_steps"), -1)
+        self.assertNotIn("eval_interval", mc)
+        self.assertNotIn("eval_steps", mc)
 
 
 if __name__ == "__main__":

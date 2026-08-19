@@ -22,6 +22,7 @@ import shlex
 import time
 import uuid as _uuid
 from pathlib import Path as _Path
+from types import SimpleNamespace
 
 import pytest
 from tabulate import tabulate
@@ -218,6 +219,73 @@ def setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     job = MaxTextTrainingJob(orch, variant_config, hf_token)
     job.setup_tokenizer()
     lifecycle.record(request.node.nodeid, "tokenizer_setup", time.monotonic() - t)
+
+
+# Smoke test: smallest fixed run that confirms the model loads and trains a few
+# steps without hitting any error_patterns. Overrides only per_device_batch_size,
+# max_target_length, precision and step count; keeps the config's model_name +
+# tokenizer so the vocab/tokenizer stay consistent. No metric/threshold checks.
+_SMOKE_STEPS = 10
+_SMOKE_BATCH = 1
+_SMOKE_SEQLEN = 2048
+
+
+def smoke(orch, variant_config, hf_token, lifecycle, request):
+    """Smoke test: the model loads and runs _SMOKE_STEPS steps without any
+    error_pattern firing.
+
+    Runs one short training with small fixed per_device_batch_size / seqlen and
+    BF16, overriding the config for this run only. Completing the steps without an
+    error signature (scanned by poll_for_completion) is the only pass criterion --
+    there is no metric or threshold verification. A failure sets lifecycle.failed
+    so downstream stages skip.
+    """
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    # Isolated deep copy so the smoke run's tiny steps/overrides never leak into
+    # the real per-sweep training_run tests (they share the module-scoped config).
+    smoke_variant = variant_config.model_copy(deep=True)
+    smoke_variant.training.steps = _SMOKE_STEPS
+    smoke_sweep = SimpleNamespace(
+        name="SMOKE",
+        maxtext_overrides={
+            "per_device_batch_size": _SMOKE_BATCH,
+            "max_target_length": _SMOKE_SEQLEN,
+            "dtype": "bfloat16",
+            "weight_dtype": "bfloat16",
+            "quantization": "",
+        },
+    )
+
+    job = MaxTextTrainingJob(orch, smoke_variant, hf_token, sweep=smoke_sweep)
+    t = time.monotonic()
+    try:
+        job.setup_training_env()
+        job.build_training_cmd()
+        job.start_training()
+        # poll scans each node's log for error_patterns/NaN every iteration and
+        # raises on the first match or on timeout; returns cleanly once the run
+        # reaches step _SMOKE_STEPS-1.
+        job.poll_for_completion()
+    except Exception as e:  # noqa: BLE001
+        lifecycle.failed = True
+        pytest.fail(f"smoke test failed (model did not run {_SMOKE_STEPS} steps cleanly): {e}")
+    finally:
+        # Reap ranks so the smoke run leaves no orphan processes for the next stage.
+        try:
+            job.stop_training()
+        except Exception:  # noqa: BLE001
+            pass
+
+    lifecycle.record(request.node.nodeid, "smoke", time.monotonic() - t)
+    log.info(
+        "smoke PASSED | model=%s steps=%s batch=%s seqlen=%s",
+        smoke_variant.training.maxtext_config.get("model_name", "<base.yml default>"),
+        _SMOKE_STEPS,
+        _SMOKE_BATCH,
+        _SMOKE_SEQLEN,
+    )
 
 
 def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, lifecycle, request):
