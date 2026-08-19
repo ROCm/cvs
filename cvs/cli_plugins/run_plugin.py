@@ -3,6 +3,8 @@ import sys
 import os
 import json
 
+from cvs.core.run_layout import RunLayout
+
 from .list_plugin import ListPlugin
 
 
@@ -16,6 +18,18 @@ class RunPlugin(ListPlugin):
         parser.add_argument("function", nargs="*", help="Optional: specific test functions to run")
         parser.add_argument("--cluster_file", required=True, help="Path to cluster configuration JSON file")
         parser.add_argument("--config_file", required=True, help="Path to test configuration JSON file")
+        parser.add_argument(
+            "--workspace",
+            default=None,
+            metavar="PATH",
+            help=(
+                "Shared-filesystem root for this run's artifacts; the run directory "
+                "becomes <workspace>/cvs/runs/<run_id> and is exposed to configs as "
+                "{run_dir}. Falls back to $CVS_WORKSPACE, then to a cvs_runs directory "
+                "beside the venv. Scheduler-managed runs in a container must set this "
+                "explicitly, since the venv's parent is not on shared storage there."
+            ),
+        )
         parser.add_argument("--html", help="Pytest: Create HTML report file at given path")
         parser.add_argument(
             "--self-contained-html",
@@ -64,6 +78,7 @@ Run Commands:
             args.log_level,
             args.capture,
             getattr(args, "extra_pytest_args", []),
+            workspace=args.workspace,
         )
 
     def _validate_json_config(self, path, label):
@@ -98,6 +113,7 @@ Run Commands:
         log_level,
         capture,
         extra_pytest_args,
+        workspace=None,
     ):
         # Pre-flight check: validate both JSON config files before pytest runs.
         self._validate_json_config(cluster_file, "--cluster_file")
@@ -110,6 +126,17 @@ Run Commands:
             sys.exit(1)
 
         test_file = self.get_test_file(module_path)
+
+        # Resolve the run layout before pytest, but only once the run is going to
+        # happen: worker ranks in a Slurm/Spur job never enter pytest at all, and
+        # config placeholder resolution needs CVS_RUN_DIR exported, so this cannot
+        # wait for a fixture -- while creating directories for a mistyped suite
+        # name would litter shared storage.
+        try:
+            RunLayout.initialize(workspace)
+        except RuntimeError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
 
         # Build pytest arguments
         pytest_args = []

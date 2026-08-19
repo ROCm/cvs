@@ -383,6 +383,11 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
       - {home}: Replaced with home directory of the user
       - {home-mount-dir}: Replaced with home mount directory name from cluster_dict
       - {node-dir-name}: Replaced with node directory name from cluster_dict
+      - {run_dir}: Replaced with this run's directory, published as CVS_RUN_DIR by
+        RunLayout when the suite is launched through `cvs run`. Only substituted
+        within the dictionary passed here: a {run_dir} in a cluster file, or in a
+        config subsection the caller never resolves, is left untouched rather than
+        reported, since neither goes through this function.
 
     Args:
       config_dict: Configuration dictionary (can be nested dict/list/str)
@@ -412,6 +417,22 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     # Get home directory
     home_dir = os.path.expanduser(f'~{username}')
 
+    # {run_dir} is published by RunLayout as CVS_RUN_DIR rather than imported:
+    # cvs/core/__init__.py imports the orchestrator factory, which imports this
+    # module, so importing cvs.core.run_layout here would be circular.
+    run_dir = os.getenv('CVS_RUN_DIR')
+    if not run_dir:
+        # Only an error when the config actually asks for it, since every suite
+        # calls this resolver and most configs never mention {run_dir}. Left
+        # unresolved it would create a directory literally named "{run_dir}".
+        if '{run_dir}' in json.dumps(config_dict, default=str):
+            log.error(
+                "Config uses {run_dir} but CVS_RUN_DIR is not set. Run the suite via "
+                "'cvs run' (optionally with --workspace) so the run layout is resolved."
+            )
+            sys.exit(1)
+        run_dir = ''
+
     log.info(
         f'Resolving config path placeholders with username: {username}, home: {home_dir}, home_mount_dir: {home_mount_dir_name}'
     )
@@ -423,6 +444,7 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
         '{home}': home_dir,
         '{home-mount-dir}': home_mount_dir_name,
         '{node-dir-name}': node_dir_name,
+        '{run_dir}': run_dir,
     }
 
     resolved_config = _resolve_placeholders_in_dict(config_dict, replacements, context_name="test config")
