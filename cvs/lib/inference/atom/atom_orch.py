@@ -397,8 +397,6 @@ class AtomJob:
                     "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
                 ]
             )
-        elif self._uses_sglang_serve():
-            env_lines.append("export SGLANG_USE_AITER=1")
         if self.ib_hcas:
             env_lines.append(f"export NCCL_IB_HCA={shlex.quote(','.join(self.ib_hcas))}")
         if self.distributed and not self.ib_netdev:
