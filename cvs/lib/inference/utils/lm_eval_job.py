@@ -33,6 +33,11 @@ class LmEvalCtx:
     output_dir: str
 
 
+def normalize_client_base_url(base_url: str) -> str:
+    """Map bind-all addresses to localhost for outbound HTTP clients."""
+    return base_url.replace("0.0.0.0", "127.0.0.1")
+
+
 def build_lm_eval_cmd(task: AccuracyTask, ctx: LmEvalCtx) -> str:
     model_flag = "local-chat-completions" if task.apply_chat_template else "local-completions"
     endpoint_path = "/v1/chat/completions" if task.apply_chat_template else "/v1/completions"
@@ -91,7 +96,12 @@ def run_accuracy_tasks(
     model_path: str,
     output_dir: str,
 ) -> Dict[str, Dict[str, float]]:
-    ctx = LmEvalCtx(base_url=base_url, model_id=model_id, model_path=model_path, output_dir=output_dir)
+    ctx = LmEvalCtx(
+        base_url=normalize_client_base_url(base_url),
+        model_id=model_id,
+        model_path=model_path,
+        output_dir=output_dir,
+    )
     results: Dict[str, Dict[str, float]] = {}
 
     for task in tasks:

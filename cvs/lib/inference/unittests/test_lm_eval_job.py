@@ -19,6 +19,7 @@ from cvs.lib.inference.utils.lm_eval_job import (
     LM_EVAL_INSTALL_CHECK_CMD,
     LmEvalCtx,
     build_lm_eval_cmd,
+    normalize_client_base_url,
     run_accuracy_tasks,
 )
 
@@ -41,6 +42,10 @@ def _ctx(**overrides):
 
 
 class TestBuildLmEvalCmd(unittest.TestCase):
+    def test_normalize_client_base_url_rewrites_bind_all(self):
+        self.assertEqual(normalize_client_base_url("http://0.0.0.0:8000"), "http://127.0.0.1:8000")
+        self.assertEqual(normalize_client_base_url("http://127.0.0.1:8000"), "http://127.0.0.1:8000")
+
     def test_env_script_sourced_before_install_guard(self):
         # HF_HUB_CACHE/HF_TOKEN are written to /tmp/server_env_script.sh by
         # server setup (see vllm_job.build_server_cmd) and are NOT inherited
@@ -337,6 +342,19 @@ class TestRunAccuracyTasks(unittest.TestCase):
         )
         out = run_accuracy_tasks(**self._run_kwargs(orch, [_task()]))
         self.assertEqual(out, {"mmlu": {"mmlu.acc__none": 0.5}})
+
+    def test_run_accuracy_tasks_rewrites_bind_all_base_url(self):
+        payload = {"results": {"mmlu": {"acc,none": 0.5}}}
+        orch = FakeOrch(responses=["", "1700000000.0 /out/mmlu/model/results.json", json.dumps(payload)])
+        run_accuracy_tasks(
+            orch=orch,
+            tasks=[_task()],
+            base_url="http://0.0.0.0:8000",
+            model_id="meta-llama/Llama-3-8b",
+            model_path="/data/models/Llama-3-8b",
+            output_dir="/tmp/accuracy-out",
+        )
+        self.assertIn("base_url=http://127.0.0.1:8000/v1/completions", orch.head_cmds[0])
 
 
 if __name__ == "__main__":
