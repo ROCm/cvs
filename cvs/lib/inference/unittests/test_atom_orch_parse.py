@@ -34,6 +34,7 @@ def _fake_variant(
     scaling_baseline_output_throughput="",
     ib_netdev="eth0",
     ib_hca_devices=None,
+    bench_extra_args="",
 ):
     params = SimpleNamespace(
         driver=driver,
@@ -56,7 +57,7 @@ def _fake_variant(
         dataset_name="random",
         backend="vllm",
         max_model_length="8192",
-        bench_extra_args="",
+        bench_extra_args=bench_extra_args,
         result_filename="results",
     )
     roles = SimpleNamespace(
@@ -285,6 +286,77 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job._bench_max_failed_requests = 2
         failed = job._client_log_failures()
         self.assertEqual(failed, [])
+
+    def test_vllm_client_argv_includes_disable_tqdm(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertIn("--disable-tqdm", job._vllm_client_argv())
+
+    def test_vllm_client_argv_honors_bench_extra_disable_tqdm(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom", bench_extra_args="--disable-tqdm"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertEqual(job._vllm_client_argv().count("--disable-tqdm"), 1)
+
+    def test_client_log_failures_uses_grep_not_tail(self):
+        orch = FakeOrch(exec_return={"node0": ""})
+        job = AtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job._client_log_failures()
+        self.assertTrue(orch.commands)
+        cmd = orch.commands[0][0]
+        self.assertIn("grep -aE", cmd)
+        self.assertNotIn("tail -2000", cmd)
+
+    def test_client_log_complete_uses_grep_marker(self):
+        orch = FakeOrch(exec_return={"node0": "OK\n"})
+        job = AtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="sglang"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertTrue(job._client_log_complete())
+        self.assertIn("grep -aq", orch.commands[0][0])
+        self.assertIn("Serving Benchmark Result", orch.commands[0][0])
+
+    def test_bench_result_ready_vllm_artifact_path(self):
+        orch = FakeOrch(exec_return={"node0": "OK\n"})
+        job = AtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertTrue(job._result_artifact.endswith("/results"))
+        self.assertTrue(job._bench_result_ready())
+        self.assertIn("test -s", orch.commands[0][0])
 
     def test_early_failure_regexes(self):
         job = AtomJob(

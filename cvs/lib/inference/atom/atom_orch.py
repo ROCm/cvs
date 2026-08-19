@@ -815,7 +815,7 @@ class AtomJob:
         return self._vllm_client_argv()
 
     def _vllm_client_argv(self):
-        return [
+        argv = [
             "vllm",
             "bench",
             "serve",
@@ -858,6 +858,12 @@ class AtomJob:
             "--result-filename",
             self.result_stem,
         ]
+        extra = shlex.split(self.bench_extra_args) if self.bench_extra_args else []
+        if "--disable-tqdm" not in extra:
+            argv.append("--disable-tqdm")
+        if extra:
+            argv.extend(extra)
+        return argv
 
     def _clear_stale_result_artifact(self):
         """Remove a prior run's result file so poll logic cannot treat it as complete."""
@@ -871,12 +877,32 @@ class AtomJob:
         client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
         self._exec_head("bash -c " + shlex.quote(client_cmd))
 
-    def _atom_result_ready(self):
+    def _bench_result_ready(self):
         out = self._exec_head(f"test -s {shlex.quote(self._result_artifact)} && echo OK || echo NO")
         return bool(out) and all("OK" in (v or "") for v in out.values())
 
+    def _client_log_probe_cmd(self):
+        log_path = shlex.quote(self.client_log)
+        crash_re = (
+            r"Traceback \(most recent call last\)"
+            r"|unrecognized arguments|invalid choice|error: argument "
+            r"|command not found|: No such file or directory"
+        )
+        fail_re = r"Failed requests:[[:space:]]+[0-9]+"
+        return (
+            f"{{ grep -aE {shlex.quote(crash_re)} {log_path} 2>/dev/null | tail -1; "
+            f"grep -aE {shlex.quote(fail_re)} {log_path} 2>/dev/null | tail -1; }} || true"
+        )
+
+    def _client_log_complete(self):
+        log_path = shlex.quote(self.client_log)
+        marker = shlex.quote("Serving Benchmark Result")
+        out = self._exec_head(f"grep -aq {marker} {log_path} && echo OK || echo NO")
+        return bool(out) and all("OK" in (v or "") for v in out.values())
+
     def _client_log_failures(self, tail_lines=2000):
-        out = self._exec_head(f"tail -{tail_lines} {shlex.quote(self.client_log)}")
+        del tail_lines
+        out = self._exec_head(self._client_log_probe_cmd())
         failed = []
         for host, output in out.items():
             txt = output or ""
@@ -910,7 +936,7 @@ class AtomJob:
                 failed = self._client_log_failures(tail_lines=500)
                 if failed:
                     raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
-                if self._atom_result_ready():
+                if self._bench_result_ready():
                     log.info("client result artifact ready during initial wait")
                     return
                 remaining = deadline - time.monotonic()
@@ -921,20 +947,18 @@ class AtomJob:
             log.info("client initial wait %ds", self._client_initial_wait)
             time.sleep(self._client_initial_wait)
 
+        poll_result_artifact = self.driver == "atom" or self._uses_vllm_serve()
         for it in range(self._client_poll_count):
             failed = self._client_log_failures()
             if failed:
                 raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
-            if self.driver == "atom":
-                if self._atom_result_ready():
+            if poll_result_artifact:
+                if self._bench_result_ready():
                     log.info("client complete (iter=%d)", it)
                     return
-            else:
-                out = self._exec_head(f"tail -2000 {shlex.quote(self.client_log)}")
-                done = [bool(self.COMPLETION_RE.search(txt or "")) for txt in out.values()]
-                if done and all(done):
-                    log.info("client complete (iter=%d)", it)
-                    return
+            elif self._client_log_complete():
+                log.info("client complete (iter=%d)", it)
+                return
             time.sleep(self._client_poll_wait)
         raise RuntimeError("client did not complete before poll cap")
 
