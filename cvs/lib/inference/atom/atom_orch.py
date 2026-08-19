@@ -889,8 +889,7 @@ class AtomJob:
         if self._uses_sglang_serve():
             env_prefix = "export PYTHONPATH=/sgl-workspace/sglang/python:${PYTHONPATH:-} && "
         client_cmd = (
-            f"source /tmp/server_env_script.sh && {env_prefix}{bench_cmd} "
-            f"> {shlex.quote(self.client_log)} 2>&1 &"
+            f"source /tmp/server_env_script.sh && {env_prefix}{bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
         )
         self._exec_client("bash -c " + shlex.quote(client_cmd))
 
