@@ -621,6 +621,8 @@ class PytorchXditWan22Benchmarks(BaseModel):
     num_benchmark_steps: int = Field(default=5, ge=1, description="Number of benchmark iterations to run")
     compile: bool = Field(default=True, description="Whether to use torch.compile for optimization")
     torchrun_nproc: int = Field(default=8, ge=1, description="Number of processes for torchrun (usually num GPUs)")
+    ulysses_size: int = Field(default=8, ge=1, description="Ulysses parallelism degree")
+    ring_size: int = Field(default=1, ge=1, description="Ring parallelism degree")
     expected_results: Dict[str, PytorchXditExpectedResults] = Field(
         description="Expected results by GPU type (auto, mi300x, mi355, etc.)"
     )
@@ -722,6 +724,24 @@ class PytorchXditWanConfigFile(BaseModel):
             raise ValueError("No benchmarks configured in 'benchmark_params' - at least wan22_i2v_a14b is required")
         return self
 
+    @model_validator(mode='after')
+    def validate_distributed_parallelism(self):
+        """When nnodes >= 2, ensure xDiT parallel degrees match nnodes × torchrun_nproc."""
+        wan = self.benchmark_params.wan22_i2v_a14b
+        nnodes = self.config.nnodes
+        if not wan or not nnodes or nnodes < 2:
+            return self
+
+        world_size = nnodes * wan.torchrun_nproc
+        product = wan.ulysses_size * wan.ring_size
+        if product != world_size:
+            raise ValueError(
+                f"Parallel degree product {product} != world_size {world_size} "
+                f"(nnodes={nnodes} × torchrun_nproc={wan.torchrun_nproc}). "
+                f"Adjust ulysses_size and ring_size."
+            )
+        return self
+
 
 class PytorchXditWanConfig(BaseModel):
     """Schema for config section in pytorch-xdit WAN configs."""
@@ -752,6 +772,46 @@ class PytorchXditWanConfig(BaseModel):
     model_rev: str = Field(
         default="206a9ee1b7bfaaf8f7e4d81335650533490646a3",
         description="Model revision (commit hash). Ignored if model_repo is an explicit local filesystem path.",
+    )
+    nnodes: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Distributed node count for unified multi-node torchrun (omit for single-node / scale-out)",
+    )
+    server_node_list: Optional[List[str]] = Field(
+        default=None,
+        description="Ordered server nodes for distributed job; defaults to all cluster nodes",
+    )
+    master_addr: str = Field(
+        default="",
+        description="Rank-0 rendezvous address; empty means first server node at runtime",
+    )
+    master_port: int = Field(
+        default=29500,
+        ge=1,
+        le=65535,
+        description="Rank-0 rendezvous port for distributed torchrun",
+    )
+    nccl_ib_hca: str = Field(
+        default="",
+        description="NCCL_IB_HCA for multi-node ROCm/NCCL (e.g. rdma0,...,rdma7)",
+    )
+    nccl_socket_ifname: str = Field(
+        default="",
+        description="NCCL_SOCKET_IFNAME for multi-node jobs",
+    )
+    gloo_socket_ifname: str = Field(
+        default="",
+        description="GLOO_SOCKET_IFNAME for multi-node jobs",
+    )
+    nccl_ib_gid_index: int = Field(
+        default=1,
+        ge=0,
+        description="NCCL_IB_GID_INDEX for IB/RoCE",
+    )
+    nccl_debug: str = Field(
+        default="INFO",
+        description="NCCL_DEBUG level (ERROR, INFO, WARN, ...)",
     )
     container_config: PytorchXditContainerConfig = Field(
         default_factory=PytorchXditContainerConfig, description="Container device/volume/env configuration"

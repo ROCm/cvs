@@ -1,0 +1,50 @@
+{
+    "config": {
+        "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
+        "container_name": "wan22-benchmark-dist",
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "hf_home": "/home/{user-id}",
+        "output_base_dir": "/home/{user-id}/cvs_wan_output",
+        "model_repo": "/data/models/Wan-AI/Wan2.2-I2V-A14B",
+        "model_rev": "",
+        "nnodes": 2,
+        "master_addr": "<changeme>",
+        "master_port": "<changeme>",
+        "_example_nccl_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+        "nccl_ib_hca": "<changeme>",
+        "_example_nccl_socket_ifname": "eno0",
+        "nccl_socket_ifname": "<changeme>",
+        "_example_gloo_socket_ifname": "eno0",
+        "gloo_socket_ifname": "<changeme>",
+        "nccl_ib_gid_index": "3",
+        "nccl_debug": "INFO",
+        "container_config": {
+            "device_list": ["/dev/dri", "/dev/kfd"],
+            "volume_dict": {},
+            "env_dict": {}
+        }
+    },
+    "benchmark_params": {
+        "wan22_i2v_a14b": {
+            "prompt": "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
+            "size": "720*1280",
+            "frame_num": 81,
+            "num_benchmark_steps": 5,
+            "compile": true,
+            "torchrun_nproc": 8,
+            "ulysses_size": 8,
+            "ring_size": 2,
+            "expected_results": {
+                "auto": {
+                    "max_avg_total_time_s": 18.0
+                },
+                "mi300x": {
+                    "max_avg_total_time_s": 15.0
+                },
+                "mi355": {
+                    "max_avg_total_time_s": 12.0
+                }
+            }
+        }
+    }
+}
