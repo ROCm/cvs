@@ -200,6 +200,13 @@ class TestRunIdResolution(_RunLayoutTestCase):
         layout = RunLayout.initialize(self.workspace)
         self.assertEqual(layout.run_id, f"local-{FAKE_STAMP}")
 
+    def test_managed_is_true_inside_a_job_step(self):
+        self._enter_job_step()
+        self.assertTrue(RunLayout.initialize(self.workspace).managed)
+
+    def test_managed_is_false_outside_a_job_step(self):
+        self.assertFalse(RunLayout.initialize(self.workspace).managed)
+
 
 class TestPathComposition(_RunLayoutTestCase):
     def test_run_dir_and_agent_dir_layout(self):

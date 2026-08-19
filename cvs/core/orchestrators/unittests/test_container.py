@@ -14,6 +14,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # no_launch / per_run / persistent contract has a loud canary. Pssh + RuntimeFactory are
 # patched once in setUp (not per method); _make() returns a fresh orch + runtime mock.
 
+import os
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -436,7 +437,10 @@ class TestContainerVolumes(unittest.TestCase):
 
     Configs resolve {run_dir} to a host path, but tests execute inside the
     container via docker exec, so that path has to resolve to the same place on
-    both sides or the artifacts are written into a disposable overlay.
+    both sides or the artifacts are written into a disposable overlay. Limited to
+    scheduler-managed runs: elsewhere the workspace is not guaranteed to exist on
+    the node the container is launched on, and a bind mount of a missing path
+    silently materializes a root-owned empty directory there.
     """
 
     def setUp(self):
@@ -448,6 +452,9 @@ class TestContainerVolumes(unittest.TestCase):
         self.addCleanup(p_rf.stop)
         RunLayout._reset()
         self.addCleanup(RunLayout._reset)
+        env = patch.dict(os.environ, {}, clear=True)
+        env.start()
+        self.addCleanup(env.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
@@ -455,16 +462,38 @@ class TestContainerVolumes(unittest.TestCase):
         self.mock_rf.create.return_value = MagicMock(name="docker_runtime")
         return ContainerOrchestrator(MagicMock(), _make_orch_config())
 
+    def _enter_job_step(self):
+        os.environ.update({"SLURM_JOB_ID": "424242", "SLURM_STEP_ID": "0", "SLURM_PROCID": "0"})
+
     def test_run_dir_is_mounted_at_the_same_path(self):
         # Identity mount: a different container path would leave the {run_dir}
         # already substituted into the config pointing at nothing.
+        self._enter_job_step()
         layout = RunLayout.initialize(self.tmp.name)
         volumes = self._make().get_volumes()
+        self.assertIn(f"{layout.run_dir}:{layout.run_dir}", volumes)
+
+    def test_no_run_dir_mount_in_an_unmanaged_run(self):
+        # No scheduler launched this, so nothing guarantees the workspace is
+        # reachable from the container host.
+        RunLayout.initialize(self.tmp.name)
+        volumes = self._make().get_volumes()
+        self.assertEqual([v for v in volumes if "cvs/runs" in v], [])
+        self.assertTrue(any("/host_ssh" in v for v in volumes))
+
+    def test_mount_does_not_depend_on_scheduler_binaries(self):
+        # is_managed_compute() also probes for scontrol/spur, which the CVS
+        # container image does not ship; the mount must survive their absence.
+        self._enter_job_step()
+        layout = RunLayout.initialize(self.tmp.name)
+        with patch("cvs.core.scheduler.shutil.which", return_value=None):
+            volumes = self._make().get_volumes()
         self.assertIn(f"{layout.run_dir}:{layout.run_dir}", volumes)
 
     def test_no_run_dir_mount_without_a_layout(self):
         # Suites are also launched with bare pytest (see cvs/tests/health/README.md),
         # which never initializes the layout. That must not break container setup.
+        self._enter_job_step()
         volumes = self._make().get_volumes()
         self.assertEqual([v for v in volumes if "cvs/runs" in v], [])
         self.assertTrue(any("/host_ssh" in v for v in volumes))

@@ -133,10 +133,12 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         # Tests run inside the container via docker exec, but configs resolve
         # {run_dir} to a host path, so the mount has to be an identity mapping --
         # any other container path leaves the substituted value pointing at
-        # nothing and the artifacts land in a disposable overlay. Absent when the
-        # suite was launched with bare pytest, which never resolves a layout.
+        # nothing and the artifacts land in a disposable overlay. Scheduler-managed
+        # runs only: those have a shared filesystem behind the workspace, whereas
+        # elsewhere bind-mounting a path the node lacks would quietly create a
+        # root-owned empty directory. No layout at all means bare pytest.
         layout = RunLayout.instance_or_none()
-        if layout is not None:
+        if layout is not None and layout.managed:
             volumes.append(f"{layout.run_dir}:{layout.run_dir}")
 
         # Merge with config.json runtime args

@@ -70,21 +70,14 @@ def _resolve_workspace(workspace=None):
     return Path(candidate).expanduser().absolute()
 
 
-def _resolve_run_id():
+def _resolve_run_id(managed):
     '''Identifies this run, and must come out identical on every rank of a step.
-
-    Keyed on the job-step environment rather than on is_managed_compute(): that
-    predicate also probes for the scontrol/spur binaries, which are absent from
-    the CVS container image even when srun launched the step and exported the
-    SLURM_* variables. Ranks would then each fall back to their own wall clock
-    and land on different run_dirs -- a silent hang at the rendezvous rather than
-    an error. The env vars are set by the launch itself, so they cannot disagree.
 
     The job id alone does not identify a run: concurrent steps in one allocation
     share it (and would then share an agent_dir, letting a worker read the wrong
     rank0 port), and a requeued job repeats it.
     '''
-    if not _running_in_job_step():
+    if not managed:
         return f"local-{_new_run_timestamp()}"
     # _running_in_job_step() guarantees both of these are set.
     run_id = f"{os.environ[JOB_ID_ENV_VAR]}.{os.environ[STEP_ID_ENV_VAR]}"
@@ -99,9 +92,10 @@ class RunLayout:
 
     _instance = None
 
-    def __init__(self, workspace, run_id):
+    def __init__(self, workspace, run_id, managed):
         self.workspace = workspace
         self.run_id = run_id
+        self.managed = managed
         self.run_dir = workspace / "cvs" / "runs" / run_id
         self.agent_dir = self.run_dir / "agent"
 
@@ -121,7 +115,15 @@ class RunLayout:
                 )
             return cls._instance
 
-        layout = cls(_resolve_workspace(workspace), _resolve_run_id())
+        # Whether a scheduler launched this, keyed on the job-step environment
+        # rather than on is_managed_compute(): that predicate also probes for the
+        # scontrol/spur binaries, which are absent from the CVS container image
+        # even when srun launched the step and exported the SLURM_* variables.
+        # Ranks would then each fall back to their own wall clock and land on
+        # different run_dirs -- a silent hang at the rendezvous rather than an
+        # error. The env vars are set by the launch itself, so ranks agree.
+        managed = _running_in_job_step()
+        layout = cls(_resolve_workspace(workspace), _resolve_run_id(managed), managed)
         try:
             # parents=True also creates run_dir; exist_ok because every rank in a
             # job step races to create the same shared-FS directories.
