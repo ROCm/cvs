@@ -285,6 +285,15 @@ class TestSingletonSemantics(_RunLayoutTestCase):
         with self.assertRaises(RuntimeError):
             RunLayout.instance()
 
+    def test_instance_or_none_returns_the_layout(self):
+        layout = RunLayout.initialize(self.workspace)
+        self.assertIs(RunLayout.instance_or_none(), layout)
+
+    def test_instance_or_none_before_initialize_is_none(self):
+        # The container orchestrator is also constructed under a bare pytest
+        # invocation, which never initializes a layout; it must not raise there.
+        self.assertIsNone(RunLayout.instance_or_none())
+
 
 class TestVenvParentDefaultShape(_RunLayoutTestCase):
     def test_default_derives_from_sys_prefix(self):

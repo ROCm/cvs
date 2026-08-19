@@ -146,6 +146,16 @@ class RunLayout:
         return cls._instance
 
     @classmethod
+    def instance_or_none(cls):
+        '''The layout if one was resolved, None otherwise.
+
+        For consumers that must also work when the suite was launched with bare
+        pytest instead of `cvs run` (see cvs/tests/health/README.md), which never
+        initializes a layout. Callers that genuinely require one use instance().
+        '''
+        return cls._instance
+
+    @classmethod
     def _reset(cls):
         '''Drop the cached layout. For unit-test isolation only.'''
         cls._instance = None

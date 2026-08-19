@@ -8,6 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 import getpass
 import re
+from cvs.core.run_layout import RunLayout
 from cvs.core.runtimes import RuntimeFactory
 
 
@@ -128,6 +129,15 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         volumes = [
             f"/home/{user}/.ssh:/host_ssh"  # SSH keys for multinode
         ]
+
+        # Tests run inside the container via docker exec, but configs resolve
+        # {run_dir} to a host path, so the mount has to be an identity mapping --
+        # any other container path leaves the substituted value pointing at
+        # nothing and the artifacts land in a disposable overlay. Absent when the
+        # suite was launched with bare pytest, which never resolves a layout.
+        layout = RunLayout.instance_or_none()
+        if layout is not None:
+            volumes.append(f"{layout.run_dir}:{layout.run_dir}")
 
         # Merge with config.json runtime args
         runtime_config = self.container_config.get('runtime', {})
