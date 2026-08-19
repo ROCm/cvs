@@ -10,11 +10,17 @@ from cvs.lib.inference.atom.atom_parsing import (
     ENFORCED_METRICS,
     GATED_METRICS,
     METRIC_TIERS,
+    sglang_bench_jsonl_to_raw,
     tier_metric_specs,
 )
 
 
 class TestATOMAtomParsing(unittest.TestCase):
+    def test_sglang_bench_jsonl_to_raw_maps_total_throughput(self):
+        text = '{"completed": 10, "total_throughput": 99.5, "output_throughput": 50.0}\n'
+        raw = sglang_bench_jsonl_to_raw(text)
+        self.assertEqual(raw["total_token_throughput"], 99.5)
+
     def test_gated_metrics_include_w1_extras(self):
         for name in ("per_gpu_throughput", "output_tput_per_gpu", "p99_tpot_ms", "p99_ttft_ms"):
             self.assertIn(name, GATED_METRICS)

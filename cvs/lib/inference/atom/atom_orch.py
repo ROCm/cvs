@@ -31,7 +31,7 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.lib.inference.atom.atom_parsing import to_client_metrics
+from cvs.lib.inference.atom.atom_parsing import sglang_bench_jsonl_to_raw, to_client_metrics
 from cvs.lib.utils.model_query_lib import OpenAIProbe
 
 log = globals.log
@@ -158,9 +158,12 @@ class AtomJob:
         self.out_dir = self._node_out_dir(0)
         self.server_log = self._rank_server_log(0)
         self.client_log = f"{self.out_dir}/client.log"
-        self._result_artifact = (
-            f"{self.out_dir}/{self.result_stem}.json" if self.driver == "atom" else f"{self.out_dir}/{self.result_stem}"
-        )
+        if self.driver == "atom":
+            self._result_artifact = f"{self.out_dir}/{self.result_stem}.json"
+        elif self._uses_sglang_serve():
+            self._result_artifact = f"{self.out_dir}/{self.result_stem}.jsonl"
+        else:
+            self._result_artifact = f"{self.out_dir}/{self.result_stem}"
 
         self._precheck_wait = server_precheck_wait_s
         self._warmup_wait = server_warmup_wait_s
@@ -239,6 +242,9 @@ class AtomJob:
         if self.distributed:
             return self.orch.exec_on_head(cmd, **kwargs)
         return self.orch.exec(cmd, **kwargs)
+
+    def _exec_client(self, cmd, **kwargs):
+        return self.orch.exec_on_head(cmd, **kwargs)
 
     def prepare_cell_out_dir(self):
         """Create per-cell output directory without touching server env or cache."""
@@ -779,23 +785,25 @@ class AtomJob:
         return argv
 
     def _sglang_client_argv(self):
-        return [
+        argv = [
             "python3",
             "-m",
             "sglang.bench_serving",
             "--backend",
             "sglang",
             "--host",
-            "0.0.0.0",
+            "127.0.0.1",
             "--port",
             str(self.port_no),
+            "--model",
+            self.model_id,
             "--dataset-name",
             self.dataset_name,
             "--num-prompts",
             self.num_prompts,
-            "--random-input",
+            "--random-input-len",
             self.isl,
-            "--random-output",
+            "--random-output-len",
             self.osl,
             "--random-range-ratio",
             self.random_range_ratio,
@@ -803,7 +811,12 @@ class AtomJob:
             self.concurrency,
             "--request-rate",
             self.request_rate,
+            "--output-file",
+            self._result_artifact,
         ]
+        if self.bench_extra_args:
+            argv.extend(shlex.split(self.bench_extra_args))
+        return argv
 
     def _client_argv(self):
         if self.driver == "atom":
@@ -866,17 +879,23 @@ class AtomJob:
     def _clear_stale_result_artifact(self):
         """Remove a prior run's result file so poll logic cannot treat it as complete."""
         artifact = shlex.quote(self._result_artifact)
-        self._exec_head(f"rm -f {artifact}")
+        self._exec_client(f"rm -f {artifact}")
 
     def run_client(self):
         self._clear_stale_result_artifact()
         args = self._client_argv()
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
-        client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
-        self._exec_head("bash -c " + shlex.quote(client_cmd))
+        env_prefix = ""
+        if self._uses_sglang_serve():
+            env_prefix = "export PYTHONPATH=/sgl-workspace/sglang/python:${PYTHONPATH:-} && "
+        client_cmd = (
+            f"source /tmp/server_env_script.sh && {env_prefix}{bench_cmd} "
+            f"> {shlex.quote(self.client_log)} 2>&1 &"
+        )
+        self._exec_client("bash -c " + shlex.quote(client_cmd))
 
     def _bench_result_ready(self):
-        out = self._exec_head(f"test -s {shlex.quote(self._result_artifact)} && echo OK || echo NO")
+        out = self._exec_client(f"test -s {shlex.quote(self._result_artifact)} && echo OK || echo NO")
         return bool(out) and all("OK" in (v or "") for v in out.values())
 
     def _client_log_probe_cmd(self):
@@ -894,13 +913,17 @@ class AtomJob:
 
     def _client_log_complete(self):
         log_path = shlex.quote(self.client_log)
-        marker = shlex.quote("Serving Benchmark Result")
-        out = self._exec_head(f"grep -aq {marker} {log_path} && echo OK || echo NO")
+        if self._uses_sglang_serve():
+            pattern = "Successful requests:"
+        else:
+            pattern = "Serving Benchmark Result"
+        marker = shlex.quote(pattern)
+        out = self._exec_client(f"grep -aq {marker} {log_path} && echo OK || echo NO")
         return bool(out) and all("OK" in (v or "") for v in out.values())
 
     def _client_log_failures(self, tail_lines=2000):
         del tail_lines
-        out = self._exec_head(self._client_log_probe_cmd())
+        out = self._exec_client(self._client_log_probe_cmd())
         failed = []
         for host, output in out.items():
             txt = output or ""
@@ -945,7 +968,7 @@ class AtomJob:
             log.info("client initial wait %ds", self._client_initial_wait)
             time.sleep(self._client_initial_wait)
 
-        poll_result_artifact = self.driver == "atom" or self._uses_vllm_serve()
+        poll_result_artifact = self.driver == "atom" or self._uses_vllm_serve() or self._uses_sglang_serve()
         for it in range(self._client_poll_count):
             failed = self._client_log_failures()
             if failed:
@@ -961,16 +984,21 @@ class AtomJob:
         raise RuntimeError("client did not complete before poll cap")
 
     def parse_results(self):
-        out = self._exec_head(f"cat {shlex.quote(self._result_artifact)}")
+        out = self._exec_client(f"cat {shlex.quote(self._result_artifact)}")
         results = {}
         for host, text in out.items():
             text = (text or "").strip()
             if not text:
                 raise RuntimeError(f"empty/missing results artifact on {host}: {self._result_artifact}")
             try:
-                raw = json.loads(text)
+                if self._uses_sglang_serve():
+                    raw = sglang_bench_jsonl_to_raw(text)
+                else:
+                    raw = json.loads(text)
             except (json.JSONDecodeError, ValueError) as e:
                 raise RuntimeError(f"unparseable results artifact on {host}: {self._result_artifact}: {e}") from e
+            raw.setdefault("num_prompts", int(self.num_prompts))
+            raw.setdefault("max_concurrency", int(self.concurrency))
             if self.driver == "atom":
                 raw.setdefault("random_input_len", int(self.isl))
                 raw.setdefault("random_output_len", int(self.osl))
