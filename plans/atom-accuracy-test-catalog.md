@@ -3,7 +3,8 @@
 Branch: `hnimrama/atom-accuracy`
 
 Inventory of accuracy/quality tests for the **atom** suite, reconciled with
-[atom-workload-tracker.md](atom-workload-tracker.md) and current CVS code.
+[atom-workload-tracker.md](atom-workload-tracker.md),
+[atom-tracker-excel-update.md](atom-tracker-excel-update.md), and current CVS code.
 
 **Repo state (2026-08-11, branch `hnimrama/atom-accuracy`):**
 

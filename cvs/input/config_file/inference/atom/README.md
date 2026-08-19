@@ -59,7 +59,9 @@ In the CVS repo, variants are flat sibling pairs in **this directory**:
 | `mi300x_atom_deepseek-v4-pro_distributed` | `…_distributed_threshold.json` | MI300X | `vllm_atom` | **P1 #10** V4 Pro PP=2 multinode |
 | `mi355x_atom_deepseek-r1_mxfp4_accuracy` | `…_mxfp4_accuracy_threshold.json` | MI355X | `atom` | W17 MXFP4 gsm8k accuracy seed |
 
-See also [plans/atom-workload-tracker.md](../../../plans/atom-workload-tracker.md) for full tracker reconciliation.
+See also [plans/atom-workload-tracker.md](../../../../../plans/atom-workload-tracker.md) for the CVS automation map,
+[plans/atom-tracker-excel-update.md](../../../../../plans/atom-tracker-excel-update.md) for Excel Online updates, and
+[plans/atom-accuracy-test-catalog.md](../../../../../plans/atom-accuracy-test-catalog.md) for ACC-* detail.
 
 Add analogous config + threshold pairs for other archs or models as needed.
 

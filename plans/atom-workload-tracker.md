@@ -2,6 +2,9 @@
 
 Branch: `hnimrama/atom-accuracy`
 
+Companion docs: [atom-tracker-excel-update.md](atom-tracker-excel-update.md) (Excel row-by-row),
+[atom-accuracy-test-catalog.md](atom-accuracy-test-catalog.md) (ACC-* detail).
+
 Maps the **Multi-Node Validation – ATOM (MI355X / MI350-class and above)** tracker
 to CVS `cvs run atom` config stems. This is the **atom suite only** — not a separate
 InferenceX runner. Cross-engine comparison uses `driver=vllm_atom` or `driver=sglang`
@@ -67,7 +70,8 @@ GPU arch in CVS: `mi300x`, `mi355x` (MI350-class → use `mi355x_*` stems).
 
 ## Quality & accuracy (#38–50)
 
-See [atom-accuracy-test-catalog.md](atom-accuracy-test-catalog.md) for ACC-* detail.
+See [atom-accuracy-test-catalog.md](atom-accuracy-test-catalog.md) for ACC-* detail and
+[atom-tracker-excel-update.md](atom-tracker-excel-update.md) for Excel Online row-by-row updates.
 
 | Area | CVS status |
 |------|------------|
