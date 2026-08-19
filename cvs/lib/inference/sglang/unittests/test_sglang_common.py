@@ -32,15 +32,24 @@ Serving Benchmark Result
 
 
 class _FakeSubtests:
+    def __init__(self):
+        self.failures = []
+
     class _Ctx:
+        def __init__(self, outer):
+            self._outer = outer
+
         def __enter__(self):
             return self
 
         def __exit__(self, exc_type, exc, tb):
+            if exc_type is not None:
+                self._outer.failures.append(exc)
+                return True
             return False
 
     def test(self, **kwargs):
-        return self._Ctx()
+        return self._Ctx(self)
 
 
 class TestSglangCommonHelpers(unittest.TestCase):
@@ -133,6 +142,26 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertTrue(passed)
         self.assertEqual(end, {'head': 'time'})
         self.assertEqual(lifecycle.perf_metric_rows['test::node'][0]['status'], 'pass')
+
+    def test_verify_inference_results_subtests_gates_violation(self):
+        host_exec = mock.Mock(return_value={'head': 'time'})
+        lifecycle = mock.Mock()
+        lifecycle.perf_metric_rows = {}
+        subtests = _FakeSubtests()
+        with mock.patch.object(sglang_common.time, 'sleep'):
+            passed, _end = sglang_common.verify_inference_results_subtests(
+                {'node1': {'mean_ttft_ms': '500.0', 'p99_ttft_ms': '10.0'}},
+                {'mean_ttft_ms': 100.0, 'p99_ttft_ms': 100.0},
+                host_exec,
+                subtests,
+                'bench_serv',
+                lifecycle=lifecycle,
+                report_nodeid='nid',
+            )
+        self.assertFalse(passed)
+        rows = {r['metric']: r['status'] for r in lifecycle.perf_metric_rows['nid']}
+        self.assertEqual(rows, {'mean_ttft_ms': 'fail', 'p99_ttft_ms': 'pass'})
+        self.assertEqual(len(subtests.failures), 1)
 
     def test_poll_for_inference_completion_success(self):
         log_text = {'bench': _SAMPLE_BENCH_LOG}
