@@ -20,12 +20,14 @@ Lifecycle (each stage is a separate test):
 
 import json
 import os
+import re
 import time
 
 import pytest
 
 from cvs.lib import globals
 from cvs.lib.training.megatron.megatron_lib import MegatronTrainingJob
+from cvs.lib.training.megatron.primus_lib import PrimusTrainingJob
 from cvs.lib.training.megatron.utils.convergence import (
     compute_convergence,
     parse_step_metrics,
@@ -41,6 +43,14 @@ from cvs.lib.utils.verdict import _check_one, ThresholdViolation
 from cvs.lib.utils_lib import update_test_result
 
 log = globals.log
+
+
+def _make_training_job(orch, variant_config, **kwargs):
+    """Return PrimusTrainingJob or MegatronTrainingJob based on the container image."""
+    if re.search(r'primus', orch.container_config.get("image", ""), re.I):
+        return PrimusTrainingJob(orch, variant_config, **kwargs)
+    return MegatronTrainingJob(orch, variant_config, **kwargs)
+
 
 # Smoke cell: smallest fixed parameters that confirm the model loads and trains.
 _SMOKE_MBS = "1"
@@ -107,7 +117,7 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
-    mt_obj = MegatronTrainingJob(
+    mt_obj = _make_training_job(
         orch,
         variant_config,
         hf_token=hf_token,
@@ -150,7 +160,7 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
 
     globals.error_list = []
 
-    mt_obj = MegatronTrainingJob(
+    mt_obj = _make_training_job(
         orch,
         variant_config,
         hf_token=hf_token,
@@ -196,7 +206,7 @@ def test_training(
     nodeid = request.node.nodeid
     combo_key = request.node.callspec.id
     globals.error_list = []
-    mt_obj = MegatronTrainingJob(
+    mt_obj = _make_training_job(
         orch,
         variant_config,
         hf_token=hf_token,
@@ -219,7 +229,7 @@ def test_training(
         mt_obj.verify_training_results()
         elapsed = time.monotonic() - t
     except Exception:
-        lifecycle.failed = True
+        train_res_dict[combo_key] = None
         raise
     finally:
         mt_obj.stop_training_processes()
@@ -274,9 +284,11 @@ def test_training(
 
 def test_metric(variant_config, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request):
     """Stage 4 (parametrized): compare each combo's metrics against thresholds."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
     combo_key = request.node.callspec.id
-    if combo_key not in train_res_dict:
-        pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run)")
+    if not train_res_dict.get(combo_key):
+        pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run or failed)")
 
     actuals_raw = train_res_dict[combo_key]
     request.node.user_properties.append(("training_log_tail", actuals_raw.get("_log_tail", "")))
@@ -335,8 +347,8 @@ def test_loss_curve(
         pytest.skip("a prior lifecycle stage failed")
 
     combo_key = request.node.callspec.id
-    if combo_key not in train_res_dict:
-        pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run)")
+    if not train_res_dict.get(combo_key):
+        pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run or failed)")
 
     combo_log_dir = train_res_dict[combo_key].get("_combo_log_dir")
     if not combo_log_dir:
