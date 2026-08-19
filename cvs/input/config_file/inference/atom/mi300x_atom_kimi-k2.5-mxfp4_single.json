@@ -1,0 +1,93 @@
+{
+  "_comment": "Tracker #14 amd/Kimi-K2.5-MXFP4 perf stem (mi300x).",
+  "schema_version": 1,
+  "framework": "atom",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi300x_atom_kimi-k2.5-mxfp4_single_threshold.json",
+  "run_card": {
+    "atom_image_pin": "rocm/atom-dev:latest",
+    "notes": "P2 workload tracker #14; lab pending"
+  },
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/home/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "amd/Kimi-K2.5-MXFP4",
+    "remote": 0,
+    "precision": "mxfp4"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "atom_mi300x",
+    "image": "rocm/atom-dev:latest",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "atom_args": [
+        "-tp",
+        "4",
+        "--trust-remote-code"
+      ],
+      "env": {
+        "ATOM_DISABLE_MMAP": "true",
+        "ATOM_USE_TRITON_MOE": "1",
+        "ATOM_USE_TRITON_GEMM": "1"
+      }
+    }
+  },
+  "params": {
+    "driver": "atom",
+    "port_no": "8000",
+    "tensor_parallelism": "4",
+    "random_range_ratio": "0.8",
+    "num_prompts": "1000",
+    "max_model_length": "4096",
+    "metric_percentiles": "95,99",
+    "reuse_server_across_sweep": "true",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60"
+  },
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "sweep": {
+    "sequence_combinations": [
+      {
+        "name": "k25mx_1k_1k",
+        "isl": "1024",
+        "osl": "1024"
+      }
+    ],
+    "runs": [
+      {
+        "combo": "k25mx_1k_1k",
+        "concurrency": 128
+      },
+      {
+        "combo": "k25mx_1k_1k",
+        "concurrency": 256
+      }
+    ]
+  }
+}

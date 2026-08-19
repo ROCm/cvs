@@ -64,12 +64,37 @@ def _cell(metrics, key):
     return "-" if v is None else v
 
 
+def log_sweep_knee_summary(inf_res_dict):
+    """CVS-10: per ISL/OSL group, log max throughput and concurrency at knee."""
+    from collections import defaultdict
+
+    groups = defaultdict(list)
+    for key, host_dict in inf_res_dict.items():
+        model, gpu, isl, osl, policy, conc = key
+        for _host, metrics in host_dict.items():
+            tput = metrics.get("client.output_throughput")
+            if tput is None:
+                continue
+            groups[(model, gpu, isl, osl, policy)].append((int(conc), tput, metrics.get("client.mean_ttft_ms")))
+    for group_key, points in sorted(groups.items()):
+        best_conc, best_tput, ttft = max(points, key=lambda p: p[1])
+        log.info(
+            "sweep summary %s: summary.max_output_throughput=%s summary.conc_at_max_tput=%s "
+            "summary.ttft_at_max_tput=%s",
+            group_key,
+            best_tput,
+            best_conc,
+            ttft,
+        )
+
+
 def print_results_table(inf_res_dict, columns):
     from tabulate import tabulate
 
     if not inf_res_dict:
         log.info("inf_res_dict empty, nothing to print")
         return
+    log_sweep_knee_summary(inf_res_dict)
     headers = [label for label, _key in columns]
     metric_keys = [key for _label, key in columns]
     rows = []

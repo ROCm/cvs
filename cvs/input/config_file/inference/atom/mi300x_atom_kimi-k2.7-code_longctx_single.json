@@ -1,0 +1,93 @@
+{
+  "_comment": "W13 Kimi K2.7 Code MXFP4 long-context perf (8K ISL / 1K OSL). Agentic/large-seq customer use case.",
+  "schema_version": 1,
+  "framework": "atom",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi300x_atom_kimi-k2.7-code_longctx_single_threshold.json",
+  "run_card": {
+    "atom_image_pin": "rocm/atom-dev:latest",
+    "notes": "K2.7 long ISL perf; pair with \u2026_code_accuracy NIAH cells"
+  },
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/home/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "moonshotai/Kimi-K2.7-Code",
+    "remote": 0,
+    "precision": "mxfp4"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "atom_mi300x",
+    "image": "rocm/atom-dev:latest",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "atom_args": [
+        "-tp",
+        "8",
+        "--trust-remote-code"
+      ],
+      "env": {
+        "ATOM_DISABLE_MMAP": "true",
+        "ATOM_USE_TRITON_MOE": "1",
+        "ATOM_USE_TRITON_GEMM": "1"
+      }
+    }
+  },
+  "params": {
+    "driver": "atom",
+    "port_no": "8000",
+    "tensor_parallelism": "8",
+    "random_range_ratio": "0.8",
+    "num_prompts": "1000",
+    "max_model_length": "10240",
+    "metric_percentiles": "95,99",
+    "reuse_server_across_sweep": "true",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60"
+  },
+  "sweep": {
+    "sequence_combinations": [
+      {
+        "name": "k27_8k_1k",
+        "isl": "8192",
+        "osl": "1024"
+      }
+    ],
+    "runs": [
+      {
+        "combo": "k27_8k_1k",
+        "concurrency": 32
+      },
+      {
+        "combo": "k27_8k_1k",
+        "concurrency": 64
+      }
+    ]
+  },
+  "platform": {
+    "gpu_metrics_poll": true
+  }
+}

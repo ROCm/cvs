@@ -55,3 +55,37 @@ def build_prev_run_compare_row(
         "changed": changed,
         "regression": regression,
     }
+
+
+def build_framework_parity_row(
+    cell: Mapping[str, Any],
+    ref_cell: Optional[Mapping[str, Any]],
+    *,
+    headline_metric: str,
+    ratio_metric_key: str,
+    ttft_metric_key: str = "compare.framework.mean_ttft_ms_ratio",
+) -> dict:
+    actuals = cell.get("actuals") or {}
+    ref_actuals = (ref_cell or {}).get("actuals") or {}
+    current_tput = actuals.get(headline_metric)
+    ref_tput = ref_actuals.get(headline_metric)
+    current_ttft = actuals.get("client.mean_ttft_ms")
+    ref_ttft = ref_actuals.get("client.mean_ttft_ms")
+
+    def _ratio(current, reference):
+        if current is None or reference is None:
+            return None
+        try:
+            return metric_ratio(float(current), float(reference))
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "cell_id": cell.get("cell_id"),
+        "host": cell.get("host"),
+        "concurrency": cell.get("concurrency"),
+        "current_throughput": current_tput,
+        "reference_throughput": ref_tput,
+        ratio_metric_key: _ratio(current_tput, ref_tput),
+        ttft_metric_key: _ratio(current_ttft, ref_ttft),
+    }

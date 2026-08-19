@@ -36,6 +36,7 @@ def test_build_inference_report_payload_uses_config():
     assert payload["chart_series"]["output_throughput"][0]["label"] == "ISL=1024 · OSL=1024"
     assert len(payload["chart_config"]) == 1
     assert payload["chart_config"][0]["suffix"] == "output_throughput"
+    assert payload["accuracy"] == {}
     assert "chart_comparison" not in payload
 
 
