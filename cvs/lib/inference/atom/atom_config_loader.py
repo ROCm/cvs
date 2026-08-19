@@ -34,9 +34,10 @@ from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_c
 ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
 ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
 # MI300X MXFP4 MoE + A4W4 GEMM require Triton; aiter A4W4 is unsupported on gfx942.
+# atom.utils.envs treats only "1" as true — "true" is ignored.
 _MXFP4_TRITON_ENV = {
-    "ATOM_USE_TRITON_MOE": "true",
-    "ATOM_USE_TRITON_GEMM": "true",
+    "ATOM_USE_TRITON_MOE": "1",
+    "ATOM_USE_TRITON_GEMM": "1",
 }
 
 
@@ -46,6 +47,9 @@ def merge_mxfp4_triton_env(precision: str, env: dict[str, str]) -> dict[str, str
     if (precision or "").lower() == "mxfp4":
         for key, value in _MXFP4_TRITON_ENV.items():
             merged.setdefault(key, value)
+        for key in _MXFP4_TRITON_ENV:
+            if str(merged.get(key, "")).lower() == "true":
+                merged[key] = "1"
     return merged
 
 log = globals.log

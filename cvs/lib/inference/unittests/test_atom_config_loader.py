@@ -441,8 +441,8 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.params.driver, "atom")
         self.assertEqual(variant.params.tensor_parallelism, "4")
         self.assertEqual(variant.model.precision, "mxfp4")
-        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_MOE"), "true")
-        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_GEMM"), "true")
+        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_MOE"), "1")
+        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_GEMM"), "1")
         self.assertEqual(
             variant.expected_cells(),
             ["ISL=8192,OSL=1024,TP=4,CONC=32", "ISL=8192,OSL=1024,TP=4,CONC=64"],
@@ -453,8 +453,8 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         config = root / "input/config_file/inference/atom/mi300x_atom_kimi-k2.7-code_single.json"
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.model.precision, "mxfp4")
-        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_MOE"), "true")
-        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_GEMM"), "true")
+        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_MOE"), "1")
+        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_GEMM"), "1")
 
     def test_load_phase_c_w3_glm_perf(self):
         root = Path(__file__).resolve().parents[3]

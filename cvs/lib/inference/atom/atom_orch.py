@@ -927,7 +927,7 @@ class AtomJob:
         out = self._exec_client(f"grep -aq {marker} {log_path} && echo OK || echo NO")
         return bool(out) and all("OK" in (v or "") for v in out.values())
 
-    def _client_log_failures(self, tail_lines=2000):
+    def _client_log_failures(self, tail_lines=2000, *, check_failed_requests=True):
         del tail_lines
         out = self._exec_client(self._client_log_probe_cmd())
         failed = []
@@ -935,6 +935,8 @@ class AtomJob:
             txt = output or ""
             if self.CLIENT_CRASH_RE.search(txt) or self.CLIENT_LAUNCH_FAIL_RE.search(txt):
                 failed.append((host, txt[-500:]))
+                continue
+            if not check_failed_requests:
                 continue
             fm = self.FAILED_REQUESTS_RE.search(txt)
             if fm:
@@ -951,7 +953,18 @@ class AtomJob:
                     )
         return failed
 
+    def _raise_if_client_crashed(self):
+        failed = self._client_log_failures(check_failed_requests=False)
+        if failed:
+            raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
+
+    def _finalize_client_or_fail(self):
+        failed = self._client_log_failures(check_failed_requests=True)
+        if failed:
+            raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
+
     def wait_client_complete(self):
+        poll_result_artifact = self.driver == "atom" or self._uses_vllm_serve() or self._uses_sglang_serve()
         if self.driver == "atom":
             log.info(
                 "client initial wait (atom: polling for result artifact, up to %ds)",
@@ -960,11 +973,10 @@ class AtomJob:
             deadline = time.monotonic() + self._client_initial_wait
             poll_s = 15
             while time.monotonic() < deadline:
-                failed = self._client_log_failures(tail_lines=500)
-                if failed:
-                    raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
+                self._raise_if_client_crashed()
                 if self._bench_result_ready():
                     log.info("client result artifact ready during initial wait")
+                    self._finalize_client_or_fail()
                     return
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -974,17 +986,16 @@ class AtomJob:
             log.info("client initial wait %ds", self._client_initial_wait)
             time.sleep(self._client_initial_wait)
 
-        poll_result_artifact = self.driver == "atom" or self._uses_vllm_serve() or self._uses_sglang_serve()
         for it in range(self._client_poll_count):
-            failed = self._client_log_failures()
-            if failed:
-                raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
+            self._raise_if_client_crashed()
             if poll_result_artifact:
                 if self._bench_result_ready():
                     log.info("client complete (iter=%d)", it)
+                    self._finalize_client_or_fail()
                     return
             elif self._client_log_complete():
                 log.info("client complete (iter=%d)", it)
+                self._finalize_client_or_fail()
                 return
             time.sleep(self._client_poll_wait)
         raise RuntimeError("client did not complete before poll cap")

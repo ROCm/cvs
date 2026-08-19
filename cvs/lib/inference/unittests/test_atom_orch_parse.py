@@ -247,8 +247,8 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         job.build_server_cmd()
         env_cmd = orch.commands[0][0]
-        self.assertIn("ATOM_USE_TRITON_MOE=true", env_cmd)
-        self.assertIn("ATOM_USE_TRITON_GEMM=true", env_cmd)
+        self.assertIn("ATOM_USE_TRITON_MOE=1", env_cmd)
+        self.assertIn("ATOM_USE_TRITON_GEMM=1", env_cmd)
 
     def test_client_log_failures_traceback(self):
         job = AtomJob(
@@ -304,6 +304,53 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job._bench_max_failed_requests = 2
         failed = job._client_log_failures()
         self.assertEqual(failed, [])
+
+    def test_client_log_failures_skips_failed_requests_when_disabled(self):
+        job = AtomJob(
+            orch=FakeOrch(exec_return={"node0": "Failed requests: 99\n"}),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=32,
+            num_prompts=100,
+        )
+        job._bench_max_failed_requests = 0
+        self.assertEqual(job._client_log_failures(check_failed_requests=False), [])
+
+    @patch("cvs.lib.inference.atom.atom_orch.time.sleep", return_value=None)
+    def test_wait_client_complete_defers_failed_requests_until_artifact_ready(self, _sleep):
+        class SeqOrch(FakeOrch):
+            def __init__(self):
+                super().__init__()
+                self.artifact_reads = 0
+
+            def exec_on_head(self, cmd, **kwargs):
+                self.exec_on_head_commands.append(cmd)
+                if "test -s" in cmd:
+                    self.artifact_reads += 1
+                    return {"node0": "OK\n" if self.artifact_reads >= 2 else "NO\n"}
+                if "grep -aE" in cmd:
+                    return {"node0": "Failed requests: 279\n"}
+                return {"node0": ""}
+
+        job = AtomJob(
+            orch=SeqOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="8192",
+            osl="1024",
+            concurrency=32,
+            num_prompts=1000,
+        )
+        job._client_initial_wait = 0
+        job._client_poll_count = 3
+        job._client_poll_wait = 0
+        job._bench_max_failed_requests = 0
+        with self.assertRaises(RuntimeError) as ctx:
+            job.wait_client_complete()
+        self.assertIn("Failed requests: 279", str(ctx.exception))
+        self.assertGreaterEqual(job.orch.artifact_reads, 2)
 
     def test_vllm_client_argv_includes_disable_tqdm(self):
         job = AtomJob(

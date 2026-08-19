@@ -54,8 +54,8 @@
       "env": {
         "VLLM_ROCM_USE_AITER": "1",
         "AMDGCN_USE_BUFFER_OPS": "0",
-        "ATOM_USE_TRITON_MOE": "true",
-        "ATOM_USE_TRITON_GEMM": "true"
+        "ATOM_USE_TRITON_MOE": "1",
+        "ATOM_USE_TRITON_GEMM": "1"
       }
     }
   },

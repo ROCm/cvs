@@ -44,8 +44,8 @@
       "atom_args": ["-tp", "8", "--trust-remote-code"],
       "env": {
         "ATOM_DISABLE_MMAP": "true",
-        "ATOM_USE_TRITON_MOE": "true",
-        "ATOM_USE_TRITON_GEMM": "true"
+        "ATOM_USE_TRITON_MOE": "1",
+        "ATOM_USE_TRITON_GEMM": "1"
       }
     }
   },
