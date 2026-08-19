@@ -5,6 +5,7 @@ import unittest
 from cvs.lib.report.render.perf_metric_table import (
     dedupe_metric_rows,
     is_benchmark_metrics_extra,
+    metric_display_label,
     render_benchmark_metrics_html,
 )
 
@@ -20,12 +21,21 @@ class TestPerfMetricTable(unittest.TestCase):
         self.assertEqual(len(out), 2)
         self.assertEqual(out[0]['status'], 'pass')
 
+    def test_metric_display_label_uses_columns_when_provided(self):
+        columns = (('Mean TTFT (ms)', 'mean_ttft_ms'),)
+        self.assertEqual(metric_display_label('mean_ttft_ms', columns), 'Mean TTFT (ms)')
+
+    def test_metric_display_label_prettifies_unknown_keys(self):
+        self.assertEqual(metric_display_label('goodput'), 'Goodput')
+
     def test_render_benchmark_metrics_html_includes_pass_and_fail_rows(self):
+        columns = (('Mean TTFT (ms)', 'mean_ttft_ms'), ('Goodput', 'goodput'))
         html_out = render_benchmark_metrics_html(
             [
                 {'node': 'n1', 'metric': 'mean_ttft_ms', 'status': 'pass'},
                 {'node': 'n1', 'metric': 'goodput', 'status': 'fail'},
-            ]
+            ],
+            columns=columns,
         )
         self.assertIn('cvs-benchmark-metrics-table', html_out)
         self.assertIn('Mean TTFT (ms)', html_out)

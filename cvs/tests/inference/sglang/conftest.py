@@ -51,8 +51,10 @@ from cvs.lib.inference.sglang.sglang_config_loader import (
 )
 from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
 from cvs.lib.inference.sglang.sglang_distributed_lib import SglangDistributed
+from cvs.lib.inference.sglang.sglang_parsing import SGLANG_RESULTS_COLUMNS
 from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
 from cvs.lib.report.benchmark_metric_registry import (
+    benchmark_metric_columns_for_nodeid,
     benchmark_metric_rows_from_item,
     benchmark_metric_rows_from_report,
     mark_collapsible_result_cell,
@@ -566,7 +568,8 @@ def _attach_benchmark_metric_extras_for_nodeid(report, nodeid: str, rows: list[d
             continue
 
     if not any(is_benchmark_metrics_extra(e) for e in extras):
-        extras.append(pytest_html.extras.html(render_benchmark_metrics_html(rows)))
+        columns = benchmark_metric_columns_for_nodeid(nodeid) or SGLANG_RESULTS_COLUMNS
+        extras.append(pytest_html.extras.html(render_benchmark_metrics_html(rows, columns=columns)))
 
     report.extras = extras
     stamp_benchmark_metric_rows_on_report(report, rows)
@@ -642,7 +645,10 @@ def pytest_sessionfinish(session, exitstatus):
     htmlpath = getattr(session.config.option, 'htmlpath', None)
     if not htmlpath:
         return
-    patch_benchmark_metrics_into_html(Path(htmlpath))
+    patch_benchmark_metrics_into_html(
+        Path(htmlpath),
+        benchmark_test_name=SGLANG_PERF_BENCHMARK_TEST,
+    )
 
 
 # def pytest_html_results_table_header(cells):

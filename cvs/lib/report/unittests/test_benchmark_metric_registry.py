@@ -18,6 +18,7 @@ class _FakeStash(dict):
 class TestBenchmarkMetricRegistry(unittest.TestCase):
     def setUp(self):
         registry._ROWS_BY_NODEID.clear()
+        registry._COLUMNS_BY_NODEID.clear()
         registry._SUBTEST_SUMMARY_COUNTED.clear()
         registry._SUBTEST_SUMMARY['failed'] = 0
         registry._SUBTEST_SUMMARY['passed'] = 0
@@ -35,6 +36,19 @@ class TestBenchmarkMetricRegistry(unittest.TestCase):
         stored = registry.benchmark_metric_rows_for_nodeid(node.nodeid)
         self.assertEqual(len(stored), 1)
         self.assertEqual(stored[0]['metric'], 'mean_ttft_ms')
+
+    def test_record_benchmark_metric_rows_stores_columns(self):
+        node = SimpleNamespace(
+            stash=_FakeStash(),
+            nodeid='cvs/tests/x.py::test_run_performance_benchmark_test',
+        )
+        columns = (('Mean TTFT (ms)', 'mean_ttft_ms'),)
+        rows = [{'node': 'n1', 'metric': 'mean_ttft_ms', 'status': 'pass'}]
+        registry.record_benchmark_metric_rows(node, rows, columns=columns)
+        self.assertEqual(
+            registry.benchmark_metric_columns_for_nodeid(node.nodeid),
+            columns,
+        )
 
     def test_stamp_benchmark_metric_rows_on_report(self):
         report = SimpleNamespace(user_properties=[])
@@ -68,7 +82,9 @@ class TestBenchmarkMetricRegistry(unittest.TestCase):
     def test_patch_benchmark_metrics_into_html(self):
         nodeid = 'cvs/tests/inference/sglang/sglang_single.py::test_run_performance_benchmark_test'
         rows = [{'node': 'n1', 'metric': 'mean_ttft_ms', 'status': 'pass'}]
+        columns = (('Mean TTFT (ms)', 'mean_ttft_ms'),)
         registry._ROWS_BY_NODEID[nodeid] = rows
+        registry._COLUMNS_BY_NODEID[nodeid] = columns
 
         payload = {
             'tests': {
@@ -97,6 +113,7 @@ class TestBenchmarkMetricRegistry(unittest.TestCase):
             self.assertTrue(registry.patch_benchmark_metrics_into_html(html_path))
             updated = html_path.read_text(encoding='utf-8')
             self.assertIn('cvs-benchmark-metrics-table', updated)
+            self.assertIn('Mean TTFT (ms)', updated)
             self.assertIn('cvs-subtests-count', updated)
 
 

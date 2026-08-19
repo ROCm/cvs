@@ -13,11 +13,12 @@ import html
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from _pytest.stash import StashKey
 
 from cvs.lib.report.render.perf_metric_table import (
+    MetricColumn,
     dedupe_metric_rows,
     is_benchmark_metrics_extra,
     render_benchmark_metrics_html,
@@ -28,15 +29,27 @@ BENCHMARK_METRIC_ROWS_USER_PROPERTY = 'cvs_benchmark_metric_rows'
 DEFAULT_BENCHMARK_TEST_NAME = 'test_run_performance_benchmark_test'
 
 _ROWS_BY_NODEID: dict[str, list[dict[str, Any]]] = {}
+_COLUMNS_BY_NODEID: dict[str, Sequence[MetricColumn]] = {}
 _SUBTEST_SUMMARY = {'failed': 0, 'passed': 0}
 _SUBTEST_SUMMARY_COUNTED: set[str] = set()
 
 
-def record_benchmark_metric_rows(node, rows: list[dict[str, Any]]) -> None:
+def record_benchmark_metric_rows(
+    node,
+    rows: list[dict[str, Any]],
+    *,
+    columns: Sequence[MetricColumn] = (),
+) -> None:
     """Persist metric pass/fail rows for pytest-html (read back after the test call)."""
     deduped = dedupe_metric_rows(rows)
     node.stash[BENCHMARK_METRIC_ROWS_KEY] = deduped
     _ROWS_BY_NODEID[node.nodeid] = deduped
+    if columns:
+        _COLUMNS_BY_NODEID[node.nodeid] = tuple(columns)
+
+
+def benchmark_metric_columns_for_nodeid(nodeid: str) -> Sequence[MetricColumn]:
+    return _COLUMNS_BY_NODEID.get(nodeid) or ()
 
 
 def benchmark_metric_rows_for_nodeid(nodeid: str) -> list[dict[str, Any]]:
@@ -86,10 +99,14 @@ def benchmark_subtest_summary() -> tuple[int, int, int]:
     return failed + passed, failed, passed
 
 
-def benchmark_metrics_extra(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def benchmark_metrics_extra(
+    rows: list[dict[str, Any]],
+    *,
+    columns: Sequence[MetricColumn] = (),
+) -> dict[str, Any]:
     from pytest_html import extras
 
-    return extras.html(render_benchmark_metrics_html(rows))
+    return extras.html(render_benchmark_metrics_html(rows, columns=columns))
 
 
 def _is_full_log_extra(extra: object) -> bool:
@@ -141,8 +158,13 @@ def mark_collapsible_result_cell(result_cell: str) -> str:
     return _mark_collapsible_result_cell(result_cell)
 
 
-def _apply_benchmark_entry_patch(entry: dict[str, Any], rows: list[dict[str, Any]]) -> None:
-    metrics_extra = benchmark_metrics_extra(rows)
+def _apply_benchmark_entry_patch(
+    entry: dict[str, Any],
+    rows: list[dict[str, Any]],
+    *,
+    columns: Sequence[MetricColumn] = (),
+) -> None:
+    metrics_extra = benchmark_metrics_extra(rows, columns=columns)
     extras: list[dict[str, Any]] = []
     for extra in entry.get('extras') or []:
         if _is_full_log_extra(extra):
@@ -279,7 +301,11 @@ def patch_benchmark_metrics_into_html(
         for entry in entries:
             if not _is_main_call_entry(entry, nodeid):
                 continue
-            _apply_benchmark_entry_patch(entry, rows)
+            _apply_benchmark_entry_patch(
+                entry,
+                rows,
+                columns=benchmark_metric_columns_for_nodeid(nodeid),
+            )
             patched = True
 
     data['tests'] = tests

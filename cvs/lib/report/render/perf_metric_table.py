@@ -7,11 +7,14 @@ from typing import Any, Mapping, Sequence
 
 _BENCHMARK_METRICS_WRAP = 'cvs-benchmark-metrics-wrap'
 
+MetricColumn = tuple[str, str | None]
 
-def _metric_display_label(metric_key: str) -> str:
-    from cvs.lib.inference.sglang.sglang_parsing import SGLANG_RESULTS_COLUMNS
 
-    for label, key in SGLANG_RESULTS_COLUMNS:
+def metric_display_label(
+    metric_key: str,
+    columns: Sequence[MetricColumn] = (),
+) -> str:
+    for label, key in columns:
         if key == metric_key:
             return label
     if not metric_key:
@@ -32,13 +35,17 @@ def dedupe_metric_rows(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, A
     return out
 
 
-def render_benchmark_metrics_html(rows: Sequence[Mapping[str, Any]]) -> str:
+def render_benchmark_metrics_html(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    columns: Sequence[MetricColumn] = (),
+) -> str:
     """Table rows aligned with pytest-html Result / Test / Duration / Links columns."""
     body_rows = []
     for row in dedupe_metric_rows(rows):
         status = str(row.get('status') or '').lower()
         passed = status == 'pass'
-        label = html.escape(_metric_display_label(str(row.get('metric') or '')))
+        label = html.escape(metric_display_label(str(row.get('metric') or ''), columns))
         outcome = 'Passed' if passed else 'Failed'
         outcome_cls = 'passed' if passed else 'failed'
         body_rows.append(

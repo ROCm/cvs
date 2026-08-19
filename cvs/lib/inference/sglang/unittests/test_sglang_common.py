@@ -8,7 +8,7 @@ from cvs.lib.inference.sglang import sglang_common
 
 _SAMPLE_BENCH_LOG = """
 Successful requests: 100
-Benchmark duration (s): 120
+Benchmark duration (s): 120.5
 Total input tokens: 819200
 Total generated tokens: 51200
 Request throughput (req/s): 0.833333
@@ -17,7 +17,7 @@ Mean TTFT (ms): 45.5
 Median TTFT (ms): 40.0
 P99 TTFT (ms): 120.0
 Mean TPOT (ms): 12.5
-Median TPOT (ms): 12
+Median TPOT (ms): 12.9
 P99 TPOT (ms): 18.0
 Mean ITL (ms): 11.0
 Median ITL (ms): 10.5
@@ -94,6 +94,8 @@ class TestSglangCommonHelpers(unittest.TestCase):
         )
         node = parsed['node1']
         self.assertEqual(node['successful_requests'], '100')
+        self.assertEqual(node['benchmark_duration'], '120.5')
+        self.assertEqual(node['median_tpot_ms'], '12.9')
         self.assertEqual(node['goodput'], '1.000000')
 
     def test_parse_inference_bench_results_disagg_extras(self):

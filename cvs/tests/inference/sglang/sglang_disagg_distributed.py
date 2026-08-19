@@ -166,11 +166,13 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request
         lifecycle=lifecycle,
         report_nodeid=request.node.nodeid,
     )
+    from cvs.lib.inference.sglang.sglang_parsing import SGLANG_RESULTS_COLUMNS
     from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
 
     record_benchmark_metric_rows(
         request.node,
         lifecycle.perf_metric_rows.get(request.node.nodeid, []),
+        columns=SGLANG_RESULTS_COLUMNS,
     )
 
     key = (
