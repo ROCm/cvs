@@ -234,9 +234,7 @@ def _build_panels(
             if accuracy_prev:
                 panels["accuracy_prev_run"] = accuracy_prev
 
-            scale_ref = resolve_scale_accuracy_ref_json_path(
-                getattr(config, "scale_accuracy_ref_json", "")
-            )
+            scale_ref = resolve_scale_accuracy_ref_json_path(getattr(config, "scale_accuracy_ref_json", ""))
             if scale_ref and lifecycle_report:
                 scale_payload = load_report_json(Path(scale_ref)) or {}
                 scale_panel = build_scale_accuracy_panel(current_accuracy, scale_payload)

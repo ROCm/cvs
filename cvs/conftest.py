@@ -17,6 +17,7 @@ from cvs.lib.report_plugins import HtmlReportManager
 
 log = logging.getLogger(__name__)
 
+
 def _maybe_autocollect_html(config, suite_name):
     '''
     Enable pytest-html for ANC suites without an explicit --html.

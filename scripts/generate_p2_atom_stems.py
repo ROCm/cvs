@@ -203,9 +203,7 @@ def make_config(gpu: str, w: dict) -> dict:
         },
         "platform": {"gpu_metrics_poll": True},
         "sweep": {
-            "sequence_combinations": [
-                {"name": w["combo"], "isl": str(w["isl"]), "osl": str(w["osl"])}
-            ],
+            "sequence_combinations": [{"name": w["combo"], "isl": str(w["isl"]), "osl": str(w["osl"])}],
             "runs": [{"combo": w["combo"], "concurrency": c} for c in w["conc"]],
         },
     }

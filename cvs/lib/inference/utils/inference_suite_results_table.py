@@ -75,9 +75,7 @@ def log_sweep_knee_summary(inf_res_dict):
             tput = metrics.get("client.output_throughput")
             if tput is None:
                 continue
-            groups[(model, gpu, isl, osl, policy)].append(
-                (int(conc), tput, metrics.get("client.mean_ttft_ms"))
-            )
+            groups[(model, gpu, isl, osl, policy)].append((int(conc), tput, metrics.get("client.mean_ttft_ms")))
     for group_key, points in sorted(groups.items()):
         best_conc, best_tput, ttft = max(points, key=lambda p: p[1])
         log.info(

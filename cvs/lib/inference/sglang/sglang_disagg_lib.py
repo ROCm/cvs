@@ -295,10 +295,7 @@ class SglangDisaggPD:
         - Proxy/router nodes
         """
         log.info('Run pre inference tasks')
-        cmd = "bash -c " + shlex.quote(
-            "sudo apt -y update && "
-            "sudo apt install -y iputils-ping iproute2 net-tools"
-        )
+        cmd = "bash -c " + shlex.quote("sudo apt -y update && sudo apt install -y iputils-ping iproute2 net-tools")
         for hosts in (self.prefill_node_list, self.decode_node_list, self.proxy_node):
             self._container_exec(cmd, hosts=hosts)
 
@@ -321,9 +318,7 @@ class SglangDisaggPD:
         """
         if re.search('broadcom|thor', self.nic_type, re.I):
             self.nccl_ib_gid_index = 3
-            cmd = "bash -c " + shlex.quote(
-                f"cp {self.mount_vol}.host {self.mount_vol}; sleep 2; ibv_devinfo; sleep 2;"
-            )
+            cmd = "bash -c " + shlex.quote(f"cp {self.mount_vol}.host {self.mount_vol}; sleep 2; ibv_devinfo; sleep 2;")
             hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
             for hosts in (self.prefill_node_list, self.decode_node_list):
                 out_dict = self._container_exec(cmd, hosts=hosts)
@@ -486,8 +481,7 @@ class SglangDisaggPD:
         log.info('Run rmsnorm2d')
         log.info('#================ * * * =========================#')
         cmd = "bash -c " + shlex.quote(
-            f"MAX_JOBS={max_jobs} python /sgl-workspace/aiter/op_tests/test_rmsnorm2d.py "
-            f"> /tmp/rsmnorm_test.log 2>&1 &"
+            f"MAX_JOBS={max_jobs} python /sgl-workspace/aiter/op_tests/test_rmsnorm2d.py > /tmp/rsmnorm_test.log 2>&1 &"
         )
         for hosts in (self.prefill_node_list, self.decode_node_list, self.proxy_node):
             self._container_exec(cmd, hosts=hosts)
@@ -558,9 +552,7 @@ class SglangDisaggPD:
                 f"{flags_block}\n"
                 f"    --log-level {self.inf_dict['log_level']}\n"
             )
-            write_cmd = "bash -c " + shlex.quote(
-                f"cat > /tmp/prefill_launch_script.sh <<'EOF'\n{launch_body}EOF"
-            )
+            write_cmd = "bash -c " + shlex.quote(f"cat > /tmp/prefill_launch_script.sh <<'EOF'\n{launch_body}EOF")
             self._container_exec(write_cmd, hosts=[node])
 
         log.info('#================ * * * =========================#')
@@ -632,9 +624,7 @@ class SglangDisaggPD:
                 f"{flags_block}\n"
                 f"    --log-level {self.inf_dict['log_level']}\n"
             )
-            write_cmd = "bash -c " + shlex.quote(
-                f"cat > /tmp/decode_launch_script.sh <<'EOF'\n{launch_body}EOF"
-            )
+            write_cmd = "bash -c " + shlex.quote(f"cat > /tmp/decode_launch_script.sh <<'EOF'\n{launch_body}EOF")
             self._container_exec(write_cmd, hosts=[node])
 
         log.info('#================ * * * =========================#')
@@ -702,9 +692,7 @@ class SglangDisaggPD:
         prefill_str = (
             f"--prefill http://{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_serv_port']} "
         )
-        decode_str = (
-            f"--decode http://{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_serv_port']} "
-        )
+        decode_str = f"--decode http://{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_serv_port']} "
         log.info('#================ * * * =========================#')
         log.info('Create Proxy Router launch script on Proxy Router nodes')
         log.info('#================ * * * =========================#')
@@ -718,9 +706,7 @@ class SglangDisaggPD:
             f"    --port {self.router_serv_port} \\\n"
             f"    --log-dir {self.inf_dict['log_dir']}\n"
         )
-        write_cmd = "bash -c " + shlex.quote(
-            f"cat > /tmp/proxy_router_launch_script.sh <<'EOF'\n{launch_body}EOF"
-        )
+        write_cmd = "bash -c " + shlex.quote(f"cat > /tmp/proxy_router_launch_script.sh <<'EOF'\n{launch_body}EOF")
         self._container_exec(write_cmd, hosts=self.proxy_node)
 
         log.info('#================ * * * =========================#')
@@ -793,9 +779,7 @@ class SglangDisaggPD:
         for node, m in (self.inference_results_dict or {}).items():
             duration = float(m.get("benchmark_duration") or 0)
             in_tok = float(m.get("total_input_tokens") or 0)
-            out_tok = float(
-                m.get("total_generated_tokens") or m.get("Total generated tokens:") or 0
-            )
+            out_tok = float(m.get("total_generated_tokens") or m.get("Total generated tokens:") or 0)
             if duration > 0 and num_gpus > 0:
                 achieved = 6.0 * num_params * (in_tok + out_tok)
                 peak = peak_tflops * 1e12 * num_gpus * duration
@@ -849,10 +833,7 @@ class SglangDisaggPD:
     ) -> None:
         for iteration in range(1, no_of_iterations):
             log.info('Starting %s readiness poll iteration %d', label, iteration)
-            grep_cmd = (
-                f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} "
-                f"{shlex.quote(log_path)} || true"
-            )
+            grep_cmd = f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} {shlex.quote(log_path)} || true"
             text = self._container_exec_text(grep_cmd, hosts=hosts)
             if _SERVER_READY_RE.search(text):
                 log.info('Wait 60 secs before serving traffic')
@@ -860,10 +841,7 @@ class SglangDisaggPD:
                 return
             log.info('Wait 120 secs and continue polling')
             time.sleep(120)
-        fail_test(
-            f'{label} on {hosts[0]!r} did not reach ready state '
-            f'in {no_of_iterations} iterations'
-        )
+        fail_test(f'{label} on {hosts[0]!r} did not reach ready state in {no_of_iterations} iterations')
 
     def get_inference_results_dict(self, out_dict):
         """
@@ -1121,8 +1099,7 @@ class SglangDisaggPD:
         threshold.json or legacy flat floats from ``flat_expected_from_specs``.
         """
         thresholds = {
-            metric: normalize_sglang_threshold_spec(metric, spec)
-            for metric, spec in expected_result_dict.items()
+            metric: normalize_sglang_threshold_spec(metric, spec) for metric, spec in expected_result_dict.items()
         }
 
         for node in self.inference_results_dict:
@@ -1165,11 +1142,15 @@ class SglangDisaggPD:
             "decode_occupied_gpus": decode["total"],
             "total_occupied_gpus": topo["total_occupied_gpus"],
         }
-        log.info("\n".join(format_sglang_gpu_topology_lines(
-            configured_tp=tp,
-            configured_pp=pp,
-            groups={"Prefill": prefill, "Decode": decode},
-        )))
+        log.info(
+            "\n".join(
+                format_sglang_gpu_topology_lines(
+                    configured_tp=tp,
+                    configured_pp=pp,
+                    groups={"Prefill": prefill, "Decode": decode},
+                )
+            )
+        )
         return result
 
     def verify_openai_compatible_endpoints(self) -> list[str]:
@@ -1209,33 +1190,22 @@ class SglangDisaggPD:
         else:
             lines_out = str(raw_out).strip().splitlines()
             if not lines_out:
-                probe_err = (
-                    f"OpenAI-compatible probe empty lines after strip on node "
-                    f"{bench_host!r}: {raw_out!r}"
-                )
+                probe_err = f"OpenAI-compatible probe empty lines after strip on node {bench_host!r}: {raw_out!r}"
             else:
                 last_line = lines_out[-1]
                 try:
                     parsed = json.loads(last_line)
                 except json.JSONDecodeError as e:
-                    probe_err = (
-                        f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}"
-                    )
+                    probe_err = f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}"
                 else:
                     if not isinstance(parsed, dict):
-                        probe_err = (
-                            f"OpenAI-compatible probe expected JSON object, got "
-                            f"{type(parsed).__name__!r}"
-                        )
+                        probe_err = f"OpenAI-compatible probe expected JSON object, got {type(parsed).__name__!r}"
                     else:
                         for step, val in parsed.items():
                             if isinstance(val, (list, tuple)) and len(val) == 2:
                                 results[step] = (int(val[0]), val[1])
                             else:
-                                probe_err = (
-                                    f"OpenAI-compatible probe bad shape at "
-                                    f"{step!r}: {val!r}"
-                                )
+                                probe_err = f"OpenAI-compatible probe bad shape at {step!r}: {val!r}"
                                 break
 
         if probe_err is not None:
@@ -1280,10 +1250,7 @@ class SglangDisaggPD:
             default_num_concurrent=spec["default_num_concurrent"],
         )
 
-        inner = (
-            f"mkdir -p {self.log_dir}/benchmark_node && "
-            f"source /tmp/benchmark_env_script.sh && {inner_cmd}"
-        )
+        inner = f"mkdir -p {self.log_dir}/benchmark_node && source /tmp/benchmark_env_script.sh && {inner_cmd}"
         out_dict = self._container_exec(
             "bash -c " + shlex.quote(inner),
             hosts=self.benchmark_serv_node,

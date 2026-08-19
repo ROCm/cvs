@@ -72,9 +72,7 @@ METRIC_TIERS: dict[str, tuple[str, ...]] = {
 METRIC_TIER_ORDER: tuple[str, ...] = tuple(METRIC_TIERS.keys()) + ("record",)
 
 _tiered = {m for names in METRIC_TIERS.values() for m in names}
-RECORD_METRICS: tuple[str, ...] = tuple(
-    short for short in SGLANG_METRIC_UNITS if short not in _tiered
-)
+RECORD_METRICS: tuple[str, ...] = tuple(short for short in SGLANG_METRIC_UNITS if short not in _tiered)
 
 SGLANG_CHART_SERIES: tuple[ReportChartSeries, ...] = (
     ReportChartSeries("output_throughput_per_sec", "Output tok/s", "tok/s"),

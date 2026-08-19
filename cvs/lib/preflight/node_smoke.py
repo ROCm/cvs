@@ -283,9 +283,9 @@ class NodeSmokeCheck(PreflightCheck):
         self.require_tools = get_nested_config(cfg, "node_smoke", "require_tools", "")
 
         self.nccl_socket_ifname = get_nested_config(cfg, "node_smoke", "nccl_socket_ifname", "") or None
-        self.gloo_socket_ifname = get_nested_config(
-            cfg, "node_smoke", "gloo_socket_ifname", self.nccl_socket_ifname
-        ) or None
+        self.gloo_socket_ifname = (
+            get_nested_config(cfg, "node_smoke", "gloo_socket_ifname", self.nccl_socket_ifname) or None
+        )
 
         rdma_allowlist = get_nested_config(cfg, "node_smoke", "rdma_nic_allowlist", None)
         if not rdma_allowlist and rdma_ifaces:
@@ -479,4 +479,3 @@ class NodeSmokeCheck(PreflightCheck):
         if setup_results is not None:
             self.results["setup_results"] = setup_results
         return self.results
-

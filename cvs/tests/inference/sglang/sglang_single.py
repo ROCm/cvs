@@ -23,7 +23,7 @@ import pytest
 import time
 from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
 from cvs.lib import globals
-#from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
+# from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
 
 log = globals.log
 
@@ -79,6 +79,7 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
     results = im_obj.verify_openai_compatible_endpoints()
     lifecycle.smoke_results = results
     lifecycle.complete_stage(request, "smoke_endpoints", t0)
+
 
 # TODO: not implemented for single-node
 # def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):

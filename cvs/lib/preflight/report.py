@@ -536,8 +536,7 @@ class PreflightReportGenerator(PreflightCheck):
         node_results = node_smoke_results.get('node_results') or {}
         total_nodes = len(node_results)
         failed_nodes = list(
-            node_smoke_results.get('failed_nodes')
-            or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+            node_smoke_results.get('failed_nodes') or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
         )
         unknown_nodes = list(
             node_smoke_results.get('unknown_nodes')
@@ -1228,9 +1227,7 @@ class PreflightReportGenerator(PreflightCheck):
         if not node_results:
             return ""
 
-        failed_nodes = {
-            n: r for n, r in node_results.items() if r.get('status') in ('FAIL', 'UNKNOWN')
-        }
+        failed_nodes = {n: r for n, r in node_results.items() if r.get('status') in ('FAIL', 'UNKNOWN')}
         dump_path = node_smoke_results.get('dump_path', '')
 
         if not failed_nodes:
@@ -1283,7 +1280,9 @@ class PreflightReportGenerator(PreflightCheck):
             </table>
         """
         if dump_path:
-            html_out += f"<p>Per-node JSON written under <code>{html.escape(str(dump_path))}/smoke/</code> on each node.</p>"
+            html_out += (
+                f"<p>Per-node JSON written under <code>{html.escape(str(dump_path))}/smoke/</code> on each node.</p>"
+            )
         html_out += """
         </section>
         """

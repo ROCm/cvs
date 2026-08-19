@@ -91,9 +91,7 @@ def _benchmark_serv_host(inference: Mapping[str, Any]) -> str:
         )
     hosts = as_node_list(raw)
     if len(hosts) != 1:
-        raise ValueError(
-            f"sglang_single requires exactly one benchmark_serv_node, got {hosts!r}"
-        )
+        raise ValueError(f"sglang_single requires exactly one benchmark_serv_node, got {hosts!r}")
     return hosts[0]
 
 
@@ -105,8 +103,7 @@ def _cluster_dict_for_single_benchmark(
     node_dict = cluster_dict.get("node_dict") or {}
     if bench_host not in node_dict:
         raise ValueError(
-            f"benchmark_serv_node {bench_host!r} is not listed in cluster node_dict "
-            f"(keys: {sorted(node_dict)!r})"
+            f"benchmark_serv_node {bench_host!r} is not listed in cluster node_dict (keys: {sorted(node_dict)!r})"
         )
     scoped = dict(cluster_dict)
     scoped["node_dict"] = {bench_host: node_dict[bench_host]}
@@ -158,10 +155,7 @@ def _cluster_dict_for_disagg_roles(
     node_dict = cluster_dict.get("node_dict") or {}
     missing = [h for h in role_hosts if h not in node_dict]
     if missing:
-        raise ValueError(
-            f"role hosts not in cluster node_dict: {missing!r} "
-            f"(cluster keys: {sorted(node_dict)!r})"
-        )
+        raise ValueError(f"role hosts not in cluster node_dict: {missing!r} (cluster keys: {sorted(node_dict)!r})")
     scoped = dict(cluster_dict)
     scoped["node_dict"] = {h: node_dict[h] for h in role_hosts}
     scoped["head_node_dict"] = {"mgmt_ip": head_host}
@@ -203,9 +197,7 @@ def _create_container_orchestrator(cluster_dict: Mapping[str, Any], variant_conf
 
 # ---------- accuracy-cell helpers (disagg long-context parametrization) ----------
 
-_ACC_CELL_RE = re.compile(
-    r"^ACC_ISL=(?P<isl>\d+),OSL=(?P<osl>\d+)$"
-)
+_ACC_CELL_RE = re.compile(r"^ACC_ISL=(?P<isl>\d+),OSL=(?P<osl>\d+)$")
 
 
 def acc_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -216,12 +208,14 @@ def acc_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, A
         m = _ACC_CELL_RE.match(str(cell_key))
         if not m:
             continue
-        cells.append({
-            "cell_key": cell_key,
-            "isl": m.group("isl"),
-            "osl": m.group("osl"),
-            "specs": specs,
-        })
+        cells.append(
+            {
+                "cell_key": cell_key,
+                "isl": m.group("isl"),
+                "osl": m.group("osl"),
+                "specs": specs,
+            }
+        )
     cells.sort(key=lambda c: int(c["isl"]))
     return cells
 
@@ -504,10 +498,7 @@ def pytest_runtest_makereport(item, call):
         import pytest_html
     except ImportError:
         return
-    body = "".join(
-        f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>"
-        for label, value, unit in rows
-    )
+    body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
     html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
     extras = getattr(report, "extras", [])
     extras.append(pytest_html.extras.html(html))
