@@ -82,6 +82,11 @@ See **Appendix B** for exactly what each suite implements today and what survive
 
 ## The sweep problem, solved once
 
+> **Superseded in part.** This section preserves the existing sweep shapes behind a
+> common `entries()` contract. "Departure: one `runs` block" below proposes replacing
+> them instead. The inventory and drift analysis here still hold; the `SweepEntry`
+> design is the fallback if the departure is rejected.
+
 ### What "cell key" means
 
 Every sweep produces cells, and each cell's key is a string that must **exactly match
@@ -140,7 +145,7 @@ def cells(self) -> list[str]:
     return [self.cell_key(e) for e in self.sweep.entries()]
 ```
 
-`entries()` is where the three shapes differ. `cells()` is where they stop differing.
+`entries()` is where the shapes differ. `cells()` is where they stop differing.
 
 `cell_key` stays suite-owned — atom's driver branching is real and cannot be
 genericized — but it now has **one signature** across all six, so framework code can
@@ -148,7 +153,7 @@ call it.
 
 ### What an entry carries
 
-The three shapes share no dimensions at all — `isl/osl/concurrency` vs
+The shapes share no dimensions at all — `isl/osl/concurrency` vs
 `gbs/mbs/precision` vs arbitrary maxtext overrides — so `SweepEntry` cannot have
 typed dimension fields. It has three:
 
@@ -256,21 +261,163 @@ Everything downstream stops caring which sweep shape it got:
 | parametrize IDs | 4 variants, one of which can drift from the key | `cells()` |
 | report cell lookup | per-suite key rebuild | `cells()` |
 
-And a fourth sweep shape costs one `entries()` method — nothing else changes.
+And a new sweep shape costs one `entries()` method — nothing else changes.
 
-### Three shapes, one contract
+### Five shapes, one contract
 
-| Block | Config shape | Key origin | Suites |
-|---|---|---|---|
-| `ComboSweep` | `sweep.sequence_combinations[]` + `sweep.runs[{combo, concurrency}]` | formatted from dims + params | vllm, atom |
-| `MatrixSweep` | `sweep.combinations{id: …}` + `sweep.runs[id]` | the combination's declared `name` | megatron, torchtitan |
-| `NamedSweep` | `training.sweeps[]` + `training.enabled_sweep_list[]` | the entry's own `name` | jaxmaxtext |
+| Block | Config shape | Key origin | Suites | Files |
+|---|---|---|---|---|
+| `ComboSweep` | `sweep.sequence_combinations[]` + `sweep.runs[{combo, concurrency}]` | formatted from dims + params | vllm, atom | 42 |
+| `MatrixSweep` | `sweep.combinations{id: …}` + `sweep.runs[id]` | formatted from dims — *not* the declared `name` | megatron, torchtitan | 12 |
+| `NamedSweep` | `training.sweeps[]` + `training.enabled_sweep_list[]` | the entry's own `name` | jaxmaxtext | 3 |
+| `BenchmarkSweep` | `{active_benchmark, benchmark_params}` — select-one | formatted from the selected params | sglang | 5 |
+| *none* | nested `model_params` lookup, no sweep construct | n/a | jax, legacy megatron, legacy torchtitan | 13 |
 
-Note jax's sweep is nested under `training`, not at the top level like the other two —
+Note jax's sweep is nested under `training`, not at the top level like the others —
 one more thing a newcomer has to discover by reading a loader.
 
-sglang has no sweep block — it derives cells *from* the threshold file, inverting the
-direction of truth. That's an open decision, not a solved case.
+`MatrixSweep` carries **three** names per entry — the dict id, an inner `name`, and the
+derived threshold key — and no two are equal. See the departure section below.
+
+sglang's `BenchmarkSweep` selects one benchmark rather than enumerating several, and it
+derives cells *from* the threshold file, inverting the direction of truth. That's an
+open decision, not a solved case.
+
+The 13 no-sweep configs cannot express a second run at all; they need a synthesized
+single entry under any scheme.
+
+---
+
+## Departure: one `runs` block
+
+The section above keeps the shapes and hides them behind a contract. The alternative is
+to **not keep them**: one shape, declared names, every key function deleted. This is a
+departure from how sweeps work in every suite today, so it is written out in full.
+
+### The inventory is five shapes, not three
+
+Counted across all shipped config files:
+
+| Shape | Config form | Key origin | Suites | Files |
+|---|---|---|---|---|
+| 1 | `sweep.{sequence_combinations[], runs[{combo, concurrency}]}` | derived — `cell_key(isl, osl, concurrency)` | vllm, atom | 42 |
+| 2 | `sweep.{combinations{id: …}, runs[id]}` | derived — `cell_key(combo_key)` | megatron, torchtitan | 12 |
+| 3 | `training.{sweeps[], enabled_sweep_list[]}` | **declared — `name` *is* the key** | jaxmaxtext | 3 |
+| 4 | `{active_benchmark, benchmark_params}` | derived — `perf_cell_key(bp_dict)` | sglang | 5 |
+| 5 | *none* — nested `model_params` lookup | n/a | jax (4), legacy megatron (3), legacy torchtitan (6) | 13 |
+
+Shape 4 reaches beyond the six suites in scope: `pytorch_xdit` uses it too, in 2 more
+config files. Widening the scope adds shapes rather than reusing them.
+
+Two corrections to what this doc said earlier. Megatron and torchtitan **do** have a
+sweep construct — shape 2 — in their current configs; it is only their legacy files
+(3 megatron, 6 torchtitan) that fall into shape 5. And sglang's configs are shape 4,
+not "no sweep block."
+
+Shape 5 matters: **13 config files cannot express a second run at all.** Those suites
+are mid-migration already, which is the strongest argument that this is convergence
+rather than imposition — four different teams reached for a sweep block and each
+invented a different one.
+
+### The key functions
+
+**8 definitions across 6 modules in 4 signatures**, plus `expected_cells()` in 6:
+
+| Signature | Sites |
+|---|---|
+| `cell_key(self, isl, osl, concurrency)` | `atom_config_loader.py:147`, `vllm_config_loader.py:226`, `inferencing_config_loader.py:187`, `sglang_config_loader.py:326` |
+| `cell_key(self, combo_key)` | `megatron/.../training_config_loader.py:147`, `torchtitan/training_config_loader.py:139` |
+| `perf_cell_key(bp_dict)` | `sglang_config_loader.py:97` (module-level) |
+| `perf_cell_key(self)` | `sglang_config_loader.py:331` |
+
+### Three names for one run
+
+A megatron combination declares an id, a `name`, and a threshold key — and no two are
+equal:
+
+```
+dict key       llama3_3_70b-mi325-bs64-mbs1-fp8
+name           llama3_3_70b_mbs1_gbs64_FP8
+threshold key  MBS=1,GBS=64,PRECISION=FP8      ← derived, appears nowhere in the file
+```
+
+To find the threshold for a run, a reader has to know which of the three the lookup
+uses and then reconstruct it from a formatter in Python.
+
+### Declare-then-select is dead weight
+
+Three of the five shapes declare entries in one list and enable them in another. In the
+shipped single-node DeepSeek vllm config, **3 combos are declared and 1 is run** — the
+other two are inert text the reader must recognise as inert. jaxmaxtext's two lists are
+character-for-character identical, so its selector selects everything.
+
+The two selector implementations also disagree on strictness: vllm's
+`validate_sweep_selector` **raises** on an unknown reference, while jaxmaxtext's
+`warnings.warn`s and silently runs a wider sweep than asked for.
+
+### The proposal
+
+```jsonc
+"runs": [
+  { "name": "ISL=1024,OSL=1024,TP=8,CONC=16",
+    "overrides": { "params": { "num_prompts": "640" } } }
+]
+```
+
+Four changes, in increasing order of departure:
+
+1. **Derived keys become declared.** All 8 key functions and all 6 `expected_cells()`
+   delete. The key is in the file.
+2. **Two levels collapse to one.** Selection moves to the CLI (`--runs a,b`). JSON has
+   no comments, so an in-file selector is the only way to disable an entry today — a
+   CLI flag removes the need.
+3. **Typed axes become arbitrary overrides.** This is the capability, not a cleanup.
+   Today a vllm sweep can vary ISL, OSL and concurrency *and nothing else*; megatron can
+   vary GBS, MBS and precision *and nothing else*. Sweeping any other axis means editing
+   Python. Overrides let a run vary any field the schema has.
+4. **Threshold home unifies.** Megatron's inline `result_dict` lifts out to the sibling
+   threshold file, where every other suite already keeps it.
+
+### What it costs
+
+**Denormalization.** vllm declares ISL/OSL once and references it from N runs; a flat
+list repeats them. Mitigated by inheritance — the config body holds the base and each
+run declares only its delta — but a wide sweep is more lines than today.
+
+**Names can lie.** `GBS=32` in a declared name is hand-written and unchecked. For
+jaxmaxtext that is already true; for vllm and megatron it is a **regression** from a key
+that is currently computed. This is the one place the departure is strictly worse, and
+it is the open decision below.
+
+**13 files need a synthesized single run** to move off shape 5.
+
+### Migration is a script, not a re-calibration
+
+`cell_key()` is deterministic. Set each declared `name` to exactly the string
+`cell_key()` emits today and **no threshold file changes at all** — 42 shape-1 configs
+and 12 shape-2 configs convert mechanically, thresholds untouched. The departure can
+land without a single re-measured number.
+
+### The cross-product question reopens
+
+This doc argued against an implicit `matrix:` cross product because generated names
+drift against hand-written threshold keys. That objection dies once thresholds are
+**emitted** from the run rather than typed: the name and the key come from one source
+and cannot disagree. So the sequencing is — threshold emitter first, then `matrix:`
+becomes safe sugar that expands to named `runs` at load.
+
+### Open decisions
+
+1. **Run identity.** Long descriptive names that can lie; short opaque ids plus a
+   rendered display string; or long names plus a validator recomputing the derivable
+   dimensions. Anything auto-resolved cannot appear in a name computed at collection
+   time, which pushes toward opaque.
+2. **sglang.** It derives cells *from* the threshold file, inverting the direction of
+   truth. Converting it is a restructure of all 5 configs, not a rename.
+3. **`matrix:` sugar** — after the emitter, or not at all.
+4. **Overrides must be `extra="forbid"`** — a typo'd key otherwise yields a run that
+   looks swept and isn't. Merge must be deep; `_deep_merge` currently exists in six
+   AST-identical copies.
 
 ---
 
@@ -642,8 +789,9 @@ time. Here it fails at load.
 
 ### The sweep blocks
 
-All three implement `entries() -> list[SweepEntry]`. See the sweep section above for
-the entry shape and the three implementations.
+Each implements `entries() -> list[SweepEntry]`. See the sweep section above for the
+entry shape and the implementations. sglang's select-one `BenchmarkSweep` and the 13
+no-sweep configs are not modelled here — both are open decisions.
 
 ```python
 class ComboSweep(_Forbid):        # vllm, atom
@@ -659,7 +807,7 @@ class NamedSweep(_Forbid):        # jaxmaxtext — lives under `training`, not t
     enabled_sweep_list:  List[str] = []   # empty = all
 ```
 
-Two rules apply to all three:
+Two rules apply to all of them:
 
 - An unresolvable reference in `runs` / `enabled_sweep_list` is an **error**. A sweep
   that drops a bad reference reports green for a run that never happened — megatron
