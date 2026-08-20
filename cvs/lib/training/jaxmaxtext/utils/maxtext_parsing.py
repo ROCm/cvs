@@ -37,6 +37,15 @@ TRAINING_METRICS = [
 ]
 TRAINING_METRIC_UNITS = dict(TRAINING_METRICS)
 
+# Checkpoint I/O benchmark metrics. Kept OUT of TRAINING_METRICS on purpose so
+# they are NOT parametrized per sweep (test_metric) or printed in the per-sweep
+# results table -- they are produced only by the opt-in checkpoint_resume test,
+# which records their rows itself (under the "CKPT" label).
+CHECKPOINT_METRICS = [
+    ("checkpoint_save_seconds", "s"),
+    ("checkpoint_load_seconds", "s"),
+]
+
 # The SLO contract: the subset of TRAINING_METRICS a calibrated run must assert.
 # Membership = "out of range means FAILURE". Record-only by default: a NEW metric
 # is record-only until its name is added here. Covers throughput (perf) plus the
@@ -68,6 +77,30 @@ _LOSS_RE = re.compile(r"\bloss[:=]?\s*([\d.eE+\-]+)", re.I)
 # Config-dump lines ("Config param target_eval_loss: 0.0") mention eval + loss but
 # are not eval results -- exclude them so they never register as eval points.
 _CONFIG_LINE_RE = re.compile(r"config param|pyconfig", re.I)
+
+# Checkpoint I/O timing (checkpoint_resume test only). MaxText/orbax wording is
+# version-dependent, so match defensively: a "save"/"restore" line mentioning a
+# checkpoint and a duration in seconds. Returns None when unparseable -- the
+# caller falls back to a step-time proxy for save and record-only for load.
+# NOTE: confirm the exact orbax/MaxText wording on your image and tighten these.
+# orbax logs the total blocking save via event_tracking, e.g.
+#   "[sync] Finished save in 11.09 seconds @ .../checkpoints/0"
+# (there is also "Finished blocking save in ..." which we intentionally skip in
+# favor of the total). Multiple saves may appear (step 0 cold, later steps warm).
+_CKPT_SAVE_RE = re.compile(r"[Ff]inished save in\s*([\d.]+)\s*second", re.I)
+# The generic "saved/restored checkpoint ... <X>s" wording is kept as a fallback
+# for other image/orbax versions.
+_CKPT_SAVE_FALLBACK_RE = re.compile(
+    r"sav(?:e|ed|ing).*?checkpoint.*?(?:took|in|duration[:=]?)\s*([\d.]+)\s*s(?:ec|econds)?\b", re.I
+)
+# On restore, orbax logs the read throughput with an elapsed time, e.g.
+#   "/jax/orbax/read/worker/io/requested throughput: 7.257 GiB/s ... (time elapsed: 6.18 s) (per-host)"
+# This is the checkpoint read/load time (per host).
+_CKPT_LOAD_RE = re.compile(r"/jax/orbax/read\b.*?time elapsed:\s*([\d.]+)\s*s", re.I)
+_CKPT_LOAD_FALLBACK_RE = re.compile(
+    r"(?:restor(?:e|ed|ing)|load(?:ed|ing)?).*?checkpoint.*?(?:took|in|duration[:=]?)\s*([\d.]+)\s*s(?:ec|econds)?\b",
+    re.I,
+)
 
 
 def compute_scaling_efficiency(
@@ -314,6 +347,48 @@ def extract_eval_metrics(log_text):
         step = int(step_m.group(1)) if step_m else None
         evals.append({"step": step, "eval_loss": loss})
     return evals
+
+
+def _match_floats(patterns, line):
+    for pat in patterns:
+        m = pat.search(line)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                return None
+    return None
+
+
+def extract_checkpoint_timings(log_text):
+    """Best-effort checkpoint save/load durations (seconds) from a MaxText log.
+
+    Save is taken from orbax's ``[sync] Finished save in <X> seconds`` lines; if
+    several checkpoints were written we return the LAST one (steady-state / the
+    checkpoint actually resumed from, rather than the cold first save). Load is
+    taken from orbax's restore read line ``/jax/orbax/read ... (time elapsed: <X>
+    s)``; we return the MAX across hosts (the slowest host bounds the restore).
+    Both fall back to a generic "saved/restored checkpoint ... <X>s" wording for
+    other image/orbax versions.
+
+    The exact wording is image/version-dependent, so this is defensive: it
+    returns ``{"save_seconds": None, "load_seconds": None}`` when nothing
+    matches. The checkpoint_resume test then falls back to a step-time proxy for
+    save time and treats a missing load time as record-only. Never raises.
+    """
+    save_vals = []
+    load_vals = []
+    for line in (log_text or "").splitlines():
+        s = _match_floats((_CKPT_SAVE_RE, _CKPT_SAVE_FALLBACK_RE), line)
+        if s is not None:
+            save_vals.append(s)
+        l = _match_floats((_CKPT_LOAD_RE, _CKPT_LOAD_FALLBACK_RE), line)
+        if l is not None:
+            load_vals.append(l)
+    return {
+        "save_seconds": save_vals[-1] if save_vals else None,
+        "load_seconds": max(load_vals) if load_vals else None,
+    }
 
 
 def parse_training_log(log_text, num_gpus, avg_last_n=10):

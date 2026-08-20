@@ -110,6 +110,7 @@ class MaxTextTrainingJob:
         self.step_metrics = []
         self.eval_metrics = []
         self.summary_metrics = {}
+        self.raw_log = ""
 
         # Host-side timestamp ({node: str}) captured when training launches, so
         # scan_dmesg_for_errors() can slice the kernel log to this run's window.
@@ -494,6 +495,7 @@ class MaxTextTrainingJob:
         if not log_text.strip():
             raise RuntimeError(f"empty/missing training log: {log_file}")
 
+        self.raw_log = log_text  # kept so callers (e.g. checkpoint I/O timing) can re-scan it
         self.step_metrics = extract_step_metrics(log_text)
         self.eval_metrics = extract_eval_metrics(log_text)
         self.summary_metrics = parse_training_log(log_text, self.num_gpus)

@@ -13,6 +13,7 @@ import warnings
 from pathlib import Path
 
 from cvs.lib.training.jaxmaxtext.utils.training_config_loader import (
+    CheckpointResume,
     Convergence,
     LossCurve,
     ScalingBaseline,
@@ -43,6 +44,18 @@ class SchemaDefaultsTests(unittest.TestCase):
         self.assertEqual(lc.milestone_steps, [100, 500, 1000, 5000])
         self.assertEqual(lc.max_slope, 0.0)
         self.assertTrue(lc.enforce)
+
+    def test_checkpoint_resume_defaults(self):
+        cr = CheckpointResume()
+        self.assertFalse(cr.enabled)  # opt-in: off by default
+        self.assertEqual(cr.sweep, "")
+        self.assertEqual(cr.steps_before_ckpt, 6)
+        self.assertEqual(cr.steps_after_resume, 6)
+        self.assertEqual(cr.checkpoint_period, 5)
+        self.assertEqual(cr.loss_tolerance, 0.1)
+        self.assertEqual(cr.max_save_seconds, 0.0)
+        self.assertEqual(cr.max_load_seconds, 0.0)
+        self.assertEqual(cr.smoke_model_overrides, {})
 
 
 class ValidateThresholdsCoverTrainingTests(unittest.TestCase):

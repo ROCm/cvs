@@ -145,7 +145,7 @@
       "xla_gpu_all_gather_combine_threshold_bytes": "8589934592",
       "xla_gpu_enable_triton_gemm": "False",
       "xla_gpu_enable_cublaslt": "True",
-      "xla_gpu_autotune_level": "4",
+      "xla_gpu_autotune_level": "0",
       "xla_gpu_enable_all_gather_combine_by_dim": "FALSE"
     },
 
@@ -189,6 +189,20 @@
       "milestone_steps": [100, 500, 1000, 5000],
       "max_slope": 0.0,
       "enforce": true
+    },
+
+    "_checkpoint_resume_comment": "Opt-in checkpoint save+resume + I/O-time test (test_checkpoint_resume). enabled=false -> skipped. Runs ONE sweep (the `sweep` name, else the first enabled) twice: train steps_before_ckpt (checkpoint written at checkpoint_period), then resume + train steps_after_resume; passes if it restarts from the checkpoint step and the boundary loss matches within loss_tolerance. max_save_seconds/max_load_seconds gate checkpoint I/O time (0 = record-only). smoke_model_overrides can shrink the model while keeping the same tokenizer/vocab, e.g. {\"base_num_decoder_layers\": 4}; empty = the config's full model. delete_ckpt_dir=true deletes the checkpoint directory after the test to free disk (set false to keep the files for inspection).",
+    "checkpoint_resume": {
+      "enabled": false,
+      "sweep": "",
+      "steps_before_ckpt": 6,
+      "steps_after_resume": 6,
+      "checkpoint_period": 5,
+      "loss_tolerance": 0.1,
+      "max_save_seconds": 0.0,
+      "max_load_seconds": 0.0,
+      "delete_ckpt_dir": true,
+      "smoke_model_overrides": {}
     },
 
     "_error_patterns_comment": "Regexes (name -> pattern) scanned in each node's training.log during polling; a match fails that sweep's training_run with the matched name. Add/remove entries as you find new error signatures. Remove this block to use the built-in defaults. Escape backslashes per JSON (e.g. two backslashes for a regex \\d).",

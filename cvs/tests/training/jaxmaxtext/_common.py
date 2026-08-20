@@ -36,6 +36,7 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     compute_convergence,
     sample_loss_curve,
     evaluate_loss_decreasing,
+    extract_checkpoint_timings,
 )
 from cvs.lib.training.jaxmaxtext.utils.loss_curve import render_loss_curve_png
 from cvs.lib.utils.verdict import evaluate_all, ThresholdViolation
@@ -356,6 +357,243 @@ def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, 
     }
 
 
+def _latest_checkpoint_step_path(orch, ckpt_dir):
+    """Path to the newest (highest-numbered) orbax checkpoint step dir under
+    `ckpt_dir`, or None if none exist. Used as a pre-Phase-2 sanity check that
+    Phase 1 actually wrote a checkpoint for MaxText to auto-resume from."""
+    try:
+        out = orch.exec("bash -c " + shlex.quote(f"ls -1 {shlex.quote(ckpt_dir)} 2>/dev/null"))
+    except Exception:  # noqa: BLE001
+        return None
+    raw = (out or {}).get(orch.hosts[0], "")
+    text = raw if isinstance(raw, str) else (raw or {}).get("output", "")
+    steps = [int(s.strip().rstrip("/")) for s in (text or "").splitlines() if s.strip().rstrip("/").isdigit()]
+    if not steps:
+        return None
+    return f"{ckpt_dir}/{max(steps)}"
+
+
+def checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecycle, request):
+    """Opt-in: checkpoint save + resume + I/O timing (one sweep, two phases).
+
+    Phase 1 trains `steps_before_ckpt` steps with checkpointing on (a checkpoint
+    is written at `checkpoint_period`); Phase 2 resumes from it (same
+    out_dir/run_name -> MaxText auto-restores the latest checkpoint) and trains
+    `steps_after_resume` more. PASS = the resumed run restarts from a non-zero
+    (restored) step AND the loss at the resume boundary matches Phase 1 within
+    `loss_tolerance` (state restored, not reinitialized). Also benchmarks
+    checkpoint_save_seconds / checkpoint_load_seconds, gated inline against
+    max_save_seconds / max_load_seconds when > 0 (else record-only).
+
+    Skipped unless training.checkpoint_resume.enabled. Isolated: a failure here
+    does NOT set lifecycle.failed. Runs on ONE sweep only; smoke_model_overrides
+    can shrink the model (keeping the tokenizer/vocab) for a fast I/O check.
+    """
+    cfg = variant_config.training.checkpoint_resume
+    if not getattr(cfg, "enabled", False):
+        pytest.skip("checkpoint_resume disabled (training.checkpoint_resume.enabled=false)")
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    # Pick the sweep to exercise: config.sweep if set, else the first enabled one.
+    enabled = variant_config.enabled_sweeps()
+    chosen = None
+    if getattr(cfg, "sweep", ""):
+        chosen = next((s for s in enabled if s.name == cfg.sweep), None)
+    if chosen is None:
+        chosen = enabled[0] if enabled else SimpleNamespace(name="default", maxtext_overrides={})
+
+    base_overrides = dict(getattr(chosen, "maxtext_overrides", None) or {})
+    base_overrides.update(cfg.smoke_model_overrides or {})
+
+    def _mk_job(total_steps, extra_overrides, enable_ckpt):
+        # Deep copy so the CKPT run's steps/checkpointing never leak into the
+        # shared, module-scoped variant used by the perf sweeps.
+        v = variant_config.model_copy(deep=True)
+        v.training.steps = total_steps
+        v.training.enable_checkpointing = enable_ckpt
+        ov = dict(base_overrides)
+        ov.update(extra_overrides or {})
+        sweep = SimpleNamespace(name="CKPT", maxtext_overrides=ov)
+        return MaxTextTrainingJob(orch, v, hf_token, sweep=sweep)
+
+    # Phase 1: train + SAVE (checkpointing on, sync so the save flushes). Clean any
+    # stale CKPT output first so Phase 2 can only restore THIS run's checkpoint.
+    job1 = _mk_job(
+        cfg.steps_before_ckpt,
+        {"checkpoint_period": cfg.checkpoint_period, "async_checkpointing": False},
+        True,
+    )
+    run_name = f"jaxmaxtext_{variant_config.model.id}_{job1.sweep_tag}"
+    ckpt_dir = f"{job1.out_dir}/{run_name}/checkpoints"
+    try:
+        orch.exec("bash -c " + shlex.quote(f"rm -rf {shlex.quote(job1.out_dir)} 2>/dev/null || true"))
+    except Exception:  # noqa: BLE001
+        pass
+
+    t0 = time.monotonic()
+    try:
+        job1.setup_training_env()
+        job1.build_training_cmd()
+        job1.start_training()
+        job1.poll_for_completion()
+        job1.parse_results()
+    except Exception as e:  # noqa: BLE001
+        try:
+            job1.stop_training()
+        except Exception:  # noqa: BLE001
+            pass
+        pytest.fail(f"checkpoint save phase failed: {e}")
+    finally:
+        try:
+            job1.stop_training()
+        except Exception:  # noqa: BLE001
+            pass
+
+    p1_steps = list(job1.step_metrics or [])
+    p1_log = getattr(job1, "raw_log", "") or ""
+
+    # Phase 2: RESUME. Auto-restore Phase 1's latest checkpoint from the SAME
+    # base_output_directory/run_name (both phases use the "CKPT" sweep + same
+    # model, so out_dir/run_name are identical and MaxText auto-resumes the
+    # latest checkpoint). enable_checkpointing MUST stay true: this MaxText
+    # version rejects loading a checkpoint when enable_checkpointing=false
+    # (incl. via load_full_state_path) -> "You must set enable_checkpointing=True
+    # to load a checkpoint". To keep Phase 2 a resume (no extra checkpoint churn),
+    # push checkpoint_period beyond the total step count so no NEW periodic
+    # checkpoint is written while we train the extra steps.
+    total_steps = cfg.steps_before_ckpt + cfg.steps_after_resume
+    if not _latest_checkpoint_step_path(orch, ckpt_dir):
+        log.warning(
+            "[checkpoint] no saved checkpoint found under %s before Phase 2; "
+            "resume/loss-continuity checks will likely fail",
+            ckpt_dir,
+        )
+    job2 = _mk_job(total_steps, {"checkpoint_period": total_steps + 1000}, True)
+    try:
+        job2.setup_training_env()
+        job2.build_training_cmd()
+        job2.start_training()
+        job2.poll_for_completion()
+        job2.parse_results()
+    except Exception as e:  # noqa: BLE001
+        try:
+            job2.stop_training()
+        except Exception:  # noqa: BLE001
+            pass
+        pytest.fail(f"checkpoint resume phase failed: {e}")
+    finally:
+        try:
+            job2.stop_training()
+        except Exception:  # noqa: BLE001
+            pass
+
+    p2_steps = list(job2.step_metrics or [])
+    p2_log = getattr(job2, "raw_log", "") or ""
+
+    # Free the (large) checkpoint files now that both phases are done, unless the
+    # user asked to keep them (delete_ckpt_dir=false) for post-test inspection.
+    if getattr(cfg, "delete_ckpt_dir", True):
+        try:
+            orch.exec("bash -c " + shlex.quote(f"rm -rf {shlex.quote(ckpt_dir)} 2>/dev/null || true"))
+            log.info("[checkpoint] deleted checkpoint dir %s (delete_ckpt_dir=true)", ckpt_dir)
+        except Exception:  # noqa: BLE001
+            pass
+    else:
+        log.info("[checkpoint] keeping checkpoint dir %s (delete_ckpt_dir=false)", ckpt_dir)
+
+    # --- resume correctness ---
+    # A fresh (non-resumed) run logs step 0 first; a restored run starts at the
+    # checkpoint step. So a non-zero first step means the checkpoint (step +
+    # weights + optimizer) was restored.
+    resumed_step = p2_steps[0]["step"] if p2_steps else None
+    resume_ok = resumed_step is not None and resumed_step > 0
+
+    p1_last_loss = next((s["loss"] for s in reversed(p1_steps) if isinstance(s.get("loss"), (int, float))), None)
+    p2_first_loss = next((s["loss"] for s in p2_steps if isinstance(s.get("loss"), (int, float))), None)
+    loss_delta = (
+        abs(p2_first_loss - p1_last_loss) if (p1_last_loss is not None and p2_first_loss is not None) else None
+    )
+    loss_ok = loss_delta is not None and loss_delta <= cfg.loss_tolerance
+
+    # --- checkpoint I/O timings ---
+    save_seconds = extract_checkpoint_timings(p1_log).get("save_seconds")
+    if save_seconds is None:
+        # Fallback: with async_checkpointing=false the checkpoint step blocks, so
+        # it is the slow outlier -> save_seconds ~= max step time - median step time.
+        secs = sorted(s["seconds"] for s in p1_steps if isinstance(s.get("seconds"), (int, float)))
+        if len(secs) >= 3:
+            median = secs[len(secs) // 2]
+            delta = secs[-1] - median
+            save_seconds = delta if delta > 0 else None
+    load_seconds = extract_checkpoint_timings(p2_log).get("load_seconds")  # best-effort; None -> record-only
+
+    # --- record rows into the consolidated metric-results table (CKPT label) ---
+    rows = training_res_dict.setdefault("metric_rows", [])
+
+    def _io_row(metric_name, value, max_bound):
+        gated = bool(max_bound and max_bound > 0)
+        if value is None:
+            status = "N/A"
+        elif gated:
+            status = "PASS" if value <= max_bound else "FAIL"
+        else:
+            status = "RECORD"
+        rows.append(
+            {
+                "sweep": "CKPT",
+                "metric": metric_name,
+                "expected": (f"<= {max_bound}" if gated else "record"),
+                "actual": _format_value(value),
+                "unit": "s",
+                "status": status,
+            }
+        )
+        return status
+
+    save_status = _io_row("checkpoint_save_seconds", save_seconds, cfg.max_save_seconds)
+    load_status = _io_row("checkpoint_load_seconds", load_seconds, cfg.max_load_seconds)
+
+    # Stash the checkpoint I/O results in their own dict so print_results_table
+    # can render them as a separate section (after the per-sweep tables and loss
+    # curves) rather than mixing them into the perf-sweep metric tables.
+    training_res_dict["checkpoint_io"] = {
+        "resumed_step": resumed_step,
+        "loss_delta": loss_delta,
+        "loss_tolerance": cfg.loss_tolerance,
+        "save_seconds": save_seconds,
+        "save_max": cfg.max_save_seconds,
+        "save_status": save_status,
+        "load_seconds": load_seconds,
+        "load_max": cfg.max_load_seconds,
+        "load_status": load_status,
+    }
+
+    lifecycle.record(request.node.nodeid, "checkpoint_resume", time.monotonic() - t0)
+    log.info(
+        "[checkpoint] resumed_step=%s loss_delta=%s (tol=%s) | save=%ss (%s) load=%ss (%s)",
+        resumed_step, loss_delta, cfg.loss_tolerance, save_seconds, save_status, load_seconds, load_status,
+    )
+
+    # --- verdict: resume correctness (hard) + I/O gates (when configured) ---
+    failures = []
+    if not resume_ok:
+        failures.append(f"resume did not restore a checkpoint (phase-2 first step={resumed_step}, expected > 0)")
+    if not loss_ok:
+        failures.append(
+            f"loss discontinuity at resume: |{p2_first_loss} - {p1_last_loss}| = {loss_delta} > tol {cfg.loss_tolerance}"
+        )
+    if save_status == "FAIL":
+        failures.append(f"checkpoint save {save_seconds}s > max {cfg.max_save_seconds}s")
+    if load_status == "FAIL":
+        failures.append(f"checkpoint load {load_seconds}s > max {cfg.max_load_seconds}s")
+
+    if failures:
+        training_res_dict.setdefault("metric_failures", []).extend(f"[CKPT] {m}" for m in failures)
+        pytest.fail("; ".join(failures))
+    log.info("checkpoint_resume PASSED")
+
+
 def metric(sweep_name, metric, training_res_dict, variant_config, lifecycle, request):
     """One test (row) per (sweep, metric). Threshold-driven PASS/FAIL; logs
     `sweep | metric | expected | actual | status` and collects rows for the
@@ -534,6 +772,41 @@ def _print_sweep_tables(training_res_dict):
             )
 
 
+def _print_checkpoint_io(training_res_dict):
+    """Log the checkpoint save/load I/O results as a separate section, printed
+    after the per-sweep metric tables and loss curves. No-op when the (opt-in)
+    checkpoint_resume test did not run."""
+    io = training_res_dict.get("checkpoint_io")
+    if not io:
+        return
+    tol = io.get("loss_tolerance")
+
+    def _bound(mx):
+        return f"<= {mx}" if (mx and mx > 0) else "record"
+
+    rows = [
+        [
+            "checkpoint_save_seconds",
+            _format_value(io.get("save_seconds")),
+            _bound(io.get("save_max")),
+            io.get("save_status"),
+        ],
+        [
+            "checkpoint_load_seconds",
+            _format_value(io.get("load_seconds")),
+            _bound(io.get("load_max")),
+            io.get("load_status"),
+        ],
+    ]
+    log.info(
+        "\n[Checkpoint I/O]  resumed_step=%s  loss_delta=%s (tol=%s)\n%s",
+        io.get("resumed_step"),
+        _format_value(io.get("loss_delta")),
+        tol,
+        tabulate(rows, headers=["Metric", "Value (s)", "Threshold", "Status"], tablefmt="github"),
+    )
+
+
 def print_results_table(training_res_dict, request):
     """Summarize all sweeps: console tables, single metric-results HTML, and a
     consolidated PASS/FAIL summary recorded via globals.error_list for the pytest
@@ -543,6 +816,7 @@ def print_results_table(training_res_dict, request):
         return
 
     _print_sweep_tables(training_res_dict)
+    _print_checkpoint_io(training_res_dict)
     _write_metric_results_html(training_res_dict, request)
 
     failures = training_res_dict.get("metric_failures", [])

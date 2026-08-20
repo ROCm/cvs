@@ -12,6 +12,7 @@ import unittest
 from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     compute_convergence,
     evaluate_loss_decreasing,
+    extract_checkpoint_timings,
     extract_eval_metrics,
     parse_training_log,
     sample_loss_curve,
@@ -24,6 +25,58 @@ def _step_line(step, seconds, loss):
         f"seconds: {seconds}, TFLOP/s/device: 200.0, Tokens/s/device: 25000.0, "
         f"total_weights: 393216, loss: {loss}, lm_loss: {loss}, perplexity: 10.0"
     )
+
+
+class ExtractCheckpointTimingsTests(unittest.TestCase):
+    def test_empty_when_no_timing_lines(self):
+        log = "\n".join(_step_line(i, 0.5, 9.0 - i) for i in range(3))
+        self.assertEqual(extract_checkpoint_timings(log), {"save_seconds": None, "load_seconds": None})
+
+    def test_parses_save_and_load_durations(self):
+        log = (
+            "Saved a checkpoint at step 5 in 12.5 seconds\n"
+            "Restored checkpoint from step 5 took 3.2s\n"
+        )
+        out = extract_checkpoint_timings(log)
+        self.assertAlmostEqual(out["save_seconds"], 12.5)
+        self.assertAlmostEqual(out["load_seconds"], 3.2)
+
+    def test_save_only(self):
+        out = extract_checkpoint_timings("saving checkpoint duration: 7 s\n")
+        self.assertAlmostEqual(out["save_seconds"], 7.0)
+        self.assertIsNone(out["load_seconds"])
+
+    def test_never_raises_on_garbage(self):
+        self.assertEqual(
+            extract_checkpoint_timings(None), {"save_seconds": None, "load_seconds": None}
+        )
+
+    def test_orbax_save_uses_last_finished_save(self):
+        # Real orbax wording: event_tracking "[sync] Finished save in <X> seconds".
+        # Two saves (cold step 0, warm step 5) -> report the LAST (steady-state).
+        log = (
+            "event_tracking.py:138] [process=0] [sync] Finished save in 11.09 seconds "
+            "@ /LOGS/CKPT/checkpoints/0\n"
+            "event_tracking.py:125] [process=0] [sync] Finished blocking save in 3.87 seconds. "
+            "Continuing save @ /LOGS/CKPT/checkpoints/5.\n"
+            "event_tracking.py:138] [process=0] [sync] Finished save in 3.89 seconds "
+            "@ /LOGS/CKPT/checkpoints/5\n"
+        )
+        out = extract_checkpoint_timings(log)
+        self.assertAlmostEqual(out["save_seconds"], 3.89)
+
+    def test_orbax_load_uses_max_read_elapsed(self):
+        # Real orbax wording on restore: "/jax/orbax/read ... (time elapsed: <X> s)".
+        # Per-host lines -> report the MAX (slowest host bounds the restore).
+        log = (
+            "checkpointer.py:307] Restoring checkpoint from /LOGS/CKPT/checkpoints/5.\n"
+            "jax_array_handlers.py:862] [process=0] /jax/orbax/read/worker/io/requested "
+            "throughput: 7.257 GiB/s (total gbytes: 44.9 GiB) (time elapsed: 6.183607 s) (per-host)\n"
+            "jax_array_handlers.py:862] [process=1] /jax/orbax/read/worker/io/requested "
+            "throughput: 7.320 GiB/s (total gbytes: 44.9 GiB) (time elapsed: 6.130086 s) (per-host)\n"
+        )
+        out = extract_checkpoint_timings(log)
+        self.assertAlmostEqual(out["load_seconds"], 6.183607)
 
 
 class ExtractEvalMetricsTests(unittest.TestCase):

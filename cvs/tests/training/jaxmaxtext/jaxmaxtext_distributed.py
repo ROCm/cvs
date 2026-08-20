@@ -14,8 +14,10 @@ Tests performed (in order):
 5. test_training_run[sweep]   - Run MaxText training per sweep (e.g. BF16, FP8)
 6. test_metric[sweep-metric]  - Validate each metric against its threshold
 7. test_loss_curve[sweep]     - Render the loss curve and check it decreases
-8. test_print_results_table   - Console tables + metric-results HTML + summary
-9. test_teardown              - Tear the container down
+8. test_checkpoint_resume     - Opt-in: checkpoint save+resume correctness +
+                                checkpoint I/O timing (skipped unless enabled)
+9. test_print_results_table   - Console tables + metric-results HTML + summary
+10. test_teardown             - Tear the container down
 
 Metrics validated per sweep (namespace training.*): tflops_per_sec_per_gpu,
 tokens_per_sec_per_gpu, tokens_per_sec_total, scaling_efficiency_pct,
@@ -86,6 +88,14 @@ def test_loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, re
     not decreasing (least-squares slope check)."""
     log.info('Starting Testcase: loss curve [%s]', sweep_name)
     return _common.loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request)
+
+
+def test_checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecycle, request):
+    """Opt-in (training.checkpoint_resume.enabled): save a checkpoint, resume from
+    it, and verify the restart restores step + loss (state), plus benchmark
+    checkpoint save/load I/O time. Skipped when disabled. No effect on the sweeps."""
+    log.info('Starting Testcase: checkpoint save+resume + I/O timing')
+    return _common.checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecycle, request)
 
 
 def test_print_results_table(training_res_dict, request):
