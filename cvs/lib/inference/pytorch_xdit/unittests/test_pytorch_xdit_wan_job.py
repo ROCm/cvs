@@ -1,7 +1,9 @@
 """Unit tests for pytorch_xdit_wan_job."""
 
 import unittest
+from unittest.mock import patch
 
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import log_benchmark_failure_excerpt
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     build_torchrun_cmd,
     parallel_product,
@@ -91,6 +93,27 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         self.assertIn("torchrun --nproc_per_node=8", cmd)
         self.assertNotIn("--nnodes=", cmd)
         self.assertIn("--compile", cmd)
+
+
+class TestLogBenchmarkFailureExcerpt(unittest.TestCase):
+    @patch("cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job.log")
+    def test_logs_tail_and_redacts_token(self, mock_log):
+        output = "line1\nTraceback (most recent call last):\nHF_TOKEN=hf_secret\n"
+        log_benchmark_failure_excerpt("10.0.0.1", output, max_lines=10)
+
+        rendered = []
+        for call in mock_log.error.call_args_list:
+            args = call.args
+            if len(args) == 1:
+                rendered.append(str(args[0]))
+            elif len(args) >= 2:
+                rendered.append(str(args[0]) % args[1:])
+
+        joined = "\n".join(rendered)
+        self.assertIn("Benchmark failure excerpt (10.0.0.1", joined)
+        self.assertIn("Traceback (most recent call last):", joined)
+        self.assertIn("HF_TOKEN=<redacted>", joined)
+        self.assertNotIn("hf_secret", joined)
 
 
 if __name__ == "__main__":
