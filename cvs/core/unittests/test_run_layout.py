@@ -26,6 +26,7 @@ from cvs.core.run_layout import (
     RunLayout,
     _default_workspace,
 )
+from cvs.core.scheduler import SCHEDULER_ENV_VAR
 
 FAKE_STAMP = "20260819-120000"
 
@@ -60,15 +61,20 @@ class _RunLayoutTestCase(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def _enter_job_step(self, job_id="424242", step_id="0", proc_id="0"):
+    def _enter_job_step(self, job_id="424242", step_id="0", proc_id="0", scheduler="slurm"):
         '''Make this process look like a rank srun launched.
 
         Step id and proc id are what cvs.core.scheduler keys its job-step check on;
-        the layout itself only reads the job id.
+        the layout itself only reads the job id. CVS_SCHEDULER is set because the
+        other half of is_managed_compute() shells out to `spur version` / `scontrol
+        version`, which would otherwise make the result depend on what happens to be
+        installed on the machine running the tests.
         '''
         os.environ[JOB_ID_ENV_VAR] = job_id
         os.environ["SLURM_STEP_ID"] = step_id
         os.environ["SLURM_PROCID"] = proc_id
+        if scheduler is not None:
+            os.environ[SCHEDULER_ENV_VAR] = scheduler
 
 
 class TestEnvVarContract(_RunLayoutTestCase):
@@ -159,14 +165,24 @@ class TestRunIdResolution(_RunLayoutTestCase):
         rank7 = RunLayout.initialize(self.workspace).run_dir
         self.assertEqual(rank0, rank7)
 
-    def test_run_id_does_not_depend_on_scheduler_binaries(self):
+    def test_scheduler_override_covers_a_missing_binary(self):
         # The container case: srun exports the SLURM_* variables into the image but
-        # scontrol/spur are not installed there. Resolution must not consult them --
-        # if it does, every rank falls back to its own clock and they diverge.
-        self._enter_job_step(job_id="424242")
+        # scontrol/spur are not installed there, so the binary probe cannot see the
+        # scheduler. CVS_SCHEDULER is how is_managed_compute() is told anyway.
+        self._enter_job_step(job_id="424242", scheduler="slurm")
         with patch("shutil.which", return_value=None):
             layout = RunLayout.initialize(self.workspace)
         self.assertEqual(layout.run_id, "424242")
+
+    @patch("cvs.core.run_layout._new_run_timestamp", return_value=FAKE_STAMP)
+    def test_undetectable_scheduler_is_not_managed(self, _mock_stamp):
+        # Without the tooling or the override there is nothing to identify the
+        # scheduler by, and the layout follows is_managed_compute() rather than
+        # second-guessing it from the SLURM_* variables alone.
+        self._enter_job_step(job_id="424242", scheduler=None)
+        with patch("shutil.which", return_value=None):
+            layout = RunLayout.initialize(self.workspace)
+        self.assertEqual(layout.run_id, f"local-{FAKE_STAMP}")
 
     @patch("cvs.core.run_layout._new_run_timestamp", return_value=FAKE_STAMP)
     def test_unmanaged_uses_local_timestamp(self, _mock_stamp):
@@ -175,9 +191,10 @@ class TestRunIdResolution(_RunLayoutTestCase):
 
     @patch("cvs.core.run_layout._new_run_timestamp", return_value=FAKE_STAMP)
     def test_salloc_without_job_step_uses_timestamp_not_job_id(self, _mock_stamp):
-        # salloc sets SLURM_JOB_ID for a bare allocation with no step. Keying the
-        # run_id off it there would give two sequential runs in one allocation the
-        # same run_dir, and the second would clobber the first.
+        # salloc sets SLURM_JOB_ID for a bare allocation with no step. The scheduler
+        # is identifiable here, so it is the missing step -- not a missing scheduler
+        # -- that has to make this unmanaged.
+        os.environ[SCHEDULER_ENV_VAR] = "slurm"
         os.environ[JOB_ID_ENV_VAR] = "424242"
         layout = RunLayout.initialize(self.workspace)
         self.assertEqual(layout.run_id, f"local-{FAKE_STAMP}")

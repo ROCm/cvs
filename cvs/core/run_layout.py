@@ -24,7 +24,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from cvs.core.scheduler import _running_in_job_step
+from cvs.core.scheduler import is_managed_compute
 
 WORKSPACE_ENV_VAR = "CVS_WORKSPACE"
 RUN_DIR_ENV_VAR = "CVS_RUN_DIR"
@@ -75,16 +75,14 @@ def _resolve_run_id():
     agrees on. Runs that share a job id share a run directory, which is the
     scheduler's notion of one run and not something CVS subdivides further.
 
-    Keyed on the job-step environment rather than on is_managed_compute(): that
-    predicate also probes for the scontrol/spur binaries, which are absent from
-    the CVS container image even when srun launched the step and exported the
-    SLURM_* variables. Ranks would then each fall back to their own wall clock
-    and land on different run_dirs -- a silent hang at the rendezvous rather than
-    an error. The env vars are set by the launch itself, so they cannot disagree.
+    An image without scontrol/spur cannot be detected by probing, and every rank
+    would then fall back to its own wall clock and land on a different run_dir --
+    a silent hang at the rendezvous rather than an error. Export CVS_SCHEDULER
+    there; that is what it is for, and it keeps this agreeing with the rest of CVS.
     '''
-    if not _running_in_job_step():
+    if not is_managed_compute():
         return f"local-{_new_run_timestamp()}"
-    # _running_in_job_step() guarantees this is set.
+    # is_managed_compute() is true only inside a job step, which sets this.
     return os.environ[JOB_ID_ENV_VAR]
 
 
