@@ -14,7 +14,10 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 # Auth constants
 AUTH_HEADER = "Authorization"
 AUTH_SCHEME = "Bearer"
-AUTH_TOKEN_FILENAME = "secret"  # bootstrap token file under RunLayout's agent_dir (mode 0600)
+# Bootstrap token file under RunLayout's agent_dir (mode 0600). The token is static for the
+# job's lifetime, so callers should read it once at process startup and cache it in memory
+# rather than re-reading it per request.
+AUTH_TOKEN_FILENAME = "secret"
 
 # Path constants
 REGISTER_PATH = "/v1/register"
