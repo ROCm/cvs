@@ -70,6 +70,7 @@ Main config file used by ``rccl_perf`` and ``rccl_regression``:
           "verify_bw_dip": "False",
           "verify_lat_dip": "False",
           "cluster_snapshot_debug": "False",
+          "verify_ecc_delta": "False",
           "rccl_result_file": "/home/{user-id}/rccl_result_file.json"
         },
         "results": {}
@@ -202,6 +203,12 @@ Configuration parameters for RCCL suites:
    * - ``cluster_snapshot_debug``
      - ``"False"``
      - Enables before/after cluster metric snapshots around tests.
+   * - ``verify_ecc_delta``
+     - ``"False"``
+     - Capture ``amd-smi metric -g all --json`` before and after each RCCL test. After the test, logs one INFO table per node with UMC, SDMA, GFX, MMHUB, PCIE_BIF, HDP, and XGMI_WAFL counters (CE/UE/DE before, after, and Delta). Warns if any counter increases. Does not fail the test. Skipped without passwordless sudo. Independent of ``cluster_snapshot_debug``. Raw ``amd-smi`` JSON and capture one-liners are DEBUG.
+   * - ``verify_ecc_blocks``
+     - ``[]``
+     - Optional block list used when ``verify_ecc_delta`` is true. Empty means all blocks.
 
 Expected results format
 -----------------------
