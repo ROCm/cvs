@@ -1,7 +1,9 @@
 # cvs/lib/unittests/test_utils_lib.py
+import os
 import unittest
 from unittest.mock import patch
 
+import cvs
 import cvs.lib.utils_lib as utils_lib
 from cvs.parsers.schemas import AortaBenchmarkConfigFile
 
@@ -18,6 +20,13 @@ class TestUtilsLib(unittest.TestCase):
         out_dict = {'host1': 'some output success'}
         utils_lib.scan_test_results(out_dict)
         mock_fail_test.assert_not_called()
+
+    def test_cvs_package_root_matches_cvs_module_directory(self):
+        expected = os.path.dirname(os.path.abspath(cvs.__file__))
+        self.assertEqual(utils_lib.cvs_package_root(), expected)
+
+    def test_cvs_package_root_contains_input_dir(self):
+        self.assertTrue(os.path.isdir(os.path.join(utils_lib.cvs_package_root(), 'input')))
 
 
 class TestResolveTestConfigPlaceholdersAorta(unittest.TestCase):
