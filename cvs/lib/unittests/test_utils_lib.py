@@ -4,7 +4,6 @@ import unittest
 from unittest.mock import patch
 
 import cvs.lib.utils_lib as utils_lib
-from cvs.core.run_layout import RUN_DIR_ENV_VAR
 from cvs.parsers.schemas import AortaBenchmarkConfigFile
 
 
@@ -56,10 +55,10 @@ class TestResolveRunDirPlaceholder(unittest.TestCase):
         patcher = patch.dict(os.environ, {}, clear=False)
         patcher.start()
         self.addCleanup(patcher.stop)
-        os.environ.pop(RUN_DIR_ENV_VAR, None)
+        os.environ.pop("CVS_RUN_DIR", None)
 
     def test_run_dir_substituted_from_env(self):
-        os.environ[RUN_DIR_ENV_VAR] = "/shared/cvs/runs/4242"
+        os.environ["CVS_RUN_DIR"] = "/shared/cvs/runs/4242"
         raw = {"log_path": "{run_dir}/logs", "nested": ["{run_dir}/a", {"k": "{run_dir}/b"}]}
         resolved = utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER)
         self.assertEqual(resolved["log_path"], "/shared/cvs/runs/4242/logs")
@@ -76,13 +75,13 @@ class TestResolveRunDirPlaceholder(unittest.TestCase):
     def test_empty_env_var_is_treated_as_unset(self):
         # Substituting '' would silently turn "{run_dir}/logs" into "/logs" and
         # write at the filesystem root, which succeeds when running as root.
-        os.environ[RUN_DIR_ENV_VAR] = ""
+        os.environ["CVS_RUN_DIR"] = ""
         raw = {"log_path": "{run_dir}/logs"}
         with self.assertRaises(SystemExit):
             utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER)
 
     def test_config_without_placeholder_unaffected_when_env_missing(self):
-        # Every existing suite calls this resolver; configs that never mention
+        # Most test modules call this resolver; configs that never mention
         # {run_dir} must keep working with no CVS_RUN_DIR set.
         raw = {"log_path": "/var/log/cvs", "user": "{user-id}"}
         resolved = utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER)

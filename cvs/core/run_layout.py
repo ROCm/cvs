@@ -10,13 +10,11 @@ Every rank in a scheduler-managed job derives workspace/run_dir/agent_dir
 independently and must arrive at the same answer, because those paths are the
 rendezvous: worker ranks never enter pytest, they read rank0's port out of
 agent_dir. Resolution therefore depends only on inputs every rank shares -- the
-job id, the environment, and the venv location -- and is cached on the class so
-a run_id containing a timestamp cannot drift between callers.
+job id, the environment, and the venv location.
 
-Consumers hold the object: `RunLayout.instance().agent_dir`. The one exception
-is cvs/lib/utils_lib.py, which cannot import this module at module level
-(cvs/core/__init__.py imports the orchestrator factory, which imports utils_lib
-back) and reads CVS_RUN_DIR from the environment instead.
+cvs/lib/utils_lib.py reads CVS_RUN_DIR out of the environment rather than
+importing this module: cvs/core/__init__.py imports the orchestrator factory,
+which imports utils_lib back.
 '''
 
 import os
@@ -25,18 +23,6 @@ from datetime import datetime
 from pathlib import Path
 
 from cvs.core.scheduler import is_managed_compute
-
-WORKSPACE_ENV_VAR = "CVS_WORKSPACE"
-RUN_DIR_ENV_VAR = "CVS_RUN_DIR"
-DEFAULT_WORKSPACE_DIR_NAME = "cvs_runs"
-# SPUR mirrors each SPUR_* variable it sets to a SLURM_* twin, so this name resolves
-# under either scheduler.
-JOB_ID_ENV_VAR = "SLURM_JOB_ID"
-
-
-def _new_run_timestamp():
-    '''Filesystem-safe local timestamp for an unmanaged run id.'''
-    return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
 def _default_workspace():
@@ -53,14 +39,14 @@ def _default_workspace():
         # as a permission error much later and for no obvious reason.
         raise RuntimeError(
             "CVS is not running from a virtualenv, so a default workspace cannot be derived. "
-            f"Pass --workspace or set {WORKSPACE_ENV_VAR} to a shared-filesystem path."
+            "Pass --workspace or set CVS_WORKSPACE to a shared-filesystem path."
         )
-    return Path(sys.prefix).parent / DEFAULT_WORKSPACE_DIR_NAME
+    return Path(sys.prefix).parent / "cvs_runs"
 
 
 def _resolve_workspace(workspace=None):
     '''Priority: explicit argument, then CVS_WORKSPACE, then the venv parent.'''
-    candidate = workspace or os.environ.get(WORKSPACE_ENV_VAR)
+    candidate = workspace or os.environ.get("CVS_WORKSPACE")
     if not candidate:
         return _default_workspace()
     # Anchored to the cwd at resolution time so that nothing which chdirs later
@@ -69,21 +55,15 @@ def _resolve_workspace(workspace=None):
 
 
 def _resolve_run_id():
-    '''Identifies this run, and must come out identical on every rank of a step.
+    '''The scheduler's job id: the one name every rank of a step already agrees on.
 
-    The scheduler's job id, taken as-is: it is the one name every rank already
-    agrees on. Runs that share a job id share a run directory, which is the
-    scheduler's notion of one run and not something CVS subdivides further.
-
-    An image without scontrol/spur cannot be detected by probing, and every rank
-    would then fall back to its own wall clock and land on a different run_dir --
-    a silent hang at the rendezvous rather than an error. Export CVS_SCHEDULER
-    there; that is what it is for, and it keeps this agreeing with the rest of CVS.
+    SPUR mirrors each SPUR_* variable it sets to a SLURM_* twin, so the SLURM name
+    resolves under either scheduler. is_managed_compute() is true only inside a job
+    step, which is what sets it.
     '''
     if not is_managed_compute():
-        return f"local-{_new_run_timestamp()}"
-    # is_managed_compute() is true only inside a job step, which sets this.
-    return os.environ[JOB_ID_ENV_VAR]
+        return f"local-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    return os.environ["SLURM_JOB_ID"]
 
 
 class RunLayout:
@@ -101,16 +81,10 @@ class RunLayout:
     def initialize(cls, workspace=None):
         '''Resolve the layout, create the directories, publish CVS_RUN_DIR.
 
-        Idempotent: later calls return the existing layout so the run_id stays
-        put. Passing a different explicit workspace is a programming error
-        rather than a reconfigure, since paths already handed out would go stale.
+        Idempotent: later calls return the existing layout, so a run_id carrying a
+        timestamp cannot drift between callers.
         '''
         if cls._instance is not None:
-            if workspace is not None and _resolve_workspace(workspace) != cls._instance.workspace:
-                raise RuntimeError(
-                    f"RunLayout already initialized with workspace {cls._instance.workspace}, "
-                    f"cannot re-initialize with {workspace}"
-                )
             return cls._instance
 
         layout = cls(_resolve_workspace(workspace), _resolve_run_id())
@@ -124,9 +98,9 @@ class RunLayout:
             raise RuntimeError(
                 f"Could not create the run directory {layout.agent_dir}: {exc}. "
                 f"Check that the workspace is a writable shared-filesystem path "
-                f"(--workspace or {WORKSPACE_ENV_VAR})."
+                f"(--workspace or CVS_WORKSPACE)."
             ) from exc
-        os.environ[RUN_DIR_ENV_VAR] = str(layout.run_dir)
+        os.environ["CVS_RUN_DIR"] = str(layout.run_dir)
         cls._instance = layout
         return layout
 

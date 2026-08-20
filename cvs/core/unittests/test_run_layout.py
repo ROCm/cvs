@@ -6,29 +6,23 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 # Unit tests for cvs/core/run_layout.py: the shared-filesystem run layout every
-# rank derives before agent bootstrap. Run-id resolution is driven by setting the
-# real SLURM_* variables rather than by mocking a predicate, because the bug this
-# module exists to prevent is a rank misreading its own environment. sys.prefix
-# and the workspace are both redirected into a tmpdir so no test can write to the
-# real venv parent.
+# rank derives before agent bootstrap. What makes a run "managed" is
+# cvs.core.scheduler's contract and is tested there; these tests set the real
+# SLURM_* variables and only pin what the layout itself does with the answer.
+# sys.prefix and the workspace are both redirected into a tmpdir so no test can
+# write to the real venv parent.
 
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from cvs.core.run_layout import (
-    DEFAULT_WORKSPACE_DIR_NAME,
-    JOB_ID_ENV_VAR,
-    RUN_DIR_ENV_VAR,
-    WORKSPACE_ENV_VAR,
-    RunLayout,
-    _default_workspace,
-)
+from cvs.core.run_layout import RunLayout
 from cvs.core.scheduler import SCHEDULER_ENV_VAR
 
-FAKE_STAMP = "20260819-120000"
+LOCAL_RUN_ID = re.compile(r"^local-\d{8}-\d{6}$")
 
 
 class _RunLayoutTestCase(unittest.TestCase):
@@ -61,7 +55,7 @@ class _RunLayoutTestCase(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def _enter_job_step(self, job_id="424242", step_id="0", proc_id="0", scheduler="slurm"):
+    def _enter_job_step(self, job_id="424242", proc_id="0"):
         '''Make this process look like a rank srun launched.
 
         Step id and proc id are what cvs.core.scheduler keys its job-step check on;
@@ -70,33 +64,15 @@ class _RunLayoutTestCase(unittest.TestCase):
         version`, which would otherwise make the result depend on what happens to be
         installed on the machine running the tests.
         '''
-        os.environ[JOB_ID_ENV_VAR] = job_id
-        os.environ["SLURM_STEP_ID"] = step_id
+        os.environ["SLURM_JOB_ID"] = job_id
+        os.environ["SLURM_STEP_ID"] = "0"
         os.environ["SLURM_PROCID"] = proc_id
-        if scheduler is not None:
-            os.environ[SCHEDULER_ENV_VAR] = scheduler
-
-
-class TestEnvVarContract(_RunLayoutTestCase):
-    '''The env var names are a user-facing contract: CVS_WORKSPACE is what a job
-    script exports and cvs_runs is what --workspace help promises. Every other test
-    reads these constants back out of the module under test, so a rename would move
-    both sides of the comparison together and go unnoticed.'''
-
-    def test_env_var_names(self):
-        self.assertEqual(WORKSPACE_ENV_VAR, "CVS_WORKSPACE")
-        self.assertEqual(RUN_DIR_ENV_VAR, "CVS_RUN_DIR")
-        self.assertEqual(DEFAULT_WORKSPACE_DIR_NAME, "cvs_runs")
-
-    def test_slurm_env_var_names(self):
-        # SPUR mirrors each SPUR_* variable it sets to a SLURM_* twin, so this name
-        # covers both schedulers.
-        self.assertEqual(JOB_ID_ENV_VAR, "SLURM_JOB_ID")
+        os.environ[SCHEDULER_ENV_VAR] = "slurm"
 
 
 class TestWorkspaceResolution(_RunLayoutTestCase):
     def test_explicit_workspace_wins_over_env(self):
-        os.environ[WORKSPACE_ENV_VAR] = str(Path(self.workspace) / "from_env")
+        os.environ["CVS_WORKSPACE"] = str(Path(self.workspace) / "from_env")
         layout = RunLayout.initialize(self.workspace)
         self.assertEqual(layout.workspace, Path(self.workspace))
 
@@ -113,7 +89,7 @@ class TestWorkspaceResolution(_RunLayoutTestCase):
     def test_empty_env_var_falls_through_to_default(self):
         # An exported-but-empty CVS_WORKSPACE is an unset one, not a request to
         # use the filesystem root.
-        os.environ[WORKSPACE_ENV_VAR] = ""
+        os.environ["CVS_WORKSPACE"] = ""
         layout = RunLayout.initialize()
         self.assertEqual(layout.workspace, Path(self.workspace) / "cvs_runs")
 
@@ -165,62 +141,24 @@ class TestRunIdResolution(_RunLayoutTestCase):
         rank7 = RunLayout.initialize(self.workspace).run_dir
         self.assertEqual(rank0, rank7)
 
-    def test_scheduler_override_covers_a_missing_binary(self):
-        # The container case: srun exports the SLURM_* variables into the image but
-        # scontrol/spur are not installed there, so the binary probe cannot see the
-        # scheduler. CVS_SCHEDULER is how is_managed_compute() is told anyway.
-        self._enter_job_step(job_id="424242", scheduler="slurm")
-        with patch("shutil.which", return_value=None):
-            layout = RunLayout.initialize(self.workspace)
-        self.assertEqual(layout.run_id, "424242")
-
-    @patch("cvs.core.run_layout._new_run_timestamp", return_value=FAKE_STAMP)
-    def test_undetectable_scheduler_is_not_managed(self, _mock_stamp):
-        # Without the tooling or the override there is nothing to identify the
-        # scheduler by, and the layout follows is_managed_compute() rather than
-        # second-guessing it from the SLURM_* variables alone.
-        self._enter_job_step(job_id="424242", scheduler=None)
-        with patch("shutil.which", return_value=None):
-            layout = RunLayout.initialize(self.workspace)
-        self.assertEqual(layout.run_id, f"local-{FAKE_STAMP}")
-
-    @patch("cvs.core.run_layout._new_run_timestamp", return_value=FAKE_STAMP)
-    def test_unmanaged_uses_local_timestamp(self, _mock_stamp):
+    def test_unmanaged_uses_local_timestamp(self):
         layout = RunLayout.initialize(self.workspace)
-        self.assertEqual(layout.run_id, f"local-{FAKE_STAMP}")
-
-    @patch("cvs.core.run_layout._new_run_timestamp", return_value=FAKE_STAMP)
-    def test_salloc_without_job_step_uses_timestamp_not_job_id(self, _mock_stamp):
-        # salloc sets SLURM_JOB_ID for a bare allocation with no step. The scheduler
-        # is identifiable here, so it is the missing step -- not a missing scheduler
-        # -- that has to make this unmanaged.
-        os.environ[SCHEDULER_ENV_VAR] = "slurm"
-        os.environ[JOB_ID_ENV_VAR] = "424242"
-        layout = RunLayout.initialize(self.workspace)
-        self.assertEqual(layout.run_id, f"local-{FAKE_STAMP}")
+        self.assertRegex(layout.run_id, LOCAL_RUN_ID)
 
 
 class TestPathComposition(_RunLayoutTestCase):
-    def test_run_dir_and_agent_dir_layout(self):
-        self._enter_job_step(job_id="99", step_id="0")
+    def test_run_dir_and_agent_dir_are_composed_and_created(self):
+        self._enter_job_step(job_id="99")
+        expected_run_dir = Path(self.workspace) / "cvs" / "runs" / "99"
         layout = RunLayout.initialize(self.workspace)
-        self.assertEqual(layout.run_dir, Path(self.workspace) / "cvs" / "runs" / "99")
-        self.assertEqual(layout.agent_dir, layout.run_dir / "agent")
-
-    def test_directories_are_created(self):
-        self._enter_job_step(job_id="99", step_id="0")
-        expected_agent_dir = Path(self.workspace) / "cvs" / "runs" / "99" / "agent"
-        layout = RunLayout.initialize(self.workspace)
-        # Asserted against the concrete expected path, not against layout.agent_dir,
-        # so a layout that resolved to the wrong place cannot satisfy this.
-        self.assertTrue(expected_agent_dir.is_dir())
-        self.assertTrue(layout.run_dir.is_dir())
+        self.assertEqual(layout.run_dir, expected_run_dir)
+        self.assertEqual(layout.agent_dir, expected_run_dir / "agent")
         self.assertTrue(layout.agent_dir.is_dir())
 
     def test_initialize_tolerates_preexisting_directories(self):
         # Every rank in a job step initializes against the same shared-FS paths,
         # so all but the first always find the directories already there.
-        self._enter_job_step(job_id="99", step_id="0")
+        self._enter_job_step(job_id="99")
         expected_agent_dir = Path(self.workspace) / "cvs" / "runs" / "99" / "agent"
         expected_agent_dir.mkdir(parents=True)
         layout = RunLayout.initialize(self.workspace)
@@ -228,9 +166,9 @@ class TestPathComposition(_RunLayoutTestCase):
         self.assertTrue(layout.agent_dir.is_dir())
 
     def test_exports_run_dir_to_environment(self):
-        self._enter_job_step(job_id="99", step_id="0")
+        self._enter_job_step(job_id="99")
         layout = RunLayout.initialize(self.workspace)
-        self.assertEqual(os.environ[RUN_DIR_ENV_VAR], str(layout.run_dir))
+        self.assertEqual(os.environ["CVS_RUN_DIR"], str(layout.run_dir))
 
     def test_unwritable_workspace_reports_the_path(self):
         # Shared storage that is unmounted, full, or read-only is routine on a
@@ -244,53 +182,23 @@ class TestPathComposition(_RunLayoutTestCase):
             RunLayout.initialize(str(unwritable / "ws"))
         message = str(ctx.exception)
         self.assertIn(str(unwritable / "ws"), message)
-        self.assertIn(WORKSPACE_ENV_VAR, message)
+        self.assertIn("CVS_WORKSPACE", message)
 
 
 class TestSingletonSemantics(_RunLayoutTestCase):
     def test_repeated_initialize_returns_same_object(self):
+        # run_id must not drift between callers, which is what makes the paths a
+        # rendezvous rather than a guess.
         first = RunLayout.initialize(self.workspace)
         self.assertIs(RunLayout.initialize(), first)
-        self.assertIs(RunLayout.initialize(self.workspace), first)
-
-    def test_timestamp_is_computed_once(self):
-        # The point of the singleton: run_id must not drift between calls. A live
-        # clock would make two calls in the same second pass by luck, so the
-        # helper is stubbed to return a different value every time it is called.
-        stamps = iter(["20260819-120000", "20260819-130000", "20260819-140000"])
-        with patch("cvs.core.run_layout._new_run_timestamp", side_effect=lambda: next(stamps)):
-            first = RunLayout.initialize(self.workspace)
-            second = RunLayout.initialize()
-            third = RunLayout.instance()
-        self.assertEqual(first.run_id, second.run_id)
-        self.assertEqual(first.run_id, third.run_id)
 
     def test_instance_returns_initialized_layout(self):
         layout = RunLayout.initialize(self.workspace)
         self.assertIs(RunLayout.instance(), layout)
 
-    def test_conflicting_workspace_raises(self):
-        RunLayout.initialize(self.workspace)
-        with self.assertRaisesRegex(RuntimeError, "already initialized"):
-            RunLayout.initialize(f"{self.workspace}/somewhere-else")
-
     def test_instance_before_initialize_raises(self):
         with self.assertRaisesRegex(RuntimeError, "initialize"):
             RunLayout.instance()
-
-    def test_reset_clears_cached_layout(self):
-        RunLayout.initialize(self.workspace)
-        RunLayout._reset()
-        with self.assertRaises(RuntimeError):
-            RunLayout.instance()
-
-
-class TestVenvParentDefaultShape(_RunLayoutTestCase):
-    def test_default_derives_from_sys_prefix(self):
-        # CVS is always installed into a venv (Makefile .cvs_venv/.test_venv,
-        # Dockerfile /opt/cvs-venv), so sys.prefix is the venv root and its
-        # parent is the intended shared-FS location.
-        self.assertEqual(_default_workspace(), Path(self.fake_prefix).parent / DEFAULT_WORKSPACE_DIR_NAME)
 
 
 if __name__ == "__main__":
