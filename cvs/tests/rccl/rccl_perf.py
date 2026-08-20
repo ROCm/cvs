@@ -284,14 +284,18 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     Flow:
       1) Capture start time to bound dmesg checks later.
       2) Optionally snapshot cluster metrics before the test (for debugging/compare).
-      3) Optionally source environment script if provided in config.
-      4) Invoke rccl_lib.rccl_cluster_test with parameters built from config and fixtures.
-      5) Capture end time and verify dmesg for errors between start/end.
-      6) Optionally snapshot metrics again and compare before/after.
-      7) Call update_test_result() to finalize test status.
+      3) Optionally capture ECC_BLOCKS counters before the test.
+      4) Optionally source environment script if provided in config.
+      5) Invoke rccl_lib.rccl_cluster_test with parameters built from config and fixtures.
+      6) Optionally capture ECC_BLOCKS after the test, log deltas, and warn on increases.
+      7) Capture end time and verify dmesg for errors between start/end.
+      8) Optionally snapshot metrics again and compare before/after.
+      9) Call update_test_result() to finalize test status.
 
     Notes:
-      - cluster_snapshot_debug controls whether before/after snapshots are taken.
+      - cluster_snapshot_debug controls whether before/after cluster snapshots are taken.
+      - verify_ecc_delta (default False) logs a post-test ECC_BLOCKS table (CE/UE/DE before, after, Delta).
+      - verify_ecc_blocks (optional list) limits capture/compare to named blocks when verify_ecc_delta is True.
     """
 
     globals.error_list = []
@@ -300,8 +304,8 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     if not can_use_sudo:
         no_sudo_nodes = [node for node, ok in sudo_status.items() if not ok]
         log.warning(
-            "Skipping dmesg markers/verification and sudo-only snapshots because passwordless sudo is unavailable "
-            "on nodes: %s",
+            "Skipping dmesg markers/verification, ECC_BLOCKS capture, and sudo-only snapshots because "
+            "passwordless sudo is unavailable on nodes: %s",
             no_sudo_nodes,
         )
 
@@ -328,6 +332,12 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     ):
         cluster_dict_before = create_cluster_metrics_snapshot(phdl)
 
+    verify_ecc_delta = ecc_delta_check_enabled(config_dict)
+    ecc_blocks = resolve_ecc_blocks(config_dict) if verify_ecc_delta else None
+    ecc_before = {}
+    if can_use_sudo and verify_ecc_delta:
+        ecc_before = capture_ecc_blocks_snapshot(phdl, 'before', blocks=ecc_blocks)
+
     # Use the new grouped parameter function
     env_script = config_dict.get('env_source_script', '/dev/null')
     result_dict = rccl_lib.rccl_perf(
@@ -345,6 +355,10 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     log.info("%s", result_dict)
     key_name = f'{rccl_collective}'
     rccl_res_dict[key_name] = result_dict
+
+    if can_use_sudo and verify_ecc_delta:
+        ecc_after = capture_ecc_blocks_snapshot(phdl, 'after', blocks=ecc_blocks)
+        compare_ecc_blocks_snapshots(ecc_before, ecc_after, collective=rccl_collective, blocks=ecc_blocks)
 
     # Scan dmesg between start and end times cluster wide ..
     # end_time = phdl.exec('date')
