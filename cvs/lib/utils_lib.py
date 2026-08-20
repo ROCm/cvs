@@ -422,8 +422,9 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     # module, so importing cvs.core.run_layout here would be circular.
     run_dir = os.getenv('CVS_RUN_DIR')
     if not run_dir:
-        # Only an error when the config actually asks for it, since every suite
-        # calls this resolver and most configs never mention {run_dir}. Left
+        # Only an error when the config actually asks for it: roughly half the test
+        # modules call this resolver and most of their configs never mention
+        # {run_dir}, so an unconditional check would break them all. Left
         # unresolved it would create a directory literally named "{run_dir}".
         if '{run_dir}' in json.dumps(config_dict, default=str):
             log.error(

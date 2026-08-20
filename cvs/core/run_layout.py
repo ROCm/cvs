@@ -29,10 +29,13 @@ from cvs.core.scheduler import _running_in_job_step
 WORKSPACE_ENV_VAR = "CVS_WORKSPACE"
 RUN_DIR_ENV_VAR = "CVS_RUN_DIR"
 DEFAULT_WORKSPACE_DIR_NAME = "cvs_runs"
-# SPUR exports the SLURM_* variables verbatim, so one set of names covers both.
+# SPUR mirrors each SPUR_* variable it sets to a SLURM_* twin, so these three names
+# resolve under either scheduler.
 JOB_ID_ENV_VAR = "SLURM_JOB_ID"
 STEP_ID_ENV_VAR = "SLURM_STEP_ID"
 PROC_ID_ENV_VAR = "SLURM_PROCID"
+# Slurm only: SPUR requeues a job without exporting any attempt counter, so there is
+# nothing to twin. See _resolve_run_id for what that costs.
 RESTART_COUNT_ENV_VAR = "SLURM_RESTART_COUNT"
 
 
@@ -83,6 +86,9 @@ def _resolve_run_id():
     The job id alone does not identify a run: concurrent steps in one allocation
     share it (and would then share an agent_dir, letting a worker read the wrong
     rank0 port), and a requeued job repeats it.
+
+    The restart suffix only separates attempts on Slurm. A SPUR requeue produces the
+    same run id as the attempt before it and overwrites that run directory.
     '''
     if not _running_in_job_step():
         return f"local-{_new_run_timestamp()}"
