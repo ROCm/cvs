@@ -37,7 +37,7 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     validate_flux_parallelism_config,
     compute_world_size,
     parallel_product,
-    build_output_cleanup_cmd, 
+    build_output_cleanup_cmd,
 )
 
 log = globals.log
@@ -66,9 +66,7 @@ def _distributed_server_nodes(cluster_dict, inference_dict):
     if nnodes < 2:
         raise ValueError(f"Distributed test requires config nnodes >= 2, got {nnodes}")
     if len(nodes) < nnodes:
-        raise ValueError(
-            f"Cluster/server_node_list has {len(nodes)} node(s) but nnodes={nnodes}"
-        )
+        raise ValueError(f"Cluster/server_node_list has {len(nodes)} node(s) but nnodes={nnodes}")
     return nodes[:nnodes], nnodes
 
 
@@ -388,9 +386,7 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict):
         update_test_result()
         return
 
-    inference_dict["_resolved_model_path_container"] = (
-        f"/hf_home/hub/models--{model_path_safe}/snapshots/{snapshot_id}"
-    )
+    inference_dict["_resolved_model_path_container"] = f"/hf_home/hub/models--{model_path_safe}/snapshots/{snapshot_id}"
     log.info(f"Using pre-cached snapshot: {inference_dict['_resolved_model_path_container']} on all server nodes")
 
     update_test_result()
@@ -425,7 +421,12 @@ def test_verify_parallelism_config(cluster_dict, inference_dict, benchmark_param
     log.info("Total GPU ranks (world_size): %d = %d nodes × %d nproc", world_size, nnodes, nproc)
     log.info(
         "xDiT parallel layout: ulysses=%d × ring=%d × pipefusion=%d × tp=%d × dp=%d = %d",
-        ulysses, ring, pipefusion, tp, dp, product,
+        ulysses,
+        ring,
+        pipefusion,
+        tp,
+        dp,
+        product,
     )
     log.info("Sequence-parallel size (ulysses × ring): %d", sp_size)
     log.info(

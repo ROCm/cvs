@@ -66,9 +66,7 @@ def _distributed_server_nodes(cluster_dict, inference_dict):
     if nnodes < 2:
         raise ValueError(f"Distributed test requires config nnodes >= 2, got {nnodes}")
     if len(nodes) < nnodes:
-        raise ValueError(
-            f"Cluster/server_node_list has {len(nodes)} node(s) but nnodes={nnodes}"
-        )
+        raise ValueError(f"Cluster/server_node_list has {len(nodes)} node(s) but nnodes={nnodes}")
     return nodes[:nnodes], nnodes
 
 
@@ -308,9 +306,7 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict):
         update_test_result()
         return
 
-    inference_dict["_resolved_ckpt_dir_container"] = (
-        f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
-    )
+    inference_dict["_resolved_ckpt_dir_container"] = f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
     log.info(f"Using pre-cached snapshot: {inference_dict['_resolved_ckpt_dir_container']} on all server nodes")
 
     update_test_result()

@@ -65,10 +65,14 @@ def validate_parallelism(
     world_size = compute_world_size(nnodes, nproc)
     product = parallel_product(wan_params)
     if product != world_size:
-        return world_size, product, (
-            f"Parallel degree product {product} != world_size {world_size} "
-            f"(nnodes={nnodes} × nproc={nproc}). "
-            f"Check ulysses_size and ring_size."
+        return (
+            world_size,
+            product,
+            (
+                f"Parallel degree product {product} != world_size {world_size} "
+                f"(nnodes={nnodes} × nproc={nproc}). "
+                f"Check ulysses_size and ring_size."
+            ),
         )
     return world_size, product, None
 
@@ -136,9 +140,7 @@ def scan_wan_fatal_output(output: str) -> bool:
 
 def build_wan_output_cleanup_cmd(output_base_dir: str, *, use_sudo: bool = True) -> str:
     prefix = "sudo " if use_sudo else ""
-    return (
-        f"bash -c {shlex.quote(f'{prefix}rm -rf {output_base_dir}/wan_22_*_outputs')}"
-    )
+    return f"bash -c {shlex.quote(f'{prefix}rm -rf {output_base_dir}/wan_22_*_outputs')}"
 
 
 @dataclass
@@ -186,9 +188,7 @@ class WanBenchmarkJob:
             if nnodes < 2:
                 raise ValueError(f"Distributed mode requires nnodes >= 2, got {nnodes}")
             if len(nodes) < nnodes:
-                raise ValueError(
-                    f"Cluster/server_node_list has {len(nodes)} node(s) but nnodes={nnodes}"
-                )
+                raise ValueError(f"Cluster/server_node_list has {len(nodes)} node(s) but nnodes={nnodes}")
             return nodes[:nnodes]
         return list(self.s_phdl.host_list)
 
@@ -235,10 +235,7 @@ class WanBenchmarkJob:
     def _fetch_hostnames(self) -> Dict[str, str]:
         log.info("Getting hostnames from %d node(s)", len(self.server_nodes))
         hostname_result = _exec_on_nodes(self.s_phdl, self.server_nodes, "hostname")
-        return {
-            node: (hostname_result.get(node, "") or "").strip() or node
-            for node in self.server_nodes
-        }
+        return {node: (hostname_result.get(node, "") or "").strip() or node for node in self.server_nodes}
 
     def _resolved_ckpt_dir(self) -> str:
         ckpt_dir = self.inference_dict.get("_resolved_ckpt_dir_container")
@@ -267,10 +264,7 @@ class WanBenchmarkJob:
         mount_host = self.inference_dict.get("_resolved_model_mount_host")
         if mount_host:
             volume_dict[mount_host] = "/model"
-        return " ".join(
-            f"--mount type=bind,source={src},target={dst}"
-            for src, dst in volume_dict.items()
-        )
+        return " ".join(f"--mount type=bind,source={src},target={dst}" for src, dst in volume_dict.items())
 
     def _build_docker_cmd(
         self,
