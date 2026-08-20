@@ -53,6 +53,29 @@ def _redact_secrets(text: str) -> str:
     return re.sub(r"(HF_TOKEN=)[^\s]+", r"\1<redacted>", text)
 
 
+def log_benchmark_failure_excerpt(
+    node: str,
+    output: str,
+    *,
+    max_lines: int = 120,
+) -> None:
+    """Log tail of captured remote benchmark output after fatal-pattern detection."""
+    if not (output or "").strip():
+        log.error("Benchmark failed on %s but captured output was empty", node)
+        return
+
+    lines = _redact_secrets(output).splitlines()
+    tail = lines[-max_lines:] if len(lines) > max_lines else lines
+    log.error(
+        "=== Benchmark failure excerpt (%s, last %d line(s)) ===",
+        node,
+        len(tail),
+    )
+    for line in tail:
+        log.error("%s", line)
+    log.error("=== end benchmark failure excerpt (%s) ===", node)
+
+
 def _secret_str(value: Any) -> str:
     return "" if value is None else str(value)
 
@@ -649,6 +672,7 @@ class FluxBenchmarkJob:
             output = (results or {}).get(node, "")
             if scan_fatal_output(output):
                 log.error("Benchmark output indicates failure on %s", node)
+                log_benchmark_failure_excerpt(node, output)
                 failed_nodes.append(node)
             else:
                 log.info("Benchmark on %s completed successfully", node)
