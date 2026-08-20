@@ -15,7 +15,6 @@ All rights reserved.
 
 import json
 import pytest
-import re
 import shlex
 
 from cvs.lib.parallel_ssh_lib import Pssh

@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 import shlex
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from cvs.lib import globals
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
