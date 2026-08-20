@@ -160,10 +160,6 @@ Exec Commands:
 
         return True, output
 
-    def _emit_error(self, msg, json_mode):
-        """Print an error message. In JSON mode, writes to stderr so stdout stays valid JSON."""
-        print(msg, file=sys.stderr if json_mode else sys.stdout)
-
     def _print_text_output(self, label, host_output):
         """Print host results in human-readable format."""
         for host, out in host_output.items():

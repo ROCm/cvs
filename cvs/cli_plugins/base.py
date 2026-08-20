@@ -1,3 +1,6 @@
+import sys
+
+
 class SubcommandPlugin:
     """Base class for CLI subcommand plugins."""
 
@@ -5,6 +8,10 @@ class SubcommandPlugin:
         "monitor": 999,
         "exec": 1000,  # High number to ensure exec appears last
     }
+
+    def _emit_error(self, msg, json_mode):
+        """Print an error message. In JSON mode, writes to stderr so stdout stays valid JSON."""
+        print(msg, file=sys.stderr if json_mode else sys.stdout)
 
     def get_name(self):
         raise NotImplementedError
