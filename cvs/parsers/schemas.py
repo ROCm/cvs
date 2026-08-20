@@ -590,6 +590,25 @@ class AortaBenchmarkConfigFile(BaseModel):
 # =============================================================================
 
 
+class PytorchXditDistributedNcclExamples(BaseModel):
+    """Documentation-only example values shipped beside ``<changeme>`` in sample JSON."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    _example_nccl_ib_hca: Optional[str] = Field(
+        default=None,
+        description="Documentation only: example nccl_ib_hca value for this cluster",
+    )
+    _example_nccl_socket_ifname: Optional[str] = Field(
+        default=None,
+        description="Documentation only: example nccl_socket_ifname value",
+    )
+    _example_gloo_socket_ifname: Optional[str] = Field(
+        default=None,
+        description="Documentation only: example gloo_socket_ifname value",
+    )
+
+
 class PytorchXditContainerConfig(BaseModel):
     """Schema for container_config section in pytorch-xdit configs."""
 
@@ -743,7 +762,7 @@ class PytorchXditWanConfigFile(BaseModel):
         return self
 
 
-class PytorchXditWanConfig(BaseModel):
+class PytorchXditWanConfig(PytorchXditDistributedNcclExamples):
     """Schema for config section in pytorch-xdit WAN configs."""
 
     model_config = ConfigDict(extra="forbid")
@@ -877,7 +896,7 @@ class PytorchXditFluxConfigFile(BaseModel):
         return self
 
 
-class PytorchXditFluxConfig(BaseModel):
+class PytorchXditFluxConfig(PytorchXditDistributedNcclExamples):
     """Schema for config section in pytorch-xdit Flux configs."""
 
     model_config = ConfigDict(extra="forbid")
