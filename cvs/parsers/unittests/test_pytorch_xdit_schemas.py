@@ -63,11 +63,11 @@ class TestPytorchXditDistributedSchemas(unittest.TestCase):
         validated = PytorchXditWanConfigFile.model_validate(raw)
 
         self.assertEqual(
-            validated.config._example_nccl_ib_hca,
+            validated.config.example_nccl_ib_hca,
             "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
         )
-        self.assertEqual(validated.config._example_nccl_socket_ifname, "eno0")
-        self.assertEqual(validated.config._example_gloo_socket_ifname, "eno0")
+        self.assertEqual(validated.config.example_nccl_socket_ifname, "eno0")
+        self.assertEqual(validated.config.example_gloo_socket_ifname, "eno0")
 
     def test_flux_config_accepts_example_nccl_hints(self):
         raw = {
@@ -90,7 +90,7 @@ class TestPytorchXditDistributedSchemas(unittest.TestCase):
         validated = PytorchXditFluxConfigFile.model_validate(raw)
 
         self.assertEqual(
-            validated.config._example_nccl_ib_hca,
+            validated.config.example_nccl_ib_hca,
             "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
         )
 

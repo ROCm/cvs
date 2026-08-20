@@ -593,18 +593,21 @@ class AortaBenchmarkConfigFile(BaseModel):
 class PytorchXditDistributedNcclExamples(BaseModel):
     """Documentation-only example values shipped beside ``<changeme>`` in sample JSON."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    _example_nccl_ib_hca: Optional[str] = Field(
+    example_nccl_ib_hca: Optional[str] = Field(
         default=None,
+        alias="_example_nccl_ib_hca",
         description="Documentation only: example nccl_ib_hca value for this cluster",
     )
-    _example_nccl_socket_ifname: Optional[str] = Field(
+    example_nccl_socket_ifname: Optional[str] = Field(
         default=None,
+        alias="_example_nccl_socket_ifname",
         description="Documentation only: example nccl_socket_ifname value",
     )
-    _example_gloo_socket_ifname: Optional[str] = Field(
+    example_gloo_socket_ifname: Optional[str] = Field(
         default=None,
+        alias="_example_gloo_socket_ifname",
         description="Documentation only: example gloo_socket_ifname value",
     )
 
@@ -765,7 +768,7 @@ class PytorchXditWanConfigFile(BaseModel):
 class PytorchXditWanConfig(PytorchXditDistributedNcclExamples):
     """Schema for config section in pytorch-xdit WAN configs."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     container_image: str = Field(
         default="amdsiloai/pytorch-xdit:v25.11.2", description="Docker image for pytorch-xdit container"
@@ -899,7 +902,7 @@ class PytorchXditFluxConfigFile(BaseModel):
 class PytorchXditFluxConfig(PytorchXditDistributedNcclExamples):
     """Schema for config section in pytorch-xdit Flux configs."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     container_image: str = Field(
         default="amdsiloai/pytorch-xdit:v25.11.2", description="Docker image for pytorch-xdit container"
