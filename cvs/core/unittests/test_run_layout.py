@@ -21,10 +21,7 @@ from unittest.mock import patch
 from cvs.core.run_layout import (
     DEFAULT_WORKSPACE_DIR_NAME,
     JOB_ID_ENV_VAR,
-    PROC_ID_ENV_VAR,
-    RESTART_COUNT_ENV_VAR,
     RUN_DIR_ENV_VAR,
-    STEP_ID_ENV_VAR,
     WORKSPACE_ENV_VAR,
     RunLayout,
     _default_workspace,
@@ -64,10 +61,14 @@ class _RunLayoutTestCase(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def _enter_job_step(self, job_id="424242", step_id="0", proc_id="0"):
-        '''Make this process look like a rank srun launched.'''
+        '''Make this process look like a rank srun launched.
+
+        Step id and proc id are what cvs.core.scheduler keys its job-step check on;
+        the layout itself only reads the job id.
+        '''
         os.environ[JOB_ID_ENV_VAR] = job_id
-        os.environ[STEP_ID_ENV_VAR] = step_id
-        os.environ[PROC_ID_ENV_VAR] = proc_id
+        os.environ["SLURM_STEP_ID"] = step_id
+        os.environ["SLURM_PROCID"] = proc_id
 
 
 class TestEnvVarContract(_RunLayoutTestCase):
@@ -82,11 +83,9 @@ class TestEnvVarContract(_RunLayoutTestCase):
         self.assertEqual(DEFAULT_WORKSPACE_DIR_NAME, "cvs_runs")
 
     def test_slurm_env_var_names(self):
-        # SPUR exports these verbatim, so the same names cover both schedulers.
+        # SPUR mirrors each SPUR_* variable it sets to a SLURM_* twin, so this name
+        # covers both schedulers.
         self.assertEqual(JOB_ID_ENV_VAR, "SLURM_JOB_ID")
-        self.assertEqual(STEP_ID_ENV_VAR, "SLURM_STEP_ID")
-        self.assertEqual(PROC_ID_ENV_VAR, "SLURM_PROCID")
-        self.assertEqual(RESTART_COUNT_ENV_VAR, "SLURM_RESTART_COUNT")
 
 
 class TestWorkspaceResolution(_RunLayoutTestCase):
@@ -144,47 +143,30 @@ class TestWorkspaceResolution(_RunLayoutTestCase):
 
 
 class TestRunIdResolution(_RunLayoutTestCase):
-    def test_job_step_uses_job_and_step_id(self):
-        self._enter_job_step(job_id="424242", step_id="0")
+    def test_job_step_uses_the_job_id(self):
+        # The scheduler's own identity for the run, taken as-is. CVS does not
+        # subdivide it further; anything needing a finer identity brings its own.
+        self._enter_job_step(job_id="424242")
         layout = RunLayout.initialize(self.workspace)
-        self.assertEqual(layout.run_id, "424242.0")
+        self.assertEqual(layout.run_id, "424242")
+
+    def test_every_rank_of_a_step_agrees(self):
+        # The whole point: ranks resolve independently and must land on one run_dir.
+        self._enter_job_step(job_id="424242", proc_id="0")
+        rank0 = RunLayout.initialize(self.workspace).run_dir
+        RunLayout._reset()
+        self._enter_job_step(job_id="424242", proc_id="7")
+        rank7 = RunLayout.initialize(self.workspace).run_dir
+        self.assertEqual(rank0, rank7)
 
     def test_run_id_does_not_depend_on_scheduler_binaries(self):
         # The container case: srun exports the SLURM_* variables into the image but
         # scontrol/spur are not installed there. Resolution must not consult them --
         # if it does, every rank falls back to its own clock and they diverge.
-        self._enter_job_step(job_id="424242", step_id="0")
+        self._enter_job_step(job_id="424242")
         with patch("shutil.which", return_value=None):
             layout = RunLayout.initialize(self.workspace)
-        self.assertEqual(layout.run_id, "424242.0")
-
-    def test_concurrent_steps_get_distinct_run_ids(self):
-        # Two srun steps in one allocation share SLURM_JOB_ID. Without the step id
-        # they would share an agent_dir and a worker could read the wrong rank0 port.
-        self._enter_job_step(job_id="424242", step_id="0")
-        first = RunLayout.initialize(self.workspace).run_id
-        RunLayout._reset()
-        self._enter_job_step(job_id="424242", step_id="1")
-        second = RunLayout.initialize(self.workspace).run_id
-        self.assertNotEqual(first, second)
-
-    def test_requeued_job_does_not_reuse_run_id(self):
-        # A requeue repeats SLURM_JOB_ID and increments SLURM_RESTART_COUNT; without
-        # it the retry overwrites the artifacts of the attempt that failed.
-        self._enter_job_step(job_id="424242", step_id="0")
-        first = RunLayout.initialize(self.workspace).run_id
-        RunLayout._reset()
-        os.environ[RESTART_COUNT_ENV_VAR] = "1"
-        second = RunLayout.initialize(self.workspace).run_id
-        self.assertNotEqual(first, second)
-        self.assertIn("424242.0", second)
-
-    def test_zero_restart_count_is_omitted(self):
-        # Slurm sets it to 0 on a first attempt; that must not change the common id.
-        self._enter_job_step(job_id="424242", step_id="0")
-        os.environ[RESTART_COUNT_ENV_VAR] = "0"
-        layout = RunLayout.initialize(self.workspace)
-        self.assertEqual(layout.run_id, "424242.0")
+        self.assertEqual(layout.run_id, "424242")
 
     @patch("cvs.core.run_layout._new_run_timestamp", return_value=FAKE_STAMP)
     def test_unmanaged_uses_local_timestamp(self, _mock_stamp):
@@ -205,12 +187,12 @@ class TestPathComposition(_RunLayoutTestCase):
     def test_run_dir_and_agent_dir_layout(self):
         self._enter_job_step(job_id="99", step_id="0")
         layout = RunLayout.initialize(self.workspace)
-        self.assertEqual(layout.run_dir, Path(self.workspace) / "cvs" / "runs" / "99.0")
+        self.assertEqual(layout.run_dir, Path(self.workspace) / "cvs" / "runs" / "99")
         self.assertEqual(layout.agent_dir, layout.run_dir / "agent")
 
     def test_directories_are_created(self):
         self._enter_job_step(job_id="99", step_id="0")
-        expected_agent_dir = Path(self.workspace) / "cvs" / "runs" / "99.0" / "agent"
+        expected_agent_dir = Path(self.workspace) / "cvs" / "runs" / "99" / "agent"
         layout = RunLayout.initialize(self.workspace)
         # Asserted against the concrete expected path, not against layout.agent_dir,
         # so a layout that resolved to the wrong place cannot satisfy this.
@@ -222,7 +204,7 @@ class TestPathComposition(_RunLayoutTestCase):
         # Every rank in a job step initializes against the same shared-FS paths,
         # so all but the first always find the directories already there.
         self._enter_job_step(job_id="99", step_id="0")
-        expected_agent_dir = Path(self.workspace) / "cvs" / "runs" / "99.0" / "agent"
+        expected_agent_dir = Path(self.workspace) / "cvs" / "runs" / "99" / "agent"
         expected_agent_dir.mkdir(parents=True)
         layout = RunLayout.initialize(self.workspace)
         self.assertEqual(layout.agent_dir, expected_agent_dir)

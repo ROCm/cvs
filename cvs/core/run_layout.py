@@ -29,14 +29,9 @@ from cvs.core.scheduler import _running_in_job_step
 WORKSPACE_ENV_VAR = "CVS_WORKSPACE"
 RUN_DIR_ENV_VAR = "CVS_RUN_DIR"
 DEFAULT_WORKSPACE_DIR_NAME = "cvs_runs"
-# SPUR mirrors each SPUR_* variable it sets to a SLURM_* twin, so these three names
-# resolve under either scheduler.
+# SPUR mirrors each SPUR_* variable it sets to a SLURM_* twin, so this name resolves
+# under either scheduler.
 JOB_ID_ENV_VAR = "SLURM_JOB_ID"
-STEP_ID_ENV_VAR = "SLURM_STEP_ID"
-PROC_ID_ENV_VAR = "SLURM_PROCID"
-# Slurm only: SPUR requeues a job without exporting any attempt counter, so there is
-# nothing to twin. See _resolve_run_id for what that costs.
-RESTART_COUNT_ENV_VAR = "SLURM_RESTART_COUNT"
 
 
 def _new_run_timestamp():
@@ -76,28 +71,21 @@ def _resolve_workspace(workspace=None):
 def _resolve_run_id():
     '''Identifies this run, and must come out identical on every rank of a step.
 
+    The scheduler's job id, taken as-is: it is the one name every rank already
+    agrees on. Runs that share a job id share a run directory, which is the
+    scheduler's notion of one run and not something CVS subdivides further.
+
     Keyed on the job-step environment rather than on is_managed_compute(): that
     predicate also probes for the scontrol/spur binaries, which are absent from
     the CVS container image even when srun launched the step and exported the
     SLURM_* variables. Ranks would then each fall back to their own wall clock
     and land on different run_dirs -- a silent hang at the rendezvous rather than
     an error. The env vars are set by the launch itself, so they cannot disagree.
-
-    The job id alone does not identify a run: concurrent steps in one allocation
-    share it (and would then share an agent_dir, letting a worker read the wrong
-    rank0 port), and a requeued job repeats it.
-
-    The restart suffix only separates attempts on Slurm. A SPUR requeue produces the
-    same run id as the attempt before it and overwrites that run directory.
     '''
     if not _running_in_job_step():
         return f"local-{_new_run_timestamp()}"
-    # _running_in_job_step() guarantees both of these are set.
-    run_id = f"{os.environ[JOB_ID_ENV_VAR]}.{os.environ[STEP_ID_ENV_VAR]}"
-    restart_count = os.environ.get(RESTART_COUNT_ENV_VAR)
-    if restart_count and restart_count != "0":
-        run_id = f"{run_id}.r{restart_count}"
-    return run_id
+    # _running_in_job_step() guarantees this is set.
+    return os.environ[JOB_ID_ENV_VAR]
 
 
 class RunLayout:
