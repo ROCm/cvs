@@ -9,8 +9,13 @@ Models are declared ``extra="allow"`` and are not yet wired into runtime
 validation, so an existing customer config is never rejected on account of them.
 """
 
+from .health import AgfhcConfigFile, RvsConfigFile, RvsTestConfig, TransferBenchConfigFile
 from .rccl import RcclConfigFile
 
 __all__ = [
+    "AgfhcConfigFile",
     "RcclConfigFile",
+    "RvsConfigFile",
+    "RvsTestConfig",
+    "TransferBenchConfigFile",
 ]
