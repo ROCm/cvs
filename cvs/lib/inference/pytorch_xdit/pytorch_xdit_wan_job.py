@@ -32,6 +32,7 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     resolve_server_nodes,
     scan_fatal_output,
     verify_distributed_logs,
+    log_benchmark_failure_excerpt,
     _exec_cmd_list_on_nodes,
     _exec_on_nodes,
 )
@@ -447,6 +448,7 @@ class WanBenchmarkJob:
             output = (results or {}).get(node, "")
             if scan_wan_fatal_output(output):
                 log.error("Benchmark output indicates failure on %s", node)
+                log_benchmark_failure_excerpt(node, output)
                 failed_nodes.append(node)
             else:
                 log.info("Benchmark on %s completed successfully", node)
