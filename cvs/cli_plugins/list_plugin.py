@@ -93,7 +93,21 @@ class ListPlugin(SubcommandPlugin):
             sys.exit(1)
 
     def __init__(self):
-        self.test_map = self.discover_tests()  # Nested: {pkg_name: {test_name: module_path}}
+        self._test_map = None
+
+    @property
+    def test_map(self):
+        """Nested {pkg_name: {test_name: module_path}}, walked lazily on first use.
+
+        main.py's discover_plugins() instantiates every plugin on every CLI
+        invocation to build the argparse structure, regardless of which
+        subcommand is actually run; computing this eagerly in __init__ would
+        walk cvs/tests/ once per ListPlugin subclass (list, run, man) even
+        when none of them end up executing.
+        """
+        if self._test_map is None:
+            self._test_map = self.discover_tests()
+        return self._test_map
 
     def _find_test(self, test_name):
         """Find test module path by name across all packages."""
