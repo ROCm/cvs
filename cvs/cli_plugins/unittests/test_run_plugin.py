@@ -224,8 +224,8 @@ class TestRunPluginWorkspace(unittest.TestCase):
     @patch("cvs.cli_plugins.run_plugin.pytest.main")
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
     def test_layout_initialized_before_pytest_runs(self, mock_exit, mock_pytest_main, mock_layout):
-        # Ordering is the whole point: CVS_RUN_DIR must be exported and the
-        # agent directory must exist before any fixture or agent looks for them.
+        # Ordering is the whole point: the layout must be resolved and the agent
+        # directory must exist before any fixture or agent looks for them.
         manager = MagicMock()
         manager.attach_mock(mock_layout.initialize, "initialize")
         manager.attach_mock(mock_pytest_main, "pytest_main")
@@ -237,7 +237,7 @@ class TestRunPluginWorkspace(unittest.TestCase):
     @patch("cvs.cli_plugins.run_plugin.pytest.main")
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
     def test_workspace_is_not_forwarded_to_pytest(self, mock_exit, mock_pytest_main, mock_layout):
-        # The layout reaches suites through CVS_RUN_DIR, not as a pytest option.
+        # The layout reaches suites through RunLayout, not as a pytest option.
         # Matched on substring rather than one exact literal, so forwarding it as
         # a separate ["--workspace", value] pair is caught too.
         self._run_with_workspace("/shared/ws", mock_pytest_main)

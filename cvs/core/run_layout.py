@@ -12,9 +12,10 @@ rendezvous: worker ranks never enter pytest, they read rank0's port out of
 agent_dir. Resolution therefore depends only on inputs every rank shares -- the
 job id, the environment, and the venv location.
 
-cvs/lib/utils_lib.py reads CVS_RUN_DIR out of the environment rather than
-importing this module: cvs/core/__init__.py imports the orchestrator factory,
-which imports utils_lib back.
+Consumers hold the object: `RunLayout.instance().agent_dir`. cvs/lib/utils_lib.py
+imports it inside the function instead of at module level, because this module
+pulls in cvs/core/__init__.py, whose orchestrator factory reaches
+cvs/core/orchestrators/baremetal.py, which imports utils_lib back.
 '''
 
 import os
@@ -79,7 +80,7 @@ class RunLayout:
 
     @classmethod
     def initialize(cls, workspace=None):
-        '''Resolve the layout, create the directories, publish CVS_RUN_DIR.
+        '''Resolve the layout and create the directories.
 
         Idempotent: later calls return the existing layout, so a run_id carrying a
         timestamp cannot drift between callers.
@@ -100,7 +101,6 @@ class RunLayout:
                 f"Check that the workspace is a writable shared-filesystem path "
                 f"(--workspace or CVS_WORKSPACE)."
             ) from exc
-        os.environ["CVS_RUN_DIR"] = str(layout.run_dir)
         cls._instance = layout
         return layout
 
@@ -109,6 +109,17 @@ class RunLayout:
         '''The layout for this run. Raises if nothing initialized it yet.'''
         if cls._instance is None:
             raise RuntimeError("RunLayout.initialize() must be called before RunLayout.instance()")
+        return cls._instance
+
+    @classmethod
+    def instance_or_none(cls):
+        '''The layout if one was resolved, None otherwise.
+
+        For cvs/lib/utils_lib.py, which resolves config placeholders for every
+        suite: most configs never mention {run_dir}, so needing a layout to be
+        resolved is the exception and cannot be made a precondition of the call.
+        Callers that genuinely require one use instance().
+        '''
         return cls._instance
 
     @classmethod

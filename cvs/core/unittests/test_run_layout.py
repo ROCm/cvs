@@ -165,11 +165,6 @@ class TestPathComposition(_RunLayoutTestCase):
         self.assertEqual(layout.agent_dir, expected_agent_dir)
         self.assertTrue(layout.agent_dir.is_dir())
 
-    def test_exports_run_dir_to_environment(self):
-        self._enter_job_step(job_id="99")
-        layout = RunLayout.initialize(self.workspace)
-        self.assertEqual(os.environ["CVS_RUN_DIR"], str(layout.run_dir))
-
     def test_unwritable_workspace_reports_the_path(self):
         # Shared storage that is unmounted, full, or read-only is routine on a
         # cluster; a raw pathlib traceback out of the CLI names none of the things

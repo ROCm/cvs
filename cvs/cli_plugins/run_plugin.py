@@ -129,7 +129,7 @@ Run Commands:
 
         # Resolve the run layout before pytest, but only once the run is going to
         # happen: worker ranks in a Slurm/Spur job never enter pytest at all, and
-        # config placeholder resolution needs CVS_RUN_DIR exported, so this cannot
+        # config placeholder resolution needs the layout resolved, so this cannot
         # wait for a fixture -- while creating directories for a mistyped suite
         # name would litter shared storage.
         try:

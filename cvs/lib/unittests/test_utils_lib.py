@@ -1,9 +1,11 @@
 # cvs/lib/unittests/test_utils_lib.py
 import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
 import cvs.lib.utils_lib as utils_lib
+from cvs.core.run_layout import RunLayout
 from cvs.parsers.schemas import AortaBenchmarkConfigFile
 
 
@@ -42,47 +44,51 @@ class TestResolveTestConfigPlaceholdersAorta(unittest.TestCase):
 
 
 class TestResolveRunDirPlaceholder(unittest.TestCase):
-    """{run_dir} comes from CVS_RUN_DIR, which cvs run exports from RunLayout.
+    """{run_dir} comes from RunLayout, the single source of truth for the paths.
 
-    utils_lib deliberately reads the environment rather than importing
-    cvs.core.run_layout: cvs/core/__init__.py imports the orchestrator factory,
-    which imports this module back, so a module-level import would be circular.
+    The import is deferred into the function under test: cvs.core.run_layout pulls
+    in cvs/core/__init__.py, whose orchestrator factory reaches
+    cvs/core/orchestrators/baremetal.py, which imports this module back at module
+    level. By call time everything is imported and the cycle is gone.
     """
 
     CLUSTER = {"username": "jdoe", "home_mount_dir_name": "home", "node_dir_name": "root"}
 
     def setUp(self):
+        RunLayout._reset()
+        self.addCleanup(RunLayout._reset)
         patcher = patch.dict(os.environ, {}, clear=False)
         patcher.start()
         self.addCleanup(patcher.stop)
-        os.environ.pop("CVS_RUN_DIR", None)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
 
-    def test_run_dir_substituted_from_env(self):
-        os.environ["CVS_RUN_DIR"] = "/shared/cvs/runs/4242"
+    def test_run_dir_substituted_from_the_layout(self):
+        layout = RunLayout.initialize(self.tmp.name)
         raw = {"log_path": "{run_dir}/logs", "nested": ["{run_dir}/a", {"k": "{run_dir}/b"}]}
         resolved = utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER)
-        self.assertEqual(resolved["log_path"], "/shared/cvs/runs/4242/logs")
-        self.assertEqual(resolved["nested"][0], "/shared/cvs/runs/4242/a")
-        self.assertEqual(resolved["nested"][1]["k"], "/shared/cvs/runs/4242/b")
+        self.assertEqual(resolved["log_path"], f"{layout.run_dir}/logs")
+        self.assertEqual(resolved["nested"][0], f"{layout.run_dir}/a")
+        self.assertEqual(resolved["nested"][1]["k"], f"{layout.run_dir}/b")
 
-    def test_run_dir_used_without_env_exits(self):
+    def test_environment_is_not_the_source_of_truth(self):
+        # The layout is the one place the run directory is decided. An environment
+        # that disagrees with it must not be able to redirect where artifacts land.
+        layout = RunLayout.initialize(self.tmp.name)
+        os.environ["CVS_RUN_DIR"] = "/somewhere/else"
+        resolved = utils_lib.resolve_test_config_placeholders({"log_path": "{run_dir}/logs"}, self.CLUSTER)
+        self.assertEqual(resolved["log_path"], f"{layout.run_dir}/logs")
+
+    def test_run_dir_used_without_a_layout_exits(self):
         # Leaving the token unresolved would create a directory literally named
         # "{run_dir}" and surface as a confusing failure much later.
         raw = {"log_path": "{run_dir}/logs"}
         with self.assertRaises(SystemExit):
             utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER)
 
-    def test_empty_env_var_is_treated_as_unset(self):
-        # Substituting '' would silently turn "{run_dir}/logs" into "/logs" and
-        # write at the filesystem root, which succeeds when running as root.
-        os.environ["CVS_RUN_DIR"] = ""
-        raw = {"log_path": "{run_dir}/logs"}
-        with self.assertRaises(SystemExit):
-            utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER)
-
-    def test_config_without_placeholder_unaffected_when_env_missing(self):
+    def test_config_without_placeholder_unaffected_without_a_layout(self):
         # Most test modules call this resolver; configs that never mention
-        # {run_dir} must keep working with no CVS_RUN_DIR set.
+        # {run_dir} must keep working with no layout resolved.
         raw = {"log_path": "/var/log/cvs", "user": "{user-id}"}
         resolved = utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER)
         self.assertEqual(resolved["log_path"], "/var/log/cvs")
