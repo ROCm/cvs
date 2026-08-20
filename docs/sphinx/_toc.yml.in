@@ -17,6 +17,8 @@ subtrees:
   entries:
   - file: how-to/run-cvs-tests
     title: Run tests
+  - file: how-to/browse-config-parameters
+    title: Look up test configuration parameters
   - file: how-to/run-with-containers
     title: Run tests with the container backend
   - file: how-to/run-vllm-benchmarks
