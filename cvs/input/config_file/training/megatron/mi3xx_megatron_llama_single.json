@@ -4,14 +4,11 @@
     {
         "container_image": "rocm/megatron-lm:v25.5_py310",
         "container_name": "megatron_llama3.1_310",
-        "_example_nnodes": "4",
         "nnodes": "<changeme>-no of nodes to run singlenode training",
         "master_address": "<changeme>",
-        "_example_training_iterations": "30",
         "training_iterations": "<changeme>",
         "hf_token_file": "/home/{user-id}/.hf_token",
         "shm_size": "128G",
-        "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
         "data_cache_dir": "/home/{user-id}/cache",
         "megatron_root": "/workspace/Megatron-LM",
         "training_scripts": {

@@ -40,14 +40,11 @@ This is the ``mi3xx_megatron_llama_single.json`` configuration file:
       {
           "container_image": "rocm/megatron-lm:v25.5_py310",
           "container_name": "megatron_llama3.1_310",
-          "_example_nnodes": "4",
           "nnodes": "<changeme>-no of nodes to run singlenode training",
           "master_address": "<changeme>",
-            "_example_training_iterations": "30",
           "training_iterations": "<changeme>",
           "hf_token_file": "/home/{user-id}/.hf_token",
           "shm_size": "128G",
-          "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
           "data_cache_dir": "/home/{user-id}/cache",
           "megatron_root": "/workspace/Megatron-LM",
           "training_scripts": {
@@ -185,18 +182,12 @@ Use the parameters in these tables to configure the training file.
    * - ``container_name``
      - ``megatron_llama3.1_310`` 
      - Name assigned to the container instance
-   * - ``_example_nnodes``
-     - 4
-     - Example of number of cluster nodes participating in the job 
    * - ``Nnodes``
      - "``<changeme>``-no of nodes to run singlenode training"
      - Number of nodes in the distributed job 
    * - ``master_address``
      - ``<changeme>``
      - IP of the master/coordinator node
-   * - ``_example_training_iterations``
-     - 30
-     - Example of number of training iterations/steps to run in this test
    * - ``training_iterations``
      - ``<changeme>``
      - Number of training iterations/steps to run in this test
@@ -206,9 +197,6 @@ Use the parameters in these tables to configure the training file.
    * - ``shm_size``
      - 256G
      - Docker shared memory size mounted into container
-   * - ``_comments_data_cache_dir``
-     - "This path should be accessible from all nodes like a common FS like NFS for distributed training"
-     - Comment explaining ``data_cache_dir`` must be accessible from all nodes
    * - ``data_cache_dir``
      - ``/home/{user-id}/cache``
      - Dataset/cache directory
@@ -492,14 +480,11 @@ The ``mi35x_megatron_llama_single.json`` config file is used to run Megatron on 
         {
             "container_image": "rocm/megatron-lm:v25.9_gfx950",
             "container_name": "megatron_llama3.1_310",
-            "_example_nnodes": "4",
             "nnodes": "<changeme>-no of nodes to run singlenode training",
             "master_address": "localhost",
-            "_example_training_iterations": "30",
             "training_iterations": "<changeme>",
             "hf_token_file": "/home/{user-id}/.hf_token",
             "shm_size": "128G",
-            "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
             "data_cache_dir": "/home/{user-id}/cache",
             "megatron_root": "/workspace/Megatron-LM",
             "training_scripts": {
@@ -626,18 +611,12 @@ Use the parameters in these tables to configure the training file.
    * - ``container_name``
      - ``megatron_llama3.1_310`` 
      - Name assigned to the container instance
-   * - ``_example_nnodes``
-     - 4
-     - Example of number of cluster nodes participating in the job 
    * - ``Nnodes``
      - "``<changeme>``-no of nodes to run singlenode training"
      - Number of nodes in the distributed job 
    * - ``master_address``
      - ``<changeme>``
      - IP of the master/coordinator node
-   * - ``_example_training_iterations``
-     - 30
-     - Example of number of training iterations/steps to run in this test
    * - ``training_iterations``
      - ``<changeme>``
      - Number of training iterations/steps to run in this test
@@ -647,9 +626,6 @@ Use the parameters in these tables to configure the training file.
    * - ``shm_size``
      - 128G
      - Docker shared memory size mounted into container
-   * - ``_comments_data_cache_dir``
-     - "This path should be accessible from all nodes like a common FS like NFS for distributed training"
-     - Comment explaining ``data_cache_dir`` must be accessible from all nodes
    * - ``data_cache_dir``
      - ``/home/{user-id}/cache``
      - Dataset/cache directory
@@ -925,32 +901,21 @@ This is the multi-node ``mi3xx_megatron_llama_distributed.json`` configuration f
     
         "config":
         {
-                "_comments__": "Config file created for 4 nodes, change expected results based on number of nodes",
             "container_image": "rocm/megatron-lm:v25.5_py310",
             "container_name": "megatron_llama3.1_310",
             "distributed_training": "True",
-            "_example_nnodes": "4",
             "nnodes": "<changeme>",
-            "_example_master_address": "X.X.X.X",
             "master_address": "<changeme>",
-            "_example_training_iterations": "30",
             "training_iterations": "<changeme>",
-            "_example_nic_type": "ainic|thor2|cx7",
             "nic_type": "<changeme>",
-            "_example_nccl_ib_hca_list": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7",
             "nccl_ib_hca_list": "<changeme>",
-            "_example_nccl_socket_ifname": "ens51f1np1",
             "nccl_socket_ifname": "<changeme>",
-            "_example_gloo_socket_ifname": "ens51f1np1",
             "gloo_socket_ifname": "<changeme>",
-            "_example_nccl_ib_gid_index": "3",
             "nccl_ib_gid_index": "<changeme>",
-            "_example_hca_id_pattern": "bnxt_|rocep|mlx5_",
             "hca_id_pattern": "bnxt_|rocep",
             "nccl_debug": "ERROR",
             "hf_token_file": "/home/{user-id}/.hf_token",
             "shm_size": "128G",
-            "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
             "data_cache_dir": "/home/{user-id}/cache",
             "megatron_root": "/workspace/Megatron-LM",
             "training_scripts": {
@@ -996,8 +961,6 @@ This is the multi-node ``mi3xx_megatron_llama_distributed.json`` configuration f
                         "fsdp": "0",
                         "result_dict":
                         {
-                            "_example_throughput_per_gpu": "610.0",
-                            "_example_tokens_per_gpu": "12000.0",
                             "throughput_per_gpu": "<changeme>",
                             "tokens_per_gpu": "<changeme>"
                         }
@@ -1016,8 +979,6 @@ This is the multi-node ``mi3xx_megatron_llama_distributed.json`` configuration f
                         "fsdp": "0",
                         "result_dict":
                         {
-                            "_example_throughput_per_gpu": "620.0",
-                            "_example_tokens_per_gpu": "14000.0",
                             "throughput_per_gpu": "<changeme>",
                             "tokens_per_gpu": "<changeme>"
                         }
@@ -1039,8 +1000,6 @@ This is the multi-node ``mi3xx_megatron_llama_distributed.json`` configuration f
                         "fsdp": "0",
                         "result_dict":
                         {
-                            "_example_throughput_per_gpu": "530.0",
-                            "_example_tokens_per_gpu": "1100.0",
                             "throughput_per_gpu": "<changeme>",
                             "tokens_per_gpu": "<changeme>"
                         }
@@ -1059,8 +1018,6 @@ This is the multi-node ``mi3xx_megatron_llama_distributed.json`` configuration f
                         "fsdp": "0",
                         "result_dict":
                         {
-                            "_example_throughput_per_gpu": "550.0",
-                            "_example_tokens_per_gpu": "1200.0",
                             "throughput_per_gpu": "<changeme>",
                             "tokens_per_gpu": "<changeme>"
                         }
@@ -1090,9 +1047,6 @@ Use the parameters in these tables to configure the training file.
    * - Configuration parameters
      - Default values
      - Description
-   * - ``_comments__``
-     - "Config file created for 4 nodes, change expected results based on number of nodes"
-     - A generic comment
    * - ``container_image``
      - ``rocm/megatron-lm:v25.5_py310`` 
      - Docker image used to run Megatron-LM
@@ -1102,65 +1056,30 @@ Use the parameters in these tables to configure the training file.
    * - ``distributed_training``
      - True
      - "True"/"False": Ehether to run training across multiple nodes
-   * - ``_example_nnodes``
-     - 4
-     - Example of number of cluster nodes participating in the job 
    * - ``Nnodes``
      - ``<changeme>``
      - Number of cluster nodes participating in the distributed job 
-   * - ``_example_master_address``
-     - "X.X.X.X"
-     - Example IP of the master/coordinator node
    * - ``master_address``
      - ``<changeme>``
      - IP of the master/coordinator node
-   * - ``_example_training_iterations``
-     - 30
-     - Example of number of training iterations/steps to run in this test
    * - ``training_iterations``
      - ``<changeme>`` 
      - Number of training iterations/steps to run in this test
-   * - ``_example_nic_type``
-     - ``ainic|thor2|cx7``
-     - Example of NIC hardware type
    * - ``nic_type``
      - ``<changeme>``
      - NIC hardware type
-   * - ``_example_nccl_ib_hca_list``
-     - Values:
-        - ``bnxt_re0``
-        - ``bnxt_re1``
-        - ``bnxt_re2``
-        - ``bnxt_re3``
-        - ``bnxt_re4``
-        - ``bnxt_re5``
-        - ``bnxt_re6``
-        - ``bnxt_re7``
-     - Example of a comma-separated list of InfiniBand HCA device names to use for NCCL/communication (multi-rail support)
    * - ``nccl_ib_hca_list``
      - ``<changeme>``
      - Comma-separated list of InfiniBand HCA device names to use for NCCL/communication (multi-rail support)
-   * - ``_example_nccl_socket_ifname``
-     - ``ens51f1np1``
-     - Example of a network interface name used by NCCL Network interface name used by NCCL / control channels
    * - ``nccl_socket_ifname``
      - ``<changeme>``
      - Network interface name used by NCCL Network interface name used by NCCL / control channels
-   * - ``_example_gloo_socket_ifname``
-     - ``ens51f1np1`` 
-     - Example of a network interface name used by Gloo control channels
    * - ``gloo_socket_ifname``
      - ``<changeme>``
      - Network interface name used by Gloo control channels
    * - ``nccl_ib_gid_index``
      - ``<changeme>``
      - GID index used for IB addressing (selects which GID)
-   * - ``_example_nccl_ib_gid_index``
-     - 3
-     - Example of  GID index used for IB addressing (selects which GID entry on the HCA to use)
-   * - ``_example_hca_id_pattern``
-     - ``bnxt_|rocep|mlx5_``
-     - Example of HCA-id pattern used to verify the libbnxt copy succeeded inside the container
    * - ``hca_id_pattern``
      - ``bnxt_|rocep``
      - ``|``-separated list of NIC-name prefixes (e.g. ``bnxt_``, ``rocep``, ``mlx5_``) checked against ``ibv_devinfo`` ``hca_id:`` lines after the libbnxt copy. Each segment is treated as a literal prefix (regex special chars are escaped by the lib), so use ``|`` only as the separator -- not as part of a regex pattern within a segment. Add ``|mlx5_`` for Mellanox/RoCE NICs.
@@ -1173,9 +1092,6 @@ Use the parameters in these tables to configure the training file.
    * - ``shm_size``
      - 128G
      - Docker shared memory size
-   * - ``_comments_data_cache_dir``
-     - "This path should be accessible from all nodes like a common FS like NFS for distributed training"
-     - A comment explaining ``data_cache_dir`` must be accessible from all nodes (NFS/shared FS).
    * - ``data_cache_dir``
      - ``/home/{user-id}/cache``
      - Dataset/cache directory (should be shared across nodes for distributed training unless using per-node copies)
@@ -1282,8 +1198,6 @@ This section also contains the ``result_dict`` parameter. It describes the expec
 
       "result_dict":
       {
-          "_example_throughput_per_gpu": "610.0",
-          "_example_tokens_per_gpu": "12000.0",
           "throughput_per_gpu": "<changeme>",
           "tokens_per_gpu": "<changeme>"
       }
@@ -1340,8 +1254,6 @@ This section also contains the ``result_dict`` parameter. It describes the expec
 
       "result_dict":
       {
-          "_example_throughput_per_gpu": "610.0",
-          "_example_tokens_per_gpu": "14000.0",
           "throughput_per_gpu": "<changeme>",
           "tokens_per_gpu": "<changeme>"
       }
@@ -1398,8 +1310,6 @@ This section also contains the ``result_dict`` parameter. It describes the expec
 
       "result_dict":
       {
-          "_example_throughput_per_gpu": "530.0",
-          "_example_tokens_per_gpu": "1100.0",
           "throughput_per_gpu": "<changeme>",
           "tokens_per_gpu": "<changeme>"
       }
@@ -1456,8 +1366,6 @@ This section also contains the ``result_dict`` parameter. It describes the expec
 
       "result_dict":
       {
-          "_example_throughput_per_gpu": "550.0",
-          "_example_tokens_per_gpu": "1200.0",
           "throughput_per_gpu": "<changeme>",
           "tokens_per_gpu": "<changeme>"
       }

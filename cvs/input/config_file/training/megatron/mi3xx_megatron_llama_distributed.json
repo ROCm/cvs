@@ -2,32 +2,21 @@
 
     "config":
     {
-	"_comments__": "Config file created for 4 nodes, change expected results based on number of nodes",
         "container_image": "rocm/megatron-lm:v25.5_py310",
         "container_name": "megatron_llama3.1_310",
         "distributed_training": "True",
-        "_example_nnodes": "4",
         "nnodes": "<changeme>",
-        "_example_master_address": "X.X.X.X",
         "master_address": "<changeme>",
-        "_example_training_iterations": "30",
         "training_iterations": "<changeme>",
-        "_example_nic_type": "ainic|thor2|cx7",
         "nic_type": "<changeme>",
-        "_example_nccl_ib_hca_list": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7",
         "nccl_ib_hca_list": "<changeme>",
-        "_example_nccl_socket_ifname": "ens51f1np1",
         "nccl_socket_ifname": "<changeme>",
-        "_example_gloo_socket_ifname": "ens51f1np1",
         "gloo_socket_ifname": "<changeme>",
-        "_example_nccl_ib_gid_index": "3",
         "nccl_ib_gid_index": "<changeme>",
-        "_example_hca_id_pattern": "bnxt_|rocep|mlx5_",
         "hca_id_pattern": "bnxt_|rocep",
         "nccl_debug": "ERROR",
         "hf_token_file": "/home/{user-id}/.hf_token",
         "shm_size": "128G",
-        "_comments_data_cache_dir": "This path should be accessible from all nodes like a common FS like NFS for distributed training",
         "data_cache_dir": "/home/{user-id}/cache",
         "megatron_root": "/workspace/Megatron-LM",
         "training_scripts": {
@@ -73,8 +62,6 @@
                      "fsdp": "0",
                      "result_dict":
                      {
-                         "_example_throughput_per_gpu": "610.0",
-                         "_example_tokens_per_gpu": "12000.0",
                          "throughput_per_gpu": "<changeme>",
                          "tokens_per_gpu": "<changeme>"
                      }
@@ -93,8 +80,6 @@
                      "fsdp": "0",
                      "result_dict":
                      {
-                         "_example_throughput_per_gpu": "620.0",
-                         "_example_tokens_per_gpu": "14000.0",
                          "throughput_per_gpu": "<changeme>",
                          "tokens_per_gpu": "<changeme>"
                      }
@@ -116,8 +101,6 @@
                      "fsdp": "0",
                      "result_dict":
                      {
-                         "_example_throughput_per_gpu": "530.0",
-                         "_example_tokens_per_gpu": "1100.0",
                          "throughput_per_gpu": "<changeme>",
                          "tokens_per_gpu": "<changeme>"
                      }
@@ -136,8 +119,6 @@
                      "fsdp": "0",
                      "result_dict":
                      {
-                         "_example_throughput_per_gpu": "550.0",
-                         "_example_tokens_per_gpu": "1200.0",
                          "throughput_per_gpu": "<changeme>",
                          "tokens_per_gpu": "<changeme>"
                      }
