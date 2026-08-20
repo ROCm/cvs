@@ -8,7 +8,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 import getpass
 import re
+from cvs.core.run_layout import RunLayout
 from cvs.core.runtimes import RuntimeFactory
+from cvs.core.scheduler import is_managed_compute
 
 
 DEFAULT_SSHD_PORT = 2224
@@ -128,6 +130,17 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         volumes = [
             f"/home/{user}/.ssh:/host_ssh"  # SSH keys for multinode
         ]
+
+        # Tests run inside the container via docker exec, but configs resolve
+        # {run_dir} to a host path, so the mount has to be an identity mapping --
+        # any other container path leaves the substituted value pointing at
+        # nothing and the artifacts land in a disposable overlay. Scheduler-managed
+        # runs only: those have a shared filesystem behind the workspace, whereas
+        # elsewhere bind-mounting a path the node lacks would quietly create a
+        # root-owned empty directory.
+        if is_managed_compute():
+            run_dir = RunLayout.get().run_dir
+            volumes.append(f"{run_dir}:{run_dir}")
 
         # Merge with config.json runtime args
         runtime_config = self.container_config.get('runtime', {})
