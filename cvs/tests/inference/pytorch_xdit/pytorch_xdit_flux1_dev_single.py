@@ -26,7 +26,7 @@ from cvs.lib.utils_lib import (
 from cvs.lib import docker_lib
 from cvs.lib import globals
 from cvs.parsers.schemas import ClusterConfigFile, PytorchXditFluxConfigFile
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux import FluxOutputParser
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux import FluxOutputParser, log_results_summary
 
 log = globals.log
 
@@ -793,20 +793,7 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
         if not passed:
             all_passed = False
 
-    # Print summary for multi-node runs
-    if len(results_summary) > 1:
-        log.info("=" * 60)
-        log.info("Multi-node results summary:")
-        for r in results_summary:
-            status = "PASS" if r['passed'] else "FAIL"
-            log.info(f"  {r['label']}: {r['avg_pipe_time_s']:.2f}s [{status}]")
-
-        # Compute overall average
-        avg_pipe_times = [r['avg_pipe_time_s'] for r in results_summary]
-        overall_avg = sum(avg_pipe_times) / len(avg_pipe_times) if avg_pipe_times else 0
-        log.info(f"  Overall average: {overall_avg:.2f}s")
-        log.info(f"  Nodes passed: {sum(1 for r in results_summary if r['passed'])}/{len(results_summary)}")
-        log.info("=" * 60)
+    log_results_summary(results_summary, metric_key="avg_pipe_time_s")
 
     if not all_passed:
         fail_test("One or more nodes failed benchmark validation")
