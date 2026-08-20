@@ -247,10 +247,17 @@ class MultiProcessPssh(ShardableSshInterface):
 
         return cmd_output
 
-    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
-        """Execute command list with automatic sharding if needed."""
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True, inactivity_timeout=None):
+        """Execute command list with automatic sharding if needed.
+
+        inactivity_timeout (see Pssh.exec) is threaded through to both the direct
+        single-process path and the sharded worker path, so a per-line inactivity
+        timeout applies regardless of host count.
+        """
         if self.pssh is not None:
-            result = self.pssh.exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
+            result = self.pssh.exec_cmd_list(
+                cmd_list, timeout=timeout, print_console=print_console, inactivity_timeout=inactivity_timeout
+            )
             self._sync_pssh_state()
             return result
 
@@ -283,7 +290,12 @@ class MultiProcessPssh(ShardableSshInterface):
 
         # Log command list execution
         if self.log:
-            if timeout is not None:
+            if inactivity_timeout is not None:
+                self.log.debug(
+                    f"Executing command list on {len(self.reachable_hosts)} host(s) "
+                    f"[inactivity_timeout={inactivity_timeout}s]"
+                )
+            elif timeout is not None:
                 self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]")
             else:
                 self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s)")
@@ -299,7 +311,12 @@ class MultiProcessPssh(ShardableSshInterface):
             offset += k
             payloads.append(
                 self.sharder.create_payloads(
-                    'exec_cmd_list', [shard_hosts], self._shard_init_kwargs(), cmd_list=shard_commands, timeout=timeout
+                    'exec_cmd_list',
+                    [shard_hosts],
+                    self._shard_init_kwargs(),
+                    cmd_list=shard_commands,
+                    timeout=timeout,
+                    inactivity_timeout=inactivity_timeout,
                 )[0]
             )
 
