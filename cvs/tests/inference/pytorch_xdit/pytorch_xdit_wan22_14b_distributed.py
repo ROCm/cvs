@@ -29,6 +29,7 @@ from cvs.lib import docker_lib
 from cvs.lib import globals
 from cvs.parsers.schemas import ClusterConfigFile, PytorchXditWanConfigFile
 from cvs.parsers.pytorch_xdit_wan import WanOutputParser
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux import log_results_summary
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     launch_wan_benchmark,
     resolve_nnodes,
@@ -431,6 +432,27 @@ def test_parse_and_validate_results(s_phdl, cluster_dict, inference_dict, benchm
     expected_results = wan_params["expected_results"]
     passed, message = parser.validate_threshold(result, expected_results, gpu_type)
     log.info("%s", message)
+
+    try:
+        server_nodes, _ = _distributed_server_nodes(cluster_dict, inference_dict)
+        hostname_out = s_phdl.exec("hostname", print_console=False)
+        results_summary = []
+        for node in server_nodes:
+            label = (hostname_out.get(node, "") or "").strip() or node
+            results_summary.append(
+                {
+                    "label": label,
+                    "avg_total_time_s": result.avg_total_time_s,
+                    "passed": passed,
+                }
+            )
+        log_results_summary(
+            results_summary,
+            metric_key="avg_total_time_s",
+            title="Distributed results summary",
+        )
+    except Exception as exc:
+        log.warning("Could not build distributed results summary: %s", exc)
 
     if not passed:
         fail_test(message)

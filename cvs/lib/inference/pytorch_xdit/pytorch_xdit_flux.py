@@ -12,11 +12,43 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib import globals
 
 log = globals.log
+
+
+def log_results_summary(
+    results_summary: Sequence[Mapping[str, object]],
+    *,
+    metric_key: str = "avg_pipe_time_s",
+    title: str = "Multi-node results summary",
+) -> None:
+    """
+    Log a per-node benchmark summary block (multi-node scale-out or distributed).
+
+    Each entry in ``results_summary`` must include ``label``, ``passed``, and
+    ``metric_key`` (a numeric seconds value).
+    """
+    if len(results_summary) <= 1:
+        return
+
+    log.info("=" * 60)
+    log.info("%s", title)
+    for entry in results_summary:
+        label = str(entry["label"])
+        passed = bool(entry["passed"])
+        avg_s = float(entry[metric_key])
+        status = "PASS" if passed else "FAIL"
+        log.info("  %s: %.2fs [%s]", label, avg_s, status)
+
+    metric_values = [float(entry[metric_key]) for entry in results_summary]
+    overall_avg = sum(metric_values) / len(metric_values) if metric_values else 0.0
+    passed_count = sum(1 for entry in results_summary if entry["passed"])
+    log.info("  Overall average: %.2fs", overall_avg)
+    log.info("  Nodes passed: %d/%d", passed_count, len(results_summary))
+    log.info("=" * 60)
 
 
 @dataclass
