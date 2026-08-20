@@ -157,9 +157,7 @@ def _exec_cmd_list_on_nodes(
     node_list = list(nodes)
     commands = list(cmd_list)
     if len(node_list) != len(commands):
-        raise ValueError(
-            f"node/cmd length mismatch: {len(node_list)} nodes vs {len(commands)} commands"
-        )
+        raise ValueError(f"node/cmd length mismatch: {len(node_list)} nodes vs {len(commands)} commands")
 
     phdl_hosts = list(getattr(s_phdl, "host_list", []) or [])
     if phdl_hosts == node_list:
@@ -242,10 +240,14 @@ def validate_parallelism(
     world_size = compute_world_size(nnodes, nproc)
     product = parallel_product(flux_params)
     if product != world_size:
-        return world_size, product, (
-            f"Parallel degree product {product} != world_size {world_size} "
-            f"(nnodes={nnodes} × nproc={nproc}). "
-            f"Check ulysses/ring/pipefusion/tensor_parallel/data_parallel."
+        return (
+            world_size,
+            product,
+            (
+                f"Parallel degree product {product} != world_size {world_size} "
+                f"(nnodes={nnodes} × nproc={nproc}). "
+                f"Check ulysses/ring/pipefusion/tensor_parallel/data_parallel."
+            ),
         )
     return world_size, product, None
 
@@ -349,9 +351,7 @@ def verify_distributed_logs(output: str, *, world_size: int) -> Tuple[bool, str]
     if rank_refs >= 2:
         return True, f"Saw {rank_refs} rank references in logs"
 
-    return False, (
-        f"No distributed proof in logs for world_size={world_size}. "
-    )
+    return False, (f"No distributed proof in logs for world_size={world_size}. ")
 
 
 def scan_fatal_output(output: str) -> bool:
@@ -403,9 +403,7 @@ class FluxBenchmarkJob:
             if nnodes < 2:
                 raise ValueError(f"Distributed mode requires nnodes >= 2, got {nnodes}")
             if len(nodes) < nnodes:
-                raise ValueError(
-                    f"Cluster/server_node_list has {len(nodes)} node(s) but nnodes={nnodes}"
-                )
+                raise ValueError(f"Cluster/server_node_list has {len(nodes)} node(s) but nnodes={nnodes}")
             return nodes[:nnodes]
         return list(self.s_phdl.host_list)
 
@@ -422,8 +420,7 @@ class FluxBenchmarkJob:
             self.flux_params,
         )
         log.info(
-            "Parallelism OK (%s): world_size=%s product=%s "
-            "(ulysses=%s ring=%s pipefusion=%s tp=%s dp=%s)",
+            "Parallelism OK (%s): world_size=%s product=%s (ulysses=%s ring=%s pipefusion=%s tp=%s dp=%s)",
             "distributed" if self.distributed else "single-node",
             world_size,
             product,
@@ -456,10 +453,7 @@ class FluxBenchmarkJob:
     def _fetch_hostnames(self) -> Dict[str, str]:
         log.info("Getting hostnames from %d node(s)", len(self.server_nodes))
         hostname_result = _exec_on_nodes(self.s_phdl, self.server_nodes, "hostname")
-        return {
-            node: (hostname_result.get(node, "") or "").strip() or node
-            for node in self.server_nodes
-        }
+        return {node: (hostname_result.get(node, "") or "").strip() or node for node in self.server_nodes}
 
     def _resolved_model_repo(self) -> str:
         return self.inference_dict.get("_resolved_model_path_container") or self.inference_dict["model_repo"]
@@ -482,10 +476,7 @@ class FluxBenchmarkJob:
         mount_host = self.inference_dict.get("_resolved_model_mount_host")
         if mount_host:
             volume_dict[mount_host] = "/model"
-        return " ".join(
-            f"--mount type=bind,source={src},target={dst}"
-            for src, dst in volume_dict.items()
-        )
+        return " ".join(f"--mount type=bind,source={src},target={dst}" for src, dst in volume_dict.items())
 
     def _build_docker_cmd(
         self,
@@ -744,9 +735,8 @@ def validate_flux_parallelism_config(
     _, _, err = validate_parallelism(1, flux_params)
     return err
 
+
 def build_output_cleanup_cmd(output_base_dir: str, *, use_sudo: bool = True) -> str:
     prefix = "sudo " if use_sudo else ""
     # Glob must expand in shell — do not quote the *
-    return (
-        f"bash -c {shlex.quote(f'{prefix}rm -rf {output_base_dir}/flux_*_outputs')}"
-    )
+    return f"bash -c {shlex.quote(f'{prefix}rm -rf {output_base_dir}/flux_*_outputs')}"

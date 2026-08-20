@@ -687,7 +687,9 @@ class PytorchXditFlux1DevBenchmarks(BaseModel):
     width: int = Field(default=1024, ge=1, description="Output image width in pixels")
     ulysses_degree: int = Field(default=8, ge=1, description="Ulysses parallelism degree")
     ring_degree: int = Field(default=1, ge=1, description="Ring parallelism degree")
-    pipefusion_parallel_degree: int = Field(default=1, ge=1, description="PipeFusion pipeline-parallel degree (multi-node)")
+    pipefusion_parallel_degree: int = Field(
+        default=1, ge=1, description="PipeFusion pipeline-parallel degree (multi-node)"
+    )
     tensor_parallel_degree: int = Field(default=1, ge=1, description="Tensor-parallel degree (1 = disabled)")
     data_parallel_degree: int = Field(default=1, ge=1, description="Data-parallel degree (1 = disabled)")
     use_torch_compile: bool = Field(default=True, description="Whether to use torch.compile for optimization")
@@ -1215,7 +1217,9 @@ class PreflightNodeSmokeConfig(BaseModel):
         description="Comma-separated CLI tools that must exist in PATH (empty = warn only)",
     )
     nccl_socket_ifname: str = Field(default="", description="NCCL_SOCKET_IFNAME override for node_smoke")
-    gloo_socket_ifname: str = Field(default="", description="GLOO_SOCKET_IFNAME override (defaults to nccl_socket_ifname)")
+    gloo_socket_ifname: str = Field(
+        default="", description="GLOO_SOCKET_IFNAME override (defaults to nccl_socket_ifname)"
+    )
     nccl_ib_hca: str = Field(default="", description="NCCL_IB_HCA override (defaults to node_check.rdma_interfaces)")
     nccl_ib_gid_index: Optional[int] = Field(
         default=None,
