@@ -51,7 +51,9 @@ the session-cached setup guard `ensure_anc_ready`, ldconfig fix, group
 execution, and artifact collection — lives in `cvs/lib/anc_lib.py` (group sets
 are `CPU_GROUPS` / `GPU_GROUPS`). Shared pytest fixtures live in this directory's
 `conftest.py` and apply to the `cpu/` and `gpu/` subfolders too. ANC is invoked
-from its installed location `/opt/amdtools/anc/anc.py`.
+from its installed location `<prefix>/anc/anc.py` — `<prefix>` is `/opt/amdtools`
+by default, or, for **tar** installs only, the relocated `ANC_INSTALL_PATH`
+(deb/rpm always use `/opt/amdtools`).
 
 **Logs & console:** each group's ANC log directory is copied under the
 `log_folder_path` prefix, where CVS lays down the fixed
@@ -129,15 +131,21 @@ The ANC config lives at `cvs/input/config_file/anc/anc_config.json`:
         "description": "AMD Node Check",
         "inactivity_timeout": 900,
         "install_timeout": 1800,
-        "anc_version": "1.4.7",
-        "anc_release_url": "https://.../anc-release-helios-nda-1.4.7-rpm-linux-x64.tar.gz",
+        "anc_version": "1.4.9",
+        "anc_release_url": "<changeme>",
+        "ANC_INSTALL_PATH": "",
         "print_all_to_console": "True",
-        "log_folder_path": "/home/user/cvs_logs",
+        "log_folder_path": "<changeme>",
         "ADD_ANC_LOGS_TO_HTML_REPORTS": "False",
         "COLLECT_HTML_REPORTS": "True"
     }
 }
 ```
+
+`anc_release_url` and `log_folder_path` ship as the `<changeme>` placeholder and
+**must** be replaced before running; an unresolved `<changeme>` aborts the run
+up front (the standard config resolver hard-exits on it, before any node is
+contacted).
 
 Each key is documented inline in the shipped config via a matching
 `_comment_<key>` sibling (keys prefixed with `_comment` are ignored at runtime).
@@ -146,16 +154,19 @@ Each key is documented inline in the shipped config via a matching
 | --- | --- |
 | `inactivity_timeout` | Per-group **inactivity** timeout in seconds (default 900 = 15 min). Applies to ANC group runs only, not install. A group is aborted only after this many seconds with **no new ANC output**; there is no total wall-clock cap, so a group that keeps producing progress runs as long as it needs. (Replaces the old `test_timeout` total-budget cap, which killed healthy, actively-running groups.) |
 | `install_timeout` | Package download+install **inactivity** timeout in seconds (default 1800 = 30 min), used only by `anc_installation` / the install pre-task. It is a per-read (no-output) timeout, not a total budget: the download emits a periodic progress heartbeat so a slow link never trips it, while a genuine stall still fails. Independent of `inactivity_timeout`. |
-| `anc_version` | Expected ANC version; install pre-task skips (re)install when already present and post-verifies the match. |
-| `anc_release_url` | ANC release archive URL (used by `anc_installation`). Flavour (deb/rpm/tar) is auto-detected from the filename. The download/unpack is staged in a private temp dir on each node and removed after install (success or failure); ANC itself always installs to `/opt/amdtools/anc`. |
+| `anc_version` | Expected ANC version; install pre-task skips (re)install when already present and post-verifies the match. When set, it must equal the version in `anc_release_url` or the run aborts before contacting any node. The version is read per node via `anc.py --content-list` (the `anc-release-*` plugin's version column) for **direct 1.5.0+** packaging, and via `anc.py --version` for **legacy ≤1.4.x** (whose `--version` reports the release version; 1.5.0+ does not). |
+| `anc_release_url` | ANC release archive URL (used by `anc_installation`). Both packaging generations are auto-detected from the filename: **legacy (≤1.4.x)** outer tarballs carry a `-deb-`/`-rpm-`/`-tar-` token (e.g. `anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz`); **direct (1.5.0+)** URLs point straight at a `.deb`/`.rpm`/`.tar.gz` with no flavour token (e.g. `anc-release-helios-nda-1.5.5-x86_64.tar.gz`). The download/unpack is staged in a private temp dir on each node and removed after install (success or failure). deb/rpm install to `/opt/amdtools/anc`; tar installs to `ANC_INSTALL_PATH` (default `/opt/amdtools`). |
+| `ANC_INSTALL_PATH` | **Tar installs only:** relocatable prefix ANC is extracted into (its `anc/` dir, tool folders, and content live under here), giving `<prefix>/anc/anc.py`. A leading `~` is expanded and the `{home}`/`{user-id}` placeholders are resolved during config load. The value is validated up front: shell-metacharacters (`'`, `"`, `` ` ``, `$`, `\`, newline) and a prefix that resolves to filesystem root (`/`, `//`) are rejected before any node is contacted. deb/rpm packages carry absolute locations baked into their archive and **ignore** this key. Leave blank or omit to keep the default `/opt/amdtools`. |
 | `print_all_to_console` | `True` echoes ANC group output to console; `False` suppresses it (diagnostics still print). |
-| `log_folder_path` | Controller-side destination **prefix** for **all** ANC artifacts — collected logs and the auto-collected HTML report. A plain directory path (leading `~` expanded); **required** — replace the shipped `REPLACE_ME`. CVS appends its own fixed structure under it: logs at `anc_logs/<node>/<test_name>/<timestamp>` and the report at `html_reports/<node>/<test_name>/<timestamp>/<test_name>.html` (`<node>` → the node's `<ip>_<hostname>` label, `<test_name>` → the group's test name, `<timestamp>` → per-run stamp). |
+| `log_folder_path` | Controller-side destination **prefix** for **all** ANC artifacts — collected logs and the auto-collected HTML report. A plain directory path (leading `~` expanded); **required** — replace the shipped `<changeme>`. CVS appends its own fixed structure under it: logs at `anc_logs/<node>/<test_name>/<timestamp>` and the report at `html_reports/<node>/<test_name>/<timestamp>/<test_name>.html` (`<node>` → the node's `<ip>_<hostname>` label, `<test_name>` → the group's test name, `<timestamp>` → per-run stamp). |
 | `ADD_ANC_LOGS_TO_HTML_REPORTS` | Governs the per-node **ANC logs** tarball links. `True` always bundles each node's collected log tree (one `.tar.gz` + link per node) into the pytest-html report zip. `False` (default) bundles them **only when the test fails**. The per-node `errors.json` links appear regardless of this flag. |
 | `COLLECT_HTML_REPORTS` | `True` (default) auto-generates a pytest-html report even when no `--html` is passed, written under `log_folder_path`. `False` disables auto-collection. An explicit `--html` on the command line always overrides the auto-collected path. |
 
-`log_folder_path` is a plain directory prefix (it does **not** accept
-`{home}`/`{runner_log_folder}` tokens). With a `log_folder_path` of
-`/home/user/cvs_logs`, logs land at
+`log_folder_path` is a directory prefix. Leading `~` is expanded, and the
+standard config placeholders `{home}`/`{user-id}` are resolved during config
+load (it does **not** accept the CVS-owned `<node>`/`<test_name>`/`<timestamp>`
+tokens — those name the fixed structure CVS appends under the prefix). With a
+`log_folder_path` of `/home/user/cvs_logs`, logs land at
 `/home/user/cvs_logs/anc_logs/<node>/<test_name>/<timestamp>` and the HTML report
 at `/home/user/cvs_logs/html_reports/<node>/<test_name>/<timestamp>/<test_name>.html`,
 where `<node>` is that node's `<ip>_<hostname>` label. To send the report
@@ -167,10 +178,10 @@ elsewhere, pass `--html` on the command line.
 
 Every ANC validation suite installs ANC as a pre-task, so a separate install
 step is **optional**. Run `anc_installation` on its own when you want to
-install/refresh ANC without running a validation group. ANC always installs to
-`/opt/amdtools/anc` (for all three flavours — deb, rpm, and tar), with the
-entrypoint at `/opt/amdtools/anc/anc.py`. You can install it in either of the
-ways below.
+install/refresh ANC without running a validation group. deb/rpm always install to
+`/opt/amdtools/anc`; **tar** installs to `ANC_INSTALL_PATH` (default
+`/opt/amdtools`), giving the entrypoint `<prefix>/anc/anc.py`. You can install it
+in either of the ways below.
 
 ### Option A - from the head node (recommended)
 
@@ -184,17 +195,20 @@ cvs run anc_installation \
   --config_file cvs/input/config_file/anc/anc_config.json
 ```
 
-This downloads the `anc_release_url` archive, installs ANC to `/opt/amdtools/anc`
-on every target node (the flavour — deb/rpm/tar — is auto-detected from the
-filename), and validates the install.
+This downloads the `anc_release_url` archive, installs ANC on every target node
+(the flavour — deb/rpm/tar — and generation — legacy/direct — are auto-detected
+from the filename; deb/rpm land in `/opt/amdtools/anc`, tar in
+`ANC_INSTALL_PATH`), and validates the install.
 
 ### Option B - manually on a target node
 
 If you do not want to run `anc_installation`, install ANC directly on the target
-node. The example below is for the **tar** flavour: download and extract the
-release archive in a staging dir, then extract the two `anc-tool` and
-`anc-content` archives into `/opt/amdtools` so the layout matches the deb/rpm
-packages:
+node. The examples below use `/opt/amdtools` as the prefix; substitute your
+`ANC_INSTALL_PATH` for a relocated tar install.
+
+**Legacy (≤1.4.x) tar** — the outer archive holds two inner `anc-tool` and
+`anc-content` tarballs; extract both into the prefix so the layout matches the
+deb/rpm packages:
 
 ```bash
 STAGE=$(mktemp -d)              # private staging dir, only for the download/unpack
@@ -202,7 +216,7 @@ trap 'rm -rf "$STAGE"' EXIT     # auto-remove it on exit (success or failure)
 cd "$STAGE"
 
 # Download and extract the ANC release
-wget -q "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.4.7/anc-release-helios-nda-1.4.7-tar-linux-x64.tar.gz" \
+wget -q "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.4.9/anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz" \
   -O outer.tar.gz
 tar -xzf outer.tar.gz
 
@@ -213,11 +227,29 @@ sudo tar -xzf anc-tool*.tar.gz    -C /opt/amdtools
 sudo tar -xzf anc-content*.tar.gz -C /opt/amdtools
 ```
 
-For the **deb**/**rpm** flavours, install the extracted `anc*.deb` / `anc*.rpm`
-packages instead (`sudo dpkg -i` / `sudo dnf install`); they lay ANC down under
-`/opt/amdtools/anc` directly. This is the sequence performed by
-[`anc_installation.py`](anc_installation.py) (which delegates to
-`cvs/lib/anc_lib.py`).
+**Direct (1.5.0+) tar** — the `.tar.gz` *is* the tree (no inner archives); a
+single untar into the prefix lays down `anc/` and the tool folders:
+
+```bash
+STAGE=$(mktemp -d)
+trap 'rm -rf "$STAGE"' EXIT
+cd "$STAGE"
+
+wget -q "https://atlartifactory.amd.com:8443/artifactory/HW-ANCRelease-REL-LOCAL/anc-release/helios_nda/1.5.5/anc-release-helios-nda-1.5.5-x86_64.tar.gz" \
+  -O anc.tar.gz
+sudo mkdir -p /opt/amdtools
+sudo tar -xzf anc.tar.gz -C /opt/amdtools
+```
+
+> For a relocated tar prefix, `anc_installation` also rewrites the content
+> YAMLs' absolute `exe_path` entries from `/opt/amdtools` to the new prefix — do
+> the same if you relocate a manual install.
+
+For the **deb**/**rpm** flavours, install the extracted (legacy) or downloaded
+(direct) `anc*.deb` / `anc*.rpm` packages instead (`sudo dpkg -i` /
+`sudo dnf install`); they lay ANC down under `/opt/amdtools/anc` directly. This
+is the sequence performed by [`anc_installation.py`](anc_installation.py) (which
+delegates to `cvs/lib/anc_lib.py`).
 
 ---
 
