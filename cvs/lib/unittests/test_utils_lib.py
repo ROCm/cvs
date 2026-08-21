@@ -64,7 +64,7 @@ class TestResolveRunDirPlaceholder(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
     def test_run_dir_substituted_from_the_layout(self):
-        layout = RunLayout.initialize(self.tmp.name)
+        layout = RunLayout.get(self.tmp.name)
         raw = {"log_path": "{run_dir}/logs", "nested": ["{run_dir}/a", {"k": "{run_dir}/b"}]}
         resolved = utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER)
         self.assertEqual(resolved["log_path"], f"{layout.run_dir}/logs")
@@ -74,25 +74,27 @@ class TestResolveRunDirPlaceholder(unittest.TestCase):
     def test_environment_is_not_the_source_of_truth(self):
         # The layout is the one place the run directory is decided. An environment
         # that disagrees with it must not be able to redirect where artifacts land.
-        layout = RunLayout.initialize(self.tmp.name)
+        layout = RunLayout.get(self.tmp.name)
         os.environ["CVS_RUN_DIR"] = "/somewhere/else"
         resolved = utils_lib.resolve_test_config_placeholders({"log_path": "{run_dir}/logs"}, self.CLUSTER)
         self.assertEqual(resolved["log_path"], f"{layout.run_dir}/logs")
 
-    def test_run_dir_used_without_a_layout_exits(self):
+    def test_run_dir_resolves_a_layout_when_none_exists_yet(self):
         # Leaving the token unresolved would create a directory literally named
-        # "{run_dir}" and surface as a confusing failure much later.
-        raw = {"log_path": "{run_dir}/logs"}
-        with self.assertRaises(SystemExit):
-            utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER)
+        # "{run_dir}"; RunLayout.get() resolves one rather than substituting nothing.
+        os.environ["CVS_WORKSPACE"] = self.tmp.name
+        resolved = utils_lib.resolve_test_config_placeholders({"log_path": "{run_dir}/logs"}, self.CLUSTER)
+        self.assertEqual(resolved["log_path"], f"{RunLayout.get().run_dir}/logs")
 
-    def test_config_without_placeholder_unaffected_without_a_layout(self):
-        # Most test modules call this resolver; configs that never mention
-        # {run_dir} must keep working with no layout resolved.
+    def test_config_without_placeholder_resolves_no_layout(self):
+        # Roughly half the test modules call this resolver and most of their configs
+        # never mention {run_dir}. Reaching for the layout regardless would create a
+        # run directory as a side effect of resolving an unrelated config.
         raw = {"log_path": "/var/log/cvs", "user": "{user-id}"}
         resolved = utils_lib.resolve_test_config_placeholders(raw, self.CLUSTER)
         self.assertEqual(resolved["log_path"], "/var/log/cvs")
         self.assertEqual(resolved["user"], "jdoe")
+        self.assertIsNone(RunLayout._instance)
 
 
 if __name__ == '__main__':

@@ -209,29 +209,29 @@ class TestRunPluginWorkspace(unittest.TestCase):
     @patch("cvs.cli_plugins.run_plugin.RunLayout")
     @patch("cvs.cli_plugins.run_plugin.pytest.main")
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
-    def test_layout_initialized_with_workspace(self, mock_exit, mock_pytest_main, mock_layout):
+    def test_layout_resolved_with_workspace(self, mock_exit, mock_pytest_main, mock_layout):
         self._run_with_workspace("/shared/ws", mock_pytest_main)
-        mock_layout.initialize.assert_called_once_with("/shared/ws")
+        mock_layout.get.assert_called_once_with("/shared/ws")
 
     @patch("cvs.cli_plugins.run_plugin.RunLayout")
     @patch("cvs.cli_plugins.run_plugin.pytest.main")
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
-    def test_layout_initialized_with_none_when_not_given(self, mock_exit, mock_pytest_main, mock_layout):
+    def test_layout_resolved_with_none_when_not_given(self, mock_exit, mock_pytest_main, mock_layout):
         self._run_with_workspace(None, mock_pytest_main)
-        mock_layout.initialize.assert_called_once_with(None)
+        mock_layout.get.assert_called_once_with(None)
 
     @patch("cvs.cli_plugins.run_plugin.RunLayout")
     @patch("cvs.cli_plugins.run_plugin.pytest.main")
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
-    def test_layout_initialized_before_pytest_runs(self, mock_exit, mock_pytest_main, mock_layout):
+    def test_layout_resolved_before_pytest_runs(self, mock_exit, mock_pytest_main, mock_layout):
         # Ordering is the whole point: the layout must be resolved and the agent
         # directory must exist before any fixture or agent looks for them.
         manager = MagicMock()
-        manager.attach_mock(mock_layout.initialize, "initialize")
+        manager.attach_mock(mock_layout.get, "get_layout")
         manager.attach_mock(mock_pytest_main, "pytest_main")
         self._run_with_workspace("/shared/ws", mock_pytest_main)
         called = [name for name, _args, _kwargs in manager.mock_calls]
-        self.assertLess(called.index("initialize"), called.index("pytest_main"))
+        self.assertLess(called.index("get_layout"), called.index("pytest_main"))
 
     @patch("cvs.cli_plugins.run_plugin.RunLayout")
     @patch("cvs.cli_plugins.run_plugin.pytest.main")
@@ -253,7 +253,7 @@ class TestRunPluginWorkspace(unittest.TestCase):
         with patch("cvs.cli_plugins.run_plugin.sys.exit", side_effect=SystemExit(1)):
             with self.assertRaises(SystemExit):
                 self._run_with_workspace("/shared/ws", mock_pytest_main, test_name="no_such_suite_xyz")
-        mock_layout.initialize.assert_not_called()
+        mock_layout.get.assert_not_called()
         mock_pytest_main.assert_not_called()
 
     @patch("cvs.cli_plugins.run_plugin.RunLayout")
@@ -262,7 +262,7 @@ class TestRunPluginWorkspace(unittest.TestCase):
     def test_unusable_workspace_exits_cleanly(self, mock_print, mock_pytest_main, mock_layout):
         # RunLayout raises RuntimeError for an unwritable or non-venv workspace.
         # The user should get that message, not a traceback, and pytest must not run.
-        mock_layout.initialize.side_effect = RuntimeError("workspace is not writable")
+        mock_layout.get.side_effect = RuntimeError("workspace is not writable")
         with patch("cvs.cli_plugins.run_plugin.sys.exit", side_effect=SystemExit(1)) as mock_exit:
             with self.assertRaises(SystemExit):
                 self._run_with_workspace("/shared/ws", mock_pytest_main)

@@ -417,27 +417,18 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     # Get home directory
     home_dir = os.path.expanduser(f'~{username}')
 
-    # Imported here rather than at module level: cvs.core.run_layout pulls in
-    # cvs/core/__init__.py, whose orchestrator factory reaches
-    # cvs/core/orchestrators/baremetal.py, which imports this module back. By call
-    # time everything is imported and the cycle is gone.
-    from cvs.core.run_layout import RunLayout
+    # Only reached when the config actually asks for it: roughly half the test
+    # modules call this resolver and most of their configs never mention {run_dir},
+    # and RunLayout.get() creates directories.
+    run_dir = ''
+    if '{run_dir}' in json.dumps(config_dict, default=str):
+        # Imported here rather than at module level: cvs.core.run_layout pulls in
+        # cvs/core/__init__.py, whose orchestrator factory reaches
+        # cvs/core/orchestrators/baremetal.py, which imports this module back. By
+        # call time everything is imported and the cycle is gone.
+        from cvs.core.run_layout import RunLayout
 
-    layout = RunLayout.instance_or_none()
-    if layout is not None:
-        run_dir = str(layout.run_dir)
-    else:
-        # Only an error when the config actually asks for it: roughly half the test
-        # modules call this resolver and most of their configs never mention
-        # {run_dir}, so an unconditional check would break them all. Left
-        # unresolved it would create a directory literally named "{run_dir}".
-        if '{run_dir}' in json.dumps(config_dict, default=str):
-            log.error(
-                "Config uses {run_dir} but no run layout was resolved. Run the suite via "
-                "'cvs run' (optionally with --workspace) so the run layout is resolved."
-            )
-            sys.exit(1)
-        run_dir = ''
+        run_dir = str(RunLayout.get().run_dir)
 
     log.info(
         f'Resolving config path placeholders with username: {username}, home: {home_dir}, home_mount_dir: {home_mount_dir_name}'

@@ -73,24 +73,24 @@ class _RunLayoutTestCase(unittest.TestCase):
 class TestWorkspaceResolution(_RunLayoutTestCase):
     def test_explicit_workspace_wins_over_env(self):
         os.environ["CVS_WORKSPACE"] = str(Path(self.workspace) / "from_env")
-        layout = RunLayout.initialize(self.workspace)
+        layout = RunLayout.get(self.workspace)
         self.assertEqual(layout.workspace, Path(self.workspace))
 
     def test_env_wins_over_venv_parent_default(self):
         env_workspace = Path(self.workspace) / "from_env"
         os.environ["CVS_WORKSPACE"] = str(env_workspace)
-        layout = RunLayout.initialize()
+        layout = RunLayout.get()
         self.assertEqual(layout.workspace, env_workspace)
 
     def test_defaults_to_venv_parent_cvs_runs(self):
-        layout = RunLayout.initialize()
+        layout = RunLayout.get()
         self.assertEqual(layout.workspace, Path(self.workspace) / "cvs_runs")
 
     def test_empty_env_var_falls_through_to_default(self):
         # An exported-but-empty CVS_WORKSPACE is an unset one, not a request to
         # use the filesystem root.
         os.environ["CVS_WORKSPACE"] = ""
-        layout = RunLayout.initialize()
+        layout = RunLayout.get()
         self.assertEqual(layout.workspace, Path(self.workspace) / "cvs_runs")
 
     def test_workspace_is_absolute(self):
@@ -98,7 +98,7 @@ class TestWorkspaceResolution(_RunLayoutTestCase):
         # move the run directory out from under an already-published path.
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.workspace)
-        layout = RunLayout.initialize("relative_ws")
+        layout = RunLayout.get("relative_ws")
         self.assertTrue(layout.workspace.is_absolute())
 
     def test_tilde_in_workspace_is_expanded(self):
@@ -106,7 +106,7 @@ class TestWorkspaceResolution(_RunLayoutTestCase):
         # which differs per rank -- the same silent rendezvous break an absolute
         # path is supposed to prevent.
         os.environ["HOME"] = self.workspace
-        layout = RunLayout.initialize("~/shared_ws")
+        layout = RunLayout.get("~/shared_ws")
         self.assertEqual(layout.workspace, Path(self.workspace) / "shared_ws")
 
     def test_not_installed_in_venv_is_a_clean_error(self):
@@ -114,13 +114,13 @@ class TestWorkspaceResolution(_RunLayoutTestCase):
         # the venv-parent default would resolve to "/cvs_runs".
         self._patch_prefix("/usr", base_prefix="/usr")
         with self.assertRaisesRegex(RuntimeError, "--workspace"):
-            RunLayout.initialize()
+            RunLayout.get()
 
     def test_explicit_workspace_works_outside_a_venv(self):
         # The venv check guards only the derived default; an explicit workspace
         # must still work for a system-interpreter install.
         self._patch_prefix("/usr", base_prefix="/usr")
-        layout = RunLayout.initialize(self.workspace)
+        layout = RunLayout.get(self.workspace)
         self.assertEqual(layout.workspace, Path(self.workspace))
 
 
@@ -129,39 +129,39 @@ class TestRunIdResolution(_RunLayoutTestCase):
         # The scheduler's own identity for the run, taken as-is. CVS does not
         # subdivide it further; anything needing a finer identity brings its own.
         self._enter_job_step(job_id="424242")
-        layout = RunLayout.initialize(self.workspace)
+        layout = RunLayout.get(self.workspace)
         self.assertEqual(layout.run_id, "424242")
 
     def test_every_rank_of_a_step_agrees(self):
         # The whole point: ranks resolve independently and must land on one run_dir.
         self._enter_job_step(job_id="424242", proc_id="0")
-        rank0 = RunLayout.initialize(self.workspace).run_dir
+        rank0 = RunLayout.get(self.workspace).run_dir
         RunLayout._reset()
         self._enter_job_step(job_id="424242", proc_id="7")
-        rank7 = RunLayout.initialize(self.workspace).run_dir
+        rank7 = RunLayout.get(self.workspace).run_dir
         self.assertEqual(rank0, rank7)
 
     def test_unmanaged_uses_local_timestamp(self):
-        layout = RunLayout.initialize(self.workspace)
+        layout = RunLayout.get(self.workspace)
         self.assertRegex(layout.run_id, LOCAL_RUN_ID)
 
 
 class TestPathComposition(_RunLayoutTestCase):
     def test_run_dir_and_agent_dir_are_composed_and_created(self):
         self._enter_job_step(job_id="99")
-        expected_run_dir = Path(self.workspace) / "cvs" / "runs" / "99"
-        layout = RunLayout.initialize(self.workspace)
+        expected_run_dir = Path(self.workspace) / "cvs_runs" / "99"
+        layout = RunLayout.get(self.workspace)
         self.assertEqual(layout.run_dir, expected_run_dir)
         self.assertEqual(layout.agent_dir, expected_run_dir / "agent")
         self.assertTrue(layout.agent_dir.is_dir())
 
-    def test_initialize_tolerates_preexisting_directories(self):
+    def test_get_tolerates_preexisting_directories(self):
         # Every rank in a job step initializes against the same shared-FS paths,
         # so all but the first always find the directories already there.
         self._enter_job_step(job_id="99")
-        expected_agent_dir = Path(self.workspace) / "cvs" / "runs" / "99" / "agent"
+        expected_agent_dir = Path(self.workspace) / "cvs_runs" / "99" / "agent"
         expected_agent_dir.mkdir(parents=True)
-        layout = RunLayout.initialize(self.workspace)
+        layout = RunLayout.get(self.workspace)
         self.assertEqual(layout.agent_dir, expected_agent_dir)
         self.assertTrue(layout.agent_dir.is_dir())
 
@@ -174,26 +174,32 @@ class TestPathComposition(_RunLayoutTestCase):
         unwritable.chmod(0o500)
         self.addCleanup(unwritable.chmod, 0o700)
         with self.assertRaises(RuntimeError) as ctx:
-            RunLayout.initialize(str(unwritable / "ws"))
+            RunLayout.get(str(unwritable / "ws"))
         message = str(ctx.exception)
         self.assertIn(str(unwritable / "ws"), message)
         self.assertIn("CVS_WORKSPACE", message)
 
 
 class TestSingletonSemantics(_RunLayoutTestCase):
-    def test_repeated_initialize_returns_same_object(self):
+    def test_repeated_get_returns_same_object(self):
         # run_id must not drift between callers, which is what makes the paths a
         # rendezvous rather than a guess.
-        first = RunLayout.initialize(self.workspace)
-        self.assertIs(RunLayout.initialize(), first)
+        first = RunLayout.get(self.workspace)
+        self.assertIs(RunLayout.get(), first)
 
-    def test_instance_returns_initialized_layout(self):
-        layout = RunLayout.initialize(self.workspace)
-        self.assertIs(RunLayout.instance(), layout)
+    def test_later_get_ignores_a_different_workspace(self):
+        # One layout per process. A second caller asking for somewhere else gets the
+        # resolved one, so consumers cannot split the run across two directories.
+        first = RunLayout.get(self.workspace)
+        elsewhere = Path(self.workspace) / "other"
+        self.assertIs(RunLayout.get(str(elsewhere)), first)
+        self.assertFalse(elsewhere.exists())
 
-    def test_instance_before_initialize_raises(self):
-        with self.assertRaisesRegex(RuntimeError, "initialize"):
-            RunLayout.instance()
+    def test_get_resolves_a_layout_when_none_exists_yet(self):
+        # No separate initialize step: the first caller resolves, later ones read.
+        layout = RunLayout.get(self.workspace)
+        self.assertEqual(layout.workspace, Path(self.workspace))
+        self.assertTrue(layout.agent_dir.is_dir())
 
 
 if __name__ == "__main__":

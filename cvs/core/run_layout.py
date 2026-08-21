@@ -12,7 +12,7 @@ rendezvous: worker ranks never enter pytest, they read rank0's port out of
 agent_dir. Resolution therefore depends only on inputs every rank shares -- the
 job id, the environment, and the venv location.
 
-Consumers hold the object: `RunLayout.instance().agent_dir`. cvs/lib/utils_lib.py
+Consumers hold the object: `RunLayout.get().agent_dir`. cvs/lib/utils_lib.py
 imports it inside the function instead of at module level, because this module
 pulls in cvs/core/__init__.py, whose orchestrator factory reaches
 cvs/core/orchestrators/baremetal.py, which imports utils_lib back.
@@ -75,15 +75,16 @@ class RunLayout:
     def __init__(self, workspace, run_id):
         self.workspace = workspace
         self.run_id = run_id
-        self.run_dir = workspace / "cvs" / "runs" / run_id
+        self.run_dir = workspace / "cvs_runs" / run_id
         self.agent_dir = self.run_dir / "agent"
 
     @classmethod
-    def initialize(cls, workspace=None):
-        '''Resolve the layout and create the directories.
+    def get(cls, workspace=None):
+        '''The layout for this run, resolving and creating it on the first call.
 
-        Idempotent: later calls return the existing layout, so a run_id carrying a
-        timestamp cannot drift between callers.
+        Idempotent: later calls return the existing layout and ignore their
+        argument, so a run_id carrying a timestamp cannot drift between callers and
+        no consumer can split one run across two directories.
         '''
         if cls._instance is not None:
             return cls._instance
@@ -103,24 +104,6 @@ class RunLayout:
             ) from exc
         cls._instance = layout
         return layout
-
-    @classmethod
-    def instance(cls):
-        '''The layout for this run. Raises if nothing initialized it yet.'''
-        if cls._instance is None:
-            raise RuntimeError("RunLayout.initialize() must be called before RunLayout.instance()")
-        return cls._instance
-
-    @classmethod
-    def instance_or_none(cls):
-        '''The layout if one was resolved, None otherwise.
-
-        For cvs/lib/utils_lib.py, which resolves config placeholders for every
-        suite: most configs never mention {run_dir}, so needing a layout to be
-        resolved is the exception and cannot be made a precondition of the call.
-        Callers that genuinely require one use instance().
-        '''
-        return cls._instance
 
     @classmethod
     def _reset(cls):
