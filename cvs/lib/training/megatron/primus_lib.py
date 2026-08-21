@@ -385,6 +385,17 @@ class PrimusTrainingJob:
                 'export NVTE_CK_IS_V3_ATOMIC_FP32=1; '
             )
 
+        # PRIMUS_WORKSPACE controls where Primus writes checkpoints.
+        # With PRIMUS_TEAM/USER/EXP_NAME all empty the checkpoint lands at:
+        #   {PRIMUS_WORKSPACE}/checkpoints
+        if self.checkpoint_dir:
+            env_exports += (
+                f'export PRIMUS_WORKSPACE={self.checkpoint_dir}; '
+                f'export PRIMUS_TEAM=""; '
+                f'export PRIMUS_USER=""; '
+                f'export PRIMUS_EXP_NAME=""; '
+            )
+
         batch_args = (
             f'--micro_batch_size {self.micro_batch_size} '
             f'--global_batch_size {self.global_batch_size} '
@@ -396,7 +407,9 @@ class PrimusTrainingJob:
                 f' --save_interval {self.save_interval or self.iterations}'
             )
         if self.load_checkpoint and self.checkpoint_dir:
-            batch_args += f' --load {self.checkpoint_dir}'
+            batch_args += f' --load {self.checkpoint_dir}/checkpoints'
+            if self.distributed_training:
+                batch_args += ' --auto_detect_ckpt_format'
 
         if self.distributed_training:
             env_exports += (
@@ -482,16 +495,19 @@ class PrimusTrainingJob:
             )
         time.sleep(50)
 
-    def _read_last_node_log(self, tail_lines=0):
-        """Read training log from the last node."""
-        n = len(self.orch.hosts)
-        last_host = self.orch.hosts[-1]
+    def _read_node_log(self, node_idx: int, tail_lines: int = 0) -> str:
+        """Read training log from a specific node by index."""
+        host = self.orch.hosts[node_idx]
         tail_suffix = f' | tail -{tail_lines}' if tail_lines > 0 else ''
         out_dict = self.orch.exec(
-            f'cat {self.combo_log_dir}/out-node{n - 1}/training.log{tail_suffix}',
-            hosts=[last_host],
+            f'cat {self.combo_log_dir}/out-node{node_idx}/training.log{tail_suffix}',
+            hosts=[host],
         )
-        return out_dict.get(last_host) or ''
+        return out_dict.get(host) or ''
+
+    def _read_last_node_log(self, tail_lines=0):
+        """Read training log from the last node."""
+        return self._read_node_log(len(self.orch.hosts) - 1, tail_lines)
 
     def _get_training_results_dict(self):
         """Parse training log and extract Primus metrics."""
