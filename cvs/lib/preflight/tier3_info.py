@@ -18,9 +18,12 @@ from typing import Any, Dict, List, Optional
 
 from cvs.lib.preflight.base import PreflightCheck
 from cvs.lib.preflight.node_smoke import (
+    DEFAULT_ARTIFACTS_ROOT_DIR,
     _config_flag_enabled,
     _normalize_mode,
     get_nested_config,
+    resolve_rdma_gid_index,
+    resolve_rdma_interfaces,
 )
 
 _REPORT_BEGIN = "---CVS_TIER3_REPORT_BEGIN---"
@@ -34,18 +37,27 @@ _FINDINGS_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Only shared Primus install paths may inherit from node_smoke. Operational knobs
+# (connectivity_mode, timeouts, dump_path, NCCL overrides, etc.) must stay
+# tier3_info-local so enabling node_smoke does not silently launch Tier 3.
+_TIER3_NODE_SMOKE_FALLBACK_KEYS = frozenset({"primus_dir", "venv_activate"})
+
 
 def resolve_tier3_setting(cfg: dict, key: str, default=None):
-    """Read ``tier3_info.<key>``, falling back to ``node_smoke.<key>``."""
+    """Read ``tier3_info.<key>``, with a narrow ``node_smoke`` fallback for Primus paths."""
     value = get_nested_config(cfg, "tier3_info", key, None)
     if value not in (None, ""):
         return value
-    return get_nested_config(cfg, "node_smoke", key, default)
+    if key in _TIER3_NODE_SMOKE_FALLBACK_KEYS:
+        fallback = get_nested_config(cfg, "node_smoke", key, None)
+        if fallback not in (None, ""):
+            return fallback
+    return default
 
 
 def _resolve_dump_path(cfg: dict) -> str:
     """Return Tier 3 dump directory; empty config uses reporting artifacts root."""
-    artifacts_root = get_nested_config(cfg, "reporting", "artifacts_root_dir", "/home/{user-id}/preflight")
+    artifacts_root = get_nested_config(cfg, "reporting", "artifacts_root_dir", DEFAULT_ARTIFACTS_ROOT_DIR)
     default_dump = f"{str(artifacts_root).rstrip('/')}/tier3_info"
     configured = resolve_tier3_setting(cfg, "dump_path", default_dump)
     configured_s = str(configured or "").strip()
@@ -224,9 +236,8 @@ class Tier3InfoCheck(PreflightCheck):
 
     def _load_settings(self):
         cfg = self.config_dict or {}
-        node_check = cfg.get("node_check") or {}
 
-        self.mode = _normalize_mode(resolve_tier3_setting(cfg, "connectivity_mode", "skip"))
+        self.mode = _normalize_mode(get_nested_config(cfg, "tier3_info", "connectivity_mode", "skip"))
         self.primus_dir = str(resolve_tier3_setting(cfg, "primus_dir", "") or "")
         self.venv_activate = str(resolve_tier3_setting(cfg, "venv_activate", "") or "")
         self.gpus_per_node = int(resolve_tier3_setting(cfg, "gpus_per_node", 8))
@@ -237,7 +248,7 @@ class Tier3InfoCheck(PreflightCheck):
         self.save_pdf = _config_flag_enabled(resolve_tier3_setting(cfg, "save_pdf", False))
         self.dump_path = _resolve_dump_path(cfg)
 
-        rdma_ifaces = node_check.get("rdma_interfaces") or []
+        rdma_ifaces = resolve_rdma_interfaces(cfg)
         self.nccl_socket_ifname = resolve_tier3_setting(cfg, "nccl_socket_ifname", "") or None
         self.gloo_socket_ifname = resolve_tier3_setting(cfg, "gloo_socket_ifname", self.nccl_socket_ifname) or None
 
@@ -248,7 +259,7 @@ class Tier3InfoCheck(PreflightCheck):
 
         gid_index = resolve_tier3_setting(cfg, "nccl_ib_gid_index", None)
         if gid_index is None:
-            gid_index = node_check.get("gid_index")
+            gid_index = resolve_rdma_gid_index(cfg)
         self.nccl_ib_gid_index = int(gid_index) if gid_index not in (None, "") else None
 
         extra = resolve_tier3_setting(cfg, "extra_args", [])

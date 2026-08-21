@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from cvs.lib.preflight.base import PreflightCheck
+from cvs.lib.preflight.node_smoke import DEFAULT_ARTIFACTS_ROOT_DIR
 from cvs.lib import globals
 
 log = globals.log
@@ -203,7 +204,7 @@ class PreflightReportGenerator(PreflightCheck):
         if output_path is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_dir = get_nested_config(
-                self.config_dict, 'reporting', 'artifacts_root_dir', '/home/{user-id}/preflight'
+                self.config_dict, 'reporting', 'artifacts_root_dir', DEFAULT_ARTIFACTS_ROOT_DIR
             )
             Path(output_dir).mkdir(parents=True, exist_ok=True)
             output_path = Path(output_dir) / f"preflight_report_{timestamp}.html"

@@ -11,6 +11,7 @@ from cvs.lib.preflight.tier3_info import (
     _REPORT_BEGIN,
     _REPORT_END,
     Tier3InfoCheck,
+    _resolve_dump_path,
     build_preflight_info_flags,
     build_remote_preflight_info_command,
     parse_preflight_info_output,
@@ -26,6 +27,9 @@ class TestBuildPreflightInfoFlags(unittest.TestCase):
         self.assertIn("--network", flags)
         self.assertIn("--dump-path /tmp/tier3", flags)
         self.assertIn("--disable-pdf", flags)
+
+    def test_resolve_dump_path_without_reporting_section(self):
+        self.assertEqual(_resolve_dump_path({"tier3_info": {"dump_path": ""}}), "/tmp/preflight/tier3_info")
 
     def test_master_node_includes_report_markers(self):
         cmd = build_remote_preflight_info_command(
@@ -57,12 +61,48 @@ class TestParsePreflightInfoOutput(unittest.TestCase):
 
 
 class TestResolveTier3Setting(unittest.TestCase):
-    def test_falls_back_to_node_smoke(self):
+    def test_falls_back_to_node_smoke_for_primus_paths_only(self):
         cfg = {
             "tier3_info": {"connectivity_mode": "run"},
             "node_smoke": {"primus_dir": "/home/user/Primus"},
         }
         self.assertEqual(resolve_tier3_setting(cfg, "primus_dir"), "/home/user/Primus")
+
+    def test_connectivity_mode_does_not_inherit_node_smoke(self):
+        cfg = {
+            "node_smoke": {"connectivity_mode": "run", "primus_dir": "/home/user/Primus"},
+        }
+        self.assertEqual(resolve_tier3_setting(cfg, "connectivity_mode", "skip"), "skip")
+
+    def test_tier3_skipped_when_only_node_smoke_enabled(self):
+        phdl = MagicMock()
+        phdl.reachable_hosts = ["node0"]
+        cfg = {
+            "node_smoke": {
+                "connectivity_mode": "run",
+                "primus_dir": "/home/user/Primus",
+                "venv_activate": "/home/user/.venv/bin/activate",
+            },
+        }
+        results = Tier3InfoCheck(phdl, ["node0"], cfg).run()
+        self.assertTrue(results.get("skipped"))
+        self.assertEqual(results.get("mode"), "skip")
+        phdl.exec_cmd_list.assert_not_called()
+
+    def test_nccl_env_derived_from_connectivity_check_rdma(self):
+        cfg = {
+            "tier3_info": {"connectivity_mode": "run", "auto_setup": False},
+            "node_smoke": {
+                "primus_dir": "/home/user/Primus",
+                "venv_activate": "/home/user/.venv/bin/activate",
+            },
+            "connectivity_check": {
+                "rdma": {"interfaces": ["rdma0", "rdma1"], "gid_index": "3"},
+            },
+        }
+        check = Tier3InfoCheck(MagicMock(), ["node0"], cfg)
+        self.assertEqual(check.nccl_ib_hca, "rdma0,rdma1")
+        self.assertEqual(check.nccl_ib_gid_index, 3)
 
 
 class TestTier3InfoCheckRun(unittest.TestCase):

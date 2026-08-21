@@ -15,6 +15,8 @@ from cvs.lib.preflight.node_smoke import (
     build_node_smoke_flags,
     build_remote_node_smoke_command,
     parse_node_smoke_output,
+    resolve_rdma_gid_index,
+    resolve_rdma_interfaces,
 )
 
 
@@ -33,6 +35,10 @@ class TestBuildNodeSmokeFlags(unittest.TestCase):
             "node_smoke": {"dump_path": ""},
         }
         self.assertEqual(_resolve_dump_path(cfg), "/home/{user-id}/preflight/node_smoke")
+
+    def test_resolve_dump_path_without_reporting_section(self):
+        cfg = {"node_smoke": {"dump_path": ""}}
+        self.assertEqual(_resolve_dump_path(cfg), "/tmp/preflight/node_smoke")
 
     def test_rdma_and_host_limits(self):
         flags = build_node_smoke_flags(
@@ -124,6 +130,22 @@ class TestParseNodeSmokeOutput(unittest.TestCase):
     def test_empty_output_fails(self):
         parsed = parse_node_smoke_output("")
         self.assertEqual(parsed["status"], "FAIL")
+
+
+class TestResolveRdmaConfig(unittest.TestCase):
+    def test_interfaces_from_connectivity_check_rdma(self):
+        cfg = {
+            "connectivity_check": {"rdma": {"interfaces": ["rdma0", "rdma1"], "gid_index": "3"}},
+        }
+        self.assertEqual(resolve_rdma_interfaces(cfg), ["rdma0", "rdma1"])
+        self.assertEqual(resolve_rdma_gid_index(cfg), "3")
+
+    def test_legacy_node_check_fallback(self):
+        cfg = {
+            "node_check": {"rdma_interfaces": ["legacy0"], "gid_index": "7"},
+        }
+        self.assertEqual(resolve_rdma_interfaces(cfg), ["legacy0"])
+        self.assertEqual(resolve_rdma_gid_index(cfg), "7")
 
 
 class TestNodeSmokeCheckRun(unittest.TestCase):

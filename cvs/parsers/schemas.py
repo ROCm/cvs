@@ -1202,7 +1202,7 @@ class PreflightNodeSmokeConfig(BaseModel):
     expected_rdma_nics: Optional[int] = Field(
         default=None,
         ge=1,
-        description="Hard-fail when training RDMA NIC count differs (default: len(node_check.rdma_interfaces))",
+        description="Hard-fail when training RDMA NIC count differs (default: len(connectivity_check.rdma.interfaces))",
     )
     ulimit_l_min_gb: float = Field(default=32.0, ge=0, description="Minimum RLIMIT_MEMLOCK in GiB (0 disables)")
     shm_min_gb: float = Field(default=8.0, ge=0, description="Minimum /dev/shm size in GiB (0 disables)")
@@ -1223,14 +1223,17 @@ class PreflightNodeSmokeConfig(BaseModel):
     gloo_socket_ifname: str = Field(
         default="", description="GLOO_SOCKET_IFNAME override (defaults to nccl_socket_ifname)"
     )
-    nccl_ib_hca: str = Field(default="", description="NCCL_IB_HCA override (defaults to node_check.rdma_interfaces)")
+    nccl_ib_hca: str = Field(
+        default="",
+        description="NCCL_IB_HCA override (defaults to comma-joined connectivity_check.rdma.interfaces)",
+    )
     nccl_ib_gid_index: Optional[int] = Field(
         default=None,
-        description="NCCL_IB_GID_INDEX override (defaults to node_check.gid_index)",
+        description="NCCL_IB_GID_INDEX override (defaults to connectivity_check.rdma.gid_index)",
     )
     rdma_nic_allowlist: str = Field(
         default="",
-        description="Training NIC allowlist for node_smoke (defaults to node_check.rdma_interfaces)",
+        description="Training NIC allowlist for node_smoke (defaults to connectivity_check.rdma.interfaces)",
     )
     ssh_timeout: int = Field(default=300, ge=30, description="SSH timeout in seconds for each node_smoke run")
     tier2_perf: bool = Field(
@@ -1290,10 +1293,16 @@ class PreflightTier3InfoConfig(BaseModel):
     )
     auto_setup: bool = Field(
         default=True,
-        description="Clone/update Primus and prepare venv before Tier 3 (falls back to node_smoke settings)",
+        description="Clone/update Primus and prepare venv before Tier 3 (uses node_smoke git/pip settings via PrimusSetup fallback)",
     )
-    primus_dir: str = Field(default="", description="Primus checkout path (default: node_smoke.primus_dir)")
-    venv_activate: str = Field(default="", description="Venv activate script (default: node_smoke.venv_activate)")
+    primus_dir: str = Field(
+        default="",
+        description="Primus checkout path; empty uses tier3_info then node_smoke.primus_dir",
+    )
+    venv_activate: str = Field(
+        default="",
+        description="Venv activate script; empty uses tier3_info then node_smoke.venv_activate",
+    )
     gpus_per_node: int = Field(default=8, ge=1, description="GPUs per node for torchrun")
     master_port: int = Field(default=1234, ge=1024, le=65535, description="Distributed master port")
     dump_path: str = Field(
@@ -1307,8 +1316,14 @@ class PreflightTier3InfoConfig(BaseModel):
     save_pdf: bool = Field(default=False, description="Generate PDF report via Primus")
     nccl_socket_ifname: str = Field(default="", description="NCCL_SOCKET_IFNAME override")
     gloo_socket_ifname: str = Field(default="", description="GLOO_SOCKET_IFNAME override")
-    nccl_ib_hca: str = Field(default="", description="NCCL_IB_HCA override")
-    nccl_ib_gid_index: Optional[int] = Field(default=None, description="NCCL_IB_GID_INDEX override")
+    nccl_ib_hca: str = Field(
+        default="",
+        description="NCCL_IB_HCA override (defaults to comma-joined connectivity_check.rdma.interfaces when empty)",
+    )
+    nccl_ib_gid_index: Optional[int] = Field(
+        default=None,
+        description="NCCL_IB_GID_INDEX override (defaults to connectivity_check.rdma.gid_index when null)",
+    )
     ssh_timeout: int = Field(default=600, ge=30, description="SSH timeout in seconds for the Tier 3 cluster run")
     extra_args: List[str] = Field(default_factory=list, description="Additional preflight CLI flags")
 
@@ -1328,10 +1343,11 @@ class PreflightReportingConfig(BaseModel):
 
     generate_html_report: bool = Field(default=True, description="Whether to generate HTML report")
     artifacts_root_dir: str = Field(
-        default="/home/{user-id}/preflight",
+        default="/tmp/preflight",
         description=(
             "Root directory for preflight artifacts. HTML report output and RDMA full_mesh ScriptLet logs use "
-            "<artifacts_root_dir>/rdma_connectivity_workspace/<session>/<round>/ on each node (NFS-friendly)."
+            "<artifacts_root_dir>/rdma_connectivity_workspace/<session>/<round>/ on each node (NFS-friendly). "
+            "Sample configs use /home/{user-id}/preflight; that placeholder is resolved only when present in JSON."
         ),
     )
     generate_rdma_pairs_csv: bool = Field(
