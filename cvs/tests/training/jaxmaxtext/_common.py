@@ -453,6 +453,25 @@ def checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecyc
     p1_steps = list(job1.step_metrics or [])
     p1_log = getattr(job1, "raw_log", "") or ""
 
+    # Phase 1 MUST have written a checkpoint, else Phase 2 has nothing to
+    # restore and the resume/loss checks are meaningless. This happens when
+    # checkpoint_period > steps_before_ckpt (no periodic save fires within
+    # Phase 1). Fail loudly here rather than silently continue into a Phase 2
+    # that cannot actually resume.
+    ckpt_step_path = _latest_checkpoint_step_path(orch, ckpt_dir)
+    if not ckpt_step_path:
+        pytest.fail(
+            f"Phase 1 wrote no checkpoint under {ckpt_dir}: checkpoint_period="
+            f"{cfg.checkpoint_period} likely exceeds steps_before_ckpt="
+            f"{cfg.steps_before_ckpt}. Set checkpoint_period <= steps_before_ckpt "
+            f"so a checkpoint is saved during Phase 1."
+        )
+    try:
+        checkpoint_step = int(str(ckpt_step_path).rstrip("/").rsplit("/", 1)[-1])
+    except (ValueError, IndexError):
+        checkpoint_step = None
+    log.info("[checkpoint] Phase 1 saved checkpoint at step %s (%s)", checkpoint_step, ckpt_step_path)
+
     # Phase 2: RESUME. Auto-restore Phase 1's latest checkpoint from the SAME
     # base_output_directory/run_name (both phases use the "CKPT" sweep + same
     # model, so out_dir/run_name are identical and MaxText auto-resumes the
@@ -463,12 +482,6 @@ def checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecyc
     # push checkpoint_period beyond the total step count so no NEW periodic
     # checkpoint is written while we train the extra steps.
     total_steps = cfg.steps_before_ckpt + cfg.steps_after_resume
-    if not _latest_checkpoint_step_path(orch, ckpt_dir):
-        log.warning(
-            "[checkpoint] no saved checkpoint found under %s before Phase 2; "
-            "resume/loss-continuity checks will likely fail",
-            ckpt_dir,
-        )
     job2 = _mk_job(total_steps, {"checkpoint_period": total_steps + 1000}, True)
     try:
         job2.setup_training_env()
@@ -509,9 +522,31 @@ def checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecyc
     resumed_step = p2_steps[0]["step"] if p2_steps else None
     resume_ok = resumed_step is not None and resumed_step > 0
 
-    p1_last_loss = next((s["loss"] for s in reversed(p1_steps) if isinstance(s.get("loss"), (int, float))), None)
-    p2_first_loss = next((s["loss"] for s in p2_steps if isinstance(s.get("loss"), (int, float))), None)
-    loss_delta = abs(p2_first_loss - p1_last_loss) if (p1_last_loss is not None and p2_first_loss is not None) else None
+    # --- loss continuity at the resume boundary ---
+    # Compare loss at the SAME step in both phases whenever they overlap: a
+    # correct restore reproduces Phase 1's loss at that step (delta ~ 0), so this
+    # is a true "state restored" check that does not depend on step alignment.
+    # Only when Phase 2 does NOT re-emit any Phase-1 step (it continued past the
+    # checkpoint without re-logging it) do we fall back to adjacent-boundary
+    # continuity (Phase 1's last loss vs Phase 2's first) -- looser, since those
+    # are one training step apart, but the best signal available.
+    p1_loss_by_step = {
+        s["step"]: s["loss"] for s in p1_steps if isinstance(s.get("loss"), (int, float)) and s.get("step") is not None
+    }
+    p2_loss_by_step = {
+        s["step"]: s["loss"] for s in p2_steps if isinstance(s.get("loss"), (int, float)) and s.get("step") is not None
+    }
+    common_steps = sorted(set(p1_loss_by_step) & set(p2_loss_by_step))
+    if common_steps:
+        cmp_step = common_steps[0]
+        p1_cmp_loss, p2_cmp_loss = p1_loss_by_step[cmp_step], p2_loss_by_step[cmp_step]
+        loss_basis = f"matched step {cmp_step}"
+    else:
+        cmp_step = None
+        p1_cmp_loss = next((s["loss"] for s in reversed(p1_steps) if isinstance(s.get("loss"), (int, float))), None)
+        p2_cmp_loss = next((s["loss"] for s in p2_steps if isinstance(s.get("loss"), (int, float))), None)
+        loss_basis = "adjacent boundary (no overlapping step; p1 last vs p2 first)"
+    loss_delta = abs(p2_cmp_loss - p1_cmp_loss) if (p1_cmp_loss is not None and p2_cmp_loss is not None) else None
     loss_ok = loss_delta is not None and loss_delta <= cfg.loss_tolerance
 
     # --- checkpoint I/O timings ---
@@ -569,10 +604,11 @@ def checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecyc
 
     lifecycle.record(request.node.nodeid, "checkpoint_resume", time.monotonic() - t0)
     log.info(
-        "[checkpoint] resumed_step=%s loss_delta=%s (tol=%s) | save=%ss (%s) load=%ss (%s)",
+        "[checkpoint] resumed_step=%s loss_delta=%s (tol=%s, basis=%s) | save=%ss (%s) load=%ss (%s)",
         resumed_step,
         loss_delta,
         cfg.loss_tolerance,
+        loss_basis,
         save_seconds,
         save_status,
         load_seconds,
@@ -585,7 +621,8 @@ def checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecyc
         failures.append(f"resume did not restore a checkpoint (phase-2 first step={resumed_step}, expected > 0)")
     if not loss_ok:
         failures.append(
-            f"loss discontinuity at resume: |{p2_first_loss} - {p1_last_loss}| = {loss_delta} > tol {cfg.loss_tolerance}"
+            f"loss discontinuity at resume ({loss_basis}): |{p2_cmp_loss} - {p1_cmp_loss}| = "
+            f"{loss_delta} > tol {cfg.loss_tolerance}"
         )
     if save_status == "FAIL":
         failures.append(f"checkpoint save {save_seconds}s > max {cfg.max_save_seconds}s")

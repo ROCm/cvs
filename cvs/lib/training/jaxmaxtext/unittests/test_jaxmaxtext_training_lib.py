@@ -396,10 +396,24 @@ class StartTrainingTests(unittest.TestCase):
     def test_launches_per_node_backgrounded(self, _sleep):
         job, orch = _make_job(hosts=["h0", "h1"])
         job.start_training()
-        cmds = orch.exec_cmd_list.call_args.args[0]
+        cmds = orch.exec_cmd_list.call_args.args[0]  # last call == launch
         self.assertEqual(len(cmds), 2)
         self.assertTrue(all("nohup bash" in c for c in cmds))
         _sleep.assert_called_once()
+
+    @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
+    def test_clears_stale_log_before_launch(self, _sleep):
+        # A stale training.log with an old "completed step" marker would make
+        # is_complete() pass on the first poll (fail-open). start_training must
+        # rm each node's log BEFORE launching.
+        job, orch = _make_job(hosts=["h0", "h1"])
+        job.start_training()
+        clear_cmds = orch.exec_cmd_list.call_args_list[0].args[0]
+        self.assertEqual(len(clear_cmds), 2)
+        self.assertTrue(all("rm -f" in c and "training.log" in c for c in clear_cmds))
+        # ... and the clear precedes the launch.
+        launch_cmds = orch.exec_cmd_list.call_args_list[-1].args[0]
+        self.assertTrue(all("nohup bash" in c for c in launch_cmds))
 
     @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
     def test_captures_host_start_time(self, _sleep):
@@ -411,6 +425,46 @@ class StartTrainingTests(unittest.TestCase):
         _wire_container_exec(orch)
         job.start_training()
         self.assertEqual(job.training_start_time, {"h0": "Mon Jan  2 03:04", "h1": "Mon Jan  2 03:04"})
+
+
+class PollForCompletionTests(unittest.TestCase):
+    _LIB = "cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib"
+
+    @patch(f"{_LIB}.time.sleep")
+    def test_completion_path_scans_final_drain_for_nan(self, _sleep):
+        # The chunk fetched on the completion path (final "completed step" +
+        # anything after) must be error-scanned before declaring success.
+        job, _ = _make_job(hosts=["h0"])
+        job.is_complete = MagicMock(return_value=True)
+        job._drain_new_log_lines = MagicMock(
+            side_effect=[
+                {},  # loop-body drain: nothing new yet
+                {0: "completed step: 2, TFLOP/s/device: NaN\n"},  # completion-path drain
+            ]
+        )
+        with self.assertRaises(RuntimeError):
+            job.poll_for_completion()
+
+    @patch(f"{_LIB}.time.sleep")
+    def test_completion_path_scans_worker_node_not_just_node0(self, _sleep):
+        # A worker-only (non-0) error in the completion window must still raise.
+        job, _ = _make_job(hosts=["h0", "h1"])
+        job.is_complete = MagicMock(return_value=True)
+        job._drain_new_log_lines = MagicMock(
+            side_effect=[
+                {},
+                {1: "some log\nNCCL ERROR: boom\n"},
+            ]
+        )
+        with self.assertRaises(RuntimeError):
+            job.poll_for_completion()
+
+    @patch(f"{_LIB}.time.sleep")
+    def test_clean_completion_returns(self, _sleep):
+        job, _ = _make_job(hosts=["h0"])
+        job.is_complete = MagicMock(return_value=True)
+        job._drain_new_log_lines = MagicMock(side_effect=[{}, {0: _log()}])
+        job.poll_for_completion()  # should not raise
 
 
 class ScanDmesgForErrorsTests(unittest.TestCase):

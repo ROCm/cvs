@@ -391,6 +391,21 @@ class MaxTextTrainingJob:
         self.training_start_time = self._host_date()
 
         scratch = self._get_scratch_dir()
+
+        # Clear each node's previous training.log BEFORE launch. The launcher
+        # only truncates the log once it reaches `python ... | tee training.log`;
+        # if this run dies earlier (env source fails, launcher never starts,
+        # etc.) a STALE log with an old "completed step: N" marker would remain
+        # and is_complete() would report success on the first poll -- a
+        # fail-open that lets smoke/training pass without this run doing the
+        # work. Removing it here means a run that never reaches `tee` leaves no
+        # log, so is_complete() stays false and the stage correctly times out.
+        clear_cmds = [
+            "bash -c " + shlex.quote(f"rm -f {shlex.quote(f'{self.out_dir}/out-node{i}/training.log')}")
+            for i in range(self.num_nodes)
+        ]
+        self.orch.exec_cmd_list(clear_cmds)
+
         launch_cmds = []
         for i in range(self.num_nodes):
             script_path = f"{scratch}/training_launcher_node{i}.sh"
@@ -504,11 +519,18 @@ class MaxTextTrainingJob:
                 log.info("[train node0]\n%s", node0_new)
 
             if self.is_complete():
-                # Flush any tail lines written since the drain above (e.g. the
-                # final "completed step" marker) so the stream ends cleanly.
-                tail_new = (self._drain_new_log_lines().get(0) or "").rstrip()
-                if tail_new:
-                    log.info("[train node0]\n%s", tail_new)
+                # Flush the tail lines written between the drain above and this
+                # completion check -- the final "completed step" marker, and
+                # anything after it (a shutdown traceback or a last-step NaN),
+                # land here. Scan EVERY node's final chunk for error signatures
+                # before declaring success (dropping non-0 nodes would hide a
+                # worker-only failure in this window), then stream node 0.
+                tail = self._drain_new_log_lines()
+                for i, text in tail.items():
+                    self._scan_chunk_for_errors(self.orch.hosts[i], i, text)
+                node0_tail = (tail.get(0) or "").rstrip()
+                if node0_tail:
+                    log.info("[train node0]\n%s", node0_tail)
                 log.info("training complete (poll iter=%d, %.0fs elapsed)", it, elapsed)
                 return
 
