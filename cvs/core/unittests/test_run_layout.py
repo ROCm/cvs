@@ -82,16 +82,16 @@ class TestWorkspaceResolution(_RunLayoutTestCase):
         layout = RunLayout.get()
         self.assertEqual(layout.workspace, env_workspace)
 
-    def test_defaults_to_venv_parent_cvs_runs(self):
+    def test_defaults_to_venv_parent(self):
         layout = RunLayout.get()
-        self.assertEqual(layout.workspace, Path(self.workspace) / "cvs_runs")
+        self.assertEqual(layout.workspace, Path(self.workspace))
 
     def test_empty_env_var_falls_through_to_default(self):
         # An exported-but-empty CVS_WORKSPACE is an unset one, not a request to
         # use the filesystem root.
         os.environ["CVS_WORKSPACE"] = ""
         layout = RunLayout.get()
-        self.assertEqual(layout.workspace, Path(self.workspace) / "cvs_runs")
+        self.assertEqual(layout.workspace, Path(self.workspace))
 
     def test_workspace_is_absolute(self):
         # Anchored to the cwd at resolution time so nothing that chdirs later can
@@ -111,7 +111,7 @@ class TestWorkspaceResolution(_RunLayoutTestCase):
 
     def test_not_installed_in_venv_is_a_clean_error(self):
         # sys.prefix == sys.base_prefix means a system-interpreter install, where
-        # the venv-parent default would resolve to "/cvs_runs".
+        # the venv-parent default would resolve to "/".
         self._patch_prefix("/usr", base_prefix="/usr")
         with self.assertRaisesRegex(RuntimeError, "--workspace"):
             RunLayout.get()
@@ -154,6 +154,14 @@ class TestPathComposition(_RunLayoutTestCase):
         self.assertEqual(layout.run_dir, expected_run_dir)
         self.assertEqual(layout.agent_dir, expected_run_dir / "agent")
         self.assertTrue(layout.agent_dir.is_dir())
+
+    def test_default_workspace_composes_the_same_shape_as_an_explicit_one(self):
+        # The derived default is the one workspace no test pinned end-to-end:
+        # asserting it in isolation let a "cvs_runs" suffix on the default and the
+        # "cvs_runs" segment run_dir adds coexist as cvs_runs/cvs_runs.
+        self._enter_job_step(job_id="99")
+        layout = RunLayout.get()
+        self.assertEqual(layout.run_dir, Path(self.workspace) / "cvs_runs" / "99")
 
     def test_get_tolerates_preexisting_directories(self):
         # Every rank in a job step initializes against the same shared-FS paths,

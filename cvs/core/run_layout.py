@@ -36,13 +36,13 @@ def _default_workspace():
     there must pass --workspace.
     '''
     if sys.prefix == sys.base_prefix:
-        # A system-interpreter install would derive "/cvs_runs" here, which fails
-        # as a permission error much later and for no obvious reason.
+        # A system-interpreter install would derive "/" here, and every run would
+        # then fail as a permission error much later and for no obvious reason.
         raise RuntimeError(
             "CVS is not running from a virtualenv, so a default workspace cannot be derived. "
             "Pass --workspace or set CVS_WORKSPACE to a shared-filesystem path."
         )
-    return Path(sys.prefix).parent / "cvs_runs"
+    return Path(sys.prefix).parent
 
 
 def _resolve_workspace(workspace=None):

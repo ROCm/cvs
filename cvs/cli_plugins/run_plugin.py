@@ -25,8 +25,8 @@ class RunPlugin(ListPlugin):
             help=(
                 "Shared-filesystem root for this run's artifacts; the run directory "
                 "becomes <workspace>/cvs_runs/<run_id> and is exposed to configs as "
-                "{run_dir}. Falls back to $CVS_WORKSPACE, then to a cvs_runs directory "
-                "beside the venv. Scheduler-managed runs in a container must set this "
+                "{run_dir}. Falls back to $CVS_WORKSPACE, then to the venv's parent "
+                "directory. Scheduler-managed runs in a container must set this "
                 "explicitly, since the venv's parent is not on shared storage there."
             ),
         )
