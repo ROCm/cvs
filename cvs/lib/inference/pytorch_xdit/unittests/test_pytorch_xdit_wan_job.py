@@ -3,7 +3,10 @@
 import unittest
 from unittest.mock import patch
 
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import log_benchmark_failure_excerpt
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+    build_nccl_env,
+    log_benchmark_failure_excerpt,
+)
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     build_torchrun_cmd,
     parallel_product,
@@ -48,6 +51,29 @@ class TestWanParallelism(unittest.TestCase):
                 cluster_dict=cluster_dict,
             )
         )
+
+
+class TestBuildNcclEnv(unittest.TestCase):
+    def test_defaults_include_nccl_proto_simple(self):
+        env = build_nccl_env({})
+        self.assertEqual(env["NCCL_PROTO"], "Simple")
+        self.assertEqual(env["HSA_FORCE_FINE_GRAIN_PCIE"], "1")
+
+    def test_maps_cluster_nccl_settings(self):
+        env = build_nccl_env(
+            {
+                "nccl_ib_hca": "rdma0,rdma1",
+                "nccl_socket_ifname": "eno0",
+                "gloo_socket_ifname": "eno0",
+                "nccl_debug": "INFO",
+                "nccl_ib_gid_index": "3",
+            }
+        )
+        self.assertEqual(env["NCCL_IB_HCA"], "rdma0,rdma1")
+        self.assertEqual(env["NCCL_SOCKET_IFNAME"], "eno0")
+        self.assertEqual(env["GLOO_SOCKET_IFNAME"], "eno0")
+        self.assertEqual(env["NCCL_DEBUG"], "INFO")
+        self.assertEqual(env["NCCL_IB_GID_INDEX"], "3")
 
 
 class TestBuildTorchrunCmd(unittest.TestCase):

@@ -18,7 +18,9 @@
         "container_config": {
             "device_list": ["/dev/dri", "/dev/kfd"],
             "volume_dict": {},
-            "env_dict": {}
+            "env_dict": {
+                "NCCL_PROTO": "Simple"
+            }
         }
     },
     "benchmark_params": {
