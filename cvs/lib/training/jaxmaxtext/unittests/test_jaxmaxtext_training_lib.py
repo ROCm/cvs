@@ -155,46 +155,72 @@ class IsCompleteTests(unittest.TestCase):
 
 class ScanForErrorsTests(unittest.TestCase):
     def test_clean_log_no_raise(self):
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": _log()}
-        job._scan_for_errors()  # should not raise
+        job, _ = _make_job(hosts=["h0"])
+        job._scan_chunk_for_errors("h0", 0, _log())  # should not raise
+
+    def test_empty_chunk_no_raise(self):
+        job, _ = _make_job(hosts=["h0"])
+        job._scan_chunk_for_errors("h0", 0, "")  # should not raise
 
     def test_nccl_error_raises(self):
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": "some log\nNCCL ERROR: unhandled\n"}
+        job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_for_errors()
+            job._scan_chunk_for_errors("h0", 0, "some log\nNCCL ERROR: unhandled\n")
 
     def test_nan_metric_raises(self):
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": "completed step: 1, TFLOP/s/device: NaN\n"}
+        job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_for_errors()
+            job._scan_chunk_for_errors("h0", 0, "completed step: 1, TFLOP/s/device: NaN\n")
 
     def test_config_error_patterns_replace_defaults(self):
         # A config-provided error_patterns set fully REPLACES the built-in defaults.
-        job, orch = _make_job(hosts=["h0"], error_patterns={"custom": "MY_CUSTOM_ERR"})
+        job, _ = _make_job(hosts=["h0"], error_patterns={"custom": "MY_CUSTOM_ERR"})
         # The default NCCL signature is no longer active -> no raise.
-        orch.exec_cmd_list.return_value = {"h0": "some log\nNCCL ERROR: unhandled\n"}
-        job._scan_for_errors()
+        job._scan_chunk_for_errors("h0", 0, "some log\nNCCL ERROR: unhandled\n")
         # The custom signature IS active -> raises.
-        orch.exec_cmd_list.return_value = {"h0": "boom MY_CUSTOM_ERR here\n"}
         with self.assertRaises(RuntimeError):
-            job._scan_for_errors()
+            job._scan_chunk_for_errors("h0", 0, "boom MY_CUSTOM_ERR here\n")
 
     def test_default_error_patterns_used_when_config_empty(self):
         # No config error_patterns -> built-in defaults apply.
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": "RESOURCE_EXHAUSTED: Out of memory\n"}
+        job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_for_errors()
+            job._scan_chunk_for_errors("h0", 0, "RESOURCE_EXHAUSTED: Out of memory\n")
 
     def test_default_segfault_pattern_raises(self):
         # segfault is part of the built-in default signatures.
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": "worker: Segmentation fault (core dumped)\n"}
+        job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_for_errors()
+            job._scan_chunk_for_errors("h0", 0, "worker: Segmentation fault (core dumped)\n")
+
+
+class DrainNewLogLinesTests(unittest.TestCase):
+    def test_advances_cursor_and_returns_new_text(self):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        orch.exec_cmd_list.return_value = {"h0": "l1\nl2\nl3\n", "h1": "a\nb\n"}
+        new = job._drain_new_log_lines()
+        self.assertEqual(new[0], "l1\nl2\nl3\n")
+        self.assertEqual(new[1], "a\nb\n")
+        # cursor advances by the number of lines read on each node.
+        self.assertEqual(job._log_line_cursor, [3, 2])
+
+    def test_uses_cursor_offset_in_tail_and_no_console_echo(self):
+        job, orch = _make_job(hosts=["h0"])
+        job._log_line_cursor = [5]
+        orch.exec_cmd_list.return_value = {"h0": "l6\n"}
+        job._drain_new_log_lines()
+        # tail starts at the line after the cursor (5 -> +6) ...
+        cmd = orch.exec_cmd_list.call_args.args[0][0]
+        self.assertIn("tail -n +6", cmd)
+        # ... and the bulk read is NOT echoed to the console.
+        self.assertEqual(orch.exec_cmd_list.call_args.kwargs.get("print_console"), False)
+
+    def test_empty_output_leaves_cursor_unchanged(self):
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec_cmd_list.return_value = {"h0": ""}
+        new = job._drain_new_log_lines()
+        self.assertEqual(new, {})
+        self.assertEqual(job._log_line_cursor, [0])
 
 
 class ParseResultsTests(unittest.TestCase):

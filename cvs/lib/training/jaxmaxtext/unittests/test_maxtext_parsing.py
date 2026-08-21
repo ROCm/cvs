@@ -33,10 +33,7 @@ class ExtractCheckpointTimingsTests(unittest.TestCase):
         self.assertEqual(extract_checkpoint_timings(log), {"save_seconds": None, "load_seconds": None})
 
     def test_parses_save_and_load_durations(self):
-        log = (
-            "Saved a checkpoint at step 5 in 12.5 seconds\n"
-            "Restored checkpoint from step 5 took 3.2s\n"
-        )
+        log = "Saved a checkpoint at step 5 in 12.5 seconds\nRestored checkpoint from step 5 took 3.2s\n"
         out = extract_checkpoint_timings(log)
         self.assertAlmostEqual(out["save_seconds"], 12.5)
         self.assertAlmostEqual(out["load_seconds"], 3.2)
@@ -47,9 +44,7 @@ class ExtractCheckpointTimingsTests(unittest.TestCase):
         self.assertIsNone(out["load_seconds"])
 
     def test_never_raises_on_garbage(self):
-        self.assertEqual(
-            extract_checkpoint_timings(None), {"save_seconds": None, "load_seconds": None}
-        )
+        self.assertEqual(extract_checkpoint_timings(None), {"save_seconds": None, "load_seconds": None})
 
     def test_orbax_save_uses_last_finished_save(self):
         # Real orbax wording: event_tracking "[sync] Finished save in <X> seconds".

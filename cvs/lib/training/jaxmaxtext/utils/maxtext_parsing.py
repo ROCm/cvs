@@ -379,12 +379,12 @@ def extract_checkpoint_timings(log_text):
     save_vals = []
     load_vals = []
     for line in (log_text or "").splitlines():
-        s = _match_floats((_CKPT_SAVE_RE, _CKPT_SAVE_FALLBACK_RE), line)
-        if s is not None:
-            save_vals.append(s)
-        l = _match_floats((_CKPT_LOAD_RE, _CKPT_LOAD_FALLBACK_RE), line)
-        if l is not None:
-            load_vals.append(l)
+        save_val = _match_floats((_CKPT_SAVE_RE, _CKPT_SAVE_FALLBACK_RE), line)
+        if save_val is not None:
+            save_vals.append(save_val)
+        load_val = _match_floats((_CKPT_LOAD_RE, _CKPT_LOAD_FALLBACK_RE), line)
+        if load_val is not None:
+            load_vals.append(load_val)
     return {
         "save_seconds": save_vals[-1] if save_vals else None,
         "load_seconds": max(load_vals) if load_vals else None,

@@ -511,9 +511,7 @@ def checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecyc
 
     p1_last_loss = next((s["loss"] for s in reversed(p1_steps) if isinstance(s.get("loss"), (int, float))), None)
     p2_first_loss = next((s["loss"] for s in p2_steps if isinstance(s.get("loss"), (int, float))), None)
-    loss_delta = (
-        abs(p2_first_loss - p1_last_loss) if (p1_last_loss is not None and p2_first_loss is not None) else None
-    )
+    loss_delta = abs(p2_first_loss - p1_last_loss) if (p1_last_loss is not None and p2_first_loss is not None) else None
     loss_ok = loss_delta is not None and loss_delta <= cfg.loss_tolerance
 
     # --- checkpoint I/O timings ---
@@ -572,7 +570,13 @@ def checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecyc
     lifecycle.record(request.node.nodeid, "checkpoint_resume", time.monotonic() - t0)
     log.info(
         "[checkpoint] resumed_step=%s loss_delta=%s (tol=%s) | save=%ss (%s) load=%ss (%s)",
-        resumed_step, loss_delta, cfg.loss_tolerance, save_seconds, save_status, load_seconds, load_status,
+        resumed_step,
+        loss_delta,
+        cfg.loss_tolerance,
+        save_seconds,
+        save_status,
+        load_seconds,
+        load_status,
     )
 
     # --- verdict: resume correctness (hard) + I/O gates (when configured) ---
