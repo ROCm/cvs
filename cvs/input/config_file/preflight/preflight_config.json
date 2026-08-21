@@ -11,7 +11,7 @@
       "_comment_gpus_per_node": "Exact number of AMD GPUs expected on every node.",
 
       "_example_expected_rocm_version": "6.2.0",
-      "expected_rocm_version": "10.0.0",
+      "expected_rocm_version": "<changeme>",
       "_comment_expected_rocm_version": "Expected ROCm version across all cluster nodes. Must match the output of 'amd-smi version' on all nodes. Format: 'major.minor.patch' (e.g., '6.2.0', '5.7.1')."
     },
 
