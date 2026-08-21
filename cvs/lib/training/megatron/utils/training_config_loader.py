@@ -135,6 +135,15 @@ class ConvergenceConfig(_Forbid):
     target_value: float = 0.0
 
 
+class CheckpointConfig(_Forbid):
+    enforce: bool = False      # if False, test_checkpoint is skipped entirely
+    save_interval: int = 5     # checkpoint written every N steps
+    save_iters: int = 21       # save phase total; last checkpoint = floor(save/interval)*interval
+    resume_iters: int = 25     # load phase total (must be > last_ckpt_step)
+    loss_rtol: float = 0.05    # max allowed fractional loss increase across boundary
+    checkpoint_dir: str = ""   # shared path for distributed; empty = derive from log_dir (single-node)
+
+
 class MegatronVariantConfig(_Forbid):
     schema_version: Literal[1]
     framework: Literal["megatron_single", "megatron_distributed"]
@@ -144,6 +153,7 @@ class MegatronVariantConfig(_Forbid):
     scaling_baseline: ScalingBaseline = Field(default_factory=ScalingBaseline)
     loss_curve: LossCurveConfig = Field(default_factory=LossCurveConfig)
     convergence: ConvergenceConfig = Field(default_factory=ConvergenceConfig)
+    checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
     config: Dict[str, Any]  # training knobs: megatron_root, nccl_*, nic_type, ...
     model_params: Dict[str, Any]  # model knobs: model_name, precision, tp, pp, ...
     container: ContainerSpec
