@@ -10,7 +10,7 @@ from cvs.lib.verify_lib import *
 from cvs.lib import globals
 from collections import defaultdict
 
-from cvs.lib.preflight.base import PreflightCheck
+from cvs.lib.preflight.base import PreflightCheck, partition_nodes_into_groups
 from cvs.lib.preflight.node_smoke import DEFAULT_ARTIFACTS_ROOT_DIR
 import re
 import shlex

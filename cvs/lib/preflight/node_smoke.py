@@ -44,32 +44,52 @@ def get_nested_config(config_dict, section, key, default):
     return default
 
 
+def _is_unresolved_placeholder(value) -> bool:
+    if value is None:
+        return False
+    return "<changeme>" in str(value).lower()
+
+
+def parse_optional_int(value, default=None):
+    """Parse an optional integer config value, ignoring unresolved placeholders."""
+    if value in (None, ""):
+        return default
+    if _is_unresolved_placeholder(value):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def resolve_rdma_interfaces(cfg: dict) -> List[str]:
     """Return RDMA interface names from ``connectivity_check.rdma.interfaces``.
 
     Legacy ``node_check.rdma_interfaces`` is supported for older configs only.
+    Unresolved ``<changeme>`` placeholders are ignored.
     """
     ifaces = get_nested_config(cfg, "connectivity_check.rdma", "interfaces", None)
     if not ifaces:
         node_check = cfg.get("node_check") or {}
         ifaces = node_check.get("rdma_interfaces")
     if isinstance(ifaces, str):
-        return [ifaces.strip()] if ifaces.strip() else []
-    if isinstance(ifaces, list):
-        return [str(item).strip() for item in ifaces if str(item).strip()]
-    return []
+        ifaces = [ifaces.strip()] if ifaces.strip() else []
+    elif not isinstance(ifaces, list):
+        return []
+    return [str(item).strip() for item in ifaces if str(item).strip() and not _is_unresolved_placeholder(item)]
 
 
 def resolve_rdma_gid_index(cfg: dict, default=None):
     """Return RoCE GID index from ``connectivity_check.rdma.gid_index``.
 
     Legacy ``node_check.gid_index`` is supported for older configs only.
+    Unresolved ``<changeme>`` placeholders return ``default``.
     """
     gid_index = get_nested_config(cfg, "connectivity_check.rdma", "gid_index", None)
     if gid_index in (None, ""):
         node_check = cfg.get("node_check") or {}
         gid_index = node_check.get("gid_index")
-    if gid_index in (None, ""):
+    if gid_index in (None, "") or _is_unresolved_placeholder(gid_index):
         return default
     return gid_index
 
@@ -332,7 +352,7 @@ class NodeSmokeCheck(PreflightCheck):
         gid_index = get_nested_config(cfg, "node_smoke", "nccl_ib_gid_index", None)
         if gid_index is None:
             gid_index = resolve_rdma_gid_index(cfg)
-        self.nccl_ib_gid_index = int(gid_index) if gid_index not in (None, "") else None
+        self.nccl_ib_gid_index = parse_optional_int(gid_index)
 
         extra = get_nested_config(cfg, "node_smoke", "extra_args", [])
         self.extra_args = [str(arg) for arg in extra if arg] if isinstance(extra, (list, tuple)) else []

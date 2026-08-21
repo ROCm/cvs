@@ -11,7 +11,7 @@
       "_comment_gpus_per_node": "Exact number of AMD GPUs expected on every node.",
 
       "_example_expected_rocm_version": "6.2.0",
-      "expected_rocm_version": "<changemea>",
+      "expected_rocm_version": "10.0.0",
       "_comment_expected_rocm_version": "Expected ROCm version across all cluster nodes. Must match the output of 'amd-smi version' on all nodes. Format: 'major.minor.patch' (e.g., '6.2.0', '5.7.1')."
     },
 
@@ -168,7 +168,7 @@
       "_comment_dump_path": "Directory for per-node smoke/*.json output. Leave empty to use <reporting.artifacts_root_dir>/node_smoke.",
 
       "expected_rdma_nics": null,
-      "_comment_expected_rdma_nics": "Hard-fail when training RDMA NIC count differs. null defaults to len(node_check.rdma_interfaces). Example: 8.",
+      "_comment_expected_rdma_nics": "Hard-fail when training RDMA NIC count differs. null defaults to len(connectivity_check.rdma.interfaces). Example: 8.",
 
       "ulimit_l_min_gb": 32,
       "_comment_ulimit_l_min_gb": "FAIL when RLIMIT_MEMLOCK is below this many GiB. 0 disables.",
@@ -195,10 +195,10 @@
       "_comment_gloo_socket_ifname": "Optional GLOO_SOCKET_IFNAME override (defaults to nccl_socket_ifname when empty).",
 
       "nccl_ib_hca": "",
-      "_comment_nccl_ib_hca": "Optional NCCL_IB_HCA override. Defaults to comma-joined node_check.rdma_interfaces.",
+      "_comment_nccl_ib_hca": "Optional NCCL_IB_HCA override. Defaults to comma-joined connectivity_check.rdma.interfaces.",
 
       "nccl_ib_gid_index": null,
-      "_comment_nccl_ib_gid_index": "Optional NCCL_IB_GID_INDEX override. Defaults to node_check.gid_index.",
+      "_comment_nccl_ib_gid_index": "Optional NCCL_IB_GID_INDEX override. Defaults to connectivity_check.rdma.gid_index.",
 
       "ssh_timeout": 300,
       "_comment_ssh_timeout": "SSH timeout in seconds for each node's node_smoke invocation (~30s Tier 1; use 600+ with tier2_perf).",
@@ -229,7 +229,7 @@
       "_comment": "Primus Tier 3 Host/GPU/Network info via primus-cli direct -- preflight --host --gpu --network (opt-in; default skip). No Slurm.",
 
       "connectivity_mode": "skip",
-      "_comment_connectivity_mode": "Options: 'run' (cluster-wide preflight --host --gpu --network) or 'skip' (default).",
+      "_comment_connectivity_mode": "Options: 'run' or 'skip' (default). Independent of node_smoke.connectivity_mode — enabling node_smoke does not enable Tier 3.",
 
       "auto_setup": true,
       "_comment_auto_setup": "When true, clone/update Primus and create venv before Tier 3 (falls back to node_smoke paths).",
@@ -265,10 +265,10 @@
       "_comment_gloo_socket_ifname": "Optional GLOO_SOCKET_IFNAME override.",
 
       "nccl_ib_hca": "",
-      "_comment_nccl_ib_hca": "Optional NCCL_IB_HCA override.",
+      "_comment_nccl_ib_hca": "Optional NCCL_IB_HCA override. Defaults to comma-joined connectivity_check.rdma.interfaces when empty.",
 
       "nccl_ib_gid_index": null,
-      "_comment_nccl_ib_gid_index": "Optional NCCL_IB_GID_INDEX override.",
+      "_comment_nccl_ib_gid_index": "Optional NCCL_IB_GID_INDEX override. Defaults to connectivity_check.rdma.gid_index when null.",
 
       "ssh_timeout": 600,
       "_comment_ssh_timeout": "SSH timeout in seconds for the parallel Tier 3 cluster run.",
