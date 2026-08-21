@@ -44,6 +44,10 @@ class TestListPlugin(unittest.TestCase):
         self.assertIsNotNone(plugin.test_map)
         self.assertIsInstance(plugin.test_map, dict)
 
+    def test_conftest_is_not_a_runnable_suite(self):
+        plugin = ListPlugin()
+        self.assertFalse(any("conftest" in tests for tests in plugin.test_map.values()))
+
     def test_find_test_method_exists(self):
         """Test that _find_test helper method exists"""
         plugin = ListPlugin()

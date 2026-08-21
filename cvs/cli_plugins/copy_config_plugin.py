@@ -1,5 +1,7 @@
 from .base import SubcommandPlugin
 from cvs.extension import ExtensionConfig
+from cvs.cli_plugins.list_plugin import ListPlugin
+from cvs.lib.config_catalog import ConfigCatalogError, load_config_catalog
 import os
 import shutil
 
@@ -22,6 +24,10 @@ class CopyConfigPlugin(SubcommandPlugin):
             action="store_true",
             help="List available config files at the given path (lists all if no path specified)",
         )
+        parser.add_argument(
+            "--platform",
+            help="Only list configs supported by this platform when a test suite is specified",
+        )
         parser.add_argument("--force", action="store_true", help="Force overwrite of existing files")
         parser.set_defaults(_plugin=self)
         return parser
@@ -34,6 +40,8 @@ Copy-Config Commands:
   cvs copy-config training/jax      List configs in training/jax directory
   cvs copy-config --list            Same as above (list all)
   cvs copy-config training --list   Same as above (list training)
+  cvs copy-config --list rccl_perf  List configs supported by a test suite
+  cvs copy-config --list rccl_perf --platform mi355
 
   Note: --list is optional, same behavior without it
   
@@ -99,9 +107,42 @@ Copy-Config Commands:
                 return candidate
         return None
 
+    @staticmethod
+    def _suite_names():
+        """Return the runnable suite names shown by ``cvs list``."""
+        return {suite for tests in ListPlugin.discover_tests().values() for suite in tests}
+
+    def _list_suite_configs(self, suite, platform, suite_names):
+        """Print catalogued configs for a suite and optional platform."""
+        try:
+            catalog = load_config_catalog()
+            catalog.validate_suites(suite_names)
+            configurations = catalog.configurations_for(suite, platform)
+        except ConfigCatalogError as error:
+            print(f"Error: {error}")
+            return
+
+        if configurations:
+            heading = f"Configs for {suite}"
+            if platform:
+                heading += f" on {platform.lower()}"
+            print(f"{heading}:")
+            for configuration in configurations:
+                print(f"  {configuration.path}")
+            return
+
+        unavailable_reason = catalog.unavailable_reason(suite)
+        if unavailable_reason:
+            print(f"No bundled config is available for {suite}: {unavailable_reason}")
+        elif platform:
+            print(f"No bundled config is available for {suite} on {platform.lower()}.")
+        else:
+            print(f"No bundled config is available for {suite}.")
+
     def run(self, args):
         roots = self._find_config_root()
         path = args.path or ""
+        platform = getattr(args, "platform", None)
 
         if args.all:
             if not args.output:
@@ -134,6 +175,16 @@ Copy-Config Commands:
             return
 
         if args.list or not args.output:
+            suite_names = self._suite_names()
+            if path in suite_names:
+                self._list_suite_configs(path, platform, suite_names)
+                return
+            if platform:
+                if path:
+                    print(f"Error: --platform requires a test suite from 'cvs list', not '{path}'.")
+                else:
+                    print("Error: --platform requires a test suite from 'cvs list'.")
+                return
             found = False
             for root in roots:
                 configs = self._list_configs(root, path)
