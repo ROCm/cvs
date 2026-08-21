@@ -67,8 +67,23 @@ Run Commands:
   cvs run agfhc --html report.html   Run test and generate HTML report"""
 
     def run(self, args):
+        # Pre-flight, in this order, before pytest is reached at all. Worker ranks
+        # in a Slurm/Spur job never enter pytest, so the run layout -- the
+        # rendezvous those ranks read -- has to be resolved here rather than in the
+        # handoff that launches it. Inputs are checked first because creating
+        # directories for a mistyped suite name would litter shared storage.
+        self._validate_json_config(args.cluster_file, "--cluster_file")
+        self._validate_json_config(args.config_file, "--config_file")
+        test_file = self._resolve_test_file(args.test)
+
+        try:
+            RunLayout.get(args.workspace)
+        except RuntimeError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+
         self.run_test(
-            args.test,
+            test_file,
             args.function,
             args.cluster_file,
             args.config_file,
@@ -78,8 +93,16 @@ Run Commands:
             args.log_level,
             args.capture,
             getattr(args, "extra_pytest_args", []),
-            workspace=args.workspace,
         )
+
+    def _resolve_test_file(self, test_name):
+        """Map a suite name to the file pytest should collect."""
+        module_path = self._find_test(test_name)
+        if not module_path:
+            print(f"Error: Unknown test '{test_name}'")
+            print("Use 'cvs list' to see available tests.")
+            sys.exit(1)
+        return self.get_test_file(module_path)
 
     def _validate_json_config(self, path, label):
         """Validate that a config file exists and is valid JSON."""
@@ -103,7 +126,7 @@ Run Commands:
 
     def run_test(
         self,
-        test_name,
+        test_file,
         test_functions,
         cluster_file,
         config_file,
@@ -113,31 +136,7 @@ Run Commands:
         log_level,
         capture,
         extra_pytest_args,
-        workspace=None,
     ):
-        # Pre-flight check: validate both JSON config files before pytest runs.
-        self._validate_json_config(cluster_file, "--cluster_file")
-        self._validate_json_config(config_file, "--config_file")
-
-        module_path = self._find_test(test_name)
-        if not module_path:
-            print(f"Error: Unknown test '{test_name}'")
-            print("Use 'cvs list' to see available tests.")
-            sys.exit(1)
-
-        test_file = self.get_test_file(module_path)
-
-        # Resolve the run layout before pytest, but only once the run is going to
-        # happen: worker ranks in a Slurm/Spur job never enter pytest at all, and
-        # config placeholder resolution needs the layout resolved, so this cannot
-        # wait for a fixture -- while creating directories for a mistyped suite
-        # name would litter shared storage.
-        try:
-            RunLayout.get(workspace)
-        except RuntimeError as e:
-            print(f"Error: {e}")
-            sys.exit(1)
-
         # Build pytest arguments
         pytest_args = []
         if test_functions:

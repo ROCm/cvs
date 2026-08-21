@@ -15,9 +15,9 @@ from cvs.cli_plugins.run_plugin import RunPlugin
 class TestRunPlugin(unittest.TestCase):
     def setUp(self):
         self.plugin = RunPlugin()
-        # run_test() now resolves the run layout before handing off to pytest.
-        # Stub it so these tests create no directories and stay independent of
-        # the ambient scheduler environment.
+        # run() resolves the run layout before handing off to pytest. Stub it so
+        # these tests create no directories and stay independent of the ambient
+        # scheduler environment.
         patcher = patch("cvs.cli_plugins.run_plugin.RunLayout")
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -188,7 +188,7 @@ class TestRunPluginWorkspace(unittest.TestCase):
     def test_workspace_defaults_to_none(self):
         self.assertIsNone(self._parse([]).workspace)
 
-    def _run_with_workspace(self, workspace, mock_pytest_main, test_name="agfhc_cvs"):
+    def _make_args(self, workspace, test_name="agfhc_cvs"):
         args = MagicMock()
         args.test = test_name
         args.function = []
@@ -201,6 +201,10 @@ class TestRunPluginWorkspace(unittest.TestCase):
         args.capture = None
         args.extra_pytest_args = []
         args.workspace = workspace
+        return args
+
+    def _run_with_workspace(self, workspace, mock_pytest_main, test_name="agfhc_cvs"):
+        args = self._make_args(workspace, test_name)
         mock_pytest_main.return_value = 0
         with patch.object(self.plugin, "get_test_file", return_value="/mock/path/test.py"):
             with patch.object(self.plugin, "_validate_json_config"):
@@ -243,6 +247,20 @@ class TestRunPluginWorkspace(unittest.TestCase):
         self._run_with_workspace("/shared/ws", mock_pytest_main)
         forwarded = mock_pytest_main.call_args[0][0]
         self.assertEqual([arg for arg in forwarded if "workspace" in arg], [])
+
+    @patch("cvs.cli_plugins.run_plugin.RunLayout")
+    @patch("cvs.cli_plugins.run_plugin.sys.exit")
+    def test_layout_resolved_outside_the_pytest_handoff(self, mock_exit, mock_layout):
+        # Worker ranks never enter pytest, so resolution cannot sit in the path
+        # that launches it. Pinning it to run() keeps it ahead of any future
+        # branch that sends a rank somewhere other than the pytest handoff.
+        args = self._make_args("/shared/ws")
+        with patch.object(self.plugin, "run_test") as mock_run_test:
+            with patch.object(self.plugin, "get_test_file", return_value="/mock/path/test.py"):
+                with patch.object(self.plugin, "_validate_json_config"):
+                    self.plugin.run(args)
+        mock_layout.get.assert_called_once_with("/shared/ws")
+        mock_run_test.assert_called_once()
 
     @patch("cvs.cli_plugins.run_plugin.RunLayout")
     @patch("cvs.cli_plugins.run_plugin.pytest.main")
