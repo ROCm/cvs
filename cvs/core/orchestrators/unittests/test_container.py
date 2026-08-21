@@ -14,11 +14,15 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # no_launch / per_run / persistent contract has a loud canary. Pssh + RuntimeFactory are
 # patched once in setUp (not per method); _make() returns a fresh orch + runtime mock.
 
+import os
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, _resolve_container_lifetime
 from cvs.core.orchestrators.container import ContainerOrchestrator
+from cvs.core.run_layout import RunLayout
+from cvs.core.scheduler import SCHEDULER_ENV_VAR
 
 
 # Reusable runtime.is_running fixtures (two-host cluster).
@@ -427,6 +431,66 @@ class TestResolveContainerLifetime(unittest.TestCase):
                 priv_key_file="/dev/null",
                 container={"launch": True, "image": "x"},
             )
+
+
+class TestContainerVolumes(unittest.TestCase):
+    """get_volumes() and the run-directory passthrough.
+
+    Configs resolve {run_dir} to a host path, but tests execute inside the
+    container via docker exec, so that path has to resolve to the same place on
+    both sides or the artifacts are written into a disposable overlay. Limited to
+    scheduler-managed runs: elsewhere the workspace is not guaranteed to exist on
+    the node the container is launched on, and a bind mount of a missing path
+    silently materializes a root-owned empty directory there.
+    """
+
+    def setUp(self):
+        p_pssh = patch("cvs.core.orchestrators.baremetal.Pssh")
+        p_rf = patch("cvs.core.orchestrators.container.RuntimeFactory")
+        p_pssh.start()
+        self.mock_rf = p_rf.start()
+        self.addCleanup(p_pssh.stop)
+        self.addCleanup(p_rf.stop)
+        RunLayout._reset()
+        self.addCleanup(RunLayout._reset)
+        env = patch.dict(os.environ, {}, clear=True)
+        env.start()
+        self.addCleanup(env.stop)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _make(self):
+        self.mock_rf.create.return_value = MagicMock(name="docker_runtime")
+        return ContainerOrchestrator(MagicMock(), _make_orch_config())
+
+    def _enter_job_step(self):
+        # CVS_SCHEDULER is pinned because the other half of is_managed_compute()
+        # shells out to `spur version` / `scontrol version`; without it the result
+        # depends on what is installed on the machine running the tests.
+        os.environ.update({"SLURM_JOB_ID": "424242", "SLURM_STEP_ID": "0", "SLURM_PROCID": "0"})
+        os.environ[SCHEDULER_ENV_VAR] = "slurm"
+
+    def test_run_dir_is_mounted_at_the_same_path(self):
+        # Identity mount: a different container path would leave the {run_dir}
+        # already substituted into the config pointing at nothing.
+        self._enter_job_step()
+        layout = RunLayout.get(self.tmp.name)
+        volumes = self._make().get_volumes()
+        self.assertIn(f"{layout.run_dir}:{layout.run_dir}", volumes)
+
+    def test_no_run_dir_mount_in_an_unmanaged_run(self):
+        # No scheduler launched this, so nothing guarantees the workspace is
+        # reachable from the container host.
+        layout = RunLayout.get(self.tmp.name)
+        volumes = self._make().get_volumes()
+        self.assertEqual([v for v in volumes if str(layout.run_dir) in v], [])
+        self.assertTrue(any("/host_ssh" in v for v in volumes))
+
+    def test_configured_volumes_are_preserved(self):
+        RunLayout.get(self.tmp.name)
+        orch = self._make()
+        orch.container_config["runtime"]["args"]["volumes"] = ["/data:/data"]
+        self.assertIn("/data:/data", orch.get_volumes())
 
 
 if __name__ == "__main__":
