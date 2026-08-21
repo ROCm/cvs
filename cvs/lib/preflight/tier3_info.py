@@ -22,7 +22,6 @@ from cvs.lib.preflight.node_smoke import (
     _config_flag_enabled,
     _normalize_mode,
     get_nested_config,
-    parse_optional_int,
     resolve_rdma_gid_index,
     resolve_rdma_interfaces,
 )
@@ -261,7 +260,7 @@ class Tier3InfoCheck(PreflightCheck):
         gid_index = resolve_tier3_setting(cfg, "nccl_ib_gid_index", None)
         if gid_index is None:
             gid_index = resolve_rdma_gid_index(cfg)
-        self.nccl_ib_gid_index = parse_optional_int(gid_index)
+        self.nccl_ib_gid_index = int(gid_index) if gid_index not in (None, "") else None
 
         extra = resolve_tier3_setting(cfg, "extra_args", [])
         self.extra_args = [str(arg) for arg in extra if arg] if isinstance(extra, (list, tuple)) else []

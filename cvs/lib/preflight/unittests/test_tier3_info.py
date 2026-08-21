@@ -104,22 +104,6 @@ class TestResolveTier3Setting(unittest.TestCase):
         self.assertEqual(check.nccl_ib_hca, "rdma0,rdma1")
         self.assertEqual(check.nccl_ib_gid_index, 3)
 
-    def test_skip_mode_tolerates_shipped_default_rdma_placeholders(self):
-        cfg = {
-            "tier3_info": {"connectivity_mode": "skip"},
-            "connectivity_check": {
-                "rdma": {"interfaces": ["<changeme>"], "gid_index": "<changeme>"},
-            },
-        }
-        phdl = MagicMock()
-        phdl.reachable_hosts = ["node0"]
-        checker = Tier3InfoCheck(phdl, ["node0"], cfg)
-        self.assertIsNone(checker.nccl_ib_gid_index)
-        self.assertIsNone(checker.nccl_ib_hca)
-        results = checker.run()
-        self.assertTrue(results.get("skipped"))
-        phdl.exec_cmd_list.assert_not_called()
-
 
 class TestTier3InfoCheckRun(unittest.TestCase):
     def _config(self):

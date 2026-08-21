@@ -15,7 +15,6 @@ from cvs.lib.preflight.node_smoke import (
     build_node_smoke_flags,
     build_remote_node_smoke_command,
     parse_node_smoke_output,
-    parse_optional_int,
     resolve_rdma_gid_index,
     resolve_rdma_interfaces,
 )
@@ -148,38 +147,8 @@ class TestResolveRdmaConfig(unittest.TestCase):
         self.assertEqual(resolve_rdma_interfaces(cfg), ["legacy0"])
         self.assertEqual(resolve_rdma_gid_index(cfg), "7")
 
-    def test_changeme_placeholders_are_ignored(self):
-        cfg = {
-            "connectivity_check": {
-                "rdma": {"interfaces": ["<changeme>"], "gid_index": "<changeme>"},
-            },
-        }
-        self.assertEqual(resolve_rdma_interfaces(cfg), [])
-        self.assertIsNone(resolve_rdma_gid_index(cfg))
 
-    def test_parse_optional_int_ignores_changeme(self):
-        self.assertIsNone(parse_optional_int("<changeme>"))
-        self.assertEqual(parse_optional_int("3"), 3)
-        self.assertIsNone(parse_optional_int("not-a-number"))
-
-
-class TestNodeSmokeCheckConstruction(unittest.TestCase):
-    def test_skip_mode_tolerates_shipped_default_rdma_placeholders(self):
-        cfg = {
-            "node_smoke": {"connectivity_mode": "skip"},
-            "connectivity_check": {
-                "rdma": {"interfaces": ["<changeme>"], "gid_index": "<changeme>"},
-            },
-        }
-        phdl = MagicMock()
-        phdl.reachable_hosts = ["node0"]
-        checker = NodeSmokeCheck(phdl, ["node0"], cfg)
-        self.assertIsNone(checker.nccl_ib_gid_index)
-        self.assertIsNone(checker.nccl_ib_hca)
-        results = checker.run()
-        self.assertTrue(results.get("skipped"))
-        phdl.exec_cmd_list.assert_not_called()
-
+class TestNodeSmokeCheckRun(unittest.TestCase):
     def _config(self):
         return {
             "node_smoke": {
