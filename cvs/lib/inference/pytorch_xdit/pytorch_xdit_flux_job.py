@@ -253,7 +253,10 @@ def validate_parallelism(
 
 
 def build_nccl_env(inference_dict: Mapping[str, Any]) -> Dict[str, str]:
-    env: Dict[str, str] = {"HSA_FORCE_FINE_GRAIN_PCIE": "1"}
+    env: Dict[str, str] = {
+        "HSA_FORCE_FINE_GRAIN_PCIE": "1",
+        "NCCL_PROTO": "Simple",
+    }
     mapping = {
         "nccl_ib_hca": "NCCL_IB_HCA",
         "nccl_socket_ifname": "NCCL_SOCKET_IFNAME",
@@ -459,12 +462,14 @@ class FluxBenchmarkJob:
         return self.inference_dict.get("_resolved_model_path_container") or self.inference_dict["model_repo"]
 
     def _build_env_args(self) -> str:
-        env_dict = dict(self.inference_dict["container_config"].get("env_dict") or {})
+        user_env = dict(self.inference_dict["container_config"].get("env_dict") or {})
+        env_dict: Dict[str, str] = {}
+        if self.distributed:
+            env_dict.update(build_nccl_env(self.inference_dict))
+        env_dict.update(user_env)
         env_dict["OMP_NUM_THREADS"] = "16"
         env_dict["HF_HOME"] = "/hf_home"
         env_dict["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(self.nproc_per_node))
-        if self.distributed:
-            env_dict.update(build_nccl_env(self.inference_dict))
         if self.hf_token:
             env_dict["HF_TOKEN"] = _secret_str(self.hf_token)
         return " ".join(f"-e {key}={value}" for key, value in env_dict.items())
