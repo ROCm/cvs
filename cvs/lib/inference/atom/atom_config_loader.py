@@ -52,6 +52,7 @@ def merge_mxfp4_triton_env(precision: str, env: dict[str, str]) -> dict[str, str
                 merged[key] = "1"
     return merged
 
+
 log = globals.log
 
 # Written by test_discover_topology / resolve_multinode_fabric — not user env.
