@@ -1,15 +1,25 @@
-'''Pytest-html row extras for inference suite reports (Phase A).'''
+'''Pytest-html row extras for sweep Run Deck profiles.'''
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
 
-from cvs.lib.inference.utils.inference_suite_lifecycle import sweep_cell_result_key
 from cvs.lib.report.cell_build import build_cell_record
-from cvs.lib.report.registry import get_suite_report_config
-from cvs.lib.report.render.cell_card import cell_card_css, render_cell_card_html
+from cvs.lib.report.registry import get_resolved_profile, resolve_suite_report_config
+from cvs.lib.report.render.cell_card import CellCardConfig, CellCardRenderer
 from cvs.lib.report.types import InferenceReportConfig
+
+
+def sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency) -> tuple:
+    """Build an ``inf_res_dict`` lookup key for a sweep cell."""
+    cell_key_fn = getattr(variant_config, "cell_key", None)
+    if callable(cell_key_fn):
+        return cell_key_fn(isl, osl, concurrency)
+    model = getattr(getattr(variant_config, "model", None), "id", "")
+    gpu = getattr(variant_config, "gpu_arch", "")
+    policy = seq_combo.get("policy", "default") if isinstance(seq_combo, dict) else "default"
+    return (model, gpu, str(isl), str(osl), str(policy), int(concurrency))
 
 
 def _highlight_metric(item, report_config: InferenceReportConfig, cell: dict) -> Optional[str]:
@@ -33,10 +43,11 @@ def attach_inference_cell_row_extra(item, report) -> None:
     if report.when != "call":
         return
 
-    report_config = get_suite_report_config(item.config)
-    if not isinstance(report_config, InferenceReportConfig):
+    profile = get_resolved_profile(item.config)
+    if profile is None:
         return
-    if not report_config.row_card_extras:
+    report_config = resolve_suite_report_config(item.config)
+    if report_config is None or not report_config.row_card_extras:
         return
 
     test_name = item.originalname or item.name.split("[")[0]
@@ -44,7 +55,7 @@ def attach_inference_cell_row_extra(item, report) -> None:
         return
 
     funcargs = getattr(item, "funcargs", {}) or {}
-    inf_res_dict = funcargs.get("inf_res_dict")
+    inf_res_dict = funcargs.get("inf_res_dict") or funcargs.get("cvs_results_dict")
     variant_config = funcargs.get("variant_config")
     lifecycle = funcargs.get("lifecycle")
     seq_combo = funcargs.get("seq_combo")
@@ -74,8 +85,7 @@ def attach_inference_cell_row_extra(item, report) -> None:
     enforce = bool(getattr(variant_config, "enforce_thresholds", False))
     htmlpath = getattr(item.config.option, "htmlpath", None)
     pytest_basename = Path(htmlpath).name if htmlpath else ""
-    card = render_cell_card_html(
-        cell,
+    config = CellCardConfig(
         tier_order=report_config.metric_tier_order,
         headline_metric=report_config.headline_metric,
         enforce=enforce,
@@ -84,7 +94,10 @@ def attach_inference_cell_row_extra(item, report) -> None:
         highlight_metric=highlight,
         pytest_html_basename=pytest_basename or None,
     )
-    snippet = f"<style>{cell_card_css(compact=True)}</style><div class='cvs-cell-row-extra'>{card}</div>"
+    renderer = CellCardRenderer(config)
+    card = renderer.render(cell)
+    css = renderer.get_css()
+    snippet = f"<style>{css}</style><div class='cvs-cell-row-extra'>{card}</div>"
 
     try:
         import pytest_html

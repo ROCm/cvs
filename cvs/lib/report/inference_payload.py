@@ -204,10 +204,18 @@ def _build_panels(
     cells: List[dict],
     report_dir: Optional[Path],
     *,
+    provenance: Optional[Mapping[str, str]] = None,
     lifecycle_report: Optional[Mapping[str, list]] = None,
     variant_config=None,
 ) -> dict:
     panels: dict = {}
+    prov = provenance or {}
+    if prov.get("launch_server_cmd"):
+        panels["launch"] = {
+            "example_cell": prov.get("launch_example_cell", ""),
+            "server_cmd": prov.get("launch_server_cmd", ""),
+            "bench_cmd": prov.get("launch_bench_cmd", ""),
+        }
     prev_run_path = resolve_prev_run_json_path(
         config.prev_run_json,
         report_basename=config.report_basename,
@@ -296,6 +304,7 @@ def build_inference_report_payload(
         config,
         cells,
         report_dir,
+        provenance=prov,
         lifecycle_report=lifecycle_report,
         variant_config=variant_config,
     )
@@ -311,7 +320,9 @@ def build_inference_report_payload(
         for ch in config.chart_series
     ]
 
-    return {
+    from cvs.lib.report.rundeck.viewer_config import build_viewer_config
+
+    payload = {
         "schema_version": 1,
         "suite_id": config.suite_id,
         "generated_at": generated_at,
@@ -340,3 +351,5 @@ def build_inference_report_payload(
         "results_table": build_results_table(config, inf_res_dict),
         "panels": panels,
     }
+    payload["viewer_config"] = build_viewer_config({}, config)
+    return payload
