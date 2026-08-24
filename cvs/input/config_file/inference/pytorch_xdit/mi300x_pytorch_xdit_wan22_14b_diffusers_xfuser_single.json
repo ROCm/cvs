@@ -13,8 +13,8 @@
                 "/dev/kfd"
             ],
             "volume_dict": {
-                "/path/to/cvs/cvs/lib/inference/pytorch_xdit/scripts/wan_i2v_example.py": "/benchmark/wan_i2v_example.py",
-                "/path/to/i2v_input.JPG": "/benchmark/i2v_input.JPG"
+                "/home/{user-id}/cvs/cvs/lib/inference/pytorch_xdit/scripts/wan_i2v_example.py": "/benchmark/wan_i2v_example.py",
+                "/home/{user-id}/cvs_inputs/i2v_input.JPG": "/benchmark/i2v_input.JPG"
             },
             "env_dict": {
                 "CVS_WAN_XFUSER_PYPACKAGES": "/shared/amdgpu/home/dl_dcgpu_aac_service_request_qle/pypackages"
