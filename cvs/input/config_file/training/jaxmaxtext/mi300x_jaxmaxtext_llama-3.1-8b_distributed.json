@@ -33,7 +33,8 @@
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
           "/dev/infiniband:/dev/infiniband",
-          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+          "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro",
           "/lib/libibverbs.d:/lib/libibverbs.d",
           "/tmp/{user-id}/jax/TRAINING_LOGS:/workspace/maxtext/output"
         ]
@@ -111,7 +112,7 @@
       "HSA_NO_SCRATCH_RECLAIM": "1",
       "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.97",
       "NCCL_DEBUG": "VERSION",
-      "NCCL_IB_DISABLE": "1",
+      "NCCL_IB_DISABLE": "0",
       "NCCL_PROTO": "Simple",
       "NCCL_IB_TC": "41",
       "NCCL_IB_SL": "0",
