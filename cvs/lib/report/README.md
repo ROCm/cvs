@@ -118,8 +118,7 @@ Artifacts next to the pytest HTML report:
 
 The interactive viewer includes a **Token Throughput per GPU vs. Interactivity**
 chart (InferenceX-style). Configure axis metrics under `viewer.interactivity`
-in the profile JSON; the static Run Deck links to it via the
-`interactivity_viewer` card.
+in the profile JSON; open the viewer sidecar from the nav link or sweep banner.
 
 ## Author tiers
 

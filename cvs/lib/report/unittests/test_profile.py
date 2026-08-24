@@ -35,6 +35,31 @@ class TestProfile(unittest.TestCase):
         )
         self.assertNotIn("run_card_display", profile.get("hooks", {}))
 
+    def test_vllm_profile_cell_highlights_include_output_throughput(self):
+        from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
+
+        profile = load_json_profile("vllm")
+        self.assertIsNotNone(profile)
+        config = build_inference_config_from_profile(profile)
+        shorts = [short for short, _label in config.cell_highlights]
+        self.assertIn("output_throughput", shorts)
+        self.assertEqual(config.full_metric("output_throughput"), "client.output_throughput")
+
+    def test_sglang_profile_preserves_empty_metric_prefix(self):
+        from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
+
+        profile = load_json_profile("sglang")
+        self.assertIsNotNone(profile)
+        profile = dict(profile)
+        hooks = dict(profile.get("hooks") or {})
+        hooks.pop("run_card_display", None)
+        profile["hooks"] = hooks
+        config = build_inference_config_from_profile(profile)
+        self.assertEqual(config.metric_prefix, "")
+        self.assertEqual(config.headline_metric, "output_throughput_per_sec")
+        self.assertEqual(config.full_metric("output_throughput_per_sec"), "output_throughput_per_sec")
+        self.assertEqual(config.metric_tier_order, ("throughput", "latency", "health", "record"))
+
 
 if __name__ == "__main__":
     unittest.main()

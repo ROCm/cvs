@@ -42,6 +42,14 @@
       ["P99 ITL (ms)", "client.p99_itl_ms"],
       ["Goodput (req/s)", "client.goodput"]
     ],
+    "cell_highlights": [
+      ["output_throughput", "Output tok/s"],
+      ["total_token_throughput", "Total tok/s"],
+      ["mean_ttft_ms", "Mean TTFT (ms)"],
+      ["mean_tpot_ms", "Mean TPOT (ms)"],
+      ["p99_ttft_ms", "P99 TTFT (ms)"],
+      ["p95_tpot_ms", "P95 TPOT (ms)"]
+    ],
     "chart_series": [
       {"metric_suffix": "output_throughput", "title": "Output tok/s", "unit": "tok/s", "invert": false},
       {"metric_suffix": "total_token_throughput", "title": "Total tok/s", "unit": "tok/s", "invert": false},
@@ -55,8 +63,10 @@
   "lifecycle": {
     "session_labels": [
       "container_launch",
+      "sshd_setup",
       "topology_discovery",
       "model_fetch",
+      "openai_smoke",
       "server_ready",
       "teardown"
     ],
@@ -79,7 +89,6 @@
     {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
     {"type": "lifecycle_timeline", "id": "lifecycle", "title": "Lifecycle timeline", "bind": "lifecycle"},
     {"type": "sweep_analytics", "id": "sweep", "title": "Sweep analytics", "bind": "datasets.sweep"},
-    {"type": "interactivity_viewer", "id": "interactivity", "title": "Interactivity", "bind": "viewer_config", "when_empty": "hide"},
     {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
     {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
     {"type": "sweep_cell_cards", "id": "cells", "title": "Sweep cells", "bind": "cells"},

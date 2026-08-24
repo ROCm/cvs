@@ -19,6 +19,14 @@ class ProfileConfigResolver:
     """Resolve JSON deck profiles and hook references into ``InferenceReportConfig``."""
 
     @staticmethod
+    def _sweep_setting(sweep: dict, profile: dict, key: str, default: Any) -> Any:
+        if key in sweep:
+            return sweep[key]
+        if key in profile:
+            return profile[key]
+        return default
+
+    @staticmethod
     def import_object(spec: str) -> Any:
         """Import ``module.path:attr`` from a profile hook or constant reference."""
         if ":" not in spec:
@@ -144,7 +152,7 @@ class ProfileConfigResolver:
             metric_tier_order=tuple(
                 sweep.get("tier_order") or profile.get("tier_order") or ("throughput", "health", "record")
             ),
-            metric_prefix=sweep.get("metric_prefix") or profile.get("metric_prefix") or "client.",
+            metric_prefix=str(cls._sweep_setting(sweep, profile, "metric_prefix", "client.")),
             cell_highlights=cell_highlights or None,
             chart_series=chart_series or None,
             inference_test_substring=behavior.get("inference_test_substring")

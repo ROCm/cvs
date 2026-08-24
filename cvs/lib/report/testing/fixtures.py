@@ -160,7 +160,6 @@ def generic_sweep_profile() -> dict:
         "cards": [
             {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
             {"type": "sweep_analytics", "id": "sweep", "title": "Sweep analytics", "bind": "datasets.sweep"},
-            {"type": "interactivity_viewer", "id": "interactivity", "title": "Interactivity", "bind": "viewer_config"},
             {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
             {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"},
         ],

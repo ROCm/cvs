@@ -202,28 +202,6 @@ class DeckCardRenderer:
         title = card.get("title") or "Compare matrix"
         return f"<h3>{html.escape(title)}</h3><table class='results-table'><tr>{head}</tr>{body}</table>"
 
-    @staticmethod
-    def render_interactivity_viewer(payload: dict, card: dict, _data: Any) -> str:
-        summary = payload.get("summary") or {}
-        viewer_name = summary.get("viewer_html")
-        if not viewer_name:
-            return ""
-        vc = payload.get("viewer_config") or {}
-        inter = vc.get("interactivity") or {}
-        if inter.get("enabled") is False:
-            return ""
-        title = card.get("title") or inter.get("title") or "Interactivity chart"
-        hint = inter.get("hint") or (
-            "Interactivity = 1000 / mean TPOT (ms) (tok/s/user) · Y = token throughput per GPU"
-        )
-        href = html.escape(f"{viewer_name}#interactivity-panel")
-        return (
-            f"<p class='viewer-banner'><strong>{html.escape(title)}</strong> — "
-            f"one line per sweep shape; hover for detail, click to pin. "
-            f"<a href='{href}'>Open interactivity chart</a> in the interactive viewer.</p>"
-            f"<p class='subsection-hint'>{html.escape(hint)}</p>"
-        )
-
     def card_renderers(self) -> dict[str, Any]:
         return {
             "run_card": self.render_run_card,
@@ -236,7 +214,6 @@ class DeckCardRenderer:
             "launch_panel": self.render_launch,
             "line_chart": self.render_line_chart,
             "heatmap": self.render_heatmap,
-            "interactivity_viewer": self.render_interactivity_viewer,
         }
 
     def render_card(self, payload: dict, card: dict) -> tuple[str, str, bool]:
