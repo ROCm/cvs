@@ -18,6 +18,8 @@
     },
     "benchmark_params": {
         "flux1_dev_t2i": {
+            "model_type": "flux2",
+            "guidance_scale": 4.0,
             "prompt": "A small cat",
             "seed": 42,
             "num_inference_steps": 50,

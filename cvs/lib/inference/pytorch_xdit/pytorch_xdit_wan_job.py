@@ -10,6 +10,10 @@ Distributed mode:
   - All nodes share rank-0 output dir ``wan_22_{rank0_hostname}_outputs``.
   - Requires ulysses_size × ring_size == nnodes × torchrun_nproc.
 
+WAN checkpoints use either the native Wan2.2 layout (``Wan-AI/Wan2.2-I2V-A14B`` via
+``/app/Wan2.2/run.py``) or the Diffusers layout (``Wan-AI/Wan2.2-I2V-A14B-Diffusers`` via
+``/app/Wan/run.py``). Model format is inferred from ``model_repo`` or ``model_index.json``.
+
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 """
@@ -19,7 +23,7 @@ from __future__ import annotations
 import re
 import shlex
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib import globals
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
@@ -39,9 +43,20 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
 
 log = globals.log
 
-RUN_WAN_PATH = "/app/Wan2.2/run.py"
-I2V_INPUT_IMAGE = "/app/Wan2.2/examples/i2v_input.JPG"
+WAN_MODEL_FORMAT_NATIVE = "native"
+WAN_MODEL_FORMAT_DIFFUSERS = "diffusers"
+
+RUN_WAN_NATIVE_PATH = "/app/Wan2.2/run.py"
+RUN_WAN_DIFFUSERS_PATH = "/app/Wan/run.py"
+I2V_INPUT_IMAGE_NATIVE = "/app/Wan2.2/examples/i2v_input.JPG"
+I2V_INPUT_IMAGE_DIFFUSERS = "/app/Wan/i2v_input.JPG"
 CONTAINER_OUTPUT_MOUNT = "/outputs"
+
+RUN_WAN_PATH = RUN_WAN_NATIVE_PATH
+I2V_INPUT_IMAGE = I2V_INPUT_IMAGE_NATIVE
+
+WAN_DIFFUSERS_DEFAULT_NUM_INFERENCE_STEPS = 40
+WAN_DIFFUSERS_DEFAULT_SEED = 42
 
 WAN_FATAL_OUTPUT_PATTERNS_EXTRA = (
     r"No AMD GPU detected",
@@ -77,7 +92,70 @@ def validate_parallelism(
     return world_size, product, None
 
 
-def build_run_wan_args(
+def detect_wan_model_format_from_model_index(model_index: Mapping[str, Any]) -> Optional[str]:
+    """Detect WAN model layout from a diffusers ``model_index.json`` payload."""
+    class_name = str(model_index.get("_class_name", ""))
+    if "WanImageToVideo" in class_name:
+        return WAN_MODEL_FORMAT_DIFFUSERS
+    return None
+
+
+def store_resolved_wan_model_format_from_index(
+    inference_dict: Dict[str, Any],
+    model_index: Mapping[str, Any],
+) -> None:
+    """Persist detected WAN model format on ``inference_dict`` for launcher routing."""
+    model_format = detect_wan_model_format_from_model_index(model_index)
+    if model_format:
+        inference_dict["_resolved_wan_model_format"] = model_format
+        log.info("Detected WAN model format from model_index.json: %s", model_format)
+
+
+def resolve_wan_model_format(
+    explicit_model_format: Optional[str] = None,
+    *repo_hints: Optional[str],
+) -> str:
+    """
+    Resolve WAN checkpoint layout.
+
+    ``native`` selects ``/app/Wan2.2/run.py`` (``--ckpt_dir``). ``diffusers`` selects
+    ``/app/Wan/run.py`` (``--model``).
+    """
+    if explicit_model_format in {WAN_MODEL_FORMAT_NATIVE, WAN_MODEL_FORMAT_DIFFUSERS}:
+        return str(explicit_model_format)
+
+    for hint in repo_hints:
+        if hint and "diffusers" in str(hint).lower():
+            return WAN_MODEL_FORMAT_DIFFUSERS
+    return WAN_MODEL_FORMAT_NATIVE
+
+
+def is_wan_diffusers_model(model_format: str) -> bool:
+    return model_format == WAN_MODEL_FORMAT_DIFFUSERS
+
+
+def parse_wan_size(size: str) -> Tuple[int, int]:
+    """Parse ``720*1280`` into ``(height, width)``."""
+    parts = str(size).split("*")
+    if len(parts) != 2:
+        raise ValueError(f"Invalid WAN size {size!r}, expected height*width")
+    return int(parts[0]), int(parts[1])
+
+
+def resolve_wan_model_format_for_job(
+    wan_params: Mapping[str, Any],
+    *,
+    model_repo_hints: Optional[Sequence[str]] = None,
+    resolved_model_format: Optional[str] = None,
+) -> str:
+    hints = list(model_repo_hints or [])
+    return resolve_wan_model_format(
+        wan_params.get("model_format") or resolved_model_format,
+        *hints,
+    )
+
+
+def build_run_wan_native_args(
     wan_params: Mapping[str, Any],
     *,
     ckpt_dir: str,
@@ -88,7 +166,7 @@ def build_run_wan_args(
         f"--task i2v-A14B "
         f"--size {shlex.quote(str(wan_params['size']))} "
         f"--ckpt_dir {shlex.quote(ckpt_dir)} "
-        f"--image {I2V_INPUT_IMAGE} "
+        f"--image {I2V_INPUT_IMAGE_NATIVE} "
         f"--save_file {CONTAINER_OUTPUT_MOUNT}/outputs/video.mp4 "
         f"--ulysses_size {int(wan_params['ulysses_size'])} "
         f"--ring_size {int(wan_params['ring_size'])} "
@@ -103,6 +181,108 @@ def build_run_wan_args(
     ).strip()
 
 
+def build_run_wan_diffusers_args(
+    wan_params: Mapping[str, Any],
+    *,
+    model_path: str,
+) -> str:
+    height, width = parse_wan_size(str(wan_params["size"]))
+    seed = int(wan_params.get("seed", WAN_DIFFUSERS_DEFAULT_SEED))
+    num_inference_steps = int(
+        wan_params.get("num_inference_steps", WAN_DIFFUSERS_DEFAULT_NUM_INFERENCE_STEPS)
+    )
+    num_repetitions = int(wan_params.get("num_repetitions", wan_params["num_benchmark_steps"]))
+    compile_flag = "--use_torch_compile" if wan_params.get("compile") else ""
+    ring_flag = (
+        f"--ring_degree {int(wan_params['ring_size'])} "
+        if int(wan_params.get("ring_size", 1)) > 1
+        else ""
+    )
+
+    log.info(
+        "WAN diffusers run.py: model=%s size=%dx%d num_repetitions=%s num_inference_steps=%s",
+        model_path,
+        height,
+        width,
+        num_repetitions,
+        num_inference_steps,
+    )
+
+    return (
+        f"--task i2v "
+        f"--height {height} "
+        f"--width {width} "
+        f"--model {shlex.quote(model_path)} "
+        f"--img_file_path {I2V_INPUT_IMAGE_DIFFUSERS} "
+        f"--ulysses_degree {int(wan_params['ulysses_size'])} "
+        f"{ring_flag}"
+        f"--seed {seed} "
+        f"--num_frames {int(wan_params['frame_num'])} "
+        f"--prompt {shlex.quote(str(wan_params['prompt']))} "
+        f"--num_repetitions {num_repetitions} "
+        f"--num_inference_steps {num_inference_steps} "
+        f"{compile_flag}"
+    ).strip()
+
+
+def build_run_wan_args(
+    wan_params: Mapping[str, Any],
+    *,
+    ckpt_dir: str,
+    output_dir_container: str = CONTAINER_OUTPUT_MOUNT,
+) -> str:
+    """Backward-compatible alias for :func:`build_run_wan_native_args`."""
+    return build_run_wan_native_args(
+        wan_params,
+        ckpt_dir=ckpt_dir,
+        output_dir_container=output_dir_container,
+    )
+
+
+def _build_wan_torchrun_body(
+    wan_params: Mapping[str, Any],
+    *,
+    model_path: str,
+    model_format: str,
+    distributed: bool,
+    node_rank: int,
+    nnodes: int,
+    nproc: int,
+    master_addr: str,
+    master_port: int,
+) -> str:
+    if is_wan_diffusers_model(model_format):
+        run_script = RUN_WAN_DIFFUSERS_PATH
+        run_args = build_run_wan_diffusers_args(wan_params, model_path=model_path)
+    else:
+        run_script = RUN_WAN_NATIVE_PATH
+        run_args = build_run_wan_native_args(wan_params, ckpt_dir=model_path)
+        log.info("WAN native run.py: ckpt_dir=%s", model_path)
+
+    if distributed:
+        torchrun = (
+            f"torchrun "
+            f"--nnodes={nnodes} "
+            f"--node_rank={node_rank} "
+            f"--nproc_per_node={nproc} "
+            f"--master_addr={shlex.quote(master_addr)} "
+            f"--master_port={master_port} "
+            f"{run_script} "
+            f"{run_args}"
+        )
+    else:
+        torchrun = f"torchrun --nproc_per_node={nproc} {run_script} {run_args}"
+
+    if is_wan_diffusers_model(model_format):
+        inner = (
+            f"cd {shlex.quote(CONTAINER_OUTPUT_MOUNT)} && "
+            f"mkdir -p results && "
+            f"{torchrun}"
+        )
+        return f"bash -c {shlex.quote(inner)}"
+    return torchrun
+
+
 def build_torchrun_cmd(
     wan_params: Mapping[str, Any],
     *,
@@ -113,23 +293,27 @@ def build_torchrun_cmd(
     nproc_per_node: Optional[int] = None,
     master_addr: str = "127.0.0.1",
     master_port: int = DEFAULT_MASTER_PORT,
+    model_format: Optional[str] = None,
+    model_repo_hints: Optional[Sequence[str]] = None,
+    resolved_model_format: Optional[str] = None,
 ) -> str:
     nproc = int(nproc_per_node or wan_params["torchrun_nproc"])
-    run_args = build_run_wan_args(wan_params, ckpt_dir=ckpt_dir)
-
-    if distributed:
-        return (
-            f"torchrun "
-            f"--nnodes={nnodes} "
-            f"--node_rank={node_rank} "
-            f"--nproc_per_node={nproc} "
-            f"--master_addr={shlex.quote(master_addr)} "
-            f"--master_port={master_port} "
-            f"{RUN_WAN_PATH} "
-            f"{run_args}"
-        )
-
-    return f"torchrun --nproc_per_node={nproc} {RUN_WAN_PATH} {run_args}"
+    resolved_format = resolve_wan_model_format_for_job(
+        wan_params,
+        model_repo_hints=model_repo_hints,
+        resolved_model_format=model_format or resolved_model_format,
+    )
+    return _build_wan_torchrun_body(
+        wan_params,
+        model_path=ckpt_dir,
+        model_format=resolved_format,
+        distributed=distributed,
+        node_rank=node_rank,
+        nnodes=nnodes,
+        nproc=nproc,
+        master_addr=master_addr,
+        master_port=master_port,
+    )
 
 
 def scan_wan_fatal_output(output: str) -> bool:
@@ -242,9 +426,17 @@ class WanBenchmarkJob:
         if ckpt_dir:
             return ckpt_dir
         model_repo = self.inference_dict["model_repo"]
-        model_rev = self.inference_dict["model_rev"]
+        model_rev = self.inference_dict.get("model_rev") or ""
         model_path_safe = model_repo.replace("/", "--")
         return f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
+
+    def _wan_model_repo_hints(self) -> List[str]:
+        hints: List[str] = []
+        for key in ("model_repo", "_resolved_model_mount_host", "_resolved_ckpt_dir_container"):
+            value = self.inference_dict.get(key)
+            if value and str(value) not in hints:
+                hints.append(str(value))
+        return hints
 
     def _build_env_args(self) -> str:
         user_env = dict(self.inference_dict["container_config"].get("env_dict") or {})
@@ -290,6 +482,8 @@ class WanBenchmarkJob:
             nproc_per_node=self.nproc_per_node,
             master_addr=master_addr,
             master_port=master_port,
+            model_repo_hints=self._wan_model_repo_hints(),
+            resolved_model_format=self.inference_dict.get("_resolved_wan_model_format"),
         )
 
         container_name = self.inference_dict["container_name"]

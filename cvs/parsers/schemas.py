@@ -640,9 +640,25 @@ class PytorchXditWan22Benchmarks(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prompt: str = Field(description="Text prompt for image-to-video generation")
+    model_format: Optional[str] = Field(
+        default=None,
+        description=(
+            "WAN checkpoint layout override: native (Wan2.2-I2V-A14B) or diffusers "
+            "(Wan2.2-I2V-A14B-Diffusers). Auto-inferred from model_repo or model_index.json when omitted."
+        ),
+    )
     size: str = Field(default="720*1280", pattern=r"^\d+\*\d+$", description="Video resolution (format: height*width)")
     frame_num: int = Field(default=81, ge=1, description="Number of frames to generate")
     num_benchmark_steps: int = Field(default=5, ge=1, description="Number of benchmark iterations to run")
+    num_inference_steps: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Diffusers denoising steps for /app/Wan/run.py (defaults to 40 when omitted).",
+    )
+    seed: Optional[int] = Field(
+        default=None,
+        description="Random seed for Diffusers Wan runs (defaults to 42 when omitted).",
+    )
     compile: bool = Field(default=True, description="Whether to use torch.compile for optimization")
     torchrun_nproc: int = Field(default=8, ge=1, description="Number of processes for torchrun (usually num GPUs)")
     ulysses_size: int = Field(default=8, ge=1, description="Ulysses parallelism degree")

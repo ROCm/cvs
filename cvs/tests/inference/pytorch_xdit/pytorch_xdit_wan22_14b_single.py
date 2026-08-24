@@ -4,56 +4,39 @@ PyTorch XDit WAN 2.2 Image-to-Video A14B inference test.
 Runs WAN 2.2 I2V-A14B PyTorch inference inside amdsiloai/pytorch-xdit container
 and validates results against configured thresholds.
 
+Supports native checkpoints (``Wan-AI/Wan2.2-I2V-A14B``) and Diffusers layouts
+(``Wan-AI/Wan2.2-I2V-A14B-Diffusers``).
+
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 """
 
 import json
 import pytest
-import queue
 import re
 import shlex
 import socket
 import subprocess
-import threading
+from typing import Optional
 
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
-    cluster_target_output_label,
     fail_test,
     update_test_result,
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
     resolve_test_config_placeholders,
-    wan_hf_snapshot_offline_check_commands,
 )
 from cvs.lib import docker_lib
 from cvs.lib import globals
 from cvs.parsers.schemas import ClusterConfigFile, PytorchXditWanConfigFile
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan import WanOutputParser
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
+    launch_wan_benchmark,
+    store_resolved_wan_model_format_from_index,
+)
 
 log = globals.log
-
-
-class _SecretValue:
-    """
-    Wrapper to avoid leaking secrets in pytest tracebacks.
-
-    Pytest will include fixture values in failure reports; by wrapping the token, we ensure
-    the token's repr is redacted while still behaving like a string for command building.
-    """
-
-    def __init__(self, value: str):
-        self.value = value or ""
-
-    def __bool__(self) -> bool:  # truthiness checks like `if hf_token:`
-        return bool(self.value)
-
-    def __str__(self) -> str:  # f-strings and command assembly
-        return self.value
-
-    def __repr__(self) -> str:  # pytest failure display
-        return "<redacted>"
 
 
 def _is_local_target(target: str) -> bool:
@@ -126,58 +109,23 @@ class LocalPssh:
             log.info("%s", out)
         return {self.host_list[0]: out}
 
-    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True, inactivity_timeout=None):
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
         # Run different commands; map 1:1 with host_list ordering
         out = {}
         for host, cmd in zip(self.host_list, cmd_list):
-            if inactivity_timeout is not None:
-                out_str = self._exec_with_inactivity_timeout(cmd, inactivity_timeout, print_console)
-            else:
-                completed = subprocess.run(
-                    cmd,
-                    shell=True,
-                    text=True,
-                    capture_output=True,
-                    timeout=timeout if timeout is None else int(timeout),
-                )
-                out_str = (completed.stdout or "") + (completed.stderr or "")
-                if print_console:
-                    log.info(f"cmd = {_redact_secrets(cmd)}")
-                    log.info("%s", out_str)
+            completed = subprocess.run(
+                cmd,
+                shell=True,
+                text=True,
+                capture_output=True,
+                timeout=timeout if timeout is None else int(timeout),
+            )
+            out_str = (completed.stdout or "") + (completed.stderr or "")
+            if print_console:
+                log.info(f"cmd = {_redact_secrets(cmd)}")
+                log.info("%s", out_str)
             out[host] = out_str
         return out
-
-    def _exec_with_inactivity_timeout(self, cmd, inactivity_timeout, print_console):
-        # Mirrors Pssh's per-line inactivity timeout: resets on every output line, kills the
-        # process only when nothing is printed for `inactivity_timeout` seconds.
-        if print_console:
-            log.info(f"cmd = {_redact_secrets(cmd)}")
-        proc = subprocess.Popen(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        line_queue = queue.Queue()
-
-        def _reader():
-            for line in proc.stdout:
-                line_queue.put(line)
-            line_queue.put(None)
-
-        reader_thread = threading.Thread(target=_reader, daemon=True)
-        reader_thread.start()
-
-        lines = []
-        while True:
-            try:
-                line = line_queue.get(timeout=inactivity_timeout)
-            except queue.Empty:
-                proc.kill()
-                proc.wait()
-                raise TimeoutError(f"Command killed after {inactivity_timeout}s of inactivity: {cmd}")
-            if line is None:
-                break
-            lines.append(line)
-            if print_console:
-                log.info("%s", line.rstrip("\n"))
-        proc.wait()
-        return "".join(lines)
 
 
 def _redact_secrets(s: str) -> str:
@@ -190,7 +138,7 @@ def _redact_secrets(s: str) -> str:
     if not s:
         return s
     # Replace HF_TOKEN=<anything until space> with HF_TOKEN=<redacted>
-    return re.sub(r"(HF_TOKEN=)\S+", r"\1<redacted>", s)
+    return re.sub(r"(HF_TOKEN=)\\S+", r"\\1<redacted>", s)
 
 
 # =============================================================================
@@ -293,18 +241,18 @@ def hf_token(inference_dict):
     """
     hf_token_file = inference_dict['hf_token_file']
     if not hf_token_file:
-        return _SecretValue("")
+        return ""
     try:
         with open(hf_token_file, 'r') as fp:
-            token = fp.read().rstrip("\n")
+            hf_token = fp.read().rstrip("\n")
         log.info("HF token loaded successfully")
-        return _SecretValue(token)
+        return hf_token
     except FileNotFoundError:
         log.warning(f"HF token file not found: {hf_token_file}")
-        return _SecretValue("")
+        return ""
     except Exception as e:
         log.error(f"Error reading HF token file: {e}")
-        return _SecretValue("")
+        return ""
 
 
 @pytest.fixture(scope="module")
@@ -316,8 +264,8 @@ def s_phdl(cluster_dict):
     # Single-node mode: execute locally ONLY when the target actually refers to this machine.
     #
     # Rationale: users often specify a remote node IP/hostname in cluster.json even for a
-    # single-node run. Without this check, that target would run on this host instead of the
-    # target node's GPUs/ROCm, and fail in confusing ways.
+    # single-node run. Always forcing local execution will run benchmarks on the login node
+    # (no GPUs/ROCm) and silently "pass" until parsing fails.
     if len(node_list) == 1:
         target = node_list[0]
         if _is_local_target(target):
@@ -380,22 +328,20 @@ def test_cleanup_stale_containers(s_phdl, inference_dict):
     log.info("Container cleanup completed on all nodes")
 
 
-def _assert_wan_snapshot_complete(s_phdl, snapshot_path, failure_prefix, failure_suffix):
-    """
-    Run wan_hf_snapshot_offline_check_commands against snapshot_path on all nodes.
-
-    Calls fail_test with a combined message on the first check that fails anywhere.
-    Returns True if every check passed everywhere, False otherwise.
-    """
-    for label, cmd in wan_hf_snapshot_offline_check_commands(snapshot_path).items():
-        res = s_phdl.exec(cmd, print_console=False)
-        bad = [n for n, out in (res or {}).items() if "OK" not in (out or "")]
-        if bad:
-            fail_test(
-                f"{failure_prefix} Check '{label}' failed on {len(bad)} node(s): {', '.join(bad)}. {failure_suffix}"
-            )
-            return False
-    return True
+def _read_model_index_from_node(s_phdl, node: str, model_dir: str) -> Optional[dict]:
+    """Read model_index.json from a remote model directory on one node."""
+    index_path = f"{model_dir.rstrip('/')}/model_index.json"
+    output = s_phdl.exec(
+        f"cat {shlex.quote(index_path)}",
+        print_console=False,
+    ).get(node, "")
+    if not (output or "").strip():
+        return None
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError:
+        log.warning("Could not parse model_index.json from %s on %s", index_path, node)
+        return None
 
 
 def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
@@ -438,19 +384,11 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
             update_test_result()
             return
 
-        # Align with HF snapshot checks for Wan2.2 I2V-A14B when staging via absolute path.
-        if "Wan2.2-I2V-A14B" in model_repo or "Wan2.2-I2V-A14B" in host_model_path:
-            if not _assert_wan_snapshot_complete(
-                s_phdl,
-                host_model_path,
-                failure_prefix="WAN local model directory looks incomplete (Wan2.2-I2V-A14B layout).",
-                failure_suffix=f"Model path: {host_model_path}.",
-            ):
-                update_test_result()
-                return
-
         inference_dict["_resolved_model_mount_host"] = host_model_path
         inference_dict["_resolved_ckpt_dir_container"] = "/model"
+        model_index = _read_model_index_from_node(s_phdl, s_phdl.host_list[0], host_model_path)
+        if model_index:
+            store_resolved_wan_model_format_from_index(inference_dict, model_index)
         log.info(f"Using local model path: {host_model_path} (mounted to /model in container) on all nodes")
         update_test_result()
         return
@@ -479,247 +417,29 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
         return
 
     inference_dict["_resolved_ckpt_dir_container"] = f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
+    model_index = _read_model_index_from_node(s_phdl, s_phdl.host_list[0], snapshot_dir_host)
+    if model_index:
+        store_resolved_wan_model_format_from_index(inference_dict, model_index)
     log.info(f"Using pre-cached snapshot: {inference_dict['_resolved_ckpt_dir_container']} on all nodes")
-
-    # Stronger offline checks for Wan2.2 I2V-A14B HF layout (avoids passing while download is partial).
-    if "Wan2.2-I2V-A14B" in model_repo:
-        if not _assert_wan_snapshot_complete(
-            s_phdl,
-            snapshot_dir_host,
-            failure_prefix="WAN Hugging Face snapshot looks incomplete (or not a Wan2.2-I2V-A14B-style tree).",
-            failure_suffix=(
-                f"Snapshot path: {snapshot_dir_host}. Wait for downloads to finish or fix hf_home / model_rev."
-            ),
-        ):
-            update_test_result()
-            return
 
     update_test_result()
 
 
 def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_token):
     """
-    Run WAN 2.2 I2V-A14B benchmark inside pytorch-xdit container on all nodes in parallel.
-
-    On success, verifies non-empty ``rank0_step*.json`` and ``video.mp4`` exist under each
-    node's output tree so a pass here is meaningful before the parse step (threshold checks).
-
-    Executes torchrun with configured parameters and mounts:
-    - HF cache to /hf_home
-    - Output directory to /outputs
+    Run WAN 2.2 I2V-A14B benchmark (native or Diffusers layout) on all cluster nodes.
     """
     globals.error_list = []
 
-    # Preflight: same ROCm device check as FLUX — avoids messy container failures on non-GPU nodes.
-    log.info(f"Checking /dev/kfd on {len(s_phdl.host_list)} node(s)")
-    kfd_check = s_phdl.exec("test -e /dev/kfd && echo KFD_OK || echo KFD_MISSING", print_console=False)
-    missing_kfd_nodes = []
-    for node, output in kfd_check.items():
-        if "KFD_OK" not in (output or ""):
-            missing_kfd_nodes.append(node)
-            log.error(f"ROCm device node /dev/kfd not found on {node}")
-        else:
-            log.info(f"/dev/kfd found on {node}")
-
-    if missing_kfd_nodes:
-        fail_test(
-            f"ROCm device node /dev/kfd not found on {len(missing_kfd_nodes)} node(s): {', '.join(missing_kfd_nodes)}. "
-            f"This test requires ROCm GPU nodes with /dev/kfd on each target."
-        )
-        update_test_result()
-        return
-
-    container_image = inference_dict['container_image']
-    missing_img_nodes = docker_lib.nodes_missing_docker_image(s_phdl, container_image)
-    if missing_img_nodes:
-        fail_test(
-            f"Container image not found locally on {len(missing_img_nodes)} node(s): {', '.join(missing_img_nodes)}. "
-            f"Configured image: {container_image}. Pull it on each target node before running this benchmark "
-            f"(for example: docker pull {container_image})."
-        )
-        update_test_result()
-        return
-
-    container_name = inference_dict['container_name']
-    hf_home = inference_dict['hf_home']
-    output_base_dir = inference_dict['output_base_dir']
-    model_repo = inference_dict['model_repo']
-    model_rev = inference_dict['model_rev']
-
-    # Get benchmark parameters
-    wan_params = benchmark_params_dict['wan22_i2v_a14b']
-    prompt = wan_params['prompt']
-    size = wan_params['size']
-    frame_num = wan_params['frame_num']
-    num_benchmark_steps = wan_params['num_benchmark_steps']
-    compile_flag = "--compile" if wan_params['compile'] else ""
-    torchrun_nproc = wan_params['torchrun_nproc']
-
-    # Output dirs use cluster SSH targets (node_dict keys), not `hostname`, to avoid FQDN drift.
-    log.info(f"Resolving output directory labels for {len(s_phdl.host_list)} node(s)")
-    hostname_result = s_phdl.exec('hostname', print_console=False)
-    node_to_hostname = {node: (hostname_result.get(node, "") or "").strip() or node for node in s_phdl.host_list}
-    node_to_out_label = {node: cluster_target_output_label(node) for node in s_phdl.host_list}
-    for node in s_phdl.host_list:
-        log.info(f"Node {node}: output label '{node_to_out_label[node]}' (hostname: {node_to_hostname[node]})")
-
-    # Prefer the resolved checkpoint dir computed in test_verify_hf_cache_or_download.
-    ckpt_dir = inference_dict.get("_resolved_ckpt_dir_container")
-    if not ckpt_dir:
-        # Fallback to prior behavior but still offline (assumes cache is pre-populated).
-        model_path_safe = model_repo.replace("/", "--")
-        ckpt_dir = f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
-
-    # Build common docker command components
-    device_list = inference_dict['container_config']['device_list']
-    volume_dict = inference_dict['container_config']['volume_dict']
-    env_dict = inference_dict['container_config']['env_dict']
-
-    # Build device arguments
-    device_args = " ".join([f"--device={dev}" for dev in device_list])
-
-    # Build environment arguments (common to all nodes)
-    env_dict_full = env_dict.copy()
-    env_dict_full['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
-    env_dict_full['OMP_NUM_THREADS'] = '16'
-    env_dict_full['HF_HOME'] = '/hf_home'
-    if hf_token:
-        env_dict_full['HF_TOKEN'] = hf_token
-    env_args = " ".join([f"-e {key}={value}" for key, value in env_dict_full.items()])
-
-    # Build torchrun command (common to all nodes)
-    torchrun_cmd = (
-        f"torchrun --nproc_per_node={torchrun_nproc} /app/Wan2.2/run.py "
-        f"--task i2v-A14B "
-        f"--size \"{size}\" "
-        f"--ckpt_dir \"{ckpt_dir}\" "
-        f"--image /app/Wan2.2/examples/i2v_input.JPG "
-        f"--save_file /outputs/outputs/video.mp4 "
-        f"--ulysses_size 8 "
-        f"--ring_size 1 "
-        f"--vae_dtype bfloat16 "
-        f"--frame_num {frame_num} "
-        f"--prompt \"{prompt}\" "
-        f"--benchmark_output_directory /outputs "
-        f"--num_benchmark_steps {num_benchmark_steps} "
-        f"--offload_model 0 "
-        f"--allow_tf32 "
-        f"{compile_flag}"
+    errors = launch_wan_benchmark(
+        s_phdl,
+        inference_dict,
+        benchmark_params_dict,
+        hf_token,
+        distributed=False,
     )
-
-    # Create per-node output directories and build per-node docker commands
-    mkdir_cmds = []
-    docker_cmds = []
-
-    for node in s_phdl.host_list:
-        out_label = node_to_out_label[node]
-        output_dir = f"{output_base_dir}/wan_22_{out_label}_outputs"
-        outputs_dir = f"{output_dir}/outputs"
-
-        # Create output directory command
-        mkdir_cmds.append(f"mkdir -p {outputs_dir}")
-
-        # Build volume arguments with per-node output directory
-        volume_dict_full = volume_dict.copy()
-        volume_dict_full[output_dir] = "/outputs"
-        volume_dict_full[hf_home] = "/hf_home"
-        # If user provided an explicit local model path, mount it consistently to /model.
-        if inference_dict.get("_resolved_model_mount_host"):
-            volume_dict_full[inference_dict["_resolved_model_mount_host"]] = "/model"
-        volume_args = " ".join(
-            [f"--mount type=bind,source={src},target={dst}" for src, dst in volume_dict_full.items()]
-        )
-
-        # Full docker command for this node
-        docker_cmd = (
-            f"docker run "
-            f"--cap-add=SYS_PTRACE "
-            f"--security-opt seccomp=unconfined "
-            f"--user root "
-            f"{device_args} "
-            f"--ipc=host "
-            f"--network host "
-            f"--rm "
-            f"--privileged "
-            f"--name {container_name} "
-            f"{volume_args} "
-            f"{env_args} "
-            f"{container_image} "
-            f"{torchrun_cmd}"
-        )
-        docker_cmds.append(docker_cmd)
-        log.info(f"Node {node} will write to: {output_dir}")
-
-    # Create output directories on all nodes in parallel
-    log.info(f"Creating output directories on {len(s_phdl.host_list)} node(s)")
-    s_phdl.exec_cmd_list(mkdir_cmds)
-
-    log.info(f"Running WAN 2.2 benchmark on {len(s_phdl.host_list)} node(s) in parallel")
-    log.debug(f"Docker command (sample): {_redact_secrets(docker_cmds[0])}")
-
-    try:
-        # Run benchmarks on all nodes in parallel
-        log.info("Starting benchmarks (this may take several minutes)...")
-        # Measured live: the silent gap between checkpoint-shard loading and the next log
-        # line (torch.compile of the 14B WanModel, 8 ranks) varies with node/JIT-cache state
-        # and has been observed anywhere from ~5 to 15+ minutes; 300s and 900s both falsely
-        # killed healthy runs. 1800s gives margin above the worst case seen so far while still
-        # failing a genuine hang well before the SLURM allocation runs out.
-        benchmark_results = s_phdl.exec_cmd_list(docker_cmds, inactivity_timeout=1800)
-
-        log.info("Benchmarks completed on all nodes")
-
-        # Check for common failure patterns on each node
-        fatal_patterns = [
-            r"\bTraceback\b",
-            r"\bModuleNotFoundError\b",
-            r"\bChildFailedError\b",
-            r"No AMD GPU detected",
-            r"0 active drivers \(\[\]\)\. There should only be one\.",
-        ]
-
-        failed_nodes = []
-        for node, output in benchmark_results.items():
-            if any(re.search(p, output, re.I) for p in fatal_patterns):
-                log.error(f"Benchmark on {node} indicates a failure")
-                failed_nodes.append(node)
-            else:
-                log.info(f"Benchmark on {node} completed successfully")
-
-        if failed_nodes:
-            fail_test(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
-        else:
-            art_verify_cmds = []
-            for node in s_phdl.host_list:
-                outd = f"{output_base_dir}/wan_22_{node_to_out_label[node]}_outputs"
-                outq = shlex.quote(outd)
-                art_verify_cmds.append(
-                    f'jf=$(find {outq} -type f -name \'rank0_step*.json\' 2>/dev/null | head -1); '
-                    f'vf=$(find {outq} -type f -name \'video.mp4\' 2>/dev/null | head -1); '
-                    f'test -n "$jf" && test -s "$jf" && test -n "$vf" && test -s "$vf" '
-                    f"&& echo ART_OK || echo ART_MISSING"
-                )
-            art_res = s_phdl.exec_cmd_list(art_verify_cmds, print_console=False)
-            missing_art = [n for n, out in art_res.items() if "ART_OK" not in (out or "")]
-            if missing_art:
-                fail_test(
-                    f"Benchmark logs looked clean but expected artifacts were missing on {len(missing_art)} node(s): "
-                    f"{', '.join(missing_art)}. Expected at least one non-empty rank0_step*.json and non-empty "
-                    f"video.mp4 under each node's wan_22_<cluster_target>_outputs directory."
-                )
-            log.info(
-                "Run step verified: non-empty rank0_step*.json and video.mp4 present on all %s node(s).",
-                len(s_phdl.host_list),
-            )
-
-    except Exception as e:
-        docker_lib.kill_docker_container(s_phdl, container_name)
-        fail_test(f"Benchmark execution failed with exception: {e}")
-
-    # Single-node: pin the run output dir so parse does not depend on probing hostnames later.
-    if len(getattr(s_phdl, "host_list", []) or []) == 1:
-        only_node = s_phdl.host_list[0]
-        inference_dict["_test_output_dir"] = f"{output_base_dir}/wan_22_{node_to_out_label[only_node]}_outputs"
+    if errors:
+        fail_test(f"Following FAILURES seen - {errors}")
 
     update_test_result()
 
@@ -739,13 +459,15 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
 
     output_dir = inference_dict.get('_test_output_dir')
     if not output_dir:
-        # Standalone parse: derive from cluster target keys (same as run step).
+        # Allow running this test standalone by deriving the output directory
+        # from the configured output_base_dir and current hostname.
         try:
             head_node = s_phdl.host_list[0]
-            out_label = cluster_target_output_label(head_node)
+            hostname_out = s_phdl.exec('hostname', print_console=False)
+            hostname = hostname_out.get(head_node, '').strip() or head_node
             output_base_dir = inference_dict.get('output_base_dir')
             if output_base_dir:
-                output_dir = f"{output_base_dir}/wan_22_{out_label}_outputs"
+                output_dir = f"{output_base_dir}/wan_22_{hostname}_outputs"
                 log.info(f"Derived output directory: {output_dir}")
         except Exception:
             output_dir = None
@@ -767,7 +489,15 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
     agg, agg_errors = None, []
     if base_dir and node_count > 1:
         # Filter aggregation to the current nodes only (avoid mixing with stale dirs).
-        expected_dirnames = [f"wan_22_{cluster_target_output_label(n)}_outputs" for n in s_phdl.host_list]
+        try:
+            hostnames = s_phdl.exec("hostname", print_console=False)
+            expected_dirnames = []
+            for _, hn in (hostnames or {}).items():
+                h = (hn or "").strip()
+                if h:
+                    expected_dirnames.append(f"wan_22_{h}_outputs")
+        except Exception:
+            expected_dirnames = []
 
         agg, agg_errors = WanOutputParser.parse_runs_under_base_dir(
             base_dir=base_dir,
