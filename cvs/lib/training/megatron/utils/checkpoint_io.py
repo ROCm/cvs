@@ -94,9 +94,7 @@ def parse_checkpoint_io_seconds(
                 load_end_ts = datetime.strptime(outer_m.group(1), _TS_FMT_S)
 
     save_times = [
-        (itr, (save_ends[itr] - save_starts[itr]).total_seconds())
-        for itr in sorted(save_starts)
-        if itr in save_ends
+        (itr, (save_ends[itr] - save_starts[itr]).total_seconds()) for itr in sorted(save_starts) if itr in save_ends
     ]
 
     load_seconds = None
@@ -117,7 +115,8 @@ def log_checkpoint_io_times(
         avg_save = sum(e for _, e in save_times) / len(save_times)
         log.info(
             "checkpoint save I/O avg (across %d checkpoints): %.2fs",
-            len(save_times), avg_save,
+            len(save_times),
+            avg_save,
         )
     else:
         log.warning("checkpoint save I/O times could not be parsed from save log")

@@ -64,6 +64,7 @@ PRIMUS_NAN_PATTERNS = [
     r'lm loss:\s+(?:NaN|Inf)',
 ]
 
+
 def _is_training_complete(output, total_iters):
     """Return True only when the final Primus iteration line is present.
 
@@ -119,6 +120,7 @@ def _parse_step_losses(log_text):
 # ---------------------------------------------------------------------------
 # PrimusTrainingJob
 # ---------------------------------------------------------------------------
+
 
 class PrimusTrainingJob:
     """Manages a single Primus-Megatron training run (single-node or distributed).
@@ -183,7 +185,8 @@ class PrimusTrainingJob:
         if int(self.nnodes) != len(orch.hosts):
             log.warning(
                 'config nnodes=%s does not match cluster host count=%d; using cluster host count',
-                self.nnodes, len(orch.hosts),
+                self.nnodes,
+                len(orch.hosts),
             )
             self.nnodes = str(len(orch.hosts))
 
@@ -307,8 +310,7 @@ class PrimusTrainingJob:
 
         if not self.training_results_dict:
             fail_test(
-                'Failed to populate training results, training_results_dict is empty'
-                ' - please check logs for failures'
+                'Failed to populate training results, training_results_dict is empty - please check logs for failures'
             )
             return
 
@@ -316,8 +318,7 @@ class PrimusTrainingJob:
             for val in result_vals:
                 if re.search('nan|inf', val, re.I):
                     fail_test(
-                        f'Failures seen in training_result dict for {result_key},'
-                        f' numbers are either NaN or Inf - {val}'
+                        f'Failures seen in training_result dict for {result_key}, numbers are either NaN or Inf - {val}'
                     )
 
         if self.distributed_training and self.verify_network_errors.lower() == 'true':
@@ -362,10 +363,7 @@ class PrimusTrainingJob:
 
     def _exp_config_path(self):
         """Return the Primus EXP YAML path relative to primus_root."""
-        return (
-            f'examples/megatron/configs/'
-            f'{self.gpu_arch}/{self.model_name}-{self.precision}-pretrain.yaml'
-        )
+        return f'examples/megatron/configs/{self.gpu_arch}/{self.model_name}-{self.precision}-pretrain.yaml'
 
     def _build_primus_cmd(self):
         """Build the primus-cli launch command per node."""
@@ -380,10 +378,7 @@ class PrimusTrainingJob:
         )
 
         if re.search(r'MI3(00|25)X', self.gpu_arch, re.I):
-            env_exports += (
-                'export PRIMUS_TURBO_ATTN_V3_ATOMIC_FP32=1; '
-                'export NVTE_CK_IS_V3_ATOMIC_FP32=1; '
-            )
+            env_exports += 'export PRIMUS_TURBO_ATTN_V3_ATOMIC_FP32=1; export NVTE_CK_IS_V3_ATOMIC_FP32=1; '
 
         # PRIMUS_WORKSPACE controls where Primus writes checkpoints.
         # With PRIMUS_TEAM/USER/EXP_NAME all empty the checkpoint lands at:
@@ -402,10 +397,7 @@ class PrimusTrainingJob:
             f'--train_iters {self.iterations}'
         )
         if self.checkpoint_dir:
-            batch_args += (
-                f' --save {self.checkpoint_dir}'
-                f' --save_interval {self.save_interval or self.iterations}'
-            )
+            batch_args += f' --save {self.checkpoint_dir} --save_interval {self.save_interval or self.iterations}'
         if self.load_checkpoint and self.checkpoint_dir:
             batch_args += f' --load {self.checkpoint_dir}/checkpoints'
             if self.distributed_training:
@@ -458,7 +450,8 @@ class PrimusTrainingJob:
             fallback_arch = 'MI300X'
             log.warning(
                 'EXP config not found for %s, retrying with fallback arch %s',
-                self.gpu_arch, fallback_arch,
+                self.gpu_arch,
+                fallback_arch,
             )
             self.gpu_arch = fallback_arch
             self.job_cmd = ''
@@ -479,11 +472,13 @@ class PrimusTrainingJob:
 
         if self.distributed_training:
             self.orch.all.exec_cmd_list(self.job_cmd_list)
-            self.orch.exec_cmd_list([
-                f'nohup {self.scripts_dir}/distributed_wrapper_script_{i}.sh '
-                f'>> {self.combo_log_dir}/out-node{i}/training.log 2>&1 &'
-                for i in range(n)
-            ])
+            self.orch.exec_cmd_list(
+                [
+                    f'nohup {self.scripts_dir}/distributed_wrapper_script_{i}.sh '
+                    f'>> {self.combo_log_dir}/out-node{i}/training.log 2>&1 &'
+                    for i in range(n)
+                ]
+            )
         else:
             self.orch.all.exec(
                 f'echo {shlex.quote(self.job_cmd)} > {self.scripts_dir}/single_node_wrapper_script.sh '

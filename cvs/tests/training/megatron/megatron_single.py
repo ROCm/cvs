@@ -312,9 +312,9 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
 
     first_step = min(resume_losses)
     log.info(
-        "CHECK 1 — step counter: last saved step in checkpoint=%d, "
-        "first step in load phase=%d",
-        last_ckpt_step, first_step,
+        "CHECK 1 — step counter: last saved step in checkpoint=%d, first step in load phase=%d",
+        last_ckpt_step,
+        first_step,
     )
     if first_step != expected_first:
         pytest.fail(
@@ -322,9 +322,9 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
             f"expected load to start at step {expected_first}, got {first_step}"
         )
     log.info(
-        "CHECK 1 PASSED — step counter correctly restored: "
-        "last checkpoint step=%d, load phase started at step=%d",
-        last_ckpt_step, first_step,
+        "CHECK 1 PASSED — step counter correctly restored: last checkpoint step=%d, load phase started at step=%d",
+        last_ckpt_step,
+        first_step,
     )
 
     # Check 2: loss continuity — save loss at last_ckpt_step ≈ resume loss at first_step
@@ -344,30 +344,42 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
         "CHECK 2 — loss boundary: "
         "loss at checkpoint step %d (save)=%.6f, "
         "loss at step %d (load)=%.6f, increase=%.6f, allowed_increase=%.6f",
-        last_ckpt_step, save_val, first_step, resume_val, increase, tol,
+        last_ckpt_step,
+        save_val,
+        first_step,
+        resume_val,
+        increase,
+        tol,
     )
     if increase > tol:
         pytest.fail(
             f"FAILED loss boundary check: "
             f"loss increased from save step {last_ckpt_step}={save_val:.6f} "
             f"to load step {first_step}={resume_val:.6f} "
-            f"(increase={increase:.6f} exceeds tolerance {tol:.6f} [{ckpt_cfg.loss_rtol*100:.0f}%])"
+            f"(increase={increase:.6f} exceeds tolerance {tol:.6f} [{ckpt_cfg.loss_rtol * 100:.0f}%])"
         )
     log.info(
         "CHECK 2 PASSED — loss did not increase beyond tolerance across checkpoint boundary: "
         "save step %d loss=%.6f, load step %d loss=%.6f, increase=%.6f within tol=%.6f",
-        last_ckpt_step, save_val, first_step, resume_val, increase, tol,
+        last_ckpt_step,
+        save_val,
+        first_step,
+        resume_val,
+        increase,
+        tol,
     )
 
-    avg_save_io = (
-        sum(e for _, e in save_io_times) / len(save_io_times) if save_io_times else None
-    )
+    avg_save_io = sum(e for _, e in save_io_times) / len(save_io_times) if save_io_times else None
     log.info(
         "test_checkpoint PASSED | "
         "last_ckpt_step=%d first_resume_step=%d "
         "save_loss=%.6f resume_loss=%.6f increase=%.6f | "
         "save_io_avg=%s load_io=%s",
-        last_ckpt_step, first_step, save_val, resume_val, increase,
+        last_ckpt_step,
+        first_step,
+        save_val,
+        resume_val,
+        increase,
         f"{avg_save_io:.2f}s" if avg_save_io is not None else "n/a",
         f"{load_io_seconds:.2f}s" if load_io_seconds is not None else "n/a",
     )
@@ -447,16 +459,15 @@ def test_training(
         conv = variant_config.convergence
         log_text = mt_obj._read_last_node_log()
         step_metrics = parse_step_metrics(log_text)
-        steps_to_target, time_to_target = compute_convergence(
-            step_metrics, [], conv.target_metric, conv.target_value
-        )
+        steps_to_target, time_to_target = compute_convergence(step_metrics, [], conv.target_metric, conv.target_value)
         if steps_to_target is not None:
             train_res_dict[combo_key]["steps_to_target"] = [str(steps_to_target)]
         if time_to_target is not None:
             train_res_dict[combo_key]["time_to_target_seconds"] = [str(time_to_target)]
         log.info(
             "convergence: steps_to_target=%s time_to_target_seconds=%s",
-            steps_to_target, time_to_target,
+            steps_to_target,
+            time_to_target,
         )
     except Exception:
         pass

@@ -136,12 +136,12 @@ class ConvergenceConfig(_Forbid):
 
 
 class CheckpointConfig(_Forbid):
-    enforce: bool = False      # if False, test_checkpoint is skipped entirely
-    save_interval: int = 5     # checkpoint written every N steps
-    save_iters: int = 21       # save phase total; last checkpoint = floor(save/interval)*interval
-    resume_iters: int = 25     # load phase total (must be > last_ckpt_step)
-    loss_rtol: float = 0.05    # max allowed fractional loss increase across boundary
-    checkpoint_dir: str = ""   # shared path for distributed; empty = derive from log_dir (single-node)
+    enforce: bool = False  # if False, test_checkpoint is skipped entirely
+    save_interval: int = 5  # checkpoint written every N steps
+    save_iters: int = 21  # save phase total; last checkpoint = floor(save/interval)*interval
+    resume_iters: int = 25  # load phase total (must be > last_ckpt_step)
+    loss_rtol: float = 0.05  # max allowed fractional loss increase across boundary
+    checkpoint_dir: str = ""  # shared path for distributed; empty = derive from log_dir (single-node)
 
 
 class MegatronVariantConfig(_Forbid):

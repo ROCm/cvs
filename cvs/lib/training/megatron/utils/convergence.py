@@ -11,7 +11,7 @@ compute_convergence — steps and wall-clock to reach a target loss
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 
 def parse_step_metrics(log_text: str) -> List[Dict]:
@@ -39,11 +39,13 @@ def parse_step_metrics(log_text: str) -> List[Dict]:
         re.I,
     )
     for m in pattern.finditer(log_text):
-        results.append({
-            "step": int(m.group(1)),
-            "elapsed_time_ms": float(m.group(2)),
-            "loss": float(m.group(3)),
-        })
+        results.append(
+            {
+                "step": int(m.group(1)),
+                "elapsed_time_ms": float(m.group(2)),
+                "loss": float(m.group(3)),
+            }
+        )
     return results
 
 
@@ -102,4 +104,3 @@ def compute_convergence(step_metrics, eval_metrics, target_metric="auto", target
         time_to_target = max(prior) if prior else None
 
     return (target_step, time_to_target)
- 
