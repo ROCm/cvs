@@ -11,7 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from cvs.lib.report.inference_payload import _build_panels, _build_run_card_display
+from cvs.lib.report.inference_payload import (
+    LifecycleAggregator,
+    build_run_card_display,
+)
+from cvs.lib.report.panels.panel_builder import ComparisonPanelBuilder
 from cvs.lib.report.profile import DeckProfile
 from cvs.lib.report.rundeck.config_adapter import resolve_report_config
 from cvs.lib.report.rundeck.dataset_builders.registry import build_datasets
@@ -50,23 +54,27 @@ class RundeckPayloadBuilder:
         prov = self._provenance()
         variant_config = self.sources.get("variant")
         lifecycle_report = self.sources.get("lifecycle_report") or {}
-        run_card_display, run_card_notes, generated_at = _build_run_card_display(self.config, variant_config, prov)
+        run_card_display, run_card_notes, generated_at = build_run_card_display(
+            self.config,
+            variant_config,
+            prov,
+        )
 
         sweep_data = datasets.get("sweep") or {}
         cells = sweep_data.get("all_cells") or sweep_data.get("cells") or []
-        panels = _build_panels(
+        panels = ComparisonPanelBuilder(
             self.config,
-            cells,
             self.ctx.report_dir,
             provenance=prov,
+        ).build(
+            cells,
             lifecycle_report=lifecycle_report,
             variant_config=variant_config,
         )
 
         from cvs.lib.report.accuracy_lifecycle import extract_accuracy_from_lifecycle
-        from cvs.lib.report.inference_payload import aggregate_lifecycle
 
-        lifecycle = aggregate_lifecycle(lifecycle_report, self.config.session_lifecycle_labels)
+        lifecycle = LifecycleAggregator.aggregate(lifecycle_report, self.config.session_lifecycle_labels)
         accuracy_metrics = extract_accuracy_from_lifecycle(lifecycle_report)
 
         payload = {
