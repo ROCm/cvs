@@ -1,14 +1,18 @@
 import unittest
 
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+    FLUX2_DEFAULT_HF_REPO,
     FLUX2_EXAMPLE_PATH,
     RUN_USP_PATH,
+    build_flux2_chat_template_host_check_cmd,
+    build_flux2_ensure_chat_template_cmd,
     build_flux2_example_args,
     build_run_usp_args,
     build_torchrun_cmd,
     detect_flux_model_type_from_model_index,
     infer_flux_model_type,
     is_flux2_model,
+    resolve_flux2_hf_repo_id,
     resolve_flux_guidance_scale,
     resolve_flux_model_type,
 )
@@ -34,6 +38,31 @@ class TestResolveFluxModelType(unittest.TestCase):
             resolve_flux_model_type(None, "/model", "/data/black-forest-labs/FLUX.2-dev"),
             "flux2",
         )
+
+
+class TestResolveFlux2HfRepoId(unittest.TestCase):
+    def test_local_path_defaults_to_flux2_dev(self):
+        self.assertEqual(
+            resolve_flux2_hf_repo_id("flux2", "/data/models/FLUX.2-dev"),
+            FLUX2_DEFAULT_HF_REPO,
+        )
+
+    def test_hf_repo_hint_is_used(self):
+        self.assertEqual(
+            resolve_flux2_hf_repo_id("flux2", "/model", ["black-forest-labs/FLUX.2-dev"]),
+            "black-forest-labs/FLUX.2-dev",
+        )
+
+
+class TestFlux2ChatTemplate(unittest.TestCase):
+    def test_host_check_cmd(self):
+        cmd = build_flux2_chat_template_host_check_cmd("/data/models/FLUX.2-dev")
+        self.assertIn("chat_template.jinja", cmd)
+
+    def test_container_ensure_cmd_fetches_from_hub(self):
+        cmd = build_flux2_ensure_chat_template_cmd(hf_repo_id=FLUX2_DEFAULT_HF_REPO)
+        self.assertIn("hf_hub_download", cmd)
+        self.assertIn("chat_template.jinja", cmd)
 
 
 class TestBuildRunUspArgs(unittest.TestCase):
@@ -156,27 +185,7 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         self.assertIn("--node_rank=1", cmd)
         self.assertIn("--benchmark_output_directory", cmd)
 
-    def test_flux2_distributed_rank0_writes_timing(self):
-        params = {
-            **self._FLUX1_PARAMS,
-            "num_inference_steps": 50,
-            "max_sequence_length": 512,
-        }
-        cmd = build_torchrun_cmd(
-            params,
-            model_repo="/model",
-            model_repo_hints=["black-forest-labs/FLUX.2-dev"],
-            distributed=True,
-            node_rank=0,
-            nnodes=2,
-            master_addr="10.0.0.1",
-            master_port=29500,
-        )
-        self.assertIn(FLUX2_EXAMPLE_PATH, cmd)
-        self.assertIn("--node_rank=0", cmd)
-        self.assertIn("results/timing.json", cmd)
-
-    def test_flux2_distributed_worker_skips_timing_wrapper(self):
+    def test_flux2_distributed_last_node_writes_timing(self):
         params = {
             **self._FLUX1_PARAMS,
             "num_inference_steps": 50,
@@ -194,7 +203,42 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         )
         self.assertIn(FLUX2_EXAMPLE_PATH, cmd)
         self.assertIn("--node_rank=1", cmd)
+        self.assertIn("results/timing.json", cmd)
+
+    def test_flux2_distributed_non_last_node_skips_timing_wrapper(self):
+        params = {
+            **self._FLUX1_PARAMS,
+            "num_inference_steps": 50,
+            "max_sequence_length": 512,
+        }
+        cmd = build_torchrun_cmd(
+            params,
+            model_repo="/model",
+            model_repo_hints=["black-forest-labs/FLUX.2-dev"],
+            distributed=True,
+            node_rank=0,
+            nnodes=2,
+            master_addr="10.0.0.1",
+            master_port=29500,
+        )
+        self.assertIn(FLUX2_EXAMPLE_PATH, cmd)
+        self.assertIn("--node_rank=0", cmd)
         self.assertNotIn("results/timing.json", cmd)
+
+    def test_flux2_cmd_ensures_chat_template_before_torchrun(self):
+        params = {
+            **self._FLUX1_PARAMS,
+            "num_inference_steps": 50,
+            "max_sequence_length": 512,
+        }
+        cmd = build_torchrun_cmd(
+            params,
+            model_repo="/model",
+            model_repo_hints=["black-forest-labs/FLUX.2-dev"],
+            distributed=False,
+        )
+        self.assertIn("hf_hub_download", cmd)
+        self.assertLess(cmd.index("hf_hub_download"), cmd.index(FLUX2_EXAMPLE_PATH))
 
 
 if __name__ == "__main__":

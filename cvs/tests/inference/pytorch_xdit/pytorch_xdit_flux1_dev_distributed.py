@@ -42,6 +42,8 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     parallel_product,
     build_output_cleanup_cmd,
     store_resolved_flux_model_type_from_index,
+    ensure_flux2_chat_template_on_host,
+    resolve_flux_model_type,
 )
 
 log = globals.log
@@ -338,6 +340,19 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict):
         model_index = _read_model_index_from_node(s_phdl, s_phdl.host_list[0], host_model_path)
         if model_index:
             store_resolved_flux_model_type_from_index(inference_dict, model_index)
+        ensure_flux2_chat_template_on_host(
+            s_phdl,
+            s_phdl.host_list,
+            host_model_path,
+            hf_home,
+            model_type=resolve_flux_model_type(
+                inference_dict.get("_resolved_flux_model_type"),
+                model_repo,
+                host_model_path,
+            ),
+            model_repo=model_repo,
+            resolved_hf_repo_id=inference_dict.get("_resolved_flux_hf_repo_id"),
+        )
         log.info(f"Using local model path: {host_model_path} (mounted to /model in container) on all server nodes")
         update_test_result()
         return

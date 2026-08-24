@@ -43,6 +43,10 @@ DEFAULT_MASTER_PORT = 29500
 RUN_USP_PATH = "/app/Flux/run_usp.py"
 FLUX2_EXAMPLE_PATH = "/app/external/xdit/examples/flux2_example.py"
 CONTAINER_OUTPUT_MOUNT = "/outputs"
+CONTAINER_MODEL_MOUNT = "/model"
+
+FLUX2_DEFAULT_HF_REPO = "black-forest-labs/FLUX.2-dev"
+FLUX2_KLEIN_DEFAULT_HF_REPO = "black-forest-labs/FLUX.2-klein-4B"
 
 FLUX2_DEFAULT_GUIDANCE_SCALE = 4.0
 FLUX_KONTEXT_DEFAULT_GUIDANCE_SCALE = 2.5
@@ -309,6 +313,159 @@ def store_resolved_flux_model_type_from_index(
     if model_type:
         inference_dict["_resolved_flux_model_type"] = model_type
         log.info("Detected FLUX model type from model_index.json: %s", model_type)
+    name_or_path = model_index.get("_name_or_path")
+    if name_or_path and not str(name_or_path).startswith("/"):
+        inference_dict["_resolved_flux_hf_repo_id"] = str(name_or_path)
+
+
+def resolve_flux2_hf_repo_id(
+    model_type: Optional[str],
+    model_repo: str,
+    model_repo_hints: Optional[Sequence[str]] = None,
+    resolved_hf_repo_id: Optional[str] = None,
+) -> str:
+    """Hugging Face repo id used to fetch FLUX.2 tokenizer assets (e.g. chat_template.jinja)."""
+    if resolved_hf_repo_id and not str(resolved_hf_repo_id).startswith("/"):
+        return str(resolved_hf_repo_id)
+    for hint in [model_repo, *(model_repo_hints or [])]:
+        if hint and not str(hint).startswith("/") and "/" in str(hint):
+            return str(hint)
+    if model_type == "flux2_klein":
+        return FLUX2_KLEIN_DEFAULT_HF_REPO
+    return FLUX2_DEFAULT_HF_REPO
+
+
+def build_flux2_ensure_chat_template_cmd(
+    *,
+    hf_repo_id: str,
+    model_mount: str = CONTAINER_MODEL_MOUNT,
+) -> str:
+    """
+    Container-side guard: FLUX.2 encode_prompt requires tokenizer.chat_template.
+
+    Locally staged model trees often omit ``tokenizer/chat_template.jinja``; fetch it
+    from Hugging Face into the mounted model directory when missing.
+    """
+    py_script = (
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        f"model = Path({json.dumps(model_mount)})\n"
+        "tok = model / 'tokenizer'\n"
+        "if (tok / 'chat_template.jinja').is_file() or (tok / 'chat_template.json').is_file():\n"
+        "    sys.exit(0)\n"
+        "cfg_path = tok / 'tokenizer_config.json'\n"
+        "if cfg_path.is_file():\n"
+        "    try:\n"
+        "        if json.loads(cfg_path.read_text(encoding='utf-8')).get('chat_template'):\n"
+        "            sys.exit(0)\n"
+        "    except json.JSONDecodeError:\n"
+        "        pass\n"
+        "repo = os.environ.get('FLUX2_HF_REPO_ID') or "
+        f"{json.dumps(hf_repo_id)}\n"
+        "token = os.environ.get('HF_TOKEN') or None\n"
+        "try:\n"
+        "    from huggingface_hub import hf_hub_download\n"
+        "except ImportError as exc:\n"
+        "    print(f'huggingface_hub required to fetch FLUX.2 chat template: {exc}', file=sys.stderr)\n"
+        "    sys.exit(1)\n"
+        "tok.mkdir(parents=True, exist_ok=True)\n"
+        "hf_hub_download(\n"
+        "    repo_id=repo,\n"
+        "    filename='tokenizer/chat_template.jinja',\n"
+        "    local_dir=str(model),\n"
+        "    token=token,\n"
+        ")\n"
+        "if not (tok / 'chat_template.jinja').is_file():\n"
+        "    print('Failed to install tokenizer/chat_template.jinja for FLUX.2', file=sys.stderr)\n"
+        "    sys.exit(1)\n"
+    )
+    return f"python3 -c {shlex.quote(py_script)}"
+
+
+def build_flux2_chat_template_host_check_cmd(host_model_path: str) -> str:
+    """Return a shell command that prints OK when FLUX.2 chat template files are present."""
+    base = shlex.quote(host_model_path.rstrip("/"))
+    return (
+        f"test -f {base}/tokenizer/chat_template.jinja "
+        f"-o -f {base}/tokenizer/chat_template.json "
+        f"&& echo OK || echo MISSING"
+    )
+
+
+def build_flux2_chat_template_host_repair_from_cache_cmd(
+    host_model_path: str,
+    hf_home: str,
+    hf_repo_id: str,
+) -> str:
+    """Copy chat_template.jinja from a local Hugging Face cache snapshot into a model dir."""
+    model_q = shlex.quote(host_model_path.rstrip("/"))
+    hf_q = shlex.quote(hf_home.rstrip("/"))
+    repo_safe = hf_repo_id.replace("/", "--")
+    return (
+        f"MODEL={model_q}; HF={hf_q}; "
+        f"if test -f \"$MODEL/tokenizer/chat_template.jinja\" "
+        f"-o -f \"$MODEL/tokenizer/chat_template.json\"; then echo OK; exit 0; fi; "
+        f"for SNAP in \"$HF/hub/models--{repo_safe}/snapshots\"/*; do "
+        f"if test -f \"$SNAP/tokenizer/chat_template.jinja\"; then "
+        f"mkdir -p \"$MODEL/tokenizer\" && "
+        f"cp \"$SNAP/tokenizer/chat_template.jinja\" \"$MODEL/tokenizer/\" && "
+        f"echo OK && exit 0; fi; done; echo MISSING"
+    )
+
+
+def ensure_flux2_chat_template_on_host(
+    s_phdl,
+    nodes: Sequence[str],
+    host_model_path: str,
+    hf_home: str,
+    *,
+    model_type: Optional[str],
+    model_repo: str,
+    resolved_hf_repo_id: Optional[str] = None,
+) -> None:
+    """
+    Best-effort repair of missing FLUX.2 ``tokenizer/chat_template.jinja`` on host model dirs.
+
+    Copies from the local Hugging Face cache when available. The container launch path fetches
+    from the Hub when the file is still missing at runtime (requires ``HF_TOKEN`` for gated repos).
+    """
+    if not is_flux2_model(model_type):
+        return
+
+    hf_repo = resolve_flux2_hf_repo_id(
+        model_type,
+        model_repo,
+        [host_model_path],
+        resolved_hf_repo_id,
+    )
+    check_cmd = build_flux2_chat_template_host_check_cmd(host_model_path)
+    check = _exec_on_nodes(s_phdl, list(nodes), check_cmd, print_console=False)
+    missing = [node for node in nodes if "OK" not in (check.get(node) or "")]
+    if not missing:
+        log.info("FLUX.2 chat template present under %s on all node(s)", host_model_path)
+        return
+
+    log.info(
+        "FLUX.2 chat template missing on %d node(s); attempting copy from HF cache (%s)",
+        len(missing),
+        hf_repo,
+    )
+    repair_cmd = build_flux2_chat_template_host_repair_from_cache_cmd(
+        host_model_path,
+        hf_home,
+        hf_repo,
+    )
+    repair = _exec_on_nodes(s_phdl, missing, repair_cmd, print_console=False)
+    still_missing = [node for node in missing if "OK" not in (repair.get(node) or "")]
+    if still_missing:
+        log.warning(
+            "FLUX.2 chat template still missing on %d node(s) after HF cache copy; "
+            "benchmark container will download tokenizer/chat_template.jinja from %s",
+            len(still_missing),
+            hf_repo,
+        )
+    else:
+        log.info("FLUX.2 chat template repaired from HF cache on all previously missing node(s)")
 
 
 def resolve_flux_model_type(
@@ -493,6 +650,9 @@ def build_flux2_benchmark_cmd(
     master_addr: str = "127.0.0.1",
     master_port: int = DEFAULT_MASTER_PORT,
     output_dir_container: str = CONTAINER_OUTPUT_MOUNT,
+    hf_repo_id: Optional[str] = None,
+    model_repo_hints: Optional[Sequence[str]] = None,
+    resolved_hf_repo_id: Optional[str] = None,
 ) -> str:
     """
     Run flux2_example.py once inside a single torchrun session and write results/timing.json.
@@ -503,6 +663,13 @@ def build_flux2_benchmark_cmd(
     """
     nproc = int(nproc_per_node or flux_params["torchrun_nproc"])
     flux2_args = build_flux2_example_args(flux_params, model_repo=model_repo, model_type=model_type)
+    resolved_repo = resolve_flux2_hf_repo_id(
+        model_type,
+        model_repo,
+        model_repo_hints=model_repo_hints,
+        resolved_hf_repo_id=resolved_hf_repo_id or hf_repo_id,
+    )
+    ensure_chat_template = build_flux2_ensure_chat_template_cmd(hf_repo_id=resolved_repo)
     torchrun_prefix = _build_torchrun_prefix(
         distributed=distributed,
         nproc=nproc,
@@ -513,13 +680,22 @@ def build_flux2_benchmark_cmd(
     )
     run_once = f"{torchrun_prefix} {FLUX2_EXAMPLE_PATH} {flux2_args}"
 
-    if distributed and node_rank != 0:
+    timing_writer = (not distributed) or (node_rank == nnodes - 1)
+    if distributed and not timing_writer:
         log.info(
-            "FLUX.2 distributed worker node_rank=%d: torchrun only (timing.json written on rank 0)",
+            "FLUX.2 distributed node_rank=%d: torchrun only (timing.json on last node rank=%d)",
             node_rank,
+            nnodes - 1,
         )
-        inner = f"cd {shlex.quote(output_dir_container)} && {run_once}"
+        inner = f"cd {shlex.quote(output_dir_container)} && {ensure_chat_template} && {run_once}"
         return f"bash -c {shlex.quote(inner)}"
+
+    if distributed:
+        log.info(
+            "FLUX.2 distributed timing.json on node_rank=%d (flux2_example prints epoch time on world rank %d)",
+            node_rank,
+            nnodes * nproc - 1,
+        )
 
     log.info(
         "FLUX.2 benchmark uses one torchrun session (warmup_steps=%s); "
@@ -547,6 +723,7 @@ def build_flux2_benchmark_cmd(
     inner = (
         f"cd {shlex.quote(output_dir_container)} && "
         f"mkdir -p results && "
+        f"{ensure_chat_template} && "
         f"python3 -c {shlex.quote(py_script)}"
     )
     return f"bash -c {shlex.quote(inner)}"
@@ -564,6 +741,7 @@ def build_torchrun_cmd(
     master_port: int = DEFAULT_MASTER_PORT,
     model_repo_hints: Optional[Sequence[str]] = None,
     resolved_model_type: Optional[str] = None,
+    resolved_hf_repo_id: Optional[str] = None,
 ) -> str:
     nproc = int(nproc_per_node or flux_params["torchrun_nproc"])
     model_type = resolve_flux_model_type_for_job(
@@ -584,6 +762,8 @@ def build_torchrun_cmd(
             nproc_per_node=nproc,
             master_addr=master_addr,
             master_port=master_port,
+            model_repo_hints=model_repo_hints,
+            resolved_hf_repo_id=resolved_hf_repo_id,
         )
 
     run_usp_args = build_run_usp_args(flux_params, model_repo=model_repo)
@@ -739,6 +919,19 @@ class FluxBenchmarkJob:
         env_dict["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(self.nproc_per_node))
         if self.hf_token:
             env_dict["HF_TOKEN"] = _secret_str(self.hf_token)
+        model_type = resolve_flux_model_type_for_job(
+            self.flux_params,
+            model_repo=self._resolved_model_repo(),
+            model_repo_hints=self._flux_model_type_hints(),
+            resolved_model_type=self.inference_dict.get("_resolved_flux_model_type"),
+        )
+        if is_flux2_model(model_type):
+            env_dict["FLUX2_HF_REPO_ID"] = resolve_flux2_hf_repo_id(
+                model_type,
+                self.inference_dict.get("model_repo", ""),
+                self._flux_model_type_hints(),
+                self.inference_dict.get("_resolved_flux_hf_repo_id"),
+            )
         return " ".join(f"-e {key}={value}" for key, value in env_dict.items())
 
     def _build_volume_args(self, host_output_dir: str) -> str:
@@ -774,6 +967,7 @@ class FluxBenchmarkJob:
             master_port=master_port,
             model_repo_hints=self._flux_model_type_hints(),
             resolved_model_type=self.inference_dict.get("_resolved_flux_model_type"),
+            resolved_hf_repo_id=self.inference_dict.get("_resolved_flux_hf_repo_id"),
         )
 
         container_name = self.inference_dict["container_name"]
