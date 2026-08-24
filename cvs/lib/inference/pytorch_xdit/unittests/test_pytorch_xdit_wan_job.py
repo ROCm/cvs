@@ -141,6 +141,8 @@ class TestBuildRunWanArgs(unittest.TestCase):
         self.assertIn("--input_image /benchmark/i2v_input.JPG", args)
         self.assertIn("--num_repetitions 5", args)
         self.assertIn("--benchmark_output_directory results/outputs", args)
+        self.assertIn("--save_video_path results/outputs/video.mp4", args)
+        self.assertIn("--output_type np", args)
         self.assertNotIn("--task i2v", args)
 
     def test_resolve_xfuser_launcher_from_config(self):

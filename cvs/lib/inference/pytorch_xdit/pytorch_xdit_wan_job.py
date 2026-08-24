@@ -287,7 +287,11 @@ def build_run_wan_xfuser_example_args(
         int(wan_params["num_benchmark_steps"]),
     )
     warmup_steps = _optional_int(wan_params.get("warmup_steps"), 1)
-    output_type = str(wan_params.get("wan_xfuser_output_type") or "latent")
+    output_type = str(wan_params.get("wan_xfuser_output_type") or "np")
+    save_video_path = str(
+        wan_params.get("wan_diffusers_save_video_path") or f"{WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR}/video.mp4"
+    )
+    video_fps = _optional_int(wan_params.get("wan_diffusers_video_fps"), 16)
 
     log.info(
         "WAN xFuser wan_i2v_example: model=%s size=%dx%d repetitions=%s warmup=%s",
@@ -310,6 +314,8 @@ def build_run_wan_xfuser_example_args(
         f"--warmup_steps {warmup_steps} "
         f"--num_repetitions {num_repetitions} "
         f"--output_type {shlex.quote(output_type)} "
+        f"--save_video_path {shlex.quote(save_video_path)} "
+        f"--video_fps {video_fps} "
         f"--prompt {shlex.quote(str(wan_params['prompt']))} "
         f"--benchmark_output_directory {shlex.quote(WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR)}"
     ).strip()

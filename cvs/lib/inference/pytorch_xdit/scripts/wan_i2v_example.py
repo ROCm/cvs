@@ -19,6 +19,7 @@ import json
 import os
 import sys
 import time
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -40,14 +41,52 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ring_degree", type=int, default=1)
     parser.add_argument("--warmup_steps", type=int, default=1)
     parser.add_argument("--num_repetitions", type=int, default=1)
-    parser.add_argument("--output_type", default="latent")
+    parser.add_argument(
+        "--output_type",
+        default="np",
+        help="xFuser output type; use np/pil for decodable frames (latent skips video export).",
+    )
     parser.add_argument("--prompt", default="A person walking in a park, cinematic style.")
+    parser.add_argument(
+        "--save_video_path",
+        default="results/outputs/video.mp4",
+        help="MP4 path written on rank 0 from the last timed repetition.",
+    )
+    parser.add_argument("--video_fps", type=int, default=16)
     parser.add_argument(
         "--benchmark_output_directory",
         default="results/outputs",
         help="Directory for rank0_step*.json timing files",
     )
     return parser.parse_args()
+
+
+def _extract_frames(run_output: Any) -> Any | None:
+    if run_output is None:
+        return None
+    if hasattr(run_output, "frames"):
+        frames = run_output.frames
+        if isinstance(frames, list) and frames:
+            return frames[0]
+        return frames
+    if isinstance(run_output, (list, tuple)) and run_output:
+        return _extract_frames(run_output[0])
+    return run_output
+
+
+def _export_video(run_output: Any, save_path: str, fps: int) -> None:
+    frames = _extract_frames(run_output)
+    if frames is None:
+        print("No frames in runner output; video export skipped", file=sys.stderr)
+        return
+
+    from diffusers.utils import export_to_video
+
+    parent = os.path.dirname(save_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    export_to_video(frames, save_path, fps=fps)
+    print(f"Saved video to {save_path}")
 
 
 def _write_step_timing(output_dir: str, step: int, elapsed: float) -> None:
@@ -99,7 +138,7 @@ def main() -> None:
     for step in range(max(int(args.num_repetitions), 1)):
         torch.cuda.synchronize()
         start_time = time.time()
-        runner.run(input_args)
+        run_output = runner.run(input_args)
         torch.cuda.synchronize()
         elapsed = time.time() - start_time
 
@@ -107,6 +146,8 @@ def main() -> None:
             _write_step_timing(args.benchmark_output_directory, step, elapsed)
             peak_mem = torch.cuda.max_memory_allocated(device=f"cuda:{local_rank}") / 1e9
             print(f"epoch time: {elapsed:.2f} sec, memory: {peak_mem:.2f} GB")
+            if step == max(int(args.num_repetitions), 1) - 1 and args.save_video_path:
+                _export_video(run_output, args.save_video_path, args.video_fps)
 
     runner.cleanup()
 

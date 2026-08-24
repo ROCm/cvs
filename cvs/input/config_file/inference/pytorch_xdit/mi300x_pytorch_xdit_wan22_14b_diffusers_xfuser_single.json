@@ -1,0 +1,49 @@
+{
+    "config": {
+        "container_image": "rocm/ufb-private:xdit-gfx942-py3.12-prereleases-rocm10.0.0rc3-2805c93",
+        "container_name": "wan22-benchmark",
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "hf_home": "/home/{user-id}",
+        "output_base_dir": "/home/{user-id}/cvs_outputs",
+        "model_repo": "/data/models/Wan2.2-I2V-A14B-Diffusers",
+        "model_rev": "",
+        "container_config": {
+            "device_list": [
+                "/dev/dri",
+                "/dev/kfd"
+            ],
+            "volume_dict": {
+                "/path/to/cvs/cvs/lib/inference/pytorch_xdit/scripts/wan_i2v_example.py": "/benchmark/wan_i2v_example.py",
+                "/path/to/i2v_input.JPG": "/benchmark/i2v_input.JPG"
+            },
+            "env_dict": {
+                "CVS_WAN_XFUSER_PYPACKAGES": "/shared/amdgpu/home/dl_dcgpu_aac_service_request_qle/pypackages"
+            }
+        }
+    },
+    "benchmark_params": {
+        "wan22_i2v_a14b": {
+            "model_format": "diffusers",
+            "wan_diffusers_launcher": "xfuser_example",
+            "wan_diffusers_run_script": "/benchmark/wan_i2v_example.py",
+            "wan_diffusers_i2v_image": "/benchmark/i2v_input.JPG",
+            "require_video_artifact": true,
+            "prompt": "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
+            "size": "720*1280",
+            "frame_num": 81,
+            "num_benchmark_steps": 5,
+            "num_inference_steps": 40,
+            "warmup_steps": 1,
+            "compile": false,
+            "torchrun_nproc": 8,
+            "expected_results": {
+                "auto": {
+                    "max_avg_total_time_s": 300.0
+                },
+                "mi325": {
+                    "max_avg_total_time_s": 300.0
+                }
+            }
+        }
+    }
+}

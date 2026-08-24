@@ -682,6 +682,19 @@ class PytorchXditWan22Benchmarks(BaseModel):
         ge=0,
         description="Warmup iterations for xfuser_example launcher (defaults to 1).",
     )
+    wan_xfuser_output_type: Optional[str] = Field(
+        default=None,
+        description="xFuser output_type for xfuser_example (defaults to np for video export).",
+    )
+    wan_diffusers_save_video_path: Optional[str] = Field(
+        default=None,
+        description="In-container MP4 path for xfuser_example (default results/outputs/video.mp4).",
+    )
+    wan_diffusers_video_fps: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="FPS passed to export_to_video for xfuser_example (defaults to 16).",
+    )
     require_video_artifact: bool = Field(
         default=True,
         description="Require video.mp4 under the output dir when parsing results.",
