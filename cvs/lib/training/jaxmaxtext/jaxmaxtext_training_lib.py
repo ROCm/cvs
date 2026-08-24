@@ -56,7 +56,16 @@ _TRAINING_ERR_PATTERNS = {
     'segfault': r'Segmentation fault|SIGSEGV|signal 11|core dumped',
 }
 
-_NAN_INF_RE = re.compile(r'(TFLOP/s/device|Tokens/s/device):\s*(NaN|Inf|-Inf)', re.I)
+# NaN/Inf in any reported training metric -- loss/lm_loss/perplexity go NaN while
+# the throughput fields (TFLOP/s/device, Tokens/s/device) stay numeric, so those
+# alone are NOT enough; MaxText also emits an explicit abort line. NOTE: the
+# TensorBoard "NaN or Inf found in input tensor" writer warning is intentionally
+# NOT matched -- it also fires on healthy steps (false positive).
+_NAN_INF_RE = re.compile(
+    r'(?:TFLOP/s/device|Tokens/s/device|loss|lm_loss|perplexity)\s*[:=]\s*(?:nan|[+-]?inf)\b'
+    r'|Aborting training due to NaN',
+    re.I,
+)
 
 
 def _sanitize(name):
@@ -273,7 +282,16 @@ class MaxTextTrainingJob:
         if not rdma.container_mount_file or not rdma.container_dest_file:
             log.info("rdma_lib paths not configured, skipping")
             return
-        cmd = f"sudo cp {shlex.quote(rdma.container_mount_file)} {shlex.quote(rdma.container_dest_file)}"
+        # Only copy when the mount source actually exists. Newer configs mount the
+        # host RDMA lib directly onto the container's real .so path (read-only), so
+        # the legacy ".host" copy source is absent -- skip the cp instead of
+        # emitting a spurious error (the ibv_devinfo check below is the real gate).
+        src = shlex.quote(rdma.container_mount_file)
+        dst = shlex.quote(rdma.container_dest_file)
+        cmd = (
+            f"if [ -f {src} ]; then sudo cp {src} {dst}; "
+            f"else echo 'rdma_lib: source {rdma.container_mount_file} not present, skipping cp'; fi"
+        )
         out = self.orch.exec(cmd)
         for host, output in (out or {}).items():
             log.info("[rdma_lib %s] %s", host, (output or "")[:200])
@@ -449,16 +467,26 @@ class MaxTextTrainingJob:
         return True
 
     def _scan_chunk_for_errors(self, host, i, text):
-        """Raise on the first known error signature (or NaN/Inf) in `text`."""
+        """Raise on the first known error signature (or NaN/Inf) in `text`.
+
+        Before raising, log the FULL offending chunk so the failure cause (e.g. a
+        compile traceback) is always visible in the console/--log-file -- the
+        exception message alone is truncated (text[-500:]) and can miss the root
+        line, and the chunk is otherwise not streamed for non-node-0 nodes.
+        """
         if not text:
             return
+        hit = None
         if _NAN_INF_RE.search(text):
-            raise RuntimeError(f"NaN/Inf in training metrics on {host} (node {i}): {text[-500:]}")
-        for err_name, err_pattern in self.error_patterns.items():
-            if not err_pattern:
-                continue
-            if re.search(err_pattern, text, re.I):
-                raise RuntimeError(f"Training error '{err_name}' on {host} (node {i}): {text[-500:]}")
+            hit = "NaN/Inf in training metrics"
+        else:
+            for err_name, err_pattern in self.error_patterns.items():
+                if err_pattern and re.search(err_pattern, text, re.I):
+                    hit = f"error '{err_name}'"
+                    break
+        if hit:
+            log.error("[train node%s] FAILURE chunk (node %s / %s):\n%s", i, i, host, text.rstrip())
+            raise RuntimeError(f"Training {hit} on {host} (node {i}): {text[-500:]}")
 
     def _drain_new_log_lines(self):
         """Fetch training-log lines written since the last poll, on every node,
@@ -509,28 +537,31 @@ class MaxTextTrainingJob:
 
             new_by_node = self._drain_new_log_lines()
 
-            # Scan every node's new chunk for errors (raises on the first match).
-            for i, text in new_by_node.items():
-                self._scan_chunk_for_errors(self.orch.hosts[i], i, text)
-
-            # Stream node 0's (coordinator) new lines to the console once.
+            # Stream node 0's (coordinator) new lines to the console FIRST, so the
+            # chunk reaches the log even when the scan below raises on this same
+            # chunk (e.g. a compile traceback in the final drained lines).
             node0_new = (new_by_node.get(0) or "").rstrip()
             if node0_new:
                 log.info("[train node0]\n%s", node0_new)
+
+            # Then scan every node's new chunk for errors (raises on the first
+            # match; the scanner logs the offending chunk before raising).
+            for i, text in new_by_node.items():
+                self._scan_chunk_for_errors(self.orch.hosts[i], i, text)
 
             if self.is_complete():
                 # Flush the tail lines written between the drain above and this
                 # completion check -- the final "completed step" marker, and
                 # anything after it (a shutdown traceback or a last-step NaN),
-                # land here. Scan EVERY node's final chunk for error signatures
-                # before declaring success (dropping non-0 nodes would hide a
-                # worker-only failure in this window), then stream node 0.
+                # land here. Stream node 0 FIRST, then scan EVERY node's final
+                # chunk (dropping non-0 nodes would hide a worker-only failure in
+                # this window; the scanner logs the offending chunk before raising).
                 tail = self._drain_new_log_lines()
-                for i, text in tail.items():
-                    self._scan_chunk_for_errors(self.orch.hosts[i], i, text)
                 node0_tail = (tail.get(0) or "").rstrip()
                 if node0_tail:
                     log.info("[train node0]\n%s", node0_tail)
+                for i, text in tail.items():
+                    self._scan_chunk_for_errors(self.orch.hosts[i], i, text)
                 log.info("training complete (poll iter=%d, %.0fs elapsed)", it, elapsed)
                 return
 

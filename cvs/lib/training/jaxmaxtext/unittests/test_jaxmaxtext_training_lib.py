@@ -172,6 +172,47 @@ class ScanForErrorsTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             job._scan_chunk_for_errors("h0", 0, "completed step: 1, TFLOP/s/device: NaN\n")
 
+    def test_nan_loss_raises_even_when_throughput_numeric(self):
+        # Real failure signature: loss/lm_loss/perplexity go NaN while
+        # TFLOP/s/device and Tokens/s/device stay numeric.
+        job, _ = _make_job(hosts=["h0"])
+        line = (
+            "completed step: 3, seconds: 6.783, TFLOP/s/device: 39.268, "
+            "Tokens/s/device: 301.929, total_weights: 65536, loss: nan, "
+            "lm_loss: nan, perplexity: nan, moe_lb_loss: 0.000\n"
+        )
+        with self.assertRaises(RuntimeError):
+            job._scan_chunk_for_errors("h0", 0, line)
+
+    def test_aborting_nan_loss_line_raises(self):
+        job, _ = _make_job(hosts=["h0"])
+        with self.assertRaises(RuntimeError):
+            job._scan_chunk_for_errors("h0", 0, "metric_logger.py:270] Aborting training due to NaN loss.\n")
+
+    def test_failure_chunk_is_logged_before_raising(self):
+        # The offending chunk (e.g. a compile traceback) must be logged so it
+        # reaches the console/--log-file -- the truncated exception message alone
+        # can miss the root cause, and non-node-0 chunks are not otherwise streamed.
+        job, _ = _make_job(hosts=["h0", "h1"])
+        chunk = "some log\nValueError: Compiler params for platform tpu cannot be used for gpu lowering.\ngrpc tail\n"
+        with patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.log") as mock_log:
+            with self.assertRaises(RuntimeError):
+                job._scan_chunk_for_errors("h1", 1, chunk)
+        logged = " ".join(str(c) for c in mock_log.error.call_args_list)
+        self.assertIn("FAILURE chunk", logged)
+        self.assertIn("Compiler params for platform tpu", logged)
+
+    def test_healthy_step_with_large_perplexity_no_raise(self):
+        # Regression guard: valid numeric metrics (incl. a big perplexity) must
+        # NOT trip the NaN detector.
+        job, _ = _make_job(hosts=["h0"])
+        job._scan_chunk_for_errors(
+            "h0",
+            0,
+            "completed step: 2, TFLOP/s/device: 38.530, Tokens/s/device: 296.258, "
+            "loss: 11.267, lm_loss: 11.267, perplexity: 78210.594, moe_lb_loss: 0.000\n",
+        )
+
     def test_config_error_patterns_replace_defaults(self):
         # A config-provided error_patterns set fully REPLACES the built-in defaults.
         job, _ = _make_job(hosts=["h0"], error_patterns={"custom": "MY_CUSTOM_ERR"})
@@ -255,6 +296,16 @@ class SetupRdmaLibTests(unittest.TestCase):
         job, orch = _make_job(rdma_lib=SimpleNamespace(container_mount_file="/src.so", container_dest_file="/dst.so"))
         orch.exec.return_value = {"h0": "hca_id: bnxt_re0\n"}
         job.setup_rdma_lib()  # should not raise
+
+    def test_cp_is_guarded_by_source_existence(self):
+        # With a direct read-only mount the legacy ".host" source is absent, so
+        # the copy must be guarded ([ -f <src> ]) rather than failing.
+        job, orch = _make_job(rdma_lib=SimpleNamespace(container_mount_file="/src.so", container_dest_file="/dst.so"))
+        orch.exec.return_value = {"h0": "hca_id: bnxt_re0\n"}
+        job.setup_rdma_lib()
+        cp_cmd = orch.exec.call_args_list[0].args[0]  # first exec == the guarded copy
+        self.assertIn("[ -f /src.so ]", cp_cmd)
+        self.assertIn("cp /src.so /dst.so", cp_cmd)
 
 
 class SetupTokenizerTests(unittest.TestCase):

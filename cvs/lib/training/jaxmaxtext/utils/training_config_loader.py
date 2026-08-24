@@ -120,6 +120,23 @@ class LossCurve(_Allow):
     enforce: bool = True
 
 
+class SmokeTest(_Allow):
+    """Smoke test (ENABLED by default). Loads the model and runs `steps` steps
+    with a small fixed batch/seqlen in BF16, passing only if no error signature
+    fires (no metric/threshold checks). A failure gates the rest of the suite.
+
+    Set `enabled=false` to SKIP it -- e.g. during iterative experiments where you
+    don't want the smoke run every time (mirrors checkpoint_resume, but opt-OUT
+    rather than opt-in). `steps`/`per_device_batch_size`/`max_target_length` tune
+    the smoke run itself.
+    """
+
+    enabled: bool = True
+    steps: int = 5
+    per_device_batch_size: int = 1
+    max_target_length: int = 2048
+
+
 class CheckpointResume(_Allow):
     """Checkpoint save + resume test (opt-in; off by default).
 
@@ -202,6 +219,7 @@ class TrainingConfig(_Allow):
     scaling_baseline: ScalingBaseline = ScalingBaseline()
     convergence: Convergence = Convergence()
     loss_curve: LossCurve = LossCurve()
+    smoke: SmokeTest = SmokeTest()
     checkpoint_resume: CheckpointResume = CheckpointResume()
     sweeps: List[Sweep] = []
     enabled_sweep_list: List[str] = []

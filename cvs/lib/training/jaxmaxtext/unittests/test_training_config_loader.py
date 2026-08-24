@@ -17,6 +17,7 @@ from cvs.lib.training.jaxmaxtext.utils.training_config_loader import (
     Convergence,
     LossCurve,
     ScalingBaseline,
+    SmokeTest,
     load_training_variant,
     validate_thresholds_cover_training,
 )
@@ -44,6 +45,13 @@ class SchemaDefaultsTests(unittest.TestCase):
         self.assertEqual(lc.milestone_steps, [100, 500, 1000, 5000])
         self.assertEqual(lc.max_slope, 0.0)
         self.assertTrue(lc.enforce)
+
+    def test_smoke_defaults(self):
+        s = SmokeTest()
+        self.assertTrue(s.enabled)  # opt-OUT: on by default
+        self.assertEqual(s.steps, 5)
+        self.assertEqual(s.per_device_batch_size, 1)
+        self.assertEqual(s.max_target_length, 2048)
 
     def test_checkpoint_resume_defaults(self):
         cr = CheckpointResume()
