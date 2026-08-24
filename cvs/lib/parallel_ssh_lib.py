@@ -9,10 +9,10 @@ DEPRECATED: This module is provided for backward compatibility only.
 For new code, please import directly from the parallel package:
 
     # Recommended (multi-process with auto-sharding):
-    from cvs.lib.parallel.multiprocess_pssh import MultiProcessPssh
+    from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
 
-    # For single-process SSH only:
-    from cvs.lib.parallel.pssh import Pssh
+    # For single-process only:
+    from cvs.lib.parallel.phandle import ParallelHandle
 
     # Configuration:
     from cvs.lib.parallel.config import ParallelConfig
@@ -21,8 +21,8 @@ This module re-exports parallel SSH types and helpers from cvs.lib.parallel
 so existing ``from cvs.lib.parallel_ssh_lib import Pssh`` imports continue working.
 
 Implementation lives in:
-  - cvs.lib.parallel.pssh — Pssh (basic single-process)
-  - cvs.lib.parallel.multiprocess_pssh — MultiProcessPssh (multi-process sharded)
+  - cvs.lib.parallel.phandle — ParallelHandle (basic single-process)
+  - cvs.lib.parallel.multiprocess_phandle — MultiProcessParallelHandle (multi-process sharded)
   - cvs.lib.parallel.scp — standalone scp helper
 '''
 
@@ -32,15 +32,15 @@ from pssh.clients import ParallelSSHClient
 from pssh.exceptions import ConnectionError, SessionError, Timeout
 
 # Direct imports from parallel package modules
-from cvs.lib.parallel.multiprocess_pssh import MultiProcessPssh as Pssh  # Main interface (auto-sharding)
+from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle as Pssh  # Main interface (auto-sharding)
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.scp import scp
 
 # Issue deprecation warning when module is imported
 warnings.warn(
     "cvs.lib.parallel_ssh_lib is deprecated. "
-    "Use 'from cvs.lib.parallel.multiprocess_pssh import MultiProcessPssh' "
-    "or 'from cvs.lib.parallel.pssh import Pssh' instead. "
+    "Use 'from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle' "
+    "or 'from cvs.lib.parallel.phandle import ParallelHandle' instead. "
     "This module will be removed in a future version.",
     DeprecationWarning,
     stacklevel=2,

@@ -31,11 +31,11 @@ def _select_reachable_hosts(reachable_hosts, hosts):
     return [host for host in reachable if host in requested]
 
 
-class Pssh:
+class ParallelHandle:
     """
-    Single-process parallel SSH: one ParallelSSHClient (one gevent hub) over a host list.
+    Single-process parallel handle: one ParallelSSHClient (one gevent hub) over a host list.
 
-    For large host counts, use PsshSharded (see cvs.lib.parallel.pssh_sharded), which shards hosts across processes.
+    For large host counts, use MultiProcessParallelHandle, which shards hosts across processes.
     """
 
     def __init__(

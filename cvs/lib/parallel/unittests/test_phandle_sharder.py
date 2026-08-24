@@ -1,13 +1,13 @@
 import unittest
 from unittest.mock import patch, MagicMock
-from cvs.lib.parallel.pssh_sharder import PsshSharder
+from cvs.lib.parallel.phandle_sharder import ParallelHandleSharder
 from cvs.lib.parallel.config import ParallelConfig
 
 
-class TestPsshSharder(unittest.TestCase):
+class TestParallelHandleSharder(unittest.TestCase):
     def setUp(self):
         self.config = ParallelConfig(hosts_per_shard=2, max_workers_per_cpu=4)
-        self.sharder = PsshSharder(self.config)
+        self.sharder = ParallelHandleSharder(self.config)
 
     def test_chunk_hosts_even_division(self):
         """Test chunking hosts with even division."""
@@ -44,10 +44,10 @@ class TestPsshSharder(unittest.TestCase):
         self.assertEqual(chunks, expected)
 
 
-class TestPsshSharderMethods(unittest.TestCase):
+class TestParallelHandleSharderMethods(unittest.TestCase):
     def setUp(self):
         self.config = ParallelConfig(hosts_per_shard=2, max_workers_per_cpu=4)
-        self.sharder = PsshSharder(self.config)
+        self.sharder = ParallelHandleSharder(self.config)
 
     def test_create_payloads_exec_mode(self):
         """Test creating payloads for exec mode."""
@@ -95,14 +95,14 @@ class TestPsshSharderMethods(unittest.TestCase):
         payloads = self.sharder.create_payloads('exec', [], {}, cmd='test')
         self.assertEqual(payloads, [])
 
-    @patch('cvs.lib.parallel.pssh_sharder.ProcessPoolExecutor')
+    @patch('cvs.lib.parallel.phandle_sharder.ProcessPoolExecutor')
     def test_execute_sharded_empty_payloads(self, mock_executor):
         """Test executing with empty payloads."""
         result = self.sharder.execute_sharded([])
         self.assertEqual(result, [])
         mock_executor.assert_not_called()
 
-    @patch('cvs.lib.parallel.pssh_sharder.ProcessPoolExecutor')
+    @patch('cvs.lib.parallel.phandle_sharder.ProcessPoolExecutor')
     def test_execute_sharded_with_payloads(self, mock_executor):
         """Test executing sharded operations."""
         # Mock executor and futures
@@ -114,7 +114,7 @@ class TestPsshSharderMethods(unittest.TestCase):
         mock_executor_instance.submit.side_effect = [mock_future1, mock_future2]
 
         # Mock as_completed and results
-        with patch('cvs.lib.parallel.pssh_sharder.as_completed') as mock_as_completed:
+        with patch('cvs.lib.parallel.phandle_sharder.as_completed') as mock_as_completed:
             mock_result1 = {'host1': 'result1', 'host2': 'result2'}
             mock_result2 = {'host3': 'result3'}
 
@@ -199,8 +199,8 @@ class TestPsshSharderMethods(unittest.TestCase):
         self.assertEqual(merged, expected)
 
 
-class TestPsshShardWorker(unittest.TestCase):
-    @patch('cvs.lib.parallel.pssh_sharder.Pssh')
+class TestParallelHandleShardWorker(unittest.TestCase):
+    @patch('cvs.lib.parallel.phandle_sharder.ParallelHandle')
     def test_pssh_shard_worker_exec_mode(self, mock_pssh_class):
         """Test shard worker in exec mode with direct operation calls."""
         mock_shard = MagicMock()
@@ -217,7 +217,7 @@ class TestPsshShardWorker(unittest.TestCase):
             'print_console': False,
         }
 
-        result = PsshSharder.run_shard(payload)
+        result = ParallelHandleSharder.run_shard(payload)
 
         expected = {
             'result': {'host1': 'output1', 'host2': 'output2'},
@@ -226,14 +226,14 @@ class TestPsshShardWorker(unittest.TestCase):
         }
         self.assertEqual(result, expected)
 
-        # Verify Pssh was created and exec was called directly
+        # Verify ParallelHandle was created and exec was called directly
         mock_pssh_class.assert_called_once_with(
             log=None, host_list=['host1', 'host2'], user='test', process_output=False
         )
         mock_shard.exec.assert_called_once_with(cmd='echo hello', timeout=30, print_console=False)
         mock_shard.destroy_clients.assert_called_once()
 
-    @patch('cvs.lib.parallel.pssh_sharder.Pssh')
+    @patch('cvs.lib.parallel.phandle_sharder.ParallelHandle')
     def test_pssh_shard_worker_cmd_list_mode(self, mock_pssh_class):
         """Test shard worker in cmd_list mode with direct operation calls."""
         mock_shard = MagicMock()
@@ -248,7 +248,7 @@ class TestPsshShardWorker(unittest.TestCase):
             'cmd_list': ['echo 1', 'echo 2'],
         }
 
-        result = PsshSharder.run_shard(payload)
+        result = ParallelHandleSharder.run_shard(payload)
 
         expected = {'result': {'host1': 'cmd1_output'}, 'reachable_hosts': ['host1'], 'unreachable_hosts': []}
         self.assertEqual(result, expected)
@@ -258,7 +258,7 @@ class TestPsshShardWorker(unittest.TestCase):
         mock_shard.exec_cmd_list.assert_called_once_with(cmd_list=['echo 1', 'echo 2'], print_console=False)
         mock_shard.destroy_clients.assert_called_once()
 
-    @patch('cvs.lib.parallel.pssh_sharder.Pssh')
+    @patch('cvs.lib.parallel.phandle_sharder.ParallelHandle')
     def test_pssh_shard_worker_upload_file_mode(self, mock_pssh_class):
         """Test shard worker in upload_file mode with direct operation calls."""
         mock_shard = MagicMock()
@@ -274,7 +274,7 @@ class TestPsshShardWorker(unittest.TestCase):
             'recurse': False,
         }
 
-        result = PsshSharder.run_shard(payload)
+        result = ParallelHandleSharder.run_shard(payload)
 
         expected = {'result': None, 'reachable_hosts': ['host1'], 'unreachable_hosts': []}
         self.assertEqual(result, expected)
@@ -284,7 +284,7 @@ class TestPsshShardWorker(unittest.TestCase):
             local_file='test.txt', remote_file='/tmp/test.txt', recurse=False
         )
 
-    @patch('cvs.lib.parallel.pssh_sharder.Pssh')
+    @patch('cvs.lib.parallel.phandle_sharder.ParallelHandle')
     def test_pssh_shard_worker_download_file_mode(self, mock_pssh_class):
         """Test shard worker in download_file mode with direct operation calls."""
         mock_shard = MagicMock()
@@ -301,7 +301,7 @@ class TestPsshShardWorker(unittest.TestCase):
             'recurse': False,
         }
 
-        result = PsshSharder.run_shard(payload)
+        result = ParallelHandleSharder.run_shard(payload)
 
         expected = {'result': {'host1': '/local/test_host1.txt'}, 'reachable_hosts': ['host1'], 'unreachable_hosts': []}
         self.assertEqual(result, expected)
@@ -311,7 +311,7 @@ class TestPsshShardWorker(unittest.TestCase):
             remote_file='/tmp/test.txt', local_file='test.txt', recurse=False
         )
 
-    @patch('cvs.lib.parallel.pssh_sharder.Pssh')
+    @patch('cvs.lib.parallel.phandle_sharder.ParallelHandle')
     def test_pssh_shard_worker_reboot_mode(self, mock_pssh_class):
         """Test shard worker in reboot mode with direct operation calls."""
         mock_shard = MagicMock()
@@ -324,7 +324,7 @@ class TestPsshShardWorker(unittest.TestCase):
             'init': {'log': None, 'host_list': ['host1'], 'user': 'test'},
         }
 
-        result = PsshSharder.run_shard(payload)
+        result = ParallelHandleSharder.run_shard(payload)
 
         expected = {'result': None, 'reachable_hosts': ['host1'], 'unreachable_hosts': []}
         self.assertEqual(result, expected)
@@ -332,7 +332,7 @@ class TestPsshShardWorker(unittest.TestCase):
         # Verify direct operation call
         mock_shard.reboot_connections.assert_called_once_with()
 
-    @patch('cvs.lib.parallel.pssh_sharder.Pssh')
+    @patch('cvs.lib.parallel.phandle_sharder.ParallelHandle')
     def test_pssh_shard_worker_unknown_operation(self, mock_pssh_class):
         """Test shard worker with unknown operation."""
         mock_shard = MagicMock()
@@ -344,11 +344,11 @@ class TestPsshShardWorker(unittest.TestCase):
         }
 
         with self.assertRaises(ValueError) as cm:
-            PsshSharder.run_shard(payload)
+            ParallelHandleSharder.run_shard(payload)
 
         self.assertIn('Unknown operation: unknown_operation', str(cm.exception))
 
-    @patch('cvs.lib.parallel.pssh_sharder.Pssh')
+    @patch('cvs.lib.parallel.phandle_sharder.ParallelHandle')
     def test_pssh_shard_worker_abc_enforcement(self, mock_pssh_class):
         """Test shard worker properly enforces ABC operations."""
         mock_shard = MagicMock()
@@ -361,7 +361,7 @@ class TestPsshShardWorker(unittest.TestCase):
         }
 
         with self.assertRaises(ValueError) as cm:
-            PsshSharder.run_shard(payload)
+            ParallelHandleSharder.run_shard(payload)
 
         # Verify proper error message
         self.assertIn('Unknown operation: fake_operation_not_in_abc', str(cm.exception))

@@ -6,17 +6,12 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 # Main exports for the parallel module
-from cvs.lib.parallel.multiprocess_pssh import MultiProcessPssh
-from cvs.lib.parallel.pssh import Pssh
+from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
+from cvs.lib.parallel.phandle import ParallelHandle
 from cvs.lib.parallel.scp import scp
 
-# Backward compatibility aliases
-PsshSharded = MultiProcessPssh  # Old name for multiprocess SSH
-
 __all__ = [
-    'Pssh',
-    'MultiProcessPssh',
+    'ParallelHandle',
+    'MultiProcessParallelHandle',
     'scp',
-    # Backward compatibility
-    'PsshSharded',
 ]

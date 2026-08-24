@@ -9,19 +9,21 @@ import inspect
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from cvs.lib.parallel.pssh import Pssh
-from cvs.lib.parallel.interfaces import ShardableSshInterface
+from cvs.lib.parallel.phandle import ParallelHandle
+from cvs.lib.parallel.interfaces import ShardableHandleInterface
 
 
 # Dynamically discover supported operations from ABC (computed once at import time)
 
 SUPPORTED_OPERATIONS = {
-    name for name, method in inspect.getmembers(ShardableSshInterface) if getattr(method, '__isabstractmethod__', False)
+    name
+    for name, method in inspect.getmembers(ShardableHandleInterface)
+    if getattr(method, '__isabstractmethod__', False)
 }
 
 
-class PsshSharder:
-    """Shards SSH operations across multiple processes for large host lists."""
+class ParallelHandleSharder:
+    """Shards parallel handle operations across multiple processes for large host lists."""
 
     def __init__(self, config):
         self.config = config
@@ -55,7 +57,7 @@ class PsshSharder:
         results = [None] * len(payloads)
 
         with ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx) as ex:
-            futures = {ex.submit(PsshSharder.run_shard, p): i for i, p in enumerate(payloads)}
+            futures = {ex.submit(ParallelHandleSharder.run_shard, p): i for i, p in enumerate(payloads)}
             for fut in as_completed(futures):
                 i = futures[fut]
                 results[i] = fut.result()
@@ -81,12 +83,12 @@ class PsshSharder:
     @staticmethod
     def run_shard(payload):
         """
-        Run an SSH operation on a shard of hosts (must be picklable for multiprocessing).
+        Run a parallel handle operation on a shard of hosts (must be picklable for multiprocessing).
 
-        Dynamically supports all abstract methods defined in ShardableSshInterface.
+        Dynamically supports all abstract methods defined in ShardableHandleInterface.
 
         Args:
-            payload: Dict with 'operation' (operation type), 'init' (SSH setup), and operation args
+            payload: Dict with 'operation' (operation type), 'init' (handle setup), and operation args
 
         Returns:
             Dict with operation result and host reachability status
@@ -99,15 +101,15 @@ class PsshSharder:
         if operation not in SUPPORTED_OPERATIONS:
             raise ValueError(f'Unknown operation: {operation}. Supported: {sorted(SUPPORTED_OPERATIONS)}')
 
-        # Create SSH client for this shard of hosts
+        # Create a ParallelHandle for this shard of hosts
         init_kwargs = payload['init']
         init_kwargs['process_output'] = False  # Force raw output mode for sharding
-        shard = Pssh(**init_kwargs)
+        shard = ParallelHandle(**init_kwargs)
 
         try:
-            # Ensure method exists in Pssh
+            # Ensure method exists in ParallelHandle
             if not hasattr(shard, operation):
-                raise RuntimeError(f'Method {operation} not found in Pssh class')
+                raise RuntimeError(f'Method {operation} not found in ParallelHandle class')
 
             shard_method = getattr(shard, operation)
 
