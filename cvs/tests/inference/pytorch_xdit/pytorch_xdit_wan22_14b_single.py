@@ -437,7 +437,8 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
         distributed=False,
     )
     if errors:
-        fail_test(f"Following FAILURES seen - {errors}")
+        for err in errors:
+            fail_test(err)
 
     update_test_result()
 

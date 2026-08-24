@@ -22,11 +22,15 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     detect_wan_model_format_from_model_index,
     parallel_product,
     parse_wan_size,
+    resolve_host_path_for_container_mount,
     resolve_wan_diffusers_launcher,
     resolve_wan_model_format,
+    scan_wan_fatal_output,
     scan_wan_xfuser_benchmark_output,
+    summarize_wan_benchmark_log,
     validate_parallelism,
     validate_wan_parallelism_config,
+    validate_wan_xfuser_mounts,
 )
 
 
@@ -225,6 +229,15 @@ class TestWanOutputVerification(unittest.TestCase):
         self.assertTrue(scan_wan_xfuser_benchmark_output("epoch time: 12.34 sec, memory: 40.00 GB"))
         self.assertFalse(scan_wan_xfuser_benchmark_output("Traceback (most recent call last):"))
 
+    def test_scan_fatal_output_catches_docker_mount_errors(self):
+        output = "docker: Error response from daemon: invalid mount config for type bind"
+        self.assertTrue(scan_wan_fatal_output(output))
+
+    def test_scan_fatal_output_catches_missing_script(self):
+        self.assertTrue(
+            scan_wan_fatal_output("python: can't open file '/benchmark/wan_i2v_example.py'")
+        )
+
     def test_build_wan_output_verify_cmd(self):
         cmd = build_wan_output_verify_cmd("/tmp/wan_22_host_outputs")
         self.assertIn("rank0_step*.json", cmd)
@@ -232,6 +245,43 @@ class TestWanOutputVerification(unittest.TestCase):
 
     def test_xfuser_benchmark_output_dir_constant(self):
         self.assertEqual(WAN_XFUSER_BENCHMARK_OUTPUT_DIR, "/outputs/outputs")
+
+    def test_summarize_wan_benchmark_log(self):
+        self.assertEqual(summarize_wan_benchmark_log(""), "docker benchmark log was empty")
+        self.assertIn("line2", summarize_wan_benchmark_log("line1\nline2\nline3"))
+
+    def test_resolve_host_path_for_container_mount(self):
+        inference_dict = {
+            "container_config": {
+                "volume_dict": {
+                    "/host/wan_i2v_example.py": "/benchmark/wan_i2v_example.py",
+                }
+            }
+        }
+        self.assertEqual(
+            resolve_host_path_for_container_mount(inference_dict, "/benchmark/wan_i2v_example.py"),
+            "/host/wan_i2v_example.py",
+        )
+
+    def test_validate_xfuser_mounts_rejects_placeholders(self):
+        class FakePssh:
+            host_list = ["10.0.0.1"]
+
+        inference_dict = {
+            "container_config": {
+                "volume_dict": {
+                    "/path/to/cvs/scripts/wan_i2v_example.py": "/benchmark/wan_i2v_example.py",
+                    "/path/to/i2v_input.JPG": "/benchmark/i2v_input.JPG",
+                }
+            }
+        }
+        wan_params = {
+            "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+            "wan_diffusers_run_script": "/benchmark/wan_i2v_example.py",
+            "wan_diffusers_i2v_image": "/benchmark/i2v_input.JPG",
+        }
+        errors = validate_wan_xfuser_mounts(FakePssh(), ["10.0.0.1"], inference_dict, wan_params)
+        self.assertTrue(any("placeholder" in err.lower() for err in errors))
 
 
 class TestBuildNcclEnv(unittest.TestCase):

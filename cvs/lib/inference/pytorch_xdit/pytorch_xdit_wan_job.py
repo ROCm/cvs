@@ -78,6 +78,10 @@ def _ring_size(wan_params: Mapping[str, Any]) -> int:
 WAN_FATAL_OUTPUT_PATTERNS_EXTRA = (
     r"No AMD GPU detected",
     r"0 active drivers \(\[\]\)\. There should only be one\.",
+    r"can't open file",
+    r"Error response from daemon",
+    r"bind source path does not exist",
+    r"invalid mount config",
 )
 
 
@@ -518,6 +522,107 @@ def build_wan_output_verify_cmd(host_output_dir: str) -> str:
     return f"bash -c {shlex.quote(inner)}"
 
 
+def resolve_host_path_for_container_mount(
+    inference_dict: Mapping[str, Any],
+    container_path: str,
+) -> Optional[str]:
+    """Find the host bind-mount source for a container path from ``volume_dict``."""
+    volume_dict = dict(inference_dict.get("container_config", {}).get("volume_dict") or {})
+    for host_path, mount_target in volume_dict.items():
+        if mount_target == container_path:
+            return str(host_path)
+    return None
+
+
+def _is_placeholder_mount_path(host_path: str) -> bool:
+    normalized = str(host_path).strip().lower()
+    return normalized.startswith("/path/to/") or "<changeme>" in normalized
+
+
+def validate_wan_xfuser_mounts(
+    s_phdl,
+    nodes: Sequence[str],
+    inference_dict: Mapping[str, Any],
+    wan_params: Mapping[str, Any],
+) -> List[str]:
+    """
+    Preflight xFuser bind mounts and input assets on each execution node.
+
+    Catches placeholder paths and missing host files before ``docker run``.
+    """
+    if resolve_wan_diffusers_launcher(wan_params, inference_dict) != WAN_DIFFUSERS_LAUNCHER_XFUSER:
+        return []
+
+    errors: List[str] = []
+    run_script_container = resolve_wan_diffusers_run_script(wan_params, inference_dict)
+    i2v_image_container = resolve_wan_diffusers_i2v_image(wan_params, inference_dict)
+
+    mount_checks: List[Tuple[str, str]] = []
+    script_host = resolve_host_path_for_container_mount(inference_dict, run_script_container)
+    if not script_host:
+        errors.append(
+            f"volume_dict must bind-mount wan_i2v_example.py to {run_script_container}. "
+            f"Example: "
+            f'"/home/{{user-id}}/cvs/cvs/lib/inference/pytorch_xdit/scripts/wan_i2v_example.py": '
+            f'"{run_script_container}"'
+        )
+    else:
+        mount_checks.append((script_host, f"xFuser launcher script ({run_script_container})"))
+
+    i2v_host = resolve_host_path_for_container_mount(inference_dict, i2v_image_container)
+    if not i2v_host:
+        errors.append(
+            f"volume_dict must bind-mount an I2V input image to {i2v_image_container}. "
+            f"Set wan_diffusers_i2v_image to the in-container path and add the host file "
+            f"to volume_dict."
+        )
+    else:
+        mount_checks.append((i2v_host, f"I2V input image ({i2v_image_container})"))
+
+    for host_path, label in mount_checks:
+        if _is_placeholder_mount_path(host_path):
+            errors.append(
+                f"Replace placeholder {label} mount path in volume_dict: {host_path}"
+            )
+
+    if errors:
+        return errors
+
+    check_cmds = [
+        " && ".join(
+            f"test -e {shlex.quote(host_path)}"
+            for host_path, _ in mount_checks
+        )
+        + " && echo WAN_MOUNT_OK || echo WAN_MOUNT_MISSING"
+    ] * len(nodes)
+
+    try:
+        check_results = _exec_cmd_list_on_nodes(s_phdl, nodes, check_cmds, print_console=False)
+    except Exception as exc:
+        return [f"Failed to verify xFuser mount paths on cluster nodes: {exc}"]
+
+    for node in nodes:
+        if "WAN_MOUNT_OK" in ((check_results or {}).get(node, "")):
+            continue
+        details = []
+        for host_path, label in mount_checks:
+            details.append(f"{label}: {host_path}")
+        errors.append(
+            f"xFuser mount preflight failed on {node}. Missing or unreadable host path(s): "
+            + "; ".join(details)
+        )
+    return errors
+
+
+def summarize_wan_benchmark_log(output: str, *, max_lines: int = 8) -> str:
+    """Return a short tail snippet from benchmark output for error messages."""
+    lines = [line for line in (output or "").splitlines() if line.strip()]
+    if not lines:
+        return "docker benchmark log was empty"
+    tail = lines[-max_lines:]
+    return " | ".join(line.strip() for line in tail)
+
+
 def build_wan_output_cleanup_cmd(output_base_dir: str, *, use_sudo: bool = True) -> str:
     prefix = "sudo " if use_sudo else ""
     return f"bash -c {shlex.quote(f'{prefix}rm -rf {output_base_dir}/wan_22_*_outputs')}"
@@ -799,6 +904,16 @@ class WanBenchmarkJob:
             errors.append("No docker commands generated")
             return {}, plan, errors
 
+        mount_errors = validate_wan_xfuser_mounts(
+            self.s_phdl,
+            plan.node_order,
+            self.inference_dict,
+            self.wan_params,
+        )
+        if mount_errors:
+            errors.extend(mount_errors)
+            return {}, plan, errors
+
         log.info("Creating output directories on %d node(s)", len(plan.node_order))
         try:
             _exec_cmd_list_on_nodes(self.s_phdl, plan.node_order, plan.mkdir_cmds)
@@ -858,8 +973,27 @@ class WanBenchmarkJob:
                         )
                     )
                     diffusers_script_hint_added = True
+                elif (
+                    not diffusers_script_hint_added
+                    and re.search(r"can't open file .*wan_i2v_example\.py", output or "", re.I)
+                ):
+                    run_script = resolve_wan_diffusers_run_script(self.wan_params, self.inference_dict)
+                    script_host = resolve_host_path_for_container_mount(self.inference_dict, run_script)
+                    errors.append(
+                        f"xFuser launcher {run_script!r} was not found in the container on {node}. "
+                        f"Bind-mount the host script into the container"
+                        + (f" (expected host path: {script_host})" if script_host else "")
+                        + f" and confirm wan_diffusers_launcher is {WAN_DIFFUSERS_LAUNCHER_XFUSER!r}."
+                    )
+                    diffusers_script_hint_added = True
+                elif re.search(r"Error response from daemon|bind source path does not exist", output or "", re.I):
+                    errors.append(
+                        f"Docker mount failure on {node}. Fix volume_dict host paths on every "
+                        f"execution node (no /path/to/ placeholders). "
+                        f"Log tail: {summarize_wan_benchmark_log(output)}"
+                    )
             else:
-                log.info("Benchmark on %s completed successfully", node)
+                log.info("Benchmark docker finished on %s (output verification pending)", node)
 
         if failed_nodes:
             errors.append(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
@@ -903,19 +1037,19 @@ class WanBenchmarkJob:
                 host_output_dir,
                 node,
             )
+            log_tail = summarize_wan_benchmark_log(node_log)
             if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER and not scan_wan_xfuser_benchmark_output(node_log):
                 errors.append(
                     f"No rank0_step*.json under {host_output_dir} on {node} and no xFuser "
-                    f"'epoch time:' lines in benchmark log. Remount the updated "
-                    f"cvs/lib/inference/pytorch_xdit/scripts/wan_i2v_example.py, reinstall "
-                    f"CVS (pip install -e .), and confirm wan_diffusers_launcher is "
-                    f"{WAN_DIFFUSERS_LAUNCHER_XFUSER!r}."
+                    f"'epoch time:' lines in benchmark log. Likely causes: placeholder "
+                    f"volume_dict paths, missing bind mount for "
+                    f"{resolve_wan_diffusers_run_script(self.wan_params, self.inference_dict)}, "
+                    f"or stale mounted wan_i2v_example.py. Log tail: {log_tail}"
                 )
             else:
                 errors.append(
                     f"No rank0_step*.json files found under {host_output_dir} on {node}. "
-                    f"Check benchmark logs for errors and inspect the output tree with: "
-                    f"find {host_output_dir} -type f"
+                    f"Log tail: {log_tail}"
                 )
 
         if missing_output_nodes:
