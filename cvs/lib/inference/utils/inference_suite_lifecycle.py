@@ -30,7 +30,7 @@ of copying launch / sshd / model-fetch / teardown blocks.
 
 Also provides ``sweep_cell_result_key``; see :mod:`cvs.lib.inference.utils.cache_probe` for ``du_bytes``.
 
-Optional HTML/JSON suite report: add ``cvs/lib/report/presets/<cvs_run_stem>.py`` (see
+Optional HTML/JSON suite report: add ``cvs/lib/report/profiles/<cvs_run_stem>.json`` (see
 ``cvs/lib/report/README.md``); root ``cvs/conftest.py`` auto-wires hooks when ``--html`` is set.
 '''
 

@@ -15,8 +15,8 @@ Run:
 ``cluster_container.json`` ``node_dict`` must include all prefill/decode/router/bench hosts.
 Model variant is selected from ``benchmark_params`` via ``active_benchmark`` / env / single-key auto.
 
-With ``--html``, session end also writes ``sglang_disagg_run_deck.html`` (plus JSON
-and interactive viewer) via ``cvs.lib.report.presets.sglang_disagg_distributed``.
+With ``--html``, session end also writes ``sglang_run_deck.html`` (plus JSON
+and interactive viewer) via ``cvs/lib/report/profiles/sglang.json`` (all SGLang stems).
 '''
 
 import pytest

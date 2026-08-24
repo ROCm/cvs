@@ -75,8 +75,8 @@ Filename must match the `cvs run` stem. Minimal skeleton:
     "lifecycle": "lifecycle"
   },
   "hooks": {
-    "tier_metric_specs": "my.hooks:tier_metric_specs",
-    "metric_units": "my.hooks:METRIC_UNITS"
+    "tier_metric_specs": "cvs.lib.inference.my_suite.my_parsing:tier_metric_specs",
+    "metric_units": "cvs.lib.inference.my_suite.my_parsing:METRIC_UNITS"
   },
   "sweep": { "tier_order": ["throughput", "record"], "chart_series": [] },
   "cards": [
@@ -86,8 +86,14 @@ Filename must match the `cvs run` stem. Minimal skeleton:
 }
 ```
 
-Optional `hooks` under `profiles/hooks/` customize metric tiers, units, run card
-rows, and launch provenance.
+Optional `hooks` under `profiles/hooks/` customize run-card rows and launch
+provenance when the default run card is not enough. Metric tiers and units should
+reference the suite parsing module directly in profile JSON.
+
+Shared sweep config across related stems can use profile stem aliases in
+``profile.py`` (``PROFILE_STEM_ALIASES``) when the deck layout is identical — see
+``sglang.json`` shared by ``sglang_single``, ``sglang_distributed``, and
+``sglang_disagg_distributed``.
 
 ### 3. Wire suite fixtures
 

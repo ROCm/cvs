@@ -16,8 +16,8 @@ is every server rank) and matching ``nnodes`` in the inference config. All liste
 nodes get a container and participate in the unified server. ``benchmark_serv_node``
 runs smoke/bench/lm-eval (defaults to rank-0 when omitted).
 
-With ``--html``, session end also writes ``sglang_distributed_run_deck.html`` (plus JSON
-and interactive viewer) via ``cvs.lib.report.presets.sglang_distributed``.
+With ``--html``, session end also writes ``sglang_run_deck.html`` (plus JSON
+and interactive viewer) via ``cvs/lib/report/profiles/sglang.json`` (all SGLang stems).
 '''
 
 import pytest
