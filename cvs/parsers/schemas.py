@@ -681,6 +681,21 @@ class PytorchXditFlux1DevBenchmarks(BaseModel):
     seed: int = Field(default=42, description="Random seed for reproducibility")
     num_inference_steps: int = Field(default=25, ge=1, description="Number of denoising steps")
     max_sequence_length: int = Field(default=256, ge=1, description="Maximum sequence length for text encoder")
+    model_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "run_usp.py --model_type (e.g. flux2 for FLUX.2-dev, flux_kontext for FLUX.1-Kontext). "
+            "Auto-inferred from model_repo when omitted."
+        ),
+    )
+    guidance_scale: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Classifier-free guidance scale for run_usp.py. Defaults to 4.0 for FLUX.2-dev "
+            "and 2.5 for FLUX.1-Kontext when omitted; not passed for FLUX.1-dev."
+        ),
+    )
     no_use_resolution_binning: bool = Field(default=True, description="Disable resolution binning")
     warmup_steps: int = Field(default=1, ge=0, description="Number of warmup steps before benchmarking")
     warmup_calls: int = Field(default=5, ge=0, description="Number of warmup calls")

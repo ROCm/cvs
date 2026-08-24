@@ -1,5 +1,5 @@
 """
-PyTorch XDit FLUX.1-dev benchmark launcher (single-node + unified distributed).
+PyTorch XDit FLUX benchmark launcher (FLUX.1-dev, FLUX.2-dev; single-node + unified distributed).
 
 Single mode:
   - One independent torchrun job per node in ``s_phdl.host_list``.
@@ -9,6 +9,10 @@ Distributed mode:
   - One coordinated torchrun job across ``nnodes`` with distinct ``--node_rank``.
   - All nodes share rank-0 output dir ``flux_{rank0_hostname}_outputs``.
   - Requires parallel-degree product == nnodes × torchrun_nproc.
+
+FLUX.2-dev is selected via ``--model_type flux2`` on ``run_usp.py`` (auto-inferred from
+``model_repo`` when it contains ``FLUX.2``). See ``/app/external/xdit/examples/flux2_example.py``
+in the pytorch-xdit container for the underlying xFuserFlux2Pipeline integration.
 
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
@@ -36,7 +40,11 @@ FATAL_OUTPUT_PATTERNS = (
 DEFAULT_BENCHMARK_TIMEOUT_S = 1800
 DEFAULT_MASTER_PORT = 29500
 RUN_USP_PATH = "/app/Flux/run_usp.py"
+FLUX2_EXAMPLE_PATH = "/app/external/xdit/examples/flux2_example.py"
 CONTAINER_OUTPUT_MOUNT = "/outputs"
+
+FLUX2_DEFAULT_GUIDANCE_SCALE = 4.0
+FLUX_KONTEXT_DEFAULT_GUIDANCE_SCALE = 2.5
 
 
 def as_node_list(value: Any) -> List[str]:
@@ -252,6 +260,40 @@ def validate_parallelism(
     return world_size, product, None
 
 
+def infer_flux_model_type(model_repo: str, explicit_model_type: Optional[str] = None) -> Optional[str]:
+    """
+    Resolve run_usp.py --model_type from config or model_repo path/name.
+
+    FLUX.2-dev requires ``flux2`` (Flux2Pipeline); FLUX.1-Kontext requires ``flux_kontext``.
+    When unset and the repo id/path does not match a known variant, omit the flag (FLUX.1 default).
+    """
+    if explicit_model_type:
+        return str(explicit_model_type).strip() or None
+
+    repo_lower = (model_repo or "").lower()
+    if "flux.2" in repo_lower or "flux2" in repo_lower:
+        if "klein" in repo_lower:
+            return "flux2_klein"
+        return "flux2"
+    if "kontext" in repo_lower:
+        return "flux_kontext"
+    return None
+
+
+def resolve_flux_guidance_scale(
+    model_type: Optional[str],
+    explicit_guidance_scale: Any = None,
+) -> Optional[float]:
+    """Return guidance scale for run_usp.py, applying model-family defaults when omitted."""
+    if explicit_guidance_scale is not None:
+        return float(explicit_guidance_scale)
+    if model_type == "flux2" or model_type == "flux2_klein":
+        return FLUX2_DEFAULT_GUIDANCE_SCALE
+    if model_type == "flux_kontext":
+        return FLUX_KONTEXT_DEFAULT_GUIDANCE_SCALE
+    return None
+
+
 def build_nccl_env(inference_dict: Mapping[str, Any]) -> Dict[str, str]:
     env: Dict[str, str] = {
         "HSA_FORCE_FINE_GRAIN_PCIE": "1",
@@ -289,12 +331,22 @@ def build_run_usp_args(
     tp = int(flux_params.get("tensor_parallel_degree", 1))
     dp = int(flux_params.get("data_parallel_degree", 1))
 
+    model_type = infer_flux_model_type(model_repo, flux_params.get("model_type"))
+    model_type_flag = f"--model_type {shlex.quote(model_type)} " if model_type else ""
+
+    guidance_scale = resolve_flux_guidance_scale(model_type, flux_params.get("guidance_scale"))
+    guidance_scale_flag = (
+        f"--guidance_scale {guidance_scale} " if guidance_scale is not None else ""
+    )
+
     return (
         f"--model {shlex.quote(model_repo)} "
+        f"{model_type_flag}"
         f"--prompt {shlex.quote(str(flux_params['prompt']))} "
         f"--seed {int(flux_params['seed'])} "
         f"--num_inference_steps {int(flux_params['num_inference_steps'])} "
         f"--max_sequence_length {int(flux_params['max_sequence_length'])} "
+        f"{guidance_scale_flag}"
         f"{' '.join(flags)} "
         f"--warmup_steps {int(flux_params['warmup_steps'])} "
         f"--warmup_calls {int(flux_params['warmup_calls'])} "
@@ -639,7 +691,7 @@ class FluxBenchmarkJob:
 
         mode_label = "distributed unified" if self.distributed else "single-node"
         log.info(
-            "Running FLUX.1-dev benchmark (%s) on %d node command(s)",
+            "Running FLUX benchmark (%s) on %d node command(s)",
             mode_label,
             len(plan.docker_cmds),
         )

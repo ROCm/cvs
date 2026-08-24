@@ -170,22 +170,24 @@ class FluxOutputParser:
             List of Path objects pointing to generated images
         """
         image_paths = []
+        patterns = [self.expected_image_pattern]
+        if self.expected_image_pattern == "flux_*.png":
+            patterns.append("flux2_*.png")
 
-        # Expected location: output_dir/results/flux_*.png
         results_dir = self.output_dir / "results"
         if results_dir.exists():
-            image_paths.extend(results_dir.glob(self.expected_image_pattern))
+            for pattern in patterns:
+                image_paths.extend(results_dir.glob(pattern))
 
-        # Fallback: search recursively
         if not image_paths:
             for root, dirs, files in os.walk(self.output_dir):
                 root_path = Path(root)
-                for pattern_match in root_path.glob(self.expected_image_pattern):
-                    if pattern_match.is_file():
-                        image_paths.append(pattern_match)
+                for pattern in patterns:
+                    for pattern_match in root_path.glob(pattern):
+                        if pattern_match.is_file():
+                            image_paths.append(pattern_match)
 
-        # Sort for consistent ordering
-        image_paths.sort()
+        image_paths = sorted(set(image_paths))
 
         log.info(f"Found {len(image_paths)} generated images under {self.output_dir}")
         for img_path in image_paths:
