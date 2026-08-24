@@ -28,11 +28,11 @@ def _cluster_dict():
 class TestATOMAtomConfigLoader(unittest.TestCase):
     def test_load_mi300x_sample_config(self):
         root = Path(__file__).resolve().parents[3]
-        config = root / ("input/config_file/inference/atom/mi300x_atom_gpt-oss-120b_bf16.json")
+        config = root / ("input/config_file/inference/atom/mi300x_atom_gpt-oss-120b_mxfp4_vllm_single.json")
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.framework, "atom")
-        self.assertEqual(variant.params.driver, "vllm")
-        self.assertEqual(variant.expected_cells(), ["ISL=7168,OSL=1024,TP=8,CONC=64"])
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.expected_cells(), ["ISL=8192,OSL=1024,TP=4,CONC=32", "ISL=8192,OSL=1024,TP=4,CONC=64"])
         self.assertIn("enforce-eager", variant.roles.server.serve_args)
 
     def test_load_w1_mi300x_atom_variant(self):
@@ -121,23 +121,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertIn("client.output_throughput", variant.thresholds[cell])
         self.assertEqual(variant.thresholds[cell]["client.success_rate"]["value"], 1)
 
-    def test_load_baseline_sweep_multinode_mi300x_variant(self):
-        root = Path(__file__).resolve().parents[3]
-        config = root / ("input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_baseline_sweep_distributed.json")
-        variant = load_variant(config, _cluster_dict())
-        self.assertEqual(variant.params.nnodes, "2")
-        self.assertEqual(variant.params.driver, "vllm_atom")
-        self.assertEqual(variant.params.pipeline_parallel_size, "2")
-        self.assertEqual(variant.params.max_model_length, "10240")
-        self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
-        self.assertTrue(variant.enforce_thresholds)
-        self.assertEqual(len(variant.expected_cells()), 14)
-        cell = "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=4"
-        self.assertIn(cell, variant.expected_cells())
-        self.assertEqual(
-            variant.thresholds[cell]["scaling.efficiency_pct"],
-            {"kind": "min", "value": 9.0},
-        )
+    def test_load_baseline_sweep_mi355x_variant(self):
         root = Path(__file__).resolve().parents[3]
         config = root / ("input/config_file/inference/atom/mi355x_atom_deepseek-r1_fp8_baseline_sweep.json")
         variant = load_variant(config, _cluster_dict())
@@ -450,7 +434,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_load_kimi_k27_mxfp4_triton_env(self):
         root = Path(__file__).resolve().parents[3]
-        config = root / "input/config_file/inference/atom/mi300x_atom_kimi-k2.7-code_single.json"
+        config = root / "input/config_file/inference/atom/mi355x_atom_kimi-k2.7-code_single.json"
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.model.precision, "mxfp4")
         self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_MOE"), "1")
@@ -468,7 +452,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_load_phase_c_w13_code_perf(self):
         root = Path(__file__).resolve().parents[3]
-        config = root / "input/config_file/inference/atom/mi300x_atom_kimi-k2.7-code_single.json"
+        config = root / "input/config_file/inference/atom/mi355x_atom_kimi-k2.7-code_single.json"
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.model.id, "moonshotai/Kimi-K2.7-Code")
         self.assertFalse(variant.enforce_thresholds)
@@ -504,14 +488,14 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_load_kimi_k26_thinking_single_tp4(self):
         root = Path(__file__).resolve().parents[3]
-        config = root / "input/config_file/inference/atom/mi300x_atom_kimi-k2.6-thinking_single.json"
+        config = root / "input/config_file/inference/atom/mi355x_atom_kimi-k2.6-thinking_single.json"
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.params.tensor_parallelism, "4")
         self.assertIn("TP=4", variant.expected_cells()[0])
 
     def test_load_kimi_k27_longctx_single(self):
         root = Path(__file__).resolve().parents[3]
-        config = root / "input/config_file/inference/atom/mi300x_atom_kimi-k2.7-code_longctx_single.json"
+        config = root / "input/config_file/inference/atom/mi355x_atom_kimi-k2.7-code_longctx_single.json"
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.expected_cells()[0], "ISL=8192,OSL=1024,TP=8,CONC=32")
 

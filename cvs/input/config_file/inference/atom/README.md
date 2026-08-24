@@ -24,12 +24,9 @@ In the CVS repo, variants are flat sibling pairs in **this directory**:
 | `mi300x_atom_deepseek-r1_fp8_vllm_single` | `…_vllm_single_threshold.json` | MI300X | `vllm_atom` | **M4** W1 single-node parity (vLLM-ATOM) |
 | `mi300x_atom_deepseek-r1_fp8_sglang_single` | `…_sglang_single_threshold.json` | MI300X | `sglang` | **M4** W1 single-node parity (SGLang) |
 | `mi300x_atom_gpt-oss-120b_mxfp4_single` | `…_mxfp4_single_threshold.json` | MI300X | `atom` | **W2** P1 perf (8K/1K, TP4 MXFP4) |
-| `mi300x_atom_glm-5.1_single` | `…_glm-5.1_single_threshold.json` | MI300X | `atom` | **W3** P1 perf (1K/8K BF16) |
-| `mi300x_atom_kimi-k2.7-code_single` | `…_kimi-k2.7-code_single_threshold.json` | MI300X | `atom` | **W13** P1 code perf |
-| `mi300x_atom_deepseek-r1_mxfp4_single` | `…_mxfp4_single_threshold.json` | MI300X | `atom` | **W17** P1 MXFP4 perf |
-| `mi300x_atom_gpt-oss-120b_bf16` | `…_bf16_threshold.json` | MI300X | `vllm` | **Interim uplift** — use `…_mxfp4_single` for W2 ATOM |
-| `mi300x_atom_deepseek-r1_fp8_baseline_sweep` | `…_baseline_sweep_threshold.json` | MI300X | `atom` | DTNI baseline: 1K/1K + 8K/1K × C=4–256 (14 cells) |
-| `mi300x_atom_deepseek-r1_fp8_baseline_sweep_distributed` | `…_baseline_sweep_distributed_threshold.json` | MI300X | `vllm_atom` | 2-node DTNI baseline (14 cells); PP=2, scaling gates |
+| `mi300x_atom_glm-5.1_single` | `…_glm-5.1_single_threshold.json` | MI300X | `atom` | **W4** P2 perf (1K/8K BF16) |
+| `mi300x_atom_deepseek-r1_mxfp4_single` | `…_mxfp4_single_threshold.json` | MI300X | `atom` | **W17** P2 MXFP4 perf |
+| `mi300x_atom_deepseek-r1_fp8_baseline_sweep` | `…_baseline_sweep_threshold.json` | MI300X | `atom` | W1 P2 latency-vs-load (14 cells) |
 | `mi300x_atom_deepseek-r1_fp8_distributed` | `…_distributed_threshold.json` | MI300X | `vllm_atom` | W1 2-node PP=2; lab-calibrated thresholds |
 | `mi300x_atom_deepseek-r1_fp8_mtp3` | `…_mtp3_threshold.json` | MI300X | `atom` | W1 FP8 + MTP3 |
 | `mi300x_atom_deepseek-r1_fp8_accuracy` | `…_accuracy_threshold.json` | MI300X | `atom` | W1 gsm8k ACC-1/2/3 + HellaSwag (M2) |
@@ -38,21 +35,21 @@ In the CVS repo, variants are flat sibling pairs in **this directory**:
 | `mi300x_atom_deepseek-r1_mxfp4_accuracy` | `…_mxfp4_accuracy_threshold.json` | MI300X | `atom` | W17 gsm8k scaffold |
 | `mi300x_atom_gpt-oss-120b_mxfp4_accuracy` | `…_mxfp4_accuracy_threshold.json` | MI300X | `atom` | W2 gsm8k + NIAH long-context |
 | `mi300x_atom_glm-5.1_accuracy` | `…_glm-5.1_accuracy_threshold.json` | MI300X | `atom` | W3 gsm8k + MMLU |
-| `mi300x_atom_kimi-k2.7-code_accuracy` | `…_code_accuracy_threshold.json` | MI300X | `atom` | W13 HumanEval + MBPP |
-| `mi300x_atom_kimi-k2.6-thinking_accuracy` | `…_thinking_accuracy_threshold.json` | MI300X | `atom` | W7 gsm8k + hendrycks_math |
 | `mi355x_atom_deepseek-r1_fp8_single` | `…_single_threshold.json` | MI355X | `atom` | W1 single-node; CI seeds, `enforce_thresholds: false` |
 | `mi355x_atom_gpt-oss-120b_mxfp4_single` | `…_mxfp4_single_threshold.json` | MI355X | `atom` | W2 P1 perf seed |
 | `mi355x_atom_glm-5.1_single` | `…_glm-5.1_single_threshold.json` | MI355X | `atom` | W3 P1 perf seed |
-| `mi355x_atom_kimi-k2.7-code_single` | `…_kimi-k2.7-code_single_threshold.json` | MI355X | `atom` | W13 P1 perf seed |
+| `mi355x_atom_kimi-k2.7-code_single` | `…_kimi-k2.7-code_single_threshold.json` | MI355X | `atom` | **W13** P1 code perf (MI355X only) |
+| `mi355x_atom_kimi-k2.7-code_longctx_single` | `…_longctx_single_threshold.json` | MI355X | `atom` | W13 K2.7 **8K ISL** perf |
+| `mi355x_atom_kimi-k2.7-code_accuracy` | `…_code_accuracy_threshold.json` | MI355X | `atom` | W13 HumanEval + MBPP |
+| `mi355x_atom_kimi-k2.5-mxfp4_single` | `…_mxfp4_single_threshold.json` | MI355X | `atom` | W9 Kimi K2.5 MXFP4 TP4 |
+| `mi355x_atom_kimi-k2.6-thinking_single` | `…_thinking_single_threshold.json` | MI355X | `atom` | W7 Kimi K2.6 thinking perf (TP4) |
+| `mi355x_atom_kimi-k2.6-thinking_accuracy` | `…_thinking_accuracy_threshold.json` | MI355X | `atom` | W7 gsm8k + hendrycks_math |
 | `mi355x_atom_deepseek-r1_mxfp4_single` | `…_mxfp4_single_threshold.json` | MI355X | `atom` | W17 P1 perf seed |
 | `mi355x_atom_deepseek-r1_fp8_baseline_sweep` | `…_baseline_sweep_threshold.json` | MI355X | `atom` | DTNI baseline matrix; record-only |
 | `mi355x_atom_deepseek-r1_fp8_distributed` | `…_distributed_threshold.json` | MI355X | `vllm_atom` | W1 2-node PP=2; record-only until lab confirm |
 | `mi355x_atom_deepseek-r1_fp8_mtp3` | `…_mtp3_threshold.json` | MI355X | `atom` | W1 FP8 + MTP3 |
 | `mi300x_atom_qwen3.5-397b-a17b_fp8_single` | `…_fp8_single_threshold.json` | MI300X | `atom` | **P1** Qwen3.5-397B 1K/8K |
 | `mi355x_atom_qwen3.5-397b-a17b_fp8_single` | `…_fp8_single_threshold.json` | MI355X | `atom` | **P1** Qwen3.5-397B MI355X seed |
-| `mi300x_atom_kimi-k2.6-thinking_single` | `…_thinking_single_threshold.json` | MI300X | `atom` | W7 Kimi K2.6 thinking perf (TP4) |
-| `mi355x_atom_kimi-k2.6-thinking_single` | `…_thinking_single_threshold.json` | MI355X | `atom` | W7 MI355X seed |
-| `mi300x_atom_kimi-k2.7-code_longctx_single` | `…_longctx_single_threshold.json` | MI300X | `atom` | K2.7 **8K ISL** perf (agentic / long-seq) |
 | `mi300x_atom_deepseek-v4-pro_longctx_single` | `…_longctx_single_threshold.json` | MI300X | `atom` | **P1 #10** V4 Pro 5000/1024 TP8 |
 | `mi300x_atom_deepseek-v4-pro_vllm_single` | `…_vllm_single_threshold.json` | MI300X | `vllm_atom` | **P1 #10** V4 Pro vLLM-ATOM (M4) |
 | `mi300x_atom_deepseek-v4-pro_sglang_single` | `…_sglang_single_threshold.json` | MI300X | `sglang` | **P1 #10** V4 Pro SGLang (M4) |
@@ -74,8 +71,7 @@ Add analogous config + threshold pairs for other archs or models as needed.
 | Stem | Driver | Use when |
 |------|--------|----------|
 | `…_single` | `atom` | **Daily M1 perf gate** (2 cells) |
-| `…_baseline_sweep` | `atom` | DTNI 14-cell matrix / calibration (**optional**; demote to nightly later) |
-| `…_baseline_sweep_distributed` | `vllm_atom` | Multinode 14-cell matrix |
+| `…_baseline_sweep` | `atom` | W1 P2 latency-vs-load (14 cells) |
 | `…_distributed` | `vllm_atom` | **M5** PP=2 perf (lab-tuned cells) |
 | `…_sglang_distributed` | `sglang` | M5 PP=2 via SGLang |
 | `…_vllm_single` | `vllm_atom` | **M4** single-node parity vs ATOM (**W1 only**) |
@@ -93,7 +89,6 @@ Add analogous config + threshold pairs for other archs or models as needed.
 
 - `…_vllm_single` = **`atom` suite**, `driver=vllm_atom`, same sweep as `…_single` — for **M4 engine comparison**.
 - `…_distributed` = same driver family but **multinode PP=2** (M5), not interchangeable.
-- `mi300x_atom_gpt-oss-120b_bf16` uses `driver=vllm` (interim uplift) — **not** M4 parity; use `…_gpt-oss-120b_mxfp4_single` for W2 ATOM.
 - Do **not** confuse with the old **`vllm_single`** pytest suite under `cvs/tests/inference/vllm/`.
 
 ### Minimum per P1 workload
@@ -102,6 +97,7 @@ Add analogous config + threshold pairs for other archs or models as needed.
 |----------|--------------|----------|
 | W1 | `_single`, `_accuracy` | `_mtp3`, `_baseline_sweep`, `_vllm_single`, `_sglang_single`, `_distributed` |
 | W2, W3, W13, W17 | `{gpu}_…_single` | `…_accuracy` when quality gates land |
+| W7, W9, W13 (Kimi) | **`mi355x_*` only** | No MI300X stems — aiter MXFP4 Triton MoE needs gfx950 |
 | All | **Separate `mi300x_*` and `mi355x_*`** | Never share thresholds across GPU arch |
 
 See also the parent automation plan **Section 12.1.1** (`atom-cvs-automation-plan.md`).
@@ -337,7 +333,7 @@ Template: `cvs/input/cluster_file/atom_cluster.json`. Copy to
 | Variant type | `params.nnodes` | `node_dict` |
 |---|---|---|
 | Single-node (`*_single`, baseline sweep, MTP3) | `1` | Head node only |
-| Multinode PP (`*_distributed`, `*_baseline_sweep_distributed`) | `2` | Head + worker |
+| Multinode PP (`*_distributed`) | `2` | Head + worker |
 
 `test_setup_sshd` runs when `len(node_dict) > 1`.
 

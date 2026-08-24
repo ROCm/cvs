@@ -44,9 +44,9 @@ GPU arch in CVS: `mi300x`, `mi355x` (MI350-class → use `mi355x_*` stems).
 | 9 | GLM 5.1 1K/4K (8K OSL in CVS W3) | P2 | In progress | `mi{300,355}x_atom_glm-5.1_single`, `…_accuracy` |
 | 10 | DeepSeek V4 Pro 5000/1024 TP8 | P1 | Complete | `mi{300,355}x_atom_deepseek-v4-pro_{longctx_single,vllm_single,sglang_single,distributed}` |
 | 11 | DeepSeek V4 Flash | P2 | In progress | `mi{300,355}x_atom_deepseek-v4-flash_single` |
-| 13–17, 19–21, 23 | GLM 5.2, Qwen variants, etc. | P2 | In progress | `mi{300,355}x_atom_{glm-5.2-*,kimi-k2.5-*,qwen3.5-*,minimax-m3,mistral-large-3,mimo-v2.5-pro}_single` |
-| 12 | Kimi K2.6 Thinking 1K/1K TP4 | P2 | In progress | `mi{300,355}x_atom_kimi-k2.6-thinking_{single,accuracy}` |
-| 18 | Kimi K2.7 Code 1K/1K | P1 | In progress | `mi{300,355}x_atom_kimi-k2.7-code_single`, `…_longctx_single`, `…_code_accuracy` |
+| 13–17, 19–21, 23 | GLM 5.2, Qwen variants, etc. | P2 | In progress | `mi{300,355}x_atom_{glm-5.2-*,qwen3.5-*,minimax-m3,mistral-large-3,mimo-v2.5-pro}_single`, `mi355x_atom_kimi-k2.5-mxfp4_single` |
+| 12 | Kimi K2.6 Thinking 1K/1K TP4 | P2 | In progress | `mi355x_atom_kimi-k2.6-thinking_{single,accuracy}` |
+| 18 | Kimi K2.7 Code 1K/1K | P1 | In progress | `mi355x_atom_kimi-k2.7-code_{single,longctx_single,code_accuracy}` (MI355X only) |
 | 22 | DeepSeek R1 MXFP4 MI355X | P2 | In progress | `mi{300,355}x_atom_deepseek-r1_mxfp4_{single,accuracy}` |
 
 ---

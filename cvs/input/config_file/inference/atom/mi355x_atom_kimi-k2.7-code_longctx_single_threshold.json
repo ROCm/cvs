@@ -1,5 +1,5 @@
 {
-  "_comment": "CI seed thresholds for mi300x_atom_kimi-k2.7-code_longctx_single; recalibrate after lab confirm.",
+  "_comment": "CI seed thresholds for mi355x_atom_kimi-k2.7-code_longctx_single; recalibrate after lab confirm.",
   "ISL=8192,OSL=1024,TP=8,CONC=32": {
     "client.total_token_throughput": {"kind": "min_tok_s", "value": 400},
     "client.output_throughput": {"kind": "min_tok_s", "value": 200},

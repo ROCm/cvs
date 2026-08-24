@@ -1,5 +1,5 @@
 {
-  "_comment": "W13 Kimi K2.7 Code MXFP4 on MI355X. CI seed until lab hardware available.",
+  "_comment": "W13 Kimi K2.7 Code MXFP4 on MI355X (gfx950). Kimi ATOM stems are MI355X-only — aiter Triton MoE shuffle lacks gfx942.",
   "schema_version": 1,
   "framework": "atom",
   "gpu_arch": "mi355x",

@@ -1,10 +1,10 @@
 {
-  "_comment": "W7 Kimi K2.6 Thinking accuracy scaffold (ACC-11 MATH record-only).",
+  "_comment": "W7 Kimi K2.6 Thinking accuracy scaffold (ACC-11 MATH record-only). MI355X only.",
   "schema_version": 1,
   "framework": "atom",
-  "gpu_arch": "mi300x",
+  "gpu_arch": "mi355x",
   "enforce_thresholds": false,
-  "threshold_json": "mi300x_atom_kimi-k2.6-thinking_accuracy_threshold.json",
+  "threshold_json": "mi355x_atom_kimi-k2.6-thinking_accuracy_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
     "notes": "W7 ACC-11 hendrycks_math record-only"
@@ -22,7 +22,7 @@
   },
   "container": {
     "lifetime": "per_run",
-    "name": "atom_mi300x",
+    "name": "atom_mi355x",
     "image": "rocm/atom-dev:latest",
     "runtime": {
       "name": "docker",

@@ -8,6 +8,9 @@ from pathlib import Path
 
 ATOM = Path(__file__).resolve().parents[1] / "cvs/input/config_file/inference/atom"
 
+# Kimi MXFP4 Triton MoE requires aiter shuffle_scale_moe on gfx950; no MI300X stems.
+MI355X_ONLY_STEMS = frozenset({"kimi-k2.5-mxfp4"})
+
 P2 = [
     {
         "tracker": 10,
@@ -228,7 +231,8 @@ def make_threshold(gpu: str, w: dict) -> dict:
 def main() -> None:
     created = 0
     for w in P2:
-        for gpu in ("mi300x", "mi355x"):
+        gpus = ("mi355x",) if w["stem"] in MI355X_ONLY_STEMS else ("mi300x", "mi355x")
+        for gpu in gpus:
             stem = f"{gpu}_atom_{w['stem']}_single"
             (ATOM / f"{stem}.json").write_text(
                 json.dumps(make_config(gpu, w), indent=2) + "\n",
