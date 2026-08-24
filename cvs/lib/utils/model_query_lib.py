@@ -599,8 +599,10 @@ class LongContextNiahBenchmark:
         seed: int,
         host: str = "0.0.0.0",
         request_timeout_sec: int = DEFAULT_REQUEST_TIMEOUT_SEC,
+        local_files_only: bool = False,
     ) -> str:
         """Python source run inside benchmark container (docker exec)."""
+        tok_extra = ", local_files_only=True" if local_files_only else ""
         return "\n".join(
             [
                 "import json, random, re, string, sys, urllib.error, urllib.request",
@@ -667,7 +669,7 @@ class LongContextNiahBenchmark:
                 "",
                 "def main():",
                 "    random.seed(SEED)",
-                "    tok = AutoTokenizer.from_pretrained(MODEL, trust_remote_code=True)",
+                "    tok = AutoTokenizer.from_pretrained(MODEL, trust_remote_code=True" + tok_extra + ")",
                 "    results = []",
                 "    correct = 0",
                 "    for i in range(NUM_PROMPTS):",
@@ -778,6 +780,7 @@ class LongContextNiahBenchmark:
         exec_timeout_sec = int(i_dict.get("exec_timeout_sec", cls.DEFAULT_EXEC_TIMEOUT_SEC))
         request_timeout_sec = int(i_dict.get("request_timeout_sec", cls.DEFAULT_REQUEST_TIMEOUT_SEC))
         tolerance_frac = float(i_dict.get("tolerance_frac", cls.DEFAULT_TOLERANCE_FRAC))
+        local_files_only = bool(i_dict.get("local_files_only", False))
         log_path = f"{log_dir.rstrip('/')}/benchmark_node/{log_basename}"
 
         expected_block = i_dict.get("expected_results") or {}
@@ -804,6 +807,7 @@ class LongContextNiahBenchmark:
                 "num_prompts": num_prompts,
                 "seed": seed,
                 "request_timeout_sec": request_timeout_sec,
+                "local_files_only": local_files_only,
             },
         }
         return inner_cmd, scoring

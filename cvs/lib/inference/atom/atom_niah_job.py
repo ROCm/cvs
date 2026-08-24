@@ -35,9 +35,10 @@ def run_niah_cell(
     i_dict = {
         "num_prompts": cell.num_prompts,
         "seed": cell.seed,
+        "local_files_only": True,
         "expected_results": {"auto": {LongContextNiahBenchmark.DEFAULT_METRIC_KEY: expected_pass_rate}},
     }
-    inner_cmd, scoring = LongContextNiahBenchmark.prepare(
+    _inner_cmd, scoring = LongContextNiahBenchmark.prepare(
         i_dict,
         port=port,
         host=host,
@@ -51,6 +52,7 @@ def run_niah_cell(
     b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
     probe_path = "/tmp/long_ctx_niah_probe.py"
     cmd = (
+        f"source /tmp/server_env_script.sh && "
         f"mkdir -p {shlex.quote(output_dir)}/benchmark_node && "
         f"echo {shlex.quote(b64)} | base64 -d > {shlex.quote(probe_path)} && "
         f"python3 {shlex.quote(probe_path)} 2>&1 | tee {shlex.quote(scoring['log_path'])}"

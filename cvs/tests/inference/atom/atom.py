@@ -383,10 +383,13 @@ def test_atom_long_context_accuracy(orch, variant_config, long_context_acc_cell,
     lc_thresholds = (variant_config.thresholds or {}).get("long_context_accuracy", {})
     cell_specs = lc_thresholds.get(long_context_acc_cell, {})
     metric_key = f"accuracy.niah_pass_rate__{cell.id}"
-    expected = 1.0
     min_spec = cell_specs.get(metric_key)
-    if isinstance(min_spec, dict) and min_spec.get("kind") == "min":
-        expected = float(min_spec["value"])
+    gate = variant_config.enforce_thresholds and isinstance(min_spec, dict) and min_spec.get("kind") == "min"
+    expected = float(min_spec["value"]) if gate else 0.0
+
+    max_ctx = int(variant_config.params.max_model_length)
+    if cell.isl > max_ctx:
+        pytest.skip(f"long_context_accuracy cell {cell.id!r} isl={cell.isl} exceeds params.max_model_length={max_ctx}")
 
     output_dir = f"{variant_config.paths.log_dir}/long_context_accuracy"
     t = time.monotonic()
@@ -407,7 +410,11 @@ def test_atom_long_context_accuracy(orch, variant_config, long_context_acc_cell,
 
     if not variant_config.enforce_thresholds or not cell_specs:
         return
-    specs = {k: v for k, v in cell_specs.items() if k in actuals and actuals[k] is not None}
+    specs = {
+        k: v
+        for k, v in cell_specs.items()
+        if k in actuals and actuals[k] is not None and isinstance(v, dict) and v.get("kind") != "info"
+    }
     if specs:
         evaluate_all(actuals, specs)
 

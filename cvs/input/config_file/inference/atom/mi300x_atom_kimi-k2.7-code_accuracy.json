@@ -54,7 +54,7 @@
     "port_no": "8000",
     "tensor_parallelism": "8",
     "num_prompts": "1",
-    "max_model_length": "4096"
+    "max_model_length": "8192"
   },
   "functional": {"api_smoke": true, "health_check": true},
   "long_context_accuracy": {
