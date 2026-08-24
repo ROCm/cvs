@@ -33,6 +33,7 @@ class RegisterRequest(BaseModel):
     '''Data model for a agent to register itself with the server'''
 
     rank: int = Field(ge=0)
+    hostname: str
     port: int = Field(gt=0, le=65535)
 
 

@@ -29,17 +29,18 @@ from cvs.core.agent.messages import (
 
 class TestRegisterRequest(unittest.TestCase):
     def test_accepts_valid_rank_and_port(self):
-        req = RegisterRequest(rank=1, port=8080)
+        req = RegisterRequest(rank=1, hostname="node1", port=8080)
         self.assertEqual(req.rank, 1)
+        self.assertEqual(req.hostname, "node1")
         self.assertEqual(req.port, 8080)
 
     def test_rejects_negative_rank(self):
         with self.assertRaises(ValidationError):
-            RegisterRequest(rank=-1, port=8080)
+            RegisterRequest(rank=-1, hostname="node1", port=8080)
 
     def test_rejects_out_of_range_port(self):
         with self.assertRaises(ValidationError):
-            RegisterRequest(rank=0, port=70000)
+            RegisterRequest(rank=0, hostname="node1", port=70000)
 
 
 class TestExecRequest(unittest.TestCase):
