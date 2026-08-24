@@ -1,8 +1,11 @@
 """
-PyTorch XDit FLUX.1-dev unified multi-node distributed inference test.
+PyTorch XDit FLUX unified multi-node distributed inference test.
 
-Runs one coordinated FLUX.1-dev torchrun job across ``nnodes`` inside the
-amdsiloai/pytorch-xdit container and validates results against configured thresholds.
+Runs one coordinated FLUX text-to-image torchrun job across ``nnodes`` inside the
+pytorch-xdit container and validates results against configured thresholds.
+
+Supports FLUX.1-dev (run_usp.py) and FLUX.2-dev (flux2_example.py); model family
+is inferred from ``model_repo``, local ``model_index.json``, or ``model_type``.
 
 Requires:
   - config ``nnodes >= 2`` with matching parallel-degree product
@@ -477,18 +480,19 @@ def test_verify_parallelism_config(cluster_dict, inference_dict, benchmark_param
 
 def test_run_flux1_benchmark(s_phdl, cluster_dict, inference_dict, benchmark_params_dict, hf_token):
     """
-    Run unified multi-node FLUX.1-dev benchmark via torchrun across server nodes.
+    Run unified multi-node FLUX benchmark (FLUX.1-dev or FLUX.2-dev) via torchrun.
     """
     globals.error_list = []
-    for msg in launch_flux_benchmark(
+    errors = launch_flux_benchmark(
         s_phdl,
         inference_dict,
         benchmark_params_dict,
         hf_token,
         distributed=True,
         cluster_dict=cluster_dict,
-    ):
-        fail_test(msg)
+    )
+    if errors:
+        fail_test(f"Following FAILURES seen - {errors}")
     update_test_result()
 
 

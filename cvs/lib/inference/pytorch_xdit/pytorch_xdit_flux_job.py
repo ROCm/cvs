@@ -513,6 +513,14 @@ def build_flux2_benchmark_cmd(
     )
     run_once = f"{torchrun_prefix} {FLUX2_EXAMPLE_PATH} {flux2_args}"
 
+    if distributed and node_rank != 0:
+        log.info(
+            "FLUX.2 distributed worker node_rank=%d: torchrun only (timing.json written on rank 0)",
+            node_rank,
+        )
+        inner = f"cd {shlex.quote(output_dir_container)} && {run_once}"
+        return f"bash -c {shlex.quote(inner)}"
+
     log.info(
         "FLUX.2 benchmark uses one torchrun session (warmup_steps=%s); "
         "num_repetitions/warmup_calls in config apply to FLUX.1 run_usp only",

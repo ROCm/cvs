@@ -140,6 +140,62 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         self.assertNotIn("for _ in range(reps)", cmd)
         self.assertNotIn("FLUX2_RUN_CMD", cmd)
 
+    def test_flux1_distributed_uses_run_usp(self):
+        cmd = build_torchrun_cmd(
+            self._FLUX1_PARAMS,
+            model_repo="black-forest-labs/FLUX.1-dev",
+            distributed=True,
+            node_rank=1,
+            nnodes=2,
+            master_addr="10.0.0.1",
+            master_port=29500,
+        )
+        self.assertIn(RUN_USP_PATH, cmd)
+        self.assertNotIn(FLUX2_EXAMPLE_PATH, cmd)
+        self.assertIn("--nnodes=2", cmd)
+        self.assertIn("--node_rank=1", cmd)
+        self.assertIn("--benchmark_output_directory", cmd)
+
+    def test_flux2_distributed_rank0_writes_timing(self):
+        params = {
+            **self._FLUX1_PARAMS,
+            "num_inference_steps": 50,
+            "max_sequence_length": 512,
+        }
+        cmd = build_torchrun_cmd(
+            params,
+            model_repo="/model",
+            model_repo_hints=["black-forest-labs/FLUX.2-dev"],
+            distributed=True,
+            node_rank=0,
+            nnodes=2,
+            master_addr="10.0.0.1",
+            master_port=29500,
+        )
+        self.assertIn(FLUX2_EXAMPLE_PATH, cmd)
+        self.assertIn("--node_rank=0", cmd)
+        self.assertIn("results/timing.json", cmd)
+
+    def test_flux2_distributed_worker_skips_timing_wrapper(self):
+        params = {
+            **self._FLUX1_PARAMS,
+            "num_inference_steps": 50,
+            "max_sequence_length": 512,
+        }
+        cmd = build_torchrun_cmd(
+            params,
+            model_repo="/model",
+            model_repo_hints=["black-forest-labs/FLUX.2-dev"],
+            distributed=True,
+            node_rank=1,
+            nnodes=2,
+            master_addr="10.0.0.1",
+            master_port=29500,
+        )
+        self.assertIn(FLUX2_EXAMPLE_PATH, cmd)
+        self.assertIn("--node_rank=1", cmd)
+        self.assertNotIn("results/timing.json", cmd)
+
 
 if __name__ == "__main__":
     unittest.main()
