@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, List, Mapping, Optional
+from typing import List, Mapping, Optional
 
 from cvs.lib.report.accuracy_lifecycle import (
     build_accuracy_prev_run_panel,
