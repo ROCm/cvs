@@ -56,10 +56,6 @@ In the CVS repo, variants are flat sibling pairs in **this directory**:
 | `mi300x_atom_deepseek-v4-pro_distributed` | `…_distributed_threshold.json` | MI300X | `vllm_atom` | **P1 #10** V4 Pro PP=2 multinode |
 | `mi355x_atom_deepseek-r1_mxfp4_accuracy` | `…_mxfp4_accuracy_threshold.json` | MI355X | `atom` | W17 MXFP4 gsm8k accuracy seed |
 
-See also [plans/atom-workload-tracker.md](../../../../../plans/atom-workload-tracker.md) for the CVS automation map,
-[plans/atom-tracker-excel-update.md](../../../../../plans/atom-tracker-excel-update.md) for Excel Online updates, and
-[plans/atom-accuracy-test-catalog.md](../../../../../plans/atom-accuracy-test-catalog.md) for ACC-* detail.
-
 Add analogous config + threshold pairs for other archs or models as needed.
 
 ## Variant suffix guide — one model, many configs?
@@ -99,8 +95,6 @@ Add analogous config + threshold pairs for other archs or models as needed.
 | W2, W3, W13, W17 | `{gpu}_…_single` | `…_accuracy` when quality gates land |
 | W7, W9, W13 (Kimi) | **`mi355x_*` only** | No MI300X stems — aiter MXFP4 Triton MoE needs gfx950 |
 | All | **Separate `mi300x_*` and `mi355x_*`** | Never share thresholds across GPU arch |
-
-See also the parent automation plan **Section 12.1.1** (`atom-cvs-automation-plan.md`).
 
 Keys prefixed with `_` (e.g. `_comment`) are inline comments and are ignored by
 the loader.
