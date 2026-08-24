@@ -71,6 +71,8 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "tpot_metric": { "type": "string" },
+            "output_throughput_metric": { "type": "string" },
+            "total_throughput_metric": { "type": "string" },
             "title": { "type": "string" },
             "hint": { "type": "string" }
           }

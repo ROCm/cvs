@@ -11,6 +11,7 @@ from cvs.lib.report.testing.fixtures import (
     generic_variant,
     two_cell_inf_res,
 )
+from cvs.lib.report.types import InferenceReportConfig
 
 
 class TestViewerConfig(unittest.TestCase):
@@ -26,6 +27,36 @@ class TestViewerConfig(unittest.TestCase):
         self.assertTrue(any(col.get("field") == "isl" for col in vc["table_columns"]))
         self.assertTrue(vc["interactivity"]["enabled"])
         self.assertEqual(vc["interactivity"]["tpot_metric"], "client.mean_tpot_ms")
+        self.assertEqual(vc["interactivity"]["output_throughput_metric"], "client.output_throughput")
+        self.assertEqual(vc["interactivity"]["total_throughput_metric"], "client.total_token_throughput")
+
+    def test_sglang_profile_interactivity_metrics(self):
+        import json
+
+        from cvs.lib.report.profile import profile_json_path
+
+        profile = json.loads(profile_json_path("sglang").read_text(encoding="utf-8"))
+        inter = profile["viewer"]["interactivity"]
+        self.assertEqual(inter["tpot_metric"], "mean_tpot_ms")
+        self.assertEqual(inter["output_throughput_metric"], "output_throughput_per_sec")
+
+        config = resolve_report_config(generic_sweep_profile())
+        config = InferenceReportConfig(
+            **{
+                **config.__dict__,
+                "suite_id": "sglang",
+                "headline_metric": "output_throughput_per_sec",
+                "metric_prefix": "",
+                "results_columns": (
+                    ("Output tok/s", "output_throughput_per_sec"),
+                    ("Mean TPOT (ms)", "mean_tpot_ms"),
+                ),
+            }
+        )
+        vc = ViewerConfigBuilder(profile, config).build()
+        self.assertEqual(vc["interactivity"]["tpot_metric"], "mean_tpot_ms")
+        self.assertIn("output_throughput_per_sec", vc["metrics"])
+        self.assertIn("mean_tpot_ms", vc["metrics"])
 
     def test_viewer_config_builder_class(self):
         profile = generic_sweep_profile()

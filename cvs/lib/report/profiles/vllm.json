@@ -67,10 +67,19 @@
     "row_card_extras": true,
     "row_card_test_names": ["test_metric", "test_gpu_metric", "test_prom_metric"]
   },
+  "viewer": {
+    "interactivity": {
+      "enabled": true,
+      "tpot_metric": "client.mean_tpot_ms",
+      "output_throughput_metric": "client.output_throughput",
+      "total_throughput_metric": "client.total_token_throughput"
+    }
+  },
   "cards": [
     {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
     {"type": "lifecycle_timeline", "id": "lifecycle", "title": "Lifecycle timeline", "bind": "lifecycle"},
     {"type": "sweep_analytics", "id": "sweep", "title": "Sweep analytics", "bind": "datasets.sweep"},
+    {"type": "interactivity_viewer", "id": "interactivity", "title": "Interactivity", "bind": "viewer_config", "when_empty": "hide"},
     {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
     {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
     {"type": "sweep_cell_cards", "id": "cells", "title": "Sweep cells", "bind": "cells"},

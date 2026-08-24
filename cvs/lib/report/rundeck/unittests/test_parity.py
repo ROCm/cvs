@@ -78,6 +78,22 @@ class TestRundeckParity(unittest.TestCase):
         self.assertIn("Full results", doc)
         self.assertIn("Sweep analytics", doc)
 
+    def test_interactivity_viewer_card_links_to_viewer(self):
+        profile = generic_sweep_profile()
+        payload = build_rundeck_payload(
+            profile=profile,
+            store={
+                "inf_res_dict": two_cell_inf_res(),
+                "variant_config": generic_variant(),
+                "lifecycle_report": {},
+            },
+            cvs_version="1.0.0",
+        )
+        payload["summary"] = {"viewer_html": "test_inference_suite_run_deck_viewer.html"}
+        doc = render_rundeck_html(payload)
+        self.assertIn("Open interactivity chart", doc)
+        self.assertIn("test_inference_suite_run_deck_viewer.html#interactivity-panel", doc)
+
     def test_inference_render_path_uses_unified_runtime(self):
         config = build_inference_config_from_profile(generic_sweep_profile())
         payload = build_inference_report_payload(

@@ -317,6 +317,8 @@ const FALLBACK_VIEWER_CONFIG = {
   interactivity: {
     enabled: true,
     tpot_metric: 'client.mean_tpot_ms',
+    output_throughput_metric: 'client.output_throughput',
+    total_throughput_metric: 'client.total_token_throughput',
     title: 'Token Throughput per GPU vs. Interactivity',
     hint: 'Interactivity = 1000 / mean TPOT (ms) (tok/s/user) · Y = total token throughput per GPU · scroll to zoom · shift+drag to pan · drag to box-zoom · click a point to pin the detail card',
   },
@@ -370,6 +372,17 @@ function shapeLabelFromSummary(s) {
 
 function interactivityTpotMetric() {
   return (viewerConfig().interactivity || {}).tpot_metric || 'client.mean_tpot_ms';
+}
+
+function interactivityMetricKeys() {
+  const inter = viewerConfig().interactivity || {};
+  return {
+    tpot: inter.tpot_metric || 'client.mean_tpot_ms',
+    total: inter.total_throughput_metric || 'client.total_token_throughput',
+    output: inter.output_throughput_metric || 'client.output_throughput',
+    perGpu: inter.per_gpu_throughput_metric || 'client.per_gpu_throughput',
+    outputPerGpu: inter.output_per_gpu_throughput_metric || 'client.output_tput_per_gpu',
+  };
 }
 
 function tableColumns() {
@@ -867,18 +880,20 @@ function gpusFromCell(cell) {
 }
 
 function totalPerGpuThroughput(cell) {
-  const direct = metricNum(cell, 'client.per_gpu_throughput');
+  const keys = interactivityMetricKeys();
+  const direct = metricNum(cell, keys.perGpu);
   if (direct != null) return direct;
-  const tput = metricNum(cell, 'client.total_token_throughput');
+  const tput = metricNum(cell, keys.total);
   const gpus = gpusFromCell(cell);
-  if (tput == null || !gpus) return null;
-  return tput / gpus;
+  if (tput != null && gpus) return tput / gpus;
+  return outputPerGpuThroughput(cell);
 }
 
 function outputPerGpuThroughput(cell) {
-  const direct = metricNum(cell, 'client.output_tput_per_gpu');
+  const keys = interactivityMetricKeys();
+  const direct = metricNum(cell, keys.outputPerGpu);
   if (direct != null) return direct;
-  const tput = metricNum(cell, 'client.output_throughput');
+  const tput = metricNum(cell, keys.output);
   const gpus = gpusFromCell(cell);
   if (tput == null || !gpus) return null;
   return tput / gpus;
@@ -886,8 +901,9 @@ function outputPerGpuThroughput(cell) {
 
 function inputPerGpuThroughput(cell, totalPg, outputPg) {
   if (totalPg != null && outputPg != null) return totalPg - outputPg;
-  const total = metricNum(cell, 'client.total_token_throughput');
-  const output = metricNum(cell, 'client.output_throughput');
+  const keys = interactivityMetricKeys();
+  const total = metricNum(cell, keys.total);
+  const output = metricNum(cell, keys.output);
   const gpus = gpusFromCell(cell);
   if (total != null && output != null && gpus) return (total - output) / gpus;
   return null;

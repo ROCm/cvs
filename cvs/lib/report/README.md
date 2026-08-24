@@ -116,6 +116,11 @@ Artifacts next to the pytest HTML report:
 | `{report_basename}_viewer.html` | Sweep + `interactive_viewer: true` |
 | `{report_basename}_summary.html` | CI one-pager |
 
+The interactive viewer includes a **Token Throughput per GPU vs. Interactivity**
+chart (InferenceX-style). Configure axis metrics under `viewer.interactivity`
+in the profile JSON; the static Run Deck links to it via the
+`interactivity_viewer` card.
+
 ## Author tiers
 
 | Tier | You add | Core adds |

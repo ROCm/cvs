@@ -134,13 +134,21 @@ class ViewerConfigBuilder:
             self.viewer.get("interactivity") if isinstance(self.viewer.get("interactivity"), dict) else {}
         )
         tpot_metric = interactivity_raw.get("tpot_metric") or self.config.full_metric("mean_tpot_ms")
+        output_metric = interactivity_raw.get("output_throughput_metric") or self.config.headline_metric
+        total_metric = interactivity_raw.get("total_throughput_metric") or self.config.full_metric(
+            "total_token_throughput"
+        )
         return {
             "enabled": bool(interactivity_raw.get("enabled", self.config.interactive_viewer)),
             "tpot_metric": tpot_metric,
+            "output_throughput_metric": output_metric,
+            "total_throughput_metric": total_metric,
             "title": interactivity_raw.get("title") or "Token Throughput per GPU vs. Interactivity",
             "hint": interactivity_raw.get(
                 "hint",
-                "Interactivity = 1000 / mean TPOT (ms) (tok/s/user) · Y = total token throughput per GPU",
+                "Interactivity = 1000 / mean TPOT (ms) (tok/s/user), matching InferenceX · "
+                "Y = total token throughput per GPU · scroll to zoom · shift+drag to pan · "
+                "drag to box-zoom · click a point to pin the detail card",
             ),
         }
 
@@ -164,10 +172,11 @@ class ViewerConfigBuilder:
             full = self.config.full_metric(ch.metric_suffix)
             metrics[full] = self._metric_meta(full, ch.title, invert=ch.invert)
         for label, key in self.config.results_columns:
-            if not key or not str(key).startswith("client."):
+            if not key:
                 continue
-            if key not in metrics:
-                metrics[key] = self._metric_meta(key, str(label))
+            key_str = str(key)
+            if key_str not in metrics:
+                metrics[key_str] = self._metric_meta(key_str, str(label))
         return metrics
 
     def _table_columns_from_config(self) -> list[dict[str, Any]]:
@@ -208,7 +217,7 @@ class ViewerConfigBuilder:
                     field = LABEL_TO_FIELD.get(str(label))
                     if field:
                         out.append({"field": field, "label": str(label)})
-                elif str(key).startswith("client."):
+                elif key is not None:
                     out.append({"metric": str(key), "label": str(label)})
         return out
 

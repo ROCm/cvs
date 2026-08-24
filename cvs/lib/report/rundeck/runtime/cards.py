@@ -199,6 +199,28 @@ def _render_heatmap(_payload: dict, card: dict, data: Any) -> str:
     return f"<h3>{html.escape(title)}</h3><table class='results-table'><tr>{head}</tr>{body}</table>"
 
 
+def _render_interactivity_viewer(payload: dict, card: dict, _data: Any) -> str:
+    summary = payload.get("summary") or {}
+    viewer_name = summary.get("viewer_html")
+    if not viewer_name:
+        return ""
+    vc = payload.get("viewer_config") or {}
+    inter = vc.get("interactivity") or {}
+    if inter.get("enabled") is False:
+        return ""
+    title = card.get("title") or inter.get("title") or "Interactivity chart"
+    hint = inter.get("hint") or (
+        "Interactivity = 1000 / mean TPOT (ms) (tok/s/user) · Y = token throughput per GPU"
+    )
+    href = html.escape(f"{viewer_name}#interactivity-panel")
+    return (
+        f"<p class='viewer-banner'><strong>{html.escape(title)}</strong> — "
+        f"one line per sweep shape; hover for detail, click to pin. "
+        f"<a href='{href}'>Open interactivity chart</a> in the interactive viewer.</p>"
+        f"<p class='subsection-hint'>{html.escape(hint)}</p>"
+    )
+
+
 CARD_RENDERERS: dict[str, Callable[[dict, dict, Any], str]] = {
     "run_card": _render_run_card,
     "lifecycle_timeline": _render_lifecycle,
@@ -210,6 +232,7 @@ CARD_RENDERERS: dict[str, Callable[[dict, dict, Any], str]] = {
     "launch_panel": _render_launch,
     "line_chart": _render_line_chart,
     "heatmap": _render_heatmap,
+    "interactivity_viewer": _render_interactivity_viewer,
 }
 
 
