@@ -11,17 +11,20 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     RUN_WAN_DIFFUSERS_PATH,
     RUN_WAN_NATIVE_PATH,
     WAN_DIFFUSERS_LAUNCHER_XFUSER,
+    WAN_XFUSER_BENCHMARK_OUTPUT_DIR,
     WAN_XFUSER_EXAMPLE_CONTAINER_PATH,
     WAN_MODEL_FORMAT_DIFFUSERS,
     build_run_wan_diffusers_args,
     build_run_wan_native_args,
     build_run_wan_xfuser_example_args,
     build_torchrun_cmd,
+    build_wan_output_verify_cmd,
     detect_wan_model_format_from_model_index,
     parallel_product,
     parse_wan_size,
     resolve_wan_diffusers_launcher,
     resolve_wan_model_format,
+    scan_wan_xfuser_benchmark_output,
     validate_parallelism,
     validate_wan_parallelism_config,
 )
@@ -140,9 +143,9 @@ class TestBuildRunWanArgs(unittest.TestCase):
         )
         self.assertIn("--input_image /benchmark/i2v_input.JPG", args)
         self.assertIn("--num_repetitions 5", args)
-        self.assertIn("--benchmark_output_directory outputs", args)
-        self.assertIn("--save_video_path outputs/video.mp4", args)
-        self.assertIn("--output_directory outputs", args)
+        self.assertIn("--benchmark_output_directory /outputs/outputs", args)
+        self.assertIn("--save_video_path /outputs/outputs/video.mp4", args)
+        self.assertIn("--output_directory /outputs/outputs", args)
         self.assertIn("--output_type np", args)
         self.assertNotIn("--task i2v", args)
 
@@ -213,8 +216,22 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         )
         self.assertIn(WAN_XFUSER_EXAMPLE_CONTAINER_PATH, cmd)
         self.assertIn("--input_image /benchmark/i2v_input.JPG", cmd)
-        self.assertIn("mkdir -p outputs", cmd)
+        self.assertIn("mkdir -p /outputs/outputs", cmd)
         self.assertNotIn(RUN_WAN_DIFFUSERS_PATH, cmd)
+
+
+class TestWanOutputVerification(unittest.TestCase):
+    def test_scan_xfuser_success_output(self):
+        self.assertTrue(scan_wan_xfuser_benchmark_output("epoch time: 12.34 sec, memory: 40.00 GB"))
+        self.assertFalse(scan_wan_xfuser_benchmark_output("Traceback (most recent call last):"))
+
+    def test_build_wan_output_verify_cmd(self):
+        cmd = build_wan_output_verify_cmd("/tmp/wan_22_host_outputs")
+        self.assertIn("rank0_step*.json", cmd)
+        self.assertIn("WAN_OUTPUT_OK", cmd)
+
+    def test_xfuser_benchmark_output_dir_constant(self):
+        self.assertEqual(WAN_XFUSER_BENCHMARK_OUTPUT_DIR, "/outputs/outputs")
 
 
 class TestBuildNcclEnv(unittest.TestCase):

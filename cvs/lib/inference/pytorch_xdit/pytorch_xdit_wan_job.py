@@ -52,11 +52,11 @@ WAN_DIFFUSERS_LAUNCHER_XFUSER = "xfuser_example"
 RUN_WAN_NATIVE_PATH = "/app/Wan2.2/run.py"
 RUN_WAN_DIFFUSERS_PATH = "/app/Wan/run.py"
 WAN_XFUSER_EXAMPLE_CONTAINER_PATH = "/benchmark/wan_i2v_example.py"
+CONTAINER_OUTPUT_MOUNT = "/outputs"
 WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR = "results/outputs"
-WAN_XFUSER_BENCHMARK_OUTPUT_DIR = "outputs"
+WAN_XFUSER_BENCHMARK_OUTPUT_DIR = f"{CONTAINER_OUTPUT_MOUNT}/outputs"
 I2V_INPUT_IMAGE_NATIVE = "/app/Wan2.2/examples/i2v_input.JPG"
 I2V_INPUT_IMAGE_DIFFUSERS = "/app/Wan/i2v_input.JPG"
-CONTAINER_OUTPUT_MOUNT = "/outputs"
 
 RUN_WAN_PATH = RUN_WAN_NATIVE_PATH
 I2V_INPUT_IMAGE = I2V_INPUT_IMAGE_NATIVE
@@ -503,6 +503,21 @@ def scan_wan_fatal_output(output: str) -> bool:
     return any(re.search(p, output or "", re.I) for p in WAN_FATAL_OUTPUT_PATTERNS_EXTRA)
 
 
+def scan_wan_xfuser_benchmark_output(output: str) -> bool:
+    """True when xFuser wan_i2v_example emitted at least one timed epoch line."""
+    return bool(re.search(r"epoch time:\s*[\d.]+", output or "", re.I))
+
+
+def build_wan_output_verify_cmd(host_output_dir: str) -> str:
+    """Return a shell command that prints WAN_OUTPUT_OK when rank0 timing JSON exists."""
+    quoted = shlex.quote(host_output_dir)
+    inner = (
+        f"find {quoted} -name 'rank0_step*.json' -print -quit 2>/dev/null | grep -q . "
+        f"&& echo WAN_OUTPUT_OK || echo WAN_OUTPUT_MISSING"
+    )
+    return f"bash -c {shlex.quote(inner)}"
+
+
 def build_wan_output_cleanup_cmd(output_base_dir: str, *, use_sudo: bool = True) -> str:
     prefix = "sudo " if use_sudo else ""
     return f"bash -c {shlex.quote(f'{prefix}rm -rf {output_base_dir}/wan_22_*_outputs')}"
@@ -848,6 +863,64 @@ class WanBenchmarkJob:
 
         if failed_nodes:
             errors.append(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
+            return results or {}, plan, errors
+
+        model_format = resolve_wan_model_format_for_job(
+            self.wan_params,
+            model_repo_hints=self._wan_model_repo_hints(),
+            resolved_model_format=self.inference_dict.get("_resolved_wan_model_format"),
+        )
+        launcher = ""
+        if is_wan_diffusers_model(model_format):
+            launcher = resolve_wan_diffusers_launcher(self.wan_params, self.inference_dict)
+
+        verify_cmds = [
+            build_wan_output_verify_cmd(plan.output_dirs_by_node[node]) for node in plan.node_order
+        ]
+        try:
+            verify_results = _exec_cmd_list_on_nodes(
+                self.s_phdl,
+                plan.node_order,
+                verify_cmds,
+                print_console=False,
+            )
+        except Exception as exc:
+            errors.append(f"Failed to verify WAN benchmark outputs: {exc}")
+            return results or {}, plan, errors
+
+        missing_output_nodes = []
+        for node in plan.node_order:
+            host_output_dir = plan.output_dirs_by_node[node]
+            verify_output = (verify_results or {}).get(node, "")
+            if "WAN_OUTPUT_OK" in (verify_output or ""):
+                log.info("WAN benchmark outputs verified under %s on %s", host_output_dir, node)
+                continue
+
+            missing_output_nodes.append(node)
+            node_log = (results or {}).get(node, "")
+            log.error(
+                "No rank0_step*.json files found under %s on %s",
+                host_output_dir,
+                node,
+            )
+            if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER and not scan_wan_xfuser_benchmark_output(node_log):
+                errors.append(
+                    f"No rank0_step*.json under {host_output_dir} on {node} and no xFuser "
+                    f"'epoch time:' lines in benchmark log. Remount the updated "
+                    f"cvs/lib/inference/pytorch_xdit/scripts/wan_i2v_example.py, reinstall "
+                    f"CVS (pip install -e .), and confirm wan_diffusers_launcher is "
+                    f"{WAN_DIFFUSERS_LAUNCHER_XFUSER!r}."
+                )
+            else:
+                errors.append(
+                    f"No rank0_step*.json files found under {host_output_dir} on {node}. "
+                    f"Check benchmark logs for errors and inspect the output tree with: "
+                    f"find {host_output_dir} -type f"
+                )
+
+        if missing_output_nodes:
+            for node in missing_output_nodes:
+                log_benchmark_failure_excerpt(node, (results or {}).get(node, ""))
 
         return results or {}, plan, errors
 

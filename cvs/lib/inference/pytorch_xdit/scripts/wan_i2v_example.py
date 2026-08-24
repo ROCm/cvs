@@ -51,18 +51,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt", default="A person walking in a park, cinematic style.")
     parser.add_argument(
         "--output_directory",
-        default="outputs",
+        default="/outputs/outputs",
         help="Directory for xFuser save_output, rank0_step JSON, and video.mp4.",
     )
     parser.add_argument(
         "--save_video_path",
-        default="outputs/video.mp4",
+        default="/outputs/outputs/video.mp4",
         help="Canonical MP4 path for CVS artifact checks.",
     )
     parser.add_argument("--video_fps", type=int, default=16)
     parser.add_argument(
         "--benchmark_output_directory",
-        default="outputs",
+        default="/outputs/outputs",
         help="Directory for rank0_step*.json timing files",
     )
     return parser.parse_args()
