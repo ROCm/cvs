@@ -26,8 +26,6 @@
             "num_inference_steps": 40,
             "compile": true,
             "torchrun_nproc": 8,
-            "ulysses_size": 8,
-            "ring_size": 1,
             "expected_results": {
                 "auto": {
                     "max_avg_total_time_s": 15.0

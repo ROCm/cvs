@@ -124,11 +124,9 @@ def wan_config_dict(training_config_file, cluster_dict):
         log.error(f"WAN config validation failed: {e}")
         pytest.fail(f"Invalid WAN configuration: {e}")
 
-    config_dict = raw_config["config"]
-    benchmark_params = raw_config["benchmark_params"]
-
-    config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
-    benchmark_params = resolve_test_config_placeholders(benchmark_params, cluster_dict)
+    validated_dict = validated_config.model_dump()
+    config_dict = resolve_test_config_placeholders(validated_dict["config"], cluster_dict)
+    benchmark_params = resolve_test_config_placeholders(validated_dict["benchmark_params"], cluster_dict)
 
     return {"config": config_dict, "benchmark_params": benchmark_params}
 

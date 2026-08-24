@@ -57,6 +57,17 @@ I2V_INPUT_IMAGE = I2V_INPUT_IMAGE_NATIVE
 
 WAN_DIFFUSERS_DEFAULT_NUM_INFERENCE_STEPS = 40
 WAN_DIFFUSERS_DEFAULT_SEED = 42
+WAN_DEFAULT_RING_SIZE = 1
+
+
+def _ulysses_size(wan_params: Mapping[str, Any]) -> int:
+    if "ulysses_size" in wan_params:
+        return int(wan_params["ulysses_size"])
+    return int(wan_params["torchrun_nproc"])
+
+
+def _ring_size(wan_params: Mapping[str, Any]) -> int:
+    return int(wan_params.get("ring_size", WAN_DEFAULT_RING_SIZE))
 
 WAN_FATAL_OUTPUT_PATTERNS_EXTRA = (
     r"No AMD GPU detected",
@@ -69,7 +80,7 @@ def _secret_str(value: Any) -> str:
 
 
 def parallel_product(wan_params: Mapping[str, Any]) -> int:
-    return int(wan_params["ulysses_size"]) * int(wan_params["ring_size"])
+    return _ulysses_size(wan_params) * _ring_size(wan_params)
 
 
 def validate_parallelism(
@@ -78,6 +89,9 @@ def validate_parallelism(
 ) -> Tuple[int, int, Optional[str]]:
     nproc = int(wan_params["torchrun_nproc"])
     world_size = compute_world_size(nnodes, nproc)
+    if nnodes == 1:
+        return world_size, world_size, None
+
     product = parallel_product(wan_params)
     if product != world_size:
         return (
@@ -168,8 +182,8 @@ def build_run_wan_native_args(
         f"--ckpt_dir {shlex.quote(ckpt_dir)} "
         f"--image {I2V_INPUT_IMAGE_NATIVE} "
         f"--save_file {CONTAINER_OUTPUT_MOUNT}/outputs/video.mp4 "
-        f"--ulysses_size {int(wan_params['ulysses_size'])} "
-        f"--ring_size {int(wan_params['ring_size'])} "
+        f"--ulysses_size {_ulysses_size(wan_params)} "
+        f"--ring_size {_ring_size(wan_params)} "
         f"--vae_dtype bfloat16 "
         f"--frame_num {int(wan_params['frame_num'])} "
         f"--prompt {shlex.quote(str(wan_params['prompt']))} "
@@ -193,11 +207,8 @@ def build_run_wan_diffusers_args(
     )
     num_repetitions = int(wan_params.get("num_repetitions", wan_params["num_benchmark_steps"]))
     compile_flag = "--use_torch_compile" if wan_params.get("compile") else ""
-    ring_flag = (
-        f"--ring_degree {int(wan_params['ring_size'])} "
-        if int(wan_params.get("ring_size", 1)) > 1
-        else ""
-    )
+    ring = _ring_size(wan_params)
+    ring_flag = f"--ring_degree {ring} " if ring > 1 else ""
 
     log.info(
         "WAN diffusers run.py: model=%s size=%dx%d num_repetitions=%s num_inference_steps=%s",
@@ -214,7 +225,7 @@ def build_run_wan_diffusers_args(
         f"--width {width} "
         f"--model {shlex.quote(model_path)} "
         f"--img_file_path {I2V_INPUT_IMAGE_DIFFUSERS} "
-        f"--ulysses_degree {int(wan_params['ulysses_size'])} "
+        f"--ulysses_degree {_ulysses_size(wan_params)} "
         f"{ring_flag}"
         f"--seed {seed} "
         f"--num_frames {int(wan_params['frame_num'])} "
@@ -378,23 +389,24 @@ class WanBenchmarkJob:
 
     def validate_parallelism(self) -> Optional[str]:
         if not self.distributed:
-            _, _, err = validate_parallelism(1, self.wan_params)
-        else:
-            _, _, err = validate_parallelism(self.nnodes, self.wan_params)
+            log.info(
+                "Single-node WAN run: using torchrun_nproc=%s (ulysses/ring inferred when omitted)",
+                self.nproc_per_node,
+            )
+            return None
+
+        _, _, err = validate_parallelism(self.nnodes, self.wan_params)
         if err:
             return err
 
-        world_size, product, _ = validate_parallelism(
-            self.nnodes if self.distributed else 1,
-            self.wan_params,
-        )
+        world_size, product, _ = validate_parallelism(self.nnodes, self.wan_params)
         log.info(
             "Parallelism OK (%s): world_size=%s product=%s (ulysses=%s ring=%s)",
             "distributed" if self.distributed else "single-node",
             world_size,
             product,
-            self.wan_params["ulysses_size"],
-            self.wan_params["ring_size"],
+            _ulysses_size(self.wan_params),
+            _ring_size(self.wan_params),
         )
         return None
 
@@ -704,7 +716,4 @@ def validate_wan_parallelism_config(
         nnodes = resolve_nnodes(inference_dict, nodes)
         _, _, err = validate_parallelism(nnodes, wan_params)
         return err
-    if node_count is not None and node_count > 1:
-        return None
-    _, _, err = validate_parallelism(1, wan_params)
-    return err
+    return None
