@@ -81,6 +81,7 @@ class TestVllmDeckProfile(unittest.TestCase):
             "container_launch",
             "topology_discovery",
             "model_fetch",
+            "openai_smoke",
             "server_ready",
             "teardown",
         }

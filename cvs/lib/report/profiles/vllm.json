@@ -63,7 +63,6 @@
   "lifecycle": {
     "session_labels": [
       "container_launch",
-      "sshd_setup",
       "topology_discovery",
       "model_fetch",
       "openai_smoke",
