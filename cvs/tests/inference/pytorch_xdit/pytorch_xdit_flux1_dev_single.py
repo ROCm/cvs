@@ -14,6 +14,7 @@ import re
 import socket
 import shlex
 import subprocess
+from typing import Optional
 
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
@@ -27,7 +28,10 @@ from cvs.lib import docker_lib
 from cvs.lib import globals
 from cvs.parsers.schemas import ClusterConfigFile, PytorchXditFluxConfigFile
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux import FluxOutputParser, log_results_summary
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import launch_flux_benchmark
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+    launch_flux_benchmark,
+    store_resolved_flux_model_type_from_index,
+)
 
 log = globals.log
 
@@ -328,6 +332,22 @@ def gpu_type(s_phdl):
 # =============================================================================
 
 
+def _read_model_index_from_node(s_phdl, node: str, model_dir: str) -> Optional[dict]:
+    """Read model_index.json from a remote model directory on one node."""
+    index_path = f"{model_dir.rstrip('/')}/model_index.json"
+    output = s_phdl.exec(
+        f"cat {shlex.quote(index_path)}",
+        print_console=False,
+    ).get(node, "")
+    if not (output or "").strip():
+        return None
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError:
+        log.warning("Could not parse model_index.json from %s on %s", index_path, node)
+        return None
+
+
 def test_cleanup_stale_containers(s_phdl, inference_dict):
     """
     Clean up potentially stale Docker containers before tests on all nodes.
@@ -425,6 +445,9 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
         # We'll mount this host path into the container at /model for consistent access.
         inference_dict["_resolved_model_mount_host"] = host_model_path
         inference_dict["_resolved_model_path_container"] = "/model"
+        model_index = _read_model_index_from_node(s_phdl, s_phdl.host_list[0], host_model_path)
+        if model_index:
+            store_resolved_flux_model_type_from_index(inference_dict, model_index)
         log.info(f"Using local model path: {host_model_path} (mounted to /model in container) on all nodes")
         update_test_result()
         return
@@ -459,6 +482,9 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
         inference_dict["_resolved_model_path_container"] = (
             f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
         )
+        model_index = _read_model_index_from_node(s_phdl, s_phdl.host_list[0], snapshot_dir_host)
+        if model_index:
+            store_resolved_flux_model_type_from_index(inference_dict, model_index)
         log.info(f"Using pre-cached snapshot: {inference_dict['_resolved_model_path_container']} on all nodes")
         update_test_result()
         return
@@ -501,6 +527,9 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
         return
 
     inference_dict["_resolved_model_path_container"] = f"/hf_home/hub/models--{model_path_safe}/snapshots/{snapshot_id}"
+    model_index = _read_model_index_from_node(s_phdl, head_node, snapshot_dir_host)
+    if model_index:
+        store_resolved_flux_model_type_from_index(inference_dict, model_index)
     log.info(f"Using pre-cached snapshot: {inference_dict['_resolved_model_path_container']} on all nodes")
 
     update_test_result()

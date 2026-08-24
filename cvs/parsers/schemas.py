@@ -684,8 +684,8 @@ class PytorchXditFlux1DevBenchmarks(BaseModel):
     model_type: Optional[str] = Field(
         default=None,
         description=(
-            "run_usp.py --model_type (e.g. flux2 for FLUX.2-dev, flux_kontext for FLUX.1-Kontext). "
-            "Auto-inferred from model_repo when omitted."
+            "FLUX model family override (flux2 for FLUX.2-dev, flux_kontext for FLUX.1-Kontext). "
+            "Auto-inferred from model_repo or model_index.json when omitted."
         ),
     )
     guidance_scale: Optional[float] = Field(

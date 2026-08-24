@@ -10,9 +10,8 @@ Distributed mode:
   - All nodes share rank-0 output dir ``flux_{rank0_hostname}_outputs``.
   - Requires parallel-degree product == nnodes × torchrun_nproc.
 
-FLUX.2-dev is selected via ``--model_type flux2`` on ``run_usp.py`` (auto-inferred from
-``model_repo`` when it contains ``FLUX.2``). See ``/app/external/xdit/examples/flux2_example.py``
-in the pytorch-xdit container for the underlying xFuserFlux2Pipeline integration.
+FLUX.2-dev is launched via ``/app/external/xdit/examples/flux2_example.py`` (xFuserFlux2Pipeline).
+FLUX.1-dev continues to use ``/app/Flux/run_usp.py``.
 
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
@@ -262,21 +261,78 @@ def validate_parallelism(
 
 def infer_flux_model_type(model_repo: str, explicit_model_type: Optional[str] = None) -> Optional[str]:
     """
-    Resolve run_usp.py --model_type from config or model_repo path/name.
+    Resolve run_usp.py --model_type from a single repo/path string.
 
-    FLUX.2-dev requires ``flux2`` (Flux2Pipeline); FLUX.1-Kontext requires ``flux_kontext``.
-    When unset and the repo id/path does not match a known variant, omit the flag (FLUX.1 default).
+    Prefer :func:`resolve_flux_model_type` when multiple hints are available.
+    """
+    return resolve_flux_model_type(explicit_model_type, model_repo)
+
+
+def detect_flux_model_type_from_model_index(model_index: Mapping[str, Any]) -> Optional[str]:
+    """Detect FLUX model family from a diffusers model_index.json payload."""
+    class_name = str(model_index.get("_class_name", ""))
+    if "Klein" in class_name:
+        return "flux2_klein"
+    if "Flux2" in class_name:
+        return "flux2"
+    if "Kontext" in class_name:
+        return "flux_kontext"
+    return None
+
+
+def is_flux2_model(model_type: Optional[str]) -> bool:
+    return model_type in {"flux2", "flux2_klein"}
+
+
+def resolve_flux_model_type_for_job(
+    flux_params: Mapping[str, Any],
+    *,
+    model_repo: str,
+    model_repo_hints: Optional[Sequence[str]] = None,
+    resolved_model_type: Optional[str] = None,
+) -> Optional[str]:
+    hints = [model_repo, *(model_repo_hints or [])]
+    return resolve_flux_model_type(
+        flux_params.get("model_type") or resolved_model_type,
+        *hints,
+    )
+
+
+def store_resolved_flux_model_type_from_index(
+    inference_dict: Dict[str, Any],
+    model_index: Mapping[str, Any],
+) -> None:
+    """Persist detected model type on inference_dict for runner script selection."""
+    model_type = detect_flux_model_type_from_model_index(model_index)
+    if model_type:
+        inference_dict["_resolved_flux_model_type"] = model_type
+        log.info("Detected FLUX model type from model_index.json: %s", model_type)
+
+
+def resolve_flux_model_type(
+    explicit_model_type: Optional[str] = None,
+    *repo_hints: Optional[str],
+) -> Optional[str]:
+    """
+    Resolve FLUX model family from config and one or more repo/path hints.
+
+    FLUX.2 selects flux2_example.py; FLUX.1 uses run_usp.py (default when unset).
+    When the container model path is ``/model``, hints must include the original
+    host ``model_repo`` or model_index metadata.
     """
     if explicit_model_type:
         return str(explicit_model_type).strip() or None
 
-    repo_lower = (model_repo or "").lower()
-    if "flux.2" in repo_lower or "flux2" in repo_lower:
-        if "klein" in repo_lower:
-            return "flux2_klein"
-        return "flux2"
-    if "kontext" in repo_lower:
-        return "flux_kontext"
+    for hint in repo_hints:
+        if not hint:
+            continue
+        repo_lower = str(hint).lower()
+        if "flux.2" in repo_lower or "flux2" in repo_lower:
+            if "klein" in repo_lower:
+                return "flux2_klein"
+            return "flux2"
+        if "kontext" in repo_lower:
+            return "flux_kontext"
     return None
 
 
@@ -331,22 +387,14 @@ def build_run_usp_args(
     tp = int(flux_params.get("tensor_parallel_degree", 1))
     dp = int(flux_params.get("data_parallel_degree", 1))
 
-    model_type = infer_flux_model_type(model_repo, flux_params.get("model_type"))
-    model_type_flag = f"--model_type {shlex.quote(model_type)} " if model_type else ""
-
-    guidance_scale = resolve_flux_guidance_scale(model_type, flux_params.get("guidance_scale"))
-    guidance_scale_flag = (
-        f"--guidance_scale {guidance_scale} " if guidance_scale is not None else ""
-    )
+    log.info("FLUX.1 run_usp: model=%s", model_repo)
 
     return (
         f"--model {shlex.quote(model_repo)} "
-        f"{model_type_flag}"
         f"--prompt {shlex.quote(str(flux_params['prompt']))} "
         f"--seed {int(flux_params['seed'])} "
         f"--num_inference_steps {int(flux_params['num_inference_steps'])} "
         f"--max_sequence_length {int(flux_params['max_sequence_length'])} "
-        f"{guidance_scale_flag}"
         f"{' '.join(flags)} "
         f"--warmup_steps {int(flux_params['warmup_steps'])} "
         f"--warmup_calls {int(flux_params['warmup_calls'])} "
@@ -362,6 +410,143 @@ def build_run_usp_args(
     )
 
 
+def build_flux2_example_args(
+    flux_params: Mapping[str, Any],
+    *,
+    model_repo: str,
+    model_type: Optional[str],
+) -> str:
+    flags: List[str] = []
+    if flux_params.get("no_use_resolution_binning"):
+        flags.append("--no_use_resolution_binning")
+    if flux_params.get("use_torch_compile"):
+        flags.append("--use_torch_compile")
+
+    pf = int(flux_params.get("pipefusion_parallel_degree", 1))
+    tp = int(flux_params.get("tensor_parallel_degree", 1))
+    dp = int(flux_params.get("data_parallel_degree", 1))
+
+    guidance_scale = resolve_flux_guidance_scale(model_type, flux_params.get("guidance_scale"))
+    guidance_scale_flag = (
+        f"--guidance_scale {guidance_scale} " if guidance_scale is not None else ""
+    )
+
+    log.info(
+        "FLUX.2 flux2_example: model=%s model_type=%s guidance_scale=%s",
+        model_repo,
+        model_type,
+        guidance_scale if guidance_scale is not None else "n/a",
+    )
+
+    return (
+        f"--model {shlex.quote(model_repo)} "
+        f"--prompt {shlex.quote(str(flux_params['prompt']))} "
+        f"--seed {int(flux_params['seed'])} "
+        f"--num_inference_steps {int(flux_params['num_inference_steps'])} "
+        f"--max_sequence_length {int(flux_params['max_sequence_length'])} "
+        f"{guidance_scale_flag}"
+        f"{' '.join(flags)} "
+        f"--warmup_steps {int(flux_params['warmup_steps'])} "
+        f"--height {int(flux_params['height'])} "
+        f"--width {int(flux_params['width'])} "
+        f"--ulysses_degree {int(flux_params['ulysses_degree'])} "
+        f"--ring_degree {int(flux_params['ring_degree'])} "
+        f"--pipefusion_parallel_degree {pf} "
+        f"--tensor_parallel_degree {tp} "
+        f"--data_parallel_degree {dp} "
+        f"--output_type pil"
+    )
+
+
+def _build_torchrun_prefix(
+    *,
+    distributed: bool,
+    nproc: int,
+    node_rank: int,
+    nnodes: int,
+    master_addr: str,
+    master_port: int,
+) -> str:
+    if distributed:
+        return (
+            f"torchrun "
+            f"--nnodes={nnodes} "
+            f"--node_rank={node_rank} "
+            f"--nproc_per_node={nproc} "
+            f"--master_addr={shlex.quote(master_addr)} "
+            f"--master_port={master_port}"
+        )
+    return f"torchrun --nproc_per_node={nproc}"
+
+
+def build_flux2_benchmark_cmd(
+    flux_params: Mapping[str, Any],
+    *,
+    model_repo: str,
+    model_type: Optional[str],
+    distributed: bool,
+    node_rank: int = 0,
+    nnodes: int = 1,
+    nproc_per_node: Optional[int] = None,
+    master_addr: str = "127.0.0.1",
+    master_port: int = DEFAULT_MASTER_PORT,
+    output_dir_container: str = CONTAINER_OUTPUT_MOUNT,
+) -> str:
+    """
+    Wrap flux2_example.py with warmup/timed repetitions and write results/timing.json.
+
+    flux2_example.py performs a single inference and prints ``epoch time: X.XX sec``.
+    CVS repeats that run to match the FLUX.1 benchmark shape expected by FluxOutputParser.
+    """
+    nproc = int(nproc_per_node or flux_params["torchrun_nproc"])
+    flux2_args = build_flux2_example_args(flux_params, model_repo=model_repo, model_type=model_type)
+    torchrun_prefix = _build_torchrun_prefix(
+        distributed=distributed,
+        nproc=nproc,
+        node_rank=node_rank,
+        nnodes=nnodes,
+        master_addr=master_addr,
+        master_port=master_port,
+    )
+    run_once = f"{torchrun_prefix} {FLUX2_EXAMPLE_PATH} {flux2_args}"
+
+    warmup_calls = int(flux_params.get("warmup_calls", 0))
+    num_repetitions = int(flux_params["num_repetitions"])
+
+    py_script = (
+        "import json, os, re, subprocess, sys\n"
+        'run_cmd = os.environ["FLUX2_RUN_CMD"]\n'
+        f"warmup = {warmup_calls}\n"
+        f"reps = {num_repetitions}\n"
+        "for _ in range(warmup):\n"
+        "    proc = subprocess.run(run_cmd, shell=True)\n"
+        "    if proc.returncode != 0:\n"
+        "        sys.exit(proc.returncode)\n"
+        "times = []\n"
+        "for _ in range(reps):\n"
+        "    proc = subprocess.run(run_cmd, shell=True, capture_output=True, text=True)\n"
+        "    sys.stdout.write(proc.stdout)\n"
+        "    sys.stderr.write(proc.stderr)\n"
+        "    if proc.returncode != 0:\n"
+        "        sys.exit(proc.returncode)\n"
+        '    match = re.search(r"epoch time:\\s*([\\d.]+)", proc.stdout + proc.stderr)\n'
+        "    if not match:\n"
+        '        print("Could not parse epoch time from flux2_example output", file=sys.stderr)\n'
+        "        sys.exit(1)\n"
+        '    times.append({"pipe_time": float(match.group(1))})\n'
+        'with open("results/timing.json", "w", encoding="utf-8") as handle:\n'
+        "    json.dump(times, handle)\n"
+    )
+
+    inner = (
+        f"cd {shlex.quote(output_dir_container)} && "
+        f"mkdir -p results && "
+        f"FLUX2_RUN_CMD={shlex.quote(run_once)} "
+        f"python3 -c {shlex.quote(py_script)}"
+    )
+    return f"bash -c {shlex.quote(inner)}"
+
+
 def build_torchrun_cmd(
     flux_params: Mapping[str, Any],
     *,
@@ -372,23 +557,40 @@ def build_torchrun_cmd(
     nproc_per_node: Optional[int] = None,
     master_addr: str = "127.0.0.1",
     master_port: int = DEFAULT_MASTER_PORT,
+    model_repo_hints: Optional[Sequence[str]] = None,
+    resolved_model_type: Optional[str] = None,
 ) -> str:
     nproc = int(nproc_per_node or flux_params["torchrun_nproc"])
-    run_usp_args = build_run_usp_args(flux_params, model_repo=model_repo)
+    model_type = resolve_flux_model_type_for_job(
+        flux_params,
+        model_repo=model_repo,
+        model_repo_hints=model_repo_hints,
+        resolved_model_type=resolved_model_type,
+    )
 
-    if distributed:
-        return (
-            f"torchrun "
-            f"--nnodes={nnodes} "
-            f"--node_rank={node_rank} "
-            f"--nproc_per_node={nproc} "
-            f"--master_addr={shlex.quote(master_addr)} "
-            f"--master_port={master_port} "
-            f"{RUN_USP_PATH} "
-            f"{run_usp_args}"
+    if is_flux2_model(model_type):
+        return build_flux2_benchmark_cmd(
+            flux_params,
+            model_repo=model_repo,
+            model_type=model_type,
+            distributed=distributed,
+            node_rank=node_rank,
+            nnodes=nnodes,
+            nproc_per_node=nproc,
+            master_addr=master_addr,
+            master_port=master_port,
         )
 
-    return f"torchrun --nproc_per_node={nproc} {RUN_USP_PATH} {run_usp_args}"
+    run_usp_args = build_run_usp_args(flux_params, model_repo=model_repo)
+    torchrun_prefix = _build_torchrun_prefix(
+        distributed=distributed,
+        nproc=nproc,
+        node_rank=node_rank,
+        nnodes=nnodes,
+        master_addr=master_addr,
+        master_port=master_port,
+    )
+    return f"{torchrun_prefix} {RUN_USP_PATH} {run_usp_args}"
 
 
 def verify_distributed_logs(output: str, *, world_size: int) -> Tuple[bool, str]:
@@ -426,7 +628,7 @@ class FluxLaunchPlan:
 
 
 class FluxBenchmarkJob:
-    """Build and run FLUX.1-dev docker+torchrun commands via a Pssh-like handle."""
+    """Build and run FLUX docker+torchrun commands (FLUX.1 via run_usp, FLUX.2 via flux2_example)."""
 
     def __init__(
         self,
@@ -513,6 +715,14 @@ class FluxBenchmarkJob:
     def _resolved_model_repo(self) -> str:
         return self.inference_dict.get("_resolved_model_path_container") or self.inference_dict["model_repo"]
 
+    def _flux_model_type_hints(self) -> List[str]:
+        hints: List[str] = []
+        for key in ("model_repo", "_resolved_model_mount_host", "_resolved_model_path_container"):
+            value = self.inference_dict.get(key)
+            if value and str(value) not in hints:
+                hints.append(str(value))
+        return hints
+
     def _build_env_args(self) -> str:
         user_env = dict(self.inference_dict["container_config"].get("env_dict") or {})
         env_dict: Dict[str, str] = {}
@@ -557,6 +767,8 @@ class FluxBenchmarkJob:
             nproc_per_node=self.nproc_per_node,
             master_addr=master_addr,
             master_port=master_port,
+            model_repo_hints=self._flux_model_type_hints(),
+            resolved_model_type=self.inference_dict.get("_resolved_flux_model_type"),
         )
 
         container_name = self.inference_dict["container_name"]
