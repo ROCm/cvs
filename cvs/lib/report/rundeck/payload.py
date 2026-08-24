@@ -54,11 +54,20 @@ class RundeckPayloadBuilder:
 
         sweep_data = datasets.get("sweep") or {}
         cells = sweep_data.get("all_cells") or sweep_data.get("cells") or []
-        panels = _build_panels(self.config, cells, self.ctx.report_dir, prov)
+        panels = _build_panels(
+            self.config,
+            cells,
+            self.ctx.report_dir,
+            provenance=prov,
+            lifecycle_report=lifecycle_report,
+            variant_config=variant_config,
+        )
 
+        from cvs.lib.report.accuracy_lifecycle import extract_accuracy_from_lifecycle
         from cvs.lib.report.inference_payload import aggregate_lifecycle
 
         lifecycle = aggregate_lifecycle(lifecycle_report, self.config.session_lifecycle_labels)
+        accuracy_metrics = extract_accuracy_from_lifecycle(lifecycle_report)
 
         payload = {
             "schema_version": 1,
@@ -80,6 +89,7 @@ class RundeckPayloadBuilder:
             "run_card_notes": run_card_notes,
             "provenance": prov,
             "lifecycle": lifecycle,
+            "accuracy": accuracy_metrics,
             "cells": cells,
             "chart_series": sweep_data.get("chart_series") or {},
             "chart_config": sweep_data.get("chart_config") or [],
