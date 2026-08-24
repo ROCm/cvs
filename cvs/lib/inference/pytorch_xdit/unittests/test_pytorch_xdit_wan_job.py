@@ -28,6 +28,17 @@ class TestWanParallelism(unittest.TestCase):
         params = {"ulysses_size": 8, "ring_size": 2, "torchrun_nproc": 8}
         self.assertEqual(parallel_product(params), 16)
 
+    def test_parallel_product_schema_defaults(self):
+        params = {"torchrun_nproc": 8}
+        self.assertEqual(parallel_product(params), 8)
+
+    def test_validate_parallelism_single_node_skips_check(self):
+        params = {"torchrun_nproc": 8}
+        world_size, product, err = validate_parallelism(1, params)
+        self.assertIsNone(err)
+        self.assertEqual(world_size, 8)
+        self.assertEqual(product, 8)
+
     def test_validate_parallelism_pass(self):
         params = {"ulysses_size": 8, "ring_size": 2, "torchrun_nproc": 8}
         world_size, product, err = validate_parallelism(2, params)
