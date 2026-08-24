@@ -46,8 +46,13 @@ log = globals.log
 WAN_MODEL_FORMAT_NATIVE = "native"
 WAN_MODEL_FORMAT_DIFFUSERS = "diffusers"
 
+WAN_DIFFUSERS_LAUNCHER_PACKAGED = "packaged"
+WAN_DIFFUSERS_LAUNCHER_XFUSER = "xfuser_example"
+
 RUN_WAN_NATIVE_PATH = "/app/Wan2.2/run.py"
 RUN_WAN_DIFFUSERS_PATH = "/app/Wan/run.py"
+WAN_XFUSER_EXAMPLE_CONTAINER_PATH = "/benchmark/wan_i2v_example.py"
+WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR = "results/outputs"
 I2V_INPUT_IMAGE_NATIVE = "/app/Wan2.2/examples/i2v_input.JPG"
 I2V_INPUT_IMAGE_DIFFUSERS = "/app/Wan/i2v_input.JPG"
 CONTAINER_OUTPUT_MOUNT = "/outputs"
@@ -150,8 +155,69 @@ def resolve_wan_model_format(
     return WAN_MODEL_FORMAT_NATIVE
 
 
-def is_wan_diffusers_model(model_format: str) -> bool:
-    return model_format == WAN_MODEL_FORMAT_DIFFUSERS
+def resolve_wan_diffusers_launcher(
+    wan_params: Mapping[str, Any],
+    inference_dict: Optional[Mapping[str, Any]] = None,
+    *,
+    run_script: Optional[str] = None,
+) -> str:
+    for source in (wan_params, inference_dict or {}):
+        explicit = source.get("wan_diffusers_launcher")
+        if explicit in {WAN_DIFFUSERS_LAUNCHER_PACKAGED, WAN_DIFFUSERS_LAUNCHER_XFUSER}:
+            return str(explicit)
+
+    script = run_script
+    if script is None:
+        for source in (wan_params, inference_dict or {}):
+            configured = source.get("wan_diffusers_run_script")
+            if configured:
+                script = str(configured)
+                break
+
+    if script and "wan_i2v_example" in script:
+        return WAN_DIFFUSERS_LAUNCHER_XFUSER
+    if script and script not in {RUN_WAN_DIFFUSERS_PATH, ""}:
+        return WAN_DIFFUSERS_LAUNCHER_XFUSER
+    return WAN_DIFFUSERS_LAUNCHER_PACKAGED
+
+
+def resolve_wan_diffusers_run_script(
+    wan_params: Mapping[str, Any],
+    inference_dict: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """Resolve the in-container Diffusers Wan launcher script."""
+    for source in (wan_params, inference_dict or {}):
+        explicit = source.get("wan_diffusers_run_script")
+        if explicit:
+            return str(explicit)
+    resolved = (inference_dict or {}).get("_resolved_wan_diffusers_run_script")
+    if resolved:
+        return str(resolved)
+
+    if resolve_wan_diffusers_launcher(wan_params, inference_dict) == WAN_DIFFUSERS_LAUNCHER_XFUSER:
+        return WAN_XFUSER_EXAMPLE_CONTAINER_PATH
+    return RUN_WAN_DIFFUSERS_PATH
+
+
+def resolve_wan_diffusers_i2v_image(
+    wan_params: Mapping[str, Any],
+    inference_dict: Optional[Mapping[str, Any]] = None,
+) -> str:
+    for source in (wan_params, inference_dict or {}):
+        explicit = source.get("wan_diffusers_i2v_image")
+        if explicit:
+            return str(explicit)
+    return I2V_INPUT_IMAGE_DIFFUSERS
+
+
+def diffusers_run_script_missing_hint(container_image: str, run_script: str) -> str:
+    return (
+        f"Diffusers Wan launcher {run_script!r} was not found in container {container_image!r}. "
+        f"Use amdsiloai/pytorch-xdit for the packaged /app/Wan/run.py harness, or set "
+        f"wan_diffusers_launcher to {WAN_DIFFUSERS_LAUNCHER_XFUSER!r}, mount "
+        f"cvs/lib/inference/pytorch_xdit/scripts/wan_i2v_example.py into the container, and set "
+        f"wan_diffusers_run_script plus wan_diffusers_i2v_image."
+    )
 
 
 def parse_wan_size(size: str) -> Tuple[int, int]:
@@ -201,10 +267,59 @@ def build_run_wan_native_args(
     ).strip()
 
 
+def is_wan_diffusers_model(model_format: str) -> bool:
+    return model_format == WAN_MODEL_FORMAT_DIFFUSERS
+
+
+def build_run_wan_xfuser_example_args(
+    wan_params: Mapping[str, Any],
+    *,
+    model_path: str,
+    i2v_image_path: str,
+) -> str:
+    height, width = parse_wan_size(str(wan_params["size"]))
+    num_inference_steps = _optional_int(
+        wan_params.get("num_inference_steps"),
+        WAN_DIFFUSERS_DEFAULT_NUM_INFERENCE_STEPS,
+    )
+    num_repetitions = _optional_int(
+        wan_params.get("num_repetitions"),
+        int(wan_params["num_benchmark_steps"]),
+    )
+    warmup_steps = _optional_int(wan_params.get("warmup_steps"), 1)
+    output_type = str(wan_params.get("wan_xfuser_output_type") or "latent")
+
+    log.info(
+        "WAN xFuser wan_i2v_example: model=%s size=%dx%d repetitions=%s warmup=%s",
+        model_path,
+        height,
+        width,
+        num_repetitions,
+        warmup_steps,
+    )
+
+    return (
+        f"--model {shlex.quote(model_path)} "
+        f"--input_image {shlex.quote(i2v_image_path)} "
+        f"--height {height} "
+        f"--width {width} "
+        f"--num_frames {int(wan_params['frame_num'])} "
+        f"--num_inference_steps {num_inference_steps} "
+        f"--ulysses_degree {_ulysses_size(wan_params)} "
+        f"--ring_degree {_ring_size(wan_params)} "
+        f"--warmup_steps {warmup_steps} "
+        f"--num_repetitions {num_repetitions} "
+        f"--output_type {shlex.quote(output_type)} "
+        f"--prompt {shlex.quote(str(wan_params['prompt']))} "
+        f"--benchmark_output_directory {shlex.quote(WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR)}"
+    ).strip()
+
+
 def build_run_wan_diffusers_args(
     wan_params: Mapping[str, Any],
     *,
     model_path: str,
+    i2v_image_path: str = I2V_INPUT_IMAGE_DIFFUSERS,
 ) -> str:
     height, width = parse_wan_size(str(wan_params["size"]))
     seed = _optional_int(wan_params.get("seed"), WAN_DIFFUSERS_DEFAULT_SEED)
@@ -234,7 +349,7 @@ def build_run_wan_diffusers_args(
         f"--height {height} "
         f"--width {width} "
         f"--model {shlex.quote(model_path)} "
-        f"--img_file_path {I2V_INPUT_IMAGE_DIFFUSERS} "
+        f"--img_file_path {i2v_image_path} "
         f"--ulysses_degree {_ulysses_size(wan_params)} "
         f"{ring_flag}"
         f"--seed {seed} "
@@ -271,10 +386,34 @@ def _build_wan_torchrun_body(
     nproc: int,
     master_addr: str,
     master_port: int,
+    inference_dict: Optional[Mapping[str, Any]] = None,
 ) -> str:
     if is_wan_diffusers_model(model_format):
-        run_script = RUN_WAN_DIFFUSERS_PATH
-        run_args = build_run_wan_diffusers_args(wan_params, model_path=model_path)
+        run_script = resolve_wan_diffusers_run_script(wan_params, inference_dict)
+        i2v_image = resolve_wan_diffusers_i2v_image(wan_params, inference_dict)
+        launcher = resolve_wan_diffusers_launcher(
+            wan_params,
+            inference_dict,
+            run_script=run_script,
+        )
+        if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER:
+            run_args = build_run_wan_xfuser_example_args(
+                wan_params,
+                model_path=model_path,
+                i2v_image_path=i2v_image,
+            )
+        else:
+            run_args = build_run_wan_diffusers_args(
+                wan_params,
+                model_path=model_path,
+                i2v_image_path=i2v_image,
+            )
+        log.info(
+            "WAN diffusers launcher=%s script=%s i2v_image=%s",
+            launcher,
+            run_script,
+            i2v_image,
+        )
     else:
         run_script = RUN_WAN_NATIVE_PATH
         run_args = build_run_wan_native_args(wan_params, ckpt_dir=model_path)
@@ -297,7 +436,7 @@ def _build_wan_torchrun_body(
     if is_wan_diffusers_model(model_format):
         inner = (
             f"cd {shlex.quote(CONTAINER_OUTPUT_MOUNT)} && "
-            f"mkdir -p results && "
+            f"mkdir -p {shlex.quote(WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR)} && "
             f"{torchrun}"
         )
         return f"bash -c {shlex.quote(inner)}"
@@ -317,6 +456,7 @@ def build_torchrun_cmd(
     model_format: Optional[str] = None,
     model_repo_hints: Optional[Sequence[str]] = None,
     resolved_model_format: Optional[str] = None,
+    inference_dict: Optional[Mapping[str, Any]] = None,
 ) -> str:
     nproc = int(nproc_per_node or wan_params["torchrun_nproc"])
     resolved_format = resolve_wan_model_format_for_job(
@@ -334,6 +474,7 @@ def build_torchrun_cmd(
         nproc=nproc,
         master_addr=master_addr,
         master_port=master_port,
+        inference_dict=inference_dict,
     )
 
 
@@ -506,6 +647,7 @@ class WanBenchmarkJob:
             master_port=master_port,
             model_repo_hints=self._wan_model_repo_hints(),
             resolved_model_format=self.inference_dict.get("_resolved_wan_model_format"),
+            inference_dict=self.inference_dict,
         )
 
         container_name = self.inference_dict["container_name"]
@@ -656,12 +798,32 @@ class WanBenchmarkJob:
                 errors.append(msg)
 
         failed_nodes = []
+        diffusers_script_hint_added = False
         for node in plan.node_order:
             output = (results or {}).get(node, "")
             if scan_wan_fatal_output(output):
                 log.error("Benchmark output indicates failure on %s", node)
                 log_benchmark_failure_excerpt(node, output)
                 failed_nodes.append(node)
+                if (
+                    not diffusers_script_hint_added
+                    and is_wan_diffusers_model(
+                        resolve_wan_model_format_for_job(
+                            self.wan_params,
+                            model_repo_hints=self._wan_model_repo_hints(),
+                            resolved_model_format=self.inference_dict.get("_resolved_wan_model_format"),
+                        )
+                    )
+                    and re.search(r"can't open file .*run\.py", output or "", re.I)
+                ):
+                    run_script = resolve_wan_diffusers_run_script(self.wan_params, self.inference_dict)
+                    errors.append(
+                        diffusers_run_script_missing_hint(
+                            self.inference_dict["container_image"],
+                            run_script,
+                        )
+                    )
+                    diffusers_script_hint_added = True
             else:
                 log.info("Benchmark on %s completed successfully", node)
 

@@ -659,6 +659,33 @@ class PytorchXditWan22Benchmarks(BaseModel):
         default=None,
         description="Random seed for Diffusers Wan runs (defaults to 42 when omitted).",
     )
+    wan_diffusers_run_script: Optional[str] = Field(
+        default=None,
+        description=(
+            "In-container Diffusers Wan launcher script. Defaults to /app/Wan/run.py "
+            "(shipped in amdsiloai/pytorch-xdit and rocm/pytorch-xdit benchmark images)."
+        ),
+    )
+    wan_diffusers_i2v_image: Optional[str] = Field(
+        default=None,
+        description="In-container input image for Diffusers Wan I2V (default /app/Wan/i2v_input.JPG).",
+    )
+    wan_diffusers_launcher: Optional[str] = Field(
+        default=None,
+        description=(
+            "Diffusers Wan launcher: packaged (/app/Wan/run.py in pytorch-xdit images) or "
+            "xfuser_example (mount cvs .../scripts/wan_i2v_example.py for ufb-private)."
+        ),
+    )
+    warmup_steps: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Warmup iterations for xfuser_example launcher (defaults to 1).",
+    )
+    require_video_artifact: bool = Field(
+        default=True,
+        description="Require video.mp4 under the output dir when parsing results.",
+    )
     compile: bool = Field(default=True, description="Whether to use torch.compile for optimization")
     torchrun_nproc: int = Field(default=8, ge=1, description="Number of processes for torchrun (usually num GPUs)")
     ulysses_size: int = Field(default=8, ge=1, description="Ulysses parallelism degree")

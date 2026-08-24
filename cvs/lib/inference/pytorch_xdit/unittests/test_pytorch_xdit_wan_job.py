@@ -10,13 +10,17 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     RUN_WAN_DIFFUSERS_PATH,
     RUN_WAN_NATIVE_PATH,
+    WAN_DIFFUSERS_LAUNCHER_XFUSER,
+    WAN_XFUSER_EXAMPLE_CONTAINER_PATH,
     WAN_MODEL_FORMAT_DIFFUSERS,
     build_run_wan_diffusers_args,
     build_run_wan_native_args,
+    build_run_wan_xfuser_example_args,
     build_torchrun_cmd,
     detect_wan_model_format_from_model_index,
     parallel_product,
     parse_wan_size,
+    resolve_wan_diffusers_launcher,
     resolve_wan_model_format,
     validate_parallelism,
     validate_wan_parallelism_config,
@@ -127,6 +131,32 @@ class TestBuildRunWanArgs(unittest.TestCase):
         self.assertIn("--seed 42", args)
         self.assertIn("--num_inference_steps 40", args)
 
+    def test_xfuser_example_uses_input_image(self):
+        params = {**self._BASE_PARAMS, "compile": False}
+        args = build_run_wan_xfuser_example_args(
+            params,
+            model_path="/model",
+            i2v_image_path="/benchmark/i2v_input.JPG",
+        )
+        self.assertIn("--input_image /benchmark/i2v_input.JPG", args)
+        self.assertIn("--num_repetitions 5", args)
+        self.assertIn("--benchmark_output_directory results/outputs", args)
+        self.assertNotIn("--task i2v", args)
+
+    def test_resolve_xfuser_launcher_from_config(self):
+        self.assertEqual(
+            resolve_wan_diffusers_launcher(
+                {"wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER},
+            ),
+            WAN_DIFFUSERS_LAUNCHER_XFUSER,
+        )
+        self.assertEqual(
+            resolve_wan_diffusers_launcher(
+                {"wan_diffusers_run_script": "/benchmark/wan_i2v_example.py"},
+            ),
+            WAN_DIFFUSERS_LAUNCHER_XFUSER,
+        )
+
 
 class TestBuildTorchrunCmd(unittest.TestCase):
     _BASE_PARAMS = {
@@ -166,17 +196,22 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         self.assertIn(RUN_WAN_NATIVE_PATH, cmd)
         self.assertIn("--compile", cmd)
 
-    def test_single_node_diffusers_wraps_output_dir(self):
+    def test_single_node_diffusers_xfuser(self):
         cmd = build_torchrun_cmd(
-            {**self._BASE_PARAMS, "compile": True},
+            {
+                **self._BASE_PARAMS,
+                "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+                "wan_diffusers_run_script": WAN_XFUSER_EXAMPLE_CONTAINER_PATH,
+                "wan_diffusers_i2v_image": "/benchmark/i2v_input.JPG",
+            },
             ckpt_dir="/model",
             distributed=False,
             model_repo_hints=["Wan-AI/Wan2.2-I2V-A14B-Diffusers"],
         )
-        self.assertIn(RUN_WAN_DIFFUSERS_PATH, cmd)
-        self.assertIn("mkdir -p results", cmd)
-        self.assertIn("--use_torch_compile", cmd)
-        self.assertNotIn(RUN_WAN_NATIVE_PATH, cmd)
+        self.assertIn(WAN_XFUSER_EXAMPLE_CONTAINER_PATH, cmd)
+        self.assertIn("--input_image /benchmark/i2v_input.JPG", cmd)
+        self.assertIn("mkdir -p results/outputs", cmd)
+        self.assertNotIn(RUN_WAN_DIFFUSERS_PATH, cmd)
 
 
 class TestBuildNcclEnv(unittest.TestCase):

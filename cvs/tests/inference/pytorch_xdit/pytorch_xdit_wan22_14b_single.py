@@ -483,6 +483,8 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
     base_dir = inference_dict.get("output_base_dir")
     wan_params = benchmark_params_dict["wan22_i2v_a14b"]
     expected_results = wan_params["expected_results"]
+    require_video = bool(wan_params.get("require_video_artifact", True))
+    expected_artifact = "video.mp4" if require_video else ""
 
     agg, agg_errors = None, []
     if base_dir and node_count > 1:
@@ -499,9 +501,9 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
 
         agg, agg_errors = WanOutputParser.parse_runs_under_base_dir(
             base_dir=base_dir,
-            expected_artifact="video.mp4",
+            expected_artifact="video.mp4" if require_video else "video.mp4",
             run_glob="wan_22_*_outputs",
-            require_artifact=True,
+            require_artifact=require_video,
             allowed_run_dir_names=expected_dirnames or None,
         )
     elif not base_dir:
@@ -528,7 +530,7 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
 
     # Fallback: single-run behavior (existing logic)
     log.info(f"Parsing results from: {output_dir}")
-    parser = WanOutputParser(output_dir, expected_artifact="video.mp4")
+    parser = WanOutputParser(output_dir, expected_artifact="video.mp4" if require_video else "video.mp4")
     result, errors = parser.parse()
 
     for error in errors:
@@ -539,9 +541,9 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
         update_test_result()
         return
 
-    if not result.artifact_path:
+    if require_video and not result.artifact_path:
         fail_test(f"Artifact 'video.mp4' not found under {output_dir}")
-    else:
+    elif result.artifact_path:
         log.info(f"Artifact found: {result.artifact_path}")
 
     log.info("Benchmark results:")
