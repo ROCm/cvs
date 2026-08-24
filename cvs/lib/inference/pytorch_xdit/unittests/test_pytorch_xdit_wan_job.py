@@ -140,8 +140,9 @@ class TestBuildRunWanArgs(unittest.TestCase):
         )
         self.assertIn("--input_image /benchmark/i2v_input.JPG", args)
         self.assertIn("--num_repetitions 5", args)
-        self.assertIn("--benchmark_output_directory results/outputs", args)
-        self.assertIn("--save_video_path results/outputs/video.mp4", args)
+        self.assertIn("--benchmark_output_directory outputs", args)
+        self.assertIn("--save_video_path outputs/video.mp4", args)
+        self.assertIn("--output_directory outputs", args)
         self.assertIn("--output_type np", args)
         self.assertNotIn("--task i2v", args)
 
@@ -212,7 +213,7 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         )
         self.assertIn(WAN_XFUSER_EXAMPLE_CONTAINER_PATH, cmd)
         self.assertIn("--input_image /benchmark/i2v_input.JPG", cmd)
-        self.assertIn("mkdir -p results/outputs", cmd)
+        self.assertIn("mkdir -p outputs", cmd)
         self.assertNotIn(RUN_WAN_DIFFUSERS_PATH, cmd)
 
 

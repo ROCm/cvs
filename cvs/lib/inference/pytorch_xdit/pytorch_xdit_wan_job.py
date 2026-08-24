@@ -53,6 +53,7 @@ RUN_WAN_NATIVE_PATH = "/app/Wan2.2/run.py"
 RUN_WAN_DIFFUSERS_PATH = "/app/Wan/run.py"
 WAN_XFUSER_EXAMPLE_CONTAINER_PATH = "/benchmark/wan_i2v_example.py"
 WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR = "results/outputs"
+WAN_XFUSER_BENCHMARK_OUTPUT_DIR = "outputs"
 I2V_INPUT_IMAGE_NATIVE = "/app/Wan2.2/examples/i2v_input.JPG"
 I2V_INPUT_IMAGE_DIFFUSERS = "/app/Wan/i2v_input.JPG"
 CONTAINER_OUTPUT_MOUNT = "/outputs"
@@ -288,8 +289,9 @@ def build_run_wan_xfuser_example_args(
     )
     warmup_steps = _optional_int(wan_params.get("warmup_steps"), 1)
     output_type = str(wan_params.get("wan_xfuser_output_type") or "np")
+    output_directory = WAN_XFUSER_BENCHMARK_OUTPUT_DIR
     save_video_path = str(
-        wan_params.get("wan_diffusers_save_video_path") or f"{WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR}/video.mp4"
+        wan_params.get("wan_diffusers_save_video_path") or f"{output_directory}/video.mp4"
     )
     video_fps = _optional_int(wan_params.get("wan_diffusers_video_fps"), 16)
 
@@ -314,10 +316,11 @@ def build_run_wan_xfuser_example_args(
         f"--warmup_steps {warmup_steps} "
         f"--num_repetitions {num_repetitions} "
         f"--output_type {shlex.quote(output_type)} "
+        f"--output_directory {shlex.quote(output_directory)} "
         f"--save_video_path {shlex.quote(save_video_path)} "
         f"--video_fps {video_fps} "
         f"--prompt {shlex.quote(str(wan_params['prompt']))} "
-        f"--benchmark_output_directory {shlex.quote(WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR)}"
+        f"--benchmark_output_directory {shlex.quote(output_directory)}"
     ).strip()
 
 
@@ -440,9 +443,19 @@ def _build_wan_torchrun_body(
         torchrun = f"torchrun --nproc_per_node={nproc} {run_script} {run_args}"
 
     if is_wan_diffusers_model(model_format):
+        launcher = resolve_wan_diffusers_launcher(
+            wan_params,
+            inference_dict,
+            run_script=run_script if is_wan_diffusers_model(model_format) else None,
+        )
+        output_subdir = (
+            WAN_XFUSER_BENCHMARK_OUTPUT_DIR
+            if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER
+            else WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR
+        )
         inner = (
             f"cd {shlex.quote(CONTAINER_OUTPUT_MOUNT)} && "
-            f"mkdir -p {shlex.quote(WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR)} && "
+            f"mkdir -p {shlex.quote(output_subdir)} && "
             f"{torchrun}"
         )
         return f"bash -c {shlex.quote(inner)}"
