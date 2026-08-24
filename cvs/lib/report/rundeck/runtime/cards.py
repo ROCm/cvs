@@ -209,9 +209,7 @@ def _render_interactivity_viewer(payload: dict, card: dict, _data: Any) -> str:
     if inter.get("enabled") is False:
         return ""
     title = card.get("title") or inter.get("title") or "Interactivity chart"
-    hint = inter.get("hint") or (
-        "Interactivity = 1000 / mean TPOT (ms) (tok/s/user) · Y = token throughput per GPU"
-    )
+    hint = inter.get("hint") or ("Interactivity = 1000 / mean TPOT (ms) (tok/s/user) · Y = token throughput per GPU")
     href = html.escape(f"{viewer_name}#interactivity-panel")
     return (
         f"<p class='viewer-banner'><strong>{html.escape(title)}</strong> — "
