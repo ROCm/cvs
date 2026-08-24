@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import asyncio
 import hmac
+import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,10 +16,24 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from . import messages
 
+FILE_MODE_PREVIEW_LINES = 20
+
 
 def _read_secret(file_path: Path) -> str:
     with open(file_path) as file:
         return file.readline().strip()
+
+
+async def _write_text(path: Path, content: str) -> None:
+    await asyncio.to_thread(path.write_text, content)
+
+
+def _tail_lines(text: str, max_lines: int) -> list[str]:
+    return text.splitlines()[-max_lines:]
+
+
+def _merged_env(overrides: dict[str, str]) -> dict[str, str]:
+    return {**os.environ, **overrides}
 
 
 @dataclass
@@ -33,7 +48,7 @@ class AgentRegistry:
     def __init__(self, expected_count: int) -> None:
         self._agents: dict[int, AgentInfo] = {}
         self._lock = asyncio.Lock()
-        self._expected_count = expected_count
+        self._expected_count: int = expected_count
         self._all_registered = asyncio.Event()
 
     async def register(self, rank: int, hostname: str, port: int) -> None:
@@ -49,6 +64,46 @@ class AgentRegistry:
     async def wait_until_ready(self, timeout: float | None = None) -> dict[int, AgentInfo]:
         await asyncio.wait_for(self._all_registered.wait(), timeout=timeout)
         return self.snapshot()
+
+
+class ProcessRegistry:
+    '''In-memory record of processes spawned via /v1/exec, keyed by cmd_id. Every rank's own agent has one,
+    since a spawned process only exists in that rank's local kernel process table.'''
+
+    def __init__(self) -> None:
+        self._processes: dict[str, asyncio.subprocess.Process] = {}
+        self._lock = asyncio.Lock()
+
+    async def register(self, cmd_id: str, process: asyncio.subprocess.Process) -> None:
+        async with self._lock:
+            self._processes[cmd_id] = process
+
+    async def unregister(self, cmd_id: str) -> None:
+        async with self._lock:
+            self._processes.pop(cmd_id, None)
+
+    def snapshot(self) -> dict[str, asyncio.subprocess.Process]:
+        return dict(self._processes)
+
+
+async def _spawn_process(
+    request: messages.ExecRequest,
+    registry: ProcessRegistry,
+    stdout: int,
+    stderr: int,
+) -> asyncio.subprocess.Process:
+    # start_new_session detaches the child into its own process group so a future kill can target
+    # the whole group (via os.killpg) without also signaling this agent process itself.
+    process = await asyncio.create_subprocess_shell(
+        request.cmd,
+        stdout=stdout,
+        stderr=stderr,
+        cwd=request.cwd,
+        env=_merged_env(request.env),
+        start_new_session=True,
+    )
+    await registry.register(request.cmd_id, process)
+    return process
 
 
 def _extract_bearer_token(header_value: str | None) -> str | None:
@@ -75,6 +130,7 @@ def create_app(agent_dir: Path, own_rank: int, expected_agent_count: int) -> Fas
     app = FastAPI(lifespan=lifespan, dependencies=[Depends(verify_auth)])
     app.state.own_rank = own_rank
     app.state.registry = AgentRegistry(expected_agent_count)
+    app.state.process_registry = ProcessRegistry()
 
     @app.post(messages.REGISTER_PATH)
     async def register_agent(request: messages.RegisterRequest, http_request: Request) -> messages.RegisterResponse:
@@ -89,14 +145,56 @@ def create_app(agent_dir: Path, own_rank: int, expected_agent_count: int) -> Fas
         '''Return status of agent connection health'''
         return messages.HealthResponse(ok=True)
 
+    @app.post(messages.EXEC_PATH)
+    async def run_cmd(request: messages.ExecRequest, http_request: Request) -> messages.ExecResponse:
+        '''Run cmd on host'''
+        registry: ProcessRegistry = http_request.app.state.process_registry
+
+        if request.output_mode == messages.ExecOutputMode.EXIT_CODE_ONLY:
+            process = await _spawn_process(
+                request, registry, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+            )
+            try:
+                await process.wait()
+            finally:
+                await registry.unregister(request.cmd_id)
+            return messages.ExecResponse(
+                exit_code=process.returncode,
+                stdout=None,
+                stderr=None,
+                stdout_path=None,
+                stderr_path=None,
+                truncated=None,
+            )
+
+        if request.output_mode == messages.ExecOutputMode.FILE:
+            process = await _spawn_process(
+                request, registry, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            try:
+                stdout_bytes, stderr_bytes = await process.communicate()
+            finally:
+                await registry.unregister(request.cmd_id)
+            stdout_text = stdout_bytes.decode(errors="replace")
+            stderr_text = stderr_bytes.decode(errors="replace")
+            stdout_path = request.out_path / f"{request.cmd_id}.stdout"
+            stderr_path = request.out_path / f"{request.cmd_id}.stderr"
+            await _write_text(stdout_path, stdout_text)
+            await _write_text(stderr_path, stderr_text)
+            return messages.ExecResponse(
+                exit_code=process.returncode,
+                stdout=_tail_lines(stdout_text, FILE_MODE_PREVIEW_LINES),
+                stderr=_tail_lines(stderr_text, FILE_MODE_PREVIEW_LINES),
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+                truncated=None,
+            )
+
+        raise NotImplementedError(f"output_mode {request.output_mode} is not yet implemented")
+
     @app.post(messages.SHUTDOWN_PATH)
     async def run_shutdown() -> messages.ShutdownResponse:
         '''Initiate graceful shutdown'''
-        ...
-
-    @app.post(messages.EXEC_PATH)
-    async def run_cmd() -> messages.ExecResponse:
-        '''Run cmd on host'''
         ...
 
     return app

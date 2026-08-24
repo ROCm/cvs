@@ -77,7 +77,7 @@ class ExecResponse(BaseModel):
       EXIT_CODE_ONLY: only exit_code is set, every other field is None
     '''
 
-    exit_code: int
+    exit_code: int | None  # asyncio.create_subprocess_exec return returncode int | None
     stdout: list[str] | None
     stderr: list[str] | None
     stdout_path: Path | None
