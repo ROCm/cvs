@@ -79,6 +79,12 @@ def _secret_str(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def _optional_int(value: Any, default: int) -> int:
+    if value is None:
+        return default
+    return int(value)
+
+
 def parallel_product(wan_params: Mapping[str, Any]) -> int:
     return _ulysses_size(wan_params) * _ring_size(wan_params)
 
@@ -201,11 +207,15 @@ def build_run_wan_diffusers_args(
     model_path: str,
 ) -> str:
     height, width = parse_wan_size(str(wan_params["size"]))
-    seed = int(wan_params.get("seed", WAN_DIFFUSERS_DEFAULT_SEED))
-    num_inference_steps = int(
-        wan_params.get("num_inference_steps", WAN_DIFFUSERS_DEFAULT_NUM_INFERENCE_STEPS)
+    seed = _optional_int(wan_params.get("seed"), WAN_DIFFUSERS_DEFAULT_SEED)
+    num_inference_steps = _optional_int(
+        wan_params.get("num_inference_steps"),
+        WAN_DIFFUSERS_DEFAULT_NUM_INFERENCE_STEPS,
     )
-    num_repetitions = int(wan_params.get("num_repetitions", wan_params["num_benchmark_steps"]))
+    num_repetitions = _optional_int(
+        wan_params.get("num_repetitions"),
+        int(wan_params["num_benchmark_steps"]),
+    )
     compile_flag = "--use_torch_compile" if wan_params.get("compile") else ""
     ring = _ring_size(wan_params)
     ring_flag = f"--ring_degree {ring} " if ring > 1 else ""

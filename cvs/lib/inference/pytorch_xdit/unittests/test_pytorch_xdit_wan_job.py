@@ -121,6 +121,12 @@ class TestBuildRunWanArgs(unittest.TestCase):
         self.assertIn("--use_torch_compile", args)
         self.assertIn("--num_repetitions 5", args)
 
+    def test_diffusers_optional_none_seed_uses_default(self):
+        params = {**self._BASE_PARAMS, "seed": None, "num_inference_steps": None}
+        args = build_run_wan_diffusers_args(params, model_path="/model")
+        self.assertIn("--seed 42", args)
+        self.assertIn("--num_inference_steps 40", args)
+
 
 class TestBuildTorchrunCmd(unittest.TestCase):
     _BASE_PARAMS = {
