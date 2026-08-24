@@ -19,6 +19,7 @@ All rights reserved.
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -37,6 +38,7 @@ FATAL_OUTPUT_PATTERNS = (
 )
 
 DEFAULT_BENCHMARK_TIMEOUT_S = 1800
+FLUX2_DEFAULT_BENCHMARK_TIMEOUT_S = 3600
 DEFAULT_MASTER_PORT = 29500
 RUN_USP_PATH = "/app/Flux/run_usp.py"
 FLUX2_EXAMPLE_PATH = "/app/external/xdit/examples/flux2_example.py"
@@ -493,10 +495,11 @@ def build_flux2_benchmark_cmd(
     output_dir_container: str = CONTAINER_OUTPUT_MOUNT,
 ) -> str:
     """
-    Wrap flux2_example.py with warmup/timed repetitions and write results/timing.json.
+    Run flux2_example.py once inside a single torchrun session and write results/timing.json.
 
-    flux2_example.py performs a single inference and prints ``epoch time: X.XX sec``.
-    CVS repeats that run to match the FLUX.1 benchmark shape expected by FluxOutputParser.
+    flux2_example.py loads the model once, runs ``warmup_steps`` internally, prints
+    ``epoch time: X.XX sec`` for the timed pass, then exits. Re-invoking torchrun for
+    each repetition would reload FLUX.2 on every GPU and take hours.
     """
     nproc = int(nproc_per_node or flux_params["torchrun_nproc"])
     flux2_args = build_flux2_example_args(flux_params, model_repo=model_repo, model_type=model_type)
@@ -510,30 +513,25 @@ def build_flux2_benchmark_cmd(
     )
     run_once = f"{torchrun_prefix} {FLUX2_EXAMPLE_PATH} {flux2_args}"
 
-    warmup_calls = int(flux_params.get("warmup_calls", 0))
-    num_repetitions = int(flux_params["num_repetitions"])
+    log.info(
+        "FLUX.2 benchmark uses one torchrun session (warmup_steps=%s); "
+        "num_repetitions/warmup_calls in config apply to FLUX.1 run_usp only",
+        flux_params.get("warmup_steps", 0),
+    )
 
     py_script = (
-        "import json, os, re, subprocess, sys\n"
-        'run_cmd = os.environ["FLUX2_RUN_CMD"]\n'
-        f"warmup = {warmup_calls}\n"
-        f"reps = {num_repetitions}\n"
-        "for _ in range(warmup):\n"
-        "    proc = subprocess.run(run_cmd, shell=True)\n"
-        "    if proc.returncode != 0:\n"
-        "        sys.exit(proc.returncode)\n"
-        "times = []\n"
-        "for _ in range(reps):\n"
-        "    proc = subprocess.run(run_cmd, shell=True, capture_output=True, text=True)\n"
-        "    sys.stdout.write(proc.stdout)\n"
-        "    sys.stderr.write(proc.stderr)\n"
-        "    if proc.returncode != 0:\n"
-        "        sys.exit(proc.returncode)\n"
-        '    match = re.search(r"epoch time:\\s*([\\d.]+)", proc.stdout + proc.stderr)\n'
-        "    if not match:\n"
-        '        print("Could not parse epoch time from flux2_example output", file=sys.stderr)\n'
-        "        sys.exit(1)\n"
-        '    times.append({"pipe_time": float(match.group(1))})\n'
+        "import json, re, subprocess, sys\n"
+        f"run_cmd = {json.dumps(run_once)}\n"
+        "proc = subprocess.run(run_cmd, shell=True, capture_output=True, text=True)\n"
+        "sys.stdout.write(proc.stdout)\n"
+        "sys.stderr.write(proc.stderr)\n"
+        "if proc.returncode != 0:\n"
+        "    sys.exit(proc.returncode)\n"
+        'match = re.search(r"epoch time:\\s*([\\d.]+)", proc.stdout + proc.stderr)\n'
+        "if not match:\n"
+        '    print("Could not parse epoch time from flux2_example output", file=sys.stderr)\n'
+        "    sys.exit(1)\n"
+        'times = [{"pipe_time": float(match.group(1))}]\n'
         'with open("results/timing.json", "w", encoding="utf-8") as handle:\n'
         "    json.dump(times, handle)\n"
     )
@@ -541,7 +539,6 @@ def build_flux2_benchmark_cmd(
     inner = (
         f"cd {shlex.quote(output_dir_container)} && "
         f"mkdir -p results && "
-        f"FLUX2_RUN_CMD={shlex.quote(run_once)} "
         f"python3 -c {shlex.quote(py_script)}"
     )
     return f"bash -c {shlex.quote(inner)}"
@@ -976,6 +973,16 @@ def launch_flux_benchmark(
         distributed=distributed,
         cluster_dict=cluster_dict,
     )
+    if timeout == DEFAULT_BENCHMARK_TIMEOUT_S:
+        model_type = resolve_flux_model_type_for_job(
+            job.flux_params,
+            model_repo=job._resolved_model_repo(),
+            model_repo_hints=job._flux_model_type_hints(),
+            resolved_model_type=inference_dict.get("_resolved_flux_model_type"),
+        )
+        if is_flux2_model(model_type):
+            timeout = FLUX2_DEFAULT_BENCHMARK_TIMEOUT_S
+
     _, plan, errors = job.run(timeout=timeout)
     if not errors:
         job.store_output_dir_hint(plan)
