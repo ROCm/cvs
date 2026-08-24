@@ -21,6 +21,7 @@ Lifecycle (each stage is a separate test):
 import json
 import os
 import re
+import shlex
 import time
 
 import pytest
@@ -384,6 +385,11 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
         f"{load_io_seconds:.2f}s" if load_io_seconds is not None else "n/a",
     )
     update_test_result()
+
+    if not request.node.session.testsfailed:
+        orch.exec(f"rm -rf {shlex.quote(ckpt_dir)}")
+    else:
+        log.info("checkpoint dir retained for debugging: %s", ckpt_dir)
 
 
 def test_training(

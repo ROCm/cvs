@@ -396,8 +396,8 @@ class PrimusTrainingJob:
             f'--global_batch_size {self.global_batch_size} '
             f'--train_iters {self.iterations}'
         )
-        if self.checkpoint_dir:
-            batch_args += f' --save {self.checkpoint_dir} --save_interval {self.save_interval or self.iterations}'
+        if self.checkpoint_dir and not self.load_checkpoint:
+            batch_args += f' --save_interval {self.save_interval or self.iterations}'
         if self.load_checkpoint and self.checkpoint_dir:
             batch_args += f' --load {self.checkpoint_dir}/checkpoints'
             if self.distributed_training:
@@ -421,9 +421,9 @@ class PrimusTrainingJob:
                     + f'-- train pretrain --config {exp_path} {batch_args} &'
                 )
                 script_cmd = (
-                    f'echo {shlex.quote(full_cmd)} > '
+                    f'umask 077; echo {shlex.quote(full_cmd)} > '
                     f'{self.scripts_dir}/distributed_wrapper_script_{i}.sh '
-                    f'&& chmod 777 {self.scripts_dir}/distributed_wrapper_script_{i}.sh'
+                    f'&& chmod 700 {self.scripts_dir}/distributed_wrapper_script_{i}.sh'
                 )
                 self.job_cmd_list.append(script_cmd)
         else:
@@ -481,8 +481,8 @@ class PrimusTrainingJob:
             )
         else:
             self.orch.all.exec(
-                f'echo {shlex.quote(self.job_cmd)} > {self.scripts_dir}/single_node_wrapper_script.sh '
-                f'&& chmod 777 {self.scripts_dir}/single_node_wrapper_script.sh'
+                f'umask 077; echo {shlex.quote(self.job_cmd)} > {self.scripts_dir}/single_node_wrapper_script.sh '
+                f'&& chmod 700 {self.scripts_dir}/single_node_wrapper_script.sh'
             )
             self.orch.exec(
                 f'nohup {self.scripts_dir}/single_node_wrapper_script.sh '

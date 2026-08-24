@@ -33,7 +33,7 @@
   },
   "checkpoint": {
     "enforce": false,
-    "save_interval": 5,
+    "save_interval": 20,
     "save_iters": 21,
     "resume_iters": 25,
     "loss_rtol": 0.05

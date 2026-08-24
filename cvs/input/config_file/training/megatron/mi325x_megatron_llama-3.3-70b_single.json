@@ -27,6 +27,13 @@
     "master_address": "127.0.0.1",
     "verify_network_errors": "False"
   },
+  "checkpoint": {
+    "enforce": false,
+    "save_interval": 20,
+    "save_iters": 21,
+    "resume_iters": 25,
+    "loss_rtol": 0.05
+  },
   "model_params": {
     "model_name": "llama3.3_70B",
     "tokenizer_model": "meta-llama/Llama-3.3-70B-Instruct",
@@ -80,3 +87,4 @@
     ]
   }
 }
+
