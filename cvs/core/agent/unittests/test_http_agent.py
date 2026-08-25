@@ -12,6 +12,8 @@ import asyncio
 import os
 import signal
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -224,6 +226,59 @@ class TestExec(HttpAgentTestBase):
             response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
             exec_response = messages.ExecResponse(**response.json())
             self.assertEqual(exec_response.stdout, [cwd_dir])
+
+
+class TestExecConcurrency(HttpAgentTestBase):
+    def _exec_request(self, **overrides) -> messages.ExecRequest:
+        kwargs = dict(
+            cmd="true",
+            env={},
+            cwd=Path("/tmp"),
+            timeout=None,
+            inactivity_timeout=None,
+            cmd_id="cmd-1",
+            out_path=None,
+            output_mode=messages.ExecOutputMode.EXIT_CODE_ONLY,
+        )
+        kwargs.update(overrides)
+        return messages.ExecRequest(**kwargs)
+
+    def test_concurrent_exec_is_rejected_with_409_and_flag_resets_after(self):
+        client = self._make_client(own_rank=0)
+        with tempfile.TemporaryDirectory() as marker_dir:
+            # the marker file is only written once /v1/exec has spawned the process, which happens
+            # strictly after exec_busy is set, so waiting for it rules out a race against the second request
+            marker_path = Path(marker_dir) / "started"
+            first_req = self._exec_request(cmd=f"touch {marker_path}; sleep 1", cmd_id="cmd-slow")
+            responses = {}
+
+            def run_first():
+                responses["first"] = client.post(
+                    messages.EXEC_PATH, content=first_req.model_dump_json(), headers=self._auth_headers()
+                )
+
+            first_thread = threading.Thread(target=run_first)
+            first_thread.start()
+            deadline = time.monotonic() + 5
+            while not marker_path.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(marker_path.exists(), "first exec never started")
+
+            second_req = self._exec_request(cmd="true", cmd_id="cmd-second")
+            second_response = client.post(
+                messages.EXEC_PATH, content=second_req.model_dump_json(), headers=self._auth_headers()
+            )
+            self.assertEqual(second_response.status_code, 409)
+
+            first_thread.join(timeout=5)
+            self.assertEqual(responses["first"].status_code, 200)
+            self.assertEqual(messages.ExecResponse(**responses["first"].json()).exit_code, 0)
+
+            third_req = self._exec_request(cmd="true", cmd_id="cmd-third")
+            third_response = client.post(
+                messages.EXEC_PATH, content=third_req.model_dump_json(), headers=self._auth_headers()
+            )
+            self.assertEqual(third_response.status_code, 200)
 
 
 class TestShutdown(HttpAgentTestBase):

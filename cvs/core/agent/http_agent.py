@@ -123,6 +123,53 @@ async def _spawn_process(
     return process
 
 
+async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> messages.ExecResponse:
+    if request.output_mode == messages.ExecOutputMode.EXIT_CODE_ONLY:
+        process = await _spawn_process(
+            request, registry, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+        )
+        try:
+            await process.wait()
+        finally:
+            await registry.unregister(request.cmd_id)
+        return messages.ExecResponse(
+            exit_code=process.returncode,
+            stdout=None,
+            stderr=None,
+            stdout_path=None,
+            stderr_path=None,
+            truncated=None,
+        )
+
+    if request.output_mode == messages.ExecOutputMode.FILE:
+        process = await _spawn_process(
+            request, registry, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        try:
+            stdout_bytes, stderr_bytes = await process.communicate()
+        finally:
+            await registry.unregister(request.cmd_id)
+        stdout_text = stdout_bytes.decode(errors="replace")
+        stderr_text = stderr_bytes.decode(errors="replace")
+        stdout_path = None
+        stderr_path = None
+        if request.out_path:
+            stdout_path = request.out_path / f"{request.cmd_id}.stdout"
+            stderr_path = request.out_path / f"{request.cmd_id}.stderr"
+            await _write_text(stdout_path, stdout_text)
+            await _write_text(stderr_path, stderr_text)
+        return messages.ExecResponse(
+            exit_code=process.returncode,
+            stdout=_tail_lines(stdout_text, FILE_MODE_PREVIEW_LINES),
+            stderr=_tail_lines(stderr_text, FILE_MODE_PREVIEW_LINES),
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            truncated=None,
+        )
+
+    raise NotImplementedError(f"output_mode {request.output_mode} is not yet implemented")
+
+
 def _extract_bearer_token(header_value: str | None) -> str | None:
     if not header_value:
         return None
@@ -148,6 +195,7 @@ def create_app(agent_dir: Path, own_rank: int, expected_agent_count: int) -> Fas
     app.state.own_rank = own_rank
     app.state.registry = AgentRegistry(expected_agent_count)
     app.state.process_registry = ProcessRegistry()
+    app.state.exec_busy = False
 
     @app.post(messages.REGISTER_PATH)
     async def register_agent(request: messages.RegisterRequest, http_request: Request) -> messages.RegisterResponse:
@@ -165,52 +213,15 @@ def create_app(agent_dir: Path, own_rank: int, expected_agent_count: int) -> Fas
     @app.post(messages.EXEC_PATH)
     async def run_cmd(request: messages.ExecRequest, http_request: Request) -> messages.ExecResponse:
         '''Run cmd on host'''
-        registry: ProcessRegistry = http_request.app.state.process_registry
-
-        if request.output_mode == messages.ExecOutputMode.EXIT_CODE_ONLY:
-            process = await _spawn_process(
-                request, registry, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
-            )
-            try:
-                await process.wait()
-            finally:
-                await registry.unregister(request.cmd_id)
-            return messages.ExecResponse(
-                exit_code=process.returncode,
-                stdout=None,
-                stderr=None,
-                stdout_path=None,
-                stderr_path=None,
-                truncated=None,
-            )
-
-        if request.output_mode == messages.ExecOutputMode.FILE:
-            process = await _spawn_process(
-                request, registry, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            try:
-                stdout_bytes, stderr_bytes = await process.communicate()
-            finally:
-                await registry.unregister(request.cmd_id)
-            stdout_text = stdout_bytes.decode(errors="replace")
-            stderr_text = stderr_bytes.decode(errors="replace")
-            stdout_path = None
-            stderr_path = None
-            if request.out_path:
-                stdout_path = request.out_path / f"{request.cmd_id}.stdout"
-                stderr_path = request.out_path / f"{request.cmd_id}.stderr"
-                await _write_text(stdout_path, stdout_text)
-                await _write_text(stderr_path, stderr_text)
-            return messages.ExecResponse(
-                exit_code=process.returncode,
-                stdout=_tail_lines(stdout_text, FILE_MODE_PREVIEW_LINES),
-                stderr=_tail_lines(stderr_text, FILE_MODE_PREVIEW_LINES),
-                stdout_path=stdout_path,
-                stderr_path=stderr_path,
-                truncated=None,
-            )
-
-        raise NotImplementedError(f"output_mode {request.output_mode} is not yet implemented")
+        # Checked and set with no `await` in between: the event loop can't switch to another
+        # request's coroutine mid-way, so this is race-free without needing an explicit lock.
+        if http_request.app.state.exec_busy:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="an exec is already in progress on this agent")
+        http_request.app.state.exec_busy = True
+        try:
+            return await _run_cmd(request, http_request.app.state.process_registry)
+        finally:
+            http_request.app.state.exec_busy = False
 
     @app.post(messages.SHUTDOWN_PATH)
     async def run_shutdown(http_request: Request) -> messages.ShutdownResponse:
