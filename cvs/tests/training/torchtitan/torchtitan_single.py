@@ -392,6 +392,7 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
 
     if not request.node.session.testsfailed:
         import shlex
+
         orch.exec(f"rm -rf {shlex.quote(ckpt_dir)}")
     else:
         log.info("checkpoint dir retained for debugging: %s", ckpt_dir)

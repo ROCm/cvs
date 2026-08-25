@@ -37,24 +37,12 @@ log = globals.log
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
 
 # TorchTitan checkpoint save patterns
-_SAVE_START_RE = re.compile(
-    r'\[(\d{4}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2})\].*saving\s+checkpoint',
-    re.I
-)
-_SAVE_END_RE = re.compile(
-    r'\[(\d{4}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2})\].*successfully\s+saved\s+checkpoint',
-    re.I
-)
+_SAVE_START_RE = re.compile(r'\[(\d{4}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2})\].*saving\s+checkpoint', re.I)
+_SAVE_END_RE = re.compile(r'\[(\d{4}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2})\].*successfully\s+saved\s+checkpoint', re.I)
 
 # TorchTitan checkpoint load patterns
-_LOAD_START_RE = re.compile(
-    r'\[(\d{4}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2})\].*loading\s+checkpoint',
-    re.I
-)
-_LOAD_END_RE = re.compile(
-    r'\[(\d{4}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2})\].*successfully\s+loaded\s+checkpoint',
-    re.I
-)
+_LOAD_START_RE = re.compile(r'\[(\d{4}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2})\].*loading\s+checkpoint', re.I)
+_LOAD_END_RE = re.compile(r'\[(\d{4}:\d{2}:\d{2}-\d{2}:\d{2}:\d{2})\].*successfully\s+loaded\s+checkpoint', re.I)
 
 _TS_FMT = '%Y:%m:%d-%H:%M:%S'
 
