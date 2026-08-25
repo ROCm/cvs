@@ -3,6 +3,8 @@ import sys
 import os
 import json
 
+from cvs.core.run_layout import RunLayout
+
 from .list_plugin import ListPlugin
 
 
@@ -16,6 +18,18 @@ class RunPlugin(ListPlugin):
         parser.add_argument("function", nargs="*", help="Optional: specific test functions to run")
         parser.add_argument("--cluster_file", required=True, help="Path to cluster configuration JSON file")
         parser.add_argument("--config_file", required=True, help="Path to test configuration JSON file")
+        parser.add_argument(
+            "--workspace",
+            default=None,
+            metavar="PATH",
+            help=(
+                "Shared-filesystem root for this run's artifacts; the run directory "
+                "becomes <workspace>/cvs_runs/<run_id> and is exposed to configs as "
+                "{run_dir}. Falls back to $CVS_WORKSPACE, then to the venv's parent "
+                "directory. Scheduler-managed runs in a container must set this "
+                "explicitly, since the venv's parent is not on shared storage there."
+            ),
+        )
         parser.add_argument("--html", help="Pytest: Create HTML report file at given path")
         parser.add_argument(
             "--self-contained-html",
@@ -53,8 +67,23 @@ Run Commands:
   cvs run agfhc --html report.html   Run test and generate HTML report"""
 
     def run(self, args):
+        # Pre-flight, in this order, before pytest is reached at all. Worker ranks
+        # in a Slurm/Spur job never enter pytest, so the run layout -- the
+        # rendezvous those ranks read -- has to be resolved here rather than in the
+        # handoff that launches it. Inputs are checked first because creating
+        # directories for a mistyped suite name would litter shared storage.
+        self._validate_json_config(args.cluster_file, "--cluster_file")
+        self._validate_json_config(args.config_file, "--config_file")
+        test_file = self._resolve_test_file(args.test)
+
+        try:
+            RunLayout.get(args.workspace)
+        except RuntimeError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+
         self.run_test(
-            args.test,
+            test_file,
             args.function,
             args.cluster_file,
             args.config_file,
@@ -65,6 +94,15 @@ Run Commands:
             args.capture,
             getattr(args, "extra_pytest_args", []),
         )
+
+    def _resolve_test_file(self, test_name):
+        """Map a suite name to the file pytest should collect."""
+        module_path = self._find_test(test_name)
+        if not module_path:
+            print(f"Error: Unknown test '{test_name}'")
+            print("Use 'cvs list' to see available tests.")
+            sys.exit(1)
+        return self.get_test_file(module_path)
 
     def _validate_json_config(self, path, label):
         """Validate that a config file exists and is valid JSON."""
@@ -88,7 +126,7 @@ Run Commands:
 
     def run_test(
         self,
-        test_name,
+        test_file,
         test_functions,
         cluster_file,
         config_file,
@@ -99,18 +137,6 @@ Run Commands:
         capture,
         extra_pytest_args,
     ):
-        # Pre-flight check: validate both JSON config files before pytest runs.
-        self._validate_json_config(cluster_file, "--cluster_file")
-        self._validate_json_config(config_file, "--config_file")
-
-        module_path = self._find_test(test_name)
-        if not module_path:
-            print(f"Error: Unknown test '{test_name}'")
-            print("Use 'cvs list' to see available tests.")
-            sys.exit(1)
-
-        test_file = self.get_test_file(module_path)
-
         # Build pytest arguments
         pytest_args = []
         if test_functions:

@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "framework": "jaxmaxtext",
+  "gpu_arch": "mi325x",
+  "enforce_thresholds": true,
+  "threshold_json": "mi325x_jaxmaxtext_deepseek-v2-lite_distributed_threshold.json",
+
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "{shared_fs}/cache/maxtext",
+    "log_dir": "{shared_fs}/LOGS/jaxmaxtext",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+
+  "model": {
+    "id": "deepseek-v2-lite",
+    "remote": 0,
+    "precision": "bfloat16"
+  },
+
+  "container": {
+    "lifetime": "per_run",
+    "name": "rocm-jaxmaxtext-mi325x-deepseek-v2-lite",
+    "image": "rocm/jax-training:maxtext-v26.4",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm-size": "256G",
+        "ulimit": ["nofile=65535:65535"],
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/dev/infiniband:/dev/infiniband",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+          "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro",
+          "/lib/libibverbs.d:/lib/libibverbs.d",
+          "/tmp/{user-id}/jax/TRAINING_LOGS:/workspace/maxtext/output"
+        ]
+      }
+    }
+  },
+
+  "__maxtext_version<=26.3__train_script": "/workspace/maxtext/src/MaxText/train.py",
+  "__maxtext_version>=26.4__train_script": "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
+  "training": {
+    "distributed": true,
+    "gpus_per_node": 8,
+    "steps": 30,
+    "enable_checkpointing": false,
+    "train_script_paths": [
+      "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
+      "/workspace/maxtext/src/MaxText/train.py"
+    ],
+
+    "_model_name_comment": "DeepSeek-V2-Lite = MaxText preset 'deepseek2-16b' (16B MoE). maxtext_config mirrors MAD scripts/jax-maxtext/env_scripts/deepseek2_16b.yml (gfx942).",
+    "maxtext_config": {
+      "base_config": "base.yml",
+      "model_name": "deepseek2-16b",
+      "hardware": "gpu",
+      "attention": "cudnn_flash_te",
+      "packing": true,
+      "log_period": 100,
+      "dcn_data_parallelism": -1,
+      "dcn_fsdp_parallelism": 1,
+      "ici_fsdp_parallelism": 1,
+      "ici_data_parallelism": 1,
+      "ici_expert_parallelism": -1,
+      "remat_policy": "minimal_flash",
+      "use_iota_embed": true,
+      "scan_layers": true,
+      "async_checkpointing": false,
+      "logits_dot_in_fp32": false,
+      "profiler": "",
+      "dtype": "bfloat16",
+      "quantization": "",
+      "quantize_kvcache": false,
+      "kv_quant_axis": "heads_and_dkv",
+      "kv_quant_dtype": "int8",
+      "weight_dtype": "bfloat16",
+      "checkpoint_is_quantized": false,
+      "max_target_length": 4096,
+      "dataset_type": "synthetic",
+      "per_device_batch_size": 10,
+      "megablox": false,
+      "capacity_factor": 1.25,
+      "sparse_matmul": false,
+      "sharding_tolerance": 0.05,
+      "max_segments_per_seq": 32,
+      "shardy": true,
+      "enable_goodput_recording": false,
+      "monitor_goodput": false
+    },
+
+    "tokenizer": {
+      "hf_model_id": "deepseek-ai/DeepSeek-V2-Lite",
+      "tokenizer_path": "{paths.models_dir}/DeepSeek-V2-Lite"
+    },
+
+    "nic_type": "thor2",
+
+    "rdma_lib": {
+      "host_source_file": "/usr/local/lib/libbnxt_re-rdmav34.so",
+      "container_mount_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+      "container_dest_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so"
+    },
+
+    "_NCCL_IB_DISABLE_comment": "IB/RoCE over Broadcom bnxt_re segfaults in RCCL QP setup on these nodes (crashes on the first inter-node channel, independent of GDR / matched rdma-core / channel-count). TCP works. Remove this once the image ships an RCCL build validated against the bnxt_re RoCE stack.",
+    "_env_vars_comment": "Compute/NVTE/XLA-side vars mirror MAD scripts/jax-maxtext/env_scripts/deepseek2_env_16b.sh (gfx942); the NCCL_IB_* / NCCL_PROTO networking vars are CVS cluster-specific (bnxt_re TCP fallback) and are not from the MAD script.",
+    "env_vars": {
+      "NNODES": "auto",
+      "GPU_MAX_HW_QUEUES": "2",
+      "HSA_FORCE_FINE_GRAIN_PCIE": "1",
+      "HIP_FORCE_DEV_KERNARG": "1",
+      "HSA_NO_SCRATCH_RECLAIM": "1",
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.97",
+      "NCCL_DEBUG": "VERSION",
+      "NCCL_IB_DISABLE": "0",
+      "NCCL_PROTO": "Simple",
+      "NCCL_IB_TC": "41",
+      "NCCL_IB_SL": "0",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_CHECKS_DISABLE": "1",
+      "NCCL_CROSS_NIC": "0",
+      "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "1",
+      "NVTE_USE_HIPBLASLT": "1",
+      "NVTE_FUSED_ATTN": "1",
+      "NVTE_CK_USES_BWD_V3": "1",
+      "NVTE_CK_USES_FWD_V3": "1",
+      "NVTE_CK_IS_V3_ATOMIC_FP32": "0",
+      "NVTE_CK_HOW_V3_BF16_CVT": "2",
+      "NVTE_FUSED_ATTN_CK": "1",
+      "NVTE_FUSED_ATTN_AOTRITON": "0"
+    },
+
+    "_xla_flags_comment": "Mirrors XLA_FLAGS from MAD scripts/jax-maxtext/env_scripts/deepseek2_env_16b.sh for deepseek2-16b (autotune_level=4).",
+    "xla_flags": {
+      "xla_gpu_memory_limit_slop_factor": "95",
+      "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592",
+      "xla_gpu_enable_command_buffer": "",
+      "xla_gpu_enable_latency_hiding_scheduler": "True",
+      "xla_gpu_all_gather_combine_threshold_bytes": "8589934592",
+      "xla_gpu_enable_triton_gemm": "False",
+      "xla_gpu_enable_cublaslt": "True",
+      "xla_gpu_autotune_level": "0",
+      "xla_gpu_enable_all_gather_combine_by_dim": "FALSE"
+    },
+
+    "_nccl_comment": "Cluster-specific RDMA/NIC devices. Replace every '<changeme>' with your node's values (see the sibling _example_* entries); distributed runs hard-exit at config load until you do. Discover them with `ibv_devices` (HCAs) and `ip -br link` (host interface).",
+    "nccl": {
+      "_example_ib_hca_list": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "ib_hca_list": "<changeme>",
+      "_example_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "ib_hca": "<changeme>",
+      "_example_socket_ifname": "eno0",
+      "socket_ifname": "<changeme>",
+      "_example_gloo_socket_ifname": "eno0",
+      "gloo_socket_ifname": "<changeme>",
+      "ib_tc": "41",
+      "ib_sl": "0",
+      "ib_gid_index": "3"
+    },
+
+    "jax_distributed": {
+      "coordinator_ip": "auto",
+      "coordinator_port": "12346",
+      "initialization_timeout_seconds": "1800",
+      "heartbeat_timeout_seconds": "900"
+    },
+
+    "_scaling_baseline_comment": "1-node total tokens/sec baseline for scaling-efficiency %. 0.0 = disabled (record-only). Populate from a prior MI325X single-node run (tok/s/GPU * 8) to enable the metric.",
+    "scaling_baseline": {
+      "tokens_per_sec_total": 0.0,
+      "num_nodes": 1
+    },
+
+    "_convergence_comment": "to enable validation loss set eval_interval > 0 (and eval_steps) in maxtext_config; this needs a validation dataset (eval_split/eval_dataset_name). target_value <= 0 disables convergence (record-only). target_metric 'auto' uses eval_loss when eval runs, else training loss.",
+    "convergence": {
+      "target_metric": "auto",
+      "target_value": 11.8
+    },
+
+    "_loss_curve_comment": "Row 32: sample training loss every `sample_every` steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
+    "loss_curve": {
+      "sample_every": 2,
+      "milestone_steps": [100, 500, 1000, 5000],
+      "max_slope": 0.0,
+      "enforce": true
+    },
+
+    "_checkpoint_resume_comment": "Opt-in checkpoint save+resume + I/O-time test (test_checkpoint_resume). enabled=false -> skipped. Runs ONE sweep (the `sweep` name, else the first enabled) twice: train steps_before_ckpt (checkpoint written at checkpoint_period), then resume + train steps_after_resume; passes if it restarts from the checkpoint step and the boundary loss matches within loss_tolerance. max_save_seconds/max_load_seconds gate checkpoint I/O time (0 = record-only). smoke_model_overrides can shrink the model while keeping the same tokenizer/vocab, e.g. {\"base_num_decoder_layers\": 4}; empty = the config's full model. delete_ckpt_dir=true deletes the checkpoint directory after the test to free disk (set false to keep the files for inspection).",
+    "checkpoint_resume": {
+      "enabled": false,
+      "sweep": "",
+      "steps_before_ckpt": 6,
+      "steps_after_resume": 6,
+      "checkpoint_period": 5,
+      "loss_tolerance": 0.1,
+      "max_save_seconds": 0.0,
+      "max_load_seconds": 0.0,
+      "delete_ckpt_dir": true,
+      "smoke_model_overrides": {}
+    },
+
+    "_error_patterns_comment": "Regexes (name -> pattern) scanned in each node's training.log during polling; a match fails that sweep's training_run with the matched name. Add/remove entries as you find new error signatures. Remove this block to use the built-in defaults. Escape backslashes per JSON (e.g. two backslashes for a regex \\d).",
+    "error_patterns": {
+      "NCCL ERROR": "NCCL ERROR|NCCL timeout|local work queue catastrophic error",
+      "GPU HW ERROR": "HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset",
+      "AssertionError": "AssertionError|ValueError:|JaxStackTrace|During handling of the above exception|triggered the following exception",
+      "rocm Err": "FAILED_PRECONDITION: No visible GPU devices|failed call to hipInit: HIP_ERROR_NoDevice|librocm reported version is: NOT_FOUND",
+      "python err": "ModuleNotFoundError: No module named|Fatal Python error:",
+      "tensorflow": "tensorflow.CoordinationServiceError|tensorflow.BarrierError|CoordinationServiceError",
+      "resource": "RESOURCE_EXHAUSTED: Out of memory|failed: RESOURCE_EXHAUSTED",
+      "segfault": "Segmentation fault|SIGSEGV|core dumped|std::bad_alloc"
+    },
+
+    "__comment_NNODES_": "NNODES is 'auto': the real node count is injected at runtime from the cluster_file (the training launcher exports NNODES=<num_nodes>), so this value is a placeholder and is overridden.",
+    "_sweeps_comment": "Each sweep = one full training run with per-run maxtext overrides; `name` is the threshold cell key. NNODES/GBS in the name are informational labels; per_device_batch_size drives the run and the real global batch = per_device_batch_size * (nodes * gpus_per_node) at runtime. DeepSeek-V2-Lite is BF16-only here. enabled_sweep_list selects which sweeps to run.",
+    "sweeps": [
+      {
+        "name": "NNODES=2,STEPS=30,PRECISION=BF16,BATCH=10,GBS=80,SEQLEN=4096",
+        "maxtext_overrides": {
+          "per_device_batch_size": 10,
+          "max_target_length": 4096,
+          "dtype": "bfloat16",
+          "weight_dtype": "bfloat16",
+          "quantization": ""
+        }
+      }
+    ],
+    "enabled_sweep_list": [
+      "NNODES=2,STEPS=30,PRECISION=BF16,BATCH=10,GBS=80,SEQLEN=4096"
+    ]
+  }
+}

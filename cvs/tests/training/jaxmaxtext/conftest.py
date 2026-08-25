@@ -172,11 +172,13 @@ def pytest_collection_modifyitems(items):
         "test_launch_container": 0,
         "test_setup_rdma": 1,
         "test_setup_tokenizer": 2,
-        "test_training_run": 3,
-        "test_metric": 4,
-        "test_loss_curve": 5,
-        "test_print_results_table": 6,
-        "test_teardown": 7,
+        "test_smoke": 3,
+        "test_training_run": 4,
+        "test_metric": 5,
+        "test_loss_curve": 6,
+        "test_checkpoint_resume": 7,
+        "test_print_results_table": 8,
+        "test_teardown": 9,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
@@ -186,6 +188,22 @@ def pytest_runtest_makereport(item, call):
     """Attach THIS test's recorded rows to its HTML report detail panel."""
     outcome = yield
     report = outcome.get_result()
+
+    # Log each test's final outcome (PASS/FAIL/SKIP) to the console + --log-file,
+    # mirroring the "Starting Testcase:" line. Log at 'call', plus at 'setup' when
+    # the test was skipped/failed before its body ran (so nothing is missed) --
+    # this avoids double-logging (a passed setup logs only later, at 'call').
+    if report.when == "call" or (report.when == "setup" and report.outcome != "passed"):
+        name = item.name  # includes params, e.g. test_metric[BF16-...-tflops]
+        if report.outcome == "skipped":
+            lr = report.longrepr
+            reason = lr[2] if isinstance(lr, tuple) and len(lr) == 3 else (str(lr) if lr is not None else "")
+            log.info("Testcase %s: SKIPPED (%s)", name, reason)
+        elif report.outcome == "failed":
+            log.error("Testcase %s: FAILED", name)
+        else:
+            log.info("Testcase %s: PASSED", name)
+
     if report.when != "call":
         return
     try:
@@ -199,9 +217,12 @@ def pytest_runtest_makereport(item, call):
 
     # Each metric row gets an EXTRA "Metric Results" link to the single shared
     # metric-results HTML file (written by test_print_results_table), in addition
-    # to its own per-test "Full Log" link (kept as-is). Two links per metric row.
+    # to its own per-test "Full Log" link (kept as-is). Skip the link for SKIPPED
+    # metric rows: when an earlier stage (e.g. smoke) fails, the metric tests are
+    # skipped and test_print_results_table writes no metric_results.html, so the
+    # link would point at empty/missing content.
     metric_link = None
-    if (item.originalname or "") == "test_metric":
+    if (item.originalname or "") == "test_metric" and report.outcome != "skipped":
         mgr = getattr(item.config, "_html_report_manager", None)
         if mgr is not None and getattr(mgr, "is_enabled", False):
             metric_link = f"{mgr._test_html_dir}/metric_results.html"

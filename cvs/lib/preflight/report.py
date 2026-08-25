@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from cvs.lib.preflight.base import PreflightCheck
+from cvs.lib.preflight.node_smoke import DEFAULT_ARTIFACTS_ROOT_DIR
 from cvs.lib import globals
 
 log = globals.log
@@ -103,6 +104,7 @@ class PreflightReportGenerator(PreflightCheck):
         ifoe_l2_results = self.results.get('ifoe_l2_connectivity', {})
         tb_smoke_results = self.results.get('transferbench_smoke', {})
         node_smoke_results = self.results.get('node_smoke', {})
+        tier3_info_results = self.results.get('tier3_info', {})
         reachability_results = self.results.get('node_reachability')
         ssh_connectivity_results = self.results.get('ssh_connectivity')
         summary = {
@@ -112,6 +114,7 @@ class PreflightReportGenerator(PreflightCheck):
                 'node_health': self._summarize_node_health_results(node_health_results),
                 'gid_consistency': self._summarize_gid_results(gid_results),
                 'node_smoke': self._summarize_node_smoke_results(node_smoke_results),
+                'tier3_info': self._summarize_tier3_info_results(tier3_info_results),
                 'ifoe_l2_connectivity': self._summarize_ifoe_l2_results(ifoe_l2_results),
                 'transferbench_smoke': self._summarize_transferbench_smoke_results(tb_smoke_results),
                 'rdma_connectivity': self._summarize_connectivity_results(connectivity_results),
@@ -176,6 +179,15 @@ class PreflightReportGenerator(PreflightCheck):
                 "Consider enabling node_smoke.connectivity_mode='run' for per-node GPU/RDMA health screening"
             )
 
+        if summary['checks']['tier3_info']['status'] == 'FAIL':
+            summary['recommendations'].append(
+                "Review Primus Tier 3 preflight info failures (Host/GPU/Network inventory) before benchmarking"
+            )
+        elif summary['checks']['tier3_info']['status'] == 'SKIPPED':
+            summary['recommendations'].append(
+                "Consider enabling tier3_info.connectivity_mode='run' for full Host/GPU/Network info screening"
+            )
+
         if summary['overall_status'] == 'PASS':
             summary['recommendations'].append("All preflight checks passed - cluster is ready for performance testing")
 
@@ -191,7 +203,9 @@ class PreflightReportGenerator(PreflightCheck):
 
         if output_path is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_dir = get_nested_config(self.config_dict, 'reporting', 'artifacts_root_dir', '/tmp/preflight')
+            output_dir = get_nested_config(
+                self.config_dict, 'reporting', 'artifacts_root_dir', DEFAULT_ARTIFACTS_ROOT_DIR
+            )
             Path(output_dir).mkdir(parents=True, exist_ok=True)
             output_path = Path(output_dir) / f"preflight_report_{timestamp}.html"
         else:
@@ -564,6 +578,45 @@ class PreflightReportGenerator(PreflightCheck):
             'summary': summary_text,
         }
 
+    def _summarize_tier3_info_results(self, tier3_info_results):
+        """Summarize Primus Tier 3 preflight info check results."""
+        if not tier3_info_results or tier3_info_results.get('skipped'):
+            msg = (
+                tier3_info_results.get('message')
+                if isinstance(tier3_info_results, dict)
+                else 'Primus Tier 3 preflight info check not performed'
+            )
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': msg or 'Primus Tier 3 preflight info check skipped',
+            }
+
+        node_results = tier3_info_results.get('node_results') or {}
+        total_nodes = len(node_results)
+        failed_nodes = list(
+            tier3_info_results.get('failed_nodes') or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+        )
+        unknown_nodes = list(
+            tier3_info_results.get('unknown_nodes')
+            or [n for n, r in node_results.items() if r.get('status') not in ('PASS', 'FAIL', 'WARN')]
+        )
+        passing_nodes = total_nodes - len(failed_nodes) - len(unknown_nodes)
+        status = 'FAIL' if failed_nodes or unknown_nodes else 'PASS'
+        summary_text = f"{passing_nodes}/{total_nodes} nodes passed Primus Tier 3 preflight info"
+        if unknown_nodes:
+            summary_text += f"; {len(unknown_nodes)} unknown"
+        return {
+            'status': status,
+            'total_nodes': total_nodes,
+            'passing_nodes': passing_nodes,
+            'failed_nodes': failed_nodes,
+            'unknown_nodes': unknown_nodes,
+            'summary': summary_text,
+        }
+
     def _summarize_reachability_results(self, reachability_results):
         """Summarize SSH reachability check results."""
         if not reachability_results:
@@ -667,6 +720,7 @@ class PreflightReportGenerator(PreflightCheck):
             {self._generate_node_health_html(results.get('node_health', {}))}
             {self._generate_gid_consistency_html(results.get('gid_consistency', {}))}
             {self._generate_node_smoke_html(results.get('node_smoke', {}))}
+            {self._generate_tier3_info_html(results.get('tier3_info', {}))}
             {self._generate_ifoe_l2_html(results.get('ifoe_l2_connectivity', {}))}
             {self._generate_transferbench_smoke_html(results.get('transferbench_smoke', {}))}
             {self._generate_connectivity_html(results.get('rdma_connectivity', {}))}
@@ -1283,6 +1337,86 @@ class PreflightReportGenerator(PreflightCheck):
             html_out += (
                 f"<p>Per-node JSON written under <code>{html.escape(str(dump_path))}/smoke/</code> on each node.</p>"
             )
+        html_out += """
+        </section>
+        """
+        return html_out
+
+    def _generate_tier3_info_html(self, tier3_info_results):
+        """Generate Primus Tier 3 preflight info section."""
+        if not tier3_info_results:
+            return ""
+
+        if tier3_info_results.get('skipped'):
+            msg = tier3_info_results.get('message', 'Primus Tier 3 preflight info check skipped')
+            return f"""
+        <section>
+            <h2>Primus Tier 3 Preflight Info</h2>
+            <p><em>{html.escape(msg)}</em></p>
+        </section>
+        """
+
+        node_results = tier3_info_results.get('node_results') or {}
+        if not node_results:
+            return ""
+
+        failed_nodes = {n: r for n, r in node_results.items() if r.get('status') in ('FAIL', 'UNKNOWN')}
+        dump_path = tier3_info_results.get('dump_path', '')
+        report_name = tier3_info_results.get('report_file_name', 'tier3_info')
+        report_md = tier3_info_results.get('report_markdown')
+
+        if not failed_nodes:
+            passing = len([n for n, r in node_results.items() if r.get('status') == 'PASS'])
+            html_out = f"""
+        <section>
+            <h2>Primus Tier 3 Preflight Info</h2>
+            <p>All <code>{passing}</code> launcher node(s) passed <code>preflight --host --gpu --network</code>.</p>
+        """
+            if dump_path:
+                html_out += f"<p>Markdown report: <code>{html.escape(str(dump_path))}/{html.escape(str(report_name))}.md</code></p>"
+            if report_md:
+                preview = report_md[:4000]
+                if len(report_md) > 4000:
+                    preview += "\n\n... (truncated)"
+                html_out += f"<pre>{html.escape(preview)}</pre>"
+            html_out += """
+        </section>
+        """
+            return html_out
+
+        html_out = """
+        <section>
+            <h2>Primus Tier 3 Preflight Info — Failures</h2>
+            <p class="error-summary">The following nodes failed Tier 3 preflight info checks:</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Node</th>
+                        <th>Status</th>
+                        <th>Fail Reasons</th>
+                    </tr>
+                </thead>
+                <tbody>
+        """
+
+        for node, result in sorted(failed_nodes.items()):
+            reasons = result.get('fail_reasons') or []
+            reasons_str = html.escape('; '.join(str(r) for r in reasons) if reasons else 'See node logs')
+            status = html.escape(str(result.get('status', 'FAIL')))
+            html_out += f"""
+                <tr>
+                    <td>{html.escape(node)}</td>
+                    <td>{status}</td>
+                    <td>{reasons_str}</td>
+                </tr>
+            """
+
+        html_out += """
+                </tbody>
+            </table>
+        """
+        if dump_path:
+            html_out += f"<p>Report directory: <code>{html.escape(str(dump_path))}/{html.escape(str(report_name))}.md</code></p>"
         html_out += """
         </section>
         """

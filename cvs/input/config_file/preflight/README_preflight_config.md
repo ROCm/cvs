@@ -61,7 +61,7 @@ The preflight configuration file follows this structure:
     },
     "reporting": {
       "generate_html_report": true,
-      "artifacts_root_dir": "/tmp/{user-id}/preflight",
+      "artifacts_root_dir": "/home/{user-id}/preflight",
       "generate_rdma_pairs_csv": false
     },
     "debug": {
@@ -334,7 +334,7 @@ Tier 2 runs need a longer SSH budget; when `tier2_perf` is enabled the effective
   - Whether to generate detailed HTML report
   - Set to `false` to disable HTML report generation
 
-- **`artifacts_root_dir`** (default: `"/tmp/{user-id}/preflight"`)
+- **`artifacts_root_dir`** (default: `"/home/{user-id}/preflight"`)
   - Root directory where preflight artifacts are saved
   - Includes HTML reports and RDMA full_mesh workspace logs under `rdma_connectivity_workspace/`
   - Must be writable by the user running the tests
@@ -490,7 +490,7 @@ Tier 2 runs need a longer SSH budget; when `tier2_perf` is enabled the effective
     },
     "reporting": {
       "generate_html_report": true,
-      "artifacts_root_dir": "/tmp/{user-id}/preflight",
+      "artifacts_root_dir": "/home/{user-id}/preflight",
       "generate_rdma_pairs_csv": true
     }
   }

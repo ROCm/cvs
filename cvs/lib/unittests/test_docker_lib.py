@@ -23,7 +23,7 @@ class TestDockerLib(unittest.TestCase):
         docker_lib.delete_all_containers_and_volumes(self.mock_phdl)
         self.mock_phdl.exec.assert_called_once_with('docker system prune --force', timeout=60 * 10)
 
-    @patch.dict(os.environ, {"CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE": "1"}, clear=False)
+    @patch.dict(os.environ, {"CVS_SKIP_DOCKER_SYSTEM_PRUNE": "1"}, clear=False)
     def test_delete_all_containers_skips_prune_when_env_set(self):
         docker_lib.delete_all_containers_and_volumes(self.mock_phdl)
         self.mock_phdl.exec.assert_not_called()

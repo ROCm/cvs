@@ -155,46 +155,113 @@ class IsCompleteTests(unittest.TestCase):
 
 class ScanForErrorsTests(unittest.TestCase):
     def test_clean_log_no_raise(self):
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": _log()}
-        job._scan_for_errors()  # should not raise
+        job, _ = _make_job(hosts=["h0"])
+        job._scan_chunk_for_errors("h0", 0, _log())  # should not raise
+
+    def test_empty_chunk_no_raise(self):
+        job, _ = _make_job(hosts=["h0"])
+        job._scan_chunk_for_errors("h0", 0, "")  # should not raise
 
     def test_nccl_error_raises(self):
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": "some log\nNCCL ERROR: unhandled\n"}
+        job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_for_errors()
+            job._scan_chunk_for_errors("h0", 0, "some log\nNCCL ERROR: unhandled\n")
 
     def test_nan_metric_raises(self):
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": "completed step: 1, TFLOP/s/device: NaN\n"}
+        job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_for_errors()
+            job._scan_chunk_for_errors("h0", 0, "completed step: 1, TFLOP/s/device: NaN\n")
+
+    def test_nan_loss_raises_even_when_throughput_numeric(self):
+        # Real failure signature: loss/lm_loss/perplexity go NaN while
+        # TFLOP/s/device and Tokens/s/device stay numeric.
+        job, _ = _make_job(hosts=["h0"])
+        line = (
+            "completed step: 3, seconds: 6.783, TFLOP/s/device: 39.268, "
+            "Tokens/s/device: 301.929, total_weights: 65536, loss: nan, "
+            "lm_loss: nan, perplexity: nan, moe_lb_loss: 0.000\n"
+        )
+        with self.assertRaises(RuntimeError):
+            job._scan_chunk_for_errors("h0", 0, line)
+
+    def test_aborting_nan_loss_line_raises(self):
+        job, _ = _make_job(hosts=["h0"])
+        with self.assertRaises(RuntimeError):
+            job._scan_chunk_for_errors("h0", 0, "metric_logger.py:270] Aborting training due to NaN loss.\n")
+
+    def test_failure_chunk_is_logged_before_raising(self):
+        # The offending chunk (e.g. a compile traceback) must be logged so it
+        # reaches the console/--log-file -- the truncated exception message alone
+        # can miss the root cause, and non-node-0 chunks are not otherwise streamed.
+        job, _ = _make_job(hosts=["h0", "h1"])
+        chunk = "some log\nValueError: Compiler params for platform tpu cannot be used for gpu lowering.\ngrpc tail\n"
+        with patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.log") as mock_log:
+            with self.assertRaises(RuntimeError):
+                job._scan_chunk_for_errors("h1", 1, chunk)
+        logged = " ".join(str(c) for c in mock_log.error.call_args_list)
+        self.assertIn("FAILURE chunk", logged)
+        self.assertIn("Compiler params for platform tpu", logged)
+
+    def test_healthy_step_with_large_perplexity_no_raise(self):
+        # Regression guard: valid numeric metrics (incl. a big perplexity) must
+        # NOT trip the NaN detector.
+        job, _ = _make_job(hosts=["h0"])
+        job._scan_chunk_for_errors(
+            "h0",
+            0,
+            "completed step: 2, TFLOP/s/device: 38.530, Tokens/s/device: 296.258, "
+            "loss: 11.267, lm_loss: 11.267, perplexity: 78210.594, moe_lb_loss: 0.000\n",
+        )
 
     def test_config_error_patterns_replace_defaults(self):
         # A config-provided error_patterns set fully REPLACES the built-in defaults.
-        job, orch = _make_job(hosts=["h0"], error_patterns={"custom": "MY_CUSTOM_ERR"})
+        job, _ = _make_job(hosts=["h0"], error_patterns={"custom": "MY_CUSTOM_ERR"})
         # The default NCCL signature is no longer active -> no raise.
-        orch.exec_cmd_list.return_value = {"h0": "some log\nNCCL ERROR: unhandled\n"}
-        job._scan_for_errors()
+        job._scan_chunk_for_errors("h0", 0, "some log\nNCCL ERROR: unhandled\n")
         # The custom signature IS active -> raises.
-        orch.exec_cmd_list.return_value = {"h0": "boom MY_CUSTOM_ERR here\n"}
         with self.assertRaises(RuntimeError):
-            job._scan_for_errors()
+            job._scan_chunk_for_errors("h0", 0, "boom MY_CUSTOM_ERR here\n")
 
     def test_default_error_patterns_used_when_config_empty(self):
         # No config error_patterns -> built-in defaults apply.
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": "RESOURCE_EXHAUSTED: Out of memory\n"}
+        job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_for_errors()
+            job._scan_chunk_for_errors("h0", 0, "RESOURCE_EXHAUSTED: Out of memory\n")
 
     def test_default_segfault_pattern_raises(self):
         # segfault is part of the built-in default signatures.
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": "worker: Segmentation fault (core dumped)\n"}
+        job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_for_errors()
+            job._scan_chunk_for_errors("h0", 0, "worker: Segmentation fault (core dumped)\n")
+
+
+class DrainNewLogLinesTests(unittest.TestCase):
+    def test_advances_cursor_and_returns_new_text(self):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        orch.exec_cmd_list.return_value = {"h0": "l1\nl2\nl3\n", "h1": "a\nb\n"}
+        new = job._drain_new_log_lines()
+        self.assertEqual(new[0], "l1\nl2\nl3\n")
+        self.assertEqual(new[1], "a\nb\n")
+        # cursor advances by the number of lines read on each node.
+        self.assertEqual(job._log_line_cursor, [3, 2])
+
+    def test_uses_cursor_offset_in_tail_and_no_console_echo(self):
+        job, orch = _make_job(hosts=["h0"])
+        job._log_line_cursor = [5]
+        orch.exec_cmd_list.return_value = {"h0": "l6\n"}
+        job._drain_new_log_lines()
+        # tail starts at the line after the cursor (5 -> +6) ...
+        cmd = orch.exec_cmd_list.call_args.args[0][0]
+        self.assertIn("tail -n +6", cmd)
+        # ... and the bulk read is NOT echoed to the console.
+        self.assertEqual(orch.exec_cmd_list.call_args.kwargs.get("print_console"), False)
+
+    def test_empty_output_leaves_cursor_unchanged(self):
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec_cmd_list.return_value = {"h0": ""}
+        new = job._drain_new_log_lines()
+        self.assertEqual(new, {})
+        self.assertEqual(job._log_line_cursor, [0])
 
 
 class ParseResultsTests(unittest.TestCase):
@@ -229,6 +296,16 @@ class SetupRdmaLibTests(unittest.TestCase):
         job, orch = _make_job(rdma_lib=SimpleNamespace(container_mount_file="/src.so", container_dest_file="/dst.so"))
         orch.exec.return_value = {"h0": "hca_id: bnxt_re0\n"}
         job.setup_rdma_lib()  # should not raise
+
+    def test_cp_is_guarded_by_source_existence(self):
+        # With a direct read-only mount the legacy ".host" source is absent, so
+        # the copy must be guarded ([ -f <src> ]) rather than failing.
+        job, orch = _make_job(rdma_lib=SimpleNamespace(container_mount_file="/src.so", container_dest_file="/dst.so"))
+        orch.exec.return_value = {"h0": "hca_id: bnxt_re0\n"}
+        job.setup_rdma_lib()
+        cp_cmd = orch.exec.call_args_list[0].args[0]  # first exec == the guarded copy
+        self.assertIn("[ -f /src.so ]", cp_cmd)
+        self.assertIn("cp /src.so /dst.so", cp_cmd)
 
 
 class SetupTokenizerTests(unittest.TestCase):
@@ -354,16 +431,40 @@ class WriteMaxtextYamlTests(unittest.TestCase):
         # scan_layers True -> lowercase bool
         self.assertIn("scan_layers: true", written)
 
+    def test_empty_string_rendered_as_quoted_not_bare(self):
+        # An empty-string maxtext param (e.g. profiler) must render as 'key: ""',
+        # never bare 'key:' (which YAML reads as null and breaks MaxText enums).
+        job, orch = _make_job()
+        job.maxtext_config["profiler"] = ""
+        job._write_maxtext_yaml()
+        written = "\n".join(str(c.args[0]) for c in orch.exec.call_args_list)
+        self.assertIn('profiler: ""', written)
+        self.assertNotIn("profiler: \n", written)
+
 
 class StartTrainingTests(unittest.TestCase):
     @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
     def test_launches_per_node_backgrounded(self, _sleep):
         job, orch = _make_job(hosts=["h0", "h1"])
         job.start_training()
-        cmds = orch.exec_cmd_list.call_args.args[0]
+        cmds = orch.exec_cmd_list.call_args.args[0]  # last call == launch
         self.assertEqual(len(cmds), 2)
         self.assertTrue(all("nohup bash" in c for c in cmds))
         _sleep.assert_called_once()
+
+    @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
+    def test_clears_stale_log_before_launch(self, _sleep):
+        # A stale training.log with an old "completed step" marker would make
+        # is_complete() pass on the first poll (fail-open). start_training must
+        # rm each node's log BEFORE launching.
+        job, orch = _make_job(hosts=["h0", "h1"])
+        job.start_training()
+        clear_cmds = orch.exec_cmd_list.call_args_list[0].args[0]
+        self.assertEqual(len(clear_cmds), 2)
+        self.assertTrue(all("rm -f" in c and "training.log" in c for c in clear_cmds))
+        # ... and the clear precedes the launch.
+        launch_cmds = orch.exec_cmd_list.call_args_list[-1].args[0]
+        self.assertTrue(all("nohup bash" in c for c in launch_cmds))
 
     @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
     def test_captures_host_start_time(self, _sleep):
@@ -375,6 +476,46 @@ class StartTrainingTests(unittest.TestCase):
         _wire_container_exec(orch)
         job.start_training()
         self.assertEqual(job.training_start_time, {"h0": "Mon Jan  2 03:04", "h1": "Mon Jan  2 03:04"})
+
+
+class PollForCompletionTests(unittest.TestCase):
+    _LIB = "cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib"
+
+    @patch(f"{_LIB}.time.sleep")
+    def test_completion_path_scans_final_drain_for_nan(self, _sleep):
+        # The chunk fetched on the completion path (final "completed step" +
+        # anything after) must be error-scanned before declaring success.
+        job, _ = _make_job(hosts=["h0"])
+        job.is_complete = MagicMock(return_value=True)
+        job._drain_new_log_lines = MagicMock(
+            side_effect=[
+                {},  # loop-body drain: nothing new yet
+                {0: "completed step: 2, TFLOP/s/device: NaN\n"},  # completion-path drain
+            ]
+        )
+        with self.assertRaises(RuntimeError):
+            job.poll_for_completion()
+
+    @patch(f"{_LIB}.time.sleep")
+    def test_completion_path_scans_worker_node_not_just_node0(self, _sleep):
+        # A worker-only (non-0) error in the completion window must still raise.
+        job, _ = _make_job(hosts=["h0", "h1"])
+        job.is_complete = MagicMock(return_value=True)
+        job._drain_new_log_lines = MagicMock(
+            side_effect=[
+                {},
+                {1: "some log\nNCCL ERROR: boom\n"},
+            ]
+        )
+        with self.assertRaises(RuntimeError):
+            job.poll_for_completion()
+
+    @patch(f"{_LIB}.time.sleep")
+    def test_clean_completion_returns(self, _sleep):
+        job, _ = _make_job(hosts=["h0"])
+        job.is_complete = MagicMock(return_value=True)
+        job._drain_new_log_lines = MagicMock(side_effect=[{}, {0: _log()}])
+        job.poll_for_completion()  # should not raise
 
 
 class ScanDmesgForErrorsTests(unittest.TestCase):
