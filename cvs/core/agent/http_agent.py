@@ -8,6 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import asyncio
 import hmac
 import os
+import signal
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from . import messages
 
 FILE_MODE_PREVIEW_LINES = 20
+SHUTDOWN_GRACE_PERIOD_SECONDS = 10.0
 
 
 def _read_secret(file_path: Path) -> str:
@@ -84,6 +86,21 @@ class ProcessRegistry:
 
     def snapshot(self) -> dict[str, asyncio.subprocess.Process]:
         return dict(self._processes)
+
+
+async def _terminate_process_group(process: asyncio.subprocess.Process, grace_period: float) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return  # already exited (e.g. its own /v1/exec call completed concurrently)
+    try:
+        await asyncio.wait_for(process.wait(), timeout=grace_period)
+    except asyncio.TimeoutError:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        await process.wait()
 
 
 async def _spawn_process(
@@ -177,10 +194,13 @@ def create_app(agent_dir: Path, own_rank: int, expected_agent_count: int) -> Fas
                 await registry.unregister(request.cmd_id)
             stdout_text = stdout_bytes.decode(errors="replace")
             stderr_text = stderr_bytes.decode(errors="replace")
-            stdout_path = request.out_path / f"{request.cmd_id}.stdout"
-            stderr_path = request.out_path / f"{request.cmd_id}.stderr"
-            await _write_text(stdout_path, stdout_text)
-            await _write_text(stderr_path, stderr_text)
+            stdout_path = None
+            stderr_path = None
+            if request.out_path:
+                stdout_path = request.out_path / f"{request.cmd_id}.stdout"
+                stderr_path = request.out_path / f"{request.cmd_id}.stderr"
+                await _write_text(stdout_path, stdout_text)
+                await _write_text(stderr_path, stderr_text)
             return messages.ExecResponse(
                 exit_code=process.returncode,
                 stdout=_tail_lines(stdout_text, FILE_MODE_PREVIEW_LINES),
@@ -193,8 +213,16 @@ def create_app(agent_dir: Path, own_rank: int, expected_agent_count: int) -> Fas
         raise NotImplementedError(f"output_mode {request.output_mode} is not yet implemented")
 
     @app.post(messages.SHUTDOWN_PATH)
-    async def run_shutdown() -> messages.ShutdownResponse:
-        '''Initiate graceful shutdown'''
-        ...
+    async def run_shutdown(http_request: Request) -> messages.ShutdownResponse:
+        '''Terminate every process this agent has spawned, then exit the agent itself'''
+        registry: ProcessRegistry = http_request.app.state.process_registry
+        processes = registry.snapshot()
+        await asyncio.gather(
+            *(_terminate_process_group(process, SHUTDOWN_GRACE_PERIOD_SECONDS) for process in processes.values())
+        )
+        # Self-signal rather than depending on a Server reference: uvicorn installs a SIGTERM
+        # handler that drains in-flight requests (this one included) before exiting.
+        os.kill(os.getpid(), signal.SIGTERM)
+        return messages.ShutdownResponse(ok=True)
 
     return app

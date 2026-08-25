@@ -9,14 +9,17 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # the bearer-token auth dependency, and the /v1/register, /v1/health route behavior.
 
 import asyncio
+import os
+import signal
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from cvs.core.agent import messages
-from cvs.core.agent.http_agent import AgentInfo, AgentRegistry, create_app
+from cvs.core.agent.http_agent import AgentInfo, AgentRegistry, create_app, _terminate_process_group
 
 
 class TestAgentRegistry(unittest.IsolatedAsyncioTestCase):
@@ -43,6 +46,26 @@ class TestAgentRegistry(unittest.IsolatedAsyncioTestCase):
         await registry.register(rank=1, hostname="node1", port=9000)
         with self.assertRaises(asyncio.TimeoutError):
             await registry.wait_until_ready(timeout=0.05)
+
+
+class TestTerminateProcessGroup(unittest.IsolatedAsyncioTestCase):
+    async def test_sends_sigterm_and_awaits_exit(self):
+        process = await asyncio.create_subprocess_shell("sleep 30", start_new_session=True)
+        await _terminate_process_group(process, grace_period=5)
+        self.assertEqual(process.returncode, -signal.SIGTERM)
+
+    async def test_escalates_to_sigkill_when_process_ignores_sigterm(self):
+        process = await asyncio.create_subprocess_shell(
+            "trap '' TERM; echo ready; sleep 30", stdout=asyncio.subprocess.PIPE, start_new_session=True
+        )
+        await process.stdout.readline()  # ensures the trap is installed before we signal the group
+        await _terminate_process_group(process, grace_period=0.2)
+        self.assertEqual(process.returncode, -signal.SIGKILL)
+
+    async def test_no_error_when_process_already_exited(self):
+        process = await asyncio.create_subprocess_shell("true", start_new_session=True)
+        await process.wait()
+        await _terminate_process_group(process, grace_period=1)
 
 
 class HttpAgentTestBase(unittest.TestCase):
@@ -201,6 +224,20 @@ class TestExec(HttpAgentTestBase):
             response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
             exec_response = messages.ExecResponse(**response.json())
             self.assertEqual(exec_response.stdout, [cwd_dir])
+
+
+class TestShutdown(HttpAgentTestBase):
+    def test_shutdown_with_no_running_processes_signals_self_and_returns_ok(self):
+        client = self._make_client(own_rank=0)
+        with patch("cvs.core.agent.http_agent.os.kill") as mock_kill:
+            response = client.post(
+                messages.SHUTDOWN_PATH,
+                content=messages.ShutdownRequest().model_dump_json(),
+                headers=self._auth_headers(),
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(messages.ShutdownResponse(**response.json()).ok)
+        mock_kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
 
 
 if __name__ == "__main__":
