@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "profile_id": "atom_rundeck",
+  "suite_id": "atom",
+  "report_basename": "atom_run_deck",
+  "title": "ATOM Run Deck",
+  "subtitle": "ATOM · lab performance summary",
+  "footer": "CVS atom · render-only · does not affect gates",
+  "link_name": "ATOM Run Deck",
+  "dataset_builder": "sweep",
+  "interactive_viewer": true,
+  "viewer_cell_threshold": 16,
+  "sources": {
+    "results": "inf_res_dict",
+    "variant": "variant_config",
+    "lifecycle": "lifecycle"
+  },
+  "hooks": {
+    "tier_metric_specs": "cvs.lib.inference.atom.atom_parsing:tier_metric_specs",
+    "metric_units": "cvs.lib.inference.atom.atom_parsing:METRIC_UNITS",
+    "run_card_display": "cvs.lib.report.profiles.hooks.atom_run_card:atom_run_card_display"
+  },
+  "sweep": {
+    "metric_prefix": "client.",
+    "tier_order": ["throughput", "ttft", "tpot", "health", "record"],
+    "throughput_metric": "client.output_throughput",
+    "ttft_metric": "client.mean_ttft_ms",
+    "headline_metric": "client.output_throughput",
+    "results_table_columns": [
+      ["Model", null],
+      ["GPU", null],
+      ["ISL", null],
+      ["OSL", null],
+      ["Policy", null],
+      ["Conc", null],
+      ["Host", null],
+      ["Output tok/s", "client.output_throughput"],
+      ["Total tok/s", "client.total_token_throughput"],
+      ["Mean TTFT (ms)", "client.mean_ttft_ms"],
+      ["Mean TPOT (ms)", "client.mean_tpot_ms"],
+      ["P99 ITL (ms)", "client.p99_itl_ms"],
+      ["Scaling eff. (%)", "scaling.efficiency_pct"]
+    ],
+    "cell_highlights": [
+      ["output_throughput", "Output tok/s"],
+      ["mean_ttft_ms", "Mean TTFT (ms)"],
+      ["mean_tpot_ms", "Mean TPOT (ms)"],
+      ["p99_ttft_ms", "P99 TTFT (ms)"],
+      ["p95_tpot_ms", "P95 TPOT (ms)"],
+      ["scaling.efficiency_pct", "Scaling eff. (%)"]
+    ],
+    "chart_series": [
+      {"metric_suffix": "output_throughput", "title": "Output tok/s", "unit": "tok/s", "invert": false},
+      {"metric_suffix": "total_token_throughput", "title": "Total tok/s", "unit": "tok/s", "invert": false},
+      {"metric_suffix": "mean_ttft_ms", "title": "Mean TTFT", "unit": "ms", "invert": true},
+      {"metric_suffix": "mean_tpot_ms", "title": "Mean TPOT", "unit": "ms", "invert": true},
+      {"metric_suffix": "p99_ttft_ms", "title": "P99 TTFT", "unit": "ms", "invert": true},
+      {"metric_suffix": "p99_tpot_ms", "title": "P99 TPOT", "unit": "ms", "invert": true},
+      {"metric_suffix": "p99_itl_ms", "title": "P99 ITL", "unit": "ms", "invert": true},
+      {"metric_suffix": "scaling.efficiency_pct", "title": "Scaling efficiency", "unit": "%", "invert": false}
+    ]
+  },
+  "lifecycle": {
+    "session_labels": [
+      "container_launch",
+      "sshd_setup",
+      "topology_discovery",
+      "model_fetch",
+      "openai_smoke",
+      "server_health",
+      "server_ready",
+      "server.time_to_ready_s",
+      "client_complete",
+      "server.client_wall_s",
+      "accuracy_eval",
+      "long_context_accuracy",
+      "mtp_quality",
+      "dmesg_scan",
+      "teardown"
+    ],
+    "cell_labels": ["server_ready", "client_complete"]
+  },
+  "behavior": {
+    "inference_test_substring": "test_atom_inference",
+    "row_card_extras": false,
+    "row_card_test_names": ["test_cell_metrics"]
+  },
+  "viewer": {
+    "interactivity": {
+      "enabled": true,
+      "tpot_metric": "client.mean_tpot_ms",
+      "output_throughput_metric": "client.output_throughput",
+      "total_throughput_metric": "client.total_token_throughput"
+    }
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {"type": "lifecycle_timeline", "id": "lifecycle", "title": "Lifecycle timeline", "bind": "lifecycle"},
+    {"type": "sweep_analytics", "id": "sweep", "title": "Sweep analytics", "bind": "datasets.sweep"},
+    {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
+    {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
+    {"type": "sweep_cell_cards", "id": "cells", "title": "Sweep cells", "bind": "cells"},
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "profile_id": "sglang_rundeck",
+  "suite_id": "sglang",
+  "report_basename": "sglang_run_deck",
+  "title": "SGLang Run Deck",
+  "subtitle": "SGLang · lab performance summary",
+  "footer": "CVS sglang · render-only · does not affect gates",
+  "link_name": "SGLang Run Deck",
+  "dataset_builder": "sweep",
+  "interactive_viewer": true,
+  "viewer_cell_threshold": 24,
+  "sources": {
+    "results": "inf_res_dict",
+    "variant": "variant_config",
+    "lifecycle": "lifecycle"
+  },
+  "hooks": {
+    "tier_metric_specs": "cvs.lib.inference.sglang.sglang_parsing:tier_metric_specs",
+    "metric_units": "cvs.lib.inference.sglang.sglang_parsing:SGLANG_METRIC_UNITS",
+    "run_card_display": "cvs.lib.report.profiles.hooks.sglang_run_card:sglang_run_card_display"
+  },
+  "sweep": {
+    "metric_prefix": "",
+    "tier_order": ["throughput", "latency", "health", "record"],
+    "throughput_metric": "output_throughput_per_sec",
+    "ttft_metric": "mean_ttft_ms",
+    "headline_metric": "output_throughput_per_sec",
+    "results_table_columns": [
+      ["Model", null],
+      ["GPU", null],
+      ["ISL", null],
+      ["OSL", null],
+      ["Policy", null],
+      ["Conc", null],
+      ["Host", null],
+      ["Req/s", "request_throughput_per_sec"],
+      ["Output tok/s", "output_throughput_per_sec"],
+      ["Mean TTFT (ms)", "mean_ttft_ms"],
+      ["Mean TPOT (ms)", "mean_tpot_ms"],
+      ["P99 ITL (ms)", "p99_itl_ms"],
+      ["Mean E2E latency (ms)", "mean_e2e_latency_ms"],
+      ["Goodput", "goodput"],
+      ["MFU (estimated)", "mfu"]
+    ],
+    "cell_highlights": [
+      ["output_throughput_per_sec", "Output tok/s"],
+      ["mean_ttft_ms", "Mean TTFT (ms)"],
+      ["mean_tpot_ms", "Mean TPOT (ms)"],
+      ["goodput", "Goodput"],
+      ["mfu", "MFU"]
+    ],
+    "chart_series": [
+      {"metric_suffix": "output_throughput_per_sec", "title": "Output tok/s", "unit": "tok/s", "invert": false},
+      {"metric_suffix": "request_throughput_per_sec", "title": "Req/s", "unit": "req/s", "invert": false},
+      {"metric_suffix": "mean_ttft_ms", "title": "Mean TTFT", "unit": "ms", "invert": true},
+      {"metric_suffix": "mean_tpot_ms", "title": "Mean TPOT", "unit": "ms", "invert": true},
+      {"metric_suffix": "p99_ttft_ms", "title": "P99 TTFT", "unit": "ms", "invert": true},
+      {"metric_suffix": "p99_tpot_ms", "title": "P99 TPOT", "unit": "ms", "invert": true}
+    ]
+  },
+  "lifecycle": {
+    "session_labels": [
+      "container_launch",
+      "rms_norm",
+      "prefill_launch",
+      "decode_launch",
+      "server_launch",
+      "server_ready",
+      "proxy_router_launch",
+      "smoke_endpoints",
+      "lm_eval_hellaswag",
+      "lm_eval_gsm8k",
+      "gpu_topology",
+      "teardown"
+    ],
+    "cell_labels": []
+  },
+  "behavior": {
+    "inference_test_substring": "test_run_performance_benchmark_test",
+    "row_card_extras": false,
+    "row_card_test_names": []
+  },
+  "viewer": {
+    "interactivity": {
+      "enabled": true,
+      "tpot_metric": "mean_tpot_ms",
+      "output_throughput_metric": "output_throughput_per_sec",
+      "total_throughput_metric": "output_throughput_per_sec"
+    }
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {"type": "lifecycle_timeline", "id": "lifecycle", "title": "Lifecycle timeline", "bind": "lifecycle"},
+    {"type": "sweep_analytics", "id": "sweep", "title": "Sweep analytics", "bind": "datasets.sweep"},
+    {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
+    {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
+    {"type": "sweep_cell_cards", "id": "cells", "title": "Sweep cells", "bind": "cells"},
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}

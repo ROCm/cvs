@@ -7,14 +7,16 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import importlib.metadata
 import json
-import logging
 from pathlib import Path
 
 import pytest
 
+from cvs.lib.report.pytest_hooks import (
+    attach_rundeck_row_extras,
+    cvs_rundeck_bind_module_fixture,
+    cvs_rundeck_session_fixture,
+)
 from cvs.lib.report_plugins import HtmlReportManager, cli_option_value
-
-log = logging.getLogger(__name__)
 
 
 def _maybe_autocollect_html(config, suite_name):
@@ -106,83 +108,29 @@ def _ensure_html_report_manager(config):
     return config._html_report_manager
 
 
-def _auto_register_inference_suite_report(config):
-    from cvs.lib.report.auto_register import try_auto_register_inference_suite_report
+def _auto_register_suite_report(config):
+    from cvs.lib.report.auto_register import try_auto_register_suite_report
 
     _sync_suite_name_from_args(config)
-    return try_auto_register_inference_suite_report(config)
+    return try_auto_register_suite_report(config)
 
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_configure(config):
+    _sync_suite_name_from_args(config)
+    _maybe_autocollect_html(config, config._suite_name)
     _ensure_html_report_manager(config)
-    _auto_register_inference_suite_report(config)
+    _auto_register_suite_report(config)
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _cvs_inference_suite_report_session(request):
-    """Initialize the session report store when a suite preset is registered."""
-    from cvs.lib.report.registry import clear_session_results, get_suite_report_config
-    from cvs.lib.report.types import InferenceReportConfig
-
-    if not isinstance(get_suite_report_config(request.config), InferenceReportConfig):
-        yield
-        return
-
-    clear_session_results()
-    yield
+def _cvs_rundeck_session(request):
+    yield from cvs_rundeck_session_fixture(request)
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _cvs_inference_suite_report_bind_module(request, _cvs_inference_suite_report_session):
-    """Bind module-scoped suite fixtures into the session store at module teardown."""
-    from cvs.lib.report.registry import bind_session_results, get_suite_report_config
-    from cvs.lib.report.types import InferenceReportConfig
-
-    if not isinstance(get_suite_report_config(request.config), InferenceReportConfig):
-        yield
-        return
-
-    inf_res_dict = None
-    variant_config = None
-    lifecycle = None
-    try:
-        inf_res_dict = request.getfixturevalue("inf_res_dict")
-    except pytest.FixtureLookupError:
-        log.warning(
-            "Inference suite report preset registered but inf_res_dict fixture is missing; "
-            "session-end report will be skipped"
-        )
-        yield
-        return
-    try:
-        variant_config = request.getfixturevalue("variant_config")
-    except pytest.FixtureLookupError:
-        log.warning(
-            "Inference suite report preset registered but variant_config fixture is missing; "
-            "session-end report will be skipped"
-        )
-        yield
-        return
-    try:
-        lifecycle = request.getfixturevalue("lifecycle")
-    except pytest.FixtureLookupError:
-        log.warning(
-            "Inference suite report preset registered but lifecycle fixture is missing; "
-            "session-end report will be skipped"
-        )
-        yield
-        return
-
-    def _bind_at_module_end():
-        bind_session_results(
-            inf_res_dict=inf_res_dict,
-            variant_config=variant_config,
-            lifecycle=lifecycle,
-        )
-
-    request.addfinalizer(_bind_at_module_end)
-    yield
+def _cvs_rundeck_bind_module(request, _cvs_rundeck_session):
+    yield from cvs_rundeck_bind_module_fixture(request, _cvs_rundeck_session)
 
 
 # Add all additional cmd line arguments for the script
@@ -248,7 +196,7 @@ def pytest_metadata(metadata):
 
 # Prepare a clean per-run log directory before tests start.
 def pytest_sessionstart(session):
-    _auto_register_inference_suite_report(session.config)
+    _auto_register_suite_report(session.config)
     _ensure_html_report_manager(session.config).setup_log_dir()
 
 
@@ -258,18 +206,7 @@ def pytest_runtest_makereport(item, call):  # noqa: ARG001
     outcome = yield
     report = outcome.get_result()
     report.extras = _ensure_html_report_manager(item.config).write_test_log(report, item.originalname)
-
-    from cvs.lib.report.registry import get_suite_report_config
-    from cvs.lib.report.types import InferenceReportConfig
-
-    if isinstance(get_suite_report_config(item.config), InferenceReportConfig):
-        from cvs.lib.report.inference_wiring import (
-            attach_inference_suite_lifecycle_table,
-            attach_inference_suite_report_row_extra,
-        )
-
-        attach_inference_suite_lifecycle_table(item, report)
-        attach_inference_suite_report_row_extra(item, report)
+    attach_rundeck_row_extras(item, report)
 
 
 # Replace inline pytest-html log content with a short externalized-log message.

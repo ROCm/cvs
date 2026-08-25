@@ -13,10 +13,13 @@ from cvs.lib.inference.utils.vllm_parsing import (
     VLLM_RESULTS_COLUMNS,
     tier_metric_specs,
 )
-from cvs.lib.report.presets.vllm import VLLM_REPORT_CONFIG
+from cvs.lib.report.auto_register import try_auto_register_suite_report
+from cvs.lib.report.profile import load_json_profile
+from cvs.lib.report.registry import get_resolved_profile, resolve_suite_report_config
+from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
 
 
-class TestVllmReportPreset(unittest.TestCase):
+class TestVllmDeckProfile(unittest.TestCase):
     def test_results_columns_fixed_positional_prefix(self):
         fixed = VLLM_RESULTS_COLUMNS[:7]
         self.assertEqual(
@@ -37,9 +40,7 @@ class TestVllmReportPreset(unittest.TestCase):
 
     def test_gated_metrics_partitioned_exactly_once(self):
         tiered = [m for names in METRIC_TIERS.values() for m in names]
-        # No duplicates across tiers.
         self.assertEqual(len(tiered), len(set(tiered)))
-        # Every gated metric lands in exactly one non-record tier.
         self.assertEqual(set(tiered), set(GATED_METRICS))
 
     def test_gated_metrics_subset_of_client_metrics(self):
@@ -65,37 +66,42 @@ class TestVllmReportPreset(unittest.TestCase):
         self.assertIn("client.num_prompts", specs)
         self.assertNotIn("client.output_throughput", specs)
 
-    def test_preset_config_identity(self):
-        self.assertEqual(VLLM_REPORT_CONFIG.suite_id, "vllm")
-        self.assertEqual(VLLM_REPORT_CONFIG.inference_test_substring, "test_vllm_inference")
-        self.assertEqual(VLLM_REPORT_CONFIG.row_card_test_names, ("test_metric", "test_gpu_metric", "test_prom_metric"))
+    def test_vllm_json_profile_identity(self):
+        profile = load_json_profile("vllm")
+        self.assertIsNotNone(profile)
+        cfg = build_inference_config_from_profile(profile)
+        self.assertEqual(cfg.suite_id, "vllm")
+        self.assertEqual(cfg.inference_test_substring, "test_vllm_inference")
+        self.assertEqual(cfg.row_card_test_names, ("test_metric", "test_gpu_metric", "test_prom_metric"))
 
-    def test_preset_lifecycle_labels_match_what_suite_records(self):
-        # Guard against drift: the vLLM suite (cvs/tests/inference/vllm/vllm.py)
-        # records exactly these session-level stages via lifecycle.record(...).
+    def test_vllm_profile_lifecycle_labels_match_what_suite_records(self):
+        profile = load_json_profile("vllm")
+        cfg = build_inference_config_from_profile(profile)
         suite_recorded = {
             "container_launch",
             "topology_discovery",
             "model_fetch",
+            "openai_smoke",
             "server_ready",
             "teardown",
         }
-        self.assertTrue(set(VLLM_REPORT_CONFIG.session_lifecycle_labels) <= suite_recorded)
-        self.assertTrue(set(VLLM_REPORT_CONFIG.cell_lifecycle_labels) <= suite_recorded)
+        self.assertTrue(set(cfg.session_lifecycle_labels) <= suite_recorded)
+        self.assertTrue(set(cfg.cell_lifecycle_labels) <= suite_recorded)
 
     def test_auto_register_resolves_vllm_stem(self):
-        from cvs.lib.report.auto_register import try_auto_register_inference_suite_report
-        from cvs.lib.report.registry import get_suite_report_config
-
         class _FakeConfig:
             pass
 
         cfg = _FakeConfig()
         cfg._suite_name = "vllm"
         cfg._suite_report_config = None
-        registered = try_auto_register_inference_suite_report(cfg)
+        registered = try_auto_register_suite_report(cfg)
         self.assertTrue(registered)
-        self.assertIs(get_suite_report_config(cfg), VLLM_REPORT_CONFIG)
+        profile = get_resolved_profile(cfg)
+        self.assertIsInstance(profile, dict)
+        self.assertEqual(profile["suite_id"], "vllm")
+        resolved = resolve_suite_report_config(cfg)
+        self.assertEqual(resolved.suite_id, "vllm")
 
 
 if __name__ == "__main__":

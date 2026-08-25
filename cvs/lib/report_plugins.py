@@ -205,7 +205,7 @@ class HtmlReportManager:
         self._htmlpath = getattr(config.option, "htmlpath", None)
         self._test_html_dir = getattr(config, "_test_html_dir", "test_html")
         self._custom_test_reports = []  # Track reports added via add_html_to_report
-        self._config_files = {}  # {original_path: {"rel": relative_path, "kind": "cluster"|"config"}}
+        self._config_files = {}  # Track copied config files {original_path: relative_path}
         # Per-test PASS/FAIL verdict lines rendered in the Reports section.
         # Each entry: {"name": test_name, "passed": bool, "detail": str}.
         self._anc_verdicts = []
@@ -332,7 +332,7 @@ class HtmlReportManager:
             return None
 
         try:
-            source_path = Path(html_file)
+            source_path = Path(html_file).resolve()
             if not source_path.exists():
                 log.warning("File not found, cannot add to report: %s", source_path)
                 return None
@@ -341,10 +341,12 @@ class HtmlReportManager:
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
             # Copy file to log directory (optionally under a caller-supplied unique name)
-            dest_path = self.log_dir / (dest_name or source_path.name)
-            shutil.copy2(source_path, dest_path)
-
-            log.info("Added file to report bundle: %s -> %s", source_path, dest_path)
+            dest_path = (self.log_dir / (dest_name or source_path.name)).resolve()
+            if source_path == dest_path:
+                log.info("File already in report bundle: %s", source_path)
+            else:
+                shutil.copy2(source_path, dest_path)
+                log.info("Added file to report bundle: %s -> %s", source_path, dest_path)
 
             # Return relative path for potential linking
             rel_path = dest_path.relative_to(self.htmlpath.parent)
@@ -395,10 +397,7 @@ class HtmlReportManager:
             # Ensure log directory exists
             self.log_dir.mkdir(parents=True, exist_ok=True)
 
-            # Copy cluster file. The "cluster_" prefix namespaces it in the
-            # bundle so it can't collide with a same-named config/artifact. The
-            # Environment-table link is keyed by `kind` (not a filename
-            # substring), so the prefix is purely for bundle hygiene.
+            # Copy cluster file
             if cluster_file_path and cluster_file_path != "Not specified":
                 cluster_path = Path(cluster_file_path)
                 if cluster_path.exists():
@@ -406,13 +405,12 @@ class HtmlReportManager:
                     shutil.copy2(cluster_path, dest_cluster)
                     rel_cluster = dest_cluster.relative_to(self.htmlpath.parent)
                     copied_files['cluster'] = str(rel_cluster)
-                    self._config_files[cluster_file_path] = {"rel": str(rel_cluster), "kind": "cluster"}
+                    self._config_files[cluster_file_path] = str(rel_cluster)
                     log.info("Copied cluster file to bundle: %s -> %s", cluster_path, dest_cluster)
                 else:
                     log.warning("Cluster file not found: %s", cluster_path)
 
-            # Copy config file with a "config_" prefix -- see the cluster-file
-            # note above.
+            # Copy config file
             if config_file_path and config_file_path != "Not specified":
                 config_path = Path(config_file_path)
                 if config_path.exists():
@@ -420,7 +418,7 @@ class HtmlReportManager:
                     shutil.copy2(config_path, dest_config)
                     rel_config = dest_config.relative_to(self.htmlpath.parent)
                     copied_files['config'] = str(rel_config)
-                    self._config_files[config_file_path] = {"rel": str(rel_config), "kind": "config"}
+                    self._config_files[config_file_path] = str(rel_config)
                     log.info("Copied config file to bundle: %s -> %s", config_path, dest_config)
                 else:
                     log.warning("Config file not found: %s", config_path)
@@ -432,15 +430,11 @@ class HtmlReportManager:
 
     def copy_config_files_from_args(self):
         """Copy config files from command line arguments to bundle."""
-
-        # Parse command line arguments to get file paths.
-        # Handles both `--opt value` and `--opt=value` forms.
         cluster_arg = cli_option_value("--cluster_file")
         config_arg = cli_option_value("--config_file")
         cluster_file_path = str(Path(cluster_arg).resolve()) if cluster_arg else None
         config_file_path = str(Path(config_arg).resolve()) if config_arg else None
 
-        # Copy files to bundle if we found them
         if cluster_file_path or config_file_path:
             return self.copy_config_files_to_bundle(cluster_file_path, config_file_path)
 
@@ -513,16 +507,15 @@ class HtmlReportManager:
         try:
             data = json.loads(json_str)
 
-            # Update environment data with clickable links for config files.
-            # Keyed by the recorded `kind` (cluster/config), not a filename
-            # substring -- so a config file whose name no longer contains
-            # "config" (e.g. mi325x_..._distributed.json) still gets linked.
-            row_by_kind = {"cluster": "Cluster File", "config": "Config File"}
-            for original_path, info in self._config_files.items():
+            # Update environment data with clickable links for config files
+            for original_path, relative_path in self._config_files.items():
                 filename = Path(original_path).name
-                row = row_by_kind.get(info["kind"])
-                if row:
-                    data["environment"][row] = f'<a href="{info["rel"]}" target="_blank">{filename}</a>'
+                if "cluster" in filename.lower():
+                    # Replace plain filename with HTML link
+                    data["environment"]["Cluster File"] = f'<a href="{relative_path}" target="_blank">{filename}</a>'
+                elif "config" in filename.lower():
+                    # Replace plain filename with HTML link
+                    data["environment"]["Config File"] = f'<a href="{relative_path}" target="_blank">{filename}</a>'
 
             # Re-encode the JSON and update the HTML
             updated_json = json.dumps(data)
@@ -620,46 +613,17 @@ class HtmlReportManager:
         return html
 
     def generate_suite_reports(self, session):
-        """Write registered suite report HTML/JSON into the pytest bundle before zip."""
+        """Write registered Run Deck HTML/JSON into the pytest bundle before zip."""
         if not self.is_enabled:
             return
 
-        from cvs.lib.report.inference import publish_inference_suite_report
-        from cvs.lib.report.registry import get_session_results, get_suite_report_config
-        from cvs.lib.report.types import InferenceReportConfig
+        from cvs.lib.report.rundeck import generate_rundeck
 
-        report_config = get_suite_report_config(session.config)
-        if report_config is None:
-            suite_name = getattr(session.config, "_suite_name", "unknown")
-            log.info(
-                "Skipping suite report generation: no preset registered for suite '%s'",
-                suite_name,
-            )
-            return
-
-        store = get_session_results()
-
-        if not isinstance(report_config, InferenceReportConfig):
-            log.warning("Unknown suite report config type: %s", type(report_config).__name__)
-            return
-
-        inf_res_dict = store.get("inf_res_dict")
-        if not inf_res_dict:
-            log.info("Skipping suite report generation: no results in session store")
-            return
-
-        publish_inference_suite_report(
-            report_config,
-            variant_config=store.get("variant_config"),
-            inf_res_dict=inf_res_dict,
-            lifecycle_report=store.get("lifecycle_report") or {},
-            report_manager=self,
-            pytest_config=session.config,
-        )
+        generate_rundeck(session, self)
 
     @staticmethod
     def inject_style_overrides(prefix):
-        """Inject global report CSS and SGLang benchmark-metrics expand/collapse script."""
+        """Inject CSS to hide show/hide details UI elements."""
         prefix.extend([REPORT_STYLE_OVERRIDES, REPORT_BENCHMARK_METRICS_SCRIPT])
 
     def create_zip_bundle(self, session):

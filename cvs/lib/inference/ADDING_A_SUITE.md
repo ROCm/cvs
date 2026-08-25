@@ -588,12 +588,16 @@ reference (`min`, `max`, `max_ms`, `within`, `min_tok_s`, `min_ratio`).
 
 **Full guide:** `cvs/lib/report/README.md`
 
-Add one preset at `cvs/lib/report/presets/<cvs_run_stem>.py`. Root `cvs/conftest.py`
-auto-loads it when the stem matches `cvs run …` and writes HTML/JSON/viewer at session
-end when `--html` is set. Reports are render-only and do not change pass/fail.
+Add one JSON deck profile at `cvs/lib/report/profiles/<cvs_run_stem>.json`. Root
+`cvs/conftest.py` auto-loads it when the stem matches `cvs run …` and writes
+HTML/JSON/viewer at session end when `--html` is set. Reports are render-only and
+do not change pass/fail.
 
-Do **not** wire reports in suite `conftest.py`. **IX-atom reference:**
-`presets/inferencex_atom.py` + `presets/inferencex_atom.py`.
+Suite-specific metric and run-card hooks belong under `cvs/lib/report/profiles/hooks/`
+only when the default run card is insufficient. Metric hooks should reference the
+suite parsing module directly (see `profiles/vllm.json`). Do **not** wire reports
+in suite `conftest.py`. **Reference:** `profiles/atom.json` +
+`profiles/hooks/atom_run_card.py`.
 
 ---
 
@@ -657,4 +661,4 @@ in the existing code.
 
 **Suite reports (optional)**
 
-- [ ] Added `cvs/lib/report/presets/<cvs_run_stem>.py` when using `--html` (see [Step 8](#step-8-suite-reports-optional-html))
+- [ ] Added `cvs/lib/report/profiles/<cvs_run_stem>.json` when using `--html` (see [Step 8](#step-8-suite-reports-optional-html))

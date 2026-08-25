@@ -14,127 +14,126 @@ from cvs.lib.report.types import InferenceReportConfig
 _PARITY_JSON = "inference_parity_report.json"
 
 
-def ci_summary_basename(report_basename: str) -> str:
-    return f"{report_basename}_summary.html"
+class CiSummaryBuilder:
+    """Build and write one-page CI summary HTML from an inference payload."""
 
+    def __init__(self, payload: Mapping[str, Any], config: InferenceReportConfig):
+        self.payload = payload
+        self.config = config
 
-def _cell_worst_score(
-    cell: dict,
-    gated_tiers: tuple[str, ...],
-    headline_metric: str,
-) -> tuple:
-    failed = sum(1 for t in gated_tiers if cell.get("tiers", {}).get(t) == "fail")
-    if failed:
-        return (0, -failed, cell.get("cell_id", ""))
-    if cell_has_any_tier_failure(cell):
-        return (1, 0, cell.get("cell_id", ""))
-    headline = (cell.get("actuals") or {}).get(headline_metric)
-    try:
-        tput = float(headline) if headline is not None else float("inf")
-    except (TypeError, ValueError):
-        tput = float("inf")
-    return (2, tput, cell.get("cell_id", ""))
+    @staticmethod
+    def ci_summary_basename(report_basename: str) -> str:
+        return f"{report_basename}_summary.html"
 
+    def _cell_worst_score(self, cell: dict) -> tuple:
+        gated_tiers = self.config.gated_tiers
+        headline_metric = self.config.headline_metric
+        failed = sum(1 for t in gated_tiers if cell.get("tiers", {}).get(t) == "fail")
+        if failed:
+            return (0, -failed, cell.get("cell_id", ""))
+        if cell_has_any_tier_failure(cell):
+            return (1, 0, cell.get("cell_id", ""))
+        headline = (cell.get("actuals") or {}).get(headline_metric)
+        try:
+            tput = float(headline) if headline is not None else float("inf")
+        except (TypeError, ValueError):
+            tput = float("inf")
+        return (2, tput, cell.get("cell_id", ""))
 
-def worst_cells(payload: Mapping[str, Any], config: InferenceReportConfig, *, limit: int = 3) -> List[dict]:
-    cells = list(payload.get("cells") or [])
-    gated = config.gated_tiers
-    headline_metric = config.headline_metric
-    scored = sorted(
-        ((_cell_worst_score(c, gated, headline_metric), c) for c in cells),
-        key=lambda item: item[0],
-    )
-    worst: List[dict] = []
-    for score, cell in scored:
-        worst.append(cell)
-        if len(worst) >= limit:
-            break
-    return worst
-
-
-def _parity_summary(report_dir: Path) -> Optional[dict]:
-    path = report_dir / _PARITY_JSON
-    if not path.is_file():
-        return None
-    data = load_report_json(path)
-    if not data:
-        return None
-    rows = data.get("rows") or []
-    failed = 0
-    for row in rows:
-        for val in (row.get("compare") or {}).values():
-            if val is not None and float(val) < 0.95:
-                failed += 1
+    def worst_cells(self, *, limit: int = 3) -> List[dict]:
+        cells = list(self.payload.get("cells") or [])
+        scored = sorted(
+            ((self._cell_worst_score(c), c) for c in cells),
+            key=lambda item: item[0],
+        )
+        worst: List[dict] = []
+        for _score, cell in scored:
+            worst.append(cell)
+            if len(worst) >= limit:
                 break
-    status = "fail" if failed else ("pass" if rows else "na")
-    return {
-        "status": status,
-        "failed_rows": failed,
-        "total_rows": len(rows),
-        "basename": _PARITY_JSON.replace(".json", ".html"),
-    }
+        return worst
 
+    @staticmethod
+    def _parity_summary(report_dir: Path) -> Optional[dict]:
+        path = report_dir / _PARITY_JSON
+        if not path.is_file():
+            return None
+        data = load_report_json(path)
+        if not data:
+            return None
+        rows = data.get("rows") or []
+        failed = 0
+        for row in rows:
+            for val in (row.get("compare") or {}).values():
+                if val is not None and float(val) < 0.95:
+                    failed += 1
+                    break
+        status = "fail" if failed else ("pass" if rows else "na")
+        return {
+            "status": status,
+            "failed_rows": failed,
+            "total_rows": len(rows),
+            "basename": _PARITY_JSON.replace(".json", ".html"),
+        }
 
-def _prev_run_regressions(payload: Mapping[str, Any]) -> int:
-    panel = (payload.get("panels") or {}).get("prev_run") or {}
-    return sum(1 for row in panel.get("rows") or [] if row.get("regression"))
+    def _prev_run_regressions(self) -> int:
+        panel = (self.payload.get("panels") or {}).get("prev_run") or {}
+        return sum(1 for row in panel.get("rows") or [] if row.get("regression"))
 
+    def render_html(
+        self,
+        *,
+        full_report_basename: str,
+        parity: Optional[dict] = None,
+    ) -> str:
+        report = self.payload.get("report") or {}
+        overall = self.payload.get("overall_status", "na")
+        title = report.get("title", self.config.title)
+        subtitle = report.get("subtitle", self.config.subtitle)
+        generated = self.payload.get("generated_at", "")
+        suite_id = self.payload.get("suite_id", self.config.suite_id)
 
-def render_ci_summary_html(
-    payload: Mapping[str, Any],
-    config: InferenceReportConfig,
-    *,
-    full_report_basename: str,
-    parity: Optional[dict] = None,
-) -> str:
-    report = payload.get("report") or {}
-    overall = payload.get("overall_status", "na")
-    title = report.get("title", config.title)
-    subtitle = report.get("subtitle", config.subtitle)
-    generated = payload.get("generated_at", "")
-    suite_id = payload.get("suite_id", config.suite_id)
-
-    highlights = worst_cells(payload, config, limit=3)
-    highlight_rows = []
-    for cell in highlights:
-        tiers = cell.get("tiers") or {}
-        failed = [t for t in config.gated_tiers if tiers.get(t) == "fail"]
-        reason = f"failed: {', '.join(failed)}" if failed else "lowest throughput / watch"
-        tput = (cell.get("actuals") or {}).get(config.headline_metric)
-        highlight_rows.append(
-            f"<li><strong>{html.escape(str(cell.get('cell_id', '')))}</strong>"
-            f" &middot; C={cell.get('concurrency', '')}"
-            f" &middot; {html.escape(reason)}"
-            f" &middot; {html.escape(str(tput) if tput is not None else '—')} tok/s</li>"
+        highlights = self.worst_cells(limit=3)
+        highlight_rows = []
+        for cell in highlights:
+            tiers = cell.get("tiers") or {}
+            failed = [t for t in self.config.gated_tiers if tiers.get(t) == "fail"]
+            reason = f"failed: {', '.join(failed)}" if failed else "lowest throughput / watch"
+            tput = (cell.get("actuals") or {}).get(self.config.headline_metric)
+            highlight_rows.append(
+                f"<li><strong>{html.escape(str(cell.get('cell_id', '')))}</strong>"
+                f" &middot; C={cell.get('concurrency', '')}"
+                f" &middot; {html.escape(reason)}"
+                f" &middot; {html.escape(str(tput) if tput is not None else '—')} tok/s</li>"
+            )
+        highlights_html = (
+            "<ul class='highlights'>" + "".join(highlight_rows) + "</ul>"
+            if highlight_rows
+            else "<p class='muted'>No cells recorded.</p>"
         )
-    highlights_html = (
-        "<ul class='highlights'>" + "".join(highlight_rows) + "</ul>"
-        if highlight_rows
-        else "<p class='muted'>No cells recorded.</p>"
-    )
 
-    regressions = _prev_run_regressions(payload)
-    prev_line = (
-        f"<p><strong>Baseline regressions:</strong> {regressions}</p>"
-        if regressions
-        else "<p><strong>Baseline regressions:</strong> none flagged</p>"
-    )
-
-    if parity:
-        parity_line = (
-            f"<p><strong>Framework parity:</strong> "
-            f"{status_badge_html(str(parity['status']))} "
-            f"({parity.get('failed_rows', 0)} failed / {parity.get('total_rows', 0)} rows) "
-            f"&middot; <a href='{html.escape(parity.get('basename', ''))}'>full parity report</a></p>"
+        regressions = self._prev_run_regressions()
+        prev_line = (
+            f"<p><strong>Baseline regressions:</strong> {regressions}</p>"
+            if regressions
+            else "<p><strong>Baseline regressions:</strong> none flagged</p>"
         )
-    else:
-        parity_line = "<p><strong>Framework parity:</strong> not generated this run</p>"
 
-    full_html = f"{full_report_basename}.html"
-    viewer = (payload.get("summary") or {}).get("viewer_html")
-    viewer_link = f" &middot; <a href='{html.escape(viewer)}'>viewer</a>" if viewer else ""
+        if parity:
+            parity_line = (
+                f"<p><strong>Framework parity:</strong> "
+                f"{status_badge_html(str(parity['status']))} "
+                f"({parity.get('failed_rows', 0)} failed / {parity.get('total_rows', 0)} rows) "
+                f"&middot; <a href='{html.escape(parity.get('basename', ''))}'>full parity report</a></p>"
+            )
+        else:
+            parity_line = "<p><strong>Framework parity:</strong> not generated this run</p>"
 
-    return f"""<!DOCTYPE html>
+        full_html = f"{full_report_basename}.html"
+        viewer = (self.payload.get("summary") or {}).get("viewer_html")
+        viewer_link = f" &middot; <a href='{html.escape(viewer)}'>viewer</a>" if viewer else ""
+
+        return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>{html.escape(title)} — CI summary</title>
 <style>
@@ -162,6 +161,47 @@ a {{ color: #0b5fff; }}
 </section>
 </body></html>"""
 
+    def write(
+        self,
+        report_dir: Path,
+        *,
+        parity_json_path: Optional[Path] = None,
+    ) -> Path:
+        report_dir = Path(report_dir)
+        out = report_dir / self.ci_summary_basename(self.config.report_basename)
+        parity = None
+        if (parity_json_path and parity_json_path.is_file()) or (report_dir / _PARITY_JSON).is_file():
+            parity = self._parity_summary(report_dir)
+        out.write_text(
+            self.render_html(
+                full_report_basename=self.config.report_basename,
+                parity=parity,
+            ),
+            encoding="utf-8",
+        )
+        return out
+
+
+def ci_summary_basename(report_basename: str) -> str:
+    return CiSummaryBuilder.ci_summary_basename(report_basename)
+
+
+def worst_cells(payload: Mapping[str, Any], config: InferenceReportConfig, *, limit: int = 3) -> List[dict]:
+    return CiSummaryBuilder(payload, config).worst_cells(limit=limit)
+
+
+def render_ci_summary_html(
+    payload: Mapping[str, Any],
+    config: InferenceReportConfig,
+    *,
+    full_report_basename: str,
+    parity: Optional[dict] = None,
+) -> str:
+    return CiSummaryBuilder(payload, config).render_html(
+        full_report_basename=full_report_basename,
+        parity=parity,
+    )
+
 
 def write_inference_ci_summary(
     payload: Mapping[str, Any],
@@ -170,18 +210,4 @@ def write_inference_ci_summary(
     *,
     parity_json_path: Optional[Path] = None,
 ) -> Path:
-    report_dir = Path(report_dir)
-    out = report_dir / ci_summary_basename(config.report_basename)
-    parity = None
-    if (parity_json_path and parity_json_path.is_file()) or (report_dir / _PARITY_JSON).is_file():
-        parity = _parity_summary(report_dir)
-    out.write_text(
-        render_ci_summary_html(
-            payload,
-            config,
-            full_report_basename=config.report_basename,
-            parity=parity,
-        ),
-        encoding="utf-8",
-    )
-    return out
+    return CiSummaryBuilder(payload, config).write(report_dir, parity_json_path=parity_json_path)

@@ -15,8 +15,8 @@ Set ``benchmark_serv_node`` in the inference config to the target host (must als
 appear in the cluster file ``node_dict``). Only that node gets a container and
 loads the model; other cluster nodes are ignored for this suite.
 
-With ``--html``, session end also writes ``sglang_single_run_deck.html`` (plus JSON
-and interactive viewer) via ``cvs.lib.report.presets.sglang_single``.
+With ``--html``, session end also writes ``sglang_run_deck.html`` (plus JSON
+and interactive viewer) via ``cvs/lib/report/profiles/sglang.json`` (all SGLang stems).
 '''
 
 import pytest

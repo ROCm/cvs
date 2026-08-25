@@ -64,6 +64,7 @@ METRIC_TIERS: dict[str, tuple[str, ...]] = {
 
 SCALING_METRICS: tuple[str, ...] = METRIC_TIERS["scaling"]
 SCALING_METRIC_UNITS: dict[str, str] = {"efficiency_pct": "%"}
+METRIC_UNITS = {**CLIENT_METRIC_UNITS, **SCALING_METRIC_UNITS}
 
 METRIC_TIER_ORDER: tuple[str, ...] = tuple(METRIC_TIERS.keys()) + ("record",)
 

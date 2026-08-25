@@ -2,25 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-from cvs.lib.report.cell_build import build_all_cells
-from cvs.lib.report.accuracy_lifecycle import (
-    build_accuracy_prev_run_panel,
-    build_scale_accuracy_panel,
-    extract_accuracy_from_lifecycle,
-    resolve_scale_accuracy_ref_json_path,
-)
-from cvs.lib.report.json_io import load_report_json
-from cvs.lib.report.panels.framework_parity import (
-    build_framework_parity_panel,
-    resolve_parity_ref_json_path,
-)
-from cvs.lib.report.panels.prev_run import build_prev_run_panel, resolve_prev_run_json_path
-from cvs.lib.report.provenance import extend_run_card_display
-from cvs.lib.report.render.gate_matrix import build_gate_matrix_rows
+from cvs.lib.report.accuracy_lifecycle import extract_accuracy_from_lifecycle
+from cvs.lib.report.cell_build import CellRecordBuilder
+from cvs.lib.report.panels.panel_builder import ComparisonPanelBuilder
+from cvs.lib.report.provenance import ProvenanceCollector
+from cvs.lib.report.render.gate_matrix import GateMatrixRenderer
 from cvs.lib.report.sweep_shape import (
     group_cells_by_shape,
     metric_values_by_concurrency,
@@ -36,34 +27,285 @@ def _inf_res_sort_key(kv: tuple) -> tuple:
     return (0, 0)
 
 
+class LifecycleAggregator:
+    """Aggregate session-level lifecycle timings across pytest nodeids."""
+
+    @staticmethod
+    def aggregate(
+        lifecycle_report: Mapping[str, list],
+        labels: tuple[str, ...],
+    ) -> Dict[str, float]:
+        out: Dict[str, float] = {}
+        for rows in lifecycle_report.values():
+            for label, value, unit in rows:
+                if unit != "s":
+                    continue
+                try:
+                    v = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if label in labels:
+                    out[label] = max(out.get(label, 0.0), v)
+        return out
+
+
+class SweepAnalyticsBuilder:
+    """Build chart series and sweep summary blocks from cell records."""
+
+    def __init__(self, config: InferenceReportConfig):
+        self.config = config
+
+    def chart_series(self, cells: List[dict]) -> Dict[str, List[dict]]:
+        groups = group_cells_by_shape(cells)
+        series: Dict[str, List[dict]] = {}
+        for chart in self.config.chart_series:
+            full = self.config.full_metric(chart.metric_suffix)
+            group_entries: List[dict] = []
+            for (isl, osl), group_cells in sorted(groups.items()):
+                values_by_conc = metric_values_by_concurrency(group_cells, full)
+                points = sorted(values_by_conc.items())
+                if len(points) >= 2:
+                    group_entries.append(
+                        {
+                            "isl": isl,
+                            "osl": osl,
+                            "label": shape_label(isl, osl),
+                            "points": points,
+                        }
+                    )
+            if group_entries:
+                series[chart.metric_suffix] = group_entries
+        return series
+
+    def summaries(self, cells: List[dict]) -> List[dict]:
+        groups = group_cells_by_shape(cells)
+        summaries: List[dict] = []
+        for (isl, osl), group in sorted(groups.items()):
+            points = []
+            for cell in group:
+                tput = cell["actuals"].get(self.config.sweep_throughput_metric)
+                if tput is None:
+                    continue
+                try:
+                    points.append((int(cell["concurrency"]), float(tput), cell))
+                except (TypeError, ValueError):
+                    continue
+            if not points:
+                continue
+
+            best_conc, best_tput, best_cell = max(points, key=lambda p: p[1])
+            ttft_at_max = best_cell["actuals"].get(self.config.sweep_ttft_metric)
+            sorted_points = sorted(points, key=lambda p: p[0])
+            saturated = False
+            if len(sorted_points) >= 2:
+                last_conc, last_tput, _ = sorted_points[-1]
+                prev_tput = sorted_points[-2][1]
+                saturated = last_conc == best_conc and last_tput <= prev_tput * 1.01
+
+            summaries.append(
+                {
+                    "isl": isl,
+                    "osl": osl,
+                    "max_output_throughput": best_tput,
+                    "conc_at_max_tput": best_conc,
+                    "ttft_at_max_tput": ttft_at_max,
+                    "saturated": saturated,
+                    "cell_count": len(group),
+                }
+            )
+        return summaries
+
+
+class ResultsTableBuilder:
+    """Build tabular sweep results from raw ``inf_res_dict``."""
+
+    def __init__(self, config: InferenceReportConfig):
+        self.config = config
+
+    def build(self, inf_res_dict: Mapping[tuple, Any]) -> dict:
+        headers = [label for label, _key in self.config.results_columns]
+        metric_keys = [key for _label, key in self.config.results_columns]
+        n_fixed = sum(1 for _label, key in self.config.results_columns if key is None)
+        rows: List[List[Any]] = []
+        for key, host_dict in sorted(inf_res_dict.items(), key=_inf_res_sort_key):
+            model, gpu, isl, osl, policy, conc = key
+            if not isinstance(host_dict, dict):
+                continue
+            fixed = [model, gpu, isl, osl, policy, conc]
+            for host, metrics in host_dict.items():
+                row = list(fixed)
+                row.append(host)
+                for mk in metric_keys[n_fixed:]:
+                    if mk is None:
+                        row.append("\u2014")
+                    else:
+                        v = metrics.get(mk)
+                        row.append(v if v is not None else "\u2014")
+                rows.append(row)
+        return {"headers": headers, "rows": rows}
+
+
+@dataclass
+class InferencePayloadContext:
+    """Inputs for building a full inference report payload."""
+
+    config: InferenceReportConfig
+    variant_config: Any
+    inf_res_dict: Mapping[tuple, Any]
+    lifecycle_report: Mapping[str, list]
+    cvs_version: str = "unknown"
+    pytest_html_path: str = ""
+    log_file_path: str = ""
+    provenance: Optional[Mapping[str, str]] = None
+    report_dir: Optional[Path] = None
+
+
+class InferencePayloadBuilder:
+    """Assemble structured inference report payloads for HTML, JSON, and tests."""
+
+    def __init__(self, ctx: InferencePayloadContext):
+        self.ctx = ctx
+        self.config = ctx.config
+        self._cell_builder = CellRecordBuilder(ctx.config)
+        self._sweep_builder = SweepAnalyticsBuilder(ctx.config)
+        self._results_builder = ResultsTableBuilder(ctx.config)
+        self._gate_renderer = GateMatrixRenderer()
+
+    def overall_status(self, cells: List[dict], enforce: bool) -> str:
+        if not cells:
+            return "na"
+        if not enforce:
+            return "record"
+        for cell in cells:
+            for tier in self.config.gated_tiers:
+                if cell["tiers"].get(tier) == "fail":
+                    return "fail"
+        return "pass"
+
+    def _build_run_card_display(
+        self,
+        variant_config,
+        prov: dict[str, str],
+    ) -> tuple[list[tuple[str, str, bool]], str, str]:
+        raw_run_card = self.config.run_card_display_builder(variant_config, prov)
+        run_card_notes = ""
+        run_card_rows: List[Tuple[str, str, bool]] = []
+        for label, value, is_link in raw_run_card:
+            if label == "Notes":
+                run_card_notes = str(value)
+                continue
+            run_card_rows.append((label, value, is_link))
+
+        run_card_display = ProvenanceCollector.extend_run_card_display(run_card_rows, prov)
+        run_card_display = [
+            (label, value, is_link) for label, value, is_link in run_card_display if label != "CVS version"
+        ]
+        display_labels = {label for label, _value, _link in run_card_display}
+        if prov.get("cvs_version") and "CVS" not in display_labels:
+            run_card_display.append(("CVS", str(prov["cvs_version"]), False))
+        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        if "Generated" not in display_labels:
+            run_card_display.append(("Generated", generated_at, False))
+        return run_card_display, run_card_notes, generated_at
+
+    def build(self) -> dict:
+        enforce = bool(getattr(self.ctx.variant_config, "enforce_thresholds", False))
+        cells = self._cell_builder.build_all(
+            variant_config=self.ctx.variant_config,
+            inf_res_dict=self.ctx.inf_res_dict,
+            lifecycle_report=self.ctx.lifecycle_report,
+        )
+
+        prov = dict(self.ctx.provenance or {})
+        if self.ctx.pytest_html_path:
+            prov.setdefault("pytest_html_path", self.ctx.pytest_html_path)
+        if self.ctx.log_file_path:
+            prov.setdefault("log_file_path", self.ctx.log_file_path)
+        if self.ctx.cvs_version:
+            prov.setdefault("cvs_version", self.ctx.cvs_version)
+
+        run_card_display, run_card_notes, generated_at = self._build_run_card_display(
+            self.ctx.variant_config,
+            prov,
+        )
+
+        chart_series = self._sweep_builder.chart_series(cells)
+        accuracy_metrics = extract_accuracy_from_lifecycle(self.ctx.lifecycle_report)
+        panels = ComparisonPanelBuilder(
+            self.config,
+            self.ctx.report_dir,
+            provenance=prov,
+        ).build(
+            cells,
+            lifecycle_report=self.ctx.lifecycle_report,
+            variant_config=self.ctx.variant_config,
+        )
+
+        chart_config = [
+            {
+                "suffix": ch.metric_suffix,
+                "title": ch.title,
+                "unit": ch.unit,
+                "metric": self.config.full_metric(ch.metric_suffix),
+                "invert": ch.invert,
+            }
+            for ch in self.config.chart_series
+        ]
+
+        from cvs.lib.report.rundeck.viewer_config import build_viewer_config
+
+        payload = {
+            "schema_version": 1,
+            "suite_id": self.config.suite_id,
+            "generated_at": generated_at,
+            "cvs_version": self.ctx.cvs_version,
+            "overall_status": self.overall_status(cells, enforce),
+            "report": {
+                "title": self.config.title,
+                "subtitle": self.config.subtitle,
+                "footer": self.config.footer,
+                "metric_tier_order": self.config.metric_tier_order,
+                "headline_metric": self.config.headline_metric,
+                "sweep_ttft_metric": self.config.sweep_ttft_metric,
+                "session_lifecycle_labels": self.config.session_lifecycle_labels,
+                "cell_lifecycle_labels": self.config.cell_lifecycle_labels,
+            },
+            "run_card_display": run_card_display,
+            "run_card_notes": run_card_notes,
+            "provenance": prov,
+            "lifecycle": LifecycleAggregator.aggregate(
+                self.ctx.lifecycle_report,
+                self.config.session_lifecycle_labels,
+            ),
+            "accuracy": accuracy_metrics,
+            "cells": cells,
+            "chart_series": chart_series,
+            "chart_config": chart_config,
+            "sweep_summaries": self._sweep_builder.summaries(cells),
+            "gate_matrix": self._gate_renderer.build_rows(cells),
+            "results_table": self._results_builder.build(self.ctx.inf_res_dict),
+            "panels": panels,
+        }
+        payload["viewer_config"] = build_viewer_config({}, self.config)
+        return payload
+
+
 def aggregate_lifecycle(
     lifecycle_report: Mapping[str, list],
     labels: tuple[str, ...],
 ) -> Dict[str, float]:
-    out: Dict[str, float] = {}
-    for rows in lifecycle_report.values():
-        for label, value, unit in rows:
-            if unit != "s":
-                continue
-            try:
-                v = float(value)
-            except (TypeError, ValueError):
-                continue
-            if label in labels:
-                out[label] = max(out.get(label, 0.0), v)
-    return out
+    return LifecycleAggregator.aggregate(lifecycle_report, labels)
 
 
 def overall_status(config: InferenceReportConfig, cells: List[dict], enforce: bool) -> str:
-    if not cells:
-        return "na"
-    if not enforce:
-        return "record"
-    for cell in cells:
-        for tier in config.gated_tiers:
-            if cell["tiers"].get(tier) == "fail":
-                return "fail"
-    return "pass"
+    return InferencePayloadBuilder(
+        InferencePayloadContext(
+            config=config,
+            variant_config=None,
+            inf_res_dict={},
+            lifecycle_report={},
+        )
+    ).overall_status(cells, enforce)
 
 
 def sweep_has_multi_shape_comparison(cells: List[dict]) -> bool:
@@ -80,183 +322,30 @@ def sweep_has_multi_shape_comparison(cells: List[dict]) -> bool:
 
 
 def build_chart_series(config: InferenceReportConfig, cells: List[dict]) -> Dict[str, List[dict]]:
-    """Per-metric sweep charts grouped by ISL/OSL shape.
-
-    Each metric maps to a list of ``{isl, osl, label, points}`` entries so
-    multi-shape sweeps do not collapse distinct cells onto the same concurrency
-    axis.
-    """
-    groups = group_cells_by_shape(cells)
-    series: Dict[str, List[dict]] = {}
-    for chart in config.chart_series:
-        full = config.full_metric(chart.metric_suffix)
-        group_entries: List[dict] = []
-        for (isl, osl), group_cells in sorted(groups.items()):
-            values_by_conc = metric_values_by_concurrency(group_cells, full)
-            points = sorted(values_by_conc.items())
-            if len(points) >= 2:
-                group_entries.append(
-                    {
-                        "isl": isl,
-                        "osl": osl,
-                        "label": shape_label(isl, osl),
-                        "points": points,
-                    }
-                )
-        if group_entries:
-            series[chart.metric_suffix] = group_entries
-    return series
+    return SweepAnalyticsBuilder(config).chart_series(cells)
 
 
 def build_sweep_summaries(config: InferenceReportConfig, cells: List[dict]) -> List[dict]:
-    groups = group_cells_by_shape(cells)
-
-    summaries: List[dict] = []
-    for (isl, osl), group in sorted(groups.items()):
-        points = []
-        for cell in group:
-            tput = cell["actuals"].get(config.sweep_throughput_metric)
-            if tput is None:
-                continue
-            try:
-                points.append((int(cell["concurrency"]), float(tput), cell))
-            except (TypeError, ValueError):
-                continue
-        if not points:
-            continue
-
-        best_conc, best_tput, best_cell = max(points, key=lambda p: p[1])
-        ttft_at_max = best_cell["actuals"].get(config.sweep_ttft_metric)
-        sorted_points = sorted(points, key=lambda p: p[0])
-        # ``saturated``: throughput at the highest concurrency did not grow meaningfully
-        # (>1%) vs the previous step, and that highest concurrency is where peak
-        # throughput was observed (plateau at the sweep top end).
-        saturated = False
-        if len(sorted_points) >= 2:
-            last_conc, last_tput, _ = sorted_points[-1]
-            prev_tput = sorted_points[-2][1]
-            saturated = last_conc == best_conc and last_tput <= prev_tput * 1.01
-
-        summaries.append(
-            {
-                "isl": isl,
-                "osl": osl,
-                "max_output_throughput": best_tput,
-                "conc_at_max_tput": best_conc,
-                "ttft_at_max_tput": ttft_at_max,
-                "saturated": saturated,
-                "cell_count": len(group),
-            }
-        )
-    return summaries
+    return SweepAnalyticsBuilder(config).summaries(cells)
 
 
 def build_results_table(config: InferenceReportConfig, inf_res_dict: Mapping[tuple, Any]) -> dict:
-    headers = [label for label, _key in config.results_columns]
-    metric_keys = [key for _label, key in config.results_columns]
-    n_fixed = sum(1 for _label, key in config.results_columns if key is None)
-    rows: List[List[Any]] = []
-    for key, host_dict in sorted(inf_res_dict.items(), key=_inf_res_sort_key):
-        model, gpu, isl, osl, policy, conc = key
-        if not isinstance(host_dict, dict):
-            continue
-        fixed = [model, gpu, isl, osl, policy, conc]
-        for host, metrics in host_dict.items():
-            row = list(fixed)
-            row.append(host)
-            for mk in metric_keys[n_fixed:]:
-                if mk is None:
-                    row.append("\u2014")
-                else:
-                    v = metrics.get(mk)
-                    row.append(v if v is not None else "\u2014")
-            rows.append(row)
-    return {"headers": headers, "rows": rows}
+    return ResultsTableBuilder(config).build(inf_res_dict)
 
 
-def _build_run_card_display(
+def build_run_card_display(
     config: InferenceReportConfig,
     variant_config,
     prov: dict[str, str],
 ) -> tuple[list[tuple[str, str, bool]], str, str]:
-    raw_run_card = config.run_card_display_builder(variant_config, prov)
-    run_card_notes = ""
-    run_card_rows: List[Tuple[str, str, bool]] = []
-    for label, value, is_link in raw_run_card:
-        if label == "Notes":
-            run_card_notes = str(value)
-            continue
-        run_card_rows.append((label, value, is_link))
-
-    run_card_display = extend_run_card_display(run_card_rows, prov)
-    run_card_display = [(label, value, is_link) for label, value, is_link in run_card_display if label != "CVS version"]
-    display_labels = {label for label, _value, _link in run_card_display}
-    if prov.get("cvs_version") and "CVS" not in display_labels:
-        run_card_display.append(("CVS", str(prov["cvs_version"]), False))
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    if "Generated" not in display_labels:
-        run_card_display.append(("Generated", generated_at, False))
-    return run_card_display, run_card_notes, generated_at
-
-
-def _build_panels(
-    config: InferenceReportConfig,
-    cells: List[dict],
-    report_dir: Optional[Path],
-    *,
-    lifecycle_report: Optional[Mapping[str, list]] = None,
-    variant_config=None,
-) -> dict:
-    panels: dict = {}
-    prev_run_path = resolve_prev_run_json_path(
-        config.prev_run_json,
-        report_basename=config.report_basename,
-        report_dir=report_dir,
-    )
-    if prev_run_path:
-        prev_run_panel = build_prev_run_panel(
-            cells,
-            Path(prev_run_path),
-            headline_metric=config.headline_metric,
+    return InferencePayloadBuilder(
+        InferencePayloadContext(
+            config=config,
+            variant_config=variant_config,
+            inf_res_dict={},
+            lifecycle_report={},
         )
-        if prev_run_panel:
-            panels["prev_run"] = prev_run_panel
-
-        if lifecycle_report:
-            current_accuracy = extract_accuracy_from_lifecycle(lifecycle_report)
-            baseline_payload = load_report_json(Path(prev_run_path)) or {}
-            accuracy_prev = build_accuracy_prev_run_panel(
-                current_accuracy,
-                baseline_payload,
-                metric_key=config.gsm8k_prev_run_metric,
-                max_drop=config.gsm8k_prev_run_max_drop,
-            )
-            if accuracy_prev:
-                panels["accuracy_prev_run"] = accuracy_prev
-
-            scale_ref = resolve_scale_accuracy_ref_json_path(getattr(config, "scale_accuracy_ref_json", ""))
-            if scale_ref and lifecycle_report:
-                scale_payload = load_report_json(Path(scale_ref)) or {}
-                scale_panel = build_scale_accuracy_panel(current_accuracy, scale_payload)
-                if scale_panel:
-                    panels["scale_accuracy"] = scale_panel
-
-    parity_path = resolve_parity_ref_json_path(config.framework_parity_ref_json)
-    if parity_path:
-        driver = "atom"
-        if variant_config is not None:
-            params = getattr(variant_config, "params", None)
-            if params is not None:
-                driver = str(getattr(params, "driver", "atom"))
-        parity_panel = build_framework_parity_panel(
-            cells,
-            Path(parity_path),
-            driver=driver,
-            headline_metric=config.headline_metric,
-        )
-        if parity_panel:
-            panels["framework_parity"] = parity_panel
-    return panels
+    )._build_run_card_display(variant_config, prov)
 
 
 def build_inference_report_payload(
@@ -272,71 +361,15 @@ def build_inference_report_payload(
     report_dir: Optional[Path] = None,
 ) -> dict:
     """Structured payload for HTML render, JSON export, and unit tests."""
-    enforce = bool(getattr(variant_config, "enforce_thresholds", False))
-    cells = build_all_cells(
-        config,
+    ctx = InferencePayloadContext(
+        config=config,
         variant_config=variant_config,
         inf_res_dict=inf_res_dict,
         lifecycle_report=lifecycle_report,
+        cvs_version=cvs_version,
+        pytest_html_path=pytest_html_path,
+        log_file_path=log_file_path,
+        provenance=provenance,
+        report_dir=report_dir,
     )
-
-    prov = dict(provenance or {})
-    if pytest_html_path:
-        prov.setdefault("pytest_html_path", pytest_html_path)
-    if log_file_path:
-        prov.setdefault("log_file_path", log_file_path)
-    if cvs_version:
-        prov.setdefault("cvs_version", cvs_version)
-
-    run_card_display, run_card_notes, generated_at = _build_run_card_display(config, variant_config, prov)
-
-    chart_series = build_chart_series(config, cells)
-    accuracy_metrics = extract_accuracy_from_lifecycle(lifecycle_report)
-    panels = _build_panels(
-        config,
-        cells,
-        report_dir,
-        lifecycle_report=lifecycle_report,
-        variant_config=variant_config,
-    )
-
-    chart_config = [
-        {
-            "suffix": ch.metric_suffix,
-            "title": ch.title,
-            "unit": ch.unit,
-            "metric": config.full_metric(ch.metric_suffix),
-            "invert": ch.invert,
-        }
-        for ch in config.chart_series
-    ]
-
-    return {
-        "schema_version": 1,
-        "suite_id": config.suite_id,
-        "generated_at": generated_at,
-        "cvs_version": cvs_version,
-        "overall_status": overall_status(config, cells, enforce),
-        "report": {
-            "title": config.title,
-            "subtitle": config.subtitle,
-            "footer": config.footer,
-            "metric_tier_order": config.metric_tier_order,
-            "headline_metric": config.headline_metric,
-            "sweep_ttft_metric": config.sweep_ttft_metric,
-            "session_lifecycle_labels": config.session_lifecycle_labels,
-            "cell_lifecycle_labels": config.cell_lifecycle_labels,
-        },
-        "run_card_display": run_card_display,
-        "run_card_notes": run_card_notes,
-        "provenance": prov,
-        "lifecycle": aggregate_lifecycle(lifecycle_report, config.session_lifecycle_labels),
-        "accuracy": accuracy_metrics,
-        "cells": cells,
-        "chart_series": chart_series,
-        "chart_config": chart_config,
-        "sweep_summaries": build_sweep_summaries(config, cells),
-        "gate_matrix": build_gate_matrix_rows(cells),
-        "results_table": build_results_table(config, inf_res_dict),
-        "panels": panels,
-    }
+    return InferencePayloadBuilder(ctx).build()

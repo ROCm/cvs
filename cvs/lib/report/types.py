@@ -77,6 +77,4 @@ class InferenceReportConfig:
     def full_metric(self, short: str) -> str:
         if short.startswith(f"{self.metric_prefix}"):
             return short
-        if short.startswith(("scaling.", "gpu.")):
-            return short
         return f"{self.metric_prefix}{short}"

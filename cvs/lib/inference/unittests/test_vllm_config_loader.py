@@ -107,7 +107,7 @@ class TestPromGatedMetricCoverage(unittest.TestCase):
 
     Mirrors TestGpuGatedMetricCoverage: prom.* is a fully separate, parallel
     gated family, not part of client.*'s tiering machinery, so its coverage
-    is proven independently here rather than in test_vllm_report_preset.py.
+    is proven independently here rather than in test_vllm_deck_profile.py.
     """
 
     _CELL = "ISL=128,OSL=2048,TP=8,CONC=16"
