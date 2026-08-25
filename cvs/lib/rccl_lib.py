@@ -26,6 +26,36 @@ from cvs.lib.verify_lib import *
 log = globals.log
 
 
+# rccl-tests benchmarks BOTH orientations unless told otherwise (common.cu:968-972
+# runs BenchTime out-of-place then in-place), but only one of them carries the
+# meaningful number for a given collective. `-O` selects a single side at the
+# binary: -O 1 => out-of-place only, -O 0 => in-place only (common.cu:1316-1317).
+#
+# This predicate is the single source of truth for that choice. The command
+# builders below use it to pick the flag; the check_* validators use it to pick
+# the rows. They must not drift: if the flag ever says one orientation and a
+# validator wants the other, the run benchmarks a side nobody grades and the group
+# comes back with zero comparable keys -- a silent pass, not an error.
+_ALLTOALL_RE = re.compile(r'alltoall|all_to_all', re.I)
+
+
+def target_inplace_for(test_name):
+    """
+    inPlace flag (1 = in-place, 0 = out-of-place) carrying the meaningful number
+    for ``test_name``.
+
+    alltoall has no useful in-place form -- every rank's send and receive buffers
+    would alias -- so it is graded out-of-place. Every other collective is graded
+    in-place.
+    """
+    return 0 if _ALLTOALL_RE.search(test_name or '') else 1
+
+
+def out_of_place_flag_for(test_name):
+    """``-O`` argument matching :func:`target_inplace_for` (1 = out-of-place only)."""
+    return 1 - target_inplace_for(test_name)
+
+
 def cleanup_gpus_on_nodes(
     phdl,
     process_patterns=None,
@@ -541,8 +571,8 @@ def check_bus_bw(test_name, output, exp_res_dict):
     ref_by_size = {str(size): float(metrics['bus_bw']) for size, metrics in exp_res_dict.items()}
 
     log.info("%s", test_name)
-    place_word = 'out-of-place' if re.search('alltoall|all_to_all', test_name, re.I) else 'in-place'
-    target_inplace = 0 if place_word == 'out-of-place' else 1
+    target_inplace = target_inplace_for(test_name)
+    place_word = 'in-place' if target_inplace else 'out-of-place'
 
     for (dtype, in_place), rows in group_rccl_results(output).items():
         if in_place != target_inplace:
@@ -584,7 +614,7 @@ def check_bw_dip(test_name, output, exp_res_dict=None):
 
     # alltoall reports the meaningful number out-of-place (inPlace == 0); every
     # other collective is validated in-place (inPlace == 1).
-    target_inplace = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
+    target_inplace = target_inplace_for(test_name)
     tolerance = 0.95  # 5% tolerance
 
     for (dtype, in_place), rows in group_rccl_results(output).items():
@@ -624,7 +654,7 @@ def check_lat_dip(test_name, output, exp_res_dict=None):
     ref_msg_sizes = set(str(size) for size in exp_res_dict.keys())
     log.info(f"Validating latency dip only for reference message sizes: {ref_msg_sizes}")
 
-    target_inplace = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
+    target_inplace = target_inplace_for(test_name)
     tolerance = 0.95  # 5% tolerance
 
     for (dtype, in_place), rows in group_rccl_results(output).items():
@@ -906,6 +936,10 @@ def rccl_regression(
         extra_flags += f' -T {rccl_timeout}'
     if output_algo_proto_channels:
         extra_flags += ' -A 1'
+    # Benchmark only the orientation this collective is graded on. Without -O the
+    # binary runs both and roughly half the benchmark time is thrown away; see
+    # target_inplace_for above.
+    extra_flags += f' -O {out_of_place_flag_for(test_name)}'
 
     # Optional per-run library path (used by paired A/B testing to load a specific
     # librccl.so build without rebuilding rccl-tests). Prepended to LD_LIBRARY_PATH
@@ -1137,6 +1171,10 @@ def rccl_perf(
         extra_flags += f' -T {rccl_timeout}'
     if output_algo_proto_channels:
         extra_flags += ' -A 1'
+    # Benchmark only the orientation this collective is graded on. Without -O the
+    # binary runs both and roughly half the benchmark time is thrown away; see
+    # target_inplace_for above.
+    extra_flags += f' -O {out_of_place_flag_for(test_name)}'
 
     for dtype in data_types:
         # Create a unique result file for each data type
