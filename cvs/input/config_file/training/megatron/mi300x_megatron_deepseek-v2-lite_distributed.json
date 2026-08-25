@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "framework": "megatron_distributed",
-  "gpu_arch": "MI325X",
+  "gpu_arch": "MI300X",
   "enforce_thresholds": true,
-  "threshold_json": "mi325x_megatron_deepseek-v2-lite_distributed_threshold.json",
+  "threshold_json": "mi300x_megatron_deepseek-v2-lite_distributed_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOGS/megatron",
@@ -89,13 +89,13 @@
   },
   "sweep": {
     "combinations": {
-      "deepseek_v2_lite-mi325x-bs128-mbs4-bf16": {
+      "deepseek_v2_lite-mi300x-bs128-mbs4-bf16": {
         "name": "deepseek_v2_lite_mbs4_gbs128_BF16",
         "global_batch_size": "128",
         "micro_batch_size": "4",
         "precision": "BF16"
       },
-      "deepseek_v2_lite-mi325x-bs128-mbs4-fp8": {
+      "deepseek_v2_lite-mi300x-bs128-mbs4-fp8": {
         "name": "deepseek_v2_lite_mbs4_gbs128_FP8",
         "global_batch_size": "128",
         "micro_batch_size": "4",
@@ -103,8 +103,8 @@
       }
     },
     "runs": [
-      "deepseek_v2_lite-mi325x-bs128-mbs4-bf16",
-      "deepseek_v2_lite-mi325x-bs128-mbs4-fp8"
+      "deepseek_v2_lite-mi300x-bs128-mbs4-bf16",
+      "deepseek_v2_lite-mi300x-bs128-mbs4-fp8"
     ]
   }
 }

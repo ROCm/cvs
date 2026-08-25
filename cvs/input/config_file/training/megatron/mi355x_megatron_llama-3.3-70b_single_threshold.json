@@ -1,0 +1,15 @@
+{
+  "_comment": "Llama 3.3 70B single-node thresholds for MI355X Megatron. Cell keys must match MegatronVariantConfig.cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>.",
+  "MBS=3,GBS=96,PRECISION=FP8": {
+    "training.throughput_per_gpu":          { "kind": "min", "value": 100 },
+    "training.elapsed_time_per_iteration":  { "kind": "max", "value": 500 },
+    "training.tokens_per_gpu":              { "kind": "min", "value": 1000 },
+    "training.mem_usage":                   { "kind": "max", "value": 0.85 }
+  },
+  "MBS=3,GBS=96,PRECISION=BF16": {
+    "training.throughput_per_gpu":          { "kind": "min", "value": 100 },
+    "training.elapsed_time_per_iteration":  { "kind": "max", "value": 500 },
+    "training.tokens_per_gpu":              { "kind": "min", "value": 1000 },
+    "training.mem_usage":                   { "kind": "max", "value": 0.85 }
+  }
+}
