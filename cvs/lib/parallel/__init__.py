@@ -9,9 +9,12 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
 from cvs.lib.parallel.phandle import ParallelHandle
 from cvs.lib.parallel.scp import scp
+from cvs.lib.parallel.transport import BaseTransport, create_transport
 
 __all__ = [
+    'BaseTransport',
     'ParallelHandle',
     'MultiProcessParallelHandle',
+    'create_transport',
     'scp',
 ]

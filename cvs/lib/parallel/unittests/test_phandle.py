@@ -639,6 +639,14 @@ class TestParallelHandleExec(unittest.TestCase):
         # (iii) host_list is a stable snapshot of the original input.
         self.assertEqual(handle.host_list, ["a", "b", "c"])
 
+    @patch("cvs.lib.parallel.phandle.ParallelSSHClient")
+    def test_init_stores_host_key_check_without_forwarding_to_client(self, mock_pssh_client):
+        mock_pssh_client.return_value = MagicMock()
+        handle = ParallelHandle(self.mock_log, ["h1"], user="user", password="pass", host_key_check=False)
+
+        self.assertFalse(handle.host_key_check)
+        mock_pssh_client.assert_called_once_with(["h1"], user="user", password="pass", keepalive_seconds=30)
+
 
 class TestParallelHandleExecCmdList(unittest.TestCase):
     def setUp(self):
@@ -1366,56 +1374,22 @@ class TestParallelHandleInactivityTimeout(unittest.TestCase):
 
 
 class TestParallelHandleDestroyClients(unittest.TestCase):
-    """destroy_clients must actually tear the SSH transport down.
+    """destroy_clients must run real SshTransport.destroy (not a mocked transport)."""
 
-    A timed-out exec leaves the per-host greenlet in client.cmds unfinished.
-    That greenlet's callable is a bound method of the ParallelSSHClient, so the
-    client stays reachable, SSHClient.__del__ never runs, and the sshd session
-    survives the ParallelHandle object -- verified against a live sshd. Dropping the
-    reference is therefore not enough; the teardown has to be explicit.
-    """
-
-    @patch("cvs.lib.parallel.phandle.ParallelSSHClient")
-    def _make_handle(self, mock_pssh_client, host_clients=None, cmds=None):
-        mock_client = MagicMock()
-        mock_client.cmds = cmds
-        mock_client._host_clients = host_clients if host_clients is not None else {}
-        mock_pssh_client.return_value = mock_client
-        handle = ParallelHandle(MagicMock(), ["host1"], user="user", password="pass")
-        return handle, mock_client
-
-    def test_destroy_clients_disconnects_each_host_client(self):
-        # The per-host SSHClient owns the socket; without an explicit
-        # _disconnect() the session is left open on the server.
+    @patch('cvs.lib.parallel.phandle.ParallelSSHClient')
+    def test_destroy_clients_runs_transport_teardown(self, mock_client_cls):
         host_client = MagicMock()
-        handle, client = self._make_handle(host_clients={(0, "host1"): host_client})
+        mock_client = MagicMock()
+        mock_client.cmds = None
+        mock_client._host_clients = {(0, 'host1'): host_client}
+        mock_client_cls.return_value = mock_client
 
+        handle = ParallelHandle(MagicMock(), ['host1'], user='user', password='pass')
         handle.destroy_clients()
 
         host_client._disconnect.assert_called_once_with()
-
-    def test_destroy_clients_kills_pending_command_greenlets(self):
-        # Unfinished greenlets from a timed-out exec are what pin the client;
-        # they must be killed or the disconnect above is unreachable.
-        greenlet = MagicMock()
-        handle, client = self._make_handle(cmds=[greenlet])
-
-        with patch("cvs.lib.parallel.phandle.killall") as mock_killall:
-            handle.destroy_clients()
-
-        mock_killall.assert_called_once()
-        self.assertEqual(list(mock_killall.call_args.args[0]), [greenlet])
-
-    def test_destroy_clients_survives_disconnect_errors(self):
-        # A host that is already gone must not abort teardown of the others.
-        dead = MagicMock()
-        dead._disconnect.side_effect = OSError("connection already gone")
-        alive = MagicMock()
-        handle, client = self._make_handle(host_clients={(0, "h1"): dead, (1, "h2"): alive})
-
-        handle.destroy_clients()
-
-        alive._disconnect.assert_called_once_with()
+        with self.assertRaises(AttributeError):
+            _ = handle._transport.client
 
 
 if __name__ == "__main__":

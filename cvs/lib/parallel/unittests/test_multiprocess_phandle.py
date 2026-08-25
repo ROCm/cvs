@@ -25,13 +25,22 @@ class TestMultiProcessParallelHandleInitialization(unittest.TestCase):
 
         # Always creates composed ParallelHandle instance with ABC+composition
         self.mock_pssh_init.assert_called_once_with(
-            self.mock_log, small_host_list, "test", None, 'id_rsa', False, True, None, process_output=True
+            self.mock_log,
+            small_host_list,
+            "test",
+            None,
+            'id_rsa',
+            False,
+            True,
+            None,
+            process_output=True,
+            transport='ssh',
         )
         # For small lists, no sharder should be created (key difference!)
         self.assertFalse(hasattr(mph, 'sharder'))
-        self.assertIsNotNone(mph.pssh)
+        self.assertIsNotNone(mph.phandle)
         # Inner ParallelHandle instance should always exist
-        self.assertTrue(hasattr(mph, 'pssh'))
+        self.assertTrue(hasattr(mph, 'phandle'))
 
     @patch('cvs.lib.parallel.multiprocess_phandle.MultiProcessParallelHandle._init_sharded')
     @patch('cvs.lib.parallel.multiprocess_phandle.ParallelHandleSharder')
@@ -47,13 +56,13 @@ class TestMultiProcessParallelHandleInitialization(unittest.TestCase):
         self.mock_pssh_init.assert_not_called()
         # Should call _init_sharded for large lists
         mock_init_sharded.assert_called_once_with(
-            self.mock_log, self.host_list, "test", None, 'id_rsa', False, True, None
+            self.mock_log, self.host_list, "test", None, 'id_rsa', False, True, None, 'ssh'
         )
         # Verify sharder was created
         mock_sharder_class.assert_called_once_with(config)
-        self.assertIsNone(mph.pssh)
+        self.assertIsNone(mph.phandle)
         # In sharded mode: inner handle is None, sharder exists
-        self.assertIsNone(mph.pssh)
+        self.assertIsNone(mph.phandle)
         self.assertTrue(hasattr(mph, 'sharder'))
 
     def test_init_with_custom_config(self):
@@ -313,6 +322,7 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
                     'host_key_check': True,
                     'stop_on_errors': False,
                     'env_vars': {"TEST": "value"},
+                    'transport': 'ssh',
                 }
                 self.assertEqual(kwargs, expected)
 
@@ -404,7 +414,7 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
         with patch('cvs.lib.parallel.multiprocess_phandle.MultiProcessParallelHandle._init_sharded'):
             with patch('cvs.lib.parallel.multiprocess_phandle.ParallelHandleSharder'):
                 mph = MultiProcessParallelHandle(self.mock_log, ["host1", "host2", "host3"], user="test")
-                mph.pssh = None
+                mph.phandle = None
                 mph.reachable_hosts = ["host1", "host2", "host3"]
                 mph.host_list = ["host1", "host2", "host3"]
                 mph.unreachable_hosts = []
@@ -424,15 +434,15 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
         mph.host_list = ["host1", "host2"]
         mph.unreachable_hosts = []
 
-        mph.pssh = MagicMock()
-        mph.pssh.prune_nodes.return_value = ["host2"]
-        mph.pssh.reachable_hosts = ["host1"]
-        mph.pssh.host_list = ["host1"]
-        mph.pssh.unreachable_hosts = ["host2"]
+        mph.phandle = MagicMock()
+        mph.phandle.prune_nodes.return_value = ["host2"]
+        mph.phandle.reachable_hosts = ["host1"]
+        mph.phandle.host_list = ["host1"]
+        mph.phandle.unreachable_hosts = ["host2"]
 
         removed = mph.prune_nodes(["host2"])
 
-        mph.pssh.prune_nodes.assert_called_once_with(["host2"])
+        mph.phandle.prune_nodes.assert_called_once_with(["host2"])
         self.assertEqual(removed, ["host2"])
         self.assertEqual(mph.reachable_hosts, ["host1"])
         self.assertEqual(mph.host_list, ["host1", "host2"])
@@ -490,5 +500,6 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
             host_key_check=False,
             stop_on_errors=True,
             env_vars=None,
+            transport='ssh',
         )
         mock_download.assert_called_once_with("/remote/test.txt", "/tmp/test.txt", recurse=False, suffix_separator="_")
