@@ -17,6 +17,10 @@ from typing import Any, Dict, List, Optional
 
 from cvs.lib.preflight.base import PreflightCheck
 
+# Writable fallback when reporting.artifacts_root_dir is omitted from config.
+# Do not use ``{user-id}`` here — in-code defaults bypass resolve_test_config_placeholders.
+DEFAULT_ARTIFACTS_ROOT_DIR = "/tmp/preflight"
+
 _JSON_BEGIN = "---CVS_NODE_SMOKE_JSON_BEGIN---"
 _JSON_END = "---CVS_NODE_SMOKE_JSON_END---"
 _STATUS_RE = re.compile(r"\bstatus=(PASS|FAIL)\b", re.IGNORECASE)
@@ -40,6 +44,36 @@ def get_nested_config(config_dict, section, key, default):
     return default
 
 
+def resolve_rdma_interfaces(cfg: dict) -> List[str]:
+    """Return RDMA interface names from ``connectivity_check.rdma.interfaces``.
+
+    Legacy ``node_check.rdma_interfaces`` is supported for older configs only.
+    """
+    ifaces = get_nested_config(cfg, "connectivity_check.rdma", "interfaces", None)
+    if not ifaces:
+        node_check = cfg.get("node_check") or {}
+        ifaces = node_check.get("rdma_interfaces")
+    if isinstance(ifaces, str):
+        return [ifaces.strip()] if ifaces.strip() else []
+    if isinstance(ifaces, list):
+        return [str(item).strip() for item in ifaces if str(item).strip()]
+    return []
+
+
+def resolve_rdma_gid_index(cfg: dict, default=None):
+    """Return RoCE GID index from ``connectivity_check.rdma.gid_index``.
+
+    Legacy ``node_check.gid_index`` is supported for older configs only.
+    """
+    gid_index = get_nested_config(cfg, "connectivity_check.rdma", "gid_index", None)
+    if gid_index in (None, ""):
+        node_check = cfg.get("node_check") or {}
+        gid_index = node_check.get("gid_index")
+    if gid_index in (None, ""):
+        return default
+    return gid_index
+
+
 def _config_flag_enabled(value, default=False):
     if value is None:
         return default
@@ -58,7 +92,7 @@ def _normalize_mode(mode) -> str:
 
 def _resolve_dump_path(cfg: dict) -> str:
     """Return node_smoke dump directory; empty config uses reporting artifacts root."""
-    artifacts_root = get_nested_config(cfg, "reporting", "artifacts_root_dir", "/tmp/preflight")
+    artifacts_root = get_nested_config(cfg, "reporting", "artifacts_root_dir", DEFAULT_ARTIFACTS_ROOT_DIR)
     default_dump = f"{str(artifacts_root).rstrip('/')}/node_smoke"
     configured = get_nested_config(cfg, "node_smoke", "dump_path", default_dump)
     configured_s = str(configured or "").strip()
@@ -251,7 +285,6 @@ class NodeSmokeCheck(PreflightCheck):
 
     def _load_settings(self):
         cfg = self.config_dict or {}
-        node_check = cfg.get("node_check") or {}
 
         self.mode = _normalize_mode(get_nested_config(cfg, "node_smoke", "connectivity_mode", "skip"))
         self.primus_dir = get_nested_config(cfg, "node_smoke", "primus_dir", "")
@@ -262,7 +295,7 @@ class NodeSmokeCheck(PreflightCheck):
 
         self.dump_path = _resolve_dump_path(cfg)
 
-        rdma_ifaces = node_check.get("rdma_interfaces") or []
+        rdma_ifaces = resolve_rdma_interfaces(cfg)
         default_rdma_nics = len(rdma_ifaces) if rdma_ifaces else None
         expected_rdma = get_nested_config(cfg, "node_smoke", "expected_rdma_nics", default_rdma_nics)
         self.expected_rdma_nics = int(expected_rdma) if expected_rdma not in (None, "", 0) else None
@@ -298,7 +331,7 @@ class NodeSmokeCheck(PreflightCheck):
 
         gid_index = get_nested_config(cfg, "node_smoke", "nccl_ib_gid_index", None)
         if gid_index is None:
-            gid_index = node_check.get("gid_index")
+            gid_index = resolve_rdma_gid_index(cfg)
         self.nccl_ib_gid_index = int(gid_index) if gid_index not in (None, "") else None
 
         extra = get_nested_config(cfg, "node_smoke", "extra_args", [])

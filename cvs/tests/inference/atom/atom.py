@@ -5,35 +5,63 @@ All rights reserved.
 
 import json
 import os
+import shlex
 import time
 
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.inference.utils.inference_suite_lifecycle import (
-    sweep_cell_result_key,
-    test_launch_container,  # noqa: F401
-    test_model_fetch,  # noqa: F401
-    test_setup_sshd,  # noqa: F401
-    test_teardown,  # noqa: F401
-)
-from cvs.lib.inference.atom.atom_orch import AtomJob
 from cvs.lib.inference.atom.atom_config_loader import (
     expand_sweep_parametrize,
     reuse_server_flag,
     server_session_key,
 )
+from cvs.lib.inference.atom.atom_dmesg import verify_dmesg_window
+from cvs.lib.inference.atom.atom_gpu_metrics import (
+    capture_gpu_snap,
+    gpu_results_from_poll,
+    merge_gpu_into_results,
+)
+from cvs.lib.inference.atom.atom_mtp_quality import (
+    chat_template_ok,
+    chat_template_sha256,
+    degenerate_decode_ratio,
+    extract_completion_text,
+    parse_mtp_log_metrics,
+)
+from cvs.lib.inference.atom.atom_niah_job import run_niah_cell
+from cvs.lib.inference.atom.atom_orch import AtomJob
 from cvs.lib.inference.atom.atom_parsing import (
     CLIENT_METRIC_UNITS as _METRIC_UNITS,
+)
+from cvs.lib.inference.atom.atom_parsing import (
     METRIC_TIERS,
     RECORD_METRICS,
     SCALING_METRIC_UNITS,
     tier_metric_specs,
 )
+from cvs.lib.inference.atom.atom_quant_parity import (
+    extract_completion_text as quant_extract_completion_text,
+)
+from cvs.lib.inference.atom.atom_quant_parity import (
+    run_quant_parity_probe,
+)
+from cvs.lib.inference.utils.inference_suite_lifecycle import (
+    sweep_cell_result_key,
+    test_accuracy_eval,  # noqa: F401
+    test_launch_container,  # noqa: F401
+    test_model_fetch,  # noqa: F401
+    test_setup_sshd,  # noqa: F401
+    test_teardown,  # noqa: F401
+)
 from cvs.lib.utils.verdict import evaluate_all
 from cvs.tests.inference.atom._shared import test_print_results_table  # noqa: F401
 
 log = globals.log
+
+_SMOKE_ISL = 128
+_SMOKE_OSL = 32
+_SMOKE_MAX_MODEL_LEN = 512
 
 
 def _tier_display_metric(tier):
@@ -80,16 +108,112 @@ def test_discover_topology(orch, variant_config, lifecycle, request):
     )
 
 
+def _mtp_quality_requested(variant_config) -> bool:
+    if variant_config.mtp_quality.enabled:
+        return True
+    args = variant_config.roles.server.atom_args or []
+    joined = " ".join(str(a) for a in args).lower()
+    return "--method" in joined and "mtp" in joined
+
+
+def _quant_parity_requested(variant_config) -> bool:
+    return bool(variant_config.quant_parity.enabled)
+
+
 def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
         raise pytest.UsageError(f"--config_file not found or not specified: {config_file!r}")
     with open(config_file) as fp:
         raw = json.load(fp)
+    if "accuracy_task" in metafunc.fixturenames:
+        task_ids = [t["id"] for t in raw.get("accuracy", {}).get("tasks", [])]
+        metafunc.parametrize("accuracy_task", task_ids, ids=task_ids)
+        return
+    if "long_context_acc_cell" in metafunc.fixturenames:
+        cell_ids = [c["id"] for c in raw.get("long_context_accuracy", {}).get("cells", [])]
+        metafunc.parametrize("long_context_acc_cell", cell_ids, ids=cell_ids)
+        return
     spec = expand_sweep_parametrize(raw.get("sweep", {}), metafunc.fixturenames)
     if spec:
         argnames, argvalues, ids = spec
         metafunc.parametrize(argnames, argvalues, ids=ids)
+
+
+def test_openai_compatible_smoke(orch, variant_config, hf_token, lifecycle, request):
+    """FUNC-1: OpenAI-compatible HTTP smoke when ``functional.api_smoke`` is enabled."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    if not variant_config.functional.api_smoke:
+        pytest.skip("functional.api_smoke not enabled for this variant")
+
+    job = AtomJob.from_variant(
+        orch=orch,
+        variant=variant_config,
+        hf_token=hf_token,
+        isl=_SMOKE_ISL,
+        osl=_SMOKE_OSL,
+        concurrency=1,
+        num_prompts=1,
+    )
+    if variant_config.params.driver == "atom" and "--max-model-len" not in job.atom_server_args:
+        job.atom_server_args = list(job.atom_server_args) + [
+            "--max-model-len",
+            str(_SMOKE_MAX_MODEL_LEN),
+        ]
+    t = time.monotonic()
+    try:
+        job.stop_server()
+        job.build_server_cmd()
+        job.start_server()
+        job.wait_ready()
+        summary = job.probe_openai_endpoints()
+    except Exception:
+        lifecycle.failed = True
+        job.dump_server_log()
+        raise
+    finally:
+        job.stop_server()
+    lifecycle.record(request.node.nodeid, "openai_smoke", time.monotonic() - t)
+    log.info("OpenAI-compatible smoke results:\n%s", "\n".join(summary))
+
+
+def test_server_health(orch, variant_config, hf_token, lifecycle, request):
+    """FUNC-2: /health, model list, and max_tokens=1 liveness when ``functional.health_check`` is enabled."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    if not variant_config.functional.health_check:
+        pytest.skip("functional.health_check not enabled for this variant")
+
+    job = AtomJob.from_variant(
+        orch=orch,
+        variant=variant_config,
+        hf_token=hf_token,
+        isl=_SMOKE_ISL,
+        osl=_SMOKE_OSL,
+        concurrency=1,
+        num_prompts=1,
+    )
+    if variant_config.params.driver == "atom" and "--max-model-len" not in job.atom_server_args:
+        job.atom_server_args = list(job.atom_server_args) + [
+            "--max-model-len",
+            str(_SMOKE_MAX_MODEL_LEN),
+        ]
+    t = time.monotonic()
+    try:
+        job.stop_server()
+        job.build_server_cmd()
+        job.start_server()
+        job.wait_ready()
+        summary = job.probe_server_health()
+    except Exception:
+        lifecycle.failed = True
+        job.dump_server_log()
+        raise
+    finally:
+        job.stop_server()
+    lifecycle.record(request.node.nodeid, "server_health", time.monotonic() - t)
+    log.info("Server health check results:\n%s", "\n".join(summary))
 
 
 def test_atom_inference(
@@ -122,30 +246,70 @@ def test_atom_inference(
 
     session_key = server_session_key(variant_config, isl, osl)
     reuse = reuse_server_flag(p) and server_session.get("key") == session_key
+    poll_gpu = variant_config.platform.gpu_metrics_poll
+    poll_readings = []
+    load_s = None
+    load_mb = None
 
     try:
         if not reuse:
             job.stop_server()
             job.build_server_cmd()
+            pre_snap = capture_gpu_snap(orch) if poll_gpu else {}
             t = time.monotonic()
             job.start_server()
             job.wait_ready()
-            lifecycle.record(request.node.nodeid, "server_ready", time.monotonic() - t)
+            ready_s = time.monotonic() - t
+            lifecycle.record(request.node.nodeid, "server_ready", ready_s)
+            lifecycle.record(request.node.nodeid, "server.time_to_ready_s", ready_s, "s")
+            if poll_gpu:
+                load_s = ready_s
+                post_snap = capture_gpu_snap(orch)
+                load_mb = ((post_snap.get("gpu.used_vram") or 0) - (pre_snap.get("gpu.used_vram") or 0)) or None
             if reuse_server_flag(p):
                 server_session["key"] = session_key
         else:
             log.info("reusing ATOM server across sweep cell (key=%s)", session_key)
             job.prepare_cell_out_dir()
+        poller = None
+        if poll_gpu:
+            from cvs.lib.utils.gpu import start_gpu_poller, stop_and_collect_gpu_poller
+
+            poller = start_gpu_poller(
+                orch,
+                run_id=f"{request.node.nodeid}_{isl}_{osl}_{concurrency}",
+                nodes=None if int(p.nnodes) <= 1 else list(orch.hosts),
+            )
         t_client = time.monotonic()
-        job.run_client()
-        job.wait_client_complete()
-        results = job.parse_results()
+        try:
+            job.run_client()
+            job.wait_client_complete()
+            results = job.parse_results()
+        finally:
+            if poller is not None:
+                from cvs.lib.utils.gpu import stop_and_collect_gpu_poller
+
+                poll_readings = stop_and_collect_gpu_poller(
+                    orch,
+                    poller,
+                    model_load_s=load_s,
+                    model_load_memory_mb=load_mb,
+                )
     except Exception:
         lifecycle.failed = True
         raise
 
+    if poll_gpu and poll_readings:
+        gpu_results = gpu_results_from_poll(poll_readings, load_s=load_s, load_mb=load_mb)
+        merge_gpu_into_results(results, gpu_results)
+        peak = gpu_results.get("gpu.peak_gpu_memory_mb")
+        if peak is not None:
+            lifecycle.record(request.node.nodeid, "gpu.peak_gpu_memory_mb", peak, "MB")
+
     inf_res_dict[sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency)] = results
-    lifecycle.record(request.node.nodeid, "client_complete", time.monotonic() - t_client)
+    client_s = time.monotonic() - t_client
+    lifecycle.record(request.node.nodeid, "client_complete", client_s)
+    lifecycle.record(request.node.nodeid, "server.client_wall_s", client_s, "s")
 
 
 def test_cell_metrics(
@@ -203,3 +367,174 @@ def test_cell_metrics(
             f"(metrics missing from benchmark artifact)"
         )
     evaluate_all(actuals, specs)
+
+
+def test_atom_long_context_accuracy(orch, variant_config, long_context_acc_cell, lifecycle, request):
+    """ACC-12: needle-in-a-haystack long-context accuracy (NIAH) per configured cell."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    lca = variant_config.long_context_accuracy
+    cells_by_id = {c.id: c for c in (lca.cells if lca else [])}
+    cell = cells_by_id.get(long_context_acc_cell)
+    if cell is None:
+        pytest.skip(f"long_context_accuracy cell {long_context_acc_cell!r} not configured")
+
+    lc_thresholds = (variant_config.thresholds or {}).get("long_context_accuracy", {})
+    cell_specs = lc_thresholds.get(long_context_acc_cell, {})
+    metric_key = f"accuracy.niah_pass_rate__{cell.id}"
+    min_spec = cell_specs.get(metric_key)
+    gate = variant_config.enforce_thresholds and isinstance(min_spec, dict) and min_spec.get("kind") == "min"
+    expected = float(min_spec["value"]) if gate else 0.0
+
+    max_ctx = int(variant_config.params.max_model_length)
+    if cell.isl > max_ctx:
+        pytest.skip(f"long_context_accuracy cell {cell.id!r} isl={cell.isl} exceeds params.max_model_length={max_ctx}")
+
+    output_dir = f"{variant_config.paths.log_dir}/long_context_accuracy"
+    t = time.monotonic()
+    try:
+        actuals = run_niah_cell(
+            orch=orch,
+            variant=variant_config,
+            cell=cell,
+            expected_pass_rate=expected,
+            output_dir=output_dir,
+        )
+    except RuntimeError as e:
+        lifecycle.record(request.node.nodeid, "long_context_accuracy", time.monotonic() - t)
+        pytest.fail(str(e))
+    lifecycle.record(request.node.nodeid, "long_context_accuracy", time.monotonic() - t)
+    for key, value in actuals.items():
+        lifecycle.record(request.node.nodeid, key, value, "")
+
+    if not variant_config.enforce_thresholds or not cell_specs:
+        return
+    specs = {
+        k: v
+        for k, v in cell_specs.items()
+        if k in actuals and actuals[k] is not None and isinstance(v, dict) and v.get("kind") != "info"
+    }
+    if specs:
+        evaluate_all(actuals, specs)
+
+
+def test_atom_mtp_quality(orch, variant_config, lifecycle, request):
+    """ACC-4/5/13: MTP acceptance, degenerate decode, and chat-template checks."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    if not _mtp_quality_requested(variant_config):
+        pytest.skip("mtp_quality not enabled for this variant")
+
+    p = variant_config.params
+    mq = variant_config.mtp_quality
+    combo = variant_config.sweep.sequence_combinations[0]
+    run = variant_config.sweep.runs[0]
+    job = AtomJob.from_variant(
+        orch=orch,
+        variant=variant_config,
+        hf_token="",
+        isl=combo.isl,
+        osl=combo.osl,
+        concurrency=run.concurrency,
+    )
+    base = f"{p.base_url}:{p.port_no}".replace("0.0.0.0", "127.0.0.1")
+    model_id = variant_config.model.id
+
+    t = time.monotonic()
+    log_out = orch.exec_on_head(f"tail -500 {shlex.quote(job.server_log)} 2>/dev/null || true", timeout=30)
+    log_text = next(iter(log_out.values()), "") or ""
+    client_out = orch.exec_on_head(f"tail -500 {shlex.quote(job.client_log)} 2>/dev/null || true", timeout=30)
+    client_text = next(iter(client_out.values()), "") or ""
+
+    actuals = parse_mtp_log_metrics(log_text + "\n" + client_text)
+    actuals["mtp.empty_or_repeat_ratio"] = degenerate_decode_ratio(client_text)
+
+    probe_body = json.dumps(
+        {
+            "model": model_id,
+            "messages": [{"role": "user", "content": mq.chat_template_prompt}],
+            "max_tokens": 64,
+        }
+    )
+    curl_cmd = (
+        f"curl -sS -X POST {shlex.quote(base + '/v1/chat/completions')} "
+        f"-H 'Content-Type: application/json' -d {shlex.quote(probe_body)}"
+    )
+    probe_out = orch.exec_on_head(curl_cmd, timeout=120)
+    probe_text = next(iter(probe_out.values()), "") or ""
+    completion = extract_completion_text(probe_text)
+    actuals["accuracy.chat_template_sha256"] = chat_template_sha256(completion)
+    ok = chat_template_ok(completion, mq.chat_template_expected_sha256)
+    if ok is not None:
+        actuals["accuracy.chat_template_ok"] = ok
+
+    lifecycle.record(request.node.nodeid, "mtp_quality", time.monotonic() - t)
+    for metric_key, value in actuals.items():
+        lifecycle.record(request.node.nodeid, metric_key, value, "")
+
+    if not variant_config.enforce_thresholds:
+        return
+    mtp_thresholds = (variant_config.thresholds or {}).get("mtp_quality", {})
+    if mtp_thresholds:
+        specs = {k: v for k, v in mtp_thresholds.items() if k in actuals and actuals[k] is not None}
+        if specs:
+            evaluate_all(actuals, specs)
+
+
+def test_atom_quant_parity(orch, variant_config, lifecycle, request):
+    """ACC-7: fixed-prompt completion fingerprint for quant parity (reference pairing TBD)."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    if not _quant_parity_requested(variant_config):
+        pytest.skip("quant_parity not enabled for this variant")
+
+    p = variant_config.params
+    qp = variant_config.quant_parity
+    base = f"{p.base_url}:{p.port_no}".replace("0.0.0.0", "127.0.0.1")
+    model_id = variant_config.model.id
+
+    t = time.monotonic()
+    probe_body = json.dumps(
+        {
+            "model": model_id,
+            "messages": [{"role": "user", "content": qp.probe_prompt}],
+            "max_tokens": 32,
+            "temperature": 0,
+        }
+    )
+    curl_cmd = (
+        f"curl -sS -X POST {shlex.quote(base + '/v1/chat/completions')} "
+        f"-H 'Content-Type: application/json' -d {shlex.quote(probe_body)}"
+    )
+    probe_out = orch.exec_on_head(curl_cmd, timeout=120)
+    probe_text = next(iter(probe_out.values()), "") or ""
+    completion = quant_extract_completion_text(probe_text)
+    actuals = run_quant_parity_probe(probe_text=completion)
+    actuals["quant_parity.reference_config_stem"] = qp.reference_config_stem or ""
+
+    lifecycle.record(request.node.nodeid, "quant_parity", time.monotonic() - t)
+    for metric_key, value in actuals.items():
+        lifecycle.record(request.node.nodeid, metric_key, value, "")
+
+    if not variant_config.enforce_thresholds:
+        return
+    qp_thresholds = (variant_config.thresholds or {}).get("quant_parity", {})
+    if qp_thresholds:
+        specs = {k: v for k, v in qp_thresholds.items() if k in actuals and actuals[k] is not None}
+        if specs:
+            evaluate_all(actuals, specs)
+
+
+def test_verify_dmesg(orch, variant_config, lifecycle, request):
+    """INF-6: time-bounded kernel log scan when ``platform.dmesg_scan`` is enabled."""
+    if not variant_config.platform.dmesg_scan:
+        pytest.skip("platform.dmesg_scan not enabled for this variant")
+    start_time = getattr(lifecycle, "dmesg_start", None)
+    if not start_time:
+        pytest.skip("dmesg start timestamps were not captured")
+
+    t = time.monotonic()
+    end_time = orch.exec('date +"%a %b %e %H:%M:%S"') or {}
+    verify_dmesg_window(orch, start_time, end_time)
+    lifecycle.record(request.node.nodeid, "dmesg_scan", time.monotonic() - t)

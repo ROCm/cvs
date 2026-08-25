@@ -1,0 +1,156 @@
+{
+  "_comment": "W1 DeepSeek R1 FP8 gsm8k accuracy (M2). Minimal perf warmup cell starts server; lm-eval runs in test_accuracy_eval.",
+  "schema_version": 1,
+  "framework": "atom",
+  "gpu_arch": "mi300x",
+  "enforce_thresholds": true,
+  "threshold_json": "mi300x_atom_deepseek-r1_fp8_accuracy_threshold.json",
+  "run_card": {
+    "atom_image_pin": "rocm/atom-dev:latest",
+    "notes": "ACC-1 gate gsm8k >= 0.94; ACC-14/15 hellaswag + mmlu_pro info until lab"
+  },
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/home/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "deepseek-ai/DeepSeek-R1-0528",
+    "remote": 0,
+    "precision": "fp8"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "atom_mi300x",
+    "image": "rocm/atom-dev:latest",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "atom_args": [
+        "-tp",
+        "8",
+        "--kv_cache_dtype",
+        "fp8",
+        "--trust-remote-code"
+      ],
+      "env": {
+        "ATOM_DISABLE_MMAP": "true"
+      }
+    }
+  },
+  "params": {
+    "driver": "atom",
+    "port_no": "8000",
+    "tensor_parallelism": "8",
+    "num_prompts": "1",
+    "max_model_length": "4096",
+    "client_poll_count": "20",
+    "client_poll_wait_time": "60"
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      },
+      {
+        "id": "gsm8k_strict",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4,
+        "metadata": {
+          "filter": "strict-match"
+        }
+      },
+      {
+        "id": "gsm8k_stderr",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4,
+        "metadata": {
+          "filter": "flexible-extract"
+        }
+      },
+      {
+        "id": "hellaswag",
+        "task": "hellaswag",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "mmlu_pro",
+        "task": "mmlu_pro",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      },
+      {
+        "id": "bbh",
+        "task": "bbh",
+        "num_fewshot": 3,
+        "num_concurrent": 4
+      },
+      {
+        "id": "musr",
+        "task": "musr",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "arc_challenge",
+        "task": "arc_challenge",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "winogrande",
+        "task": "winogrande",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      }
+    ]
+  },
+  "quant_parity": {
+    "enabled": true,
+    "probe_prompt": "The capital of France is",
+    "reference_config_stem": ""
+  },
+  "sweep": {
+    "sequence_combinations": [
+      {
+        "name": "acc_warmup",
+        "isl": "128",
+        "osl": "32"
+      }
+    ],
+    "runs": [
+      {
+        "combo": "acc_warmup",
+        "concurrency": 1
+      }
+    ]
+  }
+}

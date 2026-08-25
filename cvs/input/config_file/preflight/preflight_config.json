@@ -6,8 +6,8 @@
       "enabled": true,
       "_comment_enabled": "Enable GPU visibility, AMDGPU/KFD, kernel-health, and ROCm validation.",
 
-      "_example_gpus_per_node": 4,
-      "gpus_per_node": 4,
+      "_example_gpus_per_node": 8,
+      "gpus_per_node": 8,
       "_comment_gpus_per_node": "Exact number of AMD GPUs expected on every node.",
 
       "_example_expected_rocm_version": "6.2.0",
@@ -25,11 +25,11 @@
         "_comment_connectivity_mode": "RDMA connectivity testing mode. Options: 'basic' (test adjacent node pairs, fast, ~14% coverage for 8 nodes), 'full_mesh' (test all possible node pairs, comprehensive, 100% coverage), 'skip' (skip RDMA connectivity testing entirely).",
 
         "_example_gid_index": "3",
-        "gid_index": "3",
+        "gid_index": "<changeme>",
         "_comment_gid_index": "GID index to check on all RDMA interfaces. Typically '3' for RoCE (RDMA over Converged Ethernet). Must be a valid GID index for your InfiniBand/RoCE setup.",
 
         "_example_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
-        "interfaces": ["enp4s0np0"],
+        "interfaces": ["<changeme>"],
         "_comment_interfaces": "List of specific RDMA interface names that should be present on all cluster nodes. Examples: ['rocep28s0', 'rocep62s0'] for standard setup, ['mlx5_0', 'mlx5_1'] for Mellanox, ['ib0', 'ib1'] for generic InfiniBand.",
 
         "nodes_per_full_mesh_group": 32,
@@ -82,7 +82,7 @@
         "l2ping": {
           "_comment": "Strict afmctl L2 connectivity gate executed before TransferBench and RDMA",
 
-          "enabled": true,
+          "enabled": false,
           "_comment_enabled": "Enable IFoE L2 connectivity validation.",
 
           "pings_per_port": 3,
@@ -92,7 +92,7 @@
         "transferbench": {
           "_comment": "TransferBench IFoE data-path validation executed before RDMA",
 
-          "enabled": true,
+          "enabled": false,
           "_comment_enabled": "Enable the TransferBench preflight gate.",
 
           "scope": "node",
@@ -168,7 +168,7 @@
       "_comment_dump_path": "Directory for per-node smoke/*.json output. Leave empty to use <reporting.artifacts_root_dir>/node_smoke.",
 
       "expected_rdma_nics": null,
-      "_comment_expected_rdma_nics": "Hard-fail when training RDMA NIC count differs. null defaults to len(node_check.rdma_interfaces). Example: 8.",
+      "_comment_expected_rdma_nics": "Hard-fail when training RDMA NIC count differs. null defaults to len(connectivity_check.rdma.interfaces). Example: 8.",
 
       "ulimit_l_min_gb": 32,
       "_comment_ulimit_l_min_gb": "FAIL when RLIMIT_MEMLOCK is below this many GiB. 0 disables.",
@@ -195,10 +195,10 @@
       "_comment_gloo_socket_ifname": "Optional GLOO_SOCKET_IFNAME override (defaults to nccl_socket_ifname when empty).",
 
       "nccl_ib_hca": "",
-      "_comment_nccl_ib_hca": "Optional NCCL_IB_HCA override. Defaults to comma-joined node_check.rdma_interfaces.",
+      "_comment_nccl_ib_hca": "Optional NCCL_IB_HCA override. Defaults to comma-joined connectivity_check.rdma.interfaces.",
 
       "nccl_ib_gid_index": null,
-      "_comment_nccl_ib_gid_index": "Optional NCCL_IB_GID_INDEX override. Defaults to node_check.gid_index.",
+      "_comment_nccl_ib_gid_index": "Optional NCCL_IB_GID_INDEX override. Defaults to connectivity_check.rdma.gid_index.",
 
       "ssh_timeout": 300,
       "_comment_ssh_timeout": "SSH timeout in seconds for each node's node_smoke invocation (~30s Tier 1; use 600+ with tier2_perf).",
@@ -225,13 +225,65 @@
       "_comment_extra_args": "Additional node_smoke CLI flags forwarded to primus-cli. Example: [\"--no-clean-dump-path\"]."
     },
 
+    "tier3_info": {
+      "_comment": "Primus Tier 3 Host/GPU/Network info via primus-cli direct -- preflight --host --gpu --network (opt-in; default skip). No Slurm.",
+
+      "connectivity_mode": "skip",
+      "_comment_connectivity_mode": "Options: 'run' or 'skip' (default). Independent of node_smoke.connectivity_mode — enabling node_smoke does not enable Tier 3.",
+
+      "auto_setup": true,
+      "_comment_auto_setup": "When true, clone/update Primus and create venv before Tier 3 (falls back to node_smoke paths).",
+
+      "primus_dir": "",
+      "_comment_primus_dir": "Optional override; empty uses node_smoke.primus_dir.",
+
+      "venv_activate": "",
+      "_comment_venv_activate": "Optional override; empty uses node_smoke.venv_activate.",
+
+      "gpus_per_node": 8,
+      "_comment_gpus_per_node": "GPUs per node for torchrun.",
+
+      "master_port": 1234,
+      "_comment_master_port": "MASTER_PORT for the distributed env CVS sets across SSH-launched nodes.",
+
+      "dump_path": "",
+      "_comment_dump_path": "Report output directory. Empty uses <reporting.artifacts_root_dir>/tier3_info.",
+
+      "report_file_name": "tier3_info",
+      "_comment_report_file_name": "Base name for Primus markdown/PDF report files.",
+
+      "dist_timeout_sec": 120,
+      "_comment_dist_timeout_sec": "Timeout for torch.distributed init while aggregating the multi-node info report.",
+
+      "save_pdf": false,
+      "_comment_save_pdf": "When true, Primus also emits a PDF report.",
+
+      "nccl_socket_ifname": "",
+      "_comment_nccl_socket_ifname": "Optional NCCL_SOCKET_IFNAME override.",
+
+      "gloo_socket_ifname": "",
+      "_comment_gloo_socket_ifname": "Optional GLOO_SOCKET_IFNAME override.",
+
+      "nccl_ib_hca": "",
+      "_comment_nccl_ib_hca": "Optional NCCL_IB_HCA override. Defaults to comma-joined connectivity_check.rdma.interfaces when empty.",
+
+      "nccl_ib_gid_index": null,
+      "_comment_nccl_ib_gid_index": "Optional NCCL_IB_GID_INDEX override. Defaults to connectivity_check.rdma.gid_index when null.",
+
+      "ssh_timeout": 600,
+      "_comment_ssh_timeout": "SSH timeout in seconds for the parallel Tier 3 cluster run.",
+
+      "extra_args": [],
+      "_comment_extra_args": "Additional preflight CLI flags forwarded to primus-cli."
+    },
+
     "reporting": {
       "_comment": "Post-test reporting and output",
 
       "generate_html_report": true,
       "_comment_generate_html_report": "Whether to generate detailed HTML report. Set to 'false' to disable HTML report generation.",
 
-      "artifacts_root_dir": "/tmp/{user-id}/preflight",
+      "artifacts_root_dir": "/home/{user-id}/preflight",
       "_comment_artifacts_root_dir": "Root directory for preflight artifacts. HTML reports are saved here, and RDMA full_mesh ScriptLet logs use <artifacts_root_dir>/rdma_connectivity_workspace/<session>/<round>/ on each node (NFS-friendly). Must be writable by the user running the tests.",
 
       "generate_rdma_pairs_csv": false,

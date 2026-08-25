@@ -120,6 +120,57 @@ class LossCurve(_Allow):
     enforce: bool = True
 
 
+class SmokeTest(_Allow):
+    """Smoke test (ENABLED by default). Loads the model and runs `steps` steps
+    with a small fixed batch/seqlen in BF16, passing only if no error signature
+    fires (no metric/threshold checks). A failure gates the rest of the suite.
+
+    Set `enabled=false` to SKIP it -- e.g. during iterative experiments where you
+    don't want the smoke run every time (mirrors checkpoint_resume, but opt-OUT
+    rather than opt-in). `steps`/`per_device_batch_size`/`max_target_length` tune
+    the smoke run itself.
+    """
+
+    enabled: bool = True
+    steps: int = 5
+    per_device_batch_size: int = 1
+    max_target_length: int = 2048
+
+
+class CheckpointResume(_Allow):
+    """Checkpoint save + resume test (opt-in; off by default).
+
+    Runs ONE sweep twice: Phase 1 trains `steps_before_ckpt` steps with
+    checkpointing on (a checkpoint is written at `checkpoint_period`); Phase 2
+    resumes from that checkpoint and trains `steps_after_resume` more. Passes
+    when the resumed run restarts at the checkpoint step and the loss at the
+    resume boundary matches Phase 1 within `loss_tolerance` (state restored, not
+    reinitialized). Also benchmarks checkpoint I/O: `checkpoint_save_seconds` /
+    `checkpoint_load_seconds` are gated against `max_save_seconds` /
+    `max_load_seconds` when those are > 0 (else record-only).
+
+    `sweep` selects which sweep to use ("" -> first enabled). `smoke_model_overrides`
+    optionally shrinks the model for a fast run WITHOUT changing the tokenizer/
+    vocab (e.g. {"base_num_decoder_layers": 4}); empty -> the config's full model
+    (real-size checkpoint I/O).
+
+    `delete_ckpt_dir` (default true) removes the checkpoint directory after the
+    test to free disk space; set it false to keep the checkpoint files for
+    inspection.
+    """
+
+    enabled: bool = False
+    sweep: str = ""
+    steps_before_ckpt: int = 6
+    steps_after_resume: int = 6
+    checkpoint_period: int = 5
+    loss_tolerance: float = 0.1
+    max_save_seconds: float = 0.0
+    max_load_seconds: float = 0.0
+    delete_ckpt_dir: bool = True
+    smoke_model_overrides: Dict[str, Any] = {}
+
+
 class Sweep(_Allow):
     """One sweep entry = one full training run with per-run maxtext overrides.
 
@@ -168,6 +219,8 @@ class TrainingConfig(_Allow):
     scaling_baseline: ScalingBaseline = ScalingBaseline()
     convergence: Convergence = Convergence()
     loss_curve: LossCurve = LossCurve()
+    smoke: SmokeTest = SmokeTest()
+    checkpoint_resume: CheckpointResume = CheckpointResume()
     sweeps: List[Sweep] = []
     enabled_sweep_list: List[str] = []
 

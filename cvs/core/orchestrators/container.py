@@ -651,7 +651,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         return self.runtime.exec(self.container_id, cmd, hosts, timeout, detailed=detailed, print_console=print_console)
 
-    def exec_cmd_list(self, cmd_list, timeout=None):
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
         """
         Execute different commands on different hosts inside the container.
 
@@ -662,6 +662,9 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         Args:
             cmd_list: List of commands, one per host in host order
             timeout: Command timeout
+            print_console: If False, the commands' output is returned but not
+                logged. Use for polling/bulk reads the caller surfaces itself,
+                so a repeated log tail is not re-echoed on every poll.
 
         Returns:
             Dictionary mapping hosts to execution results
@@ -672,7 +675,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         if not self.container_id:
             raise RuntimeError("No containers running. Call setup_containers() first.")
 
-        return self.runtime.exec_cmd_list(self.container_id, cmd_list, timeout)
+        return self.runtime.exec_cmd_list(self.container_id, cmd_list, timeout, print_console=print_console)
 
     def exec_on_host(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """Execute command on the cluster host OS (SSH), not inside the container."""

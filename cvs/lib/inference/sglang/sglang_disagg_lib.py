@@ -15,32 +15,31 @@ Bare-metal SSH (``orch.head`` / ``orch.all``) is used for ``amd-smi`` and
 from __future__ import annotations
 
 import base64
-import json
 import os
 import re
 import shlex
 import time
-from typing import Any, Optional
 
 from cvs.lib import globals
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.lib.inference.sglang.sglang_common import (
-    LM_EVAL_SPECS,
     add_cli_flags_block,
     add_export_env_block,
-    as_node_list,
-    coerce_sglang_actual,
-    first_float,
-    normalize_sglang_threshold_spec,
-    resolve_client_host,
     collect_sglang_gpu_topology,
+    first_output,
     format_sglang_gpu_topology_lines,
+    normalize_hosts,
+    parse_inference_bench_results,
+    poll_for_inference_completion as poll_for_inference_completion_common,
+    resolve_client_host,
+    run_lm_eval_benchmark_test as run_lm_eval_benchmark_test_common,
+    verify_inference_results as verify_inference_results_common,
+    verify_inference_results_subtests as verify_inference_results_subtests_common,
+    verify_openai_compatible_endpoints as verify_openai_compatible_endpoints_common,
     _SERVER_READY_RE,
 )
-from cvs.lib.utils.model_query_lib import LmEvalBenchmark, LongContextNiahBenchmark, OpenAIProbe
+from cvs.lib.utils.model_query_lib import LongContextNiahBenchmark
 from cvs.lib.utils_lib import fail_test
-from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
-from cvs.lib.verify_lib import verify_dmesg_for_errors
 
 log = globals.log
 
@@ -109,13 +108,13 @@ class SglangDisaggPD:
             '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
         )
 
-        self.prefill_node_list = self._normalize_hosts(self.inf_dict['prefill_node_list'])
-        self.decode_node_list = self._normalize_hosts(self.inf_dict['decode_node_list'])
+        self.prefill_node_list = normalize_hosts(self.inf_dict['prefill_node_list'])
+        self.decode_node_list = normalize_hosts(self.inf_dict['decode_node_list'])
         self.prefill_nnodes = len(self.prefill_node_list)
         self.decode_nnodes = len(self.decode_node_list)
 
-        self.proxy_node = self._normalize_hosts(self.inf_dict['proxy_router_node'])
-        self.benchmark_serv_node = self._normalize_hosts(self.inf_dict['benchmark_serv_node'])
+        self.proxy_node = normalize_hosts(self.inf_dict['proxy_router_node'])
+        self.benchmark_serv_node = normalize_hosts(self.inf_dict['benchmark_serv_node'])
 
         self.job_cmd = ''
         self.job_cmd_list = []
@@ -167,19 +166,6 @@ class SglangDisaggPD:
     def client_host(self) -> str:
         return resolve_client_host(self.inf_dict, unified_server=False)
 
-    @staticmethod
-    def _first_output(out_dict: dict) -> str:
-        if not out_dict:
-            return ""
-        return next(iter(out_dict.values())) or ""
-
-    @staticmethod
-    def _normalize_hosts(hosts) -> list[str]:
-        """Normalize cluster JSON node field to a list of host strings."""
-        if hosts is None:
-            return []
-        return as_node_list(hosts)
-
     def _container_exec(
         self,
         cmd: str,
@@ -188,7 +174,7 @@ class SglangDisaggPD:
         timeout: int | None = None,
     ) -> dict:
         """Run ``cmd`` inside the container on ``hosts`` (default: all orch hosts)."""
-        normalized = self._normalize_hosts(hosts) if hosts is not None else None
+        normalized = normalize_hosts(hosts) if hosts is not None else None
         return self.orch.exec(cmd, hosts=normalized, timeout=timeout)
 
     def _container_exec_text(
@@ -198,7 +184,7 @@ class SglangDisaggPD:
         hosts=None,
         timeout: int | None = None,
     ) -> str:
-        return self._first_output(self._container_exec(cmd, hosts=hosts, timeout=timeout))
+        return first_output(self._container_exec(cmd, hosts=hosts, timeout=timeout))
 
     def _host_exec(
         self,
@@ -210,7 +196,7 @@ class SglangDisaggPD:
         """Run ``cmd`` on baremetal (``orch.head`` / ``orch.all``), e.g. amd-smi / dmesg."""
         if hosts is None:
             return self.orch.head.exec(cmd, timeout=timeout)
-        normalized = self._normalize_hosts(hosts)
+        normalized = normalize_hosts(hosts)
         if not normalized:
             return {}
         if len(normalized) == 1 and normalized[0] == self._head_host:
@@ -226,7 +212,7 @@ class SglangDisaggPD:
         hosts=None,
         timeout: int | None = None,
     ) -> str:
-        return self._first_output(self._host_exec(cmd, hosts=hosts, timeout=timeout))
+        return first_output(self._host_exec(cmd, hosts=hosts, timeout=timeout))
 
     def _apply_inf_defaults(self) -> None:
         self.inf_dict.setdefault('container_image', 'lmsysorg/sglang:dev')
@@ -723,7 +709,7 @@ class SglangDisaggPD:
         log.info('Waiting 120 secs after launching proxy router script')
         time.sleep(120)
 
-    def benchserv_test_random(self, d_type='auto'):
+    def benchserv_test_random(self, d_type='auto', *, verify=True):
         """
         Run SGLang serving benchmark using a synthetic random dataset and
         validate inference performance and correctness.
@@ -805,7 +791,8 @@ class SglangDisaggPD:
                 hosts=self.benchmark_serv_node,
             )
 
-        self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
+        if verify:
+            self.verify_inference_results('bench_serv', i_dict['expected_results'][d_type])
 
     def poll_for_server_ready(self, node_no, sglang_function, no_of_iterations=16):
         """Poll Prefill or Decode server logs inside the container for readiness."""
@@ -847,109 +834,19 @@ class SglangDisaggPD:
         """
         Parse inference benchmark output logs and extract key performance metrics
         into a structured dictionary.
-
-        Purpose:
-        --------
-        This method processes raw text output generated by inference benchmarks
-        (e.g., sglang.bench_serving) and extracts important metrics such as:
-        - Request counts
-        - Token throughput
-        - Latency statistics (TTFT, TPOT)
-        - Benchmark duration
-
-        The extracted metrics are stored per node in:
-        self.inference_results_dict
-
-        Args:
-        out_dict (dict):
-            Dictionary keyed by node identifier, where each value is the
-            raw stdout/stderr text produced by the benchmark on that node.
         """
-        self.inference_results_dict = {}
         log.info('Inside get_inference_results_dict')
         log.info("%s", out_dict)
-
-        for node in out_dict.keys():
-            self.inference_results_dict[node] = {}
-            if re.search('Successful requests:', out_dict[node], re.I):
-                match = re.search('Successful requests:\s+([0-9]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['successful_requests'] = match.group(1)
-            if re.search('Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I):
-                match = re.search('Benchmark duration\s+\(s\):\s+([0-9]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['benchmark_duration'] = match.group(1)
-            if re.search('Total input tokens:', out_dict[node], re.I):
-                match = re.search('Total input tokens:\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['total_input_tokens'] = match.group(1)
-            if re.search('Total generated tokens:', out_dict[node], re.I):
-                match = re.search('Total generated tokens:\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['total_generated_tokens'] = match.group(1)
-            if re.search('Request throughput \(req/s\):', out_dict[node], re.I):
-                match = re.search('Request throughput \(req/s\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['request_throughput_per_sec'] = match.group(1)
-            if re.search('Output token throughput \(tok/s\):', out_dict[node], re.I):
-                match = re.search('Output token throughput \(tok/s\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['output_throughput_per_sec'] = match.group(1)
-            if re.search('Mean TTFT \(ms\):', out_dict[node], re.I):
-                match = re.search('Mean TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['mean_ttft_ms'] = match.group(1)
-            if re.search('Median TTFT (ms):', out_dict[node], re.I):
-                match = re.search('Median TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['median_ttft_ms'] = match.group(1)
-            if re.search('P99 TTFT (ms):', out_dict[node], re.I):
-                match = re.search('P99 TTFT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['p99_ttft_ms'] = match.group(1)
-            if re.search('Mean TPOT \(ms\)', out_dict[node], re.I):
-                match = re.search('Mean TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['mean_tpot_ms'] = match.group(1)
-            if re.search('Median TPOT \(ms\):', out_dict[node], re.I):
-                match = re.search('Median TPOT \(ms\):\s+([0-9]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['median_tpot_ms'] = match.group(1)
-            if re.search('P99 TPOT (ms):', out_dict[node], re.I):
-                match = re.search('P99 TPOT \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['p99_tpot_ms'] = match.group(1)
-            if re.search('Mean ITL \(ms\):', out_dict[node], re.I):
-                match = re.search('Mean ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['mean_itl_ms'] = match.group(1)
-            if re.search('Median ITL \(ms\):', out_dict[node], re.I):
-                match = re.search('Median ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['median_itl_ms'] = match.group(1)
-            if re.search('P99 ITL \(ms\):', out_dict[node], re.I):
-                match = re.search('P99 ITL \(ms\):\s+([0-9\.]+)', out_dict[node], re.I)
-                self.inference_results_dict[node]['p99_itl_ms'] = match.group(1)
-            m = first_float(r'Mean E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
-            if m:
-                self.inference_results_dict[node]['mean_e2e_latency_ms'] = m
-            m = first_float(r'Median E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
-            if m:
-                self.inference_results_dict[node]['median_e2e_latency_ms'] = m
-            for p in (90, 95, 99):
-                m = first_float(rf'P{p} E2E Latency \(ms\):\s+([0-9\.]+)', out_dict[node])
-                if m:
-                    self.inference_results_dict[node][f'p{p}_e2e_latency_ms'] = m
-
-            total_req = first_float(r"Total requests:\s+([0-9]+)", out_dict[node])
-            failed_req = first_float(r"Failed requests:\s+([0-9]+)", out_dict[node])
-            succ = self.inference_results_dict[node].get("successful_requests")
-            if total_req:
-                self.inference_results_dict[node]["total_requests"] = total_req
-            elif succ is not None and failed_req is not None:
-                self.inference_results_dict[node]["total_requests"] = str(int(succ) + int(failed_req))
-            elif succ is not None and getattr(self, "_bench_num_prompts", None) is not None:
-                self.inference_results_dict[node]["total_requests"] = str(int(self._bench_num_prompts))
-            if succ and self.inference_results_dict[node].get("total_requests"):
-                s, t = int(succ), int(self.inference_results_dict[node]["total_requests"])
-                self.inference_results_dict[node]["goodput"] = f"{(s / t):.6f}" if t else None
-
-            out_tps = self.inference_results_dict[node].get("output_throughput_per_sec")
-            if out_tps:
-                tp = int(self.bp_dict.get("tensor_parallelism", "1"))
-                pp = int(self.bp_dict.get("pipeline_parallelism", "1"))
-                ng = (int(self.prefill_nnodes) + int(self.decode_nnodes)) * tp * pp
-                if ng > 0:
-                    self.inference_results_dict[node]["output_throughput_per_gpu_per_sec"] = (
-                        f"{float(out_tps) / ng:.6f}"
-                    )
-
+        tp = int(self.bp_dict.get("tensor_parallelism", "1"))
+        pp = int(self.bp_dict.get("pipeline_parallelism", "1"))
+        num_gpus = (int(self.prefill_nnodes) + int(self.decode_nnodes)) * tp * pp
+        self.inference_results_dict = parse_inference_bench_results(
+            out_dict,
+            bench_num_prompts=getattr(self, "_bench_num_prompts", None),
+            num_gpus_for_per_gpu_throughput=num_gpus,
+            include_itl=True,
+            include_extended_e2e_percentiles=True,
+        )
         log.info("%s", self.inference_results_dict)
         return self.inference_results_dict
 
@@ -1007,116 +904,58 @@ class SglangDisaggPD:
     def poll_for_inference_completion(
         self, iterations=10, waittime_between_iters=60, total_timeout=3600, require_all_nodes=True
     ):
-        """
-        Poll benchmark logs to detect inference completion and extract results.
-
-        Purpose:
-        --------
-        This method monitors inference progress by periodically inspecting
-        benchmark output logs. It determines when inference has completed,
-        detects early failures, and enforces a global timeout.
-
-        Completion criteria:
-        --------------------
-        Inference is considered complete when the benchmark output contains
-        the pattern 'Serving Benchmark Result'.
-
-        Failure criteria:
-        -----------------
-        Any known inference error detected in Prefill or Decode logs
-        immediately aborts the process.
-
-        Args:
-        iterations (int):
-            Maximum number of polling iterations.
-        waittime_between_iters (int):
-            Time (seconds) to wait between polling attempts.
-        total_timeout (int or None):
-            Maximum wall-clock time (seconds) allowed for inference.
-        require_all_nodes (bool):
-            If True, all nodes must report completion.
-            If False, completion by any node is sufficient.
-        """
-        time.sleep(60)
-
-        start_time = time.time()
-
-        def timed_out() -> bool:
-            return total_timeout is not None and (time.time() - start_time) >= float(total_timeout)
-
-        completed_pattern = re.compile('Serving Benchmark Result', re.I)
+        """Poll benchmark logs to detect inference completion and extract results."""
         log_path = f"{self.log_dir}/benchmark_node/benchmark_results.log"
 
-        for itr in range(1, iterations + 1):
-            log.info(f'Starting iteration {itr}')
-
-            out_dict = self._container_exec(
+        def fetch_log_tail():
+            return self._container_exec(
                 f"tail -1000 {shlex.quote(log_path)}",
                 hosts=self.benchmark_serv_node,
             )
 
-            node_completion = {}
-            for node, output in out_dict.items():
-                node_completion[node] = bool(completed_pattern.search(output or ''))
-
-            if require_all_nodes:
-                all_complete = all(node_completion.values()) if node_completion else False
-            else:
-                all_complete = any(node_completion.values()) if node_completion else False
-
-            if not all_complete:
-                if timed_out():
-                    msg = f"Timeout while waiting for inference completion after ~{int(time.time() - start_time)}s"
-                    log.warning("%s", msg)
-                    return {"status": "timeout", "reason": msg}
-                log.info('Inference still in progress')
-                time.sleep(30)
-                time.sleep(int(waittime_between_iters))
-                continue
-
-            self.get_inference_results_dict(out_dict)
-            log.info('Completed Inference, returning !!!')
-            return {"status": "success", "results": self.inference_results_dict}
-
-        if timed_out():
-            msg = f"Timeout after maximum iterations ({self.inference_poll_iterations}) and ~{int(time.time() - start_time)}s"
-            log.warning("%s", msg)
-            return {"status": "timeout", "reason": msg}
-        msg = f"Reached iteration cap ({self.inference_poll_iterations}) without completion; still in progress"
-        log.warning("%s", msg)
-        return {"status": "stuck_in_progress", "reason": msg}
+        result = poll_for_inference_completion_common(
+            fetch_log_tail,
+            self.get_inference_results_dict,
+            iterations=iterations,
+            waittime_between_iters=waittime_between_iters,
+            total_timeout=total_timeout,
+            require_all_nodes=require_all_nodes,
+            inference_poll_iterations=self.inference_poll_iterations,
+            log_progress=True,
+        )
+        if result.get('status') == 'success':
+            self.inference_results_dict = result['results']
+        return result
 
     def verify_inference_results(self, test_name, expected_result_dict):
-        """
-        Validate inference benchmark results against expected performance
-        thresholds and check for system-level errors.
+        """Validate inference benchmark results against expected performance thresholds."""
+        self.inference_end_time = verify_inference_results_common(
+            self.inference_results_dict,
+            expected_result_dict,
+            self._host_exec,
+            test_name=test_name,
+        )
 
-        Comparison rules (via ``evaluate_all`` + threshold ``kind``):
-        - Throughput, req/s, goodput, MFU: actual >= expected
-        - Latency (*_ms, *latency*): actual <= expected
-
-        Threshold entries may be full specs ``{"kind": ..., "value": ...}`` from
-        threshold.json or legacy flat floats from ``flat_expected_from_specs``.
-        """
-        thresholds = {
-            metric: normalize_sglang_threshold_spec(metric, spec) for metric, spec in expected_result_dict.items()
-        }
-
-        for node in self.inference_results_dict:
-            actuals = {
-                metric: coerce_sglang_actual(value)
-                for metric, value in self.inference_results_dict[node].items()
-                if metric in thresholds
-            }
-            try:
-                evaluate_all(actuals, thresholds)
-            except ThresholdViolation as exc:
-                for msg in exc.violations:
-                    fail_test(f"FAIL - {msg}")
-
-        self.inference_end_time = self._host_exec('date +"%a %b %e %H:%M"')
-        time.sleep(2)
-        verify_dmesg_for_errors(self.orch.all, self.inference_start_time, self.inference_end_time)
+    def verify_inference_results_subtests(
+        self,
+        subtests,
+        test_name,
+        expected_result_dict,
+        *,
+        lifecycle=None,
+        report_nodeid=None,
+    ) -> bool:
+        """Verify each metric on each node as its own pytest subtest."""
+        all_passed, self.inference_end_time = verify_inference_results_subtests_common(
+            self.inference_results_dict,
+            expected_result_dict,
+            self._host_exec,
+            subtests,
+            test_name,
+            lifecycle=lifecycle,
+            report_nodeid=report_nodeid,
+        )
+        return all_passed
 
     def sglang_disagg_gpu_counts(self, mem_threshold_mb=5000):
         tp = int(self.bp_dict["tensor_parallelism"])
@@ -1156,72 +995,17 @@ class SglangDisaggPD:
     def verify_openai_compatible_endpoints(self) -> list[str]:
         """
         Smoke-test OpenAI-compatible HTTP API on the proxy router (inside the
-        benchmark container): GET /v1/models,
-        POST /v1/chat/completions, POST /v1/completions, and structured JSON
-        (book) via chat completions.
+        benchmark container).
         """
-        port = int(self.router_serv_port)
-        model_name = self.bp_dict["model"]
-
-        probe_src = OpenAIProbe.probe_script(port, model_name, host=self.client_host)
-        b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
-        inner = (
-            f"mkdir -p {self.log_dir}/benchmark_node && "
-            f"echo {shlex.quote(b64)} | base64 -d > /tmp/openai_mq_probe.py && "
-            f"python3 /tmp/openai_mq_probe.py && rm -f /tmp/openai_mq_probe.py"
+        return verify_openai_compatible_endpoints_common(
+            port=int(self.router_serv_port),
+            model_name=self.bp_dict["model"],
+            client_host=self.client_host,
+            log_dir=self.log_dir,
+            exec_probe=lambda cmd, timeout: self._container_exec(cmd, hosts=self.benchmark_serv_node, timeout=timeout),
+            probe_host_key=self.benchmark_serv_node[0],
+            log_label='OpenAI endpoint probe inside benchmark container, same pattern as GSM8K/benchserv',
         )
-        log.info(
-            "OpenAI endpoint probe inside benchmark container (%s:%r), same pattern as GSM8K/benchserv",
-            self.client_host,
-            port,
-        )
-        out_dict = self._container_exec(
-            "bash -c " + shlex.quote(inner),
-            hosts=self.benchmark_serv_node,
-            timeout=min(900, 480 + 180),
-        )
-        bench_host = self.benchmark_serv_node[0]
-        raw_out = out_dict.get(bench_host) or self._first_output(out_dict)
-
-        probe_err: Optional[str] = None
-        results: dict[str, tuple[int, Any]] = {}
-        if not raw_out or not str(raw_out).strip():
-            probe_err = f"OpenAI-compatible probe produced no output on {bench_host!r}: {out_dict!r}"
-        else:
-            lines_out = str(raw_out).strip().splitlines()
-            if not lines_out:
-                probe_err = f"OpenAI-compatible probe empty lines after strip on node {bench_host!r}: {raw_out!r}"
-            else:
-                last_line = lines_out[-1]
-                try:
-                    parsed = json.loads(last_line)
-                except json.JSONDecodeError as e:
-                    probe_err = f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw_out!r}"
-                else:
-                    if not isinstance(parsed, dict):
-                        probe_err = f"OpenAI-compatible probe expected JSON object, got {type(parsed).__name__!r}"
-                    else:
-                        for step, val in parsed.items():
-                            if isinstance(val, (list, tuple)) and len(val) == 2:
-                                results[step] = (int(val[0]), val[1])
-                            else:
-                                probe_err = f"OpenAI-compatible probe bad shape at {step!r}: {val!r}"
-                                break
-
-        if probe_err is not None:
-            fail_test(probe_err)
-            return []
-
-        OpenAIProbe.log_results(results, log)
-
-        ok, err = OpenAIProbe.check_results(results, port=port, logger=log)
-        if not ok:
-            summary = OpenAIProbe.summarize_results(results, ok, err)
-            fail_test(f"{err}")
-            return summary
-
-        summary = OpenAIProbe.summarize_results(results, ok, err)
-        return summary
 
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type="auto"):
         return self.run_lm_eval_benchmark_test("lm_eval_hellaswag", _d_type=_d_type)
@@ -1230,56 +1014,15 @@ class SglangDisaggPD:
         return self.run_lm_eval_benchmark_test("lm_eval_gsm8k", _d_type=_d_type)
 
     def run_lm_eval_benchmark_test(self, bench_key: str, _d_type="auto"):
-        spec = LM_EVAL_SPECS[bench_key]
-        log.info("#================ * * * =========================#")
-        log.info("lm-eval %s benchmark", spec["display"])
-        log.info("#================ * * * =========================#")
-        task_name = bench_key.removeprefix("lm_eval_")
-        i_dict = self.bp_dict["inference_tests"][bench_key]
-        inner_cmd, scoring = LmEvalBenchmark.prepare(
-            i_dict,
-            port=int(self.router_serv_port),
-            host=self.client_host,
-            model_id=self.bp_dict["model"],
-            task_name=task_name,
-            default_tasks=task_name,
-            default_metric=spec["default_metric"],
-            default_metric_key=spec["default_metric_key"],
+        return run_lm_eval_benchmark_test_common(
+            bench_key,
+            bp_dict=self.bp_dict,
+            router_serv_port=self.router_serv_port,
+            client_host=self.client_host,
             log_dir=self.log_dir,
-            log_basename=f"{bench_key}.log",
-            default_num_concurrent=spec["default_num_concurrent"],
+            env_script='/tmp/benchmark_env_script.sh',
+            exec_bench=lambda cmd, timeout: self._container_exec(cmd, hosts=self.benchmark_serv_node, timeout=timeout),
         )
-
-        inner = f"mkdir -p {self.log_dir}/benchmark_node && source /tmp/benchmark_env_script.sh && {inner_cmd}"
-        out_dict = self._container_exec(
-            "bash -c " + shlex.quote(inner),
-            hosts=self.benchmark_serv_node,
-            timeout=scoring["exec_timeout_sec"],
-        )
-        time.sleep(5)
-
-        check_kwargs = LmEvalBenchmark.check_kwargs_from_scoring(scoring)
-        summary = None
-        errors: list[str] = []
-
-        for node, text in out_dict.items():
-            ok, node_summary, err = LmEvalBenchmark.check_results(text, **check_kwargs)
-            if node_summary is not None:
-                summary = node_summary
-            if not ok:
-                errors.append(f"lm-eval {spec['display']} on node {node!r}: {err}")
-
-        if summary is None:
-            summary = LmEvalBenchmark.fallback_summary(
-                scoring,
-                error=errors[-1] if errors else "no benchmark nodes produced output to score",
-            )
-            errors.append(f"lm-eval {spec['display']}: no benchmark nodes produced output to score")
-
-        for msg in errors:
-            fail_test(msg)
-
-        return summary
 
     def run_long_context_niah_accuracy(self, *, isl: int, osl: int, d_type: str = "auto"):
         """NIAH long-context accuracy at fixed ISL/OSL via /v1/chat/completions."""

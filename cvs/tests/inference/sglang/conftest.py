@@ -24,9 +24,19 @@ import json
 import os
 import re
 import time
+from pathlib import Path
 from typing import Any, Mapping
 
 import pytest
+
+try:
+    from _pytest.subtests import SubtestReport as _BuiltinSubtestReport
+except ImportError:
+    _BuiltinSubtestReport = None
+try:
+    from pytest_subtests.plugin import SubTestReport as _PluginSubtestReport
+except ImportError:
+    _PluginSubtestReport = None
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
@@ -41,7 +51,20 @@ from cvs.lib.inference.sglang.sglang_config_loader import (
 )
 from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
 from cvs.lib.inference.sglang.sglang_distributed_lib import SglangDistributed
+from cvs.lib.inference.sglang.sglang_parsing import SGLANG_RESULTS_COLUMNS
 from cvs.lib.inference.sglang.sglang_single_lib import SglangSingle
+from cvs.lib.report.benchmark_metric_registry import (
+    benchmark_metric_columns_for_nodeid,
+    benchmark_metric_rows_from_item,
+    benchmark_metric_rows_from_report,
+    mark_collapsible_result_cell,
+    patch_benchmark_metrics_into_html,
+    stamp_benchmark_metric_rows_on_report,
+)
+from cvs.lib.report.render.perf_metric_table import (
+    is_benchmark_metrics_extra,
+    render_benchmark_metrics_html,
+)
 from cvs.lib.utils_lib import (
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
@@ -55,6 +78,8 @@ from cvs.tests.inference.sglang._shared import (
 )
 
 log = globals.log
+
+SGLANG_PERF_BENCHMARK_TEST = 'test_run_performance_benchmark_test'
 
 # Re-exported for sglang_single.py / sglang_disagg_distributed.py imports.
 __all__ = ["flat_expected_from_specs"]
@@ -271,6 +296,7 @@ class _Lifecycle:
         self.report: dict[str, list[tuple[str, float, str]]] = {}
         self.phase_labels: dict[str, Any] = {}
         self.smoke_results: list | None = None
+        self.perf_metric_rows: dict[str, list[dict[str, Any]]] = {}
 
     def record(self, nodeid: str, label: str, value: float, unit: str = "s") -> None:
         self.report.setdefault(nodeid, []).append((label, value, unit))
@@ -483,12 +509,30 @@ def pytest_collection_modifyitems(items):
     items.sort(key=rank_for)
 
 
-@pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_makereport(item, call):
-    outcome = yield
-    report = outcome.get_result()
-    if report.when != "call":
-        return
+def _is_full_log_extra(extra: object) -> bool:
+    return isinstance(extra, dict) and extra.get('format_type') == 'url' and extra.get('name') == 'Full Log'
+
+
+def _is_subtest_report(report) -> bool:
+    if _BuiltinSubtestReport is not None and isinstance(report, _BuiltinSubtestReport):
+        return True
+    if _PluginSubtestReport is not None and isinstance(report, _PluginSubtestReport):
+        return True
+    return False
+
+
+def _benchmark_rows_for_report(report) -> list[dict[str, Any]]:
+    return benchmark_metric_rows_from_report(report)
+
+
+def _is_lifecycle_stage_extra(extra: object) -> bool:
+    if not isinstance(extra, dict) or extra.get('format_type') != 'html':
+        return False
+    content = str(extra.get('content') or extra.get('content_raw') or '')
+    return '<th>stage</th>' in content and '<th>value</th>' in content
+
+
+def _attach_lifecycle_stage_extra(item, report) -> None:
     lc = item.funcargs.get("lifecycle")
     rows = getattr(lc, "report", {}).get(item.nodeid) if lc else None
     if not rows:
@@ -499,9 +543,112 @@ def pytest_runtest_makereport(item, call):
         return
     body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
     html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
-    extras = getattr(report, "extras", [])
+    extras = list(getattr(report, "extras", []) or [])
     extras.append(pytest_html.extras.html(html))
     report.extras = extras
+
+
+def _attach_benchmark_metric_extras_for_nodeid(report, nodeid: str, rows: list[dict[str, Any]]) -> None:
+    """Parent benchmark row: Full Log + collapsible metric pass/fail list only."""
+    if not rows:
+        return
+
+    try:
+        import pytest_html
+    except ImportError:
+        return
+
+    extras: list[object] = []
+    for extra in getattr(report, 'extras', []) or []:
+        if _is_full_log_extra(extra):
+            extras.append(extra)
+        elif is_benchmark_metrics_extra(extra):
+            extras.append(extra)
+        elif _is_lifecycle_stage_extra(extra):
+            continue
+
+    if not any(is_benchmark_metrics_extra(e) for e in extras):
+        columns = benchmark_metric_columns_for_nodeid(nodeid) or SGLANG_RESULTS_COLUMNS
+        extras.append(pytest_html.extras.html(render_benchmark_metrics_html(rows, columns=columns)))
+
+    report.extras = extras
+    stamp_benchmark_metric_rows_on_report(report, rows)
+
+
+def _attach_benchmark_metric_extras(item, report) -> None:
+    rows = benchmark_metric_rows_from_item(item)
+    if not rows:
+        rows = getattr(item.funcargs.get("lifecycle"), "perf_metric_rows", {}).get(item.nodeid, [])
+    _attach_benchmark_metric_extras_for_nodeid(report, item.nodeid, rows)
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_makereport(item, call):
+    """Run last: lifecycle stage tables or benchmark metric extras."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != 'call' or _is_subtest_report(report):
+        return
+
+    test_name = item.originalname or item.name.split('[')[0]
+    if test_name == SGLANG_PERF_BENCHMARK_TEST:
+        _attach_benchmark_metric_extras(item, report)
+        return
+
+    _attach_lifecycle_stage_extra(item, report)
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_logreport(report):
+    """Attach benchmark extras after pytest-html stores the call report."""
+    yield
+    if report.when != 'call' or _is_subtest_report(report):
+        return
+    if SGLANG_PERF_BENCHMARK_TEST not in report.nodeid:
+        return
+    rows = _benchmark_rows_for_report(report)
+    if not rows:
+        return
+    _attach_benchmark_metric_extras_for_nodeid(report, report.nodeid, rows)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_html_results_table_html(report, data):
+    """Run after root log placeholder hook; keep inline log empty for benchmark rows."""
+    if _is_subtest_report(report):
+        return
+    if SGLANG_PERF_BENCHMARK_TEST not in report.nodeid:
+        return
+    if not _benchmark_rows_for_report(report):
+        return
+    del data[:]
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_html_results_table_row(report, cells):
+    """Mark benchmark rows so pytest-html CSS can show the + / − expand control."""
+    if _is_subtest_report(report):
+        return
+    if report.when != 'call':
+        return
+    if SGLANG_PERF_BENCHMARK_TEST not in report.nodeid:
+        return
+    if not _benchmark_rows_for_report(report):
+        return
+    cells[0] = mark_collapsible_result_cell(str(cells[0]))
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    """Patch pytest-html JSON after the report file is written."""
+    yield
+    htmlpath = getattr(session.config.option, 'htmlpath', None)
+    if not htmlpath:
+        return
+    patch_benchmark_metrics_into_html(
+        Path(htmlpath),
+        benchmark_test_name=SGLANG_PERF_BENCHMARK_TEST,
+    )
 
 
 # def pytest_html_results_table_header(cells):

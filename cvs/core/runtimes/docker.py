@@ -267,7 +267,7 @@ class DockerRuntime:
 
         return self.orchestrator.all.exec(exec_cmd, timeout=timeout, detailed=detailed, print_console=print_console)
 
-    def exec_cmd_list(self, container_name, cmd_list, timeout=None):
+    def exec_cmd_list(self, container_name, cmd_list, timeout=None, print_console=True):
         """Execute different commands on different hosts inside the container.
 
         Each command is wrapped in `docker exec bash -c` — the parallel
@@ -278,13 +278,16 @@ class DockerRuntime:
             container_name: Running container name
             cmd_list: List of commands, one per host in host order
             timeout: Command timeout
+            print_console: If False, the commands' output is returned but not
+                logged. See exec(); use for polling/bulk reads the caller
+                surfaces itself.
 
         Returns:
             Dictionary mapping hosts to execution results
         """
         sudo_prefix = self.orchestrator.sudo_prefix()
         exec_cmd_list = [f"{sudo_prefix}docker exec {container_name} bash -c {shlex.quote(cmd)}" for cmd in cmd_list]
-        return self.orchestrator.all.exec_cmd_list(exec_cmd_list, timeout=timeout)
+        return self.orchestrator.all.exec_cmd_list(exec_cmd_list, timeout=timeout, print_console=print_console)
 
     def exec_on_head(self, container_name, cmd, timeout=None, detailed=False, print_console=True):
         """Execute command directly on head node (container). See exec() for

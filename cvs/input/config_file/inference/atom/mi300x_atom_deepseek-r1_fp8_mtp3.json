@@ -72,6 +72,11 @@
     "client_poll_count": "80",
     "client_poll_wait_time": "60"
   },
+  "mtp_quality": {
+    "enabled": true,
+    "chat_template_prompt": "Briefly introduce yourself in one sentence.",
+    "chat_template_expected_sha256": ""
+  },
   "sweep": {
     "sequence_combinations": [
       {
@@ -90,5 +95,8 @@
         "concurrency": 256
       }
     ]
+  },
+  "platform": {
+    "gpu_metrics_poll": true
   }
 }

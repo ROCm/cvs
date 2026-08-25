@@ -24,13 +24,16 @@ Does NOT subclass :class:`cvs.lib.inference.base.InferenceBaseJob`.
 
 from __future__ import annotations
 
+import base64
 import json
 import re
 import shlex
 import time
 
 from cvs.lib import globals
-from cvs.lib.inference.atom.atom_parsing import to_client_metrics
+from cvs.lib.inference.atom.atom_config_loader import merge_mxfp4_triton_env
+from cvs.lib.inference.atom.atom_parsing import sglang_bench_jsonl_to_raw, to_client_metrics
+from cvs.lib.utils.model_query_lib import OpenAIProbe
 
 log = globals.log
 
@@ -141,7 +144,10 @@ class AtomJob:
         self.serve_args = self._merged_serve_args(variant)
         self.atom_server_args = list(variant.roles.server.atom_args)
         self.sglang_server_args = list(variant.roles.server.sglang_args)
-        self.server_env = dict(variant.roles.server.env)
+        self.server_env = merge_mxfp4_triton_env(
+            getattr(variant.model, "precision", ""),
+            variant.roles.server.env,
+        )
         configured_netdev = (getattr(variant.roles.server, "ib_netdev", None) or "").strip()
         if ib_netdev:
             self.ib_netdev = str(ib_netdev).strip()
@@ -156,9 +162,12 @@ class AtomJob:
         self.out_dir = self._node_out_dir(0)
         self.server_log = self._rank_server_log(0)
         self.client_log = f"{self.out_dir}/client.log"
-        self._result_artifact = (
-            f"{self.out_dir}/{self.result_stem}.json" if self.driver == "atom" else f"{self.out_dir}/{self.result_stem}"
-        )
+        if self.driver == "atom":
+            self._result_artifact = f"{self.out_dir}/{self.result_stem}.json"
+        elif self._uses_sglang_serve():
+            self._result_artifact = f"{self.out_dir}/{self.result_stem}.jsonl"
+        else:
+            self._result_artifact = f"{self.out_dir}/{self.result_stem}"
 
         self._precheck_wait = server_precheck_wait_s
         self._warmup_wait = server_warmup_wait_s
@@ -238,6 +247,9 @@ class AtomJob:
             return self.orch.exec_on_head(cmd, **kwargs)
         return self.orch.exec(cmd, **kwargs)
 
+    def _exec_client(self, cmd, **kwargs):
+        return self.orch.exec_on_head(cmd, **kwargs)
+
     def prepare_cell_out_dir(self):
         """Create per-cell output directory without touching server env or cache."""
         if self.distributed:
@@ -245,6 +257,11 @@ class AtomJob:
                 self._exec_all(f"mkdir -p {shlex.quote(self._node_out_dir(rank))}")
         else:
             self._exec_all(f"mkdir -p {shlex.quote(self.out_dir)}")
+
+    @staticmethod
+    def _is_deepseek_v4_model(model_id):
+        mid = (model_id or "").lower()
+        return "deepseek-v4" in mid or "deepseek_v4" in mid
 
     @classmethod
     def _merged_serve_args(cls, variant):
@@ -254,7 +271,7 @@ class AtomJob:
         gpu_mem = env.get("CVS_GPU_MEMORY_UTIL") or env.get("VLLM_GPU_MEMORY_UTIL")
         if gpu_mem is not None and "gpu-memory-utilization" not in merged:
             merged["gpu-memory-utilization"] = str(gpu_mem)
-        if "enforce-eager" not in merged:
+        if "enforce-eager" not in merged and not cls._is_deepseek_v4_model(variant.model.id):
             merged["enforce-eager"] = True
         return merged
 
@@ -265,6 +282,8 @@ class AtomJob:
             opt = f"--{flag}"
             if value is True:
                 argv.append(opt)
+            elif value is False:
+                pass
             elif isinstance(value, (list, tuple)):
                 for v in value:
                     argv.extend([opt, str(v)])
@@ -380,7 +399,7 @@ class AtomJob:
             f"export HF_TOKEN={shlex.quote(self.hf_token)}",
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
         ]
-        if self._uses_vllm_serve():
+        if self._uses_vllm_serve() and not self._is_deepseek_v4_model(self.model_id):
             env_lines.extend(
                 [
                     "export VLLM_USE_AITER_UNIFIED_ATTENTION=1",
@@ -388,8 +407,6 @@ class AtomJob:
                     "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
                 ]
             )
-        elif self._uses_sglang_serve():
-            env_lines.append("export SGLANG_USE_AITER=1")
         if self.ib_hcas:
             env_lines.append(f"export NCCL_IB_HCA={shlex.quote(','.join(self.ib_hcas))}")
         if self.distributed and not self.ib_netdev:
@@ -493,7 +510,10 @@ class AtomJob:
             "--server-port",
             str(self.port_no),
         ]
-        argv.extend(self._without_vllm_distributed_flags(self.atom_server_args))
+        atom_argv = self._without_vllm_distributed_flags(self.atom_server_args)
+        if not self._argv_has_flag(atom_argv, "--max-model-len", "-m"):
+            atom_argv = list(atom_argv) + ["--max-model-len", self.max_model_length]
+        argv.extend(atom_argv)
         argv.extend(self._atom_multinode_argv())
         return argv
 
@@ -641,6 +661,79 @@ class AtomJob:
                 time.sleep(30)
             raise RuntimeError("atom server warmup did not complete before timeout")
 
+    def dump_server_log(self, lines=200):
+        out = self._tail_server_logs(lines)
+        for host, text in (out or {}).items():
+            log.error("server log tail (%s):\n%s", host, text)
+
+    def probe_openai_endpoints(self):
+        probe_src = OpenAIProbe.probe_script(int(self.port_no), self.model_id)
+        b64 = base64.b64encode(probe_src.encode("utf-8")).decode("ascii")
+        probe_path = f"{self.out_dir}/openai_probe.py"
+        cmd = (
+            f"mkdir -p {shlex.quote(self.out_dir)} && "
+            f"echo {shlex.quote(b64)} | base64 -d > {shlex.quote(probe_path)} && "
+            f"python3 {shlex.quote(probe_path)}"
+        )
+        out = self.orch.exec_on_head("bash -c " + shlex.quote(cmd))
+        raw = next(iter(out.values()), None) if out else None
+        if not raw or not str(raw).strip():
+            raise RuntimeError(f"OpenAI-compatible probe produced no output: {out!r}")
+        last_line = str(raw).strip().splitlines()[-1]
+        try:
+            parsed = json.loads(last_line)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"OpenAI-compatible probe invalid JSON: {e!r} raw={raw!r}") from e
+        if not isinstance(parsed, dict):
+            raise RuntimeError(f"OpenAI-compatible probe expected JSON object, got {type(parsed).__name__!r}")
+        results = {}
+        for step, val in parsed.items():
+            if not (isinstance(val, (list, tuple)) and len(val) == 2):
+                raise RuntimeError(f"OpenAI-compatible probe bad shape at {step!r}: {val!r}")
+            results[step] = (int(val[0]), val[1])
+        OpenAIProbe.log_results(results, log)
+        ok, err = OpenAIProbe.check_results(results, port=self.port_no, logger=log)
+        summary = OpenAIProbe.summarize_results(results, ok, err)
+        if not ok:
+            raise RuntimeError(err)
+        return summary
+
+    def probe_server_health(self):
+        """FUNC-2: /health, /v1/models, and max_tokens=1 completion liveness."""
+        summary = []
+        health_url = f"http://localhost:{self.port_no}/health"
+        health_probe = f"curl -sf {shlex.quote(health_url)} -o /dev/null && echo OK || echo NO"
+        health_out = self._exec_head("bash -c " + shlex.quote(health_probe))
+        if not health_out or not all("OK" in (v or "") for v in health_out.values()):
+            raise RuntimeError(f"/health check failed: {health_out!r}")
+        summary.append(f"health {health_url}: OK")
+
+        models_url = f"http://localhost:{self.port_no}/v1/models"
+        models_probe = f"curl -sf {shlex.quote(models_url)} -o /dev/null && echo OK || echo NO"
+        models_out = self._exec_head("bash -c " + shlex.quote(models_probe))
+        if not models_out or not all("OK" in (v or "") for v in models_out.values()):
+            raise RuntimeError(f"/v1/models check failed: {models_out!r}")
+        summary.append(f"models {models_url}: OK")
+
+        if self.driver == "atom":
+            if not self._atom_warmup_ok():
+                raise RuntimeError("max_tokens=1 completion check failed")
+        else:
+            payload = json.dumps(
+                {"model": self.model_id, "prompt": "hi", "max_tokens": 1},
+                separators=(",", ":"),
+            )
+            comp_url = f"http://localhost:{self.port_no}/v1/completions"
+            comp_probe = (
+                f"curl -sf {shlex.quote(comp_url)} -H 'Content-Type: application/json' "
+                f"-d {shlex.quote(payload)} -o /dev/null --max-time 120 && echo OK || echo NO"
+            )
+            comp_out = self._exec_head("bash -c " + shlex.quote(comp_probe))
+            if not comp_out or not all("OK" in (v or "") for v in comp_out.values()):
+                raise RuntimeError(f"max_tokens=1 completion failed: {comp_out!r}")
+        summary.append("completion max_tokens=1: OK")
+        return summary
+
     def stop_server(self):
         if self.driver == "atom":
             log.info("stopping atom server")
@@ -699,23 +792,25 @@ class AtomJob:
         return argv
 
     def _sglang_client_argv(self):
-        return [
+        argv = [
             "python3",
             "-m",
             "sglang.bench_serving",
             "--backend",
             "sglang",
             "--host",
-            "0.0.0.0",
+            "127.0.0.1",
             "--port",
             str(self.port_no),
+            "--model",
+            self.model_id,
             "--dataset-name",
             self.dataset_name,
             "--num-prompts",
             self.num_prompts,
-            "--random-input",
+            "--random-input-len",
             self.isl,
-            "--random-output",
+            "--random-output-len",
             self.osl,
             "--random-range-ratio",
             self.random_range_ratio,
@@ -723,7 +818,12 @@ class AtomJob:
             self.concurrency,
             "--request-rate",
             self.request_rate,
+            "--output-file",
+            self._result_artifact,
         ]
+        if self.bench_extra_args:
+            argv.extend(shlex.split(self.bench_extra_args))
+        return argv
 
     def _client_argv(self):
         if self.driver == "atom":
@@ -733,7 +833,7 @@ class AtomJob:
         return self._vllm_client_argv()
 
     def _vllm_client_argv(self):
-        return [
+        argv = [
             "vllm",
             "bench",
             "serve",
@@ -776,30 +876,67 @@ class AtomJob:
             "--result-filename",
             self.result_stem,
         ]
+        extra = shlex.split(self.bench_extra_args) if self.bench_extra_args else []
+        if "--disable-tqdm" not in extra:
+            argv.append("--disable-tqdm")
+        if extra:
+            argv.extend(extra)
+        return argv
 
     def _clear_stale_result_artifact(self):
         """Remove a prior run's result file so poll logic cannot treat it as complete."""
         artifact = shlex.quote(self._result_artifact)
-        self._exec_head(f"rm -f {artifact}")
+        self._exec_client(f"rm -f {artifact}")
 
     def run_client(self):
         self._clear_stale_result_artifact()
         args = self._client_argv()
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
-        client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
-        self._exec_head("bash -c " + shlex.quote(client_cmd))
+        env_prefix = ""
+        if self._uses_sglang_serve():
+            env_prefix = "export PYTHONPATH=/sgl-workspace/sglang/python:${PYTHONPATH:-} && "
+        client_cmd = (
+            f"source /tmp/server_env_script.sh && {env_prefix}{bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
+        )
+        self._exec_client("bash -c " + shlex.quote(client_cmd))
 
-    def _atom_result_ready(self):
-        out = self._exec_head(f"test -s {shlex.quote(self._result_artifact)} && echo OK || echo NO")
+    def _bench_result_ready(self):
+        out = self._exec_client(f"test -s {shlex.quote(self._result_artifact)} && echo OK || echo NO")
         return bool(out) and all("OK" in (v or "") for v in out.values())
 
-    def _client_log_failures(self, tail_lines=2000):
-        out = self._exec_head(f"tail -{tail_lines} {shlex.quote(self.client_log)}")
+    def _client_log_probe_cmd(self):
+        log_path = shlex.quote(self.client_log)
+        crash_re = (
+            r"Traceback \(most recent call last\)"
+            r"|unrecognized arguments|invalid choice|error: argument "
+            r"|command not found|: No such file or directory"
+        )
+        fail_re = r"Failed requests:[[:space:]]+[0-9]+"
+        return (
+            f"{{ grep -aE {shlex.quote(crash_re)} {log_path} 2>/dev/null | tail -1; "
+            f"grep -aE {shlex.quote(fail_re)} {log_path} 2>/dev/null | tail -1; }} || true"
+        )
+
+    def _client_log_complete(self):
+        log_path = shlex.quote(self.client_log)
+        if self._uses_sglang_serve():
+            pattern = "Successful requests:"
+        else:
+            pattern = "Serving Benchmark Result"
+        marker = shlex.quote(pattern)
+        out = self._exec_client(f"grep -aq {marker} {log_path} && echo OK || echo NO")
+        return bool(out) and all("OK" in (v or "") for v in out.values())
+
+    def _client_log_failures(self, tail_lines=2000, *, check_failed_requests=True):
+        del tail_lines
+        out = self._exec_client(self._client_log_probe_cmd())
         failed = []
         for host, output in out.items():
             txt = output or ""
             if self.CLIENT_CRASH_RE.search(txt) or self.CLIENT_LAUNCH_FAIL_RE.search(txt):
                 failed.append((host, txt[-500:]))
+                continue
+            if not check_failed_requests:
                 continue
             fm = self.FAILED_REQUESTS_RE.search(txt)
             if fm:
@@ -816,7 +953,18 @@ class AtomJob:
                     )
         return failed
 
+    def _raise_if_client_crashed(self):
+        failed = self._client_log_failures(check_failed_requests=False)
+        if failed:
+            raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
+
+    def _finalize_client_or_fail(self):
+        failed = self._client_log_failures(check_failed_requests=True)
+        if failed:
+            raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
+
     def wait_client_complete(self):
+        poll_result_artifact = self.driver == "atom" or self._uses_vllm_serve() or self._uses_sglang_serve()
         if self.driver == "atom":
             log.info(
                 "client initial wait (atom: polling for result artifact, up to %ds)",
@@ -825,11 +973,10 @@ class AtomJob:
             deadline = time.monotonic() + self._client_initial_wait
             poll_s = 15
             while time.monotonic() < deadline:
-                failed = self._client_log_failures(tail_lines=500)
-                if failed:
-                    raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
-                if self._atom_result_ready():
+                self._raise_if_client_crashed()
+                if self._bench_result_ready():
                     log.info("client result artifact ready during initial wait")
+                    self._finalize_client_or_fail()
                     return
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -840,33 +987,35 @@ class AtomJob:
             time.sleep(self._client_initial_wait)
 
         for it in range(self._client_poll_count):
-            failed = self._client_log_failures()
-            if failed:
-                raise RuntimeError("client failed: " + "; ".join(f"{h}: {m}" for h, m in failed))
-            if self.driver == "atom":
-                if self._atom_result_ready():
+            self._raise_if_client_crashed()
+            if poll_result_artifact:
+                if self._bench_result_ready():
                     log.info("client complete (iter=%d)", it)
+                    self._finalize_client_or_fail()
                     return
-            else:
-                out = self._exec_head(f"tail -2000 {shlex.quote(self.client_log)}")
-                done = [bool(self.COMPLETION_RE.search(txt or "")) for txt in out.values()]
-                if done and all(done):
-                    log.info("client complete (iter=%d)", it)
-                    return
+            elif self._client_log_complete():
+                log.info("client complete (iter=%d)", it)
+                self._finalize_client_or_fail()
+                return
             time.sleep(self._client_poll_wait)
         raise RuntimeError("client did not complete before poll cap")
 
     def parse_results(self):
-        out = self._exec_head(f"cat {shlex.quote(self._result_artifact)}")
+        out = self._exec_client(f"cat {shlex.quote(self._result_artifact)}")
         results = {}
         for host, text in out.items():
             text = (text or "").strip()
             if not text:
                 raise RuntimeError(f"empty/missing results artifact on {host}: {self._result_artifact}")
             try:
-                raw = json.loads(text)
+                if self._uses_sglang_serve():
+                    raw = sglang_bench_jsonl_to_raw(text)
+                else:
+                    raw = json.loads(text)
             except (json.JSONDecodeError, ValueError) as e:
                 raise RuntimeError(f"unparseable results artifact on {host}: {self._result_artifact}: {e}") from e
+            raw.setdefault("num_prompts", int(self.num_prompts))
+            raw.setdefault("max_concurrency", int(self.concurrency))
             if self.driver == "atom":
                 raw.setdefault("random_input_len", int(self.isl))
                 raw.setdefault("random_output_len", int(self.osl))

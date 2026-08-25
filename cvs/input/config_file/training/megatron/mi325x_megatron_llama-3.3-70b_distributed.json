@@ -35,6 +35,14 @@
     "nccl_debug": "ERROR",
     "verify_network_errors": "True"
   },
+  "checkpoint": {
+    "enforce": false,
+    "save_interval": 20,
+    "save_iters": 21,
+    "resume_iters": 25,
+    "loss_rtol": 0.05,
+    "checkpoint_dir": "<changeme>"
+  },
   "model_params": {
     "model_name": "llama3.3_70B",
     "tokenizer_model": "meta-llama/Llama-3.3-70B-Instruct",
@@ -60,7 +68,8 @@
           "/home/{user-id}:/home/{user-id}",
           "/dev/infiniband:/dev/infiniband",
           "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
-          "/lib/libibverbs.d:/lib/libibverbs.d"
+          "/lib/libibverbs.d:/lib/libibverbs.d",
+          "<changeme>:<changeme>"
         ],
         "devices": [
           "/dev/kfd",

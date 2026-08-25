@@ -46,7 +46,7 @@
     "server": {
       "sglang_args": [
         "--kv-cache-dtype",
-        "fp8",
+        "fp8_e4m3",
         "--trust-remote-code",
         "--disable-cuda-graph",
         "--mem-fraction-static",
