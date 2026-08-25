@@ -68,15 +68,15 @@ def delete_all_containers_and_volumes(phdl):
 
     This runs ``docker system prune --force`` (not ``-a``), but it can still remove
     stopped containers and unused networks on shared nodes. Set environment variable
-    ``CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE`` to ``1``/``true``/``yes`` to skip this
+    ``CVS_SKIP_DOCKER_SYSTEM_PRUNE`` to ``1``/``true``/``yes`` to skip this
     step after the named benchmark container has been killed.
     """
-    flag = (os.environ.get("CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE") or "").strip().lower()
+    flag = (os.environ.get("CVS_SKIP_DOCKER_SYSTEM_PRUNE") or "").strip().lower()
     if flag in ("1", "true", "yes", "on"):
         log.info(
-            "Skipping docker system prune (CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=%s). "
+            "Skipping docker system prune (CVS_SKIP_DOCKER_SYSTEM_PRUNE=%s). "
             "Named benchmark container was already stopped.",
-            os.environ.get("CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE"),
+            os.environ.get("CVS_SKIP_DOCKER_SYSTEM_PRUNE"),
         )
         return
     # out_dict = phdl.exec('docker rm -vf $(docker ps -aq)')
