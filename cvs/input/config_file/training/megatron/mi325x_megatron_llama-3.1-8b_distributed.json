@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "framework": "megatron_single",
+  "framework": "megatron_distributed",
   "gpu_arch": "MI325X",
   "enforce_thresholds": true,
-  "threshold_json": "mi325x_megatron_llama-3.1-8b_single_threshold.json",
+  "threshold_json": "mi325x_megatron_llama-3.1-8b_distributed_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOGS/megatron",
@@ -12,14 +12,17 @@
     "rocm_dir": "",
     "megatron_root": "/workspace/Megatron-LM",
     "training_iterations": "10",
-    "nnodes": "1",
-    "nic_type": "thor2",
-    "nccl_socket_ifname": "ensf1np1",
-    "gloo_socket_ifname": "ensf1np1",
+    "nnodes": "<changeme>",
+    "master_address": "<changeme>",
+    "nic_type": "<changeme>",
+    "nccl_ib_hca_list": "<changeme>",
+    "nccl_ib_hca": "<changeme>",
+    "nccl_socket_ifname": "<changeme>",
+    "gloo_socket_ifname": "<changeme>",
+    "hca_id_pattern": "bnxt_|rocep",
     "nccl_ib_gid_index": "3",
     "nccl_debug": "ERROR",
-    "master_address": "127.0.0.1",
-    "verify_network_errors": "False"
+    "verify_network_errors": "True"
   },
   "model_params": {
     "model_name": "llama3.1_8B",
@@ -34,7 +37,7 @@
   },
   "container": {
     "lifetime": "per_run",
-    "name": "megatron_llama3_1_8b_single",
+    "name": "megatron_llama3_1_8b_distributed",
     "image": "<changeme>",
     "runtime": {
       "name": "docker",
@@ -44,11 +47,15 @@
         "privileged": true,
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
-          "/dev/infiniband:/dev/infiniband"
+          "/dev/infiniband:/dev/infiniband",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+          "/lib/libibverbs.d:/lib/libibverbs.d",
+          "<changeme>:<changeme>"
         ],
         "devices": [
           "/dev/kfd",
-          "/dev/dri"
+          "/dev/dri",
+          "/dev/infiniband/rdma_cm"
         ]
       }
     }
@@ -65,13 +72,18 @@
     "target_metric": "auto",
     "target_value": 0.0
   },
-  "_checkpoint_comment": "save_interval controls checkpoint frequency (steps); save_iters is the step at which the save-phase run stops; resume_iters is the step at which the resume-phase run stops. Loss at resume_iters must match the save-phase loss within loss_rtol. enforce=false makes checkpoint testing record-only.",
+  "scaling_baseline": {
+    "tokens_per_sec_total": 0.0,
+    "num_nodes": 1
+  },
+  "_checkpoint_comment": "checkpoint_dir is the shared filesystem path where Megatron writes and reads checkpoints across nodes. save_interval controls checkpoint frequency (steps); save_iters is the step at which the save-phase run stops; resume_iters is the step at which the resume-phase run stops. Loss at resume_iters must match the save-phase loss within loss_rtol. enforce=false makes checkpoint testing record-only.",
   "checkpoint": {
     "enforce": false,
     "save_interval": 20,
     "save_iters": 21,
     "resume_iters": 25,
-    "loss_rtol": 0.05
+    "loss_rtol": 0.05,
+    "checkpoint_dir": "<changeme>"
   },
   "sweep": {
     "combinations": {
@@ -86,25 +98,11 @@
         "global_batch_size": "128",
         "micro_batch_size": "4",
         "precision": "BF16"
-      },
-      "llama3_1_8b-mi325-bs128-mbs4-mxfp4": {
-        "name": "llama3_1_8b_mbs4_gbs128_MXFP4",
-        "global_batch_size": "128",
-        "micro_batch_size": "4",
-        "precision": "MXFP4"
-      },
-      "llama3_1_8b-mi325-bs128-mbs4-mxfp8": {
-        "name": "llama3_1_8b_mbs4_gbs128_MXFP8",
-        "global_batch_size": "128",
-        "micro_batch_size": "4",
-        "precision": "MXFP8"
       }
     },
     "runs": [
       "llama3_1_8b-mi325-bs128-mbs4-fp8",
-      "llama3_1_8b-mi325-bs128-mbs4-bf16",
-      "llama3_1_8b-mi325-bs128-mbs4-mxfp4",
-      "llama3_1_8b-mi325-bs128-mbs4-mxfp8"
+      "llama3_1_8b-mi325-bs128-mbs4-bf16"
     ]
   }
 }

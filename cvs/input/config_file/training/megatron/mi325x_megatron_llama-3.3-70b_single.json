@@ -3,12 +3,6 @@
   "framework": "megatron_single",
   "gpu_arch": "MI325X",
   "enforce_thresholds": true,
-  "loss_curve": {
-    "sample_every": 10,
-    "milestone_steps": [100, 500, 1000, 5000],
-    "max_slope": 0.0,
-    "enforce": true
-  },
   "threshold_json": "mi325x_megatron_llama-3.3-70b_single_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
@@ -65,6 +59,26 @@
         ]
       }
     }
+  },
+  "_loss_curve_comment": "sample training loss every `sample_every` steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
+  "loss_curve": {
+    "sample_every": 10,
+    "milestone_steps": [100, 500, 1000, 5000],
+    "max_slope": 0.0,
+    "enforce": true
+  },
+  "_convergence_comment": "to enable validation loss set --eval-interval > 0 and --eval-iters in megatron training args; this needs a validation data split in the dataset blend. target_value <= 0 disables convergence checking (record-only). target_metric 'auto' uses eval_loss when eval runs, else training loss.",
+  "convergence": {
+    "target_metric": "auto",
+    "target_value": 0.0
+  },
+  "_checkpoint_comment": "save_interval controls checkpoint frequency (steps); save_iters is the step at which the save-phase run stops; resume_iters is the step at which the resume-phase run stops. Loss at resume_iters must match the save-phase loss within loss_rtol. enforce=false makes checkpoint testing record-only.",
+  "checkpoint": {
+    "enforce": false,
+    "save_interval": 20,
+    "save_iters": 21,
+    "resume_iters": 25,
+    "loss_rtol": 0.05
   },
   "sweep": {
     "combinations": {
