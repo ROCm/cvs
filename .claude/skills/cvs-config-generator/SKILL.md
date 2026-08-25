@@ -8,13 +8,11 @@ description: >-
   configs.
 ---
 
-# CVS Config Generator (Claude Code)
+# CVS Config Generator
 
 ## Invocation
 
 Follow this skill when the user asks to generate, derive, or customize CVS config files. Also listed in project [CLAUDE.md](../../../CLAUDE.md).
-
-Cursor users: identical skill at `.cursor/skills/cvs-config-generator/`.
 
 ## Quick start
 
@@ -25,7 +23,7 @@ Cursor users: identical skill at `.cursor/skills/cvs-config-generator/`.
 5. Set all model fields to the **user's HuggingFace repo ID** (or local path if the user pre-staged weights on cluster nodes).
 6. **Write output files** — for SGLang/vLLM/ATOM/training, create **both** config and threshold JSON as siblings.
 7. Validate with the checklist in [frameworks.md](frameworks.md).
-8. For PyTorch XDit, run `python .claude/skills/cvs-config-generator/scripts/validate_xdit_config.py <path>`.
+8. Run `python .claude/skills/cvs-config-generator/scripts/validate_config.py <path>`.
 
 ## Model name (required user input)
 

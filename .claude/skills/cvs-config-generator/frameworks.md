@@ -154,7 +154,7 @@ Set model/checkpoint fields from user input per framework README.
 - [ ] Exactly one of `wan22_i2v_a14b` or `flux1_dev_t2i` under `benchmark_params`
 - [ ] `expected_results` has `auto` or a GPU-specific key (`mi300x`, `mi355`, …)
 - [ ] Distributed: parallel product equals `nnodes × torchrun_nproc`
-- [ ] Validate: `python .claude/skills/cvs-config-generator/scripts/validate_xdit_config.py <config.json>` (same script under `.cursor/skills/...`)
+- [ ] Validate: `python .claude/skills/cvs-config-generator/scripts/validate_config.py <config.json>`
 
 ### Threshold-based suites (vLLM, ATOM, SGLang, …)
 - [ ] Config and threshold are siblings in one directory
