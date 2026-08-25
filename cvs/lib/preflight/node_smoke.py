@@ -534,7 +534,5 @@ class NodeSmokeCheck(PreflightCheck):
         }
         if setup_results is not None:
             self.results["setup_results"] = setup_results
-        self.results.update(
-            aggregate_node_smoke_test_counts(self.results, gpus_per_node=self.gpus_per_node)
-        )
+        self.results.update(aggregate_node_smoke_test_counts(self.results, gpus_per_node=self.gpus_per_node))
         return self.results

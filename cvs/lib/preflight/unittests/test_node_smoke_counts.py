@@ -68,7 +68,9 @@ class TestNodeSmokeCounts(unittest.TestCase):
             count_tier2_tests_from_payload(None, gpus_per_node=8, tier2_enabled=True),
             (TIER2_CHECKS_PER_GPU * 8) + TIER2_RCCL_CHECK,
         )
-        self.assertEqual(count_tier2_tests_from_payload(None, gpus_per_node=1, tier2_enabled=True), TIER2_CHECKS_PER_GPU)
+        self.assertEqual(
+            count_tier2_tests_from_payload(None, gpus_per_node=1, tier2_enabled=True), TIER2_CHECKS_PER_GPU
+        )
         self.assertEqual(count_tier2_tests_from_payload(None, gpus_per_node=8, tier2_enabled=False), 0)
 
     def test_aggregate_tier1_tier2_reports_per_node_not_cluster_sum(self):

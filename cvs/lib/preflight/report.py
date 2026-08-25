@@ -40,37 +40,6 @@ def preflight_check_display_name(check_name: str) -> str:
     return PREFLIGHT_CHECK_DISPLAY_NAMES.get(check_name, check_name.replace('_', ' ').title())
 
 
-def get_nested_config(config_dict, section, key, default):
-    """
-    Get configuration value from nested structure.
-
-    Args:
-        config_dict: Full configuration dictionary
-        section: Section name (e.g., 'reporting')
-        key: Parameter key within the section
-        default: Default value if not found
-
-    Returns:
-        Configuration value or default
-    """
-    if not config_dict:
-        return default
-
-    # Handle nested sections like 'connectivity_check.rdma'
-    sections = section.split('.')
-    current = config_dict
-
-    for sec in sections:
-        if isinstance(current, dict) and sec in current:
-            current = current[sec]
-        else:
-            return default
-
-    if isinstance(current, dict) and key in current:
-        return current[key]
-    return default
-
-
 def _config_flag_enabled(value, default=True):
     """Normalize mixed bool/string config flags."""
     if value is None:
@@ -593,13 +562,10 @@ class PreflightReportGenerator(PreflightCheck):
         passing_nodes = total_nodes - len(failed_nodes) - len(unknown_nodes)
         status = 'FAIL' if failed_nodes or unknown_nodes else 'PASS'
         test_counts = self._node_smoke_test_counts(node_smoke_results)
-        summary_text = (
-            f"{passing_nodes}/{total_nodes} nodes passed {NODE_SMOKE_TIER1_LABEL}"
-            + format_tests_run_suffix(
-                test_counts.get('tier1_tests_run'),
-                per_node=True,
-                total_nodes=total_nodes,
-            )
+        summary_text = f"{passing_nodes}/{total_nodes} nodes passed {NODE_SMOKE_TIER1_LABEL}" + format_tests_run_suffix(
+            test_counts.get('tier1_tests_run'),
+            per_node=True,
+            total_nodes=total_nodes,
         )
         if unknown_nodes:
             summary_text += f"; {len(unknown_nodes)} unknown"
@@ -684,13 +650,10 @@ class PreflightReportGenerator(PreflightCheck):
         passing_nodes = total_nodes - len(failed_nodes) - len(unknown_nodes)
         status = 'FAIL' if failed_nodes or unknown_nodes else 'PASS'
         test_counts = aggregate_tier3_test_counts(tier3_results)
-        summary_text = (
-            f"{passing_nodes}/{total_nodes} nodes passed {NODE_SMOKE_TIER3_LABEL}"
-            + format_tests_run_suffix(
-                test_counts.get('tier3_tests_run'),
-                cluster_wide=True,
-                total_nodes=total_nodes,
-            )
+        summary_text = f"{passing_nodes}/{total_nodes} nodes passed {NODE_SMOKE_TIER3_LABEL}" + format_tests_run_suffix(
+            test_counts.get('tier3_tests_run'),
+            cluster_wide=True,
+            total_nodes=total_nodes,
         )
         if unknown_nodes:
             summary_text += f"; {len(unknown_nodes)} unknown"

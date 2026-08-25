@@ -17,11 +17,10 @@ from cvs.lib.preflight.scaleup_fabric import NodeHealthCheck
 from cvs.lib.preflight.transferbench_smoke import TransferBenchSmokeCheck
 from cvs.lib.preflight.node_smoke import (
     NODE_SMOKE_TIER1_LABEL,
-    NODE_SMOKE_TIER2_LABEL,
     NODE_SMOKE_TIER3_LABEL,
     NodeSmokeCheck,
 )
-from cvs.lib.preflight.tier3_info import NodeSmokeTier3Check, Tier3InfoCheck
+from cvs.lib.preflight.tier3_info import NodeSmokeTier3Check
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
 from cvs.lib.preflight.report import PreflightReportGenerator, preflight_check_display_name
