@@ -228,6 +228,58 @@ class TestExec(HttpAgentTestBase):
             self.assertEqual(exec_response.stdout, [cwd_dir])
 
 
+class TestInlineExec(HttpAgentTestBase):
+    def _exec_request(self, **overrides) -> messages.ExecRequest:
+        kwargs = dict(
+            cmd="true",
+            env={},
+            cwd=Path("/tmp"),
+            timeout=None,
+            inactivity_timeout=None,
+            cmd_id="cmd-inline",
+            out_path=None,
+            output_mode=messages.ExecOutputMode.INLINE,
+        )
+        kwargs.update(overrides)
+        return messages.ExecRequest(**kwargs)
+
+    def test_reports_full_stdout_and_stderr_untruncated(self):
+        client = self._make_client(own_rank=0)
+        req = self._exec_request(cmd="seq 1 30; echo err 1>&2")
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        self.assertEqual(response.status_code, 200)
+        exec_response = messages.ExecResponse(**response.json())
+        self.assertEqual(exec_response.exit_code, 0)
+        self.assertEqual(exec_response.stdout, [str(n) for n in range(1, 31)])
+        self.assertEqual(exec_response.stderr, ["err"])
+        self.assertIsNone(exec_response.stdout_path)
+        self.assertIsNone(exec_response.stderr_path)
+        self.assertFalse(exec_response.truncated)
+
+    def test_reports_nonzero_exit_code(self):
+        client = self._make_client(own_rank=0)
+        req = self._exec_request(cmd="false")
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        exec_response = messages.ExecResponse(**response.json())
+        self.assertEqual(exec_response.exit_code, 1)
+
+    def test_output_beyond_byte_cap_is_tail_truncated(self):
+        client = self._make_client(own_rank=0)
+        with patch("cvs.core.agent.http_agent.messages.MAX_INLINE_RESPONSE_BYTES", 10):
+            req = self._exec_request(cmd="printf '0123456789abcdefghij'")
+            response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        exec_response = messages.ExecResponse(**response.json())
+        self.assertEqual(exec_response.stdout, ["abcdefghij"])
+        self.assertTrue(exec_response.truncated)
+
+    def test_does_not_deadlock_on_large_output(self):
+        client = self._make_client(own_rank=0)
+        req = self._exec_request(cmd="head -c 1000000 /dev/zero | tr '\\0' 'a'")
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(messages.ExecResponse(**response.json()).exit_code, 0)
+
+
 class TestExecConcurrency(HttpAgentTestBase):
     def _exec_request(self, **overrides) -> messages.ExecRequest:
         kwargs = dict(

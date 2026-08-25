@@ -34,6 +34,12 @@ def _tail_lines(text: str, max_lines: int) -> list[str]:
     return text.splitlines()[-max_lines:]
 
 
+def _truncate_tail(data: bytes, max_bytes: int) -> tuple[bytes, bool]:
+    if len(data) <= max_bytes:
+        return data, False
+    return data[-max_bytes:], True
+
+
 def _merged_env(overrides: dict[str, str]) -> dict[str, str]:
     return {**os.environ, **overrides}
 
@@ -139,6 +145,25 @@ async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> 
             stdout_path=None,
             stderr_path=None,
             truncated=None,
+        )
+
+    if request.output_mode == messages.ExecOutputMode.INLINE:
+        process = await _spawn_process(
+            request, registry, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        try:
+            stdout_bytes, stderr_bytes = await process.communicate()
+        finally:
+            await registry.unregister(request.cmd_id)
+        stdout_bytes, stdout_truncated = _truncate_tail(stdout_bytes, messages.MAX_INLINE_RESPONSE_BYTES)
+        stderr_bytes, stderr_truncated = _truncate_tail(stderr_bytes, messages.MAX_INLINE_RESPONSE_BYTES)
+        return messages.ExecResponse(
+            exit_code=process.returncode,
+            stdout=stdout_bytes.decode(errors="replace").splitlines(),
+            stderr=stderr_bytes.decode(errors="replace").splitlines(),
+            stdout_path=None,
+            stderr_path=None,
+            truncated=stdout_truncated or stderr_truncated,
         )
 
     if request.output_mode == messages.ExecOutputMode.FILE:
