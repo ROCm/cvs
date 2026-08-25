@@ -326,6 +326,9 @@ class Pssh:
         inactivity_timeout is set, the underlying read_timeout is disabled so there
         is no total cap. Pass at most one of the two.
         """
+        if timeout is not None and inactivity_timeout is not None:
+            raise ValueError("Pass at most one of timeout and inactivity_timeout, not both.")
+
         if self.env_prefix:
             full_cmd = f"{self.env_prefix} ; {cmd}"
         else:
@@ -386,6 +389,9 @@ class Pssh:
         inactivity_timeout is set, the underlying read_timeout is disabled so there
         is no total cap. Pass at most one of the two.
         """
+        if timeout is not None and inactivity_timeout is not None:
+            raise ValueError("Pass at most one of timeout and inactivity_timeout, not both.")
+
         if self.env_prefix:
             cmd_list = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
         else:
