@@ -69,6 +69,18 @@ class TestPsshExec(unittest.TestCase):
         )
         self.mock_log.debug.assert_any_call("ParallelSSH session retry detail", exc_info=True)
 
+    def test_exec_session_retry_destroys_stale_client_before_recreating(self):
+        # The stale client's greenlets/transports must be torn down before a
+        # replacement is built, or the old sshd sessions leak.
+        from pssh.exceptions import SessionError
+
+        self.mock_client.run_command.side_effect = [SessionError("stale session"), []]
+        with patch.object(self.pssh, "destroy_clients", wraps=self.pssh.destroy_clients) as mock_destroy:
+            self.pssh.exec("echo hello")
+
+        mock_destroy.assert_called_once()
+        self.assertEqual(self.mock_pssh_client.call_count, 2)
+
     def test_exec_retries_once_on_session_error_with_timeout(self):
         from pssh.exceptions import SessionError
 
