@@ -379,8 +379,8 @@ CVS provides comprehensive inference testing configurations for various LLM serv
 
 .. code:: bash
 
-     cvs copy-config inference/atom/mi300x_atom_gpt-oss-120b_bf16.json --output ~/my_atom_config.json
-     cvs copy-config inference/atom/mi300x_atom_gpt-oss-120b_bf16_threshold.json --output ~/my_atom_threshold.json
+     cvs copy-config inference/atom/mi300x_atom_gpt-oss-120b_mxfp4_single.json --output ~/my_atom_config.json
+     cvs copy-config inference/atom/mi300x_atom_gpt-oss-120b_mxfp4_single_threshold.json --output ~/my_atom_threshold.json
 
 2. Edit the files and modify these parameters:
 

@@ -1,0 +1,19 @@
+{
+  "_comment": "APPROXIMATE placeholder thresholds for DeepSeek-V2-Lite (deepseek2-16b MoE) on MI325X distributed, keyed by sweep name. Gated metrics (min/max) drive PASS/FAIL; kind='info' metrics always PASS (record-only) but keep a default `value` to calibrate later. tflops/tokens mins are rough estimates -- replace with measured MI325X numbers. Requires enforce_thresholds=true.",
+
+  "NNODES=2,STEPS=30,PRECISION=BF16,BATCH=10,GBS=80,SEQLEN=4096": {
+    "training.tflops_per_sec_per_gpu": { "kind": "min", "value": 160.0 },
+    "training.tokens_per_sec_per_gpu": { "kind": "min", "value": 5500.0 },
+    "training.tokens_per_sec_total":   { "kind": "info", "value": 0 },
+    "training.scaling_efficiency_pct": { "kind": "info", "value": 80.0 },
+    "training.step_time_seconds":      { "kind": "info", "value": 3600.0 },
+    "training.step_time_mean_ms":      { "kind": "info", "value": 3600000.0 },
+    "training.step_time_p50_ms":       { "kind": "info", "value": 3600000.0 },
+    "training.step_time_p95_ms":       { "kind": "info", "value": 3600000.0 },
+    "training.final_loss":             { "kind": "max", "value": 15.0 },
+    "training.loss_decreased":         { "kind": "min", "value": 1 },
+    "training.eval_loss":              { "kind": "info", "value": 100.0 },
+    "training.steps_to_target":        { "kind": "info", "value": 1000000 },
+    "training.time_to_target_seconds": { "kind": "info", "value": 1000000.0 }
+  }
+}

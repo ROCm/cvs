@@ -206,39 +206,55 @@ def parse_setup_output(output: str) -> Dict[str, Any]:
 class PrimusSetup(PreflightCheck):
     """Clone/update Primus and prepare the preflight venv on cluster nodes."""
 
-    def __init__(self, phdl, node_list: List[str], config_dict=None):
+    def __init__(
+        self,
+        phdl,
+        node_list: List[str],
+        config_dict=None,
+        config_section: str = "node_smoke",
+        fallback_section: Optional[str] = None,
+    ):
         super().__init__(phdl, config_dict)
         self.node_list = list(node_list)
+        self.config_section = config_section
+        self.fallback_section = fallback_section
         self._load_settings()
 
-    def _load_settings(self):
+    def _resolve_setting(self, key: str, default=None):
         cfg = self.config_dict or {}
-        self.primus_dir = get_nested_config(cfg, "node_smoke", "primus_dir", "")
-        self.venv_activate = get_nested_config(cfg, "node_smoke", "venv_activate", "")
-        self.git_url = get_nested_config(
-            cfg, "node_smoke", "primus_git_url", "https://github.com/AMD-AIG-AIMA/Primus.git"
-        )
-        self.git_branch = get_nested_config(cfg, "node_smoke", "primus_git_branch", "dev/preflight-direct-test")
+        value = get_nested_config(cfg, self.config_section, key, None)
+        if value not in (None, ""):
+            return value
+        if self.fallback_section and self.fallback_section != self.config_section:
+            value = get_nested_config(cfg, self.fallback_section, key, None)
+            if value not in (None, ""):
+                return value
+        return default
+
+    def _load_settings(self):
+        self.primus_dir = self._resolve_setting("primus_dir", "")
+        self.venv_activate = self._resolve_setting("venv_activate", "")
+        self.git_url = self._resolve_setting("primus_git_url", "https://github.com/AMD-AIG-AIMA/Primus.git")
+        self.git_branch = self._resolve_setting("primus_git_branch", "dev/preflight-direct-test")
         self.recurse_submodules = _config_flag_enabled(
-            get_nested_config(cfg, "node_smoke", "primus_git_recurse_submodules", False), default=False
+            self._resolve_setting("primus_git_recurse_submodules", False), default=False
         )
-        self.force_reclone = _config_flag_enabled(get_nested_config(cfg, "node_smoke", "force_reclone", False))
-        self.pip_install_mode = get_nested_config(cfg, "node_smoke", "pip_install_mode", "minimal")
-        self.torch_pip_index_url = get_nested_config(cfg, "node_smoke", "torch_pip_index_url", _DEFAULT_TORCH_INDEX)
-        self.setup_timeout = int(get_nested_config(cfg, "node_smoke", "setup_timeout", 600))
-        self.shared_install = _config_flag_enabled(
-            get_nested_config(cfg, "node_smoke", "shared_install", True), default=True
-        )
+        self.force_reclone = _config_flag_enabled(self._resolve_setting("force_reclone", False))
+        self.pip_install_mode = self._resolve_setting("pip_install_mode", "minimal")
+        self.torch_pip_index_url = self._resolve_setting("torch_pip_index_url", _DEFAULT_TORCH_INDEX)
+        self.setup_timeout = int(self._resolve_setting("setup_timeout", 600))
+        self.shared_install = _config_flag_enabled(self._resolve_setting("shared_install", True), default=True)
 
     def _validate(self) -> Optional[str]:
+        section = self.config_section
         if not self.primus_dir:
-            return "node_smoke.primus_dir is required for auto_setup"
+            return f"{section}.primus_dir is required for auto_setup"
         if not self.venv_activate:
-            return "node_smoke.venv_activate is required for auto_setup"
+            return f"{section}.venv_activate is required for auto_setup"
         if not self.git_url:
-            return "node_smoke.primus_git_url is required for auto_setup"
+            return f"{section}.primus_git_url is required for auto_setup"
         if not self.git_branch:
-            return "node_smoke.primus_git_branch is required for auto_setup"
+            return f"{section}.primus_git_branch is required for auto_setup"
         if not self.node_list:
             return "no reachable nodes for Primus auto_setup"
         return None

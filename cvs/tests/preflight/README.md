@@ -94,7 +94,7 @@ Located at: `cvs/input/config_file/preflight/preflight_config.json`
     },
     "reporting": {
       "generate_html_report": true,
-      "artifacts_root_dir": "/tmp/{user-id}/preflight",
+      "artifacts_root_dir": "/home/{user-id}/preflight",
       "generate_rdma_pairs_csv": false
     }
   }

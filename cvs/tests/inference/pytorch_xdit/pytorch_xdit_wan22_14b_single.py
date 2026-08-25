@@ -360,6 +360,24 @@ def test_cleanup_stale_containers(s_phdl, inference_dict):
     log.info("Container cleanup completed on all nodes")
 
 
+def _assert_wan_snapshot_complete(s_phdl, snapshot_path, failure_prefix, failure_suffix):
+    """
+    Run wan_hf_snapshot_offline_check_commands against snapshot_path on all nodes.
+
+    Calls fail_test with a combined message on the first check that fails anywhere.
+    Returns True if every check passed everywhere, False otherwise.
+    """
+    for label, cmd in wan_hf_snapshot_offline_check_commands(snapshot_path).items():
+        res = s_phdl.exec(cmd, print_console=False)
+        bad = [n for n, out in (res or {}).items() if "OK" not in (out or "")]
+        if bad:
+            fail_test(
+                f"{failure_prefix} Check '{label}' failed on {len(bad)} node(s): {', '.join(bad)}. {failure_suffix}"
+            )
+            return False
+    return True
+
+
 def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
     """
     Verify the model is present locally on all nodes (no downloads).
@@ -402,17 +420,14 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
 
         # Align with HF snapshot checks for Wan2.2 I2V-A14B when staging via absolute path.
         if "Wan2.2-I2V-A14B" in model_repo or "Wan2.2-I2V-A14B" in host_model_path:
-            for label, cmd in wan_hf_snapshot_offline_check_commands(host_model_path).items():
-                res = s_phdl.exec(cmd, print_console=False)
-                bad = [n for n, out in (res or {}).items() if "OK" not in (out or "")]
-                if bad:
-                    fail_test(
-                        "WAN local model directory looks incomplete (Wan2.2-I2V-A14B layout). "
-                        f"Check '{label}' failed on {len(bad)} node(s): {', '.join(bad)}. "
-                        f"Model path: {host_model_path}."
-                    )
-                    update_test_result()
-                    return
+            if not _assert_wan_snapshot_complete(
+                s_phdl,
+                host_model_path,
+                failure_prefix="WAN local model directory looks incomplete (Wan2.2-I2V-A14B layout).",
+                failure_suffix=f"Model path: {host_model_path}.",
+            ):
+                update_test_result()
+                return
 
         inference_dict["_resolved_model_mount_host"] = host_model_path
         inference_dict["_resolved_ckpt_dir_container"] = "/model"
@@ -448,17 +463,16 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
 
     # Stronger offline checks for Wan2.2 I2V-A14B HF layout (avoids passing while download is partial).
     if "Wan2.2-I2V-A14B" in model_repo:
-        for label, cmd in wan_hf_snapshot_offline_check_commands(snapshot_dir_host).items():
-            res = s_phdl.exec(cmd, print_console=False)
-            bad = [n for n, out in (res or {}).items() if "OK" not in (out or "")]
-            if bad:
-                fail_test(
-                    "WAN Hugging Face snapshot looks incomplete (or not a Wan2.2-I2V-A14B-style tree). "
-                    f"Check '{label}' failed on {len(bad)} node(s): {', '.join(bad)}. "
-                    f"Snapshot path: {snapshot_dir_host}. Wait for downloads to finish or fix hf_home / model_rev."
-                )
-                update_test_result()
-                return
+        if not _assert_wan_snapshot_complete(
+            s_phdl,
+            snapshot_dir_host,
+            failure_prefix="WAN Hugging Face snapshot looks incomplete (or not a Wan2.2-I2V-A14B-style tree).",
+            failure_suffix=(
+                f"Snapshot path: {snapshot_dir_host}. Wait for downloads to finish or fix hf_home / model_rev."
+            ),
+        ):
+            update_test_result()
+            return
 
     update_test_result()
 

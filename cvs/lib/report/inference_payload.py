@@ -7,6 +7,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from cvs.lib.report.cell_build import build_all_cells
+from cvs.lib.report.accuracy_lifecycle import (
+    build_accuracy_prev_run_panel,
+    build_scale_accuracy_panel,
+    extract_accuracy_from_lifecycle,
+    resolve_scale_accuracy_ref_json_path,
+)
+from cvs.lib.report.json_io import load_report_json
+from cvs.lib.report.panels.framework_parity import (
+    build_framework_parity_panel,
+    resolve_parity_ref_json_path,
+)
 from cvs.lib.report.panels.prev_run import build_prev_run_panel, resolve_prev_run_json_path
 from cvs.lib.report.provenance import extend_run_card_display
 from cvs.lib.report.render.gate_matrix import build_gate_matrix_rows
@@ -192,6 +203,9 @@ def _build_panels(
     config: InferenceReportConfig,
     cells: List[dict],
     report_dir: Optional[Path],
+    *,
+    lifecycle_report: Optional[Mapping[str, list]] = None,
+    variant_config=None,
 ) -> dict:
     panels: dict = {}
     prev_run_path = resolve_prev_run_json_path(
@@ -199,15 +213,49 @@ def _build_panels(
         report_basename=config.report_basename,
         report_dir=report_dir,
     )
-    if not prev_run_path:
-        return panels
-    prev_run_panel = build_prev_run_panel(
-        cells,
-        Path(prev_run_path),
-        headline_metric=config.headline_metric,
-    )
-    if prev_run_panel:
-        panels["prev_run"] = prev_run_panel
+    if prev_run_path:
+        prev_run_panel = build_prev_run_panel(
+            cells,
+            Path(prev_run_path),
+            headline_metric=config.headline_metric,
+        )
+        if prev_run_panel:
+            panels["prev_run"] = prev_run_panel
+
+        if lifecycle_report:
+            current_accuracy = extract_accuracy_from_lifecycle(lifecycle_report)
+            baseline_payload = load_report_json(Path(prev_run_path)) or {}
+            accuracy_prev = build_accuracy_prev_run_panel(
+                current_accuracy,
+                baseline_payload,
+                metric_key=config.gsm8k_prev_run_metric,
+                max_drop=config.gsm8k_prev_run_max_drop,
+            )
+            if accuracy_prev:
+                panels["accuracy_prev_run"] = accuracy_prev
+
+            scale_ref = resolve_scale_accuracy_ref_json_path(getattr(config, "scale_accuracy_ref_json", ""))
+            if scale_ref and lifecycle_report:
+                scale_payload = load_report_json(Path(scale_ref)) or {}
+                scale_panel = build_scale_accuracy_panel(current_accuracy, scale_payload)
+                if scale_panel:
+                    panels["scale_accuracy"] = scale_panel
+
+    parity_path = resolve_parity_ref_json_path(config.framework_parity_ref_json)
+    if parity_path:
+        driver = "atom"
+        if variant_config is not None:
+            params = getattr(variant_config, "params", None)
+            if params is not None:
+                driver = str(getattr(params, "driver", "atom"))
+        parity_panel = build_framework_parity_panel(
+            cells,
+            Path(parity_path),
+            driver=driver,
+            headline_metric=config.headline_metric,
+        )
+        if parity_panel:
+            panels["framework_parity"] = parity_panel
     return panels
 
 
@@ -243,7 +291,14 @@ def build_inference_report_payload(
     run_card_display, run_card_notes, generated_at = _build_run_card_display(config, variant_config, prov)
 
     chart_series = build_chart_series(config, cells)
-    panels = _build_panels(config, cells, report_dir)
+    accuracy_metrics = extract_accuracy_from_lifecycle(lifecycle_report)
+    panels = _build_panels(
+        config,
+        cells,
+        report_dir,
+        lifecycle_report=lifecycle_report,
+        variant_config=variant_config,
+    )
 
     chart_config = [
         {
@@ -276,6 +331,7 @@ def build_inference_report_payload(
         "run_card_notes": run_card_notes,
         "provenance": prov,
         "lifecycle": aggregate_lifecycle(lifecycle_report, config.session_lifecycle_labels),
+        "accuracy": accuracy_metrics,
         "cells": cells,
         "chart_series": chart_series,
         "chart_config": chart_config,

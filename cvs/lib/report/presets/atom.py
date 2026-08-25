@@ -32,8 +32,16 @@ ATOM_SESSION_LIFECYCLE_LABELS = (
     "sshd_setup",
     "topology_discovery",
     "model_fetch",
+    "openai_smoke",
+    "server_health",
     "server_ready",
+    "server.time_to_ready_s",
     "client_complete",
+    "server.client_wall_s",
+    "accuracy_eval",
+    "long_context_accuracy",
+    "mtp_quality",
+    "dmesg_scan",
     "teardown",
 )
 

@@ -9,6 +9,10 @@
     "max_slope": 0.0,
     "enforce": true
   },
+  "convergence": {
+    "target_metric": "auto",
+    "target_value": 2.0
+  },
   "threshold_json": "mi325x_megatron_llama-3.1-8b_single_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
@@ -26,6 +30,13 @@
     "nccl_debug": "ERROR",
     "master_address": "127.0.0.1",
     "verify_network_errors": "False"
+  },
+  "checkpoint": {
+    "enforce": false,
+    "save_interval": 20,
+    "save_iters": 21,
+    "resume_iters": 25,
+    "loss_rtol": 0.05
   },
   "model_params": {
     "model_name": "llama3.1_8B",

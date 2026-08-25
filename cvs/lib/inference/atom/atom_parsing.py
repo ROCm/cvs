@@ -12,6 +12,8 @@ not in the vLLM single-node ``GATED_METRICS`` set (vLLM parity is a separate tra
 
 from __future__ import annotations
 
+import json
+
 from cvs.lib.inference.utils.vllm_parsing import (
     CLIENT_METRICS as _VLLM_CLIENT_METRICS,
     GATED_METRICS as _VLLM_GATED_METRICS,
@@ -80,6 +82,24 @@ def scaling_efficiency_pct(actual_output_throughput, *, baseline_single_node, nn
     if ideal <= 0:
         return None
     return _safe_div(actual_output_throughput, ideal)
+
+
+def sglang_bench_jsonl_to_raw(text):
+    """Parse the last JSONL record emitted by ``sglang.bench_serving --output-file``."""
+    last_line = ""
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped:
+            last_line = stripped
+    if not last_line:
+        raise ValueError("empty sglang bench JSONL")
+    payload = json.loads(last_line)
+    if not isinstance(payload, dict):
+        raise ValueError("sglang bench JSONL record must be a JSON object")
+    raw = dict(payload)
+    if "total_token_throughput" not in raw and "total_throughput" in raw:
+        raw["total_token_throughput"] = raw["total_throughput"]
+    return raw
 
 
 def to_client_metrics(raw, *, tp, isl, scaling_baseline_output_throughput=None, nnodes=1):

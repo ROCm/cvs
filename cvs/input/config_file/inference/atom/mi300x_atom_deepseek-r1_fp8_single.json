@@ -68,6 +68,9 @@
     "client_poll_count": "80",
     "client_poll_wait_time": "60"
   },
+  "platform": {
+    "gpu_metrics_poll": true
+  },
   "sweep": {
     "sequence_combinations": [
       {

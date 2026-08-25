@@ -1,0 +1,35 @@
+{
+  "_comment": "APPROXIMATE placeholder thresholds for Llama-3.1-8B on MI355X distributed, keyed by sweep name. Gated metrics (min/max) drive PASS/FAIL; kind='info' metrics always PASS (record-only) but keep a default `value` to calibrate later. tflops/tokens mins are rough estimates -- replace with measured MI355X numbers. Requires enforce_thresholds=true.",
+
+  "NNODES=2,STEPS=30,PRECISION=BF16,BATCH=4,GBS=256,SEQLEN=8192": {
+    "training.tflops_per_sec_per_gpu": { "kind": "min", "value": 400.0 },
+    "training.tokens_per_sec_per_gpu": { "kind": "min", "value": 12000.0 },
+    "training.tokens_per_sec_total":   { "kind": "info", "value": 0 },
+    "training.scaling_efficiency_pct": { "kind": "info", "value": 80.0 },
+    "training.step_time_seconds":      { "kind": "info", "value": 3600.0 },
+    "training.step_time_mean_ms":      { "kind": "info", "value": 3600000.0 },
+    "training.step_time_p50_ms":       { "kind": "info", "value": 3600000.0 },
+    "training.step_time_p95_ms":       { "kind": "info", "value": 3600000.0 },
+    "training.final_loss":             { "kind": "max", "value": 15.0 },
+    "training.loss_decreased":         { "kind": "min", "value": 1 },
+    "training.eval_loss":              { "kind": "info", "value": 100.0 },
+    "training.steps_to_target":        { "kind": "info", "value": 1000000 },
+    "training.time_to_target_seconds": { "kind": "info", "value": 1000000.0 }
+  },
+
+  "NNODES=2,STEPS=30,PRECISION=FP8,BATCH=6,GBS=384,SEQLEN=8192": {
+    "training.tflops_per_sec_per_gpu": { "kind": "min", "value": 550.0 },
+    "training.tokens_per_sec_per_gpu": { "kind": "min", "value": 18000.0 },
+    "training.tokens_per_sec_total":   { "kind": "info", "value": 0 },
+    "training.scaling_efficiency_pct": { "kind": "info", "value": 80.0 },
+    "training.step_time_seconds":      { "kind": "info", "value": 3600.0 },
+    "training.step_time_mean_ms":      { "kind": "info", "value": 3600000.0 },
+    "training.step_time_p50_ms":       { "kind": "info", "value": 3600000.0 },
+    "training.step_time_p95_ms":       { "kind": "info", "value": 3600000.0 },
+    "training.final_loss":             { "kind": "max", "value": 15.0 },
+    "training.loss_decreased":         { "kind": "min", "value": 1 },
+    "training.eval_loss":              { "kind": "info", "value": 100.0 },
+    "training.steps_to_target":        { "kind": "info", "value": 1000000 },
+    "training.time_to_target_seconds": { "kind": "info", "value": 1000000.0 }
+  }
+}

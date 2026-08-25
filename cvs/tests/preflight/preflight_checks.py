@@ -16,6 +16,7 @@ from cvs.lib.preflight.ifoe_l2_connectivity import IfoeL2ConnectivityCheck
 from cvs.lib.preflight.scaleup_fabric import NodeHealthCheck
 from cvs.lib.preflight.transferbench_smoke import TransferBenchSmokeCheck
 from cvs.lib.preflight.node_smoke import NodeSmokeCheck
+from cvs.lib.preflight.tier3_info import Tier3InfoCheck
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
 from cvs.lib.preflight.report import PreflightReportGenerator
@@ -737,6 +738,58 @@ def test_node_smoke(phdl, config_dict):
     preflight_update_test_result()
 
 
+def test_tier3_info(phdl, config_dict):
+    """
+    Run Primus ``preflight --host --gpu --network`` info checks across the cluster.
+
+    Opt-in via ``tier3_info.connectivity_mode`` in the preflight config (default
+    ``skip``).  Uses parallel SSH with torchrun — no Slurm required.
+
+    Nodes that fail are reported but are **not** pruned from ``phdl``.
+    """
+    global preflight_results
+
+    if not phdl.reachable_hosts:
+        log.warning("Primus Tier 3 preflight info skipped: no reachable hosts remain after earlier preflight pruning")
+        preflight_results['tier3_info'] = {
+            'mode': 'skip',
+            'skipped': True,
+            'message': 'No reachable nodes available for Tier 3 preflight info',
+            'node_results': {},
+        }
+        preflight_update_test_result()
+        return
+
+    node_list = list(phdl.reachable_hosts)
+    log.info("Running Primus Tier 3 preflight info on %d reachable host(s)", len(node_list))
+
+    checker = Tier3InfoCheck(phdl, node_list, config_dict)
+    results = checker.run()
+    preflight_results['tier3_info'] = results
+
+    if results.get('skipped'):
+        log.info("Primus Tier 3 preflight info: %s", results.get('message', 'skipped'))
+        preflight_update_test_result()
+        return
+
+    failed_nodes = results.get('failed_nodes') or []
+    unknown_nodes = results.get('unknown_nodes') or []
+    total = results.get('total_nodes', 0)
+    passing = len(results.get('passing_nodes') or [])
+
+    if failed_nodes or unknown_nodes:
+        log.warning(
+            "Primus Tier 3 preflight info FAIL on %d/%d node(s): %s",
+            len(failed_nodes) + len(unknown_nodes),
+            total,
+            ", ".join(failed_nodes + unknown_nodes),
+        )
+    else:
+        log.info("Primus Tier 3 preflight info PASS on %d/%d nodes", passing, total)
+
+    preflight_update_test_result()
+
+
 def _l2ping_config(config_dict):
     """Return the customer-facing l2ping configuration."""
     config = _ifoe_config(config_dict).get('l2ping', {})
@@ -1299,6 +1352,7 @@ def test_generate_preflight_report(phdl, config_dict, request):
         'rocm_versions',
         'interface_names',
         'node_smoke',
+        'tier3_info',
         'ifoe_l2_connectivity',
         'transferbench_smoke',
         'rdma_connectivity',
