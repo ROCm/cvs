@@ -201,6 +201,11 @@ class TorchTitanTrainingJob:
         self.run_label_sanitized = re.sub(r'[^A-Za-z0-9._-]', '_', str(raw_label))
         self.combo_log_dir = f'{self.log_dir}/torchtitan-logs/{self.run_label_sanitized}'
 
+        # Per-combo log dir so sweep combos don't overwrite each other's training.log
+        raw_label = run_label or "torchtitan_training"
+        self.run_label_sanitized = re.sub(r'[^A-Za-z0-9._-]', '_', str(raw_label))
+        self.combo_log_dir = f'{self.log_dir}/torchtitan-logs/{self.run_label_sanitized}'
+
         # Model params with defaults
         model_name = self.model_params.get('model_name', 'llama3_3_70b')
         self.model_config = TORCHTITAN_MODELS.get(model_name, TORCHTITAN_MODELS['llama3_3_70b'])
