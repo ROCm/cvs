@@ -20,6 +20,7 @@ from cvs.lib.inference.atom.atom_config_loader import (
     load_variant,
     orchestrator_container_from_variant,
 )
+from cvs.lib.inference.atom.atom_dmesg import capture_dmesg_timestamp
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
 log = globals.log
@@ -58,10 +59,17 @@ LIFECYCLE_RANK = {
     "test_setup_sshd": 1,
     "test_discover_topology": 2,
     "test_model_fetch": 3,
-    "test_atom_inference": 4,
-    "test_cell_metrics": 5,
-    "test_print_results_table": 6,
-    "test_teardown": 7,
+    "test_openai_compatible_smoke": 4,
+    "test_server_health": 4,
+    "test_atom_inference": 5,
+    "test_cell_metrics": 6,
+    "test_accuracy_eval": 7,
+    "test_atom_long_context_accuracy": 7,
+    "test_atom_mtp_quality": 7,
+    "test_atom_quant_parity": 7,
+    "test_verify_dmesg": 8,
+    "test_print_results_table": 8,
+    "test_teardown": 9,
 }
 
 
@@ -73,6 +81,13 @@ def _deep_merge(base, override):
     for k, v in override.items():
         out[k] = _deep_merge(base[k], v) if k in base else v
     return out
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _capture_dmesg_start(orch, variant_config, lifecycle):
+    if variant_config.platform.dmesg_scan:
+        lifecycle.dmesg_start = capture_dmesg_timestamp(orch)
+    yield
 
 
 @pytest.fixture(scope="module")

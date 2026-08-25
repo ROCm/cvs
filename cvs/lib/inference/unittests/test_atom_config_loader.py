@@ -28,11 +28,11 @@ def _cluster_dict():
 class TestATOMAtomConfigLoader(unittest.TestCase):
     def test_load_mi300x_sample_config(self):
         root = Path(__file__).resolve().parents[3]
-        config = root / ("input/config_file/inference/atom/mi300x_atom_gpt-oss-120b_bf16.json")
+        config = root / ("input/config_file/inference/atom/mi300x_atom_gpt-oss-120b_mxfp4_vllm_single.json")
         variant = load_variant(config, _cluster_dict())
         self.assertEqual(variant.framework, "atom")
-        self.assertEqual(variant.params.driver, "vllm")
-        self.assertEqual(variant.expected_cells(), ["ISL=7168,OSL=1024,TP=8,CONC=64"])
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.expected_cells(), ["ISL=8192,OSL=1024,TP=4,CONC=32", "ISL=8192,OSL=1024,TP=4,CONC=64"])
         self.assertIn("enforce-eager", variant.roles.server.serve_args)
 
     def test_load_w1_mi300x_atom_variant(self):
@@ -121,23 +121,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertIn("client.output_throughput", variant.thresholds[cell])
         self.assertEqual(variant.thresholds[cell]["client.success_rate"]["value"], 1)
 
-    def test_load_baseline_sweep_multinode_mi300x_variant(self):
-        root = Path(__file__).resolve().parents[3]
-        config = root / ("input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_baseline_sweep_distributed.json")
-        variant = load_variant(config, _cluster_dict())
-        self.assertEqual(variant.params.nnodes, "2")
-        self.assertEqual(variant.params.driver, "vllm_atom")
-        self.assertEqual(variant.params.pipeline_parallel_size, "2")
-        self.assertEqual(variant.params.max_model_length, "10240")
-        self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
-        self.assertTrue(variant.enforce_thresholds)
-        self.assertEqual(len(variant.expected_cells()), 14)
-        cell = "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=4"
-        self.assertIn(cell, variant.expected_cells())
-        self.assertEqual(
-            variant.thresholds[cell]["scaling.efficiency_pct"],
-            {"kind": "min", "value": 9.0},
-        )
+    def test_load_baseline_sweep_mi355x_variant(self):
         root = Path(__file__).resolve().parents[3]
         config = root / ("input/config_file/inference/atom/mi355x_atom_deepseek-r1_fp8_baseline_sweep.json")
         variant = load_variant(config, _cluster_dict())
@@ -287,7 +271,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                 master_addr="",
                 master_port="29501",
             ),
-            roles=SimpleNamespace(server=SimpleNamespace(atom_args=("-tp", "8"))),
+            roles=SimpleNamespace(server=SimpleNamespace(atom_args=("-tp", "8"), serve_args={}, sglang_args=[])),
         )
         self.assertNotEqual(server_session_key(variant, "1", "2"), server_session_key(variant, "3", "4"))
 
@@ -376,6 +360,208 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             thresholds={},
         )
         self.assertEqual(variant.roles.server.env, {"NCCL_IB_GID_INDEX": "1"})
+
+    def test_load_w1_accuracy_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_accuracy.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(len(variant.accuracy.tasks), 9)
+        self.assertEqual(variant.accuracy.tasks[0].id, "gsm8k_flex")
+        task_ids = {t.id for t in variant.accuracy.tasks}
+        self.assertIn("hellaswag", task_ids)
+        self.assertIn("mmlu_pro", task_ids)
+        self.assertIn("bbh", task_ids)
+        self.assertIn("arc_challenge", task_ids)
+        self.assertTrue(variant.quant_parity.enabled)
+        self.assertTrue(variant.enforce_thresholds)
+        self.assertIn(
+            "gsm8k.exact_match__flexible-extract",
+            variant.thresholds["accuracy"]["gsm8k_flex"],
+        )
+        self.assertIn(
+            "hellaswag.acc_norm__none",
+            variant.thresholds["accuracy"]["hellaswag"],
+        )
+        self.assertIn(
+            "mmlu_pro.exact_match__custom-extract",
+            variant.thresholds["accuracy"]["mmlu_pro"],
+        )
+        self.assertIn("quant_parity", variant.thresholds)
+
+    def test_load_mtp3_variant_mtp_quality_enabled(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_mtp3.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertTrue(variant.mtp_quality.enabled)
+        self.assertIn("mtp.acceptance_rate", variant.thresholds["mtp_quality"])
+
+    def test_mtp_quality_threshold_key_not_sweep_cell(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_mtp3.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertIn("mtp_quality", variant.thresholds)
+        self.assertEqual(len(variant.expected_cells()), 2)
+
+    def test_load_w2_accuracy_long_context_cells(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_gpt-oss-120b_mxfp4_accuracy.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertTrue(variant.functional.api_smoke)
+        self.assertEqual(len(variant.long_context_accuracy.cells), 1)
+        self.assertEqual(variant.long_context_accuracy.cells[0].id, "niah_8k")
+        self.assertIn("long_context_accuracy", variant.thresholds)
+
+    def test_load_mi355x_accuracy_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi355x_atom_deepseek-r1_fp8_accuracy.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertFalse(variant.enforce_thresholds)
+
+    def test_load_phase_c_w2_mxfp4_perf(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_gpt-oss-120b_mxfp4_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.driver, "atom")
+        self.assertEqual(variant.params.tensor_parallelism, "4")
+        self.assertEqual(variant.model.precision, "mxfp4")
+        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_MOE"), "1")
+        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_GEMM"), "1")
+        self.assertEqual(
+            variant.expected_cells(),
+            ["ISL=8192,OSL=1024,TP=4,CONC=32", "ISL=8192,OSL=1024,TP=4,CONC=64"],
+        )
+
+    def test_load_kimi_k27_mxfp4_triton_env(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi355x_atom_kimi-k2.7-code_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.model.precision, "mxfp4")
+        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_MOE"), "1")
+        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_GEMM"), "1")
+
+    def test_load_phase_c_w3_glm_perf(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_glm-5.1_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.model.id, "zai-org/GLM-5.1")
+        self.assertEqual(
+            variant.expected_cells(),
+            ["ISL=1024,OSL=8192,TP=8,CONC=32", "ISL=1024,OSL=8192,TP=8,CONC=64"],
+        )
+
+    def test_load_phase_c_w13_code_perf(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi355x_atom_kimi-k2.7-code_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.model.id, "moonshotai/Kimi-K2.7-Code")
+        self.assertFalse(variant.enforce_thresholds)
+
+    def test_load_phase_c_w17_mxfp4_perf(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_mxfp4_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.model.id, "amd/DeepSeek-R1-0528-MXFP4")
+        self.assertEqual(variant.params.tensor_parallelism, "8")
+
+    def test_load_m4_vllm_single_parity(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_vllm_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.nnodes, "1")
+        self.assertIn("kv-cache-dtype", variant.roles.server.serve_args)
+
+    def test_load_m4_sglang_single_parity(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_sglang_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.driver, "sglang")
+        self.assertIn("--kv-cache-dtype", variant.roles.server.sglang_args)
+
+    def test_load_qwen397b_fp8_single(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_qwen3.5-397b-a17b_fp8_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.model.id, "amd/Qwen3.5-397B-A17B-FP8")
+        self.assertEqual(variant.expected_cells()[0], "ISL=1024,OSL=8192,TP=8,CONC=32")
+
+    def test_load_kimi_k26_thinking_single_tp4(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi355x_atom_kimi-k2.6-thinking_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.tensor_parallelism, "4")
+        self.assertIn("TP=4", variant.expected_cells()[0])
+
+    def test_load_kimi_k27_longctx_single(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi355x_atom_kimi-k2.7-code_longctx_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.expected_cells()[0], "ISL=8192,OSL=1024,TP=8,CONC=32")
+
+    def test_load_w1_single_gpu_metrics_poll(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertTrue(variant.platform.gpu_metrics_poll)
+
+    def test_w1_gsm8k_threshold_fails_below_floor(self):
+        from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
+
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_accuracy.json"
+        variant = load_variant(config, _cluster_dict())
+        specs = variant.thresholds["accuracy"]["gsm8k_flex"]
+        with self.assertRaises(ThresholdViolation):
+            evaluate_all({"gsm8k.exact_match__flexible-extract": 0.90}, specs)
+
+    def test_load_distributed_accuracy_scaffold(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-r1_fp8_distributed_accuracy.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertIn("PP=2", variant.expected_cells()[0])
+        self.assertIn("accuracy", variant.thresholds)
+
+    def test_load_v4_pro_longctx_stem(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-v4-pro_longctx_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Pro")
+        self.assertEqual(variant.expected_cells()[0], "ISL=5000,OSL=1024,TP=8,CONC=16")
+        self.assertTrue(variant.platform.gpu_metrics_poll)
+
+    def test_load_v4_pro_vllm_single_stem(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-v4-pro_vllm_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.tokenizer_mode, "deepseek_v4")
+        self.assertFalse(variant.roles.server.serve_args.get("enforce-eager"))
+        self.assertEqual(variant.roles.server.serve_args.get("moe-backend"), "triton_unfused")
+
+    def test_load_v4_pro_sglang_single_stem(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-v4-pro_sglang_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.driver, "sglang")
+        self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Pro")
+
+    def test_load_v4_pro_distributed_stem(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_deepseek-v4-pro_distributed.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertIn("PP=2", variant.expected_cells()[0])
+
+    def test_load_w2_m4_vllm_parity(self):
+        root = Path(__file__).resolve().parents[3]
+        config = root / "input/config_file/inference/atom/mi300x_atom_gpt-oss-120b_mxfp4_vllm_single.json"
+        variant = load_variant(config, _cluster_dict())
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.model.id, "openai/gpt-oss-120b")
 
 
 if __name__ == "__main__":

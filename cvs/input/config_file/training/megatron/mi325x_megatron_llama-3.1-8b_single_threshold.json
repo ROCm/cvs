@@ -16,6 +16,14 @@
     "training.mem_usage": {
       "kind": "max",
       "value": 0.85
+    },
+    "training.steps_to_target": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.time_to_target_seconds": {
+      "kind": "info",
+      "value": 0
     }
   },
   "MBS=4,GBS=128,PRECISION=BF16": {
@@ -34,6 +42,14 @@
     "training.mem_usage": {
       "kind": "max",
       "value": 0.85
+    },
+    "training.steps_to_target": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.time_to_target_seconds": {
+      "kind": "info",
+      "value": 0
     }
   },
   "MBS=4,GBS=128,PRECISION=MXFP4": {
@@ -52,6 +68,14 @@
     "training.mem_usage": {
       "kind": "max",
       "value": 0.85
+    },
+    "training.steps_to_target": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.time_to_target_seconds": {
+      "kind": "info",
+      "value": 0
     }
   },
   "MBS=4,GBS=128,PRECISION=MXFP8": {

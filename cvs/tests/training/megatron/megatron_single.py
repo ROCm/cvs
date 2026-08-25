@@ -20,12 +20,20 @@ Lifecycle (each stage is a separate test):
 
 import json
 import os
+import re
+import shlex
 import time
 
 import pytest
 
 from cvs.lib import globals
 from cvs.lib.training.megatron.megatron_lib import MegatronTrainingJob
+from cvs.lib.training.megatron.primus_lib import PrimusTrainingJob, _parse_step_losses
+from cvs.lib.training.megatron.utils.checkpoint_io import log_checkpoint_io_times, parse_checkpoint_io_seconds
+from cvs.lib.training.megatron.utils.convergence import (
+    compute_convergence,
+    parse_step_metrics,
+)
 from cvs.lib.training.megatron.utils.loss_curve import (
     parse_all_loss_points,
     sample_loss_curve,
@@ -37,6 +45,14 @@ from cvs.lib.utils.verdict import _check_one, ThresholdViolation
 from cvs.lib.utils_lib import update_test_result
 
 log = globals.log
+
+
+def _make_training_job(orch, variant_config, **kwargs):
+    """Return PrimusTrainingJob or MegatronTrainingJob based on the container image."""
+    if re.search(r'primus', orch.container_config.get("image", ""), re.I):
+        return PrimusTrainingJob(orch, variant_config, **kwargs)
+    return MegatronTrainingJob(orch, variant_config, **kwargs)
+
 
 # Smoke cell: smallest fixed parameters that confirm the model loads and trains.
 _SMOKE_MBS = "1"
@@ -103,7 +119,7 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
-    mt_obj = MegatronTrainingJob(
+    mt_obj = _make_training_job(
         orch,
         variant_config,
         hf_token=hf_token,
@@ -146,7 +162,7 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
 
     globals.error_list = []
 
-    mt_obj = MegatronTrainingJob(
+    mt_obj = _make_training_job(
         orch,
         variant_config,
         hf_token=hf_token,
@@ -178,6 +194,204 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
     log.info("smoke PASSED | iters=%s", _SMOKE_ITERS)
 
 
+def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
+    """Stage 2.5: checkpoint save + resume — verify step counter and loss continuity.
+
+    Two phases:
+      Phase 1 — Save : train checkpoint.save_iters steps, saving every checkpoint.save_interval.
+                       Last checkpoint lands at floor(save_iters/interval)*interval.
+      Phase 2 — Load : resume from that checkpoint with train_iters=checkpoint.resume_iters;
+                       Primus continues from last_ckpt_step+1 to resume_iters.
+
+    Asserts:
+      - First logged step of load phase == last_ckpt_step + 1 (step counter restored).
+      - resume_losses[last_ckpt_step+1] <= save_losses[last_ckpt_step] + tol (no loss spike).
+
+    Skipped if checkpoint.enforce=false or for non-Primus images.
+    """
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+
+    ckpt_cfg = variant_config.checkpoint
+    if not ckpt_cfg.enforce:
+        pytest.skip("checkpoint.enforce=false in config; skipping test_checkpoint")
+
+    if not re.search(r'primus', orch.container_config.get("image", ""), re.I):
+        pytest.skip("checkpoint test is Primus-only")
+
+    # PRIMUS_WORKSPACE must be on a host path already volume-mounted into the
+    # container so checkpoints survive container teardown.  log_dir is mounted
+    # at the same path on both host and container (runtime.args.volumes in the
+    # JSON config), so a subdirectory of log_dir satisfies that requirement.
+    log_dir = variant_config.config.get("log_dir", "/tmp")
+    ckpt_dir = f"{log_dir}/ckpt_primus"
+    orch.exec(f"mkdir -p {ckpt_dir}")
+
+    def _run(run_label, iters, checkpoint_dir=None, save_interval=None, load_checkpoint=False):
+        job = _make_training_job(
+            orch,
+            variant_config,
+            hf_token=hf_token,
+            micro_batch_size=_SMOKE_MBS,
+            global_batch_size=_SMOKE_GBS,
+            precision=_SMOKE_PRECISION,
+            distributed_training=False,
+            tune_model_params=False,
+            run_label=run_label,
+        )
+        job.iterations = iters
+        job.local_tokenizer_path = getattr(lifecycle, "tokenizer_path", None)
+        if checkpoint_dir:
+            job.checkpoint_dir = checkpoint_dir
+            job.save_interval = save_interval or iters
+        job.load_checkpoint = load_checkpoint
+        try:
+            job.build_training_job_cmd()
+            job.start_training_job()
+            job.poll_for_training_completion()
+        finally:
+            job.stop_training_processes()
+        return job._read_last_node_log()
+
+    # Phase 1: save — train save_iters steps, writing checkpoint every save_interval steps.
+    # save_iters must not be an exact multiple of save_interval so the last checkpoint is
+    # not the final step (disable_last_saving=true in the YAML suppresses the last-iter save).
+    try:
+        save_log = _run(
+            "ckpt_save",
+            ckpt_cfg.save_iters,
+            checkpoint_dir=ckpt_dir,
+            save_interval=ckpt_cfg.save_interval,
+        )
+    except Exception:
+        raise
+
+    # Verify the checkpoint was written before attempting resume.
+    # With PRIMUS_TEAM/USER/EXP_NAME all empty, Primus writes to:
+    #   {PRIMUS_WORKSPACE}/checkpoints/latest_checkpointed_iteration.txt
+    ckpt_meta = f"{ckpt_dir}/checkpoints/latest_checkpointed_iteration.txt"
+    check = orch.exec(f"test -f {ckpt_meta} && echo FOUND || echo MISSING")
+    head_node = orch.hosts[0]
+    if "MISSING" in (check or {}).get(head_node, "MISSING"):
+        ls_out = orch.exec(f"ls -laR {ckpt_dir} 2>&1 || echo DIR_EMPTY")
+        log.error("checkpoint listing:\n%s", (ls_out or {}).get(head_node, ""))
+        pytest.fail(
+            f"checkpoint not written after save phase; expected: {ckpt_meta}\n"
+            f"Check that log_dir ({log_dir}) is volume-mounted into the container."
+        )
+
+    # last_ckpt_step = floor(save_iters / interval) * interval
+    last_ckpt_step = (ckpt_cfg.save_iters // ckpt_cfg.save_interval) * ckpt_cfg.save_interval
+    expected_first = last_ckpt_step + 1
+
+    # Phase 2: load — resume from last checkpoint, train to resume_iters total.
+    # Primus reads the checkpoint and starts iterating from last_ckpt_step+1.
+    try:
+        resume_log = _run(
+            "ckpt_resume",
+            ckpt_cfg.resume_iters,
+            checkpoint_dir=ckpt_dir,
+            load_checkpoint=True,
+        )
+    except Exception:
+        raise
+
+    save_losses = _parse_step_losses(save_log)
+    resume_losses = _parse_step_losses(resume_log)
+
+    log.info("checkpoint save steps  : %s", sorted(save_losses))
+    log.info("checkpoint resume steps: %s", sorted(resume_losses))
+
+    # Checkpoint I/O timing — save & load (seconds).
+    save_io_times, _ = parse_checkpoint_io_seconds(save_log)
+    _, load_io_seconds = parse_checkpoint_io_seconds(resume_log)
+    log_checkpoint_io_times(save_io_times, load_io_seconds)
+
+    # Check 1: step counter restored — first logged step of resume == last_ckpt_step + 1
+    if not resume_losses:
+        pytest.fail("load phase produced no iteration logs; cannot verify step counter")
+
+    first_step = min(resume_losses)
+    log.info(
+        "CHECK 1 — step counter: last saved step in checkpoint=%d, first step in load phase=%d",
+        last_ckpt_step,
+        first_step,
+    )
+    if first_step != expected_first:
+        pytest.fail(
+            f"FAILED step counter check: last saved checkpoint step={last_ckpt_step}, "
+            f"expected load to start at step {expected_first}, got {first_step}"
+        )
+    log.info(
+        "CHECK 1 PASSED — step counter correctly restored: last checkpoint step=%d, load phase started at step=%d",
+        last_ckpt_step,
+        first_step,
+    )
+
+    # Check 2: loss continuity — save loss at last_ckpt_step ≈ resume loss at first_step
+    save_val = save_losses.get(last_ckpt_step)
+    resume_val = resume_losses.get(first_step)
+    if save_val is None or resume_val is None:
+        pytest.fail(
+            f"Cannot compare losses: "
+            f"save step {last_ckpt_step} loss={save_val}, "
+            f"resume step {first_step} loss={resume_val}"
+        )
+
+    tol = ckpt_cfg.loss_rtol * max(abs(save_val), 1e-9)
+    # Loss may decrease (training continues) but must not increase beyond tolerance.
+    increase = resume_val - save_val
+    log.info(
+        "CHECK 2 — loss boundary: "
+        "loss at checkpoint step %d (save)=%.6f, "
+        "loss at step %d (load)=%.6f, increase=%.6f, allowed_increase=%.6f",
+        last_ckpt_step,
+        save_val,
+        first_step,
+        resume_val,
+        increase,
+        tol,
+    )
+    if increase > tol:
+        pytest.fail(
+            f"FAILED loss boundary check: "
+            f"loss increased from save step {last_ckpt_step}={save_val:.6f} "
+            f"to load step {first_step}={resume_val:.6f} "
+            f"(increase={increase:.6f} exceeds tolerance {tol:.6f} [{ckpt_cfg.loss_rtol * 100:.0f}%])"
+        )
+    log.info(
+        "CHECK 2 PASSED — loss did not increase beyond tolerance across checkpoint boundary: "
+        "save step %d loss=%.6f, load step %d loss=%.6f, increase=%.6f within tol=%.6f",
+        last_ckpt_step,
+        save_val,
+        first_step,
+        resume_val,
+        increase,
+        tol,
+    )
+
+    avg_save_io = sum(e for _, e in save_io_times) / len(save_io_times) if save_io_times else None
+    log.info(
+        "test_checkpoint PASSED | "
+        "last_ckpt_step=%d first_resume_step=%d "
+        "save_loss=%.6f resume_loss=%.6f increase=%.6f | "
+        "save_io_avg=%s load_io=%s",
+        last_ckpt_step,
+        first_step,
+        save_val,
+        resume_val,
+        increase,
+        f"{avg_save_io:.2f}s" if avg_save_io is not None else "n/a",
+        f"{load_io_seconds:.2f}s" if load_io_seconds is not None else "n/a",
+    )
+    update_test_result()
+
+    if not request.node.session.testsfailed:
+        orch.exec(f"rm -rf {shlex.quote(ckpt_dir)}")
+    else:
+        log.info("checkpoint dir retained for debugging: %s", ckpt_dir)
+
+
 def test_training(
     orch, variant_config, hf_token, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request
 ):
@@ -192,7 +406,7 @@ def test_training(
     nodeid = request.node.nodeid
     combo_key = request.node.callspec.id
     globals.error_list = []
-    mt_obj = MegatronTrainingJob(
+    mt_obj = _make_training_job(
         orch,
         variant_config,
         hf_token=hf_token,
@@ -215,7 +429,7 @@ def test_training(
         mt_obj.verify_training_results()
         elapsed = time.monotonic() - t
     except Exception:
-        lifecycle.failed = True
+        train_res_dict[combo_key] = None
         raise
     finally:
         mt_obj.stop_training_processes()
@@ -246,17 +460,43 @@ def test_training(
         request.node.user_properties.append(("training_log_tail", tail))
     except Exception:
         pass
+
+    try:
+        conv = variant_config.convergence
+        log_text = mt_obj._read_last_node_log()
+        step_metrics = parse_step_metrics(log_text)
+        steps_to_target, time_to_target = compute_convergence(step_metrics, [], conv.target_metric, conv.target_value)
+        if steps_to_target is not None:
+            train_res_dict[combo_key]["steps_to_target"] = [str(steps_to_target)]
+        if time_to_target is not None:
+            train_res_dict[combo_key]["time_to_target_seconds"] = [str(time_to_target)]
+        log.info(
+            "convergence: steps_to_target=%s time_to_target_seconds=%s",
+            steps_to_target,
+            time_to_target,
+        )
+    except Exception:
+        pass
+
     update_test_result()
 
 
 def test_metric(variant_config, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request):
     """Stage 4 (parametrized): compare each combo's metrics against thresholds."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
     combo_key = request.node.callspec.id
-    if combo_key not in train_res_dict:
-        pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run)")
+    if not train_res_dict.get(combo_key):
+        pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run or failed)")
+
+    actuals_raw = train_res_dict[combo_key]
+    request.node.user_properties.append(("training_log_tail", actuals_raw.get("_log_tail", "")))
+    actuals = {f"training.{k}": float(v[-1]) for k, v in actuals_raw.items() if v and not k.startswith("_")}
 
     if not variant_config.enforce_thresholds:
-        log.info("enforce_thresholds=false; skipping verdict for combo '%s'", combo_key)
+        log.info("enforce_thresholds=false; record-only for combo '%s'", combo_key)
+        for metric, value in actuals.items():
+            log.info("  RECORD  %s: actual=%s", metric, value)
         return
 
     cell = variant_config.cell_key(combo_key)
@@ -264,10 +504,6 @@ def test_metric(variant_config, micro_batch_size, global_batch_size, precision, 
     if not thresholds:
         log.warning("no thresholds defined for cell '%s'; skipping threshold checks", cell)
         return
-
-    actuals_raw = train_res_dict[combo_key]
-    request.node.user_properties.append(("training_log_tail", actuals_raw.get("_log_tail", "")))
-    actuals = {f"training.{k}": float(v[-1]) for k, v in actuals_raw.items() if v and not k.startswith("_")}
 
     log.info("--- Threshold check for combo '%s' ---", combo_key)
     violations = []
@@ -310,8 +546,8 @@ def test_loss_curve(
         pytest.skip("a prior lifecycle stage failed")
 
     combo_key = request.node.callspec.id
-    if combo_key not in train_res_dict:
-        pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run)")
+    if not train_res_dict.get(combo_key):
+        pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run or failed)")
 
     combo_log_dir = train_res_dict[combo_key].get("_combo_log_dir")
     if not combo_log_dir:

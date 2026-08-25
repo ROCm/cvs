@@ -367,8 +367,8 @@ options:
 ```bash
 $ cvs run --help
 usage: cvs run [-h] --cluster_file CLUSTER_FILE --config_file
-               CONFIG_FILE [--html HTML] [--self-contained-html]
-               [--log-file LOG_FILE]
+               CONFIG_FILE [--workspace PATH] [--html HTML]
+               [--self-contained-html] [--log-file LOG_FILE]
                [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}]
                [--capture {no,tee-sys,tee-merged,fd,sys}]
                [test] [function]
@@ -385,6 +385,12 @@ options:
                         (required)
   --config_file CONFIG_FILE
                         Path to test configuration JSON file (required)
+  --workspace PATH      Shared-filesystem root for this run's artifacts;
+                        the run directory becomes
+                        <workspace>/cvs_runs/<run_id> and is exposed to
+                        configs as {run_dir}. Falls back to
+                        $CVS_WORKSPACE, then to the venv's parent
+                        directory.
   --html HTML           Pytest: Create HTML report file at given path
   --self-contained-html
                         Pytest: Create a self-contained HTML file
@@ -415,6 +421,7 @@ All other pytest arguments are supported and passed transparently to pytest. For
 
 - `--cluster_file`: Path to cluster configuration JSON file (required)
 - `--config_file`: Path to test configuration JSON file (required)
+- `--workspace`: Shared-filesystem root for this run's artifacts. The run directory becomes `<workspace>/cvs_runs/<run_id>` and is available to test configs as the `{run_dir}` placeholder. Falls back to `$CVS_WORKSPACE`, then to the venv's parent directory. Under Slurm/Spur every rank derives the same path, so it must point at shared storage; a containerized run must set it explicitly, since the venv's parent is not shared there.
 
 ## Complete CVS Run Example
 

@@ -86,7 +86,9 @@ def test_launch_container(orch, variant_config, lifecycle, request):
     """Stage 1: launch the container."""
     t = time.monotonic()
     ok = orch.setup_containers()
-    lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - t)
+    launch_s = time.monotonic() - t
+    lifecycle.record(request.node.nodeid, "container_launch", launch_s)
+    lifecycle.record(request.node.nodeid, "server.container_launch_s", launch_s, "s")
     if not ok:
         lifecycle.failed = True
         name = orch.get_container_name(orch.container_config, orch.container_config["image"])
@@ -169,6 +171,7 @@ def test_model_fetch(orch, variant_config, lifecycle, request):
 
     lifecycle.record(request.node.nodeid, "model_fetch", time.monotonic() - t)
     lifecycle.record(request.node.nodeid, "model_size", final / 1e9, "GB")
+    lifecycle.record(request.node.nodeid, "server.model_cache_bytes", final, "bytes")
     if final <= 0:
         lifecycle.failed = True
         pytest.fail(f"no model bytes under {models_dir} after fetch")

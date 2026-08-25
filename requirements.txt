@@ -5,6 +5,7 @@ pytest
 pytest-html
 pytest-repeat
 pytest-dependency
+pytest-subtests
 xlsxwriter
 pydantic >= 2.8.2
 pandas

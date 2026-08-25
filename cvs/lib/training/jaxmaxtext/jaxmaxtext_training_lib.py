@@ -56,7 +56,16 @@ _TRAINING_ERR_PATTERNS = {
     'segfault': r'Segmentation fault|SIGSEGV|signal 11|core dumped',
 }
 
-_NAN_INF_RE = re.compile(r'(TFLOP/s/device|Tokens/s/device):\s*(NaN|Inf|-Inf)', re.I)
+# NaN/Inf in any reported training metric -- loss/lm_loss/perplexity go NaN while
+# the throughput fields (TFLOP/s/device, Tokens/s/device) stay numeric, so those
+# alone are NOT enough; MaxText also emits an explicit abort line. NOTE: the
+# TensorBoard "NaN or Inf found in input tensor" writer warning is intentionally
+# NOT matched -- it also fires on healthy steps (false positive).
+_NAN_INF_RE = re.compile(
+    r'(?:TFLOP/s/device|Tokens/s/device|loss|lm_loss|perplexity)\s*[:=]\s*(?:nan|[+-]?inf)\b'
+    r'|Aborting training due to NaN',
+    re.I,
+)
 
 
 def _sanitize(name):
@@ -110,6 +119,7 @@ class MaxTextTrainingJob:
         self.step_metrics = []
         self.eval_metrics = []
         self.summary_metrics = {}
+        self.raw_log = ""
 
         # Host-side timestamp ({node: str}) captured when training launches, so
         # scan_dmesg_for_errors() can slice the kernel log to this run's window.
@@ -121,6 +131,12 @@ class MaxTextTrainingJob:
 
         self._scratch_dir = None  # resolved lazily to /tmp/<user>/jax
         self._train_script = None  # resolved lazily to the first existing candidate
+
+        # Per-node cursor (lines already surfaced) so polling STREAMS only the
+        # new training-log lines to the console once, instead of re-dumping a
+        # `tail -N` window every iteration (which bloated --log-file with
+        # repeated content).
+        self._log_line_cursor = [0] * self.num_nodes
 
     def _get_scratch_dir(self):
         """User-namespaced in-container scratch base (``/tmp/<user>/jax``).
@@ -245,6 +261,12 @@ class MaxTextTrainingJob:
                 yml_lines.append(f'{k}: {v}')
             elif isinstance(v, bool):
                 yml_lines.append(f"{k}: {'true' if v else 'false'}")
+            elif isinstance(v, str) and v == "":
+                # Emit an explicit empty string ('key: ""'), not a bare 'key:'.
+                # A bare value parses as YAML null -> Python None, which breaks
+                # MaxText fields that are strict enums over "" (e.g. `profiler`
+                # accepts only '', 'xplane', 'nsys'; None raises a ValidationError).
+                yml_lines.append(f'{k}: ""')
             else:
                 yml_lines.append(f"{k}: {v}")
 
@@ -260,7 +282,16 @@ class MaxTextTrainingJob:
         if not rdma.container_mount_file or not rdma.container_dest_file:
             log.info("rdma_lib paths not configured, skipping")
             return
-        cmd = f"sudo cp {shlex.quote(rdma.container_mount_file)} {shlex.quote(rdma.container_dest_file)}"
+        # Only copy when the mount source actually exists. Newer configs mount the
+        # host RDMA lib directly onto the container's real .so path (read-only), so
+        # the legacy ".host" copy source is absent -- skip the cp instead of
+        # emitting a spurious error (the ibv_devinfo check below is the real gate).
+        src = shlex.quote(rdma.container_mount_file)
+        dst = shlex.quote(rdma.container_dest_file)
+        cmd = (
+            f"if [ -f {src} ]; then sudo cp {src} {dst}; "
+            f"else echo 'rdma_lib: source {rdma.container_mount_file} not present, skipping cp'; fi"
+        )
         out = self.orch.exec(cmd)
         for host, output in (out or {}).items():
             log.info("[rdma_lib %s] %s", host, (output or "")[:200])
@@ -378,6 +409,21 @@ class MaxTextTrainingJob:
         self.training_start_time = self._host_date()
 
         scratch = self._get_scratch_dir()
+
+        # Clear each node's previous training.log BEFORE launch. The launcher
+        # only truncates the log once it reaches `python ... | tee training.log`;
+        # if this run dies earlier (env source fails, launcher never starts,
+        # etc.) a STALE log with an old "completed step: N" marker would remain
+        # and is_complete() would report success on the first poll -- a
+        # fail-open that lets smoke/training pass without this run doing the
+        # work. Removing it here means a run that never reaches `tee` leaves no
+        # log, so is_complete() stays false and the stage correctly times out.
+        clear_cmds = [
+            "bash -c " + shlex.quote(f"rm -f {shlex.quote(f'{self.out_dir}/out-node{i}/training.log')}")
+            for i in range(self.num_nodes)
+        ]
+        self.orch.exec_cmd_list(clear_cmds)
+
         launch_cmds = []
         for i in range(self.num_nodes):
             script_path = f"{scratch}/training_launcher_node{i}.sh"
@@ -386,6 +432,9 @@ class MaxTextTrainingJob:
             launch_cmds.append("bash -c " + shlex.quote(inner))
 
         self.orch.exec_cmd_list(launch_cmds)
+
+        # Fresh run -> stream the log from the top.
+        self._log_line_cursor = [0] * self.num_nodes
 
         time.sleep(self._initial_wait_s)
 
@@ -407,7 +456,7 @@ class MaxTextTrainingJob:
             f"{shlex.quote(f'{self.out_dir}/out-node{i}/training.log')} 2>/dev/null || true"
             for i in range(self.num_nodes)
         ]
-        out = self.orch.exec_cmd_list(cmd_list)
+        out = self.orch.exec_cmd_list(cmd_list, print_console=False)
         if not out or len(out) < self.num_nodes:
             return False
         for _host, result in out.items():
@@ -417,32 +466,66 @@ class MaxTextTrainingJob:
                 return False
         return True
 
-    def _scan_for_errors(self):
-        """Scan each node's own training log for known error patterns.
+    def _scan_chunk_for_errors(self, host, i, text):
+        """Raise on the first known error signature (or NaN/Inf) in `text`.
 
-        Reads all nodes' logs in one parallel ``orch.exec_cmd_list`` call
-        (``cmd_list[i]`` runs on ``hosts[i]``). Raises on the first match.
+        Before raising, log the FULL offending chunk so the failure cause (e.g. a
+        compile traceback) is always visible in the console/--log-file -- the
+        exception message alone is truncated (text[-500:]) and can miss the root
+        line, and the chunk is otherwise not streamed for non-node-0 nodes.
+        """
+        if not text:
+            return
+        hit = None
+        if _NAN_INF_RE.search(text):
+            hit = "NaN/Inf in training metrics"
+        else:
+            for err_name, err_pattern in self.error_patterns.items():
+                if err_pattern and re.search(err_pattern, text, re.I):
+                    hit = f"error '{err_name}'"
+                    break
+        if hit:
+            log.error("[train node%s] FAILURE chunk (node %s / %s):\n%s", i, i, host, text.rstrip())
+            raise RuntimeError(f"Training {hit} on {host} (node {i}): {text[-500:]}")
+
+    def _drain_new_log_lines(self):
+        """Fetch training-log lines written since the last poll, on every node,
+        in one parallel call, and advance each node's cursor.
+
+        Returns ``{node_index: new_text}``. ``print_console=False`` so the
+        orchestrator does NOT re-echo the bulk output -- the caller decides what
+        to surface (we stream node 0 and scan every node for errors). This is
+        what makes the console/--log-file carry each log line ONCE instead of a
+        repeated ``tail`` window per poll.
         """
         cmd_list = [
-            f"tail -2000 {shlex.quote(f'{self.out_dir}/out-node{i}/training.log')} 2>/dev/null"
+            f"tail -n +{self._log_line_cursor[i] + 1} "
+            f"{shlex.quote(f'{self.out_dir}/out-node{i}/training.log')} 2>/dev/null || true"
             for i in range(self.num_nodes)
         ]
-        out = self.orch.exec_cmd_list(cmd_list)
+        out = self.orch.exec_cmd_list(cmd_list, print_console=False)
         node_of = {h: i for i, h in enumerate(self.orch.hosts)}
-        for host, text in (out or {}).items():
-            text = text if isinstance(text, str) else (text or {}).get("output", "")
+        new_by_node = {}
+        for host, result in (out or {}).items():
+            text = result if isinstance(result, str) else (result or {}).get("output", "")
             text = text or ""
-            i = node_of.get(host, "?")
-            if _NAN_INF_RE.search(text):
-                raise RuntimeError(f"NaN/Inf in training metrics on {host} (node {i}): {text[-500:]}")
-            for err_name, err_pattern in self.error_patterns.items():
-                if not err_pattern:
-                    continue
-                if re.search(err_pattern, text, re.I):
-                    raise RuntimeError(f"Training error '{err_name}' on {host} (node {i}): {text[-500:]}")
+            i = node_of.get(host)
+            if i is None or not text:
+                continue
+            # Advance the cursor by the number of newly read lines so the next
+            # poll starts right after them.
+            self._log_line_cursor[i] += len(text.splitlines())
+            new_by_node[i] = text
+        return new_by_node
 
     def poll_for_completion(self, timeout_s=None):
-        """Poll is_complete() with error scanning until training finishes or times out."""
+        """Poll until training finishes or times out.
+
+        Each iteration streams only the NEW training-log lines (node 0 to the
+        console; all nodes scanned for error signatures), then checks for the
+        completion marker. A concise ``[poll]`` heartbeat makes the internal
+        polling visible without re-dumping the log.
+        """
         if timeout_s is None:
             timeout_s = self._poll_count * self._poll_wait_s
 
@@ -452,16 +535,38 @@ class MaxTextTrainingJob:
             if elapsed >= timeout_s:
                 raise RuntimeError(f"training did not complete within {timeout_s}s (polled {it} times)")
 
-            self._scan_for_errors()
+            new_by_node = self._drain_new_log_lines()
+
+            # Stream node 0's (coordinator) new lines to the console FIRST, so the
+            # chunk reaches the log even when the scan below raises on this same
+            # chunk (e.g. a compile traceback in the final drained lines).
+            node0_new = (new_by_node.get(0) or "").rstrip()
+            if node0_new:
+                log.info("[train node0]\n%s", node0_new)
+
+            # Then scan every node's new chunk for errors (raises on the first
+            # match; the scanner logs the offending chunk before raising).
+            for i, text in new_by_node.items():
+                self._scan_chunk_for_errors(self.orch.hosts[i], i, text)
 
             if self.is_complete():
+                # Flush the tail lines written between the drain above and this
+                # completion check -- the final "completed step" marker, and
+                # anything after it (a shutdown traceback or a last-step NaN),
+                # land here. Stream node 0 FIRST, then scan EVERY node's final
+                # chunk (dropping non-0 nodes would hide a worker-only failure in
+                # this window; the scanner logs the offending chunk before raising).
+                tail = self._drain_new_log_lines()
+                node0_tail = (tail.get(0) or "").rstrip()
+                if node0_tail:
+                    log.info("[train node0]\n%s", node0_tail)
+                for i, text in tail.items():
+                    self._scan_chunk_for_errors(self.orch.hosts[i], i, text)
                 log.info("training complete (poll iter=%d, %.0fs elapsed)", it, elapsed)
                 return
 
             log.info(
-                "training in progress (poll iter=%d, %.0fs elapsed)",
-                it,
-                elapsed,
+                "[poll] iter=%d elapsed=%.0fs (streaming node0 log; scanning %d node(s))", it, elapsed, self.num_nodes
             )
             time.sleep(self._poll_wait_s)
 
@@ -488,6 +593,7 @@ class MaxTextTrainingJob:
         if not log_text.strip():
             raise RuntimeError(f"empty/missing training log: {log_file}")
 
+        self.raw_log = log_text  # kept so callers (e.g. checkpoint I/O timing) can re-scan it
         self.step_metrics = extract_step_metrics(log_text)
         self.eval_metrics = extract_eval_metrics(log_text)
         self.summary_metrics = parse_training_log(log_text, self.num_gpus)

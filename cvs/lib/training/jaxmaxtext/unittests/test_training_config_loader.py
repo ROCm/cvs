@@ -13,9 +13,11 @@ import warnings
 from pathlib import Path
 
 from cvs.lib.training.jaxmaxtext.utils.training_config_loader import (
+    CheckpointResume,
     Convergence,
     LossCurve,
     ScalingBaseline,
+    SmokeTest,
     load_training_variant,
     validate_thresholds_cover_training,
 )
@@ -43,6 +45,25 @@ class SchemaDefaultsTests(unittest.TestCase):
         self.assertEqual(lc.milestone_steps, [100, 500, 1000, 5000])
         self.assertEqual(lc.max_slope, 0.0)
         self.assertTrue(lc.enforce)
+
+    def test_smoke_defaults(self):
+        s = SmokeTest()
+        self.assertTrue(s.enabled)  # opt-OUT: on by default
+        self.assertEqual(s.steps, 5)
+        self.assertEqual(s.per_device_batch_size, 1)
+        self.assertEqual(s.max_target_length, 2048)
+
+    def test_checkpoint_resume_defaults(self):
+        cr = CheckpointResume()
+        self.assertFalse(cr.enabled)  # opt-in: off by default
+        self.assertEqual(cr.sweep, "")
+        self.assertEqual(cr.steps_before_ckpt, 6)
+        self.assertEqual(cr.steps_after_resume, 6)
+        self.assertEqual(cr.checkpoint_period, 5)
+        self.assertEqual(cr.loss_tolerance, 0.1)
+        self.assertEqual(cr.max_save_seconds, 0.0)
+        self.assertEqual(cr.max_load_seconds, 0.0)
+        self.assertEqual(cr.smoke_model_overrides, {})
 
 
 class ValidateThresholdsCoverTrainingTests(unittest.TestCase):
@@ -114,11 +135,13 @@ class RealConfigRoundTripTests(unittest.TestCase):
         for cell in expected:
             self.assertIn(cell, self.cfg.thresholds)
 
-    def test_eval_defaults_disabled(self):
-        # The config plumbs eval flags but leaves them disabled by default.
+    def test_eval_not_overridden(self):
+        # After aligning with the MAD scripts, the config no longer sets
+        # eval_interval / eval_steps explicitly -- eval is left to MaxText's
+        # default (disabled). Assert the keys are absent rather than pinned.
         mc = self.cfg.training.maxtext_config
-        self.assertEqual(mc.get("eval_interval"), -1)
-        self.assertEqual(mc.get("eval_steps"), -1)
+        self.assertNotIn("eval_interval", mc)
+        self.assertNotIn("eval_steps", mc)
 
 
 if __name__ == "__main__":

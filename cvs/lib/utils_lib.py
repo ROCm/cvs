@@ -206,9 +206,14 @@ def get_model_from_rocm_smi_output(smi_output):
       - Some driver/rocm-smi versions emit no marketing-name string at all (observed on
         MI350: only "Device ID: 0x75a0" and "GFX Version: gfx950", no "MI350" substring
         anywhere in `rocm-smi -a`); in that case, falls back to matching the known Device ID.
+        MI355X is affected by the same omission (ROCM-21360), hence the second entry below.
       - Falls back to 'mi300x' if nothing matches (conservative default).
 
     """
+    device_id_to_model = {
+        '0x75a0': 'mi350',
+        '0x75a3': 'mi355',
+    }
     if re.search('MI300X', smi_output, re.I):
         model = 'mi300x'
     elif re.search('MI325', smi_output, re.I):
@@ -217,10 +222,12 @@ def get_model_from_rocm_smi_output(smi_output):
         model = 'mi350'
     elif re.search('MI355', smi_output, re.I):
         model = 'mi355'
-    elif re.search(r'Device ID:\s*0x75a0', smi_output, re.I):
-        model = 'mi350'
     else:
         model = 'mi300x'
+        for device_id, mapped_model in device_id_to_model.items():
+            if re.search(rf'Device ID:\s*{re.escape(device_id)}', smi_output, re.I):
+                model = mapped_model
+                break
     return model
 
 
@@ -389,6 +396,11 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
       - {home}: Replaced with home directory of the user
       - {home-mount-dir}: Replaced with home mount directory name from cluster_dict
       - {node-dir-name}: Replaced with node directory name from cluster_dict
+      - {run_dir}: Replaced with this run's directory, resolved by RunLayout when
+        the suite is launched through `cvs run`. Only substituted
+        within the dictionary passed here: a {run_dir} in a cluster file, or in a
+        config subsection the caller never resolves, is left untouched rather than
+        reported, since neither goes through this function.
 
     Args:
       config_dict: Configuration dictionary (can be nested dict/list/str)
@@ -418,6 +430,19 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     # Get home directory
     home_dir = os.path.expanduser(f'~{username}')
 
+    # Only reached when the config actually asks for it: roughly half the test
+    # modules call this resolver and most of their configs never mention {run_dir},
+    # and RunLayout.get() creates directories.
+    run_dir = ''
+    if '{run_dir}' in json.dumps(config_dict, default=str):
+        # Imported here rather than at module level: cvs.core.run_layout pulls in
+        # cvs/core/__init__.py, whose orchestrator factory reaches
+        # cvs/core/orchestrators/baremetal.py, which imports this module back. By
+        # call time everything is imported and the cycle is gone.
+        from cvs.core.run_layout import RunLayout
+
+        run_dir = str(RunLayout.get().run_dir)
+
     log.info(
         f'Resolving config path placeholders with username: {username}, home: {home_dir}, home_mount_dir: {home_mount_dir_name}'
     )
@@ -429,6 +454,7 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
         '{home}': home_dir,
         '{home-mount-dir}': home_mount_dir_name,
         '{node-dir-name}': node_dir_name,
+        '{run_dir}': run_dir,
     }
 
     resolved_config = _resolve_placeholders_in_dict(config_dict, replacements, context_name="test config")
@@ -472,6 +498,8 @@ def wan_hf_snapshot_offline_check_commands(snapshot_dir_host: str) -> dict:
 
     low_dir = shlex.quote(os.path.join(root, 'low_noise_model'))
     high_dir = shlex.quote(os.path.join(root, 'high_noise_model'))
+    # Wan-AI/Wan2.2-I2V-A14B ships exactly 6 diffusion shards per expert (low/high noise);
+    # a different shard count means a partial or mismatched-version snapshot.
     checks['low_noise diffusion shards (6 x >500MiB)'] = (
         f's=$(find -L {low_dir} -maxdepth 1 -type f -name "diffusion_pytorch_model-*.safetensors" '
         f'-size +500M 2>/dev/null | wc -l); test "$s" -eq 6 && echo OK || echo MISSING'

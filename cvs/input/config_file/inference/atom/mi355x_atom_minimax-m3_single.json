@@ -1,0 +1,91 @@
+{
+  "_comment": "Tracker #19 MiniMaxAI/MiniMax-M3 perf stem (mi355x).",
+  "schema_version": 1,
+  "framework": "atom",
+  "gpu_arch": "mi355x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi355x_atom_minimax-m3_single_threshold.json",
+  "run_card": {
+    "atom_image_pin": "rocm/atom-dev:latest",
+    "notes": "P2 workload tracker #19; lab pending"
+  },
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/home/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "MiniMaxAI/MiniMax-M3",
+    "remote": 0,
+    "precision": "bf16"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "atom_mi355x",
+    "image": "rocm/atom-dev:latest",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "atom_args": [
+        "-tp",
+        "8",
+        "--trust-remote-code"
+      ],
+      "env": {
+        "ATOM_DISABLE_MMAP": "true"
+      }
+    }
+  },
+  "params": {
+    "driver": "atom",
+    "port_no": "8000",
+    "tensor_parallelism": "8",
+    "random_range_ratio": "0.8",
+    "num_prompts": "1000",
+    "max_model_length": "4096",
+    "metric_percentiles": "95,99",
+    "reuse_server_across_sweep": "true",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60"
+  },
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "sweep": {
+    "sequence_combinations": [
+      {
+        "name": "minimax_1k_1k",
+        "isl": "1024",
+        "osl": "1024"
+      }
+    ],
+    "runs": [
+      {
+        "combo": "minimax_1k_1k",
+        "concurrency": 128
+      },
+      {
+        "combo": "minimax_1k_1k",
+        "concurrency": 256
+      }
+    ]
+  }
+}

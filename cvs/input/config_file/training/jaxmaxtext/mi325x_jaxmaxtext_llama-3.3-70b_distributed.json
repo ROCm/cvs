@@ -33,7 +33,8 @@
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
           "/dev/infiniband:/dev/infiniband",
-          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+          "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro",
           "/lib/libibverbs.d:/lib/libibverbs.d",
           "/tmp/{user-id}/jax/TRAINING_LOGS:/workspace/maxtext/output"
         ]
@@ -53,8 +54,10 @@
       "/workspace/maxtext/src/MaxText/train.py"
     ],
 
+    "_model_name_comment": "model_name selects the MaxText model preset (layers/heads/dims). Kept in maxtext_config so the run trains Llama-3.3-70B rather than base.yml defaults.",
     "maxtext_config": {
       "base_config": "base.yml",
+      "model_name": "llama3.3-70b",
       "hardware": "gpu",
       "attention": "cudnn_flash_te",
       "dtype": "bfloat16",
@@ -67,7 +70,7 @@
       "async_checkpointing": false,
       "quantization": "",
       "weight_dtype": "bfloat16",
-      "shardy": false,
+      "shardy": true,
       "logits_dot_in_fp32": false,
       "megablox": false,
       "packing": true,
@@ -85,10 +88,12 @@
       "dcn_pipeline_parallelism": 1,
       "dcn_tensor_parallelism": 1,
       "dcn_sequence_parallelism": 1,
-      "max_segments_per_seq": 32,
-      "skip_first_n_steps_for_profiler": 3,
-      "eval_interval": -1,
-      "eval_steps": -1
+      "profiler": "",
+      "quantize_kvcache": false,
+      "kv_quant_axis": "heads_and_dkv",
+      "kv_quant_dtype": "int8",
+      "checkpoint_is_quantized": false,
+      "max_segments_per_seq": 32
     },
 
     "tokenizer": {
@@ -105,14 +110,16 @@
     },
 
     "_NCCL_IB_DISABLE_comment": "IB/RoCE over Broadcom bnxt_re segfaults in RCCL QP setup on these nodes (crashes on the first inter-node channel, independent of GDR / matched rdma-core / channel-count). TCP works. Remove this once the image ships an RCCL build validated against the bnxt_re RoCE stack.",
+    "__comment_NNODES_": "NNODES is 'auto': the real node count is injected at runtime from the cluster_file (the training launcher exports NNODES=<num_nodes>), so this value is a placeholder and is overridden.",
     "env_vars": {
-      "NNODES": "2",
+      "NNODES": "auto",
       "GPU_MAX_HW_QUEUES": "2",
       "HSA_FORCE_FINE_GRAIN_PCIE": "1",
       "HIP_FORCE_DEV_KERNARG": "1",
-      "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.93",
-      "NCCL_DEBUG": "ERROR",
-      "NCCL_IB_DISABLE": "1",
+      "HSA_NO_SCRATCH_RECLAIM": "1",
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.97",
+      "NCCL_DEBUG": "VERSION",
+      "NCCL_IB_DISABLE": "0",
       "NCCL_PROTO": "Simple",
       "NCCL_IB_TC": "41",
       "NCCL_IB_SL": "0",
@@ -131,16 +138,14 @@
     },
 
     "xla_flags": {
-      "xla_gpu_enable_latency_hiding_scheduler": "True",
-      "xla_gpu_enable_triton_gemm": "False",
       "xla_gpu_memory_limit_slop_factor": "95",
+      "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592",
       "xla_gpu_enable_command_buffer": "",
+      "xla_gpu_enable_latency_hiding_scheduler": "True",
+      "xla_gpu_all_gather_combine_threshold_bytes": "8589934592",
+      "xla_gpu_enable_triton_gemm": "False",
       "xla_gpu_enable_cublaslt": "True",
       "xla_gpu_autotune_level": "0",
-      "xla_gpu_enable_reduce_scatter_combine_by_dim": "false",
-      "xla_gpu_reduce_scatter_combine_threshold_bytes": "8589934592",
-      "xla_gpu_all_reduce_combine_threshold_bytes": "8589934592",
-      "xla_gpu_all_gather_combine_threshold_bytes": "8589934592",
       "xla_gpu_enable_all_gather_combine_by_dim": "FALSE"
     },
 
@@ -184,6 +189,20 @@
       "milestone_steps": [100, 500, 1000, 5000],
       "max_slope": 0.0,
       "enforce": true
+    },
+
+    "_checkpoint_resume_comment": "Opt-in checkpoint save+resume + I/O-time test (test_checkpoint_resume). enabled=false -> skipped. Runs ONE sweep (the `sweep` name, else the first enabled) twice: train steps_before_ckpt (checkpoint written at checkpoint_period), then resume + train steps_after_resume; passes if it restarts from the checkpoint step and the boundary loss matches within loss_tolerance. max_save_seconds/max_load_seconds gate checkpoint I/O time (0 = record-only). smoke_model_overrides can shrink the model while keeping the same tokenizer/vocab, e.g. {\"base_num_decoder_layers\": 4}; empty = the config's full model. delete_ckpt_dir=true deletes the checkpoint directory after the test to free disk (set false to keep the files for inspection).",
+    "checkpoint_resume": {
+      "enabled": false,
+      "sweep": "",
+      "steps_before_ckpt": 6,
+      "steps_after_resume": 6,
+      "checkpoint_period": 5,
+      "loss_tolerance": 0.1,
+      "max_save_seconds": 0.0,
+      "max_load_seconds": 0.0,
+      "delete_ckpt_dir": true,
+      "smoke_model_overrides": {}
     },
 
     "_error_patterns_comment": "Regexes (name -> pattern) scanned in each node's training.log during polling; a match fails that sweep's training_run with the matched name. Add/remove entries as you find new error signatures. Remove this block to use the built-in defaults. Escape backslashes per JSON (e.g. two backslashes for a regex \\d).",

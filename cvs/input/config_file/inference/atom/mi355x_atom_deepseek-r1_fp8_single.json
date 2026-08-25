@@ -87,5 +87,8 @@
         "concurrency": 256
       }
     ]
+  },
+  "platform": {
+    "gpu_metrics_poll": true
   }
 }

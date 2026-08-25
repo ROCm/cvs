@@ -20,3 +20,6 @@ dist/
 
 # Local sample output
 sample_reports/
+
+# Personal / local-only notes (not shared on branches)
+.local/

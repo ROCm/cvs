@@ -11,6 +11,7 @@ from cvs.lib import globals
 from collections import defaultdict
 
 from cvs.lib.preflight.base import PreflightCheck, partition_nodes_into_groups
+from cvs.lib.preflight.node_smoke import DEFAULT_ARTIFACTS_ROOT_DIR
 import re
 import shlex
 import time
@@ -103,7 +104,7 @@ class RdmaConnectivityCheck(PreflightCheck):
 
     def _artifacts_root_dir(self) -> str:
         cfg = self.config_dict or {}
-        root = get_nested_config(cfg, 'reporting', 'artifacts_root_dir', '/tmp/preflight')
+        root = get_nested_config(cfg, 'reporting', 'artifacts_root_dir', DEFAULT_ARTIFACTS_ROOT_DIR)
         return str(root).rstrip('/')
 
     def _remote_rdma_workspace_root(self) -> str:

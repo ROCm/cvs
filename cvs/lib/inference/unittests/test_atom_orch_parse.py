@@ -34,6 +34,7 @@ def _fake_variant(
     scaling_baseline_output_throughput="",
     ib_netdev="eth0",
     ib_hca_devices=None,
+    bench_extra_args="",
 ):
     params = SimpleNamespace(
         driver=driver,
@@ -56,7 +57,7 @@ def _fake_variant(
         dataset_name="random",
         backend="vllm",
         max_model_length="8192",
-        bench_extra_args="",
+        bench_extra_args=bench_extra_args,
         result_filename="results",
     )
     roles = SimpleNamespace(
@@ -65,7 +66,7 @@ def _fake_variant(
         )
     )
     paths = SimpleNamespace(log_dir="/LOGS", models_dir="/models")
-    model = SimpleNamespace(id="openai/gpt-oss-120b")
+    model = SimpleNamespace(id="openai/gpt-oss-120b", precision="")
     return SimpleNamespace(params=params, roles=roles, paths=paths, model=model)
 
 
@@ -132,10 +133,10 @@ class TestATOMAtomOrchParse(unittest.TestCase):
             num_prompts=1000,
         )
         job.run_client()
-        rm_cmds = [c for c, _ in orch.commands if c.startswith("rm -f ")]
+        rm_cmds = [c for c in orch.exec_on_head_commands if c.startswith("rm -f ")]
         self.assertEqual(len(rm_cmds), 1)
         self.assertIn(job._result_artifact, rm_cmds[0])
-        self.assertTrue(any("benchmark_serving" in c for c, _ in orch.commands))
+        self.assertTrue(any("benchmark_serving" in c for c in orch.exec_on_head_commands))
 
     def test_parse_results_empty_artifact_raises(self):
         job = AtomJob(
@@ -176,6 +177,36 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         merged = AtomJob._merged_serve_args(variant)
         self.assertEqual(merged["gpu-memory-utilization"], "0.75")
 
+    def test_merged_serve_args_skips_enforce_eager_for_deepseek_v4(self):
+        variant = _fake_variant(driver="vllm_atom")
+        variant.model.id = "deepseek-ai/DeepSeek-V4-Pro"
+        merged = AtomJob._merged_serve_args(variant)
+        self.assertNotIn("enforce-eager", merged)
+
+    def test_build_server_cmd_skips_r1_aiter_env_for_deepseek_v4(self):
+        orch = FakeOrch()
+        variant = _fake_variant(driver="vllm_atom")
+        variant.model.id = "deepseek-ai/DeepSeek-V4-Pro"
+        job = AtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+            **_PREFILLED_FABRIC,
+        )
+        job.build_server_cmd()
+        env_cmd = orch.commands[0][0]
+        self.assertNotIn("VLLM_USE_AITER_UNIFIED_ATTENTION", env_cmd)
+        self.assertNotIn("VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4", env_cmd)
+
+    def test_flatten_serve_args_omits_false_flags(self):
+        argv = AtomJob._flatten_serve_args({"enforce-eager": False, "trust-remote-code": True})
+        self.assertNotIn("--enforce-eager", argv)
+        self.assertIn("--trust-remote-code", argv)
+
     def test_build_server_cmd_suppresses_gpu_memory_env_vars(self):
         orch = FakeOrch()
         variant = _fake_variant(driver="vllm")
@@ -200,6 +231,24 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertNotIn("VLLM_GPU_MEMORY_UTIL", env_cmd)
         self.assertNotIn("VLLM_ENFORCE_EAGER", env_cmd)
         self.assertIn("CUSTOM_FLAG", env_cmd)
+
+    def test_build_server_cmd_exports_mxfp4_triton_env(self):
+        orch = FakeOrch()
+        variant = _fake_variant(driver="atom")
+        variant.model.precision = "mxfp4"
+        job = AtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.build_server_cmd()
+        env_cmd = orch.commands[0][0]
+        self.assertIn("ATOM_USE_TRITON_MOE=1", env_cmd)
+        self.assertIn("ATOM_USE_TRITON_GEMM=1", env_cmd)
 
     def test_client_log_failures_traceback(self):
         job = AtomJob(
@@ -255,6 +304,124 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job._bench_max_failed_requests = 2
         failed = job._client_log_failures()
         self.assertEqual(failed, [])
+
+    def test_client_log_failures_skips_failed_requests_when_disabled(self):
+        job = AtomJob(
+            orch=FakeOrch(exec_return={"node0": "Failed requests: 99\n"}),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=32,
+            num_prompts=100,
+        )
+        job._bench_max_failed_requests = 0
+        self.assertEqual(job._client_log_failures(check_failed_requests=False), [])
+
+    @patch("cvs.lib.inference.atom.atom_orch.time.sleep", return_value=None)
+    def test_wait_client_complete_defers_failed_requests_until_artifact_ready(self, _sleep):
+        class SeqOrch(FakeOrch):
+            def __init__(self):
+                super().__init__()
+                self.artifact_reads = 0
+
+            def exec_on_head(self, cmd, **kwargs):
+                self.exec_on_head_commands.append(cmd)
+                if "test -s" in cmd:
+                    self.artifact_reads += 1
+                    return {"node0": "OK\n" if self.artifact_reads >= 2 else "NO\n"}
+                if "grep -aE" in cmd:
+                    return {"node0": "Failed requests: 279\n"}
+                return {"node0": ""}
+
+        job = AtomJob(
+            orch=SeqOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="8192",
+            osl="1024",
+            concurrency=32,
+            num_prompts=1000,
+        )
+        job._client_initial_wait = 0
+        job._client_poll_count = 3
+        job._client_poll_wait = 0
+        job._bench_max_failed_requests = 0
+        with self.assertRaises(RuntimeError) as ctx:
+            job.wait_client_complete()
+        self.assertIn("Failed requests: 279", str(ctx.exception))
+        self.assertGreaterEqual(job.orch.artifact_reads, 2)
+
+    def test_vllm_client_argv_includes_disable_tqdm(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertIn("--disable-tqdm", job._vllm_client_argv())
+
+    def test_vllm_client_argv_honors_bench_extra_disable_tqdm(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom", bench_extra_args="--disable-tqdm"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertEqual(job._vllm_client_argv().count("--disable-tqdm"), 1)
+
+    def test_client_log_failures_uses_grep_not_tail(self):
+        orch = FakeOrch(exec_on_head_return={"node0": ""})
+        job = AtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job._client_log_failures()
+        self.assertTrue(orch.exec_on_head_commands)
+        cmd = orch.exec_on_head_commands[0]
+        self.assertIn("grep -aE", cmd)
+        self.assertNotIn("tail -2000", cmd)
+
+    def test_client_log_complete_uses_grep_marker(self):
+        orch = FakeOrch(exec_on_head_return={"node0": "OK\n"})
+        job = AtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="sglang"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertTrue(job._client_log_complete())
+        self.assertIn("grep -aq", orch.exec_on_head_commands[0])
+        self.assertIn("Successful requests:", orch.exec_on_head_commands[0])
+
+    def test_bench_result_ready_vllm_artifact_path(self):
+        orch = FakeOrch(exec_on_head_return={"node0": "OK\n"})
+        job = AtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertTrue(job._result_artifact.endswith("/results"))
+        self.assertTrue(job._bench_result_ready())
+        self.assertIn("test -s", orch.exec_on_head_commands[0])
 
     def test_early_failure_regexes(self):
         job = AtomJob(
@@ -335,6 +502,38 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertIn("ATOM_DP_RANK=1", launch_cmds[1])
         self.assertIn("ATOM_DP_SIZE=2", launch_cmds[0])
 
+    def test_atom_server_argv_injects_max_model_len_from_params(self):
+        job = AtomJob(
+            orch=FakeOrch(hosts=["10.0.0.1"]),
+            variant=_fake_variant(driver="atom"),
+            hf_token="tok",
+            isl="128",
+            osl="32",
+            concurrency=1,
+            num_prompts=1,
+        )
+        argv = job._atom_server_argv()
+        idxs = [i for i, a in enumerate(argv) if a == "--max-model-len"]
+        self.assertEqual(len(idxs), 1)
+        self.assertEqual(argv[idxs[0] + 1], "8192")
+
+    def test_atom_server_argv_respects_config_pinned_max_model_len(self):
+        variant = _fake_variant(driver="atom")
+        variant.roles.server.atom_args = ["-tp", "8", "--max-model-len", "4096"]
+        job = AtomJob(
+            orch=FakeOrch(hosts=["10.0.0.1"]),
+            variant=variant,
+            hf_token="tok",
+            isl="128",
+            osl="32",
+            concurrency=1,
+            num_prompts=1,
+        )
+        argv = job._atom_server_argv()
+        idxs = [i for i, a in enumerate(argv) if a == "--max-model-len"]
+        self.assertEqual(len(idxs), 1)
+        self.assertEqual(argv[idxs[0] + 1], "4096")
+
     def test_distributed_atom_tp8_multinode_never_passes_vllm_flags(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
         variant = _fake_variant(driver="atom", nnodes="2", pipeline_parallel_size="2", master_addr="10.0.0.1")
@@ -380,6 +579,51 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         job.run_client()
         self.assertEqual(len(orch.exec_on_head_commands), 2)
         self.assertTrue(any("benchmark_serving" in c for c in orch.exec_on_head_commands))
+
+    def test_single_node_client_uses_exec_on_head(self):
+        orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
+        job = AtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="sglang", nnodes="1"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.run_client()
+        self.assertEqual(len(orch.exec_on_head_commands), 2)
+        self.assertFalse(any("sglang.bench_serving" in c for c, _ in orch.commands))
+        launch = " ".join(job._sglang_client_argv())
+        self.assertIn("--random-input-len 1024", launch)
+        self.assertIn("--random-output-len 1024", launch)
+        self.assertIn("--model openai/gpt-oss-120b", launch)
+        self.assertIn("--output-file", launch)
+        self.assertIn("PYTHONPATH=/sgl-workspace/sglang/python", orch.exec_on_head_commands[1])
+
+    def test_parse_results_sglang_jsonl(self):
+        raw = {
+            "completed": 1000,
+            "duration": 120.5,
+            "output_throughput": 1500.0,
+            "total_throughput": 3000.0,
+            "mean_ttft_ms": 42.0,
+            "p99_ttft_ms": 99.0,
+        }
+        payload = json.dumps(raw)
+        job = AtomJob(
+            orch=FakeOrch(exec_on_head_return={"head": payload}),
+            variant=_fake_variant(driver="sglang"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=1000,
+        )
+        self.assertTrue(job._result_artifact.endswith("/results.jsonl"))
+        metrics = job.parse_results()["head"]
+        self.assertIn("client.output_throughput", metrics)
+        self.assertAlmostEqual(metrics["client.total_token_throughput"], 3000.0)
 
     def test_distributed_vllm_atom_pp2_passes_vllm_executor_flags(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])

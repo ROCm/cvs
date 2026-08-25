@@ -1,0 +1,68 @@
+{
+  "_comment": "MI355X W1 FP8 gsm8k accuracy (record-only until MI355X lab). Mirror of mi300x accuracy stem.",
+  "schema_version": 1,
+  "framework": "atom",
+  "gpu_arch": "mi355x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi355x_atom_deepseek-r1_fp8_accuracy_threshold.json",
+  "run_card": {
+    "atom_image_pin": "rocm/atom-dev:nightly_202606211542",
+    "notes": "MI355X ACC-1 seeds; enforce after lab confirm"
+  },
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/home/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "deepseek-ai/DeepSeek-R1-0528",
+    "remote": 0,
+    "precision": "fp8"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "atom_mi355x",
+    "image": "rocm/atom-dev:nightly_202606211542",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
+        ],
+        "devices": ["/dev/dri", "/dev/kfd"]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "atom_args": ["-tp", "8", "--kv_cache_dtype", "fp8", "--trust-remote-code"],
+      "env": {"ATOM_DISABLE_MMAP": "true"}
+    }
+  },
+  "params": {
+    "driver": "atom",
+    "port_no": "8000",
+    "tensor_parallelism": "8",
+    "num_prompts": "1",
+    "max_model_length": "4096"
+  },
+  "functional": {"api_smoke": true, "health_check": true},
+  "accuracy": {
+    "tasks": [
+      {"id": "gsm8k_flex", "task": "gsm8k", "num_fewshot": 5, "num_concurrent": 4},
+      {"id": "gsm8k_strict", "task": "gsm8k", "num_fewshot": 5, "num_concurrent": 4, "metadata": {"filter": "strict-match"}},
+      {"id": "hellaswag", "task": "hellaswag", "num_fewshot": 0, "num_concurrent": 4},
+      {"id": "mmlu_pro", "task": "mmlu_pro", "num_fewshot": 5, "num_concurrent": 4}
+    ]
+  },
+  "sweep": {
+    "sequence_combinations": [{"name": "acc_warmup", "isl": "128", "osl": "32"}],
+    "runs": [{"combo": "acc_warmup", "concurrency": 1}]
+  }
+}

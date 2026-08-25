@@ -182,8 +182,7 @@ class LocalPssh:
             except queue.Empty:
                 proc.kill()
                 proc.wait()
-                lines.append(f"[LocalPssh] Command killed after {inactivity_timeout}s of inactivity\n")
-                break
+                raise TimeoutError(f"Command killed after {inactivity_timeout}s of inactivity: {cmd}")
             if line is None:
                 break
             lines.append(line)
