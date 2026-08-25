@@ -9,6 +9,13 @@
     "max_slope": 0.0,
     "enforce": true
   },
+  "checkpoint": {
+    "enforce": false,
+    "save_interval": 20,
+    "save_iters": 21,
+    "resume_iters": 25,
+    "loss_rtol": 0.05
+  },
   "threshold_json": "mi325x_megatron_deepseek-v2-lite_single_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
