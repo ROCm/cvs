@@ -150,6 +150,9 @@ class TorchTitanTrainingJob:
         self.job_cmd_list = []
         self.training_results_dict = {}
         self.local_tokenizer_path = None
+        self.checkpoint_dir = None
+        self.save_interval = None
+        self.load_checkpoint = False
 
         # Get config and model params
         self.config = variant_config.config
@@ -427,6 +430,14 @@ class TorchTitanTrainingJob:
                     f'--module torchtitan.train --job.config_file {config_file_path}'
                 )
 
+                # Add checkpoint args if configured
+                if self.checkpoint_dir:
+                    torchrun_cmd += f' --checkpoint.folder {self.checkpoint_dir}'
+                    torchrun_cmd += f' --checkpoint.interval {self.save_interval}'
+                    torchrun_cmd += ' --checkpoint.enable_checkpoint true'
+                if self.load_checkpoint:
+                    torchrun_cmd += ' --checkpoint.load_step -1'
+
                 log_path = f'{self.combo_log_dir}/out-node{i}/training.log'
                 self.orch.exec(f'mkdir -p $(dirname {log_path})')
 
@@ -446,6 +457,14 @@ class TorchTitanTrainingJob:
                 f'--role rank --tee 3 '
                 f'--module torchtitan.train --job.config_file {config_file_path}'
             )
+
+            # Add checkpoint args if configured
+            if self.checkpoint_dir:
+                torchrun_cmd += f' --checkpoint.folder {self.checkpoint_dir}'
+                torchrun_cmd += f' --checkpoint.interval {self.save_interval}'
+                torchrun_cmd += ' --checkpoint.enable_checkpoint true'
+            if self.load_checkpoint:
+                torchrun_cmd += ' --checkpoint.load_step -1'
 
             log_path = f'{self.combo_log_dir}/out-node0/training.log'
             self.orch.exec(f'mkdir -p $(dirname {log_path})')
@@ -642,6 +661,24 @@ class TorchTitanTrainingJob:
                 log.info('Node %s: VRAM successfully freed', node)
             else:
                 log.warning('Node %s: GPU processes may still be running after kill attempt', node)
+
+    def _parse_step_losses(self, log_text):
+        """Parse step-to-loss mapping from TorchTitan training log.
+
+        Args:
+            log_text (str): Full training log text.
+
+        Returns:
+            dict: {step: loss} mapping for all logged steps.
+        """
+        losses = {}
+        # TorchTitan pattern: step: N | loss: X.XX
+        pattern = re.compile(r'step:\s+(\d+)[^\n]*?loss:\s+([0-9.eE+\-]+)', re.I)
+        for m in pattern.finditer(log_text):
+            step = int(m.group(1))
+            loss = float(m.group(2))
+            losses[step] = loss
+        return losses
 
     def _read_last_node_log(self, tail_lines=0):
         """Read the training log from the last node and return its output.
