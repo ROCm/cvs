@@ -3,7 +3,7 @@
     "node_check": {
       "_comment": "Individual node validation (parallel across nodes)",
 
-      "enabled": true,
+      "enabled": false,
       "_comment_enabled": "Enable GPU visibility, AMDGPU/KFD, kernel-health, and ROCm validation.",
 
       "_example_gpus_per_node": 8,
@@ -11,7 +11,7 @@
       "_comment_gpus_per_node": "Exact number of AMD GPUs expected on every node.",
 
       "_example_expected_rocm_version": "6.2.0",
-      "expected_rocm_version": "<changeme>",
+      "expected_rocm_version": "10.0.0",
       "_comment_expected_rocm_version": "Expected ROCm version across all cluster nodes. Must match the output of 'amd-smi version' on all nodes. Format: 'major.minor.patch' (e.g., '6.2.0', '5.7.1')."
     },
 
@@ -25,11 +25,11 @@
         "_comment_connectivity_mode": "RDMA connectivity testing mode. Options: 'basic' (test adjacent node pairs, fast, ~14% coverage for 8 nodes), 'full_mesh' (test all possible node pairs, comprehensive, 100% coverage), 'skip' (skip RDMA connectivity testing entirely).",
 
         "_example_gid_index": "3",
-        "gid_index": "<changeme>",
+        "gid_index": "3",
         "_comment_gid_index": "GID index to check on all RDMA interfaces. Typically '3' for RoCE (RDMA over Converged Ethernet). Must be a valid GID index for your InfiniBand/RoCE setup.",
 
         "_example_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
-        "interfaces": ["<changeme>"],
+        "interfaces": ["rdma0", "rdma1", "rdma2", "rdma3", "rdma4", "rdma5", "rdma6", "rdma7"],
         "_comment_interfaces": "List of specific RDMA interface names that should be present on all cluster nodes. Examples: ['rocep28s0', 'rocep62s0'] for standard setup, ['mlx5_0', 'mlx5_1'] for Mellanox, ['ib0', 'ib1'] for generic InfiniBand.",
 
         "nodes_per_full_mesh_group": 32,
@@ -155,7 +155,7 @@
       "venv_activate": "/home/{user-id}/envs/preflight/.venv/bin/activate",
       "_comment_venv_activate": "Path to the Python virtualenv activate script used by primus-cli direct. Required when connectivity_mode is 'run'.",
 
-      "connectivity_mode": "skip",
+      "connectivity_mode": "run",
       "_comment_connectivity_mode": "Options: 'run' (host/GPU/RDMA roll-call via node_smoke) or 'skip' (default).",
 
       "gpus_per_node": 8,
@@ -203,7 +203,7 @@
       "ssh_timeout": 300,
       "_comment_ssh_timeout": "SSH timeout in seconds for each node's node_smoke invocation (~30s Tier 1; use 600+ with tier2_perf).",
 
-      "tier2_perf": false,
+      "tier2_perf": true,
       "_comment_tier2_perf": "Enable Tier 2 perf sanity (--tier2-perf): 8192³ GEMM TFLOPS, HBM D2D copy bandwidth, local multi-GPU RCCL all-reduce. Requires NCCL_IB_HCA / NCCL_SOCKET_IFNAME (see launch_nodesmoke_ssh.sh).",
 
       "gemm_tflops_min": 600,
@@ -228,7 +228,7 @@
     "tier3_info": {
       "_comment": "Primus Tier 3 Host/GPU/Network info via primus-cli direct -- preflight --host --gpu --network (opt-in; default skip). No Slurm.",
 
-      "connectivity_mode": "skip",
+      "connectivity_mode": "run",
       "_comment_connectivity_mode": "Options: 'run' or 'skip' (default). Independent of node_smoke.connectivity_mode — enabling node_smoke does not enable Tier 3.",
 
       "auto_setup": true,

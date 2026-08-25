@@ -15,7 +15,10 @@ The preflight checks system validates essential cluster health and configuration
    preset to validate the IFoE scale-up data path (using MI4XX AFM admission or,
    for generic profiles, an `amd-smi fabric --json` single-vPod precondition)
    *(AIMVT-181; opt-in)*
-7. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
+7. **Node Smoke Tier 1 (opt-in)** - Per-node GPU/RDMA operational roll-call via Primus `node_smoke`
+8. **Node Smoke Tier 2 (optional)** - Per-node perf sanity when `tier2_perf` is enabled (GEMM, HBM, local RCCL)
+9. **Node Smoke Tier 3 (opt-in)** - Cluster-wide Host/GPU/Network inventory via Primus `preflight --host --gpu --network`
+10. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Quick Start
 
@@ -238,14 +241,59 @@ Per-node verdict is derived as:
 To exercise the rack IFoE switch end-to-end, set `scope` to `"cluster"` and
 allow TCP port `31337` between every selected node.
 
+## Node Smoke tiers (Primus)
+
+Node Smoke checks are **opt-in** and configured under `node_smoke_tier1` and
+`node_smoke_tier3` in the preflight config. Legacy keys `node_smoke` and
+`tier3_info` are still accepted.
+
+| Tier | Config | Scope | Default count (8 GPU) |
+|------|--------|-------|------------------------|
+| **Tier 1** | `node_smoke_tier1.connectivity_mode: "run"` | Per node | 39 tests run per node |
+| **Tier 2** | `node_smoke_tier1.tier2_perf: true` | Per node | 17 tests run per node |
+| **Tier 3** | `node_smoke_tier3.connectivity_mode: "run"` | Cluster-wide | 27 tests run cluster-wide |
+
+Tier 1 runs `primus-cli direct --single -- node_smoke` on each node. Tier 2 adds
+`--tier2-perf` (large GEMM TFLOPS, HBM D2D bandwidth, local multi-GPU RCCL).
+Tier 3 runs `primus-cli direct -- preflight --host --gpu --network` with a
+distributed rendezvous across the cluster. Tier 3 is independent of Tier 1.
+
+Preflight reports each tier separately in the console and HTML summary, for example:
+
+```
+✅ Node Smoke Tier 1: PASS - 2/2 nodes passed Node Smoke Tier 1; 39 tests run per node
+✅ Node Smoke Tier 2: PASS - 2/2 nodes passed Node Smoke Tier 2; 17 tests run per node
+✅ Node Smoke Tier 3: PASS - 2/2 nodes passed Node Smoke Tier 3; 27 tests run cluster-wide
+```
+
+See [README_preflight_config.md](../../input/config_file/preflight/README_preflight_config.md)
+for the full parameter reference, check catalog, and configuration examples.
+
+### Run individual Node Smoke tests
+
+```bash
+# Tier 1 only
+cvs run preflight_checks test_node_smoke_tier1 \
+  --cluster_file cluster.json \
+  --config_file preflight_config.json
+
+# Tier 3 only
+cvs run preflight_checks test_node_smoke_tier3 \
+  --cluster_file cluster.json \
+  --config_file preflight_config.json
+```
+
 ## Output and Reporting
 
 ### Console Output
 ```
+✅ Node Health: PASS (2/2 nodes healthy)
 ✅ GID Consistency: PASS (64/64 interfaces have GID index 3)
-⚪ RDMA Connectivity: SKIPPED (Test skipped by configuration)  
+⚪ RDMA Connectivity: SKIPPED (Test skipped by configuration)
 ✅ ROCm Versions: PASS (All nodes running 6.2.0)
-✅ Interface Names: PASS (All interfaces match rocep*s0 pattern)
+✅ Node Smoke Tier 1: PASS - 2/2 nodes passed Node Smoke Tier 1; 39 tests run per node
+✅ Node Smoke Tier 2: PASS - 2/2 nodes passed Node Smoke Tier 2; 17 tests run per node
+✅ Node Smoke Tier 3: PASS - 2/2 nodes passed Node Smoke Tier 3; 27 tests run cluster-wide
 
 Overall Status: PASS - Cluster ready for performance testing (connectivity not tested)
 ```
@@ -303,12 +351,14 @@ cvs run pytorch_xdit_wan \
 5. Run IFoE checks before RDMA-specific eligibility pruning:
    - L2 connectivity using `afmctl test ping` (opt-in)
    - TransferBench scale-up data-path smoketest (opt-in)
-6. Run RDMA checks:
+6. Run Node Smoke Tier 1 (and Tier 2 when tier2_perf is enabled) per node (opt-in)
+7. Run Node Smoke Tier 3 cluster inventory (opt-in)
+8. Run RDMA checks:
    - Interface naming and presence
    - GID consistency
    - RDMA connectivity using `ibv_rc_pingpong` (mode-dependent)
-7. Generate the comprehensive summary and HTML report
-8. Return overall PASS/FAIL status
+9. Generate the comprehensive summary and HTML report
+10. Return overall PASS/FAIL status
 ```
 
 ### Parallel Execution
@@ -382,15 +432,21 @@ ibv_devinfo
 ## Files and Structure
 
 ```
-cvs/cvs/tests/preflight/
+cvs/tests/preflight/
 ├── __init__.py
 ├── preflight_checks.py          # Main test module
 └── README.md                    # This file
 
-cvs/cvs/lib/
-└── preflight_lib.py             # Core preflight functions
+cvs/lib/preflight/
+├── gid_consistency.py           # GID validation
+├── interface_consistency.py     # RDMA interface checks
+├── node_smoke.py                # Node Smoke Tier 1/2
+├── node_smoke_counts.py         # Tier test-count catalog
+├── tier3_info.py                # Node Smoke Tier 3
+├── report.py                    # HTML report generation
+└── ...                          # Other check modules
 
-cvs/cvs/input/config_file/preflight/
+cvs/input/config_file/preflight/
 ├── preflight_config.json        # Default configuration
 └── README_preflight_config.md   # Configuration guide
 ```
@@ -466,26 +522,28 @@ For clusters with 100+ nodes:
 
 When adding new preflight checks:
 
-1. Add the check function to `preflight_lib.py`
+1. Add the check class or function under `cvs/lib/preflight/`
 2. Add the test function to `preflight_checks.py`
-3. Update the HTML report generation
-4. Add configuration parameters if needed
-5. Update documentation
+3. Update `report.py` summary and HTML generation
+4. Add configuration parameters in `cvs/parsers/schemas.py` and `preflight_config.json`
+5. Add unit tests under the module's `unittests/` directory
+6. Update documentation in this README and `README_preflight_config.md`
 
 ### Example: Adding a New Check
 
 ```python
-# In preflight_lib.py
-def check_gpu_health(phdl):
-    """Check GPU health across all nodes."""
-    cmd = "rocm-smi --showtemp --showpower"
-    # Implementation here
-    return results
+# In cvs/lib/preflight/my_check.py
+class MyCheck:
+    def run(self, phdl, config_dict):
+        """Check something across all nodes."""
+        # Implementation here
+        return results
 
-# In preflight_checks.py  
-def test_gpu_health(phdl, config_dict):
-    """Test GPU health across cluster nodes."""
-    results = preflight_lib.check_gpu_health(phdl)
+# In preflight_checks.py
+def test_my_check(phdl, config_dict):
+    """Test my check across cluster nodes."""
+    check = MyCheck()
+    results = check.run(phdl, config_dict)
     # Validation and reporting here
 ```
 

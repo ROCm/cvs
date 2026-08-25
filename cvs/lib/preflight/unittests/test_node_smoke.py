@@ -203,5 +203,76 @@ class TestNodeSmokeCheckRun(unittest.TestCase):
         self.assertIn("--rccl-gbs-min 100", cmd)
 
 
+class TestPreflightNodeSmokeReporting(unittest.TestCase):
+    def test_preflight_check_display_names(self):
+        from cvs.lib.preflight.report import preflight_check_display_name
+
+        self.assertEqual(preflight_check_display_name("node_smoke_tier1"), "Node Smoke Tier 1")
+        self.assertEqual(preflight_check_display_name("node_smoke_tier2"), "Node Smoke Tier 2")
+        self.assertEqual(preflight_check_display_name("node_smoke_tier3"), "Node Smoke Tier 3")
+        self.assertEqual(preflight_check_display_name("node_smoke"), "Node Smoke Tier 1")
+        self.assertEqual(preflight_check_display_name("tier3_info"), "Node Smoke Tier 3")
+
+    def test_node_smoke_tier_summaries_use_tier_labels(self):
+        from cvs.lib.preflight.report import PreflightReportGenerator
+
+        tier1_payload = {
+            "tier1": {
+                "per_gpu": [{"gpu": i, "status": "PASS"} for i in range(8)],
+                "gpu_processes": {"ok": True},
+                "nics": {"ok": True},
+                "host_limits": {"ok": True},
+                "gpu_low_level": {"ok": True},
+                "xgmi": {"ok": True},
+                "tooling": {"ok": True},
+                "gpu_visibility": {"ok": True},
+            }
+        }
+        tier1_results = {
+            "tier2_perf": True,
+            "gpus_per_node": 8,
+            "tier1_tests_run": 39,
+            "tier2_tests_run": 17,
+            "node_results": {
+                "node0": {"status": "PASS", "node_payload": tier1_payload},
+                "node1": {"status": "PASS", "node_payload": tier1_payload},
+            },
+            "failed_nodes": [],
+            "unknown_nodes": [],
+            "passing_nodes": ["node0", "node1"],
+            "total_nodes": 2,
+            "tier2_thresholds": {
+                "gemm_tflops_min": 600,
+                "hbm_gbs_min": 2000,
+                "rccl_gbs_min": 100,
+            },
+        }
+        tier3_results = {
+            "skipped": False,
+            "tier3_tests_run": 27,
+            "node_results": {"node0": {"status": "PASS"}, "node1": {"status": "PASS"}},
+            "failed_nodes": [],
+            "unknown_nodes": [],
+            "passing_nodes": ["node0", "node1"],
+            "total_nodes": 2,
+        }
+
+        generator = PreflightReportGenerator(None, {}, config_dict={})
+        tier1_summary = generator._summarize_node_smoke_tier1_results(tier1_results)
+        tier2_summary = generator._summarize_node_smoke_tier2_results(tier1_results)
+        tier3_summary = generator._summarize_node_smoke_tier3_results(tier3_results)
+
+        self.assertIn(
+            "2/2 nodes passed Node Smoke Tier 1; 39 tests run per node",
+            tier1_summary["summary"],
+        )
+        self.assertIn("Node Smoke Tier 2", tier2_summary["summary"])
+        self.assertIn("17 tests run per node", tier2_summary["summary"])
+        self.assertIn(
+            "2/2 nodes passed Node Smoke Tier 3; 27 tests run cluster-wide",
+            tier3_summary["summary"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

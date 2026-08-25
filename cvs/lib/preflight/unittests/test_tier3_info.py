@@ -29,7 +29,7 @@ class TestBuildPreflightInfoFlags(unittest.TestCase):
         self.assertIn("--disable-pdf", flags)
 
     def test_resolve_dump_path_without_reporting_section(self):
-        self.assertEqual(_resolve_dump_path({"tier3_info": {"dump_path": ""}}), "/tmp/preflight/tier3_info")
+        self.assertEqual(_resolve_dump_path({"tier3_info": {"dump_path": ""}}), "/tmp/preflight/node_smoke_tier3")
 
     def test_master_node_includes_report_markers(self):
         cmd = build_remote_preflight_info_command(

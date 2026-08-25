@@ -16,6 +16,14 @@ import shlex
 from typing import Any, Dict, List, Optional
 
 from cvs.lib.preflight.base import PreflightCheck
+from cvs.lib.preflight.node_smoke_counts import aggregate_node_smoke_test_counts
+
+NODE_SMOKE_TIER1_SECTION = "node_smoke_tier1"
+LEGACY_NODE_SMOKE_SECTION = "node_smoke"
+
+NODE_SMOKE_TIER1_LABEL = "Node Smoke Tier 1"
+NODE_SMOKE_TIER2_LABEL = "Node Smoke Tier 2"
+NODE_SMOKE_TIER3_LABEL = "Node Smoke Tier 3"
 
 # Writable fallback when reporting.artifacts_root_dir is omitted from config.
 # Do not use ``{user-id}`` here — in-code defaults bypass resolve_test_config_placeholders.
@@ -42,6 +50,14 @@ def get_nested_config(config_dict, section, key, default):
     if isinstance(current, dict) and key in current:
         return current[key]
     return default
+
+
+def get_preflight_nested(cfg: dict, section: str, legacy_section: str, key: str, default):
+    """Read ``section.key``, falling back to ``legacy_section.key`` when unset."""
+    value = get_nested_config(cfg, section, key, None)
+    if value is None and legacy_section:
+        value = get_nested_config(cfg, legacy_section, key, None)
+    return default if value is None else value
 
 
 def resolve_rdma_interfaces(cfg: dict) -> List[str]:
@@ -94,7 +110,9 @@ def _resolve_dump_path(cfg: dict) -> str:
     """Return node_smoke dump directory; empty config uses reporting artifacts root."""
     artifacts_root = get_nested_config(cfg, "reporting", "artifacts_root_dir", DEFAULT_ARTIFACTS_ROOT_DIR)
     default_dump = f"{str(artifacts_root).rstrip('/')}/node_smoke"
-    configured = get_nested_config(cfg, "node_smoke", "dump_path", default_dump)
+    configured = get_preflight_nested(
+        cfg, NODE_SMOKE_TIER1_SECTION, LEGACY_NODE_SMOKE_SECTION, "dump_path", default_dump
+    )
     configured_s = str(configured or "").strip()
     return configured_s if configured_s else default_dump
 
@@ -286,72 +304,77 @@ class NodeSmokeCheck(PreflightCheck):
     def _load_settings(self):
         cfg = self.config_dict or {}
 
-        self.mode = _normalize_mode(get_nested_config(cfg, "node_smoke", "connectivity_mode", "skip"))
-        self.primus_dir = get_nested_config(cfg, "node_smoke", "primus_dir", "")
-        self.venv_activate = get_nested_config(cfg, "node_smoke", "venv_activate", "")
-        self.gpus_per_node = int(get_nested_config(cfg, "node_smoke", "gpus_per_node", 8))
-        self.master_port = int(get_nested_config(cfg, "node_smoke", "master_port", 1234))
-        self.ssh_timeout = int(get_nested_config(cfg, "node_smoke", "ssh_timeout", 300))
+        tier1 = NODE_SMOKE_TIER1_SECTION
+        legacy = LEGACY_NODE_SMOKE_SECTION
+        self.mode = _normalize_mode(get_preflight_nested(cfg, tier1, legacy, "connectivity_mode", "skip"))
+        self.primus_dir = get_preflight_nested(cfg, tier1, legacy, "primus_dir", "")
+        self.venv_activate = get_preflight_nested(cfg, tier1, legacy, "venv_activate", "")
+        self.gpus_per_node = int(get_preflight_nested(cfg, tier1, legacy, "gpus_per_node", 8))
+        self.master_port = int(get_preflight_nested(cfg, tier1, legacy, "master_port", 1234))
+        self.ssh_timeout = int(get_preflight_nested(cfg, tier1, legacy, "ssh_timeout", 300))
 
         self.dump_path = _resolve_dump_path(cfg)
 
         rdma_ifaces = resolve_rdma_interfaces(cfg)
         default_rdma_nics = len(rdma_ifaces) if rdma_ifaces else None
-        expected_rdma = get_nested_config(cfg, "node_smoke", "expected_rdma_nics", default_rdma_nics)
+        expected_rdma = get_preflight_nested(cfg, tier1, legacy, "expected_rdma_nics", default_rdma_nics)
         self.expected_rdma_nics = int(expected_rdma) if expected_rdma not in (None, "", 0) else None
 
-        self.ulimit_l_min_gb = float(get_nested_config(cfg, "node_smoke", "ulimit_l_min_gb", 32.0))
-        self.shm_min_gb = float(get_nested_config(cfg, "node_smoke", "shm_min_gb", 8.0))
-        self.skip_dmesg = _config_flag_enabled(get_nested_config(cfg, "node_smoke", "skip_dmesg", False))
+        self.ulimit_l_min_gb = float(get_preflight_nested(cfg, tier1, legacy, "ulimit_l_min_gb", 32.0))
+        self.shm_min_gb = float(get_preflight_nested(cfg, tier1, legacy, "shm_min_gb", 8.0))
+        self.skip_dmesg = _config_flag_enabled(get_preflight_nested(cfg, tier1, legacy, "skip_dmesg", False))
         self.allow_foreign_procs = _config_flag_enabled(
-            get_nested_config(cfg, "node_smoke", "allow_foreign_procs", False)
+            get_preflight_nested(cfg, tier1, legacy, "allow_foreign_procs", False)
         )
-        self.allowed_procs = get_nested_config(
+        self.allowed_procs = get_preflight_nested(
             cfg,
-            "node_smoke",
+            tier1,
+            legacy,
             "allowed_procs",
             "gpuagent,rocm-smi-daemon,amd-smi,dcgm-exporter",
         )
-        self.require_tools = get_nested_config(cfg, "node_smoke", "require_tools", "")
+        self.require_tools = get_preflight_nested(cfg, tier1, legacy, "require_tools", "")
 
-        self.nccl_socket_ifname = get_nested_config(cfg, "node_smoke", "nccl_socket_ifname", "") or None
+        self.nccl_socket_ifname = get_preflight_nested(cfg, tier1, legacy, "nccl_socket_ifname", "") or None
         self.gloo_socket_ifname = (
-            get_nested_config(cfg, "node_smoke", "gloo_socket_ifname", self.nccl_socket_ifname) or None
+            get_preflight_nested(cfg, tier1, legacy, "gloo_socket_ifname", self.nccl_socket_ifname) or None
         )
 
-        rdma_allowlist = get_nested_config(cfg, "node_smoke", "rdma_nic_allowlist", None)
+        rdma_allowlist = get_preflight_nested(cfg, tier1, legacy, "rdma_nic_allowlist", None)
         if not rdma_allowlist and rdma_ifaces:
             rdma_allowlist = ",".join(rdma_ifaces)
         self.rdma_nic_allowlist = rdma_allowlist or None
 
-        nccl_ib_hca = get_nested_config(cfg, "node_smoke", "nccl_ib_hca", None)
+        nccl_ib_hca = get_preflight_nested(cfg, tier1, legacy, "nccl_ib_hca", None)
         if not nccl_ib_hca and rdma_ifaces:
             nccl_ib_hca = ",".join(rdma_ifaces)
         self.nccl_ib_hca = nccl_ib_hca or None
 
-        gid_index = get_nested_config(cfg, "node_smoke", "nccl_ib_gid_index", None)
+        gid_index = get_preflight_nested(cfg, tier1, legacy, "nccl_ib_gid_index", None)
         if gid_index is None:
             gid_index = resolve_rdma_gid_index(cfg)
         self.nccl_ib_gid_index = int(gid_index) if gid_index not in (None, "") else None
 
-        extra = get_nested_config(cfg, "node_smoke", "extra_args", [])
+        extra = get_preflight_nested(cfg, tier1, legacy, "extra_args", [])
         self.extra_args = [str(arg) for arg in extra if arg] if isinstance(extra, (list, tuple)) else []
-        self.auto_setup = _config_flag_enabled(get_nested_config(cfg, "node_smoke", "auto_setup", True), default=True)
+        self.auto_setup = _config_flag_enabled(
+            get_preflight_nested(cfg, tier1, legacy, "auto_setup", True), default=True
+        )
 
-        self.tier2_perf = _config_flag_enabled(get_nested_config(cfg, "node_smoke", "tier2_perf", False))
-        self.gemm_tflops_min = float(get_nested_config(cfg, "node_smoke", "gemm_tflops_min", 600.0))
-        self.hbm_gbs_min = float(get_nested_config(cfg, "node_smoke", "hbm_gbs_min", 2000.0))
-        self.rccl_gbs_min = float(get_nested_config(cfg, "node_smoke", "rccl_gbs_min", 100.0))
-        self.rccl_size_mb = int(get_nested_config(cfg, "node_smoke", "rccl_size_mb", 64))
-        self.rccl_timeout_sec = int(get_nested_config(cfg, "node_smoke", "rccl_timeout_sec", 120))
+        self.tier2_perf = _config_flag_enabled(get_preflight_nested(cfg, tier1, legacy, "tier2_perf", False))
+        self.gemm_tflops_min = float(get_preflight_nested(cfg, tier1, legacy, "gemm_tflops_min", 600.0))
+        self.hbm_gbs_min = float(get_preflight_nested(cfg, tier1, legacy, "hbm_gbs_min", 2000.0))
+        self.rccl_gbs_min = float(get_preflight_nested(cfg, tier1, legacy, "rccl_gbs_min", 100.0))
+        self.rccl_size_mb = int(get_preflight_nested(cfg, tier1, legacy, "rccl_size_mb", 64))
+        self.rccl_timeout_sec = int(get_preflight_nested(cfg, tier1, legacy, "rccl_timeout_sec", 120))
 
     def _validate_prerequisites(self) -> Optional[str]:
         if not self.primus_dir:
-            return "node_smoke.primus_dir is required when connectivity_mode is 'run'"
+            return f"{NODE_SMOKE_TIER1_SECTION}.primus_dir is required when connectivity_mode is 'run'"
         if not self.venv_activate:
-            return "node_smoke.venv_activate is required when connectivity_mode is 'run'"
+            return f"{NODE_SMOKE_TIER1_SECTION}.venv_activate is required when connectivity_mode is 'run'"
         if not self.node_list:
-            return "no reachable nodes available for node_smoke"
+            return f"no reachable nodes available for {NODE_SMOKE_TIER1_LABEL}"
         return None
 
     def _smoke_flags(self) -> str:
@@ -386,7 +409,7 @@ class NodeSmokeCheck(PreflightCheck):
             return {
                 "mode": self.mode,
                 "skipped": True,
-                "message": "Primus node_smoke check skipped by configuration",
+                "message": f"{NODE_SMOKE_TIER1_LABEL} check skipped by configuration",
                 "node_results": {},
             }
 
@@ -419,7 +442,7 @@ class NodeSmokeCheck(PreflightCheck):
                     "mode": self.mode,
                     "skipped": True,
                     "status": "FAIL",
-                    "message": "Primus auto_setup failed — fix setup errors before node_smoke",
+                    "message": f"Primus auto_setup failed — fix setup errors before {NODE_SMOKE_TIER1_LABEL}",
                     "setup_results": setup_results,
                     "node_results": {},
                 }
@@ -437,7 +460,7 @@ class NodeSmokeCheck(PreflightCheck):
             else ""
         )
         self.log_info(
-            f"Launching Primus node_smoke on {nnodes} node(s) "
+            f"Launching {NODE_SMOKE_TIER1_LABEL} on {nnodes} node(s) "
             f"(primus_dir={self.primus_dir}, dump_path={self.dump_path}{tier2_note})"
         )
 
@@ -479,7 +502,7 @@ class NodeSmokeCheck(PreflightCheck):
             }
             if parsed["status"] == "FAIL":
                 for reason in parsed["fail_reasons"]:
-                    self.log_error(f"Node {host} node_smoke: {reason}")
+                    self.log_error(f"Node {host} {NODE_SMOKE_TIER1_LABEL}: {reason}")
 
         failed_nodes = [n for n, r in node_results.items() if r.get("status") == "FAIL"]
         passing_nodes = [n for n, r in node_results.items() if r.get("status") == "PASS"]
@@ -497,6 +520,7 @@ class NodeSmokeCheck(PreflightCheck):
             "node_results": node_results,
             "dump_path": self.dump_path,
             "primus_dir": self.primus_dir,
+            "gpus_per_node": self.gpus_per_node,
             "tier2_perf": self.tier2_perf,
             "tier2_thresholds": {
                 "gemm_tflops_min": self.gemm_tflops_min,
@@ -510,4 +534,7 @@ class NodeSmokeCheck(PreflightCheck):
         }
         if setup_results is not None:
             self.results["setup_results"] = setup_results
+        self.results.update(
+            aggregate_node_smoke_test_counts(self.results, gpus_per_node=self.gpus_per_node)
+        )
         return self.results

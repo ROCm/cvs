@@ -10,10 +10,34 @@ import json
 from pathlib import Path
 
 from cvs.lib.preflight.base import PreflightCheck
-from cvs.lib.preflight.node_smoke import DEFAULT_ARTIFACTS_ROOT_DIR
+from cvs.lib.preflight.node_smoke import (
+    DEFAULT_ARTIFACTS_ROOT_DIR,
+    NODE_SMOKE_TIER1_LABEL,
+    NODE_SMOKE_TIER2_LABEL,
+    NODE_SMOKE_TIER3_LABEL,
+    get_nested_config,
+)
+from cvs.lib.preflight.node_smoke_counts import (
+    aggregate_node_smoke_test_counts,
+    aggregate_tier3_test_counts,
+    format_tests_run_suffix,
+)
 from cvs.lib import globals
 
 log = globals.log
+
+PREFLIGHT_CHECK_DISPLAY_NAMES = {
+    'node_smoke_tier1': NODE_SMOKE_TIER1_LABEL,
+    'node_smoke_tier2': NODE_SMOKE_TIER2_LABEL,
+    'node_smoke_tier3': NODE_SMOKE_TIER3_LABEL,
+    'node_smoke': NODE_SMOKE_TIER1_LABEL,
+    'tier3_info': NODE_SMOKE_TIER3_LABEL,
+}
+
+
+def preflight_check_display_name(check_name: str) -> str:
+    """Return human-readable preflight check name for console and HTML summaries."""
+    return PREFLIGHT_CHECK_DISPLAY_NAMES.get(check_name, check_name.replace('_', ' ').title())
 
 
 def get_nested_config(config_dict, section, key, default):
@@ -103,8 +127,8 @@ class PreflightReportGenerator(PreflightCheck):
         node_health_results = self.results.get('node_health', {})
         ifoe_l2_results = self.results.get('ifoe_l2_connectivity', {})
         tb_smoke_results = self.results.get('transferbench_smoke', {})
-        node_smoke_results = self.results.get('node_smoke', {})
-        tier3_info_results = self.results.get('tier3_info', {})
+        node_smoke_tier1_results = self.results.get('node_smoke_tier1') or self.results.get('node_smoke', {})
+        node_smoke_tier3_results = self.results.get('node_smoke_tier3') or self.results.get('tier3_info', {})
         reachability_results = self.results.get('node_reachability')
         ssh_connectivity_results = self.results.get('ssh_connectivity')
         summary = {
@@ -113,8 +137,9 @@ class PreflightReportGenerator(PreflightCheck):
                 'ssh_reachability': self._summarize_reachability_results(reachability_results),
                 'node_health': self._summarize_node_health_results(node_health_results),
                 'gid_consistency': self._summarize_gid_results(gid_results),
-                'node_smoke': self._summarize_node_smoke_results(node_smoke_results),
-                'tier3_info': self._summarize_tier3_info_results(tier3_info_results),
+                'node_smoke_tier1': self._summarize_node_smoke_tier1_results(node_smoke_tier1_results),
+                'node_smoke_tier2': self._summarize_node_smoke_tier2_results(node_smoke_tier1_results),
+                'node_smoke_tier3': self._summarize_node_smoke_tier3_results(node_smoke_tier3_results),
                 'ifoe_l2_connectivity': self._summarize_ifoe_l2_results(ifoe_l2_results),
                 'transferbench_smoke': self._summarize_transferbench_smoke_results(tb_smoke_results),
                 'rdma_connectivity': self._summarize_connectivity_results(connectivity_results),
@@ -170,22 +195,31 @@ class PreflightReportGenerator(PreflightCheck):
         if summary['checks']['interface_names']['status'] == 'FAIL':
             summary['recommendations'].append("Standardize RDMA interface naming across cluster nodes")
 
-        if summary['checks']['node_smoke']['status'] == 'FAIL':
+        if summary['checks']['node_smoke_tier1']['status'] == 'FAIL':
             summary['recommendations'].append(
-                "Review Primus node_smoke failures (GPU health, RDMA roll-call, host limits) before benchmarking"
+                f"Review {NODE_SMOKE_TIER1_LABEL} failures (GPU health, RDMA roll-call, host limits) before benchmarking"
             )
-        elif summary['checks']['node_smoke']['status'] == 'SKIPPED':
+        elif summary['checks']['node_smoke_tier1']['status'] == 'SKIPPED':
             summary['recommendations'].append(
-                "Consider enabling node_smoke.connectivity_mode='run' for per-node GPU/RDMA health screening"
+                "Consider enabling node_smoke_tier1.connectivity_mode='run' for per-node GPU/RDMA health screening"
             )
 
-        if summary['checks']['tier3_info']['status'] == 'FAIL':
+        if summary['checks']['node_smoke_tier2']['status'] == 'FAIL':
             summary['recommendations'].append(
-                "Review Primus Tier 3 preflight info failures (Host/GPU/Network inventory) before benchmarking"
+                f"Review {NODE_SMOKE_TIER2_LABEL} perf sanity failures before benchmarking"
             )
-        elif summary['checks']['tier3_info']['status'] == 'SKIPPED':
+        elif summary['checks']['node_smoke_tier2']['status'] == 'SKIPPED':
             summary['recommendations'].append(
-                "Consider enabling tier3_info.connectivity_mode='run' for full Host/GPU/Network info screening"
+                "Consider enabling node_smoke_tier1.tier2_perf=true for Node Smoke Tier 2 perf sanity checks"
+            )
+
+        if summary['checks']['node_smoke_tier3']['status'] == 'FAIL':
+            summary['recommendations'].append(
+                f"Review {NODE_SMOKE_TIER3_LABEL} failures (Host/GPU/Network inventory) before benchmarking"
+            )
+        elif summary['checks']['node_smoke_tier3']['status'] == 'SKIPPED':
+            summary['recommendations'].append(
+                "Consider enabling node_smoke_tier3.connectivity_mode='run' for full Host/GPU/Network info screening"
             )
 
         if summary['overall_status'] == 'PASS':
@@ -531,20 +565,20 @@ class PreflightReportGenerator(PreflightCheck):
             'summary': summary_text,
         }
 
-    def _summarize_node_smoke_results(self, node_smoke_results):
-        """Summarize Primus node_smoke check results."""
+    def _summarize_node_smoke_tier1_results(self, node_smoke_results):
+        """Summarize Node Smoke Tier 1 check results."""
         if not node_smoke_results or node_smoke_results.get('skipped'):
             msg = (
                 node_smoke_results.get('message')
                 if isinstance(node_smoke_results, dict)
-                else 'Primus node_smoke check not performed'
+                else f'{NODE_SMOKE_TIER1_LABEL} check not performed'
             )
             return {
                 'status': 'SKIPPED',
                 'total_nodes': 0,
                 'passing_nodes': 0,
                 'failed_nodes': [],
-                'summary': msg or 'Primus node_smoke check skipped',
+                'summary': msg or f'{NODE_SMOKE_TIER1_LABEL} check skipped',
             }
 
         node_results = node_smoke_results.get('node_results') or {}
@@ -558,14 +592,15 @@ class PreflightReportGenerator(PreflightCheck):
         )
         passing_nodes = total_nodes - len(failed_nodes) - len(unknown_nodes)
         status = 'FAIL' if failed_nodes or unknown_nodes else 'PASS'
-        summary_text = f"{passing_nodes}/{total_nodes} nodes passed Primus node_smoke"
-        if node_smoke_results.get('tier2_perf'):
-            thresholds = node_smoke_results.get('tier2_thresholds') or {}
-            summary_text += (
-                f" (Tier 2: GEMM>={thresholds.get('gemm_tflops_min', '?')} TFLOPS, "
-                f"HBM>={thresholds.get('hbm_gbs_min', '?')} GB/s, "
-                f"RCCL>={thresholds.get('rccl_gbs_min', '?')} GB/s)"
+        test_counts = self._node_smoke_test_counts(node_smoke_results)
+        summary_text = (
+            f"{passing_nodes}/{total_nodes} nodes passed {NODE_SMOKE_TIER1_LABEL}"
+            + format_tests_run_suffix(
+                test_counts.get('tier1_tests_run'),
+                per_node=True,
+                total_nodes=total_nodes,
             )
+        )
         if unknown_nodes:
             summary_text += f"; {len(unknown_nodes)} unknown"
         return {
@@ -574,38 +609,89 @@ class PreflightReportGenerator(PreflightCheck):
             'passing_nodes': passing_nodes,
             'failed_nodes': failed_nodes,
             'unknown_nodes': unknown_nodes,
-            'tier2_perf': bool(node_smoke_results.get('tier2_perf')),
+            'tier1_tests_run': test_counts.get('tier1_tests_run', 0),
             'summary': summary_text,
         }
 
-    def _summarize_tier3_info_results(self, tier3_info_results):
-        """Summarize Primus Tier 3 preflight info check results."""
-        if not tier3_info_results or tier3_info_results.get('skipped'):
+    def _summarize_node_smoke_tier2_results(self, node_smoke_results):
+        """Summarize Node Smoke Tier 2 check results (runs when tier2_perf is enabled)."""
+        if not node_smoke_results or node_smoke_results.get('skipped'):
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': f'{NODE_SMOKE_TIER2_LABEL} not run ({NODE_SMOKE_TIER1_LABEL} skipped)',
+            }
+        if not node_smoke_results.get('tier2_perf'):
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': 0,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': f'{NODE_SMOKE_TIER2_LABEL} not enabled (set node_smoke_tier1.tier2_perf=true)',
+            }
+
+        tier1_summary = self._summarize_node_smoke_tier1_results(node_smoke_results)
+        test_counts = self._node_smoke_test_counts(node_smoke_results)
+        thresholds = node_smoke_results.get('tier2_thresholds') or {}
+        summary_text = (
+            f"{tier1_summary['passing_nodes']}/{tier1_summary['total_nodes']} nodes passed {NODE_SMOKE_TIER2_LABEL} "
+            f"(GEMM>={thresholds.get('gemm_tflops_min', '?')} TFLOPS, "
+            f"HBM>={thresholds.get('hbm_gbs_min', '?')} GB/s, "
+            f"RCCL>={thresholds.get('rccl_gbs_min', '?')} GB/s)"
+            + format_tests_run_suffix(
+                test_counts.get('tier2_tests_run'),
+                per_node=True,
+                total_nodes=tier1_summary['total_nodes'],
+            )
+        )
+        return {
+            'status': tier1_summary['status'],
+            'total_nodes': tier1_summary['total_nodes'],
+            'passing_nodes': tier1_summary['passing_nodes'],
+            'failed_nodes': tier1_summary['failed_nodes'],
+            'unknown_nodes': tier1_summary.get('unknown_nodes', []),
+            'tier2_tests_run': test_counts.get('tier2_tests_run', 0),
+            'summary': summary_text,
+        }
+
+    def _summarize_node_smoke_tier3_results(self, tier3_results):
+        """Summarize Node Smoke Tier 3 check results."""
+        if not tier3_results or tier3_results.get('skipped'):
             msg = (
-                tier3_info_results.get('message')
-                if isinstance(tier3_info_results, dict)
-                else 'Primus Tier 3 preflight info check not performed'
+                tier3_results.get('message')
+                if isinstance(tier3_results, dict)
+                else f'{NODE_SMOKE_TIER3_LABEL} check not performed'
             )
             return {
                 'status': 'SKIPPED',
                 'total_nodes': 0,
                 'passing_nodes': 0,
                 'failed_nodes': [],
-                'summary': msg or 'Primus Tier 3 preflight info check skipped',
+                'summary': msg or f'{NODE_SMOKE_TIER3_LABEL} check skipped',
             }
 
-        node_results = tier3_info_results.get('node_results') or {}
+        node_results = tier3_results.get('node_results') or {}
         total_nodes = len(node_results)
         failed_nodes = list(
-            tier3_info_results.get('failed_nodes') or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+            tier3_results.get('failed_nodes') or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
         )
         unknown_nodes = list(
-            tier3_info_results.get('unknown_nodes')
+            tier3_results.get('unknown_nodes')
             or [n for n, r in node_results.items() if r.get('status') not in ('PASS', 'FAIL', 'WARN')]
         )
         passing_nodes = total_nodes - len(failed_nodes) - len(unknown_nodes)
         status = 'FAIL' if failed_nodes or unknown_nodes else 'PASS'
-        summary_text = f"{passing_nodes}/{total_nodes} nodes passed Primus Tier 3 preflight info"
+        test_counts = aggregate_tier3_test_counts(tier3_results)
+        summary_text = (
+            f"{passing_nodes}/{total_nodes} nodes passed {NODE_SMOKE_TIER3_LABEL}"
+            + format_tests_run_suffix(
+                test_counts.get('tier3_tests_run'),
+                cluster_wide=True,
+                total_nodes=total_nodes,
+            )
+        )
         if unknown_nodes:
             summary_text += f"; {len(unknown_nodes)} unknown"
         return {
@@ -614,8 +700,35 @@ class PreflightReportGenerator(PreflightCheck):
             'passing_nodes': passing_nodes,
             'failed_nodes': failed_nodes,
             'unknown_nodes': unknown_nodes,
+            'tier3_tests_run': test_counts.get('tier3_tests_run', 0),
             'summary': summary_text,
         }
+
+    _summarize_node_smoke_results = _summarize_node_smoke_tier1_results
+    _summarize_tier3_info_results = _summarize_node_smoke_tier3_results
+
+    @staticmethod
+    def _infer_node_smoke_gpus_per_node(node_smoke_results):
+        """Infer GPU count from embedded Primus payloads when config is unavailable."""
+        for result in (node_smoke_results.get('node_results') or {}).values():
+            payload = result.get('node_payload') if isinstance(result, dict) else None
+            if not isinstance(payload, dict):
+                continue
+            per_gpu = (payload.get('tier1') or {}).get('per_gpu') or []
+            if per_gpu:
+                return len(per_gpu)
+        return None
+
+    def _node_smoke_test_counts(self, node_smoke_results):
+        gpus_per_node = node_smoke_results.get('gpus_per_node') if isinstance(node_smoke_results, dict) else None
+        if gpus_per_node is None:
+            gpus_per_node = self._infer_node_smoke_gpus_per_node(node_smoke_results)
+        if node_smoke_results.get('tier1_tests_run') is not None:
+            return {
+                'tier1_tests_run': node_smoke_results.get('tier1_tests_run', 0),
+                'tier2_tests_run': node_smoke_results.get('tier2_tests_run', 0),
+            }
+        return aggregate_node_smoke_test_counts(node_smoke_results, gpus_per_node=gpus_per_node)
 
     def _summarize_reachability_results(self, reachability_results):
         """Summarize SSH reachability check results."""
@@ -719,8 +832,8 @@ class PreflightReportGenerator(PreflightCheck):
             {self._generate_executive_summary_html(summary)}
             {self._generate_node_health_html(results.get('node_health', {}))}
             {self._generate_gid_consistency_html(results.get('gid_consistency', {}))}
-            {self._generate_node_smoke_html(results.get('node_smoke', {}))}
-            {self._generate_tier3_info_html(results.get('tier3_info', {}))}
+            {self._generate_node_smoke_tier1_html(results.get('node_smoke_tier1') or results.get('node_smoke', {}))}
+            {self._generate_node_smoke_tier3_html(results.get('node_smoke_tier3') or results.get('tier3_info', {}))}
             {self._generate_ifoe_l2_html(results.get('ifoe_l2_connectivity', {}))}
             {self._generate_transferbench_smoke_html(results.get('transferbench_smoke', {}))}
             {self._generate_connectivity_html(results.get('rdma_connectivity', {}))}
@@ -1263,16 +1376,16 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
 
-    def _generate_node_smoke_html(self, node_smoke_results):
-        """Generate Primus node_smoke section — failed nodes and fail reasons."""
+    def _generate_node_smoke_tier1_html(self, node_smoke_results):
+        """Generate Node Smoke Tier 1 section — failed nodes and fail reasons."""
         if not node_smoke_results:
             return ""
 
         if node_smoke_results.get('skipped'):
-            msg = node_smoke_results.get('message', 'Primus node_smoke check skipped')
+            msg = node_smoke_results.get('message', f'{NODE_SMOKE_TIER1_LABEL} check skipped')
             return f"""
         <section>
-            <h2>Primus Node Smoke</h2>
+            <h2>{html.escape(NODE_SMOKE_TIER1_LABEL)}</h2>
             <p><em>{html.escape(msg)}</em></p>
         </section>
         """
@@ -1290,20 +1403,20 @@ class PreflightReportGenerator(PreflightCheck):
             if node_smoke_results.get('tier2_perf'):
                 thresholds = node_smoke_results.get('tier2_thresholds') or {}
                 tier2_html = f"""
-            <p>Tier 2 perf enabled: GEMM &ge; {html.escape(str(thresholds.get('gemm_tflops_min', '?')))} TFLOPS,
+            <p>{html.escape(NODE_SMOKE_TIER2_LABEL)} also enabled: GEMM &ge; {html.escape(str(thresholds.get('gemm_tflops_min', '?')))} TFLOPS,
             HBM &ge; {html.escape(str(thresholds.get('hbm_gbs_min', '?')))} GB/s,
             local RCCL &ge; {html.escape(str(thresholds.get('rccl_gbs_min', '?')))} GB/s.</p>"""
             return f"""
         <section>
-            <h2>Primus Node Smoke</h2>
-            <p>All <code>{passing}</code> node(s) passed Primus node_smoke.</p>{tier2_html}
+            <h2>{html.escape(NODE_SMOKE_TIER1_LABEL)}</h2>
+            <p>All <code>{passing}</code> node(s) passed {html.escape(NODE_SMOKE_TIER1_LABEL)}.</p>{tier2_html}
         </section>
         """
 
-        html_out = """
+        html_out = f"""
         <section>
-            <h2>Primus Node Smoke — Failures</h2>
-            <p class="error-summary">The following nodes failed Primus node_smoke checks:</p>
+            <h2>{html.escape(NODE_SMOKE_TIER1_LABEL)} — Failures</h2>
+            <p class="error-summary">The following nodes failed {html.escape(NODE_SMOKE_TIER1_LABEL)} checks:</p>
             <table>
                 <thead>
                     <tr>
@@ -1342,34 +1455,34 @@ class PreflightReportGenerator(PreflightCheck):
         """
         return html_out
 
-    def _generate_tier3_info_html(self, tier3_info_results):
-        """Generate Primus Tier 3 preflight info section."""
-        if not tier3_info_results:
+    def _generate_node_smoke_tier3_html(self, tier3_results):
+        """Generate Node Smoke Tier 3 section."""
+        if not tier3_results:
             return ""
 
-        if tier3_info_results.get('skipped'):
-            msg = tier3_info_results.get('message', 'Primus Tier 3 preflight info check skipped')
+        if tier3_results.get('skipped'):
+            msg = tier3_results.get('message', f'{NODE_SMOKE_TIER3_LABEL} check skipped')
             return f"""
         <section>
-            <h2>Primus Tier 3 Preflight Info</h2>
+            <h2>{html.escape(NODE_SMOKE_TIER3_LABEL)}</h2>
             <p><em>{html.escape(msg)}</em></p>
         </section>
         """
 
-        node_results = tier3_info_results.get('node_results') or {}
+        node_results = tier3_results.get('node_results') or {}
         if not node_results:
             return ""
 
         failed_nodes = {n: r for n, r in node_results.items() if r.get('status') in ('FAIL', 'UNKNOWN')}
-        dump_path = tier3_info_results.get('dump_path', '')
-        report_name = tier3_info_results.get('report_file_name', 'tier3_info')
-        report_md = tier3_info_results.get('report_markdown')
+        dump_path = tier3_results.get('dump_path', '')
+        report_name = tier3_results.get('report_file_name', 'node_smoke_tier3')
+        report_md = tier3_results.get('report_markdown')
 
         if not failed_nodes:
             passing = len([n for n, r in node_results.items() if r.get('status') == 'PASS'])
             html_out = f"""
         <section>
-            <h2>Primus Tier 3 Preflight Info</h2>
+            <h2>{html.escape(NODE_SMOKE_TIER3_LABEL)}</h2>
             <p>All <code>{passing}</code> launcher node(s) passed <code>preflight --host --gpu --network</code>.</p>
         """
             if dump_path:
@@ -1384,10 +1497,10 @@ class PreflightReportGenerator(PreflightCheck):
         """
             return html_out
 
-        html_out = """
+        html_out = f"""
         <section>
-            <h2>Primus Tier 3 Preflight Info — Failures</h2>
-            <p class="error-summary">The following nodes failed Tier 3 preflight info checks:</p>
+            <h2>{html.escape(NODE_SMOKE_TIER3_LABEL)} — Failures</h2>
+            <p class="error-summary">The following nodes failed {html.escape(NODE_SMOKE_TIER3_LABEL)} checks:</p>
             <table>
                 <thead>
                     <tr>
@@ -1421,6 +1534,9 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
         return html_out
+
+    _generate_node_smoke_html = _generate_node_smoke_tier1_html
+    _generate_tier3_info_html = _generate_node_smoke_tier3_html
 
     def _generate_ifoe_l2_html(self, ifoe_results):
         """Generate IFoE L2 connectivity section - failure details and a per-node breakdown."""

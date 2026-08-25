@@ -36,6 +36,8 @@ subtrees:
         title: Platform
       - file: reference/configuration-files/health
         title: Health
+      - file: reference/configuration-files/preflight
+        title: Preflight
       - file: reference/configuration-files/ib
         title: IB Perf
       - file: reference/configuration-files/rccl
