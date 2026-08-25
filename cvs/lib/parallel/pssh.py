@@ -105,6 +105,7 @@ class Pssh:
                 e,
             )
             self.log.debug("ParallelSSH session retry detail", exc_info=True)
+            self.destroy_clients()
             self._recreate_parallel_client()
             return self.client.run_command(*args, **kwargs)
 
