@@ -89,6 +89,14 @@ class TestExecRequest(unittest.TestCase):
         restored = parse_message(ExecRequest, req.model_dump_json())
         self.assertEqual(req, restored)
 
+    def test_exit_code_only_mode_rejects_inactivity_timeout(self):
+        with self.assertRaises(ValidationError):
+            ExecRequest(**self._base_kwargs(output_mode=ExecOutputMode.EXIT_CODE_ONLY, inactivity_timeout=10))
+
+    def test_inline_mode_accepts_inactivity_timeout(self):
+        req = ExecRequest(**self._base_kwargs(output_mode=ExecOutputMode.INLINE, inactivity_timeout=10))
+        self.assertEqual(req.inactivity_timeout, 10)
+
 
 class TestExecResponse(unittest.TestCase):
     def test_inline_mode_response(self):
@@ -99,6 +107,7 @@ class TestExecResponse(unittest.TestCase):
             stdout_path=None,
             stderr_path=None,
             truncated=False,
+            timed_out=False,
         )
         self.assertEqual(resp.stdout, ["hi"])
         self.assertIsNone(resp.stdout_path)
@@ -111,6 +120,7 @@ class TestExecResponse(unittest.TestCase):
             stdout_path=Path("/tmp/out/abc123.stdout"),
             stderr_path=Path("/tmp/out/abc123.stderr"),
             truncated=None,
+            timed_out=False,
         )
         self.assertEqual(resp.stdout_path, Path("/tmp/out/abc123.stdout"))
 
@@ -122,6 +132,7 @@ class TestExecResponse(unittest.TestCase):
             stdout_path=None,
             stderr_path=None,
             truncated=None,
+            timed_out=False,
         )
         self.assertEqual(resp.exit_code, 1)
         self.assertIsNone(resp.stdout)

@@ -228,6 +228,77 @@ class TestExec(HttpAgentTestBase):
             self.assertEqual(exec_response.stdout, [cwd_dir])
 
 
+class TestExecTimeouts(HttpAgentTestBase):
+    def _exec_request(self, **overrides) -> messages.ExecRequest:
+        kwargs = dict(
+            cmd="true",
+            env={},
+            cwd=Path("/tmp"),
+            timeout=None,
+            inactivity_timeout=None,
+            cmd_id="cmd-timeout",
+            out_path=None,
+            output_mode=messages.ExecOutputMode.EXIT_CODE_ONLY,
+        )
+        kwargs.update(overrides)
+        return messages.ExecRequest(**kwargs)
+
+    def test_exit_code_only_completes_normally_within_timeout(self):
+        client = self._make_client(own_rank=0)
+        req = self._exec_request(cmd="true", timeout=5)
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        exec_response = messages.ExecResponse(**response.json())
+        self.assertFalse(exec_response.timed_out)
+        self.assertEqual(exec_response.exit_code, 0)
+
+    def test_exit_code_only_is_killed_when_timeout_exceeded(self):
+        client = self._make_client(own_rank=0)
+        req = self._exec_request(cmd="sleep 30", timeout=1)
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        exec_response = messages.ExecResponse(**response.json())
+        self.assertTrue(exec_response.timed_out)
+        self.assertEqual(exec_response.exit_code, -signal.SIGTERM)
+
+    def test_inline_mode_captures_partial_output_when_timeout_exceeded(self):
+        client = self._make_client(own_rank=0)
+        req = self._exec_request(
+            cmd="echo partial; sleep 30",
+            timeout=1,
+            output_mode=messages.ExecOutputMode.INLINE,
+        )
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        exec_response = messages.ExecResponse(**response.json())
+        self.assertTrue(exec_response.timed_out)
+        self.assertEqual(exec_response.stdout, ["partial"])
+        self.assertEqual(exec_response.exit_code, -signal.SIGTERM)
+
+    def test_inline_mode_is_killed_after_falling_silent(self):
+        client = self._make_client(own_rank=0)
+        req = self._exec_request(
+            cmd="echo first; sleep 30",
+            inactivity_timeout=1,
+            output_mode=messages.ExecOutputMode.INLINE,
+        )
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        exec_response = messages.ExecResponse(**response.json())
+        self.assertTrue(exec_response.timed_out)
+        self.assertEqual(exec_response.stdout, ["first"])
+        self.assertEqual(exec_response.exit_code, -signal.SIGTERM)
+
+    def test_inline_mode_does_not_time_out_on_output_that_arrives_within_inactivity_window(self):
+        client = self._make_client(own_rank=0)
+        req = self._exec_request(
+            cmd="echo a; sleep 0.3; echo b",
+            inactivity_timeout=5,
+            output_mode=messages.ExecOutputMode.INLINE,
+        )
+        response = client.post(messages.EXEC_PATH, content=req.model_dump_json(), headers=self._auth_headers())
+        exec_response = messages.ExecResponse(**response.json())
+        self.assertFalse(exec_response.timed_out)
+        self.assertEqual(exec_response.stdout, ["a", "b"])
+        self.assertEqual(exec_response.exit_code, 0)
+
+
 class TestInlineExec(HttpAgentTestBase):
     def _exec_request(self, **overrides) -> messages.ExecRequest:
         kwargs = dict(

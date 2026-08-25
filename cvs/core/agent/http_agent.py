@@ -18,7 +18,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from . import messages
 
 FILE_MODE_PREVIEW_LINES = 20
-SHUTDOWN_GRACE_PERIOD_SECONDS = 10.0
+TERMINATE_GRACE_PERIOD_SECONDS = 10.0
 
 
 def _read_secret(file_path: Path) -> str:
@@ -109,6 +109,47 @@ async def _terminate_process_group(process: asyncio.subprocess.Process, grace_pe
         await process.wait()
 
 
+async def _read_stream_with_inactivity_timeout(
+    stream: asyncio.StreamReader, chunks: list[bytes], inactivity_timeout: float | None
+) -> None:
+    # chunks is a caller-owned accumulator (not a local) so partial output survives if this task is
+    # cancelled mid-read, e.g. because the sibling stream or the overall timeout fired first.
+    while True:
+        if inactivity_timeout is None:
+            chunk = await stream.read(65536)
+        else:
+            # wait_for re-arms on every call, so the deadline measures time since the last chunk, not
+            # total elapsed time - exactly the "no output for N seconds" semantics inactivity_timeout wants.
+            chunk = await asyncio.wait_for(stream.read(65536), timeout=inactivity_timeout)
+        if not chunk:
+            return
+        chunks.append(chunk)
+
+
+async def _communicate_with_timeouts(
+    process: asyncio.subprocess.Process, timeout: float | None, inactivity_timeout: float | None
+) -> tuple[bytes, bytes, bool]:
+    '''Like process.communicate(), but kills the process and reports timed_out if it runs longer than
+    timeout or falls silent on both streams for longer than inactivity_timeout.'''
+    stdout_chunks: list[bytes] = []
+    stderr_chunks: list[bytes] = []
+    tasks = [
+        asyncio.ensure_future(_read_stream_with_inactivity_timeout(process.stdout, stdout_chunks, inactivity_timeout)),
+        asyncio.ensure_future(_read_stream_with_inactivity_timeout(process.stderr, stderr_chunks, inactivity_timeout)),
+        asyncio.ensure_future(process.wait()),
+    ]
+    try:
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=timeout)
+        timed_out = False
+    except asyncio.TimeoutError:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await _terminate_process_group(process, TERMINATE_GRACE_PERIOD_SECONDS)
+        timed_out = True
+    return b"".join(stdout_chunks), b"".join(stderr_chunks), timed_out
+
+
 async def _spawn_process(
     request: messages.ExecRequest,
     registry: ProcessRegistry,
@@ -135,7 +176,12 @@ async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> 
             request, registry, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
         )
         try:
-            await process.wait()
+            timed_out = False
+            try:
+                await asyncio.wait_for(process.wait(), timeout=request.timeout)
+            except asyncio.TimeoutError:
+                await _terminate_process_group(process, TERMINATE_GRACE_PERIOD_SECONDS)
+                timed_out = True
         finally:
             await registry.unregister(request.cmd_id)
         return messages.ExecResponse(
@@ -145,6 +191,7 @@ async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> 
             stdout_path=None,
             stderr_path=None,
             truncated=None,
+            timed_out=timed_out,
         )
 
     if request.output_mode == messages.ExecOutputMode.INLINE:
@@ -152,7 +199,9 @@ async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> 
             request, registry, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         try:
-            stdout_bytes, stderr_bytes = await process.communicate()
+            stdout_bytes, stderr_bytes, timed_out = await _communicate_with_timeouts(
+                process, request.timeout, request.inactivity_timeout
+            )
         finally:
             await registry.unregister(request.cmd_id)
         stdout_bytes, stdout_truncated = _truncate_tail(stdout_bytes, messages.MAX_INLINE_RESPONSE_BYTES)
@@ -164,6 +213,7 @@ async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> 
             stdout_path=None,
             stderr_path=None,
             truncated=stdout_truncated or stderr_truncated,
+            timed_out=timed_out,
         )
 
     if request.output_mode == messages.ExecOutputMode.FILE:
@@ -171,7 +221,9 @@ async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> 
             request, registry, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         try:
-            stdout_bytes, stderr_bytes = await process.communicate()
+            stdout_bytes, stderr_bytes, timed_out = await _communicate_with_timeouts(
+                process, request.timeout, request.inactivity_timeout
+            )
         finally:
             await registry.unregister(request.cmd_id)
         stdout_text = stdout_bytes.decode(errors="replace")
@@ -190,6 +242,7 @@ async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> 
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             truncated=None,
+            timed_out=timed_out,
         )
 
     raise NotImplementedError(f"output_mode {request.output_mode} is not yet implemented")
@@ -254,7 +307,7 @@ def create_app(agent_dir: Path, own_rank: int, expected_agent_count: int) -> Fas
         registry: ProcessRegistry = http_request.app.state.process_registry
         processes = registry.snapshot()
         await asyncio.gather(
-            *(_terminate_process_group(process, SHUTDOWN_GRACE_PERIOD_SECONDS) for process in processes.values())
+            *(_terminate_process_group(process, TERMINATE_GRACE_PERIOD_SECONDS) for process in processes.values())
         )
         # Self-signal rather than depending on a Server reference: uvicorn installs a SIGTERM
         # handler that drains in-flight requests (this one included) before exiting.
