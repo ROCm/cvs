@@ -485,6 +485,12 @@ def wan_hf_snapshot_offline_check_commands(snapshot_dir_host: str) -> dict:
 
     Intended for snapshots of `Wan-AI/Wan2.2-I2V-A14B` (and forks with the same tree).
     Callers should only run these when `model_repo` is known to use this layout.
+
+    Layout (filenames, shard count, size thresholds) last verified against
+    Wan-AI/Wan2.2-I2V-A14B commit 206a9ee1b7bfaaf8f7e4d81335650533490646a3. These checks are
+    a fixed fingerprint, not a schema-aware parser: if `model_rev` is bumped and upstream
+    restructured the tree, expect false MISSING results here rather than a silent pass on a
+    broken snapshot -- update this function to match the new layout before re-pinning.
     """
     root = snapshot_dir_host.rstrip('/')
     checks = {}
