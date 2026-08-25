@@ -6,14 +6,38 @@ Keys prefixed with `_` (e.g. `_scaling_baseline_comment`) are inline comments an
 
 ## File Inventory
 
-| Config | Threshold | Arch / mode |
-|---|---|---|
-| `mi325x_megatron_llama-3.1-8b_single.json` | `mi325x_megatron_llama-3.1-8b_single_threshold.json` | MI325X, single-node |
-| `mi325x_megatron_llama-3.3-70b_single.json` | `mi325x_megatron_llama-3.3-70b_single_threshold.json` | MI325X, single-node |
-| `mi325x_megatron_llama-3.3-70b_distributed.json` | `mi325x_megatron_llama-3.3-70b_distributed_threshold.json` | MI325X, distributed |
-| `mi325x_megatron_deepseek-v2-lite_single.json` | `mi325x_megatron_deepseek-v2-lite_single_threshold.json` | MI325X, single-node |
+### MI300X
 
-Add analogous config + threshold pairs for other archs (e.g. MI355X) as needed.
+| Config | Threshold | Mode |
+|---|---|---|
+| `mi300x_megatron_deepseek-v2-lite_single.json` | `mi300x_megatron_deepseek-v2-lite_single_threshold.json` | single-node |
+| `mi300x_megatron_deepseek-v2-lite_distributed.json` | `mi300x_megatron_deepseek-v2-lite_distributed_threshold.json` | distributed |
+| `mi300x_megatron_llama-3.1-8b_single.json` | `mi300x_megatron_llama-3.1-8b_single_threshold.json` | single-node |
+| `mi300x_megatron_llama-3.1-8b_distributed.json` | `mi300x_megatron_llama-3.1-8b_distributed_threshold.json` | distributed |
+| `mi300x_megatron_llama-3.3-70b_single.json` | `mi300x_megatron_llama-3.3-70b_single_threshold.json` | single-node |
+| `mi300x_megatron_llama-3.3-70b_distributed.json` | `mi300x_megatron_llama-3.3-70b_distributed_threshold.json` | distributed |
+
+### MI325X
+
+| Config | Threshold | Mode |
+|---|---|---|
+| `mi325x_megatron_deepseek-v2-lite_single.json` | `mi325x_megatron_deepseek-v2-lite_single_threshold.json` | single-node |
+| `mi325x_megatron_deepseek-v2-lite_distributed.json` | `mi325x_megatron_deepseek-v2-lite_distributed_threshold.json` | distributed |
+| `mi325x_megatron_llama-3.1-8b_single.json` | `mi325x_megatron_llama-3.1-8b_single_threshold.json` | single-node |
+| `mi325x_megatron_llama-3.1-8b_distributed.json` | `mi325x_megatron_llama-3.1-8b_distributed_threshold.json` | distributed |
+| `mi325x_megatron_llama-3.3-70b_single.json` | `mi325x_megatron_llama-3.3-70b_single_threshold.json` | single-node |
+| `mi325x_megatron_llama-3.3-70b_distributed.json` | `mi325x_megatron_llama-3.3-70b_distributed_threshold.json` | distributed |
+
+### MI355X
+
+| Config | Threshold | Mode |
+|---|---|---|
+| `mi355x_megatron_deepseek-v2-lite_single.json` | `mi355x_megatron_deepseek-v2-lite_single_threshold.json` | single-node |
+| `mi355x_megatron_deepseek-v2-lite_distributed.json` | `mi355x_megatron_deepseek-v2-lite_distributed_threshold.json` | distributed |
+| `mi355x_megatron_llama-3.1-8b_single.json` | `mi355x_megatron_llama-3.1-8b_single_threshold.json` | single-node |
+| `mi355x_megatron_llama-3.1-8b_distributed.json` | `mi355x_megatron_llama-3.1-8b_distributed_threshold.json` | distributed |
+| `mi355x_megatron_llama-3.3-70b_single.json` | `mi355x_megatron_llama-3.3-70b_single_threshold.json` | single-node |
+| `mi355x_megatron_llama-3.3-70b_distributed.json` | `mi355x_megatron_llama-3.3-70b_distributed_threshold.json` | distributed |
 
 ## What You MUST Change for Your Cluster
 
@@ -28,9 +52,9 @@ Start from the config closest to your target arch/mode and edit these:
 | `config.megatron_root` | Megatron path | In-container path to Megatron-LM (default `/workspace/Megatron-LM`) |
 | `config.nnodes` | Node count | Number of nodes in your cluster (**distributed only**) |
 | `config.master_address` | Head node IP | IP of the head node (**distributed only**) |
-| `config.nic_type` | NIC family | `thor2` (Broadcom) or your NIC type (**distributed only**) |
+| `config.nic_type` | NIC family | `thor2` (Broadcom/MI300X/MI325X), `ainic` (MI355X), or your NIC type (**distributed only**) |
 | `config.nccl_ib_hca_list` / `nccl_ib_hca` | RDMA HCA devices | Your nodes' RDMA device names (e.g. `bnxt_re0,...,bnxt_re7`) (**distributed only**) |
-| `config.nccl_socket_ifname` / `gloo_socket_ifname` | Control NIC | Your management interface name (e.g. `ensf1np1`) (**distributed only**) |
+| `config.nccl_socket_ifname` / `gloo_socket_ifname` | Control NIC | Your management interface name (e.g. `ensf1np1`) |
 | `scaling_baseline.tokens_per_sec_total` | 1-node baseline | Your measured single-node total tok/s (`tok/s/GPU × 8`); `0.0` disables scaling efficiency (**distributed only**) |
 | Threshold JSON gated values | Thresholds | Calibrated PASS/FAIL bounds for your hardware |
 | Cluster file | Node IPs | Your node IPs (first entry is the coordinator node) |
@@ -49,13 +73,16 @@ Top-level fields:
 |---|---|
 | `schema_version` | Always `1` |
 | `framework` | `megatron_single` (single-node) or `megatron_distributed` (multi-node) |
-| `gpu_arch` | `MI325X` / `MI300X` etc. — labels the run, informational |
+| `gpu_arch` | `MI300X` / `MI325X` / `MI355X` — labels the run, informational |
 | `enforce_thresholds` | `true` = metrics gate PASS/FAIL; `false` = record-only |
 | `threshold_json` | Sibling threshold filename; resolved next to the config |
-| `scaling_baseline` | 1-node baseline for scaling efficiency % (distributed only) |
 | `config` | Runtime, paths, NCCL, and NIC settings |
 | `model_params` | Model architecture and default hyperparameters |
 | `container` | Docker container settings |
+| `loss_curve` | Least-squares slope check on training loss across milestone steps |
+| `convergence` | Optional validation loss target; `target_value <= 0` disables |
+| `scaling_baseline` | 1-node baseline for scaling efficiency % (distributed only) |
+| `checkpoint` | Save/resume settings; `enforce: false` makes it record-only |
 | `sweep` | Training combinations and the ordered run list |
 
 ### `config` block
@@ -71,7 +98,7 @@ Top-level fields:
 | `training_iterations` | `"10"` | Training iterations per combo |
 | `nnodes` | `"1"` / `<changeme>` | Node count; must match cluster file |
 | `master_address` | `"127.0.0.1"` / `<changeme>` | Head-node IP for distributed coordination |
-| `nic_type` | `"thor2"` | NIC family; `thor2` triggers Broadcom RDMA-lib copy |
+| `nic_type` | `"thor2"` / `"ainic"` | NIC family; `thor2` triggers Broadcom RDMA-lib copy (MI300X/MI325X); `ainic` for MI355X |
 | `nccl_ib_hca_list` / `nccl_ib_hca` | `<changeme>` | Comma-separated RDMA HCA list |
 | `nccl_socket_ifname` / `gloo_socket_ifname` | `"ensf1np1"` | Control-plane interface name |
 | `hca_id_pattern` | `"bnxt_\|rocep"` | `\|`-separated NIC prefixes for ibv_devinfo validation |
@@ -121,6 +148,33 @@ Distributed configs additionally mount the Broadcom RDMA library and expose `/de
 | `tokens_per_sec_total` | Single-node baseline total tok/s (`tok/s/GPU × 8`); `0.0` disables efficiency calculation |
 | `num_nodes` | Number of nodes used for the baseline (typically `1`) |
 
+### `loss_curve` block
+
+| Field | Description |
+|---|---|
+| `sample_every` | Sample training loss every N steps (in addition to milestone steps) |
+| `milestone_steps` | List of steps always included in the loss sample (e.g. `[100, 500, 1000, 5000]`) |
+| `max_slope` | Least-squares slope must be < `max_slope` to pass; `0.0` means any downward trend passes |
+| `enforce` | `true` = gates PASS/FAIL; `false` = record-only |
+
+### `convergence` block
+
+| Field | Description |
+|---|---|
+| `target_metric` | `"auto"` uses eval loss when eval runs, else training loss |
+| `target_value` | Target loss value; `<= 0` disables convergence checking (record-only) |
+
+### `checkpoint` block
+
+| Field | Description |
+|---|---|
+| `enforce` | `true` = gates PASS/FAIL; `false` = record-only |
+| `save_interval` | Checkpoint save frequency in training steps |
+| `save_iters` | Step at which the save-phase run stops |
+| `resume_iters` | Step at which the resume-phase run stops |
+| `loss_rtol` | Relative tolerance for loss match between save and resume phases |
+| `checkpoint_dir` | Shared filesystem path where Megatron writes and reads checkpoints across nodes (**distributed only**) |
+
 ## Sweeps
 
 Each entry in `sweep.combinations` is one parametrized training run. `sweep.runs` is the ordered list of combo IDs to execute; omit it to run all combinations.
@@ -128,14 +182,14 @@ Each entry in `sweep.combinations` is one parametrized training run. `sweep.runs
 ```json
 "sweep": {
   "combinations": {
-    "llama3_1_8b-mi325-bs128-mbs4-fp8": {
+    "llama3_1_8b-mi325x-bs128-mbs4-fp8": {
       "name": "llama3_1_8b_mbs4_gbs128_FP8",
       "global_batch_size": "128",
       "micro_batch_size": "4",
       "precision": "FP8"
     }
   },
-  "runs": ["llama3_1_8b-mi325-bs128-mbs4-fp8"]
+  "runs": ["llama3_1_8b-mi325x-bs128-mbs4-fp8"]
 }
 ```
 
@@ -171,15 +225,17 @@ Example cell:
 |---|---|
 | `min` | actual ≥ value |
 | `max` | actual ≤ value |
+| `info` | always passes; recorded for informational purposes only |
 | `min_ratio` | actual / reference ≥ value (needs `reference` key) |
 
 ### Tracked metrics
 
-| Metric | Description |
-|---|---|
-| `training.throughput_per_gpu` | TFLOP/s per GPU |
-| `training.tokens_per_gpu` | Tokens per GPU per second |
-| `training.elapsed_time_per_iteration` | Wall time per training step (ms) |
-| `training.mem_usage` | GPU memory usage |
+| Metric | Single | Distributed | Description |
+|---|---|---|---|
+| `training.throughput_per_gpu` | ✓ | ✓ | TFLOP/s per GPU |
+| `training.tokens_per_gpu` | ✓ | ✓ | Tokens per GPU per second |
+| `training.elapsed_time_per_iteration` | ✓ | ✓ | Wall time per training step (ms) |
+| `training.mem_usage` | ✓ | ✓ | GPU memory usage ratio |
+| `training.scaling_efficiency_pct` | — | ✓ | Multi-node scaling efficiency %; always `info` kind |
 
 To start gating a metric: set a calibrated `value` and the appropriate `kind`. The cell key must match the combo's `MBS=`, `GBS=`, and `PRECISION=` values exactly, or the metric falls back to record-only.
