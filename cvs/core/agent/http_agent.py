@@ -53,17 +53,17 @@ class AgentInfo:
 class AgentRegistry:
     '''In-memory record of registered agents, keyed by rank. Lives on rank 0 only.'''
 
-    def __init__(self, expected_count: int) -> None:
+    def __init__(self, world_size: int) -> None:
         self._agents: dict[int, AgentInfo] = {}
         self._lock = asyncio.Lock()
-        self._expected_count: int = expected_count
+        self._world_size: int = world_size
         self._all_registered = asyncio.Event()
 
     async def register(self, rank: int, hostname: str, port: int) -> None:
         async with self._lock:
             # last write wins: a re-registering rank (e.g. restarted with a new port) replaces its old entry
             self._agents[rank] = AgentInfo(hostname, port)
-            if len(self._agents) >= self._expected_count:
+            if len(self._agents) == self._world_size:
                 self._all_registered.set()
 
     def snapshot(self) -> dict[int, AgentInfo]:
@@ -109,44 +109,52 @@ async def _terminate_process_group(process: asyncio.subprocess.Process, grace_pe
         await process.wait()
 
 
-async def _read_stream_with_inactivity_timeout(
-    stream: asyncio.StreamReader, chunks: list[bytes], inactivity_timeout: float | None
-) -> None:
+async def _read_stream(stream: asyncio.StreamReader, chunks: list[bytes], activity: asyncio.Event) -> None:
     # chunks is a caller-owned accumulator (not a local) so partial output survives if this task is
-    # cancelled mid-read, e.g. because the sibling stream or the overall timeout fired first.
+    # cancelled mid-read, e.g. because a sibling task or the overall timeout fired first.
     while True:
-        if inactivity_timeout is None:
-            chunk = await stream.read(65536)
-        else:
-            # wait_for re-arms on every call, so the deadline measures time since the last chunk, not
-            # total elapsed time - exactly the "no output for N seconds" semantics inactivity_timeout wants.
-            chunk = await asyncio.wait_for(stream.read(65536), timeout=inactivity_timeout)
+        chunk = await stream.read(65536)
         if not chunk:
             return
         chunks.append(chunk)
+        activity.set()
+
+
+async def _watch_inactivity(activity: asyncio.Event, inactivity_timeout: float) -> None:
+    # Activity is watched combined across both streams, not per-stream: a process that only ever
+    # writes to one of stdout/stderr must not have the other stream's silence mistaken for a hang.
+    while True:
+        activity.clear()
+        await asyncio.wait_for(activity.wait(), timeout=inactivity_timeout)
 
 
 async def _communicate_with_timeouts(
     process: asyncio.subprocess.Process, timeout: float | None, inactivity_timeout: float | None
 ) -> tuple[bytes, bytes, bool]:
     '''Like process.communicate(), but kills the process and reports timed_out if it runs longer than
-    timeout or falls silent on both streams for longer than inactivity_timeout.'''
+    timeout, or if stdout and stderr are both silent for longer than inactivity_timeout.'''
     stdout_chunks: list[bytes] = []
     stderr_chunks: list[bytes] = []
-    tasks = [
-        asyncio.ensure_future(_read_stream_with_inactivity_timeout(process.stdout, stdout_chunks, inactivity_timeout)),
-        asyncio.ensure_future(_read_stream_with_inactivity_timeout(process.stderr, stderr_chunks, inactivity_timeout)),
-        asyncio.ensure_future(process.wait()),
-    ]
+    activity = asyncio.Event()
+    work = asyncio.ensure_future(
+        asyncio.gather(
+            _read_stream(process.stdout, stdout_chunks, activity),
+            _read_stream(process.stderr, stderr_chunks, activity),
+            process.wait(),
+        )
+    )
+    watchdog = asyncio.ensure_future(_watch_inactivity(activity, inactivity_timeout)) if inactivity_timeout else None
+    racers = [work, watchdog] if watchdog else [work]
     try:
-        await asyncio.wait_for(asyncio.gather(*tasks), timeout=timeout)
-        timed_out = False
-    except asyncio.TimeoutError:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        done, _ = await asyncio.wait(racers, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+        timed_out = work not in done
+    finally:
+        work.cancel()
+        if watchdog is not None:
+            watchdog.cancel()
+        await asyncio.gather(work, *([watchdog] if watchdog else []), return_exceptions=True)
+    if timed_out:
         await _terminate_process_group(process, TERMINATE_GRACE_PERIOD_SECONDS)
-        timed_out = True
     return b"".join(stdout_chunks), b"".join(stderr_chunks), timed_out
 
 
@@ -261,24 +269,38 @@ async def verify_auth(request: Request) -> None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="invalid or missing bearer token")
 
 
-def create_app(agent_dir: Path, own_rank: int, expected_agent_count: int) -> FastAPI:
-    '''Build a FastAPI app for one rank's agent process. own_rank gates /v1/register to rank 0 only.'''
+def create_app(
+    agent_dir: Path,
+    world_rank: int,
+    world_size: int,
+    own_hostname: str | None = None,
+    own_port: int | None = None,
+    register_timeout: float | None = None,
+) -> FastAPI:
+    '''Build a FastAPI app for one rank's agent process. world_rank gates /v1/register to rank 0 only.
+    Rank 0 additionally self-registers under own_hostname/own_port during startup and blocks until every
+    rank has registered, or register_timeout elapses.'''
+    if world_rank == 0 and (own_hostname is None or own_port is None):
+        raise ValueError("own_hostname and own_port are required for rank 0 to self-register")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.auth_token = _read_secret(agent_dir / messages.AUTH_TOKEN_FILENAME)
+        if world_rank == 0:
+            await app.state.registry.register(world_rank, own_hostname, own_port)
+            await app.state.registry.wait_until_ready(timeout=register_timeout)
         yield
 
     app = FastAPI(lifespan=lifespan, dependencies=[Depends(verify_auth)])
-    app.state.own_rank = own_rank
-    app.state.registry = AgentRegistry(expected_agent_count)
+    app.state.world_rank = world_rank
+    app.state.registry = AgentRegistry(world_size)
     app.state.process_registry = ProcessRegistry()
     app.state.exec_busy = False
 
     @app.post(messages.REGISTER_PATH)
     async def register_agent(request: messages.RegisterRequest, http_request: Request) -> messages.RegisterResponse:
         '''Record that a worker rank has started and is reachable at hostname:port'''
-        if http_request.app.state.own_rank != 0:
+        if http_request.app.state.world_rank != 0:
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="only rank 0 accepts registrations")
         await http_request.app.state.registry.register(request.rank, request.hostname, request.port)
         return messages.RegisterResponse(ok=True)

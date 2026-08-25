@@ -28,6 +28,5 @@ matplotlib
 
 # scheduler integration
 fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-httpx >= 0.28.1
+httpx >= 0.28.1  # required by fastapi.testclient.TestClient, used in cvs/core/agent/unittests/test_http_agent.py
 
