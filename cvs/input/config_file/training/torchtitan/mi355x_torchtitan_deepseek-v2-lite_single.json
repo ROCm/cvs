@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "framework": "torchtitan_single",
+  "gpu_arch": "MI355X",
+  "enforce_thresholds": true,
+  "loss_curve": {
+    "sample_every": 10,
+    "milestone_steps": [100, 500, 1000, 5000],
+    "max_slope": 0.0,
+    "enforce": true
+  },
+  "threshold_json": "mi355x_torchtitan_deepseek-v2-lite_single_threshold.json",
+  "config": {
+    "hf_token_file": "/home/{user-id}/.hf_token",
+    "log_dir": "/home/{user-id}/LOGS/torchtitan",
+    "scripts_dir": "/home/{user-id}/SCRIPTS/torchtitan",
+    "data_cache_dir": "/home/{user-id}/cache",
+    "rocm_dir": "",
+    "torchtitan_root": "/workspace/torchtitan",
+    "training_iterations": "10",
+    "nnodes": "1",
+    "nic_type": "thor2",
+    "nccl_socket_ifname": "ensf1np1",
+    "gloo_socket_ifname": "ensf1np1",
+    "nccl_ib_gid_index": "3",
+    "nccl_debug": "ERROR",
+    "master_address": "127.0.0.1",
+    "verify_network_errors": "False",
+    "use_generated_config": "True"
+  },
+  "model_params": {
+    "model_name": "deepseek_v2_lite",
+    "hf_model_name": "deepseek-ai/DeepSeek-V2-Lite",
+    "sequence_length": "8192",
+    "dataset": "c4",
+    "lr": "3e-4",
+    "warmup_steps": "200",
+    "activation_checkpointing": "selective",
+    "compile": "false",
+    "tensor_parallel_degree": "1",
+    "pipeline_parallel_degree": "1",
+    "context_parallel_degree": "1",
+    "expert_parallel_degree": "8",
+    "enable_async_tensor_parallel": "false",
+    "precompute_float8_dynamic_scale_for_fsdp": "false",
+    "data_parallel_shard_degree": "1",
+    "precision": "BF16"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "torchtitan_deepseek_v2_lite_bf16_single",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/dev/infiniband:/dev/infiniband"
+        ],
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri"
+        ]
+      }
+    }
+  },
+  "sweep": {
+    "combinations": {
+      "deepseek_v2_lite-mi355-bs8-mbs1-bf16": {
+        "name": "deepseek_v2_lite_mbs1_gbs8_BF16",
+        "global_batch_size": "8",
+        "micro_batch_size": "1",
+        "precision": "BF16"
+      }
+    },
+    "runs": [
+      "deepseek_v2_lite-mi355-bs8-mbs1-bf16"
+    ]
+  }
+}
