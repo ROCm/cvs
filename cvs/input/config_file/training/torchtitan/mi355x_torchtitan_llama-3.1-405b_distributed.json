@@ -9,6 +9,18 @@
     "max_slope": 0.0,
     "enforce": true
   },
+  "convergence": {
+    "target_metric": "auto",
+    "target_value": 2.0
+  },
+  "checkpoint": {
+    "enforce": false,
+    "save_interval": 20,
+    "save_iters": 21,
+    "resume_iters": 25,
+    "loss_rtol": 0.05,
+    "checkpoint_dir": "/shared/torchtitan/checkpoints"
+  },
   "threshold_json": "mi355x_torchtitan_llama-3.1-405b_distributed_threshold.json",
   "scaling_baseline": {
     "tokens_per_sec_total": 0.0,

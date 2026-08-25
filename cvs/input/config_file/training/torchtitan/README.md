@@ -8,20 +8,19 @@ Keys prefixed with `_` (e.g. `_scaling_baseline_comment`) are inline comments an
 
 ### MI355X Configurations
 
-| Config | Threshold | Model | Arch / mode |
-|---|---|---|---|
-| `mi355x_torchtitan_llama-3.1-8b_single.json` | `mi355x_torchtitan_llama-3.1-8b_single_threshold.json` | Llama-3.1-8B | MI355X, single-node |
-| `mi355x_torchtitan_llama-3.1-8b_fp8_single.json` | `mi355x_torchtitan_llama-3.1-8b_fp8_single_threshold.json` | Llama-3.1-8B FP8 | MI355X, single-node |
-| `mi355x_torchtitan_llama-3.1-70b_single.json` | `mi355x_torchtitan_llama-3.1-70b_single_threshold.json` | Llama-3.1-70B | MI355X, single-node |
-| `mi355x_torchtitan_llama-3.1-70b_fp8_distributed.json` | `mi355x_torchtitan_llama-3.1-70b_fp8_distributed_threshold.json` | Llama-3.1-70B FP8 | MI355X, distributed |
-| `mi355x_torchtitan_llama-3.3-70b_single.json` | `mi355x_torchtitan_llama-3.3-70b_single_threshold.json` | Llama-3.3-70B | MI355X, single-node |
-| `mi355x_torchtitan_llama-3.3-70b_fp8_single.json` | `mi355x_torchtitan_llama-3.3-70b_fp8_single_threshold.json` | Llama-3.3-70B FP8 | MI355X, single-node |
-| `mi355x_torchtitan_llama-3.3-70b_distributed.json` | `mi355x_torchtitan_llama-3.3-70b_distributed_threshold.json` | Llama-3.3-70B | MI355X, distributed |
-| `mi355x_torchtitan_llama-3.3-70b_fp8_distributed.json` | `mi355x_torchtitan_llama-3.3-70b_fp8_distributed_threshold.json` | Llama-3.3-70B FP8 | MI355X, distributed |
-| `mi355x_torchtitan_llama-3.1-405b_distributed.json` | `mi355x_torchtitan_llama-3.1-405b_distributed_threshold.json` | Llama-3.1-405B | MI355X, distributed |
-| `mi355x_torchtitan_deepseek-v2-lite_single.json` | `mi355x_torchtitan_deepseek-v2-lite_single_threshold.json` | DeepSeek-V2-Lite | MI355X, single-node |
-| `mi355x_torchtitan_qwen3-32b_single.json` | `mi355x_torchtitan_qwen3-32b_single_threshold.json` | Qwen3-32B | MI355X, single-node |
-| `mi355x_torchtitan_mixtral-8x22b_single.json` | `mi355x_torchtitan_mixtral-8x22b_single_threshold.json` | Mixtral-8x22B | MI355X, single-node |
+TorchTitan configs follow the Megatron pattern: one config file can contain multiple precision sweeps (BF16, FP8, MXFP8, MXFP4) for the same model, reducing the total number of files.
+
+| Config | Threshold | Model | Precisions | Arch / mode |
+|---|---|---|---|---|
+| `mi355x_torchtitan_llama-3.1-8b_single.json` | `mi355x_torchtitan_llama-3.1-8b_single_threshold.json` | Llama-3.1-8B | BF16, FP8, MXFP8, MXFP4 | MI355X, single-node |
+| `mi355x_torchtitan_llama-3.1-70b_single.json` | `mi355x_torchtitan_llama-3.1-70b_single_threshold.json` | Llama-3.1-70B | BF16 | MI355X, single-node |
+| `mi355x_torchtitan_llama-3.3-70b_single.json` | `mi355x_torchtitan_llama-3.3-70b_single_threshold.json` | Llama-3.3-70B | BF16, FP8, MXFP8 | MI355X, single-node |
+| `mi355x_torchtitan_llama-3.3-70b_distributed.json` | `mi355x_torchtitan_llama-3.3-70b_distributed_threshold.json` | Llama-3.3-70B | BF16, FP8, MXFP8 | MI355X, distributed |
+| `mi355x_torchtitan_llama-3.1-70b_fp8_distributed.json` | `mi355x_torchtitan_llama-3.1-70b_fp8_distributed_threshold.json` | Llama-3.1-70B | FP8 | MI355X, distributed |
+| `mi355x_torchtitan_llama-3.1-405b_distributed.json` | `mi355x_torchtitan_llama-3.1-405b_distributed_threshold.json` | Llama-3.1-405B | BF16 | MI355X, distributed |
+| `mi355x_torchtitan_deepseek-v2-lite_single.json` | `mi355x_torchtitan_deepseek-v2-lite_single_threshold.json` | DeepSeek-V2-Lite | BF16 | MI355X, single-node |
+| `mi355x_torchtitan_qwen3-32b_single.json` | `mi355x_torchtitan_qwen3-32b_single_threshold.json` | Qwen3-32B | BF16 | MI355X, single-node |
+| `mi355x_torchtitan_mixtral-8x22b_single.json` | `mi355x_torchtitan_mixtral-8x22b_single_threshold.json` | Mixtral-8x22B | BF16 | MI355X, single-node |
 
 ### MI355 Configurations
 
@@ -87,6 +86,8 @@ Top-level fields:
 | `enforce_thresholds` | `true` = metrics gate PASS/FAIL; `false` = record-only |
 | `threshold_json` | Sibling threshold filename; resolved next to the config |
 | `loss_curve` | Loss curve validation settings (milestone steps, max slope, enforce flag) |
+| `convergence` | Convergence tracking settings (target metric, target loss) |
+| `checkpoint` | Checkpoint save/resume test settings (enforce, intervals, loss tolerance) |
 | `scaling_baseline` | 1-node baseline for scaling efficiency % (distributed only) |
 | `config` | Runtime, paths, NCCL, and NIC settings |
 | `model_params` | Model architecture and default hyperparameters |
@@ -171,21 +172,75 @@ Distributed configs additionally mount the Broadcom RDMA library and expose `/de
 | `max_slope` | Maximum allowed loss slope (typically `0.0` for decreasing trend) |
 | `enforce` | `true` to fail test on violation; `false` to record only |
 
+### `convergence` block
+
+| Field | Description |
+|---|---|
+| `target_metric` | Metric to track: `"auto"` (use eval_loss if available, else train_loss), `"train_loss"`, or `"eval_loss"` |
+| `target_value` | Target loss threshold; `0.0` disables convergence tracking |
+
+Convergence tracking computes steps-to-target and time-to-target when the loss reaches `target_value`. These metrics are informational and never gate PASS/FAIL.
+
+### `checkpoint` block
+
+| Field | Description |
+|---|---|
+| `enforce` | `true` to run checkpoint save/resume test; `false` to skip |
+| `save_interval` | Save checkpoint every N steps |
+| `save_iters` | Number of iterations in phase 1 (save phase) |
+| `resume_iters` | Number of iterations in phase 2 (resume phase) |
+| `loss_rtol` | Relative tolerance for loss continuity validation (e.g. `0.05` = 5%) |
+| `checkpoint_dir` | Directory for checkpoint files (must be shared across nodes for distributed) |
+
+Checkpoint testing validates:
+- Step counter restoration after resume
+- Loss continuity (resumed loss within `loss_rtol` of expected continuation)
+- Checkpoint I/O timing (logged but not gated)
+
+Set `enforce: false` to skip checkpoint testing entirely.
+
 ## Sweeps
 
 Each entry in `sweep.combinations` is one parametrized training run. `sweep.runs` is the ordered list of combo IDs to execute; omit it to run all combinations.
 
+### Multiple Precision Sweeps per Config
+
+Following the Megatron pattern, one config file can contain multiple precision sweeps for the same model. This reduces the number of config files and makes it easier to run comprehensive precision testing.
+
 ```json
 "sweep": {
   "combinations": {
-    "llama3_1_8b-mi355-bs128-mbs4-fp8": {
-      "name": "llama3_1_8b_mbs4_gbs128_FP8",
-      "global_batch_size": "128",
-      "micro_batch_size": "4",
+    "llama3_1_8b-mi355-bs48-mbs6-bf16": {
+      "name": "llama3_1_8b_mbs6_gbs48_BF16",
+      "global_batch_size": "48",
+      "micro_batch_size": "6",
+      "precision": "BF16"
+    },
+    "llama3_1_8b-mi355-bs48-mbs6-fp8": {
+      "name": "llama3_1_8b_mbs6_gbs48_FP8",
+      "global_batch_size": "48",
+      "micro_batch_size": "6",
       "precision": "FP8"
+    },
+    "llama3_1_8b-mi355-bs48-mbs6-mxfp8": {
+      "name": "llama3_1_8b_mbs6_gbs48_MXFP8",
+      "global_batch_size": "48",
+      "micro_batch_size": "6",
+      "precision": "MXFP8"
+    },
+    "llama3_1_8b-mi355-bs48-mbs6-mxfp4": {
+      "name": "llama3_1_8b_mbs6_gbs48_MXFP4",
+      "global_batch_size": "48",
+      "micro_batch_size": "6",
+      "precision": "MXFP4"
     }
   },
-  "runs": ["llama3_1_8b-mi355-bs128-mbs4-fp8"]
+  "runs": [
+    "llama3_1_8b-mi355-bs48-mbs6-bf16",
+    "llama3_1_8b-mi355-bs48-mbs6-fp8",
+    "llama3_1_8b-mi355-bs48-mbs6-mxfp8",
+    "llama3_1_8b-mi355-bs48-mbs6-mxfp4"
+  ]
 }
 ```
 
@@ -194,7 +249,7 @@ Each entry in `sweep.combinations` is one parametrized training run. `sweep.runs
 | `name` | Human-readable label (used in reports) |
 | `global_batch_size` | Global batch size for this combo |
 | `micro_batch_size` | Micro-batch size for this combo |
-| `precision` | Precision override (`"FP8"`, `"BF16"`, `"FP32"`) |
+| `precision` | Precision override (`"BF16"`, `"FP8"`, `"FP32"`, `"MXFP8"`, `"MXFP4"`) |
 
 Any key in a combo overrides the matching `model_params` field — adding a new sweep parameter (e.g. `tensor_parallel_degree`) requires only a config edit, no code change.
 
