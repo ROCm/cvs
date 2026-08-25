@@ -32,6 +32,10 @@ class TestUtilsLib(unittest.TestCase):
         smi_output = 'Device Name:        AMD Radeon Graphics\nDevice ID:          0x75a0\nGFX Version:        gfx950\n'
         self.assertEqual(utils_lib.get_model_from_rocm_smi_output(smi_output), 'mi350')
 
+    def test_get_model_from_rocm_smi_output_falls_back_to_device_id_for_mi355(self):
+        smi_output = 'Device Name:        AMD Radeon Graphics\nDevice ID:          0x75a3\nGFX Version:        gfx950\n'
+        self.assertEqual(utils_lib.get_model_from_rocm_smi_output(smi_output), 'mi355')
+
     def test_get_model_from_rocm_smi_output_defaults_to_mi300x_when_unrecognized(self):
         smi_output = 'Device Name:        AMD Radeon Graphics\nDevice ID:          0x1234\n'
         self.assertEqual(utils_lib.get_model_from_rocm_smi_output(smi_output), 'mi300x')
