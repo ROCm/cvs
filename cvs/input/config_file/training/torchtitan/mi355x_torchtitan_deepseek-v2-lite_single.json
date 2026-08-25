@@ -16,7 +16,7 @@
     "scripts_dir": "/home/{user-id}/SCRIPTS/torchtitan",
     "data_cache_dir": "/home/{user-id}/cache",
     "rocm_dir": "",
-    "torchtitan_root": "/workspace/torchtitan",
+    "torchtitan_root": "/workspace/Primus/third_party/torchtitan",
     "training_iterations": "10",
     "nnodes": "1",
     "nic_type": "thor2",
