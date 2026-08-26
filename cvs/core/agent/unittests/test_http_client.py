@@ -9,7 +9,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # fan-out, host_args/stop_on_errors semantics, exception classification, and session lifecycle.
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import httpx
 
@@ -21,6 +23,7 @@ from cvs.core.agent.http_client import (
     ParallelHTTPClient,
     ParallelHTTPClientError,
 )
+from cvs.core.run_layout import RunLayout
 
 TOKEN = "test-token-123"
 
@@ -43,6 +46,16 @@ def _exec_handler(request: httpx.Request) -> httpx.Response:
 
 
 class HttpClientTestBase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # run_command's cwd/out_path derive from RunLayout; point it at a throwaway tempdir so
+        # tests don't create real cvs_runs/ directories under the repo (see test_utils_lib.py's
+        # TestResolveRunDirPlaceholder for the same pattern).
+        RunLayout._reset()
+        self.addCleanup(RunLayout._reset)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        RunLayout.get(self.tmp.name)
+
     def _make_client(self, agent_urls: dict[str, str], handler, token: str = TOKEN, **kwargs) -> ParallelHTTPClient:
         client = ParallelHTTPClient(agent_urls, token, transport=httpx.MockTransport(handler), **kwargs)
         self.addAsyncCleanup(client.destroy)
@@ -149,12 +162,148 @@ class TestRunCommand(HttpClientTestBase):
         await client.run_command("true", read_timeout=2.7)
         self.assertEqual(seen_requests[0].timeout, 3)
 
+    async def test_inactivity_timeout_is_rounded_to_int_for_the_wire_request(self):
+        seen_requests: list[messages.ExecRequest] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_requests.append(messages.parse_message(messages.ExecRequest, request.content.decode()))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("true", inactivity_timeout=4.4)
+        self.assertEqual(seen_requests[0].inactivity_timeout, 4)
+
+    async def test_inactivity_timeout_defaults_to_none(self):
+        seen_requests: list[messages.ExecRequest] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_requests.append(messages.parse_message(messages.ExecRequest, request.content.decode()))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("true")
+        self.assertIsNone(seen_requests[0].inactivity_timeout)
+
+    async def test_env_is_passed_through_to_the_exec_request(self):
+        seen_requests: list[messages.ExecRequest] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_requests.append(messages.parse_message(messages.ExecRequest, request.content.decode()))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("true", env={"FOO": "bar"})
+        self.assertEqual(seen_requests[0].env, {"FOO": "bar"})
+
+    async def test_env_defaults_to_empty_dict(self):
+        seen_requests: list[messages.ExecRequest] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_requests.append(messages.parse_message(messages.ExecRequest, request.content.decode()))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("true")
+        self.assertEqual(seen_requests[0].env, {})
+
+    async def test_cwd_defaults_to_the_run_layout_run_dir_not_a_local_path(self):
+        seen_requests: list[messages.ExecRequest] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_requests.append(messages.parse_message(messages.ExecRequest, request.content.decode()))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("true")
+        self.assertEqual(seen_requests[0].cwd, RunLayout.get().run_dir)
+
     async def test_client_is_reused_across_calls(self):
         client = self._make_client({"h1": "http://h1"}, _exec_handler)
         await client.run_command("true")
         first_client = client._client
         await client.run_command("true")
         self.assertIs(client._client, first_client)
+
+
+def _file_mode_handler(request: httpx.Request) -> httpx.Response:
+    '''Simulates the agent's FILE output_mode: writes the full output to out_path on the (here,
+    tempdir-backed) shared FS and returns only a short tail preview inline, like http_agent.py does.'''
+    body = json.loads(request.content)
+    out_dir = Path(body["out_path"])
+    stdout_path = out_dir / f"{body['cmd_id']}.stdout"
+    stderr_path = out_dir / f"{body['cmd_id']}.stderr"
+    full_stdout = "\n".join(f"line{i}" for i in range(20))
+    stdout_path.write_text(full_stdout)
+    stderr_path.write_text("err-line")
+    return httpx.Response(
+        200,
+        json={
+            "exit_code": 0,
+            "stdout": full_stdout.splitlines()[-2:],
+            "stderr": ["err-line"],
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+            "truncated": None,
+            "timed_out": False,
+        },
+    )
+
+
+class TestOutputMode(HttpClientTestBase):
+    async def test_defaults_to_inline_and_does_not_set_out_path(self):
+        seen_requests: list[messages.ExecRequest] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_requests.append(messages.parse_message(messages.ExecRequest, request.content.decode()))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("true")
+        self.assertEqual(seen_requests[0].output_mode, messages.ExecOutputMode.INLINE)
+        self.assertIsNone(seen_requests[0].out_path)
+
+    async def test_file_mode_sets_out_path_under_the_run_layout_run_dir(self):
+        seen_requests: list[messages.ExecRequest] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_requests.append(messages.parse_message(messages.ExecRequest, request.content.decode()))
+            return _file_mode_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("true", output_mode=messages.ExecOutputMode.FILE)
+        self.assertEqual(seen_requests[0].out_path, RunLayout.get().run_dir / "exec_output")
+        self.assertTrue(seen_requests[0].out_path.is_dir())
+
+    async def test_file_mode_returns_full_output_not_just_the_inline_preview(self):
+        client = self._make_client({"h1": "http://h1"}, _file_mode_handler)
+        outputs = await client.run_command("true", output_mode=messages.ExecOutputMode.FILE)
+        self.assertEqual(outputs[0].stdout, [f"line{i}" for i in range(20)])
+        self.assertEqual(outputs[0].stderr, ["err-line"])
+
+    async def test_exit_code_only_mode_is_sent_through(self):
+        seen_requests: list[messages.ExecRequest] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_requests.append(messages.parse_message(messages.ExecRequest, request.content.decode()))
+            return httpx.Response(
+                200,
+                json={
+                    "exit_code": 0,
+                    "stdout": None,
+                    "stderr": None,
+                    "stdout_path": None,
+                    "stderr_path": None,
+                    "truncated": None,
+                    "timed_out": False,
+                },
+            )
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        outputs = await client.run_command("true", output_mode=messages.ExecOutputMode.EXIT_CODE_ONLY)
+        self.assertEqual(seen_requests[0].output_mode, messages.ExecOutputMode.EXIT_CODE_ONLY)
+        self.assertEqual(outputs[0].stdout, [])
+        self.assertEqual(outputs[0].stderr, [])
+        self.assertEqual(outputs[0].exit_code, 0)
 
 
 class TestExceptionClassification(HttpClientTestBase):

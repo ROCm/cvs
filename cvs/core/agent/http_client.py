@@ -8,7 +8,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import asyncio
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 
 import httpx
 
@@ -104,8 +103,19 @@ class ParallelHTTPClient:
             self._client = None
 
     def _build_exec_requests(
-        self, cmd: str, host_args: list[str] | None, read_timeout: float | None
+        self,
+        cmd: str,
+        host_args: list[str] | None,
+        read_timeout: float | None,
+        env: dict[str, str] | None,
+        inactivity_timeout: float | None,
+        output_mode: messages.ExecOutputMode,
     ) -> dict[str, messages.ExecRequest]:
+        # Imported here, not at module level: cvs.core.run_layout pulls in cvs/core/__init__.py's
+        # orchestrator factory, which reaches back into cvs/core/agent/ in ways that risk a cycle
+        # (same reasoning as cvs/lib/utils_lib.py's lazy import of RunLayout).
+        from cvs.core.run_layout import RunLayout
+
         hosts = list(self._agent_urls)
         if host_args is not None:
             if len(host_args) != len(hosts):
@@ -113,19 +123,37 @@ class ParallelHTTPClient:
             commands = [cmd % args for args in host_args]
         else:
             commands = [cmd] * len(hosts)
+        run_dir = RunLayout.get().run_dir
+        out_dir = None
+        if output_mode == messages.ExecOutputMode.FILE:
+            out_dir = run_dir / "exec_output"
+            out_dir.mkdir(parents=True, exist_ok=True)
         return {
             host: messages.ExecRequest(
                 cmd=command,
-                env={},
-                cwd=Path.cwd(),
+                env=env or {},
+                cwd=run_dir,
                 timeout=round(read_timeout) if read_timeout is not None else None,
-                inactivity_timeout=None,
+                inactivity_timeout=round(inactivity_timeout) if inactivity_timeout is not None else None,
                 cmd_id=uuid.uuid4().hex,
-                out_path=None,
-                output_mode=messages.ExecOutputMode.INLINE,
+                out_path=out_dir,
+                output_mode=output_mode,
             )
             for host, command in zip(hosts, commands)
         }
+
+    async def _collect_output(self, exec_response: messages.ExecResponse) -> tuple[list[str], list[str]]:
+        '''FILE mode ships only a tail preview inline; the full output lives on the shared FS at
+        stdout_path/stderr_path, so read it back here to give callers the same list[str] shape
+        regardless of which output_mode produced the response (INLINE/EXIT_CODE_ONLY never set
+        stdout_path, so this falls through to the inline fields for those unchanged).'''
+        if exec_response.stdout_path is not None and exec_response.stderr_path is not None:
+            stdout_text, stderr_text = await asyncio.gather(
+                asyncio.to_thread(exec_response.stdout_path.read_text),
+                asyncio.to_thread(exec_response.stderr_path.read_text),
+            )
+            return stdout_text.splitlines(), stderr_text.splitlines()
+        return exec_response.stdout or [], exec_response.stderr or []
 
     async def _run_one(
         self,
@@ -143,12 +171,13 @@ class ParallelHTTPClient:
             )
             response.raise_for_status()
             exec_response = messages.parse_message(messages.ExecResponse, response.text)
+            stdout, stderr = await self._collect_output(exec_response)
         except Exception as exc:  # noqa: BLE001 - captured per-host so one bad host doesn't sink the others
             return HostOutput(host=host, stdout=[], stderr=[], exit_code=None, exception=_classify_exception(exc))
         return HostOutput(
             host=host,
-            stdout=exec_response.stdout or [],
-            stderr=exec_response.stderr or [],
+            stdout=stdout,
+            stderr=stderr,
             exit_code=exec_response.exit_code,
             exception=None,
         )
@@ -159,8 +188,11 @@ class ParallelHTTPClient:
         stop_on_errors: bool = True,
         read_timeout: float | None = None,
         host_args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        inactivity_timeout: float | None = None,
+        output_mode: messages.ExecOutputMode = messages.ExecOutputMode.INLINE,
     ) -> list[HostOutput]:
-        requests = self._build_exec_requests(cmd, host_args, read_timeout)
+        requests = self._build_exec_requests(cmd, host_args, read_timeout, env, inactivity_timeout, output_mode)
         client = self._get_client()
         outputs = await asyncio.gather(
             *(
