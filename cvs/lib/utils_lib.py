@@ -202,9 +202,17 @@ def get_model_from_rocm_smi_output(smi_output):
       - Performs case-insensitive regex searches for specific model tokens in the provided
         rocm-smi output (e.g., "MI300X", "MI325", "MI350", "MI355").
       - Returns the corresponding normalized lowercase token (e.g., 'mi300x').
-      - Falls back to 'mi300x' if no pattern matches (conservative default).
+      - Some driver/rocm-smi versions emit no marketing-name string at all (observed on
+        MI350: only "Device ID: 0x75a0" and "GFX Version: gfx950", no "MI350" substring
+        anywhere in `rocm-smi -a`); in that case, falls back to matching the known Device ID.
+        MI355X is affected by the same omission (ROCM-21360), hence the second entry below.
+      - Falls back to 'mi300x' if nothing matches (conservative default).
 
     """
+    device_id_to_model = {
+        '0x75a0': 'mi350',
+        '0x75a3': 'mi355',
+    }
     if re.search('MI300X', smi_output, re.I):
         model = 'mi300x'
     elif re.search('MI325', smi_output, re.I):
@@ -215,6 +223,10 @@ def get_model_from_rocm_smi_output(smi_output):
         model = 'mi355'
     else:
         model = 'mi300x'
+        for device_id, mapped_model in device_id_to_model.items():
+            if re.search(rf'Device ID:\s*{re.escape(device_id)}', smi_output, re.I):
+                model = mapped_model
+                break
     return model
 
 
