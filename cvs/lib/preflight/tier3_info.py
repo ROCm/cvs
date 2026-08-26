@@ -281,13 +281,13 @@ class Tier3InfoCheck(PreflightCheck):
     def _validate_prerequisites(self) -> Optional[str]:
         if not self.primus_dir:
             return (
-                f"{NODE_SMOKE_TIER3_SECTION}.primus_dir (or {NODE_SMOKE_TIER1_SECTION}.primus_dir) "
-                "is required when connectivity_mode is 'run'"
+                f"{NODE_SMOKE_TIER3_SECTION}.primus_dir (or {NODE_SMOKE_TIER1_SECTION}/"
+                f"{LEGACY_NODE_SMOKE_SECTION}.primus_dir) is required when connectivity_mode is 'run'"
             )
         if not self.venv_activate:
             return (
-                f"{NODE_SMOKE_TIER3_SECTION}.venv_activate (or {NODE_SMOKE_TIER1_SECTION}.venv_activate) "
-                "is required when connectivity_mode is 'run'"
+                f"{NODE_SMOKE_TIER3_SECTION}.venv_activate (or {NODE_SMOKE_TIER1_SECTION}/"
+                f"{LEGACY_NODE_SMOKE_SECTION}.venv_activate) is required when connectivity_mode is 'run'"
             )
         if not self.node_list:
             return f"no reachable nodes available for {NODE_SMOKE_TIER3_LABEL}"
@@ -338,7 +338,7 @@ class Tier3InfoCheck(PreflightCheck):
                 hosts,
                 self.config_dict,
                 config_section=self.CONFIG_SECTION,
-                fallback_section=NODE_SMOKE_TIER1_SECTION,
+                setting_resolver=resolve_tier3_setting,
             )
             setup_results = setup.run()
             if setup_results.get("status") == "FAIL":

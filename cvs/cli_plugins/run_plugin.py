@@ -7,6 +7,30 @@ from cvs.core.run_layout import RunLayout
 
 from .list_plugin import ListPlugin
 
+# Legacy preflight pytest entry points — resolved at CLI time only so full-module
+# collection does not register duplicate tests (same function object, two names).
+LEGACY_PREFLIGHT_TEST_ALIASES = {
+    "test_node_smoke": "test_node_smoke_tier1",
+    "test_tier3_info": "test_node_smoke_tier3",
+}
+
+
+def resolve_test_function_name(name: str) -> str:
+    """Map deprecated preflight test function names to their canonical pytest targets."""
+    return LEGACY_PREFLIGHT_TEST_ALIASES.get(name, name)
+
+
+def resolve_test_function_names(names):
+    """Resolve legacy aliases and drop duplicates while preserving order."""
+    resolved = []
+    seen = set()
+    for name in names:
+        canonical = resolve_test_function_name(name)
+        if canonical not in seen:
+            seen.add(canonical)
+            resolved.append(canonical)
+    return resolved
+
 
 class RunPlugin(ListPlugin):
     def get_name(self):
@@ -140,8 +164,7 @@ Run Commands:
         # Build pytest arguments
         pytest_args = []
         if test_functions:
-            # Run specific test functions - add each as a separate pytest target
-            for func in test_functions:
+            for func in resolve_test_function_names(test_functions):
                 pytest_args.append(f"{test_file}::{func}")
         else:
             # Run all tests in the file

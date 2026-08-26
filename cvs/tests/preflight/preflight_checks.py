@@ -28,7 +28,11 @@ from cvs.lib.parallel.multiprocess_pssh import MultiProcessPssh as Pssh
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
-from cvs.parsers.schemas import normalize_legacy_preflight_rdma_config, validate_config_file
+from cvs.parsers.schemas import (
+    normalize_legacy_preflight_node_smoke_sections,
+    normalize_legacy_preflight_rdma_config,
+    validate_config_file,
+)
 
 from cvs.lib import globals
 
@@ -288,6 +292,10 @@ def config_dict(config_file, cluster_dict):
     config_dict, compatibility_warning = normalize_legacy_preflight_rdma_config(config_dict)
     if compatibility_warning:
         log.warning(compatibility_warning)
+
+    config_dict, smoke_warning = normalize_legacy_preflight_node_smoke_sections(config_dict)
+    if smoke_warning:
+        log.warning(smoke_warning)
 
     # Resolve path placeholders
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
@@ -746,9 +754,6 @@ def test_node_smoke_tier1(phdl, config_dict):
     preflight_update_test_result()
 
 
-test_node_smoke = test_node_smoke_tier1
-
-
 def test_node_smoke_tier3(phdl, config_dict):
     """
     Run Node Smoke Tier 3 (Primus ``preflight --host --gpu --network``) across the cluster.
@@ -803,9 +808,6 @@ def test_node_smoke_tier3(phdl, config_dict):
         log.info("%s PASS on %d/%d nodes", NODE_SMOKE_TIER3_LABEL, passing, total)
 
     preflight_update_test_result()
-
-
-test_tier3_info = test_node_smoke_tier3
 
 
 def _l2ping_config(config_dict):

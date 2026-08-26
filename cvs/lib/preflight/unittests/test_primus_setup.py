@@ -7,12 +7,55 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
 from cvs.lib.preflight.primus_setup import (
+    PrimusSetup,
     build_primus_clone_or_update_command,
     build_primus_venv_install_command,
     build_wait_for_shared_primus_command,
     parse_setup_output,
+    _resolve_setting_from_sections,
     _venv_root_from_activate,
 )
+from cvs.lib.preflight.node_smoke import (
+    LEGACY_NODE_SMOKE_SECTION,
+    NODE_SMOKE_TIER1_SECTION,
+)
+
+
+class TestPrimusSetupConfigResolution(unittest.TestCase):
+    def test_resolve_setting_from_tier1_section(self):
+        cfg = {
+            "node_smoke_tier1": {
+                "primus_dir": "/home/user/Primus",
+                "venv_activate": "/home/user/envs/preflight/.venv/bin/activate",
+            }
+        }
+        setup = PrimusSetup(None, ["node1"], cfg)
+        self.assertEqual(setup.primus_dir, "/home/user/Primus")
+        self.assertEqual(setup.venv_activate, "/home/user/envs/preflight/.venv/bin/activate")
+
+    def test_resolve_setting_falls_back_to_legacy_node_smoke(self):
+        cfg = {
+            "node_smoke": {
+                "primus_dir": "/legacy/Primus",
+                "venv_activate": "/legacy/.venv/bin/activate",
+            }
+        }
+        setup = PrimusSetup(None, ["node1"], cfg)
+        self.assertEqual(setup.primus_dir, "/legacy/Primus")
+        self.assertEqual(setup.venv_activate, "/legacy/.venv/bin/activate")
+
+    def test_tier1_wins_over_legacy_when_both_present(self):
+        cfg = {
+            "node_smoke_tier1": {"primus_dir": "/tier1/Primus"},
+            "node_smoke": {"primus_dir": "/legacy/Primus"},
+        }
+        value = _resolve_setting_from_sections(
+            cfg,
+            (NODE_SMOKE_TIER1_SECTION, LEGACY_NODE_SMOKE_SECTION),
+            "primus_dir",
+            "",
+        )
+        self.assertEqual(value, "/tier1/Primus")
 
 
 class TestPrimusSetupCommands(unittest.TestCase):

@@ -435,7 +435,13 @@ class NodeSmokeCheck(PreflightCheck):
         if self.auto_setup:
             from cvs.lib.preflight.primus_setup import PrimusSetup
 
-            setup = PrimusSetup(self.phdl, hosts, self.config_dict)
+            setup = PrimusSetup(
+                self.phdl,
+                hosts,
+                self.config_dict,
+                config_section=NODE_SMOKE_TIER1_SECTION,
+                fallback_sections=(LEGACY_NODE_SMOKE_SECTION,),
+            )
             setup_results = setup.run()
             if setup_results.get("status") == "FAIL":
                 return {
