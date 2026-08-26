@@ -1354,6 +1354,16 @@ class TestPsshInactivityTimeout(unittest.TestCase):
         with self.assertRaises(Timeout):
             self.pssh.exec("run", inactivity_timeout=0.3)
 
+    def test_exec_rejects_timeout_and_inactivity_timeout_together(self):
+        with self.assertRaises(ValueError):
+            self.pssh.exec("run", timeout=10, inactivity_timeout=0.3)
+        self.mock_client.run_command.assert_not_called()
+
+    def test_exec_cmd_list_rejects_timeout_and_inactivity_timeout_together(self):
+        with self.assertRaises(ValueError):
+            self.pssh.exec_cmd_list(["run"], timeout=10, inactivity_timeout=0.3)
+        self.mock_client.run_command.assert_not_called()
+
 
 class TestPsshDestroyClients(unittest.TestCase):
     """destroy_clients must actually tear the SSH transport down.
