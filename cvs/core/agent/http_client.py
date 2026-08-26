@@ -25,21 +25,48 @@ class HostOutput:
 
 
 class ParallelHTTPClientError(Exception):
-    '''Raised by run_command when stop_on_errors=True and at least one host failed to reach its agent
-    or returned an unparseable response. Mirrors ParallelSSHClient's raise-on-connection-failure behavior;
-    a nonzero remote exit_code is not itself a failure here, matching pssh's stop_on_errors semantics.'''
+    '''Raised when stop_on_errors=True and at least one host failed to reach its agent or returned an
+    unparseable response. Mirrors ParallelSSHClient's raise-on-connection-failure behavior; a nonzero
+    remote exit_code is not itself a failure here, matching pssh's stop_on_errors semantics.'''
 
 
 class ParallelHTTPClient:
-    '''ParallelSSHClient-API-compatible client that fans a command out to per-host HTTP agents.'''
+    '''Async, ParallelSSHClient-inspired client that fans a command out to per-host HTTP agents.
+
+    Holds one lazily-created, long-lived httpx.AsyncClient shared across calls so repeated commands
+    reuse pooled connections instead of paying a new TCP/TLS handshake each time. Callers own the event
+    loop for the lifetime of the client (there is no internal asyncio.run()); call destroy() or use
+    `async with` when done to release pooled connections.'''
 
     def __init__(self, agent_urls: dict[str, str], token: str, connect_timeout: float | None = None) -> None:
-        self._agent_urls = agent_urls
+        self._agent_urls = dict(agent_urls)
         self._token = token
         self._connect_timeout = connect_timeout
+        self._client: httpx.AsyncClient | None = None
+
+    async def __aenter__(self) -> "ParallelHTTPClient":
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        await self.destroy()
 
     def _auth_header(self) -> dict[str, str]:
         return {messages.AUTH_HEADER: f"{messages.AUTH_SCHEME} {self._token}"}
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(headers=self._auth_header())
+        return self._client
+
+    def rebuild(self, agent_urls: dict[str, str]) -> None:
+        '''Replace the host map, e.g. to drop hosts pruned after a failed health check. The shared
+        client's connection pool needs no action: idle connections to removed hosts simply age out.'''
+        self._agent_urls = dict(agent_urls)
+
+    async def destroy(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
     def _build_exec_requests(
         self, cmd: str, host_args: list | None, read_timeout: float | None
@@ -66,10 +93,19 @@ class ParallelHTTPClient:
         }
 
     async def _run_one(
-        self, client: httpx.AsyncClient, host: str, url: str, request: messages.ExecRequest
+        self,
+        client: httpx.AsyncClient,
+        host: str,
+        url: str,
+        request: messages.ExecRequest,
+        read_timeout: float | None,
     ) -> HostOutput:
         try:
-            response = await client.post(f"{url}{messages.EXEC_PATH}", content=request.model_dump_json())
+            response = await client.post(
+                f"{url}{messages.EXEC_PATH}",
+                content=request.model_dump_json(),
+                timeout=httpx.Timeout(read_timeout, connect=self._connect_timeout),
+            )
             response.raise_for_status()
             exec_response = messages.parse_message(messages.ExecResponse, response.text)
         except Exception as exc:  # noqa: BLE001 - captured per-host so one bad host doesn't sink the others
@@ -82,15 +118,7 @@ class ParallelHTTPClient:
             exception=None,
         )
 
-    async def _run_command_async(
-        self, requests: dict[str, messages.ExecRequest], read_timeout: float | None
-    ) -> list[HostOutput]:
-        timeout = httpx.Timeout(read_timeout, connect=self._connect_timeout)
-        async with httpx.AsyncClient(headers=self._auth_header(), timeout=timeout) as client:
-            tasks = [self._run_one(client, host, self._agent_urls[host], request) for host, request in requests.items()]
-            return await asyncio.gather(*tasks)
-
-    def run_command(
+    async def run_command(
         self,
         cmd: str,
         stop_on_errors: bool = True,
@@ -98,7 +126,13 @@ class ParallelHTTPClient:
         host_args: list | None = None,
     ) -> list[HostOutput]:
         requests = self._build_exec_requests(cmd, host_args, read_timeout)
-        outputs = asyncio.run(self._run_command_async(requests, read_timeout))
+        client = self._get_client()
+        outputs = await asyncio.gather(
+            *(
+                self._run_one(client, host, self._agent_urls[host], request, read_timeout)
+                for host, request in requests.items()
+            )
+        )
         if stop_on_errors:
             failed = [output for output in outputs if output.exception is not None]
             if failed:
@@ -106,6 +140,31 @@ class ParallelHTTPClient:
                 raise ParallelHTTPClientError(f"{len(failed)} host(s) failed: {details}")
         return outputs
 
-    def join(self) -> None:
-        '''No-op: kept for API parity with ParallelSSHClient.join(), which waits on SFTP transfers this
-        client never starts.'''
+    async def _fan_out(self, method: str, path: str, stop_on_errors: bool) -> dict[str, bool]:
+        client = self._get_client()
+
+        async def call(host: str, url: str) -> tuple[str, bool | Exception]:
+            try:
+                response = await client.request(method, f"{url}{path}")
+                response.raise_for_status()
+            except Exception as exc:  # noqa: BLE001 - captured per-host, reported rather than raised
+                return host, exc
+            return host, True
+
+        results = await asyncio.gather(*(call(host, url) for host, url in self._agent_urls.items()))
+        failed = {host: outcome for host, outcome in results if isinstance(outcome, Exception)}
+        if stop_on_errors and failed:
+            details = ", ".join(f"{host}: {exc}" for host, exc in failed.items())
+            raise ParallelHTTPClientError(f"{len(failed)} host(s) failed: {details}")
+        return {host: outcome is True for host, outcome in results}
+
+    async def health(self) -> dict[str, bool]:
+        '''Liveness probe per host; never raises regardless of failures - an unreachable host is the
+        answer this call exists to produce (feeds rebuild()'s pruning decision), not an error.'''
+        return await self._fan_out("GET", messages.HEALTH_PATH, stop_on_errors=False)
+
+    async def shutdown(self, stop_on_errors: bool = False) -> dict[str, bool]:
+        '''Ask every host's agent to terminate its spawned processes and exit. Defaults to best-effort
+        (stop_on_errors=False), unlike run_command: one already-dead straggler during cleanup shouldn't
+        stop the rest from being told to shut down.'''
+        return await self._fan_out("POST", messages.SHUTDOWN_PATH, stop_on_errors)
