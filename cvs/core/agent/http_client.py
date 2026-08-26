@@ -69,7 +69,7 @@ class ParallelHTTPClient:
             self._client = None
 
     def _build_exec_requests(
-        self, cmd: str, host_args: list | None, read_timeout: float | None
+        self, cmd: str, host_args: list[str] | None, read_timeout: float | None
     ) -> dict[str, messages.ExecRequest]:
         hosts = list(self._agent_urls)
         if host_args is not None:
@@ -83,7 +83,7 @@ class ParallelHTTPClient:
                 cmd=command,
                 env={},
                 cwd=Path.cwd(),
-                timeout=read_timeout,
+                timeout=round(read_timeout) if read_timeout is not None else None,
                 inactivity_timeout=None,
                 cmd_id=uuid.uuid4().hex,
                 out_path=None,
@@ -123,7 +123,7 @@ class ParallelHTTPClient:
         cmd: str,
         stop_on_errors: bool = True,
         read_timeout: float | None = None,
-        host_args: list | None = None,
+        host_args: list[str] | None = None,
     ) -> list[HostOutput]:
         requests = self._build_exec_requests(cmd, host_args, read_timeout)
         client = self._get_client()
