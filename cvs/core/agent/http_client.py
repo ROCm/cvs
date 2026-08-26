@@ -30,6 +30,34 @@ class ParallelHTTPClientError(Exception):
     remote exit_code is not itself a failure here, matching pssh's stop_on_errors semantics.'''
 
 
+class HTTPConnectionError(Exception):
+    '''Host was unreachable at the transport level: DNS failure, connection refused, TLS failure, or a
+    connect/read/write/pool timeout. Wraps httpx.TransportError and its subclasses. Analogous to
+    pssh.exceptions.ConnectionError/Timeout/SessionError in cvs/lib/parallel/pssh.py's
+    prune_unreachable_hosts - a signal the host itself may be down, and a pruning candidate.'''
+
+
+class HTTPProtocolError(Exception):
+    '''Host was reached but the request failed at the HTTP/application layer: a non-2xx response
+    (bad auth, exec-already-in-progress conflict, agent-side error) or an unparseable response body.
+    Wraps httpx.HTTPStatusError and messages.MessageParseError. The host is alive, so this may
+    succeed on retry - not a pruning candidate, analogous to pssh's non-pruned auth/protocol errors.'''
+
+
+def _classify_exception(exc: Exception) -> Exception:
+    '''Wrap a raw httpx/messages exception so callers can distinguish "host unreachable" from "host
+    reached but request failed" via isinstance(exception, HTTPConnectionError), the same split
+    cvs/lib/parallel/pssh.py's prune_unreachable_hosts draws for SSH via pssh.exceptions.'''
+    if isinstance(exc, httpx.TransportError):
+        wrapped: Exception = HTTPConnectionError(str(exc))
+    elif isinstance(exc, (httpx.HTTPStatusError, messages.MessageParseError)):
+        wrapped = HTTPProtocolError(str(exc))
+    else:
+        return exc
+    wrapped.__cause__ = exc
+    return wrapped
+
+
 class ParallelHTTPClient:
     '''Async, ParallelSSHClient-inspired client that fans a command out to per-host HTTP agents.
 
@@ -109,7 +137,7 @@ class ParallelHTTPClient:
             response.raise_for_status()
             exec_response = messages.parse_message(messages.ExecResponse, response.text)
         except Exception as exc:  # noqa: BLE001 - captured per-host so one bad host doesn't sink the others
-            return HostOutput(host=host, stdout=[], stderr=[], exit_code=None, exception=exc)
+            return HostOutput(host=host, stdout=[], stderr=[], exit_code=None, exception=_classify_exception(exc))
         return HostOutput(
             host=host,
             stdout=exec_response.stdout or [],
@@ -148,7 +176,7 @@ class ParallelHTTPClient:
                 response = await client.request(method, f"{url}{path}")
                 response.raise_for_status()
             except Exception as exc:  # noqa: BLE001 - captured per-host, reported rather than raised
-                return host, exc
+                return host, _classify_exception(exc)
             return host, True
 
         results = await asyncio.gather(*(call(host, url) for host, url in self._agent_urls.items()))
