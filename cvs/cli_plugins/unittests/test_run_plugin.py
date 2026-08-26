@@ -9,7 +9,7 @@ import json
 # Add the parent directory to sys.path to import cli_plugins
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from cvs.cli_plugins.run_plugin import RunPlugin
+from cvs.cli_plugins.run_plugin import RunPlugin, resolve_test_function_name, resolve_test_function_names
 
 
 class TestRunPlugin(unittest.TestCase):
@@ -288,6 +288,43 @@ class TestRunPluginWorkspace(unittest.TestCase):
         mock_pytest_main.assert_not_called()
         printed = " ".join(str(c) for call in mock_print.call_args_list for c in call[0])
         self.assertIn("workspace is not writable", printed)
+
+
+class TestResolveTestFunctionNames(unittest.TestCase):
+    def setUp(self):
+        self.plugin = RunPlugin()
+
+    def test_legacy_preflight_aliases(self):
+        self.assertEqual(resolve_test_function_name("test_node_smoke"), "test_node_smoke_tier1")
+        self.assertEqual(resolve_test_function_name("test_tier3_info"), "test_node_smoke_tier3")
+        self.assertEqual(resolve_test_function_name("test_node_smoke_tier1"), "test_node_smoke_tier1")
+
+    def test_dedupes_alias_and_canonical(self):
+        names = resolve_test_function_names(
+            ["test_node_smoke", "test_node_smoke_tier1", "test_tier3_info", "test_node_smoke_tier3"]
+        )
+        self.assertEqual(names, ["test_node_smoke_tier1", "test_node_smoke_tier3"])
+
+    @patch("cvs.cli_plugins.run_plugin.pytest.main")
+    @patch("cvs.cli_plugins.run_plugin.sys.exit")
+    def test_run_test_maps_legacy_preflight_names(self, mock_exit, mock_pytest_main):
+        mock_pytest_main.return_value = 0
+        self.plugin.run_test(
+            "/mock/preflight_checks.py",
+            ["test_node_smoke", "test_tier3_info"],
+            "/path/to/cluster.json",
+            "/path/to/config.json",
+            None,
+            False,
+            None,
+            None,
+            None,
+            [],
+        )
+        mock_pytest_main.assert_called_once()
+        pytest_args = mock_pytest_main.call_args[0][0]
+        self.assertIn("/mock/preflight_checks.py::test_node_smoke_tier1", pytest_args)
+        self.assertIn("/mock/preflight_checks.py::test_node_smoke_tier3", pytest_args)
 
 
 if __name__ == "__main__":

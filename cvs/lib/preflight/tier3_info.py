@@ -19,12 +19,20 @@ from typing import Any, Dict, List, Optional
 from cvs.lib.preflight.base import PreflightCheck
 from cvs.lib.preflight.node_smoke import (
     DEFAULT_ARTIFACTS_ROOT_DIR,
+    LEGACY_NODE_SMOKE_SECTION,
+    NODE_SMOKE_TIER1_SECTION,
+    NODE_SMOKE_TIER3_LABEL,
     _config_flag_enabled,
     _normalize_mode,
     get_nested_config,
+    get_preflight_nested,
     resolve_rdma_gid_index,
     resolve_rdma_interfaces,
 )
+from cvs.lib.preflight.node_smoke_counts import aggregate_tier3_test_counts
+
+NODE_SMOKE_TIER3_SECTION = "node_smoke_tier3"
+LEGACY_TIER3_INFO_SECTION = "tier3_info"
 
 _REPORT_BEGIN = "---CVS_TIER3_REPORT_BEGIN---"
 _REPORT_END = "---CVS_TIER3_REPORT_END---"
@@ -37,19 +45,19 @@ _FINDINGS_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Only shared Primus install paths may inherit from node_smoke. Operational knobs
+# Only shared Primus install paths may inherit from Node Smoke Tier 1. Operational knobs
 # (connectivity_mode, timeouts, dump_path, NCCL overrides, etc.) must stay
-# tier3_info-local so enabling node_smoke does not silently launch Tier 3.
-_TIER3_NODE_SMOKE_FALLBACK_KEYS = frozenset({"primus_dir", "venv_activate"})
+# node_smoke_tier3-local so enabling Tier 1 does not silently launch Tier 3.
+_TIER3_TIER1_FALLBACK_KEYS = frozenset({"primus_dir", "venv_activate"})
 
 
 def resolve_tier3_setting(cfg: dict, key: str, default=None):
-    """Read ``tier3_info.<key>``, with a narrow ``node_smoke`` fallback for Primus paths."""
-    value = get_nested_config(cfg, "tier3_info", key, None)
+    """Read ``node_smoke_tier3.<key>``, with narrow Tier 1 / legacy fallbacks."""
+    value = get_preflight_nested(cfg, NODE_SMOKE_TIER3_SECTION, LEGACY_TIER3_INFO_SECTION, key, None)
     if value not in (None, ""):
         return value
-    if key in _TIER3_NODE_SMOKE_FALLBACK_KEYS:
-        fallback = get_nested_config(cfg, "node_smoke", key, None)
+    if key in _TIER3_TIER1_FALLBACK_KEYS:
+        fallback = get_preflight_nested(cfg, NODE_SMOKE_TIER1_SECTION, LEGACY_NODE_SMOKE_SECTION, key, None)
         if fallback not in (None, ""):
             return fallback
     return default
@@ -58,7 +66,7 @@ def resolve_tier3_setting(cfg: dict, key: str, default=None):
 def _resolve_dump_path(cfg: dict) -> str:
     """Return Tier 3 dump directory; empty config uses reporting artifacts root."""
     artifacts_root = get_nested_config(cfg, "reporting", "artifacts_root_dir", DEFAULT_ARTIFACTS_ROOT_DIR)
-    default_dump = f"{str(artifacts_root).rstrip('/')}/tier3_info"
+    default_dump = f"{str(artifacts_root).rstrip('/')}/node_smoke_tier3"
     configured = resolve_tier3_setting(cfg, "dump_path", default_dump)
     configured_s = str(configured or "").strip()
     return configured_s if configured_s else default_dump
@@ -227,7 +235,7 @@ def parse_preflight_info_output(output: str) -> Dict[str, Any]:
 class Tier3InfoCheck(PreflightCheck):
     """Run Primus preflight Host/GPU/Network info checks across cluster nodes via SSH."""
 
-    CONFIG_SECTION = "tier3_info"
+    CONFIG_SECTION = NODE_SMOKE_TIER3_SECTION
 
     def __init__(self, phdl, node_list: List[str], config_dict=None):
         super().__init__(phdl, config_dict)
@@ -237,14 +245,18 @@ class Tier3InfoCheck(PreflightCheck):
     def _load_settings(self):
         cfg = self.config_dict or {}
 
-        self.mode = _normalize_mode(get_nested_config(cfg, "tier3_info", "connectivity_mode", "skip"))
+        self.mode = _normalize_mode(
+            get_preflight_nested(cfg, NODE_SMOKE_TIER3_SECTION, LEGACY_TIER3_INFO_SECTION, "connectivity_mode", "skip")
+        )
         self.primus_dir = str(resolve_tier3_setting(cfg, "primus_dir", "") or "")
         self.venv_activate = str(resolve_tier3_setting(cfg, "venv_activate", "") or "")
         self.gpus_per_node = int(resolve_tier3_setting(cfg, "gpus_per_node", 8))
         self.master_port = int(resolve_tier3_setting(cfg, "master_port", 1234))
         self.ssh_timeout = int(resolve_tier3_setting(cfg, "ssh_timeout", 600))
         self.dist_timeout_sec = int(resolve_tier3_setting(cfg, "dist_timeout_sec", 120))
-        self.report_file_name = str(resolve_tier3_setting(cfg, "report_file_name", "tier3_info") or "tier3_info")
+        self.report_file_name = str(
+            resolve_tier3_setting(cfg, "report_file_name", "node_smoke_tier3") or "node_smoke_tier3"
+        )
         self.save_pdf = _config_flag_enabled(resolve_tier3_setting(cfg, "save_pdf", False))
         self.dump_path = _resolve_dump_path(cfg)
 
@@ -268,11 +280,17 @@ class Tier3InfoCheck(PreflightCheck):
 
     def _validate_prerequisites(self) -> Optional[str]:
         if not self.primus_dir:
-            return "tier3_info.primus_dir (or node_smoke.primus_dir) is required when connectivity_mode is 'run'"
+            return (
+                f"{NODE_SMOKE_TIER3_SECTION}.primus_dir (or {NODE_SMOKE_TIER1_SECTION}/"
+                f"{LEGACY_NODE_SMOKE_SECTION}.primus_dir) is required when connectivity_mode is 'run'"
+            )
         if not self.venv_activate:
-            return "tier3_info.venv_activate (or node_smoke.venv_activate) is required when connectivity_mode is 'run'"
+            return (
+                f"{NODE_SMOKE_TIER3_SECTION}.venv_activate (or {NODE_SMOKE_TIER1_SECTION}/"
+                f"{LEGACY_NODE_SMOKE_SECTION}.venv_activate) is required when connectivity_mode is 'run'"
+            )
         if not self.node_list:
-            return "no reachable nodes available for Tier 3 preflight info"
+            return f"no reachable nodes available for {NODE_SMOKE_TIER3_LABEL}"
         return None
 
     def _preflight_flags(self) -> str:
@@ -289,7 +307,7 @@ class Tier3InfoCheck(PreflightCheck):
             return {
                 "mode": self.mode,
                 "skipped": True,
-                "message": "Primus Tier 3 preflight info check skipped by configuration",
+                "message": f"{NODE_SMOKE_TIER3_LABEL} check skipped by configuration",
                 "node_results": {},
             }
 
@@ -320,7 +338,7 @@ class Tier3InfoCheck(PreflightCheck):
                 hosts,
                 self.config_dict,
                 config_section=self.CONFIG_SECTION,
-                fallback_section="node_smoke",
+                setting_resolver=resolve_tier3_setting,
             )
             setup_results = setup.run()
             if setup_results.get("status") == "FAIL":
@@ -328,7 +346,7 @@ class Tier3InfoCheck(PreflightCheck):
                     "mode": self.mode,
                     "skipped": True,
                     "status": "FAIL",
-                    "message": "Primus auto_setup failed — fix setup errors before Tier 3 preflight info",
+                    "message": f"Primus auto_setup failed — fix setup errors before {NODE_SMOKE_TIER3_LABEL}",
                     "setup_results": setup_results,
                     "node_results": {},
                 }
@@ -340,7 +358,7 @@ class Tier3InfoCheck(PreflightCheck):
         host_ranks = {host: rank for rank, host in enumerate(hosts)}
 
         self.log_info(
-            f"Launching Primus preflight --host --gpu --network on {nnodes} node(s) "
+            f"Launching {NODE_SMOKE_TIER3_LABEL} on {nnodes} node(s) "
             f"(primus_dir={self.primus_dir}, dump_path={self.dump_path}, "
             f"dist_timeout_sec={self.dist_timeout_sec})"
         )
@@ -388,7 +406,7 @@ class Tier3InfoCheck(PreflightCheck):
                 cluster_report = parsed["report_markdown"]
             if parsed["status"] == "FAIL":
                 for reason in parsed["fail_reasons"]:
-                    self.log_error(f"Node {host} Tier 3 preflight info: {reason}")
+                    self.log_error(f"Node {host} {NODE_SMOKE_TIER3_LABEL}: {reason}")
 
         failed_nodes = [n for n, r in node_results.items() if r.get("status") == "FAIL"]
         passing_nodes = [n for n, r in node_results.items() if r.get("status") == "PASS"]
@@ -412,4 +430,8 @@ class Tier3InfoCheck(PreflightCheck):
         }
         if setup_results is not None:
             self.results["setup_results"] = setup_results
+        self.results.update(aggregate_tier3_test_counts(self.results))
         return self.results
+
+
+NodeSmokeTier3Check = Tier3InfoCheck

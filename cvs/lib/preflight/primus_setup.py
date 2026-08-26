@@ -13,10 +13,15 @@ from __future__ import annotations
 import os
 import re
 import shlex
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from cvs.lib.preflight.base import PreflightCheck
-from cvs.lib.preflight.node_smoke import get_nested_config, _config_flag_enabled
+from cvs.lib.preflight.node_smoke import (
+    LEGACY_NODE_SMOKE_SECTION,
+    NODE_SMOKE_TIER1_SECTION,
+    get_nested_config,
+    _config_flag_enabled,
+)
 
 _GIT_ERROR_RE = re.compile(r"(?:^|\n)(?:fatal:|error:\s+pathspec)", re.IGNORECASE)
 _PIP_ERROR_RE = re.compile(r"(?:^|\n)ERROR:\s(?!.*pathspec)", re.IGNORECASE)
@@ -203,6 +208,24 @@ def parse_setup_output(output: str) -> Dict[str, Any]:
     return {"status": "FAIL", "errors": ["setup did not report success"]}
 
 
+def _dedupe_sections(sections: Sequence[str]) -> Tuple[str, ...]:
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for section in sections:
+        if section and section not in seen:
+            seen.add(section)
+            ordered.append(section)
+    return tuple(ordered)
+
+
+def _resolve_setting_from_sections(cfg: dict, sections: Sequence[str], key: str, default=None):
+    for section in sections:
+        value = get_nested_config(cfg, section, key, None)
+        if value not in (None, ""):
+            return value
+    return default
+
+
 class PrimusSetup(PreflightCheck):
     """Clone/update Primus and prepare the preflight venv on cluster nodes."""
 
@@ -211,25 +234,31 @@ class PrimusSetup(PreflightCheck):
         phdl,
         node_list: List[str],
         config_dict=None,
-        config_section: str = "node_smoke",
+        config_section: str = NODE_SMOKE_TIER1_SECTION,
         fallback_section: Optional[str] = None,
+        fallback_sections: Optional[Sequence[str]] = None,
+        setting_resolver: Optional[Callable[[dict, str, Any], Any]] = None,
     ):
         super().__init__(phdl, config_dict)
         self.node_list = list(node_list)
         self.config_section = config_section
-        self.fallback_section = fallback_section
+        self._setting_resolver = setting_resolver
+        if setting_resolver is None:
+            if fallback_sections is not None:
+                section_chain = (config_section, *fallback_sections)
+            elif fallback_section:
+                section_chain = (config_section, fallback_section)
+            else:
+                section_chain = (config_section, LEGACY_NODE_SMOKE_SECTION)
+            self._setting_sections = _dedupe_sections(section_chain)
+        else:
+            self._setting_sections = ()
         self._load_settings()
 
     def _resolve_setting(self, key: str, default=None):
-        cfg = self.config_dict or {}
-        value = get_nested_config(cfg, self.config_section, key, None)
-        if value not in (None, ""):
-            return value
-        if self.fallback_section and self.fallback_section != self.config_section:
-            value = get_nested_config(cfg, self.fallback_section, key, None)
-            if value not in (None, ""):
-                return value
-        return default
+        if self._setting_resolver is not None:
+            return self._setting_resolver(self.config_dict or {}, key, default)
+        return _resolve_setting_from_sections(self.config_dict or {}, self._setting_sections, key, default)
 
     def _load_settings(self):
         self.primus_dir = self._resolve_setting("primus_dir", "")

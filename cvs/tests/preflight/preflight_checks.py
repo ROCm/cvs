@@ -15,16 +15,24 @@ from cvs.lib.preflight.interface_consistency import InterfaceConsistencyCheck
 from cvs.lib.preflight.ifoe_l2_connectivity import IfoeL2ConnectivityCheck
 from cvs.lib.preflight.scaleup_fabric import NodeHealthCheck
 from cvs.lib.preflight.transferbench_smoke import TransferBenchSmokeCheck
-from cvs.lib.preflight.node_smoke import NodeSmokeCheck
-from cvs.lib.preflight.tier3_info import Tier3InfoCheck
+from cvs.lib.preflight.node_smoke import (
+    NODE_SMOKE_TIER1_LABEL,
+    NODE_SMOKE_TIER3_LABEL,
+    NodeSmokeCheck,
+)
+from cvs.lib.preflight.tier3_info import NodeSmokeTier3Check
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
-from cvs.lib.preflight.report import PreflightReportGenerator
+from cvs.lib.preflight.report import PreflightReportGenerator, preflight_check_display_name
 from cvs.lib.parallel.multiprocess_pssh import MultiProcessPssh as Pssh
 from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
-from cvs.parsers.schemas import normalize_legacy_preflight_rdma_config, validate_config_file
+from cvs.parsers.schemas import (
+    normalize_legacy_preflight_node_smoke_sections,
+    normalize_legacy_preflight_rdma_config,
+    validate_config_file,
+)
 
 from cvs.lib import globals
 
@@ -284,6 +292,10 @@ def config_dict(config_file, cluster_dict):
     config_dict, compatibility_warning = normalize_legacy_preflight_rdma_config(config_dict)
     if compatibility_warning:
         log.warning(compatibility_warning)
+
+    config_dict, smoke_warning = normalize_legacy_preflight_node_smoke_sections(config_dict)
+    if smoke_warning:
+        log.warning(smoke_warning)
 
     # Resolve path placeholders
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
@@ -681,14 +693,14 @@ def test_gid_consistency(phdl, config_dict):
     preflight_update_test_result()
 
 
-def test_node_smoke(phdl, config_dict):
+def test_node_smoke_tier1(phdl, config_dict):
     """
-    Run Primus ``node_smoke`` checks on each reachable node via primus-cli.
+    Run Node Smoke Tier 1 (Primus ``node_smoke``) on each reachable node via primus-cli.
 
-    Opt-in via ``node_smoke.connectivity_mode`` in the preflight config (default
-    ``skip``).  Uses parallel SSH — no Slurm required.
+    Opt-in via ``node_smoke_tier1.connectivity_mode`` (legacy: ``node_smoke``) in the
+    preflight config (default ``skip``).  Uses parallel SSH — no Slurm required.
 
-    Optional Tier 2 perf sanity (``node_smoke.tier2_perf``) enables
+    Optional Node Smoke Tier 2 perf sanity (``node_smoke_tier1.tier2_perf``) enables
     ``--tier2-perf``: large GEMM TFLOPS floor, HBM D2D bandwidth, and local
     multi-GPU RCCL all-reduce thresholds (``gemm_tflops_min``, ``hbm_gbs_min``,
     ``rccl_gbs_min``, etc.).
@@ -698,25 +710,28 @@ def test_node_smoke(phdl, config_dict):
     global preflight_results
 
     if not phdl.reachable_hosts:
-        log.warning("Primus node_smoke skipped: no reachable hosts remain after earlier preflight pruning")
-        preflight_results['node_smoke'] = {
+        log.warning("%s skipped: no reachable hosts remain after earlier preflight pruning", NODE_SMOKE_TIER1_LABEL)
+        skipped = {
             'mode': 'skip',
             'skipped': True,
-            'message': 'No reachable nodes available for Primus node_smoke',
+            'message': f'No reachable nodes available for {NODE_SMOKE_TIER1_LABEL}',
             'node_results': {},
         }
+        preflight_results['node_smoke_tier1'] = skipped
+        preflight_results['node_smoke'] = skipped
         preflight_update_test_result()
         return
 
     node_list = list(phdl.reachable_hosts)
-    log.info("Running Primus node_smoke on %d reachable host(s)", len(node_list))
+    log.info("Running %s on %d reachable host(s)", NODE_SMOKE_TIER1_LABEL, len(node_list))
 
     checker = NodeSmokeCheck(phdl, node_list, config_dict)
     results = checker.run()
+    preflight_results['node_smoke_tier1'] = results
     preflight_results['node_smoke'] = results
 
     if results.get('skipped'):
-        log.info("Primus node_smoke: %s", results.get('message', 'skipped'))
+        log.info("%s: %s", NODE_SMOKE_TIER1_LABEL, results.get('message', 'skipped'))
         preflight_update_test_result()
         return
 
@@ -727,48 +742,52 @@ def test_node_smoke(phdl, config_dict):
 
     if failed_nodes or unknown_nodes:
         log.warning(
-            "Primus node_smoke FAIL on %d/%d node(s): %s",
+            "%s FAIL on %d/%d node(s): %s",
+            NODE_SMOKE_TIER1_LABEL,
             len(failed_nodes) + len(unknown_nodes),
             total,
             ", ".join(failed_nodes + unknown_nodes),
         )
     else:
-        log.info("Primus node_smoke PASS on %d/%d nodes", passing, total)
+        log.info("%s PASS on %d/%d nodes", NODE_SMOKE_TIER1_LABEL, passing, total)
 
     preflight_update_test_result()
 
 
-def test_tier3_info(phdl, config_dict):
+def test_node_smoke_tier3(phdl, config_dict):
     """
-    Run Primus ``preflight --host --gpu --network`` info checks across the cluster.
+    Run Node Smoke Tier 3 (Primus ``preflight --host --gpu --network``) across the cluster.
 
-    Opt-in via ``tier3_info.connectivity_mode`` in the preflight config (default
-    ``skip``).  Uses parallel SSH with torchrun — no Slurm required.
+    Opt-in via ``node_smoke_tier3.connectivity_mode`` (legacy: ``tier3_info``) in the
+    preflight config (default ``skip``).  Uses parallel SSH with torchrun — no Slurm required.
 
     Nodes that fail are reported but are **not** pruned from ``phdl``.
     """
     global preflight_results
 
     if not phdl.reachable_hosts:
-        log.warning("Primus Tier 3 preflight info skipped: no reachable hosts remain after earlier preflight pruning")
-        preflight_results['tier3_info'] = {
+        log.warning("%s skipped: no reachable hosts remain after earlier preflight pruning", NODE_SMOKE_TIER3_LABEL)
+        skipped = {
             'mode': 'skip',
             'skipped': True,
-            'message': 'No reachable nodes available for Tier 3 preflight info',
+            'message': f'No reachable nodes available for {NODE_SMOKE_TIER3_LABEL}',
             'node_results': {},
         }
+        preflight_results['node_smoke_tier3'] = skipped
+        preflight_results['tier3_info'] = skipped
         preflight_update_test_result()
         return
 
     node_list = list(phdl.reachable_hosts)
-    log.info("Running Primus Tier 3 preflight info on %d reachable host(s)", len(node_list))
+    log.info("Running %s on %d reachable host(s)", NODE_SMOKE_TIER3_LABEL, len(node_list))
 
-    checker = Tier3InfoCheck(phdl, node_list, config_dict)
+    checker = NodeSmokeTier3Check(phdl, node_list, config_dict)
     results = checker.run()
+    preflight_results['node_smoke_tier3'] = results
     preflight_results['tier3_info'] = results
 
     if results.get('skipped'):
-        log.info("Primus Tier 3 preflight info: %s", results.get('message', 'skipped'))
+        log.info("%s: %s", NODE_SMOKE_TIER3_LABEL, results.get('message', 'skipped'))
         preflight_update_test_result()
         return
 
@@ -779,13 +798,14 @@ def test_tier3_info(phdl, config_dict):
 
     if failed_nodes or unknown_nodes:
         log.warning(
-            "Primus Tier 3 preflight info FAIL on %d/%d node(s): %s",
+            "%s FAIL on %d/%d node(s): %s",
+            NODE_SMOKE_TIER3_LABEL,
             len(failed_nodes) + len(unknown_nodes),
             total,
             ", ".join(failed_nodes + unknown_nodes),
         )
     else:
-        log.info("Primus Tier 3 preflight info PASS on %d/%d nodes", passing, total)
+        log.info("%s PASS on %d/%d nodes", NODE_SMOKE_TIER3_LABEL, passing, total)
 
     preflight_update_test_result()
 
@@ -1351,8 +1371,8 @@ def test_generate_preflight_report(phdl, config_dict, request):
         'gid_consistency',
         'rocm_versions',
         'interface_names',
-        'node_smoke',
-        'tier3_info',
+        'node_smoke_tier1',
+        'node_smoke_tier3',
         'ifoe_l2_connectivity',
         'transferbench_smoke',
         'rdma_connectivity',
@@ -1377,7 +1397,7 @@ def test_generate_preflight_report(phdl, config_dict, request):
     for check_name, check_summary in summary['checks'].items():
         status_icon = "✅" if check_summary['status'] == 'PASS' else "❌"
         log.info(
-            f"{status_icon} {check_name.replace('_', ' ').title()}: {check_summary['status']} - {check_summary['summary']}"
+            f"{status_icon} {preflight_check_display_name(check_name)}: {check_summary['status']} - {check_summary['summary']}"
         )
 
     log.info(f"\nOverall Status: {summary['overall_status']}")

@@ -7,9 +7,11 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
+from cvs.lib.preflight.primus_setup import PrimusSetup
 from cvs.lib.preflight.tier3_info import (
     _REPORT_BEGIN,
     _REPORT_END,
+    NODE_SMOKE_TIER3_SECTION,
     Tier3InfoCheck,
     _resolve_dump_path,
     build_preflight_info_flags,
@@ -29,7 +31,7 @@ class TestBuildPreflightInfoFlags(unittest.TestCase):
         self.assertIn("--disable-pdf", flags)
 
     def test_resolve_dump_path_without_reporting_section(self):
-        self.assertEqual(_resolve_dump_path({"tier3_info": {"dump_path": ""}}), "/tmp/preflight/tier3_info")
+        self.assertEqual(_resolve_dump_path({"tier3_info": {"dump_path": ""}}), "/tmp/preflight/node_smoke_tier3")
 
     def test_master_node_includes_report_markers(self):
         cmd = build_remote_preflight_info_command(
@@ -67,6 +69,30 @@ class TestResolveTier3Setting(unittest.TestCase):
             "node_smoke": {"primus_dir": "/home/user/Primus"},
         }
         self.assertEqual(resolve_tier3_setting(cfg, "primus_dir"), "/home/user/Primus")
+
+    def test_auto_setup_inherits_empty_tier3_primus_paths_from_node_smoke(self):
+        cfg = {
+            "tier3_info": {
+                "connectivity_mode": "run",
+                "auto_setup": True,
+                "primus_dir": "",
+                "venv_activate": "",
+            },
+            "node_smoke": {
+                "primus_dir": "/home/user/INSTALL/Primus",
+                "venv_activate": "/home/user/envs/preflight/.venv/bin/activate",
+            },
+        }
+        setup = PrimusSetup(
+            None,
+            ["node0"],
+            cfg,
+            config_section=NODE_SMOKE_TIER3_SECTION,
+            setting_resolver=resolve_tier3_setting,
+        )
+        self.assertEqual(setup.primus_dir, "/home/user/INSTALL/Primus")
+        self.assertEqual(setup.venv_activate, "/home/user/envs/preflight/.venv/bin/activate")
+        self.assertIsNone(setup._validate())
 
     def test_connectivity_mode_does_not_inherit_node_smoke(self):
         cfg = {
