@@ -1,5 +1,6 @@
 # cvs/lib/unittests/test_utils_lib.py
 import os
+import shlex
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -44,6 +45,17 @@ class TestUtilsLib(unittest.TestCase):
     def test_get_model_from_rocm_smi_output_defaults_to_mi300x_when_unrecognized(self):
         smi_output = 'Device Name:        AMD Radeon Graphics\nDevice ID:          0x1234\n'
         self.assertEqual(utils_lib.get_model_from_rocm_smi_output(smi_output), 'mi300x')
+
+    def test_wan_hf_snapshot_offline_check_commands_paths_quoted(self):
+        snap_root = '/data/my hf cache/snapshots/abc123'
+        cmds = utils_lib.wan_hf_snapshot_offline_check_commands(snap_root)
+        self.assertIn('configuration.json', cmds)
+        self.assertIn('low_noise diffusion shards (6 x >500MiB)', cmds)
+        quoted_cfg = shlex.quote(os.path.join(snap_root, 'configuration.json'))
+        self.assertIn(quoted_cfg, cmds['configuration.json'])
+        for label, cmd in cmds.items():
+            self.assertIn('OK', cmd, msg=label)
+            self.assertIn('MISSING', cmd, msg=label)
 
 
 class TestResolveTestConfigPlaceholdersAorta(unittest.TestCase):

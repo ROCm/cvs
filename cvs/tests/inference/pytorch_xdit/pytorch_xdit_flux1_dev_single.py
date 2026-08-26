@@ -280,8 +280,8 @@ def s_phdl(cluster_dict):
     # Single-node mode: execute locally ONLY when the target actually refers to this machine.
     #
     # Rationale: users often specify a remote node IP/hostname in cluster.json even for a
-    # single-node run. Always forcing local execution will run benchmarks on the login node
-    # (no GPUs/ROCm) and fail in confusing ways.
+    # single-node run. Without this check, that target would run on this host instead of the
+    # target node's GPUs/ROCm, and fail in confusing ways.
     if len(node_list) == 1:
         target = node_list[0]
         if _is_local_target(target):
@@ -516,8 +516,8 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     """
     globals.error_list = []
 
-    # Preflight: ensure all nodes have GPU-capable hardware. Running on a login node (no /dev/kfd)
-    # will cause ROCm + container init to fail and produce no timing.json.
+    # Preflight: ensure all nodes expose /dev/kfd (ROCm). Missing device nodes usually means
+    # the target is not suitable for this GPU container workload.
     log.info(f"Checking /dev/kfd on {len(s_phdl.host_list)} node(s)")
     kfd_check = s_phdl.exec("test -e /dev/kfd && echo KFD_OK || echo KFD_MISSING", print_console=False)
     missing_kfd_nodes = []
@@ -531,12 +531,22 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     if missing_kfd_nodes:
         fail_test(
             f"ROCm device node /dev/kfd not found on {len(missing_kfd_nodes)} node(s): {', '.join(missing_kfd_nodes)}. "
-            f"This test must be run on GPU compute nodes (e.g., via an interactive SLURM allocation)."
+            f"This test requires ROCm GPU nodes with /dev/kfd on each target."
         )
         update_test_result()
         return
 
     container_image = inference_dict['container_image']
+    missing_img_nodes = docker_lib.nodes_missing_docker_image(s_phdl, container_image)
+    if missing_img_nodes:
+        fail_test(
+            f"Container image not found locally on {len(missing_img_nodes)} node(s): {', '.join(missing_img_nodes)}. "
+            f"Configured image: {container_image}. Pull it on each target node before running this benchmark "
+            f"(for example: docker pull {container_image})."
+        )
+        update_test_result()
+        return
+
     container_name = inference_dict['container_name']
     hf_home = inference_dict['hf_home']
     output_base_dir = inference_dict['output_base_dir']

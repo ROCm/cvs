@@ -23,6 +23,7 @@ from cvs.lib.utils_lib import (
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
     resolve_test_config_placeholders,
+    wan_hf_snapshot_offline_check_commands,
 )
 from cvs.lib import docker_lib
 from cvs.lib import globals
@@ -257,8 +258,8 @@ def s_phdl(cluster_dict):
     # Single-node mode: execute locally ONLY when the target actually refers to this machine.
     #
     # Rationale: users often specify a remote node IP/hostname in cluster.json even for a
-    # single-node run. Always forcing local execution will run benchmarks on the login node
-    # (no GPUs/ROCm) and silently "pass" until parsing fails.
+    # single-node run. Without this check, that target would run on this host instead of the
+    # target node's GPUs/ROCm, and fail in confusing ways.
     if len(node_list) == 1:
         target = node_list[0]
         if _is_local_target(target):
@@ -321,6 +322,24 @@ def test_cleanup_stale_containers(s_phdl, inference_dict):
     log.info("Container cleanup completed on all nodes")
 
 
+def _assert_wan_snapshot_complete(s_phdl, snapshot_path, failure_prefix, failure_suffix):
+    """
+    Run wan_hf_snapshot_offline_check_commands against snapshot_path on all nodes.
+
+    Calls fail_test with a combined message on the first check that fails anywhere.
+    Returns True if every check passed everywhere, False otherwise.
+    """
+    for label, cmd in wan_hf_snapshot_offline_check_commands(snapshot_path).items():
+        res = s_phdl.exec(cmd, print_console=False)
+        bad = [n for n, out in (res or {}).items() if "OK" not in (out or "")]
+        if bad:
+            fail_test(
+                f"{failure_prefix} Check '{label}' failed on {len(bad)} node(s): {', '.join(bad)}. {failure_suffix}"
+            )
+            return False
+    return True
+
+
 def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
     """
     Verify the model is present locally on all nodes (no downloads).
@@ -361,6 +380,17 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
             update_test_result()
             return
 
+        # Align with HF snapshot checks for Wan2.2 I2V-A14B when staging via absolute path.
+        if "Wan2.2-I2V-A14B" in model_repo or "Wan2.2-I2V-A14B" in host_model_path:
+            if not _assert_wan_snapshot_complete(
+                s_phdl,
+                host_model_path,
+                failure_prefix="WAN local model directory looks incomplete (Wan2.2-I2V-A14B layout).",
+                failure_suffix=f"Model path: {host_model_path}.",
+            ):
+                update_test_result()
+                return
+
         inference_dict["_resolved_model_mount_host"] = host_model_path
         inference_dict["_resolved_ckpt_dir_container"] = "/model"
         log.info(f"Using local model path: {host_model_path} (mounted to /model in container) on all nodes")
@@ -393,6 +423,19 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
     inference_dict["_resolved_ckpt_dir_container"] = f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
     log.info(f"Using pre-cached snapshot: {inference_dict['_resolved_ckpt_dir_container']} on all nodes")
 
+    # Stronger offline checks for Wan2.2 I2V-A14B HF layout (avoids passing while download is partial).
+    if "Wan2.2-I2V-A14B" in model_repo:
+        if not _assert_wan_snapshot_complete(
+            s_phdl,
+            snapshot_dir_host,
+            failure_prefix="WAN Hugging Face snapshot looks incomplete (or not a Wan2.2-I2V-A14B-style tree).",
+            failure_suffix=(
+                f"Snapshot path: {snapshot_dir_host}. Wait for downloads to finish or fix hf_home / model_rev."
+            ),
+        ):
+            update_test_result()
+            return
+
     update_test_result()
 
 
@@ -406,7 +449,36 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     """
     globals.error_list = []
 
+    # Preflight: same ROCm device check as FLUX — avoids messy container failures on non-GPU nodes.
+    log.info(f"Checking /dev/kfd on {len(s_phdl.host_list)} node(s)")
+    kfd_check = s_phdl.exec("test -e /dev/kfd && echo KFD_OK || echo KFD_MISSING", print_console=False)
+    missing_kfd_nodes = []
+    for node, output in kfd_check.items():
+        if "KFD_OK" not in (output or ""):
+            missing_kfd_nodes.append(node)
+            log.error(f"ROCm device node /dev/kfd not found on {node}")
+        else:
+            log.info(f"/dev/kfd found on {node}")
+
+    if missing_kfd_nodes:
+        fail_test(
+            f"ROCm device node /dev/kfd not found on {len(missing_kfd_nodes)} node(s): {', '.join(missing_kfd_nodes)}. "
+            f"This test requires ROCm GPU nodes with /dev/kfd on each target."
+        )
+        update_test_result()
+        return
+
     container_image = inference_dict['container_image']
+    missing_img_nodes = docker_lib.nodes_missing_docker_image(s_phdl, container_image)
+    if missing_img_nodes:
+        fail_test(
+            f"Container image not found locally on {len(missing_img_nodes)} node(s): {', '.join(missing_img_nodes)}. "
+            f"Configured image: {container_image}. Pull it on each target node before running this benchmark "
+            f"(for example: docker pull {container_image})."
+        )
+        update_test_result()
+        return
+
     container_name = inference_dict['container_name']
     hf_home = inference_dict['hf_home']
     output_base_dir = inference_dict['output_base_dir']
