@@ -461,6 +461,19 @@ def resolve_test_config_placeholders(config_dict, cluster_dict):
     return resolved_config
 
 
+def cluster_target_output_label(cluster_node_key: str) -> str:
+    """
+    Stable label for per-node benchmark output directories.
+
+    Uses the cluster ``node_dict`` key (the SSH target string) instead of the remote
+    ``hostname`` command, so the same node does not produce multiple output trees when
+    short and fully-qualified hostnames vary across environments.
+    """
+    if not cluster_node_key:
+        return "unknown_node"
+    return str(cluster_node_key).strip().replace("/", "_")
+
+
 def collect_system_metadata(phdl, cluster_dict, config_dict, test_command=None, env_vars=None):
     """
     Collect comprehensive system metadata from compute nodes for test reporting.
