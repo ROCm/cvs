@@ -66,10 +66,17 @@ class ParallelHTTPClient:
     loop for the lifetime of the client (there is no internal asyncio.run()); call destroy() or use
     `async with` when done to release pooled connections.'''
 
-    def __init__(self, agent_urls: dict[str, str], token: str, connect_timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        agent_urls: dict[str, str],
+        token: str,
+        connect_timeout: float | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self._agent_urls = dict(agent_urls)
         self._token = token
         self._connect_timeout = connect_timeout
+        self._transport = transport
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> "ParallelHTTPClient":
@@ -83,7 +90,7 @@ class ParallelHTTPClient:
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(headers=self._auth_header())
+            self._client = httpx.AsyncClient(headers=self._auth_header(), transport=self._transport)
         return self._client
 
     def rebuild(self, agent_urls: dict[str, str]) -> None:
