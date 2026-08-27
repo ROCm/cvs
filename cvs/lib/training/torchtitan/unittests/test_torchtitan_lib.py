@@ -122,7 +122,9 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
 
         # Check get_training_results_dict uses the same paths
         expected_results_paths = [f'{job.combo_log_dir}/out-node{i}/training.log' for i in range(job.nnodes)]
-        self.assertEqual(write_paths, expected_results_paths, 'get_training_results_dict paths do not match write paths')
+        self.assertEqual(
+            write_paths, expected_results_paths, 'get_training_results_dict paths do not match write paths'
+        )
 
         # Check scan_for_training_errors uses the same paths
         expected_scan_paths = [f'{job.combo_log_dir}/out-node{i}/training.log' for i in range(job.nnodes)]
