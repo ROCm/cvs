@@ -11,6 +11,7 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     RUN_WAN_DIFFUSERS_PATH,
     RUN_WAN_NATIVE_PATH,
     WAN_DIFFUSERS_LAUNCHER_XFUSER,
+    WAN_XFUSER_AUTO_INPUT_IMAGE,
     WAN_XFUSER_BENCHMARK_OUTPUT_DIR,
     WAN_XFUSER_EXAMPLE_CONTAINER_PATH,
     WAN_XFUSER_TIMING_JSON_CONTAINER_PATH,
@@ -20,14 +21,17 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     build_run_wan_native_args,
     build_run_wan_xfuser_example_args,
     build_torchrun_cmd,
+    build_wan_xfuser_auto_input_image_cmd,
     build_wan_output_verify_cmd,
     build_wan_xfuser_output_verify_cmd,
+    build_wan_xfuser_video_deps_cmd,
     detect_wan_model_format_from_model_index,
     parallel_product,
     parse_wan_size,
     resolve_host_path_for_container_mount,
     resolve_wan_diffusers_launcher,
     resolve_wan_model_format,
+    should_wan_xfuser_auto_generate_input_image,
     scan_wan_fatal_output,
     scan_wan_xfuser_benchmark_output,
     summarize_wan_benchmark_log,
@@ -215,16 +219,35 @@ class TestBuildTorchrunCmd(unittest.TestCase):
                 **self._BASE_PARAMS,
                 "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
                 "wan_diffusers_run_script": WAN_XFUSER_EXAMPLE_CONTAINER_PATH,
-                "wan_diffusers_i2v_image": "/benchmark/i2v_input.JPG",
+                "wan_xfuser_auto_input_image": True,
             },
             ckpt_dir="/model",
             distributed=False,
             model_repo_hints=["Wan-AI/Wan2.2-I2V-A14B-Diffusers"],
         )
         self.assertIn(WAN_XFUSER_EXAMPLE_CONTAINER_PATH, cmd)
-        self.assertIn("--input_image /benchmark/i2v_input.JPG", cmd)
+        self.assertIn(f"--input_image {WAN_XFUSER_AUTO_INPUT_IMAGE}", cmd)
         self.assertIn("mkdir -p /outputs/results", cmd)
+        self.assertIn("imageio", cmd)
+        self.assertIn("i2v_input.jpg", cmd)
         self.assertNotIn(RUN_WAN_DIFFUSERS_PATH, cmd)
+
+    def test_auto_input_image_cmd_uses_config_size(self):
+        cmd = build_wan_xfuser_auto_input_image_cmd({"size": "720*1280"})
+        self.assertIn("1280", cmd)
+        self.assertIn("720", cmd)
+        self.assertIn(WAN_XFUSER_AUTO_INPUT_IMAGE, cmd)
+
+    def test_should_auto_generate_without_host_mount(self):
+        self.assertTrue(
+            should_wan_xfuser_auto_generate_input_image(
+                {
+                    "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+                    "wan_xfuser_auto_input_image": True,
+                },
+                {"container_config": {"volume_dict": {}}},
+            )
+        )
 
 
 class TestWanOutputVerification(unittest.TestCase):
@@ -292,6 +315,27 @@ class TestWanOutputVerification(unittest.TestCase):
         }
         errors = validate_wan_xfuser_mounts(FakePssh(), ["10.0.0.1"], inference_dict, wan_params)
         self.assertTrue(any("placeholder" in err.lower() for err in errors))
+
+    def test_validate_xfuser_mounts_allows_auto_input(self):
+        class FakePssh:
+            host_list = ["10.0.0.1"]
+
+            def exec_cmd_list(self, commands, timeout=None, print_console=False):
+                return {"10.0.0.1": "WAN_MOUNT_OK"}
+
+        inference_dict = {
+            "container_config": {
+                "volume_dict": {
+                    "/host/wan_i2v_example.py": "/benchmark/wan_i2v_example.py",
+                }
+            }
+        }
+        wan_params = {
+            "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+            "wan_xfuser_auto_input_image": True,
+        }
+        errors = validate_wan_xfuser_mounts(FakePssh(), ["10.0.0.1"], inference_dict, wan_params)
+        self.assertEqual(errors, [])
 
 
 class TestBuildNcclEnv(unittest.TestCase):

@@ -685,7 +685,21 @@ class PytorchXditWan22Benchmarks(BaseModel):
     )
     wan_diffusers_i2v_image: Optional[str] = Field(
         default=None,
-        description="In-container input image for Diffusers Wan I2V (default /app/Wan/i2v_input.JPG).",
+        description=(
+            "In-container input image for Diffusers Wan I2V. Omit or set 'auto' to generate a "
+            "placeholder JPEG in-container; otherwise bind-mount the host file via volume_dict."
+        ),
+    )
+    wan_xfuser_auto_input_image: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Generate a synthetic I2V input JPEG inside the container for xFuser runs. "
+            "Defaults to true when no host image is bind-mounted."
+        ),
+    )
+    wan_xfuser_install_video_deps: bool = Field(
+        default=True,
+        description="Run pip install imageio imageio-ffmpeg before xFuser video export.",
     )
     wan_diffusers_launcher: Optional[str] = Field(
         default=None,

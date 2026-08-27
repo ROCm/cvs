@@ -13,8 +13,7 @@
                 "/dev/kfd"
             ],
             "volume_dict": {
-                "/home/{user-id}/cvs/cvs/lib/inference/pytorch_xdit/scripts/wan_i2v_example.py": "/benchmark/wan_i2v_example.py",
-                "/home/{user-id}/cvs_inputs/i2v_input.JPG": "/benchmark/i2v_input.JPG"
+                "/home/{user-id}/cvs/cvs/lib/inference/pytorch_xdit/scripts/wan_i2v_example.py": "/benchmark/wan_i2v_example.py"
             },
             "env_dict": {
                 "CVS_WAN_XFUSER_PYPACKAGES": "/shared/amdgpu/home/dl_dcgpu_aac_service_request_qle/pypackages"
@@ -26,7 +25,8 @@
             "model_format": "diffusers",
             "wan_diffusers_launcher": "xfuser_example",
             "wan_diffusers_run_script": "/benchmark/wan_i2v_example.py",
-            "wan_diffusers_i2v_image": "/benchmark/i2v_input.JPG",
+            "wan_xfuser_auto_input_image": true,
+            "wan_xfuser_install_video_deps": true,
             "wan_xfuser_output_type": "pil",
             "wan_diffusers_save_video_path": "/outputs/results/video_i2v.mp4",
             "wan_diffusers_timing_json_path": "results/timing.json",
