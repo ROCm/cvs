@@ -88,20 +88,27 @@ class TestVllmDeckProfile(unittest.TestCase):
         self.assertTrue(set(cfg.session_lifecycle_labels) <= suite_recorded)
         self.assertTrue(set(cfg.cell_lifecycle_labels) <= suite_recorded)
 
-    def test_auto_register_resolves_vllm_stem(self):
+    def test_auto_register_resolves_split_suite_stems(self):
         class _FakeConfig:
             pass
 
-        cfg = _FakeConfig()
-        cfg._suite_name = "vllm"
-        cfg._suite_report_config = None
-        registered = try_auto_register_suite_report(cfg)
-        self.assertTrue(registered)
-        profile = get_resolved_profile(cfg)
-        self.assertIsInstance(profile, dict)
-        self.assertEqual(profile["suite_id"], "vllm")
-        resolved = resolve_suite_report_config(cfg)
-        self.assertEqual(resolved.suite_id, "vllm")
+        for stem in ("vllm_single", "vllm_distributed"):
+            with self.subTest(stem=stem):
+                cfg = _FakeConfig()
+                cfg._suite_name = stem
+                cfg._suite_report_config = None
+                self.assertTrue(try_auto_register_suite_report(cfg))
+                profile = get_resolved_profile(cfg)
+                self.assertIsInstance(profile, dict)
+                self.assertEqual(profile["suite_id"], "vllm")
+                self.assertEqual(resolve_suite_report_config(cfg).suite_id, "vllm")
+
+    def test_split_suite_stems_reuse_vllm_profile(self):
+        for stem in ("vllm_single", "vllm_distributed"):
+            with self.subTest(stem=stem):
+                profile = load_json_profile(stem)
+                self.assertIsNotNone(profile)
+                self.assertEqual(profile["suite_id"], "vllm")
 
 
 if __name__ == "__main__":
