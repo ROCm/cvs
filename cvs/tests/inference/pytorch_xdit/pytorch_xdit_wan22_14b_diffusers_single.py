@@ -32,6 +32,7 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_i2v import (
     log_results_summary,
 )
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
+    build_wan_output_cleanup_cmd,
     launch_wan_benchmark,
     store_resolved_wan_model_format_from_index,
 )
@@ -214,6 +215,13 @@ def test_cleanup_stale_containers(s_phdl, inference_dict):
     container_name = inference_dict["container_name"]
     docker_lib.kill_docker_container(s_phdl, container_name)
     docker_lib.delete_all_containers_and_volumes(s_phdl)
+
+    output_base_dir = inference_dict.get("output_base_dir")
+    if output_base_dir:
+        cleanup_cmd = build_wan_output_cleanup_cmd(output_base_dir, use_sudo=True)
+        log.info("Cleaning stale WAN outputs under %s", output_base_dir)
+        s_phdl.exec(cleanup_cmd)
+
     update_test_result()
 
 
