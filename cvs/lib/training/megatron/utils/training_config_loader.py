@@ -234,9 +234,7 @@ def load_training_variant(config_path, cluster_dict) -> MegatronVariantConfig:
         raw.get("checkpoint", {}).pop("checkpoint_dir", None)
         try:
             vols = raw["container"]["runtime"]["args"]["volumes"]
-            raw["container"]["runtime"]["args"]["volumes"] = [
-                v for v in vols if "<changeme>" not in v
-            ]
+            raw["container"]["runtime"]["args"]["volumes"] = [v for v in vols if "<changeme>" not in v]
         except (KeyError, TypeError):
             pass
 
