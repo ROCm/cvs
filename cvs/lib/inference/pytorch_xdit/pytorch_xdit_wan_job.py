@@ -54,7 +54,10 @@ RUN_WAN_DIFFUSERS_PATH = "/app/Wan/run.py"
 WAN_XFUSER_EXAMPLE_CONTAINER_PATH = "/benchmark/wan_i2v_example.py"
 CONTAINER_OUTPUT_MOUNT = "/outputs"
 WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR = "results/outputs"
-WAN_XFUSER_BENCHMARK_OUTPUT_DIR = f"{CONTAINER_OUTPUT_MOUNT}/outputs"
+WAN_XFUSER_RESULTS_DIR = f"{CONTAINER_OUTPUT_MOUNT}/results"
+WAN_XFUSER_BENCHMARK_OUTPUT_DIR = CONTAINER_OUTPUT_MOUNT
+WAN_XFUSER_VIDEO_CONTAINER_PATH = f"{WAN_XFUSER_RESULTS_DIR}/video_i2v.mp4"
+WAN_XFUSER_TIMING_JSON_CONTAINER_PATH = f"{WAN_XFUSER_RESULTS_DIR}/timing.json"
 I2V_INPUT_IMAGE_NATIVE = "/app/Wan2.2/examples/i2v_input.JPG"
 I2V_INPUT_IMAGE_DIFFUSERS = "/app/Wan/i2v_input.JPG"
 
@@ -292,10 +295,13 @@ def build_run_wan_xfuser_example_args(
         int(wan_params["num_benchmark_steps"]),
     )
     warmup_steps = _optional_int(wan_params.get("warmup_steps"), 1)
-    output_type = str(wan_params.get("wan_xfuser_output_type") or "np")
+    output_type = str(wan_params.get("wan_xfuser_output_type") or "pil")
     output_directory = WAN_XFUSER_BENCHMARK_OUTPUT_DIR
     save_video_path = str(
-        wan_params.get("wan_diffusers_save_video_path") or f"{output_directory}/video.mp4"
+        wan_params.get("wan_diffusers_save_video_path") or WAN_XFUSER_VIDEO_CONTAINER_PATH
+    )
+    timing_json_path = str(
+        wan_params.get("wan_diffusers_timing_json_path") or "results/timing.json"
     )
     video_fps = _optional_int(wan_params.get("wan_diffusers_video_fps"), 16)
 
@@ -322,9 +328,9 @@ def build_run_wan_xfuser_example_args(
         f"--output_type {shlex.quote(output_type)} "
         f"--output_directory {shlex.quote(output_directory)} "
         f"--save_video_path {shlex.quote(save_video_path)} "
+        f"--timing_json_path {shlex.quote(timing_json_path)} "
         f"--video_fps {video_fps} "
-        f"--prompt {shlex.quote(str(wan_params['prompt']))} "
-        f"--benchmark_output_directory {shlex.quote(output_directory)}"
+        f"--prompt {shlex.quote(str(wan_params['prompt']))}"
     ).strip()
 
 
@@ -452,11 +458,10 @@ def _build_wan_torchrun_body(
             inference_dict,
             run_script=run_script if is_wan_diffusers_model(model_format) else None,
         )
-        output_subdir = (
-            WAN_XFUSER_BENCHMARK_OUTPUT_DIR
-            if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER
-            else WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR
-        )
+        if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER:
+            output_subdir = WAN_XFUSER_RESULTS_DIR
+        else:
+            output_subdir = f"{CONTAINER_OUTPUT_MOUNT}/{WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR}"
         inner = (
             f"cd {shlex.quote(CONTAINER_OUTPUT_MOUNT)} && "
             f"mkdir -p {shlex.quote(output_subdir)} && "
@@ -519,6 +524,14 @@ def build_wan_output_verify_cmd(host_output_dir: str) -> str:
         f"find {quoted} -name 'rank0_step*.json' -print -quit 2>/dev/null | grep -q . "
         f"&& echo WAN_OUTPUT_OK || echo WAN_OUTPUT_MISSING"
     )
+    return f"bash -c {shlex.quote(inner)}"
+
+
+def build_wan_xfuser_output_verify_cmd(host_output_dir: str) -> str:
+    """Return a shell command that prints WAN_OUTPUT_OK when Flux-style timing.json exists."""
+    quoted = shlex.quote(host_output_dir)
+    timing_json = f"{quoted}/results/timing.json"
+    inner = f"test -f {timing_json} && echo WAN_OUTPUT_OK || echo WAN_OUTPUT_MISSING"
     return f"bash -c {shlex.quote(inner)}"
 
 
@@ -1008,9 +1021,13 @@ class WanBenchmarkJob:
         if is_wan_diffusers_model(model_format):
             launcher = resolve_wan_diffusers_launcher(self.wan_params, self.inference_dict)
 
-        verify_cmds = [
-            build_wan_output_verify_cmd(plan.output_dirs_by_node[node]) for node in plan.node_order
-        ]
+        verify_cmds = []
+        for node in plan.node_order:
+            host_output_dir = plan.output_dirs_by_node[node]
+            if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER:
+                verify_cmds.append(build_wan_xfuser_output_verify_cmd(host_output_dir))
+            else:
+                verify_cmds.append(build_wan_output_verify_cmd(host_output_dir))
         try:
             verify_results = _exec_cmd_list_on_nodes(
                 self.s_phdl,
@@ -1032,21 +1049,32 @@ class WanBenchmarkJob:
 
             missing_output_nodes.append(node)
             node_log = (results or {}).get(node, "")
-            log.error(
-                "No rank0_step*.json files found under %s on %s",
-                host_output_dir,
-                node,
-            )
             log_tail = summarize_wan_benchmark_log(node_log)
-            if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER and not scan_wan_xfuser_benchmark_output(node_log):
-                errors.append(
-                    f"No rank0_step*.json under {host_output_dir} on {node} and no xFuser "
-                    f"'epoch time:' lines in benchmark log. Likely causes: placeholder "
-                    f"volume_dict paths, missing bind mount for "
-                    f"{resolve_wan_diffusers_run_script(self.wan_params, self.inference_dict)}, "
-                    f"or stale mounted wan_i2v_example.py. Log tail: {log_tail}"
+            if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER:
+                log.error(
+                    "No results/timing.json found under %s on %s",
+                    host_output_dir,
+                    node,
                 )
+                if not scan_wan_xfuser_benchmark_output(node_log):
+                    errors.append(
+                        f"No results/timing.json under {host_output_dir} on {node} and no xFuser "
+                        f"'epoch time:' lines in benchmark log. Likely causes: placeholder "
+                        f"volume_dict paths, missing bind mount for "
+                        f"{resolve_wan_diffusers_run_script(self.wan_params, self.inference_dict)}, "
+                        f"or stale mounted wan_i2v_example.py. Log tail: {log_tail}"
+                    )
+                else:
+                    errors.append(
+                        f"No results/timing.json found under {host_output_dir} on {node}. "
+                        f"Log tail: {log_tail}"
+                    )
             else:
+                log.error(
+                    "No rank0_step*.json files found under %s on %s",
+                    host_output_dir,
+                    node,
+                )
                 errors.append(
                     f"No rank0_step*.json files found under {host_output_dir} on {node}. "
                     f"Log tail: {log_tail}"

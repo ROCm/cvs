@@ -15,9 +15,8 @@ import torch
 import torch.distributed as dist
 
 SHARED_HOME = "/shared/amdgpu/home/dl_dcgpu_aac_service_request_qle"
-_EXTRA_PYPACKAGES = os.environ.get("CVS_WAN_XFUSER_PYPACKAGES", "").strip() or f"{SHARED_HOME}/pypackages"
-if _EXTRA_PYPACKAGES not in sys.path:
-    sys.path.insert(0, _EXTRA_PYPACKAGES)
+if f"{SHARED_HOME}/pypackages" not in sys.path:
+    sys.path.insert(0, f"{SHARED_HOME}/pypackages")
 
 
 def parse_args():
@@ -38,8 +37,8 @@ def parse_args():
         help="Must be 'pil' or 'latent' in this xFuser build.",
     )
     parser.add_argument("--prompt", default="A person walking in a park, cinematic style.")
-    parser.add_argument("--output_directory", default="/outputs")
-    parser.add_argument("--save_video_path", default="results/video_i2v.mp4")
+    parser.add_argument("--output_directory", default="output")
+    parser.add_argument("--save_video_path", default="output/video.mp4")
     parser.add_argument("--video_fps", type=int, default=16)
     parser.add_argument(
         "--timing_json_path",
@@ -181,8 +180,8 @@ def _write_timing_json(timing_json_path, pipe_times):
 
 def main():
     args = parse_args()
-    if not os.path.isabs(args.save_video_path):
-        args.save_video_path = os.path.join(args.output_directory, args.save_video_path)
+    if not args.save_video_path:
+        args.save_video_path = os.path.join(args.output_directory, "video.mp4")
     if not os.path.isabs(args.timing_json_path):
         args.timing_json_path = os.path.join(args.output_directory, args.timing_json_path)
 

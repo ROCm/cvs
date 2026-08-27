@@ -13,12 +13,15 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     WAN_DIFFUSERS_LAUNCHER_XFUSER,
     WAN_XFUSER_BENCHMARK_OUTPUT_DIR,
     WAN_XFUSER_EXAMPLE_CONTAINER_PATH,
+    WAN_XFUSER_TIMING_JSON_CONTAINER_PATH,
+    WAN_XFUSER_VIDEO_CONTAINER_PATH,
     WAN_MODEL_FORMAT_DIFFUSERS,
     build_run_wan_diffusers_args,
     build_run_wan_native_args,
     build_run_wan_xfuser_example_args,
     build_torchrun_cmd,
     build_wan_output_verify_cmd,
+    build_wan_xfuser_output_verify_cmd,
     detect_wan_model_format_from_model_index,
     parallel_product,
     parse_wan_size,
@@ -147,10 +150,10 @@ class TestBuildRunWanArgs(unittest.TestCase):
         )
         self.assertIn("--input_image /benchmark/i2v_input.JPG", args)
         self.assertIn("--num_repetitions 5", args)
-        self.assertIn("--benchmark_output_directory /outputs/outputs", args)
-        self.assertIn("--save_video_path /outputs/outputs/video.mp4", args)
-        self.assertIn("--output_directory /outputs/outputs", args)
-        self.assertIn("--output_type np", args)
+        self.assertIn("--output_directory /outputs", args)
+        self.assertIn(f"--save_video_path {WAN_XFUSER_VIDEO_CONTAINER_PATH}", args)
+        self.assertIn("--timing_json_path results/timing.json", args)
+        self.assertIn("--output_type pil", args)
         self.assertNotIn("--task i2v", args)
 
     def test_resolve_xfuser_launcher_from_config(self):
@@ -220,7 +223,7 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         )
         self.assertIn(WAN_XFUSER_EXAMPLE_CONTAINER_PATH, cmd)
         self.assertIn("--input_image /benchmark/i2v_input.JPG", cmd)
-        self.assertIn("mkdir -p /outputs/outputs", cmd)
+        self.assertIn("mkdir -p /outputs/results", cmd)
         self.assertNotIn(RUN_WAN_DIFFUSERS_PATH, cmd)
 
 
@@ -243,8 +246,15 @@ class TestWanOutputVerification(unittest.TestCase):
         self.assertIn("rank0_step*.json", cmd)
         self.assertIn("WAN_OUTPUT_OK", cmd)
 
+    def test_build_wan_xfuser_output_verify_cmd(self):
+        cmd = build_wan_xfuser_output_verify_cmd("/tmp/wan_22_host_outputs")
+        self.assertIn("results/timing.json", cmd)
+        self.assertIn("WAN_OUTPUT_OK", cmd)
+
     def test_xfuser_benchmark_output_dir_constant(self):
-        self.assertEqual(WAN_XFUSER_BENCHMARK_OUTPUT_DIR, "/outputs/outputs")
+        self.assertEqual(WAN_XFUSER_BENCHMARK_OUTPUT_DIR, "/outputs")
+        self.assertEqual(WAN_XFUSER_VIDEO_CONTAINER_PATH, "/outputs/results/video_i2v.mp4")
+        self.assertEqual(WAN_XFUSER_TIMING_JSON_CONTAINER_PATH, "/outputs/results/timing.json")
 
     def test_summarize_wan_benchmark_log(self):
         self.assertEqual(summarize_wan_benchmark_log(""), "docker benchmark log was empty")

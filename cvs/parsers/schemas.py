@@ -627,11 +627,28 @@ class PytorchXditContainerConfig(BaseModel):
 
 
 class PytorchXditExpectedResults(BaseModel):
-    """Schema for expected_results in pytorch-xdit benchmark params."""
+    """Schema for expected_results in pytorch-xdit WAN benchmark params."""
 
     model_config = ConfigDict(extra="forbid")
 
-    max_avg_total_time_s: float = Field(gt=0, description="Maximum acceptable average total_time in seconds")
+    max_avg_total_time_s: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Maximum acceptable average total_time in seconds (native/packaged Wan)",
+    )
+    max_avg_pipe_time_s: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Maximum acceptable average pipe_time in seconds (xFuser Wan I2V)",
+    )
+
+    @model_validator(mode="after")
+    def validate_threshold_present(self) -> "PytorchXditExpectedResults":
+        if self.max_avg_total_time_s is None and self.max_avg_pipe_time_s is None:
+            raise ValueError(
+                "expected_results entry must include max_avg_total_time_s and/or max_avg_pipe_time_s"
+            )
+        return self
 
 
 class PytorchXditWan22Benchmarks(BaseModel):
@@ -684,11 +701,15 @@ class PytorchXditWan22Benchmarks(BaseModel):
     )
     wan_xfuser_output_type: Optional[str] = Field(
         default=None,
-        description="xFuser output_type for xfuser_example (defaults to np for video export).",
+        description="xFuser output_type for xfuser_example (defaults to pil for ufb-private video export).",
     )
     wan_diffusers_save_video_path: Optional[str] = Field(
         default=None,
-        description="In-container MP4 path for xfuser_example (default results/outputs/video.mp4).",
+        description="In-container MP4 path for xfuser_example (default /outputs/results/video_i2v.mp4).",
+    )
+    wan_diffusers_timing_json_path: Optional[str] = Field(
+        default=None,
+        description="In-container timing JSON path for xfuser_example (default results/timing.json).",
     )
     wan_diffusers_video_fps: Optional[int] = Field(
         default=None,
