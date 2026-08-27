@@ -49,8 +49,6 @@
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
           "/dev/infiniband:/dev/infiniband",
-          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
-          "/lib/libibverbs.d:/lib/libibverbs.d",
           "<changeme>:<changeme>"
         ],
         "devices": [

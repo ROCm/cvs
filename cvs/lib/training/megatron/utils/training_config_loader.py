@@ -227,6 +227,19 @@ def load_training_variant(config_path, cluster_dict) -> MegatronVariantConfig:
     """
     raw, thresholds = substitute_config(config_path, cluster_dict)
 
+    # When checkpoint testing is disabled, checkpoint_dir and its shared-FS
+    # volume mount are unused — exempt both from the <changeme> check so
+    # operators can use the template as-is without filling in checkpoint paths.
+    if not raw.get("checkpoint", {}).get("enforce", False):
+        raw.get("checkpoint", {}).pop("checkpoint_dir", None)
+        try:
+            vols = raw["container"]["runtime"]["args"]["volumes"]
+            raw["container"]["runtime"]["args"]["volumes"] = [
+                v for v in vols if "<changeme>" not in v
+            ]
+        except (KeyError, TypeError):
+            pass
+
     _check_no_changeme(raw)
 
     known = {k: v for k, v in raw.items() if k in MegatronVariantConfig.model_fields}

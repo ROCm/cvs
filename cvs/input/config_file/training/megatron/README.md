@@ -14,6 +14,7 @@ Keys prefixed with `_` (e.g. `_scaling_baseline_comment`) are inline comments an
 | `mi300x_megatron_deepseek-v2-lite_distributed.json` | `mi300x_megatron_deepseek-v2-lite_distributed_threshold.json` | distributed |
 | `mi300x_megatron_llama-3.1-8b_single.json` | `mi300x_megatron_llama-3.1-8b_single_threshold.json` | single-node |
 | `mi300x_megatron_llama-3.1-8b_distributed.json` | `mi300x_megatron_llama-3.1-8b_distributed_threshold.json` | distributed |
+| `mi300x_megatron_llama-3.1-405b_distributed.json` | `mi300x_megatron_llama-3.1-405b_distributed_threshold.json` | distributed |
 | `mi300x_megatron_llama-3.3-70b_single.json` | `mi300x_megatron_llama-3.3-70b_single_threshold.json` | single-node |
 | `mi300x_megatron_llama-3.3-70b_distributed.json` | `mi300x_megatron_llama-3.3-70b_distributed_threshold.json` | distributed |
 
@@ -25,6 +26,7 @@ Keys prefixed with `_` (e.g. `_scaling_baseline_comment`) are inline comments an
 | `mi325x_megatron_deepseek-v2-lite_distributed.json` | `mi325x_megatron_deepseek-v2-lite_distributed_threshold.json` | distributed |
 | `mi325x_megatron_llama-3.1-8b_single.json` | `mi325x_megatron_llama-3.1-8b_single_threshold.json` | single-node |
 | `mi325x_megatron_llama-3.1-8b_distributed.json` | `mi325x_megatron_llama-3.1-8b_distributed_threshold.json` | distributed |
+| `mi325x_megatron_llama-3.1-405b_distributed.json` | `mi325x_megatron_llama-3.1-405b_distributed_threshold.json` | distributed |
 | `mi325x_megatron_llama-3.3-70b_single.json` | `mi325x_megatron_llama-3.3-70b_single_threshold.json` | single-node |
 | `mi325x_megatron_llama-3.3-70b_distributed.json` | `mi325x_megatron_llama-3.3-70b_distributed_threshold.json` | distributed |
 
@@ -36,6 +38,7 @@ Keys prefixed with `_` (e.g. `_scaling_baseline_comment`) are inline comments an
 | `mi355x_megatron_deepseek-v2-lite_distributed.json` | `mi355x_megatron_deepseek-v2-lite_distributed_threshold.json` | distributed |
 | `mi355x_megatron_llama-3.1-8b_single.json` | `mi355x_megatron_llama-3.1-8b_single_threshold.json` | single-node |
 | `mi355x_megatron_llama-3.1-8b_distributed.json` | `mi355x_megatron_llama-3.1-8b_distributed_threshold.json` | distributed |
+| `mi355x_megatron_llama-3.1-405b_distributed.json` | `mi355x_megatron_llama-3.1-405b_distributed_threshold.json` | distributed |
 | `mi355x_megatron_llama-3.3-70b_single.json` | `mi355x_megatron_llama-3.3-70b_single_threshold.json` | single-node |
 | `mi355x_megatron_llama-3.3-70b_distributed.json` | `mi355x_megatron_llama-3.3-70b_distributed_threshold.json` | distributed |
 
@@ -47,14 +50,16 @@ Start from the config closest to your target arch/mode and edit these:
 |---|---|---|
 | `container.image` | Docker image | Your Megatron-LM ROCm image tag accessible on all nodes |
 | `container.name` | Container name | Any unique name (optional) |
+| `config.training_iterations` | Training steps | Number of training steps to run (e.g. `"30"`) |
 | `config.hf_token_file` | HF token path | Location of your Hugging Face token file on the nodes |
-| `config.log_dir` / `scripts_dir` / `data_cache_dir` | Paths | Replace `{user-id}` with your actual username |
 | `config.megatron_root` | Megatron path | In-container path to Megatron-LM (default `/workspace/Megatron-LM`) |
 | `config.nnodes` | Node count | Number of nodes in your cluster (**distributed only**) |
 | `config.master_address` | Head node IP | IP of the head node (**distributed only**) |
 | `config.nic_type` | NIC family | `thor2` (Broadcom/MI300X/MI325X), `ainic` (MI355X), or your NIC type (**distributed only**) |
 | `config.nccl_ib_hca_list` / `nccl_ib_hca` | RDMA HCA devices | Your nodes' RDMA device names (e.g. `bnxt_re0,...,bnxt_re7`) (**distributed only**) |
 | `config.nccl_socket_ifname` / `gloo_socket_ifname` | Control NIC | Your management interface name (e.g. `ensf1np1`) |
+| `checkpoint.checkpoint_dir` | Checkpoint path | Shared filesystem path for checkpoint save/resume. Required only when `checkpoint.enforce: true`; ignored by the loader when `enforce: false`. (**distributed only**) |
+| `container.runtime.args.volumes` last entry | Checkpoint FS mount | Replace `<changeme>:<changeme>` with the same shared path as `checkpoint_dir` mounted at the same path inside the container (e.g. `/mnt/shared/ckpt:/mnt/shared/ckpt`). Required only when `checkpoint.enforce: true`; ignored by the loader when `enforce: false`. (**distributed only**) |
 | `scaling_baseline.tokens_per_sec_total` | 1-node baseline | Your measured single-node total tok/s (`tok/s/GPU × 8`); `0.0` disables scaling efficiency (**distributed only**) |
 | Threshold JSON gated values | Thresholds | Calibrated PASS/FAIL bounds for your hardware |
 | Cluster file | Node IPs | Your node IPs (first entry is the coordinator node) |
@@ -95,12 +100,12 @@ Top-level fields:
 | `data_cache_dir` | `/home/{user-id}/cache` | Tokenizer and dataset cache directory |
 | `rocm_dir` | `""` | ROCm path; empty string triggers auto-detection |
 | `megatron_root` | `/workspace/Megatron-LM` | Megatron-LM path inside the container |
-| `training_iterations` | `"10"` | Training iterations per combo |
+| `training_iterations` | `<changeme>` | Training iterations per combo (e.g. `"30"`; see `_example_training_iterations` in the JSON) |
 | `nnodes` | `"1"` / `<changeme>` | Node count; must match cluster file |
 | `master_address` | `"127.0.0.1"` / `<changeme>` | Head-node IP for distributed coordination |
 | `nic_type` | `"thor2"` / `"ainic"` | NIC family; `thor2` triggers Broadcom RDMA-lib copy (MI300X/MI325X); `ainic` for MI355X |
 | `nccl_ib_hca_list` / `nccl_ib_hca` | `<changeme>` | Comma-separated RDMA HCA list |
-| `nccl_socket_ifname` / `gloo_socket_ifname` | `"ensf1np1"` | Control-plane interface name |
+| `nccl_socket_ifname` / `gloo_socket_ifname` | `<changeme>` | Control-plane interface name (e.g. `"ensf1np1"`; see `_example_*` fields in the JSON) |
 | `hca_id_pattern` | `"bnxt_\|rocep"` | `\|`-separated NIC prefixes for ibv_devinfo validation |
 | `nccl_ib_gid_index` | `"3"` | GID index for RoCE (standard `"3"` for Broadcom) |
 | `nccl_debug` | `"ERROR"` | NCCL log verbosity (`"ERROR"`, `"WARN"`, `"INFO"`, `"TRACE"`) |

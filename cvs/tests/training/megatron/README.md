@@ -64,9 +64,9 @@ Tests run in this pinned order. `[combo]` = one row per enabled sweep combo.
 | Order | Test | Runs on | Purpose |
 |---|---|---|---|
 | 0 | `test_launch_container` | once | Launch and verify the container |
-| 1 | `test_setup_rdma` | distributed only | Copy RDMA lib into container (Broadcom/thor2 NIC) and verify `ibv_devinfo`; skipped for ainic |
-| 2 | `test_download_tokenizer` | once | Download HF tokenizer for models that require a local file (DeepSeek, Mixtral) |
-| 3 | `test_smoke` | once | Fixed small run confirming the model loads and trains without error |
+| 1 | `test_download_tokenizer` | once | Download HF tokenizer for models that require a local file (DeepSeek) |
+| 2 | `test_smoke` | once | Fixed small run confirming the model loads and trains without error |
+| 3 | `test_checkpoint` | once | Checkpoint save + resume with loss continuity check. Skipped when `checkpoint.enforce: false`. |
 | 4 | `test_training[combo]` | per combo | Build cmd, train, poll logs, parse results; GPU memory freed between combos |
 | 5 | `test_metric[combo]` | per combo | Threshold PASS/FAIL per metric |
 | 6 | `test_loss_curve[combo]` | per combo | Gate on downward `lm_loss` trend at steps 100 / 500 / 1k / 5k |
@@ -169,6 +169,7 @@ Located in `cvs/input/config_file/training/megatron/`:
 | `mi300x_megatron_deepseek-v2-lite_distributed.json` | `mi300x_megatron_deepseek-v2-lite_distributed_threshold.json` | distributed |
 | `mi300x_megatron_llama-3.1-8b_single.json` | `mi300x_megatron_llama-3.1-8b_single_threshold.json` | single-node |
 | `mi300x_megatron_llama-3.1-8b_distributed.json` | `mi300x_megatron_llama-3.1-8b_distributed_threshold.json` | distributed |
+| `mi300x_megatron_llama-3.1-405b_distributed.json` | `mi300x_megatron_llama-3.1-405b_distributed_threshold.json` | distributed |
 | `mi300x_megatron_llama-3.3-70b_single.json` | `mi300x_megatron_llama-3.3-70b_single_threshold.json` | single-node |
 | `mi300x_megatron_llama-3.3-70b_distributed.json` | `mi300x_megatron_llama-3.3-70b_distributed_threshold.json` | distributed |
 
@@ -180,6 +181,7 @@ Located in `cvs/input/config_file/training/megatron/`:
 | `mi325x_megatron_deepseek-v2-lite_distributed.json` | `mi325x_megatron_deepseek-v2-lite_distributed_threshold.json` | distributed |
 | `mi325x_megatron_llama-3.1-8b_single.json` | `mi325x_megatron_llama-3.1-8b_single_threshold.json` | single-node |
 | `mi325x_megatron_llama-3.1-8b_distributed.json` | `mi325x_megatron_llama-3.1-8b_distributed_threshold.json` | distributed |
+| `mi325x_megatron_llama-3.1-405b_distributed.json` | `mi325x_megatron_llama-3.1-405b_distributed_threshold.json` | distributed |
 | `mi325x_megatron_llama-3.3-70b_single.json` | `mi325x_megatron_llama-3.3-70b_single_threshold.json` | single-node |
 | `mi325x_megatron_llama-3.3-70b_distributed.json` | `mi325x_megatron_llama-3.3-70b_distributed_threshold.json` | distributed |
 
@@ -191,6 +193,7 @@ Located in `cvs/input/config_file/training/megatron/`:
 | `mi355x_megatron_deepseek-v2-lite_distributed.json` | `mi355x_megatron_deepseek-v2-lite_distributed_threshold.json` | distributed |
 | `mi355x_megatron_llama-3.1-8b_single.json` | `mi355x_megatron_llama-3.1-8b_single_threshold.json` | single-node |
 | `mi355x_megatron_llama-3.1-8b_distributed.json` | `mi355x_megatron_llama-3.1-8b_distributed_threshold.json` | distributed |
+| `mi355x_megatron_llama-3.1-405b_distributed.json` | `mi355x_megatron_llama-3.1-405b_distributed_threshold.json` | distributed |
 | `mi355x_megatron_llama-3.3-70b_single.json` | `mi355x_megatron_llama-3.3-70b_single_threshold.json` | single-node |
 | `mi355x_megatron_llama-3.3-70b_distributed.json` | `mi355x_megatron_llama-3.3-70b_distributed_threshold.json` | distributed |
 
