@@ -34,7 +34,6 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     resolve_master_addr,
     resolve_nnodes,
     resolve_server_nodes,
-    scan_fatal_output,
     verify_distributed_logs,
     log_benchmark_failure_excerpt,
     _exec_cmd_list_on_nodes,
@@ -86,6 +85,16 @@ WAN_FATAL_OUTPUT_PATTERNS_EXTRA = (
     r"Error response from daemon",
     r"bind source path does not exist",
     r"invalid mount config",
+)
+
+WAN_BENIGN_OUTPUT_LINE_PATTERNS = (
+    r"skipped \(ModuleNotFoundError\)",
+)
+
+WAN_CORE_FATAL_OUTPUT_PATTERNS = (
+    r"\bTraceback\b",
+    r"\bChildFailedError\b",
+    r"\bOSError:\b",
 )
 
 
@@ -559,10 +568,28 @@ def build_torchrun_cmd(
     )
 
 
+def _sanitize_wan_benchmark_output(output: str) -> str:
+    """Drop known-benign xFuser/xDiT log lines before fatal-pattern scanning."""
+    kept: List[str] = []
+    for line in (output or "").splitlines():
+        if any(re.search(p, line, re.I) for p in WAN_BENIGN_OUTPUT_LINE_PATTERNS):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def scan_wan_fatal_output(output: str) -> bool:
-    if scan_fatal_output(output):
+    text = _sanitize_wan_benchmark_output(output)
+    if any(re.search(p, text, re.I) for p in WAN_CORE_FATAL_OUTPUT_PATTERNS):
         return True
-    return any(re.search(p, output or "", re.I) for p in WAN_FATAL_OUTPUT_PATTERNS_EXTRA)
+    if any(re.search(p, text, re.I) for p in WAN_FATAL_OUTPUT_PATTERNS_EXTRA):
+        return True
+    if re.search(r"\bModuleNotFoundError\b", text, re.I):
+        return bool(
+            re.search(r"\bTraceback\b", text, re.I)
+            or re.search(r"\[rank\d+\]:.*ModuleNotFoundError", text, re.I)
+        )
+    return False
 
 
 def scan_wan_xfuser_benchmark_output(output: str) -> bool:

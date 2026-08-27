@@ -264,6 +264,23 @@ class TestWanOutputVerification(unittest.TestCase):
             scan_wan_fatal_output("python: can't open file '/benchmark/wan_i2v_example.py'")
         )
 
+    def test_scan_fatal_output_ignores_torchao_module_not_found(self):
+        output = (
+            "torchao Float8Tensor FSDP2 patches skipped (ModuleNotFoundError): "
+            "No module named 'torchao'\n"
+            "100%|██████████| 40/40 [02:08<00:00,  3.21s/it]\n"
+            "step 0: epoch time: 134.99 sec, memory: 94.91 GB\n"
+        )
+        self.assertFalse(scan_wan_fatal_output(output))
+
+    def test_scan_fatal_output_still_catches_real_module_not_found(self):
+        output = (
+            "Traceback (most recent call last):\n"
+            "  File \"/benchmark/wan_i2v_example.py\", line 191, in main\n"
+            "ModuleNotFoundError: No module named 'xfuser'\n"
+        )
+        self.assertTrue(scan_wan_fatal_output(output))
+
     def test_build_wan_output_verify_cmd(self):
         cmd = build_wan_output_verify_cmd("/tmp/wan_22_host_outputs")
         self.assertIn("rank0_step*.json", cmd)
