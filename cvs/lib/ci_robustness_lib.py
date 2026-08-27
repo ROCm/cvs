@@ -3,9 +3,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved. This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
-'''
 
-"""
 CI robustness helpers for the RCCL regression pipeline (AIMVT-196):
 
   1. Retry of transient test failures (run_with_retries / classify_failure).
@@ -16,7 +14,7 @@ The decision logic here is intentionally pure and dependency-free so it can be
 unit-tested exhaustively on a login node. The thin cluster-facing wrapper that
 actually executes the cleanup over SSH lives in rccl_lib.cleanup_gpus_on_nodes
 and reuses the builders below.
-"""
+'''
 
 import re
 import shlex
@@ -124,7 +122,7 @@ def run_with_retries(
       The last exception if all attempts fail or a failure is non-retriable.
     """
     if is_retriable is None:
-        is_retriable = lambda exc: classify_failure(exc)
+        is_retriable = classify_failure
     total_attempts = max(1, max_retries + 1)
     last_exc = None
     for attempt in range(1, total_attempts + 1):

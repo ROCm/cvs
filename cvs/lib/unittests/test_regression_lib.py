@@ -9,7 +9,6 @@ detector's two most important properties for CI:
   * a genuine regression larger than the size-tier threshold is reliably caught.
 """
 
-import math
 import random
 import unittest
 
@@ -195,7 +194,6 @@ class TestDetectRegressions(unittest.TestCase):
         self.assertEqual(report["summary"]["candidates"], 1)
 
     def test_isolated_candidate_confirmed_when_adjacency_disabled(self):
-        sizes = [1 * GiB, 2 * GiB]
         a_runs = [
             [
                 {

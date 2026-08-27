@@ -3,9 +3,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved. This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
-'''
 
-"""
 Paired A/B regression detector for RCCL performance results.
 
 Motivation
@@ -65,7 +63,7 @@ or when more than ``max_inconclusive_frac`` of the matrix was excluded. Callers
 MUST gate on both: a green ``has_regression`` over an untrustworthy report is
 the single worst output a regression gate can produce, because it looks
 identical to a real pass.
-"""
+'''
 
 import statistics
 from copy import deepcopy

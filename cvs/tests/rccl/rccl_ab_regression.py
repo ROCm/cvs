@@ -3,9 +3,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved. This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
-'''
 
-"""
 Paired A/B RCCL regression test.
 
 For each (collective, data type, NCCL env-combo) this runs a reference build (A)
@@ -24,7 +22,7 @@ Modes (config: rccl.ab_regression):
   - control_mode=false: reference build vs candidate build (real detection).
 
 See cvs/input/config_file/rccl/rccl_ab_config.json.sample for the config shape.
-"""
+'''
 
 import os
 import json
