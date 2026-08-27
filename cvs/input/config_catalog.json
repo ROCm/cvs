@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "configurations": [
+    {
+      "path": "aorta/aorta_benchmark.yaml",
+      "platforms": ["mi300"],
+      "suites": ["test_aorta"]
+    },
+    {
+      "path": "anc/anc_config.json",
+      "platforms": ["all"],
+      "suites": ["anc_installation", "anc_test_cpu", "anc_test_gpu"]
+    },
+    {
+      "path": "health/mi300_health_config.json",
+      "platforms": ["mi300", "mi300x"],
+      "suites": [
+        "agfhc_cvs",
+        "csp_qual_agfhc",
+        "rvs_cvs",
+        "transferbench_cvs",
+        "install_agfhc",
+        "install_babelstream",
+        "install_rocblas",
+        "install_rvs",
+        "install_transferbench"
+      ]
+    },
+    {
+      "path": "ibperf/ibperf_config.json",
+      "platforms": ["all"],
+      "suites": ["ib_perf_bw_test", "install_ibperf_tools"]
+    },
+    {
+      "path": "inference/inferencemax/mi300x_inferencemax_gpt_oss_120b_single.json",
+      "platforms": ["mi300x"],
+      "suites": ["inferencemax_gpt_oss_120b_single"]
+    },
+    {
+      "path": "inference/inferencemax/mi355x_inferencemax_gpt_oss_120b_single.json",
+      "platforms": ["mi355"],
+      "suites": ["inferencemax_gpt_oss_120b_single"]
+    },
+    {
+      "path": "inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json",
+      "platforms": ["mi300x", "mi355"],
+      "suites": ["pytorch_xdit_flux1_dev_single"]
+    },
+    {
+      "path": "inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json",
+      "platforms": ["mi300x", "mi355"],
+      "suites": ["pytorch_xdit_wan22_14b_single"]
+    },
+    {
+      "path": "inference/sglang/mi30x_sglang_distributed.json",
+      "platforms": ["mi300x"],
+      "suites": ["sglang_deepseek_r1_671b_distributed", "sglang_llama_70b_distributed"]
+    },
+    {
+      "path": "inference/sglang/mi35x_sglang_distributed.json",
+      "platforms": ["mi350", "mi355"],
+      "suites": ["sglang_deepseek_r1_671b_distributed", "sglang_llama_70b_distributed"]
+    },
+    {
+      "path": "inference/vllm/mi355x_vllm_single.json",
+      "platforms": ["mi355"],
+      "suites": [
+        "vllm_deepseek31_685b_single",
+        "vllm_gpt_oss_120b_single",
+        "vllm_qwen3_235b_single",
+        "vllm_qwen3_80b_single"
+      ]
+    },
+    {
+      "path": "mori/mi35x_mori_config.json",
+      "platforms": ["mi350", "mi355"],
+      "suites": ["mori_benchmark_test"]
+    },
+    {
+      "path": "ompi/ompi_config.json",
+      "platforms": ["all"],
+      "suites": ["install_ompi"]
+    },
+    {
+      "path": "platform/host_config.json",
+      "platforms": ["all"],
+      "suites": ["host_configs_cvs"]
+    },
+    {
+      "path": "preflight/preflight_config.json",
+      "platforms": ["all"],
+      "suites": ["preflight_checks"]
+    },
+    {
+      "path": "rccl/rccl_config.json",
+      "platforms": ["all"],
+      "suites": ["rccl_pairwise", "rccl_perf", "rccl_regression"]
+    },
+    {
+      "path": "training/jax/mi300x_jax_llama3_1_405b_distributed.json",
+      "platforms": ["mi300x"],
+      "suites": ["jax_llama3_1_405b_distributed"]
+    },
+    {
+      "path": "training/jax/mi300x_jax_llama3_1_70b_distributed.json",
+      "platforms": ["mi300x"],
+      "suites": ["jax_llama3_1_70b_distributed"]
+    },
+    {
+      "path": "training/jax/mi300x_jax_llama3_1_70b_single.json",
+      "platforms": ["mi300x"],
+      "suites": ["jax_llama3_1_70b_single"]
+    },
+    {
+      "path": "training/jax/mi35x_jax_llama3_1_70b_single.json",
+      "platforms": ["mi355"],
+      "suites": ["jax_llama3_1_70b_single"]
+    },
+    {
+      "path": "training/megatron/mi35x_megatron_llama_single.json",
+      "platforms": ["mi350", "mi355"],
+      "suites": ["megatron_llama3_1_70b_single", "megatron_llama3_1_8b_single"]
+    },
+    {
+      "path": "training/megatron/mi3xx_megatron_llama_distributed.json",
+      "platforms": ["mi300x"],
+      "suites": ["megatron_llama3_1_70b_distributed", "megatron_llama3_1_8b_distributed"]
+    },
+    {
+      "path": "training/megatron/mi3xx_megatron_llama_single.json",
+      "platforms": ["mi300x"],
+      "suites": ["megatron_llama3_1_70b_single", "megatron_llama3_1_8b_single"]
+    },
+    {
+      "path": "training/torchtitan/mi3xx_torchtitan_deepseek_distributed.json",
+      "platforms": ["mi300x"],
+      "suites": ["torchtitan_deepseek_16b_distributed"]
+    },
+    {
+      "path": "training/torchtitan/mi3xx_torchtitan_deepseek_single.json",
+      "platforms": ["mi300x"],
+      "suites": ["torchtitan_deepseek_16b_single"]
+    },
+    {
+      "path": "training/torchtitan/mi3xx_torchtitan_llama_distributed.json",
+      "platforms": ["mi300x"],
+      "suites": ["torchtitan_llama3_1_70b_distributed", "torchtitan_llama3_1_8b_distributed"]
+    },
+    {
+      "path": "training/torchtitan/mi3xx_torchtitan_llama_single.json",
+      "platforms": ["mi300x"],
+      "suites": ["torchtitan_llama3_1_70b_single", "torchtitan_llama3_1_8b_single"]
+    },
+    {
+      "path": "training/torchtitan/mi3xx_torchtitan_qwen3_distributed.json",
+      "platforms": ["mi300x"],
+      "suites": ["torchtitan_qwen3_32b_distributed"]
+    },
+    {
+      "path": "training/torchtitan/mi3xx_torchtitan_qwen3_single.json",
+      "platforms": ["mi300x"],
+      "suites": ["torchtitan_qwen3_32b_single"]
+    }
+  ],
+  "unavailable_suites": []
+}
