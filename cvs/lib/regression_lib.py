@@ -84,7 +84,6 @@ DEFAULT_CONFIG = {
     # metrics, where a regression means B > A.)
     "metric": "busBw",
     "higher_is_better": True,
-
     # Relative regression thresholds per size tier (fraction of A).
     #
     # May also be given per collective, which is how a calibration run writes
@@ -113,15 +112,12 @@ DEFAULT_CONFIG = {
         "small_max_bytes": 1 * MiB,
         "mid_max_bytes": 64 * MiB,
     },
-
     # Non-parametric separation gate.
     "separation_gate": True,
     "separation_b_percentile": 75,
     "separation_a_percentile": 25,
-
     # Adjacency confirmation. Set to 1 to disable (flag isolated sizes too).
     "adjacency_min_run": 2,
-
     # Keys whose reference (A) median metric is below this floor are skipped
     # (relative deltas explode near zero). Units match the metric (GB/s).
     #
@@ -143,17 +139,14 @@ DEFAULT_CONFIG = {
         "mid": 0.05,
         "large": 0.5,
     },
-
     # Minimum repeats per side; below this a key is INCONCLUSIVE.
     "min_repeats": 2,
-
     # Require both sides to have the SAME number of samples for a key. A sweep
     # that dies at repeat 4 of 7 still reaches the analysis, and both remaining
     # gates degrade toward PASS with small n (the separation gate in particular
     # almost never fires at n=2), so unequal or truncated samples bias the
     # verdict green. Off => legacy behaviour.
     "require_balanced_samples": True,
-
     # Fraction of compared keys allowed to be INCONCLUSIVE before the run is
     # considered untrustworthy. Inconclusive keys are not regressions, but a run
     # where most keys were excluded is not a pass either -- it is a run that
@@ -373,17 +366,13 @@ def compare_key(a_samples, b_samples, size_bytes, config=None, collective=None):
     # it inconclusive rather than quietly returning a green verdict from it.
     if cfg.get("require_balanced_samples", True) and a_stats["n"] != b_stats["n"]:
         result["verdict"] = INCONCLUSIVE
-        result["reasons"].append(
-            f"unbalanced samples (A={a_stats['n']}, B={b_stats['n']}) — a sweep did not complete"
-        )
+        result["reasons"].append(f"unbalanced samples (A={a_stats['n']}, B={b_stats['n']}) — a sweep did not complete")
         return result
 
     # Guard: reference too small to compare reliably.
     if a_stats["median"] < floor:
         result["verdict"] = INCONCLUSIVE
-        result["reasons"].append(
-            f"reference median {a_stats['median']:.4f} below {result['tier']} floor {floor}"
-        )
+        result["reasons"].append(f"reference median {a_stats['median']:.4f} below {result['tier']} floor {floor}")
         return result
 
     # Gate 1: size-tiered relative threshold.
@@ -409,9 +398,7 @@ def compare_key(a_samples, b_samples, size_bytes, config=None, collective=None):
         result["candidate"] = True
     else:
         if not passed_threshold:
-            result["reasons"].append(
-                f"rel_drop {result['rel_drop']:.3f} <= threshold {result['threshold']:.3f}"
-            )
+            result["reasons"].append(f"rel_drop {result['rel_drop']:.3f} <= threshold {result['threshold']:.3f}")
         if not passed_separation:
             result["reasons"].append("distributions overlap (separation gate not met)")
     return result
@@ -457,10 +444,12 @@ def detect_regressions(a_runs, b_runs, config=None):
     missing_keys = []
     for key in sorted(set(a_samples) ^ set(b_samples)):
         name, size, dtype, in_place = key
-        missing_keys.append({
-            "key": {"name": name, "size": size, "type": dtype, "inPlace": in_place},
-            "present_in": "reference" if key in a_samples else "candidate",
-        })
+        missing_keys.append(
+            {
+                "key": {"name": name, "size": size, "type": dtype, "inPlace": in_place},
+                "present_in": "reference" if key in a_samples else "candidate",
+            }
+        )
 
     # Evaluate each common key for candidacy.
     per_key = {}
@@ -521,11 +510,7 @@ def detect_regressions(a_runs, b_runs, config=None):
     # verdict off this report at all" — no data, half the keys missing, or so
     # much of the matrix excluded that a green result is meaningless. Callers
     # must gate on both; only one of them is about the code under test.
-    trustworthy = (
-        total > 0
-        and not missing_keys
-        and not inconclusive_exceeded
-    )
+    trustworthy = total > 0 and not missing_keys and not inconclusive_exceeded
 
     report = {
         "config": cfg,
@@ -595,8 +580,7 @@ def measure_noise(control_runs, config=None):
 
     out = {tier: _stats(lst) for tier, lst in per_tier.items()}
     out["by_collective"] = {
-        name: {tier: _stats(lst) for tier, lst in tiers.items()}
-        for name, tiers in per_collective.items()
+        name: {tier: _stats(lst) for tier, lst in tiers.items()} for name, tiers in per_collective.items()
     }
     return out
 
@@ -620,8 +604,15 @@ def _mad(values):
     return 1.4826 * median([abs(v - med) for v in data])
 
 
-def derive_thresholds(control_runs, config=None, safety_factor=2.0, min_thresholds=None,
-                      max_thresholds=None, mad_k=3.0, per_collective=True):
+def derive_thresholds(
+    control_runs,
+    config=None,
+    safety_factor=2.0,
+    min_thresholds=None,
+    max_thresholds=None,
+    mad_k=3.0,
+    per_collective=True,
+):
     """
     Recommend regression thresholds from a control (A=B) dataset.
 
@@ -711,8 +702,7 @@ def format_report(report, max_rows=50):
             why.append(f"{s['missing_keys']} key(s) present on only one side")
         if s.get("inconclusive_exceeded"):
             why.append(
-                f"{s['inconclusive_frac'] * 100:.1f}% inconclusive "
-                f"(budget {s['max_inconclusive_frac'] * 100:.0f}%)"
+                f"{s['inconclusive_frac'] * 100:.1f}% inconclusive (budget {s['max_inconclusive_frac'] * 100:.0f}%)"
             )
         lines.append(f"UNTRUSTWORTHY : {'; '.join(why)}")
         lines.append("                a PASS from this report is not evidence of anything.")

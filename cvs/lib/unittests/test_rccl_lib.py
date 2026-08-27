@@ -296,10 +296,24 @@ class TestRcclLib(unittest.TestCase):
         """In-place and out-of-place rows for the same size must NOT collapse."""
         result_dict = {
             "all_reduce_perf-NCCL_ALGO=Ring": [
-                {"size": 1024, "name": "AllReduce", "type": "float", "inPlace": 0,
-                 "busBw": 10.0, "algBw": 5.0, "time": 1.0},
-                {"size": 1024, "name": "AllReduce", "type": "float", "inPlace": 1,
-                 "busBw": 99.0, "algBw": 50.0, "time": 2.0},
+                {
+                    "size": 1024,
+                    "name": "AllReduce",
+                    "type": "float",
+                    "inPlace": 0,
+                    "busBw": 10.0,
+                    "algBw": 5.0,
+                    "time": 1.0,
+                },
+                {
+                    "size": 1024,
+                    "name": "AllReduce",
+                    "type": "float",
+                    "inPlace": 1,
+                    "busBw": 99.0,
+                    "algBw": 50.0,
+                    "time": 2.0,
+                },
             ]
         }
         graph = rccl_lib.convert_to_graph_dict(result_dict)
@@ -314,10 +328,24 @@ class TestRcclLib(unittest.TestCase):
         """Different data types for the same size must NOT collapse."""
         result_dict = {
             "all_reduce_perf-NCCL_ALGO=Ring": [
-                {"size": 1024, "name": "AllReduce", "type": "float", "inPlace": 1,
-                 "busBw": 10.0, "algBw": 5.0, "time": 1.0},
-                {"size": 1024, "name": "AllReduce", "type": "bfloat16", "inPlace": 1,
-                 "busBw": 20.0, "algBw": 10.0, "time": 1.0},
+                {
+                    "size": 1024,
+                    "name": "AllReduce",
+                    "type": "float",
+                    "inPlace": 1,
+                    "busBw": 10.0,
+                    "algBw": 5.0,
+                    "time": 1.0,
+                },
+                {
+                    "size": 1024,
+                    "name": "AllReduce",
+                    "type": "bfloat16",
+                    "inPlace": 1,
+                    "busBw": 20.0,
+                    "algBw": 10.0,
+                    "time": 1.0,
+                },
             ]
         }
         graph = rccl_lib.convert_to_graph_dict(result_dict)
@@ -370,15 +398,11 @@ class TestRcclLib(unittest.TestCase):
 
     def test_format_run_command_log_entry(self):
         """Clean run record: command collapsed to one line; output + headers present."""
-        command = (
-            "/opt/ompi/bin/mpirun \\\n"
-            "    --allow-run-as-root \\\n"
-            "    -np 32 \\\n"
-            "    all_reduce_perf -b 1K -e 4G"
-        )
+        command = "/opt/ompi/bin/mpirun \\\n    --allow-run-as-root \\\n    -np 32 \\\n    all_reduce_perf -b 1K -e 4G"
         output = "#  size  busbw\n  1024  0.02\n# Avg bus bandwidth : 100.0\n"
-        entry = rccl_lib.format_run_command_log_entry("all_reduce_perf [NCCL_ALGO=Ring] -> ref_float_r0.json",
-                                                      command, output)
+        entry = rccl_lib.format_run_command_log_entry(
+            "all_reduce_perf [NCCL_ALGO=Ring] -> ref_float_r0.json", command, output
+        )
         # Command is collapsed to a single copy/paste-able line (no backslashes/newlines).
         self.assertIn("mpirun --allow-run-as-root -np 32 all_reduce_perf -b 1K -e 4G", entry)
         self.assertNotIn("\\\n", entry)
@@ -392,10 +416,24 @@ class TestRcclLib(unittest.TestCase):
         """Both data types are compared against the size-keyed reference."""
         test_name = "all_reduce_perf"
         output = [
-            {"name": "all_reduce_perf", "size": 1024, "type": "float", "inPlace": 1,
-             "busBw": 90.0, "algBw": 45.0, "time": 12.3},
-            {"name": "all_reduce_perf", "size": 1024, "type": "bfloat16", "inPlace": 1,
-             "busBw": 70.0, "algBw": 35.0, "time": 12.3},  # below threshold -> must fail
+            {
+                "name": "all_reduce_perf",
+                "size": 1024,
+                "type": "float",
+                "inPlace": 1,
+                "busBw": 90.0,
+                "algBw": 45.0,
+                "time": 12.3,
+            },
+            {
+                "name": "all_reduce_perf",
+                "size": 1024,
+                "type": "bfloat16",
+                "inPlace": 1,
+                "busBw": 70.0,
+                "algBw": 35.0,
+                "time": 12.3,
+            },  # below threshold -> must fail
         ]
         exp_res_dict = {"1024": {"bus_bw": 80.0}}  # 95% threshold = 76.0
         rccl_lib.check_bus_bw(test_name, output, exp_res_dict)

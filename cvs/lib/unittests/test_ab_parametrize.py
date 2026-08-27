@@ -53,16 +53,18 @@ FIXTURES = ["rccl_collective", "regression_params", "data_type"]
 class TestAbParametrize(unittest.TestCase):
     def test_no_regression_block_runs_collectives_under_default_env(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cfg = _write_cfg(tmp, {
-                "rccl_collective": ["all_reduce_perf", "all_gather_perf"],
-                "data_types": ["float", "bfloat16"],
-                # no "regression" key at all
-            })
+            cfg = _write_cfg(
+                tmp,
+                {
+                    "rccl_collective": ["all_reduce_perf", "all_gather_perf"],
+                    "data_types": ["float", "bfloat16"],
+                    # no "regression" key at all
+                },
+            )
             mf = _FakeMetafunc(cfg, FIXTURES)
             ab.pytest_generate_tests(mf)
 
-            self.assertEqual(mf.calls["rccl_collective"]["argvalues"],
-                             ["all_reduce_perf", "all_gather_perf"])
+            self.assertEqual(mf.calls["rccl_collective"]["argvalues"], ["all_reduce_perf", "all_gather_perf"])
             # Exactly one knob combo: the production-env default.
             self.assertEqual(mf.calls["regression_params"]["argvalues"], [{}])
             self.assertEqual(mf.calls["regression_params"]["ids"], ["default"])
@@ -70,10 +72,13 @@ class TestAbParametrize(unittest.TestCase):
 
     def test_empty_regression_block_is_treated_as_default(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cfg = _write_cfg(tmp, {
-                "rccl_collective": ["all_reduce_perf"],
-                "regression": {},
-            })
+            cfg = _write_cfg(
+                tmp,
+                {
+                    "rccl_collective": ["all_reduce_perf"],
+                    "regression": {},
+                },
+            )
             mf = _FakeMetafunc(cfg, FIXTURES)
             ab.pytest_generate_tests(mf)
 
@@ -82,10 +87,13 @@ class TestAbParametrize(unittest.TestCase):
 
     def test_regression_block_expands_knob_matrix(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cfg = _write_cfg(tmp, {
-                "rccl_collective": ["all_reduce_perf"],
-                "regression": {"NCCL_PXN_DISABLE": ["0", "1"]},
-            })
+            cfg = _write_cfg(
+                tmp,
+                {
+                    "rccl_collective": ["all_reduce_perf"],
+                    "regression": {"NCCL_PXN_DISABLE": ["0", "1"]},
+                },
+            )
             mf = _FakeMetafunc(cfg, FIXTURES)
             ab.pytest_generate_tests(mf)
 
@@ -100,10 +108,13 @@ class TestAbParametrize(unittest.TestCase):
 
     def test_cartesian_product_of_two_knobs(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cfg = _write_cfg(tmp, {
-                "rccl_collective": ["all_reduce_perf"],
-                "regression": {"NCCL_ALGO": ["Ring"], "NCCL_PXN_DISABLE": ["0", "1"]},
-            })
+            cfg = _write_cfg(
+                tmp,
+                {
+                    "rccl_collective": ["all_reduce_perf"],
+                    "regression": {"NCCL_ALGO": ["Ring"], "NCCL_PXN_DISABLE": ["0", "1"]},
+                },
+            )
             mf = _FakeMetafunc(cfg, FIXTURES)
             ab.pytest_generate_tests(mf)
 
@@ -123,37 +134,31 @@ class TestResolveDetectThresholds(unittest.TestCase):
     def test_derived_file_overrides_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             self._write_derived(tmp, {"thresholds": self.DERIVED_THR})
-            out = ab._resolve_detect_thresholds(
-                {"thresholds": self.CONFIG_THR}, {}, tmp)
+            out = ab._resolve_detect_thresholds({"thresholds": self.CONFIG_THR}, {}, tmp)
             self.assertEqual(out["thresholds"], self.DERIVED_THR)
 
     def test_missing_file_keeps_config(self):
         with tempfile.TemporaryDirectory() as tmp:
-            out = ab._resolve_detect_thresholds(
-                {"thresholds": self.CONFIG_THR}, {}, tmp)
+            out = ab._resolve_detect_thresholds({"thresholds": self.CONFIG_THR}, {}, tmp)
             self.assertEqual(out["thresholds"], self.CONFIG_THR)
 
     def test_opt_out_keeps_config_even_if_file_present(self):
         with tempfile.TemporaryDirectory() as tmp:
             self._write_derived(tmp, {"thresholds": self.DERIVED_THR})
-            out = ab._resolve_detect_thresholds(
-                {"thresholds": self.CONFIG_THR},
-                {"use_derived_thresholds": False}, tmp)
+            out = ab._resolve_detect_thresholds({"thresholds": self.CONFIG_THR}, {"use_derived_thresholds": False}, tmp)
             self.assertEqual(out["thresholds"], self.CONFIG_THR)
 
     def test_corrupt_file_keeps_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "ab_derived_thresholds.json"), "w") as fp:
                 fp.write("{ not json")
-            out = ab._resolve_detect_thresholds(
-                {"thresholds": self.CONFIG_THR}, {}, tmp)
+            out = ab._resolve_detect_thresholds({"thresholds": self.CONFIG_THR}, {}, tmp)
             self.assertEqual(out["thresholds"], self.CONFIG_THR)
 
     def test_file_without_thresholds_key_keeps_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             self._write_derived(tmp, {"noise": {}})
-            out = ab._resolve_detect_thresholds(
-                {"thresholds": self.CONFIG_THR}, {}, tmp)
+            out = ab._resolve_detect_thresholds({"thresholds": self.CONFIG_THR}, {}, tmp)
             self.assertEqual(out["thresholds"], self.CONFIG_THR)
 
     def test_does_not_mutate_input(self):

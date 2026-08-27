@@ -236,8 +236,7 @@ def derived_thresholds_paths(ab_cfg, out_dir):
     explicit = ab_cfg.get('derived_thresholds_path')
     if explicit:
         paths.append(explicit)
-    paths.append(os.path.join(
-        os.getenv('RCCL_CI_ROOT', '/it-share/rccl-ci'), 'configs', 'ab_derived_thresholds.json'))
+    paths.append(os.path.join(os.getenv('RCCL_CI_ROOT', '/it-share/rccl-ci'), 'configs', 'ab_derived_thresholds.json'))
     paths.append(os.path.join(out_dir, 'ab_derived_thresholds.json'))
     # Preserve order, drop duplicates.
     seen, ordered = set(), []
@@ -258,6 +257,7 @@ def _provenance(ab_cfg):
     stamp records what is actually there -- when a build silently reuses a cache
     entry, only the stamp shows it.
     """
+
     def _built_rev(side):
         ld = (side or {}).get('ld_library_path') or ''
         first = ld.split(':')[0]
@@ -277,10 +277,8 @@ def _provenance(ab_cfg):
         "run_key": os.getenv('RCCL_CI_RUN_KEY'),
         "slurm_job_id": os.getenv('SLURM_JOB_ID'),
         "github_run_id": os.getenv('GITHUB_RUN_ID'),
-        "reference": {"lib": (ref.get('ld_library_path') or '').split(':')[0],
-                      "built_rev": _built_rev(ref)},
-        "candidate": {"lib": (cand.get('ld_library_path') or '').split(':')[0],
-                      "built_rev": _built_rev(cand)},
+        "reference": {"lib": (ref.get('ld_library_path') or '').split(':')[0], "built_rev": _built_rev(ref)},
+        "candidate": {"lib": (cand.get('ld_library_path') or '').split(':')[0], "built_rev": _built_rev(cand)},
     }
 
 
@@ -295,10 +293,7 @@ def _sides_identical(ab_cfg):
     cand = ab_cfg.get('candidate', {}) or {}
 
     def _real(side):
-        return tuple(
-            os.path.realpath(side[k]) if side.get(k) else None
-            for k in ("ld_library_path", "rccl_tests_dir")
-        )
+        return tuple(os.path.realpath(side[k]) if side.get(k) else None for k in ("ld_library_path", "rccl_tests_dir"))
 
     ref_r, cand_r = _real(ref), _real(cand)
     if ref_r == (None, None) and cand_r == (None, None):
@@ -345,8 +340,11 @@ def _publish_derived_thresholds(derived, ab_cfg, out_dir, publish=True):
         log.info("publish_derived_thresholds=false; calibration left in %s only", local)
         return
 
-    stable = derived_thresholds_paths(ab_cfg, out_dir)[0] if ab_cfg.get('derived_thresholds_path') else \
-        os.path.join(os.getenv('RCCL_CI_ROOT', '/it-share/rccl-ci'), 'configs', 'ab_derived_thresholds.json')
+    stable = (
+        derived_thresholds_paths(ab_cfg, out_dir)[0]
+        if ab_cfg.get('derived_thresholds_path')
+        else os.path.join(os.getenv('RCCL_CI_ROOT', '/it-share/rccl-ci'), 'configs', 'ab_derived_thresholds.json')
+    )
     try:
         os.makedirs(os.path.dirname(stable), exist_ok=True)
         tmp = f"{stable}.tmp.{os.getpid()}"
@@ -355,8 +353,11 @@ def _publish_derived_thresholds(derived, ab_cfg, out_dir, publish=True):
         os.replace(tmp, stable)
         log.info("Published calibrated thresholds to %s", stable)
     except OSError as exc:
-        log.warning("Could not publish calibrated thresholds to %s (%s); "
-                    "detect runs will keep using the previous calibration.", stable, exc)
+        log.warning(
+            "Could not publish calibrated thresholds to %s (%s); detect runs will keep using the previous calibration.",
+            stable,
+            exc,
+        )
 
 
 def _resolve_detect_thresholds(detector_overrides, ab_cfg, out_dir):
@@ -394,14 +395,15 @@ def _resolve_detect_thresholds(detector_overrides, ab_cfg, out_dir):
             continue
 
         shape = 'per-collective' if doc.get('thresholds_by_collective') else 'per-tier'
-        log.info("Using calibrated thresholds (%s) from %s: %s (overriding config)",
-                 shape, derived_path, derived_thr)
-        return {**detector_overrides,
-                "thresholds": derived_thr,
-                "thresholds_source": f"{derived_path} ({shape})"}
+        log.info("Using calibrated thresholds (%s) from %s: %s (overriding config)", shape, derived_path, derived_thr)
+        return {**detector_overrides, "thresholds": derived_thr, "thresholds_source": f"{derived_path} ({shape})"}
 
-    log.warning("No calibrated thresholds found in any of %s; using config thresholds %s. "
-                "Run a control-mode calibration first.", tried, cfg_thr)
+    log.warning(
+        "No calibrated thresholds found in any of %s; using config thresholds %s. "
+        "Run a control-mode calibration first.",
+        tried,
+        cfg_thr,
+    )
     return {**detector_overrides, "thresholds_source": "config (no calibration found)"}
 
 
@@ -417,8 +419,9 @@ def _side_params(base_rccl_test_params, side_cfg, data_type=None):
     return params
 
 
-def _run_one_side_once(phdl, shdl, cluster_dict, config_dict, side_cfg, collective, env_overrides, repeat_idx,
-                       data_type=None):
+def _run_one_side_once(
+    phdl, shdl, cluster_dict, config_dict, side_cfg, collective, env_overrides, repeat_idx, data_type=None
+):
     """
     Run a single sweep for one build side and return the parsed result rows.
 
@@ -477,8 +480,9 @@ def _run_one_side_once(phdl, shdl, cluster_dict, config_dict, side_cfg, collecti
     return rows
 
 
-def _run_one_side(phdl, shdl, cluster_dict, config_dict, side_cfg, collective, env_overrides, repeat_idx,
-                  data_type=None):
+def _run_one_side(
+    phdl, shdl, cluster_dict, config_dict, side_cfg, collective, env_overrides, repeat_idx, data_type=None
+):
     """Run one sweep with retry on transient failures; clean stale GPU state between attempts."""
     retry_cfg = config_dict.get('retry', {})
     max_retries = int(retry_cfg.get('max_retries', 2))
@@ -544,8 +548,10 @@ def test_ab_pair(phdl, shdl, cluster_dict, config_dict, rccl_collective, regress
     #   "skip_keys": [["alltoall_perf", "bfloat16"]]
     skip_keys = {(str(c), str(d)) for c, d in ab_cfg.get('skip_keys', [])}
     if (str(rccl_collective), str(data_type)) in skip_keys:
-        pytest.skip(f"{rccl_collective}/{data_type} excluded via ab_regression.skip_keys "
-                    f"(known upstream issue; not a gate failure)")
+        pytest.skip(
+            f"{rccl_collective}/{data_type} excluded via ab_regression.skip_keys "
+            f"(known upstream issue; not a gate failure)"
+        )
 
     # Circuit breaker: if the environment has already proven itself broken, skip
     # the rest of the matrix immediately instead of re-discovering it one 30-minute
@@ -553,8 +559,10 @@ def test_ab_pair(phdl, shdl, cluster_dict, config_dict, rccl_collective, regress
     # analysis test must still run so the job emits a report that says, explicitly,
     # that there is no verdict.
     if _breaker["tripped_by"]:
-        pytest.skip(f"circuit breaker tripped by {_breaker['tripped_by']}; "
-                    f"environment is broken, not flaky — skipping remaining sweeps")
+        pytest.skip(
+            f"circuit breaker tripped by {_breaker['tripped_by']}; "
+            f"environment is broken, not flaky — skipping remaining sweeps"
+        )
 
     repeats = int(ab_cfg.get('repeats', 7))
     control_mode = bool(ab_cfg.get('control_mode', False))
@@ -571,8 +579,7 @@ def test_ab_pair(phdl, shdl, cluster_dict, config_dict, rccl_collective, regress
 
     params_str = ' '.join(f'{k}={v}' for k, v in regression_params.items()) or 'default'
     group_key = f'{rccl_collective}-d={data_type}-{params_str}'
-    group = ab_runs.setdefault(
-        group_key, {"a": [], "b": [], "repeats_expected": repeats, "complete": False})
+    group = ab_runs.setdefault(group_key, {"a": [], "b": [], "repeats_expected": repeats, "complete": False})
     group["repeats_expected"] = repeats
 
     try:
@@ -593,8 +600,7 @@ def test_ab_pair(phdl, shdl, cluster_dict, config_dict, rccl_collective, regress
     except Exception:
         if _breaker["consecutive_failures"] >= breaker_budget and not _breaker["tripped_by"]:
             _breaker["tripped_by"] = f"{group_key} ({_breaker['consecutive_failures']} consecutive sweep failures)"
-            log.error("Circuit breaker TRIPPED: %s. Remaining sweeps will be skipped.",
-                      _breaker["tripped_by"])
+            log.error("Circuit breaker TRIPPED: %s. Remaining sweeps will be skipped.", _breaker["tripped_by"])
         raise
 
     group["complete"] = True
@@ -609,9 +615,18 @@ def test_ab_analyze(request, config_dict):
 
     # Effective detector config from the user's ab_regression block.
     detector_overrides = {}
-    for k in ("thresholds", "tier_boundaries", "separation_gate", "separation_b_percentile",
-              "separation_a_percentile", "adjacency_min_run", "min_bandwidth_floor", "min_repeats",
-              "metric", "higher_is_better"):
+    for k in (
+        "thresholds",
+        "tier_boundaries",
+        "separation_gate",
+        "separation_b_percentile",
+        "separation_a_percentile",
+        "adjacency_min_run",
+        "min_bandwidth_floor",
+        "min_repeats",
+        "metric",
+        "higher_is_better",
+    ):
         if k in ab_cfg:
             detector_overrides[k] = ab_cfg[k]
 
@@ -639,14 +654,18 @@ def test_ab_analyze(request, config_dict):
         # only legitimate way to ask for A==A.
         same = _sides_identical(ab_cfg)
         if same and ab_cfg.get('allow_identical_sides'):
-            log.warning("Both sides resolve to the same build (%s); "
-                        "allow_identical_sides is set, so this is a pipeline smoke run "
-                        "and its PASS says nothing about any code change.", same)
+            log.warning(
+                "Both sides resolve to the same build (%s); "
+                "allow_identical_sides is set, so this is a pipeline smoke run "
+                "and its PASS says nothing about any code change.",
+                same,
+            )
         elif same:
             untrustworthy.append(
                 f"detect mode but both sides resolve to the same build ({same}) — "
                 f"this run compares a build against itself and cannot detect anything. "
-                f"Use ab_regression.control_mode=true if an A=A noise run was intended.")
+                f"Use ab_regression.control_mode=true if an A=A noise run was intended."
+            )
 
     # Groups that did not finish all their repeats are excluded outright.
     scored_runs = {}
@@ -654,7 +673,8 @@ def test_ab_analyze(request, config_dict):
         if not runs.get("complete"):
             untrustworthy.append(
                 f"{group_key}: only {len(runs['a'])}/{runs.get('repeats_expected', '?')} "
-                f"repeats completed — group excluded")
+                f"repeats completed — group excluded"
+            )
             continue
         scored_runs[group_key] = runs
 
@@ -675,8 +695,11 @@ def test_ab_analyze(request, config_dict):
                 safety_factor=float(ab_cfg.get('safety_factor', 2.0)),
                 mad_k=float(ab_cfg.get('mad_k', 3.0)),
             )
-            log.info("Derived thresholds from control run: pooled=%s per-collective=%s",
-                     derived["thresholds"], derived.get("thresholds_by_collective"))
+            log.info(
+                "Derived thresholds from control run: pooled=%s per-collective=%s",
+                derived["thresholds"],
+                derived.get("thresholds_by_collective"),
+            )
             log.info("Measured noise: %s", derived["noise"])
             # Publishing is deferred until after the per-group checks below.
             # These numbers go to a shared path that every future detect run
@@ -694,8 +717,7 @@ def test_ab_analyze(request, config_dict):
             # the gate, and it cannot be one while the two disagree.
             detector_overrides = {
                 **detector_overrides,
-                "thresholds": (derived.get("thresholds_by_collective")
-                               or derived["thresholds"]),
+                "thresholds": (derived.get("thresholds_by_collective") or derived["thresholds"]),
             }
             thresholds_source = "this control run"
     else:
@@ -732,27 +754,35 @@ def test_ab_analyze(request, config_dict):
     # artifacts for inspection -- it just does not get to hand them to the gate.
     if pending_publish is not None:
         if untrustworthy:
-            log.warning("NOT publishing derived thresholds: this control run is untrustworthy (%s). "
-                        "They remain in this run's artifacts only.", "; ".join(untrustworthy[:5]))
+            log.warning(
+                "NOT publishing derived thresholds: this control run is untrustworthy (%s). "
+                "They remain in this run's artifacts only.",
+                "; ".join(untrustworthy[:5]),
+            )
             _publish_derived_thresholds(pending_publish, ab_cfg, out_dir, publish=False)
         else:
             _publish_derived_thresholds(pending_publish, ab_cfg, out_dir)
 
     with open(os.path.join(out_dir, 'ab_regression_report.json'), 'w') as fp:
-        json.dump({
-            "control_mode": control_mode,
-            # Which code and which builds produced this verdict. Without it, a
-            # report on NFS is just a number: there is no way, after the fact, to
-            # tell which detector version scored it or which two libraries it
-            # compared -- and both change underneath a shared checkout.
-            "provenance": _provenance(ab_cfg),
-            "thresholds_source": thresholds_source,
-            "trustworthy": not untrustworthy,
-            "untrustworthy_reasons": untrustworthy,
-            "groups_expected": len(ab_runs),
-            "groups_scored": len(scored_runs),
-            "reports": all_reports,
-        }, fp, indent=2, default=str)
+        json.dump(
+            {
+                "control_mode": control_mode,
+                # Which code and which builds produced this verdict. Without it, a
+                # report on NFS is just a number: there is no way, after the fact, to
+                # tell which detector version scored it or which two libraries it
+                # compared -- and both change underneath a shared checkout.
+                "provenance": _provenance(ab_cfg),
+                "thresholds_source": thresholds_source,
+                "trustworthy": not untrustworthy,
+                "untrustworthy_reasons": untrustworthy,
+                "groups_expected": len(ab_runs),
+                "groups_scored": len(scored_runs),
+                "reports": all_reports,
+            },
+            fp,
+            indent=2,
+            default=str,
+        )
 
     log.info("Thresholds source: %s", thresholds_source)
 
@@ -760,9 +790,11 @@ def test_ab_analyze(request, config_dict):
     # trusted and happened to flag something should be reported as the former,
     # because under those conditions the flag is not evidence either.
     if untrustworthy:
-        fail_test(f"A/B run produced NO USABLE VERDICT ({len(untrustworthy)} reason(s)): "
-                  + "; ".join(untrustworthy[:10])
-                  + " — this is neither a PASS nor a regression; see ab_regression_report.json")
+        fail_test(
+            f"A/B run produced NO USABLE VERDICT ({len(untrustworthy)} reason(s)): "
+            + "; ".join(untrustworthy[:10])
+            + " — this is neither a PASS nor a regression; see ab_regression_report.json"
+        )
     elif control_mode:
         # In control mode a confirmed regression means the detector is NOT stable
         # on this hardware (identical build flagged) - that must fail loudly.

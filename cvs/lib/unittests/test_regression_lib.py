@@ -42,20 +42,22 @@ def _cv_for_size(size):
 def _make_run(rng, collective="AllReduce", dtype="float", in_place=1, bw_scale=1.0, sizes=None):
     """Build one simulated sweep (list of rccl-style rows) with Gaussian noise."""
     rows = []
-    for size in (sizes or SWEEP_SIZES):
+    for size in sizes or SWEEP_SIZES:
         cv = _cv_for_size(size)
         mean = _true_bw(size) * bw_scale
         val = mean * (1.0 + rng.gauss(0.0, cv))
         val = max(val, 0.01)
-        rows.append({
-            "name": collective,
-            "size": size,
-            "type": dtype,
-            "inPlace": in_place,
-            "busBw": val,
-            "algBw": val * 0.5,
-            "time": 1.0,
-        })
+        rows.append(
+            {
+                "name": collective,
+                "size": size,
+                "type": dtype,
+                "inPlace": in_place,
+                "busBw": val,
+                "algBw": val * 0.5,
+                "time": 1.0,
+            }
+        )
     return rows
 
 
@@ -115,8 +117,9 @@ class TestCompareKey(unittest.TestCase):
         self.assertEqual(v["verdict"], reg.INCONCLUSIVE)
 
     def test_below_floor_inconclusive(self):
-        v = reg.compare_key([0.1, 0.1, 0.1], [0.01, 0.01, 0.01], size_bytes=1 * KiB,
-                            config={"min_bandwidth_floor": 0.5})
+        v = reg.compare_key(
+            [0.1, 0.1, 0.1], [0.01, 0.01, 0.01], size_bytes=1 * KiB, config={"min_bandwidth_floor": 0.5}
+        )
         self.assertEqual(v["verdict"], reg.INCONCLUSIVE)
 
     def test_separation_gate_blocks_overlap(self):
@@ -126,7 +129,7 @@ class TestCompareKey(unittest.TestCase):
         b = [70.0, 85.0, 90.0, 110.0, 115.0]  # median 90, but p75(B)=110 >= p25(A)=100
         v = reg.compare_key(a, b, size_bytes=1 * GiB)
         self.assertGreater(v["rel_drop"], 0.05)  # threshold gate alone would pass
-        self.assertFalse(v["candidate"])          # separation gate vetoes it
+        self.assertFalse(v["candidate"])  # separation gate vetoes it
 
 
 class TestDetectRegressions(unittest.TestCase):
@@ -156,15 +159,34 @@ class TestDetectRegressions(unittest.TestCase):
         a_runs = []
         b_runs = []
         for _ in range(5):
-            a_rows = [{"name": "AllReduce", "size": s, "type": "float", "inPlace": 1,
-                       "busBw": 300.0, "algBw": 150.0, "time": 1.0} for s in sizes]
+            a_rows = [
+                {
+                    "name": "AllReduce",
+                    "size": s,
+                    "type": "float",
+                    "inPlace": 1,
+                    "busBw": 300.0,
+                    "algBw": 150.0,
+                    "time": 1.0,
+                }
+                for s in sizes
+            ]
             b_rows = []
             for s in sizes:
                 bw = 300.0
                 if s == 1 * GiB:  # single isolated size regressed 30%
                     bw = 210.0
-                b_rows.append({"name": "AllReduce", "size": s, "type": "float", "inPlace": 1,
-                               "busBw": bw, "algBw": bw / 2, "time": 1.0})
+                b_rows.append(
+                    {
+                        "name": "AllReduce",
+                        "size": s,
+                        "type": "float",
+                        "inPlace": 1,
+                        "busBw": bw,
+                        "algBw": bw / 2,
+                        "time": 1.0,
+                    }
+                )
             a_runs.append(a_rows)
             b_runs.append(b_rows)
         report = reg.detect_regressions(a_runs, b_runs, config={"adjacency_min_run": 2})
@@ -174,24 +196,86 @@ class TestDetectRegressions(unittest.TestCase):
 
     def test_isolated_candidate_confirmed_when_adjacency_disabled(self):
         sizes = [1 * GiB, 2 * GiB]
-        a_runs = [[{"name": "AllReduce", "size": 1 * GiB, "type": "float", "inPlace": 1,
-                    "busBw": 300.0, "algBw": 150.0, "time": 1.0},
-                   {"name": "AllReduce", "size": 2 * GiB, "type": "float", "inPlace": 1,
-                    "busBw": 300.0, "algBw": 150.0, "time": 1.0}] for _ in range(5)]
-        b_runs = [[{"name": "AllReduce", "size": 1 * GiB, "type": "float", "inPlace": 1,
-                    "busBw": 210.0, "algBw": 105.0, "time": 1.0},
-                   {"name": "AllReduce", "size": 2 * GiB, "type": "float", "inPlace": 1,
-                    "busBw": 300.0, "algBw": 150.0, "time": 1.0}] for _ in range(5)]
+        a_runs = [
+            [
+                {
+                    "name": "AllReduce",
+                    "size": 1 * GiB,
+                    "type": "float",
+                    "inPlace": 1,
+                    "busBw": 300.0,
+                    "algBw": 150.0,
+                    "time": 1.0,
+                },
+                {
+                    "name": "AllReduce",
+                    "size": 2 * GiB,
+                    "type": "float",
+                    "inPlace": 1,
+                    "busBw": 300.0,
+                    "algBw": 150.0,
+                    "time": 1.0,
+                },
+            ]
+            for _ in range(5)
+        ]
+        b_runs = [
+            [
+                {
+                    "name": "AllReduce",
+                    "size": 1 * GiB,
+                    "type": "float",
+                    "inPlace": 1,
+                    "busBw": 210.0,
+                    "algBw": 105.0,
+                    "time": 1.0,
+                },
+                {
+                    "name": "AllReduce",
+                    "size": 2 * GiB,
+                    "type": "float",
+                    "inPlace": 1,
+                    "busBw": 300.0,
+                    "algBw": 150.0,
+                    "time": 1.0,
+                },
+            ]
+            for _ in range(5)
+        ]
         report = reg.detect_regressions(a_runs, b_runs, config={"adjacency_min_run": 1})
         self.assertTrue(report["summary"]["has_regression"])
 
     def test_small_message_regression_below_threshold_skipped(self):
         # A 12% drop at a small (noisy) size is below the 20% small-tier threshold.
         size = 4 * KiB
-        a_runs = [[{"name": "AllReduce", "size": size, "type": "float", "inPlace": 1,
-                    "busBw": 10.0, "algBw": 5.0, "time": 1.0}] for _ in range(5)]
-        b_runs = [[{"name": "AllReduce", "size": size, "type": "float", "inPlace": 1,
-                    "busBw": 8.8, "algBw": 4.4, "time": 1.0}] for _ in range(5)]
+        a_runs = [
+            [
+                {
+                    "name": "AllReduce",
+                    "size": size,
+                    "type": "float",
+                    "inPlace": 1,
+                    "busBw": 10.0,
+                    "algBw": 5.0,
+                    "time": 1.0,
+                }
+            ]
+            for _ in range(5)
+        ]
+        b_runs = [
+            [
+                {
+                    "name": "AllReduce",
+                    "size": size,
+                    "type": "float",
+                    "inPlace": 1,
+                    "busBw": 8.8,
+                    "algBw": 4.4,
+                    "time": 1.0,
+                }
+            ]
+            for _ in range(5)
+        ]
         report = reg.detect_regressions(a_runs, b_runs)
         self.assertFalse(report["summary"]["has_regression"])
 

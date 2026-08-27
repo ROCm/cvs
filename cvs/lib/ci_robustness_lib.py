@@ -137,7 +137,11 @@ def run_with_retries(
             if log is not None:
                 log.warning(
                     "%s attempt %d/%d failed: %r (retriable=%s)",
-                    label, attempt, total_attempts, exc, retriable,
+                    label,
+                    attempt,
+                    total_attempts,
+                    exc,
+                    retriable,
                 )
             if not (more_attempts and retriable):
                 raise
@@ -211,7 +215,7 @@ def _self_safe_pattern(pattern):
     """
     for i, ch in enumerate(pattern):
         if ch.isalnum():
-            return pattern[:i] + '[' + ch + ']' + pattern[i + 1:]
+            return pattern[:i] + '[' + ch + ']' + pattern[i + 1 :]
     return pattern
 
 

@@ -20,8 +20,7 @@ import os
 import random
 import sys
 
-_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__)))))
+_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 if _REPO not in sys.path:
     sys.path.insert(0, _REPO)
 
@@ -32,8 +31,7 @@ LARGE_CUTOFF = 64 * 1024 * 1024
 
 
 def rows(vals, name="all_reduce_perf"):
-    return [{"name": name, "size": s, "type": "float", "inPlace": 0, "busBw": v}
-            for s, v in vals.items()]
+    return [{"name": name, "size": s, "type": "float", "inPlace": 0, "busBw": v} for s, v in vals.items()]
 
 
 def noisy(base, cv=0.0024):
@@ -80,12 +78,9 @@ def test_tightened_thresholds_catch_a_real_ten_percent_regression():
     so a 10% drop on the biggest messages sailed through as PASS."""
     random.seed(7)
     a = [rows({s: noisy(100.0) for s in SIZES}) for _ in range(7)]
-    b = [rows({s: noisy(90.0 if s > LARGE_CUTOFF else 100.0) for s in SIZES})
-         for _ in range(7)]
-    old = R.detect_regressions(
-        a, b, config={"thresholds": {"small": 0.172, "mid": 0.123, "large": 0.129}})
-    new = R.detect_regressions(
-        a, b, config={"thresholds": {"small": 0.10, "mid": 0.05, "large": 0.03}})
+    b = [rows({s: noisy(90.0 if s > LARGE_CUTOFF else 100.0) for s in SIZES}) for _ in range(7)]
+    old = R.detect_regressions(a, b, config={"thresholds": {"small": 0.172, "mid": 0.123, "large": 0.129}})
+    new = R.detect_regressions(a, b, config={"thresholds": {"small": 0.10, "mid": 0.05, "large": 0.03}})
     assert old["summary"]["regressions"] == 0, "regression baseline changed"
     assert new["summary"]["regressions"] == 2
 
@@ -110,17 +105,20 @@ def test_derive_thresholds_is_robust_to_a_few_flaky_keys():
 def test_uncalibrated_collective_falls_back_to_the_tightest_threshold():
     """Falling back to the loosest would let a brand-new collective in with an
     alltoall-sized blind spot."""
-    cfg = R.merge_config({"thresholds": {
-        "all_reduce_perf": {"small": .10, "mid": .05, "large": .03},
-        "alltoall_perf": {"small": .20, "mid": .15, "large": .10},
-    }})
+    cfg = R.merge_config(
+        {
+            "thresholds": {
+                "all_reduce_perf": {"small": 0.10, "mid": 0.05, "large": 0.03},
+                "alltoall_perf": {"small": 0.20, "mid": 0.15, "large": 0.10},
+            }
+        }
+    )
     assert R.threshold_for(1 << 29, cfg, "all_reduce_perf") == 0.03
     assert R.threshold_for(1 << 29, cfg, "nope_perf") == 0.03
 
 
 def test_legacy_scalar_floor_and_flat_thresholds_still_work():
-    cfg = R.merge_config({"min_bandwidth_floor": 0.5,
-                          "thresholds": {"small": .2, "mid": .1, "large": .05}})
+    cfg = R.merge_config({"min_bandwidth_floor": 0.5, "thresholds": {"small": 0.2, "mid": 0.1, "large": 0.05}})
     assert R.floor_for(1024, cfg) == 0.5
     assert R.threshold_for(1024, cfg, "anything") == 0.2
 

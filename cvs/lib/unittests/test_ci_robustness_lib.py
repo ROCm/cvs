@@ -46,14 +46,16 @@ class TestRunWithRetries(unittest.TestCase):
         sleeps = []
         retries = []
         out = rb.run_with_retries(
-            flaky, max_retries=3, backoff_sec=5,
+            flaky,
+            max_retries=3,
+            backoff_sec=5,
             sleep_fn=lambda s: sleeps.append(s),
             on_before_retry=lambda n: retries.append(n),
         )
         self.assertEqual(out, "recovered")
-        self.assertEqual(state["n"], 3)               # failed twice, succeeded on 3rd
-        self.assertEqual(retries, [2, 3])             # hook ran before attempts 2 and 3
-        self.assertEqual(sleeps, [5, 10])             # linear backoff 5*1, 5*2
+        self.assertEqual(state["n"], 3)  # failed twice, succeeded on 3rd
+        self.assertEqual(retries, [2, 3])  # hook ran before attempts 2 and 3
+        self.assertEqual(sleeps, [5, 10])  # linear backoff 5*1, 5*2
 
     def test_exhausts_and_raises(self):
         state = {"n": 0}
@@ -64,7 +66,7 @@ class TestRunWithRetries(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             rb.run_with_retries(always_fail, max_retries=2, sleep_fn=lambda s: None)
-        self.assertEqual(state["n"], 3)               # 1 + 2 retries
+        self.assertEqual(state["n"], 3)  # 1 + 2 retries
 
     def test_non_retriable_raises_immediately(self):
         state = {"n": 0}
@@ -75,7 +77,7 @@ class TestRunWithRetries(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             rb.run_with_retries(corrupt, max_retries=5, sleep_fn=lambda s: None)
-        self.assertEqual(state["n"], 1)               # never retried
+        self.assertEqual(state["n"], 1)  # never retried
 
 
 class TestParseGpuPids(unittest.TestCase):
@@ -90,7 +92,7 @@ PID      PROCESS NAME        GPU(s)   VRAM USED
 ====================================================================================
 """
         pids = rb.parse_gpu_pids(out)
-        self.assertEqual(pids, [12345, 12346])        # header text + pid 0 excluded
+        self.assertEqual(pids, [12345, 12346])  # header text + pid 0 excluded
 
     def test_empty(self):
         self.assertEqual(rb.parse_gpu_pids(""), [])

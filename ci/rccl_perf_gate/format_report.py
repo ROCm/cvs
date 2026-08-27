@@ -70,8 +70,7 @@ def _trust(report_data):
     top = report_data.get("trustworthy")
     reasons = list(report_data.get("untrustworthy_reasons") or [])
     if top is None:
-        top = bool(reports) and all(
-            r.get("summary", {}).get("trustworthy", False) for r in reports.values())
+        top = bool(reports) and all(r.get("summary", {}).get("trustworthy", False) for r in reports.values())
         if not top and not reasons:
             reasons = ["this report predates the trustworthiness flag, or a group could not be scored"]
     return bool(top), reasons
@@ -163,8 +162,7 @@ def render(report_data, title="RCCL Perf-Regression Gate"):
 
     if not trustworthy:
         lines.append(
-            "**Mode:** "
-            + ("calibration / control (A=A)" if control_mode else "detect (reference vs candidate)")
+            "**Mode:** " + ("calibration / control (A=A)" if control_mode else "detect (reference vs candidate)")
         )
 
     lines.append(f"**Thresholds:** {_thresholds_line(reports)}")
@@ -205,8 +203,7 @@ def render(report_data, title="RCCL Perf-Regression Gate"):
     for group_key, rep in sorted(reports.items()):
         s = rep.get("summary", {})
         lines.append(
-            f"| {group_key} | {s.get('keys_compared', 0)} "
-            f"| {s.get('regressions', 0)} | {s.get('inconclusive', 0)} |"
+            f"| {group_key} | {s.get('keys_compared', 0)} | {s.get('regressions', 0)} | {s.get('inconclusive', 0)} |"
         )
     lines.append("")
     lines.append("</details>")

@@ -583,9 +583,7 @@ def check_bus_bw(test_name, output, exp_res_dict):
                 continue
             actual_bw = float(act_dict['busBw'])
             threshold = expected_bw * tolerance
-            log.info(
-                f"Comparing (type={dtype}): actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}"
-            )
+            log.info(f"Comparing (type={dtype}): actual={actual_bw}, expected={expected_bw}, threshold={threshold:.2f}")
             if actual_bw < threshold:
                 fail_test(
                     f"The actual {place_word} bus BW {actual_bw} for msg size {act_dict['size']} (type={dtype}) "
