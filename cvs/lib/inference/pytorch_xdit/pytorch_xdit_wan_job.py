@@ -58,6 +58,7 @@ WAN_XFUSER_RESULTS_DIR = f"{CONTAINER_OUTPUT_MOUNT}/results"
 WAN_XFUSER_BENCHMARK_OUTPUT_DIR = CONTAINER_OUTPUT_MOUNT
 WAN_XFUSER_VIDEO_CONTAINER_PATH = f"{WAN_XFUSER_RESULTS_DIR}/video_i2v.mp4"
 WAN_XFUSER_TIMING_JSON_CONTAINER_PATH = f"{WAN_XFUSER_RESULTS_DIR}/timing.json"
+WAN_XFUSER_AUTO_INPUT_IMAGE = "/tmp/i2v_input.jpg"
 I2V_INPUT_IMAGE_NATIVE = "/app/Wan2.2/examples/i2v_input.JPG"
 I2V_INPUT_IMAGE_DIFFUSERS = "/app/Wan/i2v_input.JPG"
 
@@ -211,11 +212,54 @@ def resolve_wan_diffusers_i2v_image(
     wan_params: Mapping[str, Any],
     inference_dict: Optional[Mapping[str, Any]] = None,
 ) -> str:
+    if should_wan_xfuser_auto_generate_input_image(wan_params, inference_dict):
+        return WAN_XFUSER_AUTO_INPUT_IMAGE
     for source in (wan_params, inference_dict or {}):
         explicit = source.get("wan_diffusers_i2v_image")
         if explicit:
             return str(explicit)
     return I2V_INPUT_IMAGE_DIFFUSERS
+
+
+def should_wan_xfuser_auto_generate_input_image(
+    wan_params: Mapping[str, Any],
+    inference_dict: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    """True when xFuser should synthesize a placeholder I2V input inside the container."""
+    if resolve_wan_diffusers_launcher(wan_params, inference_dict) != WAN_DIFFUSERS_LAUNCHER_XFUSER:
+        return False
+
+    explicit_flag = wan_params.get("wan_xfuser_auto_input_image")
+    if explicit_flag is not None:
+        return bool(explicit_flag)
+
+    configured_image = None
+    for source in (wan_params, inference_dict or {}):
+        value = source.get("wan_diffusers_i2v_image")
+        if value:
+            configured_image = str(value)
+            break
+
+    if configured_image and configured_image.lower() in {"auto", "generate"}:
+        return True
+    if configured_image:
+        host_mount = resolve_host_path_for_container_mount(inference_dict or {}, configured_image)
+        return host_mount is None
+    return True
+
+
+def build_wan_xfuser_auto_input_image_cmd(wan_params: Mapping[str, Any]) -> str:
+    """Create a solid-color JPEG at ``WAN_XFUSER_AUTO_INPUT_IMAGE`` matching config resolution."""
+    height, width = parse_wan_size(str(wan_params["size"]))
+    return (
+        "python3 -c "
+        f"\"from PIL import Image; Image.new('RGB', ({width}, {height}), (120, 160, 200))"
+        f".save('{WAN_XFUSER_AUTO_INPUT_IMAGE}')\""
+    )
+
+
+def build_wan_xfuser_video_deps_cmd() -> str:
+    return "pip install -q imageio imageio-ffmpeg"
 
 
 def diffusers_run_script_missing_hint(container_image: str, run_script: str) -> str:
@@ -462,10 +506,19 @@ def _build_wan_torchrun_body(
             output_subdir = WAN_XFUSER_RESULTS_DIR
         else:
             output_subdir = f"{CONTAINER_OUTPUT_MOUNT}/{WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR}"
+        prep_cmds: List[str] = []
+        if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER:
+            if should_wan_xfuser_auto_generate_input_image(wan_params, inference_dict):
+                prep_cmds.append(build_wan_xfuser_auto_input_image_cmd(wan_params))
+            if wan_params.get("wan_xfuser_install_video_deps", True):
+                prep_cmds.append(build_wan_xfuser_video_deps_cmd())
+        prep_prefix = " && ".join(prep_cmds)
+        if prep_prefix:
+            prep_prefix = f"{prep_prefix} && "
         inner = (
             f"cd {shlex.quote(CONTAINER_OUTPUT_MOUNT)} && "
             f"mkdir -p {shlex.quote(output_subdir)} && "
-            f"{torchrun}"
+            f"{prep_prefix}{torchrun}"
         )
         return f"bash -c {shlex.quote(inner)}"
     return torchrun
@@ -583,11 +636,17 @@ def validate_wan_xfuser_mounts(
         mount_checks.append((script_host, f"xFuser launcher script ({run_script_container})"))
 
     i2v_host = resolve_host_path_for_container_mount(inference_dict, i2v_image_container)
-    if not i2v_host:
+    auto_input = should_wan_xfuser_auto_generate_input_image(wan_params, inference_dict)
+    if auto_input:
+        log.info(
+            "xFuser I2V input will be generated in-container at %s (no host image mount required)",
+            WAN_XFUSER_AUTO_INPUT_IMAGE,
+        )
+    elif not i2v_host:
         errors.append(
-            f"volume_dict must bind-mount an I2V input image to {i2v_image_container}. "
-            f"Set wan_diffusers_i2v_image to the in-container path and add the host file "
-            f"to volume_dict."
+            f"volume_dict must bind-mount an I2V input image to {i2v_image_container}, "
+            f"or set wan_xfuser_auto_input_image to true to generate a placeholder JPEG "
+            f"in-container at {WAN_XFUSER_AUTO_INPUT_IMAGE}."
         )
     else:
         mount_checks.append((i2v_host, f"I2V input image ({i2v_image_container})"))
