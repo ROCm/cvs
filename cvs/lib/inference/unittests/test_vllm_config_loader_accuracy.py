@@ -93,17 +93,24 @@ class TestAccuracyThresholdKeyDoesNotTripSweepCoverage(unittest.TestCase):
         )
         self.assertIn("accuracy", vc.thresholds)
 
-    def test_typo_key_alongside_accuracy_still_raises(self):
+    def test_typo_key_is_rejected_by_runtime_coverage_check(self):
+        from cvs.lib.inference.utils.inferencing_config_loader import validate_thresholds_cover_sweep
+
+        variant = VariantConfig(
+            **_base_kwargs(
+                enforce_thresholds=True,
+                thresholds={
+                    self._CELL: self._full_gated_specs(),
+                    "accuracy": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.5}}},
+                    "acuracy": {},
+                },
+            )
+        )
         with self.assertRaises(ValueError) as ctx:
-            VariantConfig(
-                **_base_kwargs(
-                    enforce_thresholds=True,
-                    thresholds={
-                        self._CELL: self._full_gated_specs(),
-                        "accuracy": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.5}}},
-                        "acuracy": {},
-                    },
-                )
+            validate_thresholds_cover_sweep(
+                expected_cells=variant.expected_cells(),
+                thresholds=variant.thresholds,
+                enforce_thresholds=variant.enforce_thresholds,
             )
         self.assertIn("threshold keys matching no sweep cell", str(ctx.exception))
 

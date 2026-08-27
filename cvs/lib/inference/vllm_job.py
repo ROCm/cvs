@@ -2,11 +2,10 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unified vLLM benchmark job for single-node and multinode distributed runs.
+vLLM benchmark job for one explicit target-host group.
 
 Routing contract:
-  - build_server_cmd: BROADCAST env-script write + mkdir to ALL nodes.
-    On single-node (nnodes=1) broadcast and targeted exec are equivalent.
+  - build_server_cmd: writes the environment script to every target host.
   - start_server: one targeted orch.exec(..., hosts=[host]) per host, with
     per-rank --node-rank. On single-node this yields one (0, head) iteration.
   - run_client / wait_client_complete / parse_results: HEAD-ONLY via
@@ -16,7 +15,8 @@ Routing contract:
   - wait_ready / is_ready: BROADCAST so every shard is checked.
   - stop_server: BROADCAST pkill to all nodes.
 
-Distributed vs single-node branching is localised to _server_argv only:
+Distributed vs single-node branching is localised to _server_argv only. The
+target host group, rather than the variant config, determines node count:
 distributed flags (--node-rank, --master-addr, --master-port, --nnodes,
 --pipeline-parallel-size, --distributed-executor-backend) are added iff
 int(nnodes) > 1. Everything else is topology-blind.
@@ -27,7 +27,7 @@ IB device config (distributed only):
       script.
   ib_netdev: explicit Linux netdev name for NCCL_SOCKET_IFNAME /
       GLOO_SOCKET_IFNAME. Read directly from variant.roles.server.ib_netdev.
-      Required when nnodes > 1 (enforced by VariantConfig validator).
+  Required for multi-host distributed execution.
 '''
 
 from __future__ import annotations
@@ -144,13 +144,16 @@ class VllmJob:
         self.ib_hcas = ib_hcas or []
         self.goodput_slo = goodput_slo
         self.log_subdir = log_subdir
+        self.hosts = tuple(orch.hosts)
+        if not self.hosts:
+            raise ValueError("VllmJob requires at least one target host")
 
         p = variant.params
         self.tp = p.tensor_parallelism
-        self.pp = p.pipeline_parallel_size
+        self.pp = p.pipeline_parallel_size if len(self.hosts) > 1 else "1"
         self.master_addr = p.master_addr
         self.master_port = p.master_port
-        self.nnodes = p.nnodes
+        self.nnodes = str(len(self.hosts))
         self.port_no = p.port_no
         self.random_range_ratio = p.random_range_ratio
         self.random_prefix_len = p.random_prefix_len
@@ -167,6 +170,8 @@ class VllmJob:
         self.model_id = variant.model.id
         self.log_dir = variant.paths.log_dir
         self.serve_args = dict(variant.roles.server.serve_args)
+        if len(self.hosts) == 1:
+            self.serve_args.pop("distributed-executor-backend", None)
         self.server_env = dict(variant.roles.server.env)
         self.models_dir = variant.paths.models_dir
         self.ib_netdev = variant.roles.server.ib_netdev
@@ -290,16 +295,7 @@ class VllmJob:
     # ---------- server side ----------
 
     def build_server_cmd(self):
-        """Write per-node env scripts and create per-rank output directories.
-
-        Broadcast to ALL nodes so every rank has its env script and out-dir
-        before start_server launches the per-host processes. On single-node
-        the broadcast and targeted exec are equivalent.
-
-        IB devices (ib_hcas, ib_netdev) are written into the env script only
-        when present — they come from test_discover_topology (ib_hcas) and
-        directly from the config (ib_netdev). No runtime patches, no probing.
-        """
+        """Write the server environment and create per-rank output directories."""
         env_lines = [
             f"export HF_TOKEN={shlex.quote(self.hf_token)}",
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
@@ -330,7 +326,7 @@ class VllmJob:
           3. Any non-zero exit code OR EARLY_FAILURE_RE match in output raises
              RuntimeError before serve is attempted.
         """
-        head = self.orch.hosts[0]
+        head = self.hosts[0]
         # Step 1: bootstrap head node.
         head_cmd = f"ray start --head --port={self.master_port}"
         out = self.orch.exec(head_cmd, hosts=[head], detailed=True)
@@ -338,7 +334,7 @@ class VllmJob:
             if result.get("exit_code", 0) != 0 or self.EARLY_FAILURE_RE.search(result.get("output", "") or ""):
                 raise RuntimeError(f"ray bootstrap failed on {h} rank 0")
         # Step 2: bootstrap each worker node.
-        for rank, host in enumerate(self.orch.hosts):
+        for rank, host in enumerate(self.hosts):
             if rank == 0:
                 continue
             worker_cmd = f"ray start --address={self.master_addr}:{self.master_port}"
@@ -357,7 +353,7 @@ class VllmJob:
         if self._is_ray_backend and int(self.nnodes) > 1:
             # Ray multi-node: cluster bootstrap then head-only serve (AC12).
             self._bootstrap_ray_cluster()
-            head = self.orch.hosts[0]
+            head = self.hosts[0]
             serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv(0))
             rank_log = self._rank_log(0)
             inner = f"source /tmp/server_env_script.sh && nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
@@ -367,7 +363,7 @@ class VllmJob:
                     raise RuntimeError(f"vllm server failed to launch on {h} (rank 0): {output[-500:]}")
         else:
             # mp multi-node or single-node (any backend): serve on every host.
-            for rank, host in enumerate(self.orch.hosts):
+            for rank, host in enumerate(self.hosts):
                 serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv(rank))
                 rank_log = self._rank_log(rank)
                 inner = f"source /tmp/server_env_script.sh && nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
@@ -385,7 +381,7 @@ class VllmJob:
         once the head is up.
         """
         pattern = self.READINESS_RE.pattern
-        for rank, host in enumerate(self.orch.hosts):
+        for rank, host in enumerate(self.hosts):
             if rank > 0 and int(self.nnodes) > 1:
                 continue
             rank_log = self._rank_log(rank)
@@ -406,7 +402,7 @@ class VllmJob:
         Tailing/grepping a non-existent log on a worker would spuriously fail
         or hang, so workers are skipped entirely (AC22).
         """
-        for rank, host in enumerate(self.orch.hosts):
+        for rank, host in enumerate(self.hosts):
             if self._is_ray_backend and int(self.nnodes) > 1 and rank > 0:
                 continue
             rank_log = self._rank_log(rank)
@@ -521,16 +517,7 @@ class VllmJob:
     # ---------- client side (head-only) ----------
 
     def run_client(self):
-        """Launch bench serve on the HEAD node only via exec_on_head.
-
-        exec_on_head is required (not orch.exec broadcast): on multinode,
-        broadcast would launch N competing clients, each connecting to the same
-        server endpoint and inflating load.
-        """
-        # Ensure this cell's head output dir exists. build_server_cmd creates it
-        # on a fresh bringup, but the server-reuse path skips build_server_cmd,
-        # so the client (which writes client.log + results here) must guarantee
-        # the directory itself.
+        """Launch the benchmark client on the orchestrator head."""
         self.orch.exec_on_head(f"mkdir -p {shlex.quote(self.out_dir)}")
         args = [
             "vllm",
@@ -658,7 +645,7 @@ class VllmJob:
         preserved in the captured output even though _check_early_failure()
         stops tailing this log once startup is confirmed.
         """
-        for rank, host in enumerate(self.orch.hosts):
+        for rank, host in enumerate(self.hosts):
             if self._is_ray_backend and int(self.nnodes) > 1 and rank > 0:
                 continue
             rank_log = self._rank_log(rank)

@@ -84,7 +84,6 @@ def _make_job_for_check(tail_output="", grep_exit=1):
     variant.params.pipeline_parallel_size = "1"
     variant.params.master_addr = "localhost"
     variant.params.master_port = "29501"
-    variant.params.nnodes = "1"
     variant.params.port_no = "8000"
     variant.params.random_range_ratio = "0.0"
     variant.params.random_prefix_len = "0"
@@ -174,6 +173,13 @@ class TestMaxModelLenNoDuplicate(unittest.TestCase):
         self.assertEqual(len(idxs), 1, "derived max-model-len must still be emitted when unpinned")
         # 1024+1024 worst-case derived value, definitely not the 16384 config value
         self.assertNotEqual(argv[idxs[0] + 1], "16384")
+
+
+class TestEffectiveHosts(unittest.TestCase):
+    def test_node_count_comes_from_orchestrator_hosts(self):
+        job = _job("1024", "1024", 16)
+        self.assertEqual(job.nnodes, "2")
+        self.assertEqual(job.hosts, ("10.0.0.1", "10.0.0.2"))
 
 
 class TestServerSignatureReuse(unittest.TestCase):

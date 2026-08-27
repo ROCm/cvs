@@ -264,7 +264,10 @@ def _job(
     env=None,
     ib_hcas=None,
 ):
-    orch = RecordingOrch() if orch is None else orch
+    if orch is None:
+        orch = RecordingOrch(hosts=[HEAD, WORKER, HOST2][: int(nnodes)])
+    else:
+        orch.hosts = list(orch.hosts[: int(nnodes)])
     return VllmJob(
         orch=orch,
         variant=_variant(serve_args, nnodes, pp, ib_netdev, tp, master_addr, env),
@@ -277,12 +280,8 @@ def _job(
     )
 
 
-def _vc(nnodes="2", pp="1", serve_args=None, ib_netdev="eth0", tp="8"):
-    """A real pydantic VariantConfig exercising _check_distributed_consistency.
-
-    enforce_thresholds=False so the (independent) threshold-coverage validator
-    only warns and never masks the distributed-consistency error under test.
-    """
+def _vc(pp="1", serve_args=None, ib_netdev="eth0", tp="8", **params_extra):
+    params = {"tensor_parallelism": tp, "pipeline_parallel_size": pp, **params_extra}
     return VariantConfig(
         schema_version=1,
         framework="vllm",
@@ -294,7 +293,7 @@ def _vc(nnodes="2", pp="1", serve_args=None, ib_netdev="eth0", tp="8"):
             "hf_token_file": "/home/x/.hf",
         },
         model={"id": "/models/test-model", "remote": 0},
-        params={"tensor_parallelism": tp, "pipeline_parallel_size": pp, "nnodes": nnodes},
+        params=params,
         roles={"server": {"serve_args": dict(serve_args or {}), "env": {}, "ib_netdev": ib_netdev}},
         sweep={
             "sequence_combinations": [{"name": "a", "isl": "1024", "osl": "1024"}],
@@ -331,71 +330,29 @@ def _all_cmds(orch):
 
 
 # --------------------------------------------------------------------------- #
-# Config validator: VariantConfig._check_distributed_consistency  (AC1-6)
+# Config validation and runtime topology are deliberately separate.
 # --------------------------------------------------------------------------- #
 class TestVariantConfigRayConsistency(unittest.TestCase):
-    """The ray relaxation applies ONLY to the (nn>1 & pp==1) rule and ONLY for
-    the exact string 'ray'. ib_netdev and the (pp>1 & nn==1) rule are untouched."""
+    def test_accepts_topology_agnostic_variants(self):
+        _vc(pp="1", serve_args=RAY, ib_netdev=None)
+        _vc(pp="2", serve_args={}, ib_netdev="eth0")
 
-    def test_accepts_valid(self):
-        # (nnodes, pp, serve_args, ib_netdev) that must construct without error.
-        cases = [
-            ("1", "1", {}, None),  # baseline: unrelaxed single-node default path
-            ("2", "1", RAY, "eth0"),  # AC1: ray relaxation permits nn>1 & pp==1
-            ("2", "2", {}, "eth0"),  # AC3: mp multi-node path unchanged
-            ("2", "2", RAY, "eth0"),  # finding 8: ray + pp>1 is legal (nn>1 & pp>1
-            # is valid for ANY backend; the ray relaxation only special-cases pp==1,
-            # it never REJECTS ray+pp>1). Validated through the REAL VariantConfig
-            # validator, not just the SimpleNamespace fake used by _server_argv tests.
-        ]
-        for nn, pp, sa, ib in cases:
-            with self.subTest(nnodes=nn, pp=pp, serve_args=sa):
-                try:
-                    _vc(nnodes=nn, pp=pp, serve_args=sa, ib_netdev=ib)
-                except ValidationError as e:  # pragma: no cover - failure path
-                    self.fail(f"unexpected ValidationError: {e}")
-
-    def test_rejects_invalid(self):
-        # (nnodes, pp, serve_args, ib_netdev, field-token-in-message)
-        cases = [
-            ("2", "1", {}, "eth0", "pipeline_parallel_size"),  # AC2 no ray key
-            ("1", "2", RAY, "eth0", "pipeline_parallel_size"),  # AC4 pp>1 & nn==1 never relaxed
-            ("2", "1", RAY, None, "ib_netdev"),  # AC5 ib_netdev not relaxed by ray
-            ("2", "1", {"distributed-executor-backend": "RAY"}, "eth0", "pipeline_parallel_size"),  # AC6 case-sensitive
-            ("2", "1", {"distributed-executor-backend": "Ray"}, "eth0", "pipeline_parallel_size"),  # AC6 case-sensitive
-        ]
-        for nn, pp, sa, ib, token in cases:
-            with self.subTest(nnodes=nn, pp=pp, serve_args=sa, ib_netdev=ib):
-                with self.assertRaises(ValidationError) as ctx:
-                    _vc(nnodes=nn, pp=pp, serve_args=sa, ib_netdev=ib)
-                self.assertIn(token, str(ctx.exception))
+    def test_rejects_removed_nnodes_field(self):
+        with self.assertRaises(ValidationError) as ctx:
+            _vc(pp="1", serve_args={}, ib_netdev=None, nnodes="2")
+        self.assertIn("nnodes", str(ctx.exception))
 
 
 class TestCellKeyRayMultiNode(unittest.TestCase):
-    """AC7: ray multi-node has pp=1, so cell_key uses the single-node format
-    (no PP= segment), identical to a genuine single-node cell.
-
-    Round-4 finding 3: cell_key has two branches -- pp==1 (no PP= segment) and
-    pp>1 (a "PP=<pp>," segment inserted before CONC). The pp>1 branch had zero
-    coverage anywhere for THIS VariantConfig class, so both branches are now
-    pinned together in one subTest table (discipline rule B), asserting the exact
-    segment position/value/comma placement, not just presence."""
-
     def test_cell_key_format_both_pp_branches(self):
-        # (nnodes, pp, serve_args, ib_netdev, expected_key)
         cases = [
-            # AC7: ray multi-node, pp==1 -> single-node format, NO PP= segment.
-            ("2", "1", RAY, "eth0", "ISL=1024,OSL=1024,TP=8,CONC=16"),
-            # pp>1 branch -> "PP=2," inserted immediately before CONC. pp>1 requires
-            # nnodes>1 (the pp>1 & nn==1 rule always fires), so this is a valid mp
-            # multi-node config; the PP segment is what distinguishes it from the
-            # pp==1 key above.
-            ("2", "2", {}, "eth0", "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"),
+            (1, "1", "ISL=1024,OSL=1024,TP=8,CONC=16"),
+            (2, "2", "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=16"),
         ]
-        for nn, pp, sa, ib, expected in cases:
-            with self.subTest(nnodes=nn, pp=pp):
-                vc = _vc(nnodes=nn, pp=pp, serve_args=sa, ib_netdev=ib, tp="8")
-                self.assertEqual(vc.cell_key(isl="1024", osl="1024", concurrency="16"), expected)
+        for nnodes, pp, expected in cases:
+            with self.subTest(nnodes=nnodes, pp=pp):
+                vc = _vc(pp=pp, tp="8")
+                self.assertEqual(vc.cell_key("1024", "1024", "16", nnodes=nnodes, pipeline_parallel_size=pp), expected)
 
 
 # --------------------------------------------------------------------------- #
@@ -413,11 +370,11 @@ class TestIsRayBackend(unittest.TestCase):
         ]
         for sa, expected in cases:
             with self.subTest(serve_args=sa):
-                job = _job(serve_args=sa, nnodes="1", pp="1")
+                job = _job(serve_args=sa, nnodes="2", pp="1")
                 self.assertIs(job._is_ray_backend, expected)
 
     def test_property_reflects_live_serve_args_not_a_cached_snapshot(self):
-        job = _job(serve_args={}, nnodes="1", pp="1")
+        job = _job(serve_args={}, nnodes="2", pp="1")
         self.assertIs(job._is_ray_backend, False)
         job.serve_args["distributed-executor-backend"] = "ray"
         self.assertIs(job._is_ray_backend, True)
@@ -487,13 +444,13 @@ class TestServerArgvRayVsMp(unittest.TestCase):
         self.assertEqual(_value_after(argv1, "--node-rank"), "1")
 
     def test_single_node_ray_passthrough_no_driver_flags(self):
-        # RC3 / Edge: single-node omits all driver-injected dist flags, but the
-        # user's serve_args backend still passes through verbatim.
+        # Singleton fallback is always a plain single-node server, even when a
+        # distributed config carries a Ray backend setting.
         argv = _job(serve_args=RAY, nnodes="1", pp="1")._server_argv(0)
         for flag in self._DRIVER_DIST_FLAGS:
             with self.subTest(flag=flag):
                 self.assertNotIn(flag, argv)
-        self.assertEqual(_value_after(argv, "--distributed-executor-backend"), "ray")
+        self.assertNotIn("--distributed-executor-backend", argv)
 
     def test_ray_multinode_pp_gt_1_keeps_pipeline_parallel_size(self):
         # Coverage-gap (finding 1): VariantConfig permits a ray backend with

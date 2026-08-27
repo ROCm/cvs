@@ -4,8 +4,8 @@ All rights reserved.
 
 Shared test helpers for the unified vllm suite.
 
-`test_print_results_table` is exported and imported by `vllm.py` as a sibling
-test that pytest runs LAST (lexically after `test_vllm_inference`).
+`test_print_results_table` is imported by both explicit vLLM suites and runs
+after `test_vllm_inference`.
 '''
 
 from tabulate import tabulate
