@@ -1,6 +1,6 @@
 {
     "config": {
-        "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
+        "container_image": "rocm/ufb-private:xdit-gfx942-py3.12-prereleases-rocm10.0.0rc3-2805c93",
         "container_name": "flux-benchmark-dist",
         "hf_token_file": "/home/{user-id}/.hf_token",
         "hf_home": "/home/{user-id}",
