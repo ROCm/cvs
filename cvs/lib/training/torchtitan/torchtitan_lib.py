@@ -495,9 +495,9 @@ class TorchTitanTrainingJob:
     def get_training_results_dict(self):
         """Parse training results from logs."""
         if self.distributed_training:
-            log_files = [f'{self.log_dir}/torchtitan-logs/out-node{i}/training.log' for i in range(self.nnodes)]
+            log_files = [f'{self.combo_log_dir}/out-node{i}/training.log' for i in range(self.nnodes)]
         else:
-            log_files = [f'{self.log_dir}/torchtitan-logs/out-node0/training.log']
+            log_files = [f'{self.combo_log_dir}/out-node0/training.log']
 
         all_results = {}
         for log_file in log_files:
@@ -515,9 +515,9 @@ class TorchTitanTrainingJob:
     def scan_for_training_errors(self):
         """Scan training logs for known error patterns."""
         if self.distributed_training:
-            log_files = [f'{self.log_dir}/torchtitan-logs/out-node{i}/training.log' for i in range(self.nnodes)]
+            log_files = [f'{self.combo_log_dir}/out-node{i}/training.log' for i in range(self.nnodes)]
         else:
-            log_files = [f'{self.log_dir}/torchtitan-logs/out-node0/training.log']
+            log_files = [f'{self.combo_log_dir}/out-node0/training.log']
 
         for log_file in log_files:
             out_dict = self.orch.exec(f'tail -1000 {log_file}')
@@ -532,10 +532,7 @@ class TorchTitanTrainingJob:
         """Poll training logs until completion."""
         max_iters = 60
 
-        if self.distributed_training:
-            log_file = f'{self.log_dir}/torchtitan-logs/out-node0/training.log'
-        else:
-            log_file = f'{self.log_dir}/torchtitan-logs/out-node0/training.log'
+        log_file = f'{self.combo_log_dir}/out-node0/training.log'
 
         for iteration in range(max_iters):
             time.sleep(time_between_iters)
