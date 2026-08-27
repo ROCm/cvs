@@ -26,6 +26,8 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         self.mock_variant_config.config = {
             'log_dir': '/test/logs',
             'scripts_dir': '/test/scripts',
+            'data_cache_dir': '/test/cache',
+            'hf_token_file': '/test/.hf_token',
             'torchtitan_root': '/workspace/torchtitan',
             'training_iterations': '10',
             'nnodes': '2',

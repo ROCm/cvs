@@ -447,7 +447,8 @@ class TorchTitanTrainingJob:
                 # Add checkpoint args if configured
                 if self.checkpoint_dir:
                     torchrun_cmd += f' --checkpoint.folder {self.checkpoint_dir}'
-                    torchrun_cmd += f' --checkpoint.interval {self.save_interval}'
+                    if self.save_interval is not None:
+                        torchrun_cmd += f' --checkpoint.interval {self.save_interval}'
                     torchrun_cmd += ' --checkpoint.enable_checkpoint true'
                 if self.load_checkpoint:
                     torchrun_cmd += ' --checkpoint.load_step -1'
@@ -475,7 +476,8 @@ class TorchTitanTrainingJob:
             # Add checkpoint args if configured
             if self.checkpoint_dir:
                 torchrun_cmd += f' --checkpoint.folder {self.checkpoint_dir}'
-                torchrun_cmd += f' --checkpoint.interval {self.save_interval}'
+                if self.save_interval is not None:
+                    torchrun_cmd += f' --checkpoint.interval {self.save_interval}'
                 torchrun_cmd += ' --checkpoint.enable_checkpoint true'
             if self.load_checkpoint:
                 torchrun_cmd += ' --checkpoint.load_step -1'
