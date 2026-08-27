@@ -26,8 +26,8 @@ The JAX MaxText tests check:
 - **Convergence**: final loss / loss-decreasing trend, optional time-to-target
 - **Checkpoint save/resume** (opt-in): resume correctness + checkpoint I/O timing
 
-Use ``cvs copy-config --list`` to list available templates, or
-``cvs copy-config <name>`` to copy one to your working directory.
+Use ``cvs config list training/jaxmaxtext`` to list available templates, or
+``cvs config copy training/jaxmaxtext/<name>`` to copy one to your working directory.
 
 .. note::
 

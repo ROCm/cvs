@@ -165,5 +165,5 @@ Node Smoke Tier 3 (``node_smoke_tier3``)
 Further reading
 ===============
 
-- :doc:`/reference/configuration-files/cluster-file` — Cluster topology and SSH
+- :doc:`/reference/cluster/cluster-file` — Cluster topology and SSH
 - `cvs/tests/preflight/README.md <https://github.com/ROCm/cvs/blob/main/cvs/tests/preflight/README.md>`_ — Test suite overview and architecture

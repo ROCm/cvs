@@ -24,6 +24,8 @@ Each ``cvs run`` invocation is pointed at a cluster file via ``--cluster_file <p
 
 Copy the template that matches your cluster shape, edit the placeholders, and pass it to ``cvs run`` and ``cvs exec``. The choice of backend is made entirely in the cluster file. The ``cvs run`` invocation does not change.
 
+Ensure :doc:`/reference/cluster/passwordless-ssh` is configured before running CVS against the cluster.
+
 Backends
 ========
 

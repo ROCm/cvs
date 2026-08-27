@@ -8,7 +8,7 @@ Run vLLM inference benchmarks
 
 The vLLM suite measures LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. One parametrized suite covers both single-node and multinode runs — you select the topology in the configuration file, not by choosing a different suite.
 
-This page walks through a first run. For the full schema, every metric, and the threshold grammar, see :doc:`/reference/configuration-files/vllm`.
+This page walks through a first run. For the full schema, every metric, and the threshold grammar, see :doc:`/reference/configuration-files/inference/vllm`.
 
 Prerequisites
 =============
@@ -23,13 +23,15 @@ On every cluster node:
 
 On the head node where you launch ``cvs run``:
 
-- CVS installed (see :doc:`/install/cvs-install`).
+- CVS installed (see :doc:`/getting-started/install`).
 - SSH key-based access to every cluster node.
 
 For a multinode run, additionally have on hand:
 
 - The **head node address** reachable from every worker.
 - The **network interface name** used for inter-node traffic, for example ``ens51f1np1``. Find it with ``ip -br addr`` on a node. CVS cannot derive this automatically.
+
+.. _vllm-set-up-config:
 
 Step 1: Copy a configuration file
 =================================
@@ -38,25 +40,25 @@ CVS ships single-node and distributed vLLM configurations. List them:
 
 .. code:: bash
 
-  cvs copy-config inference/vllm
+  cvs config list inference/vllm
 
 Copy the one that matches your topology:
 
 .. code:: bash
 
   # Single node
-  cvs copy-config inference/vllm/mi300x_vllm_llama31-70b_fp8_single.json \
+  cvs config copy inference/vllm/mi300x_vllm_llama31-70b_fp8_single.json \
     --output /tmp/cvs/vllm_singlenode_config.json
 
   # Multiple nodes
-  cvs copy-config inference/vllm/mi300x_vllm_llama31-70b_fp8_distributed.json \
+  cvs config copy inference/vllm/mi300x_vllm_llama31-70b_fp8_distributed.json \
     --output /tmp/cvs/vllm_multinode_config.json
 
 You also need a cluster file describing your nodes. Use the container template, since the vLLM suite always runs inside a container:
 
 .. code:: bash
 
-  cvs copy-config cluster_container.json --output /tmp/cvs/cluster.json
+  cvs config copy cluster_container.json --output /tmp/cvs/cluster.json
 
 Step 2: Fill in the placeholders
 ================================
@@ -81,6 +83,8 @@ For a **multinode** configuration, also set:
 .. tip::
 
   Leave ``enforce_thresholds`` set to ``false`` for your first run on new hardware. The run then measures and records everything without failing on thresholds you have not calibrated yet. Set it to ``true`` once you know what good looks like.
+
+.. _vllm-run-tests:
 
 Step 3: Run the suite
 =====================
@@ -216,7 +220,7 @@ Common pitfalls
 See also
 ========
 
-- :doc:`/reference/configuration-files/vllm` — full configuration schema, metrics, and thresholds
-- :doc:`/reference/configuration-files/cluster-file` — cluster file schema
+- :doc:`/reference/configuration-files/inference/vllm` — full configuration schema, metrics, and thresholds
+- :doc:`/reference/cluster/cluster-file` — cluster file schema
 - :doc:`/how-to/run-with-containers` — container backend in depth
-- :doc:`/how-to/run-cvs-tests` — running other CVS suites
+- :doc:`/how-to/run-tests/index` — running other CVS suites

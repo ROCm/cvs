@@ -28,7 +28,7 @@ Configs use flat sibling pairs under
 loading fails with an ambiguous-threshold ``ValueError``.
 
 **Lab ``~/input`` layout:** the repo keeps every variant flat in one tree, but after
-``cvs copy-config`` you should place each run's config + threshold pair in a dedicated
+``cvs config copy`` you should place each run's config + threshold pair in a dedicated
 subdirectory (for example ``~/input/.../atom/single/``) so only one
 threshold file sits beside the config you pass to ``--config_file``. Alternatively set
 ``"threshold_json"`` in the config to an explicit path. See the in-tree README at

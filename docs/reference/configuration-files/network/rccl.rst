@@ -29,42 +29,7 @@ All suites also collect host/network information and check firewall state before
 How to run
 ==========
 
-From the CVS repo root (directory containing ``cvs`` and ``input``):
-
-.. code-block:: bash
-
-  cvs list rccl_perf
-  cvs list rccl_regression
-
-Run the performance suite:
-
-.. code-block:: bash
-
-  cvs run rccl_perf \
-      --cluster_file input/cluster_file/cluster.json \
-      --config_file input/config_file/rccl/rccl_config.json \
-      --html=/var/www/html/cvs/rccl_perf.html --capture=tee-sys --self-contained-html \
-      --log-file=/tmp/rccl_perf.log -vvv -s
-
-Run the regression suite:
-
-.. code-block:: bash
-
-  cvs run rccl_regression \
-      --cluster_file input/cluster_file/rccl/rccl_regression.json \
-      --config_file input/config_file/rccl/rccl_config.json \
-      --html=/var/www/html/cvs/rccl_regression.html --capture=tee-sys --self-contained-html \
-      --log-file=/tmp/rccl_regression.log -vvv -s
-
-Generate heatmap from results:
-
-.. code-block:: bash
-
-  cvs generate heatmap \
-      --actual /tmp/rccl_perf_results.json \
-      --reference /path/to/reference.json \
-      --output /var/www/html/cvs/rccl_heatmap.html \
-      --title "RCCL Performance Heatmap"
+See :doc:`/how-to/test-suites/network/rccl` for ``cvs run`` examples, environment script staging, and heatmap generation.
 
 .. note::
 

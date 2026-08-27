@@ -3,10 +3,10 @@
   :keywords: CVS, ROCm, documentation, test suites, validation
 
 ********************************************
-Cluster Validation Suite (CVS) documentation
+ROCm Cluster Validation Suite (CVS) documentation
 ********************************************
 
-CVS is a collection of test suites that validate AMD AI clusters end to end, from single-node burn-in health tests to cluster-wide distributed training and inferencing.
+CVS is a collection of test suites that validate AMD ROCm clusters end to end, from single-node burn-in health tests to cluster-wide distributed training and inferencing.
 CVS requires only SSH connectivity to the cluster nodes — no Slurm, no Kubernetes, no scheduler needed.
 
 The component public repository is located at `https://github.com/ROCm/cvs <https://github.com/ROCm/cvs>`_.
@@ -14,24 +14,33 @@ The component public repository is located at `https://github.com/ROCm/cvs <http
 .. grid:: 2
   :gutter: 3
 
-  .. grid-item-card:: Overview
+  .. grid-item-card:: Concepts
 
-    * :doc:`What is CVS <what-is-cvs>`
+    * :doc:`What is CVS <concepts/what-is-cvs>`
+    * :doc:`Scalability and performance <concepts/cvs-at-scale>`
 
-  .. grid-item-card:: Install
+  .. grid-item-card:: Getting started
 
-    * :doc:`Cluster Validation Suite installation </install/cvs-install>`
+    * :doc:`Quickstart </getting-started/quickstart>`
+    * :doc:`Install </getting-started/install>`
+    * :doc:`Upgrade </getting-started/upgrade>`
 
   .. grid-item-card:: How to
 
-    * :doc:`Run tests <how-to/run-cvs-tests>`
-    * :doc:`Run ad-hoc cluster-wide commands <how-to/execute-cluster-commands>`
-    * :doc:`Copy files and directories to cluster nodes <how-to/copy-to-cluster>`
-    * :doc:`Monitor the health of GPU clusters <how-to/run-cluster>`
+    * :doc:`Set up cluster file <how-to/configure/cluster-config>`
+    * :doc:`Set up test configs <how-to/configure/test-suite-config/index>`
+    * :doc:`Run tests <how-to/run-tests/index>`
+    * :doc:`Run cluster commands <how-to/execute-cluster-commands>`
+    * :doc:`Copy to cluster <how-to/copy-to-cluster>`
+    * :doc:`Monitor cluster health <how-to/monitor/index>`
 
   .. grid-item-card:: Reference
 
-    * :doc:`Test configuration files <reference/configuration-files/configure-config>`
+    * :doc:`Cluster file <reference/cluster/cluster-file>`
+    * :doc:`Run with containers <how-to/run-with-containers>`
+    * :doc:`Passwordless SSH <reference/cluster/passwordless-ssh>`
+    * :doc:`Configuration files <reference/configuration-files/index>`
+    * :doc:`CLI reference <reference/cli/cvs-run>`
 
 To contribute to the documentation, refer to
 `Contributing to ROCm <https://rocm.docs.amd.com/en/latest/contribute/contributing.html>`_.

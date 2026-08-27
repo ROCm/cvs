@@ -34,7 +34,7 @@ export HCOLL_ENABLE_MCAST_ALL=0
 # scale-up fabric is present. Verified on a 2-node Helios (bnxt_re) cluster:
 # with CUMEM_ENABLE=0 all RCCL collectives failed at ncclCommInitRank; with
 # CUMEM_ENABLE=1 all collectives (AllReduce/AllGather/ReduceScatter/AllToAll/
-# Broadcast, fp32+bf16, 1KB-1GB) passed. See docs/reference/configuration-files/rccl.rst.
+# Broadcast, fp32+bf16, 1KB-1GB) passed. See docs/reference/configuration-files/network/rccl.rst.
 export NCCL_CUMEM_ENABLE=1
 export HSA_NO_SCRATCH_RECLAIM=1
 export NCCL_IGNORE_CPU_AFFINITY=1

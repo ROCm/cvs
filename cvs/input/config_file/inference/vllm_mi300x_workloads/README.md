@@ -178,5 +178,5 @@ This file covers only what is specific to this workload set. For the vLLM suite
 itself — threshold kinds, cell-key format, multinode prerequisites, accuracy
 metric keys — see the suite reference and how-to:
 
-- `docs/reference/configuration-files/vllm.rst`
+- `docs/reference/configuration-files/inference/vllm.rst`
 - `docs/how-to/run-vllm-benchmarks.rst`

@@ -2,9 +2,9 @@
   :description: Run ad-hoc commands across all nodes and switches in a CVS cluster
   :keywords: CVS, cluster, commands, exec, SSH, ad-hoc, cluster-wide
 
-*********************************
-Run ad-hoc cluster-wide commands
-*********************************
+************************
+Run cluster commands
+************************
 
 CVS provides an ``exec`` command to execute arbitrary shell commands on all nodes in the cluster simultaneously using parallel SSH. This is useful for gathering system information, running diagnostics, or performing administrative tasks across all cluster nodes at once.
 
@@ -17,13 +17,13 @@ To execute a command on all cluster nodes:
 
 .. code:: bash
 
-  cvs exec --cmd "hostname" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "hostname" --cluster_file ~/cvs_workspace/cluster.json
 
 You can also use the ``CLUSTER_FILE`` environment variable:
 
 .. code:: bash
 
-  CLUSTER_FILE=input/cluster_file/cluster.json cvs exec --cmd "hostname"
+  CLUSTER_FILE=~/cvs_workspace/cluster.json cvs exec --cmd "hostname"
 
 Command options
 ===============
@@ -59,18 +59,18 @@ By default ``cvs exec`` runs on every host in ``node_dict`` (compute nodes). Use
 .. code:: bash
 
   # Compute nodes only (default — identical to old behaviour)
-  cvs exec --cmd "hostname" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "hostname" --cluster_file ~/cvs_workspace/cluster.json
 
   # Switch trays only
-  cvs exec --cmd "show version" --cluster_file input/cluster_file/cluster_rack.json --target switches
+  cvs exec --cmd "show version" --cluster_file ~/cvs_workspace/cluster_rack.json --target switches
 
   # Both compute nodes and switch trays
-  cvs exec --cmd "date" --cluster_file input/cluster_file/cluster_rack.json --target all
+  cvs exec --cmd "date" --cluster_file ~/cvs_workspace/cluster_rack.json --target all
 
 Rack-aware cluster file
 =======================
 
-``--target switches`` and ``--target all`` require a ``racks`` block in the cluster file that lists the switch tray IPs and (optionally) per-rack SSH credentials. A reference template is provided at ``input/cluster_file/cluster_rack.json``.
+``--target switches`` and ``--target all`` require a ``racks`` block in the cluster file that lists the switch tray IPs and (optionally) per-rack SSH credentials. Copy the rack template with ``cvs config copy cluster_rack.json --output ~/cvs_workspace/cluster_rack.json``.
 
 If ``--target switches`` is used with a plain cluster file (no ``racks`` block), CVS prints a warning and exits without executing any command.
 
@@ -85,13 +85,13 @@ System information
 .. code:: bash
 
   # Check system uptime on all nodes
-  cvs exec --cmd "uptime" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "uptime" --cluster_file ~/cvs_workspace/cluster.json
 
   # Get OS and kernel information
-  cvs exec --cmd "uname -a" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "uname -a" --cluster_file ~/cvs_workspace/cluster.json
 
   # Check available memory
-  cvs exec --cmd "free -h" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "free -h" --cluster_file ~/cvs_workspace/cluster.json
 
 GPU information
 ---------------
@@ -99,13 +99,13 @@ GPU information
 .. code:: bash
 
   # Get GPU information using rocm-smi
-  cvs exec --cmd "rocm-smi --showid --showproductname --showuniqueid" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "rocm-smi --showid --showproductname --showuniqueid" --cluster_file ~/cvs_workspace/cluster.json
 
   # Get GPU temperature and usage
-  cvs exec --cmd "rocm-smi --showtemp --showuse" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "rocm-smi --showtemp --showuse" --cluster_file ~/cvs_workspace/cluster.json
 
   # Get GPU memory information
-  cvs exec --cmd "rocm-smi --showmeminfo vram" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "rocm-smi --showmeminfo vram" --cluster_file ~/cvs_workspace/cluster.json
 
 Network information
 -------------------
@@ -113,16 +113,16 @@ Network information
 .. code:: bash
 
   # List RDMA devices
-  cvs exec --cmd "rdma res" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "rdma res" --cluster_file ~/cvs_workspace/cluster.json
 
   # Check network interfaces
-  cvs exec --cmd "ip addr show" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "ip addr show" --cluster_file ~/cvs_workspace/cluster.json
 
   # Check network connectivity
-  cvs exec --cmd "ping -c 3 8.8.8.8" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "ping -c 3 8.8.8.8" --cluster_file ~/cvs_workspace/cluster.json
 
   # Show routing table
-  cvs exec --cmd "ip route show" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "ip route show" --cluster_file ~/cvs_workspace/cluster.json
 
 Storage and disk information
 ----------------------------
@@ -130,13 +130,13 @@ Storage and disk information
 .. code:: bash
 
   # Check disk usage
-  cvs exec --cmd "df -h" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "df -h" --cluster_file ~/cvs_workspace/cluster.json
 
   # Check mounted filesystems
-  cvs exec --cmd "mount | grep -E '(ext4|xfs|nfs)'" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "mount | grep -E '(ext4|xfs|nfs)'" --cluster_file ~/cvs_workspace/cluster.json
 
   # Check disk I/O statistics
-  cvs exec --cmd "iostat -x 1 3" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "iostat -x 1 3" --cluster_file ~/cvs_workspace/cluster.json
 
 Process and service information
 -------------------------------
@@ -144,13 +144,13 @@ Process and service information
 .. code:: bash
 
   # Check running processes
-  cvs exec --cmd "ps aux | head -20" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "ps aux | head -20" --cluster_file ~/cvs_workspace/cluster.json
 
   # Check system load
-  cvs exec --cmd "top -b -n 1 | head -10" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "top -b -n 1 | head -10" --cluster_file ~/cvs_workspace/cluster.json
 
   # Check systemd services status
-  cvs exec --cmd "systemctl status rocm" --cluster_file input/cluster_file/cluster.json
+  cvs exec --cmd "systemctl status rocm" --cluster_file ~/cvs_workspace/cluster.json
 
 Output format
 =============
@@ -183,7 +183,7 @@ Pass ``--json`` to receive a single structured JSON object on stdout. All SSH di
 
 .. code:: bash
 
-  cvs exec --cmd "hostname" --cluster_file cluster.json --json
+  cvs exec --cmd "hostname" --cluster_file ~/cvs_workspace/cluster.json --json
 
 Output schema:
 
@@ -270,7 +270,7 @@ If commands fail on specific nodes:
 If ``--target switches`` produces a warning and no output:
 
 - Verify that the cluster file contains a ``racks`` block with ``switch_trays`` entries
-- Use ``input/cluster_file/cluster_rack.json`` as a reference template
+- Copy a rack-aware cluster file with ``cvs config copy cluster_rack.json --output ~/cvs_workspace/cluster_rack.json``
 
 If SSH connections hang or time out:
 
