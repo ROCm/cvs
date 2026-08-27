@@ -221,7 +221,9 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
         pytest.skip("checkpoint.enforce=false in config; skipping test_checkpoint")
 
     # Checkpoint directory must be volume-mounted into the container
-    log_dir = variant_config.config.get("log_dir", "/tmp")
+    log_dir = variant_config.config.get("log_dir")
+    if not log_dir:
+        pytest.fail("config.log_dir is required for checkpoint tests (must be user-scoped and volume-mounted)")
     ckpt_dir = ckpt_cfg.checkpoint_dir if ckpt_cfg.checkpoint_dir else f"{log_dir}/ckpt_torchtitan"
     orch.exec(f"mkdir -p {ckpt_dir}")
 
@@ -241,7 +243,9 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
         job.local_tokenizer_path = getattr(lifecycle, "tokenizer_path", None)
         if checkpoint_dir:
             job.checkpoint_dir = checkpoint_dir
-            job.save_interval = save_interval or iters
+            # Only set save_interval if not loading (resume phase should load only, not save)
+            if save_interval is not None and not load_checkpoint:
+                job.save_interval = save_interval
         job.load_checkpoint = load_checkpoint
         try:
             job.build_training_job_cmd()
@@ -568,21 +572,24 @@ def test_loss_curve(
 
     mgr = getattr(request.config, "_html_report_manager", None)
     mgr_enabled = mgr is not None and getattr(mgr, "is_enabled", False)
-    out_dir = mgr.log_dir if mgr_enabled else "/tmp"
-    try:
-        from pathlib import Path as _Path
-        import uuid as _uuid
 
-        _Path(out_dir).mkdir(parents=True, exist_ok=True)
-        fname = f"loss_curve_{combo_key}_{str(_uuid.uuid4()).split('-')[-1]}.png"
-        png_path = _Path(out_dir) / fname
-        title = f"Training Loss Curve — {variant_config.model_params.get('model_name', '')} [{combo_key}]"
-        rendered = render_loss_curve_png(points, png_path, title=title)
-        if rendered and mgr_enabled:
-            rel_path = str(_Path(rendered).relative_to(mgr.htmlpath.parent))
-            lifecycle.add_artifact(request.node.nodeid, f"Loss Curve [{combo_key}]", rel_path, rendered)
-    except Exception as e:
-        log.warning("loss curve: could not render PNG (%s)", e)
+    # Only render PNG if HTML manager is enabled; use user-scoped log_dir, not /tmp
+    if mgr_enabled:
+        out_dir = mgr.log_dir
+        try:
+            from pathlib import Path as _Path
+            import uuid as _uuid
+
+            _Path(out_dir).mkdir(parents=True, exist_ok=True)
+            fname = f"loss_curve_{combo_key}_{str(_uuid.uuid4()).split('-')[-1]}.png"
+            png_path = _Path(out_dir) / fname
+            title = f"Training Loss Curve — {variant_config.model_params.get('model_name', '')} [{combo_key}]"
+            rendered = render_loss_curve_png(points, png_path, title=title)
+            if rendered:
+                rel_path = str(_Path(rendered).relative_to(mgr.htmlpath.parent))
+                lifecycle.add_artifact(request.node.nodeid, f"Loss Curve [{combo_key}]", rel_path, rendered)
+        except Exception as e:
+            log.warning("loss curve: could not render PNG (%s)", e)
 
     verdict = evaluate_loss_decreasing(points, lc.max_slope)
     if verdict is None:

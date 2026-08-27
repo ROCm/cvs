@@ -173,14 +173,28 @@ class TorchTitanTrainingJob:
         self.gloo_socket_ifname = self.config.get('gloo_socket_ifname', '')
         self.nccl_ib_gid_index = self.config.get('nccl_ib_gid_index', '3')
         self.nccl_debug = self.config.get('nccl_debug', 'ERROR')
-        self.data_cache_dir = self.config.get('data_cache_dir', '/tmp/cache')
-        self.log_dir = self.config.get('log_dir', '/tmp/logs')
-        self.scripts_dir = scripts_dir if scripts_dir is not None else self.config.get('scripts_dir', '/tmp/scripts')
+
+        # Require user-scoped paths for security; all shipped configs provide these with {user-id}
+        self.data_cache_dir = self.config.get('data_cache_dir')
+        if not self.data_cache_dir:
+            raise ValueError("config.data_cache_dir is required (must be user-scoped, not /tmp)")
+
+        self.log_dir = self.config.get('log_dir')
+        if not self.log_dir:
+            raise ValueError("config.log_dir is required (must be user-scoped, not /tmp)")
+
+        self.scripts_dir = scripts_dir if scripts_dir is not None else self.config.get('scripts_dir')
+        if not self.scripts_dir:
+            raise ValueError("config.scripts_dir is required (must be user-scoped, not /tmp)")
+
+        self.hf_token_file = self.config.get('hf_token_file')
+        if not self.hf_token_file:
+            raise ValueError("config.hf_token_file is required (must be user-scoped, not /tmp)")
+
         self.master_address = self.config.get('master_address', list(orch.hosts)[0] if orch.hosts else 'localhost')
         self.verify_network_errors = self.config.get('verify_network_errors', 'False')
         self.rocm_path = detect_rocm_path(self.orch, self.config.get('rocm_dir', ''))
         self.use_generated_config = self.config.get('use_generated_config', 'True') == 'True'
-        self.hf_token_file = self.config.get('hf_token_file', '/tmp/.hf_token')
 
         # Per-combo log dir so sweep combos don't overwrite each other's training.log
         raw_label = run_label or "torchtitan_training"

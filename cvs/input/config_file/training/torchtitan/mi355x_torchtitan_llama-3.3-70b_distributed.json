@@ -19,7 +19,7 @@
     "save_iters": 21,
     "resume_iters": 25,
     "loss_rtol": 0.05,
-    "checkpoint_dir": "/shared/torchtitan/checkpoints"
+    "checkpoint_dir": "/home/{user-id}/LOGS/torchtitan/checkpoints"
   },
   "threshold_json": "mi355x_torchtitan_llama-3.3-70b_distributed_threshold.json",
   "scaling_baseline": {
