@@ -1,7 +1,8 @@
 # vllm MI3XX workload configs
 
-14 MI325X inference workloads for the `vllm` suite, each shipped as a
-`single` / `distributed` pair — 28 configs and 28 sibling thresholds.
+14 MI325X inference workloads for the `vllm_single` and `vllm_distributed`
+suites, each shipped as a `single` / `distributed` pair — 28 configs and 28
+sibling thresholds.
 
 ## Layout
 
@@ -20,10 +21,10 @@ is absent, but keeping one pair per directory avoids the trap entirely.
 
 ## Topology
 
-| | PP | nnodes |
+| Mode | PP | Host behavior |
 |---|---|---|
-| `single` | 1 | 1 |
-| `distributed` | 2 | 2 |
+| `single` | 1 | first cluster host only |
+| `distributed` | 2 | all cluster hosts form one service |
 
 TP is **per model**, following the source workload list: TP=4 for
 `deepseek-v4-flash`, `kimi-k26`, `kimi-k25` and `gpt-oss-120b`; TP=8 for
@@ -163,7 +164,7 @@ cvs copy-config "inference/vllm/${THRESHOLD}" \
 # then edit "$DIR/${VAR}.json" and fill in every <changeme>
 
 TS=$(date +%Y%m%d_%H%M%S)
-cvs run vllm \
+cvs run vllm_single \
   --cluster_file ~/input/cluster_file/<your-cluster>.json \
   --config_file "$DIR/${VAR}.json" \
   --html=~/cvs_results/${TS}_${VAR}.html \
@@ -173,6 +174,7 @@ cvs run vllm \
 ```
 
 Do not pass pytest function names — let the suite's default tests run.
+For a ``*_distributed.json`` file, use ``cvs run vllm_distributed`` instead.
 
 ## See also
 

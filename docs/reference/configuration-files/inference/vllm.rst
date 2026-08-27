@@ -6,13 +6,13 @@
 vLLM inference configuration file
 **********************************
 
-The vLLM suite benchmarks LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. It is a **single parametrized suite**: the same test file covers single-node and multinode pipeline-parallel runs, and the topology is determined entirely by the configuration file. There is no separate "single-node" and "distributed" suite to choose between.
+The vLLM suites benchmark LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` runs one service across the cluster and uses single-node behavior when the cluster has one host.
 
 Run it with:
 
 .. code:: bash
 
-  cvs run vllm --cluster_file <cluster.json> --config_file <config.json>
+  cvs run vllm_single --cluster_file <cluster.json> --config_file <config.json>
 
 For a step-by-step walkthrough of a first run, see :doc:`/how-to/test-suites/inference/vllm`. This page is the schema and metric reference.
 
@@ -36,7 +36,7 @@ Each stage of the run is an independent test, so every stage becomes its own tim
      - Always skipped for vLLM (see note below)
    * - 2
      - ``test_discover_topology``
-     - Resolve IB HCA devices; no-op when ``nnodes`` is 1
+     - Resolve IB HCA devices; no-op for effective single-node execution
    * - 3
      - ``test_model_fetch``
      - Stage model weights
@@ -218,22 +218,22 @@ These rules are enforced when the configuration file loads, before anything star
 
    * - Condition
      - Rule
-   * - ``nnodes`` > 1, backend is not ray
+   * - cluster has more than one host, backend is not ray
      - ``pipeline_parallel_size`` **must** be greater than 1
-   * - ``nnodes`` > 1, backend is ray
+   * - cluster has more than one host, backend is ray
      - ``pipeline_parallel_size`` of 1 is valid
    * - ``pipeline_parallel_size`` > 1
-     - ``nnodes`` **must** be greater than 1
-   * - ``nnodes`` > 1, either backend
+     - The distributed suite requires more than one cluster host
+   * - cluster has more than one host, either backend
      - ``roles.server.ib_netdev`` is **required**
 
 The corresponding error messages are:
 
 .. code:: text
 
-  nnodes=2 > 1 requires pipeline_parallel_size > 1 (got pp=1)
-  pipeline_parallel_size=2 > 1 requires nnodes > 1 (got nnodes=1)
-  ib_netdev is required in roles.server when nnodes > 1. Set it to the Linux
+  multi-host distributed execution requires pipeline_parallel_size > 1 unless using ray
+  pipeline_parallel_size > 1 requires a multi-host distributed suite
+  ib_netdev is required for multi-host distributed execution. Set it to the Linux
   network interface name for NCCL_SOCKET_IFNAME (e.g. "ens51f1np1"). Cannot be
   auto-derived from HCA names.
 
@@ -520,7 +520,7 @@ Server role
      - ``"auto"``, an explicit list, or ``null``; sets ``NCCL_IB_HCA``
    * - ``ib_netdev``
      - ``null``
-     - Interface name; required when ``nnodes`` is greater than 1
+     - Interface name; required for multi-host distributed execution
 
 How serve_args are flattened
 ----------------------------
@@ -600,7 +600,7 @@ then, conditionally, ``NCCL_IB_HCA`` (from ``ib_hca_devices``) and ``NCCL_SOCKET
 Parameters
 ==========
 
-``params`` holds the client knobs and the topology.
+``params`` holds client knobs and distributed-service settings. The cluster file determines host count.
 
 .. list-table::
    :widths: 3 2 5
@@ -645,9 +645,6 @@ Parameters
    * - ``pipeline_parallel_size``
      - ``"1"``
      - PP degree; see :ref:`vllm-backends`
-   * - ``nnodes``
-     - ``"1"``
-     - Node count
    * - ``master_addr``
      - ``"localhost"``
      - Head node address for multinode
@@ -730,7 +727,7 @@ Each run is one **cell**, identified by a canonical key used to look up threshol
   Single-node:  ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<conc>
   Distributed:  ISL=<isl>,OSL=<osl>,TP=<tp>,PP=<pp>,CONC=<conc>
 
-The ``PP=`` segment appears **only** when ``pipeline_parallel_size`` is greater than 1, which keeps single-node keys backward compatible. Examples::
+``PP=`` appears only when pipeline parallelism exceeds one, which keeps singleton keys backward compatible. The host count is placement information, not a threshold dimension. Examples::
 
   ISL=1000,OSL=1000,TP=8,CONC=16
   ISL=1000,OSL=1000,TP=8,PP=2,CONC=16
@@ -1174,11 +1171,11 @@ Troubleshooting
 
    * - Message
      - Cause and fix
-   * - ``nnodes=N > 1 requires pipeline_parallel_size > 1``
-     - Multinode on the mp backend needs pipeline parallelism. Either raise ``pipeline_parallel_size``, or set ``distributed-executor-backend`` to ``"ray"``
-   * - ``pipeline_parallel_size=N > 1 requires nnodes > 1``
-     - Pipeline parallelism spans nodes. Raise ``nnodes`` or reset ``pipeline_parallel_size`` to 1
-   * - ``ib_netdev is required in roles.server when nnodes > 1``
+   * - Distributed execution requires ``pipeline_parallel_size > 1``
+     - Multi-host ``vllm_distributed`` on the mp backend needs pipeline parallelism. Either raise ``pipeline_parallel_size``, or set ``distributed-executor-backend`` to ``"ray"``
+   * - ``vllm_single requires pipeline_parallel_size=1``
+     - Use ``vllm_distributed`` when the config requires pipeline parallelism
+   * - ``vllm_distributed requires roles.server.ib_netdev``
      - Set ``roles.server.ib_netdev`` to the interface name. There is no ``"auto"``
    * - ``Container image not specified in config``
      - ``container.image`` is empty. Note that a variant ``container`` block with no ``image`` overwrites the cluster file's value
