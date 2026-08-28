@@ -125,6 +125,30 @@ class TestMi4xxParsers(unittest.TestCase):
         self.assertEqual(gpus, [])
         self.assertTrue(errors)
 
+    def test_amd_smi_gpu_inventory_ignores_concatenated_ai_nic_document(self):
+        # Some amd-smi builds print the GPU array and an AI-NIC array as two
+        # back-to-back JSON documents on one `list --json` call. The NIC
+        # record has a function-.0 BDF but no GPU identifier and must not be
+        # counted as a 5th GPU.
+        gpu_json = json.dumps(_gpu_inventory()["gpus"])
+        ai_nic_json = json.dumps(
+            [
+                {
+                    "ai_nic": 0,
+                    "bdf": "0005:01:00.0",
+                    "permanent_address": "04:90:81:ad:bd:b8",
+                    "product_name": "Salina 2x400G QSFP112",
+                    "part_number": "DSC3-2Q400-64S64E64P",
+                    "serial_number": "FPK260701BCEC0V2",
+                    "vendor_name": "AMD Pensando Systems, Inc.",
+                }
+            ]
+        )
+        gpus, errors = parse_amd_smi_gpu_json(f"{gpu_json}\n{ai_nic_json}")
+        self.assertEqual(errors, [])
+        self.assertEqual(len(gpus), 4)
+        self.assertEqual({gpu["bdf"] for gpu in gpus}, {f"0000:{i + 1:02x}:00.0" for i in range(4)})
+
     def test_afm_device_json_preserves_accelerator_zero_and_vpod(self):
         devices, errors = parse_afmctl_device_json(json.dumps(_afm_devices()))
         self.assertEqual(errors, [])
