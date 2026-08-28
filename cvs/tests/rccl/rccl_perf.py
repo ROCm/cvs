@@ -353,11 +353,17 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
 
     end_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
     if can_use_sudo:
-        # Bound dmesg scan to this test's own start..end window (per-test).
-        # till_end_flag=True scans from start_time to the end of the dmesg
-        # buffer, which causes earlier-test kernel events (e.g. a scatter_perf
-        # segfault) to repeatedly fail every subsequent parametrized test.
-        verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=False)
+        dmesg_during_test = re.search('True', config_dict.get('cvs_params', {}).get('dmesg_during_test', 'False'), re.I)
+        if dmesg_during_test:
+            start_marker = f'Starting Test {rccl_collective}'
+            end_marker = f'End of Test {rccl_collective}'
+            verify_dmesg_during_test(phdl, start_marker, end_marker, dmesg_during_test=True)
+        else:
+            # Bound dmesg scan to this test's own start..end window (per-test).
+            # till_end_flag=True scans from start_time to the end of the dmesg
+            # buffer, which causes earlier-test kernel events (e.g. a scatter_perf
+            # segfault) to repeatedly fail every subsequent parametrized test.
+            verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=False)
 
     # Get new cluster snapshot and compare ..
     if can_use_sudo and re.search(

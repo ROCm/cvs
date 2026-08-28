@@ -35,6 +35,8 @@
 
         "_comment_cvs_params": "The rccl_result_file.json will be appended by rccl_test_params.data_types. When it's float the file name will be rccl_result_file_float.json on the head node.",
         "cvs_params": {
+            "dmesg_during_test": "False",
+            "_comment_dmesg_during_test": "When True, slice dmesg between kmsg Start/End Test markers per RCCL test instead of using verify_dmesg_for_errors clock window.",
             "cluster_snapshot_debug": "False",
             "_comment_nic_model": "Set nic_model for validations (eg., 'thor' , 'ainic', 'connectx')",
             "nic_model": "thor",
