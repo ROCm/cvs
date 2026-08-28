@@ -1179,6 +1179,56 @@ def normalize_legacy_preflight_rdma_config(value):
     return normalized, warning_message
 
 
+LEGACY_PREFLIGHT_NODE_SMOKE_SECTIONS = {
+    "node_smoke": "node_smoke_tier1",
+    "tier3_info": "node_smoke_tier3",
+}
+
+
+def _preflight_section_has_values(section: dict) -> bool:
+    if not isinstance(section, dict):
+        return False
+    return any(value not in (None, "") for value in section.values())
+
+
+def normalize_legacy_preflight_node_smoke_sections(value):
+    """Copy legacy Node Smoke section names to their canonical tier keys.
+
+    Returns a deep-copied configuration and one consolidated warning message,
+    or the original value and ``None`` when no legacy keys need migration.
+    Canonical sections win when both legacy and canonical blocks are populated.
+    """
+    if not isinstance(value, dict):
+        return value, None
+
+    legacy_keys = [key for key in LEGACY_PREFLIGHT_NODE_SMOKE_SECTIONS if key in value]
+    if not legacy_keys:
+        return value, None
+
+    normalized = deepcopy(value)
+    migrations = []
+    for legacy_key in legacy_keys:
+        canonical_key = LEGACY_PREFLIGHT_NODE_SMOKE_SECTIONS[legacy_key]
+        legacy_block = normalized.get(legacy_key)
+        if not isinstance(legacy_block, dict):
+            continue
+        canonical_block = normalized.get(canonical_key)
+        if isinstance(canonical_block, dict) and _preflight_section_has_values(canonical_block):
+            continue
+        normalized[canonical_key] = deepcopy(legacy_block)
+        migrations.append(f"preflight.{legacy_key} -> preflight.{canonical_key}")
+
+    if not migrations:
+        return value, None
+
+    warning_message = (
+        "Deprecated preflight Node Smoke section name(s) detected: "
+        + ", ".join(migrations)
+        + ". Prefer node_smoke_tier1 and node_smoke_tier3 in new configs."
+    )
+    return normalized, warning_message
+
+
 class PreflightParallelismConfig(BaseModel):
     """Legacy parallelism settings for preflight checks."""
 
@@ -1597,6 +1647,9 @@ class PreflightConfigFile(BaseModel):
         normalized, warning_message = normalize_legacy_preflight_rdma_config(cleaned)
         if warning_message:
             warnings.warn(warning_message, FutureWarning, stacklevel=2)
+        normalized, smoke_warning = normalize_legacy_preflight_node_smoke_sections(normalized)
+        if smoke_warning:
+            warnings.warn(smoke_warning, FutureWarning, stacklevel=2)
         return normalized
 
     @model_validator(mode="after")
