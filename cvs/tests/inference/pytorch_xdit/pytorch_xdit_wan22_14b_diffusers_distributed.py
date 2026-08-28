@@ -24,6 +24,10 @@ from cvs.lib.utils_lib import (
 from cvs.lib import docker_lib
 from cvs.lib import globals
 from cvs.parsers.schemas import ClusterConfigFile, PytorchXditWanConfigFile
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_model_verify import (
+    build_diffusers_local_model_required_checks,
+    verify_required_checks_on_nodes,
+)
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_i2v import (
     WanI2vOutputParser,
     log_results_summary,
@@ -234,6 +238,17 @@ def test_verify_model_on_nodes(s_phdl, inference_dict):
             f"Local model path not found on {len(missing_nodes)} node(s): {', '.join(missing_nodes)}. "
             f"Path: {host_model_path}"
         )
+        update_test_result()
+        return
+
+    verify_err = verify_required_checks_on_nodes(
+        s_phdl,
+        host_model_path,
+        build_diffusers_local_model_required_checks(host_model_path),
+        layout_description="WAN Diffusers",
+    )
+    if verify_err:
+        fail_test(verify_err)
         update_test_result()
         return
 

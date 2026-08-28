@@ -30,6 +30,12 @@ from cvs.lib.utils_lib import (
 from cvs.lib import docker_lib
 from cvs.lib import globals
 from cvs.parsers.schemas import ClusterConfigFile, PytorchXditWanConfigFile
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_model_verify import (
+    build_diffusers_local_model_required_checks,
+    resolve_wan_local_model_required_checks,
+    verify_required_checks_on_nodes,
+    wan_native_hf_snapshot_required_checks,
+)
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan import WanOutputParser
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     launch_wan_benchmark,
@@ -382,11 +388,27 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
             update_test_result()
             return
 
-        inference_dict["_resolved_model_mount_host"] = host_model_path
-        inference_dict["_resolved_ckpt_dir_container"] = "/model"
         model_index = _read_model_index_from_node(s_phdl, s_phdl.host_list[0], host_model_path)
         if model_index:
             store_resolved_wan_model_format_from_index(inference_dict, model_index)
+
+        verify_err = verify_required_checks_on_nodes(
+            s_phdl,
+            host_model_path,
+            resolve_wan_local_model_required_checks(
+                host_model_path,
+                model_format=inference_dict.get("_resolved_wan_model_format"),
+                model_repo=model_repo,
+            ),
+            layout_description="WAN",
+        )
+        if verify_err:
+            fail_test(verify_err)
+            update_test_result()
+            return
+
+        inference_dict["_resolved_model_mount_host"] = host_model_path
+        inference_dict["_resolved_ckpt_dir_container"] = "/model"
         log.info(f"Using local model path: {host_model_path} (mounted to /model in container) on all nodes")
         update_test_result()
         return
@@ -413,6 +435,21 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
         )
         update_test_result()
         return
+
+    snapshot_checks = wan_native_hf_snapshot_required_checks(snapshot_dir_host, model_repo)
+    if snapshot_checks is None and "diffusers" in str(model_repo).lower():
+        snapshot_checks = build_diffusers_local_model_required_checks(snapshot_dir_host)
+    if snapshot_checks:
+        verify_err = verify_required_checks_on_nodes(
+            s_phdl,
+            snapshot_dir_host,
+            snapshot_checks,
+            layout_description="WAN HF snapshot",
+        )
+        if verify_err:
+            fail_test(verify_err)
+            update_test_result()
+            return
 
     inference_dict["_resolved_ckpt_dir_container"] = f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
     model_index = _read_model_index_from_node(s_phdl, s_phdl.host_list[0], snapshot_dir_host)

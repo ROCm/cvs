@@ -32,6 +32,10 @@ from cvs.lib.utils_lib import (
 from cvs.lib import docker_lib
 from cvs.lib import globals
 from cvs.parsers.schemas import ClusterConfigFile, PytorchXditFluxConfigFile
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_model_verify import (
+    build_diffusers_local_model_required_checks,
+    verify_required_checks_on_nodes,
+)
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux import FluxOutputParser, log_results_summary
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     launch_flux_benchmark,
@@ -302,38 +306,16 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict):
             update_test_result()
             return
 
-        required_checks = {
-            "model_index.json": f"test -f {shlex.quote(host_model_path + '/model_index.json')} && echo OK || echo MISSING",
-            "transformer/config.json": f"test -f {shlex.quote(host_model_path + '/transformer/config.json')} && echo OK || echo MISSING",
-            "transformer weights": (
-                f"test -f {shlex.quote(host_model_path + '/transformer/diffusion_pytorch_model.safetensors')} "
-                f"-o -f {shlex.quote(host_model_path + '/transformer/diffusion_pytorch_model.safetensors.index.json')} "
-                f"-o -f {shlex.quote(host_model_path + '/transformer/pytorch_model.bin')} "
-                f"-o -f {shlex.quote(host_model_path + '/transformer/pytorch_model.bin.index.json')} "
-                f"&& echo OK || echo MISSING"
-            ),
-            "vae/config.json": f"test -f {shlex.quote(host_model_path + '/vae/config.json')} && echo OK || echo MISSING",
-            "vae weights": (
-                f"test -f {shlex.quote(host_model_path + '/vae/diffusion_pytorch_model.safetensors')} "
-                f"-o -f {shlex.quote(host_model_path + '/vae/diffusion_pytorch_model.safetensors.index.json')} "
-                f"-o -f {shlex.quote(host_model_path + '/vae/pytorch_model.bin')} "
-                f"-o -f {shlex.quote(host_model_path + '/vae/pytorch_model.bin.index.json')} "
-                f"&& echo OK || echo MISSING"
-            ),
-        }
-
-        for label, cmd in required_checks.items():
-            res = s_phdl.exec(cmd, print_console=False)
-            bad = [n for n, out in (res or {}).items() if "OK" not in (out or "")]
-            if bad:
-                fail_test(
-                    "Local FLUX model directory appears incomplete for diffusers loading. "
-                    f"Missing/invalid '{label}' on {len(bad)} node(s): {', '.join(bad)}. "
-                    f"Model path: {host_model_path}. "
-                    "Ensure the repo contains full weights (especially transformer weights), not just configs."
-                )
-                update_test_result()
-                return
+        verify_err = verify_required_checks_on_nodes(
+            s_phdl,
+            host_model_path,
+            build_diffusers_local_model_required_checks(host_model_path),
+            layout_description="FLUX diffusers",
+        )
+        if verify_err:
+            fail_test(verify_err)
+            update_test_result()
+            return
 
         inference_dict["_resolved_model_mount_host"] = host_model_path
         inference_dict["_resolved_model_path_container"] = "/model"
