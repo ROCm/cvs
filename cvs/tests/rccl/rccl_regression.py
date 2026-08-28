@@ -214,8 +214,10 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
         )
 
     params_str = ' '.join(f'{k}={v}' for k, v in regression_params.items())
+    start_marker = f'Starting Test {rccl_collective} {params_str}'
+    end_marker = f'End of Test {rccl_collective} {params_str}'
     if can_use_sudo:
-        orch.all.exec(f'sudo echo "Starting Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
+        orch.all.exec(dmesg_write_marker_cmd(start_marker))
 
     # Minute precision can drop kernel events from the end of the test window.
     start_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
@@ -244,15 +246,19 @@ def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective,
 
     # Scan dmesg between start and end times cluster wide ..
     if can_use_sudo:
-        orch.all.exec(f'sudo echo "End of Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
+        orch.all.exec(dmesg_write_marker_cmd(end_marker))
 
     end_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
     if can_use_sudo:
-        # Bound dmesg scan to this test's own start..end window (per-test).
-        # till_end_flag=True scans from start_time to the end of the dmesg
-        # buffer, which causes earlier-test kernel events (e.g. a scatter_perf
-        # segfault) to repeatedly fail every subsequent parametrized test.
-        verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=False)
+        dmesg_during_test = re.search('True', config_dict.get('cvs_params', {}).get('dmesg_during_test', 'False'), re.I)
+        if dmesg_during_test:
+            verify_dmesg_during_test(orch.all, start_marker, end_marker, dmesg_during_test=True)
+        else:
+            # Bound dmesg scan to this test's own start..end window (per-test).
+            # till_end_flag=True scans from start_time to the end of the dmesg
+            # buffer, which causes earlier-test kernel events (e.g. a scatter_perf
+            # segfault) to repeatedly fail every subsequent parametrized test.
+            verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=False)
 
     # Get new cluster snapshot and compare ..
     if can_use_sudo and re.search(
