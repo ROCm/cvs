@@ -93,13 +93,25 @@ def _secret_str(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def _ssh_credential_source(s_phdl) -> Any:
+    """Return the object holding SSH credentials (handles MultiProcessPssh wrapper)."""
+    inner = getattr(s_phdl, "pssh", None)
+    if inner is not None:
+        return inner
+    return s_phdl
+
+
 def _phdl_connection_kwargs(s_phdl) -> Dict[str, Any]:
     """Best-effort SSH connection kwargs for a scoped one-node Pssh handle."""
+    src = _ssh_credential_source(s_phdl)
+    env_vars = getattr(s_phdl, "env_vars", None)
+    if env_vars is None:
+        env_vars = getattr(src, "env_vars", None)
     return {
-        "user": getattr(s_phdl, "user", None),
-        "password": getattr(s_phdl, "password", None),
-        "pkey": getattr(s_phdl, "pkey", "id_rsa"),
-        "env_vars": getattr(s_phdl, "env_vars", None),
+        "user": getattr(src, "user", None),
+        "password": getattr(src, "password", None),
+        "pkey": getattr(src, "pkey", "id_rsa"),
+        "env_vars": env_vars,
     }
 
 

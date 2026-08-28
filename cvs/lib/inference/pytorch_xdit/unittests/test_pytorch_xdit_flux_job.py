@@ -241,5 +241,26 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         self.assertLess(cmd.index("hf_hub_download"), cmd.index(FLUX2_EXAMPLE_PATH))
 
 
+class TestPhdlConnectionKwargs(unittest.TestCase):
+    def test_reads_credentials_from_inner_pssh(self):
+        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import _phdl_connection_kwargs
+
+        class _Inner:
+            user = "ubuntu"
+            password = None
+            pkey = "/home/ubuntu/.ssh/id_rsa"
+            env_vars = {"FOO": "bar"}
+
+        class _Wrapper:
+            pssh = _Inner()
+            host_list = ["10.0.0.1", "10.0.0.2"]
+            env_vars = None
+
+        kwargs = _phdl_connection_kwargs(_Wrapper())
+        self.assertEqual(kwargs["user"], "ubuntu")
+        self.assertEqual(kwargs["pkey"], "/home/ubuntu/.ssh/id_rsa")
+        self.assertEqual(kwargs["env_vars"], {"FOO": "bar"})
+
+
 if __name__ == "__main__":
     unittest.main()
