@@ -8,7 +8,8 @@ Tests performed (in order):
 1. test_launch_container      - Launch the training container on all nodes
 2. test_setup_rdma            - Copy the RDMA lib into the container (thor2 NIC)
                                 and verify ibv_devinfo
-3. test_setup_tokenizer       - Download the HuggingFace tokenizer
+3. test_setup_tokenizer       - Download the HuggingFace tokenizer (skipped when
+                                dataset_type=synthetic)
 4. test_smoke                 - Small fixed run: model loads + trains 10 steps
                                 without error_patterns (no metric checks)
 5. test_training_run[sweep]   - Run MaxText training per sweep (e.g. BF16, FP8)

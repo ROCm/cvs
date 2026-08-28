@@ -8,6 +8,7 @@ the expected_cells (sweep-name) contract, the threshold-coverage validator, and
 a round-trip load of a real jaxmaxtext config file.
 '''
 
+import getpass
 import unittest
 import warnings
 from pathlib import Path
@@ -142,6 +143,10 @@ class RealConfigRoundTripTests(unittest.TestCase):
         mc = self.cfg.training.maxtext_config
         self.assertNotIn("eval_interval", mc)
         self.assertNotIn("eval_steps", mc)
+
+    def test_temp_dir_is_user_namespaced(self):
+        expected = f"/tmp/{getpass.getuser()}/jaxmaxtext"
+        self.assertEqual(self.cfg.paths.temp_dir, expected)
 
 
 if __name__ == "__main__":

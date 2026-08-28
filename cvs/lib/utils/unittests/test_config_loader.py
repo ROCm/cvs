@@ -223,6 +223,7 @@ class TestPathsLifecycle(unittest.TestCase):
     def test_valid_construction(self):
         p = Paths(**_paths_dict())
         self.assertEqual(p.shared_fs, "/data/shared")
+        self.assertEqual(p.temp_dir, "")
 
     def test_extra_field_rejected(self):
         d = dict(_paths_dict())
