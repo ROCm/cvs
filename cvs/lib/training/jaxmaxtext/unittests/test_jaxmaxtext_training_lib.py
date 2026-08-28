@@ -37,6 +37,7 @@ def _training(**overrides):
             ib_hca_list="rdma0,rdma1",
             socket_ifname="eno0",
             gloo_socket_ifname="eno0",
+            ib_gid_index="3",
         ),
         jax_distributed=SimpleNamespace(
             coordinator_ip="auto",
@@ -468,6 +469,23 @@ class WriteMaxtextYamlTests(unittest.TestCase):
         written = "\n".join(str(c.args[0]) for c in orch.exec.call_args_list)
         self.assertIn('profiler: ""', written)
         self.assertNotIn("profiler: \n", written)
+
+
+class WriteEnvScriptTests(unittest.TestCase):
+    def test_distributed_exports_nccl_ib_gid_index_from_nccl_block(self):
+        # nccl.ib_gid_index is now wired to export NCCL_IB_GID_INDEX (like ib_hca),
+        # so the nccl block -- not env_vars -- is authoritative for the GID index.
+        job, orch = _make_job(hosts=["h0", "h1"])  # distributed=True
+        job._write_env_script()
+        written = "\n".join(str(c.args[0]) for c in orch.exec.call_args_list)
+        self.assertIn("export NCCL_IB_GID_INDEX=3", written)
+        self.assertIn("export NCCL_IB_HCA=", written)
+
+    def test_single_node_does_not_export_nccl_ib_gid_index(self):
+        job, orch = _make_job(hosts=["h0"], distributed=False)
+        job._write_env_script()
+        written = "\n".join(str(c.args[0]) for c in orch.exec.call_args_list)
+        self.assertNotIn("NCCL_IB_GID_INDEX", written)
 
 
 class StartTrainingTests(unittest.TestCase):

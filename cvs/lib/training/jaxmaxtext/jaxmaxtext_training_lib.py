@@ -248,6 +248,8 @@ class MaxTextTrainingJob:
                 lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(nccl.socket_ifname)}")
             if nccl.gloo_socket_ifname:
                 lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(nccl.gloo_socket_ifname)}")
+            if nccl.ib_gid_index:
+                lines.append(f"export NCCL_IB_GID_INDEX={shlex.quote(nccl.ib_gid_index)}")
         else:
             lines.append("export NCCL_IB_DISABLE=1")
             lines.append("export NCCL_SHM_DISABLE=0")
