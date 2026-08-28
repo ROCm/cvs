@@ -617,7 +617,7 @@ class HtmlReportManager:
         if not self.is_enabled:
             return
 
-        from cvs.lib.report.rundeck import generate_rundeck
+        from cvs.lib.report.rundeck.generate_rundeck import generate_rundeck
 
         generate_rundeck(session, self)
 
