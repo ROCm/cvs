@@ -14,7 +14,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import MaxTextTrainingJob
+from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import MaxTextTrainingJob, needs_hf_tokenizer
 
 
 def _training(**overrides):
@@ -46,6 +46,8 @@ def _training(**overrides):
         ),
         rdma_lib=SimpleNamespace(container_mount_file="", container_dest_file=""),
         tokenizer=SimpleNamespace(hf_model_id="", tokenizer_path="/models/tok"),
+        sweeps=[],
+        enabled_sweep_list=[],
     )
     for k, v in overrides.items():
         setattr(t, k, v)
@@ -61,23 +63,16 @@ def _make_job(hosts=None, **training_overrides):
     variant = SimpleNamespace(
         training=_training(**training_overrides),
         model=SimpleNamespace(id="llama3.3-70b"),
-        paths=SimpleNamespace(log_dir="/logs", models_dir="/models"),
+        paths=SimpleNamespace(log_dir="/logs", models_dir="/models", temp_dir="/tmp/tester/jaxmaxtext"),
     )
     return MaxTextTrainingJob(orch, variant, hf_token="dummy"), orch
 
 
-def _wire_container_exec(orch, user="tester", script="/workspace/maxtext/src/MaxText/train.py"):
-    """Answer the in-container probes the job runs before building launchers.
-
-    ``build_training_cmd`` resolves the scratch dir (``id -un``) and the train
-    script (a ``[ -f ... ]`` probe) via ``orch.exec``; without wiring these the
-    default empty response would make ``_resolve_train_script`` raise.
-    """
+def _wire_container_exec(orch, script="/workspace/maxtext/src/MaxText/train.py"):
+    """Answer the in-container train-script probe ``build_training_cmd`` runs."""
 
     def _side(cmd, *a, **k):
         text = str(cmd)
-        if "id -un" in text:
-            return {h: user for h in orch.hosts}
         if "train.py" in text:
             return {h: script for h in orch.hosts}
         return {}
@@ -312,16 +307,25 @@ class SetupTokenizerTests(unittest.TestCase):
     def test_skips_download_when_no_model_id(self):
         job, orch = _make_job()  # hf_model_id="" by default
         job.setup_tokenizer()
-        # Only the mkdir exec fires; no huggingface-cli download command.
         joined = " ".join(str(c.args[0]) for c in orch.exec.call_args_list)
+        self.assertNotIn("hf download", joined)
         self.assertNotIn("huggingface-cli", joined)
 
     def test_downloads_when_model_id_set(self):
         job, orch = _make_job(tokenizer=SimpleNamespace(hf_model_id="org/model", tokenizer_path="/models/tok"))
         job.setup_tokenizer()
         joined = " ".join(str(c.args[0]) for c in orch.exec.call_args_list)
-        self.assertIn("huggingface-cli download", joined)
+        self.assertIn("hf download", joined)
+        self.assertNotIn("huggingface-cli", joined)
         self.assertIn("org/model", joined)
+
+    def test_skips_download_when_dataset_is_synthetic(self):
+        job, orch = _make_job(
+            tokenizer=SimpleNamespace(hf_model_id="org/model", tokenizer_path="/models/tok"),
+            maxtext_config={"dataset_type": "synthetic"},
+        )
+        job.setup_tokenizer()
+        orch.exec.assert_not_called()
 
 
 class BuildTrainingCmdTests(unittest.TestCase):
@@ -339,8 +343,8 @@ class BuildTrainingCmdTests(unittest.TestCase):
         self.assertIn("JAX_COORDINATOR_IP=h0", cmds[0])
         # resolved train script and user-namespaced scratch dir are wired in
         self.assertIn("/workspace/maxtext/src/MaxText/train.py", cmds[0])
-        self.assertIn("/tmp/tester/jax/maxtext_env.sh", cmds[0])
-        self.assertIn("/tmp/tester/jax/maxtext_config.yml", cmds[0])
+        self.assertIn("/tmp/tester/jaxmaxtext/maxtext_env.sh", cmds[0])
+        self.assertIn("/tmp/tester/jaxmaxtext/maxtext_config.yml", cmds[0])
 
     def test_single_node_localhost_coordinator(self):
         job, orch = _make_job(hosts=["h0"], distributed=False)
@@ -400,23 +404,47 @@ class TrainScriptResolveTests(unittest.TestCase):
 
 
 class ScratchDirTests(unittest.TestCase):
-    def test_user_namespaced(self):
+    def test_uses_paths_temp_dir(self):
         job, orch = _make_job()
-        orch.exec.return_value = {"h0": "alice"}
-        self.assertEqual(job._get_scratch_dir(), "/tmp/alice/jax")
+        self.assertEqual(job._get_scratch_dir(), "/tmp/tester/jaxmaxtext")
+        orch.exec.assert_not_called()
 
-    def test_falls_back_to_default_when_unresolved(self):
+    def test_falls_back_when_temp_dir_unset(self):
         job, orch = _make_job()
-        orch.exec.return_value = {}
-        self.assertEqual(job._get_scratch_dir(), "/tmp/cvs/jax")
+        job.variant.paths = SimpleNamespace(log_dir="/logs", models_dir="/models")
+        self.assertEqual(job._get_scratch_dir(), "/tmp/cvs/jaxmaxtext")
+        orch.exec.assert_not_called()
+
+    def test_strips_trailing_slash(self):
+        job, _ = _make_job()
+        job.variant.paths.temp_dir = "/tmp/alice/jaxmaxtext/"
+        self.assertEqual(job._get_scratch_dir(), "/tmp/alice/jaxmaxtext")
 
     def test_result_is_cached(self):
         job, orch = _make_job()
-        orch.exec.return_value = {"h0": "bob"}
-        job._get_scratch_dir()
-        count_after_first = orch.exec.call_count
-        job._get_scratch_dir()
-        self.assertEqual(orch.exec.call_count, count_after_first)
+        job.variant.paths.temp_dir = "/tmp/bob/jaxmaxtext"
+        first = job._get_scratch_dir()
+        job.variant.paths.temp_dir = "/tmp/other/jaxmaxtext"
+        self.assertEqual(job._get_scratch_dir(), first)
+        orch.exec.assert_not_called()
+
+
+class NeedsHfTokenizerTests(unittest.TestCase):
+    def test_synthetic_does_not_need_tokenizer(self):
+        job, _ = _make_job(maxtext_config={"dataset_type": "synthetic"})
+        self.assertFalse(needs_hf_tokenizer(job.training))
+
+    def test_missing_dataset_type_needs_tokenizer(self):
+        job, _ = _make_job()
+        self.assertTrue(needs_hf_tokenizer(job.training))
+
+    def test_sweep_override_to_hf_needs_tokenizer(self):
+        job, _ = _make_job(
+            maxtext_config={"dataset_type": "synthetic"},
+            sweeps=[SimpleNamespace(name="c4", maxtext_overrides={"dataset_type": "hf"})],
+            enabled_sweep_list=["c4"],
+        )
+        self.assertTrue(needs_hf_tokenizer(job.training))
 
 
 class WriteMaxtextYamlTests(unittest.TestCase):

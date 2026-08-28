@@ -73,6 +73,28 @@ def _sanitize(name):
     return re.sub(r'[^A-Za-z0-9]+', '_', str(name)).strip('_') or "default"
 
 
+_SCRATCH_FALLBACK = "/tmp/cvs/jaxmaxtext"
+
+
+def needs_hf_tokenizer(training) -> bool:
+    """Return True unless every configured run uses ``dataset_type=synthetic``.
+
+    Synthetic MaxText data is random token ids in ``[0, vocab_size)`` and does
+    not load a HuggingFace tokenizer. An empty/missing ``dataset_type`` follows
+    MaxText's default (tfds/C4) and still needs a tokenizer. A sweep that
+    overrides ``dataset_type`` away from synthetic also needs a download.
+    """
+    types = [str((getattr(training, "maxtext_config", None) or {}).get("dataset_type", "")).lower()]
+    enabled = set(getattr(training, "enabled_sweep_list", None) or [])
+    for sweep in getattr(training, "sweeps", None) or []:
+        if enabled and getattr(sweep, "name", None) not in enabled:
+            continue
+        overrides = getattr(sweep, "maxtext_overrides", None) or {}
+        if isinstance(overrides, dict) and "dataset_type" in overrides:
+            types.append(str(overrides["dataset_type"]).lower())
+    return any(t != "synthetic" for t in types)
+
+
 class MaxTextTrainingJob:
     """JAX MaxText training job driven by an injected ContainerOrchestrator.
 
@@ -129,7 +151,7 @@ class MaxTextTrainingJob:
         self._poll_count = int(self.training.steps * 10)
         self._initial_wait_s = 60
 
-        self._scratch_dir = None  # resolved lazily to /tmp/<user>/jax
+        self._scratch_dir = None  # resolved lazily from paths.temp_dir
         self._train_script = None  # resolved lazily to the first existing candidate
 
         # Per-node cursor (lines already surfaced) so polling STREAMS only the
@@ -139,26 +161,19 @@ class MaxTextTrainingJob:
         self._log_line_cursor = [0] * self.num_nodes
 
     def _get_scratch_dir(self):
-        """User-namespaced in-container scratch base (``/tmp/<user>/jax``).
+        """Host-user scratch base from ``paths.temp_dir`` (cached).
 
-        Namespacing by the container user avoids /tmp ownership collisions on
-        shared GPU nodes: a scratch dir left behind by one user would otherwise
-        block a different user's run with a permission error. Resolved once
-        (via ``id -un``) and cached.
+        Must not use the in-container uid (docker jobs run as root, which would
+        put launchers under ``/tmp/root`` and collide across users on the same
+        node, including later baremetal orch). Configs set
+        ``paths.temp_dir=/tmp/{user-id}/jaxmaxtext`` so the host login that
+        invoked ``cvs`` owns the namespace. Missing ``temp_dir`` falls back to
+        ``/tmp/cvs/jaxmaxtext``.
         """
         if self._scratch_dir:
             return self._scratch_dir
-        user = "cvs"
-        try:
-            out = self.orch.exec("bash -c " + shlex.quote("id -un 2>/dev/null || true"))
-            raw = (out or {}).get(self.orch.hosts[0], "")
-            text = raw if isinstance(raw, str) else (raw or {}).get("output", "")
-            text = (text or "").strip()
-            if text:
-                user = text.splitlines()[-1].strip() or "cvs"
-        except Exception:  # noqa: BLE001 - fall back to a safe default
-            pass
-        self._scratch_dir = f"/tmp/{user}/jax"
+        temp = (getattr(self.variant.paths, "temp_dir", None) or "").strip().rstrip("/")
+        self._scratch_dir = temp or _SCRATCH_FALLBACK
         return self._scratch_dir
 
     def _resolve_train_script(self):
@@ -305,6 +320,12 @@ class MaxTextTrainingJob:
 
     def setup_tokenizer(self):
         """Download HuggingFace tokenizer into the models dir."""
+        if not needs_hf_tokenizer(self.training):
+            log.info(
+                "skipping tokenizer download: dataset_type=synthetic "
+                "(random token ids in [0, vocab_size); HuggingFace tokenizer is not used)"
+            )
+            return
         tok = self.training.tokenizer
         models_dir = self.variant.paths.models_dir
         self.orch.exec(f"mkdir -p {shlex.quote(models_dir)}")
@@ -314,13 +335,12 @@ class MaxTextTrainingJob:
             log.info("tokenizer.hf_model_id not set, skipping download")
             return
 
-        # Export the credentials inline rather than sourcing /tmp/jax/maxtext_env.sh:
-        # the tokenizer stage runs before setup_training_env() writes that env
-        # script, so sourcing it here fails with "No such file or directory".
+        # Credentials inline: this stage runs before setup_training_env() writes
+        # the env script, so sourcing that file here would fail.
         dl_cmd = (
             f"export HF_TOKEN={shlex.quote(self.hf_token)} && "
             f"export HF_HOME={shlex.quote(self.variant.paths.models_dir)} && "
-            f"huggingface-cli download {shlex.quote(hf_model)} --local-dir {shlex.quote(tok.tokenizer_path)}"
+            f"hf download {shlex.quote(hf_model)} --local-dir {shlex.quote(tok.tokenizer_path)}"
         )
         log.info("downloading tokenizer: %s -> %s", hf_model, tok.tokenizer_path)
         self.orch.exec("bash -c " + shlex.quote(dl_cmd))

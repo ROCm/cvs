@@ -28,7 +28,7 @@ import pytest
 from tabulate import tabulate
 
 from cvs.lib import globals
-from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import MaxTextTrainingJob
+from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import MaxTextTrainingJob, needs_hf_tokenizer
 from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     TRAINING_METRICS,
     TRAINING_METRIC_UNITS,
@@ -213,9 +213,16 @@ def setup_rdma(orch, variant_config, hf_token, lifecycle, request):
 
 
 def setup_tokenizer(orch, variant_config, hf_token, lifecycle, request):
-    """Download HF tokenizer into models dir."""
+    """Download HF tokenizer into models dir (skipped for synthetic data)."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
+    if not needs_hf_tokenizer(variant_config.training):
+        reason = (
+            "dataset_type=synthetic: training uses random token ids in "
+            "[0, vocab_size); HuggingFace tokenizer download is not required"
+        )
+        log.info("skipping tokenizer setup: %s", reason)
+        pytest.skip(reason)
     t = time.monotonic()
     job = MaxTextTrainingJob(orch, variant_config, hf_token)
     job.setup_tokenizer()
