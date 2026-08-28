@@ -1001,94 +1001,25 @@ class WanBenchmarkJob:
         plan.world_size = self.nproc_per_node
         return plan
 
-    def _output_verify_targets(self, plan: WanLaunchPlan) -> List[Tuple[str, str]]:
-        """Return (node, host_output_dir) pairs that must contain benchmark artifacts."""
-        if self.distributed:
-            rank0_node = plan.node_order[0]
-            return [(rank0_node, plan.output_dirs_by_node[rank0_node])]
-        return [(node, plan.output_dirs_by_node[node]) for node in plan.node_order]
+    def _rank0_benchmark_log(self, plan: WanLaunchPlan, results: Mapping[str, str]) -> str:
+        if not plan.node_order:
+            return ""
+        return (results or {}).get(plan.node_order[0], "") or ""
 
-    def _resolve_output_launcher(self) -> str:
+    def _benchmark_logs_indicate_success(self, plan: WanLaunchPlan, results: Mapping[str, str]) -> bool:
+        rank0_log = self._rank0_benchmark_log(plan, results)
+        if not rank0_log or scan_wan_fatal_output(rank0_log):
+            return False
         model_format = resolve_wan_model_format_for_job(
             self.wan_params,
             model_repo_hints=self._wan_model_repo_hints(),
             resolved_model_format=self.inference_dict.get("_resolved_wan_model_format"),
         )
         if is_wan_diffusers_model(model_format):
-            return resolve_wan_diffusers_launcher(self.wan_params, self.inference_dict)
-        return ""
-
-    def _verify_benchmark_outputs(
-        self,
-        plan: WanLaunchPlan,
-        results: Mapping[str, str],
-    ) -> List[str]:
-        launcher = self._resolve_output_launcher()
-        verify_targets = self._output_verify_targets(plan)
-        verify_cmds: List[str] = []
-        for _, host_output_dir in verify_targets:
+            launcher = resolve_wan_diffusers_launcher(self.wan_params, self.inference_dict)
             if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER:
-                verify_cmds.append(build_wan_xfuser_output_verify_cmd(host_output_dir))
-            else:
-                verify_cmds.append(build_wan_output_verify_cmd(host_output_dir))
-
-        verify_nodes = [node for node, _ in verify_targets]
-        try:
-            verify_results = _exec_cmd_list_on_nodes(
-                self.s_phdl,
-                verify_nodes,
-                verify_cmds,
-                print_console=False,
-            )
-        except Exception as exc:
-            return [f"Failed to verify WAN benchmark outputs: {exc}"]
-
-        errors: List[str] = []
-        missing_output_nodes: List[str] = []
-        for node, host_output_dir in verify_targets:
-            verify_output = (verify_results or {}).get(node, "")
-            if "WAN_OUTPUT_OK" in (verify_output or ""):
-                log.info("WAN benchmark outputs verified under %s on %s", host_output_dir, node)
-                continue
-
-            missing_output_nodes.append(node)
-            node_log = (results or {}).get(node, "")
-            log_tail = summarize_wan_benchmark_log(node_log)
-            if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER:
-                log.error(
-                    "No results/timing.json found under %s on %s",
-                    host_output_dir,
-                    node,
-                )
-                if not scan_wan_xfuser_benchmark_output(node_log):
-                    errors.append(
-                        f"No results/timing.json under {host_output_dir} on {node} and no xFuser "
-                        f"'epoch time:' lines in benchmark log. Likely causes: placeholder "
-                        f"volume_dict paths, missing bind mount for "
-                        f"{resolve_wan_diffusers_run_script(self.wan_params, self.inference_dict)}, "
-                        f"or stale mounted wan_i2v_example.py. Log tail: {log_tail}"
-                    )
-                else:
-                    errors.append(
-                        f"No results/timing.json found under {host_output_dir} on {node}. "
-                        f"Log tail: {log_tail}"
-                    )
-            else:
-                log.error(
-                    "No rank0_step*.json files found under %s on %s",
-                    host_output_dir,
-                    node,
-                )
-                errors.append(
-                    f"No rank0_step*.json files found under {host_output_dir} on {node}. "
-                    f"Log tail: {log_tail}"
-                )
-
-        if missing_output_nodes:
-            for node in missing_output_nodes:
-                log_benchmark_failure_excerpt(node, (results or {}).get(node, ""))
-
-        return errors
+                return scan_wan_xfuser_benchmark_output(rank0_log)
+        return True
 
     def _cleanup_stuck_containers(self, plan: WanLaunchPlan) -> None:
         if not self.distributed:
@@ -1174,16 +1105,18 @@ class WanBenchmarkJob:
 
         if exec_error is not None:
             self._cleanup_stuck_containers(plan)
-            verify_errors = self._verify_benchmark_outputs(plan, results)
-            if not verify_errors:
+            if self._benchmark_logs_indicate_success(plan, results):
                 log.warning(
-                    "Benchmark docker exec failed (%s) but rank-0 outputs verified on disk; "
-                    "treating run as success (likely container exit hang after inference)",
+                    "Benchmark docker exec failed (%s) but rank-0 logs indicate success; "
+                    "treating run as success (likely container exit hang after inference). "
+                    "Validate artifacts from shared output path in parse step.",
                     exec_error,
                 )
                 return results, plan, []
             errors.append(f"Benchmark execution failed with exception: {exec_error}")
-            errors.extend(verify_errors)
+            rank0_log = self._rank0_benchmark_log(plan, results)
+            if rank0_log:
+                log_benchmark_failure_excerpt(plan.node_order[0], rank0_log)
             return results, plan, errors
 
         combined_output = "\n".join((results or {}).values())
@@ -1240,13 +1173,11 @@ class WanBenchmarkJob:
                         f"Log tail: {summarize_wan_benchmark_log(output)}"
                     )
             else:
-                log.info("Benchmark docker finished on %s (output verification pending)", node)
+                log.info("Benchmark on %s completed successfully", node)
 
         if failed_nodes:
             errors.append(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
-            return results or {}, plan, errors
 
-        errors.extend(self._verify_benchmark_outputs(plan, results or {}))
         return results or {}, plan, errors
 
     def store_output_dir_hint(self, plan: WanLaunchPlan) -> None:
