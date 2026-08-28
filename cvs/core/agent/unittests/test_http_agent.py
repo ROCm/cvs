@@ -158,7 +158,7 @@ class TestRankZeroSelfRegistration(HttpAgentTestBase):
         with TestClient(app):
             self.assertEqual(app.state.registry.snapshot(), {0: AgentInfo(hostname="rank0-host", port=9000)})
 
-    def test_rank0_startup_blocks_until_register_timeout_when_other_ranks_never_register(self):
+    def test_rank0_startup_does_not_wait_for_workers(self):
         app = create_app(
             agent_dir=self._agent_dir(),
             world_rank=0,
@@ -167,9 +167,8 @@ class TestRankZeroSelfRegistration(HttpAgentTestBase):
             own_port=9000,
             register_timeout=0.05,
         )
-        with self.assertRaises(asyncio.TimeoutError):
-            with TestClient(app):
-                pass
+        with TestClient(app):
+            self.assertEqual(app.state.registry.snapshot(), {0: AgentInfo(hostname="rank0-host", port=9000)})
 
 
 class TestExec(HttpAgentTestBase):

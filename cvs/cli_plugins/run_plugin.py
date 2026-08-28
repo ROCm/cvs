@@ -3,7 +3,9 @@ import sys
 import os
 import json
 
+from cvs.core.agent.lifecycle import REGISTRATION_TIMEOUT_SECONDS, managed_rank, run_worker, start_rank0
 from cvs.core.run_layout import RunLayout
+from cvs.core.scheduler import is_managed_compute
 
 from .list_plugin import ListPlugin
 
@@ -101,12 +103,12 @@ Run Commands:
         test_file = self._resolve_test_file(args.test)
 
         try:
-            RunLayout.get(args.workspace)
+            layout = RunLayout.get(args.workspace)
         except RuntimeError as e:
             print(f"Error: {e}")
             sys.exit(1)
 
-        self.run_test(
+        test_args = (
             test_file,
             args.function,
             args.cluster_file,
@@ -118,6 +120,27 @@ Run Commands:
             args.capture,
             getattr(args, "extra_pytest_args", []),
         )
+        if not is_managed_compute():
+            return sys.exit(self.run_test(*test_args))
+
+        try:
+            rank, world_size = managed_rank()
+        except RuntimeError as e:
+            print(f"Error: {e}")
+            return sys.exit(1)
+        if rank != 0:
+            return sys.exit(run_worker(layout.agent_dir, rank, world_size))
+
+        coordinator = start_rank0(layout.agent_dir, world_size)
+        try:
+            try:
+                coordinator.wait_for_registrations(REGISTRATION_TIMEOUT_SECONDS)
+            except TimeoutError:
+                print("Warning: registration timeout expired; continuing with available ranks.")
+            exit_code = self.run_test(*test_args)
+        finally:
+            coordinator.close()
+        return sys.exit(exit_code)
 
     def _resolve_test_file(self, test_name):
         """Map a suite name to the file pytest should collect."""
@@ -198,5 +221,4 @@ Run Commands:
         pytest_args.extend(extra_pytest_args)
 
         # Run pytest normally
-        exit_code = pytest.main(pytest_args)
-        sys.exit(exit_code)
+        return pytest.main(pytest_args)

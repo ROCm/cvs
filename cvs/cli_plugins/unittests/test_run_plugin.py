@@ -290,6 +290,61 @@ class TestRunPluginWorkspace(unittest.TestCase):
         self.assertIn("workspace is not writable", printed)
 
 
+class TestManagedRunPlugin(unittest.TestCase):
+    def setUp(self):
+        self.plugin = RunPlugin()
+        self.args = argparse.Namespace(
+            test="health",
+            function=[],
+            cluster_file="/path/to/cluster.json",
+            config_file="/path/to/config.json",
+            html=None,
+            self_contained_html=False,
+            log_file=None,
+            log_level=None,
+            capture=None,
+            extra_pytest_args=[],
+            workspace="/shared/workspace",
+        )
+
+    def _prepare_run(self):
+        return (
+            patch.object(self.plugin, "_validate_json_config"),
+            patch.object(self.plugin, "_resolve_test_file", return_value="/mock/path/test.py"),
+        )
+
+    @patch("cvs.cli_plugins.run_plugin.sys.exit")
+    @patch("cvs.cli_plugins.run_plugin.run_worker", return_value=0)
+    @patch("cvs.cli_plugins.run_plugin.managed_rank", return_value=(1, 2))
+    @patch("cvs.cli_plugins.run_plugin.is_managed_compute", return_value=True)
+    @patch("cvs.cli_plugins.run_plugin.RunLayout")
+    def test_worker_never_enters_pytest(self, mock_layout, _managed, _rank, mock_worker, mock_exit):
+        mock_layout.get.return_value.agent_dir = "/shared/workspace/agent"
+        validate, resolve = self._prepare_run()
+        with validate, resolve, patch.object(self.plugin, "run_test") as mock_run_test:
+            self.plugin.run(self.args)
+        mock_worker.assert_called_once_with("/shared/workspace/agent", 1, 2)
+        mock_run_test.assert_not_called()
+        mock_exit.assert_called_once_with(0)
+
+    @patch("cvs.cli_plugins.run_plugin.sys.exit")
+    @patch("cvs.cli_plugins.run_plugin.start_rank0")
+    @patch("cvs.cli_plugins.run_plugin.managed_rank", return_value=(0, 2))
+    @patch("cvs.cli_plugins.run_plugin.is_managed_compute", return_value=True)
+    @patch("cvs.cli_plugins.run_plugin.RunLayout")
+    def test_rank0_continues_after_registration_timeout(
+        self, mock_layout, _managed, _rank, mock_start_rank0, mock_exit
+    ):
+        coordinator = mock_start_rank0.return_value
+        coordinator.wait_for_registrations.side_effect = TimeoutError
+        validate, resolve = self._prepare_run()
+        with validate, resolve, patch.object(self.plugin, "run_test", return_value=5) as mock_run_test:
+            self.plugin.run(self.args)
+        mock_run_test.assert_called_once()
+        coordinator.close.assert_called_once()
+        mock_exit.assert_called_once_with(5)
+
+
 class TestResolveTestFunctionNames(unittest.TestCase):
     def setUp(self):
         self.plugin = RunPlugin()
