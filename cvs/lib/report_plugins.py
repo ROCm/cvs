@@ -205,7 +205,7 @@ class HtmlReportManager:
         self._htmlpath = getattr(config.option, "htmlpath", None)
         self._test_html_dir = getattr(config, "_test_html_dir", "test_html")
         self._custom_test_reports = []  # Track reports added via add_html_to_report
-        self._config_files = {}  # Track copied config files {original_path: relative_path}
+        self._config_files = {}  # Track copied config files {original_path: (env_key, relative_path)}
         # Per-test PASS/FAIL verdict lines rendered in the Reports section.
         # Each entry: {"name": test_name, "passed": bool, "detail": str}.
         self._anc_verdicts = []
@@ -405,7 +405,7 @@ class HtmlReportManager:
                     shutil.copy2(cluster_path, dest_cluster)
                     rel_cluster = dest_cluster.relative_to(self.htmlpath.parent)
                     copied_files['cluster'] = str(rel_cluster)
-                    self._config_files[cluster_file_path] = str(rel_cluster)
+                    self._config_files[cluster_file_path] = ("Cluster File", str(rel_cluster))
                     log.info("Copied cluster file to bundle: %s -> %s", cluster_path, dest_cluster)
                 else:
                     log.warning("Cluster file not found: %s", cluster_path)
@@ -418,7 +418,7 @@ class HtmlReportManager:
                     shutil.copy2(config_path, dest_config)
                     rel_config = dest_config.relative_to(self.htmlpath.parent)
                     copied_files['config'] = str(rel_config)
-                    self._config_files[config_file_path] = str(rel_config)
+                    self._config_files[config_file_path] = ("Config File", str(rel_config))
                     log.info("Copied config file to bundle: %s -> %s", config_path, dest_config)
                 else:
                     log.warning("Config file not found: %s", config_path)
@@ -507,15 +507,17 @@ class HtmlReportManager:
         try:
             data = json.loads(json_str)
 
-            # Update environment data with clickable links for config files
-            for original_path, relative_path in self._config_files.items():
-                filename = Path(original_path).name
-                if "cluster" in filename.lower():
-                    # Replace plain filename with HTML link
-                    data["environment"]["Cluster File"] = f'<a href="{relative_path}" target="_blank">{filename}</a>'
-                elif "config" in filename.lower():
-                    # Replace plain filename with HTML link
-                    data["environment"]["Config File"] = f'<a href="{relative_path}" target="_blank">{filename}</a>'
+            # Update environment data with clickable links for config files.
+            # Use the role recorded at copy time (env_key) rather than guessing
+            # from the filename -- config files named e.g. "..._distributed.json"
+            # do not contain the substring "config", which previously left the
+            # Config File cell without a link.
+            env = data.get("environment")
+            if isinstance(env, dict):
+                for original_path, (env_key, relative_path) in self._config_files.items():
+                    filename = Path(original_path).name
+                    if env_key in env:
+                        env[env_key] = f'<a href="{relative_path}" target="_blank">{filename}</a>'
 
             # Re-encode the JSON and update the HTML
             updated_json = json.dumps(data)
