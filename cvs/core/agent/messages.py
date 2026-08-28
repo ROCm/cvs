@@ -33,6 +33,7 @@ class RegisterRequest(BaseModel):
     '''Data model for a agent to register itself with the server'''
 
     rank: int = Field(ge=0)
+    hostname: str
     port: int = Field(gt=0, le=65535)
 
 
@@ -66,6 +67,15 @@ class ExecRequest(BaseModel):
             raise ValueError("out_path is required when output_mode is FILE")
         return self
 
+    @model_validator(mode="after")
+    def _inactivity_timeout_requires_captured_output(self):
+        if self.inactivity_timeout is not None and self.output_mode == ExecOutputMode.EXIT_CODE_ONLY:
+            raise ValueError(
+                "inactivity_timeout requires output_mode INLINE or FILE "
+                "(EXIT_CODE_ONLY discards output, so activity can't be observed)"
+            )
+        return self
+
 
 class ExecResponse(BaseModel):
     '''
@@ -74,14 +84,18 @@ class ExecResponse(BaseModel):
       INLINE: stdout/stderr hold the full captured output; truncated reflects MAX_INLINE_RESPONSE_BYTES
       FILE: stdout/stderr hold a trailing preview only; stdout_path/stderr_path hold the full output on shared FS
       EXIT_CODE_ONLY: only exit_code is set, every other field is None
+    timed_out is set whenever the process was killed for exceeding timeout or inactivity_timeout; when
+    True, exit_code reflects the kill signal (negative) and stdout/stderr (if applicable) hold only
+    whatever output was captured before the process was killed.
     '''
 
-    exit_code: int
+    exit_code: int | None  # asyncio.create_subprocess_exec return returncode int | None
     stdout: list[str] | None
     stderr: list[str] | None
     stdout_path: Path | None
     stderr_path: Path | None
     truncated: bool | None  # set for INLINE mode only; None when not applicable
+    timed_out: bool
 
 
 class ErrorResponse(BaseModel):

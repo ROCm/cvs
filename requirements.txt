@@ -25,3 +25,8 @@ jinja2
 
 # Headless plotting for training loss-curve PNGs (Agg backend; see cvs/lib/training/jaxmaxtext/utils/loss_curve.py)
 matplotlib
+
+# scheduler integration
+fastapi>=0.115.0
+httpx >= 0.28.1  # required by fastapi.testclient.TestClient, used in cvs/core/agent/unittests/test_http_agent.py
+
