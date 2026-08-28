@@ -38,11 +38,9 @@ class NcclConfig(_Allow):
     ib_hca: str = ""
     socket_ifname: str = ""
     gloo_socket_ifname: str = ""
-    ib_tc: str = "41"
-    ib_sl: str = "0"
     ib_gid_index: str = "3"
 
-    @field_validator("ib_hca_list", "ib_hca", "socket_ifname", "gloo_socket_ifname")
+    @field_validator("ib_hca_list", "ib_hca", "socket_ifname", "gloo_socket_ifname", "ib_gid_index")
     @classmethod
     def _reject_changeme(cls, v, info):
         """Hard-exit when a cluster-specific RDMA/NIC field is left as '<changeme>'.

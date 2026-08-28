@@ -13,10 +13,13 @@ import unittest
 import warnings
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from cvs.lib.training.jaxmaxtext.utils.training_config_loader import (
     CheckpointResume,
     Convergence,
     LossCurve,
+    NcclConfig,
     ScalingBaseline,
     SmokeTest,
     load_training_variant,
@@ -65,6 +68,22 @@ class SchemaDefaultsTests(unittest.TestCase):
         self.assertEqual(cr.max_save_seconds, 0.0)
         self.assertEqual(cr.max_load_seconds, 0.0)
         self.assertEqual(cr.smoke_model_overrides, {})
+
+
+class NcclConfigTests(unittest.TestCase):
+    def test_defaults(self):
+        n = NcclConfig()
+        self.assertEqual(n.ib_gid_index, "3")
+        # ib_tc / ib_sl were removed from nccl (they live in env_vars now); the
+        # _Allow base still tolerates them if an old config carries them.
+        self.assertFalse(hasattr(NcclConfig(), "ib_tc") and "ib_tc" in NcclConfig().model_fields)
+
+    def test_ib_gid_index_changeme_rejected(self):
+        with self.assertRaises(ValidationError):
+            NcclConfig(ib_gid_index="<changeme>")
+
+    def test_ib_gid_index_concrete_value_ok(self):
+        self.assertEqual(NcclConfig(ib_gid_index="1").ib_gid_index, "1")
 
 
 class ValidateThresholdsCoverTrainingTests(unittest.TestCase):

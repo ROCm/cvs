@@ -101,13 +101,13 @@
 
     "nic_type": "thor2",
 
+    "_rdma_lib_comment": "Backup 2-stage user-lib copy, used ONLY when a direct read-only volume mount of the NIC's RDMA user lib (.so) into the container is not allowed. In that case mount the host lib as '<name>.so.host' (container_mount_file) and it is copied to the real '<name>.so' (container_dest_file) inside the container after launch. When the .so is bind-mounted :ro directly (the current default), this block is unused.",
     "rdma_lib": {
       "host_source_file": "/usr/local/lib/libbnxt_re-rdmav34.so",
       "container_mount_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
       "container_dest_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so"
     },
 
-    "_NCCL_IB_DISABLE_comment": "IB/RoCE over Broadcom bnxt_re segfaults in RCCL QP setup on these nodes (crashes on the first inter-node channel, independent of GDR / matched rdma-core / channel-count). TCP works. Remove this once the image ships an RCCL build validated against the bnxt_re RoCE stack.",
     "_env_vars_comment": "Compute/NVTE/XLA-side vars mirror MAD scripts/jax-maxtext/env_scripts/gfx950_deepseek2_env_16b.sh (gfx950/MI355X: RCCL_WARP_SPEED_AUTO=0, no HSA_NO_SCRATCH_RECLAIM); the NCCL_IB_* / NCCL_PROTO networking vars are CVS cluster-specific (bnxt_re TCP fallback) and are not from the MAD script.",
     "env_vars": {
       "NNODES": "auto",
@@ -121,7 +121,6 @@
       "NCCL_PROTO": "Simple",
       "NCCL_IB_TC": "41",
       "NCCL_IB_SL": "0",
-      "NCCL_IB_GID_INDEX": "3",
       "NCCL_CHECKS_DISABLE": "1",
       "NCCL_CROSS_NIC": "0",
       "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "1",
@@ -158,9 +157,8 @@
       "socket_ifname": "<changeme>",
       "_example_gloo_socket_ifname": "eno0",
       "gloo_socket_ifname": "<changeme>",
-      "ib_tc": "41",
-      "ib_sl": "0",
-      "ib_gid_index": "3"
+      "_example_ib_gid_index": "3",
+      "ib_gid_index": "<changeme>"
     },
 
     "jax_distributed": {
