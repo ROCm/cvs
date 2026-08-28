@@ -25,7 +25,7 @@ import shlex
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib import globals
-from cvs.lib.parallel_ssh_lib import Pssh
+from cvs.lib.parallel.pssh import Pssh
 
 log = globals.log
 
