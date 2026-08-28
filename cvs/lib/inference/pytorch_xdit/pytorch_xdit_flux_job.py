@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 import re
 import shlex
-from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib import globals
@@ -846,19 +845,15 @@ def verify_distributed_logs(output: str, *, world_size: int) -> Tuple[bool, str]
     return False, (f"No distributed proof in logs for world_size={world_size}. ")
 
 
-@dataclass
-class FluxLaunchPlan:
-    mkdir_cmds: List[str] = field(default_factory=list)
-    docker_cmds: List[str] = field(default_factory=list)
-    node_order: List[str] = field(default_factory=list)
-    node_to_hostname: Dict[str, str] = field(default_factory=dict)
-    output_dirs_by_node: Dict[str, str] = field(default_factory=dict)
-    primary_output_dir: str = ""
-    distributed: bool = False
-    world_size: int = 0
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_benchmark_job import (
+    BenchmarkLaunchPlan,
+    PytorchXditBenchmarkJob,
+)
+
+FluxLaunchPlan = BenchmarkLaunchPlan
 
 
-class FluxBenchmarkJob:
+class FluxBenchmarkJob(PytorchXditBenchmarkJob):
     """Build and run FLUX docker+torchrun commands (FLUX.1 via run_usp, FLUX.2 via flux2_example)."""
 
     def __init__(
@@ -871,29 +866,21 @@ class FluxBenchmarkJob:
         distributed: bool = False,
         cluster_dict: Optional[Mapping[str, Any]] = None,
     ):
-        self.s_phdl = s_phdl
-        self.inference_dict = inference_dict
         self.flux_params = benchmark_params_dict["flux1_dev_t2i"]
-        self.hf_token = hf_token
-        self.distributed = distributed
-        self.cluster_dict = cluster_dict or {}
+        super().__init__(
+            s_phdl,
+            inference_dict,
+            hf_token,
+            distributed=distributed,
+            cluster_dict=cluster_dict,
+            nproc_per_node=int(self.flux_params["torchrun_nproc"]),
+        )
 
-        self.nproc_per_node = int(self.flux_params["torchrun_nproc"])
-        self.server_nodes = self._resolve_execution_nodes()
-        self.nnodes = len(self.server_nodes) if self.distributed else 1
+    def _benchmark_name(self) -> str:
+        return "FLUX"
 
-    def _resolve_execution_nodes(self) -> List[str]:
-        if self.distributed:
-            if not self.cluster_dict:
-                raise ValueError("distributed=True requires cluster_dict")
-            nodes = resolve_server_nodes(self.cluster_dict, self.inference_dict)
-            nnodes = resolve_nnodes(self.inference_dict, nodes)
-            if nnodes < 2:
-                raise ValueError(f"Distributed mode requires nnodes >= 2, got {nnodes}")
-            if len(nodes) < nnodes:
-                raise ValueError(f"Cluster/server_node_list has {len(nodes)} node(s) but nnodes={nnodes}")
-            return nodes[:nnodes]
-        return list(self.s_phdl.host_list)
+    def _host_output_dir(self, output_base_dir: str, hostname: str) -> str:
+        return f"{output_base_dir}/flux_{hostname}_outputs"
 
     def validate_parallelism(self) -> Optional[str]:
         if not self.distributed:
@@ -919,29 +906,6 @@ class FluxBenchmarkJob:
             self.flux_params.get("data_parallel_degree", 1),
         )
         return None
-
-    def check_kfd(self) -> List[str]:
-        log.info("Checking /dev/kfd on %d node(s)", len(self.server_nodes))
-        kfd_check = _exec_on_nodes(
-            self.s_phdl,
-            self.server_nodes,
-            "test -e /dev/kfd && echo KFD_OK || echo KFD_MISSING",
-            print_console=False,
-        )
-        missing = []
-        for node in self.server_nodes:
-            output = kfd_check.get(node, "")
-            if "KFD_OK" not in (output or ""):
-                missing.append(node)
-                log.error("ROCm device node /dev/kfd not found on %s", node)
-            else:
-                log.info("/dev/kfd found on %s", node)
-        return missing
-
-    def _fetch_hostnames(self) -> Dict[str, str]:
-        log.info("Getting hostnames from %d node(s)", len(self.server_nodes))
-        hostname_result = _exec_on_nodes(self.s_phdl, self.server_nodes, "hostname")
-        return {node: (hostname_result.get(node, "") or "").strip() or node for node in self.server_nodes}
 
     def _resolved_model_repo(self) -> str:
         return self.inference_dict.get("_resolved_model_path_container") or self.inference_dict["model_repo"]
@@ -980,16 +944,7 @@ class FluxBenchmarkJob:
             )
         return " ".join(f"-e {key}={value}" for key, value in env_dict.items())
 
-    def _build_volume_args(self, host_output_dir: str) -> str:
-        volume_dict = dict(self.inference_dict["container_config"].get("volume_dict") or {})
-        volume_dict[host_output_dir] = CONTAINER_OUTPUT_MOUNT
-        volume_dict[self.inference_dict["hf_home"]] = "/hf_home"
-        mount_host = self.inference_dict.get("_resolved_model_mount_host")
-        if mount_host:
-            volume_dict[mount_host] = "/model"
-        return " ".join(f"--mount type=bind,source={src},target={dst}" for src, dst in volume_dict.items())
-
-    def _build_docker_cmd(
+    def _build_torchrun_cmd(
         self,
         *,
         node_rank: int,
@@ -997,12 +952,7 @@ class FluxBenchmarkJob:
         master_addr: str,
         master_port: int,
     ) -> str:
-        device_list = self.inference_dict["container_config"]["device_list"]
-        device_args = " ".join(f"--device={dev}" for dev in device_list)
-        env_args = self._build_env_args()
-        volume_args = self._build_volume_args(host_output_dir)
-
-        torchrun_cmd = build_torchrun_cmd(
+        return build_torchrun_cmd(
             self.flux_params,
             model_repo=self._resolved_model_repo(),
             distributed=self.distributed,
@@ -1015,190 +965,6 @@ class FluxBenchmarkJob:
             resolved_model_type=self.inference_dict.get("_resolved_flux_model_type"),
             resolved_hf_repo_id=self.inference_dict.get("_resolved_flux_hf_repo_id"),
         )
-
-        container_name = self.inference_dict["container_name"]
-        if self.distributed:
-            container_name = f"{container_name}-rank{node_rank}"
-
-        return (
-            f"docker run "
-            f"--cap-add=SYS_PTRACE "
-            f"--security-opt seccomp=unconfined "
-            f"--user root "
-            f"{device_args} "
-            f"--ipc=host "
-            f"--network host "
-            f"--rm "
-            f"--privileged "
-            f"--name {container_name} "
-            f"{volume_args} "
-            f"{env_args} "
-            f"{self.inference_dict['container_image']} "
-            f"{torchrun_cmd}"
-        )
-
-    def build_launch_plan(self) -> FluxLaunchPlan:
-        node_to_hostname = self._fetch_hostnames()
-        output_base_dir = self.inference_dict["output_base_dir"]
-        master_port = int(self.inference_dict.get("master_port") or DEFAULT_MASTER_PORT)
-
-        plan = FluxLaunchPlan(
-            distributed=self.distributed,
-            node_order=list(self.server_nodes),
-            node_to_hostname=dict(node_to_hostname),
-        )
-
-        if self.distributed:
-            rank0_node = self.server_nodes[0]
-            master_addr = resolve_master_addr(
-                self.inference_dict,
-                node_to_hostname,
-                rank0_node,
-                s_phdl=self.s_phdl,
-            )
-            primary_output_dir = f"{output_base_dir}/flux_{node_to_hostname[rank0_node]}_outputs"
-            plan.primary_output_dir = primary_output_dir
-            plan.world_size = compute_world_size(self.nnodes, self.nproc_per_node)
-
-            for node_rank, node in enumerate(self.server_nodes):
-                plan.mkdir_cmds.append(f"mkdir -p {shlex.quote(primary_output_dir)}")
-                plan.output_dirs_by_node[node] = primary_output_dir
-                plan.docker_cmds.append(
-                    self._build_docker_cmd(
-                        node_rank=node_rank,
-                        host_output_dir=primary_output_dir,
-                        master_addr=master_addr,
-                        master_port=master_port,
-                    )
-                )
-                log.info(
-                    "Distributed node %s (%s) rank=%d master=%s:%d output=%s",
-                    node,
-                    node_to_hostname[node],
-                    node_rank,
-                    master_addr,
-                    master_port,
-                    primary_output_dir,
-                )
-            return plan
-
-        for node in self.server_nodes:
-            hostname = node_to_hostname[node]
-            host_output_dir = f"{output_base_dir}/flux_{hostname}_outputs"
-            plan.mkdir_cmds.append(f"mkdir -p {shlex.quote(host_output_dir)}")
-            plan.output_dirs_by_node[node] = host_output_dir
-            plan.docker_cmds.append(
-                self._build_docker_cmd(
-                    node_rank=0,
-                    host_output_dir=host_output_dir,
-                    master_addr="127.0.0.1",
-                    master_port=master_port,
-                )
-            )
-            log.info("Single-node job on %s (%s) output=%s", node, hostname, host_output_dir)
-
-        if len(self.server_nodes) == 1:
-            only_node = self.server_nodes[0]
-            plan.primary_output_dir = plan.output_dirs_by_node[only_node]
-        else:
-            plan.primary_output_dir = ""
-
-        plan.world_size = self.nproc_per_node
-        return plan
-
-    def run(
-        self,
-        *,
-        timeout: int = DEFAULT_BENCHMARK_TIMEOUT_S,
-    ) -> Tuple[Dict[str, str], FluxLaunchPlan, List[str]]:
-        errors: List[str] = []
-
-        par_err = self.validate_parallelism()
-        if par_err:
-            errors.append(par_err)
-            return {}, FluxLaunchPlan(), errors
-
-        missing_kfd = self.check_kfd()
-        if missing_kfd:
-            errors.append(
-                f"ROCm device node /dev/kfd not found on {len(missing_kfd)} node(s): "
-                f"{', '.join(missing_kfd)}. Run on GPU compute nodes."
-            )
-            return {}, FluxLaunchPlan(), errors
-
-        plan = self.build_launch_plan()
-
-        if not plan.docker_cmds:
-            errors.append("No docker commands generated")
-            return {}, plan, errors
-
-        log.info(
-            "Creating output directories on %d node(s)",
-            len(plan.node_order),
-        )
-        try:
-            _exec_cmd_list_on_nodes(
-                self.s_phdl,
-                plan.node_order,
-                plan.mkdir_cmds,
-            )
-        except Exception as exc:
-            errors.append(f"Failed to create output directories: {exc}")
-            return {}, plan, errors
-
-        mode_label = "distributed unified" if self.distributed else "single-node"
-        log.info(
-            "Running FLUX benchmark (%s) on %d node command(s)",
-            mode_label,
-            len(plan.docker_cmds),
-        )
-        log.debug("Docker command (sample): %s", _redact_secrets(plan.docker_cmds[0]))
-
-        try:
-            raw_results = _exec_cmd_list_on_nodes(
-                self.s_phdl,
-                plan.node_order,
-                plan.docker_cmds,
-                timeout=timeout,
-                detailed=True,
-            )
-        except Exception as exc:
-            errors.append(f"Benchmark execution failed with exception: {exc}")
-            return {}, plan, errors
-
-        results = _normalize_exec_results(raw_results, plan.node_order)
-        combined_output = "\n".join(results.values())
-        if self.distributed:
-            ok, msg = verify_distributed_logs(combined_output, world_size=plan.world_size)
-            log.info("Distributed log proof: %s", msg)
-            if not ok:
-                errors.append(msg)
-
-        failed_nodes = []
-        for node in plan.node_order:
-            raw = (raw_results or {}).get(node)
-            output = _exec_result_output(raw)
-            exit_code = _exec_result_exit_code(raw)
-            if exit_code != 0:
-                log.error("Benchmark exited with code %s on %s", exit_code, node)
-                log_benchmark_failure_excerpt(node, output)
-                failed_nodes.append(node)
-            else:
-                log.info("Benchmark on %s completed successfully (exit 0)", node)
-
-        if failed_nodes:
-            errors.append(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
-
-        return results or {}, plan, errors
-
-    def store_output_dir_hint(self, plan: FluxLaunchPlan) -> None:
-        if plan.primary_output_dir:
-            self.inference_dict["_test_output_dir"] = plan.primary_output_dir
-            return
-
-        if not self.distributed and len(plan.node_order) == 1:
-            node = plan.node_order[0]
-            self.inference_dict["_test_output_dir"] = plan.output_dirs_by_node[node]
 
 
 def launch_flux_benchmark(

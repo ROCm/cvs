@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import re
 import shlex
-from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib import globals
@@ -31,16 +30,15 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     DEFAULT_MASTER_PORT,
     build_nccl_env,
     compute_world_size,
-    resolve_master_addr,
     resolve_nnodes,
     resolve_server_nodes,
-    verify_distributed_logs,
     log_benchmark_failure_excerpt,
     _exec_cmd_list_on_nodes,
-    _exec_on_nodes,
-    _exec_result_exit_code,
-    _exec_result_output,
-    _normalize_exec_results,
+)
+
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_benchmark_job import (
+    BenchmarkLaunchPlan,
+    PytorchXditBenchmarkJob,
 )
 
 log = globals.log
@@ -753,19 +751,10 @@ def build_wan_output_cleanup_cmd(output_base_dir: str, *, use_sudo: bool = True)
     return f"bash -c {shlex.quote(f'{prefix}rm -rf {output_base_dir}/wan_22_*_outputs')}"
 
 
-@dataclass
-class WanLaunchPlan:
-    mkdir_cmds: List[str] = field(default_factory=list)
-    docker_cmds: List[str] = field(default_factory=list)
-    node_order: List[str] = field(default_factory=list)
-    node_to_hostname: Dict[str, str] = field(default_factory=dict)
-    output_dirs_by_node: Dict[str, str] = field(default_factory=dict)
-    primary_output_dir: str = ""
-    distributed: bool = False
-    world_size: int = 0
+WanLaunchPlan = BenchmarkLaunchPlan
 
 
-class WanBenchmarkJob:
+class WanBenchmarkJob(PytorchXditBenchmarkJob):
     """Build and run WAN 2.2 docker+torchrun commands via a Pssh-like handle."""
 
     def __init__(
@@ -778,29 +767,24 @@ class WanBenchmarkJob:
         distributed: bool = False,
         cluster_dict: Optional[Mapping[str, Any]] = None,
     ):
-        self.s_phdl = s_phdl
-        self.inference_dict = inference_dict
         self.wan_params = benchmark_params_dict["wan22_i2v_a14b"]
-        self.hf_token = hf_token
-        self.distributed = distributed
-        self.cluster_dict = cluster_dict or {}
+        super().__init__(
+            s_phdl,
+            inference_dict,
+            hf_token,
+            distributed=distributed,
+            cluster_dict=cluster_dict,
+            nproc_per_node=int(self.wan_params["torchrun_nproc"]),
+        )
 
-        self.nproc_per_node = int(self.wan_params["torchrun_nproc"])
-        self.server_nodes = self._resolve_execution_nodes()
-        self.nnodes = len(self.server_nodes) if self.distributed else 1
+    def _benchmark_name(self) -> str:
+        return "WAN 2.2"
 
-    def _resolve_execution_nodes(self) -> List[str]:
-        if self.distributed:
-            if not self.cluster_dict:
-                raise ValueError("distributed=True requires cluster_dict")
-            nodes = resolve_server_nodes(self.cluster_dict, self.inference_dict)
-            nnodes = resolve_nnodes(self.inference_dict, nodes)
-            if nnodes < 2:
-                raise ValueError(f"Distributed mode requires nnodes >= 2, got {nnodes}")
-            if len(nodes) < nnodes:
-                raise ValueError(f"Cluster/server_node_list has {len(nodes)} node(s) but nnodes={nnodes}")
-            return nodes[:nnodes]
-        return list(self.s_phdl.host_list)
+    def _host_output_dir(self, output_base_dir: str, hostname: str) -> str:
+        return f"{output_base_dir}/wan_22_{hostname}_outputs"
+
+    def _mkdir_cmd(self, host_output_dir: str) -> str:
+        return f"mkdir -p {shlex.quote(host_output_dir + '/outputs')}"
 
     def validate_parallelism(self) -> Optional[str]:
         if not self.distributed:
@@ -824,29 +808,6 @@ class WanBenchmarkJob:
             _ring_size(self.wan_params),
         )
         return None
-
-    def check_kfd(self) -> List[str]:
-        log.info("Checking /dev/kfd on %d node(s)", len(self.server_nodes))
-        kfd_check = _exec_on_nodes(
-            self.s_phdl,
-            self.server_nodes,
-            "test -e /dev/kfd && echo KFD_OK || echo KFD_MISSING",
-            print_console=False,
-        )
-        missing = []
-        for node in self.server_nodes:
-            output = kfd_check.get(node, "")
-            if "KFD_OK" not in (output or ""):
-                missing.append(node)
-                log.error("ROCm device node /dev/kfd not found on %s", node)
-            else:
-                log.info("/dev/kfd found on %s", node)
-        return missing
-
-    def _fetch_hostnames(self) -> Dict[str, str]:
-        log.info("Getting hostnames from %d node(s)", len(self.server_nodes))
-        hostname_result = _exec_on_nodes(self.s_phdl, self.server_nodes, "hostname")
-        return {node: (hostname_result.get(node, "") or "").strip() or node for node in self.server_nodes}
 
     def _resolved_ckpt_dir(self) -> str:
         ckpt_dir = self.inference_dict.get("_resolved_ckpt_dir_container")
@@ -878,16 +839,7 @@ class WanBenchmarkJob:
             env_dict["HF_TOKEN"] = _secret_str(self.hf_token)
         return " ".join(f"-e {key}={value}" for key, value in env_dict.items())
 
-    def _build_volume_args(self, host_output_dir: str) -> str:
-        volume_dict = dict(self.inference_dict["container_config"].get("volume_dict") or {})
-        volume_dict[host_output_dir] = CONTAINER_OUTPUT_MOUNT
-        volume_dict[self.inference_dict["hf_home"]] = "/hf_home"
-        mount_host = self.inference_dict.get("_resolved_model_mount_host")
-        if mount_host:
-            volume_dict[mount_host] = "/model"
-        return " ".join(f"--mount type=bind,source={src},target={dst}" for src, dst in volume_dict.items())
-
-    def _build_docker_cmd(
+    def _build_torchrun_cmd(
         self,
         *,
         node_rank: int,
@@ -895,12 +847,7 @@ class WanBenchmarkJob:
         master_addr: str,
         master_port: int,
     ) -> str:
-        device_list = self.inference_dict["container_config"]["device_list"]
-        device_args = " ".join(f"--device={dev}" for dev in device_list)
-        env_args = self._build_env_args()
-        volume_args = self._build_volume_args(host_output_dir)
-
-        torchrun_cmd = build_torchrun_cmd(
+        return build_torchrun_cmd(
             self.wan_params,
             ckpt_dir=self._resolved_ckpt_dir(),
             distributed=self.distributed,
@@ -914,95 +861,19 @@ class WanBenchmarkJob:
             inference_dict=self.inference_dict,
         )
 
-        container_name = self.inference_dict["container_name"]
-        if self.distributed:
-            container_name = f"{container_name}-rank{node_rank}"
-
-        return (
-            f"docker run "
-            f"--cap-add=SYS_PTRACE "
-            f"--security-opt seccomp=unconfined "
-            f"--user root "
-            f"{device_args} "
-            f"--ipc=host "
-            f"--network host "
-            f"--rm "
-            f"--privileged "
-            f"--name {container_name} "
-            f"{volume_args} "
-            f"{env_args} "
-            f"{self.inference_dict['container_image']} "
-            f"{torchrun_cmd}"
+    def _pre_launch_validation(self, plan: BenchmarkLaunchPlan) -> List[str]:
+        return validate_wan_xfuser_mounts(
+            self.s_phdl,
+            plan.node_order,
+            self.inference_dict,
+            self.wan_params,
         )
 
-    def build_launch_plan(self) -> WanLaunchPlan:
-        node_to_hostname = self._fetch_hostnames()
-        output_base_dir = self.inference_dict["output_base_dir"]
-        master_port = int(self.inference_dict.get("master_port") or DEFAULT_MASTER_PORT)
-
-        plan = WanLaunchPlan(
+    def _resolve_run_timeout(self, timeout: Optional[int]) -> int:
+        return resolve_wan_benchmark_timeout(
             distributed=self.distributed,
-            node_order=list(self.server_nodes),
-            node_to_hostname=dict(node_to_hostname),
+            explicit_timeout=timeout,
         )
-
-        if self.distributed:
-            rank0_node = self.server_nodes[0]
-            master_addr = resolve_master_addr(
-                self.inference_dict,
-                node_to_hostname,
-                rank0_node,
-                s_phdl=self.s_phdl,
-            )
-            primary_output_dir = f"{output_base_dir}/wan_22_{node_to_hostname[rank0_node]}_outputs"
-            plan.primary_output_dir = primary_output_dir
-            plan.world_size = compute_world_size(self.nnodes, self.nproc_per_node)
-
-            for node_rank, node in enumerate(self.server_nodes):
-                plan.mkdir_cmds.append(f"mkdir -p {shlex.quote(primary_output_dir + '/outputs')}")
-                plan.output_dirs_by_node[node] = primary_output_dir
-                plan.docker_cmds.append(
-                    self._build_docker_cmd(
-                        node_rank=node_rank,
-                        host_output_dir=primary_output_dir,
-                        master_addr=master_addr,
-                        master_port=master_port,
-                    )
-                )
-                log.info(
-                    "Distributed node %s (%s) rank=%d master=%s:%d output=%s",
-                    node,
-                    node_to_hostname[node],
-                    node_rank,
-                    master_addr,
-                    master_port,
-                    primary_output_dir,
-                )
-            return plan
-
-        for node in self.server_nodes:
-            hostname = node_to_hostname[node]
-            host_output_dir = f"{output_base_dir}/wan_22_{hostname}_outputs"
-            plan.mkdir_cmds.append(f"mkdir -p {shlex.quote(host_output_dir + '/outputs')}")
-            plan.output_dirs_by_node[node] = host_output_dir
-            plan.docker_cmds.append(
-                self._build_docker_cmd(
-                    node_rank=0,
-                    host_output_dir=host_output_dir,
-                    master_addr="127.0.0.1",
-                    master_port=master_port,
-                )
-            )
-            log.info("Single-node job on %s (%s) output=%s", node, hostname, host_output_dir)
-
-        if len(self.server_nodes) == 1:
-            only_node = self.server_nodes[0]
-            plan.primary_output_dir = plan.output_dirs_by_node[only_node]
-        else:
-            plan.primary_output_dir = ""
-
-        plan.world_size = self.nproc_per_node
-        return plan
 
     def _rank0_benchmark_log(self, plan: WanLaunchPlan, results: Mapping[str, str]) -> str:
         if not plan.node_order:
@@ -1089,101 +960,40 @@ class WanBenchmarkJob:
         except Exception as exc:
             log.warning("Failed to clean up ranked WAN docker containers: %s", exc)
 
-    def run(
+    def _handle_benchmark_exec_exception(
         self,
-        *,
-        timeout: Optional[int] = None,
-    ) -> Tuple[Dict[str, str], WanLaunchPlan, List[str]]:
-        errors: List[str] = []
-
-        par_err = self.validate_parallelism()
-        if par_err:
-            errors.append(par_err)
-            return {}, WanLaunchPlan(), errors
-
-        missing_kfd = self.check_kfd()
-        if missing_kfd:
-            errors.append(
-                f"ROCm device node /dev/kfd not found on {len(missing_kfd)} node(s): "
-                f"{', '.join(missing_kfd)}. Run on GPU compute nodes."
+        exc: Exception,
+        plan: WanLaunchPlan,
+        results: Mapping[str, str],
+    ) -> Tuple[List[str], bool]:
+        self._cleanup_stuck_containers(plan)
+        if self._benchmark_logs_indicate_success(plan, results):
+            log.warning(
+                "Benchmark docker exec failed (%s) but rank-0 logs indicate success; "
+                "treating run as success (likely container exit hang after inference). "
+                "Validate artifacts from shared output path in parse step.",
+                exc,
             )
-            return {}, WanLaunchPlan(), errors
+            return [], True
+        errors = [f"Benchmark execution failed with exception: {exc}"]
+        rank0_log = self._rank0_benchmark_log(plan, results)
+        if rank0_log:
+            log_benchmark_failure_excerpt(plan.node_order[0], rank0_log)
+        return errors, False
 
-        plan = self.build_launch_plan()
-        if not plan.docker_cmds:
-            errors.append("No docker commands generated")
-            return {}, plan, errors
-
-        mount_errors = validate_wan_xfuser_mounts(
-            self.s_phdl,
-            plan.node_order,
-            self.inference_dict,
-            self.wan_params,
-        )
-        if mount_errors:
-            errors.extend(mount_errors)
-            return {}, plan, errors
-
-        log.info("Creating output directories on %d node(s)", len(plan.node_order))
-        try:
-            _exec_cmd_list_on_nodes(self.s_phdl, plan.node_order, plan.mkdir_cmds)
-        except Exception as exc:
-            errors.append(f"Failed to create output directories: {exc}")
-            return {}, plan, errors
-
-        mode_label = "distributed unified" if self.distributed else "single-node"
-        effective_timeout = resolve_wan_benchmark_timeout(
-            distributed=self.distributed,
-            explicit_timeout=timeout,
-        )
-        log.info(
-            "Running WAN 2.2 benchmark (%s) on %d node command(s) [timeout=%ds]",
-            mode_label,
-            len(plan.docker_cmds),
-            effective_timeout,
+    def _collect_benchmark_failures(
+        self,
+        raw_results: Mapping[str, Any],
+        plan: WanLaunchPlan,
+    ) -> Tuple[List[str], List[str]]:
+        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+            _exec_result_exit_code,
+            _exec_result_output,
+            log_benchmark_failure_excerpt,
         )
 
-        results: Dict[str, str] = {}
-        exec_error: Optional[Exception] = None
-        raw_results: Dict[str, Any] = {}
-        try:
-            raw_results = _exec_cmd_list_on_nodes(
-                self.s_phdl,
-                plan.node_order,
-                plan.docker_cmds,
-                timeout=effective_timeout,
-                detailed=True,
-            )
-            results = _normalize_exec_results(raw_results, plan.node_order)
-        except Exception as exc:
-            exec_error = exc
-            log.warning("Benchmark docker exec ended with exception: %s", exc)
-            results = _normalize_exec_results(raw_results, plan.node_order)
-
-        if exec_error is not None:
-            self._cleanup_stuck_containers(plan)
-            if self._benchmark_logs_indicate_success(plan, results):
-                log.warning(
-                    "Benchmark docker exec failed (%s) but rank-0 logs indicate success; "
-                    "treating run as success (likely container exit hang after inference). "
-                    "Validate artifacts from shared output path in parse step.",
-                    exec_error,
-                )
-                return results, plan, []
-            errors.append(f"Benchmark execution failed with exception: {exec_error}")
-            rank0_log = self._rank0_benchmark_log(plan, results)
-            if rank0_log:
-                log_benchmark_failure_excerpt(plan.node_order[0], rank0_log)
-            return results, plan, errors
-
-        combined_output = "\n".join(results.values())
-        if self.distributed:
-            ok, msg = verify_distributed_logs(combined_output, world_size=plan.world_size)
-            log.info("Distributed log proof: %s", msg)
-            if not ok:
-                errors.append(msg)
-
-        failed_nodes = []
+        failed_nodes: List[str] = []
+        extra_errors: List[str] = []
         diffusers_script_hint_added = False
         for node in plan.node_order:
             raw = (raw_results or {}).get(node)
@@ -1194,27 +1004,14 @@ class WanBenchmarkJob:
                 log_benchmark_failure_excerpt(node, output)
                 failed_nodes.append(node)
                 diffusers_script_hint_added = self._append_wan_benchmark_failure_hints(
-                    errors,
+                    extra_errors,
                     node=node,
                     output=output,
                     diffusers_script_hint_added=diffusers_script_hint_added,
                 )
             else:
                 log.info("Benchmark on %s completed successfully (exit 0)", node)
-
-        if failed_nodes:
-            errors.append(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
-
-        return results or {}, plan, errors
-
-    def store_output_dir_hint(self, plan: WanLaunchPlan) -> None:
-        if plan.primary_output_dir:
-            self.inference_dict["_test_output_dir"] = plan.primary_output_dir
-            return
-
-        if not self.distributed and len(plan.node_order) == 1:
-            node = plan.node_order[0]
-            self.inference_dict["_test_output_dir"] = plan.output_dirs_by_node[node]
+        return failed_nodes, extra_errors
 
 
 def launch_wan_benchmark(
