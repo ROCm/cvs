@@ -29,7 +29,7 @@ The following list provides a link to code snippets and the parameters for each 
 - :doc:`Preflight </reference/configuration-files/preflight>`
 - :doc:`InfiniBand (IB Perf) </reference/configuration-files/ib>`
 - :doc:`RCCL </reference/configuration-files/rccl>`
-- :doc:`JAX </reference/configuration-files/jax>`
+- :doc:`JAX MaxText </reference/configuration-files/jaxmaxtext>`
 - :doc:`Megatron </reference/configuration-files/megatron>`
 - :doc:`MORI (RDMA Performance) </reference/configuration-files/mori>`
 - :doc:`Aorta (Distributed Training) </reference/configuration-files/aorta>`

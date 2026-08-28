@@ -42,8 +42,8 @@ subtrees:
         title: IB Perf
       - file: reference/configuration-files/rccl
         title: RCCL
-      - file: reference/configuration-files/jax
-        title: JAX
+      - file: reference/configuration-files/jaxmaxtext
+        title: JAX MaxText
       - file: reference/configuration-files/megatron
         title: Megatron
       - file: reference/configuration-files/mori

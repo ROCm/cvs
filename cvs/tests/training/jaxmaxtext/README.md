@@ -4,6 +4,12 @@ Cluster validation suite that runs **JAX MaxText** pre-training on AMD Instinct
 GPUs (single-node or multi-node) and gates the run on performance and
 correctness metrics with a PASS/FAIL HTML report.
 
+> **JAX training in CVS is now `jaxmaxtext`.** The legacy `jax` suite
+> (`jax_llama3_1_*`) and its `cvs/lib/jax_training_lib.py` have been removed;
+> use `jaxmaxtext_single` / `jaxmaxtext_distributed` instead.
+
+Library internals: `cvs/lib/training/jaxmaxtext/README.md`.
+
 ## Overview
 
 The suite drives a MaxText training job inside a container on one or more
@@ -78,12 +84,17 @@ Tests run in this pinned order. `[sweep]` = one row per enabled sweep;
 |---|---|---|---|
 | 1 | `test_launch_container` | once | Launch and verify the container |
 | 2 | `test_setup_rdma` | distributed only | Copy RDMA lib into container (thor2 NIC) and verify `ibv_devinfo` |
-| 3 | `test_setup_tokenizer` | once | Download the HF tokenizer |
-| 4 | `test_training_run[sweep]` | per sweep | Build cmd, train, poll, parse results |
-| 5 | `test_metric[sweep-metric]` | per sweep x metric | Threshold PASS/FAIL per metric |
-| 6 | `test_loss_curve[sweep]` | per sweep | Render loss PNG; gate on downward trend |
-| 7 | `test_print_results_table` | once | Console tables + metric results HTML + failure summary |
-| 8 | `test_teardown` | once | Tear the container down |
+| 3 | `test_setup_tokenizer` | once | Download the HF tokenizer (skipped when every enabled run is `dataset_type: synthetic`) |
+| 4 | `test_smoke` | once | Small fixed run (BF16, few steps): model loads + trains cleanly with no error/NaN signature. ENABLED by default; a failure gates the rest of the suite. Skip via `training.smoke.enabled: false` or `-k "not smoke"` |
+| 5 | `test_training_run[sweep]` | per sweep | Build cmd, train, poll, parse results |
+| 6 | `test_metric[sweep-metric]` | per sweep x metric | Threshold PASS/FAIL per metric |
+| 7 | `test_loss_curve[sweep]` | per sweep | Render loss PNG; gate on downward trend |
+| 8 | `test_checkpoint_resume` | once | Opt-in (`training.checkpoint_resume.enabled`): checkpoint save+resume correctness + I/O timing; skipped when disabled |
+| 9 | `test_print_results_table` | once | Console tables + metric results HTML + failure summary |
+| 10 | `test_teardown` | once | Tear the container down |
+
+Each test also logs its final outcome (`Testcase <name>: PASSED/FAILED/SKIPPED`)
+to the console and `--log-file`.
 
 On a training failure/timeout, lingering ranks are killed (`stop_training`) so
 the next sweep does not launch on top of them.
@@ -153,18 +164,10 @@ the config as you encounter new ones.
 ## Config and threshold files
 
 Located in `cvs/input/config_file/training/jaxmaxtext/` (each config has a
-sibling threshold file named by its `threshold_json` field):
-
-| Config | Threshold | Arch / mode |
-|---|---|---|
-| `mi300x_jaxmaxtext_llama-3.3-70b_single.json` | `..._single_threshold.json` | MI300X, single-node |
-| `mi300x_jaxmaxtext_llama-3.3-70b_distributed.json` | `..._distributed_threshold.json` | MI300X, distributed |
-| `mi325x_jaxmaxtext_llama-3.3-70b_distributed.json` | `..._distributed_threshold.json` | MI325X, distributed |
-
-(Add analogous configs for other archs, e.g. MI355X, as needed.)
-
-See `cvs/input/config_file/training/jaxmaxtext/README.md` for the full variable
-reference and the values you must change for your cluster and container image.
+sibling threshold file named by its `threshold_json` field). See
+`cvs/input/config_file/training/jaxmaxtext/README.md` for the full per-arch
+inventory (MI300X/MI325X/MI355X), the variable-by-variable reference, and the
+values you must change for your cluster and container image.
 
 ## Prerequisites
 

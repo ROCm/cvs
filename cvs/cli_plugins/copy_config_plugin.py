@@ -13,7 +13,9 @@ class CopyConfigPlugin(SubcommandPlugin):
             "copy-config", help="List or copy config files from CVS package. Lists configs if --output not specified."
         )
         parser.add_argument(
-            "path", nargs="?", help="Path to config file (e.g. training/jax/mi300x_distributed_llama_3_1_405b.json)"
+            "path",
+            nargs="?",
+            help="Path to config file (e.g. training/jaxmaxtext/mi325x_jaxmaxtext_llama-3.1-405b_distributed.json)",
         )
         parser.add_argument("--all", action="store_true", help="Copy all config files preserving directory structure")
         parser.add_argument("--output", help="Destination path to copy config file(s)")
@@ -31,14 +33,14 @@ class CopyConfigPlugin(SubcommandPlugin):
 Copy-Config Commands:
   cvs copy-config                   List all available config files
   cvs copy-config training          List configs in training directory
-  cvs copy-config training/jax      List configs in training/jax directory
+  cvs copy-config training/jaxmaxtext   List configs in training/jaxmaxtext directory
   cvs copy-config --list            Same as above (list all)
   cvs copy-config training --list   Same as above (list training)
 
   Note: --list is optional, same behavior without it
   
   cvs copy-config --all --output /tmp/cvs/input/                          Copy all config files preserving directory structure
-  cvs copy-config training/jax/mi300x_config.json --output ~/mi300.json   Copy specific config file
+  cvs copy-config training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_distributed.json --output ~/cfg.json   Copy specific config file
   cvs copy-config --all --output /tmp/cvs/input/ --force                  Force overwrite existing files"""
 
     def _find_config_root(self):
