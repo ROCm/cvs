@@ -794,11 +794,9 @@ class WanBenchmarkJob(PytorchXditBenchmarkJob):
             )
             return None
 
-        _, _, err = validate_parallelism(self.nnodes, self.wan_params)
+        world_size, product, err = validate_parallelism(self.nnodes, self.wan_params)
         if err:
             return err
-
-        world_size, product, _ = validate_parallelism(self.nnodes, self.wan_params)
         log.info(
             "Parallelism OK (%s): world_size=%s product=%s (ulysses=%s ring=%s)",
             "distributed" if self.distributed else "single-node",

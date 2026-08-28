@@ -883,17 +883,10 @@ class FluxBenchmarkJob(PytorchXditBenchmarkJob):
         return f"{output_base_dir}/flux_{hostname}_outputs"
 
     def validate_parallelism(self) -> Optional[str]:
-        if not self.distributed:
-            _, _, err = validate_parallelism(1, self.flux_params)
-        else:
-            _, _, err = validate_parallelism(self.nnodes, self.flux_params)
+        nnodes = self.nnodes if self.distributed else 1
+        world_size, product, err = validate_parallelism(nnodes, self.flux_params)
         if err:
             return err
-
-        world_size, product, _ = validate_parallelism(
-            self.nnodes if self.distributed else 1,
-            self.flux_params,
-        )
         log.info(
             "Parallelism OK (%s): world_size=%s product=%s (ulysses=%s ring=%s pipefusion=%s tp=%s dp=%s)",
             "distributed" if self.distributed else "single-node",
