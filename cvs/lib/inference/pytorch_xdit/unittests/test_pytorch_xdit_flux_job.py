@@ -1,21 +1,116 @@
 import unittest
+from unittest.mock import MagicMock
 
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     FLUX2_DEFAULT_HF_REPO,
     FLUX2_EXAMPLE_PATH,
     RUN_USP_PATH,
+    FluxBenchmarkJob,
     build_flux2_chat_template_host_check_cmd,
     build_flux2_ensure_chat_template_cmd,
     build_flux2_example_args,
+    build_nccl_env,
     build_run_usp_args,
     build_torchrun_cmd,
     detect_flux_model_type_from_model_index,
     infer_flux_model_type,
     is_flux2_model,
+    parallel_product,
     resolve_flux2_hf_repo_id,
     resolve_flux_guidance_scale,
     resolve_flux_model_type,
+    validate_flux_parallelism_config,
+    validate_parallelism,
 )
+
+_FLUX_BENCHMARK_PARAMS = {
+    "prompt": "A small cat",
+    "seed": 42,
+    "num_inference_steps": 25,
+    "max_sequence_length": 256,
+    "no_use_resolution_binning": True,
+    "use_torch_compile": True,
+    "warmup_steps": 1,
+    "warmup_calls": 5,
+    "num_repetitions": 25,
+    "height": 1024,
+    "width": 1024,
+    "ulysses_degree": 8,
+    "ring_degree": 1,
+    "torchrun_nproc": 8,
+}
+
+
+def _flux_benchmark_params(**overrides):
+    params = dict(_FLUX_BENCHMARK_PARAMS)
+    params.update(overrides)
+    return {"flux1_dev_t2i": params}
+
+
+def _flux_inference_dict(**overrides):
+    base = {
+        "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
+        "container_name": "flux-benchmark",
+        "hf_home": "/home/user/.cache/huggingface",
+        "output_base_dir": "/home/user/cvs_flux_output",
+        "model_repo": "black-forest-labs/FLUX.1-dev",
+        "container_config": {
+            "device_list": ["/dev/dri", "/dev/kfd"],
+            "volume_dict": {},
+            "env_dict": {"CUSTOM": "1"},
+        },
+    }
+    base.update(overrides)
+    return base
+
+
+def _wire_phdl_exec(phdl, hosts, hostnames=None):
+    hostnames = hostnames or {host: f"host-{idx}" for idx, host in enumerate(hosts)}
+
+    def _exec_side(cmd, timeout=None, print_console=False):
+        text = str(cmd)
+        out = {}
+        for host in hosts:
+            if "/dev/kfd" in text:
+                out[host] = "KFD_OK"
+            elif text.strip() == "hostname":
+                out[host] = hostnames[host]
+            elif "hostname -I" in text:
+                out[host] = host
+            else:
+                out[host] = ""
+        return out
+
+    phdl.exec.side_effect = _exec_side
+
+
+def _make_flux_job(
+    hosts=None,
+    *,
+    distributed=False,
+    cluster_dict=None,
+    benchmark_overrides=None,
+    inference_overrides=None,
+):
+    hosts = hosts or ["10.0.0.1"]
+    phdl = MagicMock()
+    phdl.host_list = list(hosts)
+    _wire_phdl_exec(phdl, hosts)
+    phdl.exec_cmd_list = MagicMock(
+        return_value={host: "Initialized process group\nepoch time: 1.0 sec" for host in hosts}
+    )
+
+    benchmark_params = _flux_benchmark_params(**(benchmark_overrides or {}))
+    inference_dict = _flux_inference_dict(**(inference_overrides or {}))
+    job = FluxBenchmarkJob(
+        phdl,
+        inference_dict,
+        benchmark_params,
+        hf_token="hf_test_token",
+        distributed=distributed,
+        cluster_dict=cluster_dict,
+    )
+    return job, phdl
 
 
 class TestFluxModelRouting(unittest.TestCase):
@@ -239,6 +334,215 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         )
         self.assertIn("hf_hub_download", cmd)
         self.assertLess(cmd.index("hf_hub_download"), cmd.index(FLUX2_EXAMPLE_PATH))
+
+
+class TestBuildNcclEnv(unittest.TestCase):
+    def test_defaults_include_nccl_proto_simple(self):
+        env = build_nccl_env({})
+        self.assertEqual(env["NCCL_PROTO"], "Simple")
+        self.assertEqual(env["HSA_FORCE_FINE_GRAIN_PCIE"], "1")
+
+    def test_maps_inference_dict_nccl_fields(self):
+        env = build_nccl_env(
+            {
+                "nccl_ib_hca": "mlx5_0",
+                "nccl_socket_ifname": "eno0",
+                "gloo_socket_ifname": "eno0",
+                "nccl_debug": "INFO",
+                "nccl_ib_gid_index": 3,
+            }
+        )
+        self.assertEqual(env["NCCL_IB_HCA"], "mlx5_0")
+        self.assertEqual(env["NCCL_SOCKET_IFNAME"], "eno0")
+        self.assertEqual(env["GLOO_SOCKET_IFNAME"], "eno0")
+        self.assertEqual(env["NCCL_DEBUG"], "INFO")
+        self.assertEqual(env["NCCL_IB_GID_INDEX"], "3")
+
+
+class TestFluxParallelism(unittest.TestCase):
+    def test_parallel_product_includes_all_degrees(self):
+        params = {
+            "ulysses_degree": 2,
+            "ring_degree": 2,
+            "pipefusion_parallel_degree": 2,
+            "tensor_parallel_degree": 1,
+            "data_parallel_degree": 1,
+            "torchrun_nproc": 4,
+        }
+        self.assertEqual(parallel_product(params), 8)
+
+    def test_validate_parallelism_pass(self):
+        params = {**_FLUX_BENCHMARK_PARAMS, "ring_degree": 2}
+        world_size, product, err = validate_parallelism(2, params)
+        self.assertIsNone(err)
+        self.assertEqual(world_size, 16)
+        self.assertEqual(product, 16)
+
+    def test_validate_parallelism_fail(self):
+        _, _, err = validate_parallelism(2, _FLUX_BENCHMARK_PARAMS)
+        self.assertIsNotNone(err)
+        self.assertIn("Parallel degree product", err)
+
+    def test_validate_flux_parallelism_config_distributed(self):
+        cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+        inference_dict = {"nnodes": 2}
+        benchmark_params = _flux_benchmark_params(ring_degree=2)
+        self.assertIsNone(
+            validate_flux_parallelism_config(
+                inference_dict,
+                benchmark_params,
+                distributed=True,
+                cluster_dict=cluster_dict,
+            )
+        )
+
+
+class TestFluxBenchmarkJob(unittest.TestCase):
+    def test_validate_parallelism_single_node_pass(self):
+        job, _ = _make_flux_job()
+        self.assertIsNone(job.validate_parallelism())
+
+    def test_validate_parallelism_distributed_fail(self):
+        cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+        job, _ = _make_flux_job(
+            hosts=["10.0.0.1", "10.0.0.2"],
+            distributed=True,
+            cluster_dict=cluster_dict,
+            inference_overrides={"nnodes": 2, "master_addr": "10.0.0.1"},
+        )
+        err = job.validate_parallelism()
+        self.assertIsNotNone(err)
+        self.assertIn("Parallel degree product", err)
+
+    def test_build_env_args_single_node_omits_nccl(self):
+        job, _ = _make_flux_job()
+        env_args = job._build_env_args()
+        self.assertIn("-e CUSTOM=1", env_args)
+        self.assertIn("-e HF_TOKEN=hf_test_token", env_args)
+        self.assertIn("-e CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7", env_args)
+        self.assertNotIn("NCCL_PROTO", env_args)
+
+    def test_build_env_args_distributed_includes_nccl(self):
+        cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+        job, _ = _make_flux_job(
+            hosts=["10.0.0.1", "10.0.0.2"],
+            distributed=True,
+            cluster_dict=cluster_dict,
+            inference_overrides={
+                "nnodes": 2,
+                "master_addr": "10.0.0.1",
+                "nccl_ib_hca": "mlx5_0",
+            },
+            benchmark_overrides={"ring_degree": 2},
+        )
+        env_args = job._build_env_args()
+        self.assertIn("-e NCCL_PROTO=Simple", env_args)
+        self.assertIn("-e NCCL_IB_HCA=mlx5_0", env_args)
+
+    def test_build_env_args_flux2_adds_hf_repo_id(self):
+        job, _ = _make_flux_job(
+            inference_overrides={
+                "model_repo": "black-forest-labs/FLUX.2-dev",
+                "_resolved_flux_model_type": "flux2",
+            }
+        )
+        env_args = job._build_env_args()
+        self.assertIn("-e FLUX2_HF_REPO_ID=black-forest-labs/FLUX.2-dev", env_args)
+
+    def test_build_docker_cmd_contains_torchrun_and_run_usp(self):
+        job, _ = _make_flux_job()
+        cmd = job._build_docker_cmd(
+            node_rank=0,
+            host_output_dir="/home/user/cvs_flux_output/flux_host-0_outputs",
+            master_addr="127.0.0.1",
+            master_port=29500,
+        )
+        self.assertIn("docker run", cmd)
+        self.assertIn(RUN_USP_PATH, cmd)
+        self.assertIn("--name flux-benchmark", cmd)
+
+    def test_build_docker_cmd_distributed_uses_ranked_container_name(self):
+        cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+        job, _ = _make_flux_job(
+            hosts=["10.0.0.1", "10.0.0.2"],
+            distributed=True,
+            cluster_dict=cluster_dict,
+            inference_overrides={"nnodes": 2, "master_addr": "10.0.0.1"},
+            benchmark_overrides={"ring_degree": 2},
+        )
+        cmd = job._build_docker_cmd(
+            node_rank=1,
+            host_output_dir="/home/user/cvs_flux_output/flux_host-0_outputs",
+            master_addr="10.0.0.1",
+            master_port=29500,
+        )
+        self.assertIn("--name flux-benchmark-rank1", cmd)
+        self.assertIn("--node_rank=1", cmd)
+
+    def test_build_launch_plan_single_node(self):
+        job, _ = _make_flux_job(hosts=["10.0.0.1"])
+        plan = job.build_launch_plan()
+        self.assertFalse(plan.distributed)
+        self.assertEqual(plan.node_order, ["10.0.0.1"])
+        self.assertEqual(len(plan.docker_cmds), 1)
+        self.assertEqual(len(plan.mkdir_cmds), 1)
+        self.assertIn("/home/user/cvs_flux_output/flux_host-0_outputs", plan.primary_output_dir)
+        self.assertEqual(plan.world_size, 8)
+
+    def test_build_launch_plan_distributed(self):
+        cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+        job, _ = _make_flux_job(
+            hosts=["10.0.0.1", "10.0.0.2"],
+            distributed=True,
+            cluster_dict=cluster_dict,
+            inference_overrides={"nnodes": 2, "master_addr": "10.0.0.1"},
+            benchmark_overrides={"ring_degree": 2},
+        )
+        plan = job.build_launch_plan()
+        self.assertTrue(plan.distributed)
+        self.assertEqual(plan.node_order, ["10.0.0.1", "10.0.0.2"])
+        self.assertEqual(len(plan.docker_cmds), 2)
+        self.assertEqual(plan.world_size, 16)
+        self.assertIn("flux_host-0_outputs", plan.primary_output_dir)
+
+    def test_run_fails_on_parallelism_mismatch(self):
+        cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+        job, phdl = _make_flux_job(
+            hosts=["10.0.0.1", "10.0.0.2"],
+            distributed=True,
+            cluster_dict=cluster_dict,
+            inference_overrides={"nnodes": 2, "master_addr": "10.0.0.1"},
+        )
+        results, plan, errors = job.run()
+        self.assertEqual(results, {})
+        self.assertEqual(plan.docker_cmds, [])
+        self.assertTrue(errors)
+        phdl.exec_cmd_list.assert_not_called()
+
+    def test_run_fails_on_missing_kfd(self):
+        job, phdl = _make_flux_job()
+
+        def _missing_kfd(cmd, timeout=None, print_console=False):
+            if "/dev/kfd" in str(cmd):
+                return {"10.0.0.1": "KFD_MISSING"}
+            return {"10.0.0.1": "host-0"}
+
+        phdl.exec.side_effect = _missing_kfd
+        results, plan, errors = job.run()
+        self.assertEqual(results, {})
+        self.assertTrue(any("/dev/kfd" in err for err in errors))
+        phdl.exec_cmd_list.assert_not_called()
+
+    def test_run_success_single_node(self):
+        job, phdl = _make_flux_job()
+        results, plan, errors = job.run()
+        self.assertEqual(errors, [])
+        self.assertEqual(set(results.keys()), {"10.0.0.1"})
+        self.assertEqual(len(plan.docker_cmds), 1)
+        self.assertEqual(phdl.exec_cmd_list.call_count, 2)
+        benchmark_call = phdl.exec_cmd_list.call_args_list[-1]
+        self.assertIn("docker run", benchmark_call.args[0][0])
+        self.assertEqual(benchmark_call.kwargs.get("timeout"), 1800)
 
 
 class TestPhdlConnectionKwargs(unittest.TestCase):

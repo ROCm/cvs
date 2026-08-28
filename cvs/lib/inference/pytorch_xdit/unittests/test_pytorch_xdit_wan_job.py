@@ -1,7 +1,7 @@
 """Unit tests for pytorch_xdit_wan_job."""
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     build_nccl_env,
@@ -18,6 +18,7 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     WAN_XFUSER_TIMING_JSON_CONTAINER_PATH,
     WAN_XFUSER_VIDEO_CONTAINER_PATH,
     WAN_MODEL_FORMAT_DIFFUSERS,
+    WanBenchmarkJob,
     build_run_wan_diffusers_args,
     build_run_wan_native_args,
     build_run_wan_xfuser_example_args,
@@ -42,6 +43,92 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     validate_wan_parallelism_config,
     validate_wan_xfuser_mounts,
 )
+
+_WAN_BENCHMARK_PARAMS = {
+    "prompt": "test prompt",
+    "size": "720*1280",
+    "frame_num": 81,
+    "num_benchmark_steps": 5,
+    "compile": True,
+    "torchrun_nproc": 8,
+    "ulysses_size": 8,
+    "ring_size": 1,
+}
+
+
+def _wan_benchmark_params(**overrides):
+    params = dict(_WAN_BENCHMARK_PARAMS)
+    params.update(overrides)
+    return {"wan22_i2v_a14b": params}
+
+
+def _wan_inference_dict(**overrides):
+    base = {
+        "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
+        "container_name": "wan22-benchmark",
+        "hf_home": "/home/user/.cache/huggingface",
+        "output_base_dir": "/home/user/cvs_outputs",
+        "model_repo": "Wan-AI/Wan2.2-I2V-A14B",
+        "model_rev": "206a9ee1b7bfaaf8f7e4d81335650533490646a3",
+        "container_config": {
+            "device_list": ["/dev/dri", "/dev/kfd"],
+            "volume_dict": {},
+            "env_dict": {"CUSTOM": "1"},
+        },
+    }
+    base.update(overrides)
+    return base
+
+
+def _wire_phdl_exec(phdl, hosts, hostnames=None):
+    hostnames = hostnames or {host: f"host-{idx}" for idx, host in enumerate(hosts)}
+
+    def _exec_side(cmd, timeout=None, print_console=False):
+        text = str(cmd)
+        out = {}
+        for host in hosts:
+            if "/dev/kfd" in text:
+                out[host] = "KFD_OK"
+            elif text.strip() == "hostname":
+                out[host] = hostnames[host]
+            elif "hostname -I" in text:
+                out[host] = host
+            elif "WAN_MOUNT_OK" in text:
+                out[host] = "WAN_MOUNT_OK"
+            else:
+                out[host] = ""
+        return out
+
+    phdl.exec.side_effect = _exec_side
+
+
+def _make_wan_job(
+    hosts=None,
+    *,
+    distributed=False,
+    cluster_dict=None,
+    benchmark_overrides=None,
+    inference_overrides=None,
+):
+    hosts = hosts or ["10.0.0.1"]
+    phdl = MagicMock()
+    phdl.host_list = list(hosts)
+    _wire_phdl_exec(phdl, hosts)
+    phdl.exec_cmd_list = MagicMock(
+        return_value={host: "Initialized process group\nstep 0: epoch time: 12.34 sec" for host in hosts}
+    )
+
+    benchmark_params = _wan_benchmark_params(**(benchmark_overrides or {}))
+    inference_dict = _wan_inference_dict(**(inference_overrides or {}))
+    job = WanBenchmarkJob(
+        phdl,
+        inference_dict,
+        benchmark_params,
+        hf_token="hf_test_token",
+        distributed=distributed,
+        cluster_dict=cluster_dict,
+    )
+    return job, phdl
 
 
 class TestWanParallelism(unittest.TestCase):
@@ -382,6 +469,175 @@ class TestBuildNcclEnv(unittest.TestCase):
         env = build_nccl_env({})
         self.assertEqual(env["NCCL_PROTO"], "Simple")
         self.assertEqual(env["HSA_FORCE_FINE_GRAIN_PCIE"], "1")
+
+    def test_maps_inference_dict_nccl_fields(self):
+        env = build_nccl_env(
+            {
+                "nccl_ib_hca": "mlx5_0",
+                "nccl_socket_ifname": "eno0",
+                "gloo_socket_ifname": "eno0",
+                "nccl_debug": "INFO",
+                "nccl_ib_gid_index": 3,
+            }
+        )
+        self.assertEqual(env["NCCL_IB_HCA"], "mlx5_0")
+        self.assertEqual(env["NCCL_SOCKET_IFNAME"], "eno0")
+        self.assertEqual(env["GLOO_SOCKET_IFNAME"], "eno0")
+        self.assertEqual(env["NCCL_DEBUG"], "INFO")
+        self.assertEqual(env["NCCL_IB_GID_INDEX"], "3")
+
+
+class TestWanBenchmarkJob(unittest.TestCase):
+    def test_validate_parallelism_single_node_skips_check(self):
+        job, _ = _make_wan_job()
+        self.assertIsNone(job.validate_parallelism())
+
+    def test_validate_parallelism_distributed_fail(self):
+        cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+        job, _ = _make_wan_job(
+            hosts=["10.0.0.1", "10.0.0.2"],
+            distributed=True,
+            cluster_dict=cluster_dict,
+            inference_overrides={"nnodes": 2, "master_addr": "10.0.0.1"},
+        )
+        err = job.validate_parallelism()
+        self.assertIsNotNone(err)
+        self.assertIn("Parallel degree product", err)
+
+    def test_validate_parallelism_distributed_pass(self):
+        cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+        job, _ = _make_wan_job(
+            hosts=["10.0.0.1", "10.0.0.2"],
+            distributed=True,
+            cluster_dict=cluster_dict,
+            inference_overrides={"nnodes": 2, "master_addr": "10.0.0.1"},
+            benchmark_overrides={"ring_size": 2},
+        )
+        self.assertIsNone(job.validate_parallelism())
+
+    def test_build_env_args_single_node_omits_nccl(self):
+        job, _ = _make_wan_job()
+        env_args = job._build_env_args()
+        self.assertIn("-e CUSTOM=1", env_args)
+        self.assertIn("-e HF_TOKEN=hf_test_token", env_args)
+        self.assertIn("-e CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7", env_args)
+        self.assertNotIn("NCCL_PROTO", env_args)
+
+    def test_build_env_args_distributed_includes_nccl(self):
+        cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+        job, _ = _make_wan_job(
+            hosts=["10.0.0.1", "10.0.0.2"],
+            distributed=True,
+            cluster_dict=cluster_dict,
+            inference_overrides={
+                "nnodes": 2,
+                "master_addr": "10.0.0.1",
+                "nccl_ib_hca": "mlx5_0",
+            },
+            benchmark_overrides={"ring_size": 2},
+        )
+        env_args = job._build_env_args()
+        self.assertIn("-e NCCL_PROTO=Simple", env_args)
+        self.assertIn("-e NCCL_IB_HCA=mlx5_0", env_args)
+
+    def test_build_docker_cmd_contains_torchrun_and_native_script(self):
+        job, _ = _make_wan_job()
+        cmd = job._build_docker_cmd(
+            node_rank=0,
+            host_output_dir="/home/user/cvs_outputs/wan_22_host-0_outputs",
+            master_addr="127.0.0.1",
+            master_port=29500,
+        )
+        self.assertIn("docker run", cmd)
+        self.assertIn(RUN_WAN_NATIVE_PATH, cmd)
+        self.assertIn("--name wan22-benchmark", cmd)
+
+    def test_build_docker_cmd_distributed_uses_ranked_container_name(self):
+        cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+        job, _ = _make_wan_job(
+            hosts=["10.0.0.1", "10.0.0.2"],
+            distributed=True,
+            cluster_dict=cluster_dict,
+            inference_overrides={"nnodes": 2, "master_addr": "10.0.0.1"},
+            benchmark_overrides={"ring_size": 2},
+        )
+        cmd = job._build_docker_cmd(
+            node_rank=1,
+            host_output_dir="/home/user/cvs_outputs/wan_22_host-0_outputs",
+            master_addr="10.0.0.1",
+            master_port=29500,
+        )
+        self.assertIn("--name wan22-benchmark-rank1", cmd)
+        self.assertIn("--node_rank=1", cmd)
+
+    def test_build_launch_plan_single_node(self):
+        job, _ = _make_wan_job(hosts=["10.0.0.1"])
+        plan = job.build_launch_plan()
+        self.assertFalse(plan.distributed)
+        self.assertEqual(plan.node_order, ["10.0.0.1"])
+        self.assertEqual(len(plan.docker_cmds), 1)
+        self.assertEqual(len(plan.mkdir_cmds), 1)
+        self.assertIn("/outputs", plan.mkdir_cmds[0])
+        self.assertIn("/home/user/cvs_outputs/wan_22_host-0_outputs", plan.primary_output_dir)
+        self.assertEqual(plan.world_size, 8)
+
+    def test_build_launch_plan_distributed(self):
+        cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+        job, _ = _make_wan_job(
+            hosts=["10.0.0.1", "10.0.0.2"],
+            distributed=True,
+            cluster_dict=cluster_dict,
+            inference_overrides={"nnodes": 2, "master_addr": "10.0.0.1"},
+            benchmark_overrides={"ring_size": 2},
+        )
+        plan = job.build_launch_plan()
+        self.assertTrue(plan.distributed)
+        self.assertEqual(plan.node_order, ["10.0.0.1", "10.0.0.2"])
+        self.assertEqual(len(plan.docker_cmds), 2)
+        self.assertEqual(plan.world_size, 16)
+        self.assertIn("wan_22_host-0_outputs", plan.primary_output_dir)
+
+    def test_run_fails_on_parallelism_mismatch(self):
+        cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+        job, phdl = _make_wan_job(
+            hosts=["10.0.0.1", "10.0.0.2"],
+            distributed=True,
+            cluster_dict=cluster_dict,
+            inference_overrides={"nnodes": 2, "master_addr": "10.0.0.1"},
+        )
+        results, plan, errors = job.run()
+        self.assertEqual(results, {})
+        self.assertEqual(plan.docker_cmds, [])
+        self.assertTrue(errors)
+        phdl.exec_cmd_list.assert_not_called()
+
+    def test_run_fails_on_missing_kfd(self):
+        job, phdl = _make_wan_job()
+
+        def _missing_kfd(cmd, timeout=None, print_console=False):
+            if "/dev/kfd" in str(cmd):
+                return {"10.0.0.1": "KFD_MISSING"}
+            return {"10.0.0.1": "host-0"}
+
+        phdl.exec.side_effect = _missing_kfd
+        results, plan, errors = job.run()
+        self.assertEqual(results, {})
+        self.assertTrue(any("/dev/kfd" in err for err in errors))
+        phdl.exec_cmd_list.assert_not_called()
+
+    def test_run_success_single_node(self):
+        job, phdl = _make_wan_job()
+        results, plan, errors = job.run()
+        self.assertEqual(errors, [])
+        self.assertEqual(set(results.keys()), {"10.0.0.1"})
+        self.assertEqual(len(plan.docker_cmds), 1)
+        self.assertEqual(phdl.exec_cmd_list.call_count, 2)
+        benchmark_call = phdl.exec_cmd_list.call_args_list[-1]
+        self.assertIn("docker run", benchmark_call.args[0][0])
+        self.assertEqual(
+            benchmark_call.kwargs.get("timeout"),
+            resolve_wan_benchmark_timeout(distributed=False),
+        )
 
 
 class TestLogBenchmarkFailureExcerpt(unittest.TestCase):
