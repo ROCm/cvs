@@ -58,6 +58,10 @@ class Paths(_Forbid):
     models_dir: str
     log_dir: str
     hf_token_file: str
+    # Host-user-namespaced scratch (jaxmaxtext launchers/yml). Optional so
+    # inference configs that omit it still load; jaxmaxtext configs set it to
+    # /tmp/{user-id}/jaxmaxtext so container-root /tmp/root is never used.
+    temp_dir: str = ""
 
 
 class ModelSpec(_Forbid):

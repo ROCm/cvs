@@ -9,7 +9,8 @@
     "shared_fs": "/home/{user-id}",
     "models_dir": "{shared_fs}/cache/maxtext",
     "log_dir": "{shared_fs}/LOGS/jaxmaxtext",
-    "hf_token_file": "{shared_fs}/.hf_token"
+    "hf_token_file": "{shared_fs}/.hf_token",
+    "temp_dir": "/tmp/{user-id}/jaxmaxtext"
   },
 
   "model": {

@@ -6,7 +6,8 @@ JAX MaxText Single-Node Training Validation Suite.
 
 Tests performed (in order):
 1. test_launch_container      - Launch the training container
-2. test_setup_tokenizer       - Download the HuggingFace tokenizer
+2. test_setup_tokenizer       - Download the HuggingFace tokenizer (skipped when
+                                dataset_type=synthetic)
 3. test_smoke                 - Small fixed run: model loads + trains 10 steps
                                 without error_patterns (no metric checks)
 4. test_training_run[sweep]   - Run MaxText training per sweep (e.g. BF16, FP8)
