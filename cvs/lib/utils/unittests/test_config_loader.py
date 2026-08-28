@@ -27,6 +27,7 @@ from cvs.lib.utils.config_loader import (
     ContainerSpec,
     ModelSpec,
     Paths,
+    _find_packaged_threshold,
     substitute_config,
 )
 
@@ -369,6 +370,19 @@ class TestSubstituteConfigThresholdJsonField(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 substitute_config(config_path, {})
 
+    def test_missing_sibling_falls_back_to_packaged_threshold(self):
+        """A config run from a copied location without its sibling threshold
+        falls back to the shipped threshold matched by filename under the
+        packaged input/config_file tree (warns, then loads)."""
+        packaged_name = "mi325x_jaxmaxtext_llama-3.1-8b_distributed_threshold.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = _base_config_dict(packaged_name)  # relative name; no sibling here
+            config_path = self._write_config(Path(tmp), cfg)
+            with self.assertWarns(UserWarning):
+                _, thresholds = substitute_config(config_path, {})
+            self.assertIsInstance(thresholds, dict)
+            self.assertGreater(len(thresholds), 0)
+
     def test_threshold_json_value_not_placeholder_substituted(self):
         """The threshold_json value is a literal absolute path; placeholders in it
         must NOT be substituted against the cluster dict."""
@@ -418,6 +432,19 @@ class TestSubstituteConfigThresholdJsonField(unittest.TestCase):
             _, thresholds = substitute_config(config_path, {})
             self.assertNotIn("_comment", thresholds)
             self.assertIn("cell1", thresholds)
+
+
+class TestFindPackagedThreshold(unittest.TestCase):
+    """The packaged-threshold fallback lookup used when a copied config lacks
+    its sibling threshold file."""
+
+    def test_finds_real_packaged_threshold(self):
+        p = _find_packaged_threshold("mi325x_jaxmaxtext_llama-3.1-8b_distributed_threshold.json")
+        self.assertIsNotNone(p)
+        self.assertTrue(p.is_file())
+
+    def test_returns_none_for_unknown_name(self):
+        self.assertIsNone(_find_packaged_threshold("no_such_threshold_xyz_12345.json"))
 
 
 class TestSubstituteConfigPlaceholders(unittest.TestCase):
