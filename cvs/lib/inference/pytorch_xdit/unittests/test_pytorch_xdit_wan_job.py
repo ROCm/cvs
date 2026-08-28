@@ -11,6 +11,7 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     RUN_WAN_DIFFUSERS_PATH,
     RUN_WAN_NATIVE_PATH,
     WAN_DIFFUSERS_LAUNCHER_XFUSER,
+    WAN_DISTRIBUTED_BENCHMARK_TIMEOUT_S,
     WAN_XFUSER_AUTO_INPUT_IMAGE,
     WAN_XFUSER_BENCHMARK_OUTPUT_DIR,
     WAN_XFUSER_EXAMPLE_CONTAINER_PATH,
@@ -22,6 +23,7 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     build_run_wan_xfuser_example_args,
     build_torchrun_cmd,
     build_wan_xfuser_auto_input_image_cmd,
+    build_wan_distributed_container_cleanup_cmds,
     build_wan_output_verify_cmd,
     build_wan_xfuser_output_verify_cmd,
     build_wan_xfuser_video_deps_cmd,
@@ -30,6 +32,7 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     parse_wan_size,
     resolve_host_path_for_container_mount,
     resolve_wan_diffusers_launcher,
+    resolve_wan_benchmark_timeout,
     resolve_wan_model_format,
     should_wan_xfuser_auto_generate_input_image,
     scan_wan_fatal_output,
@@ -42,6 +45,25 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
 
 
 class TestWanParallelism(unittest.TestCase):
+    def test_resolve_wan_benchmark_timeout(self):
+        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import DEFAULT_BENCHMARK_TIMEOUT_S
+
+        self.assertEqual(
+            resolve_wan_benchmark_timeout(distributed=True),
+            WAN_DISTRIBUTED_BENCHMARK_TIMEOUT_S,
+        )
+        self.assertEqual(
+            resolve_wan_benchmark_timeout(distributed=False),
+            DEFAULT_BENCHMARK_TIMEOUT_S,
+        )
+        self.assertEqual(resolve_wan_benchmark_timeout(distributed=True, explicit_timeout=999), 999)
+
+    def test_build_wan_distributed_container_cleanup_cmds(self):
+        cmds = build_wan_distributed_container_cleanup_cmds("wan22-benchmark-dist", 2)
+        self.assertEqual(len(cmds), 2)
+        self.assertIn("wan22-benchmark-dist-rank0", cmds[0])
+        self.assertIn("wan22-benchmark-dist-rank1", cmds[1])
+
     def test_parallel_product(self):
         params = {"ulysses_size": 8, "ring_size": 2, "torchrun_nproc": 8}
         self.assertEqual(parallel_product(params), 16)
