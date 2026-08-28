@@ -1,5 +1,5 @@
 {
-  "_comment": "Llama 3.3 70B distributed thresholds for MI325X Megatron. Cell keys must match MegatronVariantConfig.cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>.",
+  "_comment": "Llama 3.1 405B distributed thresholds for MI355X Megatron. Cell keys must match MegatronVariantConfig.cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>.",
   "MBS=1,GBS=64,PRECISION=FP8": {
     "training.throughput_per_gpu":          { "kind": "min", "value": 100 },
     "training.elapsed_time_per_iteration":  { "kind": "max", "value": 500 },

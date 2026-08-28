@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "framework": "megatron_single",
-  "gpu_arch": "MI325X",
+  "framework": "megatron_distributed",
+  "gpu_arch": "MI300X",
   "enforce_thresholds": true,
-  "threshold_json": "mi325x_megatron_deepseek-v2-lite_single_threshold.json",
+  "threshold_json": "mi300x_megatron_llama-3.1-8b_distributed_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOGS/megatron",
@@ -13,31 +13,32 @@
     "megatron_root": "/workspace/Megatron-LM",
     "_example_training_iterations": "30",
     "training_iterations": "<changeme>",
-    "nnodes": "1",
-    "nic_type": "thor2",
-    "_example_nccl_socket_ifname": "ensf1np1",
+    "nnodes": "<changeme>",
+    "master_address": "<changeme>",
+    "nic_type": "<changeme>",
+    "nccl_ib_hca_list": "<changeme>",
+    "nccl_ib_hca": "<changeme>",
     "nccl_socket_ifname": "<changeme>",
-    "_example_gloo_socket_ifname": "ensf1np1",
     "gloo_socket_ifname": "<changeme>",
+    "hca_id_pattern": "bnxt_|rocep",
     "nccl_ib_gid_index": "3",
     "nccl_debug": "ERROR",
-    "master_address": "127.0.0.1",
-    "verify_network_errors": "False"
+    "verify_network_errors": "True"
   },
   "model_params": {
-    "model_name": "deepseek_v2_lite",
-    "tokenizer_model": "deepseek-ai/DeepSeek-V2-Lite",
-    "model_size": "16",
-    "sequence_length": "4096",
+    "model_name": "llama3.1_8B",
+    "tokenizer_model": "meta-llama/Llama-3.1-8B",
+    "model_size": "8",
+    "sequence_length": "8192",
     "recompute": "0",
     "fsdp": "0",
     "tensor_parallelism": "1",
     "pipeline_parallelism": "1",
-    "precision": "BF16"
+    "precision": "FP8"
   },
   "container": {
     "lifetime": "per_run",
-    "name": "megatron_deepseek_v2_lite_single",
+    "name": "megatron_llama3_1_8b_distributed",
     "image": "<changeme>",
     "runtime": {
       "name": "docker",
@@ -47,11 +48,15 @@
         "privileged": true,
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
-          "/dev/infiniband:/dev/infiniband"
+          "/dev/infiniband:/dev/infiniband",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+          "/lib/libibverbs.d:/lib/libibverbs.d",
+          "<changeme>:<changeme>"
         ],
         "devices": [
           "/dev/kfd",
-          "/dev/dri"
+          "/dev/dri",
+          "/dev/infiniband/rdma_cm"
         ]
       }
     }
@@ -68,32 +73,38 @@
     "target_metric": "auto",
     "target_value": 0.0
   },
-  "_checkpoint_comment": "save_interval controls checkpoint frequency (steps); save_iters is the step at which the save-phase run stops; resume_iters is the step at which the resume-phase run stops. Loss at resume_iters must match the save-phase loss within loss_rtol. enforce=false makes checkpoint testing record-only.",
+  "_scaling_baseline_comment": "1-node total tokens/sec baseline for scaling-efficiency %. 0.0 = disabled (record-only). Populate from a prior MI300X single-node run (tok/s/GPU * 8) to enable the metric.",
+  "scaling_baseline": {
+    "tokens_per_sec_total": 0.0,
+    "num_nodes": 1
+  },
+  "_checkpoint_comment": "checkpoint_dir is the shared filesystem path where Megatron writes and reads checkpoints across nodes. save_interval controls checkpoint frequency (steps); save_iters is the step at which the save-phase run stops; resume_iters is the step at which the resume-phase run stops. Loss at resume_iters must match the save-phase loss within loss_rtol. enforce=false makes checkpoint testing record-only.",
   "checkpoint": {
     "enforce": false,
     "save_interval": 20,
     "save_iters": 21,
     "resume_iters": 25,
-    "loss_rtol": 0.05
+    "loss_rtol": 0.05,
+    "checkpoint_dir": "<changeme>"
   },
   "sweep": {
     "combinations": {
-      "deepseek_v2_lite-mi325x-bs128-mbs4-bf16": {
-        "name": "deepseek_v2_lite_mbs4_gbs128_BF16",
-        "global_batch_size": "128",
-        "micro_batch_size": "4",
-        "precision": "BF16"
-      },
-      "deepseek_v2_lite-mi325x-bs128-mbs4-fp8": {
-        "name": "deepseek_v2_lite_mbs4_gbs128_FP8",
+      "llama3_1_8b-mi300x-bs128-mbs4-fp8": {
+        "name": "llama3_1_8b_mbs4_gbs128_FP8",
         "global_batch_size": "128",
         "micro_batch_size": "4",
         "precision": "FP8"
+      },
+      "llama3_1_8b-mi300x-bs128-mbs4-bf16": {
+        "name": "llama3_1_8b_mbs4_gbs128_BF16",
+        "global_batch_size": "128",
+        "micro_batch_size": "4",
+        "precision": "BF16"
       }
     },
     "runs": [
-      "deepseek_v2_lite-mi325x-bs128-mbs4-bf16",
-      "deepseek_v2_lite-mi325x-bs128-mbs4-fp8"
+      "llama3_1_8b-mi300x-bs128-mbs4-fp8",
+      "llama3_1_8b-mi300x-bs128-mbs4-bf16"
     ]
   }
 }

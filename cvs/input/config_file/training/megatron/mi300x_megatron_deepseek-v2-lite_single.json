@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "framework": "megatron_single",
-  "gpu_arch": "MI325X",
+  "gpu_arch": "MI300X",
   "enforce_thresholds": true,
-  "threshold_json": "mi325x_megatron_llama-3.3-70b_single_threshold.json",
+  "threshold_json": "mi300x_megatron_deepseek-v2-lite_single_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOGS/megatron",
@@ -25,19 +25,19 @@
     "verify_network_errors": "False"
   },
   "model_params": {
-    "model_name": "llama3.3_70B",
-    "tokenizer_model": "meta-llama/Llama-3.3-70B-Instruct",
-    "model_size": "70",
-    "sequence_length": "8192",
+    "model_name": "deepseek_v2_lite",
+    "tokenizer_model": "deepseek-ai/DeepSeek-V2-Lite",
+    "model_size": "16",
+    "sequence_length": "4096",
     "recompute": "0",
     "fsdp": "0",
-    "tensor_parallelism": "8",
+    "tensor_parallelism": "1",
     "pipeline_parallelism": "1",
-    "precision": "FP8"
+    "precision": "BF16"
   },
   "container": {
     "lifetime": "per_run",
-    "name": "megatron_llama3_3_70b_single",
+    "name": "megatron_deepseek_v2_lite_single",
     "image": "<changeme>",
     "runtime": {
       "name": "docker",
@@ -78,23 +78,22 @@
   },
   "sweep": {
     "combinations": {
-      "llama3_3_70b-mi325x-bs96-mbs3-fp8": {
-        "name": "llama3_3_70b_mbs3_gbs96_FP8",
-        "global_batch_size": "96",
-        "micro_batch_size": "3",
-        "precision": "FP8"
-      },
-      "llama3_3_70b-mi325x-bs96-mbs3-bf16": {
-        "name": "llama3_3_70b_mbs3_gbs96_BF16",
-        "global_batch_size": "96",
-        "micro_batch_size": "3",
+      "deepseek_v2_lite-mi300x-bs128-mbs4-bf16": {
+        "name": "deepseek_v2_lite_mbs4_gbs128_BF16",
+        "global_batch_size": "128",
+        "micro_batch_size": "4",
         "precision": "BF16"
+      },
+      "deepseek_v2_lite-mi300x-bs128-mbs4-fp8": {
+        "name": "deepseek_v2_lite_mbs4_gbs128_FP8",
+        "global_batch_size": "128",
+        "micro_batch_size": "4",
+        "precision": "FP8"
       }
     },
     "runs": [
-      "llama3_3_70b-mi325x-bs96-mbs3-fp8",
-      "llama3_3_70b-mi325x-bs96-mbs3-bf16"
+      "deepseek_v2_lite-mi300x-bs128-mbs4-bf16",
+      "deepseek_v2_lite-mi300x-bs128-mbs4-fp8"
     ]
   }
 }
-

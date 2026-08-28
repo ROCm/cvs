@@ -1,15 +1,17 @@
 {
-  "_comment": "DeepSeek V2 Lite single-node thresholds for MI325X Megatron. Cell keys must match MegatronVariantConfig.cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>.",
+  "_comment": "DeepSeek V2 Lite distributed thresholds for MI300X Megatron. Cell keys must match MegatronVariantConfig.cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>.",
   "MBS=4,GBS=128,PRECISION=BF16": {
     "training.throughput_per_gpu":          { "kind": "min", "value": 100 },
     "training.elapsed_time_per_iteration":  { "kind": "max", "value": 500 },
     "training.tokens_per_gpu":              { "kind": "min", "value": 1000 },
-    "training.mem_usage":                   { "kind": "max", "value": 0.85 }
+    "training.mem_usage":                   { "kind": "max", "value": 0.85 },
+    "training.scaling_efficiency_pct":      { "kind": "info", "value": 85.0 }
   },
   "MBS=4,GBS=128,PRECISION=FP8": {
     "training.throughput_per_gpu":          { "kind": "min", "value": 100 },
     "training.elapsed_time_per_iteration":  { "kind": "max", "value": 500 },
     "training.tokens_per_gpu":              { "kind": "min", "value": 1000 },
-    "training.mem_usage":                   { "kind": "max", "value": 0.85 }
+    "training.mem_usage":                   { "kind": "max", "value": 0.85 },
+    "training.scaling_efficiency_pct":      { "kind": "info", "value": 85.0 }
   }
 }

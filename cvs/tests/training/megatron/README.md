@@ -64,9 +64,9 @@ Tests run in this pinned order. `[combo]` = one row per enabled sweep combo.
 | Order | Test | Runs on | Purpose |
 |---|---|---|---|
 | 0 | `test_launch_container` | once | Launch and verify the container |
-| 1 | `test_setup_rdma` | distributed only | Copy RDMA lib into container (thor2 NIC) and verify `ibv_devinfo` |
-| 2 | `test_download_tokenizer` | once | Download HF tokenizer for models that require a local file (DeepSeek, Mixtral) |
-| 3 | `test_smoke` | once | Fixed small run confirming the model loads and trains without error |
+| 1 | `test_download_tokenizer` | once | Download HF tokenizer for models that require a local file (DeepSeek) |
+| 2 | `test_smoke` | once | Fixed small run confirming the model loads and trains without error |
+| 3 | `test_checkpoint` | once | Checkpoint save + resume with loss continuity check. Skipped when `checkpoint.enforce: false`. |
 | 4 | `test_training[combo]` | per combo | Build cmd, train, poll logs, parse results; GPU memory freed between combos |
 | 5 | `test_metric[combo]` | per combo | Threshold PASS/FAIL per metric |
 | 6 | `test_loss_curve[combo]` | per combo | Gate on downward `lm_loss` trend at steps 100 / 500 / 1k / 5k |
@@ -80,7 +80,7 @@ On a training failure, lingering GPU processes are killed (`stop_training_proces
 
 A sweep combo is one full training run declared in `sweep.combinations`. `sweep.runs` is the ordered list of combo IDs to execute; set it to a subset to run only selected combos without editing `combinations`.
 
-The combo ID (e.g. `llama3_1_8b-mi325-bs128-mbs4-fp8`) appears in every parametrized row: `test_training[llama3_1_8b-mi325-bs128-mbs4-fp8]`, `test_metric[llama3_1_8b-mi325-bs128-mbs4-fp8]`, and `test_loss_curve[llama3_1_8b-mi325-bs128-mbs4-fp8]`.
+The combo ID (e.g. `llama3_1_8b-mi325x-bs128-mbs4-fp8`) appears in every parametrized row: `test_training[llama3_1_8b-mi325x-bs128-mbs4-fp8]`, `test_metric[llama3_1_8b-mi325x-bs128-mbs4-fp8]`, and `test_loss_curve[llama3_1_8b-mi325x-bs128-mbs4-fp8]`.
 
 ## Metrics and PASS/FAIL
 
@@ -114,6 +114,25 @@ efficiency % = (actual_total_tok/s / (actual_nodes / baseline_nodes)) / baseline
 
 Populate `scaling_baseline.tokens_per_sec_total` in the config from a completed single-node run (`tok/s/GPU × 8`). Set to `0.0` to disable and collect data only.
 
+## Loss Curve
+
+`test_loss_curve[combo]` fits a least-squares line to `lm_loss` samples collected at `loss_curve.milestone_steps` (plus every `loss_curve.sample_every` steps) and passes when the slope is below `loss_curve.max_slope`. A value of `0.0` means any downward trend passes.
+
+Set `loss_curve.enforce: false` to record the slope without gating.
+
+## Convergence
+
+`test_metric[combo]` also reports a convergence check when `convergence.target_value > 0`. It compares the final training loss (or eval loss when eval runs) against `convergence.target_value`. Set `target_value <= 0` to disable (record-only). `target_metric: "auto"` selects eval loss when available, otherwise training loss.
+
+## Checkpoint Save and Resume
+
+When `checkpoint.enforce` is `true`, the suite runs the training job twice:
+
+1. **Save phase** — trains to `checkpoint.save_iters` steps, saving a checkpoint every `checkpoint.save_interval` steps to `checkpoint.checkpoint_dir`.
+2. **Resume phase** — resumes from the saved checkpoint and trains to `checkpoint.resume_iters` steps.
+
+The suite passes when the loss at `resume_iters` matches the save-phase loss within `checkpoint.loss_rtol` (relative tolerance). Set `enforce: false` to record checkpoint behavior without gating.
+
 ## Training-Log Error Detection
 
 During polling, each node's `training.log` is scanned for known error patterns. Defaults cover:
@@ -135,19 +154,48 @@ Log path fields:
 | Placeholder | Source |
 |---|---|
 | `<log_dir>` | `config.log_dir` in the config file |
-| `<combo_id>` | Sweep run ID (e.g. `llama3_1_8b-mi325-bs128-mbs4-fp8`) |
+| `<combo_id>` | Sweep run ID (e.g. `llama3_1_8b-mi325x-bs128-mbs4-fp8`) |
 | `out-node<N>` | One directory per node; `out-node0` for single-node |
 
 ## Config and Threshold Files
 
 Located in `cvs/input/config_file/training/megatron/`:
 
-| Config | Threshold | Arch / mode |
+**MI300X**
+
+| Config | Threshold | Mode |
 |---|---|---|
-| `mi325x_megatron_llama-3.1-8b_single.json` | `mi325x_megatron_llama-3.1-8b_single_threshold.json` | MI325X, single-node |
-| `mi325x_megatron_llama-3.3-70b_single.json` | `mi325x_megatron_llama-3.3-70b_single_threshold.json` | MI325X, single-node |
-| `mi325x_megatron_llama-3.3-70b_distributed.json` | `mi325x_megatron_llama-3.3-70b_distributed_threshold.json` | MI325X, distributed |
-| `mi325x_megatron_deepseek-v2-lite_single.json` | `mi325x_megatron_deepseek-v2-lite_single_threshold.json` | MI325X, single-node |
+| `mi300x_megatron_deepseek-v2-lite_single.json` | `mi300x_megatron_deepseek-v2-lite_single_threshold.json` | single-node |
+| `mi300x_megatron_deepseek-v2-lite_distributed.json` | `mi300x_megatron_deepseek-v2-lite_distributed_threshold.json` | distributed |
+| `mi300x_megatron_llama-3.1-8b_single.json` | `mi300x_megatron_llama-3.1-8b_single_threshold.json` | single-node |
+| `mi300x_megatron_llama-3.1-8b_distributed.json` | `mi300x_megatron_llama-3.1-8b_distributed_threshold.json` | distributed |
+| `mi300x_megatron_llama-3.1-405b_distributed.json` | `mi300x_megatron_llama-3.1-405b_distributed_threshold.json` | distributed |
+| `mi300x_megatron_llama-3.3-70b_single.json` | `mi300x_megatron_llama-3.3-70b_single_threshold.json` | single-node |
+| `mi300x_megatron_llama-3.3-70b_distributed.json` | `mi300x_megatron_llama-3.3-70b_distributed_threshold.json` | distributed |
+
+**MI325X**
+
+| Config | Threshold | Mode |
+|---|---|---|
+| `mi325x_megatron_deepseek-v2-lite_single.json` | `mi325x_megatron_deepseek-v2-lite_single_threshold.json` | single-node |
+| `mi325x_megatron_deepseek-v2-lite_distributed.json` | `mi325x_megatron_deepseek-v2-lite_distributed_threshold.json` | distributed |
+| `mi325x_megatron_llama-3.1-8b_single.json` | `mi325x_megatron_llama-3.1-8b_single_threshold.json` | single-node |
+| `mi325x_megatron_llama-3.1-8b_distributed.json` | `mi325x_megatron_llama-3.1-8b_distributed_threshold.json` | distributed |
+| `mi325x_megatron_llama-3.1-405b_distributed.json` | `mi325x_megatron_llama-3.1-405b_distributed_threshold.json` | distributed |
+| `mi325x_megatron_llama-3.3-70b_single.json` | `mi325x_megatron_llama-3.3-70b_single_threshold.json` | single-node |
+| `mi325x_megatron_llama-3.3-70b_distributed.json` | `mi325x_megatron_llama-3.3-70b_distributed_threshold.json` | distributed |
+
+**MI355X**
+
+| Config | Threshold | Mode |
+|---|---|---|
+| `mi355x_megatron_deepseek-v2-lite_single.json` | `mi355x_megatron_deepseek-v2-lite_single_threshold.json` | single-node |
+| `mi355x_megatron_deepseek-v2-lite_distributed.json` | `mi355x_megatron_deepseek-v2-lite_distributed_threshold.json` | distributed |
+| `mi355x_megatron_llama-3.1-8b_single.json` | `mi355x_megatron_llama-3.1-8b_single_threshold.json` | single-node |
+| `mi355x_megatron_llama-3.1-8b_distributed.json` | `mi355x_megatron_llama-3.1-8b_distributed_threshold.json` | distributed |
+| `mi355x_megatron_llama-3.1-405b_distributed.json` | `mi355x_megatron_llama-3.1-405b_distributed_threshold.json` | distributed |
+| `mi355x_megatron_llama-3.3-70b_single.json` | `mi355x_megatron_llama-3.3-70b_single_threshold.json` | single-node |
+| `mi355x_megatron_llama-3.3-70b_distributed.json` | `mi355x_megatron_llama-3.3-70b_distributed_threshold.json` | distributed |
 
 See [`cvs/input/config_file/training/megatron/README.md`](../../input/config_file/training/megatron/README.md) for the full variable reference and the values you must change for your cluster and container image.
 

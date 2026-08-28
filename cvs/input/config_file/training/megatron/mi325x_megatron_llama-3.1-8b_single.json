@@ -3,16 +3,6 @@
   "framework": "megatron_single",
   "gpu_arch": "MI325X",
   "enforce_thresholds": true,
-  "loss_curve": {
-    "sample_every": 10,
-    "milestone_steps": [100, 500, 1000, 5000],
-    "max_slope": 0.0,
-    "enforce": true
-  },
-  "convergence": {
-    "target_metric": "auto",
-    "target_value": 2.0
-  },
   "threshold_json": "mi325x_megatron_llama-3.1-8b_single_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
@@ -21,22 +11,18 @@
     "data_cache_dir": "/home/{user-id}/cache",
     "rocm_dir": "",
     "megatron_root": "/workspace/Megatron-LM",
-    "training_iterations": "10",
+    "_example_training_iterations": "30",
+    "training_iterations": "<changeme>",
     "nnodes": "1",
     "nic_type": "thor2",
-    "nccl_socket_ifname": "ensf1np1",
-    "gloo_socket_ifname": "ensf1np1",
+    "_example_nccl_socket_ifname": "ensf1np1",
+    "nccl_socket_ifname": "<changeme>",
+    "_example_gloo_socket_ifname": "ensf1np1",
+    "gloo_socket_ifname": "<changeme>",
     "nccl_ib_gid_index": "3",
     "nccl_debug": "ERROR",
     "master_address": "127.0.0.1",
     "verify_network_errors": "False"
-  },
-  "checkpoint": {
-    "enforce": false,
-    "save_interval": 20,
-    "save_iters": 21,
-    "resume_iters": 25,
-    "loss_rtol": 0.05
   },
   "model_params": {
     "model_name": "llama3.1_8B",
@@ -70,27 +56,47 @@
       }
     }
   },
+  "_loss_curve_comment": "sample training loss every `sample_every` steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
+  "loss_curve": {
+    "sample_every": 10,
+    "milestone_steps": [100, 500, 1000, 5000],
+    "max_slope": 0.0,
+    "enforce": true
+  },
+  "_convergence_comment": "to enable validation loss set --eval-interval > 0 and --eval-iters in megatron training args; this needs a validation data split in the dataset blend. target_value <= 0 disables convergence checking (record-only). target_metric 'auto' uses eval_loss when eval runs, else training loss.",
+  "convergence": {
+    "target_metric": "auto",
+    "target_value": 0.0
+  },
+  "_checkpoint_comment": "save_interval controls checkpoint frequency (steps); save_iters is the step at which the save-phase run stops; resume_iters is the step at which the resume-phase run stops. Loss at resume_iters must match the save-phase loss within loss_rtol. enforce=false makes checkpoint testing record-only.",
+  "checkpoint": {
+    "enforce": false,
+    "save_interval": 20,
+    "save_iters": 21,
+    "resume_iters": 25,
+    "loss_rtol": 0.05
+  },
   "sweep": {
     "combinations": {
-      "llama3_1_8b-mi325-bs128-mbs4-fp8": {
+      "llama3_1_8b-mi325x-bs128-mbs4-fp8": {
         "name": "llama3_1_8b_mbs4_gbs128_FP8",
         "global_batch_size": "128",
         "micro_batch_size": "4",
         "precision": "FP8"
       },
-      "llama3_1_8b-mi325-bs128-mbs4-bf16": {
+      "llama3_1_8b-mi325x-bs128-mbs4-bf16": {
         "name": "llama3_1_8b_mbs4_gbs128_BF16",
         "global_batch_size": "128",
         "micro_batch_size": "4",
         "precision": "BF16"
       },
-      "llama3_1_8b-mi325-bs128-mbs4-mxfp4": {
+      "llama3_1_8b-mi325x-bs128-mbs4-mxfp4": {
         "name": "llama3_1_8b_mbs4_gbs128_MXFP4",
         "global_batch_size": "128",
         "micro_batch_size": "4",
         "precision": "MXFP4"
       },
-      "llama3_1_8b-mi325-bs128-mbs4-mxfp8": {
+      "llama3_1_8b-mi325x-bs128-mbs4-mxfp8": {
         "name": "llama3_1_8b_mbs4_gbs128_MXFP8",
         "global_batch_size": "128",
         "micro_batch_size": "4",
@@ -98,10 +104,10 @@
       }
     },
     "runs": [
-      "llama3_1_8b-mi325-bs128-mbs4-fp8",
-      "llama3_1_8b-mi325-bs128-mbs4-bf16",
-      "llama3_1_8b-mi325-bs128-mbs4-mxfp4",
-      "llama3_1_8b-mi325-bs128-mbs4-mxfp8"
+      "llama3_1_8b-mi325x-bs128-mbs4-fp8",
+      "llama3_1_8b-mi325x-bs128-mbs4-bf16",
+      "llama3_1_8b-mi325x-bs128-mbs4-mxfp4",
+      "llama3_1_8b-mi325x-bs128-mbs4-mxfp8"
     ]
   }
 }

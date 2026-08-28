@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "framework": "megatron_single",
-  "gpu_arch": "MI325X",
+  "gpu_arch": "MI300X",
   "enforce_thresholds": true,
-  "threshold_json": "mi325x_megatron_llama-3.3-70b_single_threshold.json",
+  "threshold_json": "mi300x_megatron_llama-3.3-70b_single_threshold.json",
   "config": {
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOGS/megatron",
@@ -78,13 +78,13 @@
   },
   "sweep": {
     "combinations": {
-      "llama3_3_70b-mi325x-bs96-mbs3-fp8": {
+      "llama3_3_70b-mi300x-bs96-mbs3-fp8": {
         "name": "llama3_3_70b_mbs3_gbs96_FP8",
         "global_batch_size": "96",
         "micro_batch_size": "3",
         "precision": "FP8"
       },
-      "llama3_3_70b-mi325x-bs96-mbs3-bf16": {
+      "llama3_3_70b-mi300x-bs96-mbs3-bf16": {
         "name": "llama3_3_70b_mbs3_gbs96_BF16",
         "global_batch_size": "96",
         "micro_batch_size": "3",
@@ -92,9 +92,8 @@
       }
     },
     "runs": [
-      "llama3_3_70b-mi325x-bs96-mbs3-fp8",
-      "llama3_3_70b-mi325x-bs96-mbs3-bf16"
+      "llama3_3_70b-mi300x-bs96-mbs3-fp8",
+      "llama3_3_70b-mi300x-bs96-mbs3-bf16"
     ]
   }
 }
-
