@@ -38,6 +38,9 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     log_benchmark_failure_excerpt,
     _exec_cmd_list_on_nodes,
     _exec_on_nodes,
+    _exec_result_exit_code,
+    _exec_result_output,
+    _normalize_exec_results,
 )
 
 log = globals.log
@@ -1021,6 +1024,56 @@ class WanBenchmarkJob:
                 return scan_wan_xfuser_benchmark_output(rank0_log)
         return True
 
+    def _append_wan_benchmark_failure_hints(
+        self,
+        errors: List[str],
+        *,
+        node: str,
+        output: str,
+        diffusers_script_hint_added: bool,
+    ) -> bool:
+        if diffusers_script_hint_added:
+            return True
+
+        model_format = resolve_wan_model_format_for_job(
+            self.wan_params,
+            model_repo_hints=self._wan_model_repo_hints(),
+            resolved_model_format=self.inference_dict.get("_resolved_wan_model_format"),
+        )
+        if (
+            is_wan_diffusers_model(model_format)
+            and re.search(r"can't open file .*run\.py", output or "", re.I)
+        ):
+            run_script = resolve_wan_diffusers_run_script(self.wan_params, self.inference_dict)
+            errors.append(
+                diffusers_run_script_missing_hint(
+                    self.inference_dict["container_image"],
+                    run_script,
+                )
+            )
+            return True
+
+        if re.search(r"can't open file .*wan_i2v_example\.py", output or "", re.I):
+            run_script = resolve_wan_diffusers_run_script(self.wan_params, self.inference_dict)
+            script_host = resolve_host_path_for_container_mount(self.inference_dict, run_script)
+            errors.append(
+                f"xFuser launcher {run_script!r} was not found in the container on {node}. "
+                f"Bind-mount the host script into the container"
+                + (f" (expected host path: {script_host})" if script_host else "")
+                + f" and confirm wan_diffusers_launcher is {WAN_DIFFUSERS_LAUNCHER_XFUSER!r}."
+            )
+            return True
+
+        if re.search(r"Error response from daemon|bind source path does not exist", output or "", re.I):
+            errors.append(
+                f"Docker mount failure on {node}. Fix volume_dict host paths on every "
+                f"execution node (no /path/to/ placeholders). "
+                f"Log tail: {summarize_wan_benchmark_log(output)}"
+            )
+            return True
+
+        return False
+
     def _cleanup_stuck_containers(self, plan: WanLaunchPlan) -> None:
         if not self.distributed:
             return
@@ -1092,16 +1145,20 @@ class WanBenchmarkJob:
 
         results: Dict[str, str] = {}
         exec_error: Optional[Exception] = None
+        raw_results: Dict[str, Any] = {}
         try:
-            results = _exec_cmd_list_on_nodes(
+            raw_results = _exec_cmd_list_on_nodes(
                 self.s_phdl,
                 plan.node_order,
                 plan.docker_cmds,
                 timeout=effective_timeout,
+                detailed=True,
             )
+            results = _normalize_exec_results(raw_results, plan.node_order)
         except Exception as exc:
             exec_error = exc
             log.warning("Benchmark docker exec ended with exception: %s", exc)
+            results = _normalize_exec_results(raw_results, plan.node_order)
 
         if exec_error is not None:
             self._cleanup_stuck_containers(plan)
@@ -1119,7 +1176,7 @@ class WanBenchmarkJob:
                 log_benchmark_failure_excerpt(plan.node_order[0], rank0_log)
             return results, plan, errors
 
-        combined_output = "\n".join((results or {}).values())
+        combined_output = "\n".join(results.values())
         if self.distributed:
             ok, msg = verify_distributed_logs(combined_output, world_size=plan.world_size)
             log.info("Distributed log proof: %s", msg)
@@ -1129,51 +1186,21 @@ class WanBenchmarkJob:
         failed_nodes = []
         diffusers_script_hint_added = False
         for node in plan.node_order:
-            output = (results or {}).get(node, "")
-            if scan_wan_fatal_output(output):
-                log.error("Benchmark output indicates failure on %s", node)
+            raw = (raw_results or {}).get(node)
+            output = _exec_result_output(raw)
+            exit_code = _exec_result_exit_code(raw)
+            if exit_code != 0:
+                log.error("Benchmark exited with code %s on %s", exit_code, node)
                 log_benchmark_failure_excerpt(node, output)
                 failed_nodes.append(node)
-                if (
-                    not diffusers_script_hint_added
-                    and is_wan_diffusers_model(
-                        resolve_wan_model_format_for_job(
-                            self.wan_params,
-                            model_repo_hints=self._wan_model_repo_hints(),
-                            resolved_model_format=self.inference_dict.get("_resolved_wan_model_format"),
-                        )
-                    )
-                    and re.search(r"can't open file .*run\.py", output or "", re.I)
-                ):
-                    run_script = resolve_wan_diffusers_run_script(self.wan_params, self.inference_dict)
-                    errors.append(
-                        diffusers_run_script_missing_hint(
-                            self.inference_dict["container_image"],
-                            run_script,
-                        )
-                    )
-                    diffusers_script_hint_added = True
-                elif (
-                    not diffusers_script_hint_added
-                    and re.search(r"can't open file .*wan_i2v_example\.py", output or "", re.I)
-                ):
-                    run_script = resolve_wan_diffusers_run_script(self.wan_params, self.inference_dict)
-                    script_host = resolve_host_path_for_container_mount(self.inference_dict, run_script)
-                    errors.append(
-                        f"xFuser launcher {run_script!r} was not found in the container on {node}. "
-                        f"Bind-mount the host script into the container"
-                        + (f" (expected host path: {script_host})" if script_host else "")
-                        + f" and confirm wan_diffusers_launcher is {WAN_DIFFUSERS_LAUNCHER_XFUSER!r}."
-                    )
-                    diffusers_script_hint_added = True
-                elif re.search(r"Error response from daemon|bind source path does not exist", output or "", re.I):
-                    errors.append(
-                        f"Docker mount failure on {node}. Fix volume_dict host paths on every "
-                        f"execution node (no /path/to/ placeholders). "
-                        f"Log tail: {summarize_wan_benchmark_log(output)}"
-                    )
+                diffusers_script_hint_added = self._append_wan_benchmark_failure_hints(
+                    errors,
+                    node=node,
+                    output=output,
+                    diffusers_script_hint_added=diffusers_script_hint_added,
+                )
             else:
-                log.info("Benchmark on %s completed successfully", node)
+                log.info("Benchmark on %s completed successfully (exit 0)", node)
 
         if failed_nodes:
             errors.append(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")

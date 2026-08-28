@@ -21,6 +21,8 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     resolve_flux_model_type,
     validate_flux_parallelism_config,
     validate_parallelism,
+    _exec_result_exit_code,
+    _exec_result_output,
 )
 
 _FLUX_BENCHMARK_PARAMS = {
@@ -64,21 +66,31 @@ def _flux_inference_dict(**overrides):
     return base
 
 
-def _wire_phdl_exec(phdl, hosts, hostnames=None):
+def _wire_phdl_exec(phdl, hosts, hostnames=None, *, benchmark_exit_code=0, benchmark_output=None):
     hostnames = hostnames or {host: f"host-{idx}" for idx, host in enumerate(hosts)}
+    benchmark_output = benchmark_output or "Initialized process group\nepoch time: 1.0 sec"
 
-    def _exec_side(cmd, timeout=None, print_console=False):
+    def _exec_side(cmd, timeout=None, print_console=False, detailed=False):
         text = str(cmd)
         out = {}
         for host in hosts:
-            if "/dev/kfd" in text:
-                out[host] = "KFD_OK"
+            if "test -e /dev/kfd" in text:
+                value = "KFD_OK"
             elif text.strip() == "hostname":
-                out[host] = hostnames[host]
+                value = hostnames[host]
             elif "hostname -I" in text:
-                out[host] = host
+                value = host
+            elif "docker run" in text:
+                value = benchmark_output
+                if detailed:
+                    out[host] = {"output": value, "exit_code": benchmark_exit_code}
+                    continue
             else:
-                out[host] = ""
+                value = ""
+            if detailed:
+                out[host] = {"output": value, "exit_code": 0}
+            else:
+                out[host] = value
         return out
 
     phdl.exec.side_effect = _exec_side
@@ -522,8 +534,8 @@ class TestFluxBenchmarkJob(unittest.TestCase):
     def test_run_fails_on_missing_kfd(self):
         job, phdl = _make_flux_job()
 
-        def _missing_kfd(cmd, timeout=None, print_console=False):
-            if "/dev/kfd" in str(cmd):
+        def _missing_kfd(cmd, timeout=None, print_console=False, detailed=False):
+            if "test -e /dev/kfd" in str(cmd):
                 return {"10.0.0.1": "KFD_MISSING"}
             return {"10.0.0.1": "host-0"}
 
@@ -539,10 +551,31 @@ class TestFluxBenchmarkJob(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(set(results.keys()), {"10.0.0.1"})
         self.assertEqual(len(plan.docker_cmds), 1)
-        self.assertEqual(phdl.exec_cmd_list.call_count, 2)
-        benchmark_call = phdl.exec_cmd_list.call_args_list[-1]
-        self.assertIn("docker run", benchmark_call.args[0][0])
-        self.assertEqual(benchmark_call.kwargs.get("timeout"), 1800)
+        self.assertEqual(phdl.exec_cmd_list.call_count, 1)
+        phdl.exec.assert_called()
+        benchmark_call = phdl.exec.call_args_list[-1]
+        self.assertTrue(benchmark_call.kwargs.get("detailed"))
+        self.assertIn("Initialized process group", results["10.0.0.1"])
+
+    def test_run_fails_on_nonzero_exit_without_traceback(self):
+        job, phdl = _make_flux_job()
+        _wire_phdl_exec(phdl, ["10.0.0.1"], benchmark_exit_code=137, benchmark_output="Killed")
+        results, plan, errors = job.run()
+        self.assertEqual(set(results.keys()), {"10.0.0.1"})
+        self.assertTrue(errors)
+        self.assertTrue(any("10.0.0.1" in err for err in errors))
+        self.assertNotIn("Traceback", results["10.0.0.1"])
+
+
+class TestExecResultHelpers(unittest.TestCase):
+    def test_exec_result_output_from_detailed_dict(self):
+        self.assertEqual(_exec_result_output({"output": "hello", "exit_code": 0}), "hello")
+
+    def test_exec_result_exit_code_from_detailed_dict(self):
+        self.assertEqual(_exec_result_exit_code({"output": "hello", "exit_code": 2}), 2)
+
+    def test_exec_result_exit_code_defaults_for_plain_string(self):
+        self.assertEqual(_exec_result_exit_code("hello"), 0)
 
 
 class TestPhdlConnectionKwargs(unittest.TestCase):

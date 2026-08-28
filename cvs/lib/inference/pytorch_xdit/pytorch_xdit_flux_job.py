@@ -30,13 +30,6 @@ from cvs.lib.parallel_ssh_lib import Pssh
 
 log = globals.log
 
-FATAL_OUTPUT_PATTERNS = (
-    r"\bTraceback\b",
-    r"\bModuleNotFoundError\b",
-    r"\bChildFailedError\b",
-    r"\bOSError:\b",
-)
-
 DEFAULT_BENCHMARK_TIMEOUT_S = 1800
 FLUX2_DEFAULT_BENCHMARK_TIMEOUT_S = 3600
 DEFAULT_MASTER_PORT = 29500
@@ -72,7 +65,7 @@ def log_benchmark_failure_excerpt(
     *,
     max_lines: int = 120,
 ) -> None:
-    """Log tail of captured remote benchmark output after fatal-pattern detection."""
+    """Log tail of captured remote benchmark output after a benchmark failure."""
     if not (output or "").strip():
         log.error("Benchmark failed on %s but captured output was empty", node)
         return
@@ -115,6 +108,22 @@ def _phdl_connection_kwargs(s_phdl) -> Dict[str, Any]:
     }
 
 
+def _exec_result_output(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("output") or "")
+    return str(value or "")
+
+
+def _exec_result_exit_code(value: Any) -> int:
+    if isinstance(value, dict):
+        return int(value.get("exit_code", -1))
+    return 0
+
+
+def _normalize_exec_results(raw_results: Mapping[str, Any], nodes: Sequence[str]) -> Dict[str, str]:
+    return {node: _exec_result_output((raw_results or {}).get(node)) for node in nodes}
+
+
 def _exec_on_single_node(
     s_phdl,
     node: str,
@@ -122,20 +131,36 @@ def _exec_on_single_node(
     *,
     timeout: Optional[int] = None,
     print_console: bool = False,
-) -> str:
+    detailed: bool = False,
+) -> Any:
     """Run ``cmd`` on exactly one node, even when ``s_phdl`` covers more hosts."""
     phdl_hosts = list(getattr(s_phdl, "host_list", []) or [])
     if phdl_hosts == [node]:
-        out = s_phdl.exec(cmd, timeout=timeout, print_console=print_console)
-        return (out or {}).get(node, "")
+        out = s_phdl.exec(
+            cmd,
+            timeout=timeout,
+            print_console=print_console,
+            detailed=detailed,
+        )
+    else:
+        scoped = Pssh(
+            getattr(s_phdl, "log", log),
+            [node],
+            **_phdl_connection_kwargs(s_phdl),
+        )
+        out = scoped.exec(
+            cmd,
+            timeout=timeout,
+            print_console=print_console,
+            detailed=detailed,
+        )
 
-    scoped = Pssh(
-        getattr(s_phdl, "log", log),
-        [node],
-        **_phdl_connection_kwargs(s_phdl),
-    )
-    out = scoped.exec(cmd, timeout=timeout, print_console=print_console)
-    return (out or {}).get(node, "")
+    node_out = (out or {}).get(node)
+    if detailed:
+        if isinstance(node_out, dict):
+            return node_out
+        return {"output": str(node_out or ""), "exit_code": -1}
+    return str(node_out or "")
 
 
 def _exec_on_nodes(
@@ -145,15 +170,21 @@ def _exec_on_nodes(
     *,
     timeout: Optional[int] = None,
     print_console: bool = False,
-) -> Dict[str, str]:
+    detailed: bool = False,
+) -> Dict[str, Any]:
     """Run the same command on an explicit node subset."""
     node_list = list(nodes)
     phdl_hosts = list(getattr(s_phdl, "host_list", []) or [])
 
     if phdl_hosts == node_list:
-        return s_phdl.exec(cmd, timeout=timeout, print_console=print_console) or {}
+        return s_phdl.exec(
+            cmd,
+            timeout=timeout,
+            print_console=print_console,
+            detailed=detailed,
+        ) or {}
 
-    results: Dict[str, str] = {}
+    results: Dict[str, Any] = {}
     for node in node_list:
         results[node] = _exec_on_single_node(
             s_phdl,
@@ -161,6 +192,7 @@ def _exec_on_nodes(
             cmd,
             timeout=timeout,
             print_console=print_console,
+            detailed=detailed,
         )
     return results
 
@@ -172,12 +204,17 @@ def _exec_cmd_list_on_nodes(
     *,
     timeout: Optional[int] = None,
     print_console: bool = False,
-) -> Dict[str, str]:
+    detailed: bool = False,
+) -> Dict[str, Any]:
     """
     Run per-node commands on an explicit node subset.
 
     ``Pssh.exec_cmd_list`` maps commands to ``s_phdl.host_list`` order. This helper
     avoids mis-launch when the participating node set is a subset or reordered.
+
+    When ``detailed=True``, runs one ``exec(..., detailed=True)`` per node so callers
+    receive structured ``{'output', 'exit_code'}`` values. ``exec_cmd_list`` does not
+    expose exit codes.
     """
     node_list = list(nodes)
     commands = list(cmd_list)
@@ -185,10 +222,10 @@ def _exec_cmd_list_on_nodes(
         raise ValueError(f"node/cmd length mismatch: {len(node_list)} nodes vs {len(commands)} commands")
 
     phdl_hosts = list(getattr(s_phdl, "host_list", []) or [])
-    if phdl_hosts == node_list:
+    if not detailed and phdl_hosts == node_list:
         return s_phdl.exec_cmd_list(commands, timeout=timeout, print_console=print_console) or {}
 
-    results: Dict[str, str] = {}
+    results: Dict[str, Any] = {}
     for node, cmd in zip(node_list, commands):
         results[node] = _exec_on_single_node(
             s_phdl,
@@ -196,6 +233,7 @@ def _exec_cmd_list_on_nodes(
             cmd,
             timeout=timeout,
             print_console=print_console,
+            detailed=detailed,
         )
     return results
 
@@ -808,10 +846,6 @@ def verify_distributed_logs(output: str, *, world_size: int) -> Tuple[bool, str]
     return False, (f"No distributed proof in logs for world_size={world_size}. ")
 
 
-def scan_fatal_output(output: str) -> bool:
-    return any(re.search(p, output or "", re.I) for p in FATAL_OUTPUT_PATTERNS)
-
-
 @dataclass
 class FluxLaunchPlan:
     mkdir_cmds: List[str] = field(default_factory=list)
@@ -1121,17 +1155,19 @@ class FluxBenchmarkJob:
         log.debug("Docker command (sample): %s", _redact_secrets(plan.docker_cmds[0]))
 
         try:
-            results = _exec_cmd_list_on_nodes(
+            raw_results = _exec_cmd_list_on_nodes(
                 self.s_phdl,
                 plan.node_order,
                 plan.docker_cmds,
                 timeout=timeout,
+                detailed=True,
             )
         except Exception as exc:
             errors.append(f"Benchmark execution failed with exception: {exc}")
             return {}, plan, errors
 
-        combined_output = "\n".join((results or {}).values())
+        results = _normalize_exec_results(raw_results, plan.node_order)
+        combined_output = "\n".join(results.values())
         if self.distributed:
             ok, msg = verify_distributed_logs(combined_output, world_size=plan.world_size)
             log.info("Distributed log proof: %s", msg)
@@ -1140,13 +1176,15 @@ class FluxBenchmarkJob:
 
         failed_nodes = []
         for node in plan.node_order:
-            output = (results or {}).get(node, "")
-            if scan_fatal_output(output):
-                log.error("Benchmark output indicates failure on %s", node)
+            raw = (raw_results or {}).get(node)
+            output = _exec_result_output(raw)
+            exit_code = _exec_result_exit_code(raw)
+            if exit_code != 0:
+                log.error("Benchmark exited with code %s on %s", exit_code, node)
                 log_benchmark_failure_excerpt(node, output)
                 failed_nodes.append(node)
             else:
-                log.info("Benchmark on %s completed successfully", node)
+                log.info("Benchmark on %s completed successfully (exit 0)", node)
 
         if failed_nodes:
             errors.append(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
