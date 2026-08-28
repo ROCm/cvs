@@ -1,5 +1,6 @@
 import datetime
 import os
+import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -159,6 +160,209 @@ class TestFullDmesgScan(unittest.TestCase):
         self.assertEqual(len(result["node1"]), 1)
         self.assertIn("Out of memory error", result["node1"][0])
         mock_fail_test.assert_called()
+
+
+class TestVerifyDmesgDuringTest(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
+
+    @staticmethod
+    def _run_marker_awk_slice(dmesg_text, start_marker, end_marker):
+        """Run the same awk slice used remotely against in-memory dmesg text."""
+        full_cmd = verify_lib._dmesg_slice_by_markers_cmd(start_marker, end_marker)
+        awk_tail = full_cmd.rsplit(" | awk ", 1)[1]
+        completed = subprocess.run(
+            ["bash", "-c", f"awk {awk_tail}"],
+            input=dmesg_text,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return completed.stdout
+
+    def test_disabled_is_no_op(self):
+        phdl = MagicMock()
+        result = verify_lib.verify_dmesg_during_test(phdl, 'Starting Test x', 'End of Test x', dmesg_during_test=False)
+        self.assertEqual(result, {})
+        phdl.exec.assert_not_called()
+
+    @patch("cvs.lib.verify_lib.log")
+    def test_missing_markers_warn_only(self, mock_log):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "unrelated kernel line\n"}
+
+        with patch("cvs.lib.verify_lib.fail_test") as mock_fail:
+            result = verify_lib.verify_dmesg_during_test(
+                phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf"
+            )
+
+        self.assertEqual(result, {"node1": []})
+        mock_fail.assert_not_called()
+        mock_log.warning.assert_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    def test_legacy_slice_command_uses_markers(self, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            "node1": (
+                "line before\n"
+                "Starting Test all_reduce_perf\n"
+                "Mar 1 00:00:00 host kernel: amdgpu page fault segfault at 0\n"
+                "End of Test all_reduce_perf\n"
+                "line after\n"
+            )
+        }
+
+        result = verify_lib.verify_dmesg_during_test(
+            phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf"
+        )
+
+        cmd = phdl.exec.call_args[0][0]
+        self.assertIn("dmesg -T", cmd)
+        self.assertIn("-v s='Starting Test all_reduce_perf'", cmd)
+        self.assertIn("-v e='End of Test all_reduce_perf'", cmd)
+        self.assertIn("last=buf", cmd)
+        self.assertIn('printf "%s",last', cmd)
+        self.assertTrue(result["node1"])
+        mock_fail_test.assert_called()
+
+    def test_trim_trailing_blank_dmesg_lines(self):
+        self.assertEqual(
+            verify_lib._trim_trailing_blank_dmesg_lines("a\nb\n\n"),
+            "a\nb\n",
+        )
+        self.assertEqual(
+            verify_lib._trim_trailing_blank_dmesg_lines("a\n\nb\n\n"),
+            "a\n\nb\n",
+        )
+
+    def test_awk_slice_has_no_trailing_blank_line(self):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        dmesg_text = "Starting Test all_reduce_perf\nEnd of Test all_reduce_perf\n"
+        sliced = self._run_marker_awk_slice(dmesg_text, "Starting Test all_reduce_perf", "End of Test all_reduce_perf")
+        self.assertEqual(len(sliced.splitlines()), 2)
+
+    @patch("cvs.lib.verify_lib.log")
+    def test_log_line_count_excludes_trailing_blank(self, mock_log):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            "node1": ("Starting Test all_reduce_perf\nEnd of Test all_reduce_perf\n\n"),
+        }
+
+        with patch("cvs.lib.verify_lib.fail_test"):
+            verify_lib.verify_dmesg_during_test(phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf")
+
+        info_call = mock_log.info.call_args_list[-1]
+        self.assertEqual(info_call[0][2], 2)
+
+    def test_awk_slice_returns_last_marker_pair_only(self):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        dmesg_text = (
+            "noise before\n"
+            "Starting Test all_reduce_perf\n"
+            "old run segfault\n"
+            "End of Test all_reduce_perf\n"
+            "Starting Test all_reduce_perf\n"
+            "current run line\n"
+            "End of Test all_reduce_perf\n"
+            "noise after\n"
+        )
+        sliced = self._run_marker_awk_slice(dmesg_text, "Starting Test all_reduce_perf", "End of Test all_reduce_perf")
+        self.assertIn("current run line", sliced)
+        self.assertNotIn("old run segfault", sliced)
+        self.assertNotIn("noise before", sliced)
+        self.assertNotIn("noise after", sliced)
+
+    def test_awk_slice_returns_partial_when_end_marker_missing(self):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        dmesg_text = (
+            "Starting Test all_reduce_perf\n"
+            "old complete\n"
+            "End of Test all_reduce_perf\n"
+            "Starting Test all_reduce_perf\n"
+            "crash line still in buffer\n"
+        )
+        sliced = self._run_marker_awk_slice(dmesg_text, "Starting Test all_reduce_perf", "End of Test all_reduce_perf")
+        self.assertIn("crash line still in buffer", sliced)
+        self.assertNotIn("old complete", sliced)
+
+    @patch("cvs.lib.verify_lib.log")
+    def test_crash_partial_slice_warns_missing_end(self, mock_log):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            "node1": "Starting Test all_reduce_perf\ncrash line still in buffer\n",
+        }
+
+        with patch("cvs.lib.verify_lib.fail_test") as mock_fail:
+            result = verify_lib.verify_dmesg_during_test(
+                phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf"
+            )
+
+        self.assertEqual(result, {"node1": []})
+        mock_fail.assert_not_called()
+        mock_log.warning.assert_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    def test_node_scraper_scans_bounded_slice(self, mock_parse, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = [
+            {
+                "priority": "ERROR",
+                "category": "SW_DRIVER",
+                "description": "GPU reset",
+                "match_content": "GPU reset begin",
+                "count": 1,
+                "timestamps": [],
+                "source": "dmesg",
+            }
+        ]
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            "node1": "Starting Test all_reduce_perf\nGPU reset begin\nEnd of Test all_reduce_perf\n"
+        }
+
+        result = verify_lib.verify_dmesg_during_test(
+            phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf"
+        )
+
+        self.assertIn("--time-format iso -x", phdl.exec.call_args[0][0])
+        mock_parse.assert_called_once()
+        self.assertEqual(len(result["node1"]), 1)
+        mock_fail_test.assert_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    @patch("cvs.lib.verify_lib.log")
+    def test_node_scraper_warning_does_not_fail(self, mock_log, mock_parse, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = [
+            {
+                "priority": "WARNING",
+                "category": "SW_DRIVER",
+                "description": "Runlist oversubscribed",
+                "match_content": "Runlist is getting oversubscribed",
+                "count": 1,
+                "timestamps": [],
+                "source": "dmesg",
+            }
+        ]
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            "node1": ("Starting Test all_reduce_perf\nRunlist is getting oversubscribed\nEnd of Test all_reduce_perf\n")
+        }
+
+        result = verify_lib.verify_dmesg_during_test(
+            phdl, "Starting Test all_reduce_perf", "End of Test all_reduce_perf"
+        )
+
+        self.assertEqual(result, {"node1": []})
+        mock_fail_test.assert_not_called()
+        mock_log.warning.assert_called()
 
 
 class TestDmesgMigrations(unittest.TestCase):

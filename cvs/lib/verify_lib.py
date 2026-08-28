@@ -409,6 +409,155 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     return err_dict
 
 
+_DMESG_DURING_TEST_LOG_LINE_CAP = 500
+
+
+def _shell_single_quote(value):
+    """Escape value for embedding in a single-quoted shell argument."""
+    return value.replace("'", "'\"'\"'")
+
+
+def _trim_trailing_blank_dmesg_lines(text):
+    """Remove blank lines after the last non-empty line; keep blank lines in the middle."""
+    if not text:
+        return text
+    lines = text.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return ''
+    return '\n'.join(lines) + '\n'
+
+
+def _dmesg_slice_by_markers_cmd(start_marker, end_marker):
+    """Build a remote shell command that returns dmesg lines between two literal markers.
+
+    When the same marker pair appears multiple times in the ring buffer, only the
+    last complete start..end window is returned (most recent test invocation).
+    If the last start has no matching end (crash/hang), lines from that start to
+    EOF are returned so the caller can warn and optionally scan partial output.
+    """
+    start_quoted = _shell_single_quote(start_marker)
+    end_quoted = _shell_single_quote(end_marker)
+    awk_script = (
+        "index($0,s){buf=$0 ORS;cap=1;next} "
+        "cap{buf=buf $0 ORS;if(index($0,e)){last=buf;cap=0;buf=\"\"}} "
+        "END{if(cap&&buf)printf \"%s\",buf; else if(last)printf \"%s\",last}"
+    )
+    if use_node_scraper_dmesg():
+        dmesg_cmd = "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never"
+    else:
+        dmesg_cmd = "sudo dmesg -T | egrep -v 'ALLOWED|DENIED' --color=never"
+    return f"{dmesg_cmd} | awk -v s='{start_quoted}' -v e='{end_quoted}' '{awk_script}'"
+
+
+def _scan_sliced_dmesg_legacy(output_dict):
+    """Scan marker-bounded dmesg slices with err_patterns_dict / warn_patterns_dict."""
+    err_dict = {}
+    for node in output_dict.keys():
+        err_dict[node] = []
+        for line in output_dict[node].split("\n"):
+            for err_key in err_patterns_dict.keys():
+                if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
+                    fail_test(f'ERROR - Failue pattern ** {line} ** seen in Dmesg')
+                    err_dict[node].append(line)
+            for warn_key in warn_patterns_dict.keys():
+                if re.search(f'{warn_patterns_dict[warn_key]}', line, re.I):
+                    log.warning(
+                        f'WARN - GPU in degraded state ({warn_key}) on {node}: {line.strip()} '
+                        f'-- perf numbers from this run may not be trustworthy'
+                    )
+    return err_dict
+
+
+def _scan_sliced_dmesg_node_scraper(output_dict):
+    """Scan marker-bounded dmesg slices; WARNING events warn, others fail."""
+    err_dict = {}
+    analysis_args = {'error_regex': cvs_dmesg_error_regex()}
+    for node in output_dict.keys():
+        err_dict[node] = []
+        events = node_scraper_adapter.parse_dmesg(output_dict[node], node_name=node, analysis_args=analysis_args)
+        for event in events:
+            priority = str(event.get('priority') or '').upper()
+            lines = node_scraper_adapter.event_match_lines([event])
+            line = lines[0] if lines else (event.get('description') or '')
+            if priority == 'WARNING':
+                log.warning(
+                    f'WARN - GPU in degraded state on {node}: {line} '
+                    f'-- perf numbers from this run may not be trustworthy'
+                )
+                continue
+            msg = f'ERROR - Failure pattern *** {line} *** seen in Dmesg on node {node}'
+            fail_test(msg)
+            err_dict[node].append(line)
+    return err_dict
+
+
+def verify_dmesg_during_test(phdl, start_marker, end_marker, *, dmesg_during_test=True):
+    """
+    Collect dmesg between kmsg start/end markers (inclusive), log the slice per node,
+    and scan for error/warn patterns.
+
+    Intended for RCCL tests that write markers via ``tee /dev/kmsg``. When
+    ``dmesg_during_test`` is False the function is a no-op. Missing markers on a
+    node produce a warning and skip scanning on that node (test is not failed).
+    """
+    if not dmesg_during_test:
+        return {}
+
+    log.info('scan dmesg during test (markers: %s .. %s)', start_marker, end_marker)
+    output_dict = phdl.exec(_dmesg_slice_by_markers_cmd(start_marker, end_marker))
+    log.info('#----------------------------------------------------------#')
+
+    err_dict = {}
+    scannable = {}
+    for node, text in output_dict.items():
+        err_dict[node] = []
+        text = _trim_trailing_blank_dmesg_lines(text)
+        if not text or not text.strip():
+            log.warning(
+                'node %s: dmesg_during_test skipped: empty slice (markers %r .. %r not found or no lines between)',
+                node,
+                start_marker,
+                end_marker,
+            )
+            continue
+        if start_marker not in text:
+            log.warning(
+                'node %s: dmesg_during_test skipped: start marker %r not found in slice',
+                node,
+                start_marker,
+            )
+            continue
+        if end_marker not in text:
+            log.warning(
+                'node %s: dmesg_during_test skipped: end marker %r not found in slice',
+                node,
+                end_marker,
+            )
+            continue
+
+        scannable[node] = text
+        lines = text.splitlines()
+        logged = lines[:_DMESG_DURING_TEST_LOG_LINE_CAP]
+        body = '\n'.join(logged)
+        if len(lines) > _DMESG_DURING_TEST_LOG_LINE_CAP:
+            body = f'{body}\n... (truncated, {len(lines)} lines total)'
+        log.info('node %s: dmesg during test (%d lines):\n%s', node, len(lines), body)
+
+    if not scannable:
+        return err_dict
+
+    if use_node_scraper_dmesg():
+        scan_result = _scan_sliced_dmesg_node_scraper(scannable)
+    else:
+        scan_result = _scan_sliced_dmesg_legacy(scannable)
+
+    for node, matches in scan_result.items():
+        err_dict[node] = matches
+    return err_dict
+
+
 def verify_nic_link_flap(phdl):
     """
     Verify NIC health by checking link flap/reset/down counters from ethtool stats
