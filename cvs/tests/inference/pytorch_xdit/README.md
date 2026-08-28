@@ -1,654 +1,262 @@
-# PyTorch XDit Inference Tests
+# PyTorch XDit Inference Suite (single-node and distributed)
 
-This directory contains inference microbenchmark tests for PyTorch XDit models (WAN, Flux, etc.).
+Cluster validation suite that runs **PyTorch XDit** diffusion inference benchmarks on AMD
+Instinct GPUs (single-node scale-out or unified multi-node distributed) and gates each
+run on artifact presence, docker exit codes, and GPU-specific latency thresholds.
 
-**IMPORTANT**: Use GPU-capable targets with the drivers and device nodes this workload expects (for example ROCm and `/dev/kfd` for these tests). Do not run GPU benchmarks on machines that are not set up for them.
+Library code: `cvs/lib/inference/pytorch_xdit/` (`pytorch_xdit_flux_job.py`,
+`pytorch_xdit_wan_job.py`, `pytorch_xdit_benchmark_job.py`, and output parsers).
 
-For how Hugging Face stores models and what `HF_HOME` means, see the official docs: [Hugging Face Hub cache](https://huggingface.co/docs/huggingface_hub/guides/manage-cache) and [`HF_HOME` / cache environment variables](https://huggingface.co/docs/huggingface/package_reference/environment_variables). Here, `config.hf_home` is bind-mounted to `/hf_home` in the container and should be the directory that contains the `hub/` cache layout the test expects (not necessarily your UNIX home).
+> **Use GPU compute nodes.** Targets must have ROCm device nodes (for example `/dev/kfd`),
+> Docker, and the configured `container_image` pulled locally. Do not run these benchmarks
+> on login or management nodes without GPUs.
 
-**Config placeholders** (see `cvs.lib.utils_lib`): test JSON files resolve `{user-id}`, `{user}`, and `{home}`. Cluster files resolve `{user-id}` only.
+## Overview
 
-**Cleanup test**: the first test stops the named benchmark container and runs `docker system prune --force` on targets. To skip only the prune step after the kill, set `CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1` (values `1`, `true`, `yes`, `on`).
+The suite drives a docker+torchrun benchmark inside `amdsiloai/pytorch-xdit` (or a
+compatible image) on one or more cluster nodes, then parses output artifacts and compares
+latency against per-GPU thresholds. It provides:
 
-**Operational notes**: long SSH sessions may hit a stale client; `Pssh` retries once on `SessionError`. The run steps fail fast if the container image is missing on a node, and they verify expected output artifacts exist before parse/threshold steps. Output directories are named from each target’s `cluster.json` / `node_dict` key (the SSH target string), not the remote `hostname`, so runs stay stable when short vs FQDN hostnames differ.
+1. **Six suites** - FLUX and WAN 2.2 I2V, each in single-node and distributed variants;
+   WAN also has Diffusers/xFuser single and distributed suites.
+2. **Two execution modes** - **single-node** runs one independent job per node in
+   `cluster.json` / `s_phdl.host_list`; **distributed** runs one coordinated torchrun
+   job across `config.nnodes` with distinct `--node_rank`.
+3. **Offline model staging** - models must be present on every participating node before
+   the run (explicit host path or pre-populated Hugging Face cache under `hf_home`).
+4. **Preflight checks** - `/dev/kfd`, local container image, parallelism config
+   (distributed), and WAN xFuser bind-mount validation where applicable.
+5. **Exit-code gating** - benchmark pass/fail uses docker `exit_code` from
+   `exec(..., detailed=True)`, not log-regex scanning.
+6. **Threshold gating** - average FLUX `pipe_time` or WAN `total_time` compared to
+   `expected_results` for the auto-detected GPU type (`mi300x`, `mi350`, `mi355`, or
+   `auto`).
 
-**Thresholds** in sample configs are placeholders; tune them for your hardware and workload.
+Single-node output dirs use the cluster **SSH target** string from `node_dict`, not the
+remote `hostname` (`flux_<target>_outputs`, `wan_22_<target>_outputs`).
 
-## First-Time Setup
+## Quick Start
 
-The shortest path to a successful first run is:
-
-1. SSH to the reserved compute node.
-2. Stage models into a real Hugging Face cache root on that node.
-3. Pull the XDit container image on that node.
-4. Create a single-node `cluster.json`.
-5. Run the full pytest module (or `cvs run`) with `CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1` on shared systems.
-
-### 1. Connect to the compute node
-
-```bash
-ssh <reserved-compute-node-host-or-ip>
-```
-
-### 2. Install `hf` CLI on the node if needed
-
-```bash
-python3 -m venv /tmp/hf-cli-venv
-/tmp/hf-cli-venv/bin/pip install 'huggingface_hub[cli]'
-```
-
-### 3. Set the Hugging Face cache root
-
-Use the directory you want to put in `config.hf_home`. A common choice is:
+Single-node FLUX.1-dev:
 
 ```bash
-export HF_HOME="$HOME/.cache/huggingface"
+cvs run pytorch_xdit_flux_dev_single \
+  --cluster_file ./p3_1n_cluster.json \
+  --config_file cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json \
+  --html ./logs/pytorch_xdit_flux_single.html --self-contained-html -vvv
 ```
 
-**Multi-node clusters**: `config.hf_home` is resolved and staged independently per
-node — it is not synchronized by the test. If `$HOME` is a per-node local disk
-(not NFS-mounted or otherwise shared across the cluster), each node downloads and
-stores its own full copy of the model, multiplying both download time and disk
-usage by the number of nodes. To download once and reuse it everywhere, point
-`hf_home` at a path backed by storage shared across every target node (e.g. an
-NFS-mounted home directory, or an explicit shared mount added via
-`container_config.volume_dict`), and run the `hf download` step only once against
-that shared path rather than once per node.
-
-If you use a gated model and have a token file:
+Distributed FLUX (multi-node unified torchrun):
 
 ```bash
-export HF_TOKEN="$(tr -d '\n' < "$HOME/.hf_token")"
+cvs run pytorch_xdit_flux_dev_distributed \
+  --cluster_file ./p3_2n_cluster.json \
+  --config_file cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_distributed.json \
+  --html ./logs/pytorch_xdit_flux_distributed.html --self-contained-html -vvv
 ```
 
-If your workflow is fully offline and the model is already present in `HF_HOME`, you can skip the download step.
-
-### 4. Stage the models with `hf download`
-
-#### WAN
-
-```bash
-HF_HOME="$HF_HOME" /tmp/hf-cli-venv/bin/hf download \
-  Wan-AI/Wan2.2-I2V-A14B \
-  --revision 206a9ee1b7bfaaf8f7e4d81335650533490646a3
-```
-
-#### FLUX
-
-```bash
-HF_HOME="$HF_HOME" /tmp/hf-cli-venv/bin/hf download \
-  black-forest-labs/FLUX.1-dev
-```
-
-### 5. Pull the container image on the target node
-
-```bash
-docker pull amdsiloai/pytorch-xdit:v25.11.2
-```
-
-### 6. Quick sanity checks
-
-```bash
-test -e /dev/kfd && echo KFD_OK
-test -d "$HF_HOME/hub/models--Wan-AI--Wan2.2-I2V-A14B/snapshots/206a9ee1b7bfaaf8f7e4d81335650533490646a3" && echo WAN_OK
-test -d "$HF_HOME/hub/models--black-forest-labs--FLUX.1-dev/snapshots" && echo FLUX_OK
-docker image inspect amdsiloai/pytorch-xdit:v25.11.2 >/dev/null && echo IMG_OK
-```
-
-### 7. Minimal single-node `cluster.json`
-
-A minimal single-node example with placeholders looks like:
-
-```json
-{
-  "username": "{user-id}",
-  "priv_key_file": "/path/to/private/key",
-  "head_node_dict": {
-    "mgmt_ip": "REPLACE_WITH_COMPUTE_NODE_HOST_OR_IP"
-  },
-  "env_vars": {},
-  "node_dict": {
-    "REPLACE_WITH_COMPUTE_NODE_HOST_OR_IP": {
-      "bmc_ip": "NA",
-      "vpc_ip": "REPLACE_WITH_COMPUTE_NODE_HOST_OR_IP"
-    }
-  }
-}
-```
-
-The **same SSH target string** should be used for:
-
-- `head_node_dict.mgmt_ip`
-- the `node_dict` key
-- `node_dict.<node>.vpc_ip`
-
-Unlike the test JSON files, cluster files resolve `{user-id}` only. Do not use `{home}` in `priv_key_file`; use a real absolute path if `/home/{user-id}/.ssh/id_rsa` is not correct on your system.
-
-This keeps the output directory name stable (`wan_22_<cluster_target>_outputs`, `flux_<cluster_target>_outputs`) even if the remote host reports a different short hostname or FQDN.
-
-### 8. Run the full module
-
-If your `cvs` CLI environment is installed cleanly:
-
-```bash
-CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1 \
-cvs run pytorch_xdit_wan22_14b_single \
-  --cluster_file=/path/to/cluster.json \
-  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json
-```
-
-```bash
-CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1 \
-cvs run pytorch_xdit_flux1_dev_single \
-  --cluster_file=/path/to/cluster.json \
-  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json
-```
-
-If you are running from a source checkout and do not have a working `cvs` entrypoint, the equivalent form is:
-
-```bash
-CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1 \
-PYTHONPATH=/path/to/cvs \
-python -m pytest cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_14b_single.py \
-  --cluster_file=/path/to/cluster.json \
-  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json \
-  -q -s --tb=short
-```
-
-```bash
-CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1 \
-PYTHONPATH=/path/to/cvs \
-python -m pytest cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_single.py \
-  --cluster_file=/path/to/cluster.json \
-  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json \
-  -q -s --tb=short
-```
-
----
-
-## WAN 2.2 Image-to-Video A14B Test
-
-Test file: `pytorch_xdit_wan22_14b_single.py`
-
-### Overview
-
-Runs WAN 2.2 I2V-A14B inference inside the `amdsiloai/pytorch-xdit:v25.11.2` container and validates:
-
-- Successful container execution
-- Presence of benchmark JSONs (`rank0_step*.json`)
-- Presence of generated artifact (`video.mp4`)
-- Average inference time meets GPU-specific threshold
-
-### Prerequisites
-
-1. **Cluster configuration** (`cluster.json`) with:
-   - Node definitions
-   - SSH credentials (username + private key)
-
-2. **Model must be pre-staged locally** (no runtime downloads):
-   - Set `config.model_repo` to an explicit on-disk path on every node (recommended), e.g. `/models/Wan-AI/Wan2.2-I2V-A14B`
-   - Alternatively, use a HF repo id in `config.model_repo` only if the snapshot is already cached under `hf_home` (offline mode). For `Wan-AI/Wan2.2-I2V-A14B`, the verification step applies additional snapshot layout checks.
-
-3. **Targets** with Docker, the configured `container_image` already pulled locally, and ROCm device nodes as required by the container (sample configs use eight processes).
-
-4. **Storage requirements**:
-   - ~118GB for model cache (`hf_home`) — measured from a real `hf download` of
-     `Wan-AI/Wan2.2-I2V-A14B`
-   - ~10GB for output artifacts
-
-### Running the Test
-
-#### Basic invocation
+Single-node WAN 2.2 I2V (native checkpoint layout):
 
 ```bash
 cvs run pytorch_xdit_wan22_14b_single \
-  --cluster_file=/path/to/cluster.json \
-  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json
+  --cluster_file ./p3_1n_cluster.json \
+  --config_file cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json \
+  --html ./logs/pytorch_xdit_wan_single.html --self-contained-html -vvv
 ```
 
-#### Example with absolute paths
+- `--cluster_file` - JSON describing node(s), SSH credentials, and optional `env_vars`.
+- `--config_file` - one of the templates under
+  `cvs/input/config_file/inference/pytorch_xdit/`. Replace every `<changeme>` (especially
+  in distributed NCCL/network fields) before running.
+- `--html` / `--self-contained-html` - pytest HTML report for the suite run.
+
+> Use a **single-node** config with `pytorch_xdit_*_single` suites and a **distributed**
+> config (with `nnodes >= 2` and matching parallel degrees) with `pytorch_xdit_*_distributed`
+> suites. FLUX.1-dev, FLUX.2-dev, and WAN model family are selected via `model_repo`,
+> local `model_index.json`, or benchmark params — the same suite file covers each.
+
+On shared clusters, skip aggressive docker prune during cleanup:
 
 ```bash
-cvs run pytorch_xdit_wan22_14b_single \
-  --cluster_file=/home/user/cluster.json \
-  --config_file=/home/user/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json
+export CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1
 ```
 
-### Configuration
+## The six suites
 
-Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json`:
+| Suite (`cvs run <name>`) | File | Model / launcher | Mode |
+|---|---|---|---|
+| `pytorch_xdit_flux_dev_single` | `pytorch_xdit_flux_dev_single.py` | FLUX.1 (`run_usp.py`) or FLUX.2 (`flux2_example.py`) | one job per node in cluster |
+| `pytorch_xdit_flux_dev_distributed` | `pytorch_xdit_flux_dev_distributed.py` | FLUX.1 / FLUX.2 unified torchrun | `nnodes >= 2`, shared rank-0 output |
+| `pytorch_xdit_wan22_14b_single` | `pytorch_xdit_wan22_14b_single.py` | WAN 2.2 I2V native (`/app/Wan2.2/run.py`) | one job per node |
+| `pytorch_xdit_wan22_14b_distributed` | `pytorch_xdit_wan22_14b_distributed.py` | WAN 2.2 native unified torchrun | `nnodes >= 2` |
+| `pytorch_xdit_wan22_14b_diffusers_single` | `pytorch_xdit_wan22_14b_diffusers_single.py` | WAN Diffusers xFuser (`wan_i2v_example.py`) | one job per node |
+| `pytorch_xdit_wan22_14b_diffusers_distributed` | `pytorch_xdit_wan22_14b_diffusers_distributed.py` | WAN Diffusers xFuser unified torchrun | `nnodes >= 2` |
 
-```json
-{
-    "config": {
-        "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
-        "container_name": "wan22-benchmark",
-        "hf_token_file": "{home}/.hf_token",
-        "hf_home": "{home}/.cache/huggingface",
-        "output_base_dir": "{home}/cvs_outputs",
-        "model_repo": "Wan-AI/Wan2.2-I2V-A14B",
-        "model_rev": "206a9ee1b7bfaaf8f7e4d81335650533490646a3",
-        "container_config": {
-            "device_list": ["/dev/dri", "/dev/kfd"],
-            "volume_dict": {},
-            "env_dict": {}
-        }
-    },
-    "benchmark_params": {
-        "wan22_i2v_a14b": {
-            "prompt": "Summer beach vacation...",
-            "size": "720*1280",
-            "frame_num": 81,
-            "num_benchmark_steps": 5,
-            "compile": true,
-            "torchrun_nproc": 8,
-            "expected_results": {
-                "auto": {"max_avg_total_time_s": 9999.0}
-            }
-        }
-    }
-}
-```
-
-**Placeholders** (automatically resolved in test config):
-
-- `{user-id}`: Username
-- `{home}`: Home directory of that user
-
-**Key parameters**:
-
-- `hf_home`: Host directory for HF model cache (mounted to `/hf_home` in container). This should be the root that contains `hub/`, typically `{home}/.cache/huggingface`.
-- `output_base_dir`: Host directory for benchmark outputs
-- `num_benchmark_steps`: Number of inference iterations (5 recommended)
-- `torchrun_nproc`: Number of GPU processes (typically 8 for MI300X)
-- `expected_results`: Performance thresholds by GPU type
-
-### Expected Output Artifacts
-
-After a successful run, outputs are under a directory named with the cluster **SSH target** for that node (see shared notes above), not necessarily `hostname`:
-
-```
-${output_base_dir}/wan_22_<cluster_target>_outputs/
-├── outputs/
-│   ├── outputs/
-│   │   ├── video.mp4          # Generated video artifact
-│   │   ├── rank0_step0.json   # Benchmark JSON (example)
-│   │   └── ...
-```
-
-Step JSON names follow `rank0_step*.json`; with **`num_benchmark_steps: 1`**, a successful run may produce **`rank0_step1.json`** rather than `rank0_step0.json`. **`video.mp4`** may be located via recursive search under the run directory.
-
-Each `rank0_step*.json` contains:
-
-```json
-{
-  "total_time": 10.234,
-  ...
-}
-```
-
-### Test Execution Flow
-
-1. **Cleanup**: Stop stale benchmark container; optional prune (see above).
-2. **Model verification (offline)**: Paths and, for standard WAN repo id flows, snapshot layout checks.
-3. **Preflight**: `/dev/kfd` and local `config.container_image` on each target.
-4. **Benchmark run**: WAN inference with torchrun; verifies non-empty `rank0_step*.json` and `video.mp4` on success.
-5. **Result parsing**: Locate step JSONs and `video.mp4`, average timings, threshold check.
-
-### Pass/Fail Criteria
-
-The test **PASSES** if:
-
-- Model is present and passes verification (including WAN snapshot checks where applicable).
-- Container executes without errors; expected artifacts are present.
-- Average `total_time` meets the configured threshold for the detected GPU type.
-
-The test **FAILS** if:
-
-- Model is missing or incomplete on a target node.
-- Preflight checks fail (`/dev/kfd`, container image).
-- Container execution fails or artifacts are missing/empty.
-- Average time exceeds threshold.
-
-### Troubleshooting
-
-#### Missing Model Path
-
-```
-Local model path not found on <node>: /models/...
-```
-
-**Solution**: Pre-stage the model directory on every node and set `config.model_repo` to that path.
-
-#### Container Image Missing
-
-```
-Container image not found locally on <node>...
-```
-
-**Solution**: `docker pull` the configured image on each target node before running the test.
-
-#### Performance Threshold Exceeded
-
-```
-FAIL: Average total_time XX.XXs > threshold YY.YYs (GPU: <gpu_type>)
-```
-
-**Solution**: Tune the workload or thresholds for your environment.
-
-#### Missing Output Artifacts
-
-```
-Artifact 'video.mp4' not found...
-```
-
-**Solution**: Inspect logs on the target; confirm you are looking under `wan_22_<cluster_target>_outputs` for that node’s SSH key in `node_dict`.
-
-#### SSH errors after a long run
-
-If a lightweight remote command fails after a long run, `Pssh` retries once on `SessionError`; check logs for the retry line.
-
-### Configuration Validation
-
-The test uses **Pydantic schemas** for fail-fast validation. If your config has issues, you'll see clear errors:
-
-```
-Invalid WAN configuration:
-  config.model_repo: field required
-```
-
-Common validation errors:
-
-- Missing required fields (`hf_token_file`, `hf_home`, etc.)
-- Invalid types (e.g., `compile` must be boolean)
-- Invalid ranges (e.g., `num_benchmark_steps` must be ≥ 1)
-- Missing `expected_results` or no `auto`/GPU-specific threshold
-
-### GPU Type Detection
-
-The test auto-detects GPU type from `rocm-smi` output:
-
-- `mi300x` → uses `expected_results.mi300x` threshold
-- `mi355` → uses `expected_results.mi355` threshold
-- Other/unknown → uses `expected_results.auto` threshold
-
-### Listing Available Tests
+List suites and test functions:
 
 ```bash
-# List all CVS tests
 cvs list
-
-# List test functions within this test module
-cvs list pytorch_xdit_wan22_14b_single
+cvs list pytorch_xdit_flux_dev_single
 ```
 
-### Example Output
+## Test lifecycle (report rows)
 
-```
-============================= test session starts ==============================
-collecting ... collected 4 items
+Tests run in this order within each suite file.
 
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_14b_single.py::test_cleanup_stale_containers PASSED
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_14b_single.py::test_verify_hf_cache_or_download PASSED
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_14b_single.py::test_run_wan22_benchmark PASSED
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_wan22_14b_single.py::test_parse_and_validate_results PASSED
+| Order | Test | Single | Distributed | Purpose |
+|---|---|---|---|---|
+| 1 | `test_cleanup_stale_containers` | yes | yes | Stop named benchmark container; optional `docker system prune` |
+| 2 | `test_verify_hf_cache_or_download` | FLUX, WAN native | FLUX, WAN native | Offline model presence on every node |
+| 2 | `test_verify_model_on_nodes` | WAN Diffusers | WAN Diffusers | Model / mount preflight for Diffusers layout |
+| 3 | `test_verify_parallelism_config` | no | yes | `ulysses × ring × … == nnodes × torchrun_nproc` |
+| 4 | `test_run_*_benchmark` | yes | yes | docker+torchrun benchmark; gates on exit code |
+| 5 | `test_parse_and_validate_results` | yes | yes | Parse artifacts, average latency, threshold PASS/FAIL |
 
-============================== 4 passed in X.XXs ==============================
-```
+Distributed suites scope `s_phdl` to `server_node_list` / `nnodes` participating nodes,
+not necessarily every entry in `cluster.json`.
 
----
+## Metrics and PASS/FAIL
 
-## FLUX.1-dev Text-to-Image Test
+GPU type is detected once per suite from `rocm-smi` on rank-0 (or the sole node).
+Threshold lookup order: exact GPU key → `auto`.
 
-Test file: `pytorch_xdit_flux1_dev_single.py`
+| Model family | Parsed metric | Threshold key | Required artifacts |
+|---|---|---|---|
+| FLUX | average `pipe_time` from `results/timing.json` | `max_avg_pipe_time_s` | non-empty `timing.json`, at least one `flux_*.png` |
+| WAN native | average `total_time` from `rank0_step*.json` | `max_avg_total_time_s` | step JSONs, `video.mp4` (recursive search) |
+| WAN Diffusers xFuser | average epoch time from `results/timing.json` | `max_avg_total_time_s` | `results/timing.json`, `results/video_i2v.mp4` |
 
-### Overview
+A suite **passes** when model preflight succeeds, the benchmark exits 0 on every
+participating node, expected artifacts exist, and the averaged metric is at or below the
+configured threshold.
 
-Runs FLUX.1-dev text-to-image inference inside the `amdsiloai/pytorch-xdit:v25.11.2` container and validates:
+A suite **fails** when model paths are missing, preflight checks fail, docker exits
+non-zero, artifacts are missing/empty, or latency exceeds the threshold.
 
-- Successful container execution
-- Presence of timing.json with pipe_time measurements
-- Presence of generated images (`flux_*.png`)
-- Average inference time meets GPU-specific threshold
+Sample thresholds in-repo are starting points; tune `expected_results` for your hardware,
+software stack, and benchmark settings before production gating.
 
-### Prerequisites
+## Output layout
 
-1. **Cluster configuration** (`cluster.json`) with:
-   - Node definitions
-   - SSH credentials (username + private key)
-
-2. **Model must be pre-staged locally** (no runtime downloads):
-   - Set `config.model_repo` to an explicit on-disk path on every node (recommended), e.g. `/models/black-forest-labs/FLUX.1-dev`
-   - Alternatively, use a HF repo id in `config.model_repo` only if the snapshot is already cached under `hf_home` (offline mode)
-   - If you pre-download from Hugging Face, ensure any required model license is accepted beforehand
-
-3. **Targets** with Docker, the configured `container_image` already pulled locally, and ROCm as required by the container.
-
-4. **Storage requirements**:
-   - ~35GB for model cache (`hf_home`)
-   - ~5GB for output artifacts
-
-### Running the Test
-
-#### Basic invocation
-
-```bash
-cvs run pytorch_xdit_flux1_dev_single \
-  --cluster_file=/path/to/cluster.json \
-  --config_file=/path/to/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json
-```
-
-#### Example with absolute paths
-
-```bash
-cvs run pytorch_xdit_flux1_dev_single \
-  --cluster_file=/home/user/cluster.json \
-  --config_file=/home/user/cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json
-```
-
-### Configuration
-
-Edit `cvs/cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json`:
-
-```json
-{
-    "config": {
-        "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
-        "container_name": "flux-benchmark",
-        "hf_token_file": "{home}/.hf_token",
-        "hf_home": "{home}/.cache/huggingface",
-        "output_base_dir": "{home}/cvs_flux_output",
-        "model_repo": "black-forest-labs/FLUX.1-dev",
-        "model_rev": "",
-        "container_config": {
-            "device_list": ["/dev/dri", "/dev/kfd"],
-            "volume_dict": {},
-            "env_dict": {}
-        }
-    },
-    "benchmark_params": {
-        "flux1_dev_t2i": {
-            "prompt": "A small cat",
-            "seed": 42,
-            "num_inference_steps": 25,
-            "max_sequence_length": 256,
-            "no_use_resolution_binning": true,
-            "warmup_steps": 1,
-            "warmup_calls": 5,
-            "num_repetitions": 25,
-            "height": 1024,
-            "width": 1024,
-            "ulysses_degree": 8,
-            "ring_degree": 1,
-            "use_torch_compile": true,
-            "torchrun_nproc": 8,
-            "expected_results": {
-                "auto": {"max_avg_pipe_time_s": 9999.0}
-            }
-        }
-    }
-}
-```
-
-**Placeholders** (automatically resolved in test config):
-
-- `{user-id}`: Username
-- `{home}`: Home directory of that user
-
-**Key parameters**:
-
-- `hf_home`: Host directory for HF model cache (mounted to `/hf_home` in container). This should be the root that contains `hub/`, typically `{home}/.cache/huggingface`.
-- `output_base_dir`: Host directory for benchmark outputs
-- `model_rev`: Model revision (empty string means use any available snapshot)
-- `num_repetitions`: Number of inference iterations (25 recommended for stable averages)
-- `num_inference_steps`: Number of denoising steps (25 is default for FLUX.1-dev)
-- `torchrun_nproc`: Number of GPU processes (typically 8 for MI300X)
-- `use_torch_compile`: Enable torch.compile optimization (recommended)
-- `expected_results`: Performance thresholds by GPU type
-
-### Expected Output Artifacts
-
-After a successful run:
+**FLUX** (single-node example):
 
 ```
 ${output_base_dir}/flux_<cluster_target>_outputs/
-├── results/
-│   ├── timing.json        # Benchmark timing data (JSON list with pipe_time)
-│   ├── flux_0.png         # Generated image (repetition 0)
-│   ├── flux_1.png         # Generated image (repetition 1)
-│   ├── flux_2.png         # ...
-│   └── ...
+└── results/
+    ├── timing.json
+    └── flux_*.png
 ```
 
-The `timing.json` file contains a JSON list where each entry has:
-
-```json
-[
-  {
-    "pipe_time": 5.234,
-    ...
-  },
-  ...
-]
-```
-
-### Test Execution Flow
-
-1. **Cleanup**: Same as WAN (see above).
-2. **Model verification (offline)**: Diffusers-style checks for absolute paths; HF cache rules for repo ids.
-3. **Preflight**: `/dev/kfd` and local `config.container_image` on each target.
-4. **Benchmark run**: Flux inference; verifies non-empty `results/timing.json` and at least one non-empty `flux_*.png`.
-5. **Result parsing**: Average `pipe_time`, threshold check.
-
-### Pass/Fail Criteria
-
-The test **PASSES** if:
-
-- Model is present and passes verification.
-- Container executes without errors; timing and images are present.
-- Average `pipe_time` meets the configured threshold for the detected GPU type.
-
-The test **FAILS** if:
-
-- Model is missing on a target node.
-- Preflight or container execution fails.
-- Timing data or images are missing.
-- Average time exceeds threshold.
-
-### Troubleshooting
-
-#### Missing Model Path
-
-If you see a failure like:
+**WAN native**:
 
 ```
-Local model path not found on <node>: /models/...
+${output_base_dir}/wan_22_<cluster_target>_outputs/
+└── outputs/.../rank0_step*.json, video.mp4
 ```
 
-**Solution**: Pre-stage the model directory on every node and set `config.model_repo` to that path.
-
-#### Incomplete FLUX directory
-
-Errors about missing transformer/VAE weights or `model_index.json`.
-
-**Solution**: Stage a complete diffusers-style tree.
-
-#### Container Image Missing
+**WAN Diffusers xFuser**:
 
 ```
-Container image not found locally on <node>...
+${output_base_dir}/wan_22_<cluster_target>_outputs/
+└── results/timing.json, results/video_i2v.mp4
 ```
 
-**Solution**: `docker pull` the configured image on each target node before running the test.
+Distributed runs write to `flux_<rank0_target>_outputs` or `wan_22_<rank0_target>_outputs`
+shared across ranks.
 
-#### Performance Threshold Exceeded
+## Config files
 
-```
-FAIL: Average pipe_time XX.XXs > threshold YY.YYs (GPU: <gpu_type>)
-```
+Templates live in `cvs/input/config_file/inference/pytorch_xdit/`:
 
-**Solution**: Tune the workload or thresholds for your environment.
+| Config file | Typical suite |
+|---|---|
+| `mi300x_pytorch_xdit_flux1_dev_single.json` | `pytorch_xdit_flux_dev_single` |
+| `mi300x_pytorch_xdit_flux1_dev_distributed.json` | `pytorch_xdit_flux_dev_distributed` |
+| `mi300x_pytorch_xdit_flux2_dev_single.json` | `pytorch_xdit_flux_dev_single` |
+| `mi300x_pytorch_xdit_flux2_dev_distributed.json` | `pytorch_xdit_flux_dev_distributed` |
+| `mi300x_pytorch_xdit_wan22_14b_single.json` | `pytorch_xdit_wan22_14b_single` |
+| `mi300x_pytorch_xdit_wan22_14b_distributed.json` | `pytorch_xdit_wan22_14b_distributed` |
+| `mi300x_pytorch_xdit_wan22_14b_diffusers_single.json` | `pytorch_xdit_wan22_14b_diffusers_single` |
+| `mi300x_pytorch_xdit_wan22_14b_diffusers_distributed.json` | `pytorch_xdit_wan22_14b_diffusers_distributed` |
 
-#### Missing Output Artifacts
+**Placeholders** (test JSON): `{user-id}`, `{user}`, `{home}` — resolved at startup.
+Cluster JSON resolves `{user-id}` only; use real absolute paths for `priv_key_file` when
+`/home/{user-id}/.ssh/id_rsa` is wrong on your system.
 
-```
-No images matching 'flux_*.png' found...
-```
+**Key config fields:**
 
-**Solution**: Check container logs and GPU access.
+- `hf_home` - host Hugging Face cache root (mounted at `/hf_home`); must contain `hub/`
+  when using repo-id + offline cache mode. See
+  [HF cache docs](https://huggingface.co/docs/huggingface_hub/guides/manage-cache).
+- `model_repo` - Hugging Face repo id or absolute on-disk model path (preferred at scale).
+- `output_base_dir` - host directory for benchmark outputs.
+- `container_config.device_list` - typically `["/dev/dri", "/dev/kfd"]`.
+- `nnodes`, `master_addr`, `nccl_*`, `gloo_socket_ifname` - distributed rendezvous and
+  NCCL tuning (replace `<changeme>` values).
+- `benchmark_params.flux1_dev_t2i` or `benchmark_params.wan22_i2v_a14b` - torchrun
+  parallelism, warmup/repetition counts, and `expected_results`.
 
-#### timing.json Not Found
+Configs are validated through Pydantic schemas (`PytorchXditFluxConfigFile`,
+`PytorchXditWanConfigFile`) at load time.
 
-```
-timing.json not found under output directory
-```
+## First-time setup
 
-**Solution**: Confirm the container finished successfully; look under `flux_<cluster_target>_outputs/results/`.
+1. SSH to each compute node (or a shared staging host with cluster-visible storage).
+2. Stage models under a real `hf_home` or bind-mount path (`hf download` or rsync).
+3. `docker pull` the configured `container_image` on every execution node.
+4. Create `cluster.json` with the same SSH target string for `mgmt_ip`, `node_dict` key,
+   and `vpc_ip`.
+5. Run with `CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1` on shared systems.
 
-### Configuration Validation
-
-The test uses **Pydantic schemas** for fail-fast validation. If your config has issues, you'll see clear errors:
-
-```
-Invalid Flux configuration:
-  config.model_repo: field required
-```
-
-Common validation errors:
-
-- Missing required fields (`hf_token_file`, `hf_home`, etc.)
-- Invalid types (e.g., `use_torch_compile` must be boolean)
-- Invalid ranges (e.g., `num_repetitions` must be ≥ 1)
-- Missing `expected_results` or no `auto`/GPU-specific threshold
-
-### GPU Type Detection
-
-The test auto-detects GPU type from `rocm-smi` output:
-
-- `mi300x` → uses `expected_results.mi300x` threshold
-- `mi355` → uses `expected_results.mi355` threshold
-- Other/unknown → uses `expected_results.auto` threshold
-
-### Listing Available Tests
+**Model download examples** (on the node):
 
 ```bash
-# List all CVS tests
-cvs list
-
-# List test functions within this test module
-cvs list pytorch_xdit_flux1_dev_single
+export HF_HOME="$HOME/.cache/huggingface"
+hf download black-forest-labs/FLUX.1-dev
+hf download Wan-AI/Wan2.2-I2V-A14B --revision 206a9ee1b7bfaaf8f7e4d81335650533490646a3
 ```
 
-### Example Output
+**Sanity checks:**
 
+```bash
+test -e /dev/kfd && echo KFD_OK
+docker image inspect amdsiloai/pytorch-xdit:v25.11.2 >/dev/null && echo IMG_OK
 ```
-============================= test session starts ==============================
-collecting ... collected 4 items
 
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_single.py::test_cleanup_stale_containers PASSED
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_single.py::test_verify_hf_cache_or_download PASSED
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_single.py::test_run_flux1_benchmark PASSED
-cvs/cvs/tests/inference/pytorch_xdit/pytorch_xdit_flux1_dev_single.py::test_parse_and_validate_results PASSED
+**Multi-node storage:** `hf_home` is verified independently per node. If `$HOME` is not
+shared across the cluster, each node needs its own full model copy unless you mount a
+shared path via `container_config.volume_dict`.
 
-============================== 4 passed in X.XXs ==============================
-```
+## Prerequisites
+
+- Passwordless SSH from the control host to each execution node (key in cluster file).
+- Docker on every execution node with the benchmark image pre-pulled.
+- ROCm GPUs with `/dev/kfd` and `/dev/dri` available to the container.
+- Models staged offline on every participating node (no runtime Hugging Face downloads
+  at scale).
+- Hugging Face token file at `hf_token_file` when using gated models or FLUX.2 chat
+  template fetch paths.
+- Distributed runs: NCCL/RDMA network settings matching the cluster; parallel-degree
+  product must equal `nnodes × torchrun_nproc`.
+
+## Operational notes
+
+- **Cleanup:** `test_cleanup_stale_containers` kills the named container and runs
+  `docker system prune --force` unless `CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1`.
+- **SSH retries:** long benchmark sessions may hit stale SSH clients; `Pssh` retries once
+  on `SessionError`.
+- **Local single-node:** when the sole cluster target resolves to localhost, single suites
+  may use a `LocalPssh` path instead of SSH.
+- **WAN xFuser:** Diffusers suites may require bind-mounting `wan_i2v_example.py` and an
+  I2V input image in `volume_dict`, or enabling auto-generated in-container input.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Action |
+|---|---|---|
+| `/dev/kfd not found` | non-GPU or wrong node class | run on GPU compute nodes |
+| `Container image not found locally` | image not pulled | `docker pull` on each node |
+| `Local model path not found` | model not staged | rsync/`hf download` to every node |
+| `Parallel degree product != world_size` | config mismatch | align ulysses/ring/… with `nnodes × nproc` |
+| Threshold exceeded | slow hardware or wrong baseline | tune workload or `expected_results` |
+| Missing `video.mp4` / `timing.json` | benchmark failed mid-run | inspect benchmark log tail on failing node |
