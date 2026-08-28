@@ -8,16 +8,41 @@ field). One config = one GPU arch + mode (single or distributed).
 
 ## File inventory
 
-| Config | Threshold | Arch / mode |
+Each config has a sibling threshold file named by its `threshold_json` field
+(same stem + `_threshold.json`).
+
+### MI300X
+
+| Config | Model | Mode |
 |---|---|---|
-| `mi300x_jaxmaxtext_llama-3.3-70b_single.json` | `mi300x_jaxmaxtext_llama-3.3-70b_single_threshold.json` | MI300X, single-node |
-| `mi300x_jaxmaxtext_llama-3.3-70b_distributed.json` | `mi300x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json` | MI300X, distributed |
-| `mi325x_jaxmaxtext_llama-3.3-70b_distributed.json` | `mi325x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json` | MI325X, distributed |
+| `mi300x_jaxmaxtext_llama-3.3-70b_single.json` | Llama-3.3-70B | single-node |
+| `mi300x_jaxmaxtext_llama-3.3-70b_distributed.json` | Llama-3.3-70B | distributed |
+| `mi300x_jaxmaxtext_llama-3.1-8b_distributed.json` | Llama-3.1-8B | distributed |
+| `mi300x_jaxmaxtext_deepseek-v2-lite_distributed.json` | DeepSeek-V2-Lite | distributed |
 
-Add analogous config + threshold pairs for other archs (e.g. MI355X) as needed.
+### MI325X
 
-Keys prefixed with `_` (e.g. `_error_patterns_comment`) are inline comments and
-are ignored by the loader.
+| Config | Model | Mode |
+|---|---|---|
+| `mi325x_jaxmaxtext_llama-3.3-70b_distributed.json` | Llama-3.3-70B | distributed |
+| `mi325x_jaxmaxtext_llama-3.1-8b_distributed.json` | Llama-3.1-8B | distributed |
+| `mi325x_jaxmaxtext_llama-3.1-405b_distributed.json` | Llama-3.1-405B | distributed |
+| `mi325x_jaxmaxtext_deepseek-v2-lite_distributed.json` | DeepSeek-V2-Lite | distributed |
+
+### MI355X
+
+| Config | Model | Mode |
+|---|---|---|
+| `mi355x_jaxmaxtext_llama-3.3-70b_distributed.json` | Llama-3.3-70B | distributed |
+| `mi355x_jaxmaxtext_llama-3.1-8b_distributed.json` | Llama-3.1-8B | distributed |
+| `mi355x_jaxmaxtext_llama-3.1-405b_distributed.json` | Llama-3.1-405B | distributed |
+| `mi355x_jaxmaxtext_deepseek-v2-lite_distributed.json` | DeepSeek-V2-Lite | distributed |
+
+One config = one GPU arch + mode. Add analogous config + threshold pairs for new
+archs/models as needed.
+
+Keys prefixed with `_` (e.g. `_error_patterns_comment`, `_example_ib_hca`) are
+inline comments/examples and are ignored by the loader.
 
 ## What you MUST change for your cluster / setup
 
@@ -28,14 +53,16 @@ Start from the config closest to your target arch/mode and edit these:
 | `container.image` | container image | Your MaxText/JAX ROCm image tag present on the nodes |
 | `container.name` | container name | Any unique name (optional) |
 | `paths.shared_fs` | base path (`/home/{user-id}`) | A path reachable from all nodes; `{user-id}` resolves to the cluster/OS user |
+| `paths.temp_dir` | in-container scratch (`/tmp/{user-id}/jaxmaxtext`) | Host-user-namespaced scratch for launcher scripts / MaxText YAML; keep `{user-id}` so shared nodes never collide on `/tmp/root` |
 | `paths.hf_token_file` | HF token path | Location of your Hugging Face token file on the nodes |
-| `training.tokenizer.hf_model_id` | tokenizer repo | The HF tokenizer to download (matches the model) |
+| `training.tokenizer.hf_model_id` | tokenizer repo | The HF tokenizer to download (matches the model). Skipped automatically when every enabled run uses `dataset_type: synthetic` |
 | `training.tokenizer.tokenizer_path` | in-container tokenizer dir | Where the tokenizer is written (usually under `{paths.models_dir}`) |
 | `training.gpus_per_node` | GPUs per node | Your node's GPU count (default 8); feeds total-throughput/scaling metrics - do not assume a fixed topology |
 | `training.nic_type` | NIC type | `thor2` (Broadcom) etc. for distributed; `none` for single-node |
-| `training.rdma_lib.*` | RDMA lib paths | Host/container paths for the NIC's `libibverbs` provider (distributed) |
+| `training.rdma_lib.*` | RDMA lib paths | **Backup** 2-stage copy of the NIC's `libibverbs` provider into the container; used only when a direct read-only `.so` bind-mount is not allowed (distributed). Unused when the `.so` is mounted `:ro` directly (the default) |
 | `training.nccl.ib_hca` / `ib_hca_list` | RDMA HCA devices | Your nodes' RDMA device names (e.g. `rdma0..rdma7`) |
 | `training.nccl.socket_ifname` / `gloo_socket_ifname` | control NIC | Your management interface name (e.g. `eno0`) |
+| `training.nccl.ib_gid_index` | RoCE GID index | Your cluster's GID index (commonly `3`); exported as `NCCL_IB_GID_INDEX`. Shipped as `<changeme>` (distributed hard-exits until set) |
 | `training.jax_distributed.coordinator_ip` | JAX coordinator | Keep `auto` (uses the first node in the cluster `node_dict`), or set a specific IP |
 | `training.sweeps[].maxtext_overrides.quantization` | FP8 recipe | `nanoo_fp8` on MI300X/MI325X (CDNA3); `fp8` on MI355X/MI350X (CDNA4) |
 | `training.scaling_baseline.tokens_per_sec_total` | 1-node baseline | Your measured single-node total tok/s (0.0 disables scaling efficiency) |
@@ -68,7 +95,7 @@ Top-level (framework-agnostic) fields:
 | `gpu_arch` | `mi300x` / `mi325x` / `mi355x` (labels the run) |
 | `enforce_thresholds` | `true` = metrics gate PASS/FAIL; `false` = record-only |
 | `threshold_json` | Sibling threshold filename |
-| `paths` | `shared_fs`, `models_dir`, `log_dir`, `hf_token_file` |
+| `paths` | `shared_fs`, `models_dir`, `log_dir`, `hf_token_file`, `temp_dir` (host-user scratch, `/tmp/{user-id}/jaxmaxtext`) |
 | `model` | `id`, `remote` (0 = already cached), `precision` (label) |
 | `container` | `lifetime`, `name`, `image`, `runtime` (docker `args`: network/ipc/privileged/shm-size/ulimit/volumes) |
 
@@ -83,16 +110,18 @@ Top-level (framework-agnostic) fields:
 | `enable_checkpointing` | Whether MaxText writes checkpoints |
 | `train_script_paths` | Candidate in-container paths to the MaxText train entrypoint; the job picks the first one that exists in the running container. List them newest-first (e.g. v26.4+ path before the v26.3 path) so a version bump only needs a new entry, not an edit. `train_script` (single path) is still accepted as a deprecated fallback. |
 | `maxtext_config` | MaxText YAML params written verbatim (see below) |
-| `tokenizer` | `hf_model_id` (download source), `tokenizer_path` (in-container dir) |
-| `nic_type` | NIC family; `thor2` triggers the RDMA-lib copy, `none` skips it |
-| `rdma_lib` | Host/container paths for the NIC's libibverbs provider (distributed) |
-| `env_vars` | Environment exported before training (NCCL/NVTE/HIP/XLA client) |
+| `tokenizer` | `hf_model_id` (download source), `tokenizer_path` (in-container dir). Download is skipped when every enabled run is `dataset_type: synthetic` |
+| `nic_type` | NIC family; `thor2` triggers the backup RDMA-lib copy, `none` skips it |
+| `rdma_lib` | **Backup** host/container paths for the 2-stage libibverbs copy (distributed); unused when the `.so` is bind-mounted `:ro` directly |
+| `env_vars` | Environment exported before training (NCCL/NVTE/HIP/XLA client). `NCCL_IB_TC`/`NCCL_IB_SL` live here; `NCCL_IB_GID_INDEX` is driven by `nccl.ib_gid_index` instead |
 | `xla_flags` | `XLA_FLAGS` passed to the run |
-| `nccl` | RDMA HCA list + control interface names for distributed comms |
+| `nccl` | RDMA HCA list + control interface names + `ib_gid_index` (exported as `NCCL_IB_GID_INDEX`) for distributed comms |
 | `jax_distributed` | `coordinator_ip` (`auto` = first node), `coordinator_port`, init/heartbeat timeouts |
 | `scaling_baseline` | 1-node `tokens_per_sec_total` + `num_nodes` for scaling-efficiency % |
 | `convergence` | `target_metric` (`auto`/`train_loss`/`eval_loss`) + `target_value` for time-to-target |
 | `loss_curve` | `sample_every`, `milestone_steps`, `max_slope`, `enforce` for the loss-curve check |
+| `smoke` | Smoke test (test_smoke), ENABLED by default; `enabled`, `steps`, `per_device_batch_size`, `max_target_length` (see below) |
+| `checkpoint_resume` | Checkpoint save+resume + I/O-timing test (test_checkpoint_resume), opt-in (`enabled: false`); see below |
 | `error_patterns` | `{name: regex}` scanned in the training log (see below) |
 | `sweeps` | List of `{name, maxtext_overrides}`; `name` is the threshold cell key |
 | `enabled_sweep_list` | Subset of sweep names to actually run |
@@ -133,6 +162,50 @@ BF16 sweeps use `quantization: ""` and keep `dtype`/`weight_dtype: bfloat16`.
 fails that sweep's `test_training_run` with the matched name. Add/remove entries
 as you find new signatures. Remove the whole block to fall back to the driver's
 built-in defaults. Escape backslashes per JSON (e.g. two backslashes for `\d`).
+
+### `smoke` block
+
+The smoke test (`test_smoke`) loads the model and runs a few steps at a small
+fixed batch/seqlen in BF16, passing only if no `error_patterns`/NaN signature
+fires (no metric/threshold checks). A failure gates the rest of the suite.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Runs by default (opt-OUT). Set `false` to skip it, e.g. during iterative experiments |
+| `steps` | `5` | Steps for the smoke run |
+| `per_device_batch_size` | `1` | Small fixed batch for the smoke run |
+| `max_target_length` | `2048` | Small fixed sequence length for the smoke run |
+
+You can also skip it ad-hoc without editing the config: `cvs run … -k "not smoke"`.
+
+### `checkpoint_resume` block
+
+Opt-in (`enabled: false` by default). Runs ONE sweep twice: Phase 1 trains
+`steps_before_ckpt` with checkpointing on (a checkpoint is written at
+`checkpoint_period`); Phase 2 resumes and trains `steps_after_resume` more.
+Passes when Phase 2 restarts at the checkpoint step AND the loss at the resume
+boundary matches Phase 1 within `loss_tolerance`. Also benchmarks
+`checkpoint_save_seconds` / `checkpoint_load_seconds`, gated against
+`max_save_seconds` / `max_load_seconds` when those are `> 0` (else record-only).
+
+| Field | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Opt-in switch |
+| `sweep` | `""` | Which sweep to exercise (`""` = first enabled) |
+| `steps_before_ckpt` | `6` | Phase-1 steps (checkpoint saved at `checkpoint_period`) |
+| `steps_after_resume` | `6` | Phase-2 steps after resuming |
+| `checkpoint_period` | `5` | Save frequency; must be `<= steps_before_ckpt` or Phase 1 saves nothing |
+| `loss_tolerance` | `0.1` | Max loss delta at the resume boundary |
+| `max_save_seconds` / `max_load_seconds` | `0.0` | I/O time gates; `0` = record-only |
+| `delete_ckpt_dir` | `true` | Delete the checkpoint dir after the test (`false` keeps it for inspection) |
+| `smoke_model_overrides` | `{}` | Optional shrink of the model (same tokenizer/vocab) for a fast I/O check |
+
+## Datasets and the tokenizer
+
+`dataset_type: synthetic` (random token ids in `[0, vocab_size)`) needs no
+tokenizer, so `test_setup_tokenizer` is skipped automatically when every enabled
+run is synthetic. Any other `dataset_type` (or an unset one, MaxText's tfds/C4
+default) triggers the HF tokenizer download from `training.tokenizer.hf_model_id`.
 
 ## Threshold files
 

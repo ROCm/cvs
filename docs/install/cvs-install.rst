@@ -360,7 +360,7 @@ JAX / Megatron training configuration files
 
    .. code:: bash
 
-     cvs copy-config training/jax/mi300x_jax_llama3_1_70b_distributed.json --output ~/my_training_config.json
+     cvs copy-config training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_distributed.json --output ~/my_training_config.json
      # Or for Megatron:
      cvs copy-config training/megatron/mi3xx_megatron_llama_distributed.json --output ~/my_megatron_config.json
 

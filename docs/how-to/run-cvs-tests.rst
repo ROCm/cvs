@@ -65,10 +65,9 @@ You can list available tests using either `cvs run` (with no arguments) or `cvs 
       • rccl_perf
       • rccl_regression
   
-    cvs.tests.training.jax (3 test suites)
-      • jax_llama3_1_405b_distributed
-      • jax_llama3_1_70b_distributed
-      • jax_llama3_1_70b_single
+    cvs.tests.training.jaxmaxtext (2 test suites)
+      • jaxmaxtext_distributed
+      • jaxmaxtext_single
   
     cvs.tests.training.megatron (4 test suites)
       • megatron_llama3_1_70b_distributed
@@ -436,67 +435,58 @@ Before running RCCL tests, ensure the environment script specified in ``env_sour
   cvs generate heatmap --actual /tmp/rccl_perf_results.json --reference /path/to/golden_reference.json --output /var/www/html/cvs/rccl_heatmap.html --title "RCCL Performance Comparison"
 
 
-JAX training test scripts
--------------------------
+JAX MaxText training test scripts
+---------------------------------
 
 
-You can list all available JAX training test cases using the CLI:
+You can list all available JAX MaxText training test cases using the CLI:
 
 .. code:: bash
 
-  cvs list jax_llama3_1_405b_distributed
+  cvs list jaxmaxtext_distributed
 
 .. code:: text
 
-  Available tests in jax_llama3_1_405b_distributed:
-    - test_disable_firewall
-    - test_cleanup_stale_containers
-    - test_launch_jax_containers
-    - test_llama_3_1_405b_distributed
+  Available tests in jaxmaxtext_distributed:
+    - test_launch_container
+    - test_setup_rdma
+    - test_setup_tokenizer
+    - test_smoke
+    - test_training_run
+    - test_metric
+    - test_loss_curve
+    - test_checkpoint_resume
+    - test_print_results_table
+    - test_teardown
 
 .. code:: bash
 
-  cvs list jax_llama3_1_70b_distributed
+  cvs list jaxmaxtext_single
 
 .. code:: text
 
-  Available tests in jax_llama3_1_70b_distributed:
-    - test_disable_firewall
-    - test_cleanup_stale_containers
-    - test_launch_jax_containers
-    - test_llama_3_1_70b_training
-
-.. code:: bash
-
-  cvs list jax_llama3_1_70b_single
-
-.. code:: text
-
-  Available tests in jax_llama3_1_70b_single:
-    - test_cleanup_stale_containers
-    - test_disable_firewall
-    - test_launch_jax_containers
-    - test_llama_3_1_70b_singlenode_training
+  Available tests in jaxmaxtext_single:
+    - test_launch_container
+    - test_setup_tokenizer
+    - test_smoke
+    - test_training_run
+    - test_metric
+    - test_loss_curve
+    - test_checkpoint_resume
+    - test_print_results_table
+    - test_teardown
 
 
-You can run all JAX llama training tests using the CVS CLI:
+You can run the JAX MaxText training suites using the CVS CLI:
 
 
 .. code:: bash
 
-  cvs run jax_llama3_1_405b_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jax/mi300x_jax_llama3_1_405b_distributed.json --html=/var/www/html/cvs/jax_llama3_1_405b_distributed.html --capture=tee-sys --self-contained-html --log-file=/tmp/jax_llama3_1_405b_distributed.log -vvv -s
+  cvs run jaxmaxtext_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi325x_jaxmaxtext_llama-3.3-70b_distributed.json --html=/var/www/html/cvs/jaxmaxtext_distributed.html --capture=tee-sys --self-contained-html --log-file=/tmp/jaxmaxtext_distributed.log -vvv -s
 
 .. code:: bash
 
-  cvs run jax_llama3_1_70b_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jax/mi300x_jax_llama3_1_70b_distributed.json --html=/var/www/html/cvs/jax_llama3_1_70b_distributed.html --capture=tee-sys --self-contained-html --log-file=/tmp/jax_llama3_1_70b_distributed.log -vvv -s
-
-.. code:: bash
-
-  cvs run jax_llama3_1_70b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jax/mi300x_jax_llama3_1_70b_single.json --html=/var/www/html/cvs/jax_llama3_1_70b_single.html --capture=tee-sys --self-contained-html --log-file=/tmp/jax_llama3_1_70b_single.log -vvv -s
-
-.. code:: bash
-
-  cvs run jax_llama3_1_70b_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jax/mi35x_jax_llama3_1_70b_single.json --html=/var/www/html/cvs/jax_llama3_1_70b_single.html --capture=tee-sys --self-contained-html --log-file=/tmp/jax_llama3_1_70b_single.log -vvv -s
+  cvs run jaxmaxtext_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single.json --html=/var/www/html/cvs/jaxmaxtext_single.html --capture=tee-sys --self-contained-html --log-file=/tmp/jaxmaxtext_single.log -vvv -s
   
 -------------------------
 
