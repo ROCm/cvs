@@ -496,8 +496,9 @@ def get_nic_ethtool_stats_dict(phdl, vendor=None):
           }
 
     Important assumptions and behavior:
-        - Assumes each node in bck_nic_dict has the same number of backend RDMA NICs,
-          and that NICs are accessed by a consistent index across nodes when batching.
+        - Nodes may have different backend RDMA NIC counts (e.g. a downed link). Batches
+          are sized to the largest per-node count; nodes with fewer NICs run a no-op for
+          the extra rounds and are skipped when parsing results for those rounds.
         - Uses grep -v "[" to skip per-queue stats (bracketed) and focus on aggregate totals.
         - Prints warnings (stdout) for non-zero error-like counters; does not raise.
         - Values parsed from ethtool output are kept as strings to preserve the parser behavior.
@@ -511,10 +512,11 @@ def get_nic_ethtool_stats_dict(phdl, vendor=None):
 
     bck_nic_dict = get_backend_rdma_nic_dict(phdl)
 
-    # Derive node list and infer NIC count from the first node
+    # Derive node list. Nodes are not guaranteed to have the same NIC count
+    # (e.g. a downed link drops one node's backend NIC list by one), so the
+    # batch count below is driven by the largest per-node count rather than
+    # assuming every node matches node_list[0].
     node_list = list(bck_nic_dict.keys())
-    node_0 = node_list[0]
-    no_of_nics = len(bck_nic_dict[node_0])
 
     # Initialize the final per-node stats dict
     for node in node_list:
@@ -539,18 +541,28 @@ def get_nic_ethtool_stats_dict(phdl, vendor=None):
             intf_name = node_nic_dict[dev_name]['eth_device']
             eth_dev_dict[node].append(intf_name)
 
-    # For each NIC index, generate one command per node so they can be executed in parallel
+    no_of_nics = max((len(eth_dev_dict[node]) for node in node_list), default=0)
+
+    # For each NIC index, generate one command per node so they can be executed in parallel.
+    # exec_cmd_list pairs cmd_list[k] with the k-th reachable host positionally, so every
+    # batch needs exactly one entry per node even when a node has no interface at this
+    # index; give it a harmless no-op and skip its (nonexistent) result below.
     for i in range(0, no_of_nics):
         cmd_dict[i] = []
         for node in node_list:
-            intf_nam = eth_dev_dict[node][i]
-            cmd_dict[i].append(f'sudo ethtool -S {intf_nam} | grep -v "\[" --color=never')
+            if i < len(eth_dev_dict[node]):
+                intf_nam = eth_dev_dict[node][i]
+                cmd_dict[i].append(f'sudo ethtool -S {intf_nam} | grep -v "\[" --color=never')
+            else:
+                cmd_dict[i].append('true')
 
     # Execute each batch of commands and parse results into stats_dict
     for i in range(0, no_of_nics):
         cmd_list = cmd_dict[i]
         stats_dict_out = phdl.exec_cmd_list(cmd_list)
         for node in stats_dict_out:
+            if i >= len(eth_dev_dict[node]):
+                continue
             intf_nam = eth_dev_dict[node][i]
             stats_dict[node][intf_nam] = convert_ethtool_out_to_dict(stats_dict_out[node], vendor)
 

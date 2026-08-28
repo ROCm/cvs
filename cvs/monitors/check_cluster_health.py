@@ -69,12 +69,13 @@ def load_cluster_file(cluster_file_path):
 def general_health_checks(
     phdl,
     start_time_dict=None,
+    expected_gpu_count=None,
 ):
     health_dict = {}
     print('Verify General Health Checks')
     # Check PCIe Bus and Width
     try:
-        health_dict['gpu_pcie_link'] = verify_lib.verify_gpu_pcie_bus_width(phdl)
+        health_dict['gpu_pcie_link'] = verify_lib.verify_gpu_pcie_bus_width(phdl, expected_cards=expected_gpu_count)
     except Exception as e:
         print(f'ERROR running verify_gpu_pcie_bus_width, due to exception {e}')
     # Check Dmesg for errors
@@ -412,6 +413,17 @@ class CheckClusterHealthMonitor(MonitorPlugin):
         parser.add_argument("--key_file", help="SSH private key file (only valid with --hosts_file)")
         parser.add_argument("--iterations", type=int, default=2, help="Number of iterations to run the checks")
         parser.add_argument(
+            "--expected_gpu_count",
+            type=int,
+            default=None,
+            help=(
+                "Expected number of GPUs per node for the PCIe bus/width check. "
+                "GPU count varies by platform (e.g. 4 on a Helios-R tray, 8 on others); "
+                "if omitted, it is auto-detected from the first node and other nodes "
+                "are checked for agreement with that count."
+            ),
+        )
+        parser.add_argument(
             "--time_between_iters", type=int, default=60, help="Time duration to sleep between iterations"
         )
         parser.add_argument("--report_file", default="./cluster_report.html", help="Output HTML report file path")
@@ -482,7 +494,9 @@ class CheckClusterHealthMonitor(MonitorPlugin):
         start_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
 
         # Run general health checks and scan historic errors
-        gen_health_dict = general_health_checks(phdl, start_time_dict=start_time)
+        gen_health_dict = general_health_checks(
+            phdl, start_time_dict=start_time, expected_gpu_count=args.expected_gpu_count
+        )
 
         # Take cluster metrics snapshot before iterations
         snapshot_dict_before = verify_lib.create_cluster_metrics_snapshot(phdl)

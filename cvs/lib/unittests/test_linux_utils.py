@@ -1,6 +1,6 @@
 # cvs/lib/unittests/test_linux_utils.py
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import cvs.lib.linux_utils as linux_utils
 
 
@@ -132,6 +132,45 @@ link rdma1/1 state DOWN physical_state LINK_DOWN netdev tw_eth1"""
 
         # Verify non-ACTIVE device is excluded
         self.assertNotIn('rdma1', result['node1'])  # DOWN state
+
+
+class TestGetNicEthtoolStatsDict(unittest.TestCase):
+    def test_asymmetric_nic_counts_across_nodes(self):
+        """Nodes with different backend RDMA NIC counts (e.g. a downed link) must not
+        raise IndexError, and each node's stats must only contain its own interfaces."""
+        mock_phdl = MagicMock()
+
+        bck_nic_dict = {
+            'node1': {
+                'rdma0': {'eth_device': 'eth0'},
+                'rdma1': {'eth_device': 'eth1'},
+            },
+            'node2': {
+                'rdma0': {'eth_device': 'eth2'},
+            },
+        }
+
+        # Batch 0: both nodes have an interface at index 0.
+        # Batch 1: only node1 has a second interface; node2 ran the 'true' no-op.
+        mock_phdl.exec_cmd_list.side_effect = [
+            {'node1': 'rx_errors: 0', 'node2': 'rx_errors: 0'},
+            {'node1': 'rx_errors: 1', 'node2': ''},
+        ]
+
+        with patch.object(linux_utils, 'get_backend_rdma_nic_dict', return_value=bck_nic_dict):
+            result = linux_utils.get_nic_ethtool_stats_dict(mock_phdl)
+
+        self.assertEqual(mock_phdl.exec_cmd_list.call_count, 2)
+
+        self.assertEqual(set(result['node1'].keys()), {'eth0', 'eth1'})
+        self.assertEqual(result['node1']['eth1']['rx_errors'], '1')
+
+        # node2 must only have its single real interface, not a bogus entry
+        # from the 'true' no-op run in the second batch.
+        self.assertEqual(set(result['node2'].keys()), {'eth2'})
+
+        second_batch_cmds = mock_phdl.exec_cmd_list.call_args_list[1].args[0]
+        self.assertEqual(second_batch_cmds[1], 'true')
 
 
 if __name__ == '__main__':
