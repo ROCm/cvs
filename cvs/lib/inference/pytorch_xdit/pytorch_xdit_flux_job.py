@@ -1,5 +1,5 @@
 """
-PyTorch XDit FLUX.1-dev benchmark launcher (single-node + unified distributed).
+PyTorch XDit FLUX benchmark launcher (FLUX.1-dev, FLUX.2-dev; single-node + unified distributed).
 
 Single mode:
   - One independent torchrun job per node in ``s_phdl.host_list``.
@@ -10,12 +10,16 @@ Distributed mode:
   - All nodes share rank-0 output dir ``flux_{rank0_hostname}_outputs``.
   - Requires parallel-degree product == nnodes × torchrun_nproc.
 
+FLUX.2-dev is launched via ``/app/external/xdit/examples/flux2_example.py`` (xFuserFlux2Pipeline).
+FLUX.1-dev continues to use ``/app/Flux/run_usp.py``.
+
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -34,9 +38,18 @@ FATAL_OUTPUT_PATTERNS = (
 )
 
 DEFAULT_BENCHMARK_TIMEOUT_S = 1800
+FLUX2_DEFAULT_BENCHMARK_TIMEOUT_S = 3600
 DEFAULT_MASTER_PORT = 29500
 RUN_USP_PATH = "/app/Flux/run_usp.py"
+FLUX2_EXAMPLE_PATH = "/app/external/xdit/examples/flux2_example.py"
 CONTAINER_OUTPUT_MOUNT = "/outputs"
+CONTAINER_MODEL_MOUNT = "/model"
+
+FLUX2_DEFAULT_HF_REPO = "black-forest-labs/FLUX.2-dev"
+FLUX2_KLEIN_DEFAULT_HF_REPO = "black-forest-labs/FLUX.2-klein-4B"
+
+FLUX2_DEFAULT_GUIDANCE_SCALE = 4.0
+FLUX_KONTEXT_DEFAULT_GUIDANCE_SCALE = 2.5
 
 
 def as_node_list(value: Any) -> List[str]:
@@ -80,13 +93,25 @@ def _secret_str(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def _ssh_credential_source(s_phdl) -> Any:
+    """Return the object holding SSH credentials (handles MultiProcessPssh wrapper)."""
+    inner = getattr(s_phdl, "pssh", None)
+    if inner is not None:
+        return inner
+    return s_phdl
+
+
 def _phdl_connection_kwargs(s_phdl) -> Dict[str, Any]:
     """Best-effort SSH connection kwargs for a scoped one-node Pssh handle."""
+    src = _ssh_credential_source(s_phdl)
+    env_vars = getattr(s_phdl, "env_vars", None)
+    if env_vars is None:
+        env_vars = getattr(src, "env_vars", None)
     return {
-        "user": getattr(s_phdl, "user", None),
-        "password": getattr(s_phdl, "password", None),
-        "pkey": getattr(s_phdl, "pkey", "id_rsa"),
-        "env_vars": getattr(s_phdl, "env_vars", None),
+        "user": getattr(src, "user", None),
+        "password": getattr(src, "password", None),
+        "pkey": getattr(src, "pkey", "id_rsa"),
+        "env_vars": env_vars,
     }
 
 
@@ -252,8 +277,255 @@ def validate_parallelism(
     return world_size, product, None
 
 
+def infer_flux_model_type(model_repo: str, explicit_model_type: Optional[str] = None) -> Optional[str]:
+    """
+    Resolve run_usp.py --model_type from a single repo/path string.
+
+    Prefer :func:`resolve_flux_model_type` when multiple hints are available.
+    """
+    return resolve_flux_model_type(explicit_model_type, model_repo)
+
+
+def detect_flux_model_type_from_model_index(model_index: Mapping[str, Any]) -> Optional[str]:
+    """Detect FLUX model family from a diffusers model_index.json payload."""
+    class_name = str(model_index.get("_class_name", ""))
+    if "Klein" in class_name:
+        return "flux2_klein"
+    if "Flux2" in class_name:
+        return "flux2"
+    if "Kontext" in class_name:
+        return "flux_kontext"
+    return None
+
+
+def is_flux2_model(model_type: Optional[str]) -> bool:
+    return model_type in {"flux2", "flux2_klein"}
+
+
+def resolve_flux_model_type_for_job(
+    flux_params: Mapping[str, Any],
+    *,
+    model_repo: str,
+    model_repo_hints: Optional[Sequence[str]] = None,
+    resolved_model_type: Optional[str] = None,
+) -> Optional[str]:
+    hints = [model_repo, *(model_repo_hints or [])]
+    return resolve_flux_model_type(
+        flux_params.get("model_type") or resolved_model_type,
+        *hints,
+    )
+
+
+def store_resolved_flux_model_type_from_index(
+    inference_dict: Dict[str, Any],
+    model_index: Mapping[str, Any],
+) -> None:
+    """Persist detected model type on inference_dict for runner script selection."""
+    model_type = detect_flux_model_type_from_model_index(model_index)
+    if model_type:
+        inference_dict["_resolved_flux_model_type"] = model_type
+        log.info("Detected FLUX model type from model_index.json: %s", model_type)
+    name_or_path = model_index.get("_name_or_path")
+    if name_or_path and not str(name_or_path).startswith("/"):
+        inference_dict["_resolved_flux_hf_repo_id"] = str(name_or_path)
+
+
+def resolve_flux2_hf_repo_id(
+    model_type: Optional[str],
+    model_repo: str,
+    model_repo_hints: Optional[Sequence[str]] = None,
+    resolved_hf_repo_id: Optional[str] = None,
+) -> str:
+    """Hugging Face repo id used to fetch FLUX.2 tokenizer assets (e.g. chat_template.jinja)."""
+    if resolved_hf_repo_id and not str(resolved_hf_repo_id).startswith("/"):
+        return str(resolved_hf_repo_id)
+    for hint in [model_repo, *(model_repo_hints or [])]:
+        if hint and not str(hint).startswith("/") and "/" in str(hint):
+            return str(hint)
+    if model_type == "flux2_klein":
+        return FLUX2_KLEIN_DEFAULT_HF_REPO
+    return FLUX2_DEFAULT_HF_REPO
+
+
+def build_flux2_ensure_chat_template_cmd(
+    *,
+    hf_repo_id: str,
+    model_mount: str = CONTAINER_MODEL_MOUNT,
+) -> str:
+    """
+    Container-side guard: FLUX.2 encode_prompt requires tokenizer.chat_template.
+
+    Locally staged model trees often omit ``tokenizer/chat_template.jinja``; fetch it
+    from Hugging Face into the mounted model directory when missing.
+    """
+    py_script = (
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        f"model = Path({json.dumps(model_mount)})\n"
+        "tok = model / 'tokenizer'\n"
+        "if (tok / 'chat_template.jinja').is_file() or (tok / 'chat_template.json').is_file():\n"
+        "    sys.exit(0)\n"
+        "cfg_path = tok / 'tokenizer_config.json'\n"
+        "if cfg_path.is_file():\n"
+        "    try:\n"
+        "        if json.loads(cfg_path.read_text(encoding='utf-8')).get('chat_template'):\n"
+        "            sys.exit(0)\n"
+        "    except json.JSONDecodeError:\n"
+        "        pass\n"
+        "repo = os.environ.get('FLUX2_HF_REPO_ID') or "
+        f"{json.dumps(hf_repo_id)}\n"
+        "token = os.environ.get('HF_TOKEN') or None\n"
+        "try:\n"
+        "    from huggingface_hub import hf_hub_download\n"
+        "except ImportError as exc:\n"
+        "    print(f'huggingface_hub required to fetch FLUX.2 chat template: {exc}', file=sys.stderr)\n"
+        "    sys.exit(1)\n"
+        "tok.mkdir(parents=True, exist_ok=True)\n"
+        "hf_hub_download(\n"
+        "    repo_id=repo,\n"
+        "    filename='tokenizer/chat_template.jinja',\n"
+        "    local_dir=str(model),\n"
+        "    token=token,\n"
+        ")\n"
+        "if not (tok / 'chat_template.jinja').is_file():\n"
+        "    print('Failed to install tokenizer/chat_template.jinja for FLUX.2', file=sys.stderr)\n"
+        "    sys.exit(1)\n"
+    )
+    return f"python3 -c {shlex.quote(py_script)}"
+
+
+def build_flux2_chat_template_host_check_cmd(host_model_path: str) -> str:
+    """Return a shell command that prints OK when FLUX.2 chat template files are present."""
+    base = shlex.quote(host_model_path.rstrip("/"))
+    return (
+        f"test -f {base}/tokenizer/chat_template.jinja "
+        f"-o -f {base}/tokenizer/chat_template.json "
+        f"&& echo OK || echo MISSING"
+    )
+
+
+def build_flux2_chat_template_host_repair_from_cache_cmd(
+    host_model_path: str,
+    hf_home: str,
+    hf_repo_id: str,
+) -> str:
+    """Copy chat_template.jinja from a local Hugging Face cache snapshot into a model dir."""
+    model_q = shlex.quote(host_model_path.rstrip("/"))
+    hf_q = shlex.quote(hf_home.rstrip("/"))
+    repo_safe = hf_repo_id.replace("/", "--")
+    return (
+        f"MODEL={model_q}; HF={hf_q}; "
+        f"if test -f \"$MODEL/tokenizer/chat_template.jinja\" "
+        f"-o -f \"$MODEL/tokenizer/chat_template.json\"; then echo OK; exit 0; fi; "
+        f"for SNAP in \"$HF/hub/models--{repo_safe}/snapshots\"/*; do "
+        f"if test -f \"$SNAP/tokenizer/chat_template.jinja\"; then "
+        f"mkdir -p \"$MODEL/tokenizer\" && "
+        f"cp \"$SNAP/tokenizer/chat_template.jinja\" \"$MODEL/tokenizer/\" && "
+        f"echo OK && exit 0; fi; done; echo MISSING"
+    )
+
+
+def ensure_flux2_chat_template_on_host(
+    s_phdl,
+    nodes: Sequence[str],
+    host_model_path: str,
+    hf_home: str,
+    *,
+    model_type: Optional[str],
+    model_repo: str,
+    resolved_hf_repo_id: Optional[str] = None,
+) -> None:
+    """
+    Best-effort repair of missing FLUX.2 ``tokenizer/chat_template.jinja`` on host model dirs.
+
+    Copies from the local Hugging Face cache when available. The container launch path fetches
+    from the Hub when the file is still missing at runtime (requires ``HF_TOKEN`` for gated repos).
+    """
+    if not is_flux2_model(model_type):
+        return
+
+    hf_repo = resolve_flux2_hf_repo_id(
+        model_type,
+        model_repo,
+        [host_model_path],
+        resolved_hf_repo_id,
+    )
+    check_cmd = build_flux2_chat_template_host_check_cmd(host_model_path)
+    check = _exec_on_nodes(s_phdl, list(nodes), check_cmd, print_console=False)
+    missing = [node for node in nodes if "OK" not in (check.get(node) or "")]
+    if not missing:
+        log.info("FLUX.2 chat template present under %s on all node(s)", host_model_path)
+        return
+
+    log.info(
+        "FLUX.2 chat template missing on %d node(s); attempting copy from HF cache (%s)",
+        len(missing),
+        hf_repo,
+    )
+    repair_cmd = build_flux2_chat_template_host_repair_from_cache_cmd(
+        host_model_path,
+        hf_home,
+        hf_repo,
+    )
+    repair = _exec_on_nodes(s_phdl, missing, repair_cmd, print_console=False)
+    still_missing = [node for node in missing if "OK" not in (repair.get(node) or "")]
+    if still_missing:
+        log.warning(
+            "FLUX.2 chat template still missing on %d node(s) after HF cache copy; "
+            "benchmark container will download tokenizer/chat_template.jinja from %s",
+            len(still_missing),
+            hf_repo,
+        )
+    else:
+        log.info("FLUX.2 chat template repaired from HF cache on all previously missing node(s)")
+
+
+def resolve_flux_model_type(
+    explicit_model_type: Optional[str] = None,
+    *repo_hints: Optional[str],
+) -> Optional[str]:
+    """
+    Resolve FLUX model family from config and one or more repo/path hints.
+
+    FLUX.2 selects flux2_example.py; FLUX.1 uses run_usp.py (default when unset).
+    When the container model path is ``/model``, hints must include the original
+    host ``model_repo`` or model_index metadata.
+    """
+    if explicit_model_type:
+        return str(explicit_model_type).strip() or None
+
+    for hint in repo_hints:
+        if not hint:
+            continue
+        repo_lower = str(hint).lower()
+        if "flux.2" in repo_lower or "flux2" in repo_lower:
+            if "klein" in repo_lower:
+                return "flux2_klein"
+            return "flux2"
+        if "kontext" in repo_lower:
+            return "flux_kontext"
+    return None
+
+
+def resolve_flux_guidance_scale(
+    model_type: Optional[str],
+    explicit_guidance_scale: Any = None,
+) -> Optional[float]:
+    """Return guidance scale for run_usp.py, applying model-family defaults when omitted."""
+    if explicit_guidance_scale is not None:
+        return float(explicit_guidance_scale)
+    if model_type == "flux2" or model_type == "flux2_klein":
+        return FLUX2_DEFAULT_GUIDANCE_SCALE
+    if model_type == "flux_kontext":
+        return FLUX_KONTEXT_DEFAULT_GUIDANCE_SCALE
+    return None
+
+
 def build_nccl_env(inference_dict: Mapping[str, Any]) -> Dict[str, str]:
-    env: Dict[str, str] = {"HSA_FORCE_FINE_GRAIN_PCIE": "1"}
+    env: Dict[str, str] = {
+        "HSA_FORCE_FINE_GRAIN_PCIE": "1",
+        "NCCL_PROTO": "Simple",
+    }
     mapping = {
         "nccl_ib_hca": "NCCL_IB_HCA",
         "nccl_socket_ifname": "NCCL_SOCKET_IFNAME",
@@ -286,6 +558,8 @@ def build_run_usp_args(
     tp = int(flux_params.get("tensor_parallel_degree", 1))
     dp = int(flux_params.get("data_parallel_degree", 1))
 
+    log.info("FLUX.1 run_usp: model=%s", model_repo)
+
     return (
         f"--model {shlex.quote(model_repo)} "
         f"--prompt {shlex.quote(str(flux_params['prompt']))} "
@@ -307,6 +581,166 @@ def build_run_usp_args(
     )
 
 
+def build_flux2_example_args(
+    flux_params: Mapping[str, Any],
+    *,
+    model_repo: str,
+    model_type: Optional[str],
+) -> str:
+    flags: List[str] = []
+    if flux_params.get("no_use_resolution_binning"):
+        flags.append("--no_use_resolution_binning")
+    if flux_params.get("use_torch_compile"):
+        flags.append("--use_torch_compile")
+
+    pf = int(flux_params.get("pipefusion_parallel_degree", 1))
+    tp = int(flux_params.get("tensor_parallel_degree", 1))
+    dp = int(flux_params.get("data_parallel_degree", 1))
+
+    guidance_scale = resolve_flux_guidance_scale(model_type, flux_params.get("guidance_scale"))
+    guidance_scale_flag = (
+        f"--guidance_scale {guidance_scale} " if guidance_scale is not None else ""
+    )
+
+    log.info(
+        "FLUX.2 flux2_example: model=%s model_type=%s guidance_scale=%s",
+        model_repo,
+        model_type,
+        guidance_scale if guidance_scale is not None else "n/a",
+    )
+
+    return (
+        f"--model {shlex.quote(model_repo)} "
+        f"--prompt {shlex.quote(str(flux_params['prompt']))} "
+        f"--seed {int(flux_params['seed'])} "
+        f"--num_inference_steps {int(flux_params['num_inference_steps'])} "
+        f"--max_sequence_length {int(flux_params['max_sequence_length'])} "
+        f"{guidance_scale_flag}"
+        f"{' '.join(flags)} "
+        f"--warmup_steps {int(flux_params['warmup_steps'])} "
+        f"--height {int(flux_params['height'])} "
+        f"--width {int(flux_params['width'])} "
+        f"--ulysses_degree {int(flux_params['ulysses_degree'])} "
+        f"--ring_degree {int(flux_params['ring_degree'])} "
+        f"--pipefusion_parallel_degree {pf} "
+        f"--tensor_parallel_degree {tp} "
+        f"--data_parallel_degree {dp} "
+        f"--output_type pil"
+    )
+
+
+def _build_torchrun_prefix(
+    *,
+    distributed: bool,
+    nproc: int,
+    node_rank: int,
+    nnodes: int,
+    master_addr: str,
+    master_port: int,
+) -> str:
+    if distributed:
+        return (
+            f"torchrun "
+            f"--nnodes={nnodes} "
+            f"--node_rank={node_rank} "
+            f"--nproc_per_node={nproc} "
+            f"--master_addr={shlex.quote(master_addr)} "
+            f"--master_port={master_port}"
+        )
+    return f"torchrun --nproc_per_node={nproc}"
+
+
+def build_flux2_benchmark_cmd(
+    flux_params: Mapping[str, Any],
+    *,
+    model_repo: str,
+    model_type: Optional[str],
+    distributed: bool,
+    node_rank: int = 0,
+    nnodes: int = 1,
+    nproc_per_node: Optional[int] = None,
+    master_addr: str = "127.0.0.1",
+    master_port: int = DEFAULT_MASTER_PORT,
+    output_dir_container: str = CONTAINER_OUTPUT_MOUNT,
+    hf_repo_id: Optional[str] = None,
+    model_repo_hints: Optional[Sequence[str]] = None,
+    resolved_hf_repo_id: Optional[str] = None,
+) -> str:
+    """
+    Run flux2_example.py once inside a single torchrun session and write results/timing.json.
+
+    flux2_example.py loads the model once, runs ``warmup_steps`` internally, prints
+    ``epoch time: X.XX sec`` for the timed pass, then exits. Re-invoking torchrun for
+    each repetition would reload FLUX.2 on every GPU and take hours.
+    """
+    nproc = int(nproc_per_node or flux_params["torchrun_nproc"])
+    flux2_args = build_flux2_example_args(flux_params, model_repo=model_repo, model_type=model_type)
+    resolved_repo = resolve_flux2_hf_repo_id(
+        model_type,
+        model_repo,
+        model_repo_hints=model_repo_hints,
+        resolved_hf_repo_id=resolved_hf_repo_id or hf_repo_id,
+    )
+    ensure_chat_template = build_flux2_ensure_chat_template_cmd(hf_repo_id=resolved_repo)
+    torchrun_prefix = _build_torchrun_prefix(
+        distributed=distributed,
+        nproc=nproc,
+        node_rank=node_rank,
+        nnodes=nnodes,
+        master_addr=master_addr,
+        master_port=master_port,
+    )
+    run_once = f"{torchrun_prefix} {FLUX2_EXAMPLE_PATH} {flux2_args}"
+
+    timing_writer = (not distributed) or (node_rank == nnodes - 1)
+    if distributed and not timing_writer:
+        log.info(
+            "FLUX.2 distributed node_rank=%d: torchrun only (timing.json on last node rank=%d)",
+            node_rank,
+            nnodes - 1,
+        )
+        inner = f"cd {shlex.quote(output_dir_container)} && {ensure_chat_template} && {run_once}"
+        return f"bash -c {shlex.quote(inner)}"
+
+    if distributed:
+        log.info(
+            "FLUX.2 distributed timing.json on node_rank=%d (flux2_example prints epoch time on world rank %d)",
+            node_rank,
+            nnodes * nproc - 1,
+        )
+
+    log.info(
+        "FLUX.2 benchmark uses one torchrun session (warmup_steps=%s); "
+        "num_repetitions/warmup_calls in config apply to FLUX.1 run_usp only",
+        flux_params.get("warmup_steps", 0),
+    )
+
+    py_script = (
+        "import json, re, subprocess, sys\n"
+        f"run_cmd = {json.dumps(run_once)}\n"
+        "proc = subprocess.run(run_cmd, shell=True, capture_output=True, text=True)\n"
+        "sys.stdout.write(proc.stdout)\n"
+        "sys.stderr.write(proc.stderr)\n"
+        "if proc.returncode != 0:\n"
+        "    sys.exit(proc.returncode)\n"
+        'match = re.search(r"epoch time:\\s*([\\d.]+)", proc.stdout + proc.stderr)\n'
+        "if not match:\n"
+        '    print("Could not parse epoch time from flux2_example output", file=sys.stderr)\n'
+        "    sys.exit(1)\n"
+        'times = [{"pipe_time": float(match.group(1))}]\n'
+        'with open("results/timing.json", "w", encoding="utf-8") as handle:\n'
+        "    json.dump(times, handle)\n"
+    )
+
+    inner = (
+        f"cd {shlex.quote(output_dir_container)} && "
+        f"mkdir -p results && "
+        f"{ensure_chat_template} && "
+        f"python3 -c {shlex.quote(py_script)}"
+    )
+    return f"bash -c {shlex.quote(inner)}"
+
+
 def build_torchrun_cmd(
     flux_params: Mapping[str, Any],
     *,
@@ -317,23 +751,43 @@ def build_torchrun_cmd(
     nproc_per_node: Optional[int] = None,
     master_addr: str = "127.0.0.1",
     master_port: int = DEFAULT_MASTER_PORT,
+    model_repo_hints: Optional[Sequence[str]] = None,
+    resolved_model_type: Optional[str] = None,
+    resolved_hf_repo_id: Optional[str] = None,
 ) -> str:
     nproc = int(nproc_per_node or flux_params["torchrun_nproc"])
-    run_usp_args = build_run_usp_args(flux_params, model_repo=model_repo)
+    model_type = resolve_flux_model_type_for_job(
+        flux_params,
+        model_repo=model_repo,
+        model_repo_hints=model_repo_hints,
+        resolved_model_type=resolved_model_type,
+    )
 
-    if distributed:
-        return (
-            f"torchrun "
-            f"--nnodes={nnodes} "
-            f"--node_rank={node_rank} "
-            f"--nproc_per_node={nproc} "
-            f"--master_addr={shlex.quote(master_addr)} "
-            f"--master_port={master_port} "
-            f"{RUN_USP_PATH} "
-            f"{run_usp_args}"
+    if is_flux2_model(model_type):
+        return build_flux2_benchmark_cmd(
+            flux_params,
+            model_repo=model_repo,
+            model_type=model_type,
+            distributed=distributed,
+            node_rank=node_rank,
+            nnodes=nnodes,
+            nproc_per_node=nproc,
+            master_addr=master_addr,
+            master_port=master_port,
+            model_repo_hints=model_repo_hints,
+            resolved_hf_repo_id=resolved_hf_repo_id,
         )
 
-    return f"torchrun --nproc_per_node={nproc} {RUN_USP_PATH} {run_usp_args}"
+    run_usp_args = build_run_usp_args(flux_params, model_repo=model_repo)
+    torchrun_prefix = _build_torchrun_prefix(
+        distributed=distributed,
+        nproc=nproc,
+        node_rank=node_rank,
+        nnodes=nnodes,
+        master_addr=master_addr,
+        master_port=master_port,
+    )
+    return f"{torchrun_prefix} {RUN_USP_PATH} {run_usp_args}"
 
 
 def verify_distributed_logs(output: str, *, world_size: int) -> Tuple[bool, str]:
@@ -371,7 +825,7 @@ class FluxLaunchPlan:
 
 
 class FluxBenchmarkJob:
-    """Build and run FLUX.1-dev docker+torchrun commands via a Pssh-like handle."""
+    """Build and run FLUX docker+torchrun commands (FLUX.1 via run_usp, FLUX.2 via flux2_example)."""
 
     def __init__(
         self,
@@ -458,15 +912,38 @@ class FluxBenchmarkJob:
     def _resolved_model_repo(self) -> str:
         return self.inference_dict.get("_resolved_model_path_container") or self.inference_dict["model_repo"]
 
+    def _flux_model_type_hints(self) -> List[str]:
+        hints: List[str] = []
+        for key in ("model_repo", "_resolved_model_mount_host", "_resolved_model_path_container"):
+            value = self.inference_dict.get(key)
+            if value and str(value) not in hints:
+                hints.append(str(value))
+        return hints
+
     def _build_env_args(self) -> str:
-        env_dict = dict(self.inference_dict["container_config"].get("env_dict") or {})
+        user_env = dict(self.inference_dict["container_config"].get("env_dict") or {})
+        env_dict: Dict[str, str] = {}
+        if self.distributed:
+            env_dict.update(build_nccl_env(self.inference_dict))
+        env_dict.update(user_env)
         env_dict["OMP_NUM_THREADS"] = "16"
         env_dict["HF_HOME"] = "/hf_home"
         env_dict["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(self.nproc_per_node))
-        if self.distributed:
-            env_dict.update(build_nccl_env(self.inference_dict))
         if self.hf_token:
             env_dict["HF_TOKEN"] = _secret_str(self.hf_token)
+        model_type = resolve_flux_model_type_for_job(
+            self.flux_params,
+            model_repo=self._resolved_model_repo(),
+            model_repo_hints=self._flux_model_type_hints(),
+            resolved_model_type=self.inference_dict.get("_resolved_flux_model_type"),
+        )
+        if is_flux2_model(model_type):
+            env_dict["FLUX2_HF_REPO_ID"] = resolve_flux2_hf_repo_id(
+                model_type,
+                self.inference_dict.get("model_repo", ""),
+                self._flux_model_type_hints(),
+                self.inference_dict.get("_resolved_flux_hf_repo_id"),
+            )
         return " ".join(f"-e {key}={value}" for key, value in env_dict.items())
 
     def _build_volume_args(self, host_output_dir: str) -> str:
@@ -500,6 +977,9 @@ class FluxBenchmarkJob:
             nproc_per_node=self.nproc_per_node,
             master_addr=master_addr,
             master_port=master_port,
+            model_repo_hints=self._flux_model_type_hints(),
+            resolved_model_type=self.inference_dict.get("_resolved_flux_model_type"),
+            resolved_hf_repo_id=self.inference_dict.get("_resolved_flux_hf_repo_id"),
         )
 
         container_name = self.inference_dict["container_name"]
@@ -634,7 +1114,7 @@ class FluxBenchmarkJob:
 
         mode_label = "distributed unified" if self.distributed else "single-node"
         log.info(
-            "Running FLUX.1-dev benchmark (%s) on %d node command(s)",
+            "Running FLUX benchmark (%s) on %d node command(s)",
             mode_label,
             len(plan.docker_cmds),
         )
@@ -707,6 +1187,16 @@ def launch_flux_benchmark(
         distributed=distributed,
         cluster_dict=cluster_dict,
     )
+    if timeout == DEFAULT_BENCHMARK_TIMEOUT_S:
+        model_type = resolve_flux_model_type_for_job(
+            job.flux_params,
+            model_repo=job._resolved_model_repo(),
+            model_repo_hints=job._flux_model_type_hints(),
+            resolved_model_type=inference_dict.get("_resolved_flux_model_type"),
+        )
+        if is_flux2_model(model_type):
+            timeout = FLUX2_DEFAULT_BENCHMARK_TIMEOUT_S
+
     _, plan, errors = job.run(timeout=timeout)
     if not errors:
         job.store_output_dir_hint(plan)

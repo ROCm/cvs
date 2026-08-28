@@ -627,11 +627,28 @@ class PytorchXditContainerConfig(BaseModel):
 
 
 class PytorchXditExpectedResults(BaseModel):
-    """Schema for expected_results in pytorch-xdit benchmark params."""
+    """Schema for expected_results in pytorch-xdit WAN benchmark params."""
 
     model_config = ConfigDict(extra="forbid")
 
-    max_avg_total_time_s: float = Field(gt=0, description="Maximum acceptable average total_time in seconds")
+    max_avg_total_time_s: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Maximum acceptable average total_time in seconds (native/packaged Wan)",
+    )
+    max_avg_pipe_time_s: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Maximum acceptable average pipe_time in seconds (xFuser Wan I2V)",
+    )
+
+    @model_validator(mode="after")
+    def validate_threshold_present(self) -> "PytorchXditExpectedResults":
+        if self.max_avg_total_time_s is None and self.max_avg_pipe_time_s is None:
+            raise ValueError(
+                "expected_results entry must include max_avg_total_time_s and/or max_avg_pipe_time_s"
+            )
+        return self
 
 
 class PytorchXditWan22Benchmarks(BaseModel):
@@ -640,9 +657,83 @@ class PytorchXditWan22Benchmarks(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prompt: str = Field(description="Text prompt for image-to-video generation")
+    model_format: Optional[str] = Field(
+        default=None,
+        description=(
+            "WAN checkpoint layout override: native (Wan2.2-I2V-A14B) or diffusers "
+            "(Wan2.2-I2V-A14B-Diffusers). Auto-inferred from model_repo or model_index.json when omitted."
+        ),
+    )
     size: str = Field(default="720*1280", pattern=r"^\d+\*\d+$", description="Video resolution (format: height*width)")
     frame_num: int = Field(default=81, ge=1, description="Number of frames to generate")
     num_benchmark_steps: int = Field(default=5, ge=1, description="Number of benchmark iterations to run")
+    num_inference_steps: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Diffusers denoising steps for /app/Wan/run.py (defaults to 40 when omitted).",
+    )
+    seed: Optional[int] = Field(
+        default=None,
+        description="Random seed for Diffusers Wan runs (defaults to 42 when omitted).",
+    )
+    wan_diffusers_run_script: Optional[str] = Field(
+        default=None,
+        description=(
+            "In-container Diffusers Wan launcher script. Defaults to /app/Wan/run.py "
+            "(shipped in amdsiloai/pytorch-xdit and rocm/pytorch-xdit benchmark images)."
+        ),
+    )
+    wan_diffusers_i2v_image: Optional[str] = Field(
+        default=None,
+        description=(
+            "In-container input image for Diffusers Wan I2V. Omit or set 'auto' to generate a "
+            "placeholder JPEG in-container; otherwise bind-mount the host file via volume_dict."
+        ),
+    )
+    wan_xfuser_auto_input_image: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Generate a synthetic I2V input JPEG inside the container for xFuser runs. "
+            "Defaults to true when no host image is bind-mounted."
+        ),
+    )
+    wan_xfuser_install_video_deps: bool = Field(
+        default=True,
+        description="Run pip install imageio imageio-ffmpeg before xFuser video export.",
+    )
+    wan_diffusers_launcher: Optional[str] = Field(
+        default=None,
+        description=(
+            "Diffusers Wan launcher: packaged (/app/Wan/run.py in pytorch-xdit images) or "
+            "xfuser_example (mount cvs .../scripts/wan_i2v_example.py for ufb-private)."
+        ),
+    )
+    warmup_steps: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Warmup iterations for xfuser_example launcher (defaults to 1).",
+    )
+    wan_xfuser_output_type: Optional[str] = Field(
+        default=None,
+        description="xFuser output_type for xfuser_example (defaults to pil for ufb-private video export).",
+    )
+    wan_diffusers_save_video_path: Optional[str] = Field(
+        default=None,
+        description="In-container MP4 path for xfuser_example (default /outputs/results/video_i2v.mp4).",
+    )
+    wan_diffusers_timing_json_path: Optional[str] = Field(
+        default=None,
+        description="In-container timing JSON path for xfuser_example (default results/timing.json).",
+    )
+    wan_diffusers_video_fps: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="FPS passed to export_to_video for xfuser_example (defaults to 16).",
+    )
+    require_video_artifact: bool = Field(
+        default=True,
+        description="Require video.mp4 under the output dir when parsing results.",
+    )
     compile: bool = Field(default=True, description="Whether to use torch.compile for optimization")
     torchrun_nproc: int = Field(default=8, ge=1, description="Number of processes for torchrun (usually num GPUs)")
     ulysses_size: int = Field(default=8, ge=1, description="Ulysses parallelism degree")
@@ -681,6 +772,21 @@ class PytorchXditFlux1DevBenchmarks(BaseModel):
     seed: int = Field(default=42, description="Random seed for reproducibility")
     num_inference_steps: int = Field(default=25, ge=1, description="Number of denoising steps")
     max_sequence_length: int = Field(default=256, ge=1, description="Maximum sequence length for text encoder")
+    model_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "FLUX model family override (flux2 for FLUX.2-dev, flux_kontext for FLUX.1-Kontext). "
+            "Auto-inferred from model_repo or model_index.json when omitted."
+        ),
+    )
+    guidance_scale: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Classifier-free guidance scale for run_usp.py. Defaults to 4.0 for FLUX.2-dev "
+            "and 2.5 for FLUX.1-Kontext when omitted; not passed for FLUX.1-dev."
+        ),
+    )
     no_use_resolution_binning: bool = Field(default=True, description="Disable resolution binning")
     warmup_steps: int = Field(default=1, ge=0, description="Number of warmup steps before benchmarking")
     warmup_calls: int = Field(default=5, ge=0, description="Number of warmup calls")

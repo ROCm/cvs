@@ -19,6 +19,10 @@ from cvs.lib import globals
 log = globals.log
 
 
+def _is_rank0_benchmark_json(filename: str) -> bool:
+    return filename.startswith("rank0") and filename.endswith(".json")
+
+
 @dataclass
 class WanBenchmarkResult:
     """Parsed WAN benchmark results."""
@@ -84,13 +88,14 @@ class WanOutputParser:
         - Else default to outputs
         """
         candidates = [
+            run_dir / "results" / "outputs",
             run_dir / "outputs" / "outputs" / "outputs",
             run_dir / "outputs" / "outputs",
             run_dir / "outputs",
         ]
         for cand in candidates:
             try:
-                if cand.exists() and any(p.name.startswith("rank0_step") for p in cand.glob("rank0_step*.json")):
+                if cand.exists() and any(_is_rank0_benchmark_json(p.name) for p in cand.glob("rank0*.json")):
                     return cand
             except Exception:
                 continue
@@ -169,7 +174,8 @@ class WanOutputParser:
         per_run: List[WanRunSummary] = []
         for run_dir in run_dirs:
             bench_dir = cls._select_bench_dir(run_dir)
-            rank0_jsons = sorted(list(bench_dir.glob("rank0_step*.json")))
+            rank0_jsons = sorted(list(bench_dir.glob("rank0*.json")))
+            rank0_jsons = [p for p in rank0_jsons if _is_rank0_benchmark_json(p.name)]
             if not rank0_jsons:
                 continue
 
@@ -223,7 +229,7 @@ class WanOutputParser:
         # Search recursively for rank0_step*.json files
         for root, dirs, files in os.walk(self.output_dir):
             for file in files:
-                if file.startswith("rank0_step") and file.endswith(".json"):
+                if _is_rank0_benchmark_json(file):
                     json_path = Path(root) / file
                     json_files.append(json_path)
 

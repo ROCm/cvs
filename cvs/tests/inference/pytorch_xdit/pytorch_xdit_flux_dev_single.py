@@ -1,7 +1,7 @@
 """
-PyTorch XDit FLUX.1-dev Text-to-Image inference test.
+PyTorch XDit FLUX text-to-image inference test (FLUX.1-dev and FLUX.2-dev).
 
-Runs FLUX.1-dev PyTorch inference inside amdsiloai/pytorch-xdit container
+Runs FLUX PyTorch inference inside amdsiloai/pytorch-xdit container
 and validates results against configured thresholds.
 
 Copyright 2025 Advanced Micro Devices, Inc.
@@ -10,16 +10,14 @@ All rights reserved.
 
 import json
 import pytest
-import queue
 import re
 import socket
 import shlex
 import subprocess
-import threading
+from typing import Optional
 
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import (
-    cluster_target_output_label,
     fail_test,
     update_test_result,
     get_model_from_rocm_smi_output,
@@ -30,6 +28,12 @@ from cvs.lib import docker_lib
 from cvs.lib import globals
 from cvs.parsers.schemas import ClusterConfigFile, PytorchXditFluxConfigFile
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux import FluxOutputParser, log_results_summary
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+    launch_flux_benchmark,
+    store_resolved_flux_model_type_from_index,
+    ensure_flux2_chat_template_on_host,
+    resolve_flux_model_type,
+)
 
 log = globals.log
 
@@ -138,58 +142,23 @@ class LocalPssh:
             log.info("%s", out)
         return {self.host_list[0]: out}
 
-    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True, inactivity_timeout=None):
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
         # Run different commands; map 1:1 with host_list ordering
         out = {}
         for host, cmd in zip(self.host_list, cmd_list):
-            if inactivity_timeout is not None:
-                out_str = self._exec_with_inactivity_timeout(cmd, inactivity_timeout, print_console)
-            else:
-                completed = subprocess.run(
-                    cmd,
-                    shell=True,
-                    text=True,
-                    capture_output=True,
-                    timeout=timeout if timeout is None else int(timeout),
-                )
-                out_str = (completed.stdout or "") + (completed.stderr or "")
-                if print_console:
-                    log.info(f"cmd = {_redact_secrets(cmd)}")
-                    log.info("%s", out_str)
+            completed = subprocess.run(
+                cmd,
+                shell=True,
+                text=True,
+                capture_output=True,
+                timeout=timeout if timeout is None else int(timeout),
+            )
+            out_str = (completed.stdout or "") + (completed.stderr or "")
+            if print_console:
+                log.info(f"cmd = {_redact_secrets(cmd)}")
+                log.info("%s", out_str)
             out[host] = out_str
         return out
-
-    def _exec_with_inactivity_timeout(self, cmd, inactivity_timeout, print_console):
-        # Mirrors Pssh's per-line inactivity timeout: resets on every output line, kills the
-        # process only when nothing is printed for `inactivity_timeout` seconds.
-        if print_console:
-            log.info(f"cmd = {_redact_secrets(cmd)}")
-        proc = subprocess.Popen(cmd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        line_queue = queue.Queue()
-
-        def _reader():
-            for line in proc.stdout:
-                line_queue.put(line)
-            line_queue.put(None)
-
-        reader_thread = threading.Thread(target=_reader, daemon=True)
-        reader_thread.start()
-
-        lines = []
-        while True:
-            try:
-                line = line_queue.get(timeout=inactivity_timeout)
-            except queue.Empty:
-                proc.kill()
-                proc.wait()
-                raise TimeoutError(f"Command killed after {inactivity_timeout}s of inactivity: {cmd}")
-            if line is None:
-                break
-            lines.append(line)
-            if print_console:
-                log.info("%s", line.rstrip("\n"))
-        proc.wait()
-        return "".join(lines)
 
 
 # =============================================================================
@@ -317,8 +286,8 @@ def s_phdl(cluster_dict):
     # Single-node mode: execute locally ONLY when the target actually refers to this machine.
     #
     # Rationale: users often specify a remote node IP/hostname in cluster.json even for a
-    # single-node run. Without this check, that target would run on this host instead of the
-    # target node's GPUs/ROCm, and fail in confusing ways.
+    # single-node run. Always forcing local execution will run benchmarks on the login node
+    # (no GPUs/ROCm) and fail in confusing ways.
     if len(node_list) == 1:
         target = node_list[0]
         if _is_local_target(target):
@@ -363,6 +332,22 @@ def gpu_type(s_phdl):
 # =============================================================================
 # Test Cases
 # =============================================================================
+
+
+def _read_model_index_from_node(s_phdl, node: str, model_dir: str) -> Optional[dict]:
+    """Read model_index.json from a remote model directory on one node."""
+    index_path = f"{model_dir.rstrip('/')}/model_index.json"
+    output = s_phdl.exec(
+        f"cat {shlex.quote(index_path)}",
+        print_console=False,
+    ).get(node, "")
+    if not (output or "").strip():
+        return None
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError:
+        log.warning("Could not parse model_index.json from %s on %s", index_path, node)
+        return None
 
 
 def test_cleanup_stale_containers(s_phdl, inference_dict):
@@ -462,6 +447,22 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
         # We'll mount this host path into the container at /model for consistent access.
         inference_dict["_resolved_model_mount_host"] = host_model_path
         inference_dict["_resolved_model_path_container"] = "/model"
+        model_index = _read_model_index_from_node(s_phdl, s_phdl.host_list[0], host_model_path)
+        if model_index:
+            store_resolved_flux_model_type_from_index(inference_dict, model_index)
+        ensure_flux2_chat_template_on_host(
+            s_phdl,
+            s_phdl.host_list,
+            host_model_path,
+            hf_home,
+            model_type=resolve_flux_model_type(
+                inference_dict.get("_resolved_flux_model_type"),
+                model_repo,
+                host_model_path,
+            ),
+            model_repo=model_repo,
+            resolved_hf_repo_id=inference_dict.get("_resolved_flux_hf_repo_id"),
+        )
         log.info(f"Using local model path: {host_model_path} (mounted to /model in container) on all nodes")
         update_test_result()
         return
@@ -496,6 +497,9 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
         inference_dict["_resolved_model_path_container"] = (
             f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
         )
+        model_index = _read_model_index_from_node(s_phdl, s_phdl.host_list[0], snapshot_dir_host)
+        if model_index:
+            store_resolved_flux_model_type_from_index(inference_dict, model_index)
         log.info(f"Using pre-cached snapshot: {inference_dict['_resolved_model_path_container']} on all nodes")
         update_test_result()
         return
@@ -538,6 +542,9 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
         return
 
     inference_dict["_resolved_model_path_container"] = f"/hf_home/hub/models--{model_path_safe}/snapshots/{snapshot_id}"
+    model_index = _read_model_index_from_node(s_phdl, head_node, snapshot_dir_host)
+    if model_index:
+        store_resolved_flux_model_type_from_index(inference_dict, model_index)
     log.info(f"Using pre-cached snapshot: {inference_dict['_resolved_model_path_container']} on all nodes")
 
     update_test_result()
@@ -545,232 +552,21 @@ def test_verify_hf_cache_or_download(s_phdl, inference_dict, hf_token):
 
 def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_token):
     """
-    Run FLUX.1-dev text-to-image benchmark inside pytorch-xdit container on all nodes in parallel.
+    Run FLUX text-to-image benchmark (FLUX.1-dev or FLUX.2-dev) inside pytorch-xdit container.
 
-    On success, verifies non-empty ``results/timing.json`` and at least one non-empty ``flux_*.png``
-    under each node's output tree so a pass is meaningful before parse/threshold validation.
-
-    Executes torchrun with configured parameters and mounts:
-    - HF cache to /hf_home
-    - Output directory to /outputs
+    Model family is inferred from ``config.model_repo`` (FLUX.2 gets ``--model_type flux2``).
     """
     globals.error_list = []
 
-    # Preflight: ensure all nodes expose /dev/kfd (ROCm). Missing device nodes usually means
-    # the target is not suitable for this GPU container workload.
-    log.info(f"Checking /dev/kfd on {len(s_phdl.host_list)} node(s)")
-    kfd_check = s_phdl.exec("test -e /dev/kfd && echo KFD_OK || echo KFD_MISSING", print_console=False)
-    missing_kfd_nodes = []
-    for node, output in kfd_check.items():
-        if "KFD_OK" not in (output or ""):
-            missing_kfd_nodes.append(node)
-            log.error(f"ROCm device node /dev/kfd not found on {node}")
-        else:
-            log.info(f"/dev/kfd found on {node}")
-
-    if missing_kfd_nodes:
-        fail_test(
-            f"ROCm device node /dev/kfd not found on {len(missing_kfd_nodes)} node(s): {', '.join(missing_kfd_nodes)}. "
-            f"This test requires ROCm GPU nodes with /dev/kfd on each target."
-        )
-        update_test_result()
-        return
-
-    container_image = inference_dict['container_image']
-    missing_img_nodes = docker_lib.nodes_missing_docker_image(s_phdl, container_image)
-    if missing_img_nodes:
-        fail_test(
-            f"Container image not found locally on {len(missing_img_nodes)} node(s): {', '.join(missing_img_nodes)}. "
-            f"Configured image: {container_image}. Pull it on each target node before running this benchmark "
-            f"(for example: docker pull {container_image})."
-        )
-        update_test_result()
-        return
-
-    container_name = inference_dict['container_name']
-    hf_home = inference_dict['hf_home']
-    output_base_dir = inference_dict['output_base_dir']
-    # Prefer the resolved container model path computed in test_verify_hf_cache_or_download.
-    model_repo = inference_dict.get('_resolved_model_path_container') or inference_dict['model_repo']
-
-    # Get benchmark parameters
-    flux_params = benchmark_params_dict['flux1_dev_t2i']
-    prompt = flux_params['prompt']
-    seed = flux_params['seed']
-    num_inference_steps = flux_params['num_inference_steps']
-    max_sequence_length = flux_params['max_sequence_length']
-    no_use_resolution_binning = flux_params['no_use_resolution_binning']
-    warmup_steps = flux_params['warmup_steps']
-    warmup_calls = flux_params['warmup_calls']
-    num_repetitions = flux_params['num_repetitions']
-    height = flux_params['height']
-    width = flux_params['width']
-    ulysses_degree = flux_params['ulysses_degree']
-    ring_degree = flux_params['ring_degree']
-    use_torch_compile = flux_params['use_torch_compile']
-    torchrun_nproc = flux_params['torchrun_nproc']
-
-    log.info(f"Resolving output directory labels for {len(s_phdl.host_list)} node(s)")
-    hostname_result = s_phdl.exec('hostname', print_console=False)
-    node_to_hostname = {node: (hostname_result.get(node, "") or "").strip() or node for node in s_phdl.host_list}
-    node_to_out_label = {node: cluster_target_output_label(node) for node in s_phdl.host_list}
-    for node in s_phdl.host_list:
-        log.info(f"Node {node}: output label '{node_to_out_label[node]}' (hostname: {node_to_hostname[node]})")
-
-    # Build common docker command components
-    device_list = inference_dict['container_config']['device_list']
-    volume_dict = inference_dict['container_config']['volume_dict']
-    env_dict = inference_dict['container_config']['env_dict']
-
-    # Build device arguments
-    device_args = " ".join([f"--device={dev}" for dev in device_list])
-
-    # Build environment arguments (common to all nodes)
-    env_dict_full = env_dict.copy()
-    env_dict_full['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
-    env_dict_full['OMP_NUM_THREADS'] = '16'
-    env_dict_full['HF_HOME'] = '/hf_home'
-    if hf_token:
-        env_dict_full['HF_TOKEN'] = hf_token
-    env_args = " ".join([f"-e {key}={value}" for key, value in env_dict_full.items()])
-
-    # Build torchrun command (common to all nodes)
-    resolution_binning_flag = "" if no_use_resolution_binning else ""
-    if no_use_resolution_binning:
-        resolution_binning_flag = "--no_use_resolution_binning"
-
-    compile_flag = "--use-torch-compile" if use_torch_compile else ""
-
-    torchrun_cmd = (
-        f"torchrun --nproc_per_node={torchrun_nproc} /app/Flux/run_usp.py "
-        f"--model \"{model_repo}\" "
-        f"--prompt \"{prompt}\" "
-        f"--seed {seed} "
-        f"--num_inference_steps {num_inference_steps} "
-        f"--max_sequence_length {max_sequence_length} "
-        f"{resolution_binning_flag} "
-        f"--warmup_steps {warmup_steps} "
-        f"--warmup_calls {warmup_calls} "
-        f"--num_repetitions {num_repetitions} "
-        f"--height {height} --width {width} "
-        f"--ulysses_degree {ulysses_degree} "
-        f"--ring_degree {ring_degree} "
-        f"{compile_flag} "
-        f"--benchmark_output_directory /outputs"
+    errors = launch_flux_benchmark(
+        s_phdl,
+        inference_dict,
+        benchmark_params_dict,
+        hf_token,
+        distributed=False,
     )
-
-    # Create per-node output directories and build per-node docker commands
-    mkdir_cmds = []
-    docker_cmds = []
-
-    for node in s_phdl.host_list:
-        out_label = node_to_out_label[node]
-        output_dir = f"{output_base_dir}/flux_{out_label}_outputs"
-
-        # Create output directory command
-        mkdir_cmds.append(f"mkdir -p {output_dir}")
-
-        # Build volume arguments with per-node output directory
-        volume_dict_full = volume_dict.copy()
-        volume_dict_full[output_dir] = "/outputs"
-        volume_dict_full[hf_home] = "/hf_home"
-        # If user provided an explicit local model path, mount it consistently to /model.
-        if inference_dict.get("_resolved_model_mount_host"):
-            volume_dict_full[inference_dict["_resolved_model_mount_host"]] = "/model"
-        volume_args = " ".join(
-            [f"--mount type=bind,source={src},target={dst}" for src, dst in volume_dict_full.items()]
-        )
-
-        # Full docker command for this node
-        docker_cmd = (
-            f"docker run "
-            f"--cap-add=SYS_PTRACE "
-            f"--security-opt seccomp=unconfined "
-            f"--user root "
-            f"{device_args} "
-            f"--ipc=host "
-            f"--network host "
-            f"--rm "
-            f"--privileged "
-            f"--name {container_name} "
-            f"{volume_args} "
-            f"{env_args} "
-            f"{container_image} "
-            f"{torchrun_cmd}"
-        )
-        docker_cmds.append(docker_cmd)
-        log.info(f"Node {node} will write to: {output_dir}")
-
-    # Create output directories on all nodes in parallel
-    log.info(f"Creating output directories on {len(s_phdl.host_list)} node(s)")
-    s_phdl.exec_cmd_list(mkdir_cmds)
-
-    log.info(f"Running FLUX.1-dev benchmark on {len(s_phdl.host_list)} node(s) in parallel")
-    log.debug(f"Docker command (sample): {_redact_secrets(docker_cmds[0])}")
-
-    try:
-        # Run benchmarks on all nodes in parallel
-        log.info("Starting benchmarks (this may take several minutes)...")
-        # Measured live on the WAN22 benchmark (same load/compile pattern): the silent gap
-        # between checkpoint-shard loading and the next log line (torch.compile) varies with
-        # node/JIT-cache state and has been observed anywhere from ~5 to 15+ minutes; 300s and
-        # 900s both falsely killed healthy runs. 1800s gives margin above the worst case seen
-        # so far while still failing a genuine hang well before the SLURM allocation runs out.
-        benchmark_results = s_phdl.exec_cmd_list(docker_cmds, inactivity_timeout=1800)
-
-        log.info("Benchmarks completed on all nodes")
-
-        # Check for common failure patterns on each node and fail fast.
-        fatal_patterns = [
-            r"\bTraceback\b",
-            r"\bModuleNotFoundError\b",
-            r"\bChildFailedError\b",
-            r"\bOSError:\b",
-        ]
-
-        failed_nodes = []
-        for node, output in benchmark_results.items():
-            if any(re.search(p, output, re.I) for p in fatal_patterns):
-                log.error(f"Benchmark output indicates a failure on {node} (see logs above).")
-                failed_nodes.append(node)
-            else:
-                log.info(f"Benchmark on {node} completed successfully")
-
-        if failed_nodes:
-            fail_test(f"Benchmark failed on {len(failed_nodes)} node(s): {', '.join(failed_nodes)}")
-        else:
-            art_verify_cmds = []
-            for node in s_phdl.host_list:
-                od = f"{output_base_dir}/flux_{node_to_out_label[node]}_outputs"
-                odq = shlex.quote(od)
-                art_verify_cmds.append(
-                    f'tj=$(find {odq} -type f -path \'*/results/timing.json\' 2>/dev/null | head -1); '
-                    f'pf=$(find {odq} -type f -name \'flux_*.png\' 2>/dev/null | head -1); '
-                    f'test -n "$tj" && test -s "$tj" && test -n "$pf" && test -s "$pf" '
-                    f"&& echo ART_OK || echo ART_MISSING"
-                )
-            art_res = s_phdl.exec_cmd_list(art_verify_cmds, print_console=False)
-            missing_art = [n for n, out in art_res.items() if "ART_OK" not in (out or "")]
-            if missing_art:
-                fail_test(
-                    f"Benchmark logs looked clean but expected artifacts were missing on {len(missing_art)} node(s): "
-                    f"{', '.join(missing_art)}. Expected non-empty results/timing.json and at least one non-empty "
-                    f"flux_*.png under each node's flux_<cluster_target>_outputs directory."
-                )
-            log.info(
-                "Run step verified: non-empty timing.json and flux_*.png present on all %s node(s).",
-                len(s_phdl.host_list),
-            )
-
-    except Exception as e:
-        docker_lib.kill_docker_container(s_phdl, container_name)
-        fail_test(f"Benchmark execution failed with exception: {e}")
-
-    # For convenience, store the single-node output dir so parsing can be strict and avoid
-    # picking up stale outputs from previous runs on other hosts.
-    if len(getattr(s_phdl, "host_list", []) or []) == 1:
-        only_node = s_phdl.host_list[0]
-        inference_dict["_test_output_dir"] = f"{output_base_dir}/flux_{node_to_out_label[only_node]}_outputs"
+    if errors:
+        fail_test(f"Following FAILURES seen - {errors}")
 
     update_test_result()
 
@@ -780,8 +576,8 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
     Parse benchmark outputs and validate against thresholds.
 
     Handles both single-node and multi-node runs:
-    - Single node: parses ``flux_<cluster_target>_outputs``
-    - Multi-node: parses one ``flux_<cluster_target>_outputs`` per node and validates each
+    - Single node: parses flux_{hostname}_outputs
+    - Multi-node: parses all flux_*_outputs directories and validates each
 
     Uses FluxOutputParser to:
     - Locate results/timing.json
@@ -808,21 +604,28 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
     if inference_dict.get("_test_output_dir"):
         output_dirs = [inference_dict["_test_output_dir"]]
     else:
-        # Derive from cluster SSH targets (same labels as the run step).
+        # Otherwise, derive expected output dirs from the current nodes' hostnames.
         try:
-            expected_labels = [cluster_target_output_label(n) for n in s_phdl.host_list]
+            head_node = s_phdl.host_list[0]
+            hostname_out = s_phdl.exec('hostname', print_console=False)
+            expected_hostnames = []
+            for node in s_phdl.host_list:
+                hn = (hostname_out.get(node, "") or "").strip() or node
+                expected_hostnames.append(hn)
         except Exception:
-            expected_labels = []
+            # Fallback to head node only
+            expected_hostnames = [head_node] if 'head_node' in locals() else []
 
-        if not expected_labels:
-            fail_test("Could not determine cluster node keys to locate Flux outputs")
+        if not expected_hostnames:
+            fail_test("Could not determine node hostnames to locate Flux outputs")
             update_test_result()
             return
 
+        # Single-node: parse only that node's directory.
         if node_count <= 1:
-            output_dirs = [f"{output_base_dir}/flux_{expected_labels[0]}_outputs"]
+            output_dirs = [f"{output_base_dir}/flux_{expected_hostnames[0]}_outputs"]
         else:
-            output_dirs = [f"{output_base_dir}/flux_{lab}_outputs" for lab in expected_labels]
+            output_dirs = [f"{output_base_dir}/flux_{hn}_outputs" for hn in expected_hostnames]
 
     log.info(f"Found {len(output_dirs)} output directory(ies) to parse")
 

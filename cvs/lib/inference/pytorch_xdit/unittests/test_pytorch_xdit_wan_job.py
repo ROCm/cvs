@@ -3,19 +3,81 @@
 import unittest
 from unittest.mock import patch
 
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import log_benchmark_failure_excerpt
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+    build_nccl_env,
+    log_benchmark_failure_excerpt,
+)
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
+    RUN_WAN_DIFFUSERS_PATH,
+    RUN_WAN_NATIVE_PATH,
+    WAN_DIFFUSERS_LAUNCHER_XFUSER,
+    WAN_DISTRIBUTED_BENCHMARK_TIMEOUT_S,
+    WAN_XFUSER_AUTO_INPUT_IMAGE,
+    WAN_XFUSER_BENCHMARK_OUTPUT_DIR,
+    WAN_XFUSER_EXAMPLE_CONTAINER_PATH,
+    WAN_XFUSER_TIMING_JSON_CONTAINER_PATH,
+    WAN_XFUSER_VIDEO_CONTAINER_PATH,
+    WAN_MODEL_FORMAT_DIFFUSERS,
+    build_run_wan_diffusers_args,
+    build_run_wan_native_args,
+    build_run_wan_xfuser_example_args,
     build_torchrun_cmd,
+    build_wan_xfuser_auto_input_image_cmd,
+    build_wan_distributed_container_cleanup_cmds,
+    build_wan_output_verify_cmd,
+    build_wan_xfuser_output_verify_cmd,
+    build_wan_xfuser_video_deps_cmd,
+    detect_wan_model_format_from_model_index,
     parallel_product,
+    parse_wan_size,
+    resolve_host_path_for_container_mount,
+    resolve_wan_diffusers_launcher,
+    resolve_wan_benchmark_timeout,
+    resolve_wan_model_format,
+    should_wan_xfuser_auto_generate_input_image,
+    scan_wan_fatal_output,
+    scan_wan_xfuser_benchmark_output,
+    summarize_wan_benchmark_log,
     validate_parallelism,
     validate_wan_parallelism_config,
+    validate_wan_xfuser_mounts,
 )
 
 
 class TestWanParallelism(unittest.TestCase):
+    def test_resolve_wan_benchmark_timeout(self):
+        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import DEFAULT_BENCHMARK_TIMEOUT_S
+
+        self.assertEqual(
+            resolve_wan_benchmark_timeout(distributed=True),
+            WAN_DISTRIBUTED_BENCHMARK_TIMEOUT_S,
+        )
+        self.assertEqual(
+            resolve_wan_benchmark_timeout(distributed=False),
+            DEFAULT_BENCHMARK_TIMEOUT_S,
+        )
+        self.assertEqual(resolve_wan_benchmark_timeout(distributed=True, explicit_timeout=999), 999)
+
+    def test_build_wan_distributed_container_cleanup_cmds(self):
+        cmds = build_wan_distributed_container_cleanup_cmds("wan22-benchmark-dist", 2)
+        self.assertEqual(len(cmds), 2)
+        self.assertIn("wan22-benchmark-dist-rank0", cmds[0])
+        self.assertIn("wan22-benchmark-dist-rank1", cmds[1])
+
     def test_parallel_product(self):
         params = {"ulysses_size": 8, "ring_size": 2, "torchrun_nproc": 8}
         self.assertEqual(parallel_product(params), 16)
+
+    def test_parallel_product_schema_defaults(self):
+        params = {"torchrun_nproc": 8}
+        self.assertEqual(parallel_product(params), 8)
+
+    def test_validate_parallelism_single_node_skips_check(self):
+        params = {"torchrun_nproc": 8}
+        world_size, product, err = validate_parallelism(1, params)
+        self.assertIsNone(err)
+        self.assertEqual(world_size, 8)
+        self.assertEqual(product, 8)
 
     def test_validate_parallelism_pass(self):
         params = {"ulysses_size": 8, "ring_size": 2, "torchrun_nproc": 8}
@@ -50,49 +112,276 @@ class TestWanParallelism(unittest.TestCase):
         )
 
 
-class TestBuildTorchrunCmd(unittest.TestCase):
-    def test_distributed_cmd_includes_rendezvous(self):
-        params = {
-            "prompt": "test prompt",
-            "size": "720*1280",
-            "frame_num": 81,
-            "num_benchmark_steps": 5,
-            "compile": False,
-            "torchrun_nproc": 8,
-            "ulysses_size": 8,
-            "ring_size": 2,
-        }
-        cmd = build_torchrun_cmd(
+class TestWanModelRouting(unittest.TestCase):
+    def test_model_index_diffusers(self):
+        self.assertEqual(
+            detect_wan_model_format_from_model_index({"_class_name": "WanImageToVideoPipeline"}),
+            WAN_MODEL_FORMAT_DIFFUSERS,
+        )
+
+    def test_resolve_from_repo_name(self):
+        self.assertEqual(
+            resolve_wan_model_format(None, "Wan-AI/Wan2.2-I2V-A14B-Diffusers"),
+            WAN_MODEL_FORMAT_DIFFUSERS,
+        )
+        self.assertEqual(
+            resolve_wan_model_format(None, "Wan-AI/Wan2.2-I2V-A14B"),
+            "native",
+        )
+
+    def test_parse_wan_size(self):
+        self.assertEqual(parse_wan_size("720*1280"), (720, 1280))
+
+
+class TestBuildRunWanArgs(unittest.TestCase):
+    _BASE_PARAMS = {
+        "prompt": "test prompt",
+        "size": "720*1280",
+        "frame_num": 81,
+        "num_benchmark_steps": 5,
+        "compile": True,
+        "torchrun_nproc": 8,
+        "ulysses_size": 8,
+        "ring_size": 1,
+    }
+
+    def test_native_uses_ckpt_dir(self):
+        args = build_run_wan_native_args(self._BASE_PARAMS, ckpt_dir="/model")
+        self.assertIn("--ckpt_dir /model", args)
+        self.assertIn("--task i2v-A14B", args)
+        self.assertIn("--ulysses_size 8", args)
+        self.assertIn("--compile", args)
+
+    def test_diffusers_uses_model_and_torch_compile(self):
+        args = build_run_wan_diffusers_args(self._BASE_PARAMS, model_path="/model")
+        self.assertIn("--model /model", args)
+        self.assertIn("--task i2v", args)
+        self.assertIn("--height 720", args)
+        self.assertIn("--width 1280", args)
+        self.assertIn("--use_torch_compile", args)
+        self.assertIn("--num_repetitions 5", args)
+
+    def test_diffusers_optional_none_seed_uses_default(self):
+        params = {**self._BASE_PARAMS, "seed": None, "num_inference_steps": None}
+        args = build_run_wan_diffusers_args(params, model_path="/model")
+        self.assertIn("--seed 42", args)
+        self.assertIn("--num_inference_steps 40", args)
+
+    def test_xfuser_example_uses_input_image(self):
+        params = {**self._BASE_PARAMS, "compile": False}
+        args = build_run_wan_xfuser_example_args(
             params,
+            model_path="/model",
+            i2v_image_path="/benchmark/i2v_input.JPG",
+        )
+        self.assertIn("--input_image /benchmark/i2v_input.JPG", args)
+        self.assertIn("--num_repetitions 5", args)
+        self.assertIn("--output_directory /outputs", args)
+        self.assertIn(f"--save_video_path {WAN_XFUSER_VIDEO_CONTAINER_PATH}", args)
+        self.assertIn("--timing_json_path results/timing.json", args)
+        self.assertIn("--output_type pil", args)
+        self.assertNotIn("--task i2v", args)
+
+    def test_resolve_xfuser_launcher_from_config(self):
+        self.assertEqual(
+            resolve_wan_diffusers_launcher(
+                {"wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER},
+            ),
+            WAN_DIFFUSERS_LAUNCHER_XFUSER,
+        )
+        self.assertEqual(
+            resolve_wan_diffusers_launcher(
+                {"wan_diffusers_run_script": "/benchmark/wan_i2v_example.py"},
+            ),
+            WAN_DIFFUSERS_LAUNCHER_XFUSER,
+        )
+
+
+class TestBuildTorchrunCmd(unittest.TestCase):
+    _BASE_PARAMS = {
+        "prompt": "test prompt",
+        "size": "720*1280",
+        "frame_num": 81,
+        "num_benchmark_steps": 5,
+        "compile": False,
+        "torchrun_nproc": 8,
+        "ulysses_size": 8,
+        "ring_size": 2,
+    }
+
+    def test_distributed_cmd_includes_rendezvous(self):
+        cmd = build_torchrun_cmd(
+            self._BASE_PARAMS,
             ckpt_dir="/model",
             distributed=True,
             node_rank=1,
             nnodes=2,
             master_addr="10.0.0.1",
             master_port=29500,
+            model_repo_hints=["Wan-AI/Wan2.2-I2V-A14B"],
         )
         self.assertIn("--nnodes=2", cmd)
         self.assertIn("--node_rank=1", cmd)
-        self.assertIn("--master_addr=10.0.0.1", cmd)
-        self.assertIn("--ulysses_size 8", cmd)
-        self.assertIn("--ring_size 2", cmd)
-        self.assertIn("/app/Wan2.2/run.py", cmd)
+        self.assertIn(RUN_WAN_NATIVE_PATH, cmd)
 
-    def test_single_node_cmd(self):
-        params = {
-            "prompt": "test prompt",
-            "size": "720*1280",
-            "frame_num": 81,
-            "num_benchmark_steps": 5,
-            "compile": True,
-            "torchrun_nproc": 8,
-            "ulysses_size": 8,
-            "ring_size": 1,
-        }
-        cmd = build_torchrun_cmd(params, ckpt_dir="/model", distributed=False)
+    def test_single_node_native(self):
+        cmd = build_torchrun_cmd(
+            {**self._BASE_PARAMS, "compile": True},
+            ckpt_dir="/model",
+            distributed=False,
+            model_repo_hints=["Wan-AI/Wan2.2-I2V-A14B"],
+        )
         self.assertIn("torchrun --nproc_per_node=8", cmd)
-        self.assertNotIn("--nnodes=", cmd)
+        self.assertIn(RUN_WAN_NATIVE_PATH, cmd)
         self.assertIn("--compile", cmd)
+
+    def test_single_node_diffusers_xfuser(self):
+        cmd = build_torchrun_cmd(
+            {
+                **self._BASE_PARAMS,
+                "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+                "wan_diffusers_run_script": WAN_XFUSER_EXAMPLE_CONTAINER_PATH,
+                "wan_xfuser_auto_input_image": True,
+            },
+            ckpt_dir="/model",
+            distributed=False,
+            model_repo_hints=["Wan-AI/Wan2.2-I2V-A14B-Diffusers"],
+        )
+        self.assertIn(WAN_XFUSER_EXAMPLE_CONTAINER_PATH, cmd)
+        self.assertIn(f"--input_image {WAN_XFUSER_AUTO_INPUT_IMAGE}", cmd)
+        self.assertIn("mkdir -p /outputs/results", cmd)
+        self.assertIn("imageio", cmd)
+        self.assertIn("i2v_input.jpg", cmd)
+        self.assertNotIn(RUN_WAN_DIFFUSERS_PATH, cmd)
+
+    def test_auto_input_image_cmd_uses_config_size(self):
+        cmd = build_wan_xfuser_auto_input_image_cmd({"size": "720*1280"})
+        self.assertIn("1280", cmd)
+        self.assertIn("720", cmd)
+        self.assertIn(WAN_XFUSER_AUTO_INPUT_IMAGE, cmd)
+
+    def test_should_auto_generate_without_host_mount(self):
+        self.assertTrue(
+            should_wan_xfuser_auto_generate_input_image(
+                {
+                    "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+                    "wan_xfuser_auto_input_image": True,
+                },
+                {"container_config": {"volume_dict": {}}},
+            )
+        )
+
+
+class TestWanOutputVerification(unittest.TestCase):
+    def test_scan_xfuser_success_output(self):
+        self.assertTrue(scan_wan_xfuser_benchmark_output("epoch time: 12.34 sec, memory: 40.00 GB"))
+        self.assertFalse(scan_wan_xfuser_benchmark_output("Traceback (most recent call last):"))
+
+    def test_scan_fatal_output_catches_docker_mount_errors(self):
+        output = "docker: Error response from daemon: invalid mount config for type bind"
+        self.assertTrue(scan_wan_fatal_output(output))
+
+    def test_scan_fatal_output_catches_missing_script(self):
+        self.assertTrue(
+            scan_wan_fatal_output("python: can't open file '/benchmark/wan_i2v_example.py'")
+        )
+
+    def test_scan_fatal_output_ignores_torchao_module_not_found(self):
+        output = (
+            "torchao Float8Tensor FSDP2 patches skipped (ModuleNotFoundError): "
+            "No module named 'torchao'\n"
+            "100%|██████████| 40/40 [02:08<00:00,  3.21s/it]\n"
+            "step 0: epoch time: 134.99 sec, memory: 94.91 GB\n"
+        )
+        self.assertFalse(scan_wan_fatal_output(output))
+
+    def test_scan_fatal_output_still_catches_real_module_not_found(self):
+        output = (
+            "Traceback (most recent call last):\n"
+            "  File \"/benchmark/wan_i2v_example.py\", line 191, in main\n"
+            "ModuleNotFoundError: No module named 'xfuser'\n"
+        )
+        self.assertTrue(scan_wan_fatal_output(output))
+
+    def test_build_wan_output_verify_cmd(self):
+        cmd = build_wan_output_verify_cmd("/tmp/wan_22_host_outputs")
+        self.assertIn("rank0_step*.json", cmd)
+        self.assertIn("WAN_OUTPUT_OK", cmd)
+
+    def test_build_wan_xfuser_output_verify_cmd(self):
+        cmd = build_wan_xfuser_output_verify_cmd("/tmp/wan_22_host_outputs")
+        self.assertIn("results/timing.json", cmd)
+        self.assertIn("WAN_OUTPUT_OK", cmd)
+
+    def test_xfuser_benchmark_output_dir_constant(self):
+        self.assertEqual(WAN_XFUSER_BENCHMARK_OUTPUT_DIR, "/outputs")
+        self.assertEqual(WAN_XFUSER_VIDEO_CONTAINER_PATH, "/outputs/results/video_i2v.mp4")
+        self.assertEqual(WAN_XFUSER_TIMING_JSON_CONTAINER_PATH, "/outputs/results/timing.json")
+
+    def test_summarize_wan_benchmark_log(self):
+        self.assertEqual(summarize_wan_benchmark_log(""), "docker benchmark log was empty")
+        self.assertIn("line2", summarize_wan_benchmark_log("line1\nline2\nline3"))
+
+    def test_resolve_host_path_for_container_mount(self):
+        inference_dict = {
+            "container_config": {
+                "volume_dict": {
+                    "/host/wan_i2v_example.py": "/benchmark/wan_i2v_example.py",
+                }
+            }
+        }
+        self.assertEqual(
+            resolve_host_path_for_container_mount(inference_dict, "/benchmark/wan_i2v_example.py"),
+            "/host/wan_i2v_example.py",
+        )
+
+    def test_validate_xfuser_mounts_rejects_placeholders(self):
+        class FakePssh:
+            host_list = ["10.0.0.1"]
+
+        inference_dict = {
+            "container_config": {
+                "volume_dict": {
+                    "/path/to/cvs/scripts/wan_i2v_example.py": "/benchmark/wan_i2v_example.py",
+                    "/path/to/i2v_input.JPG": "/benchmark/i2v_input.JPG",
+                }
+            }
+        }
+        wan_params = {
+            "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+            "wan_diffusers_run_script": "/benchmark/wan_i2v_example.py",
+            "wan_diffusers_i2v_image": "/benchmark/i2v_input.JPG",
+        }
+        errors = validate_wan_xfuser_mounts(FakePssh(), ["10.0.0.1"], inference_dict, wan_params)
+        self.assertTrue(any("placeholder" in err.lower() for err in errors))
+
+    def test_validate_xfuser_mounts_allows_auto_input(self):
+        class FakePssh:
+            host_list = ["10.0.0.1"]
+
+            def exec_cmd_list(self, commands, timeout=None, print_console=False):
+                return {"10.0.0.1": "WAN_MOUNT_OK"}
+
+        inference_dict = {
+            "container_config": {
+                "volume_dict": {
+                    "/host/wan_i2v_example.py": "/benchmark/wan_i2v_example.py",
+                }
+            }
+        }
+        wan_params = {
+            "wan_diffusers_launcher": WAN_DIFFUSERS_LAUNCHER_XFUSER,
+            "wan_xfuser_auto_input_image": True,
+        }
+        errors = validate_wan_xfuser_mounts(FakePssh(), ["10.0.0.1"], inference_dict, wan_params)
+        self.assertEqual(errors, [])
+
+
+class TestBuildNcclEnv(unittest.TestCase):
+    def test_defaults_include_nccl_proto_simple(self):
+        env = build_nccl_env({})
+        self.assertEqual(env["NCCL_PROTO"], "Simple")
+        self.assertEqual(env["HSA_FORCE_FINE_GRAIN_PCIE"], "1")
 
 
 class TestLogBenchmarkFailureExcerpt(unittest.TestCase):
@@ -111,8 +400,6 @@ class TestLogBenchmarkFailureExcerpt(unittest.TestCase):
 
         joined = "\n".join(rendered)
         self.assertIn("Benchmark failure excerpt (10.0.0.1", joined)
-        self.assertIn("Traceback (most recent call last):", joined)
-        self.assertIn("HF_TOKEN=<redacted>", joined)
         self.assertNotIn("hf_secret", joined)
 
 

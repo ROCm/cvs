@@ -1,0 +1,62 @@
+{
+    "config": {
+        "container_image": "rocm/ufb-private:xdit-gfx942-py3.12-prereleases-rocm10.0.0rc3-2805c93",
+        "container_name": "wan22-benchmark-dist",
+        "hf_token_file": "/home/{user-id}/.hf_token",
+        "hf_home": "/home/{user-id}",
+        "output_base_dir": "/home/{user-id}/cvs_outputs",
+        "model_repo": "/data/models/Wan2.2-I2V-A14B-Diffusers",
+        "model_rev": "",
+        "nnodes": 2,
+        "master_addr": "<changeme>",
+        "master_port": 29500,
+        "nccl_ib_hca": "<changeme>",
+        "nccl_socket_ifname": "<changeme>",
+        "gloo_socket_ifname": "<changeme>",
+        "nccl_ib_gid_index": "3",
+        "nccl_debug": "INFO",
+        "container_config": {
+            "device_list": [
+                "/dev/dri",
+                "/dev/kfd"
+            ],
+            "volume_dict": {
+                "/home/{user-id}/cvs/cvs/lib/inference/pytorch_xdit/scripts/wan_i2v_example.py": "/benchmark/wan_i2v_example.py"
+            },
+            "env_dict": {
+                "CVS_WAN_XFUSER_PYPACKAGES": "/shared/amdgpu/home/dl_dcgpu_aac_service_request_qle/pypackages"
+            }
+        }
+    },
+    "benchmark_params": {
+        "wan22_i2v_a14b": {
+            "model_format": "diffusers",
+            "wan_diffusers_launcher": "xfuser_example",
+            "wan_diffusers_run_script": "/benchmark/wan_i2v_example.py",
+            "wan_xfuser_auto_input_image": true,
+            "wan_xfuser_install_video_deps": true,
+            "wan_xfuser_output_type": "pil",
+            "wan_diffusers_save_video_path": "/outputs/results/video_i2v.mp4",
+            "wan_diffusers_timing_json_path": "results/timing.json",
+            "require_video_artifact": true,
+            "prompt": "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
+            "size": "720*1280",
+            "frame_num": 81,
+            "num_benchmark_steps": 1,
+            "num_inference_steps": 40,
+            "warmup_steps": 1,
+            "compile": false,
+            "torchrun_nproc": 8,
+            "ulysses_size": 8,
+            "ring_size": 2,
+            "expected_results": {
+                "auto": {
+                    "max_avg_pipe_time_s": 300.0
+                },
+                "mi325": {
+                    "max_avg_pipe_time_s": 300.0
+                }
+            }
+        }
+    }
+}
