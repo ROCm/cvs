@@ -90,14 +90,33 @@ def _walk_dicts(value: Any, inherited_bdf: Optional[str] = None) -> Iterable[Tup
             yield from _walk_dicts(child, inherited_bdf)
 
 
-def _parse_json(output: str, command_name: str) -> Tuple[Optional[Any], List[str]]:
+def _parse_json(output: str, command_name: str) -> Tuple[List[Any], List[str]]:
+    """Decode one or more whitespace-separated top-level JSON documents.
+
+    Some amd-smi builds print multiple JSON documents back-to-back for a
+    single ``list --json`` invocation (e.g. a GPU array followed by an
+    AI-NIC array), which a plain ``json.loads`` rejects as trailing data.
+    """
     raw = (output or "").strip()
     if not raw:
-        return None, [f"{command_name} returned empty output"]
-    try:
-        return json.loads(raw), []
-    except json.JSONDecodeError as exc:
-        return None, [f"{command_name} did not return valid JSON: {exc.msg}"]
+        return [], [f"{command_name} returned empty output"]
+    decoder = json.JSONDecoder()
+    documents: List[Any] = []
+    index = 0
+    length = len(raw)
+    while index < length:
+        while index < length and raw[index].isspace():
+            index += 1
+        if index >= length:
+            break
+        try:
+            document, index = decoder.raw_decode(raw, index)
+        except json.JSONDecodeError as exc:
+            return [], [f"{command_name} did not return valid JSON: {exc.msg}"]
+        documents.append(document)
+    if not documents:
+        return [], [f"{command_name} returned empty output"]
+    return documents, []
 
 
 def parse_afmctl_device_json(output: str) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -112,27 +131,33 @@ def parse_afmctl_device_json(output: str) -> Tuple[List[Dict[str, Any]], List[st
 
 
 def parse_amd_smi_gpu_json(output: str) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Return a de-duplicated GPU inventory from ``amd-smi list --json``."""
-    document, errors = _parse_json(output, "amd-smi list --json")
+    """Return a de-duplicated GPU inventory from ``amd-smi list --json``.
+
+    Some amd-smi builds emit the GPU list followed by other device
+    families (e.g. AI-NIC) as a second concatenated JSON document; only
+    records carrying a GPU identifier are counted as GPUs.
+    """
+    documents, errors = _parse_json(output, "amd-smi list --json")
     if errors:
         return [], errors
 
     gpus: List[Dict[str, Any]] = []
     seen = set()
-    for record, inherited_bdf in _walk_dicts(document):
-        flattened = _flatten_values(record)
-        bdf = _normalize_bdf(_first_value(flattened, _BDF_KEYS)) or inherited_bdf
-        gpu_id = _first_value(flattened, _GPU_ID_KEYS)
-        if bdf is None and gpu_id is None:
-            continue
-        # AFM/IFoE BDFs are function .1; AMD-SMI lists GPU function .0.
-        if bdf and not bdf.endswith(".0"):
-            continue
-        identity = bdf or f"gpu:{gpu_id}"
-        if identity in seen:
-            continue
-        seen.add(identity)
-        gpus.append({"bdf": bdf, "gpu_id": gpu_id})
+    for document in documents:
+        for record, inherited_bdf in _walk_dicts(document):
+            flattened = _flatten_values(record)
+            gpu_id = _first_value(flattened, _GPU_ID_KEYS)
+            if gpu_id is None:
+                continue
+            bdf = _normalize_bdf(_first_value(flattened, _BDF_KEYS)) or inherited_bdf
+            # AFM/IFoE BDFs are function .1; AMD-SMI lists GPU function .0.
+            if bdf and not bdf.endswith(".0"):
+                continue
+            identity = bdf or f"gpu:{gpu_id}"
+            if identity in seen:
+                continue
+            seen.add(identity)
+            gpus.append({"bdf": bdf, "gpu_id": gpu_id})
     if not gpus:
         errors.append("amd-smi list JSON contained no GPU descriptors")
     return gpus, errors
