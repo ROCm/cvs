@@ -176,12 +176,15 @@ def _exec_on_nodes(
     phdl_hosts = list(getattr(s_phdl, "host_list", []) or [])
 
     if phdl_hosts == node_list:
-        return s_phdl.exec(
-            cmd,
-            timeout=timeout,
-            print_console=print_console,
-            detailed=detailed,
-        ) or {}
+        return (
+            s_phdl.exec(
+                cmd,
+                timeout=timeout,
+                print_console=print_console,
+                detailed=detailed,
+            )
+            or {}
+        )
 
     results: Dict[str, Any] = {}
     for node in node_list:
@@ -635,9 +638,7 @@ def build_flux2_example_args(
     dp = int(flux_params.get("data_parallel_degree", 1))
 
     guidance_scale = resolve_flux_guidance_scale(model_type, flux_params.get("guidance_scale"))
-    guidance_scale_flag = (
-        f"--guidance_scale {guidance_scale} " if guidance_scale is not None else ""
-    )
+    guidance_scale_flag = f"--guidance_scale {guidance_scale} " if guidance_scale is not None else ""
 
     log.info(
         "FLUX.2 flux2_example: model=%s model_type=%s guidance_scale=%s",
@@ -845,7 +846,7 @@ def verify_distributed_logs(output: str, *, world_size: int) -> Tuple[bool, str]
     return False, (f"No distributed proof in logs for world_size={world_size}. ")
 
 
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_benchmark_job import (
+from cvs.lib.inference.pytorch_xdit.pytorch_xdit_benchmark_job import (  # noqa: E402
     BenchmarkLaunchPlan,
     PytorchXditBenchmarkJob,
 )

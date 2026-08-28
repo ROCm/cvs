@@ -645,9 +645,7 @@ class PytorchXditExpectedResults(BaseModel):
     @model_validator(mode="after")
     def validate_threshold_present(self) -> "PytorchXditExpectedResults":
         if self.max_avg_total_time_s is None and self.max_avg_pipe_time_s is None:
-            raise ValueError(
-                "expected_results entry must include max_avg_total_time_s and/or max_avg_pipe_time_s"
-            )
+            raise ValueError("expected_results entry must include max_avg_total_time_s and/or max_avg_pipe_time_s")
         return self
 
 

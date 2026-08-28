@@ -245,9 +245,7 @@ def test_verify_model_on_nodes(s_phdl, inference_dict):
 
     model_repo = inference_dict["model_repo"]
     if not (isinstance(model_repo, str) and model_repo.strip().startswith("/")):
-        fail_test(
-            "Diffusers xFuser WAN test requires config.model_repo as an explicit local path on every node."
-        )
+        fail_test("Diffusers xFuser WAN test requires config.model_repo as an explicit local path on every node.")
         update_test_result()
         return
 
@@ -315,9 +313,7 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
     else:
         try:
             hostname_out = s_phdl.exec("hostname", print_console=False)
-            expected_hostnames = [
-                (hostname_out.get(node, "") or "").strip() or node for node in s_phdl.host_list
-            ]
+            expected_hostnames = [(hostname_out.get(node, "") or "").strip() or node for node in s_phdl.host_list]
         except Exception:
             expected_hostnames = list(s_phdl.host_list)
 
@@ -351,14 +347,16 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
         if result.video_path:
             log.info("Video artifact found for %s: %s", label, result.video_path)
 
-        log.info("Benchmark results (%s): repetitions=%d avg_pipe_time=%.2fs",
-                 label, result.repetition_count, result.avg_pipe_time_s)
+        log.info(
+            "Benchmark results (%s): repetitions=%d avg_pipe_time=%.2fs",
+            label,
+            result.repetition_count,
+            result.avg_pipe_time_s,
+        )
 
         passed, message = parser.validate_threshold(result, expected_results, gpu_type)
         log.info("%s: %s", label, message)
-        results_summary.append(
-            {"label": label, "avg_pipe_time_s": result.avg_pipe_time_s, "passed": passed}
-        )
+        results_summary.append({"label": label, "avg_pipe_time_s": result.avg_pipe_time_s, "passed": passed})
         if not passed:
             all_passed = False
 

@@ -102,6 +102,7 @@ def _ulysses_size(wan_params: Mapping[str, Any]) -> int:
 def _ring_size(wan_params: Mapping[str, Any]) -> int:
     return int(wan_params.get("ring_size", WAN_DEFAULT_RING_SIZE))
 
+
 WAN_FATAL_OUTPUT_PATTERNS_EXTRA = (
     r"No AMD GPU detected",
     r"0 active drivers \(\[\]\)\. There should only be one\.",
@@ -111,9 +112,7 @@ WAN_FATAL_OUTPUT_PATTERNS_EXTRA = (
     r"invalid mount config",
 )
 
-WAN_BENIGN_OUTPUT_LINE_PATTERNS = (
-    r"skipped \(ModuleNotFoundError\)",
-)
+WAN_BENIGN_OUTPUT_LINE_PATTERNS = (r"skipped \(ModuleNotFoundError\)",)
 
 WAN_CORE_FATAL_OUTPUT_PATTERNS = (
     r"\bTraceback\b",
@@ -374,12 +373,8 @@ def build_run_wan_xfuser_example_args(
     warmup_steps = _optional_int(wan_params.get("warmup_steps"), 1)
     output_type = str(wan_params.get("wan_xfuser_output_type") or "pil")
     output_directory = WAN_XFUSER_BENCHMARK_OUTPUT_DIR
-    save_video_path = str(
-        wan_params.get("wan_diffusers_save_video_path") or WAN_XFUSER_VIDEO_CONTAINER_PATH
-    )
-    timing_json_path = str(
-        wan_params.get("wan_diffusers_timing_json_path") or "results/timing.json"
-    )
+    save_video_path = str(wan_params.get("wan_diffusers_save_video_path") or WAN_XFUSER_VIDEO_CONTAINER_PATH)
+    timing_json_path = str(wan_params.get("wan_diffusers_timing_json_path") or "results/timing.json")
     video_fps = _optional_int(wan_params.get("wan_diffusers_video_fps"), 16)
 
     log.info(
@@ -610,8 +605,7 @@ def scan_wan_fatal_output(output: str) -> bool:
         return True
     if re.search(r"\bModuleNotFoundError\b", text, re.I):
         return bool(
-            re.search(r"\bTraceback\b", text, re.I)
-            or re.search(r"\[rank\d+\]:.*ModuleNotFoundError", text, re.I)
+            re.search(r"\bTraceback\b", text, re.I) or re.search(r"\[rank\d+\]:.*ModuleNotFoundError", text, re.I)
         )
     return False
 
@@ -704,18 +698,13 @@ def validate_wan_xfuser_mounts(
 
     for host_path, label in mount_checks:
         if _is_placeholder_mount_path(host_path):
-            errors.append(
-                f"Replace placeholder {label} mount path in volume_dict: {host_path}"
-            )
+            errors.append(f"Replace placeholder {label} mount path in volume_dict: {host_path}")
 
     if errors:
         return errors
 
     check_cmds = [
-        " && ".join(
-            f"test -e {shlex.quote(host_path)}"
-            for host_path, _ in mount_checks
-        )
+        " && ".join(f"test -e {shlex.quote(host_path)}" for host_path, _ in mount_checks)
         + " && echo WAN_MOUNT_OK || echo WAN_MOUNT_MISSING"
     ] * len(nodes)
 
@@ -731,8 +720,7 @@ def validate_wan_xfuser_mounts(
         for host_path, label in mount_checks:
             details.append(f"{label}: {host_path}")
         errors.append(
-            f"xFuser mount preflight failed on {node}. Missing or unreadable host path(s): "
-            + "; ".join(details)
+            f"xFuser mount preflight failed on {node}. Missing or unreadable host path(s): " + "; ".join(details)
         )
     return errors
 
@@ -909,10 +897,7 @@ class WanBenchmarkJob(PytorchXditBenchmarkJob):
             model_repo_hints=self._wan_model_repo_hints(),
             resolved_model_format=self.inference_dict.get("_resolved_wan_model_format"),
         )
-        if (
-            is_wan_diffusers_model(model_format)
-            and re.search(r"can't open file .*run\.py", output or "", re.I)
-        ):
+        if is_wan_diffusers_model(model_format) and re.search(r"can't open file .*run\.py", output or "", re.I):
             run_script = resolve_wan_diffusers_run_script(self.wan_params, self.inference_dict)
             errors.append(
                 diffusers_run_script_missing_hint(

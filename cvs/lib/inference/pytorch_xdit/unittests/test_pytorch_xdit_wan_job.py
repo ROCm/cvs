@@ -27,7 +27,6 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
     build_wan_distributed_container_cleanup_cmds,
     build_wan_output_verify_cmd,
     build_wan_xfuser_output_verify_cmd,
-    build_wan_xfuser_video_deps_cmd,
     detect_wan_model_format_from_model_index,
     parallel_product,
     parse_wan_size,
@@ -379,9 +378,7 @@ class TestWanOutputVerification(unittest.TestCase):
         self.assertTrue(scan_wan_fatal_output(output))
 
     def test_scan_fatal_output_catches_missing_script(self):
-        self.assertTrue(
-            scan_wan_fatal_output("python: can't open file '/benchmark/wan_i2v_example.py'")
-        )
+        self.assertTrue(scan_wan_fatal_output("python: can't open file '/benchmark/wan_i2v_example.py'"))
 
     def test_scan_fatal_output_ignores_torchao_module_not_found(self):
         output = (

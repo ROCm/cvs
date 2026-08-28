@@ -539,7 +539,7 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
 
         agg, agg_errors = WanOutputParser.parse_runs_under_base_dir(
             base_dir=base_dir,
-            expected_artifact="video.mp4" if require_video else "video.mp4",
+            expected_artifact=expected_artifact,
             run_glob="wan_22_*_outputs",
             require_artifact=require_video,
             allowed_run_dir_names=expected_dirnames or None,

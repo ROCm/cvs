@@ -41,9 +41,7 @@ class TestWanHfSnapshotRequiredChecks(unittest.TestCase):
         self.assertIn("configuration.json", checks)
 
     def test_diffusers_repo_returns_none(self):
-        self.assertIsNone(
-            wan_native_hf_snapshot_required_checks("/cache/snap", "Wan-AI/Wan2.2-I2V-A14B-Diffusers")
-        )
+        self.assertIsNone(wan_native_hf_snapshot_required_checks("/cache/snap", "Wan-AI/Wan2.2-I2V-A14B-Diffusers"))
 
 
 class TestFirstRequiredCheckFailure(unittest.TestCase):

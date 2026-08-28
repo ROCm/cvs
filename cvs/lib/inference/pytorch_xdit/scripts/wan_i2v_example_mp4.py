@@ -2,6 +2,7 @@
 Wan2.2-I2V-A14B-Diffusers xDiT image-to-video benchmark.
 Usage: torchrun ... wan_i2v_example.py --model /path/to/model --input_image /path/to/image.jpg
 """
+
 import argparse
 import glob
 import json
@@ -113,6 +114,7 @@ def _iter_frames(raw_frames):
 
     try:
         from PIL import Image
+
         if isinstance(raw_frames, Image.Image):
             return [_normalize_single_frame(np.asarray(raw_frames.convert("RGB")))]
     except ImportError:
@@ -145,6 +147,7 @@ def _export_video(run_output, save_path, fps):
 
     try:
         import imageio
+
         writer = imageio.get_writer(save_path, fps=fps, codec="libx264")
         for arr in arrays:
             writer.append_data(arr)
@@ -228,7 +231,6 @@ def main():
 
         rank = dist.get_rank() if dist.is_initialized() else 0
         local_rank = int(torch.cuda.current_device())
-        last_step = max(int(args.num_repetitions), 1) - 1
 
         for step in range(max(int(args.num_repetitions), 1)):
             torch.cuda.synchronize()

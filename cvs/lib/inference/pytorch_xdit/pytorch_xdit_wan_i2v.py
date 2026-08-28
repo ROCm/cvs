@@ -110,9 +110,7 @@ class WanI2vOutputParser:
                     continue
                 pipe_time = entry["pipe_time"]
                 if not isinstance(pipe_time, (int, float)):
-                    errors.append(
-                        f"timing.json[{index}]: pipe_time is not numeric (got {type(pipe_time).__name__})"
-                    )
+                    errors.append(f"timing.json[{index}]: pipe_time is not numeric (got {type(pipe_time).__name__})")
                     continue
                 pipe_times.append(float(pipe_time))
         except json.JSONDecodeError as exc:
@@ -138,9 +136,7 @@ class WanI2vOutputParser:
 
         video_path = self.find_video_artifact()
         if self.require_video_artifact and video_path is None:
-            all_errors.append(
-                f"Artifact '{self.expected_video_name}' not found under {self.output_dir}"
-            )
+            all_errors.append(f"Artifact '{self.expected_video_name}' not found under {self.output_dir}")
             return None, all_errors
 
         avg_pipe_time_s = sum(pipe_times) / len(pipe_times)
@@ -189,8 +185,7 @@ class WanI2vOutputParser:
             return True, message
 
         message = (
-            f"FAIL: Average pipe_time {result.avg_pipe_time_s:.2f}s > "
-            f"threshold {max_avg_time:.2f}s (GPU: {gpu_type})"
+            f"FAIL: Average pipe_time {result.avg_pipe_time_s:.2f}s > threshold {max_avg_time:.2f}s (GPU: {gpu_type})"
         )
         log.error("%s", message)
         return False, message
