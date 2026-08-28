@@ -35,6 +35,7 @@ from __future__ import annotations
 import getpass
 import json
 import re
+import warnings
 from pathlib import Path
 from typing import Any, Dict
 
@@ -163,6 +164,25 @@ def _resolve_cluster_mapping(cluster_dict):
 # ---------- public API (generic) ----------
 
 
+def _find_packaged_threshold(name):
+    """Locate a threshold file by name in the packaged ``input/config_file`` tree.
+
+    Fallback for when a config is run from a copied location that no longer has
+    its sibling threshold file: the shipped threshold still lives under the cvs
+    package's ``input/config_file/**`` (config_loader.py is at
+    ``cvs/lib/utils/``, so ``parents[2]`` is the package root). Returns the path,
+    or ``None`` when there is no packaged match.
+    """
+    try:
+        pkg_config_root = Path(__file__).resolve().parents[2] / "input" / "config_file"
+    except IndexError:
+        return None
+    if not pkg_config_root.is_dir():
+        return None
+    matches = sorted(pkg_config_root.rglob(name))
+    return matches[0] if matches else None
+
+
 def substitute_config(config_path, cluster_dict):
     """Read a variant config + sibling threshold file and resolve placeholders.
 
@@ -190,7 +210,21 @@ def substitute_config(config_path, cluster_dict):
         if not threshold_path.is_absolute():
             threshold_path = (config_path.parent / threshold_path).resolve()
         if not threshold_path.is_file():
-            raise FileNotFoundError(f"threshold_json not found: {threshold_path}")
+            # The config may be run from a copied location that lacks its sibling
+            # threshold file; fall back to the shipped copy under the packaged
+            # input/config_file tree (matched by filename).
+            packaged = _find_packaged_threshold(threshold_path.name)
+            if packaged is None:
+                raise FileNotFoundError(
+                    f"threshold_json not found: {threshold_path} "
+                    f"(and no packaged fallback named '{threshold_path.name}')"
+                )
+            warnings.warn(
+                f"threshold_json '{threshold_path.name}' not found next to the config "
+                f"({config_path.parent}); using the packaged copy at {packaged}",
+                stacklevel=2,
+            )
+            threshold_path = packaged
     else:
         threshold_candidates = sorted(config_path.parent.glob("*threshold.json"))
         if not threshold_candidates:
