@@ -99,38 +99,48 @@ Add analogous config + threshold pairs for other archs or models as needed.
 Keys prefixed with `_` (e.g. `_comment`) are inline comments and are ignored by
 the loader.
 
-## What you MUST change for your cluster / setup
+## Required before first run
 
-Start from the config closest to your target GPU / topology / driver and edit
-these:
+Start from the config stem closest to your GPU, model, topology, and driver.
+CVS **hard-exits** if any `<changeme>` placeholder remains in the config or
+cluster file at load time. Most single-node stems ship concrete defaults; only
+some distributed / vLLM / SGLang parity variants mark `container.image` as
+`<changeme>`.
 
-| Where | Variable | Change to |
+| Where | Field | What to set |
 |---|---|---|
-| `container.image` | container image | Your ATOM ROCm image on the nodes |
-| `container.name` | container name | Any unique name (optional) |
-| `paths.shared_fs` | base path | A path reachable from all nodes; `{user-id}` resolves to the cluster/OS user |
-| `paths.models_dir` | model cache | Host path to the staged model (shipped configs use `/home/models`) |
-| `paths.log_dir` | benchmark logs | Usually `{shared_fs}/LOGS` |
-| `paths.hf_token_file` | HF token path | Location of your Hugging Face token file |
-| `model.id` | model repo id | The model under test (W1: `deepseek-ai/DeepSeek-R1-0528`) |
-| `model.remote` | fetch mode | `0` = already cached on nodes; `1` = not implemented |
-| `params.driver` | execution stack | `atom` (single-node) or `vllm_atom` (multinode PP); see below |
-| `params.nnodes` | node count | `1` single-node; `2` for shipped multinode PP variants |
-| `params.master_addr` | PP coordinator | Head node VPC IP (replace `{head-node-ip}` on multinode stems) |
-| `params.master_port` | PP coordinator port | Usually `29501` |
-| `params.pipeline_parallel_size` | PP size | `2` on shipped multinode stems |
-| `params.scaling_baseline_output_throughput` | 1-node baseline | Measured single-node output tok/s for `scaling.efficiency_pct` (multinode) |
-| `roles.server.atom_args` | ATOM server CLI | Tokens after `--model` / `--server-port` when `driver=atom` |
-| `roles.server.serve_args` | multinode serve flags | Dict merged into the multinode server argv when `driver=vllm_atom` |
-| `roles.server.ib_hca_devices` | RDMA HCAs | `"auto"` (default) or explicit list; probed in `test_discover_topology` |
-| `roles.server.ib_netdev` | socket netdev | `"auto"` (default on distributed) or explicit name; **not** `mlx5_*` |
-| `roles.server.env` | server env | ATOM / multinode env (e.g. mmap, AITER flags) |
-| `.json` gated values | thresholds | Calibrated PASS/FAIL bounds for your hardware |
-| cluster file `node_dict` | node IPs | Your node IPs; **host count must equal `params.nnodes`** |
-| cluster template | `atom_cluster.json` | Copy from `cvs/input/cluster_file/atom_cluster.json` |
+| Config | `<changeme>` values | Replace every `<changeme>` with a cluster-specific value before `cvs run` |
+| Cluster file | `node_dict`, `head_node_dict.mgmt_ip` | Your node VPC IPs; **host count must equal `params.nnodes`** |
+| Cluster file | `username`, `priv_key_file` | SSH user and key path (defaults use `{user-id}`) |
+| Config | `container.image` | Your ATOM / vLLM-ATOM / SGLang image when the shipped tag is not on the nodes |
+| Config | `paths.shared_fs`, `paths.models_dir`, `paths.hf_token_file` | Only when your lab layout differs from `/home/{user-id}` and `/home/models` |
+| Config (multinode) | `params.master_addr` | Head node VPC IP (replace `{head-node-ip}`; must match cluster `head_node_dict.mgmt_ip`) |
+| Config (multinode) | `roles.server.ib_netdev` | Socket interface for NCCL when `"auto"` discovery is wrong on your fabric |
 
-Also set `enforce_thresholds` to `true` for real PASS/FAIL or `false` for
-record-only (MI355X stems ship record-only until lab calibration).
+Copy the cluster template from `cvs/input/cluster_file/atom_cluster.json` to
+`~/input/cluster_file/atom_cluster.json` and edit placeholders there. Trim
+`node_dict` to one host for single-node variants.
+
+## Optional tunables
+
+These fields have shipped defaults per variant. Change them only when you need
+different behavior — do **not** treat this list as mandatory user input.
+
+| Area | Fields | When to adjust |
+|---|---|---|
+| Variant choice | config stem (`_single`, `_distributed`, `_accuracy`, …) | Prefer picking the right JSON pair over rewriting `model.id`, `params.driver`, or sweep shape |
+| Gating | `enforce_thresholds`, sibling `*_threshold.json` | `false` = record-only (MI355X seeds ship this way); `true` after lab calibration |
+| Container | `container.name`, runtime `args` (volumes, shm) | Name must stay consistent with the cluster file when you override it |
+| Paths | `paths.log_dir` | Non-default log location under shared FS |
+| Model | `model.remote` | `0` = weights already on nodes (shipped default); `1` = not implemented |
+| `params` | `num_prompts`, `max_model_length`, `random_range_ratio`, `metric_percentiles`, poll timeouts | Run length, MML sizing, tail metrics — see **`params` block** below |
+| `params` (multinode) | `master_port`, `pipeline_parallel_size`, `scaling_baseline_output_throughput` | PP wiring and `scaling.efficiency_pct` baseline |
+| `roles.server` | `atom_args`, `serve_args`, `env`, `ib_hca_devices`, `ib_netdev` | Server CLI, env exports, explicit fabric when `"auto"` is insufficient |
+| `sweep` | `sequence_combinations`, `runs` | Extra ISL/OSL cells or concurrency points — see **`sweep` block** below |
+| Accuracy / platform | `functional.*`, `platform.*`, `accuracy.tasks`, `long_context_accuracy`, `mtp_quality` | Optional quality and infra hooks on accuracy variants |
+
+For field-by-field schema detail, see **Config structure**, **`params` block**,
+and **`sweep` block** below.
 
 ### Lab directory layout
 
