@@ -1,5 +1,6 @@
+import threading
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     FLUX2_DEFAULT_HF_REPO,
@@ -19,6 +20,7 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     resolve_flux_model_type,
     validate_flux_parallelism_config,
     validate_parallelism,
+    _exec_cmd_list_on_nodes,
     _exec_result_exit_code,
     _exec_result_output,
 )
@@ -574,6 +576,46 @@ class TestExecResultHelpers(unittest.TestCase):
 
     def test_exec_result_exit_code_defaults_for_plain_string(self):
         self.assertEqual(_exec_result_exit_code("hello"), 0)
+
+
+class TestExecCmdListOnNodes(unittest.TestCase):
+    @patch("cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job._exec_on_single_node")
+    def test_detailed_multi_node_runs_in_parallel(self, mock_single):
+        barrier = threading.Barrier(2, timeout=2)
+
+        def _wait_and_return(*_args, **_kwargs):
+            barrier.wait()
+            return {"output": "ok", "exit_code": 0}
+
+        mock_single.side_effect = _wait_and_return
+
+        phdl = MagicMock()
+        phdl.host_list = ["10.0.0.1", "10.0.0.2"]
+        results = _exec_cmd_list_on_nodes(
+            phdl,
+            ["10.0.0.1", "10.0.0.2"],
+            ["docker run rank0", "docker run rank1"],
+            detailed=True,
+        )
+
+        self.assertEqual(mock_single.call_count, 2)
+        self.assertEqual(results["10.0.0.1"]["exit_code"], 0)
+        self.assertEqual(results["10.0.0.2"]["exit_code"], 0)
+        phdl.exec_cmd_list.assert_not_called()
+
+    def test_non_detailed_uses_exec_cmd_list_when_host_order_matches(self):
+        phdl = MagicMock()
+        phdl.host_list = ["10.0.0.1", "10.0.0.2"]
+        phdl.exec_cmd_list.return_value = {"10.0.0.1": "ok", "10.0.0.2": "ok"}
+
+        results = _exec_cmd_list_on_nodes(
+            phdl,
+            ["10.0.0.1", "10.0.0.2"],
+            ["mkdir -p /a", "mkdir -p /a"],
+        )
+
+        self.assertEqual(results, {"10.0.0.1": "ok", "10.0.0.2": "ok"})
+        phdl.exec_cmd_list.assert_called_once()
 
 
 class TestPhdlConnectionKwargs(unittest.TestCase):

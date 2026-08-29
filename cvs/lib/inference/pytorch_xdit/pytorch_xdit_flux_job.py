@@ -22,7 +22,8 @@ from __future__ import annotations
 import json
 import re
 import shlex
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib import globals
 from cvs.lib.parallel.pssh import Pssh
@@ -123,6 +124,26 @@ def _normalize_exec_results(raw_results: Mapping[str, Any], nodes: Sequence[str]
     return {node: _exec_result_output((raw_results or {}).get(node)) for node in nodes}
 
 
+def _exec_on_nodes_concurrently(
+    nodes: Sequence[str],
+    runner: Callable[[str], Any],
+) -> Dict[str, Any]:
+    """Run ``runner(node)`` on each node; use a thread per node when len > 1."""
+    node_list = list(nodes)
+    if not node_list:
+        return {}
+    if len(node_list) == 1:
+        return {node_list[0]: runner(node_list[0])}
+
+    results: Dict[str, Any] = {}
+    with ThreadPoolExecutor(max_workers=len(node_list)) as executor:
+        future_to_node = {executor.submit(runner, node): node for node in node_list}
+        for future in as_completed(future_to_node):
+            node = future_to_node[future]
+            results[node] = future.result()
+    return results
+
+
 def _exec_on_single_node(
     s_phdl,
     node: str,
@@ -186,9 +207,8 @@ def _exec_on_nodes(
             or {}
         )
 
-    results: Dict[str, Any] = {}
-    for node in node_list:
-        results[node] = _exec_on_single_node(
+    def _run(node: str) -> Any:
+        return _exec_on_single_node(
             s_phdl,
             node,
             cmd,
@@ -196,7 +216,8 @@ def _exec_on_nodes(
             print_console=print_console,
             detailed=detailed,
         )
-    return results
+
+    return _exec_on_nodes_concurrently(node_list, _run)
 
 
 def _exec_cmd_list_on_nodes(
@@ -215,8 +236,9 @@ def _exec_cmd_list_on_nodes(
     avoids mis-launch when the participating node set is a subset or reordered.
 
     When ``detailed=True``, runs one ``exec(..., detailed=True)`` per node so callers
-    receive structured ``{'output', 'exit_code'}`` values. ``exec_cmd_list`` does not
-    expose exit codes.
+    receive structured ``{'output', 'exit_code'}`` values. Multi-node ``detailed``
+    launches run concurrently so distributed torchrun rendezvous is not serialized.
+    ``exec_cmd_list`` does not expose exit codes.
     """
     node_list = list(nodes)
     commands = list(cmd_list)
@@ -227,17 +249,19 @@ def _exec_cmd_list_on_nodes(
     if not detailed and phdl_hosts == node_list:
         return s_phdl.exec_cmd_list(commands, timeout=timeout, print_console=print_console) or {}
 
-    results: Dict[str, Any] = {}
-    for node, cmd in zip(node_list, commands):
-        results[node] = _exec_on_single_node(
+    cmd_by_node = dict(zip(node_list, commands))
+
+    def _run(node: str) -> Any:
+        return _exec_on_single_node(
             s_phdl,
             node,
-            cmd,
+            cmd_by_node[node],
             timeout=timeout,
             print_console=print_console,
             detailed=detailed,
         )
-    return results
+
+    return _exec_on_nodes_concurrently(node_list, _run)
 
 
 def resolve_server_nodes(cluster_dict: Mapping[str, Any], inference_dict: Mapping[str, Any]) -> List[str]:
