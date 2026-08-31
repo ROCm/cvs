@@ -84,7 +84,6 @@ class HttpAgentTestBase(unittest.TestCase):
             world_size=world_size,
             own_hostname="rank0-host" if world_rank == 0 else None,
             own_port=9000 if world_rank == 0 else None,
-            register_timeout=5.0 if world_rank == 0 else None,
         )
         client = TestClient(app)
         client.__enter__()  # runs the app's lifespan startup so app.state.auth_token is populated
@@ -153,7 +152,6 @@ class TestRankZeroSelfRegistration(HttpAgentTestBase):
             world_size=1,
             own_hostname="rank0-host",
             own_port=9000,
-            register_timeout=1,
         )
         with TestClient(app):
             self.assertEqual(app.state.registry.snapshot(), {0: AgentInfo(hostname="rank0-host", port=9000)})
@@ -165,7 +163,6 @@ class TestRankZeroSelfRegistration(HttpAgentTestBase):
             world_size=2,
             own_hostname="rank0-host",
             own_port=9000,
-            register_timeout=0.05,
         )
         with TestClient(app):
             self.assertEqual(app.state.registry.snapshot(), {0: AgentInfo(hostname="rank0-host", port=9000)})

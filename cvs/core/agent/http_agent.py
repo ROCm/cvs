@@ -275,7 +275,6 @@ def create_app(
     world_size: int,
     own_hostname: str | None = None,
     own_port: int | None = None,
-    register_timeout: float | None = None,
 ) -> FastAPI:
     '''Build the agent app without blocking startup on rank registration.'''
     if world_rank == 0 and (own_hostname is None or own_port is None):

@@ -344,6 +344,42 @@ class TestManagedRunPlugin(unittest.TestCase):
         coordinator.close.assert_called_once()
         mock_exit.assert_called_once_with(5)
 
+    @patch("cvs.cli_plugins.run_plugin.sys.exit")
+    @patch("cvs.cli_plugins.run_plugin.start_rank0")
+    @patch("cvs.cli_plugins.run_plugin.managed_rank", return_value=(0, 2))
+    @patch("cvs.cli_plugins.run_plugin.is_managed_compute", return_value=True)
+    @patch("cvs.cli_plugins.run_plugin.RunLayout")
+    def test_rank0_continues_after_legacy_asyncio_timeout(
+        self, mock_layout, _managed, _rank, mock_start_rank0, mock_exit
+    ):
+        class LegacyAsyncioTimeout(Exception):
+            pass
+
+        coordinator = mock_start_rank0.return_value
+        coordinator.wait_for_registrations.side_effect = LegacyAsyncioTimeout
+        validate, resolve = self._prepare_run()
+        with patch("cvs.cli_plugins.run_plugin.asyncio.TimeoutError", LegacyAsyncioTimeout):
+            with validate, resolve, patch.object(self.plugin, "run_test", return_value=0) as mock_run_test:
+                self.plugin.run(self.args)
+        mock_run_test.assert_called_once()
+        coordinator.close.assert_called_once()
+        mock_exit.assert_called_once_with(0)
+
+    @patch("cvs.cli_plugins.run_plugin.sys.exit")
+    @patch("cvs.cli_plugins.run_plugin.start_rank0")
+    @patch("cvs.cli_plugins.run_plugin.managed_rank", return_value=(0, 2))
+    @patch("cvs.cli_plugins.run_plugin.is_managed_compute", return_value=True)
+    @patch("cvs.cli_plugins.run_plugin.RunLayout")
+    def test_rank0_runs_after_successful_registration(self, mock_layout, _managed, _rank, mock_start_rank0, mock_exit):
+        validate, resolve = self._prepare_run()
+        with validate, resolve, patch.object(self.plugin, "run_test", return_value=7) as mock_run_test:
+            self.plugin.run(self.args)
+        coordinator = mock_start_rank0.return_value
+        coordinator.wait_for_registrations.assert_called_once_with(60)
+        mock_run_test.assert_called_once()
+        coordinator.close.assert_called_once()
+        mock_exit.assert_called_once_with(7)
+
 
 class TestResolveTestFunctionNames(unittest.TestCase):
     def setUp(self):

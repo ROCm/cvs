@@ -126,10 +126,12 @@ class Heartbeat:
 
 
 class AgentRunner:
-    '''Run the AIMVT-302 application in the background for one scheduler rank.'''
+    '''Run the HTTP agent application in the background for one scheduler rank.'''
 
     def __init__(self, agent_dir: Path, rank: int, world_size: int, host: str | None = None):
-        self.host = host or socket.gethostname()
+        self.host = (
+            host or os.environ.get("SLURM_NODENAME") or os.environ.get("SLURMD_NODENAME") or socket.gethostname()
+        )
         self._socket = socket.socket()
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._socket.bind(("0.0.0.0", 0))

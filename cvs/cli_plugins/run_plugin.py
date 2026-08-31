@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 import sys
 import os
@@ -135,7 +136,7 @@ Run Commands:
         try:
             try:
                 coordinator.wait_for_registrations(REGISTRATION_TIMEOUT_SECONDS)
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 print("Warning: registration timeout expired; continuing with available ranks.")
             exit_code = self.run_test(*test_args)
         finally:
