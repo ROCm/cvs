@@ -36,6 +36,10 @@
         "_comment_cvs_params": "The rccl_result_file.json will be appended by rccl_test_params.data_types. When it's float the file name will be rccl_result_file_float.json on the head node.",
         "cvs_params": {
             "cluster_snapshot_debug": "False",
+            "verify_ecc_delta": "False",
+            "_comment_verify_ecc_delta": "Set True to capture amd-smi ECC_BLOCKS (UMC, SDMA, GFX, MMHUB, PCIE_BIF, HDP, XGMI_WAFL CE/UE/DE) and log a post-test INFO table. Warns (does not fail) if any counter increases. Uses 'amd-smi metric -g all --json'. Raw amd-smi JSON is DEBUG-only. Requires passwordless sudo (same gate as dmesg).",
+            "verify_ecc_blocks": [],
+            "_comment_verify_ecc_blocks": "Optional list when verify_ecc_delta is True. Only these ECC blocks are captured, compared, and reported (e.g. [\"UMC\", \"XGMI_WAFL\"]). Omit or leave empty for all blocks.",
             "_comment_nic_model": "Set nic_model for validations (eg., 'thor' , 'ainic', 'connectx')",
             "nic_model": "thor",
             "verify_bus_bw": "False",

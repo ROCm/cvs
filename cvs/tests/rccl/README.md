@@ -160,3 +160,4 @@ The RCCL config keeps benchmark intent and validation settings, while RCCL/NCCL/
 - **Regression cases**: Each combination in the Cartesian product gets its own result file suffix
 - **Single env dump**: Only `test_print_env_once` prints the environment; other tests focus on performance
 - **Tree filter**: Algorithm restrictions apply to maintain compatibility
+- **ECC_BLOCKS**: When `cvs_params.verify_ecc_delta` is `"True"` (default `"False"`), `rccl_perf` and `rccl_regression` capture UMC/SDMA/GFX/MMHUB/PCIE_BIF/HDP/XGMI_WAFL CE/UE/DE counters and log one post-test INFO table per node. Optionally set `cvs_params.verify_ecc_blocks` to a list of block names (e.g. `["UMC", "XGMI_WAFL"]`) to limit capture and delta reporting to those blocks only; omit or leave empty for all blocks. Grep the pytest log for `ECC_BLOCKS`. Requires passwordless sudo.
