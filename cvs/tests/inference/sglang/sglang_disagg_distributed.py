@@ -51,12 +51,12 @@ def test_launch_container(orch, variant_config, lifecycle, request):
     lifecycle.complete_stage(request, "container_launch", t0)
 
 
-# def test_setup_ibv_devices(im_obj, lifecycle, request):
-#     globals.error_list = []
-#     t0 = time.monotonic()
-#     im_obj.exec_nic_setup_scripts()
-#     im_obj.check_ibv_devices()
-#     lifecycle.complete_stage(request, "ibv_setup", t0)
+def test_setup_ibv_devices(im_obj, lifecycle, request):
+    globals.error_list = []
+    t0 = time.monotonic()
+    im_obj.exec_nic_setup_scripts()
+    im_obj.check_ibv_devices()
+    lifecycle.complete_stage(request, "ibv_setup", t0)
 
 
 def test_rms_norm(im_obj, lifecycle, request):
