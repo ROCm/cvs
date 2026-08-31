@@ -27,6 +27,7 @@ from cvs.lib.inference.sglang.sglang_common import (
     first_output,
     format_sglang_gpu_topology_lines,
     parse_inference_bench_results,
+    perf_enforce_thresholds,
     poll_for_inference_completion as poll_for_inference_completion_common,
     resolve_distributed_client_host,
     resolve_server_node_list,
@@ -445,6 +446,7 @@ class SglangDistributed:
             expected_result_dict,
             self._host_exec,
             test_name=test_name,
+            enforce_thresholds=perf_enforce_thresholds(self.bp_dict),
         )
 
     def verify_inference_results_subtests(
@@ -464,6 +466,7 @@ class SglangDistributed:
             test_name,
             lifecycle=lifecycle,
             report_nodeid=report_nodeid,
+            enforce_thresholds=perf_enforce_thresholds(self.bp_dict),
         )
         return all_passed
 

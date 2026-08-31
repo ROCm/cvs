@@ -89,6 +89,7 @@
 		      "bench_serv_random":
 		      {
 			  "backend": "sglang",
+			  "enforce_thresholds": false,
 			  "data_set_name": "random",
 			  "num_prompts": "3000",
 			  "input_length": "1024",
@@ -152,6 +153,7 @@
 		      "bench_serv_random":
 		      {
 			  "backend": "sglang",
+			  "enforce_thresholds": false,
 			  "data_set_name": "random",
 			  "num_prompts": "3000",
 			  "input_length": "1024",

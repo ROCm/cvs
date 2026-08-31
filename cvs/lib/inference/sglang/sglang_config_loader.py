@@ -36,6 +36,7 @@ from cvs.lib.utils.config_loader import (
     _Forbid,
     substitute_config,
 )
+from cvs.lib.inference.sglang.sglang_common import perf_enforce_thresholds
 from cvs.lib.utils_lib import resolve_test_config_placeholders
 
 log = globals.log
@@ -385,7 +386,7 @@ def _load_legacy_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> S
         "schema_version": 1,
         "framework": _LEGACY_FRAMEWORK,
         "gpu_arch": str(root.get("gpu_arch") or "mi30x"),
-        "enforce_thresholds": bool(root.get("enforce_thresholds", True)),
+        "enforce_thresholds": perf_enforce_thresholds(bp),
         "threshold_json": str(threshold_path),
         "paths": paths_raw,
         "model": {
@@ -430,6 +431,9 @@ def _load_unified_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> 
         raw["benchmark_params"] = dict(bp_all[raw["variant_key"]])
 
     known = {k: v for k, v in raw.items() if k in SglangSingleVariantConfig.model_fields}
+    bp = known.get("benchmark_params")
+    if isinstance(bp, dict):
+        known["enforce_thresholds"] = perf_enforce_thresholds(bp)
     return SglangSingleVariantConfig(**known)
 
 

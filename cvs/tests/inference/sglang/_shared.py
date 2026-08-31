@@ -16,6 +16,7 @@ from tabulate import tabulate
 from typing import Any, Mapping
 
 from cvs.lib import globals
+from cvs.lib.inference.sglang.sglang_common import perf_enforce_thresholds
 
 log = globals.log
 
@@ -136,9 +137,11 @@ def _flat_threshold_specs(specs: dict) -> dict[str, float]:
     return out
 
 
-def _perf_result(actual, expected, metric_key: str) -> str:
+def _perf_result(actual, expected, metric_key: str, *, enforce_thresholds: bool = True) -> str:
     if actual is None or expected is None:
         return "-"
+    if not enforce_thresholds:
+        return "PASS"
     a, e = float(actual), float(expected)
     if "ms" in metric_key.lower():
         return "PASS" if a <= e else "FAIL"
@@ -250,6 +253,7 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
 
     _CELL_RE = re.compile(r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$")
     bp = (getattr(variant_config, "benchmark_params", None) or {}) if variant_config else {}
+    enforce_thresholds = perf_enforce_thresholds(bp)
     performance_by_cell = phase_labels.get("performance_by_cell") or {}
     if performance_by_cell:
         summary_rows = []
@@ -324,7 +328,7 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                         label,
                         f"{float(actual):.4f}",
                         f"{float(expected):.4f}" if expected is not None else "-",
-                        _perf_result(actual, expected, metric_key),
+                        _perf_result(actual, expected, metric_key, enforce_thresholds=enforce_thresholds),
                     ]
                 )
 

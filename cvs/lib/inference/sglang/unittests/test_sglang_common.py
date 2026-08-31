@@ -65,6 +65,17 @@ class TestSglangCommonHelpers(unittest.TestCase):
         specs = sglang_common.thresholds_from_expected({'mean_ttft_ms': 100.0})
         self.assertEqual(specs['mean_ttft_ms']['kind'], 'max_ms')
 
+    def test_perf_enforce_thresholds_defaults_true(self):
+        self.assertTrue(sglang_common.perf_enforce_thresholds({}))
+
+    def test_perf_enforce_thresholds_reads_bench_serv_random(self):
+        bp = {
+            'inference_tests': {
+                'bench_serv_random': {'enforce_thresholds': False},
+            }
+        }
+        self.assertFalse(sglang_common.perf_enforce_thresholds(bp))
+
     def test_node_threshold_actuals_filters_metrics(self):
         inference = {'node1': {'mean_ttft_ms': '50.0', 'other': '1'}}
         thresholds = {'mean_ttft_ms': {'kind': 'max_ms', 'value': 100.0}}
@@ -164,6 +175,46 @@ class TestSglangCommonHelpers(unittest.TestCase):
         rows = {r['metric']: r['status'] for r in lifecycle.perf_metric_rows['nid']}
         self.assertEqual(rows, {'mean_ttft_ms': 'fail', 'p99_ttft_ms': 'pass'})
         self.assertEqual(len(subtests.failures), 1)
+
+    def test_verify_inference_results_subtests_record_only_passes_on_violation(self):
+        host_exec = mock.Mock(return_value={'head': 'time'})
+        lifecycle = mock.Mock()
+        lifecycle.perf_metric_rows = {}
+        subtests = _FakeSubtests()
+        with mock.patch.object(sglang_common.time, 'sleep'):
+            passed, _end = sglang_common.verify_inference_results_subtests(
+                {'node1': {'mean_ttft_ms': '500.0', 'p99_ttft_ms': '10.0'}},
+                {'mean_ttft_ms': 100.0, 'p99_ttft_ms': 100.0},
+                host_exec,
+                subtests,
+                'bench_serv',
+                lifecycle=lifecycle,
+                report_nodeid='nid',
+                enforce_thresholds=False,
+            )
+        self.assertTrue(passed)
+        rows = {r['metric']: r['status'] for r in lifecycle.perf_metric_rows['nid']}
+        self.assertEqual(rows, {'mean_ttft_ms': 'pass', 'p99_ttft_ms': 'pass'})
+        self.assertEqual(subtests.failures, [])
+
+    def test_verify_inference_results_subtests_record_only_fails_without_results(self):
+        host_exec = mock.Mock(return_value={'head': 'time'})
+        lifecycle = mock.Mock()
+        lifecycle.perf_metric_rows = {}
+        subtests = _FakeSubtests()
+        with mock.patch.object(sglang_common.time, 'sleep'):
+            passed, _end = sglang_common.verify_inference_results_subtests(
+                {},
+                {'mean_ttft_ms': 100.0},
+                host_exec,
+                subtests,
+                'bench_serv',
+                lifecycle=lifecycle,
+                report_nodeid='nid',
+                enforce_thresholds=False,
+            )
+        self.assertFalse(passed)
+        self.assertEqual(subtests.failures, [])
 
     def test_poll_for_inference_completion_success(self):
         log_text = {'bench': _SAMPLE_BENCH_LOG}
