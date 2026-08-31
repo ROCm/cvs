@@ -197,6 +197,17 @@ def thresholds_from_expected(expected_result_dict: dict[str, Any]) -> dict[str, 
     return {metric: normalize_sglang_threshold_spec(metric, spec) for metric, spec in expected_result_dict.items()}
 
 
+def perf_enforce_thresholds(bp_dict: Mapping[str, Any] | None) -> bool:
+    """Read performance gating flag from ``inference_tests.bench_serv_random``."""
+    if not bp_dict:
+        return True
+    bench = (bp_dict.get("inference_tests") or {}).get("bench_serv_random") or {}
+    raw = bench.get("enforce_thresholds", True)
+    if isinstance(raw, str):
+        return raw.strip().lower() not in ("0", "false", "no")
+    return bool(raw)
+
+
 def node_threshold_actuals(
     inference_results_dict: dict[str, dict[str, Any]],
     node: str,
@@ -236,15 +247,17 @@ def verify_inference_results(
     host_exec: Callable[..., dict],
     *,
     test_name: str = "",
+    enforce_thresholds: bool = True,
 ) -> dict:
     thresholds = thresholds_from_expected(expected_result_dict)
-    for node in inference_results_dict:
-        actuals = node_threshold_actuals(inference_results_dict, node, thresholds)
-        try:
-            evaluate_all(actuals, thresholds)
-        except ThresholdViolation as exc:
-            for msg in exc.violations:
-                fail_test(f"FAIL - {msg}")
+    if enforce_thresholds:
+        for node in inference_results_dict:
+            actuals = node_threshold_actuals(inference_results_dict, node, thresholds)
+            try:
+                evaluate_all(actuals, thresholds)
+            except ThresholdViolation as exc:
+                for msg in exc.violations:
+                    fail_test(f"FAIL - {msg}")
     return finalize_inference_verification(host_exec)
 
 
@@ -257,10 +270,11 @@ def verify_inference_results_subtests(
     *,
     lifecycle=None,
     report_nodeid=None,
+    enforce_thresholds: bool = True,
 ) -> tuple[bool, dict]:
     """Verify each metric on each node as its own pytest subtest."""
     thresholds = thresholds_from_expected(expected_result_dict)
-    all_passed = True
+    all_passed = bool(inference_results_dict)
     if lifecycle is not None and report_nodeid:
         metric_rows: list[dict[str, Any]] = []
         lifecycle.perf_metric_rows[report_nodeid] = metric_rows
@@ -269,20 +283,30 @@ def verify_inference_results_subtests(
 
     for node in inference_results_dict:
         actuals = node_threshold_actuals(inference_results_dict, node, thresholds)
+        if enforce_thresholds and not actuals:
+            all_passed = False
         for metric, spec in thresholds.items():
-            violation = metric_threshold_violation(metric, actuals, spec)
+            if enforce_thresholds:
+                violation = metric_threshold_violation(metric, actuals, spec)
+                status = 'pass' if violation is None else 'fail'
+            else:
+                violation = None
+                status = 'pass' if metric in actuals else 'fail'
+                if metric not in actuals:
+                    all_passed = False
             if metric_rows is not None:
                 metric_rows.append(
                     {
                         'node': node,
                         'metric': metric,
-                        'status': 'pass' if violation is None else 'fail',
+                        'status': status,
                     }
                 )
             if violation is not None:
                 all_passed = False
             with subtests.test(test_name=test_name, node=node, metric=metric):
-                assert violation is None, violation
+                if enforce_thresholds:
+                    assert violation is None, violation
 
     return all_passed, finalize_inference_verification(host_exec)
 

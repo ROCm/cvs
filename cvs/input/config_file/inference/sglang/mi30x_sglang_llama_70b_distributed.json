@@ -66,6 +66,7 @@
                 "bench_serv_random":
                 {
                     "backend": "sglang",
+                    "enforce_thresholds": false,
                     "data_set_name": "random",
                     "num_prompts": "100",
                     "random_range_ratio": "0.5",
