@@ -20,6 +20,7 @@ All rights reserved.
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -52,6 +53,7 @@ WAN_DIFFUSERS_LAUNCHER_XFUSER = "xfuser_example"
 RUN_WAN_NATIVE_PATH = "/app/Wan2.2/run.py"
 RUN_WAN_DIFFUSERS_PATH = "/app/Wan/run.py"
 WAN_XFUSER_EXAMPLE_CONTAINER_PATH = "/benchmark/wan_i2v_example.py"
+WAN_XFUSER_PYPACKAGES_ENV = "CVS_WAN_XFUSER_PYPACKAGES"
 CONTAINER_OUTPUT_MOUNT = "/outputs"
 WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR = "results/outputs"
 WAN_XFUSER_RESULTS_DIR = f"{CONTAINER_OUTPUT_MOUNT}/results"
@@ -220,6 +222,19 @@ def resolve_wan_diffusers_launcher(
     if script and script not in {RUN_WAN_DIFFUSERS_PATH, ""}:
         return WAN_DIFFUSERS_LAUNCHER_XFUSER
     return WAN_DIFFUSERS_LAUNCHER_PACKAGED
+
+
+def resolve_wan_xfuser_pypackages_env(
+    user_env: Mapping[str, Any],
+    environ: Optional[Mapping[str, str]] = None,
+) -> Optional[str]:
+    """Return extra sys.path for xFuser: config env_dict first, then the process environment."""
+    configured = str(user_env.get(WAN_XFUSER_PYPACKAGES_ENV) or "").strip()
+    if configured:
+        return configured
+    env = os.environ if environ is None else environ
+    host_value = str(env.get(WAN_XFUSER_PYPACKAGES_ENV) or "").strip()
+    return host_value or None
 
 
 def resolve_wan_diffusers_run_script(
@@ -818,6 +833,9 @@ class WanBenchmarkJob(PytorchXditBenchmarkJob):
         if self.distributed:
             env_dict.update(build_nccl_env(self.inference_dict))
         env_dict.update(user_env)
+        pypackages = resolve_wan_xfuser_pypackages_env(user_env)
+        if pypackages:
+            env_dict[WAN_XFUSER_PYPACKAGES_ENV] = pypackages
         env_dict["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(self.nproc_per_node))
         env_dict["OMP_NUM_THREADS"] = "16"
         env_dict["HF_HOME"] = "/hf_home"

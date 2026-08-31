@@ -198,6 +198,9 @@ Cluster JSON resolves `{user-id}` only; use real absolute paths for `priv_key_fi
   it is missing, bind-mounts `cvs/lib/inference/xdit/scripts/flux2_example.py` to
   `/benchmark/flux2_example.py` (same pattern as WAN xFuser). Flux2 sample configs
   already set this mapping in `volume_dict`.
+- `CVS_WAN_XFUSER_PYPACKAGES` - optional extra Python path for WAN xFuser. Set it in
+  the environment (`export CVS_WAN_XFUSER_PYPACKAGES=/path/to/pypackages`) or in
+  `container_config.env_dict`; do not commit cluster-specific paths in sample JSON.
 - `nnodes`, `master_addr`, `nccl_*`, `gloo_socket_ifname` - distributed rendezvous and
   NCCL tuning (replace `<changeme>` values).
 - `benchmark_params.flux1_dev_t2i` or `benchmark_params.wan22_i2v_a14b` - torchrun
