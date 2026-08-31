@@ -15,6 +15,7 @@ from cvs.lib.inference.xdit.pytorch_xdit_wan_job import (
     WAN_XFUSER_AUTO_INPUT_IMAGE,
     WAN_XFUSER_BENCHMARK_OUTPUT_DIR,
     WAN_XFUSER_EXAMPLE_CONTAINER_PATH,
+    WAN_XFUSER_PYPACKAGES_ENV,
     WAN_XFUSER_TIMING_JSON_CONTAINER_PATH,
     WAN_XFUSER_VIDEO_CONTAINER_PATH,
     WAN_MODEL_FORMAT_DIFFUSERS,
@@ -34,6 +35,7 @@ from cvs.lib.inference.xdit.pytorch_xdit_wan_job import (
     resolve_wan_diffusers_launcher,
     resolve_wan_benchmark_timeout,
     resolve_wan_model_format,
+    resolve_wan_xfuser_pypackages_env,
     should_wan_xfuser_auto_generate_input_image,
     scan_wan_fatal_output,
     scan_wan_xfuser_benchmark_output,
@@ -522,6 +524,7 @@ class TestWanBenchmarkJob(unittest.TestCase):
         )
         self.assertIsNone(job.validate_parallelism())
 
+    @patch.dict("os.environ", {WAN_XFUSER_PYPACKAGES_ENV: ""})
     def test_build_env_args_single_node_omits_nccl(self):
         job, _ = _make_wan_job()
         env_args = job._build_env_args()
@@ -529,7 +532,9 @@ class TestWanBenchmarkJob(unittest.TestCase):
         self.assertIn("-e HF_TOKEN=hf_test_token", env_args)
         self.assertIn("-e CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7", env_args)
         self.assertNotIn("NCCL_PROTO", env_args)
+        self.assertNotIn(WAN_XFUSER_PYPACKAGES_ENV, env_args)
 
+    @patch.dict("os.environ", {WAN_XFUSER_PYPACKAGES_ENV: ""})
     def test_build_env_args_distributed_includes_nccl(self):
         cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
         job, _ = _make_wan_job(
@@ -546,6 +551,31 @@ class TestWanBenchmarkJob(unittest.TestCase):
         env_args = job._build_env_args()
         self.assertIn("-e NCCL_PROTO=Simple", env_args)
         self.assertIn("-e NCCL_IB_HCA=mlx5_0", env_args)
+
+    def test_resolve_wan_xfuser_pypackages_prefers_config(self):
+        self.assertEqual(
+            resolve_wan_xfuser_pypackages_env(
+                {WAN_XFUSER_PYPACKAGES_ENV: "/from/config/pypackages"},
+                environ={WAN_XFUSER_PYPACKAGES_ENV: "/from/host/pypackages"},
+            ),
+            "/from/config/pypackages",
+        )
+
+    def test_resolve_wan_xfuser_pypackages_uses_process_env(self):
+        self.assertEqual(
+            resolve_wan_xfuser_pypackages_env(
+                {},
+                environ={WAN_XFUSER_PYPACKAGES_ENV: "/from/host/pypackages"},
+            ),
+            "/from/host/pypackages",
+        )
+        self.assertIsNone(resolve_wan_xfuser_pypackages_env({}, environ={}))
+
+    @patch.dict("os.environ", {WAN_XFUSER_PYPACKAGES_ENV: "/from/host/pypackages"})
+    def test_build_env_args_forwards_host_pypackages(self):
+        job, _ = _make_wan_job()
+        env_args = job._build_env_args()
+        self.assertIn(f"-e {WAN_XFUSER_PYPACKAGES_ENV}=/from/host/pypackages", env_args)
 
     def test_build_docker_cmd_contains_torchrun_and_native_script(self):
         job, _ = _make_wan_job()
