@@ -51,7 +51,14 @@ _PERF_CELL_RE = re.compile(r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),P
 
 
 def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> str:
-    """Pick which ``benchmark_params`` entry to run."""
+    """Pick which ``benchmark_params`` entry to run.
+
+    Resolution order:
+    1. Environment ``SGLANG_BENCHMARK_KEY`` (override for CI matrices).
+    2. If ``benchmark_params`` has exactly one key, use it.
+
+    ``root`` is the full JSON object loaded from ``--config_file`` (not only ``config``).
+    """
     env_key = (os.environ.get("SGLANG_BENCHMARK_KEY") or "").strip()
     bp = root.get("benchmark_params") or {}
     if not isinstance(bp, dict) or not bp:
@@ -65,15 +72,6 @@ def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> 
         log.info("Using benchmark variant from env SGLANG_BENCHMARK_KEY=%r", env_key)
         return env_key
 
-    explicit = root.get("active_benchmark")
-    if explicit is not None:
-        if explicit not in bp:
-            raise ValueError(
-                f"active_benchmark={explicit!r} not found in benchmark_params ({config_path}); valid: {sorted(bp)!r}"
-            )
-        log.info("Using benchmark variant from active_benchmark=%r", explicit)
-        return str(explicit)
-
     if len(bp) == 1:
         only = next(iter(bp))
         log.info("Single benchmark_params entry; using %r", only)
@@ -81,7 +79,7 @@ def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> 
 
     raise ValueError(
         f"Multiple benchmark_params keys in {config_path!r}: {sorted(bp)!r}. "
-        'Set top-level "active_benchmark" to one of them, or export SGLANG_BENCHMARK_KEY.'
+        "Export SGLANG_BENCHMARK_KEY to select one."
     )
 
 
@@ -420,7 +418,7 @@ def _load_unified_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> 
         if "benchmark_params" in raw:
             raw["variant_key"] = resolve_benchmark_variant_key(raw, config_path)
         else:
-            raw["variant_key"] = raw.get("active_benchmark") or "default"
+            raw["variant_key"] = "default"
 
     # Optional embedded legacy blocks in unified configs.
     if "config" in raw and not raw.get("inference"):

@@ -43,7 +43,6 @@
             }
         }
     },
-    "active_benchmark": "deepseek-r1",
     "benchmark_params":
     {
         "deepseek-r1":
