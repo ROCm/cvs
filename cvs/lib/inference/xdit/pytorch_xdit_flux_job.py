@@ -722,9 +722,7 @@ def build_flux2_example_image_probe_cmd(container_image: str) -> str:
 
 def build_flux2_example_host_check_cmd(host_path: str) -> str:
     quoted = shlex.quote(host_path)
-    return (
-        f"test -e {quoted} && echo FLUX2_EXAMPLE_HOST_OK || echo FLUX2_EXAMPLE_HOST_MISSING"
-    )
+    return f"test -e {quoted} && echo FLUX2_EXAMPLE_HOST_OK || echo FLUX2_EXAMPLE_HOST_MISSING"
 
 
 def ensure_flux2_example_available(
@@ -741,11 +739,7 @@ def ensure_flux2_example_available(
     """
     model_type = resolve_flux_model_type_for_job(
         flux_params,
-        model_repo=str(
-            inference_dict.get("_resolved_model_path_container")
-            or inference_dict.get("model_repo")
-            or ""
-        ),
+        model_repo=str(inference_dict.get("_resolved_model_path_container") or inference_dict.get("model_repo") or ""),
         model_repo_hints=[
             str(inference_dict.get("model_repo") or ""),
             str(inference_dict.get("_resolved_model_mount_host") or ""),
@@ -774,11 +768,7 @@ def ensure_flux2_example_available(
         except Exception as exc:
             return [f"Failed to probe container image for {FLUX2_EXAMPLE_PATH}: {exc}"]
 
-        missing = [
-            node
-            for node in node_list
-            if "FLUX2_EXAMPLE_PRESENT" not in (probe.get(node) or "")
-        ]
+        missing = [node for node in node_list if "FLUX2_EXAMPLE_PRESENT" not in (probe.get(node) or "")]
         if not missing:
             inference_dict["_flux2_example_container_path"] = FLUX2_EXAMPLE_PATH
             log.info("FLUX.2 example present in image at %s", FLUX2_EXAMPLE_PATH)
@@ -799,11 +789,7 @@ def ensure_flux2_example_available(
     except Exception as extra:
         return [f"Failed to verify FLUX.2 example host path {host_path}: {extra}"]
 
-    missing_host = [
-        node
-        for node in node_list
-        if "FLUX2_EXAMPLE_HOST_OK" not in (checks.get(node) or "")
-    ]
+    missing_host = [node for node in node_list if "FLUX2_EXAMPLE_HOST_OK" not in (checks.get(node) or "")]
     if missing_host:
         return [
             f"FLUX.2 example {FLUX2_EXAMPLE_PATH} is not in the container image and "

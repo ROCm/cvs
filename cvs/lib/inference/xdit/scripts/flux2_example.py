@@ -83,13 +83,15 @@ def main():
         if pipe.is_dp_last_group():
             for i, image in enumerate(output.images):
                 image_rank = dp_group_index * dp_batch_size + i
-                image_name = f"flux2_{variant}_result_{parallel_info}_{image_rank}_tc_{engine_args.use_torch_compile}.png"
+                image_name = (
+                    f"flux2_{variant}_result_{parallel_info}_{image_rank}_tc_{engine_args.use_torch_compile}.png"
+                )
                 image.save(f"./results/{image_name}")
                 print(f"image {i} saved to ./results/{image_name}")
 
     if get_world_group().rank == get_world_group().world_size - 1:
         print(
-            f"epoch time: {elapsed_time:.2f} sec, parameter memory: {parameter_peak_memory/1e9:.2f} GB, memory: {peak_memory/1e9:.2f} GB"
+            f"epoch time: {elapsed_time:.2f} sec, parameter memory: {parameter_peak_memory / 1e9:.2f} GB, memory: {peak_memory / 1e9:.2f} GB"
         )
     get_runtime_state().destroy_distributed_env()
 

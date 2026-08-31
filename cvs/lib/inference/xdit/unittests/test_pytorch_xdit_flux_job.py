@@ -377,7 +377,9 @@ class TestBuildTorchrunCmd(unittest.TestCase):
 class TestFlux2ExampleFallbackMount(unittest.TestCase):
     def test_default_host_path_points_at_cvs_script(self):
         host_path = default_flux2_example_host_path()
-        self.assertTrue(host_path.endswith("scripts/flux2_example.py") or host_path.endswith(r"scripts\flux2_example.py"))
+        self.assertTrue(
+            host_path.endswith("scripts/flux2_example.py") or host_path.endswith(r"scripts\flux2_example.py")
+        )
         self.assertTrue(host_path.replace("\\", "/").endswith("lib/inference/xdit/scripts/flux2_example.py"))
 
     def test_image_probe_cmd_checks_in_image_path(self):
@@ -469,9 +471,7 @@ class TestFlux2ExampleFallbackMount(unittest.TestCase):
                 "container_config": {
                     "device_list": ["/dev/dri", "/dev/kfd"],
                     "volume_dict": {
-                        "/home/user/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py": (
-                            FLUX2_EXAMPLE_MOUNT_PATH
-                        )
+                        "/home/user/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py": (FLUX2_EXAMPLE_MOUNT_PATH)
                     },
                     "env_dict": {},
                 },
