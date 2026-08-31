@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-SGLang config loader for single-node, distributed, and disaggregated suites.
+SGLang single-node config loader for ContainerOrchestrator suites.
 
 ``load_variant()`` is the single entry point for ``sglang_single`` conftest and
 produces both:
