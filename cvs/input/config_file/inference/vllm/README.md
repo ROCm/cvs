@@ -1,7 +1,7 @@
-# vllm MI325X workload configs
+# vllm MI3XX workload configs
 
-14 inference workloads for the `vllm` suite on MI325X, each shipped as a
-`single` / `distributed` pair — 28 configs, 28 sibling thresholds.
+14 MI325X inference workloads for the `vllm` suite, each shipped as a
+`single` / `distributed` pair, plus four MI355X single-node workloads.
 
 ## Layout
 
@@ -142,6 +142,10 @@ loads straight from the mount and no download occurs.
 | `mistral-large-3_bf16` | Mistral Large 3 BF16 | Mistral-native format: `tokenizer-mode`/`config-format`/`load-format` all `mistral` |
 | `deepseek-r1-0528_fp8` | DeepSeek R1 0528 FP8 PTPC | |
 | `gpt-oss-20b_fp8` | GPT-OSS 20B FP8 | |
+| `gpt-oss-120b_fp4` | GPT-OSS 120B FP4 | MI355X single-node legacy workload |
+| `qwen3-235b_bf16` | Qwen3 235B BF16 | MI355X single-node legacy workload |
+| `qwen3-80b_bf16` | Qwen3 80B BF16 | MI355X single-node legacy workload |
+| `deepseek-v31_fp8` | DeepSeek V3.1 FP8 | MI355X single-node legacy workload |
 
 Models with a custom tokenizer or modelling code set `trust-remote-code: true`;
 the suite mirrors that flag onto the bench client so it can load the same
