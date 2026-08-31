@@ -1,0 +1,272 @@
+{
+  "_comment": "Uncalibrated placeholders for deepseek-v4-flash_fp8 (single, TP=4, CONC=16 and CONC=32). Every value is 0 and means 'not yet measured' -- covers client.*, gpu.* and prom.*. enforce_thresholds is false in the config, so these record without gating. Replace with measured values from a calibration run before enabling enforcement.",
+  "_comment_accuracy": "The accuracy block is keyed by accuracy task id, then by lm-eval metric key, so it cannot be pre-enumerated the way client/gpu/prom can -- its contents follow whichever tasks config.json selects in accuracy.tasks, which selects gsm8k. Shape to fill in alongside a task: \"accuracy\": {\"<task-id>\": {\"<lm_eval_task>.<metric>\": {\"kind\": \"min\", \"value\": 0}}}, where <metric> is the results.json key with commas replaced by __ (e.g. gsm8k.exact_match__strict-match). Exempt from the sweep-cell coverage check via NON_SWEEP_THRESHOLD_KEYS.",
+  "ISL=1024,OSL=1024,TP=4,CONC=16": {
+    "client.total_token_throughput": {
+      "kind": "min_tok_s",
+      "value": 0
+    },
+    "client.output_throughput": {
+      "kind": "min_tok_s",
+      "value": 0
+    },
+    "client.mean_ttft_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.median_ttft_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p90_ttft_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p95_ttft_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p99_ttft_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.median_tpot_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p90_tpot_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p95_tpot_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p99_tpot_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.mean_itl_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.median_itl_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p95_itl_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p99_itl_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.mean_e2el_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.median_e2el_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p90_e2el_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p95_e2el_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p99_e2el_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.success_rate": {
+      "kind": "min",
+      "value": 0
+    },
+    "client.failed": {
+      "kind": "max",
+      "value": 0
+    },
+    "gpu.peak_gpu_memory_mb": {
+      "kind": "max",
+      "value": 0
+    },
+    "gpu.model_load_memory_mb": {
+      "kind": "max",
+      "value": 0
+    },
+    "gpu.model_load_s": {
+      "kind": "max",
+      "value": 0
+    },
+    "gpu.gpu_bandwidth_util_pct": {
+      "kind": "min",
+      "value": 0
+    },
+    "gpu.gpu_compute_util_pct": {
+      "kind": "min",
+      "value": 0
+    },
+    "prom.queue_time_p50_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "prom.queue_time_p95_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "prom.prefill_time_p50_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "prom.prefill_time_p95_ms": {
+      "kind": "max_ms",
+      "value": 0
+    }
+  },
+  "ISL=1024,OSL=1024,TP=4,CONC=32": {
+    "client.total_token_throughput": {
+      "kind": "min_tok_s",
+      "value": 0
+    },
+    "client.output_throughput": {
+      "kind": "min_tok_s",
+      "value": 0
+    },
+    "client.mean_ttft_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.median_ttft_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p90_ttft_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p95_ttft_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p99_ttft_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.median_tpot_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p90_tpot_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p95_tpot_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p99_tpot_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.mean_itl_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.median_itl_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p95_itl_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p99_itl_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.mean_e2el_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.median_e2el_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p90_e2el_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p95_e2el_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.p99_e2el_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "client.success_rate": {
+      "kind": "min",
+      "value": 0
+    },
+    "client.failed": {
+      "kind": "max",
+      "value": 0
+    },
+    "gpu.peak_gpu_memory_mb": {
+      "kind": "max",
+      "value": 0
+    },
+    "gpu.model_load_memory_mb": {
+      "kind": "max",
+      "value": 0
+    },
+    "gpu.model_load_s": {
+      "kind": "max",
+      "value": 0
+    },
+    "gpu.gpu_bandwidth_util_pct": {
+      "kind": "min",
+      "value": 0
+    },
+    "gpu.gpu_compute_util_pct": {
+      "kind": "min",
+      "value": 0
+    },
+    "prom.queue_time_p50_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "prom.queue_time_p95_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "prom.prefill_time_p50_ms": {
+      "kind": "max_ms",
+      "value": 0
+    },
+    "prom.prefill_time_p95_ms": {
+      "kind": "max_ms",
+      "value": 0
+    }
+  },
+  "accuracy": {
+    "gsm8k": {
+      "gsm8k.exact_match__strict-match": {
+        "kind": "min",
+        "value": 0
+      }
+    }
+  }
+}

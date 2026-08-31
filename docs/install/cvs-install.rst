@@ -393,8 +393,8 @@ CVS provides comprehensive inference testing configurations for various LLM serv
 
    .. code:: bash
 
-     cvs copy-config inference/vllm/mi300x_vllm_llama31-70b_fp8_single.json --output ~/my_vllm_config.json
-     cvs copy-config inference/vllm/mi300x_vllm_llama31-70b_fp8_distributed.json --output ~/my_vllm_multinode_config.json
+     cvs copy-config inference/vllm/mi3xx_vllm_llama33-70b_fp8_single_config.json --output ~/my_vllm_config.json
+     cvs copy-config inference/vllm/mi3xx_vllm_llama33-70b_fp8_distributed_config.json --output ~/my_vllm_multinode_config.json
 
 2. Edit the file and configure:
 

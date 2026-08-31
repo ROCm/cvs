@@ -782,7 +782,7 @@ your configuration file.
 
 .. code:: bash
 
-  cvs run vllm --cluster_file input/cluster_file/cluster_container.json --config_file input/config_file/inference/vllm/mi300x_vllm_llama31-70b_fp8_single.json --html=/var/www/html/cvs/vllm.html --capture=tee-sys --self-contained-html --log-file=/tmp/vllm.log -vvv -s
+  cvs run vllm --cluster_file input/cluster_file/cluster_container.json --config_file input/config_file/inference/vllm/mi3xx_vllm_llama33-70b_fp8_single_config.json --html=/var/www/html/cvs/vllm.html --capture=tee-sys --self-contained-html --log-file=/tmp/vllm.log -vvv -s
 
 For the full configuration schema, metrics, and thresholds see
 :doc:`/reference/configuration-files/vllm`; for a step-by-step first run including multinode,
