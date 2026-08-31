@@ -4,7 +4,7 @@
   "framework": "vllm",
   "gpu_arch": "mi355x",
   "enforce_thresholds": false,
-  "threshold_json": "mi3xx_vllm_qwen3-235b_bf16_single_threshold.json",
+  "threshold_json": "mi35x_vllm_qwen3-235b_bf16_single_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/models",

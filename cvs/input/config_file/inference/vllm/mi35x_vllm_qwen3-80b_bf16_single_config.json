@@ -1,10 +1,10 @@
 {
-  "_comment": "vllm single workload: gpt-oss-120b on MI355X, TP=1 single node. Adapted from the legacy MI355X vllm_single workload bundle. Sweep carries 1k1k/1k8k/8k1k at concurrencies 16 and 32; only 1k1k is selected in sweep.runs. Set container.image, model.id and the models mount before running.",
+  "_comment": "vllm single workload: qwen3-80b on MI355X, TP=1 single node. Adapted from the legacy MI355X vllm_single workload bundle. Sweep carries 1k1k/1k8k/8k1k at concurrencies 16 and 32; only 1k1k is selected in sweep.runs. Set container.image, model.id and the models mount before running.",
   "schema_version": 1,
   "framework": "vllm",
   "gpu_arch": "mi355x",
   "enforce_thresholds": false,
-  "threshold_json": "mi3xx_vllm_gpt-oss-120b_fp4_single_threshold.json",
+  "threshold_json": "mi35x_vllm_qwen3-80b_bf16_single_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/models",
@@ -12,12 +12,12 @@
     "hf_token_file": "{shared_fs}/.hf_token"
   },
   "model": {
-    "id": "openai/gpt-oss-120b",
+    "id": "Qwen/Qwen3-Next-80B-A3B-Instruct",
     "remote": 0
   },
   "container": {
     "lifetime": "per_run",
-    "name": "vllm_gpt_oss_120b_single_mi355x",
+    "name": "vllm_qwen3_80b_single_mi355x",
     "image": "<changeme>",
     "runtime": {
       "name": "docker",
@@ -68,7 +68,7 @@
   "sweep": {
     "sequence_combinations": [
       {
-        "name": "w_gpt-oss-120b_fp4_1k1k",
+        "name": "w_qwen3-80b_bf16_1k1k",
         "isl": "1024",
         "osl": "1024",
         "goodput_slo": {
@@ -78,7 +78,7 @@
         }
       },
       {
-        "name": "w_gpt-oss-120b_fp4_1k8k",
+        "name": "w_qwen3-80b_bf16_1k8k",
         "isl": "1024",
         "osl": "8192",
         "goodput_slo": {
@@ -88,7 +88,7 @@
         }
       },
       {
-        "name": "w_gpt-oss-120b_fp4_8k1k",
+        "name": "w_qwen3-80b_bf16_8k1k",
         "isl": "8192",
         "osl": "1024",
         "goodput_slo": {
@@ -100,11 +100,11 @@
     ],
     "runs": [
       {
-        "combo": "w_gpt-oss-120b_fp4_1k1k",
+        "combo": "w_qwen3-80b_bf16_1k1k",
         "concurrency": 16
       },
       {
-        "combo": "w_gpt-oss-120b_fp4_1k1k",
+        "combo": "w_qwen3-80b_bf16_1k1k",
         "concurrency": 32
       }
     ]

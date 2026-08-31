@@ -1,10 +1,10 @@
 {
-  "_comment": "vllm single workload: deepseek-v31 on MI355X, TP=8 single node. Adapted from the legacy MI355X vllm_single workload bundle. Sweep carries 1k1k/1k8k/8k1k at concurrencies 16 and 32; only 1k1k is selected in sweep.runs. Set container.image, model.id and the models mount before running.",
+  "_comment": "vllm single workload: gpt-oss-120b on MI355X, TP=1 single node. Adapted from the legacy MI355X vllm_single workload bundle. Sweep carries 1k1k/1k8k/8k1k at concurrencies 16 and 32; only 1k1k is selected in sweep.runs. Set container.image, model.id and the models mount before running.",
   "schema_version": 1,
   "framework": "vllm",
   "gpu_arch": "mi355x",
   "enforce_thresholds": false,
-  "threshold_json": "mi3xx_vllm_deepseek-v31_fp8_single_threshold.json",
+  "threshold_json": "mi35x_vllm_gpt-oss-120b_fp4_single_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/models",
@@ -12,12 +12,12 @@
     "hf_token_file": "{shared_fs}/.hf_token"
   },
   "model": {
-    "id": "deepseek-ai/DeepSeek-V3.1",
+    "id": "openai/gpt-oss-120b",
     "remote": 0
   },
   "container": {
     "lifetime": "per_run",
-    "name": "vllm_deepseek_v31_single_mi355x",
+    "name": "vllm_gpt_oss_120b_single_mi355x",
     "image": "<changeme>",
     "runtime": {
       "name": "docker",
@@ -39,9 +39,7 @@
   },
   "roles": {
     "server": {
-      "serve_args": {
-        "kv-cache-dtype": "fp8"
-      },
+      "serve_args": {},
       "env": {
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1"
@@ -58,7 +56,7 @@
     "request_rate": "inf",
     "random_range_ratio": "0.0",
     "random_prefix_len": "0",
-    "tensor_parallelism": "8",
+    "tensor_parallelism": "1",
     "pipeline_parallel_size": "1",
     "nnodes": "1",
     "tokenizer_mode": "auto",
@@ -70,7 +68,7 @@
   "sweep": {
     "sequence_combinations": [
       {
-        "name": "w_deepseek-v31_fp8_1k1k",
+        "name": "w_gpt-oss-120b_fp4_1k1k",
         "isl": "1024",
         "osl": "1024",
         "goodput_slo": {
@@ -80,7 +78,7 @@
         }
       },
       {
-        "name": "w_deepseek-v31_fp8_1k8k",
+        "name": "w_gpt-oss-120b_fp4_1k8k",
         "isl": "1024",
         "osl": "8192",
         "goodput_slo": {
@@ -90,7 +88,7 @@
         }
       },
       {
-        "name": "w_deepseek-v31_fp8_8k1k",
+        "name": "w_gpt-oss-120b_fp4_8k1k",
         "isl": "8192",
         "osl": "1024",
         "goodput_slo": {
@@ -102,11 +100,11 @@
     ],
     "runs": [
       {
-        "combo": "w_deepseek-v31_fp8_1k1k",
+        "combo": "w_gpt-oss-120b_fp4_1k1k",
         "concurrency": 16
       },
       {
-        "combo": "w_deepseek-v31_fp8_1k1k",
+        "combo": "w_gpt-oss-120b_fp4_1k1k",
         "concurrency": 32
       }
     ]
