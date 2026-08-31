@@ -29,7 +29,6 @@
             }
         }
     },
-    "active_benchmark": "llama-70b",
     "benchmark_params":
     {
         "llama-70b":

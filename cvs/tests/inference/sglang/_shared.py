@@ -10,12 +10,11 @@ Each suite has its own stage order (single-node, unified multi-node, or PD disag
 
 from __future__ import annotations
 
-import os
 import re
 from tabulate import tabulate
-from typing import Any, Mapping
 
 from cvs.lib import globals
+from cvs.lib.inference.sglang.sglang_config_loader import resolve_benchmark_variant_key
 from cvs.lib.inference.sglang.sglang_common import perf_enforce_thresholds
 
 log = globals.log
@@ -29,49 +28,6 @@ __all__ = [
 ]
 
 _SMOKE_LINE_RE = re.compile(r"^(.+) -> (Pass|Fail) \((\d+)\)$")
-
-
-def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> str:
-    """Pick which ``benchmark_params`` entry to run.
-
-    Resolution order:
-    1. Environment ``SGLANG_BENCHMARK_KEY`` (override for CI matrices).
-    2. Top-level JSON ``active_benchmark`` (string key into ``benchmark_params``).
-    3. If ``benchmark_params`` has exactly one key, use it.
-
-    ``root`` is the full JSON object loaded from ``--config_file`` (not only ``config``).
-    """
-    env_key = (os.environ.get("SGLANG_BENCHMARK_KEY") or "").strip()
-    bp = root.get("benchmark_params") or {}
-    if not isinstance(bp, dict) or not bp:
-        raise ValueError(f"benchmark_params missing or empty in {config_path!r}")
-
-    if env_key:
-        if env_key not in bp:
-            raise ValueError(
-                f"SGLANG_BENCHMARK_KEY={env_key!r} not found in benchmark_params ({config_path}); valid: {sorted(bp)!r}"
-            )
-        log.info("Using benchmark variant from env SGLANG_BENCHMARK_KEY=%r", env_key)
-        return env_key
-
-    explicit = root.get("active_benchmark")
-    if explicit is not None:
-        if explicit not in bp:
-            raise ValueError(
-                f"active_benchmark={explicit!r} not found in benchmark_params ({config_path}); valid: {sorted(bp)!r}"
-            )
-        log.info("Using benchmark variant from active_benchmark=%r", explicit)
-        return str(explicit)
-
-    if len(bp) == 1:
-        only = next(iter(bp))
-        log.info("Single benchmark_params entry; using %r", only)
-        return str(only)
-
-    raise ValueError(
-        f"Multiple benchmark_params keys in {config_path!r}: {sorted(bp)!r}. "
-        "Set top-level \"active_benchmark\" to one of them, or export SGLANG_BENCHMARK_KEY."
-    )
 
 
 # Stable test order for sglang_disagg_distributed (PD prefill/decode/router).
@@ -137,11 +93,9 @@ def _flat_threshold_specs(specs: dict) -> dict[str, float]:
     return out
 
 
-def _perf_result(actual, expected, metric_key: str, *, enforce_thresholds: bool = True) -> str:
+def _perf_result(actual, expected, metric_key: str) -> str:
     if actual is None or expected is None:
         return "-"
-    if not enforce_thresholds:
-        return "PASS"
     a, e = float(actual), float(expected)
     if "ms" in metric_key.lower():
         return "PASS" if a <= e else "FAIL"
@@ -316,9 +270,14 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                 if actual is None:
                     continue
                 expected = expected_map.get(metric_key)
-                expected_display = (
-                    f"{float(expected):.4f}" if expected is not None and enforce_thresholds else "-"
-                )
+                if enforce_thresholds:
+                    actual_display = f"{float(actual):.4f}"
+                    expected_display = f"{float(expected):.4f}" if expected is not None else "-"
+                    result_display = _perf_result(actual, expected, metric_key)
+                else:
+                    actual_display = f"{float(actual):.4f}"
+                    expected_display = "-"
+                    result_display = "PASS"
                 perf_rows.append(
                     [
                         model,
@@ -329,9 +288,9 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                         conc,
                         host,
                         label,
-                        f"{float(actual):.4f}",
+                        actual_display,
                         expected_display,
-                        _perf_result(actual, expected, metric_key, enforce_thresholds=enforce_thresholds),
+                        result_display,
                     ]
                 )
 
