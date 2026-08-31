@@ -46,20 +46,20 @@
     },
     "benchmark_params":
     {
-        "llama-70b":
+        "deepseek-r1":
         {
             "backend": "sglang",
-            "threshold_file": "cvs/input/config_file/inference/sglang/mi30x_sglang_llama_70b_threshold.json",
+            "threshold_file": "cvs/input/config_file/inference/sglang/mi3xx_sglang_deepseek_r1_0528_threshold.json",
             "max_concurrency": "256",
             "_comments_model": "If the model is local, specify the full path of the model",
-            "model": "meta-llama/Llama-3.1-70B-Instruct",
+            "model": "/root/models/DeepSeek-R1-0528",
             "tensor_parallelism": "8",
             "pipeline_parallelism": "2",
-            "memory_fraction": "0.85",
+            "memory_fraction": "0.7",
             "tokenizer_mode": "auto",
             "inference_poll_iterations": "16",
             "context_length": "205000",
-            "add_export_env": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8"],
+            "add_export_env": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8", "GPU_ARCHS=gfx942"],
             "add_flags": ["--attention-backend aiter"],
             "inference_tests":
             {
@@ -68,9 +68,9 @@
                     "backend": "sglang",
                     "enforce_thresholds": false,
                     "data_set_name": "random",
-                    "num_prompts": "100",
+                    "num_prompts": "25",
                     "random_range_ratio": "0.5",
-                    "model_num_params": "70000000000",
+                    "model_num_params": "671000000000",
                     "peak_gpu_tflops": "2615"
                 },
                 "lm_eval_hellaswag":
