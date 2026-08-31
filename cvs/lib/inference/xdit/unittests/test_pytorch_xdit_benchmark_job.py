@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import MagicMock
 
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_benchmark_job import (
+from cvs.lib.inference.xdit.pytorch_xdit_benchmark_job import (
     BenchmarkLaunchPlan,
     PytorchXditBenchmarkJob,
 )

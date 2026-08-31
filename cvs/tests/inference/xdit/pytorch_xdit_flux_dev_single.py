@@ -27,12 +27,12 @@ from cvs.lib.utils_lib import (
 from cvs.lib import docker_lib
 from cvs.lib import globals
 from cvs.parsers.schemas import ClusterConfigFile, PytorchXditFluxConfigFile
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_model_verify import (
+from cvs.lib.inference.xdit.pytorch_xdit_model_verify import (
     build_diffusers_local_model_required_checks,
     verify_required_checks_on_nodes,
 )
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux import FluxOutputParser, log_results_summary
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+from cvs.lib.inference.xdit.pytorch_xdit_flux import FluxOutputParser, log_results_summary
+from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
     launch_flux_benchmark,
     store_resolved_flux_model_type_from_index,
     ensure_flux2_chat_template_on_host,

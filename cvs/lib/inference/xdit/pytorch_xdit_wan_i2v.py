@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from cvs.lib import globals
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux import log_results_summary
+from cvs.lib.inference.xdit.pytorch_xdit_flux import log_results_summary
 
 log = globals.log
 

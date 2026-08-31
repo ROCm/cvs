@@ -10,7 +10,7 @@ from __future__ import annotations
 import shlex
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
+from cvs.lib.inference.xdit.pytorch_xdit_wan_job import (
     WAN_MODEL_FORMAT_DIFFUSERS,
     resolve_wan_model_format,
 )

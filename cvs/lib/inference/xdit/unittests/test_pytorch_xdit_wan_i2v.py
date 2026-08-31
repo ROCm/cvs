@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_i2v import WanI2vOutputParser
+from cvs.lib.inference.xdit.pytorch_xdit_wan_i2v import WanI2vOutputParser
 
 
 class TestWanI2vOutputParser(unittest.TestCase):

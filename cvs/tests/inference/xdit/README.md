@@ -4,7 +4,7 @@ Cluster validation suite that runs **PyTorch XDit** diffusion inference benchmar
 Instinct GPUs (single-node scale-out or unified multi-node distributed) and gates each
 run on artifact presence, docker exit codes, and GPU-specific latency thresholds.
 
-Library code: `cvs/lib/inference/pytorch_xdit/` (`pytorch_xdit_flux_job.py`,
+Library code: `cvs/lib/inference/xdit/` (`pytorch_xdit_flux_job.py`,
 `pytorch_xdit_wan_job.py`, `pytorch_xdit_benchmark_job.py`, and output parsers).
 
 > **Use GPU compute nodes.** Targets must have ROCm device nodes (for example `/dev/kfd`),
@@ -42,7 +42,7 @@ Single-node FLUX.1-dev:
 ```bash
 cvs run pytorch_xdit_flux_dev_single \
   --cluster_file ./p3_1n_cluster.json \
-  --config_file cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_single.json \
+  --config_file cvs/input/config_file/inference/xdit/mi3xx_pytorch_xdit_flux1_dev_single.json \
   --html ./logs/pytorch_xdit_flux_single.html --self-contained-html -vvv
 ```
 
@@ -51,7 +51,7 @@ Distributed FLUX (multi-node unified torchrun):
 ```bash
 cvs run pytorch_xdit_flux_dev_distributed \
   --cluster_file ./p3_2n_cluster.json \
-  --config_file cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_flux1_dev_distributed.json \
+  --config_file cvs/input/config_file/inference/xdit/mi3xx_pytorch_xdit_flux1_dev_distributed.json \
   --html ./logs/pytorch_xdit_flux_distributed.html --self-contained-html -vvv
 ```
 
@@ -60,13 +60,13 @@ Single-node WAN 2.2 I2V (native checkpoint layout):
 ```bash
 cvs run pytorch_xdit_wan22_14b_single \
   --cluster_file ./p3_1n_cluster.json \
-  --config_file cvs/input/config_file/inference/pytorch_xdit/mi300x_pytorch_xdit_wan22_14b_single.json \
+  --config_file cvs/input/config_file/inference/xdit/mi3xx_pytorch_xdit_wan22_14b_single.json \
   --html ./logs/pytorch_xdit_wan_single.html --self-contained-html -vvv
 ```
 
 - `--cluster_file` - JSON describing node(s), SSH credentials, and optional `env_vars`.
 - `--config_file` - one of the templates under
-  `cvs/input/config_file/inference/pytorch_xdit/`. Replace every `<changeme>` (especially
+  `cvs/input/config_file/inference/xdit/`. Replace every `<changeme>` (especially
   in distributed NCCL/network fields) before running.
 - `--html` / `--self-contained-html` - pytest HTML report for the suite run.
 
@@ -166,18 +166,18 @@ shared across ranks.
 
 ## Config files
 
-Templates live in `cvs/input/config_file/inference/pytorch_xdit/`:
+Templates live in `cvs/input/config_file/inference/xdit/`:
 
 | Config file | Typical suite |
 |---|---|
-| `mi300x_pytorch_xdit_flux1_dev_single.json` | `pytorch_xdit_flux_dev_single` |
-| `mi300x_pytorch_xdit_flux1_dev_distributed.json` | `pytorch_xdit_flux_dev_distributed` |
-| `mi300x_pytorch_xdit_flux2_dev_single.json` | `pytorch_xdit_flux_dev_single` |
-| `mi300x_pytorch_xdit_flux2_dev_distributed.json` | `pytorch_xdit_flux_dev_distributed` |
-| `mi300x_pytorch_xdit_wan22_14b_single.json` | `pytorch_xdit_wan22_14b_single` |
-| `mi300x_pytorch_xdit_wan22_14b_distributed.json` | `pytorch_xdit_wan22_14b_distributed` |
-| `mi300x_pytorch_xdit_wan22_14b_diffusers_single.json` | `pytorch_xdit_wan22_14b_diffusers_single` |
-| `mi300x_pytorch_xdit_wan22_14b_diffusers_distributed.json` | `pytorch_xdit_wan22_14b_diffusers_distributed` |
+| `mi3xx_pytorch_xdit_flux1_dev_single.json` | `pytorch_xdit_flux_dev_single` |
+| `mi3xx_pytorch_xdit_flux1_dev_distributed.json` | `pytorch_xdit_flux_dev_distributed` |
+| `mi3xx_pytorch_xdit_flux2_dev_single.json` | `pytorch_xdit_flux_dev_single` |
+| `mi3xx_pytorch_xdit_flux2_dev_distributed.json` | `pytorch_xdit_flux_dev_distributed` |
+| `mi3xx_pytorch_xdit_wan22_14b_single.json` | `pytorch_xdit_wan22_14b_single` |
+| `mi3xx_pytorch_xdit_wan22_14b_distributed.json` | `pytorch_xdit_wan22_14b_distributed` |
+| `mi3xx_pytorch_xdit_wan22_14b_diffusers_single.json` | `pytorch_xdit_wan22_14b_diffusers_single` |
+| `mi3xx_pytorch_xdit_wan22_14b_diffusers_distributed.json` | `pytorch_xdit_wan22_14b_diffusers_distributed` |
 
 **Placeholders** (test JSON): `{user-id}`, `{user}`, `{home}` — resolved at startup.
 Cluster JSON resolves `{user-id}` only; use real absolute paths for `priv_key_file` when

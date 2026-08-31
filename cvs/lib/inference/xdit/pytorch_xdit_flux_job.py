@@ -870,7 +870,7 @@ def verify_distributed_logs(output: str, *, world_size: int) -> Tuple[bool, str]
     return False, (f"No distributed proof in logs for world_size={world_size}. ")
 
 
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_benchmark_job import (  # noqa: E402
+from cvs.lib.inference.xdit.pytorch_xdit_benchmark_job import (  # noqa: E402
     BenchmarkLaunchPlan,
     PytorchXditBenchmarkJob,
 )

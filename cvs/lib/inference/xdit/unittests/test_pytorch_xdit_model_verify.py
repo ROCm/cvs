@@ -1,6 +1,6 @@
 import unittest
 
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_model_verify import (
+from cvs.lib.inference.xdit.pytorch_xdit_model_verify import (
     build_diffusers_local_model_required_checks,
     first_required_check_failure,
     resolve_wan_local_model_required_checks,

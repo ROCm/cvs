@@ -25,7 +25,7 @@ import shlex
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib import globals
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
     DEFAULT_BENCHMARK_TIMEOUT_S,
     DEFAULT_MASTER_PORT,
     build_nccl_env,
@@ -36,7 +36,7 @@ from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
     _exec_cmd_list_on_nodes,
 )
 
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_benchmark_job import (
+from cvs.lib.inference.xdit.pytorch_xdit_benchmark_job import (
     BenchmarkLaunchPlan,
     PytorchXditBenchmarkJob,
 )
@@ -299,7 +299,7 @@ def diffusers_run_script_missing_hint(container_image: str, run_script: str) -> 
         f"Diffusers Wan launcher {run_script!r} was not found in container {container_image!r}. "
         f"Use amdsiloai/pytorch-xdit for the packaged /app/Wan/run.py harness, or set "
         f"wan_diffusers_launcher to {WAN_DIFFUSERS_LAUNCHER_XFUSER!r}, mount "
-        f"cvs/lib/inference/pytorch_xdit/scripts/wan_i2v_example.py into the container, and set "
+        f"cvs/lib/inference/xdit/scripts/wan_i2v_example.py into the container, and set "
         f"wan_diffusers_run_script plus wan_diffusers_i2v_image."
     )
 
@@ -674,7 +674,7 @@ def validate_wan_xfuser_mounts(
         errors.append(
             f"volume_dict must bind-mount wan_i2v_example.py to {run_script_container}. "
             f"Example: "
-            f'"/home/{{user-id}}/cvs/cvs/lib/inference/pytorch_xdit/scripts/wan_i2v_example.py": '
+            f'"/home/{{user-id}}/cvs/cvs/lib/inference/xdit/scripts/wan_i2v_example.py": '
             f'"{run_script_container}"'
         )
     else:
@@ -969,7 +969,7 @@ class WanBenchmarkJob(PytorchXditBenchmarkJob):
         raw_results: Mapping[str, Any],
         plan: WanLaunchPlan,
     ) -> Tuple[List[str], List[str]]:
-        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+        from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
             _exec_result_exit_code,
             _exec_result_output,
             log_benchmark_failure_excerpt,

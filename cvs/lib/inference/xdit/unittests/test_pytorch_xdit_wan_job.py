@@ -3,11 +3,11 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
     build_nccl_env,
     log_benchmark_failure_excerpt,
 )
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
+from cvs.lib.inference.xdit.pytorch_xdit_wan_job import (
     RUN_WAN_DIFFUSERS_PATH,
     RUN_WAN_NATIVE_PATH,
     WAN_DIFFUSERS_LAUNCHER_XFUSER,
@@ -142,7 +142,7 @@ def _make_wan_job(
 
 class TestWanParallelism(unittest.TestCase):
     def test_resolve_wan_benchmark_timeout(self):
-        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import DEFAULT_BENCHMARK_TIMEOUT_S
+        from cvs.lib.inference.xdit.pytorch_xdit_flux_job import DEFAULT_BENCHMARK_TIMEOUT_S
 
         self.assertEqual(
             resolve_wan_benchmark_timeout(distributed=True),
@@ -658,7 +658,7 @@ class TestWanBenchmarkJob(unittest.TestCase):
 
 
 class TestLogBenchmarkFailureExcerpt(unittest.TestCase):
-    @patch("cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job.log")
+    @patch("cvs.lib.inference.xdit.pytorch_xdit_flux_job.log")
     def test_logs_tail_and_redacts_token(self, mock_log):
         output = "line1\nTraceback (most recent call last):\nHF_TOKEN=hf_secret\n"
         log_benchmark_failure_excerpt("10.0.0.1", output, max_lines=10)

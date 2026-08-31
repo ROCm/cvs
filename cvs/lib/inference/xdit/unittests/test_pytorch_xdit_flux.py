@@ -1,16 +1,16 @@
 import unittest
 from unittest.mock import patch
 
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux import log_results_summary
+from cvs.lib.inference.xdit.pytorch_xdit_flux import log_results_summary
 
 
 class TestLogResultsSummary(unittest.TestCase):
-    @patch("cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux.log")
+    @patch("cvs.lib.inference.xdit.pytorch_xdit_flux.log")
     def test_skips_single_entry(self, mock_log):
         log_results_summary([{"label": "node0", "avg_pipe_time_s": 1.0, "passed": True}])
         mock_log.info.assert_not_called()
 
-    @patch("cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux.log")
+    @patch("cvs.lib.inference.xdit.pytorch_xdit_flux.log")
     def test_logs_multi_node_summary(self, mock_log):
         results_summary = [
             {"label": "tus1-p3-g40", "avg_pipe_time_s": 1.18, "passed": True},
@@ -34,7 +34,7 @@ class TestLogResultsSummary(unittest.TestCase):
         self.assertIn("Overall average: 1.16s", joined)
         self.assertIn("Nodes passed: 2/2", joined)
 
-    @patch("cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux.log")
+    @patch("cvs.lib.inference.xdit.pytorch_xdit_flux.log")
     def test_custom_metric_key_and_title(self, mock_log):
         results_summary = [
             {"label": "node-a", "avg_total_time_s": 2.0, "passed": False},

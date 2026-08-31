@@ -54,7 +54,7 @@ class PytorchXditBenchmarkJob(ABC):
         self.nnodes = len(self.server_nodes) if self.distributed else 1
 
     def _resolve_execution_nodes(self) -> List[str]:
-        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+        from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
             resolve_nnodes,
             resolve_server_nodes,
         )
@@ -76,7 +76,7 @@ class PytorchXditBenchmarkJob(ABC):
         """Return an error message when parallelism config is invalid, else None."""
 
     def check_kfd(self) -> List[str]:
-        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import _exec_on_nodes
+        from cvs.lib.inference.xdit.pytorch_xdit_flux_job import _exec_on_nodes
 
         log.info("Checking /dev/kfd on %d node(s)", len(self.server_nodes))
         kfd_check = _exec_on_nodes(
@@ -96,7 +96,7 @@ class PytorchXditBenchmarkJob(ABC):
         return missing
 
     def _fetch_hostnames(self) -> Dict[str, str]:
-        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import _exec_on_nodes
+        from cvs.lib.inference.xdit.pytorch_xdit_flux_job import _exec_on_nodes
 
         log.info("Getting hostnames from %d node(s)", len(self.server_nodes))
         hostname_result = _exec_on_nodes(self.s_phdl, self.server_nodes, "hostname")
@@ -174,7 +174,7 @@ class PytorchXditBenchmarkJob(ABC):
         )
 
     def build_launch_plan(self) -> BenchmarkLaunchPlan:
-        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+        from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
             DEFAULT_MASTER_PORT,
             compute_world_size,
             resolve_master_addr,
@@ -252,7 +252,7 @@ class PytorchXditBenchmarkJob(ABC):
         return []
 
     def _resolve_run_timeout(self, timeout: Optional[int]) -> int:
-        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import DEFAULT_BENCHMARK_TIMEOUT_S
+        from cvs.lib.inference.xdit.pytorch_xdit_flux_job import DEFAULT_BENCHMARK_TIMEOUT_S
 
         return timeout if timeout is not None else DEFAULT_BENCHMARK_TIMEOUT_S
 
@@ -264,7 +264,7 @@ class PytorchXditBenchmarkJob(ABC):
         """Short benchmark label used in run() log messages."""
 
     def _create_output_directories(self, plan: BenchmarkLaunchPlan) -> Optional[str]:
-        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import _exec_cmd_list_on_nodes
+        from cvs.lib.inference.xdit.pytorch_xdit_flux_job import _exec_cmd_list_on_nodes
 
         log.info("Creating output directories on %d node(s)", len(plan.node_order))
         try:
@@ -274,7 +274,7 @@ class PytorchXditBenchmarkJob(ABC):
         return None
 
     def _verify_distributed_output(self, plan: BenchmarkLaunchPlan, results: Mapping[str, str]) -> Optional[str]:
-        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import verify_distributed_logs
+        from cvs.lib.inference.xdit.pytorch_xdit_flux_job import verify_distributed_logs
 
         if not self.distributed:
             return None
@@ -290,7 +290,7 @@ class PytorchXditBenchmarkJob(ABC):
         raw_results: Mapping[str, Any],
         plan: BenchmarkLaunchPlan,
     ) -> Tuple[List[str], List[str]]:
-        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+        from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
             _exec_result_exit_code,
             _exec_result_output,
             log_benchmark_failure_excerpt,
@@ -327,7 +327,7 @@ class PytorchXditBenchmarkJob(ABC):
         *,
         timeout: Optional[int] = None,
     ) -> Tuple[Dict[str, str], BenchmarkLaunchPlan, List[str]]:
-        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+        from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
             _exec_cmd_list_on_nodes,
             _normalize_exec_results,
             _redact_secrets,

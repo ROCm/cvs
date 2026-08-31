@@ -2,7 +2,7 @@ import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import (
+from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
     FLUX2_DEFAULT_HF_REPO,
     FLUX2_EXAMPLE_PATH,
     RUN_USP_PATH,
@@ -579,7 +579,7 @@ class TestExecResultHelpers(unittest.TestCase):
 
 
 class TestExecCmdListOnNodes(unittest.TestCase):
-    @patch("cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job._exec_on_single_node")
+    @patch("cvs.lib.inference.xdit.pytorch_xdit_flux_job._exec_on_single_node")
     def test_detailed_multi_node_runs_in_parallel(self, mock_single):
         barrier = threading.Barrier(2, timeout=2)
 
@@ -620,7 +620,7 @@ class TestExecCmdListOnNodes(unittest.TestCase):
 
 class TestPhdlConnectionKwargs(unittest.TestCase):
     def test_reads_credentials_from_inner_pssh(self):
-        from cvs.lib.inference.pytorch_xdit.pytorch_xdit_flux_job import _phdl_connection_kwargs
+        from cvs.lib.inference.xdit.pytorch_xdit_flux_job import _phdl_connection_kwargs
 
         class _Inner:
             user = "ubuntu"

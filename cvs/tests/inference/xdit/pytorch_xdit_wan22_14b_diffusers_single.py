@@ -27,15 +27,15 @@ from cvs.lib.utils_lib import (
 from cvs.lib import docker_lib
 from cvs.lib import globals
 from cvs.parsers.schemas import ClusterConfigFile, PytorchXditWanConfigFile
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_model_verify import (
+from cvs.lib.inference.xdit.pytorch_xdit_model_verify import (
     build_diffusers_local_model_required_checks,
     verify_required_checks_on_nodes,
 )
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_i2v import (
+from cvs.lib.inference.xdit.pytorch_xdit_wan_i2v import (
     WanI2vOutputParser,
     log_results_summary,
 )
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan_job import (
+from cvs.lib.inference.xdit.pytorch_xdit_wan_job import (
     build_wan_output_cleanup_cmd,
     launch_wan_benchmark,
     store_resolved_wan_model_format_from_index,

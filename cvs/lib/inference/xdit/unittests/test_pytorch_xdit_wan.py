@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cvs.lib.inference.pytorch_xdit.pytorch_xdit_wan import (
+from cvs.lib.inference.xdit.pytorch_xdit_wan import (
     WanBenchmarkResult,
     WanOutputParser,
 )
