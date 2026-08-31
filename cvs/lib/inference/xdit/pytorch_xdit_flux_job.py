@@ -23,6 +23,7 @@ import json
 import re
 import shlex
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib import globals
@@ -35,6 +36,8 @@ FLUX2_DEFAULT_BENCHMARK_TIMEOUT_S = 3600
 DEFAULT_MASTER_PORT = 29500
 RUN_USP_PATH = "/app/Flux/run_usp.py"
 FLUX2_EXAMPLE_PATH = "/app/external/xdit/examples/flux2_example.py"
+FLUX2_EXAMPLE_MOUNT_PATH = "/benchmark/flux2_example.py"
+FLUX2_EXAMPLE_HOST_SCRIPT = Path(__file__).resolve().parent / "scripts" / "flux2_example.py"
 CONTAINER_OUTPUT_MOUNT = "/outputs"
 CONTAINER_MODEL_MOUNT = "/model"
 
@@ -691,6 +694,137 @@ def build_flux2_example_args(
     )
 
 
+def default_flux2_example_host_path() -> str:
+    """Host path of the CVS-shipped flux2_example.py (same layout as wan_i2v_example.py)."""
+    return str(FLUX2_EXAMPLE_HOST_SCRIPT)
+
+
+def resolve_flux2_example_host_mount(
+    inference_dict: Mapping[str, Any],
+) -> Optional[Tuple[str, str]]:
+    """Return ``(host_path, container_path)`` if flux2_example.py is already in volume_dict."""
+    volume_dict = dict(inference_dict.get("container_config", {}).get("volume_dict") or {})
+    for host_path, mount_target in volume_dict.items():
+        if mount_target in {FLUX2_EXAMPLE_MOUNT_PATH, FLUX2_EXAMPLE_PATH}:
+            return str(host_path), str(mount_target)
+    return None
+
+
+def build_flux2_example_image_probe_cmd(container_image: str) -> str:
+    """Print PRESENT when the image already contains flux2_example.py."""
+    img = shlex.quote(container_image)
+    path = shlex.quote(FLUX2_EXAMPLE_PATH)
+    return (
+        f"docker run --rm --network none --entrypoint test {img} -f {path} "
+        f">/dev/null 2>&1 && echo FLUX2_EXAMPLE_PRESENT || echo FLUX2_EXAMPLE_MISSING"
+    )
+
+
+def build_flux2_example_host_check_cmd(host_path: str) -> str:
+    quoted = shlex.quote(host_path)
+    return (
+        f"test -e {quoted} && echo FLUX2_EXAMPLE_HOST_OK || echo FLUX2_EXAMPLE_HOST_MISSING"
+    )
+
+
+def ensure_flux2_example_available(
+    s_phdl,
+    nodes: Sequence[str],
+    inference_dict: Dict[str, Any],
+    flux_params: Mapping[str, Any],
+) -> List[str]:
+    """
+    If the image lacks ``FLUX2_EXAMPLE_PATH``, bind-mount CVS ``scripts/flux2_example.py``
+    to ``FLUX2_EXAMPLE_MOUNT_PATH`` (``/benchmark/flux2_example.py``), same as WAN xFuser.
+
+    An explicit ``volume_dict`` mapping wins over image probing. Skipped for FLUX.1.
+    """
+    model_type = resolve_flux_model_type_for_job(
+        flux_params,
+        model_repo=str(
+            inference_dict.get("_resolved_model_path_container")
+            or inference_dict.get("model_repo")
+            or ""
+        ),
+        model_repo_hints=[
+            str(inference_dict.get("model_repo") or ""),
+            str(inference_dict.get("_resolved_model_mount_host") or ""),
+        ],
+        resolved_model_type=inference_dict.get("_resolved_flux_model_type"),
+    )
+    if not is_flux2_model(model_type):
+        return []
+
+    node_list = list(nodes)
+    if not node_list:
+        return ["FLUX.2 example setup requires at least one execution node"]
+
+    existing_mount = resolve_flux2_example_host_mount(inference_dict)
+    if existing_mount:
+        host_path, container_path = existing_mount
+        log.info(
+            "FLUX.2 example already bind-mounted from %s to %s",
+            host_path,
+            container_path,
+        )
+    else:
+        probe_cmd = build_flux2_example_image_probe_cmd(str(inference_dict["container_image"]))
+        try:
+            probe = _exec_on_nodes(s_phdl, node_list, probe_cmd, print_console=False)
+        except Exception as exc:
+            return [f"Failed to probe container image for {FLUX2_EXAMPLE_PATH}: {exc}"]
+
+        missing = [
+            node
+            for node in node_list
+            if "FLUX2_EXAMPLE_PRESENT" not in (probe.get(node) or "")
+        ]
+        if not missing:
+            inference_dict["_flux2_example_container_path"] = FLUX2_EXAMPLE_PATH
+            log.info("FLUX.2 example present in image at %s", FLUX2_EXAMPLE_PATH)
+            return []
+
+        host_path = default_flux2_example_host_path()
+        container_path = FLUX2_EXAMPLE_MOUNT_PATH
+        log.info(
+            "FLUX.2 example missing in image on %d node(s); bind-mounting %s -> %s",
+            len(missing),
+            host_path,
+            container_path,
+        )
+
+    check_cmd = build_flux2_example_host_check_cmd(host_path)
+    try:
+        checks = _exec_on_nodes(s_phdl, node_list, check_cmd, print_console=False)
+    except Exception as extra:
+        return [f"Failed to verify FLUX.2 example host path {host_path}: {extra}"]
+
+    missing_host = [
+        node
+        for node in node_list
+        if "FLUX2_EXAMPLE_HOST_OK" not in (checks.get(node) or "")
+    ]
+    if missing_host:
+        return [
+            f"FLUX.2 example {FLUX2_EXAMPLE_PATH} is not in the container image and "
+            f"host file {host_path} is missing on {len(missing_host)} node(s): "
+            f"{', '.join(missing_host)}. Copy cvs/lib/inference/xdit/scripts/flux2_example.py "
+            f"onto those nodes or set volume_dict like WAN, for example: "
+            f'"/home/{{user-id}}/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py": '
+            f'"{FLUX2_EXAMPLE_MOUNT_PATH}"'
+        ]
+
+    if not existing_mount:
+        container_config = inference_dict.setdefault("container_config", {})
+        volume_dict = dict(container_config.get("volume_dict") or {})
+        volume_dict[host_path] = container_path
+        container_config["volume_dict"] = volume_dict
+        log.info("Added FLUX.2 example bind-mount %s -> %s", host_path, container_path)
+
+    inference_dict["_flux2_example_container_path"] = container_path
+    return []
+
+
 def _build_torchrun_prefix(
     *,
     distributed: bool,
@@ -727,6 +861,7 @@ def build_flux2_benchmark_cmd(
     hf_repo_id: Optional[str] = None,
     model_repo_hints: Optional[Sequence[str]] = None,
     resolved_hf_repo_id: Optional[str] = None,
+    example_path: str = FLUX2_EXAMPLE_PATH,
 ) -> str:
     """
     Run flux2_example.py once inside a single torchrun session and write results/timing.json.
@@ -752,7 +887,7 @@ def build_flux2_benchmark_cmd(
         master_addr=master_addr,
         master_port=master_port,
     )
-    run_once = f"{torchrun_prefix} {FLUX2_EXAMPLE_PATH} {flux2_args}"
+    run_once = f"{torchrun_prefix} {example_path} {flux2_args}"
 
     timing_writer = (not distributed) or (node_rank == nnodes - 1)
     if distributed and not timing_writer:
@@ -816,6 +951,7 @@ def build_torchrun_cmd(
     model_repo_hints: Optional[Sequence[str]] = None,
     resolved_model_type: Optional[str] = None,
     resolved_hf_repo_id: Optional[str] = None,
+    flux2_example_path: Optional[str] = None,
 ) -> str:
     nproc = int(nproc_per_node or flux_params["torchrun_nproc"])
     model_type = resolve_flux_model_type_for_job(
@@ -838,6 +974,7 @@ def build_torchrun_cmd(
             master_port=master_port,
             model_repo_hints=model_repo_hints,
             resolved_hf_repo_id=resolved_hf_repo_id,
+            example_path=flux2_example_path or FLUX2_EXAMPLE_PATH,
         )
 
     run_usp_args = build_run_usp_args(flux_params, model_repo=model_repo)
@@ -925,6 +1062,18 @@ class FluxBenchmarkJob(PytorchXditBenchmarkJob):
         )
         return None
 
+    def build_launch_plan(self) -> BenchmarkLaunchPlan:
+        self._flux2_example_setup_errors = ensure_flux2_example_available(
+            self.s_phdl,
+            self.server_nodes,
+            self.inference_dict,
+            self.flux_params,
+        )
+        return super().build_launch_plan()
+
+    def _pre_launch_validation(self, plan: BenchmarkLaunchPlan) -> List[str]:
+        return list(getattr(self, "_flux2_example_setup_errors", None) or [])
+
     def _resolved_model_repo(self) -> str:
         return self.inference_dict.get("_resolved_model_path_container") or self.inference_dict["model_repo"]
 
@@ -982,6 +1131,7 @@ class FluxBenchmarkJob(PytorchXditBenchmarkJob):
             model_repo_hints=self._flux_model_type_hints(),
             resolved_model_type=self.inference_dict.get("_resolved_flux_model_type"),
             resolved_hf_repo_id=self.inference_dict.get("_resolved_flux_hf_repo_id"),
+            flux2_example_path=self.inference_dict.get("_flux2_example_container_path"),
         )
 
 

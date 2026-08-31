@@ -4,18 +4,24 @@ from unittest.mock import MagicMock, patch
 
 from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
     FLUX2_DEFAULT_HF_REPO,
+    FLUX2_EXAMPLE_MOUNT_PATH,
     FLUX2_EXAMPLE_PATH,
     RUN_USP_PATH,
     FluxBenchmarkJob,
     build_flux2_chat_template_host_check_cmd,
     build_flux2_ensure_chat_template_cmd,
     build_flux2_example_args,
+    build_flux2_example_host_check_cmd,
+    build_flux2_example_image_probe_cmd,
     build_nccl_env,
     build_run_usp_args,
     build_torchrun_cmd,
+    default_flux2_example_host_path,
     detect_flux_model_type_from_model_index,
+    ensure_flux2_example_available,
     is_flux2_model,
     parallel_product,
+    resolve_flux2_example_host_mount,
     resolve_flux2_hf_repo_id,
     resolve_flux_model_type,
     validate_flux_parallelism_config,
@@ -80,6 +86,10 @@ def _wire_phdl_exec(phdl, hosts, hostnames=None, *, benchmark_exit_code=0, bench
                 value = hostnames[host]
             elif "hostname -I" in text:
                 value = host
+            elif "FLUX2_EXAMPLE_PRESENT" in text:
+                value = "FLUX2_EXAMPLE_PRESENT"
+            elif "FLUX2_EXAMPLE_HOST_OK" in text:
+                value = "FLUX2_EXAMPLE_HOST_OK"
             elif "docker run" in text:
                 value = benchmark_output
                 if detailed:
@@ -346,6 +356,198 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         )
         self.assertIn("hf_hub_download", cmd)
         self.assertLess(cmd.index("hf_hub_download"), cmd.index(FLUX2_EXAMPLE_PATH))
+
+    def test_flux2_uses_volume_dict_mount_path(self):
+        params = {
+            **self._FLUX1_PARAMS,
+            "num_inference_steps": 50,
+            "max_sequence_length": 512,
+        }
+        cmd = build_torchrun_cmd(
+            params,
+            model_repo="/model",
+            model_repo_hints=["black-forest-labs/FLUX.2-dev"],
+            distributed=False,
+            flux2_example_path=FLUX2_EXAMPLE_MOUNT_PATH,
+        )
+        self.assertIn(FLUX2_EXAMPLE_MOUNT_PATH, cmd)
+        self.assertNotIn(FLUX2_EXAMPLE_PATH, cmd)
+
+
+class TestFlux2ExampleFallbackMount(unittest.TestCase):
+    def test_default_host_path_points_at_cvs_script(self):
+        host_path = default_flux2_example_host_path()
+        self.assertTrue(host_path.endswith("scripts/flux2_example.py") or host_path.endswith(r"scripts\flux2_example.py"))
+        self.assertTrue(host_path.replace("\\", "/").endswith("lib/inference/xdit/scripts/flux2_example.py"))
+
+    def test_image_probe_cmd_checks_in_image_path(self):
+        cmd = build_flux2_example_image_probe_cmd("rocm/ufb-private:xdit")
+        self.assertIn("--entrypoint test", cmd)
+        self.assertIn(FLUX2_EXAMPLE_PATH, cmd)
+        self.assertIn("FLUX2_EXAMPLE_PRESENT", cmd)
+        self.assertIn("FLUX2_EXAMPLE_MISSING", cmd)
+
+    def test_host_check_cmd(self):
+        cmd = build_flux2_example_host_check_cmd("/host/flux2_example.py")
+        self.assertIn("test -e", cmd)
+        self.assertIn("/host/flux2_example.py", cmd)
+
+    def test_flux1_does_not_probe_or_mount(self):
+        job, phdl = _make_flux_job()
+        errors = ensure_flux2_example_available(
+            phdl,
+            job.server_nodes,
+            job.inference_dict,
+            job.flux_params,
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(job.inference_dict["container_config"]["volume_dict"], {})
+        probe_cmds = [str(call.args[0]) for call in phdl.exec.call_args_list]
+        self.assertFalse(any("FLUX2_EXAMPLE_PRESENT" in cmd for cmd in probe_cmds))
+
+    def test_present_in_image_skips_bind_mount(self):
+        job, phdl = _make_flux_job(
+            inference_overrides={
+                "model_repo": "black-forest-labs/FLUX.2-dev",
+                "_resolved_flux_model_type": "flux2",
+            }
+        )
+        errors = ensure_flux2_example_available(
+            phdl,
+            job.server_nodes,
+            job.inference_dict,
+            job.flux_params,
+        )
+        self.assertEqual(errors, [])
+        self.assertEqual(job.inference_dict["container_config"]["volume_dict"], {})
+        self.assertIsNone(resolve_flux2_example_host_mount(job.inference_dict))
+        self.assertEqual(job.inference_dict["_flux2_example_container_path"], FLUX2_EXAMPLE_PATH)
+
+    def test_missing_in_image_bind_mounts_cvs_script(self):
+        job, phdl = _make_flux_job(
+            inference_overrides={
+                "model_repo": "black-forest-labs/FLUX.2-dev",
+                "_resolved_flux_model_type": "flux2",
+            }
+        )
+
+        def _missing_in_image(cmd, timeout=None, print_console=False, detailed=False):
+            text = str(cmd)
+            if "FLUX2_EXAMPLE_PRESENT" in text:
+                return {"10.0.0.1": "FLUX2_EXAMPLE_MISSING"}
+            if "FLUX2_EXAMPLE_HOST_OK" in text:
+                return {"10.0.0.1": "FLUX2_EXAMPLE_HOST_OK"}
+            return {"10.0.0.1": ""}
+
+        phdl.exec.side_effect = _missing_in_image
+        errors = ensure_flux2_example_available(
+            phdl,
+            job.server_nodes,
+            job.inference_dict,
+            job.flux_params,
+        )
+        self.assertEqual(errors, [])
+        host_path = default_flux2_example_host_path()
+        self.assertEqual(
+            job.inference_dict["container_config"]["volume_dict"][host_path],
+            FLUX2_EXAMPLE_MOUNT_PATH,
+        )
+        self.assertEqual(
+            resolve_flux2_example_host_mount(job.inference_dict),
+            (host_path, FLUX2_EXAMPLE_MOUNT_PATH),
+        )
+        self.assertEqual(
+            job.inference_dict["_flux2_example_container_path"],
+            FLUX2_EXAMPLE_MOUNT_PATH,
+        )
+
+    def test_existing_volume_dict_skips_image_probe(self):
+        job, phdl = _make_flux_job(
+            inference_overrides={
+                "model_repo": "black-forest-labs/FLUX.2-dev",
+                "_resolved_flux_model_type": "flux2",
+                "container_config": {
+                    "device_list": ["/dev/dri", "/dev/kfd"],
+                    "volume_dict": {
+                        "/home/user/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py": (
+                            FLUX2_EXAMPLE_MOUNT_PATH
+                        )
+                    },
+                    "env_dict": {},
+                },
+            }
+        )
+        errors = ensure_flux2_example_available(
+            phdl,
+            job.server_nodes,
+            job.inference_dict,
+            job.flux_params,
+        )
+        self.assertEqual(errors, [])
+        probe_cmds = [str(call.args[0]) for call in phdl.exec.call_args_list]
+        self.assertFalse(any("FLUX2_EXAMPLE_PRESENT" in cmd for cmd in probe_cmds))
+        self.assertTrue(any("FLUX2_EXAMPLE_HOST_OK" in cmd for cmd in probe_cmds))
+        self.assertEqual(
+            job.inference_dict["_flux2_example_container_path"],
+            FLUX2_EXAMPLE_MOUNT_PATH,
+        )
+
+    def test_missing_host_script_returns_error(self):
+        job, phdl = _make_flux_job(
+            inference_overrides={
+                "model_repo": "black-forest-labs/FLUX.2-dev",
+                "_resolved_flux_model_type": "flux2",
+            }
+        )
+
+        def _missing_host(cmd, timeout=None, print_console=False, detailed=False):
+            text = str(cmd)
+            if "FLUX2_EXAMPLE_PRESENT" in text:
+                return {"10.0.0.1": "FLUX2_EXAMPLE_MISSING"}
+            if "FLUX2_EXAMPLE_HOST_OK" in text:
+                return {"10.0.0.1": "FLUX2_EXAMPLE_HOST_MISSING"}
+            return {"10.0.0.1": ""}
+
+        phdl.exec.side_effect = _missing_host
+        errors = ensure_flux2_example_available(
+            phdl,
+            job.server_nodes,
+            job.inference_dict,
+            job.flux_params,
+        )
+        self.assertTrue(errors)
+        self.assertIn("flux2_example.py", errors[0])
+        self.assertEqual(job.inference_dict["container_config"]["volume_dict"], {})
+
+    def test_launch_plan_docker_cmd_includes_fallback_mount(self):
+        job, phdl = _make_flux_job(
+            inference_overrides={
+                "model_repo": "black-forest-labs/FLUX.2-dev",
+                "_resolved_flux_model_type": "flux2",
+            }
+        )
+
+        def _missing_in_image(cmd, timeout=None, print_console=False, detailed=False):
+            text = str(cmd)
+            if "test -e /dev/kfd" in text:
+                return {"10.0.0.1": "KFD_OK"}
+            if text.strip() == "hostname":
+                return {"10.0.0.1": "host-0"}
+            if "FLUX2_EXAMPLE_PRESENT" in text:
+                return {"10.0.0.1": "FLUX2_EXAMPLE_MISSING"}
+            if "FLUX2_EXAMPLE_HOST_OK" in text:
+                return {"10.0.0.1": "FLUX2_EXAMPLE_HOST_OK"}
+            if "docker run" in text:
+                return {"10.0.0.1": "ok"}
+            return {"10.0.0.1": ""}
+
+        phdl.exec.side_effect = _missing_in_image
+        plan = job.build_launch_plan()
+        host_path = default_flux2_example_host_path()
+        self.assertIn(host_path, plan.docker_cmds[0])
+        self.assertIn(f"target={FLUX2_EXAMPLE_MOUNT_PATH}", plan.docker_cmds[0])
+        self.assertIn(FLUX2_EXAMPLE_MOUNT_PATH, plan.docker_cmds[0])
+        self.assertEqual(job._pre_launch_validation(plan), [])
 
 
 class TestBuildNcclEnv(unittest.TestCase):

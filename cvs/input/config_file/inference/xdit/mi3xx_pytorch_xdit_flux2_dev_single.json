@@ -12,7 +12,9 @@
                 "/dev/dri",
                 "/dev/kfd"
             ],
-            "volume_dict": {},
+            "volume_dict": {
+                "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py": "/benchmark/flux2_example.py"
+            },
             "env_dict": {}
         }
     },

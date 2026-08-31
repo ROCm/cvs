@@ -25,7 +25,8 @@ latency against per-GPU thresholds. It provides:
 3. **Offline model staging** - models must be present on every participating node before
    the run (explicit host path or pre-populated Hugging Face cache under `hf_home`).
 4. **Preflight checks** - `/dev/kfd`, local container image, parallelism config
-   (distributed), and WAN xFuser bind-mount validation where applicable.
+   (distributed), WAN xFuser bind-mount validation, and FLUX.2 `flux2_example.py`
+   fallback mount when the image does not ship `/app/external/xdit/examples/flux2_example.py`.
 5. **Exit-code gating** - benchmark pass/fail uses docker `exit_code` from
    `exec(..., detailed=True)`, not log-regex scanning.
 6. **Threshold gating** - average FLUX `pipe_time` or WAN `total_time` compared to
@@ -191,6 +192,12 @@ Cluster JSON resolves `{user-id}` only; use real absolute paths for `priv_key_fi
 - `model_repo` - Hugging Face repo id or absolute on-disk model path (preferred at scale).
 - `output_base_dir` - host directory for benchmark outputs.
 - `container_config.device_list` - typically `["/dev/dri", "/dev/kfd"]`.
+- `container_config.volume_dict` - optional host:container bind mounts. WAN Diffusers
+  xFuser requires mounting `cvs/lib/inference/xdit/scripts/wan_i2v_example.py`.
+  FLUX.2 probes `/app/external/xdit/examples/flux2_example.py` in the image and, when
+  it is missing, bind-mounts `cvs/lib/inference/xdit/scripts/flux2_example.py` to
+  `/benchmark/flux2_example.py` (same pattern as WAN xFuser). Flux2 sample configs
+  already set this mapping in `volume_dict`.
 - `nnodes`, `master_addr`, `nccl_*`, `gloo_socket_ifname` - distributed rendezvous and
   NCCL tuning (replace `<changeme>` values).
 - `benchmark_params.flux1_dev_t2i` or `benchmark_params.wan22_i2v_a14b` - torchrun
