@@ -28,11 +28,11 @@
           "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
           "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro",
           "/lib/libibverbs.d:/lib/libibverbs.d"
-        ],
+        ],  
         "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm"],
         "env": {
           "NCCL_IB_HCA": "<changeme> rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
-          "HCA_ID_PREFIX": "<changeme> rdma",
+          "HCA_ID_PREFIX": "<changeme>",
           "NCCL_SOCKET_IFNAME": "<changeme> eno0",
           "GLOO_SOCKET_IFNAME": "<changeme> eno0",
           "GLOO_TCP_IFNAME": "<changeme> eno0",
@@ -108,30 +108,14 @@
     ]
   },
   "sweeps": {
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=4": {
-      "num_prompts": "50"
-    },
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=8": {
-      "num_prompts": "50"
-    },
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16": {
-      "num_prompts": "50"
-    },
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32": {
-      "num_prompts": "50"
-    },
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=64": {
-      "num_prompts": "50"
-    },
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128": {
-      "num_prompts": "50"
-    },
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=256": {
-      "num_prompts": "50"
-    },
-    "ISL=8192,OSL=1024,TP=8,PP=1,CONC=64": {
-      "num_prompts": "50"
-    }
+    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=4": {},
+    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=8": {},
+    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16": {},
+    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32": {},
+    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=64": {},
+    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128": {},
+    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=256": {},
+    "ISL=8192,OSL=1024,TP=8,PP=1,CONC=64": {}
   },
   "sweep": {
     "_comment": "Combo-key runs of ISL, OSL, TP, PP, and CONC, comma-separated. Each listed run must exist in the threshold JSON. If this field is empty, every run in the threshold JSON is used.",

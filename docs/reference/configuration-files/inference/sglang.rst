@@ -289,8 +289,9 @@ Additional ``server_params`` / ``container`` env fields beyond the single-node s
    * - ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, ``GLOO_TCP_IFNAME``
      - Ethernet interfaces for socket/Gloo fallback.
    * - ``HCA_ID_PREFIX``
-     - Used by ``test_setup_ibv_devices`` to match ``ibv_devinfo`` HCA names. The host
-       ``libbnxt_re-rdmav34.so`` is bind-mounted via ``volumes``.
+     - Single ``ibv_devinfo`` ``hca_id`` prefix used by ``test_setup_ibv_devices``.
+       Replace ``<changeme>`` with ``rdma``, ``bnxt_``, or ``mlx5_``. Keep ``rdma0,...``
+       on ``NCCL_IB_HCA`` only.
 
 Disaggregated prefill-decode (``sglang_disagg_distributed``)
 ------------------------------------------------------------
