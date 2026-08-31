@@ -186,7 +186,7 @@ def test_example(orch, config_dict):
 
 ### Configuration References
 - [cvs/input/cluster_file/README.md](cvs/input/cluster_file/README.md) - Cluster configuration format
-- Sample configs: `cvs copy-config --list` for available templates
+- Sample configs: ``cvs config list-dirs`` and ``cvs config list`` for available templates
 
 ### AMD/ROCm Resources
 - [ROCm Documentation](https://rocm.docs.amd.com/) - ROCm platform documentation
