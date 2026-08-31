@@ -15,9 +15,8 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
-SHARED_HOME = "/shared/amdgpu/home/dl_dcgpu_aac_service_request_qle"
-_EXTRA_PYPACKAGES = os.environ.get("CVS_WAN_XFUSER_PYPACKAGES", "").strip() or f"{SHARED_HOME}/pypackages"
-if _EXTRA_PYPACKAGES not in sys.path:
+_EXTRA_PYPACKAGES = os.environ.get("CVS_WAN_XFUSER_PYPACKAGES", "").strip()
+if _EXTRA_PYPACKAGES and _EXTRA_PYPACKAGES not in sys.path:
     sys.path.insert(0, _EXTRA_PYPACKAGES)
 
 

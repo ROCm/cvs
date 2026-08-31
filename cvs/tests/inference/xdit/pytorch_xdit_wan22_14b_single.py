@@ -144,7 +144,7 @@ def _redact_secrets(s: str) -> str:
     if not s:
         return s
     # Replace HF_TOKEN=<anything until space> with HF_TOKEN=<redacted>
-    return re.sub(r"(HF_TOKEN=)\\S+", r"\\1<redacted>", s)
+    return re.sub(r"(HF_TOKEN=)\S+", r"\1<redacted>", s)
 
 
 # =============================================================================
