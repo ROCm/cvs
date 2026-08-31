@@ -1,0 +1,28 @@
+{
+    "ssh_key_distribution": {
+        "_comment_keys": "Local paths on the machine running CVS. Replace every <changeme>. The private key is uploaded via SFTP (never echoed).",
+        "cluster_key_private_path": "<changeme>",
+        "cluster_key_public_path": "<changeme>",
+
+        "_comment_key_name": "Filename the key gets on the remote nodes under remote_ssh_dir. Peers reference it via IdentityFile.",
+        "key_name": "cluster_id",
+
+        "_comment_controlling": "Optional. Local path to the controlling station's EXISTING public key to also authorize. Leave as empty string to skip.",
+        "controlling_station_pubkey_path": "",
+
+        "_comment_remote_ssh_dir": "Optional. Remote per-user ssh dir. Default ~/.ssh. '~' expands on the remote node.",
+        "remote_ssh_dir": "~/.ssh",
+
+        "_comment_host_pattern": "Optional override for the ssh_config Host wildcard. If empty, derived from node_dict keys + vpc_ips.",
+        "ssh_config_host_pattern": "",
+
+        "_comment_verify": "Verification behavior after distribution.",
+        "verify_connectivity": true,
+        "_comment_verify_mode": "'ring' (each node -> next, O(n)) or 'full_mesh' (every ordered pair, O(n^2)).",
+        "verify_mode": "ring",
+        "verify_timeout": 20,
+
+        "_comment_config_block": "How ~/.ssh/config is managed. 'managed_block' inserts/replaces a marked CVS block, preserving other content (recommended). 'overwrite' replaces the whole file.",
+        "ssh_config_write_mode": "managed_block"
+    }
+}
