@@ -28,12 +28,9 @@ from cvs.runners.aorta import (
 from cvs.runners._base_runner import RunStatus
 from cvs.parsers.aorta_report import AortaReportParser
 from cvs.parsers.tracelens import TraceLensParser
-from cvs.parsers.schemas import (
-    ParseStatus,
-    # Config validation schemas
-    ClusterConfigFile,
-    AortaBenchmarkConfigFile,
-)
+from cvs.parsers.schemas import ParseStatus
+from cvs.schema.config_file.aorta.benchmark import AortaBenchmarkConfigFile
+from cvs.schema.cluster_file.cluster import ClusterConfigFile
 
 from cvs.lib import globals
 from cvs.lib.utils_lib import (

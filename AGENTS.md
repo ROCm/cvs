@@ -43,7 +43,7 @@ make ut          # sdist -> .test_venv -> run_all_unittests.py
 ### Test Structure
 - Test functions use `test_` prefix (PyTest requirement)
 - Customer test suites live under `cvs/tests/`; library code under `cvs/lib/`
-- Configuration files in `cvs/input/config_file/` (JSON-structured, explicit parameters). Sample configs mark mandatory user fields with `<changeme>` in value strings — users must replace every `<changeme>` before running tests; unresolved placeholders hard-exit at startup via `_resolve_placeholders_in_dict` (`cvs/lib/utils_lib.py`), reached by `resolve_test_config_placeholders`, which nearly every test module calls. The `<changeme>` validators in `cvs/parsers/schemas.py` cover only the aorta and pytorch-xdit configs.
+- Configuration files in `cvs/input/config_file/` (JSON-structured, explicit parameters). Sample configs mark mandatory user fields with `<changeme>` in value strings — users must replace every `<changeme>` before running tests; unresolved placeholders hard-exit at startup via `_resolve_placeholders_in_dict` (`cvs/lib/utils_lib.py`), reached by `resolve_test_config_placeholders`, which nearly every test module calls. The `<changeme>` validators in `cvs/schema/config_file/` (aorta and pytorch_xdit) cover only those config types.
 - Tests require `--cluster_file` and `--config_file` CLI args (wired via `cvs/conftest.py`; the `orch` fixture is in `cvs/tests/conftest.py`)
 
 ### Orchestrator Patterns (Recommended)

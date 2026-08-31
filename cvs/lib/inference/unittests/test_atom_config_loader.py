@@ -18,7 +18,7 @@ from cvs.lib.inference.atom.atom_config_loader import (
     reuse_server_flag,
     server_session_key,
 )
-from cvs.lib.inference.utils.inferencing_config_loader import Run, SeqCombo, Sweep
+from cvs.schema.config_file.inference.common.sweep import Run, SeqCombo, Sweep
 
 
 def _cluster_dict():

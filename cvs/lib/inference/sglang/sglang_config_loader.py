@@ -27,16 +27,13 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
-from pydantic import Field, model_validator
-from typing_extensions import Literal
-
 from cvs.lib import globals
-from cvs.lib.utils.config_loader import (
-    BaseVariantConfig,
-    _Forbid,
-    substitute_config,
-)
+from cvs.lib.utils.config_loader import substitute_config
 from cvs.lib.utils_lib import resolve_test_config_placeholders
+from cvs.schema.config_file.inference.sglang.variant import (
+    SglangSingleVariantConfig,
+    perf_cell_key,
+)
 
 log = globals.log
 
@@ -92,17 +89,6 @@ def flat_expected_from_specs(specs: Mapping[str, Any]) -> dict[str, float]:
         else:
             out[metric] = float(spec)
     return out
-
-
-def perf_cell_key(bp_dict: Mapping[str, Any]) -> str:
-    bench = (bp_dict.get("inference_tests") or {}).get("bench_serv_random") or {}
-    return (
-        f"ISL={bench.get('input_length', '-')},"
-        f"OSL={bench.get('output_length', '-')},"
-        f"TP={bp_dict.get('tensor_parallelism', '8')},"
-        f"PP={bp_dict.get('pipeline_parallelism', '1')},"
-        f"CONC={bp_dict.get('max_concurrency', '-')}"
-    )
 
 
 def bench_cell_key(bench_name: str) -> str:
@@ -295,53 +281,6 @@ def legacy_paths_from_inference(inference: Mapping[str, Any]) -> dict[str, str]:
 
 def _is_legacy_root(raw: Mapping[str, Any]) -> bool:
     return "benchmark_params" in raw and ("config" in raw or "container_image" in raw)
-
-
-# ---------- typed config ----------
-
-
-class SglangRoleServer(_Forbid):
-    env: Dict[str, str] = Field(default_factory=dict)
-    serve_port: str = "8000"
-
-
-class SglangRoles(_Forbid):
-    server: SglangRoleServer = Field(default_factory=SglangRoleServer)
-
-
-class SglangSingleVariantConfig(BaseVariantConfig):
-    """Typed config for ``sglang_single`` + ContainerOrchestrator."""
-
-    framework: Literal["sglang_single"]
-    gpu_arch: str
-    variant_key: str = ""
-    config_path: str = ""
-
-    # Legacy blocks kept for ``SglangSingle`` until that lib is refactored.
-    inference: Dict[str, Any] = Field(default_factory=dict)
-    benchmark_params: Dict[str, Any] = Field(default_factory=dict)
-
-    roles: SglangRoles = Field(default_factory=SglangRoles)
-
-    def cell_key(self, isl, osl, concurrency) -> str:
-        tp = self.benchmark_params.get("tensor_parallelism", "-")
-        pp = self.benchmark_params.get("pipeline_parallelism", "-")
-        return f"ISL={isl},OSL={osl},TP={tp},PP={pp},CONC={concurrency}"
-
-    def perf_cell_key(self) -> str:
-        return perf_cell_key(self.benchmark_params)
-
-    @property
-    def hf_token_file(self) -> str:
-        return self.paths.hf_token_file
-
-    @model_validator(mode="after")
-    def _sync_legacy_inference_container_name(self):
-        """Keep legacy inference dict aligned with orchestrator container name."""
-        if self.inference and self.container.name:
-            self.inference["container_name"] = self.container.name
-            self.inference["container_image"] = self.container.image
-        return self
 
 
 # ---------- public API ----------

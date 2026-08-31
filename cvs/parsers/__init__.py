@@ -5,7 +5,9 @@ Parsers are responsible for:
 - Transforming raw benchmark outputs into structured data
 - Validating results against Pydantic schemas
 - Aggregating metrics across runs/ranks
-- Validating configuration files (fail fast)
+
+Configuration file schemas live under ``cvs/schema/`` (mirroring ``cvs/input/``); use
+``cvs.schema.validate.validate_config_file`` to validate configs before running benchmarks.
 
 Parsers should NOT:
 - Execute benchmarks
@@ -14,46 +16,20 @@ Parsers should NOT:
 """
 
 from cvs.parsers.schemas import (
-    # Result schemas
-    AortaTraceMetrics,
     AortaBenchmarkResult,
+    AortaTraceMetrics,
     ParseResult,
     ParseStatus,
-    # Config file schemas
-    ClusterConfigFile,
-    ClusterNodeConfig,
-    AortaBenchmarkConfigFile,
-    AortaDockerConfigFile,
-    AortaRcclConfigFile,
-    AortaEnvironmentConfigFile,
-    AortaExpectedResultsConfigFile,
-    AortaAnalysisConfigFile,
-    # Validation helper
-    validate_config_file,
 )
 
-# Parser implementations
 from cvs.parsers.aorta_report import AortaReportParser
 from cvs.parsers.tracelens import TraceLensParser
 
 __all__ = [
-    # Result schemas
     "AortaTraceMetrics",
     "AortaBenchmarkResult",
     "ParseResult",
     "ParseStatus",
-    # Config file schemas
-    "ClusterConfigFile",
-    "ClusterNodeConfig",
-    "AortaBenchmarkConfigFile",
-    "AortaDockerConfigFile",
-    "AortaRcclConfigFile",
-    "AortaEnvironmentConfigFile",
-    "AortaExpectedResultsConfigFile",
-    "AortaAnalysisConfigFile",
-    # Validation helper
-    "validate_config_file",
-    # Parser implementations
     "AortaReportParser",
     "TraceLensParser",
 ]

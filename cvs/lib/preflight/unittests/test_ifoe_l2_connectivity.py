@@ -20,7 +20,7 @@ from cvs.lib.preflight.ifoe_l2_connectivity import (
     parse_afmctl_show_device_json,
 )
 from cvs.lib.preflight.report import PreflightReportGenerator
-from cvs.parsers.schemas import PreflightConfigFile
+from cvs.schema.config_file.preflight.config import PreflightConfigFile
 
 
 PASSING_OUTPUT = """\

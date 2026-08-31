@@ -26,7 +26,8 @@ from cvs.lib.utils_lib import (
 )
 from cvs.lib import docker_lib
 from cvs.lib import globals
-from cvs.parsers.schemas import ClusterConfigFile, PytorchXditFluxConfigFile
+from cvs.schema.cluster_file.cluster import ClusterConfigFile
+from cvs.schema.config_file.inference.pytorch_xdit.config import PytorchXditFluxConfigFile
 from cvs.lib.inference.xdit.pytorch_xdit_model_verify import (
     build_diffusers_local_model_required_checks,
     verify_required_checks_on_nodes,
