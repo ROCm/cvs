@@ -9,7 +9,7 @@ of role hosts (not every host in cluster.json unless all are assigned roles).
 Run:
   pytest cvs/tests/inference/sglang/sglang_disagg_distributed.py \\
     --cluster_file cvs/input/cluster_file/cluster_container.json \\
-    --config_file cvs/input/config_file/inference/sglang/mi30x_sglang_distributed.json \\
+    --config_file cvs/input/config_file/inference/sglang/mi3xx_sglang_llama_70b_disaggregated.json \\
     --html=~/cvs_results/sglang_disagg.html
 
 ``cluster_container.json`` ``node_dict`` must include all prefill/decode/router/bench hosts.
