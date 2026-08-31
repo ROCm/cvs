@@ -4,15 +4,6 @@ All rights reserved.
 
 SGLang single-node config loader for ContainerOrchestrator suites.
 
-Supports two on-disk layouts:
-
-1. **Legacy** (existing ``mi30x_sglang_*.json``):
-   top-level ``config`` + ``benchmark_params`` + per-variant ``threshold_file``.
-
-2. **Unified** (vLLM-style, optional future configs):
-   ``schema_version: 1``, ``framework: "sglang_single"``, ``paths`` / ``container`` /
-   ``model`` / ``threshold_json``.
-
 ``load_variant()`` is the single entry point for ``sglang_single`` conftest and
 produces both:
 - typed fields for ``OrchestratorFactory`` (``container``, ``paths``, ``model``)
