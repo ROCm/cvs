@@ -1337,11 +1337,22 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
 
     @staticmethod
     def _extract_exit_sentinel(output: str) -> Tuple[str, Optional[int]]:
-        """Remove the exit sentinel used by ``exec_cmd_list`` target calls."""
-        match = re.search(r"(?:^|\n)__CVS_AFMCTL_EXIT_STATUS__=(-?\d+)\s*$", output or "")
+        """Remove the exit sentinel used by ``exec_cmd_list`` target calls.
+
+        Pssh appends a host's stderr after its stdout, so a target command that
+        writes to stderr pushes the sentinel out of the last-line position where
+        it is emitted. Search for it anywhere instead of anchoring to the end of
+        the string, and splice out just its own line so any stderr that follows
+        is preserved rather than silently dropped along with the exit status.
+        """
+        text = output or ""
+        match = re.search(r"(?:^|\n)__CVS_AFMCTL_EXIT_STATUS__=(-?\d+)[ \t]*\n?", text)
         if not match:
-            return output or "", None
-        return (output or "")[: match.start()].rstrip("\n"), int(match.group(1))
+            return text, None
+        before = text[: match.start()].rstrip("\n")
+        after = text[match.end() :]
+        cleaned = before + "\n" + after if after else before
+        return cleaned, int(match.group(1))
 
     def _exec_on_node(self, node: str, command: str) -> Dict:
         """Run a command only on ``node`` when the Pssh backend supports it.

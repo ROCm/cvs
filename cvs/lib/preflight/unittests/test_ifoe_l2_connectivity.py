@@ -551,6 +551,23 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         self.assertIn('__CVS_AFMCTL_EXIT_STATUS__', phdl.command_list[1])
         self.assertEqual(execution, {'output': 'ping output', 'exit_status': 7})
 
+    def test_targeted_executor_recovers_exit_status_when_stderr_follows_sentinel(self):
+        class TargetedPssh:
+            reachable_hosts = ['nodeA', 'nodeB']
+
+            def exec_cmd_list(self, commands, timeout=None, print_console=True):
+                return {
+                    'nodeA': '',
+                    'nodeB': ('ping output\n__CVS_AFMCTL_EXIT_STATUS__=3\nafmctl: link down on port 2\n'),
+                }
+
+        phdl = TargetedPssh()
+        check = IfoeL2ConnectivityCheck(phdl)
+        execution = check._exec_on_node('nodeB', 'afmctl test ping --example')
+
+        self.assertEqual(execution['exit_status'], 3)
+        self.assertEqual(execution['output'], 'ping output\nafmctl: link down on port 2\n')
+
     def test_run_passes_with_explicit_bdfs(self):
         phdl = self._make_phdl(
             reachable_hosts=['nodeA', 'nodeB'],
