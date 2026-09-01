@@ -14,7 +14,7 @@ import re
 from tabulate import tabulate
 
 from cvs.lib import globals
-from cvs.lib.inference.sglang.sglang_config_loader import resolve_benchmark_variant_key
+from cvs.lib.inference.sglang.sglang_config_loader import perf_specs_for_cell, resolve_benchmark_variant_key
 from cvs.lib.inference.sglang.sglang_common import perf_enforce_thresholds
 
 log = globals.log
@@ -82,17 +82,6 @@ SGLANG_DISTRIBUTED_TEST_ORDER = {
 }
 
 
-def _flat_threshold_specs(specs: dict) -> dict[str, float]:
-    """Threshold cell specs → {metric: numeric_gate}."""
-    out: dict[str, float] = {}
-    for metric, spec in (specs or {}).items():
-        if isinstance(spec, dict) and "value" in spec:
-            out[metric] = float(spec["value"])
-        elif spec is not None:
-            out[metric] = float(spec)
-    return out
-
-
 def _perf_result(actual, expected, metric_key: str) -> str:
     if actual is None or expected is None:
         return "-"
@@ -105,11 +94,7 @@ def _perf_result(actual, expected, metric_key: str) -> str:
 def _thresholds_for_cell(variant_config, isl, osl, conc) -> dict[str, float]:
     if variant_config is None:
         return {}
-    tp = (getattr(variant_config, "benchmark_params", None) or {}).get("tensor_parallelism", "-")
-    pp = (getattr(variant_config, "benchmark_params", None) or {}).get("pipeline_parallelism", "-")
-    cell_id = f"ISL={isl},OSL={osl},TP={tp},PP={pp},CONC={conc}"
-    raw = (getattr(variant_config, "thresholds", None) or {}).get(cell_id) or {}
-    return _flat_threshold_specs(raw)
+    return perf_specs_for_cell(getattr(variant_config, "thresholds", None) or {}, isl, osl, conc)
 
 
 def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
@@ -206,7 +191,6 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
             )
 
     _CELL_RE = re.compile(r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$")
-    bp = (getattr(variant_config, "benchmark_params", None) or {}) if variant_config else {}
     enforce_thresholds = perf_enforce_thresholds(bp)
     performance_by_cell = phase_labels.get("performance_by_cell") or {}
     if performance_by_cell:

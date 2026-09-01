@@ -121,6 +121,22 @@ def perf_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, 
     return cells
 
 
+def perf_specs_for_cell(thresholds: Mapping[str, Any], isl, osl, conc) -> dict[str, float]:
+    """Flattened threshold gates for one perf cell, or ``{}`` when the cell has none.
+
+    Perf cells are parametrized on ISL/OSL/CONC alone (see ``perf_cells_from_thresholds``),
+    so TP/PP in the cell key are descriptive and deliberately excluded from the match: a
+    threshold file written for TP=8,PP=1 still gates a run whose config sets PP=2.
+    """
+    target = (str(isl), str(osl), str(conc))
+    for cell in perf_cells_from_thresholds(thresholds):
+        if (cell["isl"], cell["osl"], cell["conc"]) != target:
+            continue
+        specs = {metric: spec for metric, spec in (cell["specs"] or {}).items() if spec is not None}
+        return flat_expected_from_specs(specs)
+    return {}
+
+
 def _resolve_threshold_path(threshold_path: str, *, config_path: Path) -> Path:
     path = Path(threshold_path)
     if path.is_absolute():
