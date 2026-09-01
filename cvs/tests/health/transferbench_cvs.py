@@ -7,15 +7,155 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import pytest
 
-import re
 import json
+import re
+import shlex
 
-
+from cvs.lib.env_lib import build_env_prefix
 from cvs.lib.utils_lib import *
-
 from cvs.lib import globals
 
 log = globals.log
+
+_ENV_VAR_NAME_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+_LINUX_ID_LIST_PART_RE = re.compile(r'^(\d+)(?:-(\d+))?$')
+_DETECT_NUM_CPU_DEVICES_CMD = (
+    "n=$(grep -l '[0-9]' /sys/devices/system/node/node*/cpulist 2>/dev/null | wc -l | tr -d ' '); "
+    "if [ -n \"$n\" ] && [ \"$n\" -gt 0 ]; then printf '%s\\n' \"$n\"; "
+    "else awk '/^Mems_allowed_list:/ {print $2}' /proc/self/status; fi"
+)
+_TB_NUMA_ABORT_HINT = (
+    "If the run aborted enumerating sparse NUMA CPU endpoints, set "
+    "transferbench.num_cpu_devices or transferbench.env.NUM_CPU_DEVICES to the "
+    "populated CPU NUMA count (Helios-R / Venice: 2)."
+)
+
+
+def count_linux_id_list(spec):
+    """Count IDs in a Linux cpuset-style list such as ``0-1,4,6-8``."""
+    text = str(spec or '').strip()
+    if not text:
+        raise ValueError('linux id list is empty')
+    total = 0
+    for part in text.split(','):
+        part = part.strip()
+        match = _LINUX_ID_LIST_PART_RE.fullmatch(part)
+        if not match:
+            raise ValueError(f'invalid linux id list: {spec!r}')
+        start = int(match.group(1))
+        end = int(match.group(2) or start)
+        if end < start:
+            raise ValueError(f'invalid linux id list: {spec!r}')
+        total += end - start + 1
+    return total
+
+
+def parse_cpu_device_count(value):
+    """Accept an int, a numeric string, or a Linux cpuset list (``0-1`` -> 2)."""
+    if value is None or value == '':
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f'invalid CPU device count: {value!r}')
+    if isinstance(value, int):
+        if value < 1:
+            raise ValueError('num_cpu_devices must be >= 1')
+        return value
+    text = str(value).strip()
+    if re.fullmatch(r'\d+', text):
+        parsed = int(text)
+        if parsed < 1:
+            raise ValueError('num_cpu_devices must be >= 1')
+        return parsed
+    return count_linux_id_list(text)
+
+
+def _validate_tb_env(env_vars):
+    if env_vars is None:
+        return {}
+    if not isinstance(env_vars, dict):
+        raise ValueError('transferbench.env must be a mapping of environment variable names to values')
+    normalized = {}
+    for key, value in env_vars.items():
+        if not isinstance(key, str) or not _ENV_VAR_NAME_RE.fullmatch(key):
+            raise ValueError(f'Invalid environment variable name in transferbench.env: {key!r}')
+        if value is None:
+            raise ValueError(f'transferbench.env[{key!r}] must not be null')
+        normalized[key] = str(value)
+    return normalized
+
+
+def resolve_configured_tb_env(config_dict):
+    """Return TransferBench env from health config (no node probing)."""
+    extra = _validate_tb_env(config_dict.get('env') or config_dict.get('env_vars'))
+    raw_count = config_dict.get('num_cpu_devices')
+    if raw_count not in (None, '', '<changeme>'):
+        extra['NUM_CPU_DEVICES'] = str(parse_cpu_device_count(raw_count))
+    return extra
+
+
+def detect_num_cpu_devices(orch):
+    """Probe populated CPU NUMA nodes; return a count only when all hosts agree."""
+    out_dict = orch.exec(_DETECT_NUM_CPU_DEVICES_CMD, timeout=30)
+    counts = {}
+    for node, output in (out_dict or {}).items():
+        text = output if isinstance(output, str) else (output or {}).get('output', '')
+        line = next((ln.strip() for ln in str(text).splitlines() if ln.strip()), '')
+        try:
+            counts[node] = parse_cpu_device_count(line)
+        except (TypeError, ValueError):
+            log.warning('Could not parse CPU NUMA count from %s: %r', node, line)
+    values = {count for count in counts.values() if count}
+    if len(values) == 1:
+        return next(iter(values))
+    if len(values) > 1:
+        log.warning('NUMA CPU device counts disagree across nodes: %s', counts)
+    return None
+
+
+def resolve_runtime_tb_env(orch, config_dict):
+    """Merge config env with auto-detected NUM_CPU_DEVICES when unset."""
+    extra = resolve_configured_tb_env(config_dict)
+    auto = config_dict.get('auto_num_cpu_devices', True)
+    if isinstance(auto, str):
+        auto = auto.strip().lower() in ('1', 'true', 'yes', 'on')
+    if 'NUM_CPU_DEVICES' not in extra and auto:
+        detected = detect_num_cpu_devices(orch)
+        if detected:
+            log.info('Auto-scoped TransferBench NUM_CPU_DEVICES=%s from populated CPU NUMA nodes', detected)
+            extra['NUM_CPU_DEVICES'] = str(detected)
+    return extra
+
+
+def build_transferbench_command(path, rocm_path, preset, extra_env=None):
+    """Build a ``sudo bash -c`` TransferBench invocation with env inside the inner shell.
+
+    Cluster/PSSH ``env_vars`` do not survive these ``sudo bash -c`` wrappers, so
+    NUM_CPU_DEVICES and LD_LIBRARY_PATH must be exported in the inner script.
+    """
+    env = {'LD_LIBRARY_PATH': f'{rocm_path}/lib:$LD_LIBRARY_PATH'}
+    if extra_env:
+        env.update(extra_env)
+    exports = build_env_prefix(env)
+    inner = f'{exports} && echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH" && {path}/TransferBench {preset}'
+    return f'sudo bash -c {shlex.quote(inner)}'
+
+
+def run_transferbench(orch, config_dict, preset, timeout, extra_env=None):
+    """Resolve ROCm/env and execute one TransferBench preset on all orch hosts."""
+    path = config_dict['path']
+    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
+    env = resolve_runtime_tb_env(orch, config_dict)
+    if extra_env:
+        env.update(extra_env)
+    cmd = build_transferbench_command(path, rocm_path, preset, env)
+    log.info('TransferBench command: %s', cmd)
+    return orch.exec(cmd, timeout=timeout)
+
+
+def _tb_output_excerpt(out, tail=6000):
+    if len(out) <= tail:
+        return out
+    return f"...[truncated {len(out) - tail} chars]...\n{out[-tail:]}"
 
 
 # Importing additional cmd line args to script ..
@@ -131,17 +271,26 @@ def parse_tb_a2a_bw(out_dict, exp_dict):
 
 def parse_tb_p2p_bw(out_dict, exp_dict):
     for node in out_dict.keys():
-        match = re.search(
-            'Averages\s+\(During\s+UniDir\):\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+([0-9\.]+)', out_dict[node], re.I
-        )
+        out = out_dict[node]
+        match = re.search(r'Averages\s+\(During\s+UniDir\):\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+([0-9\.]+)', out, re.I)
+        if not match:
+            fail_test(
+                f"TransferBench p2p UniDir averages not found on node {node}. {_TB_NUMA_ABORT_HINT} "
+                f"Output: {_tb_output_excerpt(out)}"
+            )
+            continue
         avg_unidir = float(match.group(1))
         if float(avg_unidir) < float(exp_dict['avg_gpu_to_gpu_p2p_unidir_bw']):
             fail_test(
                 f"Actual Avg UniDir GPU to GPU bandwidth {avg_unidir} is less than expected {exp_dict['avg_gpu_to_gpu_p2p_unidir_bw']} on node {node}"
             )
-        match = re.search(
-            'Averages\s+\(During\s+BiDir\):\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+([0-9\.]+)', out_dict[node], re.I
-        )
+        match = re.search(r'Averages\s+\(During\s+BiDir\):\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+([0-9\.]+)', out, re.I)
+        if not match:
+            fail_test(
+                f"TransferBench p2p BiDir averages not found on node {node}. {_TB_NUMA_ABORT_HINT} "
+                f"Output: {_tb_output_excerpt(out)}"
+            )
+            continue
         avg_bidir = float(match.group(1))
         if float(avg_bidir) < float(exp_dict['avg_gpu_to_gpu_p2p_bidir_bw']):
             fail_test(
@@ -228,12 +377,8 @@ def test_transfer_bench_a2a(
 ):
     globals.error_list = []
     log.info('Testcase Run Transferbench a2a')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
-    out_dict = orch.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench a2a'",
-        timeout=(60 * 5),
-    )
+    preset = config_dict.get('a2a_preset') or 'a2a'
+    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 5))
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     parse_tb_a2a_bw(out_dict, config_dict['results'])
@@ -247,12 +392,8 @@ def test_transfer_bench_p2p(
 ):
     globals.error_list = []
     log.info('Testcase Run Transferbench p2p')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
-    out_dict = orch.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench p2p'",
-        timeout=(60 * 5),
-    )
+    preset = config_dict.get('p2p_preset') or 'p2p'
+    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 5))
     print_test_output(log, out_dict)
     parse_tb_p2p_bw(out_dict, config_dict['results'])
     scan_test_results(out_dict)
@@ -265,12 +406,8 @@ def test_transfer_bench_healthcheck(
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench healthcheck')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
-    out_dict = orch.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench healthcheck'",
-        timeout=(60 * 3),
-    )
+    preset = config_dict.get('healthcheck_preset') or 'healthcheck'
+    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 3))
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     update_test_result()
@@ -282,12 +419,8 @@ def test_transfer_bench_a2asweep(
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench a2asweep')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
-    out_dict = orch.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && {path}/TransferBench a2asweep'",
-        timeout=(60 * 10),
-    )
+    preset = config_dict.get('a2asweep_preset') or 'a2asweep'
+    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 10))
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     update_test_result()
@@ -299,11 +432,13 @@ def test_transfer_bench_scaling(
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench scaling')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
-    out_dict = orch.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && GFX_TEMPORAL=3 GFX_UNROLL=32 {path}/TransferBench scaling'",
+    preset = config_dict.get('scaling_preset') or 'scaling'
+    out_dict = run_transferbench(
+        orch,
+        config_dict,
+        preset,
         timeout=(60 * 10),
+        extra_env={'GFX_TEMPORAL': '3', 'GFX_UNROLL': '32'},
     )
     print_test_output(log, out_dict)
     parse_tb_scaling_bw(out_dict, config_dict['results'])
@@ -317,11 +452,13 @@ def test_transfer_bench_schmoo(
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench schmoo')
-    path = config_dict['path']
-    rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
-    out_dict = orch.exec(
-        f"sudo bash -c 'export LD_LIBRARY_PATH={rocm_path}/lib:$LD_LIBRARY_PATH && echo \"LD_LIBRARY_PATH: $LD_LIBRARY_PATH\" && GFX_UNROLL=32 SWEEP_MIN=32 {path}/TransferBench schmoo'",
+    preset = config_dict.get('schmoo_preset') or 'schmoo'
+    out_dict = run_transferbench(
+        orch,
+        config_dict,
+        preset,
         timeout=(60 * 5),
+        extra_env={'GFX_UNROLL': '32', 'SWEEP_MIN': '32'},
     )
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
