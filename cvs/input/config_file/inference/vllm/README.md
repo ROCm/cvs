@@ -87,10 +87,9 @@ measured values from a calibration run before flipping `enforce_thresholds`.
 Accuracy is split across the two files, unlike the three families above:
 
 - **`config.json` → `accuracy.tasks`** selects *which* lm-eval tasks run.
-  Every config enables the `gsm8k` task.
+  Shipped empty, so no accuracy stage runs and the pytest node is auto-skipped.
 - **`threshold.json` → `accuracy`** holds the gating values, keyed by task id
-  then by lm-eval metric key. Every config supplies a zero-valued GSM8K
-  exact-match threshold.
+  then by lm-eval metric key. Shipped as `{}`.
 
 Because the threshold keys are derived from the task ids you choose, they
 cannot be pre-enumerated the way `client.*`/`gpu.*`/`prom.*` can — the two

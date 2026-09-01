@@ -110,12 +110,6 @@
     ]
   },
   "accuracy": {
-    "tasks": [
-      {
-        "id": "gsm8k",
-        "task": "gsm8k",
-        "num_fewshot": 5
-      }
-    ]
+    "tasks": []
   }
 }

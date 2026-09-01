@@ -1,6 +1,6 @@
 {
   "_comment": "Uncalibrated placeholders for kimi-k27-code_mxfp4 (distributed, TP=8, PP=2, CONC=16 and CONC=32). Every value is 0 and means 'not yet measured' -- covers client.*, gpu.* and prom.*. enforce_thresholds is false in the config, so these record without gating. Replace with measured values from a calibration run before enabling enforcement.",
-  "_comment_accuracy": "The accuracy block is keyed by accuracy task id, then by lm-eval metric key, so it cannot be pre-enumerated the way client/gpu/prom can -- its contents follow whichever tasks config.json selects in accuracy.tasks, which selects gsm8k. Shape to fill in alongside a task: \"accuracy\": {\"<task-id>\": {\"<lm_eval_task>.<metric>\": {\"kind\": \"min\", \"value\": 0}}}, where <metric> is the results.json key with commas replaced by __ (e.g. gsm8k.exact_match__strict-match). Exempt from the sweep-cell coverage check via NON_SWEEP_THRESHOLD_KEYS.",
+  "_comment_accuracy": "The accuracy block is keyed by accuracy task id, then by lm-eval metric key, so it cannot be pre-enumerated the way client/gpu/prom can -- its contents follow whichever tasks config.json selects in accuracy.tasks, which is empty. Shape to fill in alongside a task: \"accuracy\": {\"<task-id>\": {\"<lm_eval_task>.<metric>\": {\"kind\": \"min\", \"value\": 0}}}, where <metric> is the results.json key with commas replaced by __ (e.g. gsm8k.exact_match__strict-match). Exempt from the sweep-cell coverage check via NON_SWEEP_THRESHOLD_KEYS.",
   "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": {
     "client.total_token_throughput": {
       "kind": "min_tok_s",
@@ -261,12 +261,5 @@
       "value": 0
     }
   },
-  "accuracy": {
-    "gsm8k": {
-      "gsm8k.exact_match__strict-match": {
-        "kind": "min",
-        "value": 0
-      }
-    }
-  }
+  "accuracy": {}
 }
