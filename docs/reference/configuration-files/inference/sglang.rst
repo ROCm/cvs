@@ -271,8 +271,8 @@ Additional ``config`` fields beyond the single-node set:
      - NCCL InfiniBand/RoCE device list and GID index.
    * - ``nccl_socket_ifname``, ``gloo_socket_ifname``
      - Ethernet interfaces for socket/Gloo fallback.
-   * - ``hca_id_prefix``, ``mount_vol``
-     - Used by ``test_setup_ibv_devices`` when ``nic_type`` matches Broadcom/Thor; ``mount_vol`` is the in-container path to ``libbnxt_re-rdmav34.so``.
+   * - ``hca_id_prefix``
+     - Used by ``test_setup_ibv_devices`` when ``nic_type`` matches Broadcom/Thor to match ``ibv_devinfo`` HCA names. The host ``libbnxt_re-rdmav34.so`` is bind-mounted via ``volume_dict``.
 
 Disaggregated prefill-decode (``sglang_disagg_distributed``)
 ------------------------------------------------------------
