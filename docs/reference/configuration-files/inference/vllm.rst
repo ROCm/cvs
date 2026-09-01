@@ -6,7 +6,7 @@
 vLLM inference configuration file
 **********************************
 
-The vLLM suites benchmark LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` runs one service across the cluster and uses single-node behavior when the cluster has one host.
+The vLLM suites benchmark LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` supports one-host fallback or the current two-host distributed recipes. Larger clusters require an explicit recipe and calibrated thresholds.
 
 Run it with:
 
@@ -218,14 +218,14 @@ These rules are enforced when the configuration file loads, before anything star
 
    * - Condition
      - Rule
-   * - cluster has more than one host, backend is not ray
+   * - exactly two cluster hosts, backend is not ray
      - ``pipeline_parallel_size`` **must** be greater than 1
-   * - cluster has more than one host, backend is ray
+   * - exactly two cluster hosts, backend is ray
      - ``pipeline_parallel_size`` of 1 is valid
    * - ``pipeline_parallel_size`` > 1
      - The distributed suite requires more than one cluster host
-   * - cluster has more than one host, either backend
-     - ``roles.server.ib_netdev`` is **required**
+   * - exactly two cluster hosts, either backend
+     - ``roles.server.ib_netdev`` is **required**; larger clusters are rejected until a dedicated recipe exists
 
 The corresponding error messages are:
 

@@ -24,12 +24,15 @@ is absent, but keeping one pair per directory avoids the trap entirely.
 | Mode | PP | Host behavior |
 |---|---|---|
 | `single` | 1 | first cluster host only |
-| `distributed` | 2 | all cluster hosts form one service |
+| `distributed` | 2 | exactly two cluster hosts form one service |
 
 TP is **per model**, following the source workload list: TP=4 for
 `deepseek-v4-flash`, `kimi-k26`, `kimi-k25` and `gpt-oss-120b`; TP=8 for
 everything else. A TP=4 distributed variant still spans 2 nodes via PP=2,
 using 4 GPUs per node.
+
+Distributed configs support one-host fallback or exactly two hosts. CVS rejects
+larger clusters until a matching N-host recipe and threshold set are available.
 
 ## Sweep
 

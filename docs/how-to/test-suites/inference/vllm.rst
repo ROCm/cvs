@@ -6,7 +6,7 @@
 Run vLLM inference benchmarks
 *****************************
 
-The vLLM suites measure LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts; ``vllm_distributed`` runs one service across all hosts, and falls back to single-node behavior on a one-host cluster.
+The vLLM suites measure LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` supports one-host fallback or the current two-host distributed recipes; larger clusters require an explicit recipe and calibrated thresholds.
 
 This page walks through a first run. For the full schema, every metric, and the threshold grammar, see :doc:`/reference/configuration-files/inference/vllm`.
 
@@ -97,7 +97,7 @@ Step 3: Run the suite
     --html /tmp/cvs/vllm.html --self-contained-html \
     --log-file /tmp/cvs/cvs.log
 
-Use ``vllm_distributed`` for one distributed service across a multi-host cluster:
+Use ``vllm_distributed`` for one distributed service across a two-host cluster:
 
 .. code:: bash
 
@@ -139,7 +139,7 @@ A skipped ``test_setup_sshd`` row is expected. vLLM communicates over the host n
 Going multinode
 ===============
 
-The cluster file determines the host count. For distributed runs, configure ``params.pipeline_parallel_size`` and ``roles.server.ib_netdev``. Which parallelism combination is valid depends on the distributed executor backend.
+The cluster file determines the host count. Current distributed recipes support exactly two hosts, or one-host fallback. For distributed runs, configure ``params.pipeline_parallel_size`` and ``roles.server.ib_netdev``. Which parallelism combination is valid depends on the distributed executor backend.
 
 Using the default backend (mp)
 ------------------------------
