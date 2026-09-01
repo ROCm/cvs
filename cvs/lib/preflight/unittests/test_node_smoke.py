@@ -276,7 +276,7 @@ class TestPreflightNodeSmokeReporting(unittest.TestCase):
 
 class TestLegacyNodeSmokeConfigNormalization(unittest.TestCase):
     def test_legacy_node_smoke_copied_to_tier1(self):
-        from cvs.parsers.schemas import normalize_legacy_preflight_node_smoke_sections
+        from cvs.schema.config_file.preflight.config import normalize_legacy_preflight_node_smoke_sections
 
         cfg = {"node_smoke": {"connectivity_mode": "run", "primus_dir": "/home/user/Primus"}}
         normalized, warning = normalize_legacy_preflight_node_smoke_sections(cfg)
@@ -285,7 +285,7 @@ class TestLegacyNodeSmokeConfigNormalization(unittest.TestCase):
         self.assertEqual(normalized["node_smoke"]["primus_dir"], "/home/user/Primus")
 
     def test_canonical_tier1_not_overwritten_by_legacy(self):
-        from cvs.parsers.schemas import normalize_legacy_preflight_node_smoke_sections
+        from cvs.schema.config_file.preflight.config import normalize_legacy_preflight_node_smoke_sections
 
         cfg = {
             "node_smoke_tier1": {"primus_dir": "/tier1/Primus"},

@@ -26,7 +26,7 @@ from cvs.lib.preflight.transferbench_smoke import (
     reconcile_cluster_vpod,
 )
 from cvs.lib.preflight.report import PreflightReportGenerator
-from cvs.parsers.schemas import PreflightConfigFile
+from cvs.schema.config_file.preflight.config import PreflightConfigFile
 
 
 # ---------------------------------------------------------------------------

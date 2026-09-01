@@ -19,7 +19,7 @@ from cvs.lib.preflight.scaleup_fabric import (  # noqa: E402
     parse_station_masks,
 )
 from cvs.lib.preflight.report import PreflightReportGenerator  # noqa: E402
-from cvs.parsers.schemas import PreflightConfigFile  # noqa: E402
+from cvs.schema.config_file.preflight.config import PreflightConfigFile  # noqa: E402
 
 
 def _afm_devices(*, phase="ACTIVE", vpod=None):

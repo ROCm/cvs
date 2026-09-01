@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import cvs.lib.utils_lib as utils_lib
 from cvs.core.run_layout import RunLayout
-from cvs.parsers.schemas import AortaBenchmarkConfigFile
+from cvs.schema.config_file.aorta.benchmark import AortaBenchmarkConfigFile
 
 
 class TestUtilsLib(unittest.TestCase):

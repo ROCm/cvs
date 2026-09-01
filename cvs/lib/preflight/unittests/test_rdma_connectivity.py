@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..
 from cvs.lib.preflight.base import partition_nodes_into_groups
 from cvs.lib.preflight.rdma_connectivity import RdmaConnectivityCheck
 from cvs.lib.preflight.report import PreflightReportGenerator
-from cvs.parsers.schemas import PreflightConfigFile, normalize_legacy_preflight_rdma_config
+from cvs.schema.config_file.preflight.config import PreflightConfigFile, normalize_legacy_preflight_rdma_config
 
 
 def _make_checker(

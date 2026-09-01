@@ -525,7 +525,7 @@ When adding new preflight checks:
 1. Add the check class or function under `cvs/lib/preflight/`
 2. Add the test function to `preflight_checks.py`
 3. Update `report.py` summary and HTML generation
-4. Add configuration parameters in `cvs/parsers/schemas.py` and `preflight_config.json`
+4. Add configuration parameters in `cvs/schema/config_file/preflight/config.py` and `preflight_config.json`
 5. Add unit tests under the module's `unittests/` directory
 6. Update documentation in this README and `README_preflight_config.md`
 

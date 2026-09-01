@@ -219,7 +219,8 @@ Contract for new suite authors:
 
 **Must add:**
 - A `@model_validator(mode="after")` that performs threshold-coverage checking
-  (equivalent to `_check_thresholds_cover_sweep` in `inferencing_config_loader.py`).
+  (equivalent to `validate_thresholds_cover_sweep` in
+  `cvs/schema/config_file/inference/common/sweep.py`).
   The check must cover **two axes**:
   1. **Cell coverage** — sweep cells with no threshold entry AND threshold keys
      that match no sweep cell (both directions; a one-way check silently skips

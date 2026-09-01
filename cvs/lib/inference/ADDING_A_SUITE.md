@@ -65,8 +65,10 @@ Create `cvs/lib/<your_framework>/utils/<your_framework>_config_loader.py`.
 from pydantic import model_validator
 from typing_extensions import Literal
 
-from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
-from cvs.lib.inference.utils.inferencing_config_loader import (
+from cvs.schema.base import _Forbid
+from cvs.schema.common.base import BaseVariantConfig
+from cvs.lib.utils.config_loader import substitute_config
+from cvs.schema.config_file.inference.common.sweep import (
     GoodputSlo, Roles, Run, Sweep, SeqCombo, validate_sweep_selector,
 )
 from cvs.lib.<your_framework>.utils.<your_framework>_parsing import GATED_METRICS
@@ -100,7 +102,8 @@ class VariantConfig(BaseVariantConfig):
 
     @model_validator(mode="after")
     def _check_thresholds_cover_sweep(self):
-        # Copy the two-axis check from inferencing_config_loader.py:
+        # Copy the two-axis check from cvs/schema/config_file/inference/common/sweep.py
+        # (`validate_thresholds_cover_sweep`):
         # Axis 1: every sweep cell has a threshold entry; no key names a phantom cell.
         # Axis 2: every present cell has a spec for every GATED_METRICS member.
         # When enforce_thresholds=False: warn instead of raise.
