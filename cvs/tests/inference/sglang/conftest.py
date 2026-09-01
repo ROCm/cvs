@@ -14,8 +14,8 @@ nodes from ``server_node_list`` or prefill+decode union).
 ``sglang_disagg_distributed.py`` — ``SglangDisaggPD`` (PD roles from inference config;
 containers only on the union of prefill/decode/router/bench hosts).
 
-Each ``benchmark_params`` variant may set ``threshold_file`` to a JSON file beside the config;
-that file supplies pass/fail thresholds for performance and lm-eval benchmarks.
+Each workload sets ``threshold_json`` to a JSON file beside the config; that
+file supplies pass/fail thresholds for performance and lm-eval benchmarks.
 '''
 
 from __future__ import annotations
@@ -24,8 +24,9 @@ import json
 import os
 import re
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 
@@ -41,7 +42,6 @@ except ImportError:
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_common import as_node_list, cleanup_sglang_log_dir, resolve_server_node_list
-
 from cvs.lib.inference.sglang.sglang_config_loader import (
     SglangSingleVariantConfig,
     flat_expected_from_specs,
@@ -68,7 +68,6 @@ from cvs.lib.report.render.perf_metric_table import (
 from cvs.lib.utils_lib import (
     get_model_from_rocm_smi_output,
     resolve_cluster_config_placeholders,
-    resolve_test_config_placeholders,
     update_test_result,
 )
 from cvs.tests.inference.sglang._shared import (
@@ -363,9 +362,8 @@ def inference_dict(variant_config):
 
 
 @pytest.fixture(scope="module")
-def benchmark_params_dict(inference_config_root, cluster_dict):
-    bp = inference_config_root["benchmark_params"]
-    return resolve_test_config_placeholders(bp, cluster_dict)
+def benchmark_params_dict(variant_config):
+    return {variant_config.variant_key: variant_config.benchmark_params}
 
 
 @pytest.fixture(scope="module")
@@ -516,9 +514,7 @@ def _is_full_log_extra(extra: object) -> bool:
 def _is_subtest_report(report) -> bool:
     if _BuiltinSubtestReport is not None and isinstance(report, _BuiltinSubtestReport):
         return True
-    if _PluginSubtestReport is not None and isinstance(report, _PluginSubtestReport):
-        return True
-    return False
+    return _PluginSubtestReport is not None and isinstance(report, _PluginSubtestReport)
 
 
 def _benchmark_rows_for_report(report) -> list[dict[str, Any]]:
@@ -560,9 +556,7 @@ def _attach_benchmark_metric_extras_for_nodeid(report, nodeid: str, rows: list[d
 
     extras: list[object] = []
     for extra in getattr(report, 'extras', []) or []:
-        if _is_full_log_extra(extra):
-            extras.append(extra)
-        elif is_benchmark_metrics_extra(extra):
+        if _is_full_log_extra(extra) or is_benchmark_metrics_extra(extra):
             extras.append(extra)
         elif _is_lifecycle_stage_extra(extra):
             continue

@@ -1,11 +1,13 @@
 '''Unit tests for cvs/lib/inference/sglang/sglang_config_loader.py.'''
 
+import json
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from cvs.lib.inference.sglang import sglang_config_loader as loader
-
 
 _THRESHOLDS = {
     'ISL=1024,OSL=1024,TP=8,PP=1,CONC=64': {
@@ -94,3 +96,149 @@ class TestResolveBenchmarkVariantKey(unittest.TestCase):
     def test_missing_benchmark_params_raises(self):
         with self.assertRaises(ValueError):
             loader.resolve_benchmark_variant_key({}, 'cfg.json')
+
+
+class TestUnifiedRuntimeViews(unittest.TestCase):
+    def setUp(self):
+        self.raw = {
+            'threshold_json': 'threshold.json',
+            'paths': {
+                'log_dir': '/logs',
+                'hf_token_file': '/home/user/.hf_token',
+            },
+            'model': {'id': '/models/model'},
+            'container': {
+                'name': 'sglang',
+                'image': 'image',
+                'lifetime': 'per_run',
+                'runtime': {
+                    'name': 'docker',
+                    'args': {
+                        'shm_size': '128G',
+                        'volumes': ['/host:/container', '/host-ro:/container-ro:ro'],
+                        'devices': ['/dev/kfd'],
+                        'env': {'FROM_RUNTIME': '1'},
+                    },
+                },
+            },
+            'roles': {
+                'server': {
+                    'nnodes': '2',
+                    'benchmark_serv_node': 'node1',
+                    'proxy_router_serv_port': '8000',
+                }
+            },
+            'params': {
+                'tensor_parallelism': '8',
+                'pipeline_parallelism': '2',
+                'add_export_env': ['SGLANG_USE_AITER=1'],
+                'inference_tests': {
+                    'bench_serv_random': {
+                        'enforce_thresholds': False,
+                    }
+                },
+            },
+            'accuracy': {
+                'tasks': [
+                    {
+                        'id': 'lm_eval_hellaswag',
+                        'tasks': 'hellaswag',
+                    }
+                ]
+            },
+        }
+        self.thresholds = {
+            'ISL=1024,OSL=1024,TP=8,PP=2,CONC=4': {
+                'mfu': {'kind': 'min', 'value': 0.1},
+            },
+            'BENCH=lm_eval_hellaswag': {
+                'acc_norm,none': {'kind': 'min', 'value': 0.23},
+            },
+        }
+
+    def test_builds_existing_controller_dicts(self):
+        inference, params, server = loader._unified_runtime_views(self.raw, self.thresholds)
+
+        self.assertEqual(inference['container_name'], 'sglang')
+        self.assertEqual(inference['nnodes'], '2')
+        self.assertEqual(inference['container_config']['volume_dict']['/host-ro'], '/container-ro:ro')
+        self.assertEqual(params['model'], '/models/model')
+        self.assertEqual(params['inference_tests']['lm_eval_hellaswag']['tasks'], 'hellaswag')
+        self.assertEqual(
+            params['inference_tests']['lm_eval_hellaswag']['expected_results']['hellaswag'],
+            {'acc_norm,none': 0.23},
+        )
+        self.assertEqual(server['env']['SGLANG_USE_AITER'], '1')
+
+    def test_duplicate_accuracy_task_ids_raise(self):
+        self.raw['accuracy']['tasks'].append(
+            {
+                'id': 'lm_eval_hellaswag',
+                'tasks': 'hellaswag',
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, 'duplicate accuracy task id'):
+            loader._unified_runtime_views(self.raw, self.thresholds)
+
+
+class TestUnifiedPackagedConfigs(unittest.TestCase):
+    @staticmethod
+    def _replace_changeme(value):
+        if isinstance(value, str):
+            return value.replace('<changeme>', 'node1')
+        if isinstance(value, list):
+            return [TestUnifiedPackagedConfigs._replace_changeme(item) for item in value]
+        if isinstance(value, dict):
+            return {key: TestUnifiedPackagedConfigs._replace_changeme(item) for key, item in value.items()}
+        return value
+
+    def test_all_sglang_workload_configs_load(self):
+        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
+        config_paths = sorted(config_dir.glob('mi3xx_sglang_*_single.json'))
+        config_paths += sorted(config_dir.glob('mi3xx_sglang_*_distributed.json'))
+        config_paths += sorted(config_dir.glob('mi3xx_sglang_*_disaggregated.json'))
+        self.assertEqual(len(config_paths), 6)
+
+        for config_path in config_paths:
+            with self.subTest(config=config_path.name):
+                raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
+                raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
+                with tempfile.TemporaryDirectory() as tmp:
+                    temp_config = Path(tmp) / config_path.name
+                    temp_config.write_text(json.dumps(raw), encoding='utf-8')
+                    variant = loader.load_variant(str(temp_config), {'username': 'test'})
+
+                self.assertEqual(variant.framework, 'sglang')
+                self.assertEqual(len(variant.accuracy.tasks), 2)
+                self.assertEqual(
+                    set(variant.benchmark_params['inference_tests']),
+                    {'bench_serv_random', 'lm_eval_hellaswag', 'lm_eval_gsm8k'},
+                )
+                self.assertEqual(set(variant.params.inference_tests), {'bench_serv_random'})
+                self.assertEqual(variant.params.add_flags, ['--attention-backend aiter'])
+                self.assertFalse(variant.enforce_thresholds)
+
+                if 'llama_70b_distributed' in config_path.name:
+                    self.assertEqual(
+                        variant.params.inference_tests['bench_serv_random']['num_prompts'],
+                        '100',
+                    )
+                if 'deepseek' in config_path.name:
+                    self.assertIn('GPU_ARCHS=gfx942', variant.params.add_export_env)
+                if variant.topology == 'disaggregated':
+                    self.assertEqual(variant.params.prefill_policy, 'cache_aware')
+                    self.assertEqual(variant.params.decode_policy, 'cache_aware')
+
+    def test_missing_topology_role_fails_during_load(self):
+        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
+        config_path = config_dir / 'mi3xx_sglang_llama_70b_distributed.json'
+        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
+        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
+        del raw['roles']['server']['server_node_list']
+
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_config = Path(tmp) / config_path.name
+            temp_config.write_text(json.dumps(raw), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'server_node_list'):
+                loader.load_variant(str(temp_config), {'username': 'test'})
