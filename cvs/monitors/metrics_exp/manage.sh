@@ -65,6 +65,47 @@ check_docker_access() {
     fi
 }
 
+# Check for port conflicts before starting services
+check_port_conflicts() {
+    local REQUIRED_PORTS="30080 30090 30030 30100"
+    local has_conflict=false
+
+    for port in $REQUIRED_PORTS; do
+        # Find any container using this port (excluding our own fleet-* containers)
+        local container=$(docker ps --format '{{.Names}}' --filter "publish=$port" 2>/dev/null | grep -v "^fleet-" | head -1)
+        if [ -n "$container" ]; then
+            echo -e "  ${YELLOW}Port $port is in use by container: $container${NC}"
+            echo -e "  Stopping $container..."
+            docker stop "$container" 2>/dev/null || true
+            docker rm "$container" 2>/dev/null || true
+            has_conflict=true
+        fi
+
+        # Also check if port is bound by host process (not in container)
+        if ss -tlnp 2>/dev/null | grep -q ":$port "; then
+            # Verify it's not one of our containers with host networking
+            local is_our_container=false
+            for our_container in fleet-manager fleet-prometheus fleet-grafana fleet-loki; do
+                if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${our_container}$"; then
+                    is_our_container=true
+                    break
+                fi
+            done
+
+            if [ "$is_our_container" = false ]; then
+                local process=$(ss -tlnp 2>/dev/null | grep ":$port " | head -1)
+                echo -e "  ${RED}Warning: Port $port is in use by a host process${NC}"
+                echo -e "  ${RED}  $process${NC}"
+                has_conflict=true
+            fi
+        fi
+    done
+
+    if [ "$has_conflict" = true ]; then
+        echo -e "${YELLOW}  Cleaned up conflicting containers${NC}"
+    fi
+}
+
 print_header() {
     echo -e "${BLUE}================================================${NC}"
     echo -e "${BLUE}  AMD GPU Fleet Manager - Service Management${NC}"
@@ -138,6 +179,10 @@ cmd_start() {
 
     echo -e "${GREEN}Starting services...${NC}"
 
+    # Check for port conflicts before starting
+    echo -e "${YELLOW}Checking for port conflicts...${NC}"
+    check_port_conflicts
+
     if [ -n "$service" ]; then
         $COMPOSE up -d "$service"
     else
@@ -183,6 +228,10 @@ cmd_rebuild() {
     local no_cache="$3"
 
     echo -e "${YELLOW}Rebuilding services...${NC}"
+
+    # Check for port conflicts before rebuilding
+    echo -e "${YELLOW}Checking for port conflicts...${NC}"
+    check_port_conflicts
 
     # Build UI first (unless skipped or targeting non-fleet-manager service)
     if [ "$skip_ui" != "true" ]; then

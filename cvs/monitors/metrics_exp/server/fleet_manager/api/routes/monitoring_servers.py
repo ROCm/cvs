@@ -614,6 +614,43 @@ async def check_services(server_id: int, db: Session = Depends(get_db)):
         }
 
 
+def _is_local_server(server_ip: str) -> bool:
+    """Check if the monitoring server IP is the local machine."""
+    import socket
+
+    if not server_ip:
+        return False
+
+    # Check for obvious localhost addresses
+    if server_ip in ("localhost", "127.0.0.1", "::1"):
+        return True
+
+    # Get all local IP addresses
+    try:
+        hostname = socket.gethostname()
+        local_ips = set()
+
+        # Get IPs from hostname
+        try:
+            local_ips.update(socket.gethostbyname_ex(hostname)[2])
+        except socket.gaierror:
+            pass
+
+        # Also try to get all interface IPs
+        try:
+            import subprocess
+
+            result = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                local_ips.update(result.stdout.strip().split())
+        except Exception:
+            pass
+
+        return server_ip in local_ips
+    except Exception:
+        return False
+
+
 @router.post("/{server_id}/install-stack")
 async def install_stack(
     server_id: int,
@@ -627,12 +664,22 @@ async def install_stack(
 
     _validate_ssh_config(server)
 
+    # Check if this is the local server (same machine as fleet-manager)
+    # If so, we'll stop any existing fleet-* containers to avoid port conflicts
+    is_local = _is_local_server(server.server_ip)
+    if is_local:
+        logger.warning(
+            f"Monitoring server '{server.name}' is on the same machine as fleet-manager. "
+            "Existing fleet-* containers will be stopped to avoid port conflicts."
+        )
+
     job_id = str(uuid4())
 
     _installation_jobs[job_id] = {
         "status": "starting",
         "started_at": datetime.utcnow().isoformat(),
         "server": server.server_ip,
+        "is_local_server": is_local,
         "logs": [],
         "current_step": "Initializing...",
         "completed": False,
@@ -643,12 +690,18 @@ async def install_stack(
         run_stack_installation,
         job_id=job_id,
         server_id=server.id,
+        is_local_server=is_local,
     )
+
+    message = "Monitoring stack installation started"
+    if is_local:
+        message += " (local server detected - fleet-manager stack containers will be stopped to avoid conflicts)"
 
     return {
         "job_id": job_id,
-        "message": "Monitoring stack installation started",
+        "message": message,
         "server": server.server_ip,
+        "is_local_server": is_local,
     }
 
 
@@ -829,7 +882,7 @@ def _update_install_step(job_id: str, step: str):
         _add_install_log(job_id, step)
 
 
-async def run_stack_installation(job_id: str, server_id: int):
+async def run_stack_installation(job_id: str, server_id: int, is_local_server: bool = False):
     """Background task to install the monitoring stack."""
     from ...models.database import SessionLocal, MonitoringServer
 
@@ -844,6 +897,36 @@ async def run_stack_installation(job_id: str, server_id: int):
             return
 
         _installation_jobs[job_id]["status"] = "running"
+
+        # If this is the local server, stop the fleet-manager's docker-compose stack first
+        # to free up the ports (30090, 30100, 30030)
+        if is_local_server:
+            _update_install_step(job_id, "Detected local server - stopping fleet-manager stack to free ports...")
+            _add_install_log(job_id, "Monitoring server is on the same machine as fleet-manager", "warning")
+
+            import subprocess
+
+            try:
+                # Try to find and stop the fleet-manager docker-compose stack
+                # This runs locally (not via SSH) since we're on the same machine
+                result = subprocess.run(
+                    ["docker", "ps", "--format", "{{.Names}}", "--filter", "name=fleet-"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                fleet_containers = [c for c in result.stdout.strip().split('\n') if c.startswith('fleet-')]
+
+                if fleet_containers:
+                    _add_install_log(job_id, f"Found fleet-manager containers: {fleet_containers}")
+                    for container in fleet_containers:
+                        if container in ('fleet-prometheus', 'fleet-grafana', 'fleet-loki'):
+                            subprocess.run(["docker", "stop", container], timeout=30, capture_output=True)
+                            subprocess.run(["docker", "rm", container], timeout=30, capture_output=True)
+                            _add_install_log(job_id, f"Stopped and removed {container}")
+            except Exception as e:
+                _add_install_log(job_id, f"Warning: Could not stop local fleet containers: {e}", "warning")
+
         _update_install_step(job_id, f"Connecting to {server.server_ip}...")
 
         ssh = _create_ssh_manager(server)
@@ -1050,6 +1133,37 @@ async def run_stack_installation(job_id: str, server_id: int):
             else:
                 await ssh.execute(f"cd {install_dir} && docker compose down --remove-orphans", timeout=60)
             _add_install_log(job_id, "Existing containers removed (if any)")
+
+            # Check for port conflicts - stop any containers using our target ports
+            # This handles the case where the monitoring server is on the same machine
+            # as the fleet-manager stack (which uses fleet-prometheus, fleet-grafana, etc.)
+            _update_install_step(job_id, "Checking for port conflicts...")
+            ports_to_check = [server.prometheus_port, server.loki_port, server.grafana_port]
+            for port in ports_to_check:
+                # Find container using this port (via host networking or port mapping)
+                if docker_cmd:
+                    result = await ssh.execute(
+                        f"{docker_cmd} \"docker ps --format '{{{{.Names}}}}' --filter 'publish={port}'\""
+                    )
+                else:
+                    result = await ssh.execute(f"docker ps --format '{{{{.Names}}}}' --filter 'publish={port}'")
+
+                if result.success and result.stdout.strip():
+                    container_name = result.stdout.strip().split('\n')[0]
+                    _add_install_log(job_id, f"Port {port} in use by container '{container_name}', stopping it...")
+                    if docker_cmd:
+                        await ssh.execute(f"{docker_cmd} 'docker stop {container_name}'", timeout=30)
+                        await ssh.execute(f"{docker_cmd} 'docker rm {container_name}'", timeout=30)
+                    else:
+                        await ssh.execute(f"docker stop {container_name}", timeout=30)
+                        await ssh.execute(f"docker rm {container_name}", timeout=30)
+
+                # Also check for processes using host networking on these ports
+                result = await ssh.execute(f"ss -tlnp 2>/dev/null | grep ':{port} ' | head -1")
+                if result.success and result.stdout.strip():
+                    _add_install_log(
+                        job_id, f"Warning: Port {port} is in use by a process: {result.stdout.strip()}", "warning"
+                    )
 
             # Start the stack - allow up to 5 minutes; compose up -d pulls any
             # missing images and waits for containers to start.
