@@ -16,12 +16,15 @@ from pathlib import Path
 import httpx
 
 from cvs.core.agent import messages
+from cvs.core.agent.http_agent import create_app
 from cvs.core.agent.http_client import (
     HostOutput,
     HTTPConnectionError,
     HTTPProtocolError,
     ParallelHTTPClient,
     ParallelHTTPClientError,
+    _SHUTDOWN_READ_TIMEOUT_SECONDS,
+    _exec_http_read_timeout,
 )
 from cvs.core.run_layout import RunLayout
 
@@ -72,6 +75,8 @@ class TestRunCommand(HttpClientTestBase):
             self.assertEqual(output.stderr, [])
             self.assertEqual(output.exit_code, 0)
             self.assertIsNone(output.exception)
+            self.assertFalse(output.timed_out)
+            self.assertFalse(output.truncated)
 
     async def test_sends_bearer_auth_header(self):
         seen_headers = []
@@ -224,6 +229,56 @@ class TestRunCommand(HttpClientTestBase):
         await client.run_command("true")
         self.assertIs(client._client, first_client)
 
+    async def test_exec_request_uses_json_content_type(self):
+        seen_content_types = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_content_types.append(request.headers.get("content-type"))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("true")
+        self.assertTrue(seen_content_types)
+        self.assertIn("application/json", seen_content_types[0])
+
+    async def test_http_read_timeout_includes_agent_termination_grace(self):
+        seen_timeouts = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_timeouts.append(request.extensions.get("timeout"))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler, connect_timeout=2.0)
+        await client.run_command("true", read_timeout=1)
+        timeout = seen_timeouts[0]
+        expected_read = _exec_http_read_timeout(1)
+        self.assertEqual(timeout["connect"], 2.0)
+        self.assertEqual(timeout["read"], expected_read)
+        self.assertGreater(timeout["read"], 1)
+        self.assertGreaterEqual(timeout["read"], 1 + messages.TERMINATE_GRACE_PERIOD_SECONDS)
+
+    async def test_timed_out_and_truncated_are_preserved_on_host_output(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "exit_code": -15,
+                    "stdout": ["partial"],
+                    "stderr": [],
+                    "stdout_path": None,
+                    "stderr_path": None,
+                    "truncated": True,
+                    "timed_out": True,
+                },
+            )
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        outputs = await client.run_command("true")
+        self.assertTrue(outputs[0].timed_out)
+        self.assertTrue(outputs[0].truncated)
+        self.assertEqual(outputs[0].exit_code, -15)
+        self.assertIsNone(outputs[0].exception)
+
 
 def _file_mode_handler(request: httpx.Request) -> httpx.Response:
     '''Simulates the agent's FILE output_mode: writes the full output to out_path on the (here,
@@ -279,6 +334,55 @@ class TestOutputMode(HttpClientTestBase):
         outputs = await client.run_command("true", output_mode=messages.ExecOutputMode.FILE)
         self.assertEqual(outputs[0].stdout, [f"line{i}" for i in range(20)])
         self.assertEqual(outputs[0].stderr, ["err-line"])
+
+    async def test_file_mode_rejects_path_outside_expected_exec_output(self):
+        secret = Path(self.tmp.name) / "secret.txt"
+        secret.write_text("classified")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "exit_code": 0,
+                    "stdout": ["preview"],
+                    "stderr": [],
+                    "stdout_path": str(secret),
+                    "stderr_path": str(secret),
+                    "truncated": None,
+                    "timed_out": False,
+                },
+            )
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        outputs = await client.run_command("true", output_mode=messages.ExecOutputMode.FILE, stop_on_errors=False)
+        self.assertIsInstance(outputs[0].exception, HTTPProtocolError)
+        self.assertEqual(outputs[0].stdout, [])
+        self.assertEqual(secret.read_text(), "classified")
+
+    async def test_file_mode_rejects_unexpected_filename_in_exec_output(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            out_dir = Path(json.loads(request.content)["out_path"])
+            decoy = out_dir / "other.stdout"
+            decoy.write_text("nope")
+            stderr_path = out_dir / "other.stderr"
+            stderr_path.write_text("nope-err")
+            return httpx.Response(
+                200,
+                json={
+                    "exit_code": 0,
+                    "stdout": ["preview"],
+                    "stderr": [],
+                    "stdout_path": str(decoy),
+                    "stderr_path": str(stderr_path),
+                    "truncated": None,
+                    "timed_out": False,
+                },
+            )
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        outputs = await client.run_command("true", output_mode=messages.ExecOutputMode.FILE, stop_on_errors=False)
+        self.assertIsInstance(outputs[0].exception, HTTPProtocolError)
+        self.assertEqual(outputs[0].stdout, [])
 
     async def test_exit_code_only_mode_is_sent_through(self):
         seen_requests: list[messages.ExecRequest] = []
@@ -368,6 +472,19 @@ class TestHealth(HttpClientTestBase):
         await client.health()
         self.assertEqual(seen_paths, [messages.HEALTH_PATH])
 
+    async def test_health_applies_connect_timeout_and_explicit_read_deadline(self):
+        seen_timeouts = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_timeouts.append(request.extensions.get("timeout"))
+            return httpx.Response(200, json={"ok": True})
+
+        client = self._make_client({"h1": "http://h1"}, handler, connect_timeout=2.0)
+        await client.health()
+        timeout = seen_timeouts[0]
+        self.assertEqual(timeout["connect"], 2.0)
+        self.assertEqual(timeout["read"], 5.0)
+
 
 class TestShutdown(HttpClientTestBase):
     async def test_hits_shutdown_path_on_every_host(self):
@@ -405,6 +522,20 @@ class TestShutdown(HttpClientTestBase):
         with self.assertRaises(ParallelHTTPClientError):
             await client.shutdown(stop_on_errors=True)
 
+    async def test_shutdown_read_timeout_covers_agent_termination_grace(self):
+        seen_timeouts = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_timeouts.append(request.extensions.get("timeout"))
+            return httpx.Response(200, json={"ok": True})
+
+        client = self._make_client({"h1": "http://h1"}, handler, connect_timeout=2.0)
+        await client.shutdown()
+        timeout = seen_timeouts[0]
+        self.assertEqual(timeout["connect"], 2.0)
+        self.assertEqual(timeout["read"], _SHUTDOWN_READ_TIMEOUT_SECONDS)
+        self.assertGreaterEqual(timeout["read"], messages.TERMINATE_GRACE_PERIOD_SECONDS)
+
 
 class TestRebuildAndDestroy(HttpClientTestBase):
     async def test_rebuild_replaces_host_map(self):
@@ -432,6 +563,61 @@ class TestRebuildAndDestroy(HttpClientTestBase):
         self.assertIsNone(client._client)
 
 
+class TestConnectionPool(HttpClientTestBase):
+    def test_pool_is_unbounded_rather_than_capped_at_the_httpx_default_of_100(self):
+        client = ParallelHTTPClient({f"h{i}": f"http://h{i}" for i in range(101)}, TOKEN)
+        limits = client._pool_limits()
+        self.assertIsNone(limits.max_connections)
+        self.assertIsNone(limits.max_keepalive_connections)
+
+    async def test_fan_out_reaches_every_host_past_the_httpx_default_of_100(self):
+        seen_urls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_urls.append(str(request.url))
+            return _exec_handler(request)
+
+        client = self._make_client({f"h{i}": f"http://h{i}" for i in range(101)}, handler)
+        outputs = await client.run_command("true")
+        self.assertEqual(len(outputs), 101)
+        self.assertEqual(len(set(seen_urls)), 101)
+
+    async def test_growing_the_host_set_keeps_the_existing_pooled_client(self):
+        client = self._make_client({f"h{i}": f"http://h{i}" for i in range(2)}, _exec_handler)
+        await client.run_command("true")
+        first_client = client._client
+        client.rebuild({f"h{i}": f"http://h{i}" for i in range(101)})
+        outputs = await client.run_command("true")
+        self.assertIs(client._client, first_client)
+        self.assertEqual(len(outputs), 101)
+
+
+class TestCreateAppIntegration(HttpClientTestBase):
+    async def test_run_command_posts_json_accepted_by_create_app(self):
+        agent_dir = Path(self.tmp.name) / "agent"
+        agent_dir.mkdir()
+        (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(TOKEN + "\n")
+        app = create_app(
+            agent_dir=agent_dir,
+            world_rank=0,
+            world_size=1,
+            own_hostname="rank0-host",
+            own_port=9000,
+            register_timeout=5.0,
+        )
+        async with app.router.lifespan_context(app):
+            client = ParallelHTTPClient({"local": "http://testserver"}, TOKEN, transport=httpx.ASGITransport(app=app))
+            try:
+                outputs = await client.run_command("echo hello")
+            finally:
+                await client.destroy()
+        self.assertEqual(len(outputs), 1)
+        self.assertIsNone(outputs[0].exception)
+        self.assertEqual(outputs[0].exit_code, 0)
+        self.assertEqual(outputs[0].stdout, ["hello"])
+        self.assertFalse(outputs[0].timed_out)
+
+
 class TestHostOutput(unittest.TestCase):
     def test_is_a_plain_dataclass_not_pssh_output(self):
         output = HostOutput(host="h1", stdout=["a"], stderr=["b"], exit_code=0, exception=None)
@@ -440,6 +626,8 @@ class TestHostOutput(unittest.TestCase):
         self.assertEqual(output.stderr, ["b"])
         self.assertEqual(output.exit_code, 0)
         self.assertIsNone(output.exception)
+        self.assertFalse(output.timed_out)
+        self.assertIsNone(output.truncated)
 
 
 if __name__ == "__main__":
