@@ -275,11 +275,8 @@ def create_app(
     world_size: int,
     own_hostname: str | None = None,
     own_port: int | None = None,
-    register_timeout: float | None = None,
 ) -> FastAPI:
-    '''Build a FastAPI app for one rank's agent process. world_rank gates /v1/register to rank 0 only.
-    Rank 0 additionally self-registers under own_hostname/own_port during startup and blocks until every
-    rank has registered, or register_timeout elapses.'''
+    '''Build the agent app without blocking startup on rank registration.'''
     if world_rank == 0 and (own_hostname is None or own_port is None):
         raise ValueError("own_hostname and own_port are required for rank 0 to self-register")
 
@@ -288,7 +285,6 @@ def create_app(
         app.state.auth_token = _read_secret(agent_dir / messages.AUTH_TOKEN_FILENAME)
         if world_rank == 0:
             await app.state.registry.register(world_rank, own_hostname, own_port)
-            await app.state.registry.wait_until_ready(timeout=register_timeout)
         yield
 
     app = FastAPI(lifespan=lifespan, dependencies=[Depends(verify_auth)])
