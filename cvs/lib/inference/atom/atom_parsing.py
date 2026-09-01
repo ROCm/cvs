@@ -64,7 +64,6 @@ METRIC_TIERS: dict[str, tuple[str, ...]] = {
 
 SCALING_METRICS: tuple[str, ...] = METRIC_TIERS["scaling"]
 SCALING_METRIC_UNITS: dict[str, str] = {"efficiency_pct": "%"}
-METRIC_UNITS = {**CLIENT_METRIC_UNITS, **SCALING_METRIC_UNITS}
 
 METRIC_TIER_ORDER: tuple[str, ...] = tuple(METRIC_TIERS.keys()) + ("record",)
 
@@ -118,21 +117,48 @@ def to_client_metrics(raw, *, tp, isl, scaling_baseline_output_throughput=None, 
     return m
 
 
+def actual_metric_key(tier: str, short: str) -> str:
+    """Map a threshold short name to the ``actuals`` dict key (still ``client.*`` for bench metrics)."""
+    if tier == "scaling" or short.startswith("scaling."):
+        return short if short.startswith("scaling.") else f"scaling.{short}"
+    return f"client.{short}"
+
+
 def tier_metric_specs(thresholds_cell: dict, tier: str) -> dict[str, dict]:
-    """Return threshold specs for one tier in a sweep cell."""
+    """Return threshold specs for one tier in a sweep cell (bare metric names)."""
     if tier == "record":
         names = RECORD_METRICS
-        prefix = "client."
     elif tier == "scaling":
         names = SCALING_METRICS
-        prefix = "scaling."
     else:
         names = METRIC_TIERS.get(tier, ())
-        prefix = "client."
     specs = {}
     for short in names:
-        full = f"{prefix}{short}"
-        spec = thresholds_cell.get(full)
-        if spec is not None:
-            specs[full] = spec
+        if tier == "scaling":
+            key = f"scaling.{short}"
+            spec = thresholds_cell.get(key)
+            if spec is not None:
+                specs[key] = spec
+        else:
+            spec = thresholds_cell.get(short)
+            if spec is not None:
+                specs[short] = spec
     return specs
+
+
+def evaluate_specs_for_actuals(
+    specs: dict[str, dict],
+    actuals: dict,
+    *,
+    metric_tier: str,
+) -> tuple[dict[str, object], dict[str, dict]]:
+    """Align bare threshold spec keys with ``client.*`` / ``scaling.*`` actuals for ``evaluate_all``."""
+    eval_actuals: dict[str, object] = {}
+    eval_specs: dict[str, dict] = {}
+    for key, spec in specs.items():
+        actual_key = actual_metric_key(metric_tier, key)
+        val = actuals.get(actual_key)
+        if val is not None:
+            eval_actuals[key] = val
+            eval_specs[key] = spec
+    return eval_actuals, eval_specs

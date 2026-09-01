@@ -90,6 +90,7 @@ def validate_thresholds_cover_sweep(
     enforce_thresholds: bool,
     gated_metrics=None,
     gated_gpu_metrics=None,
+    gated_metric_prefix: str = "client.",
 ) -> None:
     """Shared sweep/threshold coverage check for inference variant configs."""
     expected = set(expected_cells)
@@ -102,7 +103,7 @@ def validate_thresholds_cover_sweep(
     if extra:
         problems.append(f"threshold keys matching no sweep cell (typo?): {extra}")
     gated = gated_metrics if gated_metrics is not None else GATED_METRICS
-    gated_keys = [f"client.{m}" for m in sorted(gated)]
+    gated_keys = [f"{gated_metric_prefix}{m}" for m in sorted(gated)]
     if gated_gpu_metrics:
         gated_keys += [f"gpu.{m}" for m in sorted(gated_gpu_metrics)]
     gated_gaps = {}

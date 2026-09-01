@@ -1,0 +1,46 @@
+{
+  "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128": {
+    "output_throughput": {
+      "kind": "min_tok_s",
+      "value": 0
+    },
+    "mean_ttft_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "success_rate": {
+      "kind": "min",
+      "value": 0
+    },
+    "failed": {
+      "kind": "max",
+      "value": 1000000
+    }
+  },
+  "ISL=1024,OSL=1024,TP=8,PP=1,CONC=256": {
+    "output_throughput": {
+      "kind": "min_tok_s",
+      "value": 0
+    },
+    "mean_ttft_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "mean_tpot_ms": {
+      "kind": "max_ms",
+      "value": 1000000
+    },
+    "success_rate": {
+      "kind": "min",
+      "value": 0
+    },
+    "failed": {
+      "kind": "max",
+      "value": 1000000
+    }
+  }
+}
