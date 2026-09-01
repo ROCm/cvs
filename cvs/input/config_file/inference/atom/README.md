@@ -1,6 +1,6 @@
 # ATOM inference configs
 
-JSON variant and threshold files for the ``atom`` suite.
+JSON variant and threshold files for the ``atom`` suite. Full documentation:
 
 - **Configuration reference:** `docs/reference/configuration-files/inference/atom.rst`
 - **How to run:** `docs/how-to/test-suites/inference/atom.rst`
