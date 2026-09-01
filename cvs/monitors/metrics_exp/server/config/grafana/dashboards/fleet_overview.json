@@ -177,16 +177,78 @@
       }
     },
     {
+      "id": 20,
+      "type": "table",
+      "title": "Down Nodes",
+      "description": "List of nodes that are currently unreachable. Empty when all nodes are healthy.",
+      "gridPos": {"h": 4, "w": 12, "x": 0, "y": 5},
+      "targets": [
+        {
+          "expr": "up{job=\"amd_gpu_metrics\", node_group=~\"$nodegroup\"} == 0",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "Value": true, "__name__": true, "job": true, "gpu": true},
+          "indexByName": {"hostname": 0, "instance": 1, "node_group": 2},
+          "renameByName": {"hostname": "Hostname", "instance": "Instance", "node_group": "Node Group"}
+        }}
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [{"displayName": "Hostname"}]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"displayMode": "auto", "filterable": true},
+          "color": {"mode": "fixed", "fixedColor": "red"}
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "table",
+      "title": "Active Nodes",
+      "description": "List of nodes that are currently active and reporting metrics.",
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 5},
+      "targets": [
+        {
+          "expr": "count by (hostname, node_group, instance) (up{job=\"amd_gpu_metrics\", node_group=~\"$nodegroup\"} == 1)",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "Value": true},
+          "indexByName": {"hostname": 0, "instance": 1, "node_group": 2},
+          "renameByName": {"hostname": "Hostname", "instance": "Instance", "node_group": "Node Group"}
+        }}
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [{"displayName": "Hostname"}]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"displayMode": "auto", "filterable": true},
+          "color": {"mode": "fixed", "fixedColor": "green"}
+        }
+      }
+    },
+    {
       "id": 8,
       "type": "row",
       "title": "GPU Metrics",
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 9}
     },
     {
       "id": 9,
       "type": "timeseries",
       "title": "Average GPU Temperature by Node Group",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
       "targets": [
         {
           "expr": "avg by (node_group) (gpu_junction_temperature{node_group=~\"$nodegroup\"})",
@@ -204,7 +266,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "Average GPU Power by Node Group",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 10},
       "targets": [
         {
           "expr": "avg by (node_group) (gpu_power_usage{node_group=~\"$nodegroup\"})",
@@ -222,7 +284,7 @@
       "id": 11,
       "type": "timeseries",
       "title": "Average GPU Utilization by Node Group",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18},
       "targets": [
         {
           "expr": "avg by (node_group) (gpu_gfx_activity{node_group=~\"$nodegroup\"})",
@@ -241,7 +303,7 @@
       "id": 12,
       "type": "timeseries",
       "title": "Average GPU Memory Usage by Node Group",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
       "targets": [
         {
           "expr": "avg by (node_group) (gpu_used_vram{node_group=~\"$nodegroup\"} / gpu_total_vram{node_group=~\"$nodegroup\"} * 100)",
@@ -260,14 +322,14 @@
       "id": 13,
       "type": "row",
       "title": "Top 10 Nodes by Key Metrics",
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22}
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 26}
     },
     {
       "id": 14,
       "type": "barchart",
       "title": "Top 10 Nodes by GPU Temperature (Max)",
       "description": "Nodes with highest maximum GPU junction temperature",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 23},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 27},
       "targets": [
         {
           "expr": "topk(10, max by (hostname) (gpu_junction_temperature{node_group=~\"$nodegroup\"}))",
@@ -292,7 +354,7 @@
       "type": "barchart",
       "title": "Top 10 Nodes by GPU Power (Max)",
       "description": "Nodes with highest maximum GPU power draw",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 23},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 27},
       "targets": [
         {
           "expr": "topk(10, max by (hostname) (gpu_power_usage{node_group=~\"$nodegroup\"}))",
@@ -313,7 +375,7 @@
       "type": "barchart",
       "title": "Top 10 Nodes by GPU Utilization (Max)",
       "description": "Nodes with highest maximum GPU utilization",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 31},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 35},
       "targets": [
         {
           "expr": "topk(10, max by (hostname) (gpu_gfx_activity{node_group=~\"$nodegroup\"}))",
@@ -335,7 +397,7 @@
       "type": "barchart",
       "title": "Top 10 Nodes by GPU Memory Usage (Max)",
       "description": "Nodes with highest maximum GPU VRAM usage",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 31},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 35},
       "targets": [
         {
           "expr": "topk(10, max by (hostname) (gpu_used_vram{node_group=~\"$nodegroup\"} / gpu_total_vram{node_group=~\"$nodegroup\"} * 100))",
@@ -356,13 +418,13 @@
       "id": 18,
       "type": "row",
       "title": "Node Status",
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 39}
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 43}
     },
     {
       "id": 19,
       "type": "table",
       "title": "Node Status",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 40},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 44},
       "targets": [
         {
           "expr": "count by (hostname, node_group, instance) (gpu_power_usage{node_group=~\"$nodegroup\"})",

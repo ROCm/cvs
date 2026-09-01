@@ -9,6 +9,7 @@ import MetricGroups from './pages/MetricGroups'
 import ControlNodeGroups from './pages/ControlNodeGroups'
 import ControlNodeGroupDetail from './pages/ControlNodeGroupDetail'
 import AddControlNodeGroup from './pages/AddControlNodeGroup'
+import Alerts from './pages/Alerts'
 
 function App() {
   return (
@@ -25,6 +26,7 @@ function App() {
           <Route path="control-nodegroups" element={<ControlNodeGroups />} />
           <Route path="control-nodegroups/new" element={<AddControlNodeGroup />} />
           <Route path="control-nodegroups/:id" element={<ControlNodeGroupDetail />} />
+          <Route path="alerts" element={<Alerts />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -80,6 +80,32 @@ async def delete_nodegroup_dashboard(
     raise HTTPException(status_code=500, detail="Failed to delete dashboard")
 
 
+@router.post("/provision-defaults")
+async def provision_default_dashboards():
+    """Provision or refresh all default dashboards to Grafana.
+
+    This will create or update the built-in dashboards:
+    - Fleet Overview
+    - GPU Utilization
+    - GPU Health
+    - Thermal & Power
+    - CPU & System
+    - Storage & Filesystem
+    - RDMA Network
+    - Logs Analysis
+    """
+    results = await grafana.provision_default_dashboards()
+
+    success_count = sum(1 for v in results.values() if v)
+    failed_count = sum(1 for v in results.values() if not v)
+
+    return {
+        "message": f"Provisioned {success_count} dashboards, {failed_count} failed",
+        "results": results,
+        "success": failed_count == 0,
+    }
+
+
 @router.get("/templates")
 async def list_dashboard_templates():
     """List available dashboard templates."""

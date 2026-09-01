@@ -1,0 +1,758 @@
+{
+  "uid": "storage-filesystem",
+  "title": "Storage & Filesystem",
+  "description": "Disk I/O, filesystem usage, and storage health metrics from Node Exporter",
+  "tags": ["gpu-fleet", "storage", "disk", "filesystem"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "templating": {
+    "list": [
+      {
+        "name": "nodegroup",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(node_filesystem_size_bytes, node_group)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      },
+      {
+        "name": "hostname",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(node_filesystem_size_bytes{node_group=~\"$nodegroup\"}, hostname)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      },
+      {
+        "name": "mountpoint",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "query": "label_values(node_filesystem_size_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"}, mountpoint)",
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Overview",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Total Storage",
+      "description": "Total storage capacity across all selected nodes and filesystems",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "targets": [
+        {
+          "expr": "sum(node_filesystem_size_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"})",
+          "legendFormat": "Total"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Used Storage",
+      "description": "Total used storage across all selected nodes",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+      "targets": [
+        {
+          "expr": "sum(node_filesystem_size_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} - node_filesystem_avail_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"})",
+          "legendFormat": "Used"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "orange", "value": null}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Available Storage",
+      "description": "Total available storage across all selected nodes",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+      "targets": [
+        {
+          "expr": "sum(node_filesystem_avail_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"})",
+          "legendFormat": "Available"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 5,
+      "type": "gauge",
+      "title": "Avg Disk Usage %",
+      "description": "Average filesystem usage percentage across all selected nodes",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+      "targets": [
+        {
+          "expr": "avg(100 - (node_filesystem_avail_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} * 100))",
+          "legendFormat": "Usage"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "orange", "value": 85},
+              {"color": "red", "value": 95}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Filesystems > 90% Full",
+      "description": "Number of filesystems with usage above 90%",
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+      "targets": [
+        {
+          "expr": "count((1 - node_filesystem_avail_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"}) > 0.9) or vector(0)",
+          "legendFormat": "Critical"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Avg Disk I/O Util",
+      "description": "Average disk I/O utilization across all disks",
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+      "targets": [
+        {
+          "expr": "avg(rate(node_disk_io_time_seconds_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m])) * 100",
+          "legendFormat": "I/O Util"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 50},
+              {"color": "red", "value": 80}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "area"}
+    },
+
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Filesystem Usage",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Filesystem Usage by Mount Point",
+      "description": "Current filesystem usage for each mount point. Click column headers to sort.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 6},
+      "targets": [
+        {
+          "expr": "100 - (node_filesystem_avail_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} * 100)",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true, "device": true, "fstype": false},
+          "indexByName": {"hostname": 0, "mountpoint": 1, "fstype": 2, "node_group": 3, "Value": 4},
+          "renameByName": {"hostname": "Node", "mountpoint": "Mount Point", "fstype": "FS Type", "node_group": "Node Group", "Value": "Usage %"}
+        }}
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [{"displayName": "Usage %", "desc": true}]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"displayMode": "auto", "filterable": true}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Usage %"},
+            "properties": [
+              {"id": "unit", "value": "percent"},
+              {"id": "max", "value": 100},
+              {"id": "min", "value": 0},
+              {"id": "custom.displayMode", "value": "gradient-gauge"},
+              {"id": "custom.width", "value": 250},
+              {"id": "thresholds", "value": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 70},
+                  {"color": "orange", "value": 85},
+                  {"color": "red", "value": 95}
+                ]
+              }}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Filesystem Usage % Over Time",
+      "description": "Filesystem usage trend over time",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "expr": "100 - (node_filesystem_avail_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} * 100)",
+          "legendFormat": "{{hostname}} {{mountpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 1, "fillOpacity": 10}
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Available Space Over Time",
+      "description": "Available filesystem space trend",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "expr": "node_filesystem_avail_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"}",
+          "legendFormat": "{{hostname}} {{mountpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {"lineWidth": 1, "fillOpacity": 10}
+        }
+      }
+    },
+
+    {
+      "id": 12,
+      "type": "row",
+      "title": "Disk I/O Performance",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24}
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Disk Read Throughput",
+      "description": "Bytes read per second from disk",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 25},
+      "targets": [
+        {
+          "expr": "rate(node_disk_read_bytes_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m])",
+          "legendFormat": "{{hostname}} {{device}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {"lineWidth": 1, "fillOpacity": 15}
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Disk Write Throughput",
+      "description": "Bytes written per second to disk",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 25},
+      "targets": [
+        {
+          "expr": "rate(node_disk_written_bytes_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m])",
+          "legendFormat": "{{hostname}} {{device}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {"lineWidth": 1, "fillOpacity": 15}
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Disk Read IOPS",
+      "description": "Read operations per second",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 33},
+      "targets": [
+        {
+          "expr": "rate(node_disk_reads_completed_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m])",
+          "legendFormat": "{{hostname}} {{device}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "iops",
+          "custom": {"lineWidth": 1, "fillOpacity": 15}
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Disk Write IOPS",
+      "description": "Write operations per second",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 33},
+      "targets": [
+        {
+          "expr": "rate(node_disk_writes_completed_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m])",
+          "legendFormat": "{{hostname}} {{device}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "iops",
+          "custom": {"lineWidth": 1, "fillOpacity": 15}
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Disk I/O Utilization %",
+      "description": "Percentage of time disk is busy with I/O operations. 100% indicates disk saturation.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 41},
+      "targets": [
+        {
+          "expr": "rate(node_disk_io_time_seconds_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m]) * 100",
+          "legendFormat": "{{hostname}} {{device}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 1, "fillOpacity": 15},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 50},
+              {"color": "red", "value": 80}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "Disk I/O Wait Time (Latency)",
+      "description": "Average time for I/O requests to complete",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 41},
+      "targets": [
+        {
+          "expr": "rate(node_disk_read_time_seconds_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m]) / rate(node_disk_reads_completed_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m])",
+          "legendFormat": "{{hostname}} {{device}} read"
+        },
+        {
+          "expr": "rate(node_disk_write_time_seconds_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m]) / rate(node_disk_writes_completed_total{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m])",
+          "legendFormat": "{{hostname}} {{device}} write"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {"lineWidth": 1, "fillOpacity": 10},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.01},
+              {"color": "red", "value": 0.1}
+            ]
+          }
+        }
+      }
+    },
+
+    {
+      "id": 19,
+      "type": "row",
+      "title": "Inode Usage",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 49}
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Inode Usage %",
+      "description": "Percentage of inodes used. High inode usage can prevent file creation even with free disk space.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 50},
+      "targets": [
+        {
+          "expr": "100 - (node_filesystem_files_free{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} / node_filesystem_files{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} * 100)",
+          "legendFormat": "{{hostname}} {{mountpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": {"lineWidth": 1, "fillOpacity": 10},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "red", "value": 90}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "table",
+      "title": "Inode Usage by Mount Point",
+      "description": "Inode usage for each filesystem. High usage can prevent creating new files even with free space.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 50},
+      "targets": [
+        {
+          "expr": "100 - (node_filesystem_files_free{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} / node_filesystem_files{node_group=~\"$nodegroup\", hostname=~\"$hostname\", mountpoint=~\"$mountpoint\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} * 100)",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true, "device": true, "fstype": true},
+          "indexByName": {"hostname": 0, "mountpoint": 1, "node_group": 2, "Value": 3},
+          "renameByName": {"hostname": "Node", "mountpoint": "Mount Point", "node_group": "Node Group", "Value": "Inode Usage %"}
+        }}
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [{"displayName": "Inode Usage %", "desc": true}]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"displayMode": "auto", "filterable": true}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Inode Usage %"},
+            "properties": [
+              {"id": "unit", "value": "percent"},
+              {"id": "max", "value": 100},
+              {"id": "min", "value": 0},
+              {"id": "decimals", "value": 1},
+              {"id": "custom.displayMode", "value": "gradient-gauge"},
+              {"id": "custom.width", "value": 200}
+            ]
+          }
+        ]
+      }
+    },
+
+    {
+      "id": 22,
+      "type": "row",
+      "title": "Top Consumers",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 58}
+    },
+    {
+      "id": 23,
+      "type": "barchart",
+      "title": "Top 10 Nodes by Disk Usage",
+      "description": "Nodes with highest average filesystem usage percentage",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 59},
+      "targets": [
+        {
+          "expr": "topk(10, avg by (hostname) (100 - node_filesystem_avail_bytes{node_group=~\"$nodegroup\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{node_group=~\"$nodegroup\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} * 100))",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "color": {"mode": "palette-classic"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "red", "value": 90}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 24,
+      "type": "barchart",
+      "title": "Top 10 Nodes by Disk I/O",
+      "description": "Nodes with highest disk I/O utilization",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 59},
+      "targets": [
+        {
+          "expr": "topk(10, avg by (hostname) (rate(node_disk_io_time_seconds_total{node_group=~\"$nodegroup\"}[5m])) * 100)",
+          "legendFormat": "{{hostname}}",
+          "instant": true
+        }
+      ],
+      "options": {"orientation": "horizontal", "showValue": "always"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "color": {"mode": "palette-classic"}
+        }
+      }
+    },
+
+    {
+      "id": 25,
+      "type": "row",
+      "title": "Critical Filesystems",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 67}
+    },
+    {
+      "id": 26,
+      "type": "table",
+      "title": "Filesystems Above 85% Usage",
+      "description": "Filesystems that are running low on space. Empty when all filesystems are healthy.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 68},
+      "targets": [
+        {
+          "expr": "(100 - node_filesystem_avail_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{node_group=~\"$nodegroup\", hostname=~\"$hostname\", fstype!~\"tmpfs|devtmpfs|overlay|squashfs\"} * 100) > 85",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true, "device": true},
+          "indexByName": {"hostname": 0, "mountpoint": 1, "fstype": 2, "node_group": 3, "Value": 4},
+          "renameByName": {"hostname": "Node", "mountpoint": "Mount Point", "fstype": "FS Type", "node_group": "Node Group", "Value": "Usage %"}
+        }}
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [{"displayName": "Usage %", "desc": true}]
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"displayMode": "auto", "filterable": true},
+          "color": {"mode": "fixed", "fixedColor": "red"}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Usage %"},
+            "properties": [
+              {"id": "unit", "value": "percent"},
+              {"id": "decimals", "value": 1},
+              {"id": "custom.displayMode", "value": "color-text"}
+            ]
+          }
+        ]
+      }
+    },
+
+    {
+      "id": 27,
+      "type": "row",
+      "title": "Storage & Filesystem Errors (Logs)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 76}
+    },
+    {
+      "id": 28,
+      "type": "stat",
+      "title": "Storage Errors (24h)",
+      "description": "Count of storage/disk/filesystem related errors in the last 24 hours",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 77},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(disk.*error|i/o error|filesystem.*error|ext4.*error|xfs.*error|btrfs.*error|nvme.*error|scsi.*error|ata.*error|sata.*error|sd[a-z].*error|buffer i/o|read.*error.*sector|write.*error.*sector|bad.*sector|remount.*read-only)\"[24h])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 10}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 29,
+      "type": "stat",
+      "title": "NVMe Errors (24h)",
+      "description": "NVMe drive errors in the last 24 hours",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 77},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(nvme.*error|nvme.*fail|nvme.*timeout|nvme.*reset)\"[24h])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 5}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 30,
+      "type": "stat",
+      "title": "RAID/MD Errors (24h)",
+      "description": "Software RAID (md) errors in the last 24 hours",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 77},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(md.*error|raid.*error|md.*degraded|raid.*degraded|md.*fail)\"[24h])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 31,
+      "type": "stat",
+      "title": "Filesystem Errors (24h)",
+      "description": "Filesystem corruption or mount errors",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 77},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(ext4.*error|xfs.*error|btrfs.*error|filesystem.*corrupt|remount.*read-only|journal.*abort)\"[24h])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 32,
+      "type": "logs",
+      "title": "Storage & Disk Error Logs",
+      "description": "Dmesg/kernel logs related to storage devices, disks, filesystems, NVMe, SCSI, and I/O errors. Empty when no errors detected.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 81},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "{node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(disk.*error|i/o error|filesystem.*error|ext4.*error|xfs.*error|btrfs.*error|nvme.*error|nvme.*fail|scsi.*error|ata.*error|sata.*error|sd[a-z].*error|buffer i/o|read.*error.*sector|write.*error.*sector|bad.*sector|remount.*read-only|md.*error|raid.*error|md.*degraded|journal.*abort|blk_update_request)\"",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
+    }
+  ]
+}
