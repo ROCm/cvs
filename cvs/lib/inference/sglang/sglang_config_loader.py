@@ -69,8 +69,7 @@ def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> 
         return str(only)
 
     raise ValueError(
-        f"Multiple benchmark_params keys in {config_path!r}: {sorted(bp)!r}. "
-        "Export SGLANG_BENCHMARK_KEY to select one."
+        f"Multiple benchmark_params keys in {config_path!r}: {sorted(bp)!r}. Export SGLANG_BENCHMARK_KEY to select one."
     )
 
 
