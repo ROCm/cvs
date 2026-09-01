@@ -10,6 +10,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 """
 
+import socket
 import subprocess
 import tempfile
 import threading
@@ -27,6 +28,7 @@ from cvs.runners.aorta import (
     AortaMultiNodeConfig,
     AortaRunner,
     RcclConfig,
+    combined_traces_in,
 )
 from cvs.runners.unittests.test_aorta import _make_runner
 
@@ -340,6 +342,7 @@ class TestRunMultiNodeTimeout(unittest.TestCase):
         with (
             patch.object(r, "_run_single_node", side_effect=fake_run_single_node),
             patch.object(r, "_pick_master_port", return_value=29500),
+            patch.object(r, "_collect_multi_node_traces", return_value=None),
         ):
             start = time.time()
             result = r.run()
@@ -409,6 +412,105 @@ class TestSetupSingleNodeCancelledLate(unittest.TestCase):
         self.assertIsNone(error)
         self.assertIs(r._containers["10.0.0.1"], fake_container)
         fake_container.stop.assert_not_called()
+
+
+class TestRunPartialNodeFailureStillCollectsTraces(unittest.TestCase):
+    def test_failed_node_does_not_block_trace_collection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            aorta_path = Path(tmp)
+            combined_root = aorta_path / "combined_traces"
+            combined_root.mkdir()
+            r = _make_runner(nodes=["10.0.0.1", "10.0.0.2"], aorta_path=aorta_path)
+
+            def fake_run_single_node(*, node, node_rank, launch_cmd, env):
+                if node == "10.0.0.2":
+                    return (node, 1, "boom")
+                return (node, 0, "ok")
+
+            with (
+                patch.object(r, "_run_single_node", side_effect=fake_run_single_node),
+                patch.object(r, "_pick_master_port", return_value=29500),
+                patch.object(r, "_collect_multi_node_traces", return_value=combined_root) as mock_collect,
+            ):
+                result = r.run()
+
+            mock_collect.assert_called_once_with(["10.0.0.1", "10.0.0.2"])
+            self.assertEqual(result.status, RunStatus.FAILED)
+            self.assertIn("10.0.0.2", result.error_message)
+            self.assertEqual(result.get_artifact("torch_traces"), combined_root)
+
+
+class TestCombinedTracesIn(unittest.TestCase):
+    def test_returns_true_when_under_combined_traces(self):
+        root = Path("/aorta")
+        self.assertTrue(combined_traces_in(root / "combined_traces" / "node_0" / "torch_profiler", root))
+
+    def test_returns_false_for_real_run_artifacts(self):
+        root = Path("/aorta")
+        self.assertFalse(combined_traces_in(root / "artifacts" / "run1" / "torch_profiler", root))
+
+    def test_returns_false_for_path_outside_root(self):
+        root = Path("/aorta")
+        self.assertFalse(combined_traces_in(Path("/elsewhere/torch_profiler"), root))
+
+
+class TestCopyLocalTorchProfilers(unittest.TestCase):
+    def test_copies_torch_profiler_trees_and_skips_combined(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # Real run artifact
+            (root / "artifacts" / "run1" / "torch_profiler" / "rank_0").mkdir(parents=True)
+            (root / "artifacts" / "run1" / "torch_profiler" / "rank_0" / "trace.json").write_text("{}")
+
+            # Pre-existing combined traces (must be skipped to avoid recursion)
+            (root / "combined_traces" / "node_0" / "torch_profiler").mkdir(parents=True)
+            (root / "combined_traces" / "node_0" / "torch_profiler" / "trace.json").write_text("{}")
+
+            dest = root / "combined_traces" / "node_0_new"
+            dest.mkdir()
+
+            runner = _make_runner(nodes=["a"], aorta_path=str(root))
+            copied = runner._copy_local_torch_profilers(root, dest)
+
+            self.assertTrue(copied)
+            target = dest / "artifacts" / "run1" / "torch_profiler" / "rank_0" / "trace.json"
+            self.assertTrue(target.exists(), f"Expected {target} to exist")
+            # Combined traces tree itself must NOT have been re-copied under dest
+            self.assertFalse((dest / "combined_traces").exists())
+
+    def test_returns_false_when_no_traces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dest = root / "out"
+            dest.mkdir()
+            runner = _make_runner(nodes=["a"], aorta_path=str(root))
+            self.assertFalse(runner._copy_local_torch_profilers(root, dest))
+
+
+class TestCollectMultiNodeTracesHeadOnly(unittest.TestCase):
+    """
+    End-to-end happy path for trace collection where every node is the head
+    (no SSH involved) so we can exercise the directory layout logic without a
+    real cluster.
+    """
+
+    def test_layout_matches_combined_traces_node_rank(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "artifacts" / "torch_profiler" / "rank_0").mkdir(parents=True)
+            (root / "artifacts" / "torch_profiler" / "rank_0" / "trace.json").write_text("{}")
+
+            # Single-node "cluster" so the head-node fast path is used for both ranks.
+            runner = _make_runner(nodes=[socket.gethostname()], aorta_path=str(root))
+            result = runner._collect_multi_node_traces([socket.gethostname()])
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result, root / "combined_traces")
+            self.assertTrue(
+                (
+                    root / "combined_traces" / "node_0" / "artifacts" / "torch_profiler" / "rank_0" / "trace.json"
+                ).exists()
+            )
 
 
 if __name__ == "__main__":
