@@ -83,9 +83,6 @@ A vLLM configuration file has these top-level keys:
    * - ``framework``
      - yes
      - Must be ``"vllm"``
-   * - ``gpu_arch``
-     - yes
-     - GPU architecture label, for example ``"mi300x"``. Reported, not enforced
    * - ``enforce_thresholds``
      - no (default ``true``)
      - When ``false``, threshold failures and coverage gaps become warnings

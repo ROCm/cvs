@@ -2,7 +2,6 @@
   "_comment": "vllm single workload: deepseek-v31 on MI355X, TP=8 single node. Adapted from the legacy MI355X vllm_single workload bundle. Sweep carries 1k1k/1k8k/8k1k at concurrencies 16 and 32; only 1k1k is selected in sweep.runs. Set container.image, model.id and the models mount before running.",
   "schema_version": 1,
   "framework": "vllm",
-  "gpu_arch": "mi355x",
   "enforce_thresholds": false,
   "threshold_json": "mi35x_vllm_deepseek-v31_fp8_single_threshold.json",
   "paths": {

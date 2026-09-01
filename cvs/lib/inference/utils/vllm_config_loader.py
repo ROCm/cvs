@@ -186,7 +186,6 @@ class VariantConfig(_Forbid):
 
     schema_version: Literal[1]
     framework: Literal["vllm"]
-    gpu_arch: str
     enforce_thresholds: bool = True
     container: ContainerConfig = Field(default_factory=ContainerConfig)
     paths: Paths

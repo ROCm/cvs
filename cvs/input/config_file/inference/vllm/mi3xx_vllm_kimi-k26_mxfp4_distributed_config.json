@@ -2,7 +2,6 @@
   "_comment": "vllm distributed workload: kimi-k26_mxfp4 on MI325X, TP=4, PP=2 across 2 nodes. Sweep carries 1k1k/1k8k/8k1k at concurrencies 16 and 32; only 1k1k is selected in sweep.runs. num_prompts is 320, not the 3200 schema default, to keep this a characterization pass rather than a full-length benchmark -- raise it to 3200 for comparable published numbers. Set container.image, model.id and the models mount before running.",
   "schema_version": 1,
   "framework": "vllm",
-  "gpu_arch": "mi325x",
   "enforce_thresholds": false,
   "threshold_json": "mi3xx_vllm_kimi-k26_mxfp4_distributed_threshold.json",
   "paths": {

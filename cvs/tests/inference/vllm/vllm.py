@@ -441,7 +441,6 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
 
     key = (
         variant_config.model.id,
-        variant_config.gpu_arch,
         isl,
         osl,
         seq_combo.get("name", "default"),
@@ -458,7 +457,6 @@ def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, li
     osl = seq_combo["osl"]
     key = (
         variant_config.model.id,
-        variant_config.gpu_arch,
         isl,
         osl,
         seq_combo.get("name", "default"),
@@ -491,7 +489,6 @@ def test_gpu_metric(seq_combo, concurrency, gpu_metric, inf_res_dict, variant_co
     osl = seq_combo["osl"]
     key = (
         variant_config.model.id,
-        variant_config.gpu_arch,
         isl,
         osl,
         seq_combo.get("name", "default"),
@@ -527,7 +524,6 @@ def test_prom_metric(seq_combo, concurrency, prom_metric, inf_res_dict, variant_
     osl = seq_combo["osl"]
     key = (
         variant_config.model.id,
-        variant_config.gpu_arch,
         isl,
         osl,
         seq_combo.get("name", "default"),
