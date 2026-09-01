@@ -1,12 +1,17 @@
 """Grafana dashboard provisioning and management."""
 
 import os
+import json
 import logging
 import base64
+from pathlib import Path
 import httpx
 from typing import Optional, Dict, Any, List
 
 logger = logging.getLogger(__name__)
+
+# Path to dashboard JSON files
+DASHBOARDS_DIR = Path(__file__).parent.parent.parent / "config" / "grafana" / "dashboards"
 
 GRAFANA_URL = os.environ.get("GRAFANA_URL", "http://grafana:3000")
 GRAFANA_API_KEY = os.environ.get("GRAFANA_API_KEY", "")
@@ -129,38 +134,289 @@ class GrafanaProvisioner:
             return result
         return []
 
+    # ================================================================
+    # Alert Contact Point Methods
+    # ================================================================
+
+    def _map_contact_type_to_grafana(self, contact_type: str) -> str:
+        """Map our contact type names to Grafana's expected type names."""
+        mapping = {
+            "msteams": "teams",  # Our schema uses msteams, Grafana uses teams
+        }
+        return mapping.get(contact_type, contact_type)
+
+    def _normalize_settings_for_grafana(self, contact_type: str, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize settings to Grafana's expected format.
+
+        Handles differences between our internal format and Grafana's API requirements.
+        """
+        normalized = dict(settings)
+
+        if contact_type == "email":
+            # Grafana expects addresses as semicolon-separated string, not array
+            addresses = normalized.get("addresses", "")
+            if isinstance(addresses, list):
+                normalized["addresses"] = ";".join(addresses)
+            # Ensure singleEmail is set
+            if "singleEmail" not in normalized:
+                normalized["singleEmail"] = False
+
+        return normalized
+
+    async def create_contact_point(
+        self,
+        name: str,
+        contact_type: str,
+        settings: Dict[str, Any],
+        disable_resolve_message: bool = False,
+    ) -> Dict[str, Any]:
+        """Create a Grafana contact point.
+
+        Args:
+            name: Contact point name
+            contact_type: Type (email, slack, msteams, pagerduty, opsgenie, webhook, discord)
+            settings: Type-specific settings
+            disable_resolve_message: Don't send resolved notifications
+
+        Returns:
+            Created contact point with UID
+        """
+        grafana_type = self._map_contact_type_to_grafana(contact_type)
+        normalized_settings = self._normalize_settings_for_grafana(contact_type, settings)
+        data = {
+            "name": name,
+            "type": grafana_type,
+            "settings": normalized_settings,
+            "disableResolveMessage": disable_resolve_message,
+        }
+        return await self._request("POST", "/api/v1/provisioning/contact-points", data)
+
+    async def update_contact_point(
+        self,
+        uid: str,
+        name: str,
+        contact_type: str,
+        settings: Dict[str, Any],
+        disable_resolve_message: bool = False,
+    ) -> Dict[str, Any]:
+        """Update an existing contact point."""
+        grafana_type = self._map_contact_type_to_grafana(contact_type)
+        normalized_settings = self._normalize_settings_for_grafana(contact_type, settings)
+        data = {
+            "name": name,
+            "type": grafana_type,
+            "settings": normalized_settings,
+            "disableResolveMessage": disable_resolve_message,
+        }
+        return await self._request("PUT", f"/api/v1/provisioning/contact-points/{uid}", data)
+
+    async def delete_contact_point(self, uid: str) -> bool:
+        """Delete a contact point by UID."""
+        result = await self._request("DELETE", f"/api/v1/provisioning/contact-points/{uid}")
+        return "error" not in result
+
+    async def list_contact_points(self) -> List[Dict[str, Any]]:
+        """List all contact points."""
+        result = await self._request("GET", "/api/v1/provisioning/contact-points")
+        return result if isinstance(result, list) else []
+
+    async def get_contact_point(self, uid: str) -> Optional[Dict[str, Any]]:
+        """Get a contact point by UID."""
+        result = await self._request("GET", f"/api/v1/provisioning/contact-points/{uid}")
+        if "error" in result:
+            return None
+        return result
+
+    async def test_contact_point(self, uid: str) -> Dict[str, Any]:
+        """Send test notification to contact point.
+
+        Uses Grafana's receiver test endpoint.
+        """
+        data = {
+            "receivers": [{"uid": uid}],
+            "alert": {
+                "labels": {"alertname": "TestAlert", "severity": "info"},
+                "annotations": {
+                    "summary": "This is a test alert from GPU Fleet Monitor",
+                    "description": "If you receive this, your notification channel is working correctly.",
+                },
+            },
+        }
+        return await self._request("POST", "/api/alertmanager/grafana/config/api/v1/receivers/test", data)
+
+    # ================================================================
+    # Alert Rule Methods
+    # ================================================================
+
+    async def get_or_create_alert_folder(
+        self,
+        title: str = "Fleet Alerts",
+        uid: str = "fleet-alerts",
+    ) -> str:
+        """Get or create folder for alert rules."""
+        # Try to get existing folder
+        result = await self._request("GET", f"/api/folders/{uid}")
+        if "error" not in result and "uid" in result:
+            return result["uid"]
+
+        # Create new folder
+        result = await self.create_folder(title, uid)
+        return result.get("uid", uid)
+
+    def _operator_to_grafana(self, operator: str) -> str:
+        """Convert threshold operator to Grafana format."""
+        mapping = {
+            ">": "gt",
+            ">=": "gte",
+            "<": "lt",
+            "<=": "lte",
+            "==": "eq",
+            "!=": "ne",
+        }
+        return mapping.get(operator, "gt")
+
+    async def create_alert_rule(
+        self,
+        title: str,
+        folder_uid: str,
+        rule_group: str,
+        datasource_uid: str,
+        query_expression: str,
+        threshold_value: Optional[float] = None,
+        threshold_operator: str = ">",
+        for_duration: str = "5m",
+        labels: Optional[Dict[str, str]] = None,
+        annotations: Optional[Dict[str, str]] = None,
+        no_data_state: str = "NoData",
+        exec_err_state: str = "Error",
+        datasource_type: str = "prometheus",
+    ) -> Dict[str, Any]:
+        """Create a Grafana alert rule.
+
+        Args:
+            title: Alert rule name
+            folder_uid: Folder UID to store the rule
+            rule_group: Rule group name
+            datasource_uid: Datasource UID (prometheus or loki)
+            query_expression: PromQL or LogQL expression
+            threshold_value: Threshold value for comparison
+            threshold_operator: Comparison operator (>, >=, <, <=, ==, !=)
+            for_duration: How long condition must be true (e.g., "5m")
+            labels: Additional labels to add to alerts
+            annotations: Annotations (summary, description, runbook_url)
+            no_data_state: State when no data (NoData, OK, Alerting)
+            exec_err_state: State on evaluation error (Error, OK, Alerting)
+            datasource_type: Type of datasource (prometheus or loki)
+
+        Returns:
+            Created alert rule with UID
+        """
+        # Build the data array for Grafana unified alerting
+        data_items = [
+            {
+                "refId": "A",
+                "relativeTimeRange": {"from": 600, "to": 0},
+                "datasourceUid": datasource_uid,
+                "model": {
+                    "expr": query_expression,
+                    "instant": datasource_type == "loki",
+                    "intervalMs": 1000,
+                    "maxDataPoints": 43200,
+                    "refId": "A",
+                },
+            },
+        ]
+
+        # Add threshold condition if specified
+        if threshold_value is not None:
+            data_items.append(
+                {
+                    "refId": "B",
+                    "relativeTimeRange": {"from": 0, "to": 0},
+                    "datasourceUid": "__expr__",
+                    "model": {
+                        "conditions": [
+                            {
+                                "evaluator": {
+                                    "params": [threshold_value],
+                                    "type": self._operator_to_grafana(threshold_operator),
+                                },
+                                "operator": {"type": "and"},
+                                "query": {"params": ["A"]},
+                                "reducer": {"params": [], "type": "last"},
+                                "type": "query",
+                            }
+                        ],
+                        "datasource": {"type": "__expr__", "uid": "__expr__"},
+                        "expression": "A",
+                        "intervalMs": 1000,
+                        "maxDataPoints": 43200,
+                        "refId": "B",
+                        "type": "threshold",
+                    },
+                }
+            )
+            condition_ref = "B"
+        else:
+            condition_ref = "A"
+
+        rule_data = {
+            "title": title,
+            "folderUID": folder_uid,
+            "ruleGroup": rule_group,
+            "for": for_duration,
+            "labels": labels or {},
+            "annotations": annotations or {},
+            "noDataState": no_data_state,
+            "execErrState": exec_err_state,
+            "data": data_items,
+            "condition": condition_ref,
+        }
+
+        return await self._request("POST", "/api/v1/provisioning/alert-rules", rule_data)
+
+    async def update_alert_rule(self, uid: str, rule_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update an existing alert rule."""
+        return await self._request("PUT", f"/api/v1/provisioning/alert-rules/{uid}", rule_data)
+
+    async def delete_alert_rule(self, uid: str) -> bool:
+        """Delete an alert rule."""
+        result = await self._request("DELETE", f"/api/v1/provisioning/alert-rules/{uid}")
+        return "error" not in result
+
+    async def get_alert_rule(self, uid: str) -> Optional[Dict[str, Any]]:
+        """Get an alert rule by UID."""
+        result = await self._request("GET", f"/api/v1/provisioning/alert-rules/{uid}")
+        if "error" in result:
+            return None
+        return result
+
+    async def list_alert_rules(self) -> List[Dict[str, Any]]:
+        """List all alert rules."""
+        result = await self._request("GET", "/api/v1/provisioning/alert-rules")
+        return result if isinstance(result, list) else []
+
+    # ================================================================
+    # Notification Policy Methods
+    # ================================================================
+
+    async def get_notification_policy(self) -> Dict[str, Any]:
+        """Get the notification policy tree."""
+        return await self._request("GET", "/api/v1/provisioning/policies")
+
+    async def update_notification_policy(self, policy: Dict[str, Any]) -> Dict[str, Any]:
+        """Update notification policy."""
+        return await self._request("PUT", "/api/v1/provisioning/policies", policy)
+
+    # Legacy method name for backwards compatibility
     async def setup_alert_contact_point(
         self,
         name: str,
         type: str = "email",
         settings: Optional[Dict] = None,
     ) -> Dict[str, Any]:
-        """Set up an alert contact point."""
-        data = {
-            "name": name,
-            "type": type,
-            "settings": settings or {},
-        }
-        return await self._request("POST", "/api/v1/provisioning/contact-points", data)
-
-    async def create_alert_rule(
-        self,
-        title: str,
-        condition: str,
-        folder_uid: str,
-        labels: Optional[Dict] = None,
-        annotations: Optional[Dict] = None,
-    ) -> Dict[str, Any]:
-        """Create an alert rule."""
-        data = {
-            "title": title,
-            "ruleGroup": "fleet-alerts",
-            "folderUid": folder_uid,
-            "condition": condition,
-            "labels": labels or {},
-            "annotations": annotations or {},
-        }
-        return await self._request("POST", "/api/v1/provisioning/alert-rules", data)
+        """Set up an alert contact point (legacy method, use create_contact_point)."""
+        return await self.create_contact_point(name, type, settings or {})
 
     def generate_node_group_dashboard(
         self,
@@ -745,11 +1001,47 @@ class GrafanaProvisioner:
         uid = f"ng_{safe_name}"[:40]
         return await self.delete_dashboard(uid)
 
-    def get_default_dashboards(self) -> List[Dict[str, Any]]:
-        """Get all default dashboards for the GPU Fleet Monitoring system."""
+    def load_dashboards_from_files(self) -> List[Dict[str, Any]]:
+        """Load dashboard definitions from JSON files in the config directory.
+
+        Returns dashboards from server/config/grafana/dashboards/*.json
+        """
         dashboards = []
 
-        # Fleet Overview Dashboard
+        if not DASHBOARDS_DIR.exists():
+            logger.warning(f"Dashboards directory not found: {DASHBOARDS_DIR}")
+            return dashboards
+
+        for json_file in DASHBOARDS_DIR.glob("*.json"):
+            try:
+                with open(json_file, "r") as f:
+                    dashboard = json.load(f)
+                    dashboards.append(dashboard)
+                    logger.debug(f"Loaded dashboard from {json_file.name}: {dashboard.get('title')}")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse dashboard {json_file.name}: {e}")
+            except Exception as e:
+                logger.error(f"Failed to load dashboard {json_file.name}: {e}")
+
+        logger.info(f"Loaded {len(dashboards)} dashboards from {DASHBOARDS_DIR}")
+        return dashboards
+
+    def get_default_dashboards(self) -> List[Dict[str, Any]]:
+        """Get all default dashboards for the GPU Fleet Monitoring system.
+
+        Prefers loading from JSON files in config/grafana/dashboards/.
+        Falls back to hardcoded dashboards if files not found.
+        """
+        # Try to load from JSON files first
+        dashboards = self.load_dashboards_from_files()
+        if dashboards:
+            return dashboards
+
+        # Fallback to hardcoded dashboards
+        logger.warning("No dashboard files found, using hardcoded fallback dashboards")
+        dashboards = []
+
+        # Fleet Overview Dashboard (fallback)
         dashboards.append(
             {
                 "uid": "fleet-overview",

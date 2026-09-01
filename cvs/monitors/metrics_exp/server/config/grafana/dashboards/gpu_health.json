@@ -161,6 +161,231 @@
         {"expr": "gpu_ecc_uncorrect_sdma{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}} GPU{{gpu_id}} SDMA"}
       ],
       "fieldConfig": {"defaults": {"custom": {"lineWidth": 1}}}
+    },
+
+    {
+      "id": 40,
+      "type": "row",
+      "title": "PCIe Metrics",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 41}
+    },
+    {
+      "id": 41,
+      "type": "stat",
+      "title": "PCIe Bandwidth (Avg)",
+      "description": "Average PCIe bandwidth utilization across all GPUs",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 42},
+      "targets": [{"expr": "avg(gpu_pcie_bw{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}) or vector(0)", "legendFormat": "Avg BW"}],
+      "options": {"colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "Bps", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}}
+    },
+    {
+      "id": 42,
+      "type": "stat",
+      "title": "PCIe Replay Count",
+      "description": "Total PCIe replay errors (indicates link quality issues)",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 42},
+      "targets": [{"expr": "sum(gpu_pcie_replay{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}) or vector(0)", "legendFormat": "Replays"}],
+      "options": {"colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 1000}]}}}
+    },
+    {
+      "id": 43,
+      "type": "stat",
+      "title": "PCIe Width (Most Common)",
+      "description": "PCIe lane width - expect x16 for optimal performance",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 42},
+      "targets": [{"expr": "topk(1, count by (pcie_width) (gpu_pcie_width{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}))", "legendFormat": "x{{pcie_width}}"}],
+      "options": {"colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}}
+    },
+    {
+      "id": 44,
+      "type": "stat",
+      "title": "PCIe Speed (Most Common)",
+      "description": "PCIe generation/speed",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 42},
+      "targets": [{"expr": "topk(1, count by (pcie_speed) (gpu_pcie_speed{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}))", "legendFormat": "Gen {{pcie_speed}}"}],
+      "options": {"colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}}}
+    },
+    {
+      "id": 45,
+      "type": "timeseries",
+      "title": "PCIe Bandwidth Over Time",
+      "description": "PCIe bandwidth utilization per GPU",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 46},
+      "targets": [{"expr": "gpu_pcie_bw{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}", "legendFormat": "{{hostname}} GPU{{gpu_id}}"}],
+      "fieldConfig": {"defaults": {"unit": "Bps", "custom": {"lineWidth": 1}}}
+    },
+    {
+      "id": 46,
+      "type": "timeseries",
+      "title": "PCIe Replay Errors Over Time",
+      "description": "PCIe replay count increase (link retransmissions)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 46},
+      "targets": [{"expr": "increase(gpu_pcie_replay{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}[5m])", "legendFormat": "{{hostname}} GPU{{gpu_id}}"}],
+      "fieldConfig": {"defaults": {"custom": {"lineWidth": 1}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]}}}
+    },
+    {
+      "id": 47,
+      "type": "table",
+      "title": "PCIe Configuration by GPU",
+      "description": "Current PCIe width and speed for each GPU",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 54},
+      "targets": [
+        {
+          "expr": "gpu_pcie_width{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true, "node_group": true}, "renameByName": {"hostname": "Host", "gpu_id": "GPU", "Value": "Width (lanes)"}}}
+      ],
+      "fieldConfig": {
+        "defaults": {"custom": {"align": "center"}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Width (lanes)"}, "properties": [{"id": "custom.displayMode", "value": "color-text"}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 8}, {"color": "green", "value": 16}]}}]}
+        ]
+      }
+    },
+
+    {
+      "id": 50,
+      "type": "row",
+      "title": "GPU Driver Errors (Logs)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 62}
+    },
+    {
+      "id": 51,
+      "type": "stat",
+      "title": "Critical GPU Errors (24h)",
+      "description": "Count of amdgpu emerg/crit/err level messages in the last 24 hours",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 63},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(amdgpu.*error|amdgpu.*fail|amdgpu.*timeout|gpu.*hang|gpu.*reset|ras.*error|ecc.*error)\"[24h])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 10}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 52,
+      "type": "stat",
+      "title": "GPU Hangs/Resets (24h)",
+      "description": "GPU hang and reset events",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 63},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(gpu.*hang|gpu.*reset|amdgpu.*reset|ring.*hang)\"[24h])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 53,
+      "type": "stat",
+      "title": "PCIe/AER Errors (24h)",
+      "description": "PCIe Advanced Error Reporting events",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 63},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(AER.*error|AER.*Uncorrected|pcieport.*error|pcie.*fatal)\"[24h])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 5}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 54,
+      "type": "stat",
+      "title": "XGMI Errors (24h)",
+      "description": "XGMI interconnect errors between GPUs",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 63},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(xgmi.*error|xgmi.*fail)\"[24h])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 55,
+      "type": "logs",
+      "title": "AMDGPU Critical Error Logs",
+      "description": "All amdgpu-related emerg, crit, and err level messages from dmesg/journal. Empty when no errors detected.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 67},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "{node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(amdgpu.*error|amdgpu.*fail|amdgpu.*timeout|gpu.*hang|gpu.*reset|amdgpu.*reset|ring.*hang|ras.*error|ras.*event|ecc.*error|xgmi.*error|xgmi.*fail|AER.*error|AER.*Uncorrected|pcieport.*amdgpu|pcie.*fatal.*amdgpu|drm.*error|kfd.*error)\"",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
     }
   ]
 }

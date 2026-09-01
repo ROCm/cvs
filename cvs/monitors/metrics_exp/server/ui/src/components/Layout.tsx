@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronUp,
   Cpu,
+  Bell,
 } from 'lucide-react'
 
 function Layout() {
@@ -48,6 +49,7 @@ function Layout() {
     { to: '/metrics', icon: BarChart3, label: 'Metric Groups' },
     { to: '/nodegroups', icon: Server, label: 'Node Groups' },
     { to: '/control-nodegroups', icon: Cpu, label: 'Control Node Groups' },
+    { to: '/alerts', icon: Bell, label: 'Alerts' },
   ]
 
   // GPU Node Group dashboard links

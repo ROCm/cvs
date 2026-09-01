@@ -624,3 +624,258 @@ class ControlNodeGroupUpdate(BaseModel):
     remote_password: Optional[str] = None
     kubeconfig_source: Optional[str] = None
     kubeconfig_remote_path: Optional[str] = None
+
+
+# ============================================
+# Alert Configuration Schemas
+# ============================================
+
+
+class ContactPointType(str, Enum):
+    """Contact point types supported by Grafana."""
+
+    EMAIL = "email"
+    SLACK = "slack"
+    TEAMS = "msteams"
+    PAGERDUTY = "pagerduty"
+    OPSGENIE = "opsgenie"
+    WEBHOOK = "webhook"
+    DISCORD = "discord"
+
+
+class AlertSeverity(str, Enum):
+    """Alert severity levels."""
+
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+
+class AlertRuleCategory(str, Enum):
+    """Categories of alert rules."""
+
+    NODE_HEALTH = "node_health"
+    GPU_HARDWARE = "gpu_hardware"
+    THERMAL = "thermal"
+    MEMORY = "memory"
+    NETWORK = "network"
+    LOGS = "logs"
+
+
+class ThresholdOperator(str, Enum):
+    """Threshold comparison operators."""
+
+    GT = ">"
+    GTE = ">="
+    LT = "<"
+    LTE = "<="
+    EQ = "=="
+    NEQ = "!="
+
+
+class ThresholdConfig(BaseModel):
+    """Threshold configuration for an alert rule."""
+
+    operator: ThresholdOperator = ThresholdOperator.GT
+    value: float
+    for_duration: str = "5m"
+
+
+# --- Contact Point Schemas ---
+
+
+class AlertContactPointBase(BaseModel):
+    """Base schema for alert contact points."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    contact_type: ContactPointType
+    settings: dict = Field(default_factory=dict)
+
+
+class AlertContactPointCreate(AlertContactPointBase):
+    """Schema for creating a contact point."""
+
+    pass
+
+
+class AlertContactPointUpdate(BaseModel):
+    """Schema for updating a contact point."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    contact_type: Optional[ContactPointType] = None
+    settings: Optional[dict] = None
+
+
+class AlertContactPointResponse(BaseModel):
+    """Schema for contact point response."""
+
+    id: int
+    name: str
+    description: Optional[str] = None
+    contact_type: str
+    # Settings with sensitive fields redacted
+    settings: dict = Field(default_factory=dict)
+    has_credentials: bool = False
+
+    grafana_uid: Optional[str] = None
+    last_synced_at: Optional[datetime] = None
+    sync_error: Optional[str] = None
+
+    created_at: datetime
+    updated_at: datetime
+
+    alert_rule_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+# --- Alert Rule Template Schemas ---
+
+
+class AlertRuleTemplateResponse(BaseModel):
+    """Schema for alert rule template response."""
+
+    id: int
+    name: str
+    display_name: str
+    description: Optional[str] = None
+    category: str
+    is_default: bool
+
+    datasource_type: str
+    query_expression: str
+    default_threshold: dict
+    default_severity: str
+    summary_template: Optional[str] = None
+    description_template: Optional[str] = None
+    runbook_url: Optional[str] = None
+
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# --- Alert Rule Schemas ---
+
+
+class AlertRuleBase(BaseModel):
+    """Base schema for alert rules."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    enabled: bool = True
+    severity: AlertSeverity = AlertSeverity.WARNING
+
+
+class AlertRuleCreate(AlertRuleBase):
+    """Schema for creating an alert rule."""
+
+    monitoring_server_id: int
+    template_id: Optional[int] = None
+    contact_point_id: Optional[int] = None
+    node_group_id: Optional[int] = None  # None = all node groups
+
+    # Custom query (if not using template)
+    datasource_type: str = "prometheus"
+    query_expression: Optional[str] = None
+
+    # Threshold (overrides template default)
+    threshold_config: Optional[ThresholdConfig] = None
+
+    # Custom labels and annotations
+    labels: dict = Field(default_factory=dict)
+    summary: Optional[str] = None
+    runbook_url: Optional[str] = None
+
+
+class AlertRuleUpdate(BaseModel):
+    """Schema for updating an alert rule."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    enabled: Optional[bool] = None
+    severity: Optional[AlertSeverity] = None
+    contact_point_id: Optional[int] = None
+    node_group_id: Optional[int] = None
+    threshold_config: Optional[ThresholdConfig] = None
+    labels: Optional[dict] = None
+    summary: Optional[str] = None
+    runbook_url: Optional[str] = None
+
+
+class AlertRuleResponse(AlertRuleBase):
+    """Schema for alert rule response."""
+
+    id: int
+    monitoring_server_id: int
+    template_id: Optional[int] = None
+    contact_point_id: Optional[int] = None
+    node_group_id: Optional[int] = None
+
+    datasource_type: str
+    query_expression: Optional[str] = None
+    threshold_config: Optional[dict] = None
+    labels: dict = Field(default_factory=dict)
+    summary: Optional[str] = None
+    runbook_url: Optional[str] = None
+
+    grafana_uid: Optional[str] = None
+    grafana_folder_uid: str = "fleet-alerts"
+    last_synced_at: Optional[datetime] = None
+    sync_error: Optional[str] = None
+
+    created_at: datetime
+    updated_at: datetime
+
+    # Expanded relationship names for UI
+    template_name: Optional[str] = None
+    contact_point_name: Optional[str] = None
+    node_group_name: Optional[str] = None
+    monitoring_server_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class BulkAlertRuleCreate(BaseModel):
+    """Schema for creating multiple alert rules from templates."""
+
+    monitoring_server_id: int
+    contact_point_id: Optional[int] = None
+    node_group_id: Optional[int] = None
+    template_ids: List[int] = Field(..., min_length=1)
+
+
+class AlertConfigurationSummary(BaseModel):
+    """Summary of alert configuration for a monitoring server."""
+
+    monitoring_server_id: int
+    monitoring_server_name: str
+    total_rules: int
+    enabled_rules: int
+    disabled_rules: int
+    rules_with_sync_errors: int
+    contact_points: List[str]
+    last_sync_at: Optional[datetime] = None
+
+
+class AlertSyncResponse(BaseModel):
+    """Response for alert sync operations."""
+
+    success: bool
+    message: str
+    synced_count: int = 0
+    error_count: int = 0
+    errors: List[str] = Field(default_factory=list)
+
+
+class AlertTestResponse(BaseModel):
+    """Response for contact point test."""
+
+    success: bool
+    message: str

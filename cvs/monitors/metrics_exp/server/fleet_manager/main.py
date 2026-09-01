@@ -19,6 +19,7 @@ from .api.routes import (
     monitoring_servers_router,
     metric_groups_router,
     control_nodegroups_router,
+    alerts_router,
 )
 from .api.schemas import HealthResponse, ServiceHealth, FleetStats
 from .services import PrometheusConfigManager, GrafanaProvisioner
@@ -84,6 +85,7 @@ app.include_router(monitoring_router, prefix="/api/v1")
 app.include_router(monitoring_servers_router, prefix="/api/v1")
 app.include_router(metric_groups_router, prefix="/api/v1")
 app.include_router(control_nodegroups_router, prefix="/api/v1")
+app.include_router(alerts_router, prefix="/api/v1")
 
 
 @app.get("/", tags=["Root"], include_in_schema=False)
@@ -224,6 +226,8 @@ if os.path.exists(static_path):
 @app.get("/metrics/{full_path:path}", include_in_schema=False)
 @app.get("/settings", include_in_schema=False)
 @app.get("/settings/{full_path:path}", include_in_schema=False)
+@app.get("/alerts", include_in_schema=False)
+@app.get("/alerts/{full_path:path}", include_in_schema=False)
 async def serve_spa(full_path: str = ""):
     """Serve the SPA for client-side routes."""
     static_path = os.path.join(os.path.dirname(__file__), "static")

@@ -88,7 +88,7 @@ make ut          # sdist -> .test_venv -> run_all_unittests.py
 - Cluster files: node topology, SSH credentials, head-node settings (`cvs/input/cluster_file/`)
 - Config files: test-specific parameters (RDMA interfaces, GPU settings, thresholds)
 - Use `<changeme>` in sample/default JSON values for any field the user must customize; do not ship cluster-specific values as defaults
-- Use `cvs copy-config` and `cvs generate cluster_json` for setup automation
+- Use `cvs config` and `cvs generate cluster_json` for setup automation
 - Tune parallel SSH via `CVS_HOSTS_PER_SHARD` and `CVS_WORKERS_PER_CPU`
 
 ### Performance & Scalability
@@ -186,7 +186,7 @@ def test_example(orch, config_dict):
 
 ### Configuration References
 - [cvs/input/cluster_file/README.md](cvs/input/cluster_file/README.md) - Cluster configuration format
-- Sample configs: `cvs copy-config --list` for available templates
+- Sample configs: `cvs config list-dirs` to browse categories; `cvs config list` for file paths
 
 ### AMD/ROCm Resources
 - [ROCm Documentation](https://rocm.docs.amd.com/) - ROCm platform documentation

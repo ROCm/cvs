@@ -15,7 +15,7 @@ Run from the **CVS package directory**—the directory that contains the `input`
 (myenv) [user@host myproject/cvs]$ cvs run test_aorta --cluster_file input/cluster_file/cluster.json --config_file input/config_file/aorta/aorta_benchmark.yaml --html=logs/www/html/cvs/aorta.html --capture=tee-sys --self-contained-html --log-file=logs/aorta.log -vvv -s
 ```
 
-With HTML report and full logging (see also `docs/reference/configuration-files/aorta.rst`):
+With HTML report and full logging (see also `docs/reference/configuration-files/training/aorta.rst`):
 
 ```bash
 cvs run test_aorta --cluster_file input/cluster_file/cluster.json --config_file input/config_file/aorta/aorta_benchmark.yaml --html=logs/www/html/cvs/aorta.html --capture=tee-sys --self-contained-html --log-file=logs/aorta.log -v --log-cli-level=INFO
@@ -23,7 +23,7 @@ cvs run test_aorta --cluster_file input/cluster_file/cluster.json --config_file 
 
 # Config and expected results
 
-Configuration options (paths, Docker image, RCCL build, environment, analysis, and expected-result thresholds) are documented in the reference docs under `docs/reference/configuration-files/aorta.rst`. Key settings:
+Configuration options (paths, Docker image, RCCL build, environment, analysis, and expected-result thresholds) are documented in the reference docs under `docs/reference/configuration-files/training/aorta.rst`. Key settings:
 
 - **aorta_path** – Path to Aorta repo on the host (bind-mounted into the container).
 - **expected_results** – Validation thresholds; the test fails if any is not met:

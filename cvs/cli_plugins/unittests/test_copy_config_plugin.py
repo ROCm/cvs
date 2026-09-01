@@ -1,12 +1,13 @@
 import unittest
-from unittest.mock import patch
+import warnings
 import os
 import tempfile
 import argparse
 import io
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 
 from cvs.cli_plugins.copy_config_plugin import CopyConfigPlugin
+from cvs.cli_plugins import config_files
 
 
 class TestCopyConfigPlugin(unittest.TestCase):
@@ -27,13 +28,12 @@ class TestCopyConfigPlugin(unittest.TestCase):
 
     def test_find_config_root(self):
         """Test finding config root directories"""
-        roots = self.plugin._find_config_root()
+        roots = config_files.find_config_roots()
 
         # Should match the expected roots
         self.assertEqual(sorted(roots), sorted(self.expected_roots))
 
-    @patch("builtins.print")
-    def test_run_list_mode(self, mock_print):
+    def test_run_list_mode(self):
         """Test listing configs when no output specified"""
         args = argparse.Namespace()
         args.output = None
@@ -42,10 +42,17 @@ class TestCopyConfigPlugin(unittest.TestCase):
         args.all = False
         args.force = False
 
-        self.plugin.run(args)
+        captured_out = io.StringIO()
+        captured_err = io.StringIO()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with redirect_stdout(captured_out), redirect_stderr(captured_err):
+                self.plugin.run(args)
 
-        # Should print configs
-        mock_print.assert_called()
+        self.assertIn("Configs under", captured_out.getvalue())
+        self.assertIn("deprecated", captured_err.getvalue())
+        self.assertEqual(len(caught), 1)
+        self.assertIs(caught[0].category, DeprecationWarning)
 
     def test_run_copy_all_success(self):
         """Test successful copy of all configs"""
@@ -54,6 +61,8 @@ class TestCopyConfigPlugin(unittest.TestCase):
             args.output = temp_dir
             args.path = None
             args.all = True
+            args.force = False
+            args.list = False
 
             self.plugin.run(args)
 
@@ -242,9 +251,8 @@ class TestCopyConfigPluginExtension(unittest.TestCase):
     """Test copy-config plugin finds core config roots"""
 
     def test_find_config_root_returns_list(self):
-        """Test that _find_config_root returns a list of directories"""
-        plugin = CopyConfigPlugin()
-        roots = plugin._find_config_root()
+        """Test that find_config_roots returns a list of directories"""
+        roots = config_files.find_config_roots()
 
         # Should return a list
         self.assertIsInstance(roots, list)
@@ -256,11 +264,10 @@ class TestCopyConfigPluginExtension(unittest.TestCase):
 
     def test_find_config_file_in_core_package(self):
         """Test finding config files from core cvs package"""
-        plugin = CopyConfigPlugin()
-        roots = plugin._find_config_root()
+        roots = config_files.find_config_roots()
 
         # Should be able to find a file that exists in core package
-        found_file = plugin._find_config_file(roots, "platform/host_config.json")
+        found_file = config_files.find_config_file(roots, "platform/host_config.json")
         self.assertIsNotNone(found_file)
         self.assertTrue(os.path.exists(found_file))
 

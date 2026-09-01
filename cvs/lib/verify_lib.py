@@ -158,7 +158,7 @@ def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
     return err_dict
 
 
-def verify_gpu_pcie_bus_width(phdl, expected_cards=8, gpu_pcie_speed=32, gpu_pcie_width=16):
+def verify_gpu_pcie_bus_width(phdl, expected_cards=None, gpu_pcie_speed=32, gpu_pcie_width=16):
     """
     Verify that all GPUs across nodes are operating at the expected PCIe link speed and width.
 
@@ -166,7 +166,11 @@ def verify_gpu_pcie_bus_width(phdl, expected_cards=8, gpu_pcie_speed=32, gpu_pci
       phdl: parallel ssh handle to execute on all nodes:
             - exec_cmd_list(list_of_shell_cmds) -> dict mapping node to command output.
               used when the commands to run can vary from node to node
-      expected_cards (int): Expected number of GPUs per node to validate.
+      expected_cards (int, optional): Expected number of GPUs per node to validate.
+              GPU count per node varies by platform (e.g. 4 on a Helios-R tray,
+              8 on other platforms), so this has no fixed default. If None,
+              it is auto-detected from the first node's actual GPU count and
+              every other node is checked for agreement with that count.
       gpu_pcie_speed (int): Expected PCIe link speed in GT/s (e.g., 32 for PCIe Gen5).
       gpu_pcie_width (int): Expected PCIe link width (e.g., 16 for x16).
 
@@ -201,6 +205,9 @@ def verify_gpu_pcie_bus_width(phdl, expected_cards=8, gpu_pcie_speed=32, gpu_pci
     # Use first node to derive an initial card list (structure validation)
     node_0 = list(out_dict.keys())[0]
     card_list = list(out_dict[node_0].keys())
+
+    if expected_cards is None:
+        expected_cards = len(card_list)
 
     # Check each node has the expected number of GPUs
     for node in out_dict.keys():

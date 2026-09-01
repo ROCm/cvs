@@ -3,7 +3,7 @@
   :keywords: CVS, container, docker, rvs, orchestrator, run
 
 ****************************************
-Run CVS tests with the container backend
+Run with containers
 ****************************************
 
 CVS can route workload commands through a long-lived per-host container instead of running them directly on the host filesystem. This is useful when you want to validate the same image you ship to production, keep the host footprint minimal (Docker, GPU driver, and SSH only), or pin the test environment byte-for-byte.
@@ -15,14 +15,14 @@ Prerequisites
 
 On every cluster node:
 
-- **Docker** installed. The SSH user needs either passwordless ``sudo docker`` or direct Docker access (for example membership in the ``docker`` group) -- CVS probes once per run (``sudo -n true``) and caches which applies, prefixing every subsequent Docker command accordingly. See :doc:`/reference/configuration-files/cluster-file`.
+- **Docker** installed. The SSH user needs either passwordless ``sudo docker`` or direct Docker access (for example membership in the ``docker`` group) -- CVS probes once per run (``sudo -n true``) and caches which applies, prefixing every subsequent Docker command accordingly. See :doc:`/reference/cluster/cluster-file`.
 - **Host driver** loaded so ``/dev/kfd``, ``/dev/dri/*``, and ``/dev/infiniband/*`` (when RDMA is in scope) are present for passthrough.
 - **SSH user home directory** reachable. The orchestrator mounts ``~/.ssh`` as ``/host_ssh`` inside the container so that the in-container ``sshd`` on port ``2224`` can authenticate.
 - **Container image** either pre-loaded on every node (``docker load``) or pullable from a reachable registry. The image must contain ``openssh-server`` and the workload binaries the suite invokes (for example ``/opt/rocm/bin/rvs``).
 
 On the head node where you launch ``cvs run``:
 
-- CVS installed (see :doc:`/install/cvs-install`).
+- CVS installed (see :doc:`/getting-started/install`).
 - SSH key-based access to every cluster node as the SSH user.
 
 Step 1: Copy the cluster template
@@ -32,13 +32,13 @@ CVS ships a ``cluster_container.json`` template alongside the baremetal ``cluste
 
 .. code:: bash
 
-  cvs copy-config cluster_container.json --output /tmp/cvs/input/cluster_file/cluster_container.json
+  cvs config copy cluster_container.json --output /tmp/cvs/input/cluster_file/cluster_container.json
 
-You can list every available template with:
+You can browse every available template directory with:
 
 .. code:: bash
 
-  cvs copy-config --list
+  cvs config list-dirs
 
 Step 2: Edit the placeholders
 =============================
@@ -52,7 +52,7 @@ Open the copied file and edit:
 - ``container.name``: container name on each host. For parallel runs make this per-iteration unique (for example ``cvs_iter_<run_id>``). Pin it explicitly when using ``lifetime: persistent``.
 - ``container.lifetime``: ``no_launch``, ``per_run``, or ``persistent``. See the lifecycle note below.
 
-For the full schema and runtime argument reference, see :doc:`/reference/configuration-files/cluster-file`.
+For the full schema and runtime argument reference, see :doc:`/reference/cluster/cluster-file`.
 
 Step 3: Run a test suite
 ========================
@@ -107,7 +107,7 @@ The ``container.lifetime`` policy controls who owns the container lifecycle:
 - ``persistent`` - CVS attaches to the container if it is already running on every host, or starts it fresh if it is running on no host. Teardown is a no-op, so the container (and its overlay) survives across runs. This unblocks install-then-run workflows: ``cvs run install_rvs`` followed by ``cvs run rvs_cvs`` in separate invocations. If the container is running on some hosts but not all, CVS fails rather than rebuilding (which would destroy the overlay on the still-running hosts) -- remove it on all hosts and rerun, or restart it on the missing hosts. Pin ``container.name`` so a tag bump does not silently abandon the overlay.
 - ``no_launch`` - CVS does not start anything. It verifies that a container with the configured name is already running on every host and reuses it. Teardown is a no-op.
 
-See the ``lifetime`` truth table in :doc:`/reference/configuration-files/cluster-file` for the full state matrix.
+See the ``lifetime`` truth table in :doc:`/reference/cluster/cluster-file` for the full state matrix.
 
 To stop and remove a container that CVS left running (``persistent`` or ``no_launch``), run on every node:
 
@@ -130,7 +130,7 @@ Common pitfalls
 See also
 ========
 
-- :doc:`/reference/configuration-files/cluster-file` - cluster file schema, container block reference, and ``runtime.args`` table.
+- :doc:`/reference/cluster/cluster-file` - cluster file schema, container block reference, and ``runtime.args`` table.
 - `cvs/input/cluster_file/README.md <https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/README.md>`_ - in-tree reference next to the templates.
-- :doc:`/how-to/run-cvs-tests` - general test running guide.
+- :doc:`/how-to/run-tests/index` - general test running guide.
 - :doc:`/how-to/execute-cluster-commands` - ``cvs exec`` documentation.

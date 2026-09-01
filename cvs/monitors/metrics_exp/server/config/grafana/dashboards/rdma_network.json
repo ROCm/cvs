@@ -86,9 +86,49 @@
       "id": 6,
       "type": "table",
       "title": "Link Status Table",
-      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 1},
+      "description": "RDMA link status. Physical State shows link_up/down, State shows active/down.",
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 1},
       "targets": [{"expr": "rdma_link_info{node_group=~\"$nodegroup\", hostname=~\"$hostname\", device=~\"$device\"}", "format": "table", "instant": true}],
-      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "node_group": true}, "renameByName": {"hostname": "Host", "device": "Device", "port": "Port", "netdev": "NetDev", "link_layer": "Type"}}}]
+      "transformations": [
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "Value": true, "__name__": true, "job": true, "instance": true, "node_group": true, "link_layer": true},
+          "indexByName": {"hostname": 0, "device": 1, "port": 2, "netdev": 3, "physical_state": 4, "state": 5},
+          "renameByName": {"hostname": "Host", "device": "Device", "port": "Port", "netdev": "NetDev", "physical_state": "Physical", "state": "State"}
+        }}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"displayMode": "auto", "filterable": true}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Physical"},
+            "properties": [
+              {"id": "mappings", "value": [
+                {"type": "value", "options": {"link_up": {"text": "Up", "color": "green"}}},
+                {"type": "value", "options": {"linkup": {"text": "Up", "color": "green"}}},
+                {"type": "value", "options": {"active": {"text": "Up", "color": "green"}}},
+                {"type": "value", "options": {"down": {"text": "Down", "color": "red"}}},
+                {"type": "value", "options": {"polling": {"text": "Polling", "color": "yellow"}}},
+                {"type": "value", "options": {"disabled": {"text": "Disabled", "color": "orange"}}}
+              ]},
+              {"id": "custom.displayMode", "value": "color-text"}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "State"},
+            "properties": [
+              {"id": "mappings", "value": [
+                {"type": "value", "options": {"active": {"text": "Active", "color": "green"}}},
+                {"type": "value", "options": {"up": {"text": "Active", "color": "green"}}},
+                {"type": "value", "options": {"down": {"text": "Down", "color": "red"}}},
+                {"type": "value", "options": {"init": {"text": "Init", "color": "yellow"}}}
+              ]},
+              {"id": "custom.displayMode", "value": "color-text"}
+            ]
+          }
+        ]
+      }
     },
     {
       "id": 10,
@@ -450,6 +490,141 @@
       "targets": [{"expr": "topk(10, sum by (hostname) (rate(rdma_stat_seq_err_naks_rcvd{node_group=~\"$nodegroup\"}[5m]) + rate(rdma_stat_oos_drop_count{node_group=~\"$nodegroup\"}[5m]) + rate(rdma_stat_rx_roce_errors{node_group=~\"$nodegroup\"}[5m])))", "legendFormat": "{{hostname}}", "instant": true}],
       "options": {"orientation": "horizontal", "showValue": "always"},
       "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 1}]}}}
+    },
+
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Network/RDMA Errors (Logs)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 98}
+    },
+    {
+      "id": 101,
+      "type": "stat",
+      "title": "RDMA/NIC Errors (24h)",
+      "description": "Count of RDMA and network-related errors in the last 24 hours",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 99},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(rdma.*error|roce.*error|infiniband.*error|mlx.*error|bnxt.*error|network.*error|nic.*error|eth.*error|link.*down|carrier.*lost|tx.*timeout)\"[24h])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 10}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 102,
+      "type": "stat",
+      "title": "Link Down Events (24h)",
+      "description": "Network link down events in the last 24 hours",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 99},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(link.*down|link is down|nic link is down|carrier lost|carrier off)\"[24h])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 103,
+      "type": "stat",
+      "title": "Driver Errors (24h)",
+      "description": "NIC driver errors (mlx, bnxt, ainic)",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 99},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(mlx5.*error|mlx5.*fail|bnxt.*error|bnxt.*fail|ainic.*error|ainic.*fail|rdma.*timeout|cq.*error|qp.*error)\"[24h])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 5}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 104,
+      "type": "stat",
+      "title": "TX Timeouts (24h)",
+      "description": "Network transmit timeout errors",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 99},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "sum(count_over_time({node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(tx.*timeout|transmit.*timeout|netdev.*watchdog)\"[24h])) or vector(0)",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 1}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "none"}
+    },
+    {
+      "id": 105,
+      "type": "logs",
+      "title": "Network/RDMA Error Logs",
+      "description": "Dmesg/kernel logs related to RDMA, RoCE, InfiniBand, Mellanox, Broadcom bnxt, AMD AINIC, and network interface errors. Empty when no errors detected.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 103},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {
+          "expr": "{node_group=~\"$nodegroup\", host=~\"$hostname\"} |~ \"(?i)(rdma.*error|rdma.*fail|roce.*error|infiniband.*error|mlx5.*error|mlx5.*fail|mlx5.*timeout|bnxt.*error|bnxt.*fail|bnxt.*timeout|ainic.*error|ainic.*fail|network.*error|nic.*error|eth.*error|link.*down|link is down|carrier.*lost|carrier off|tx.*timeout|transmit.*timeout|netdev.*watchdog|cq.*error|qp.*error|modify_qp.*fail)\"",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": "none"
+      }
     }
   ]
 }

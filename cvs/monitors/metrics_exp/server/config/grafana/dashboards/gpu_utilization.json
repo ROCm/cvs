@@ -337,19 +337,74 @@
       },
       "options": {"orientation": "horizontal", "displayMode": "gradient"}
     },
+    {
+      "id": 29,
+      "type": "row",
+      "title": "Per-GPU Summary",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 42}
+    },
+    {
+      "id": 30,
+      "type": "table",
+      "title": "GPU Utilization by Individual GPU",
+      "description": "GFX Activity for each GPU. Use column headers to sort by Node or Utilization.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 43},
+      "targets": [
+        {
+          "expr": "gpu_gfx_activity{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true},
+          "indexByName": {"hostname": 0, "gpu": 1, "node_group": 2, "Value": 3},
+          "renameByName": {"hostname": "Node", "gpu": "GPU ID", "node_group": "Node Group", "Value": "GFX Activity %"}
+        }}
+      ],
+      "options": {
+        "showHeader": true,
+        "sortBy": [{"displayName": "Node"}],
+        "footer": {"show": false},
+        "frameIndex": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "displayMode": "auto",
+            "filterable": true,
+            "align": "left"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "GFX Activity %"},
+            "properties": [
+              {"id": "unit", "value": "percent"},
+              {"id": "max", "value": 100},
+              {"id": "min", "value": 0},
+              {"id": "custom.displayMode", "value": "gradient-gauge"},
+              {"id": "custom.align", "value": "left"},
+              {"id": "custom.width", "value": 300}
+            ]
+          }
+        ]
+      }
+    },
 
     {
       "id": 18,
       "type": "row",
       "title": "User Activity & GPU Process Tracking",
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 42}
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 53}
     },
     {
       "id": 19,
       "type": "stat",
       "title": "Active GPU Processes (KFD)",
       "description": "Number of processes currently launching GPU kernels via KFD. 0 = no active GPU processes or KFD not loaded.",
-      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 43},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 54},
       "targets": [{ "expr": "sum(node_kfd_process_count{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})", "instant": true }],
       "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }] } } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
@@ -359,7 +414,7 @@
       "type": "stat",
       "title": "Logged-In Users",
       "description": "Total active SSH/interactive sessions across selected nodes.",
-      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 43},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 54},
       "targets": [{ "expr": "sum(node_logged_in_users_count{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})", "instant": true }],
       "fieldConfig": { "defaults": { "unit": "short" } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
@@ -369,7 +424,7 @@
       "type": "stat",
       "title": "Unique GPU Users (KFD)",
       "description": "Number of distinct users with active GPU processes.",
-      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 43},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 54},
       "targets": [{ "expr": "count(count by (user) (node_kfd_process_info{node_group=~\"$nodegroup\", hostname=~\"$hostname\"}))", "instant": true }],
       "fieldConfig": { "defaults": { "unit": "short" } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
@@ -379,7 +434,7 @@
       "type": "stat",
       "title": "GPU Memory in Use (KFD)",
       "description": "Total GPU memory allocated by KFD processes across selected nodes.",
-      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 43},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 54},
       "targets": [{ "expr": "sum(node_kfd_process_count{node_group=~\"$nodegroup\", hostname=~\"$hostname\"})", "instant": true }],
       "fieldConfig": { "defaults": { "unit": "short" } },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
@@ -389,7 +444,7 @@
       "type": "table",
       "title": "KFD GPU Processes (Active GPU Kernel Users)",
       "description": "Processes currently using the GPU via KFD. Empty when no GPU workloads are running. gpu_mem_mb shown in label — sort by that column to find top memory consumers.",
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 47},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 58},
       "targets": [{ "expr": "node_kfd_process_info{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
       "transformations": [
         { "id": "merge", "options": {} },
@@ -406,7 +461,7 @@
       "type": "table",
       "title": "Currently Logged-In Users",
       "description": "Active SSH/interactive sessions. Refresh interval: 30s.",
-      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 59},
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 70},
       "targets": [{ "expr": "node_logged_in_user_info{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
       "transformations": [
         { "id": "merge", "options": {} },
@@ -423,7 +478,7 @@
       "type": "table",
       "title": "User Process Summary",
       "description": "Number of running processes per user across selected nodes.",
-      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 59},
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 70},
       "targets": [{ "expr": "node_user_process_count{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} > 0", "instant": true, "legendFormat": "", "format": "table" }],
       "transformations": [
         { "id": "merge", "options": {} },
@@ -440,7 +495,7 @@
       "type": "table",
       "title": "Notable User Commands (GPU/ML workloads prioritised)",
       "description": "Most notable running process per user. GPU and ML workload commands are preferred over other processes.",
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 69},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 80},
       "targets": [{ "expr": "node_user_top_process_info{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
       "transformations": [
         { "id": "merge", "options": {} },
@@ -457,7 +512,7 @@
       "type": "table",
       "title": "Recent Login History",
       "description": "Last 30 login events per node (from 'last' command). Refreshes every 30s.",
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 79},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 90},
       "targets": [{ "expr": "node_recent_login_info{node_group=~\"$nodegroup\", hostname=~\"$hostname\"} == 1", "instant": true, "legendFormat": "", "format": "table" }],
       "transformations": [
         { "id": "merge", "options": {} },
@@ -475,7 +530,7 @@
       "title": "Auth Logs (SSH Logins & sudo Events)",
       "description": "Live auth log stream from /var/log/auth.log (Ubuntu) or /var/log/secure (RHEL). Use the search bar to filter by username or event type.",
       "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 91},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 102},
       "targets": [{
         "datasource": { "type": "loki", "uid": "loki" },
         "expr": "{node_group=~\"$nodegroup\", job=\"auth\"}"

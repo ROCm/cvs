@@ -76,8 +76,42 @@ else
     COMPOSE="docker-compose"
 fi
 
-# Step 1: Stop and remove all existing containers with our names
-echo -e "${YELLOW}Step 1: Stopping and removing existing containers...${NC}"
+# Step 1: Check for port conflicts and stop existing containers
+echo -e "${YELLOW}Step 1: Checking for port conflicts and cleaning up...${NC}"
+
+# Ports we need
+REQUIRED_PORTS="30080 30090 30030 30100"
+
+# Check for containers using our ports (regardless of name)
+check_port_conflicts() {
+    local has_conflict=false
+    for port in $REQUIRED_PORTS; do
+        # Find any container using this port
+        local container=$(docker ps --format '{{.Names}}' --filter "publish=$port" 2>/dev/null | head -1)
+        if [ -n "$container" ]; then
+            echo -e "  ${YELLOW}Port $port is in use by container: $container${NC}"
+            echo -e "  Stopping $container..."
+            docker stop "$container" 2>/dev/null || true
+            docker rm "$container" 2>/dev/null || true
+            has_conflict=true
+        fi
+
+        # Also check if port is bound by host process (not in container)
+        if ss -tlnp 2>/dev/null | grep -q ":$port "; then
+            local process=$(ss -tlnp 2>/dev/null | grep ":$port " | head -1)
+            echo -e "  ${RED}Warning: Port $port is in use by a host process${NC}"
+            echo -e "  ${RED}  $process${NC}"
+            echo -e "  ${RED}Please stop the process using port $port before continuing${NC}"
+            has_conflict=true
+        fi
+    done
+
+    if [ "$has_conflict" = true ]; then
+        echo -e "${YELLOW}  Cleaned up conflicting containers${NC}"
+    fi
+}
+
+check_port_conflicts
 
 # List of container names we deploy
 CONTAINERS="fleet-manager fleet-prometheus fleet-grafana fleet-loki fleet-postgres device-metrics-exporter"

@@ -38,6 +38,43 @@ class TestVerifyGpuPcieBusWidth(unittest.TestCase):
         verify_lib.verify_gpu_pcie_bus_width(phdl, expected_cards=1)
         mock_fail_test.assert_called()
 
+    @patch("cvs.lib.verify_lib.get_gpu_pcie_bus_dict")
+    @patch("cvs.lib.verify_lib.fail_test")
+    def test_auto_detects_expected_cards_when_omitted(self, mock_fail_test, mock_get_bus_dict):
+        """Platforms with fewer than 8 GPUs per node (e.g. a 4-GPU Helios-R tray)
+        must not be judged against a hardcoded expectation when none is given."""
+        mock_get_bus_dict.return_value = {
+            "node1": {"card0": {"PCI Bus": "0000:01:00.0"}, "card1": {"PCI Bus": "0000:02:00.0"}},
+            "node2": {"card0": {"PCI Bus": "0000:03:00.0"}, "card1": {"PCI Bus": "0000:04:00.0"}},
+        }
+
+        phdl = MagicMock()
+        phdl.exec_cmd_list.return_value = {
+            "node1": "LnkSta: Speed 32GT/s, Width x16",
+            "node2": "LnkSta: Speed 32GT/s, Width x16",
+        }
+
+        result = verify_lib.verify_gpu_pcie_bus_width(phdl)
+        self.assertEqual(result, {"node1": [], "node2": []})
+        mock_fail_test.assert_not_called()
+
+    @patch("cvs.lib.verify_lib.get_gpu_pcie_bus_dict")
+    @patch("cvs.lib.verify_lib.fail_test")
+    def test_flags_node_disagreeing_with_auto_detected_count(self, mock_fail_test, mock_get_bus_dict):
+        mock_get_bus_dict.return_value = {
+            "node1": {"card0": {"PCI Bus": "0000:01:00.0"}, "card1": {"PCI Bus": "0000:02:00.0"}},
+            "node2": {"card0": {"PCI Bus": "0000:03:00.0"}},
+        }
+
+        phdl = MagicMock()
+        phdl.exec_cmd_list.return_value = {
+            "node1": "LnkSta: Speed 32GT/s, Width x16",
+            "node2": "LnkSta: Speed 32GT/s, Width x16",
+        }
+
+        verify_lib.verify_gpu_pcie_bus_width(phdl)
+        mock_fail_test.assert_any_call('ERROR !! Number of cards not matching expected no 2 on node node2')
+
 
 class TestVerifyGpuPcieErrors(unittest.TestCase):
     @patch("cvs.lib.verify_lib.get_gpu_metrics_dict")
