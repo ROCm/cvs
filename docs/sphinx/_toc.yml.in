@@ -4,63 +4,161 @@ defaults:
 root: index
 
 subtrees:
-- entries:
-  - file: what-is-cvs.rst
-    title: What is Cluster Validation Suite?
-
-- caption: Install
+- caption: Concepts
   entries:
-  - file: install/cvs-install
-    title: Cluster Validation Suite installation
+  - file: concepts/what-is-cvs
+    title: What is Cluster Validation Suite?
+  - file: concepts/cvs-at-scale
+    title: Scalability and performance
+
+- caption: Getting started
+  entries:
+  - file: getting-started/quickstart
+    title: Quickstart
+  - file: getting-started/install
+    title: Install
+  - file: getting-started/upgrade
+    title: Upgrade
 
 - caption: How to
   entries:
-  - file: how-to/run-cvs-tests
+  - file: how-to/configure/cluster-config
+    title: Set up cluster file
+  - file: how-to/configure/test-suite-config/index
+    title: Set up test configs
+    subtrees:
+    - entries:
+      - file: how-to/configure/test-suite-config/pick-config-file
+        title: Choose config template
+  - file: how-to/run-tests/index
     title: Run tests
-  - file: how-to/run-with-containers
-    title: Run tests with the container backend
-  - file: how-to/run-vllm-benchmarks
-    title: Run vLLM inference benchmarks
-  - file: how-to/run-cluster
-    title: Monitor the health of GPU clusters
+    subtrees:
+    - entries:
+      - file: how-to/test-suites/burn-in-diag/index
+        title: Burn-in / Diag tests
+        subtrees:
+        - entries:
+          - file: how-to/test-suites/burn-in-diag/platform
+            title: Platform tests
+          - file: how-to/test-suites/burn-in-diag/health
+            title: Health (burn-in) tests
+          - file: how-to/test-suites/burn-in-diag/preflight
+            title: Preflight tests
+      - file: how-to/test-suites/network/index
+        title: Network tests
+        subtrees:
+        - entries:
+          - file: how-to/test-suites/network/ib-perf
+            title: InfiniBand (IB Perf) tests
+          - file: how-to/test-suites/network/rccl
+            title: RCCL tests
+          - file: how-to/test-suites/network/mori
+            title: MORI tests
+      - file: how-to/test-suites/training/index
+        title: Training tests
+        subtrees:
+        - entries:
+          - file: how-to/test-suites/training/aorta
+            title: Aorta benchmark
+          - file: how-to/test-suites/training/jax
+            title: JAX MaxText tests
+          - file: how-to/test-suites/training/megatron
+            title: Megatron training tests
+          - file: how-to/test-suites/training/torchtitan
+            title: TorchTitan training tests
+      - file: how-to/test-suites/inference/index
+        title: Inference tests
+        subtrees:
+        - entries:
+          - file: how-to/test-suites/inference/vllm
+            title: Run vLLM inference benchmarks
+          - file: how-to/test-suites/inference/atom
+            title: ATOM inference tests
+          - file: how-to/test-suites/inference/sglang
+            title: SGLang tests
+          - file: how-to/test-suites/inference/xdit
+            title: xDiT tests
+  - file: how-to/execute-cluster-commands
+    title: Run cluster commands
+  - file: how-to/copy-to-cluster
+    title: Copy to cluster
+  - file: how-to/monitor/index
+    title: Monitor cluster health
+    subtrees:
+    - entries:
+      - file: how-to/monitor/health-reports/index
+        title: Health reports
+      - file: how-to/monitor/live-dashboards/index
+        title: Live dashboards
+        subtrees:
+        - entries:
+          - file: how-to/monitor/live-dashboards/agentless
+            title: Agentless (SSH)
+          - file: how-to/monitor/live-dashboards/exporters
+            title: Agent (Exporters)
 
 - caption: Reference
   entries:
-  - file: reference/configuration-files/configure-config
+  - file: reference/cluster/passwordless-ssh
+    title: Passwordless SSH
+  - file: reference/cluster/cluster-file
+    title: Cluster file
+  - file: how-to/run-with-containers
+    title: Run with containers
+  - file: reference/configuration-files/index
     title: Test configuration files
     subtrees:
     - entries:
-      - file: reference/configuration-files/cluster-file
-        title: Cluster file
-      - file: reference/configuration-files/platform
-        title: Platform
-      - file: reference/configuration-files/health
-        title: Health
-      - file: reference/configuration-files/preflight
-        title: Preflight
-      - file: reference/configuration-files/ib
-        title: IB Perf
-      - file: reference/configuration-files/rccl
-        title: RCCL
-      - file: reference/configuration-files/jaxmaxtext
-        title: JAX MaxText
-      - file: reference/configuration-files/megatron
-        title: Megatron
-      - file: reference/configuration-files/mori
-        title: MORI
-      - file: reference/configuration-files/aorta
-        title: Aorta
-      - file: reference/configuration-files/atom
-        title: ATOM
-      - file: reference/configuration-files/vllm
-        title: vLLM Inference
-      - file: reference/configuration-files/sglang
-        title: SGLang Disaggregated
-      - file: reference/configuration-files/flux1_t2i
-        title: Flux.1 Text-to-Image
-      - file: reference/configuration-files/wan22_i2v
-        title: WAN 2.2 Image-to-Video
+      - file: reference/configuration-files/burn-in-diag/index
+        title: Burn-in / Diag
+        subtrees:
+        - entries:
+          - file: reference/configuration-files/burn-in-diag/platform
+            title: Platform
+          - file: reference/configuration-files/burn-in-diag/health
+            title: Health
+          - file: reference/configuration-files/burn-in-diag/preflight
+            title: Preflight
+      - file: reference/configuration-files/network/index
+        title: Network
+        subtrees:
+        - entries:
+          - file: reference/configuration-files/network/ib
+            title: IB Perf
+          - file: reference/configuration-files/network/rccl
+            title: RCCL
+          - file: reference/configuration-files/network/mori
+            title: MORI
+      - file: reference/configuration-files/training/index
+        title: Training
+        subtrees:
+        - entries:
+          - file: reference/configuration-files/training/jaxmaxtext
+            title: JAX MaxText
+          - file: reference/configuration-files/training/megatron
+            title: Megatron
+          - file: reference/configuration-files/training/torchtitan
+            title: TorchTitan
+          - file: reference/configuration-files/training/aorta
+            title: Aorta
+      - file: reference/configuration-files/inference/index
+        title: Inference
+        subtrees:
+        - entries:
+          - file: reference/configuration-files/inference/atom
+            title: ATOM
+          - file: reference/configuration-files/inference/vllm
+            title: vLLM Inference
+          - file: reference/configuration-files/inference/sglang
+            title: SGLang Disaggregated
+          - file: reference/configuration-files/inference/flux1_t2i
+            title: Flux.1 Text-to-Image
+          - file: reference/configuration-files/inference/wan22_i2v
+            title: WAN 2.2 Image-to-Video
+  - file: reference/cli/cvs-run
+    title: CLI reference
 
 - caption: About
   entries:
-  - file: license.md
+  - file: license.rst
+    title: Licensing

@@ -183,12 +183,14 @@ html-doc: doc-venv
 	@echo "Watching docs for changes. Open http://$(shell hostname -I | awk '{print $$1}'):$(DOC_PORT) in your browser."
 	@echo "Press Ctrl+C to stop."
 	@echo ""
-	ROCM_DOCS_CORE_READ_GITHUB_ACTIVITY=false \
+	ROCM_DOCS_USE_BUNDLED_MAPPINGS=1 \
+		$(DOC_VENV_DIR)/bin/python -m sphinx build -a docs $(DOC_BUILD_DIR) -q
+	ROCM_DOCS_USE_BUNDLED_MAPPINGS=1 \
 		$(DOC_VENV_DIR)/bin/sphinx-autobuild docs $(DOC_BUILD_DIR) --port $(DOC_PORT) --host 0.0.0.0 -q
 
 clean_doc_venv:
 	@echo "Removing doc virtual environment and build artifacts..."
-	rm -rf $(DOC_VENV_DIR) $(DOC_BUILD_DIR) docs/sphinx/_toc.yml
+	rm -rf $(DOC_VENV_DIR) $(DOC_BUILD_DIR) docs/sphinx/_toc.yml docs/_build/html/_toc.yml
 
 clean_test_venv:
 	@echo "Removing virtual environment..."

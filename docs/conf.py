@@ -4,7 +4,9 @@
 # list see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+import os
 import re
+import shutil
 
 # Required settings
 html_theme = "rocm_docs_theme"
@@ -44,7 +46,27 @@ copyright = "Copyright (c) 2025 Advanced Micro Devices, Inc. All rights reserved
 version = version_number
 release = version_number
 
-external_toc_path = "./sphinx/_toc.yml"  # Defines Table of Content structure definition path
+exclude_patterns = ['_includes/**']
+
+# Generated at build time from sphinx/_toc.yml.in (rocm-docs-core). Keep it under
+# _build/html so sphinx-autobuild does not watch and rebuild in a loop.
+_build_toc_dir = os.path.join(os.path.dirname(__file__), "_build", "html")
+os.makedirs(_build_toc_dir, exist_ok=True)
+external_toc_template_path = "./sphinx/_toc.yml.in"
+external_toc_path = "./_build/html/_toc.yml"
+
+# rocm_docs regenerates _toc.yml in config-inited (priority 500) after
+# sphinx-external-toc parses it (priority 900). Sync early so sidebar order
+# matches _toc.yml.in on the first build after edits.
+_toc_in = os.path.join(os.path.dirname(__file__), "sphinx", "_toc.yml.in")
+_toc_out = os.path.join(_build_toc_dir, "_toc.yml")
+if os.path.isfile(_toc_in):
+    shutil.copy2(_toc_in, _toc_out)
+
+# Optional: skip fetching projects.yaml from GitHub (see Makefile html-doc target).
+# "Mappings" = intersphinx project URL map in rocm-docs-core's bundled data/projects.yaml.
+if os.environ.get("ROCM_DOCS_USE_BUNDLED_MAPPINGS"):
+    external_projects_remote_repository = ""
 
 # Add more addtional package accordingly
 extensions = [
@@ -54,5 +76,3 @@ extensions = [
 html_title = f"{project} {version_number} documentation"
 
 external_projects_current_project = "Cluster Validation Suite"
-
-exclude_patterns = ['_includes/**']

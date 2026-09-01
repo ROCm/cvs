@@ -1,11 +1,11 @@
 .. meta::
-  :description: CVS is a collection of test suites that can validate AMD AI clusters
+  :description: CVS is a collection of test suites that can validate AMD ROCm clusters
   :keywords: CVS, ROCm, documentation, test suites, validation
 
 What is Cluster Validation Suite (CVS)?
 =======================================
 
-CVS is a collection of test suites that validate AMD AI clusters.
+CVS is a collection of test suites that validate AMD ROCm clusters.
 Use CVS to verify GPU cluster health, GPU/CPU node health, host OS configuration, and NIC (network interface card) validation.
 
 Here are the tests available in the CVS:
@@ -29,7 +29,7 @@ Here are the tests available in the CVS:
   - Flux.1 text-to-image generation tests validate distributed image generation using xDiT with Ulysses and Ring parallelization.
   - WAN 2.2 image-to-video generation tests validate 81-frame video generation with distributed inference.
 
-You can also :doc:`Monitor the health of GPU clusters <how-to/run-cluster>` using the Cluster Health Checker utility script. This script generates an overall health report that you can use to diagnose issues in your cluster.
+You can also :doc:`Monitor cluster health <how-to/monitor/index>` using the Cluster Health Checker utility script. This script generates an overall health report that you can use to diagnose issues in your cluster.
 
 CVS uses the open-source PyTest framework to run the tests and generate reports. You can launch CVS from a head node or any Linux management station that has connectivity to the cluster nodes via SSH. The single node tests run cluster-wide in parallel using the open-source parallel-SSH Python modules to optimize their running time.
 

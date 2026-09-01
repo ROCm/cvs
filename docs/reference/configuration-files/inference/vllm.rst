@@ -14,7 +14,7 @@ Run it with:
 
   cvs run vllm --cluster_file <cluster.json> --config_file <config.json>
 
-For a step-by-step walkthrough of a first run, see :doc:`/how-to/run-vllm-benchmarks`. This page is the schema and metric reference.
+For a step-by-step walkthrough of a first run, see :doc:`/how-to/test-suites/inference/vllm`. This page is the schema and metric reference.
 
 Lifecycle
 =========
@@ -173,7 +173,7 @@ Four different things in this stack are called a "backend". They are unrelated, 
      - The container runtime
    * - Cluster file ``orchestrator``
      - ``"baremetal"``, ``"container"``
-     - Whether CVS runs commands on the host or inside a container. See :doc:`/reference/configuration-files/cluster-file`
+     - Whether CVS runs commands on the host or inside a container. See :doc:`/reference/cluster/cluster-file`
 
 .. warning::
 
@@ -1205,7 +1205,7 @@ Troubleshooting
 See also
 ========
 
-- :doc:`/how-to/run-vllm-benchmarks` — step-by-step first run
-- :doc:`/reference/configuration-files/cluster-file` — cluster file and orchestrator backends
+- :doc:`/how-to/test-suites/inference/vllm` — step-by-step first run
+- :doc:`/reference/cluster/cluster-file` — cluster file and orchestrator backends
 - :doc:`/how-to/run-with-containers` — container backend walkthrough
-- :doc:`/how-to/run-cvs-tests` — running other CVS suites
+- :doc:`/how-to/run-tests/index` — running other CVS suites
