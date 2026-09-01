@@ -45,8 +45,8 @@ Copy a template locally:
   cvs config list inference/sglang
   cvs config copy inference/sglang/mi3xx_sglang_llama_70b_single.json \
     --output ~/cvs_workspace/inference/sglang/mi3xx_sglang_llama_70b_single.json
-  cvs config copy inference/sglang/mi325_sglang_llama_70b_threshold.json \
-    --output ~/cvs_workspace/inference/sglang/mi325_sglang_llama_70b_threshold.json
+  cvs config copy inference/sglang/mi3xx_sglang_llama_70b_threshold.json \
+    --output ~/cvs_workspace/inference/sglang/mi3xx_sglang_llama_70b_threshold.json
 
 .. note::
 
@@ -314,6 +314,10 @@ Uses the multi-node network env fields above, plus:
      - Rank-0 addresses for each role group.
    * - ``prefill_coordinator_port``, ``decode_coordinator_port``
      - Coordinator ports (defaults ``40001``, ``40002``).
+   * - ``gloo_tcp_ifname``
+     - TCP interface for Gloo (disaggregated templates; ``<changeme>``).
+   * - ``nccl_ib_hca_list``
+     - RDMA devices for disaggregation transfer (in addition to ``nccl_ib_hca``).
 
 ``benchmark_params`` / model settings
 =====================================
@@ -333,26 +337,25 @@ Uses the multi-node network env fields above, plus:
      - External JSON with per-cell performance thresholds.
    * - ``server_params.tensor_parallelism``, ``pipeline_parallelism``
      - ``8``, ``1`` or ``2``
-     - TP size per node; PP across nodes for distributed/disaggregated runs. Sweep combo TP/PP
-       labels the cell; they do not relaunch the server.
-   * - ``server_params.memory_fraction``
+     - TP size per node; PP across nodes for distributed/disaggregated runs.
+   * - ``memory_fraction``
      - ``0.85`` (Llama) / ``0.7`` (DeepSeek)
      - Static KV-cache memory fraction passed to ``launch_server``.
    * - ``server_params.max_concurrency``
      - ``256``
      - ``bench_serving`` concurrency sweep upper bound.
-   * - ``server_params.tokenizer_mode``
+   * - ``tokenizer_mode``
      - ``auto``
      - Tokenizer mode passed to ``launch_server``.
-   * - ``server_params.inference_poll_iterations``
+   * - ``inference_poll_iterations``
      - ``16``
      - Server-ready poll attempts.
-   * - ``ADD_EXPORT_ENV``, ``server_params.add_flags``
+   * - ``add_export_env``, ``add_flags``
      - ROCm/SGLang tuning (for example ``SGLANG_USE_AITER=1``, ``--attention-backend aiter``). DeepSeek templates also set ``GPU_ARCHS=gfx942``.
-   * - ``server_params.context_length``
+   * - ``context_length``
      - ``205000``
      - Long-context cap (distributed / disaggregated Llama and DeepSeek templates).
-   * - ``server_params.prefill_policy``, ``decode_policy``
+   * - ``prefill_policy``, ``decode_policy``
      - ``cache_aware``
      - Disaggregated templates only; PD routing policy.
 
