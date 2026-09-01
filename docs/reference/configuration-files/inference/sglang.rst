@@ -288,10 +288,8 @@ Additional ``server_params`` / ``container`` env fields beyond the single-node s
      - NCCL InfiniBand/RoCE device list and GID index (``container.runtime.args.env``).
    * - ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, ``GLOO_TCP_IFNAME``
      - Ethernet interfaces for socket/Gloo fallback.
-   * - ``HCA_ID_PREFIX``
-     - Single ``ibv_devinfo`` ``hca_id`` prefix used by ``test_setup_ibv_devices``.
-       Replace ``<changeme>`` with ``rdma``, ``bnxt_``, or ``mlx5_``. Keep ``rdma0,...``
-       on ``NCCL_IB_HCA`` only.
+   * - ``hca_id_prefix``
+     - Used by ``test_setup_ibv_devices`` when ``nic_type`` matches Broadcom/Thor to match ``ibv_devinfo`` HCA names. The host ``libbnxt_re-rdmav34.so`` is bind-mounted via ``volume_dict``.
 
 Disaggregated prefill-decode (``sglang_disagg_distributed``)
 ------------------------------------------------------------
