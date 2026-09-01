@@ -69,11 +69,6 @@ class SglangDistributed:
         self.inf_dict = inference_config_dict
         self.bp_dict = benchmark_params_dict
 
-        self.mount_vol = self.inf_dict.get(
-            'mount_vol',
-            '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
-        )
-
         self.inference_results_dict = {}
         log.info("%s", self.gpu_type)
 
@@ -335,12 +330,11 @@ class SglangDistributed:
     def exec_nic_setup_scripts(self) -> None:
         if re.search('broadcom|thor', self.nic_type, re.I):
             self.inf_dict['nccl_ib_gid_index'] = 3
-            cmd = "bash -c " + shlex.quote(f"cp {self.mount_vol}.host {self.mount_vol}; sleep 2; ibv_devinfo; sleep 2;")
-            out_dict = self._container_exec(cmd)
+            out_dict = self._container_exec("ibv_devinfo")
             hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
             for node, out in out_dict.items():
                 if not re.search(hca_id_regex, out or '', re.I):
-                    fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
+                    fail_test(f'Broadcom HCA not visible on node {node}')
 
     def check_ibv_devices(self) -> None:
         out_dict = self._container_exec("ibv_devinfo")

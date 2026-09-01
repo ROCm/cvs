@@ -104,11 +104,6 @@ class SglangDisaggPD:
         self.inf_dict = inference_config_dict
         self.bp_dict = benchmark_params_dict
 
-        self.mount_vol = self.inf_dict.get(
-            'mount_vol',
-            '/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so',
-        )
-
         self.prefill_node_list = normalize_hosts(self.inf_dict['prefill_node_list'])
         self.decode_node_list = normalize_hosts(self.inf_dict['decode_node_list'])
         self.prefill_nnodes = len(self.prefill_node_list)
@@ -289,30 +284,15 @@ class SglangDisaggPD:
     def exec_nic_setup_scripts(
         self,
     ):
-        """
-        Execute NIC-related setup steps inside the inference container.
-
-        Behavior:
-        - Only runs for distributed inference.
-        - If NIC type appears to be Broadcom/Thor, applies a temporary workaround:
-          * Copies the bnxt RDMA library from the host-named file to the container's expected path.
-          * Verifies that ibv_devinfo shows a bnxt_ HCA (to confirm RDMA is wired correctly).
-        - Forces NCCL GID index to 3 for Broadcom/Thor (common requirement).
-
-        Assumptions:
-        - sudo is non-interactive within the container.
-        - The bnxt library file paths exist in the container base image.
-        """
         if re.search('broadcom|thor', self.nic_type, re.I):
             self.nccl_ib_gid_index = 3
-            cmd = "bash -c " + shlex.quote(f"cp {self.mount_vol}.host {self.mount_vol}; sleep 2; ibv_devinfo; sleep 2;")
             hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
             for hosts in (self.prefill_node_list, self.decode_node_list):
-                out_dict = self._container_exec(cmd, hosts=hosts)
+                out_dict = self._container_exec("ibv_devinfo", hosts=hosts)
                 for node, out in out_dict.items():
                     if not re.search(hca_id_regex, out or '', re.I):
                         log.info("%s", out)
-                        fail_test(f'Broadcom libbnxt rdma driver is not properly copied on node {node}')
+                        fail_test(f'Broadcom HCA not visible on node {node}')
 
     def check_ibv_devices(
         self,
