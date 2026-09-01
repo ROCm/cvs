@@ -1,15 +1,15 @@
 # vllm MI3XX workload configs
 
 14 MI325X inference workloads for the `vllm` suite, each shipped as a
-`single` / `distributed` pair, plus four MI355X single-node workloads.
+`single` / `distributed` pair — 28 configs and 28 sibling thresholds.
 
 ## Layout
 
 Flat sibling pairs, same convention as `inferencex_atom_single`:
 
 ```text
-mi3xx_vllm_{model}_{precision}_{topology}_config.json
-mi3xx_vllm_{model}_{precision}_{topology}_threshold.json
+mi3xx_vllm_{model}_{precision}_{topology}.json
+mi325x_vllm_{model}_{precision}_{topology}_threshold.json
 ```
 
 `topology` is `single` or `distributed`. Each config points `threshold_json` at
@@ -141,10 +141,6 @@ loads straight from the mount and no download occurs.
 | `mistral-large-3_bf16` | Mistral Large 3 BF16 | Mistral-native format: `tokenizer-mode`/`config-format`/`load-format` all `mistral` |
 | `deepseek-r1-0528_fp8` | DeepSeek R1 0528 FP8 PTPC | |
 | `gpt-oss-20b_fp8` | GPT-OSS 20B FP8 | |
-| `gpt-oss-120b_fp4` | GPT-OSS 120B FP4 | MI355X single-node legacy workload |
-| `qwen3-235b_bf16` | Qwen3 235B BF16 | MI355X single-node legacy workload |
-| `qwen3-80b_bf16` | Qwen3 80B BF16 | MI355X single-node legacy workload |
-| `deepseek-v31_fp8` | DeepSeek V3.1 FP8 | MI355X single-node legacy workload |
 
 Models with a custom tokenizer or modelling code set `trust-remote-code: true`;
 the suite mirrors that flag onto the bench client so it can load the same
@@ -159,16 +155,17 @@ VAR=mi3xx_vllm_glm-51_fp8_single
 DIR=~/input/config_file/inference/vllm/$VAR
 mkdir -p "$DIR"
 
-cvs copy-config inference/vllm/${VAR}_config.json \
-  --output "$DIR/${VAR}_config.json"
-cvs copy-config inference/vllm/${VAR}_threshold.json \
-  --output "$DIR/${VAR}_threshold.json"
-# then edit "$DIR/${VAR}_config.json" and fill in every <changeme>
+THRESHOLD=mi325x_vllm_glm-51_fp8_single_threshold.json
+cvs copy-config inference/vllm/${VAR}.json \
+  --output "$DIR/${VAR}.json"
+cvs copy-config "inference/vllm/${THRESHOLD}" \
+  --output "$DIR/${THRESHOLD}"
+# then edit "$DIR/${VAR}.json" and fill in every <changeme>
 
 TS=$(date +%Y%m%d_%H%M%S)
 cvs run vllm \
   --cluster_file ~/input/cluster_file/<your-cluster>.json \
-  --config_file "$DIR/${VAR}_config.json" \
+  --config_file "$DIR/${VAR}.json" \
   --html=~/cvs_results/${TS}_${VAR}.html \
   --self-contained-html \
   --log-file=~/cvs_results/${TS}_${VAR}.log \
