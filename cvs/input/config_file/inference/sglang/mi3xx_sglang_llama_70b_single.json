@@ -1,19 +1,25 @@
 {
   "_comment": "SGLang single-node Llama 3.1 70B workload. Performance cells are defined by threshold_json.",
-  "enforce_thresholds": false,
-  "gpu_name" : "<changeme> mi325",
-  "threshold_json": "mi325_sglang_llama_70b_threshold.json",
+  "schema_version": 1,
+  "framework": "sglang",
+  "topology": "single",
+  "gpu_arch": "mi3xx",
+  "threshold_json": "mi3xx_sglang_llama_70b_threshold.json",
+  "_container_image": "rocm/sgl-dev:v0.5.12.post1-rocm720-mi30x-20260601",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/root/models",
     "log_dir": "{shared_fs}/LOGS/sglang",
     "hf_token_file": "{shared_fs}/.hf_token"
   },
+  "model": {
+    "id": "meta-llama/Llama-3.1-70B-Instruct",
+    "remote": 0
+  },
   "container": {
     "lifetime": "per_run",
     "name": "sglang_container",
-    "_image_example": "rocm/sgl-dev:v0.5.14-rocm720-mi30x-20260629",
-    "image": "<changeme>",
+    "image": "rocm/sgl-dev:v0.5.12.post1-rocm720-mi30x-20260603",
     "runtime": {
       "name": "docker",
       "args": {
@@ -26,35 +32,40 @@
           "/mnt/dtni/models:/root/models"
         ],
         "devices": ["/dev/dri", "/dev/kfd"],
-        "env": {
-          "NCCL_DEBUG": "ERROR",
-          "ADD_EXPORT_ENV": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8"]
-        }
+        "env": {}
       }
     }
   },
-  "server_params": {
+  "roles": {
+    "server": {
+      "nnodes": "1",
+      "log_level": "info",
+      "nccl_debug": "ERROR",
+      "benchmark_serv_node": "<changeme>",
+      "proxy_router_serv_port": "8000"
+    }
+  },
+  "params": {
     "backend": "sglang",
-    "nnodes": "1",
-    "log_level": "info",
-    "model": "meta-llama/Llama-3.1-70B-Instruct",
     "max_concurrency": "256",
     "tensor_parallelism": "8",
     "pipeline_parallelism": "1",
     "memory_fraction": "0.85",
     "tokenizer_mode": "auto",
     "inference_poll_iterations": "16",
+    "add_export_env": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8"],
     "add_flags": ["--attention-backend aiter"],
-    "benchmark_serv_node": "<changeme>",
-    "proxy_router_serv_port": "8000"
-  },
-  "benchmark_params": {
-    "backend": "sglang",
-    "data_set_name": "random",
-    "num_prompts": "25",
-    "random_range_ratio": "0.5",
-    "model_num_params": "70000000000",
-    "peak_gpu_tflops": "2615"
+    "inference_tests": {
+      "bench_serv_random": {
+        "backend": "sglang",
+        "enforce_thresholds": false,
+        "data_set_name": "random",
+        "num_prompts": "25",
+        "random_range_ratio": "0.5",
+        "model_num_params": "70000000000",
+        "peak_gpu_tflops": "2615"
+      }
+    }
   },
   "accuracy": {
     "tasks": [
@@ -81,27 +92,6 @@
         "num_concurrent": "4",
         "exec_timeout_sec": "7200",
         "extra_model_args": "tokenizer_backend=huggingface"
-      }
-    ]
-  },
-  "sweeps": {
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=4": {},
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=8": {},
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16": {},
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32": {},
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=64": {},
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128": {},
-    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=256": {},
-    "ISL=8192,OSL=1024,TP=8,PP=1,CONC=64": {}
-  },
-  "sweep": {
-    "_comment": "Combo-key runs of ISL, OSL, TP, PP, and CONC, comma-separated. Each listed run must exist in the threshold JSON. If this field is empty, every run in the threshold JSON is used.",
-    "runs": [
-      {
-        "combo": "ISL=1024,OSL=1024,TP=8,PP=1,CONC=64"
-      },
-      {
-        "combo": "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128"
       }
     ]
   }

@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-SGLang single-node config loader for ContainerOrchestrator suites.
+SGLang config loader for single-node, distributed, and disaggregated suites.
 
 ``load_variant()`` is the single entry point for ``sglang_single`` conftest and
 produces both:
@@ -349,8 +349,8 @@ class SglangAccuracy(_Forbid):
 class SglangSingleVariantConfig(BaseVariantConfig):
     """Typed config shared by all SGLang topologies."""
 
-    framework: Literal["sglang", "sglang_single"] = "sglang"
-    gpu_arch: str = "mi30x"
+    framework: Literal["sglang", "sglang_single"]
+    gpu_arch: str
     topology: Literal["single", "distributed", "disaggregated"] = "single"
     variant_key: str = ""
     config_path: str = ""
@@ -360,8 +360,6 @@ class SglangSingleVariantConfig(BaseVariantConfig):
     # Legacy blocks kept for ``SglangSingle`` until that lib is refactored.
     inference: dict[str, Any] = Field(default_factory=dict)
     benchmark_params: dict[str, Any] = Field(default_factory=dict)
-    sweeps: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    sweep: dict[str, Any] = Field(default_factory=dict)
 
     roles: SglangRoles = Field(default_factory=SglangRoles)
 
@@ -416,13 +414,7 @@ class SglangSingleVariantConfig(BaseVariantConfig):
 
 
 def orchestrator_container_from_variant(variant: SglangSingleVariantConfig) -> dict[str, Any]:
-    """``container`` block for ``OrchestratorConfig`` (includes server env).
-
-    ``runtime.args.env`` is dropped: the container runtime renders ``-e`` flags
-    only from the top-level ``env`` here, and it holds list values
-    (``ADD_EXPORT_ENV``) that have no ``docker run`` representation. The scalar
-    entries are already flattened into ``roles.server.env`` by the loader.
-    """
+    """``container`` block for ``OrchestratorConfig`` (includes server env)."""
     block = variant.container.model_dump()
     runtime = dict(block.get("runtime") or {})
     runtime_args = {key: value for key, value in dict(runtime.get("args") or {}).items() if key != "env"}
@@ -457,42 +449,20 @@ def _accuracy_tasks_to_inference_tests(accuracy: Mapping[str, Any]) -> dict[str,
     return inference_tests
 
 
-_RUNTIME_ENV_TO_INFERENCE = {
-    "NCCL_IB_HCA": "nccl_ib_hca",
-    "HCA_ID_PREFIX": "hca_id_prefix",
-    "NCCL_SOCKET_IFNAME": "nccl_socket_ifname",
-    "GLOO_SOCKET_IFNAME": "gloo_socket_ifname",
-    "GLOO_TCP_IFNAME": "gloo_tcp_ifname",
-    "NCCL_IB_GID_INDEX": "nccl_ib_gid_index",
-    "NCCL_DEBUG": "nccl_debug",
-}
-
-
 def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]) -> tuple[dict, dict, dict]:
     """Build legacy controller views from the unified SGLang schema."""
     paths = dict(raw.get("paths") or {})
     container = dict(raw.get("container") or {})
     runtime = dict(container.get("runtime") or {})
     runtime_args = dict(runtime.get("args") or {})
-    new_layout = isinstance(raw.get("server_params"), Mapping)
-    server = dict(raw.get("server_params") or {}) if new_layout else dict((raw.get("roles") or {}).get("server") or {})
-    params = dict(server) if new_layout else dict(raw.get("params") or {})
+    server = dict((raw.get("roles") or {}).get("server") or {})
+    params = dict(raw.get("params") or {})
 
-    if new_layout:
-        benchmark = dict(raw.get("benchmark_params") or {})
-        benchmark["enforce_thresholds"] = raw.get("enforce_thresholds", True)
-        inference_tests = {"bench_serv_random": benchmark}
-    else:
-        inference_tests = dict(params.get("inference_tests") or {})
+    inference_tests = dict(params.get("inference_tests") or {})
     inference_tests.update(_accuracy_tasks_to_inference_tests(raw.get("accuracy") or {}))
     params["inference_tests"] = inference_tests
-    params["model"] = str(server.get("model") or "") if new_layout else str((raw.get("model") or {}).get("id") or "")
+    params["model"] = str((raw.get("model") or {}).get("id") or "")
     params["threshold_file"] = str(raw.get("threshold_json") or "")
-
-    runtime_env = dict(runtime_args.get("env") or {})
-    add_export_env = runtime_env.get("ADD_EXPORT_ENV")
-    if add_export_env is not None:
-        params["add_export_env"] = list(add_export_env) if isinstance(add_export_env, list) else [str(add_export_env)]
 
     inference: dict[str, Any] = {
         "container_image": container.get("image"),
@@ -508,24 +478,16 @@ def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]
         },
     }
     for key, value in server.items():
-        if key.startswith("_") or key in ("env", "serve_port", "model"):
+        if key.startswith("_") or key in ("env", "serve_port"):
             continue
         inference[key] = value
-    for env_key, inference_key in _RUNTIME_ENV_TO_INFERENCE.items():
-        if env_key in runtime_env:
-            inference[inference_key] = runtime_env[env_key]
     if server.get("serve_port") and "proxy_router_serv_port" not in inference:
         inference["proxy_router_serv_port"] = server["serve_port"]
 
     _inject_thresholds_into_bp_dict(params, thresholds, inject_current_perf=False)
     server["env"] = {
-        key: str(value)
-        for key, value in {
-            **runtime_env,
-            **_legacy_server_env(inference, params),
-            **dict(server.get("env") or {}),
-        }.items()
-        if not isinstance(value, (list, dict))
+        **_legacy_server_env(inference, params),
+        **dict(server.get("env") or {}),
     }
     return inference, params, server
 
@@ -597,35 +559,11 @@ def _load_unified_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> 
     raw["thresholds"] = thresholds
     raw["config_path"] = str(Path(config_path).resolve())
 
-    server_params = dict(raw.get("server_params") or {})
-    if server_params:
-        if server_params.get("prefill_node_list") or server_params.get("decode_node_list"):
-            topology = "disaggregated"
-        elif server_params.get("server_node_list") or int(server_params.get("nnodes") or 1) > 1:
-            topology = "distributed"
-        else:
-            topology = "single"
-        raw.setdefault("schema_version", 1)
-        raw.setdefault("framework", "sglang")
-        raw.setdefault("gpu_arch", str(raw.get("gpu_name") or "mi30x"))
-        raw.setdefault("topology", topology)
-        raw.setdefault(
-            "model",
-            {
-                "id": str(server_params.get("model") or ""),
-                "remote": 0,
-            },
-        )
-        raw["container"] = {
-            key: value for key, value in dict(raw.get("container") or {}).items() if not str(key).startswith("_")
-        }
-
     raw["variant_key"] = raw.get("variant_key") or "default"
 
     inference, benchmark_params, server = _unified_runtime_views(raw, thresholds)
     raw["inference"] = inference
     raw["benchmark_params"] = benchmark_params
-    raw["params"] = benchmark_params
     raw.setdefault("roles", {})["server"] = server
     raw["enforce_thresholds"] = perf_enforce_thresholds(benchmark_params)
 
