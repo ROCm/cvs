@@ -95,6 +95,26 @@ class AortaAnalysisConfig:
 
 
 @dataclass
+class AortaMultiNodeConfig:
+    """
+    Multi-node disaggregated launch configuration.
+
+    See ``AortaMultiNodeConfigFile`` in ``cvs/parsers/schemas.py`` for the
+    YAML-facing description of each field.
+    """
+
+    master_launch_mode: str = "auto"
+    nproc_per_node: Optional[int] = None
+    master_port: Optional[int] = None
+    master_addr: Optional[str] = None
+    train_script: str = "train.py"
+    extra_torchrun_args: List[str] = field(default_factory=list)
+    extra_train_args: List[str] = field(default_factory=list)
+    extra_env: Dict[str, str] = field(default_factory=dict)
+    collect_traces: bool = True
+
+
+@dataclass
 class AortaConfig(RunConfig):
     """
     Configuration for Aorta benchmark runner.
@@ -130,6 +150,16 @@ class AortaConfig(RunConfig):
 
     # Analysis configuration (use Aorta's built-in scripts)
     analysis: AortaAnalysisConfig = field(default_factory=AortaAnalysisConfig)
+
+    # Multi-node disaggregated launch configuration
+    multi_node: AortaMultiNodeConfig = field(default_factory=AortaMultiNodeConfig)
+
+    # Maps a `nodes` entry to its VPC/RDMA-fabric address, when the cluster has one
+    # distinct from the orchestrator-reachable address. Used to resolve master_addr
+    # for torchrun rendezvous so other nodes connect over the fabric, not the
+    # (possibly orchestrator-only) SSH network. Empty by default: falls back to the
+    # plain node identifier, matching prior behavior for single-network clusters.
+    node_vpc_ips: Dict[str, str] = field(default_factory=dict)
 
     # Scripts to execute (relative to container mount)
     build_script: str = "scripts/build_rccl.sh"
