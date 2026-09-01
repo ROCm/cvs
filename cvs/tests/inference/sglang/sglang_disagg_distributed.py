@@ -13,17 +13,20 @@ Run:
     --html=~/cvs_results/sglang_disagg.html
 
 ``cluster_container.json`` ``node_dict`` must include all prefill/decode/router/bench hosts.
-Model variant is selected from ``benchmark_params`` via ``SGLANG_BENCHMARK_KEY`` or single-key auto.
+Workload, runtime, and accuracy settings come from the unified SGLang config.
 
 With ``--html``, session end also writes ``sglang_run_deck.html`` (plus JSON
 and interactive viewer) via ``cvs/lib/report/profiles/sglang.json`` (all SGLang stems).
 '''
 
-import pytest
 import time
-from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
+
+import pytest
+
 from cvs.lib import globals
+from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
 from cvs.lib.verify_lib import verify_dmesg_for_errors
+
 # from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
 
 log = globals.log
@@ -103,31 +106,6 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
     results = im_obj.verify_openai_compatible_endpoints()
     lifecycle.smoke_results = results
     lifecycle.complete_stage(request, "smoke_endpoints", t0)
-
-
-# def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
-#     globals.error_list = []
-#     t0 = time.monotonic()
-#     bench = im_obj.bp_dict["inference_tests"]["long_ctx_niah"]
-#     bench["input_length"] = acc_cell["isl"]
-#     bench["output_length"] = acc_cell["osl"]
-#     bench.setdefault("expected_results", {})["auto"] = flat_expected_from_specs(acc_cell["specs"])
-#     im_obj.bp_dict["max_concurrency"] = "1"
-#     im_obj.setup_benchmark_serv_container_env()
-#     summary = im_obj.run_long_context_niah_accuracy(
-#         isl=int(acc_cell["isl"]),
-#         osl=int(acc_cell["osl"]),
-#         d_type="auto",
-#     )
-#     lifecycle.phase_labels[f"accuracy_long_ctx_{acc_cell['isl']}"] = summary
-#     lifecycle.phase_labels.setdefault("accuracy_by_cell", {})[acc_cell["cell_key"]] = (
-#         "PASS" if summary.get("passed") else "FAIL"
-#     )
-#     lifecycle.complete_stage(
-#         request,
-#         f"long_ctx_niah[{acc_cell['isl']}/{acc_cell['osl']}]",
-#         t0,
-#     )
 
 
 def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
