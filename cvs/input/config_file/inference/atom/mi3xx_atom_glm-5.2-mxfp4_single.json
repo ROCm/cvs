@@ -1,8 +1,8 @@
 {
-  "_comment": "Tracker #13 amd/GLM-5.2-MXFP4 perf stem (mi325x).",
+  "_comment": "Tracker #13 amd/GLM-5.2-MXFP4 perf stem (mi3xx).",
   "schema_version": 1,
   "framework": "atom",
-  "gpu_arch": "mi325x",
+  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_glm-5.2-mxfp4_threshold.json",
   "run_card": {
@@ -22,7 +22,7 @@
   },
   "container": {
     "lifetime": "per_run",
-    "name": "atom_mi325x",
+    "name": "atom_mi3xx",
     "image": "rocm/atom-dev:latest",
     "runtime": {
       "name": "docker",

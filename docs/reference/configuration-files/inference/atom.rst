@@ -30,10 +30,11 @@ Shipped files live under ``cvs/input/config_file/inference/atom/``:
 
   {gpu}_atom_{model}_{precision}_single.json
   {gpu}_atom_{model}_{precision}_distributed.json   # when multinode PP is supported
-  {gpu}_atom_{model}_{precision}_threshold.json
+  {platform}_atom_{model}_{precision}_threshold.json
 
-``{gpu}`` is the **platform** prefix for configs and thresholds. Shipped stems on
-this branch use ``mi325x`` (lab-validated on MI325X / gfx942).
+Config stems use the **family** prefix ``mi3xx``. Threshold files use a
+**platform** prefix (shipped: ``mi325x``, lab-validated on MI325X / gfx942).
+Each config's ``threshold_json`` points at the matching ``mi325x_*_threshold.json``.
 
 Multi-profile configs (``schema_version: 2``) embed job shapes under ``profiles``.
 Select one at runtime with ``--config_profile NAME`` (or ``CVS_CONFIG_PROFILE``).
@@ -54,13 +55,13 @@ Shipped model inventory
    * - Model stem
      - Topology files
      - Notes
-   * - ``mi325x_atom_deepseek-r1_fp8``
+   * - ``mi3xx_atom_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - W1 — profiles: perf, accuracy, mtp3, baseline_sweep, vllm, sglang (single); perf, sglang, accuracy (distributed)
-   * - ``mi325x_atom_gpt-oss-120b_mxfp4``
+   * - ``mi3xx_atom_gpt-oss-120b_mxfp4``
      - ``_single``
      - W2 — ``perf`` / ``native`` / ``vllm`` / ``sglang`` profiles
-   * - ``mi325x_atom_glm-5.1``
+   * - ``mi3xx_atom_glm-5.1``
      - ``_single``
      - W4 perf + accuracy profiles
    * - Other P2 models
@@ -76,7 +77,7 @@ accuracy/MTP blocks):
 .. code:: bash
 
   cvs run atom \
-    --config_file ~/input/.../mi325x_atom_deepseek-r1_fp8_single.json \
+    --config_file ~/input/.../mi3xx_atom_deepseek-r1_fp8_single.json \
     --config_profile accuracy \
     --cluster_file ~/input/cluster_file/atom_cluster.json
 
@@ -204,7 +205,7 @@ Top-level fields:
    * - ``framework``
      - ``atom``
    * - ``gpu_arch``
-     - ``mi325x`` / ``mi325x`` label
+     - ``mi3xx`` family label (config stem prefix)
    * - ``enforce_thresholds``
      - ``true`` = gate metrics; ``false`` = record-only
    * - ``threshold_json``

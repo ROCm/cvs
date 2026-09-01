@@ -1,13 +1,13 @@
 {
-  "_comment": "Tracker #16 zai-org/GLM-5.2-FP8 perf stem (mi325x).",
+  "_comment": "Tracker #21 mistralai/Mistral-Large-3-675B-Instruct-2512 perf stem (mi3xx).",
   "schema_version": 1,
   "framework": "atom",
-  "gpu_arch": "mi325x",
+  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
-  "threshold_json": "mi325x_atom_glm-5.2-fp8_threshold.json",
+  "threshold_json": "mi325x_atom_mistral-large-3_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "P2 workload tracker #16; lab pending"
+    "notes": "P2 workload tracker #21; lab pending"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -16,13 +16,13 @@
     "hf_token_file": "{shared_fs}/.hf_token"
   },
   "model": {
-    "id": "zai-org/GLM-5.2-FP8",
+    "id": "mistralai/Mistral-Large-3-675B-Instruct-2512",
     "remote": 0,
     "precision": "fp8"
   },
   "container": {
     "lifetime": "per_run",
-    "name": "atom_mi325x",
+    "name": "atom_mi3xx",
     "image": "rocm/atom-dev:latest",
     "runtime": {
       "name": "docker",
@@ -72,18 +72,18 @@
   "sweep": {
     "sequence_combinations": [
       {
-        "name": "glm52fp8_1k_1k",
+        "name": "mistral_1k_1k",
         "isl": "1024",
         "osl": "1024"
       }
     ],
     "runs": [
       {
-        "combo": "glm52fp8_1k_1k",
+        "combo": "mistral_1k_1k",
         "concurrency": 128
       },
       {
-        "combo": "glm52fp8_1k_1k",
+        "combo": "mistral_1k_1k",
         "concurrency": 256
       }
     ]

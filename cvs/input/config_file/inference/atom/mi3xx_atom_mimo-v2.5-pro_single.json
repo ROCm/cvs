@@ -1,13 +1,13 @@
 {
-  "_comment": "Tracker #17 zai-org/GLM-5.2 perf stem (mi325x).",
+  "_comment": "Tracker #23 XiaomiMiMo/MiMo-V2.5-Pro perf stem (mi3xx).",
   "schema_version": 1,
   "framework": "atom",
-  "gpu_arch": "mi325x",
+  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
-  "threshold_json": "mi325x_atom_glm-5.2_threshold.json",
+  "threshold_json": "mi325x_atom_mimo-v2.5-pro_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "P2 workload tracker #17; lab pending"
+    "notes": "P2 workload tracker #23; lab pending"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -16,13 +16,13 @@
     "hf_token_file": "{shared_fs}/.hf_token"
   },
   "model": {
-    "id": "zai-org/GLM-5.2",
+    "id": "XiaomiMiMo/MiMo-V2.5-Pro",
     "remote": 0,
-    "precision": "mxfp4"
+    "precision": "bf16"
   },
   "container": {
     "lifetime": "per_run",
-    "name": "atom_mi325x",
+    "name": "atom_mi3xx",
     "image": "rocm/atom-dev:latest",
     "runtime": {
       "name": "docker",
@@ -50,9 +50,7 @@
         "--trust-remote-code"
       ],
       "env": {
-        "ATOM_DISABLE_MMAP": "true",
-        "ATOM_USE_TRITON_MOE": "1",
-        "ATOM_USE_TRITON_GEMM": "1"
+        "ATOM_DISABLE_MMAP": "true"
       }
     }
   },
@@ -74,18 +72,18 @@
   "sweep": {
     "sequence_combinations": [
       {
-        "name": "glm52_1k_1k",
+        "name": "mimo_1k_1k",
         "isl": "1024",
         "osl": "1024"
       }
     ],
     "runs": [
       {
-        "combo": "glm52_1k_1k",
+        "combo": "mimo_1k_1k",
         "concurrency": 128
       },
       {
-        "combo": "glm52_1k_1k",
+        "combo": "mimo_1k_1k",
         "concurrency": 256
       }
     ]

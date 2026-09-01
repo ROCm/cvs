@@ -1,13 +1,13 @@
 {
-  "_comment": "Tracker #15 Qwen/Qwen3.5-397B-A17B perf stem (mi325x).",
+  "_comment": "Tracker #20 amd/Qwen3.5-397B-A17B-MXFP4 perf stem (mi3xx).",
   "schema_version": 1,
   "framework": "atom",
-  "gpu_arch": "mi325x",
+  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
-  "threshold_json": "mi325x_atom_qwen3.5-397b-a17b_threshold.json",
+  "threshold_json": "mi325x_atom_qwen3.5-397b-a17b-mxfp4_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "P2 workload tracker #15; lab pending"
+    "notes": "P2 workload tracker #20; lab pending"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -16,13 +16,13 @@
     "hf_token_file": "{shared_fs}/.hf_token"
   },
   "model": {
-    "id": "Qwen/Qwen3.5-397B-A17B",
+    "id": "amd/Qwen3.5-397B-A17B-MXFP4",
     "remote": 0,
-    "precision": "bf16"
+    "precision": "mxfp4"
   },
   "container": {
     "lifetime": "per_run",
-    "name": "atom_mi325x",
+    "name": "atom_mi3xx",
     "image": "rocm/atom-dev:latest",
     "runtime": {
       "name": "docker",
@@ -50,7 +50,9 @@
         "--trust-remote-code"
       ],
       "env": {
-        "ATOM_DISABLE_MMAP": "true"
+        "ATOM_DISABLE_MMAP": "true",
+        "ATOM_USE_TRITON_MOE": "1",
+        "ATOM_USE_TRITON_GEMM": "1"
       }
     }
   },
@@ -72,18 +74,18 @@
   "sweep": {
     "sequence_combinations": [
       {
-        "name": "qwenbf16_1k_1k",
+        "name": "qwenmx_1k_1k",
         "isl": "1024",
         "osl": "1024"
       }
     ],
     "runs": [
       {
-        "combo": "qwenbf16_1k_1k",
+        "combo": "qwenmx_1k_1k",
         "concurrency": 128
       },
       {
-        "combo": "qwenbf16_1k_1k",
+        "combo": "qwenmx_1k_1k",
         "concurrency": 256
       }
     ]

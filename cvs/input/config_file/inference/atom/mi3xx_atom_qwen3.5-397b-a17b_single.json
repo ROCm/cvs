@@ -1,13 +1,13 @@
 {
-  "_comment": "P1 Qwen3.5-397B-A17B FP8 on 8x MI300X (1K ISL / 8K OSL). Atom tracker #8.",
+  "_comment": "Tracker #15 Qwen/Qwen3.5-397B-A17B perf stem (mi3xx).",
   "schema_version": 1,
   "framework": "atom",
-  "gpu_arch": "mi325x",
+  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
-  "threshold_json": "mi325x_atom_qwen3.5-397b-a17b_fp8_threshold.json",
+  "threshold_json": "mi325x_atom_qwen3.5-397b-a17b_threshold.json",
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "P1 perf; calibrate thresholds after lab confirm"
+    "notes": "P2 workload tracker #15; lab pending"
   },
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -16,13 +16,13 @@
     "hf_token_file": "{shared_fs}/.hf_token"
   },
   "model": {
-    "id": "amd/Qwen3.5-397B-A17B-FP8",
+    "id": "Qwen/Qwen3.5-397B-A17B",
     "remote": 0,
-    "precision": "fp8"
+    "precision": "bf16"
   },
   "container": {
     "lifetime": "per_run",
-    "name": "atom_mi325x",
+    "name": "atom_mi3xx",
     "image": "rocm/atom-dev:latest",
     "runtime": {
       "name": "docker",
@@ -60,32 +60,32 @@
     "tensor_parallelism": "8",
     "random_range_ratio": "0.8",
     "num_prompts": "1000",
-    "max_model_length": "12288",
+    "max_model_length": "4096",
     "metric_percentiles": "95,99",
     "reuse_server_across_sweep": "true",
     "client_poll_count": "80",
     "client_poll_wait_time": "60"
   },
+  "platform": {
+    "gpu_metrics_poll": true
+  },
   "sweep": {
     "sequence_combinations": [
       {
-        "name": "qwen_1k_8k",
+        "name": "qwenbf16_1k_1k",
         "isl": "1024",
-        "osl": "8192"
+        "osl": "1024"
       }
     ],
     "runs": [
       {
-        "combo": "qwen_1k_8k",
-        "concurrency": 32
+        "combo": "qwenbf16_1k_1k",
+        "concurrency": 128
       },
       {
-        "combo": "qwen_1k_8k",
-        "concurrency": 64
+        "combo": "qwenbf16_1k_1k",
+        "concurrency": 256
       }
     ]
-  },
-  "platform": {
-    "gpu_metrics_poll": true
   }
 }

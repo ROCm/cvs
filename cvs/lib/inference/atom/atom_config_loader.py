@@ -187,10 +187,7 @@ class AtomVariantConfig(BaseVariantConfig):
 
     def cell_key(self, isl, osl, concurrency):
         p = self.params
-        return (
-            f"ISL={isl},OSL={osl},TP={p.tensor_parallelism},"
-            f"PP={p.pipeline_parallel_size},CONC={concurrency}"
-        )
+        return f"ISL={isl},OSL={osl},TP={p.tensor_parallelism},PP={p.pipeline_parallel_size},CONC={concurrency}"
 
     def expected_cells(self) -> list[str]:
         by_name = {c.name: c for c in self.sweep.sequence_combinations}

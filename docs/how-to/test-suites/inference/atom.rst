@@ -56,14 +56,14 @@ sits beside the config you pass to ``--config_file``:
   SINGLE_DIR=~/input/config_file/inference/atom/single
   mkdir -p "$SINGLE_DIR"
 
-  cvs config copy inference/atom/mi325x_atom_deepseek-r1_fp8_single.json \
-    --output "$SINGLE_DIR/mi325x_atom_deepseek-r1_fp8_single.json"
+  cvs config copy inference/atom/mi3xx_atom_deepseek-r1_fp8_single.json \
+    --output "$SINGLE_DIR/mi3xx_atom_deepseek-r1_fp8_single.json"
   cvs config copy inference/atom/mi325x_atom_deepseek-r1_fp8_threshold.json \
     --output "$SINGLE_DIR/mi325x_atom_deepseek-r1_fp8_threshold.json"
   cvs config copy cluster_file/atom_cluster.json --output ~/input/cluster_file/atom_cluster.json
 
-Use ``mi325x_*`` stems on MI325X (gfx942). Threshold filenames must match the
-platform you calibrated on.
+Config stems use ``mi3xx_*`` (MI300-family). Threshold files use ``mi325x_*``
+on MI325X (gfx942) — match the platform you calibrated on.
 
 Step 2: Edit placeholders
 =========================
@@ -92,7 +92,7 @@ Single-node W1 (``driver=atom``):
 
   cvs run atom \
     --cluster_file ~/input/cluster_file/atom_cluster.json \
-    --config_file "$SINGLE_DIR/mi325x_atom_deepseek-r1_fp8_single.json" \
+    --config_file "$SINGLE_DIR/mi3xx_atom_deepseek-r1_fp8_single.json" \
     --html ~/cvs_results/atom-w1-single.html --self-contained-html -vvv
 
 Multinode PP (``driver=vllm_atom``):
@@ -101,7 +101,7 @@ Multinode PP (``driver=vllm_atom``):
 
   cvs run atom \
     --cluster_file ~/input/cluster_file/atom_cluster.json \
-    --config_file ~/input/config_file/inference/atom/distributed/mi325x_atom_deepseek-r1_fp8_distributed.json \
+    --config_file ~/input/config_file/inference/atom/distributed/mi3xx_atom_deepseek-r1_fp8_distributed.json \
     --html ~/cvs_results/atom-w1-distributed.html --self-contained-html -vvv
 
 Multi-profile configs (``schema_version: 2``) select a job shape with
@@ -111,7 +111,7 @@ Multi-profile configs (``schema_version: 2``) select a job shape with
 
   cvs run atom \
     --cluster_file ~/input/cluster_file/atom_cluster.json \
-    --config_file "$SINGLE_DIR/mi325x_atom_deepseek-r1_fp8_single.json" \
+    --config_file "$SINGLE_DIR/mi3xx_atom_deepseek-r1_fp8_single.json" \
     --config_profile accuracy \
     --html ~/cvs_results/atom-w1-accuracy.html --self-contained-html -vvv
 

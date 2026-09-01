@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "framework": "atom",
-  "gpu_arch": "mi325x",
+  "gpu_arch": "mi3xx",
   "default_profile": "perf",
   "threshold_json": "mi325x_atom_deepseek-r1_mxfp4_threshold.json",
   "paths": {
@@ -24,7 +24,7 @@
       },
       "container": {
         "lifetime": "per_run",
-        "name": "atom_mi325x",
+        "name": "atom_mi3xx",
         "image": "rocm/atom-dev:latest",
         "runtime": {
           "name": "docker",
@@ -103,7 +103,7 @@
       },
       "container": {
         "lifetime": "per_run",
-        "name": "atom_mi325x",
+        "name": "atom_mi3xx",
         "image": "rocm/atom-dev:latest",
         "runtime": {
           "name": "docker",
