@@ -294,13 +294,7 @@ def _test_metric(
     request.node.user_properties.append(("metric_unit", units.get(metric, "-")))
     if prefix != "client." and value is None:
         pytest.skip(f"{full}: no value recorded")
-    cell = variant_config.cell_key(
-        seq_combo["isl"],
-        seq_combo["osl"],
-        concurrency,
-        nnodes=len(vllm_targets[0]),
-        pipeline_parallel_size=(1 if len(vllm_targets[0]) == 1 else variant_config.params.pipeline_parallel_size),
-    )
+    cell = variant_config.cell_key(seq_combo["isl"], seq_combo["osl"], concurrency)
     spec = (variant_config.thresholds.get(cell) or {}).get(full)
     if not variant_config.enforce_thresholds or spec is None:
         return

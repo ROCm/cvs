@@ -147,13 +147,20 @@ class VllmJob:
         self.hosts = tuple(orch.hosts)
         if not self.hosts:
             raise ValueError("VllmJob requires at least one target host")
+        topology = getattr(variant, "_effective_topology", None) if hasattr(variant, "__pydantic_private__") else None
+        if topology is not None and topology.hosts != self.hosts:
+            raise ValueError("vLLM topology hosts do not match the orchestrator")
 
         p = variant.params
         self.tp = p.tensor_parallelism
-        self.pp = p.pipeline_parallel_size if len(self.hosts) > 1 else "1"
+        self.pp = (
+            str(topology.pipeline_parallel_size)
+            if topology is not None
+            else (p.pipeline_parallel_size if len(self.hosts) > 1 else "1")
+        )
         self.master_addr = p.master_addr
         self.master_port = p.master_port
-        self.nnodes = str(len(self.hosts))
+        self.nnodes = str(topology.nnodes) if topology is not None else str(len(self.hosts))
         self.port_no = p.port_no
         self.random_range_ratio = p.random_range_ratio
         self.random_prefix_len = p.random_prefix_len

@@ -71,8 +71,11 @@ class CellRecordBuilder:
         if not specs:
             return "na"
         for metric, spec in specs.items():
-            if metric_pass(metric, actuals.get(metric), spec) == "fail":
+            status = metric_pass(metric, actuals.get(metric), spec)
+            if status == "fail":
                 return "fail"
+            if status == "na":
+                return "na"
         return "pass"
 
     def resolve_pytest_nodeids(self, concurrency: Any) -> dict[str, str]:

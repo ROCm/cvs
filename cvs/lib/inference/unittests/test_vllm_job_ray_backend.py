@@ -6,9 +6,8 @@ Unit tests for the Ray distributed-executor-backend support added to
 cvs.lib.inference.vllm_job.VllmJob and
 cvs.lib.inference.utils.vllm_config_loader.VariantConfig.
 
-Impl-blind / spec-derived (greenfield): these tests are written from the
-behavioral spec before the implementation exists and are committed RED. A
-different agent makes them green and may NOT edit this file.
+These tests were originally derived from the Ray execution contract before
+implementation and retain coverage of its observable behavior.
 
 Coverage map (spec AC -> test):
   Config validator relaxation ...... AC1-6   -> TestVariantConfigRayConsistency
@@ -61,6 +60,7 @@ from types import SimpleNamespace
 
 from pydantic import ValidationError
 
+from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
 from cvs.lib.inference.utils.vllm_config_loader import VariantConfig
 from cvs.lib.inference.vllm_job import VllmJob
 
@@ -219,14 +219,13 @@ def _responder_readiness(exit_code=0, empty=False):
     return r
 
 
-def _variant(serve_args=None, nnodes="2", pp="2", ib_netdev="enp159s0np0", tp="8", master_addr="10.0.0.1", env=None):
+def _variant(serve_args=None, pp="2", ib_netdev="enp159s0np0", tp="8", master_addr="10.0.0.1", env=None):
     """Minimal SimpleNamespace variant mirroring _variant() in the reuse suite."""
     params = SimpleNamespace(
         tensor_parallelism=tp,
         pipeline_parallel_size=pp,
         master_addr=master_addr,
         master_port="29501",
-        nnodes=nnodes,
         port_no="8000",
         random_range_ratio="0.0",
         random_prefix_len="0",
@@ -270,7 +269,7 @@ def _job(
         orch.hosts = list(orch.hosts[: int(nnodes)])
     return VllmJob(
         orch=orch,
-        variant=_variant(serve_args, nnodes, pp, ib_netdev, tp, master_addr, env),
+        variant=_variant(serve_args, pp, ib_netdev, tp, master_addr, env),
         hf_token="tok",
         isl=isl,
         osl=osl,
@@ -353,6 +352,31 @@ class TestCellKeyRayMultiNode(unittest.TestCase):
             with self.subTest(nnodes=nnodes, pp=pp):
                 vc = _vc(pp=pp, tp="8")
                 self.assertEqual(vc.cell_key("1024", "1024", "16", nnodes=nnodes, pipeline_parallel_size=pp), expected)
+
+    def test_bound_topology_drives_three_argument_key_and_expected_cells(self):
+        vc = _vc(pp="2", tp="8")
+        vc.bind_effective_topology(EffectiveVllmTopology("distributed", ("node0", "node1"), 2))
+        expected = "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=16"
+        self.assertEqual(vc.cell_key("1024", "1024", "16"), expected)
+        self.assertEqual(vc.expected_cells(), [expected])
+
+    def test_unbound_three_argument_key_fails_clearly(self):
+        with self.assertRaisesRegex(RuntimeError, "topology is not bound"):
+            _vc(pp="2", tp="8").cell_key("1024", "1024", "16")
+
+    def test_job_uses_bound_effective_topology(self):
+        variant = _vc(pp="2", tp="8")
+        variant.bind_effective_topology(EffectiveVllmTopology("distributed", (HEAD, WORKER), 2))
+        job = VllmJob(
+            orch=RecordingOrch(),
+            variant=variant,
+            hf_token="token",
+            isl="1024",
+            osl="1024",
+            concurrency=16,
+            num_prompts=320,
+        )
+        self.assertEqual((job.nnodes, job.pp), ("2", "2"))
 
 
 # --------------------------------------------------------------------------- #
@@ -1108,7 +1132,7 @@ class TestVllmJobWaitReady(unittest.TestCase):
         poll_count = 3
         job = VllmJob(
             orch=RecordingOrch(responder=_responder_ok(), hosts=[HEAD]),
-            variant=_variant(serve_args={}, nnodes="1", pp="1", ib_netdev=None),
+            variant=_variant(serve_args={}, pp="1", ib_netdev=None),
             hf_token="tok",
             isl="1024",
             osl="1024",

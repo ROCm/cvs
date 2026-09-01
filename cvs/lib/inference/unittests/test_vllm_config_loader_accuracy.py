@@ -108,7 +108,7 @@ class TestAccuracyThresholdKeyDoesNotTripSweepCoverage(unittest.TestCase):
         )
         with self.assertRaises(ValueError) as ctx:
             validate_thresholds_cover_sweep(
-                expected_cells=variant.expected_cells(),
+                expected_cells=variant.expected_cells(nnodes=1),
                 thresholds=variant.thresholds,
                 enforce_thresholds=variant.enforce_thresholds,
             )

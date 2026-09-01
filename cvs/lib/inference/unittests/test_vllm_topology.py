@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 
 from cvs.cli_plugins.list_plugin import ListPlugin
-from cvs.lib.inference.vllm_topology import build_vllm_targets, scope_vllm_cluster
+from cvs.lib.inference.vllm_topology import build_vllm_targets, resolve_vllm_topology, scope_vllm_cluster
 
 
 def _variant(pp="1", ray=False, ib_netdev=None):
@@ -37,6 +37,10 @@ class TestVllmTopology(unittest.TestCase):
         targets, pp = build_vllm_targets("distributed", _variant(pp="2", ib_netdev="eth0"), ["node0", "node1"])
         self.assertEqual(targets, (("node0", "node1"),))
         self.assertEqual(pp, 2)
+
+    def test_distributed_rejects_more_than_two_hosts(self):
+        with self.assertRaisesRegex(ValueError, "exactly two"):
+            resolve_vllm_topology("distributed", _variant(pp="2", ib_netdev="eth0"), ["node0", "node1", "node2"])
 
     def test_distributed_one_host_uses_singleton_fallback(self):
         targets, pp = build_vllm_targets("distributed", _variant(pp="2"), ["node0"])

@@ -10,7 +10,7 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.inference.vllm_topology import build_vllm_targets, scope_vllm_cluster
+from cvs.lib.inference.vllm_topology import resolve_vllm_topology, scope_vllm_cluster
 from cvs.lib.inference.utils.inferencing_config_loader import validate_thresholds_cover_sweep
 from cvs.lib.inference.utils.vllm_config_loader import load_variant
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
@@ -124,17 +124,18 @@ def vllm_mode(request):
 @pytest.fixture(scope="module")
 def vllm_targets(orch, variant_config, vllm_mode):
     try:
-        targets, effective_pp = build_vllm_targets(vllm_mode, variant_config, orch.hosts)
+        topology = resolve_vllm_topology(vllm_mode, variant_config, orch.hosts)
     except ValueError as exc:
         pytest.fail(str(exc))
 
+    variant_config.bind_effective_topology(topology)
     validate_thresholds_cover_sweep(
-        expected_cells=variant_config.expected_cells(nnodes=len(targets[0]), pipeline_parallel_size=effective_pp),
+        expected_cells=variant_config.expected_cells(),
         thresholds=variant_config.thresholds,
         enforce_thresholds=variant_config.enforce_thresholds,
         gated_metrics=set(),
     )
-    return targets
+    return topology.target_groups
 
 
 @pytest.fixture(scope="module")

@@ -29,7 +29,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 from typing_extensions import Literal
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
@@ -192,6 +192,7 @@ class VariantConfig(_Forbid):
     sweep: Sweep
     thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
+    _effective_topology: Any = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def _check_remote_not_implemented(self):
@@ -199,7 +200,10 @@ class VariantConfig(_Forbid):
             raise NotImplementedError("model.remote=1 (remote model download) is not implemented.")
         return self
 
-    def cell_key(self, isl, osl, concurrency, *, nnodes=1, pipeline_parallel_size=None):
+    def bind_effective_topology(self, topology) -> None:
+        self._effective_topology = topology
+
+    def cell_key(self, isl, osl, concurrency, *, nnodes=None, pipeline_parallel_size=None):
         """Canonical threshold key for one sweep cell.
 
         The effective topology is supplied by the suite after it has constructed
@@ -208,13 +212,23 @@ class VariantConfig(_Forbid):
         Single-node: ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<concurrency>
         Distributed:  ISL=<isl>,OSL=<osl>,TP=<tp>,PP=<pp>,NNODES=<n>,CONC=<concurrency>
         """
+        topology = self._effective_topology
+        if nnodes is None:
+            if topology is None:
+                raise RuntimeError("vLLM effective topology is not bound")
+            nnodes = topology.nnodes
+        if pipeline_parallel_size is None:
+            pipeline_parallel_size = (
+                topology.pipeline_parallel_size if topology is not None else self.params.pipeline_parallel_size
+            )
+
         base = f"ISL={isl},OSL={osl},TP={self.params.tensor_parallelism},"
-        pp = int(pipeline_parallel_size if pipeline_parallel_size is not None else self.params.pipeline_parallel_size)
+        pp = int(pipeline_parallel_size)
         if int(nnodes) > 1:
             base += f"PP={pp},NNODES={int(nnodes)},"
         return base + f"CONC={concurrency}"
 
-    def expected_cells(self, *, nnodes=1, pipeline_parallel_size=None):
+    def expected_cells(self, *, nnodes=None, pipeline_parallel_size=None):
         by_name = {c.name: c for c in self.sweep.sequence_combinations}
         return [
             self.cell_key(

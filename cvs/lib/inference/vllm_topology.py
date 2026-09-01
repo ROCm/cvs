@@ -1,6 +1,22 @@
 '''Effective vLLM topology derived from the selected suite and orchestrator.'''
 
 from copy import deepcopy
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class EffectiveVllmTopology:
+    mode: str
+    hosts: tuple[str, ...]
+    pipeline_parallel_size: int
+
+    @property
+    def nnodes(self) -> int:
+        return len(self.hosts)
+
+    @property
+    def target_groups(self) -> tuple[tuple[str, ...], ...]:
+        return (self.hosts,)
 
 
 def scope_vllm_cluster(mode, cluster):
@@ -29,7 +45,7 @@ def scope_vllm_cluster(mode, cluster):
     return scoped
 
 
-def build_vllm_targets(mode, variant, hosts):
+def resolve_vllm_topology(mode, variant, hosts) -> EffectiveVllmTopology:
     hosts = tuple(hosts)
     if not hosts:
         raise ValueError("vLLM requires at least one orchestrator host")
@@ -39,11 +55,16 @@ def build_vllm_targets(mode, variant, hosts):
             raise ValueError("vllm_single requires pipeline_parallel_size=1")
         if len(hosts) != 1:
             raise ValueError("vllm_single orchestrator must be scoped to its first host")
-        return (hosts,), 1
+        return EffectiveVllmTopology("single", hosts, 1)
     if mode != "distributed":
         raise ValueError(f"unknown vLLM mode: {mode!r}")
     if len(hosts) == 1:
-        return (hosts,), 1
+        return EffectiveVllmTopology("single", hosts, 1)
+    if len(hosts) != 2:
+        raise ValueError(
+            "vllm_distributed currently supports exactly two cluster hosts; "
+            "add an explicit N-host recipe and thresholds before using a larger cluster"
+        )
 
     is_ray = variant.roles.server.serve_args.get("distributed-executor-backend") == "ray"
     effective_pp = int(variant.params.pipeline_parallel_size)
@@ -51,4 +72,9 @@ def build_vllm_targets(mode, variant, hosts):
         raise ValueError("vllm_distributed requires pipeline_parallel_size>1 unless distributed-executor-backend=ray")
     if not variant.roles.server.ib_netdev:
         raise ValueError("vllm_distributed requires roles.server.ib_netdev on multi-host clusters")
-    return (hosts,), effective_pp
+    return EffectiveVllmTopology("distributed", hosts, effective_pp)
+
+
+def build_vllm_targets(mode, variant, hosts):
+    topology = resolve_vllm_topology(mode, variant, hosts)
+    return topology.target_groups, topology.pipeline_parallel_size
