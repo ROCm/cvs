@@ -188,6 +188,7 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                 ),
             )
 
+    _CELL_RE = re.compile(r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$")
     enforce_thresholds = perf_enforce_thresholds(bp)
 
     PERF_METRICS = [
