@@ -11,7 +11,7 @@ separate pytest module; pick the one that matches your topology, then point ``--
 at a template from ``cvs/input/config_file/inference/sglang/``.
 
 For the full configuration schema, threshold format, and parameter reference, see
-:doc:`/reference/configuration-files/sglang`.
+:doc:`/reference/configuration-files/inference/sglang`.
 
 Test suites
 ===========
