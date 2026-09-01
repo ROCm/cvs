@@ -205,7 +205,7 @@ Top-level fields:
    * - ``framework``
      - ``atom``
    * - ``gpu_arch``
-     - ``mi3xx`` family label (config stem prefix)
+     - Inferred from the config filename prefix (``{gpu}_atom_…``); optional override in JSON
    * - ``enforce_thresholds``
      - ``true`` = gate metrics; ``false`` = record-only
    * - ``threshold_json``

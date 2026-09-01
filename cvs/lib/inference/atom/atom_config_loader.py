@@ -12,6 +12,7 @@ Generic paths/model/container/threshold plumbing lives in
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 from pydantic import Field, field_validator, model_validator
@@ -468,8 +469,24 @@ def _prune_orphan_sweep_thresholds(thresholds: dict[str, Any], expected_cells: l
     return pruned
 
 
+_CONFIG_STEM_GPU_ARCH = re.compile(r"^([^_]+)_atom_")
+
+
+def gpu_arch_from_config_path(config_path) -> str:
+    """Infer ``gpu_arch`` from ``{gpu}_atom_*.json`` config stems."""
+    stem = Path(config_path).stem
+    match = _CONFIG_STEM_GPU_ARCH.match(stem)
+    if not match:
+        raise ValueError(
+            f"config filename must be {{gpu}}_atom_*.json to infer gpu_arch (got {Path(config_path).name})"
+        )
+    return match.group(1)
+
+
 def load_variant(config_path, cluster_dict, profile: str | None = None) -> AtomVariantConfig:
     raw, thresholds = substitute_config(config_path, cluster_dict)
+    if not str(raw.get("gpu_arch") or "").strip():
+        raw["gpu_arch"] = gpu_arch_from_config_path(config_path)
     raw, thresholds, _ = resolve_atom_profile(raw, thresholds, profile)
     thresholds = _prune_orphan_sweep_thresholds(thresholds, _expected_cells_from_raw(raw))
     raw["thresholds"] = thresholds

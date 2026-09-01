@@ -1,7 +1,6 @@
 {
   "schema_version": 2,
   "framework": "atom",
-  "gpu_arch": "mi3xx",
   "default_profile": "perf",
   "threshold_json": "mi325x_atom_gpt-oss-120b_mxfp4_threshold.json",
   "paths": {

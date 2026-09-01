@@ -2,7 +2,6 @@
   "_comment": "Tracker #23 XiaomiMiMo/MiMo-V2.5-Pro perf stem (mi3xx).",
   "schema_version": 1,
   "framework": "atom",
-  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_mimo-v2.5-pro_threshold.json",
   "run_card": {

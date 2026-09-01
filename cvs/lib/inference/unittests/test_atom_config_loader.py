@@ -16,6 +16,7 @@ from cvs.lib.inference.atom.atom_config_loader import (
     AtomVariantConfig,
     expand_sweep,
     expand_sweep_parametrize,
+    gpu_arch_from_config_path,
     load_variant,
     orchestrator_container_from_variant,
     placeholder_gated_threshold_cell,
@@ -35,6 +36,22 @@ def _atom_config(root: Path, name: str, profile: str | None = None):
 
 
 class TestATOMAtomConfigLoader(unittest.TestCase):
+    def test_gpu_arch_inferred_from_config_filename(self):
+        root = Path(__file__).resolve().parents[3]
+        self.assertEqual(
+            gpu_arch_from_config_path(root / "input/config_file/inference/atom/mi3xx_atom_glm-5.1_single.json"),
+            "mi3xx",
+        )
+
+    def test_load_variant_infers_gpu_arch_when_omitted(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_glm-5.1_single.json")
+        self.assertEqual(variant.gpu_arch, "mi3xx")
+
+    def test_gpu_arch_from_config_path_rejects_non_atom_stem(self):
+        with self.assertRaises(ValueError):
+            gpu_arch_from_config_path("custom_workload.json")
+
     def test_load_mi3xx_sample_config(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_gpt-oss-120b_mxfp4_single.json", profile="vllm")

@@ -2,7 +2,6 @@
   "_comment": "Tracker #15 Qwen/Qwen3.5-397B-A17B perf stem (mi3xx).",
   "schema_version": 1,
   "framework": "atom",
-  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_qwen3.5-397b-a17b_threshold.json",
   "run_card": {

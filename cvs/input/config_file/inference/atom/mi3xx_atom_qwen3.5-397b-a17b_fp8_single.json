@@ -2,7 +2,6 @@
   "_comment": "P1 Qwen3.5-397B-A17B FP8 on 8x MI300X (1K ISL / 8K OSL). Atom tracker #8.",
   "schema_version": 1,
   "framework": "atom",
-  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_qwen3.5-397b-a17b_fp8_threshold.json",
   "run_card": {

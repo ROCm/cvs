@@ -2,7 +2,6 @@
   "_comment": "Tracker #16 zai-org/GLM-5.2-FP8 perf stem (mi3xx).",
   "schema_version": 1,
   "framework": "atom",
-  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_glm-5.2-fp8_threshold.json",
   "run_card": {

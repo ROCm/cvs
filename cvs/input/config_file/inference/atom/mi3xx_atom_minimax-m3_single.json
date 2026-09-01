@@ -2,7 +2,6 @@
   "_comment": "Tracker #19 MiniMaxAI/MiniMax-M3 perf stem (mi3xx).",
   "schema_version": 1,
   "framework": "atom",
-  "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_minimax-m3_threshold.json",
   "run_card": {
