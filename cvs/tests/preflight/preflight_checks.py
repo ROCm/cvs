@@ -196,10 +196,10 @@ def _prune_nodes_from_phdl(phdl, failed_nodes, reason):
     on_host = [h for h in phdl.reachable_hosts if h in remove]
     if not on_host:
         return
-    pruned = phdl.prune_nodes(on_host)
+    pruned = phdl.prune_nodes(on_host, reason=reason.rstrip(":"), log_pruning=False)
     if not pruned:
         return
-    log.info(f"{reason} Pruned {len(pruned)} node(s) from further preflight tests: {', '.join(sorted(pruned))}")
+    log.warning(f"{reason} Pruned {len(pruned)} node(s) from further preflight tests: {', '.join(sorted(pruned))}")
 
 
 # Override update_test_result for preflight tests to be reporting-only

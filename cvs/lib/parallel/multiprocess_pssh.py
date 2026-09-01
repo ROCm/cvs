@@ -465,9 +465,14 @@ class MultiProcessPssh(ShardableSshInterface):
 
         return merged_results
 
-    def prune_nodes(self, nodes_to_remove):
+    def prune_nodes(self, nodes_to_remove, reason="Unreachable", log_pruning=True):
         """
         Explicitly prune nodes from future operations.
+
+        Args:
+            nodes_to_remove: Iterable of hostnames/IPs to remove.
+            reason: Optional reason for pruning passed to underlying Pssh instance.
+            log_pruning: If True (default), log each pruned host in underlying Pssh.
 
         Works in both modes:
         - sharded mode: updates wrapper host state
@@ -483,7 +488,7 @@ class MultiProcessPssh(ShardableSshInterface):
 
         if self.pssh is not None:
             # Non-sharded mode: let single-process Pssh own prune + client rebuild.
-            removed = self.pssh.prune_nodes(removed)
+            removed = self.pssh.prune_nodes(removed, reason=reason, log_pruning=log_pruning)
             self._sync_pssh_state()
             return removed
 

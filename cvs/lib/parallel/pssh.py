@@ -130,12 +130,15 @@ class Pssh:
         unreachable = [item.host for item in output if item.exception]
         return unreachable
 
-    def prune_nodes(self, nodes_to_remove):
+    def prune_nodes(self, nodes_to_remove, reason="Unreachable", log_pruning=True):
         """
         Explicitly prune hosts from this Pssh instance and rebuild client.
 
         Args:
             nodes_to_remove: Iterable of hostnames/IPs to remove.
+            reason: Reason for pruning. Defaults to "Unreachable".
+            log_pruning: If True (default), log each pruned host. Set False to suppress logging
+                        when caller handles summary logging.
 
         Returns:
             list: Hosts actually removed from reachable_hosts.
@@ -148,8 +151,9 @@ class Pssh:
         if not removed:
             return []
 
-        for host in removed:
-            self.log.warning(f"Host {host} is unreachable, pruning from reachable hosts list.")
+        if log_pruning:
+            for host in removed:
+                self.log.warning(f"Host {host} pruned from reachable hosts list: {reason}")
 
         self.reachable_hosts = [h for h in self.reachable_hosts if h not in remove_set]
         for host in removed:
