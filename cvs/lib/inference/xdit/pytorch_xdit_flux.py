@@ -12,11 +12,43 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib import globals
 
 log = globals.log
+
+
+def log_results_summary(
+    results_summary: Sequence[Mapping[str, object]],
+    *,
+    metric_key: str = "avg_pipe_time_s",
+    title: str = "Multi-node results summary",
+) -> None:
+    """
+    Log a per-node benchmark summary block (multi-node scale-out or distributed).
+
+    Each entry in ``results_summary`` must include ``label``, ``passed``, and
+    ``metric_key`` (a numeric seconds value).
+    """
+    if len(results_summary) <= 1:
+        return
+
+    log.info("=" * 60)
+    log.info("%s:", title)
+    for entry in results_summary:
+        label = str(entry["label"])
+        passed = bool(entry["passed"])
+        avg_s = float(entry[metric_key])
+        status = "PASS" if passed else "FAIL"
+        log.info("  %s: %.2fs [%s]", label, avg_s, status)
+
+    metric_values = [float(entry[metric_key]) for entry in results_summary]
+    overall_avg = sum(metric_values) / len(metric_values) if metric_values else 0.0
+    passed_count = sum(1 for entry in results_summary if entry["passed"])
+    log.info("  Overall average: %.2fs", overall_avg)
+    log.info("  Nodes passed: %d/%d", passed_count, len(results_summary))
+    log.info("=" * 60)
 
 
 @dataclass
@@ -138,22 +170,24 @@ class FluxOutputParser:
             List of Path objects pointing to generated images
         """
         image_paths = []
+        patterns = [self.expected_image_pattern]
+        if self.expected_image_pattern == "flux_*.png":
+            patterns.append("flux2_*.png")
 
-        # Expected location: output_dir/results/flux_*.png
         results_dir = self.output_dir / "results"
         if results_dir.exists():
-            image_paths.extend(results_dir.glob(self.expected_image_pattern))
+            for pattern in patterns:
+                image_paths.extend(results_dir.glob(pattern))
 
-        # Fallback: search recursively
         if not image_paths:
             for root, dirs, files in os.walk(self.output_dir):
                 root_path = Path(root)
-                for pattern_match in root_path.glob(self.expected_image_pattern):
-                    if pattern_match.is_file():
-                        image_paths.append(pattern_match)
+                for pattern in patterns:
+                    for pattern_match in root_path.glob(pattern):
+                        if pattern_match.is_file():
+                            image_paths.append(pattern_match)
 
-        # Sort for consistent ordering
-        image_paths.sort()
+        image_paths = sorted(set(image_paths))
 
         log.info(f"Found {len(image_paths)} generated images under {self.output_dir}")
         for img_path in image_paths:
