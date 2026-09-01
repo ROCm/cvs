@@ -26,6 +26,6 @@ LLM serving, disaggregated prefill/decode, and diffusion workloads for cluster-s
      - :doc:`/reference/configuration-files/inference/sglang`
    * - xDiT
      - :doc:`/how-to/test-suites/inference/xdit`
-     - :doc:`/reference/configuration-files/inference/flux1_t2i`, :doc:`/reference/configuration-files/inference/wan22_i2v`
+     - :doc:`/reference/configuration-files/inference/xdit`
 
 See also :doc:`/how-to/run-tests/index` for common ``cvs run`` flags and workflow.

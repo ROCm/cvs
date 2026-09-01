@@ -27,6 +27,8 @@ threshold file referenced by ``benchmark_params.<variant>.threshold_file``.
      - ``cvs/tests/inference/sglang/sglang_disagg_distributed.py``
      - Disaggregated prefill/decode with a proxy router; separate prefill and decode node groups.
 
+How to run: :doc:`/how-to/test-suites/inference/sglang`.
+
 Run any suite with:
 
 .. code:: bash
@@ -36,7 +38,15 @@ Run any suite with:
     --config_file cvs/input/config_file/inference/sglang/<config>.json \
     --html=~/cvs_results/sglang.html
 
-Copy a template locally with ``cvs copy-config`` (see ``cvs copy-config --list`` for names).
+Copy a template locally:
+
+.. code:: bash
+
+  cvs config list inference/sglang
+  cvs config copy inference/sglang/mi3xx_sglang_llama_70b_single.json \
+    --output ~/cvs_workspace/inference/sglang/mi3xx_sglang_llama_70b_single.json
+  cvs config copy inference/sglang/mi3xx_sglang_llama_70b_threshold.json \
+    --output ~/cvs_workspace/inference/sglang/mi3xx_sglang_llama_70b_threshold.json
 
 .. note::
 
@@ -285,6 +295,8 @@ Uses the multi-node network fields above, plus:
      - Rank-0 addresses for each role group.
    * - ``prefill_coordinator_port``, ``decode_coordinator_port``
      - Coordinator ports (defaults ``40001``, ``40002``).
+   * - ``gloo_tcp_ifname``
+     - TCP interface for Gloo (disaggregated templates; ``<changeme>``).
    * - ``nccl_ib_hca_list``
      - RDMA devices for disaggregation transfer (in addition to ``nccl_ib_hca``).
 
@@ -308,16 +320,25 @@ Uses the multi-node network fields above, plus:
      - ``8``, ``1`` or ``2``
      - TP size per node; PP across nodes for distributed/disaggregated runs.
    * - ``memory_fraction``
-     - ``0.85``
+     - ``0.85`` (Llama) / ``0.7`` (DeepSeek)
      - Static KV-cache memory fraction passed to ``launch_server``.
    * - ``max_concurrency``
      - ``256``
      - ``bench_serving`` concurrency sweep upper bound.
+   * - ``tokenizer_mode``
+     - ``auto``
+     - Tokenizer mode passed to ``launch_server``.
+   * - ``inference_poll_iterations``
+     - ``16``
+     - Server-ready poll attempts.
    * - ``add_export_env``, ``add_flags``
-     - ROCm/SGLang tuning (for example ``SGLANG_USE_AITER=1``, ``--attention-backend aiter``).
+     - ROCm/SGLang tuning (for example ``SGLANG_USE_AITER=1``, ``--attention-backend aiter``). DeepSeek templates also set ``GPU_ARCHS=gfx942``.
    * - ``context_length``
      - ``205000``
-     - Long-context cap (distributed / disaggregated DeepSeek and Llama templates).
+     - Long-context cap (distributed / disaggregated Llama and DeepSeek templates).
+   * - ``prefill_policy``, ``decode_policy``
+     - ``cache_aware``
+     - Disaggregated templates only; PD routing policy.
 
 Inference tests
 ===============
