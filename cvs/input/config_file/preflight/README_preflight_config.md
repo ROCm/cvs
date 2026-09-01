@@ -291,8 +291,8 @@ They now follow this fixed policy:
 | `dst_accelerators` | Build strict destination coverage from reconciled vPOD membership |
 | `ports` | Test admitted, station-mask-enabled ports that are operationally up |
 | `traffic_types` | Enforce IFoE request, IFoE response, and non-IFoE traffic |
-| `loss_threshold_pct` | Fail on any reported loss or incomplete coverage |
-| `per_ping_timeout` / `ssh_timeout` | Derive conservative timeouts from the requested workload |
+| `loss_threshold_pct` | Default 0.0 (any reported loss fails the node); overridable via `l2ping.loss_threshold_pct` |
+| `per_ping_timeout` / `ssh_timeout` | Default 600s SSH timeout per afmctl invocation; overridable via `l2ping.ssh_timeout` |
 
 - **`fabric_checks`** (default: `false`)
   - Enables MI4XX-only AIFM/AFM/vPOD, station-mask, and IFoE port admission checks
@@ -308,6 +308,13 @@ port and validates per-port and aggregate summary accounting.
   - Enables the mandatory L2 connectivity gate before TransferBench and RDMA
 - **`pings_per_port`** (default: `3`)
   - Number of ping samples sent per selected IFoE port pair
+- **`ssh_timeout`** (default: `600`)
+  - SSH timeout in seconds for each `afmctl` invocation. Raise this when large
+    port counts or half-cabled BDFs make a sweep take longer than the previous
+    180s cap (measured healthy sweep ~117s, half-cabled ~260s).
+- **`loss_threshold_pct`** (default: `0.0`)
+  - Maximum tolerated packet loss percentage per traffic type. Keep `0.0` for a
+    strict gate; raise it only when known-dead ports should not fail the node.
 
 ##### TransferBench (`connectivity_check.ifoe.transferbench`)
 
