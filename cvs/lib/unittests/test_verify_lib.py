@@ -1,5 +1,6 @@
 import datetime
 import re
+import shutil
 import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
@@ -134,6 +135,8 @@ class TestKernelLogScanQuietAndSummarized(unittest.TestCase):
         self.assertFalse(
             any('SENTINEL-KERNEL-LOG' in str(arg) for call in handle.log.info.call_args_list for arg in call.args)
         )
+
+_HAS_BASH_AND_AWK = shutil.which("bash") and shutil.which("awk")
 
 
 class TestVerifyGpuPcieBusWidth(unittest.TestCase):
@@ -372,14 +375,8 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
         )
         return completed.stdout
 
-    def test_disabled_is_no_op(self):
-        phdl = MagicMock()
-        result = verify_lib.verify_dmesg_during_test(phdl, 'Starting Test x', 'End of Test x', dmesg_during_test=False)
-        self.assertEqual(result, {})
-        phdl.exec.assert_not_called()
-
     @patch("cvs.lib.verify_lib.log")
-    def test_missing_markers_warn_only(self, mock_log):
+    def test_nonempty_slice_without_start_marker_is_skipped(self, mock_log):
         phdl = MagicMock()
         phdl.exec.return_value = {"node1": "unrelated kernel line\n"}
 
@@ -391,6 +388,9 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
         self.assertEqual(result, {"node1": []})
         mock_fail.assert_not_called()
         mock_log.warning.assert_called()
+        warn_msg = mock_log.warning.call_args[0][0]
+        self.assertIn("start marker", warn_msg)
+        self.assertIn("not found in slice", warn_msg)
 
     @patch("cvs.lib.verify_lib.fail_test")
     def test_slice_command_uses_markers(self, mock_fail_test):
@@ -411,12 +411,18 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
 
         cmd = phdl.exec.call_args[0][0]
         self.assertIn("--time-format iso -x", cmd)
+        self.assertIn("grep -E -v", cmd)
+        self.assertNotIn("egrep", cmd)
         self.assertIn("-v s='Starting Test all_reduce_perf'", cmd)
         self.assertIn("-v e='End of Test all_reduce_perf'", cmd)
         self.assertIn("last=buf", cmd)
         self.assertIn('printf "%s",last', cmd)
         self.assertTrue(result["node1"])
         mock_fail_test.assert_called()
+        fail_msg = mock_fail_test.call_args[0][0]
+        self.assertIn("Failure pattern ***", fail_msg)
+        self.assertIn("on node node1", fail_msg)
+        self.assertNotIn("Failue", fail_msg)
 
     def test_shell_single_quote_metacharacters_reach_awk_command(self):
         start_marker = "Starting Test all_reduce's size=$1 `n`"
@@ -454,6 +460,7 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
             "a\n\nb\n",
         )
 
+    @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
     def test_awk_slice_has_no_trailing_blank_line(self):
         dmesg_text = "Starting Test all_reduce_perf\nEnd of Test all_reduce_perf\n"
         sliced = self._run_marker_awk_slice(dmesg_text, "Starting Test all_reduce_perf", "End of Test all_reduce_perf")
@@ -472,6 +479,7 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
         info_call = mock_log.info.call_args_list[-1]
         self.assertEqual(info_call[0][2], 2)
 
+    @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
     def test_awk_slice_returns_last_marker_pair_only(self):
         dmesg_text = (
             "noise before\n"
@@ -489,6 +497,7 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
         self.assertNotIn("noise before", sliced)
         self.assertNotIn("noise after", sliced)
 
+    @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
     def test_awk_slice_returns_partial_when_end_marker_missing(self):
         dmesg_text = (
             "Starting Test all_reduce_perf\n"

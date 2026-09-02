@@ -459,7 +459,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
         end_dt = _parse_cvs_time(end_time_dict[node0])
         if end_dt:
             analysis_args['analysis_range_end'] = end_dt
-    output_dict = _collect_kernel_log(phdl, "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
+    output_dict = _collect_kernel_log(phdl, "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never")
     err_dict = _node_scraper_scan(output_dict, analysis_args=analysis_args, source_label='Dmesg')
     _log_kernel_scan_summary('verify_dmesg_for_errors', output_dict, err_dict)
     return err_dict
@@ -513,22 +513,20 @@ def _dmesg_slice_by_markers_cmd(start_marker, end_marker):
         "cap{buf=buf $0 ORS;if(index($0,e)){last=buf;cap=0;buf=\"\"}} "
         "END{if(cap&&buf)printf \"%s\",buf; else if(last)printf \"%s\",last}"
     )
-    dmesg_cmd = "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never"
+    dmesg_cmd = "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never"
     return f"{dmesg_cmd} | awk -v s='{start_quoted}' -v e='{end_quoted}' '{awk_script}'"
 
 
-def verify_dmesg_during_test(phdl, start_marker, end_marker, *, dmesg_during_test=True):
+def verify_dmesg_during_test(phdl, start_marker, end_marker):
     """
     Collect dmesg between kmsg start/end markers (inclusive), log the slice per node,
     and scan for error/warn patterns.
 
-    Intended for RCCL tests that write markers via ``tee /dev/kmsg``. When
-    ``dmesg_during_test`` is False the function is a no-op. Missing markers on a
-    node produce a warning and skip scanning on that node (test is not failed).
+    Intended for RCCL tests that write markers via ``tee /dev/kmsg``. Callers
+    decide whether to invoke this (e.g. ``cvs_params.dmesg_during_test``). Missing
+    markers on a node produce a warning and skip scanning on that node (test is
+    not failed).
     """
-    if not dmesg_during_test:
-        return {}
-
     log.info('scan dmesg during test (markers: %s .. %s)', start_marker, end_marker)
     output_dict = phdl.exec(_dmesg_slice_by_markers_cmd(start_marker, end_marker))
     log.info('#----------------------------------------------------------#')
@@ -546,6 +544,8 @@ def verify_dmesg_during_test(phdl, start_marker, end_marker, *, dmesg_during_tes
                 end_marker,
             )
             continue
+        # Clean awk output already includes the start marker; this catches
+        # non-empty phdl.exec stdout that was not sliced (SSH noise, MOTD).
         if start_marker not in text:
             log.warning(
                 'node %s: dmesg_during_test skipped: start marker %r not found in slice',
@@ -807,7 +807,7 @@ def full_dmesg_scan(
     """
 
     output_dict = _collect_kernel_log(
-        phdl, "sudo dmesg --time-format iso -x | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never"
+        phdl, "sudo dmesg --time-format iso -x | grep -v initialized | grep -E -v 'ALLOWED|DENIED' --color=never"
     )
     err_dict = _node_scraper_scan(
         output_dict,
@@ -841,7 +841,7 @@ def verify_driver_errors(phdl):
     """
 
     err_dict = {}
-    output_dict = _collect_kernel_log(phdl, "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
+    output_dict = _collect_kernel_log(phdl, "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never")
     for node in output_dict.keys():
         err_dict[node] = []
         events = node_scraper_adapter.parse_dmesg(
