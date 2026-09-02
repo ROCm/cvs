@@ -26,7 +26,7 @@ is absent, but keeping one pair per directory avoids the trap entirely.
 | `distributed` | 2 | 2 |
 
 TP is **per model**, following the source workload list: TP=4 for
-`deepseek-v4-flash`, `kimi-k26`, `kimi-k25` and `gpt-oss-20b`; TP=8 for
+`deepseek-v4-flash`, `kimi-k26`, `kimi-k25` and `gpt-oss-120b`; TP=8 for
 everything else. A TP=4 distributed variant still spans 2 nodes via PP=2,
 using 4 GPUs per node.
 
@@ -140,7 +140,7 @@ loads straight from the mount and no download occurs.
 | `mimo-v25-pro_fp8` | MiMo V2.5 Pro FP8 | |
 | `mistral-large-3_bf16` | Mistral Large 3 BF16 | Mistral-native format: `tokenizer-mode`/`config-format`/`load-format` all `mistral` |
 | `deepseek-r1-0528_fp8` | DeepSeek R1 0528 FP8 PTPC | |
-| `gpt-oss-20b_fp8` | GPT-OSS 20B FP8 | |
+| `gpt-oss-120b_mxfp4` | GPT-OSS 120B MXFP4 | |
 
 Models with a custom tokenizer or modelling code set `trust-remote-code: true`;
 the suite mirrors that flag onto the bench client so it can load the same
