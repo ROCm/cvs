@@ -675,7 +675,6 @@ class TestCreateAppIntegration(HttpClientTestBase):
             world_size=1,
             own_hostname="rank0-host",
             own_port=9000,
-            register_timeout=5.0,
         )
         async with app.router.lifespan_context(app):
             client = ParallelHTTPClient({"local": "http://testserver"}, TOKEN, transport=httpx.ASGITransport(app=app))
