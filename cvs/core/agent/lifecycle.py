@@ -172,6 +172,9 @@ class AgentRunner:
         future = asyncio.run_coroutine_threadsafe(self._app.state.registry.wait_until_ready(timeout), self._event_loop)
         return future.result(timeout=timeout + 1)
 
+    def registered_agents(self) -> dict[int, AgentInfo]:
+        return self._app.state.registry.snapshot()
+
     def stop(self) -> None:
         self._server.should_exit = True
         if self._thread.is_alive():
@@ -189,6 +192,9 @@ class Rank0Coordinator:
 
     def wait_for_registrations(self, timeout: float) -> dict:
         return self._agent.wait_for_registrations(timeout)
+
+    def registered_agents(self) -> dict:
+        return self._agent.registered_agents()
 
     def close(self) -> None:
         if self._closed:

@@ -313,6 +313,19 @@ class TestManagedRunPlugin(unittest.TestCase):
             patch.object(self.plugin, "_resolve_test_file", return_value="/mock/path/test.py"),
         )
 
+    @patch.dict(os.environ, {}, clear=False)
+    @patch("cvs.cli_plugins.run_plugin.sys.exit")
+    @patch("cvs.cli_plugins.run_plugin.is_managed_compute", return_value=False)
+    @patch("cvs.cli_plugins.run_plugin.RunLayout")
+    def test_resolved_workspace_is_published_to_the_environment(self, mock_layout, _managed, mock_exit):
+        """--workspace is a CLI argument, so a spawned child would otherwise re-derive a
+        different run_dir from its own defaults."""
+        mock_layout.get.return_value.workspace = "/shared/workspace"
+        validate, resolve = self._prepare_run()
+        with validate, resolve, patch.object(self.plugin, "run_test", return_value=0):
+            self.plugin.run(self.args)
+        self.assertEqual(os.environ["CVS_WORKSPACE"], "/shared/workspace")
+
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
     @patch("cvs.cli_plugins.run_plugin.run_worker", return_value=0)
     @patch("cvs.cli_plugins.run_plugin.managed_rank", return_value=(1, 2))
@@ -327,58 +340,91 @@ class TestManagedRunPlugin(unittest.TestCase):
         mock_run_test.assert_not_called()
         mock_exit.assert_called_once_with(0)
 
+    @patch("cvs.cli_plugins.run_plugin.AgentMesh")
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
     @patch("cvs.cli_plugins.run_plugin.start_rank0")
     @patch("cvs.cli_plugins.run_plugin.managed_rank", return_value=(0, 2))
     @patch("cvs.cli_plugins.run_plugin.is_managed_compute", return_value=True)
     @patch("cvs.cli_plugins.run_plugin.RunLayout")
     def test_rank0_continues_after_registration_timeout(
-        self, mock_layout, _managed, _rank, mock_start_rank0, mock_exit
+        self, mock_layout, _managed, _rank, mock_start_rank0, mock_exit, mock_mesh
     ):
         coordinator = mock_start_rank0.return_value
         coordinator.wait_for_registrations.side_effect = TimeoutError
+        coordinator.registered_agents.return_value = {0: MagicMock()}
         validate, resolve = self._prepare_run()
         with validate, resolve, patch.object(self.plugin, "run_test", return_value=5) as mock_run_test:
             self.plugin.run(self.args)
+        mock_mesh.install_from_agent_dir.assert_called_once()
         mock_run_test.assert_called_once()
+        mock_mesh.reset.assert_called_once()
         coordinator.close.assert_called_once()
         mock_exit.assert_called_once_with(5)
 
+    @patch("cvs.cli_plugins.run_plugin.AgentMesh")
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
     @patch("cvs.cli_plugins.run_plugin.start_rank0")
     @patch("cvs.cli_plugins.run_plugin.managed_rank", return_value=(0, 2))
     @patch("cvs.cli_plugins.run_plugin.is_managed_compute", return_value=True)
     @patch("cvs.cli_plugins.run_plugin.RunLayout")
     def test_rank0_continues_after_legacy_asyncio_timeout(
-        self, mock_layout, _managed, _rank, mock_start_rank0, mock_exit
+        self, mock_layout, _managed, _rank, mock_start_rank0, mock_exit, mock_mesh
     ):
         class LegacyAsyncioTimeout(Exception):
             pass
 
         coordinator = mock_start_rank0.return_value
         coordinator.wait_for_registrations.side_effect = LegacyAsyncioTimeout
+        coordinator.registered_agents.return_value = {}
         validate, resolve = self._prepare_run()
         with patch("cvs.cli_plugins.run_plugin.asyncio.TimeoutError", LegacyAsyncioTimeout):
             with validate, resolve, patch.object(self.plugin, "run_test", return_value=0) as mock_run_test:
                 self.plugin.run(self.args)
         mock_run_test.assert_called_once()
+        mock_mesh.reset.assert_called_once()
         coordinator.close.assert_called_once()
         mock_exit.assert_called_once_with(0)
 
+    @patch("cvs.cli_plugins.run_plugin.AgentMesh")
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
     @patch("cvs.cli_plugins.run_plugin.start_rank0")
     @patch("cvs.cli_plugins.run_plugin.managed_rank", return_value=(0, 2))
     @patch("cvs.cli_plugins.run_plugin.is_managed_compute", return_value=True)
     @patch("cvs.cli_plugins.run_plugin.RunLayout")
-    def test_rank0_runs_after_successful_registration(self, mock_layout, _managed, _rank, mock_start_rank0, mock_exit):
+    def test_rank0_runs_after_successful_registration(
+        self, mock_layout, _managed, _rank, mock_start_rank0, mock_exit, mock_mesh
+    ):
+        snapshot = {0: MagicMock(), 1: MagicMock()}
+        mock_start_rank0.return_value.wait_for_registrations.return_value = snapshot
         validate, resolve = self._prepare_run()
         with validate, resolve, patch.object(self.plugin, "run_test", return_value=7) as mock_run_test:
             self.plugin.run(self.args)
         coordinator = mock_start_rank0.return_value
         coordinator.wait_for_registrations.assert_called_once_with(60)
+        mock_mesh.install_from_agent_dir.assert_called_once()
+        self.assertEqual(mock_mesh.install_from_agent_dir.call_args.args[0], snapshot)
         mock_run_test.assert_called_once()
+        mock_mesh.reset.assert_called_once()
         coordinator.close.assert_called_once()
         mock_exit.assert_called_once_with(7)
+
+    @patch("cvs.cli_plugins.run_plugin.AgentMesh")
+    @patch("cvs.cli_plugins.run_plugin.sys.exit")
+    @patch("cvs.cli_plugins.run_plugin.start_rank0")
+    @patch("cvs.cli_plugins.run_plugin.managed_rank", return_value=(0, 2))
+    @patch("cvs.cli_plugins.run_plugin.is_managed_compute", return_value=True)
+    @patch("cvs.cli_plugins.run_plugin.RunLayout")
+    def test_rank0_exits_when_mesh_install_fails(
+        self, mock_layout, _managed, _rank, mock_start_rank0, mock_exit, mock_mesh
+    ):
+        mock_mesh.install_from_agent_dir.side_effect = ValueError("duplicate agent hostname")
+        validate, resolve = self._prepare_run()
+        with validate, resolve, patch.object(self.plugin, "run_test") as mock_run_test:
+            self.plugin.run(self.args)
+        mock_run_test.assert_not_called()
+        mock_mesh.reset.assert_called_once()
+        mock_start_rank0.return_value.close.assert_called_once()
+        mock_exit.assert_called_once_with(1)
 
 
 class TestResolveTestFunctionNames(unittest.TestCase):
