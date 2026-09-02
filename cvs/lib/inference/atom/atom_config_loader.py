@@ -352,47 +352,6 @@ def _strip_profile_meta(raw: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in raw.items() if k not in _PROFILE_SHARED_KEYS and k != "profiles"}
 
 
-def _is_w2_gpt_oss_mxfp4(raw: dict[str, Any]) -> bool:
-    model = raw.get("model") or {}
-    if (model.get("precision") or "").lower() != "mxfp4":
-        return False
-    mid = (model.get("id") or "").lower()
-    return mid.endswith("gpt-oss-120b") or "gpt-oss-120b" in mid
-
-
-def _w2_perf_native_atom_fallback(
-    raw: dict[str, Any],
-    merged: dict[str, Any],
-    selected: str,
-) -> dict[str, Any]:
-    """Route W2 perf off native atom until MXFP4 openai_server is customer-qualified."""
-    if selected != "perf":
-        return merged
-    if (merged.get("params") or {}).get("driver") != "atom":
-        return merged
-    if not _is_w2_gpt_oss_mxfp4(raw):
-        return merged
-    profiles = raw.get("profiles") or {}
-    vllm_body = profiles.get("vllm")
-    if not isinstance(vllm_body, dict):
-        return merged
-    log.info(
-        "W2 GPT-OSS MXFP4 perf requested driver=atom; using vllm_atom stack "
-        "(opt into native openai_server with --config_profile native when qualified)"
-    )
-    overlay = dict(vllm_body)
-    for key in ("sweep", "enforce_thresholds", "run_card", "platform", "functional"):
-        if key in merged:
-            overlay[key] = merged[key]
-    rc = dict(overlay.get("run_card") or {})
-    prefix = "W2 perf via vllm_atom (native atom: --config_profile native)"
-    existing = (rc.get("notes") or "").strip()
-    rc["notes"] = f"{existing}; {prefix}" if existing else prefix
-    overlay["run_card"] = rc
-    shared = {k: raw[k] for k in _PROFILE_SHARED_KEYS if k in raw}
-    return {**shared, **overlay, "schema_version": 1}
-
-
 def resolve_atom_profile(
     raw: dict[str, Any],
     thresholds: dict[str, Any],
@@ -439,7 +398,6 @@ def resolve_atom_profile(
     else:
         merged_thresholds = dict(thresholds)
 
-    merged = _w2_perf_native_atom_fallback(raw, merged, selected)
     return merged, merged_thresholds, selected
 
 

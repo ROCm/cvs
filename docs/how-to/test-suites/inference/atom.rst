@@ -58,8 +58,8 @@ sits beside the config you pass to ``--config_file``:
 
   cvs config copy inference/atom/mi3xx_atom_deepseek-r1_fp8_single.json \
     --output "$SINGLE_DIR/mi3xx_atom_deepseek-r1_fp8_single.json"
-  cvs config copy inference/atom/mi325x_atom_deepseek-r1_fp8_threshold.json \
-    --output "$SINGLE_DIR/mi325x_atom_deepseek-r1_fp8_threshold.json"
+  cvs config copy inference/atom/mi325x_atom_deepseek-r1_fp8_single_threshold.json \
+    --output "$SINGLE_DIR/mi325x_atom_deepseek-r1_fp8_single_threshold.json"
   cvs config copy cluster_file/atom_cluster.json --output ~/input/cluster_file/atom_cluster.json
 
 Config stems use ``mi3xx_*`` (MI300-family). Threshold files use ``mi325x_*``

@@ -2,7 +2,7 @@
   "schema_version": 2,
   "framework": "atom",
   "default_profile": "perf",
-  "threshold_json": "mi325x_atom_deepseek-r1_mxfp4_threshold.json",
+  "threshold_json": "mi325x_atom_deepseek-r1_mxfp4_single_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/home/models",
@@ -15,90 +15,11 @@
     "precision": "mxfp4"
   },
   "profiles": {
-    "accuracy": {
-      "enforce_thresholds": false,
-      "run_card": {
-        "atom_image_pin": "rocm/atom-dev:latest",
-        "notes": "W17 ACC-1 floor 0.93 MXFP4"
-      },
-      "container": {
-        "lifetime": "per_run",
-        "name": "atom_mi3xx",
-        "image": "rocm/atom-dev:latest",
-        "runtime": {
-          "name": "docker",
-          "args": {
-            "network": "host",
-            "ipc": "host",
-            "privileged": true,
-            "shm_size": "128G",
-            "volumes": [
-              "/home/{user-id}:/home/{user-id}",
-              "/home/models:/home/models"
-            ],
-            "devices": [
-              "/dev/dri",
-              "/dev/kfd"
-            ]
-          }
-        }
-      },
-      "roles": {
-        "server": {
-          "atom_args": [
-            "-tp",
-            "8",
-            "--trust-remote-code"
-          ],
-          "env": {
-            "ATOM_DISABLE_MMAP": "true",
-            "ATOM_USE_TRITON_MOE": "1",
-            "ATOM_USE_TRITON_GEMM": "1"
-          }
-        }
-      },
-      "params": {
-        "driver": "atom",
-        "port_no": "8000",
-        "tensor_parallelism": "8",
-        "num_prompts": "1",
-        "max_model_length": "4096"
-      },
-      "functional": {
-        "api_smoke": true,
-        "health_check": true
-      },
-      "accuracy": {
-        "tasks": [
-          {
-            "id": "gsm8k_flex",
-            "task": "gsm8k",
-            "num_fewshot": 5,
-            "num_concurrent": 4
-          }
-        ]
-      },
-      "sweep": {
-        "sequence_combinations": [
-          {
-            "name": "acc_warmup",
-            "isl": "128",
-            "osl": "32"
-          }
-        ],
-        "runs": [
-          {
-            "combo": "acc_warmup",
-            "concurrency": 1
-          }
-        ]
-      }
-    },
     "perf": {
       "enforce_thresholds": false,
       "run_card": {
         "atom_image_pin": "rocm/atom-dev:latest",
-        "notes": "W17 P1 MXFP4 reasoning; gsm8k floor 0.93 on accuracy variant"
+        "notes": "amd/DeepSeek-R1-0528-MXFP4 (mxfp4) single-node atom perf plus accuracy"
       },
       "container": {
         "lifetime": "per_run",
@@ -154,6 +75,11 @@
             "name": "w17_1k_1k",
             "isl": "1024",
             "osl": "1024"
+          },
+          {
+            "name": "acc_warmup",
+            "isl": "128",
+            "osl": "32"
           }
         ],
         "runs": [
@@ -164,13 +90,232 @@
           {
             "combo": "w17_1k_1k",
             "concurrency": 256
+          },
+          {
+            "combo": "acc_warmup",
+            "concurrency": 1
           }
         ]
       },
       "platform": {
         "gpu_metrics_poll": true
+      },
+      "functional": {
+        "api_smoke": true,
+        "health_check": true
+      },
+      "accuracy": {
+        "tasks": [
+          {
+            "id": "gsm8k_flex",
+            "task": "gsm8k",
+            "num_fewshot": 5,
+            "num_concurrent": 4
+          }
+        ]
+      }
+    },
+    "vllm": {
+      "enforce_thresholds": false,
+      "run_card": {
+        "atom_image_pin": "rocm/atom-dev:latest",
+        "notes": "amd/DeepSeek-R1-0528-MXFP4 (mxfp4) single-node vllm_atom parity perf plus accuracy"
+      },
+      "container": {
+        "lifetime": "per_run",
+        "name": "atom_mi3xx_vllm",
+        "image": "<changeme>",
+        "runtime": {
+          "name": "docker",
+          "args": {
+            "network": "host",
+            "ipc": "host",
+            "privileged": true,
+            "shm_size": "128G",
+            "volumes": [
+              "/home/{user-id}:/home/{user-id}",
+              "/home/models:/home/models"
+            ],
+            "devices": [
+              "/dev/dri",
+              "/dev/kfd"
+            ]
+          }
+        }
+      },
+      "roles": {
+        "server": {
+          "serve_args": {
+            "trust-remote-code": true,
+            "enforce-eager": true,
+            "gpu-memory-utilization": 0.95,
+            "block-size": 64,
+            "no-enable-prefix-caching": true
+          },
+          "env": {
+            "VLLM_ROCM_USE_AITER": "1",
+            "AMDGCN_USE_BUFFER_OPS": "0",
+            "ATOM_USE_TRITON_MOE": "1",
+            "ATOM_USE_TRITON_GEMM": "1"
+          }
+        }
+      },
+      "params": {
+        "driver": "vllm_atom",
+        "port_no": "8000",
+        "tensor_parallelism": "8",
+        "random_range_ratio": "0.8",
+        "num_prompts": "1000",
+        "max_model_length": "4096",
+        "metric_percentiles": "95,99",
+        "reuse_server_across_sweep": "true",
+        "client_poll_count": "80",
+        "client_poll_wait_time": "60"
+      },
+      "sweep": {
+        "sequence_combinations": [
+          {
+            "name": "w17_1k_1k",
+            "isl": "1024",
+            "osl": "1024"
+          },
+          {
+            "name": "acc_warmup",
+            "isl": "128",
+            "osl": "32"
+          }
+        ],
+        "runs": [
+          {
+            "combo": "w17_1k_1k",
+            "concurrency": 128
+          },
+          {
+            "combo": "w17_1k_1k",
+            "concurrency": 256
+          },
+          {
+            "combo": "acc_warmup",
+            "concurrency": 1
+          }
+        ]
+      },
+      "platform": {
+        "gpu_metrics_poll": true
+      },
+      "functional": {
+        "api_smoke": true,
+        "health_check": true
+      },
+      "accuracy": {
+        "tasks": [
+          {
+            "id": "gsm8k_flex",
+            "task": "gsm8k",
+            "num_fewshot": 5,
+            "num_concurrent": 4
+          }
+        ]
+      }
+    },
+    "sglang": {
+      "enforce_thresholds": false,
+      "run_card": {
+        "atom_image_pin": "rocm/atom-dev:latest",
+        "notes": "amd/DeepSeek-R1-0528-MXFP4 (mxfp4) single-node sglang parity perf plus accuracy"
+      },
+      "container": {
+        "lifetime": "per_run",
+        "name": "atom_mi3xx_sglang",
+        "image": "<changeme>",
+        "runtime": {
+          "name": "docker",
+          "args": {
+            "network": "host",
+            "ipc": "host",
+            "privileged": true,
+            "shm_size": "128G",
+            "volumes": [
+              "/home/{user-id}:/home/{user-id}",
+              "/home/models:/home/models"
+            ],
+            "devices": [
+              "/dev/dri",
+              "/dev/kfd"
+            ]
+          }
+        }
+      },
+      "roles": {
+        "server": {
+          "sglang_args": [
+            "--tp-size",
+            "8",
+            "--trust-remote-code"
+          ],
+          "env": {
+            "ATOM_USE_TRITON_MOE": "1",
+            "ATOM_USE_TRITON_GEMM": "1"
+          }
+        }
+      },
+      "params": {
+        "driver": "sglang",
+        "port_no": "8000",
+        "tensor_parallelism": "8",
+        "random_range_ratio": "0.8",
+        "num_prompts": "1000",
+        "max_model_length": "4096",
+        "metric_percentiles": "95,99",
+        "reuse_server_across_sweep": "true",
+        "client_poll_count": "80",
+        "client_poll_wait_time": "60"
+      },
+      "sweep": {
+        "sequence_combinations": [
+          {
+            "name": "w17_1k_1k",
+            "isl": "1024",
+            "osl": "1024"
+          },
+          {
+            "name": "acc_warmup",
+            "isl": "128",
+            "osl": "32"
+          }
+        ],
+        "runs": [
+          {
+            "combo": "w17_1k_1k",
+            "concurrency": 128
+          },
+          {
+            "combo": "w17_1k_1k",
+            "concurrency": 256
+          },
+          {
+            "combo": "acc_warmup",
+            "concurrency": 1
+          }
+        ]
+      },
+      "platform": {
+        "gpu_metrics_poll": true
+      },
+      "functional": {
+        "api_smoke": true,
+        "health_check": true
+      },
+      "accuracy": {
+        "tasks": [
+          {
+            "id": "gsm8k_flex",
+            "task": "gsm8k",
+            "num_fewshot": 5,
+            "num_concurrent": 4
+          }
+        ]
       }
     }
-  },
-  "_comment": "W17 DeepSeek R1 MXFP4 gsm8k accuracy (M3 scaffold). enforce_thresholds false until W17 perf variant lands in lab."
+  }
 }
