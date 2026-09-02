@@ -817,7 +817,7 @@ def _l2ping_config(config_dict):
         raise ValueError("preflight.connectivity_check.ifoe.l2ping must be an object")
     unknown = sorted(
         key
-        for key in set(config) - {'enabled', 'pings_per_port', 'loss_threshold_pct', 'ssh_timeout'}
+        for key in set(config) - {'enabled', 'pings_per_port', 'loss_threshold_pct', 'ping_timeout'}
         if not key.startswith('_')
     )
     if unknown:
@@ -897,14 +897,14 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     if loss_threshold_pct < 0.0 or loss_threshold_pct > 100.0:
         raise ValueError("preflight.connectivity_check.ifoe.l2ping.loss_threshold_pct must be between 0 and 100")
 
-    ssh_timeout = int(l2ping_config.get('ssh_timeout', 600))
-    if ssh_timeout < 30:
-        raise ValueError("preflight.connectivity_check.ifoe.l2ping.ssh_timeout must be at least 30 seconds")
+    ping_timeout = int(l2ping_config.get('ping_timeout', 600))
+    if ping_timeout < 30:
+        raise ValueError("preflight.connectivity_check.ifoe.l2ping.ping_timeout must be at least 30 seconds")
 
     log.info(
-        "Running strict IFoE L2 full-mesh connectivity (pings_per_port=%d, ssh_timeout=%ds, loss_threshold_pct=%.2f) on %d host(s)",
+        "Running strict IFoE L2 full-mesh connectivity (pings_per_port=%d, ping_timeout=%ds, loss_threshold_pct=%.2f) on %d host(s)",
         pings_per_port,
-        ssh_timeout,
+        ping_timeout,
         loss_threshold_pct,
         len(phdl.reachable_hosts),
     )
@@ -921,7 +921,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
         per_ping_timeout=None,
         traffic_types=['ifoe_req', 'ifoe_resp', 'non_ifoe'],
         loss_threshold_pct=loss_threshold_pct,
-        ssh_timeout=ssh_timeout,
+        ssh_timeout=ping_timeout,
         use_sudo=True,
         json_args=['--json'],
         allow_text_fallback=False,
@@ -962,7 +962,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
         'failed_invocations': failed_invocations,
         'pings_per_port': pings_per_port,
         'loss_threshold_pct': loss_threshold_pct,
-        'ssh_timeout': ssh_timeout,
+        'ping_timeout': ping_timeout,
         'traffic_types': ['ifoe_req', 'ifoe_resp', 'non_ifoe'],
         'mesh_mode': 'full_mesh',
         'ports': 'up',

@@ -922,7 +922,7 @@ class TestL2PingConfigContract(unittest.TestCase):
                             'enabled': True,
                             'pings_per_port': 5,
                             'loss_threshold_pct': 3.0,
-                            'ssh_timeout': 600,
+                            'ping_timeout': 600,
                         }
                     }
                 }
@@ -932,7 +932,22 @@ class TestL2PingConfigContract(unittest.TestCase):
         self.assertTrue(config.connectivity_check.ifoe.l2ping.enabled)
         self.assertEqual(config.connectivity_check.ifoe.l2ping.pings_per_port, 5)
         self.assertEqual(config.connectivity_check.ifoe.l2ping.loss_threshold_pct, 3.0)
-        self.assertEqual(config.connectivity_check.ifoe.l2ping.ssh_timeout, 600)
+        self.assertEqual(config.connectivity_check.ifoe.l2ping.ping_timeout, 600)
+
+        with self.assertRaises(ValidationError):
+            PreflightConfigFile.model_validate(
+                {
+                    'connectivity_check': {
+                        'ifoe': {
+                            'l2ping': {
+                                'enabled': True,
+                                'pings_per_port': 3,
+                                'ssh_timeout': 600,
+                            }
+                        }
+                    }
+                }
+            )
 
         with self.assertRaises(ValidationError):
             PreflightConfigFile.model_validate(
@@ -1026,7 +1041,7 @@ class TestL2PingConfigContract(unittest.TestCase):
                     'l2ping': {
                         'enabled': True,
                         'pings_per_port': 3,
-                        'ssh_timeout': 900,
+                        'ping_timeout': 900,
                         'loss_threshold_pct': 3.0,
                     }
                 }
@@ -1056,7 +1071,7 @@ class TestL2PingConfigContract(unittest.TestCase):
             self.assertEqual(kwargs['ssh_timeout'], 900)
             self.assertEqual(kwargs['loss_threshold_pct'], 3.0)
             result = preflight_checks.preflight_results['ifoe_l2_connectivity']
-            self.assertEqual(result['ssh_timeout'], 900)
+            self.assertEqual(result['ping_timeout'], 900)
             self.assertEqual(result['loss_threshold_pct'], 3.0)
         finally:
             preflight_checks.preflight_results.clear()

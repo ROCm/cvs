@@ -1379,10 +1379,10 @@ class PreflightL2PingConfig(BaseModel):
         le=100.0,
         description="Maximum tolerated packet loss percentage per traffic type",
     )
-    ssh_timeout: int = Field(
+    ping_timeout: int = Field(
         default=600,
         ge=30,
-        description="SSH timeout in seconds for each afmctl invocation",
+        description="PSSH read timeout in seconds for each afmctl ping invocation",
     )
 
 

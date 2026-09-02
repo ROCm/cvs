@@ -72,7 +72,7 @@
         "_comment_per_ping_timeout": "Optional value for afmctl's -t flag (per-ping timeout). Leave null to use afmctl's default.",
         "_comment_traffic_types": "Traffic categories to enforce when evaluating PASS/FAIL. Maps to afmctl's --traffic-type (request, response, non-ifoe). When all three are selected (default) --traffic-type is omitted so afmctl exercises every category.",
         "_comment_loss_threshold_pct": "Maximum tolerated packet loss percentage per traffic type. Defaults to 0.0 (any failure marks the node as FAIL).",
-        "_comment_ssh_timeout": "Overall SSH timeout (seconds) for each afmctl invocation. Increase for large port counts or high pings_per_port values.",
+        "_comment_ping_timeout": "PSSH read timeout (seconds) for each afmctl ping invocation. Increase for large port counts or high pings_per_port values.",
 
         "fabric_checks": false,
         "_comment_fabric_checks": "Enable MI4XX-only AIFM/AFM/vPOD, station-mask, and IFoE port admission checks.",
@@ -88,8 +88,8 @@
           "pings_per_port": 3,
           "_comment_pings_per_port": "Ping samples sent per selected IFoE port pair.",
 
-          "ssh_timeout": 600,
-          "_comment_ssh_timeout": "SSH timeout in seconds for each afmctl invocation. Half-cabled BDFs can exceed the old 180s cap; 600s covers measured ~260s sweeps and afmctl's 5-minute default -t.",
+          "ping_timeout": 600,
+          "_comment_ping_timeout": "PSSH read timeout in seconds for each afmctl ping invocation. Half-cabled BDFs can exceed the old 180s cap; 600s covers measured ~260s sweeps and afmctl's 5-minute default -t.",
 
           "loss_threshold_pct": 0.0,
           "_comment_loss_threshold_pct": "Maximum tolerated packet loss percentage per traffic type. 0.0 fails the node on any down port. Raise only when known-dead ports should not fail an otherwise healthy fabric."
