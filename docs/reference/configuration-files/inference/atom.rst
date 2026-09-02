@@ -61,9 +61,9 @@ Shipped model inventory
    * - ``mi3xx_atom_gpt-oss-120b_mxfp4``
      - ``_single``
      - W2 — ``perf`` / ``native`` / ``vllm`` / ``sglang`` profiles
-   * - ``mi3xx_atom_glm-5.1``
+   * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
      - ``_single``
-     - W4 perf + accuracy profiles
+     - W3 — ``perf`` / ``vllm`` / ``sglang`` profiles
    * - Other P2 models
      - ``_single`` only
      - Flat schema_version 1 perf gate

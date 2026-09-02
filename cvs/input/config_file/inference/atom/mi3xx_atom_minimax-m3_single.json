@@ -48,7 +48,14 @@
           "atom_args": [
             "-tp",
             "8",
-            "--trust-remote-code"
+            "--trust-remote-code",
+            "--block-size",
+            "128",
+            "--enforce-eager",
+            "--level",
+            "0",
+            "--cudagraph-mode",
+            "NONE"
           ],
           "env": {
             "ATOM_DISABLE_MMAP": "true"

@@ -39,13 +39,15 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
     def test_gpu_arch_inferred_from_config_filename(self):
         root = Path(__file__).resolve().parents[3]
         self.assertEqual(
-            gpu_arch_from_config_path(root / "input/config_file/inference/atom/mi3xx_atom_glm-5.1_single.json"),
+            gpu_arch_from_config_path(
+                root / "input/config_file/inference/atom/mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json"
+            ),
             "mi3xx",
         )
 
     def test_load_variant_infers_gpu_arch_when_omitted(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_glm-5.1_single.json")
+        variant = _atom_config(root, "mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json")
         self.assertEqual(variant.gpu_arch, "mi3xx")
 
     def test_gpu_arch_from_config_path_rejects_non_atom_stem(self):
@@ -384,16 +386,22 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             ],
         )
 
-    def test_load_phase_c_w3_glm_perf(self):
+    def test_load_minimax_m3_native_perf_atom_args(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_glm-5.1_single.json")
-        self.assertEqual(variant.model.id, "zai-org/GLM-5.1")
+        variant = _atom_config(root, "mi3xx_atom_minimax-m3_single.json")
         self.assertEqual(
-            variant.expected_cells(),
+            variant.roles.server.atom_args,
             [
-                "ISL=1024,OSL=8192,TP=8,PP=1,CONC=32",
-                "ISL=1024,OSL=8192,TP=8,PP=1,CONC=64",
-                "ISL=128,OSL=32,TP=8,PP=1,CONC=1",
+                "-tp",
+                "8",
+                "--trust-remote-code",
+                "--block-size",
+                "128",
+                "--enforce-eager",
+                "--level",
+                "0",
+                "--cudagraph-mode",
+                "NONE",
             ],
         )
 
@@ -420,7 +428,14 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json")
         self.assertEqual(variant.model.id, "amd/Qwen3.5-397B-A17B-FP8")
-        self.assertEqual(variant.expected_cells()[0], "ISL=1024,OSL=8192,TP=8,PP=1,CONC=32")
+        self.assertEqual(
+            variant.expected_cells(),
+            [
+                "ISL=1024,OSL=8192,TP=8,PP=1,CONC=32",
+                "ISL=1024,OSL=8192,TP=8,PP=1,CONC=64",
+                "ISL=128,OSL=32,TP=8,PP=1,CONC=1",
+            ],
+        )
 
     def test_load_w1_single_gpu_metrics_poll(self):
         root = Path(__file__).resolve().parents[3]
@@ -494,9 +509,9 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_legacy_flat_config_unchanged(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_glm-5.1_single.json")
+        variant = _atom_config(root, "mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json")
         self.assertEqual(variant.schema_version, 1)
-        self.assertEqual(variant.threshold_json, "mi325x_atom_glm-5.1_single_threshold.json")
+        self.assertEqual(variant.threshold_json, "mi325x_atom_qwen3.5-397b-a17b_fp8_threshold.json")
 
     def test_flat_config_slices_profiled_threshold(self):
         root = Path(__file__).resolve().parents[3]
