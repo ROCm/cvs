@@ -1142,7 +1142,7 @@ class IfoeL2ConnectivityCheck(PreflightCheck):
     def _exec_on_node(self, node: str, command: str) -> Dict:
         """Run a command only on ``node`` when the Pssh backend supports it.
 
-        ``MultiProcessPssh.exec_cmd_list`` schedules one command per host.  A
+        ``MultiProcessParallelHandle.exec_cmd_list`` schedules one command per host.  A
         no-op is sent to non-target hosts so a BDF is never accidentally
         exercised on a host where it is absent.  Lightweight/mock backends
         without that API retain the older broadcast fallback for compatibility.

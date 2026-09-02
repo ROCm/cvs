@@ -1,15 +1,15 @@
 import unittest
 from unittest.mock import patch, MagicMock
-from cvs.lib.parallel.multiprocess_pssh import MultiProcessPssh
+from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
 from cvs.lib.parallel.config import ParallelConfig
 
 
-class TestMultiProcessPsshInitialization(unittest.TestCase):
+class TestMultiProcessParallelHandleInitialization(unittest.TestCase):
     def setUp(self):
         self.mock_log = MagicMock()
         self.host_list = ["host1", "host2", "host3", "host4", "host5"]
-        # Mock Pssh.__init__ for all tests in this class
-        self.pssh_patcher = patch('cvs.lib.parallel.multiprocess_pssh.Pssh.__init__')
+        # Mock ParallelHandle.__init__ for all tests in this class
+        self.pssh_patcher = patch('cvs.lib.parallel.multiprocess_phandle.ParallelHandle.__init__')
         self.mock_pssh_init = self.pssh_patcher.start()
         self.mock_pssh_init.return_value = None
 
@@ -21,61 +21,70 @@ class TestMultiProcessPsshInitialization(unittest.TestCase):
         small_host_list = ["host1", "host2"]
         config = ParallelConfig(hosts_per_shard=32)
 
-        pssh = MultiProcessPssh(self.mock_log, small_host_list, user="test", config=config)
+        mph = MultiProcessParallelHandle(self.mock_log, small_host_list, user="test", config=config)
 
-        # Always creates composed Pssh instance with ABC+composition
+        # Always creates composed ParallelHandle instance with ABC+composition
         self.mock_pssh_init.assert_called_once_with(
-            self.mock_log, small_host_list, "test", None, 'id_rsa', False, True, None, process_output=True
+            self.mock_log,
+            small_host_list,
+            "test",
+            None,
+            'id_rsa',
+            False,
+            True,
+            None,
+            process_output=True,
+            transport='ssh',
         )
         # For small lists, no sharder should be created (key difference!)
-        self.assertFalse(hasattr(pssh, 'sharder'))
-        self.assertIsNotNone(pssh.pssh)
-        # But pssh instance should always exist
-        self.assertTrue(hasattr(pssh, 'pssh'))
+        self.assertFalse(hasattr(mph, 'sharder'))
+        self.assertIsNotNone(mph.phandle)
+        # Inner ParallelHandle instance should always exist
+        self.assertTrue(hasattr(mph, 'phandle'))
 
-    @patch('cvs.lib.parallel.multiprocess_pssh.MultiProcessPssh._init_sharded')
-    @patch('cvs.lib.parallel.multiprocess_pssh.PsshSharder')
+    @patch('cvs.lib.parallel.multiprocess_phandle.MultiProcessParallelHandle._init_sharded')
+    @patch('cvs.lib.parallel.multiprocess_phandle.ParallelHandleSharder')
     def test_init_with_sharding_large_host_list(self, mock_sharder_class, mock_init_sharded):
         """Test initialization with sharding for large host lists."""
         config = ParallelConfig(hosts_per_shard=2)  # Force sharding
         mock_sharder = MagicMock()
         mock_sharder_class.return_value = mock_sharder
 
-        pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
+        mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
 
-        # In sharded mode, should NOT create Pssh instance (avoids bottleneck)
+        # In sharded mode, should NOT create ParallelHandle instance (avoids bottleneck)
         self.mock_pssh_init.assert_not_called()
         # Should call _init_sharded for large lists
         mock_init_sharded.assert_called_once_with(
-            self.mock_log, self.host_list, "test", None, 'id_rsa', False, True, None
+            self.mock_log, self.host_list, "test", None, 'id_rsa', False, True, None, 'ssh'
         )
         # Verify sharder was created
         mock_sharder_class.assert_called_once_with(config)
-        self.assertIsNone(pssh.pssh)
-        # In sharded mode: pssh is None, sharder exists
-        self.assertIsNone(pssh.pssh)
-        self.assertTrue(hasattr(pssh, 'sharder'))
+        self.assertIsNone(mph.phandle)
+        # In sharded mode: inner handle is None, sharder exists
+        self.assertIsNone(mph.phandle)
+        self.assertTrue(hasattr(mph, 'sharder'))
 
     def test_init_with_custom_config(self):
         """Test initialization with custom configuration."""
         config = ParallelConfig(hosts_per_shard=64, max_workers_per_cpu=8)
 
-        pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", password="pass", config=config)
+        mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", password="pass", config=config)
 
-        self.assertEqual(pssh.config, config)
+        self.assertEqual(mph.config, config)
 
 
-class TestMultiProcessPsshExec(unittest.TestCase):
+class TestMultiProcessParallelHandleExec(unittest.TestCase):
     def setUp(self):
         self.mock_log = MagicMock()
         self.host_list = ["host1", "host2"]
-        # Mock Pssh.__init__ for all tests in this class
-        self.pssh_patcher = patch('cvs.lib.parallel.multiprocess_pssh.Pssh.__init__')
+        # Mock ParallelHandle.__init__ for all tests in this class
+        self.pssh_patcher = patch('cvs.lib.parallel.multiprocess_phandle.ParallelHandle.__init__')
         self.mock_pssh_init = self.pssh_patcher.start()
         self.mock_pssh_init.return_value = None
 
         # Mock execute_sharded to avoid process spawning while testing real payload creation
-        self.execute_sharded_patcher = patch('cvs.lib.parallel.pssh_sharder.PsshSharder.execute_sharded')
+        self.execute_sharded_patcher = patch('cvs.lib.parallel.phandle_sharder.ParallelHandleSharder.execute_sharded')
         self.mock_execute_sharded = self.execute_sharded_patcher.start()
 
     def tearDown(self):
@@ -92,8 +101,8 @@ class TestMultiProcessPsshExec(unittest.TestCase):
             {'result': {"host2": "up2"}, 'reachable_hosts': ["host2"], 'unreachable_hosts': []},
         ]
 
-        pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
-        result = pssh.exec("uptime", timeout=30, detailed=True)
+        mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
+        result = mph.exec("uptime", timeout=30, detailed=True)
 
         # Verify execute_sharded was called with real payloads from create_payloads
         self.mock_execute_sharded.assert_called_once()
@@ -134,8 +143,8 @@ class TestMultiProcessPsshExec(unittest.TestCase):
 
         self.mock_execute_sharded.side_effect = capture_payloads_and_return_results
 
-        pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
-        result = pssh.exec_cmd_list(cmd_list, timeout=60)
+        mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
+        result = mph.exec_cmd_list(cmd_list, timeout=60)
 
         # Verify execute_sharded was called with real payloads
         self.mock_execute_sharded.assert_called_once()
@@ -165,8 +174,8 @@ class TestMultiProcessPsshExec(unittest.TestCase):
         original_hosts = ["host1", "host2", "host3", "host4"]
         reachable_hosts_only = ["host1", "host3", "host4"]  # host2 is unreachable
 
-        with patch('cvs.lib.parallel.multiprocess_pssh.MultiProcessPssh._init_sharded'):
-            with patch('cvs.lib.parallel.multiprocess_pssh.PsshSharder') as mock_sharder_class:
+        with patch('cvs.lib.parallel.multiprocess_phandle.MultiProcessParallelHandle._init_sharded'):
+            with patch('cvs.lib.parallel.multiprocess_phandle.ParallelHandleSharder') as mock_sharder_class:
                 mock_sharder = MagicMock()
                 mock_sharder_class.return_value = mock_sharder
 
@@ -188,23 +197,23 @@ class TestMultiProcessPsshExec(unittest.TestCase):
                 ]
                 mock_sharder.merge_results.return_value = {"host1": "result1", "host3": "result3", "host4": "result4"}
 
-                pssh = MultiProcessPssh(self.mock_log, original_hosts, user="test", config=config)
+                mph = MultiProcessParallelHandle(self.mock_log, original_hosts, user="test", config=config)
 
                 # Set up test state with unreachable host
-                pssh.env_prefix = None
-                pssh.host_list = original_hosts
-                pssh.reachable_hosts = reachable_hosts_only  # host2 is missing
-                pssh.config = config
-                pssh.sharder = mock_sharder
+                mph.env_prefix = None
+                mph.host_list = original_hosts
+                mph.reachable_hosts = reachable_hosts_only  # host2 is missing
+                mph.config = config
+                mph.sharder = mock_sharder
                 # Additional attributes needed by _shard_init_kwargs
-                pssh.user = "test"
-                pssh.password = None
-                pssh.pkey = "id_rsa"
-                pssh.host_key_check = False
-                pssh.stop_on_errors = True
-                pssh.env_vars = None
+                mph.user = "test"
+                mph.password = None
+                mph.pkey = "id_rsa"
+                mph.host_key_check = False
+                mph.stop_on_errors = True
+                mph.env_vars = None
 
-                result = pssh.exec_cmd_list(cmd_list)
+                result = mph.exec_cmd_list(cmd_list)
 
                 # Verify create_payloads was called and check the command mapping
                 mock_sharder.create_payloads.assert_called()
@@ -225,8 +234,8 @@ class TestMultiProcessPsshExec(unittest.TestCase):
             {'result': None, 'reachable_hosts': ["host2"], 'unreachable_hosts': []},
         ]
 
-        pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
-        result = pssh.scp_file("test.txt", "/tmp/test.txt", recurse=False)
+        mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
+        result = mph.scp_file("test.txt", "/tmp/test.txt", recurse=False)
 
         # Verify execute_sharded was called with real payloads
         self.mock_execute_sharded.assert_called_once()
@@ -253,8 +262,8 @@ class TestMultiProcessPsshExec(unittest.TestCase):
             {'result': None, 'reachable_hosts': ["host2"], 'unreachable_hosts': []},
         ]
 
-        pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
-        result = pssh.reboot_connections()
+        mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
+        result = mph.reboot_connections()
 
         # Verify execute_sharded was called with real payloads
         self.mock_execute_sharded.assert_called_once()
@@ -270,17 +279,17 @@ class TestMultiProcessPsshExec(unittest.TestCase):
         self.assertEqual(result, {})
 
 
-class TestMultiProcessPsshHelperMethods(unittest.TestCase):
+class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
     def setUp(self):
         self.mock_log = MagicMock()
         self.host_list = ["host1", "host2"]
-        # Mock Pssh.__init__ for all tests in this class
-        self.pssh_patcher = patch('cvs.lib.parallel.multiprocess_pssh.Pssh.__init__')
+        # Mock ParallelHandle.__init__ for all tests in this class
+        self.pssh_patcher = patch('cvs.lib.parallel.multiprocess_phandle.ParallelHandle.__init__')
         self.mock_pssh_init = self.pssh_patcher.start()
         self.mock_pssh_init.return_value = None
 
         # Mock execute_sharded to avoid process spawning while testing real payload creation
-        self.execute_sharded_patcher = patch('cvs.lib.parallel.pssh_sharder.PsshSharder.execute_sharded')
+        self.execute_sharded_patcher = patch('cvs.lib.parallel.phandle_sharder.ParallelHandleSharder.execute_sharded')
         self.mock_execute_sharded = self.execute_sharded_patcher.start()
 
     def tearDown(self):
@@ -291,19 +300,19 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
         """Test _shard_init_kwargs creates correct initialization arguments."""
         config = ParallelConfig(hosts_per_shard=1)
 
-        with patch('cvs.lib.parallel.multiprocess_pssh.MultiProcessPssh._init_sharded'):
-            with patch('cvs.lib.parallel.multiprocess_pssh.PsshSharder'):
-                pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
+        with patch('cvs.lib.parallel.multiprocess_phandle.MultiProcessParallelHandle._init_sharded'):
+            with patch('cvs.lib.parallel.multiprocess_phandle.ParallelHandleSharder'):
+                mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
 
                 # Manually set attributes that _init_sharded would set
-                pssh.user = "test"
-                pssh.password = "pass"
-                pssh.pkey = "key"
-                pssh.host_key_check = True
-                pssh.stop_on_errors = False
-                pssh.env_vars = {"TEST": "value"}
+                mph.user = "test"
+                mph.password = "pass"
+                mph.pkey = "key"
+                mph.host_key_check = True
+                mph.stop_on_errors = False
+                mph.env_vars = {"TEST": "value"}
 
-                kwargs = pssh._shard_init_kwargs()
+                kwargs = mph._shard_init_kwargs()
 
                 expected = {
                     'log': None,  # No longer pass logger to child processes (fixes pickling issue)
@@ -313,6 +322,7 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
                     'host_key_check': True,
                     'stop_on_errors': False,
                     'env_vars': {"TEST": "value"},
+                    'transport': 'ssh',
                 }
                 self.assertEqual(kwargs, expected)
 
@@ -320,24 +330,24 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
         """Test _merge_shard_returns updates host lists correctly."""
         config = ParallelConfig(hosts_per_shard=1)
 
-        with patch('cvs.lib.parallel.multiprocess_pssh.MultiProcessPssh._init_sharded'):
-            with patch('cvs.lib.parallel.multiprocess_pssh.PsshSharder'):
-                pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
+        with patch('cvs.lib.parallel.multiprocess_phandle.MultiProcessParallelHandle._init_sharded'):
+            with patch('cvs.lib.parallel.multiprocess_phandle.ParallelHandleSharder'):
+                mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
 
                 # Manually set attributes that _init_sharded would set
-                pssh.host_list = self.host_list
-                pssh.reachable_hosts = []
-                pssh.unreachable_hosts = []
+                mph.host_list = self.host_list
+                mph.reachable_hosts = []
+                mph.unreachable_hosts = []
 
                 shard_returns = [
                     {"reachable_hosts": ["host1"], "unreachable_hosts": []},
                     {"reachable_hosts": ["host2"], "unreachable_hosts": []},
                 ]
 
-                pssh._merge_shard_returns(shard_returns)
+                mph._merge_shard_returns(shard_returns)
 
-                self.assertEqual(set(pssh.reachable_hosts), {"host1", "host2"})
-                self.assertEqual(pssh.unreachable_hosts, [])
+                self.assertEqual(set(mph.reachable_hosts), {"host1", "host2"})
+                self.assertEqual(mph.unreachable_hosts, [])
 
     def test_upload_file_with_sharding(self):
         """Test upload_file with sharding uses sharder."""
@@ -349,8 +359,8 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
             {'result': None, 'reachable_hosts': ["host2"], 'unreachable_hosts': []},
         ]
 
-        pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
-        result = pssh.upload_file("test.txt", "/tmp/test.txt", recurse=True)
+        mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
+        result = mph.upload_file("test.txt", "/tmp/test.txt", recurse=True)
 
         # Verify execute_sharded was called with real payloads
         self.mock_execute_sharded.assert_called_once()
@@ -382,8 +392,8 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
             {'result': {"host3": "host3: SUCCESS"}, 'reachable_hosts': ["host3"], 'unreachable_hosts': []},
         ]
 
-        pssh = MultiProcessPssh(self.mock_log, host_list, user="test", config=config)
-        result = pssh.upload_file_list(node_path_map)
+        mph = MultiProcessParallelHandle(self.mock_log, host_list, user="test", config=config)
+        result = mph.upload_file_list(node_path_map)
 
         self.mock_execute_sharded.assert_called_once()
         payloads = self.mock_execute_sharded.call_args[0][0]
@@ -401,42 +411,42 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
 
     def test_prune_nodes_sharded_mode_updates_wrapper_state(self):
         """Test prune_nodes in sharded mode updates wrapper state directly."""
-        with patch('cvs.lib.parallel.multiprocess_pssh.MultiProcessPssh._init_sharded'):
-            with patch('cvs.lib.parallel.multiprocess_pssh.PsshSharder'):
-                pssh = MultiProcessPssh(self.mock_log, ["host1", "host2", "host3"], user="test")
-                pssh.pssh = None
-                pssh.reachable_hosts = ["host1", "host2", "host3"]
-                pssh.host_list = ["host1", "host2", "host3"]
-                pssh.unreachable_hosts = []
+        with patch('cvs.lib.parallel.multiprocess_phandle.MultiProcessParallelHandle._init_sharded'):
+            with patch('cvs.lib.parallel.multiprocess_phandle.ParallelHandleSharder'):
+                mph = MultiProcessParallelHandle(self.mock_log, ["host1", "host2", "host3"], user="test")
+                mph.phandle = None
+                mph.reachable_hosts = ["host1", "host2", "host3"]
+                mph.host_list = ["host1", "host2", "host3"]
+                mph.unreachable_hosts = []
 
-                removed = pssh.prune_nodes(["host2", "hostX"])
+                removed = mph.prune_nodes(["host2", "hostX"])
 
                 self.assertEqual(removed, ["host2"])
-                self.assertEqual(pssh.reachable_hosts, ["host1", "host3"])
-                self.assertEqual(pssh.host_list, ["host1", "host2", "host3"])
-                self.assertEqual(pssh.unreachable_hosts, ["host2"])
+                self.assertEqual(mph.reachable_hosts, ["host1", "host3"])
+                self.assertEqual(mph.host_list, ["host1", "host2", "host3"])
+                self.assertEqual(mph.unreachable_hosts, ["host2"])
 
-    def test_prune_nodes_non_sharded_delegates_to_single_process_pssh(self):
-        """Test prune_nodes in non-sharded mode delegates to single-process Pssh."""
+    def test_prune_nodes_non_sharded_delegates_to_parallel_handle(self):
+        """Test prune_nodes in non-sharded mode delegates to inner ParallelHandle."""
         config = ParallelConfig(hosts_per_shard=32)
-        pssh = MultiProcessPssh(self.mock_log, ["host1", "host2"], user="test", config=config)
-        pssh.reachable_hosts = ["host1", "host2"]
-        pssh.host_list = ["host1", "host2"]
-        pssh.unreachable_hosts = []
+        mph = MultiProcessParallelHandle(self.mock_log, ["host1", "host2"], user="test", config=config)
+        mph.reachable_hosts = ["host1", "host2"]
+        mph.host_list = ["host1", "host2"]
+        mph.unreachable_hosts = []
 
-        pssh.pssh = MagicMock()
-        pssh.pssh.prune_nodes.return_value = ["host2"]
-        pssh.pssh.reachable_hosts = ["host1"]
-        pssh.pssh.host_list = ["host1"]
-        pssh.pssh.unreachable_hosts = ["host2"]
+        mph.phandle = MagicMock()
+        mph.phandle.prune_nodes.return_value = ["host2"]
+        mph.phandle.reachable_hosts = ["host1"]
+        mph.phandle.host_list = ["host1"]
+        mph.phandle.unreachable_hosts = ["host2"]
 
-        removed = pssh.prune_nodes(["host2"])
+        removed = mph.prune_nodes(["host2"])
 
-        pssh.pssh.prune_nodes.assert_called_once_with(["host2"])
+        mph.phandle.prune_nodes.assert_called_once_with(["host2"])
         self.assertEqual(removed, ["host2"])
-        self.assertEqual(pssh.reachable_hosts, ["host1"])
-        self.assertEqual(pssh.host_list, ["host1", "host2"])
-        self.assertEqual(pssh.unreachable_hosts, ["host2"])
+        self.assertEqual(mph.reachable_hosts, ["host1"])
+        self.assertEqual(mph.host_list, ["host1", "host2"])
+        self.assertEqual(mph.unreachable_hosts, ["host2"])
 
     def test_download_file_with_sharding(self):
         """Test download_file with sharding uses sharder and merges results."""
@@ -448,8 +458,8 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
             {'result': {"host2": "/tmp/test.txt_host2"}, 'reachable_hosts': ["host2"], 'unreachable_hosts': []},
         ]
 
-        pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
-        result = pssh.download_file("/remote/test.txt", "/tmp/test.txt", suffix_separator="_")
+        mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
+        result = mph.download_file("/remote/test.txt", "/tmp/test.txt", suffix_separator="_")
 
         # Verify execute_sharded was called with real payloads
         self.mock_execute_sharded.assert_called_once()
@@ -474,10 +484,10 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
         expected_result = {"host2": "/tmp/test.txt_host2"}
 
         with patch(
-            'cvs.lib.parallel.multiprocess_pssh.Pssh.download_file', return_value=expected_result
+            'cvs.lib.parallel.multiprocess_phandle.ParallelHandle.download_file', return_value=expected_result
         ) as mock_download:
-            pssh = MultiProcessPssh(self.mock_log, self.host_list, user="test", config=config)
-            result = pssh.download_file("/remote/test.txt", "/tmp/test.txt", hosts=["host2"])
+            mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
+            result = mph.download_file("/remote/test.txt", "/tmp/test.txt", hosts=["host2"])
 
         self.assertEqual(result, expected_result)
         self.mock_execute_sharded.assert_not_called()
@@ -490,5 +500,6 @@ class TestMultiProcessPsshHelperMethods(unittest.TestCase):
             host_key_check=False,
             stop_on_errors=True,
             env_vars=None,
+            transport='ssh',
         )
         mock_download.assert_called_once_with("/remote/test.txt", "/tmp/test.txt", recurse=False, suffix_separator="_")

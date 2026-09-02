@@ -9,14 +9,17 @@ from __future__ import print_function
 
 import warnings
 from gevent import Timeout as GTimeout
-from gevent import killall
 from pssh.clients import ParallelSSHClient
 from pssh.exceptions import Timeout, ConnectionError, SessionError
 
 from cvs.lib.env_lib import build_env_prefix
+from cvs.lib.parallel.transport import create_transport
 from cvs.lib import globals
 
 global_log = globals.log
+
+# Re-export for unit tests that patch ParallelSSHClient on this module.
+__all__ = ['ParallelHandle', 'ParallelSSHClient', '_select_reachable_hosts']
 
 
 def _select_reachable_hosts(reachable_hosts, hosts):
@@ -27,15 +30,15 @@ def _select_reachable_hosts(reachable_hosts, hosts):
     requested = list(hosts)
     unknown_hosts = [host for host in requested if host not in reachable]
     if unknown_hosts:
-        raise ValueError(f"SFTP download requested unreachable host(s): {unknown_hosts}")
+        raise ValueError(f"Download requested unreachable host(s): {unknown_hosts}")
     return [host for host in reachable if host in requested]
 
 
-class Pssh:
+class ParallelHandle:
     """
-    Single-process parallel SSH: one ParallelSSHClient (one gevent hub) over a host list.
+    Single-process parallel handle over a host list via a pluggable transport.
 
-    For large host counts, use PsshSharded (see cvs.lib.parallel.pssh_sharded), which shards hosts across processes.
+    For large host counts, use MultiProcessParallelHandle, which shards hosts across processes.
     """
 
     def __init__(
@@ -49,7 +52,8 @@ class Pssh:
         stop_on_errors=True,
         env_vars=None,
         process_output=True,
-        **ssh_client_kwargs,
+        transport='ssh',
+        **transport_kwargs,
     ):
         # Backward compatibility warning for log parameter
         if log is not None:
@@ -72,7 +76,8 @@ class Pssh:
         self.stop_on_errors = stop_on_errors
         self.process_output = process_output
         self.unreachable_hosts = []
-        self.ssh_client_kwargs = ssh_client_kwargs
+        self.transport_name = transport
+        self.transport_kwargs = transport_kwargs
         self.env_prefix = build_env_prefix(env_vars)
         self.log.debug(f"Environ vars: {self.env_prefix}")
 
@@ -80,21 +85,30 @@ class Pssh:
             self.log.info("%s", self.reachable_hosts)
             self.log.info("%s", self.user)
             self.log.info("%s", self.pkey)
-        self._recreate_parallel_client()
+
+        self._transport = create_transport(
+            self.reachable_hosts,
+            transport=transport,
+            user=user,
+            password=password,
+            pkey=pkey,
+            **transport_kwargs,
+        )
+
+    @property
+    def client(self):
+        """Underlying protocol client (ParallelSSHClient for SSH transport)."""
+        return self._transport.client
+
+    @property
+    def ssh_client_kwargs(self):
+        """Backward-compatible alias for SSH transport kwargs."""
+        if hasattr(self._transport, 'ssh_client_kwargs'):
+            return self._transport.ssh_client_kwargs
+        return self.transport_kwargs
 
     def _recreate_parallel_client(self):
-        if self.password is None:
-            self.client = ParallelSSHClient(
-                self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30, **self.ssh_client_kwargs
-            )
-        else:
-            self.client = ParallelSSHClient(
-                self.reachable_hosts,
-                user=self.user,
-                password=self.password,
-                keepalive_seconds=30,
-                **self.ssh_client_kwargs,
-            )
+        self._transport.rebuild(self.reachable_hosts)
 
     def _run_command_with_session_retry(self, *args, **kwargs):
         try:
@@ -111,24 +125,10 @@ class Pssh:
 
     def check_connectivity(self, hosts):
         """
-        Check connectivity for a list of hosts using one ParallelSSHClient.
+        Check connectivity for a list of hosts.
         Returns a list of unreachable hosts.
         """
-        if not hosts:
-            return []
-        temp_ssh_client_kwargs = self.ssh_client_kwargs.copy()
-        temp_ssh_client_kwargs['timeout'] = 2
-        temp_ssh_client_kwargs['num_retries'] = 0
-        temp_client = ParallelSSHClient(
-            hosts,
-            user=self.user,
-            pkey=self.pkey if self.password is None else None,
-            password=self.password,
-            **temp_ssh_client_kwargs,
-        )
-        output = temp_client.run_command('echo 1', stop_on_errors=False, read_timeout=2)
-        unreachable = [item.host for item in output if item.exception]
-        return unreachable
+        return self._transport.check_connectivity(hosts)
 
     def prune_nodes(self, nodes_to_remove):
         """
@@ -156,18 +156,7 @@ class Pssh:
             if host not in self.unreachable_hosts:
                 self.unreachable_hosts.append(host)
 
-        if self.password is None:
-            self.client = ParallelSSHClient(
-                self.reachable_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30, **self.ssh_client_kwargs
-            )
-        else:
-            self.client = ParallelSSHClient(
-                self.reachable_hosts,
-                user=self.user,
-                password=self.password,
-                keepalive_seconds=30,
-                **self.ssh_client_kwargs,
-            )
+        self._transport.rebuild(self.reachable_hosts)
         return removed
 
     def prune_unreachable_hosts(self, output):
@@ -515,14 +504,8 @@ class Pssh:
         self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, target_hosts)
         if target_hosts == self.reachable_hosts:
             client = self.client
-        elif self.password is None:
-            client = ParallelSSHClient(
-                target_hosts, user=self.user, pkey=self.pkey, keepalive_seconds=30, **self.ssh_client_kwargs
-            )
         else:
-            client = ParallelSSHClient(
-                target_hosts, user=self.user, password=self.password, keepalive_seconds=30, **self.ssh_client_kwargs
-            )
+            client = self._transport.client_for_hosts(target_hosts).client
         cmds = client.copy_remote_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
         client.pool.join()
         errors = []
@@ -590,34 +573,6 @@ class Pssh:
         self.client.run_command('reboot -f', stop_on_errors=self.stop_on_errors)
 
     def destroy_clients(self):
-        """Close the SSH transport for every host and drop the client.
-
-        Dropping the reference alone is not sufficient. A timed-out exec leaves
-        its per-host greenlet in client.cmds unfinished, and that greenlet's
-        callable is a bound method of the ParallelSSHClient, so the client stays
-        reachable, SSHClient.__del__ never runs and the sshd session outlives
-        this object. Kill the pending greenlets, then disconnect each host
-        client explicitly.
-        """
+        """Close the transport for every host and drop the client."""
         self.log.info('Destroying Current phdl connections ..')
-        client = getattr(self, 'client', None)
-        if client is None:
-            return
-
-        pending = getattr(client, 'cmds', None)
-        if pending:
-            try:
-                killall(pending, block=True, timeout=5)
-            except Exception as exc:
-                self.log.debug(f"Error killing pending SSH greenlets: {exc}")
-            client.cmds = None
-
-        host_clients = getattr(client, '_host_clients', None) or {}
-        for key, host_client in list(host_clients.items()):
-            try:
-                host_client._disconnect()
-            except Exception as exc:
-                self.log.debug(f"Error disconnecting SSH client {key}: {exc}")
-        host_clients.clear()
-
-        del self.client
+        self._transport.destroy()

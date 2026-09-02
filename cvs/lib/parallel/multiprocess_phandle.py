@@ -6,24 +6,24 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.lib.env_lib import build_env_prefix
-from cvs.lib.parallel.pssh import Pssh, _select_reachable_hosts
+from cvs.lib.parallel.phandle import ParallelHandle, _select_reachable_hosts
 from cvs.lib.parallel.config import ParallelConfig
-from cvs.lib.parallel.pssh_sharder import PsshSharder
-from cvs.lib.parallel.interfaces import ShardableSshInterface
+from cvs.lib.parallel.phandle_sharder import ParallelHandleSharder
+from cvs.lib.parallel.interfaces import ShardableHandleInterface
 from cvs.lib import globals
 
 global_log = globals.log
 
 
-class MultiProcessPssh(ShardableSshInterface):
+class MultiProcessParallelHandle(ShardableHandleInterface):
     """
-    Multi-process parallel SSH with automatic host sharding for large host lists.
+    Multi-process parallel handle with automatic host sharding for large host lists.
 
     When ``len(host_list) > hosts_per_shard`` (default 32), operations like
     ``exec`` / ``exec_cmd_list`` / ``scp_file`` / ``reboot_connections`` run in child processes (spawn),
-    each running a ``Pssh`` instance over a slice of hosts.
+    each running a ``ParallelHandle`` instance over a slice of hosts.
 
-    Pass ``hosts_per_shard=0`` to disable process sharding (always one ``Pssh`` in the parent process).
+    Pass ``hosts_per_shard=0`` to disable process sharding (always one ``ParallelHandle`` in the parent process).
     """
 
     def __init__(
@@ -37,7 +37,8 @@ class MultiProcessPssh(ShardableSshInterface):
         stop_on_errors=True,
         env_vars=None,
         config=None,
-        **ssh_client_kwargs,
+        transport='ssh',
+        **transport_kwargs,
     ):
         # Initialize configuration
         self.config = config or ParallelConfig.from_env()
@@ -46,23 +47,33 @@ class MultiProcessPssh(ShardableSshInterface):
         # Always ensure self.log is set for backward compatibility
         self.log = global_log
 
-        # Store ssh_client_kwargs for forwarding to shard workers
-        self.ssh_client_kwargs = ssh_client_kwargs
+        # Store transport kwargs for forwarding to shard workers
+        self.transport = transport
+        self.transport_kwargs = transport_kwargs
 
         n = len(host_list) if host_list is not None else 0
         use_mp = hosts_per_shard > 0 and n > hosts_per_shard
 
         if use_mp:
-            # Initialize for multi-process sharding - no Pssh instance needed
+            # Initialize for multi-process sharding - no ParallelHandle instance needed
             self._init_sharded(
-                log, host_list, user, password, pkey, host_key_check, stop_on_errors, env_vars, **ssh_client_kwargs
+                log,
+                host_list,
+                user,
+                password,
+                pkey,
+                host_key_check,
+                stop_on_errors,
+                env_vars,
+                transport,
+                **transport_kwargs,
             )
 
-            self.sharder = PsshSharder(self.config)
-            self.pssh = None  # No Pssh instance needed for sharded mode
+            self.sharder = ParallelHandleSharder(self.config)
+            self.phandle = None  # No ParallelHandle instance needed for sharded mode
         else:
-            # No sharding - create Pssh instance for delegation
-            self.pssh = Pssh(
+            # No sharding - create ParallelHandle instance for delegation
+            self.phandle = ParallelHandle(
                 log,
                 host_list,
                 user,
@@ -72,7 +83,8 @@ class MultiProcessPssh(ShardableSshInterface):
                 stop_on_errors,
                 env_vars,
                 process_output=True,  # Default to True for compatibility
-                **ssh_client_kwargs,
+                transport=transport,
+                **transport_kwargs,
             )
             # Ensure attributes needed by _shard_init_kwargs are available
             self.host_list = host_list
@@ -90,7 +102,8 @@ class MultiProcessPssh(ShardableSshInterface):
         host_key_check,
         stop_on_errors,
         env_vars,
-        **ssh_client_kwargs,
+        transport,
+        **transport_kwargs,
     ):
         """Initialize for sharded multi-process execution."""
         # Always use global logger but maintain self.log for backward compatibility
@@ -104,7 +117,8 @@ class MultiProcessPssh(ShardableSshInterface):
         self.stop_on_errors = stop_on_errors
         self.unreachable_hosts = []
         self.env_vars = env_vars
-        self.ssh_client_kwargs = ssh_client_kwargs
+        self.transport = transport
+        self.transport_kwargs = transport_kwargs
         self.env_prefix = build_env_prefix(env_vars)
         self.process_output = True  # Default to True for compatibility
         self.client = None
@@ -123,15 +137,16 @@ class MultiProcessPssh(ShardableSshInterface):
             'host_key_check': self.host_key_check,
             'stop_on_errors': self.stop_on_errors,
             'env_vars': self.env_vars,
-            **self.ssh_client_kwargs,  # Forward all ssh client kwargs to shard workers
+            'transport': self.transport,
+            **self.transport_kwargs,
         }
 
-    def _sync_pssh_state(self):
-        """Sync wrapper reachability state from Single-process Pssh (non-sharded mode)."""
-        if self.pssh is None:
+    def _sync_phandle_state(self):
+        """Sync wrapper reachability state from Single-process ParallelHandle (non-sharded mode)."""
+        if self.phandle is None:
             return
-        self.reachable_hosts = list(self.pssh.reachable_hosts)
-        self.unreachable_hosts = list(self.pssh.unreachable_hosts)
+        self.reachable_hosts = list(self.phandle.reachable_hosts)
+        self.unreachable_hosts = list(self.phandle.unreachable_hosts)
 
     def _merge_shard_returns(self, shard_returns, merge_unreachable=True):
         """
@@ -186,19 +201,19 @@ class MultiProcessPssh(ShardableSshInterface):
     def exec(self, cmd, timeout=None, print_console=True, detailed=False, inactivity_timeout=None):
         """Execute command with automatic sharding if needed.
 
-        inactivity_timeout (see Pssh.exec) is threaded through to both the direct
+        inactivity_timeout (see ParallelHandle.exec) is threaded through to both the direct
         single-process path and the sharded worker path, so a per-line inactivity
         timeout applies regardless of host count.
         """
-        if self.pssh is not None:
-            result = self.pssh.exec(
+        if self.phandle is not None:
+            result = self.phandle.exec(
                 cmd,
                 timeout=timeout,
                 print_console=print_console,
                 detailed=detailed,
                 inactivity_timeout=inactivity_timeout,
             )
-            self._sync_pssh_state()
+            self._sync_phandle_state()
             return result
 
         if self.env_prefix:
@@ -250,15 +265,15 @@ class MultiProcessPssh(ShardableSshInterface):
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True, inactivity_timeout=None):
         """Execute command list with automatic sharding if needed.
 
-        inactivity_timeout (see Pssh.exec) is threaded through to both the direct
+        inactivity_timeout (see ParallelHandle.exec) is threaded through to both the direct
         single-process path and the sharded worker path, so a per-line inactivity
         timeout applies regardless of host count.
         """
-        if self.pssh is not None:
-            result = self.pssh.exec_cmd_list(
+        if self.phandle is not None:
+            result = self.phandle.exec_cmd_list(
                 cmd_list, timeout=timeout, print_console=print_console, inactivity_timeout=inactivity_timeout
             )
-            self._sync_pssh_state()
+            self._sync_phandle_state()
             return result
 
         # Keep host_list as full inventory; accept command lists aligned either
@@ -274,7 +289,7 @@ class MultiProcessPssh(ShardableSshInterface):
                 f"reachable_hosts={len(self.reachable_hosts)})"
             )
 
-        # Keep raw commands for shard payloads (worker Pssh applies env_prefix once).
+        # Keep raw commands for shard payloads (worker ParallelHandle applies env_prefix once).
         # Build expanded commands separately for logging compatibility.
         raw_commands = list(cmd_list)
         if self.env_prefix:
@@ -349,8 +364,8 @@ class MultiProcessPssh(ShardableSshInterface):
 
     def upload_file(self, local_file, remote_file, recurse=False):
         """Upload file with automatic sharding if needed."""
-        if self.pssh is not None:
-            return self.pssh.upload_file(local_file, remote_file, recurse=recurse)
+        if self.phandle is not None:
+            return self.phandle.upload_file(local_file, remote_file, recurse=recurse)
 
         self.log.info('SFTP upload %s -> %s on %s', local_file, remote_file, self.reachable_hosts)
 
@@ -368,18 +383,18 @@ class MultiProcessPssh(ShardableSshInterface):
 
     def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_', hosts=None):
         """Download a file, optionally from an exact subset of reachable hosts."""
-        if self.pssh is not None:
-            result = self.pssh.download_file(
+        if self.phandle is not None:
+            result = self.phandle.download_file(
                 remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator, hosts=hosts
             )
-            self._sync_pssh_state()
+            self._sync_phandle_state()
             return result
 
         if hosts is not None:
             target_hosts = _select_reachable_hosts(self.reachable_hosts, hosts)
             if not target_hosts:
                 return {}
-            target_pssh = Pssh(
+            target_phandle = ParallelHandle(
                 None,
                 target_hosts,
                 user=self.user,
@@ -388,9 +403,10 @@ class MultiProcessPssh(ShardableSshInterface):
                 host_key_check=self.host_key_check,
                 stop_on_errors=self.stop_on_errors,
                 env_vars=self.env_vars,
-                **self.ssh_client_kwargs,
+                transport=self.transport,
+                **self.transport_kwargs,
             )
-            return target_pssh.download_file(
+            return target_phandle.download_file(
                 remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator
             )
 
@@ -411,8 +427,8 @@ class MultiProcessPssh(ShardableSshInterface):
 
     def reboot_connections(self):
         """Reboot connections with automatic sharding if needed."""
-        if self.pssh is not None:
-            return self.pssh.reboot_connections()
+        if self.phandle is not None:
+            return self.phandle.reboot_connections()
 
         self.log.info('Rebooting Connections')
 
@@ -423,8 +439,8 @@ class MultiProcessPssh(ShardableSshInterface):
 
     def upload_file_list(self, node_path_map):
         """Upload different files to different hosts with automatic sharding if needed."""
-        if self.pssh is not None:
-            return self.pssh.upload_file_list(node_path_map)
+        if self.phandle is not None:
+            return self.phandle.upload_file_list(node_path_map)
 
         if not node_path_map:
             return {}
@@ -440,7 +456,7 @@ class MultiProcessPssh(ShardableSshInterface):
             shard_node_path_map = {h: node_path_map[h] for h in shard_hosts if h in node_path_map}
             if shard_node_path_map:
                 # Worker host_list must match node_path_map keys for upload_file_list.
-                # Pssh.upload_file_list delegates to ParallelSSHClient.copy_file(copy_args=...),
+                # ParallelHandle.upload_file_list delegates to ParallelSSHClient.copy_file(copy_args=...),
                 # which requires one copy_args entry per worker host in order.
                 target_hosts = [h for h in shard_hosts if h in shard_node_path_map]
                 payloads.append(
@@ -471,7 +487,7 @@ class MultiProcessPssh(ShardableSshInterface):
 
         Works in both modes:
         - sharded mode: updates wrapper host state
-        - non-sharded mode: delegates to Single-process Pssh (which rebuilds its client)
+        - non-sharded mode: delegates to Single-process ParallelHandle (which rebuilds its client)
         """
         if not nodes_to_remove:
             return []
@@ -481,13 +497,13 @@ class MultiProcessPssh(ShardableSshInterface):
         if not removed:
             return []
 
-        if self.pssh is not None:
-            # Non-sharded mode: let single-process Pssh own prune + client rebuild.
-            removed = self.pssh.prune_nodes(removed)
-            self._sync_pssh_state()
+        if self.phandle is not None:
+            # Non-sharded mode: let single-process ParallelHandle own prune + client rebuild.
+            removed = self.phandle.prune_nodes(removed)
+            self._sync_phandle_state()
             return removed
 
-        # Sharded mode: workers create per-call Pssh instances from payload host lists, so
+        # Sharded mode: workers create per-call ParallelHandle instances from payload host lists, so
         # pruning only needs to update wrapper host state used for future shard construction.
         self.reachable_hosts = [h for h in self.reachable_hosts if h not in remove_set]
         for host in removed:
@@ -497,12 +513,12 @@ class MultiProcessPssh(ShardableSshInterface):
 
     def destroy_clients(self):
         """Destroy clients - handle both sharded and non-sharded modes."""
-        if self.pssh is None:
+        if self.phandle is None:
             self.log.info('Cleaning up sharded mode state ..')
             # In sharded mode, no persistent connections to destroy
             self.client = None
         else:
             self.log.info('Destroying Current phdl connections ..')
-            # In non-sharded mode, properly destroy the Pssh instance connections
-            if self.pssh is not None:
-                self.pssh.destroy_clients()
+            # In non-sharded mode, properly destroy the ParallelHandle instance connections
+            if self.phandle is not None:
+                self.phandle.destroy_clients()
