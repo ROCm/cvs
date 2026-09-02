@@ -1373,6 +1373,17 @@ class PreflightL2PingConfig(BaseModel):
 
     enabled: bool = Field(default=False, description="Enable the mandatory IFoE L2 connectivity gate")
     pings_per_port: int = Field(default=3, ge=1, description="Ping samples per selected IFoE port pair")
+    loss_threshold_pct: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=100.0,
+        description="Maximum tolerated packet loss percentage per traffic type",
+    )
+    ping_timeout: int = Field(
+        default=600,
+        ge=30,
+        description="PSSH read timeout in seconds for each afmctl ping invocation",
+    )
 
 
 class PreflightTransferBenchConfig(BaseModel):

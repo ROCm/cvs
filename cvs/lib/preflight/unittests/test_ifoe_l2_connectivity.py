@@ -913,7 +913,7 @@ Port#    State
 
 
 class TestL2PingConfigContract(unittest.TestCase):
-    def test_schema_accepts_only_the_two_customer_facing_options(self):
+    def test_schema_accepts_timeout_and_loss_overrides(self):
         config = PreflightConfigFile.model_validate(
             {
                 'connectivity_check': {
@@ -921,6 +921,8 @@ class TestL2PingConfigContract(unittest.TestCase):
                         'l2ping': {
                             'enabled': True,
                             'pings_per_port': 5,
+                            'loss_threshold_pct': 3.0,
+                            'ping_timeout': 600,
                         }
                     }
                 }
@@ -929,6 +931,8 @@ class TestL2PingConfigContract(unittest.TestCase):
 
         self.assertTrue(config.connectivity_check.ifoe.l2ping.enabled)
         self.assertEqual(config.connectivity_check.ifoe.l2ping.pings_per_port, 5)
+        self.assertEqual(config.connectivity_check.ifoe.l2ping.loss_threshold_pct, 3.0)
+        self.assertEqual(config.connectivity_check.ifoe.l2ping.ping_timeout, 600)
 
         with self.assertRaises(ValidationError):
             PreflightConfigFile.model_validate(
@@ -938,7 +942,22 @@ class TestL2PingConfigContract(unittest.TestCase):
                             'l2ping': {
                                 'enabled': True,
                                 'pings_per_port': 3,
-                                'loss_threshold_pct': 1.0,
+                                'ssh_timeout': 600,
+                            }
+                        }
+                    }
+                }
+            )
+
+        with self.assertRaises(ValidationError):
+            PreflightConfigFile.model_validate(
+                {
+                    'connectivity_check': {
+                        'ifoe': {
+                            'l2ping': {
+                                'enabled': True,
+                                'pings_per_port': 3,
+                                'mesh_mode': 'full_mesh',
                             }
                         }
                     }
@@ -998,6 +1017,7 @@ class TestL2PingConfigContract(unittest.TestCase):
             self.assertEqual(kwargs['ports'], 'up')
             self.assertEqual(kwargs['traffic_types'], ['ifoe_req', 'ifoe_resp', 'non_ifoe'])
             self.assertEqual(kwargs['loss_threshold_pct'], 0.0)
+            self.assertEqual(kwargs['ssh_timeout'], 600)
             self.assertTrue(kwargs['require_complete_coverage'])
             self.assertTrue(kwargs['strict_discovery'])
             self.assertFalse(kwargs['allow_text_fallback'])
@@ -1006,6 +1026,53 @@ class TestL2PingConfigContract(unittest.TestCase):
             result = preflight_checks.preflight_results['ifoe_l2_connectivity']
             self.assertEqual(result['status'], 'PASS')
             self.assertEqual(result['failure_mode'], 'gate')
+        finally:
+            preflight_checks.preflight_results.clear()
+            preflight_checks.preflight_results.update(previous_results)
+
+    def test_preflight_entrypoint_honors_l2ping_timeout_and_loss_overrides(self):
+        from cvs.tests.preflight import preflight_checks
+
+        phdl = MagicMock()
+        phdl.reachable_hosts = ['nodeA']
+        config = {
+            'connectivity_check': {
+                'ifoe': {
+                    'l2ping': {
+                        'enabled': True,
+                        'pings_per_port': 3,
+                        'ping_timeout': 900,
+                        'loss_threshold_pct': 3.0,
+                    }
+                }
+            }
+        }
+        cluster = {'node_dict': {'nodeA': {}}}
+        checker_results = {
+            'nodeA': {
+                'status': 'PASS',
+                'errors': [],
+                'accelerators': {},
+                'coverage': {'complete': True},
+            }
+        }
+
+        previous_results = dict(preflight_checks.preflight_results)
+        preflight_checks.preflight_results.clear()
+        try:
+            with (
+                patch.object(preflight_checks, 'IfoeL2ConnectivityCheck') as checker_cls,
+                patch.object(preflight_checks, 'preflight_update_test_result'),
+            ):
+                checker_cls.return_value.run.return_value = checker_results
+                preflight_checks.test_ifoe_l2_connectivity(phdl, config, cluster)
+
+            kwargs = checker_cls.call_args.kwargs
+            self.assertEqual(kwargs['ssh_timeout'], 900)
+            self.assertEqual(kwargs['loss_threshold_pct'], 3.0)
+            result = preflight_checks.preflight_results['ifoe_l2_connectivity']
+            self.assertEqual(result['ping_timeout'], 900)
+            self.assertEqual(result['loss_threshold_pct'], 3.0)
         finally:
             preflight_checks.preflight_results.clear()
             preflight_checks.preflight_results.update(previous_results)

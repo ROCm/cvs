@@ -1532,6 +1532,8 @@ class PreflightReportGenerator(PreflightCheck):
         failed_invocations = int(ifoe_results.get('failed_invocations', 0))
         pings_per_port = int(ifoe_results.get('pings_per_port', 3))
         loss_threshold = ifoe_results.get('loss_threshold_pct', 0.0)
+        ping_timeout = ifoe_results.get('ping_timeout', ifoe_results.get('ssh_timeout'))
+        ping_timeout_txt = f"{ping_timeout}s" if ping_timeout is not None else "600s (default)"
         traffic_types = ifoe_results.get('traffic_types') or []
         mesh_mode = ifoe_results.get('mesh_mode', 'full_mesh')
         ports = ifoe_results.get('ports', 'up')
@@ -1551,6 +1553,7 @@ class PreflightReportGenerator(PreflightCheck):
             result mode: <code>{html.escape(str(failure_mode))}</code>;
             Traffic types enforced: <code>{html.escape(", ".join(str(t) for t in traffic_types))}</code>;
             loss threshold: <code>{html.escape(str(loss_threshold))}%</code>;
+            ping timeout: <code>{html.escape(str(ping_timeout_txt))}</code>;
             invocations: <code>{total_invocations - failed_invocations}/{total_invocations}</code> succeeded.</p>
         """
 
