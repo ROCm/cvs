@@ -10,8 +10,10 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # migrated rvs_cvs.py orch fixture. Mocks Pssh so tests run with no SSH.
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from cvs.core.agent.mesh import AgentMesh
 from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 
@@ -336,6 +338,109 @@ class TestBaremetalOrchestratorSubsetHandleCleanup(unittest.TestCase):
         orch.exec("hostname")
 
         orch.all.destroy_clients.assert_not_called()
+
+
+class TestBaremetalOrchestratorHttpTransport(unittest.TestCase):
+    """_make_orch_config() names hosts 10.0.0.1/10.0.0.2, the management-IP style a real
+    cluster file uses; agents register under scheduler node names, so these exercise the
+    AgentMesh.resolve() bridge rather than assuming the two namespaces already match."""
+
+    def setUp(self):
+        AgentMesh.reset()
+        self.addCleanup(AgentMesh.reset)
+        AgentMesh.install(
+            {
+                0: SimpleNamespace(hostname="node01", port=9000),
+                1: SimpleNamespace(hostname="node02", port=9001),
+            },
+            "tok",
+        )
+        mapping = {
+            "node01": ["10.0.0.1"],
+            "node02": ["10.0.0.2"],
+            "10.0.0.1": ["10.0.0.1"],
+            "10.0.0.2": ["10.0.0.2"],
+        }
+        patcher = patch("cvs.core.agent.mesh._addresses", side_effect=lambda n: mapping.get(n, []))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.expected_urls = {"10.0.0.1": "http://node01:9000", "10.0.0.2": "http://node02:9001"}
+
+    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_init_uses_http_transport_when_managed(self, mock_pssh, _managed):
+        BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        self.assertEqual(mock_pssh.call_count, 2)
+        for call in mock_pssh.call_args_list:
+            self.assertEqual(call.kwargs["transport"], "http")
+            self.assertEqual(call.kwargs["agent_urls"], self.expected_urls)
+            self.assertEqual(call.kwargs["token"], "tok")
+
+    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_subset_exec_forwards_http_kwargs(self, mock_pssh, _managed):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        mock_pssh.reset_mock()
+        orch.exec("hostname", hosts=["10.0.0.2"])
+        mock_pssh.assert_called_once()
+        self.assertEqual(mock_pssh.call_args.args[1], ["10.0.0.2"])
+        self.assertEqual(mock_pssh.call_args.kwargs["transport"], "http")
+        self.assertEqual(mock_pssh.call_args.kwargs["token"], "tok")
+        # The full map is forwarded; HttpTransport narrows it to the subset it was given.
+        self.assertEqual(mock_pssh.call_args.kwargs["agent_urls"], self.expected_urls)
+
+    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_cluster_host_without_an_agent_fails_at_construction(self, _pssh, _managed):
+        cfg = _make_orch_config()
+        cfg.node_dict = {"10.0.0.1": {}, "10.0.0.9": {}}
+        with self.assertRaises(ValueError) as ctx:
+            BaremetalOrchestrator(MagicMock(), cfg)
+        self.assertIn("10.0.0.9", str(ctx.exception))
+
+    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_close_destroys_both_persistent_handles(self, mock_pssh, _managed):
+        mock_pssh.side_effect = lambda *args, **kwargs: MagicMock()
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.close()
+        orch.head.destroy_clients.assert_called_once_with()
+        orch.all.destroy_clients.assert_called_once_with()
+
+    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=False)
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_close_survives_a_handle_that_raises(self, mock_pssh, _managed):
+        mock_pssh.side_effect = lambda *args, **kwargs: MagicMock()
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head.destroy_clients.side_effect = OSError("already gone")
+        orch.close()
+        orch.all.destroy_clients.assert_called_once_with()
+
+    @patch("cvs.core.orchestrators.container.RuntimeFactory")
+    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
+    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    def test_container_orchestrator_stays_on_ssh_when_managed(self, mock_pssh, _managed, _runtime):
+        from cvs.core.orchestrators.container import ContainerOrchestrator
+
+        cfg = OrchestratorConfig(
+            orchestrator="container",
+            node_dict={"10.0.0.1": {}, "10.0.0.2": {}},
+            username="testuser",
+            priv_key_file="/dev/null",
+            password=None,
+            head_node_dict={"mgmt_ip": "10.0.0.1"},
+            container={
+                "lifetime": "per_run",
+                "image": "rocm/cvs:test",
+                "name": "cvs_iter_test",
+                "runtime": {"name": "docker", "args": {}},
+            },
+        )
+        with patch("cvs.core.agent.mesh.AgentMesh.get") as mock_get:
+            ContainerOrchestrator(MagicMock(), cfg)
+        mock_get.assert_not_called()
+        self.assertNotIn("transport", mock_pssh.call_args.kwargs)
 
 
 if __name__ == "__main__":
