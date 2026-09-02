@@ -3,7 +3,6 @@
   "schema_version": 1,
   "framework": "sglang",
   "topology": "distributed",
-  "gpu_arch": "mi3xx",
   "threshold_json": "mi3xx_sglang_deepseek_r1_0528_threshold.json",
   "_container_image": "rocm/sgl-dev:v0.5.12.post1-rocm720-mi30x-20260601",
   "paths": {
