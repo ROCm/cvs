@@ -10,6 +10,7 @@ from cvs.lib.inference.atom.atom_parsing import (
     ENFORCED_METRICS,
     GATED_METRICS,
     METRIC_TIERS,
+    METRIC_UNITS,
     evaluate_specs_for_actuals,
     sglang_bench_jsonl_to_raw,
     tier_metric_specs,
@@ -29,6 +30,10 @@ class TestATOMAtomParsing(unittest.TestCase):
     def test_enforced_metrics_cover_all_tiers(self):
         tiered = {m for names in METRIC_TIERS.values() for m in names}
         self.assertEqual(ENFORCED_METRICS, frozenset(tiered))
+
+    def test_metric_units_export_for_run_deck_profile(self):
+        self.assertIn("output_throughput", METRIC_UNITS)
+        self.assertEqual(METRIC_UNITS["efficiency_pct"], "%")
 
     def test_tier_metric_specs_throughput(self):
         cell = {

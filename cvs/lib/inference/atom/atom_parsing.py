@@ -65,6 +65,9 @@ METRIC_TIERS: dict[str, tuple[str, ...]] = {
 SCALING_METRICS: tuple[str, ...] = METRIC_TIERS["scaling"]
 SCALING_METRIC_UNITS: dict[str, str] = {"efficiency_pct": "%"}
 
+# Run-deck profile hook (atom.json) and report presets merge client + scaling units.
+METRIC_UNITS: dict[str, str] = {**CLIENT_METRIC_UNITS, **SCALING_METRIC_UNITS}
+
 METRIC_TIER_ORDER: tuple[str, ...] = tuple(METRIC_TIERS.keys()) + ("record",)
 
 _tiered = {m for names in METRIC_TIERS.values() for m in names}
