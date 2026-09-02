@@ -352,11 +352,11 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regre
       - regression_params: dict of all regression parametrized values (NCCL_ALGO, NCCL_PROTO, NCCL_*_NCHANNELS, etc.)
 
     Flow:
-      1) Capture start time to bound dmesg checks later.
+      1) Optionally capture start time to bound clock-window dmesg checks later.
       2) Optionally snapshot cluster metrics before the test (for debugging/compare).
       3) Build env_overrides dict from all regression parameters.
       4) Invoke rccl_lib.rccl_regression with parameters built from config and fixtures.
-      5) Capture end time and verify dmesg for errors between start/end.
+      5) Verify dmesg via kmsg markers or a start/end clock window.
       6) Optionally snapshot metrics again and compare before/after.
       7) Call update_test_result() to finalize test status.
 
@@ -375,15 +375,20 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regre
             no_sudo_nodes,
         )
 
+    cvs_params = config_dict.get('cvs_params', {})
+    dmesg_during_test = str(cvs_params.get('dmesg_during_test', 'False')).strip().lower() == 'true'
+    use_clock_window_dmesg = can_use_sudo and not dmesg_during_test
+
     params_str = ' '.join(f'{k}={v}' for k, v in regression_params.items())
     if can_use_sudo:
         phdl.exec(f'sudo echo "Starting Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
 
-    # start_time = phdl.exec('date')
     # Seconds precision matters: verify_dmesg_for_errors' node-scraper path
     # treats analysis_range_end as an exclusive cutoff, so a minute-truncated
     # end time silently drops the final minute of this test's dmesg window.
-    start_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
+    start_time = None
+    if use_clock_window_dmesg:
+        start_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
     node_list = list(cluster_dict['node_dict'].keys())
 
     # Build list of nodes and their VPC IPs (used by the RCCL test)
@@ -420,23 +425,18 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regre
     key_name = f'{rccl_collective}-{params_str}'
     rccl_res_dict[key_name] = result_dict
 
-    # Scan dmesg between start and end times cluster wide ..
-    # end_time = phdl.exec('date')
     if can_use_sudo:
         phdl.exec(f'sudo echo "End of Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
-
-    end_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
-    if can_use_sudo:
-        dmesg_during_test = re.search('True', config_dict.get('cvs_params', {}).get('dmesg_during_test', 'False'), re.I)
         if dmesg_during_test:
             start_marker = f'Starting Test {rccl_collective} {params_str}'
             end_marker = f'End of Test {rccl_collective} {params_str}'
-            verify_dmesg_during_test(phdl, start_marker, end_marker, dmesg_during_test=True)
+            verify_dmesg_during_test(phdl, start_marker, end_marker)
         else:
             # Bound dmesg scan to this test's own start..end window (per-test).
             # till_end_flag=True scans from start_time to the end of the dmesg
             # buffer, which causes earlier-test kernel events (e.g. a scatter_perf
             # segfault) to repeatedly fail every subsequent parametrized test.
+            end_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
             verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=False)
 
     # Get new cluster snapshot and compare ..
