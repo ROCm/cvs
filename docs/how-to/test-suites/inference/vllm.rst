@@ -47,11 +47,11 @@ Copy the one that matches your topology:
 .. code:: bash
 
   # Single node
-  cvs config copy inference/vllm/mi300x_vllm_llama31-70b_fp8_single.json \
+  cvs config copy inference/vllm/mi3xx_vllm_llama33-70b_fp8_single.json \
     --output /tmp/cvs/vllm_singlenode_config.json
 
   # Multiple nodes
-  cvs config copy inference/vllm/mi300x_vllm_llama31-70b_fp8_distributed.json \
+  cvs config copy inference/vllm/mi3xx_vllm_llama33-70b_fp8_distributed.json \
     --output /tmp/cvs/vllm_multinode_config.json
 
 You also need a cluster file describing your nodes. Use the container template, since the vLLM suite always runs inside a container:

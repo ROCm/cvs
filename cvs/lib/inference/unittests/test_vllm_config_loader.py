@@ -59,7 +59,6 @@ class TestGpuGatedMetricCoverage(unittest.TestCase):
         return VariantConfig(
             schema_version=1,
             framework="vllm",
-            gpu_arch="mi300x",
             enforce_thresholds=enforce,
             paths={
                 "shared_fs": "/home/x",
@@ -120,7 +119,6 @@ class TestPromGatedMetricCoverage(unittest.TestCase):
         return VariantConfig(
             schema_version=1,
             framework="vllm",
-            gpu_arch="mi300x",
             enforce_thresholds=enforce,
             paths={
                 "shared_fs": "/home/x",

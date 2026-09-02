@@ -18,7 +18,6 @@ def _base_kwargs(**overrides):
     kwargs = dict(
         schema_version=1,
         framework="vllm",
-        gpu_arch="mi300x",
         enforce_thresholds=False,
         paths={
             "shared_fs": "/home/x",

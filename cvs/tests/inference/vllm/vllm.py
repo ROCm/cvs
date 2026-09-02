@@ -63,6 +63,8 @@ _FETCH_PRESENCE_RETRIES = 5
 # num_prompts are irrelevant here -- the probe never calls run_client.
 _SMOKE_ISL = 128
 _SMOKE_OSL = 32
+# Reports use a shared six-field result-key contract; vLLM no longer carries a GPU label.
+_GPU_REPORT_LABEL = ""
 
 # max-model-len for the smoke server, used only when the config doesn't set
 # one explicitly. Sized for OpenAIProbe's actual requests (the structured-
@@ -441,7 +443,7 @@ def test_vllm_inference(orch, variant_config, hf_token, seq_combo, concurrency, 
 
     key = (
         variant_config.model.id,
-        variant_config.gpu_arch,
+        _GPU_REPORT_LABEL,
         isl,
         osl,
         seq_combo.get("name", "default"),
@@ -458,7 +460,7 @@ def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, li
     osl = seq_combo["osl"]
     key = (
         variant_config.model.id,
-        variant_config.gpu_arch,
+        _GPU_REPORT_LABEL,
         isl,
         osl,
         seq_combo.get("name", "default"),
@@ -491,7 +493,7 @@ def test_gpu_metric(seq_combo, concurrency, gpu_metric, inf_res_dict, variant_co
     osl = seq_combo["osl"]
     key = (
         variant_config.model.id,
-        variant_config.gpu_arch,
+        _GPU_REPORT_LABEL,
         isl,
         osl,
         seq_combo.get("name", "default"),
@@ -527,7 +529,7 @@ def test_prom_metric(seq_combo, concurrency, prom_metric, inf_res_dict, variant_
     osl = seq_combo["osl"]
     key = (
         variant_config.model.id,
-        variant_config.gpu_arch,
+        _GPU_REPORT_LABEL,
         isl,
         osl,
         seq_combo.get("name", "default"),
