@@ -109,7 +109,7 @@ Training workload templates use:
      - ``input/config_file/training/megatron/`` — ``mi{gpu}_megatron_{model}_{single|distributed}.json`` + ``mi{gpu}_megatron_{model}_{single|distributed}_threshold.json``
      - ``cvs config list training/megatron``
 
-       `Config README <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/training/megatron/README.md>`_
+       `docs/reference/configuration-files/training/megatron.rst <https://github.com/ROCm/cvs/blob/main/docs/reference/configuration-files/training/megatron.rst>`_
    * - TorchTitan
      - ``input/config_file/training/torchtitan/`` — ``mi{gpu}_torchtitan_{model}_{single|distributed}.json`` + ``mi{gpu}_torchtitan_{model}_{single|distributed}_threshold.json``
      - ``cvs config list training/torchtitan``

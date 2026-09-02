@@ -10,7 +10,9 @@ Topology is determined by the config file:
 
 Lifecycle (each stage is a separate test):
   test_launch_container  — launch the container once for all sweep combos
+  test_download_tokenizer — download HF tokenizer when the model needs a local file
   test_smoke             — fixed small cell: model loads and runs N steps without error
+  test_checkpoint        — Primus-only: checkpoint save + resume correctness check
   test_training          — parametrized: one test per sweep combo; kills GPU
                            processes in finally so VRAM is free for the next combo
   test_metric            — parametrized: threshold check per combo via evaluate_all
