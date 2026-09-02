@@ -20,8 +20,13 @@ log = globals.log
 _ENV_VAR_NAME_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 _LINUX_ID_LIST_PART_RE = re.compile(r'^(\d+)(?:-(\d+))?$')
 _DETECT_NUM_CPU_DEVICES_CMD = (
-    "n=$(grep -l '[0-9]' /sys/devices/system/node/node*/cpulist 2>/dev/null | wc -l | tr -d ' '); "
-    "if [ -n \"$n\" ] && [ \"$n\" -gt 0 ]; then printf '%s\\n' \"$n\"; "
+    "c=0; "
+    "for f in /sys/devices/system/node/node*/cpulist; do "
+    "[ -f \"$f\" ] || continue; "
+    "grep -q '[0-9]' \"$f\" || continue; "
+    "c=$((c+1)); "
+    "done; "
+    "if [ \"$c\" -gt 0 ]; then printf '%s\\n' \"$c\"; "
     "else awk '/^Mems_allowed_list:/ {print $2}' /proc/self/status; fi"
 )
 _TB_NUMA_ABORT_HINT = (

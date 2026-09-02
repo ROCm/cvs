@@ -63,6 +63,10 @@ class TestTransferBenchEnvAndCommand(unittest.TestCase):
         self.assertIn('TransferBench p2p', cmd)
         self.assertIn('LD_LIBRARY_PATH', cmd)
 
+    def test_detect_command_counts_populated_cpulists(self):
+        self.assertIn('for f in /sys/devices/system/node/node*/cpulist', tb._DETECT_NUM_CPU_DEVICES_CMD)
+        self.assertIn('Mems_allowed_list', tb._DETECT_NUM_CPU_DEVICES_CMD)
+
     def test_auto_detect_when_hosts_agree(self):
         orch = MagicMock()
         orch.exec.return_value = {'nodeA': '2\n', 'nodeB': '2\n'}
