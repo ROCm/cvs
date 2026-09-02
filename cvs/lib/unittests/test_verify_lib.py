@@ -1,5 +1,6 @@
 import datetime
 import os
+import shutil
 import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
@@ -7,6 +8,8 @@ from unittest.mock import MagicMock, patch
 
 # Import the module under test
 import cvs.lib.verify_lib as verify_lib
+
+_HAS_BASH_AND_AWK = shutil.which("bash") and shutil.which("awk")
 
 
 class TestVerifyGpuPcieBusWidth(unittest.TestCase):
@@ -131,6 +134,8 @@ class TestFullDmesgScan(unittest.TestCase):
 
         # legacy path collects with human-readable `dmesg -T`
         self.assertIn("dmesg -T", phdl.exec.call_args[0][0])
+        self.assertIn("grep -E -v", phdl.exec.call_args[0][0])
+        self.assertNotIn("egrep", phdl.exec.call_args[0][0])
         self.assertTrue(result["node1"])
         mock_fail_test.assert_called()
 
@@ -180,14 +185,8 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
         )
         return completed.stdout
 
-    def test_disabled_is_no_op(self):
-        phdl = MagicMock()
-        result = verify_lib.verify_dmesg_during_test(phdl, 'Starting Test x', 'End of Test x', dmesg_during_test=False)
-        self.assertEqual(result, {})
-        phdl.exec.assert_not_called()
-
     @patch("cvs.lib.verify_lib.log")
-    def test_missing_markers_warn_only(self, mock_log):
+    def test_nonempty_slice_without_start_marker_is_skipped(self, mock_log):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
         phdl = MagicMock()
         phdl.exec.return_value = {"node1": "unrelated kernel line\n"}
@@ -200,6 +199,9 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
         self.assertEqual(result, {"node1": []})
         mock_fail.assert_not_called()
         mock_log.warning.assert_called()
+        warn_msg = mock_log.warning.call_args[0][0]
+        self.assertIn("start marker", warn_msg)
+        self.assertIn("not found in slice", warn_msg)
 
     @patch("cvs.lib.verify_lib.fail_test")
     def test_legacy_slice_command_uses_markers(self, mock_fail_test):
@@ -221,12 +223,18 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
 
         cmd = phdl.exec.call_args[0][0]
         self.assertIn("dmesg -T", cmd)
+        self.assertIn("grep -E -v", cmd)
+        self.assertNotIn("egrep", cmd)
         self.assertIn("-v s='Starting Test all_reduce_perf'", cmd)
         self.assertIn("-v e='End of Test all_reduce_perf'", cmd)
         self.assertIn("last=buf", cmd)
         self.assertIn('printf "%s",last', cmd)
         self.assertTrue(result["node1"])
         mock_fail_test.assert_called()
+        fail_msg = mock_fail_test.call_args[0][0]
+        self.assertIn("Failure pattern ***", fail_msg)
+        self.assertIn("on node node1", fail_msg)
+        self.assertNotIn("Failue", fail_msg)
 
     def test_trim_trailing_blank_dmesg_lines(self):
         self.assertEqual(
@@ -238,6 +246,7 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
             "a\n\nb\n",
         )
 
+    @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
     def test_awk_slice_has_no_trailing_blank_line(self):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
         dmesg_text = "Starting Test all_reduce_perf\nEnd of Test all_reduce_perf\n"
@@ -258,6 +267,7 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
         info_call = mock_log.info.call_args_list[-1]
         self.assertEqual(info_call[0][2], 2)
 
+    @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
     def test_awk_slice_returns_last_marker_pair_only(self):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
         dmesg_text = (
@@ -276,6 +286,7 @@ class TestVerifyDmesgDuringTest(unittest.TestCase):
         self.assertNotIn("noise before", sliced)
         self.assertNotIn("noise after", sliced)
 
+    @unittest.skipUnless(_HAS_BASH_AND_AWK, "requires bash and awk")
     def test_awk_slice_returns_partial_when_end_marker_missing(self):
         os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
         dmesg_text = (

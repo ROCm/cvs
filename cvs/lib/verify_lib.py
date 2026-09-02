@@ -321,7 +321,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     Behavior:
       - Extracts a human-readable timestamp prefix (e.g., 'Mon Jan  2 03:04:05') from provided times.
       - Uses dmesg -T (human-readable timestamps) piped to awk to slice the log from start to end.
-      - Filters out lines containing 'ALLOWED' or 'DENIED' (non-fatal/noisy) via egrep -v.
+      - Filters out lines containing 'ALLOWED' or 'DENIED' (non-fatal/noisy) via grep -E -v.
       - Scans each line against err_patterns_dict (fail_test on match) and warn_patterns_dict
         (log.warning only on match; test still passes but run carries a visible WARN).
 
@@ -354,7 +354,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
             end_dt = _parse_cvs_time(end_time_dict[node0])
             if end_dt:
                 analysis_args['analysis_range_end'] = end_dt
-        output_dict = phdl.exec("sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
+        output_dict = phdl.exec("sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never")
         return _node_scraper_scan(output_dict, analysis_args=analysis_args, source_label='Dmesg')
 
     err_dict = {}
@@ -378,11 +378,11 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
     # Filter out allowed/denied lines to reduce noise. Return is a dict keyed by node.
     if till_end_flag:
         output_dict = phdl.exec(
-            f"sudo dmesg -T | sed -n '/{start_pattern}/,$p' | egrep -v 'ALLOWED|DENIED' --color=never"
+            f"sudo dmesg -T | sed -n '/{start_pattern}/,$p' | grep -E -v 'ALLOWED|DENIED' --color=never"
         )
     else:
         output_dict = phdl.exec(
-            f"sudo dmesg -T | awk '/{start_pattern}.*/,/{end_pattern}.*/' | egrep -v 'ALLOWED|DENIED' --color=never"
+            f"sudo dmesg -T | awk '/{start_pattern}.*/,/{end_pattern}.*/' | grep -E -v 'ALLOWED|DENIED' --color=never"
         )
     # print(output_dict)
     for node in output_dict.keys():
@@ -397,7 +397,7 @@ def verify_dmesg_for_errors(phdl, start_time_dict, end_time_dict, till_end_flag=
         for line in output_dict[node].split("\n"):
             for err_key in err_patterns_dict.keys():
                 if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
-                    fail_test(f'ERROR - Failue pattern ** {line} ** seen in Dmesg')
+                    fail_test(f'ERROR - Failure pattern *** {line} *** seen in Dmesg on node {node}')
                     err_dict[node].append(line)
             for warn_key in warn_patterns_dict.keys():
                 if re.search(f'{warn_patterns_dict[warn_key]}', line, re.I):
@@ -445,21 +445,21 @@ def _dmesg_slice_by_markers_cmd(start_marker, end_marker):
         "END{if(cap&&buf)printf \"%s\",buf; else if(last)printf \"%s\",last}"
     )
     if use_node_scraper_dmesg():
-        dmesg_cmd = "sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never"
+        dmesg_cmd = "sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never"
     else:
-        dmesg_cmd = "sudo dmesg -T | egrep -v 'ALLOWED|DENIED' --color=never"
+        dmesg_cmd = "sudo dmesg -T | grep -E -v 'ALLOWED|DENIED' --color=never"
     return f"{dmesg_cmd} | awk -v s='{start_quoted}' -v e='{end_quoted}' '{awk_script}'"
 
 
 def _scan_sliced_dmesg_legacy(output_dict):
     """Scan marker-bounded dmesg slices with err_patterns_dict / warn_patterns_dict."""
     err_dict = {}
-    for node in output_dict.keys():
+    for node in output_dict:
         err_dict[node] = []
         for line in output_dict[node].split("\n"):
             for err_key in err_patterns_dict.keys():
                 if re.search(f'{err_patterns_dict[err_key]}', line, re.I):
-                    fail_test(f'ERROR - Failue pattern ** {line} ** seen in Dmesg')
+                    fail_test(f'ERROR - Failure pattern *** {line} *** seen in Dmesg on node {node}')
                     err_dict[node].append(line)
             for warn_key in warn_patterns_dict.keys():
                 if re.search(f'{warn_patterns_dict[warn_key]}', line, re.I):
@@ -474,7 +474,7 @@ def _scan_sliced_dmesg_node_scraper(output_dict):
     """Scan marker-bounded dmesg slices; WARNING events warn, others fail."""
     err_dict = {}
     analysis_args = {'error_regex': cvs_dmesg_error_regex()}
-    for node in output_dict.keys():
+    for node in output_dict:
         err_dict[node] = []
         events = node_scraper_adapter.parse_dmesg(output_dict[node], node_name=node, analysis_args=analysis_args)
         for event in events:
@@ -493,18 +493,16 @@ def _scan_sliced_dmesg_node_scraper(output_dict):
     return err_dict
 
 
-def verify_dmesg_during_test(phdl, start_marker, end_marker, *, dmesg_during_test=True):
+def verify_dmesg_during_test(phdl, start_marker, end_marker):
     """
     Collect dmesg between kmsg start/end markers (inclusive), log the slice per node,
     and scan for error/warn patterns.
 
-    Intended for RCCL tests that write markers via ``tee /dev/kmsg``. When
-    ``dmesg_during_test`` is False the function is a no-op. Missing markers on a
-    node produce a warning and skip scanning on that node (test is not failed).
+    Intended for RCCL tests that write markers via ``tee /dev/kmsg``. Callers
+    decide whether to invoke this (e.g. ``cvs_params.dmesg_during_test``). Missing
+    markers on a node produce a warning and skip scanning on that node (test is
+    not failed).
     """
-    if not dmesg_during_test:
-        return {}
-
     log.info('scan dmesg during test (markers: %s .. %s)', start_marker, end_marker)
     output_dict = phdl.exec(_dmesg_slice_by_markers_cmd(start_marker, end_marker))
     log.info('#----------------------------------------------------------#')
@@ -522,6 +520,8 @@ def verify_dmesg_during_test(phdl, start_marker, end_marker, *, dmesg_during_tes
                 end_marker,
             )
             continue
+        # Clean awk output already includes the start marker; this catches
+        # non-empty phdl.exec stdout that was not sliced (SSH noise, MOTD).
         if start_marker not in text:
             log.warning(
                 'node %s: dmesg_during_test skipped: start marker %r not found in slice',
@@ -721,7 +721,7 @@ def full_journalctl_scan(phdl, start_time_dict=None):
             entry), instead of collecting the entire kernel journal.
 
     Behavior:
-      - Runs 'journalctl -k' (kernel messages) filtered through egrep for high-signal
+      - Runs 'journalctl -k' (kernel messages) filtered through grep -E for high-signal
         keywords: amdgpu, interrupt, error, fail, timeout, fault.
       - Iterates over each node?s output and checks each line against regex patterns
         defined in err_patterns_dict.
@@ -738,7 +738,7 @@ def full_journalctl_scan(phdl, start_time_dict=None):
     Notes:
       - This function fails fast on the first matching error; consider aggregating
         all matches per node if you prefer a single consolidated report.
-      - The initial egrep reduces volume; ensure it doesn?t hide relevant lines
+      - The initial grep -E reduces volume; ensure it doesn?t hide relevant lines
         not containing those keywords if broader scanning is desired.
     """
 
@@ -752,7 +752,7 @@ def full_journalctl_scan(phdl, start_time_dict=None):
     if use_node_scraper_dmesg():
         # node-scraper path: scan the kernel journal (ISO timestamps) with the
         # node-scraper analyzer plus CVS's historical patterns, instead of the
-        # lossy egrep prefilter + per-line regex. --since (when available) is
+        # lossy grep -E prefilter + per-line regex. --since (when available) is
         # applied server-side so journalctl itself, not just the analyzer,
         # avoids transferring/parsing the entire historic journal.
         output_dict = phdl.exec(f'sudo journalctl -k -o short-iso{since_clause}')
@@ -764,7 +764,7 @@ def full_journalctl_scan(phdl, start_time_dict=None):
 
     err_dict = {}
     # Fetch kernel logs filtered for likely error indicators across nodes
-    out_dict = phdl.exec(f'sudo journalctl -k{since_clause} | egrep "amdgpu|interrupt|error|fail|timeout|fault"')
+    out_dict = phdl.exec(f'sudo journalctl -k{since_clause} | grep -E "amdgpu|interrupt|error|fail|timeout|fault"')
     for node in out_dict.keys():
         err_dict[node] = []
 
@@ -816,7 +816,7 @@ def full_dmesg_scan(
     Notes:
       - This function fails fast. If you need a consolidated report of all matches,
         consider accumulating them and failing once at the end.
-      - Current filters are simple grep/egrep; adjust if they exclude useful diagnostics.
+      - Current filters are simple grep; adjust if they exclude useful diagnostics.
       - Consider adding case-insensitive filtering (e.g., grep -i) where appropriate.
     """
 
@@ -828,7 +828,7 @@ def full_dmesg_scan(
         # timestamp extraction apply, then flag every detected error. CVS's
         # historical patterns are added as analyzer extensions.
         output_dict = phdl.exec(
-            "sudo dmesg --time-format iso -x | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never"
+            "sudo dmesg --time-format iso -x | grep -v initialized | grep -E -v 'ALLOWED|DENIED' --color=never"
         )
         return _node_scraper_scan(
             output_dict,
@@ -840,7 +840,7 @@ def full_dmesg_scan(
     err_dict = {}
 
     # Pull human-readable kernel logs and filter out common noise
-    output_dict = phdl.exec("sudo dmesg -T | grep -v initialized | egrep -v 'ALLOWED|DENIED' --color=never")
+    output_dict = phdl.exec("sudo dmesg -T | grep -v initialized | grep -E -v 'ALLOWED|DENIED' --color=never")
     for node in output_dict.keys():
         err_dict[node] = []
 
@@ -896,7 +896,7 @@ def verify_driver_errors(phdl):
         # (amdgpu match or SW_DRIVER category) to preserve this check's
         # driver-error focus while reusing node-scraper's pattern table.
         err_dict = {}
-        output_dict = phdl.exec("sudo dmesg --time-format iso -x | egrep -v 'ALLOWED|DENIED' --color=never")
+        output_dict = phdl.exec("sudo dmesg --time-format iso -x | grep -E -v 'ALLOWED|DENIED' --color=never")
         for node in output_dict.keys():
             err_dict[node] = []
             events = node_scraper_adapter.parse_dmesg(
@@ -920,7 +920,7 @@ def verify_driver_errors(phdl):
 
     err_dict = {}
     # Collect AMDGPU-related kernel messages filtered for likely error terms
-    out_dict = phdl.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'fail|error|reset|hang|traceback' --color=never")
+    out_dict = phdl.exec("sudo dmesg -T | grep -i amdgpu  | grep -E -i 'fail|error|reset|hang|traceback' --color=never")
     for node in out_dict.keys():
         err_dict[node] = []
 
