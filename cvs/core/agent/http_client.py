@@ -18,18 +18,33 @@ from . import messages
 # TERMINATE_GRACE_PERIOD_SECONDS in SIGTERM-then-SIGKILL before ExecResponse can be sent;
 # the extra buffer covers response serialization and FILE-mode writes on the shared FS.
 _EXEC_RESPONSE_BUFFER_SECONDS = 1.0
-# Fallback read deadline for requests that carry no execution cost of their own (health, and any
-# future endpoint). Matches httpx's implicit default, stated explicitly so it can't drift silently.
+# Read deadline for requests that carry no execution cost of their own (health, and any future
+# endpoint). Matches httpx's implicit default, stated explicitly so it can't drift silently.
 _DEFAULT_READ_TIMEOUT_SECONDS = 5.0
+# Connect deadline when the caller supplies none. Deliberately independent of the read deadline:
+# reaching an agent costs the same whether the command it runs takes a second or an hour.
+_DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0
 # Shutdown waits out the agent's process-group termination grace before returning.
 _SHUTDOWN_READ_TIMEOUT_SECONDS = messages.TERMINATE_GRACE_PERIOD_SECONDS + _EXEC_RESPONSE_BUFFER_SECONDS
 
 
-def _exec_http_read_timeout(read_timeout: float | None) -> float | None:
-    '''HTTP read deadline for /v1/exec: the agent's process deadline plus termination grace.'''
-    if read_timeout is None:
+def _agent_timeout_seconds(timeout: float | None, name: str) -> int | None:
+    '''Map a caller timeout onto ExecRequest's int seconds. round() alone turns (0, 0.5) into 0,
+    which the agent treats as an immediate kill; keep at least 1s for any positive value.'''
+    if timeout is None:
         return None
-    return round(read_timeout) + messages.TERMINATE_GRACE_PERIOD_SECONDS + _EXEC_RESPONSE_BUFFER_SECONDS
+    if timeout <= 0:
+        raise ValueError(f"{name} must be positive, got {timeout}")
+    return max(1, round(timeout))
+
+
+def _exec_http_read_timeout(agent_timeout: int | None) -> float | None:
+    '''HTTP read deadline for /v1/exec, derived from the deadline the agent itself was given: the
+    agent only answers once the process is done, and a timed-out one needs its termination grace
+    first. Takes the already-normalized ExecRequest.timeout so the two can't drift apart.'''
+    if agent_timeout is None:
+        return None
+    return agent_timeout + messages.TERMINATE_GRACE_PERIOD_SECONDS + _EXEC_RESPONSE_BUFFER_SECONDS
 
 
 def _validated_exec_output_path(reported: Path | None, out_dir: Path, cmd_id: str, stream: str) -> Path:
@@ -120,7 +135,12 @@ class ParallelHTTPClient:
         return {messages.AUTH_HEADER: f"{messages.AUTH_SCHEME} {self._token}"}
 
     def _http_timeout(self, read_timeout: float | None) -> httpx.Timeout:
-        return httpx.Timeout(read_timeout, connect=self._connect_timeout)
+        # httpx.Timeout(read, connect=None) disables the TCP deadline, leaving a black-holed host to
+        # the OS SYN timeout. Letting connect track read instead would hand a long-running command's
+        # deadline to the connect phase, which is back to waiting out the OS, so an omitted
+        # connect_timeout gets a fixed finite deadline of its own.
+        connect = self._connect_timeout if self._connect_timeout is not None else _DEFAULT_CONNECT_TIMEOUT_SECONDS
+        return httpx.Timeout(read_timeout, connect=connect)
 
     def _pool_limits(self) -> httpx.Limits:
         # httpx caps the pool at 100 connections by default, which would serialize the tail of a
@@ -182,8 +202,8 @@ class ParallelHTTPClient:
                 cmd=command,
                 env=env or {},
                 cwd=run_dir,
-                timeout=round(read_timeout) if read_timeout is not None else None,
-                inactivity_timeout=round(inactivity_timeout) if inactivity_timeout is not None else None,
+                timeout=_agent_timeout_seconds(read_timeout, "read_timeout"),
+                inactivity_timeout=_agent_timeout_seconds(inactivity_timeout, "inactivity_timeout"),
                 cmd_id=uuid.uuid4().hex,
                 out_path=out_dir,
                 output_mode=output_mode,
@@ -219,13 +239,12 @@ class ParallelHTTPClient:
         host: str,
         url: str,
         request: messages.ExecRequest,
-        read_timeout: float | None,
     ) -> HostOutput:
         try:
             response = await client.post(
                 f"{url}{messages.EXEC_PATH}",
                 json=request.model_dump(mode="json"),
-                timeout=self._http_timeout(_exec_http_read_timeout(read_timeout)),
+                timeout=self._http_timeout(_exec_http_read_timeout(request.timeout)),
             )
             response.raise_for_status()
             exec_response = messages.parse_message(messages.ExecResponse, response.text)
@@ -255,10 +274,7 @@ class ParallelHTTPClient:
         requests = self._build_exec_requests(cmd, host_args, read_timeout, env, inactivity_timeout, output_mode)
         client = self._get_client()
         outputs = await asyncio.gather(
-            *(
-                self._run_one(client, host, self._agent_urls[host], request, read_timeout)
-                for host, request in requests.items()
-            )
+            *(self._run_one(client, host, self._agent_urls[host], request) for host, request in requests.items())
         )
         if stop_on_errors:
             failed = [output for output in outputs if output.exception is not None]

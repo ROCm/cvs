@@ -167,6 +167,24 @@ class TestRunCommand(HttpClientTestBase):
         await client.run_command("true", read_timeout=2.7)
         self.assertEqual(seen_requests[0].timeout, 3)
 
+    async def test_subsecond_read_timeout_is_at_least_one_second_on_the_wire(self):
+        seen_requests: list[messages.ExecRequest] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_requests.append(messages.parse_message(messages.ExecRequest, request.content.decode()))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("true", read_timeout=0.4)
+        self.assertEqual(seen_requests[0].timeout, 1)
+
+    async def test_non_positive_read_timeout_raises_value_error(self):
+        client = self._make_client({"h1": "http://h1"}, _exec_handler)
+        with self.assertRaises(ValueError):
+            await client.run_command("true", read_timeout=0)
+        with self.assertRaises(ValueError):
+            await client.run_command("true", read_timeout=-1)
+
     async def test_inactivity_timeout_is_rounded_to_int_for_the_wire_request(self):
         seen_requests: list[messages.ExecRequest] = []
 
@@ -177,6 +195,17 @@ class TestRunCommand(HttpClientTestBase):
         client = self._make_client({"h1": "http://h1"}, handler)
         await client.run_command("true", inactivity_timeout=4.4)
         self.assertEqual(seen_requests[0].inactivity_timeout, 4)
+
+    async def test_subsecond_inactivity_timeout_is_at_least_one_second_on_the_wire(self):
+        seen_requests: list[messages.ExecRequest] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_requests.append(messages.parse_message(messages.ExecRequest, request.content.decode()))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("true", inactivity_timeout=0.4)
+        self.assertEqual(seen_requests[0].inactivity_timeout, 1)
 
     async def test_inactivity_timeout_defaults_to_none(self):
         seen_requests: list[messages.ExecRequest] = []
@@ -256,6 +285,36 @@ class TestRunCommand(HttpClientTestBase):
         self.assertEqual(timeout["read"], expected_read)
         self.assertGreater(timeout["read"], 1)
         self.assertGreaterEqual(timeout["read"], 1 + messages.TERMINATE_GRACE_PERIOD_SECONDS)
+
+    async def test_connect_deadline_does_not_scale_with_a_long_running_commands_read_deadline(self):
+        # A black-holed host has to fail at the connect deadline, not at whatever deadline the
+        # command it would have run happens to carry.
+        seen_timeouts = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_timeouts.append(request.extensions.get("timeout"))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("true", read_timeout=1)
+        await client.run_command("true", read_timeout=3600)
+        short, long_running = seen_timeouts
+        self.assertEqual(short["connect"], 5.0)
+        self.assertEqual(long_running["connect"], 5.0)
+        self.assertGreater(long_running["read"], 3600)
+
+    async def test_unbounded_exec_still_uses_a_finite_connect_deadline(self):
+        seen_timeouts = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_timeouts.append(request.extensions.get("timeout"))
+            return _exec_handler(request)
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.run_command("true")
+        timeout = seen_timeouts[0]
+        self.assertIsNone(timeout["read"])
+        self.assertEqual(timeout["connect"], 5.0)
 
     async def test_timed_out_and_truncated_are_preserved_on_host_output(self):
         def handler(request: httpx.Request) -> httpx.Response:
@@ -483,6 +542,19 @@ class TestHealth(HttpClientTestBase):
         await client.health()
         timeout = seen_timeouts[0]
         self.assertEqual(timeout["connect"], 2.0)
+        self.assertEqual(timeout["read"], 5.0)
+
+    async def test_omitted_connect_timeout_does_not_disable_health_connect_deadline(self):
+        seen_timeouts = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_timeouts.append(request.extensions.get("timeout"))
+            return httpx.Response(200, json={"ok": True})
+
+        client = self._make_client({"h1": "http://h1"}, handler)
+        await client.health()
+        timeout = seen_timeouts[0]
+        self.assertEqual(timeout["connect"], 5.0)
         self.assertEqual(timeout["read"], 5.0)
 
 
