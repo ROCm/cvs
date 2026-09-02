@@ -65,6 +65,24 @@ class TestMultiProcessParallelHandleInitialization(unittest.TestCase):
         self.assertIsNone(mph.phandle)
         self.assertTrue(hasattr(mph, 'sharder'))
 
+    @patch('cvs.lib.parallel.multiprocess_phandle.ParallelHandleSharder')
+    def test_http_transport_never_shards_into_child_processes(self, mock_sharder_class):
+        """Spawned shards would each rebuild an HTTP pool and re-derive RunLayout from
+        the environment alone; the async client already fans out inside one process."""
+        config = ParallelConfig(hosts_per_shard=2)  # Would force sharding on SSH
+
+        mph = MultiProcessParallelHandle(
+            self.mock_log,
+            self.host_list,
+            config=config,
+            transport='http',
+            agent_urls={host: f'http://{host}:9' for host in self.host_list},
+            token='tok',
+        )
+
+        self.assertIsNotNone(mph.phandle)
+        mock_sharder_class.assert_not_called()
+
     def test_init_with_custom_config(self):
         """Test initialization with custom configuration."""
         config = ParallelConfig(hosts_per_shard=64, max_workers_per_cpu=8)
@@ -483,9 +501,12 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
         config = ParallelConfig(hosts_per_shard=1, max_workers_per_cpu=1)
         expected_result = {"host2": "/tmp/test.txt_host2"}
 
-        with patch(
-            'cvs.lib.parallel.multiprocess_phandle.ParallelHandle.download_file', return_value=expected_result
-        ) as mock_download:
+        with (
+            patch(
+                'cvs.lib.parallel.multiprocess_phandle.ParallelHandle.download_file', return_value=expected_result
+            ) as mock_download,
+            patch('cvs.lib.parallel.multiprocess_phandle.ParallelHandle.destroy_clients') as mock_destroy,
+        ):
             mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
             result = mph.download_file("/remote/test.txt", "/tmp/test.txt", hosts=["host2"])
 
@@ -503,3 +524,4 @@ class TestMultiProcessParallelHandleHelperMethods(unittest.TestCase):
             transport='ssh',
         )
         mock_download.assert_called_once_with("/remote/test.txt", "/tmp/test.txt", recurse=False, suffix_separator="_")
+        mock_destroy.assert_called_once_with()

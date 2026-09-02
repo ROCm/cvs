@@ -78,6 +78,10 @@ class ContainerOrchestrator(BaremetalOrchestrator):
     which should be called explicitly by test code when needed.
     """
 
+    # The HTTP agents run on the host; reaching into the container namespace still
+    # requires SSH to the container's sshd, so stay on SSH even in a managed job.
+    _use_agent_transport = False
+
     def __init__(self, log, config, stop_on_errors=False):
         """
         Initialize container orchestrator.

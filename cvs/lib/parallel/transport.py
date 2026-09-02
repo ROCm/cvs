@@ -13,7 +13,20 @@ class BaseTransport(ABC):
 
     Fan-out operations (run_command, copy_file, …) live on self.client.
     ParallelHTTPClient must match ParallelSSHClient's API or ParallelHandle breaks.
+
+    The two class attributes below let ParallelHandle stay protocol-agnostic:
+    it asks the transport what it can do instead of branching on a name.
     """
+
+    # Exceptions on a per-host result that mean "this host may be down", making it a
+    # candidate for the connectivity re-check in ParallelHandle.prune_unreachable_hosts.
+    # Anything outside this tuple (auth, protocol, a command that merely failed) is a
+    # recoverable error and must never prune.
+    prune_exception_types = ()
+
+    # True when the far side enforces the inactivity timeout itself and returns finished
+    # output. False when the timeout has to be applied locally while reading a live stream.
+    remote_inactivity_timeout = False
 
     @abstractmethod
     def rebuild(self, hosts):
@@ -45,9 +58,10 @@ def create_transport(
 
     Args:
         hosts: Hostnames/IPs to connect to.
-        transport: Wire protocol selector. ``'ssh'`` today; ``'http'`` later.
+        transport: Wire protocol selector (``'ssh'`` or ``'http'``).
         user, password, pkey: SSH credentials (ignored by non-SSH transports).
         transport_kwargs: Protocol-specific options forwarded to the transport.
+            HTTP requires ``agent_urls`` (host → base URL) and ``token``.
     """
     if transport == 'ssh':
         from cvs.lib.parallel.ssh_transport import SshTransport
@@ -60,5 +74,7 @@ def create_transport(
             **transport_kwargs,
         )
     if transport == 'http':
-        raise NotImplementedError('HTTP transport is not implemented yet')
+        from cvs.lib.parallel.http_transport import HttpTransport
+
+        return HttpTransport(hosts, **transport_kwargs)
     raise ValueError(f'Unknown transport: {transport!r}')

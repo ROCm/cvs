@@ -23,6 +23,9 @@ class FakeAgent:
     def wait_for_registrations(self, _timeout):
         raise TimeoutError
 
+    def registered_agents(self):
+        return {}
+
     def stop(self):
         pass
 
@@ -60,6 +63,7 @@ class TestLifecycle(unittest.TestCase):
         agent.start()
         self.assertEqual(agent.wait_until_ready(timeout=5), agent.port)
         self.assertIn(0, agent.wait_for_registrations(timeout=1))
+        self.assertIn(0, agent.registered_agents())
 
     @patch("cvs.core.agent.lifecycle.socket.socket")
     def test_agent_runner_prefers_scheduler_hostname(self, mock_socket):

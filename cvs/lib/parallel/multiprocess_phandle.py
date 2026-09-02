@@ -24,6 +24,7 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
     each running a ``ParallelHandle`` instance over a slice of hosts.
 
     Pass ``hosts_per_shard=0`` to disable process sharding (always one ``ParallelHandle`` in the parent process).
+    Sharding applies to the SSH transport only; see ``__init__``.
     """
 
     def __init__(
@@ -52,7 +53,12 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
         self.transport_kwargs = transport_kwargs
 
         n = len(host_list) if host_list is not None else 0
-        use_mp = hosts_per_shard > 0 and n > hosts_per_shard
+        # Process sharding exists because parallel-ssh's gevent fan-out is CPU-bound in one
+        # process. Transports that are already concurrently non-blocking gain nothing from it
+        # and lose by it: every shard is a spawned interpreter with its own connection pool
+        # (so no keep-alives across calls) that has to re-derive process-global state such as
+        # RunLayout from the environment alone.
+        use_mp = hosts_per_shard > 0 and n > hosts_per_shard and transport == 'ssh'
 
         if use_mp:
             # Initialize for multi-process sharding - no ParallelHandle instance needed
@@ -406,9 +412,12 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
                 transport=self.transport,
                 **self.transport_kwargs,
             )
-            return target_phandle.download_file(
-                remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator
-            )
+            try:
+                return target_phandle.download_file(
+                    remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator
+                )
+            finally:
+                target_phandle.destroy_clients()
 
         self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, self.reachable_hosts)
 

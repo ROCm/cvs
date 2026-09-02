@@ -10,7 +10,7 @@ from __future__ import print_function
 import warnings
 from gevent import Timeout as GTimeout
 from pssh.clients import ParallelSSHClient
-from pssh.exceptions import Timeout, ConnectionError, SessionError
+from pssh.exceptions import Timeout, SessionError
 
 from cvs.lib.env_lib import build_env_prefix
 from cvs.lib.parallel.transport import create_transport
@@ -110,6 +110,34 @@ class ParallelHandle:
     def _recreate_parallel_client(self):
         self._transport.rebuild(self.reachable_hosts)
 
+    def _client_run_kwargs(self, timeout=None, inactivity_timeout=None, host_args=None):
+        """Build the client's run_command kwargs, enforcing the timeout contract once."""
+        if timeout is not None and inactivity_timeout is not None:
+            raise ValueError("Pass at most one of timeout and inactivity_timeout, not both.")
+
+        kwargs = {'stop_on_errors': self.stop_on_errors}
+        if host_args is not None:
+            kwargs['host_args'] = host_args
+        if inactivity_timeout is not None:
+            # An inactivity timeout disables the total read_timeout either way. Transports
+            # that return finished output enforce it remotely; the rest are enforced
+            # per-line by _iter_lines while the stream is still open.
+            if self._transport.remote_inactivity_timeout:
+                kwargs['inactivity_timeout'] = inactivity_timeout
+        elif timeout is not None:
+            kwargs['read_timeout'] = timeout
+        return kwargs
+
+    def _stream_inactivity_timeout(self, inactivity_timeout):
+        """The inactivity timeout _process_output should apply while reading streams.
+
+        None when the transport already enforced it, so the per-line gevent timer is not
+        armed around output that has already finished arriving.
+        """
+        if inactivity_timeout is None or self._transport.remote_inactivity_timeout:
+            return None
+        return inactivity_timeout
+
     def _run_command_with_session_retry(self, *args, **kwargs):
         try:
             return self.client.run_command(*args, **kwargs)
@@ -161,18 +189,19 @@ class ParallelHandle:
 
     def prune_unreachable_hosts(self, output):
         """
-        Prune unreachable hosts from self.reachable_hosts if they have ConnectionError or Timeout exceptions and also fail connectivity check.
+        Prune unreachable hosts from self.reachable_hosts if they failed with one of the transport's
+        pruning-candidate exceptions and also fail a connectivity check.
 
-        Targeted pruning: Only ConnectionError and Timeout exceptions trigger pruning to avoid removing hosts for transient failures
-        like authentication errors or SSH protocol issues, which may succeed on next try. ConnectionErrors and Timeouts are indicative
-        of potential unreachability, so we perform an additional connectivity check before pruning. This ensures
-        that hosts are not permanently removed from the list for recoverable errors.
+        Targeted pruning: only the exception types the transport declares in prune_exception_types
+        trigger pruning, to avoid removing hosts for transient failures like authentication errors or
+        protocol issues, which may succeed on the next try. Those types are merely indicative of
+        potential unreachability, so we perform an additional connectivity check before pruning. This
+        ensures that hosts are not permanently removed from the list for recoverable errors.
         """
-        failed_hosts = [
-            item.host
-            for item in output
-            if item.exception and isinstance(item.exception, (ConnectionError, Timeout, SessionError))
-        ]
+        prune_types = self._transport.prune_exception_types
+        if not prune_types:
+            return
+        failed_hosts = [item.host for item in output if item.exception and isinstance(item.exception, prune_types)]
         unreachable = self.check_connectivity(failed_hosts)
         self.prune_nodes(unreachable)
 
@@ -315,13 +344,12 @@ class ParallelHandle:
         inactivity_timeout is set, the underlying read_timeout is disabled so there
         is no total cap. Pass at most one of the two.
         """
-        if timeout is not None and inactivity_timeout is not None:
-            raise ValueError("Pass at most one of timeout and inactivity_timeout, not both.")
-
         if self.env_prefix:
             full_cmd = f"{self.env_prefix} ; {cmd}"
         else:
             full_cmd = cmd
+
+        client_kwargs = self._client_run_kwargs(timeout=timeout, inactivity_timeout=inactivity_timeout)
 
         self.log.info(f'cmd = {full_cmd}')
 
@@ -339,22 +367,13 @@ class ParallelHandle:
             else:
                 self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
 
-        # With an inactivity timeout the total read_timeout must be disabled, so
-        # the per-line gevent timer in _process_output is the only limiter.
-        if inactivity_timeout is not None:
-            output = self._run_command_with_session_retry(full_cmd, stop_on_errors=self.stop_on_errors)
-        elif timeout is None:
-            output = self._run_command_with_session_retry(full_cmd, stop_on_errors=self.stop_on_errors)
-        else:
-            output = self._run_command_with_session_retry(
-                full_cmd, read_timeout=timeout, stop_on_errors=self.stop_on_errors
-            )
+        output = self._run_command_with_session_retry(full_cmd, **client_kwargs)
         cmd_output = self._process_output(
             output,
             cmd=full_cmd,
             print_console=print_console,
             include_exit_codes=detailed,
-            inactivity_timeout=inactivity_timeout,
+            inactivity_timeout=self._stream_inactivity_timeout(inactivity_timeout),
         )
 
         # Log per-host execution completion
@@ -378,13 +397,14 @@ class ParallelHandle:
         inactivity_timeout is set, the underlying read_timeout is disabled so there
         is no total cap. Pass at most one of the two.
         """
-        if timeout is not None and inactivity_timeout is not None:
-            raise ValueError("Pass at most one of timeout and inactivity_timeout, not both.")
-
         if self.env_prefix:
             cmd_list = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
         else:
             cmd_list = cmd_list
+
+        client_kwargs = self._client_run_kwargs(
+            timeout=timeout, inactivity_timeout=inactivity_timeout, host_args=cmd_list
+        )
 
         self.log.info("%s", cmd_list)
 
@@ -400,19 +420,13 @@ class ParallelHandle:
             else:
                 self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s)")
 
-        # With an inactivity timeout the total read_timeout must be disabled, so
-        # the per-line gevent timer in _process_output is the only limiter.
-        if inactivity_timeout is not None:
-            output = self._run_command_with_session_retry('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
-        elif timeout is None:
-            output = self._run_command_with_session_retry('%s', host_args=cmd_list, stop_on_errors=self.stop_on_errors)
-        else:
-            output = self._run_command_with_session_retry(
-                '%s', host_args=cmd_list, read_timeout=timeout, stop_on_errors=self.stop_on_errors
-            )
+        output = self._run_command_with_session_retry('%s', **client_kwargs)
 
         cmd_output = self._process_output(
-            output, cmd_list=cmd_list, print_console=print_console, inactivity_timeout=inactivity_timeout
+            output,
+            cmd_list=cmd_list,
+            print_console=print_console,
+            inactivity_timeout=self._stream_inactivity_timeout(inactivity_timeout),
         )
 
         # Log per-host command execution (only for processed output)
@@ -502,26 +516,32 @@ class ParallelHandle:
             return {}
 
         self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, target_hosts)
-        if target_hosts == self.reachable_hosts:
-            client = self.client
-        else:
-            client = self._transport.client_for_hosts(target_hosts).client
-        cmds = client.copy_remote_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
-        client.pool.join()
-        errors = []
-        result = {}
-        for cmd, host in zip(cmds, target_hosts):
-            try:
-                cmd.get()
-                result[host] = f'{local_file}{suffix_separator}{host}'
-            except Exception as e:
-                errors.append((host, e))
-        if errors:
-            raise IOError(
-                f"download_file '{remote_file}' -> '{local_file}' failed on "
-                f"{len(errors)}/{len(target_hosts)} hosts: {errors}"
-            ) from errors[0][1]
-        return result
+        subset_transport = None
+        try:
+            if target_hosts == self.reachable_hosts:
+                client = self.client
+            else:
+                subset_transport = self._transport.client_for_hosts(target_hosts)
+                client = subset_transport.client
+            cmds = client.copy_remote_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
+            client.pool.join()
+            errors = []
+            result = {}
+            for cmd, host in zip(cmds, target_hosts):
+                try:
+                    cmd.get()
+                    result[host] = f'{local_file}{suffix_separator}{host}'
+                except Exception as e:
+                    errors.append((host, e))
+            if errors:
+                raise IOError(
+                    f"download_file '{remote_file}' -> '{local_file}' failed on "
+                    f"{len(errors)}/{len(target_hosts)} hosts: {errors}"
+                ) from errors[0][1]
+            return result
+        finally:
+            if subset_transport is not None:
+                subset_transport.destroy()
 
     def upload_file_list(self, node_path_map):
         """

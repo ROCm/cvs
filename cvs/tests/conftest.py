@@ -34,5 +34,8 @@ def orch(pytestconfig):
 
     yield orch
 
-    if cfg.orchestrator == "container":
-        orch.teardown_containers()
+    try:
+        if cfg.orchestrator == "container":
+            orch.teardown_containers()
+    finally:
+        orch.close()

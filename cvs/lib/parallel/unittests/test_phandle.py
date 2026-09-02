@@ -1,5 +1,9 @@
 import unittest
 from unittest.mock import patch, MagicMock
+
+from pssh.exceptions import Timeout
+
+from cvs.lib.parallel.http_transport import HttpTransport
 from cvs.lib.parallel.phandle import ParallelHandle  # Test basic ParallelHandle class directly
 
 
@@ -1184,6 +1188,8 @@ class TestParallelHandleFileTransfer(unittest.TestCase):
 
     def test_download_file_targets_only_requested_host(self):
         target_client = MagicMock()
+        target_client.cmds = None
+        target_client._host_clients = {}
         target_client.copy_remote_file.return_value = [self._ok_greenlet()]
         with patch("cvs.lib.parallel.phandle.ParallelSSHClient", return_value=target_client) as mock_client:
             result = self.handle.download_file("/remote/file.json", "/tmp/local.json", hosts=["host2"])
@@ -1390,6 +1396,134 @@ class TestParallelHandleDestroyClients(unittest.TestCase):
         host_client._disconnect.assert_called_once_with()
         with self.assertRaises(AttributeError):
             _ = handle._transport.client
+
+
+class TestParallelHandleHttpTransport(unittest.TestCase):
+    def _output(self, host, line='ok', exception=None):
+        item = MagicMock()
+        item.host = host
+        item.stdout = [line] if exception is None else []
+        item.stderr = []
+        item.exception = exception
+        item.exit_code = 0 if exception is None else None
+        return item
+
+    def _handle(self, mock_create, hosts=None):
+        hosts = hosts or ['h1', 'h2']
+        transport = MagicMock()
+        client = MagicMock()
+        transport.client = client
+        # The capabilities ParallelHandle branches on are real class attributes, not
+        # MagicMock children, or isinstance() below would take a mock as its type tuple.
+        transport.prune_exception_types = HttpTransport.prune_exception_types
+        transport.remote_inactivity_timeout = HttpTransport.remote_inactivity_timeout
+        mock_create.return_value = transport
+        handle = ParallelHandle(MagicMock(), hosts, transport='http', agent_urls={}, token='tok')
+        handle.log = MagicMock()
+        return handle, transport, client
+
+    @patch('cvs.lib.parallel.phandle.create_transport')
+    def test_exec_forwards_inactivity_timeout_to_http_client(self, mock_create):
+        handle, _transport, client = self._handle(mock_create, hosts=['h1'])
+        client.run_command.return_value = [self._output('h1')]
+        handle.exec('run', inactivity_timeout=5)
+        client.run_command.assert_called_once_with('run', stop_on_errors=True, inactivity_timeout=5)
+
+    @patch('cvs.lib.parallel.phandle.create_transport')
+    def test_exec_cmd_list_forwards_inactivity_timeout_to_http_client(self, mock_create):
+        handle, _transport, client = self._handle(mock_create, hosts=['h1'])
+        client.run_command.return_value = [self._output('h1')]
+        handle.exec_cmd_list(['echo a'], inactivity_timeout=4)
+        client.run_command.assert_called_once_with(
+            '%s', host_args=['echo a'], stop_on_errors=True, inactivity_timeout=4
+        )
+
+    @patch('cvs.lib.parallel.phandle.create_transport')
+    def test_exec_does_not_arm_local_timer_for_remotely_enforced_inactivity(self, mock_create):
+        handle, _transport, client = self._handle(mock_create, hosts=['h1'])
+        client.run_command.return_value = [self._output('h1')]
+        with patch.object(handle, '_process_output', return_value={}) as mock_process:
+            handle.exec('run', inactivity_timeout=5)
+        self.assertIsNone(mock_process.call_args.kwargs['inactivity_timeout'])
+
+    @patch('cvs.lib.parallel.phandle.create_transport')
+    def test_exec_rejects_both_timeouts(self, mock_create):
+        handle, _transport, client = self._handle(mock_create, hosts=['h1'])
+        with self.assertRaisesRegex(ValueError, "at most one of timeout and inactivity_timeout"):
+            handle.exec('run', timeout=3, inactivity_timeout=5)
+        client.run_command.assert_not_called()
+
+    @patch('cvs.lib.parallel.phandle.create_transport')
+    def test_agent_timeout_is_not_a_pruning_candidate(self, mock_create):
+        """The agent answered, so the host is up: report the timeout, keep the host."""
+        handle, transport, client = self._handle(mock_create)
+        handle.stop_on_errors = False
+        client.run_command.return_value = [
+            self._output('h1'),
+            self._output('h2', exception=Timeout('agent terminated the command')),
+        ]
+
+        result = handle.exec('sleep 100', timeout=1)
+
+        transport.check_connectivity.assert_called_once_with([])
+        self.assertEqual(handle.reachable_hosts, ['h1', 'h2'])
+        self.assertIn('ABORT: Timeout Error in Host: h2', result['h2'])
+
+    @patch('cvs.lib.parallel.phandle.create_transport')
+    def test_prune_treats_http_connection_error_as_unreachable(self, mock_create):
+        from cvs.core.agent.http_client import HTTPConnectionError
+
+        handle, transport, client = self._handle(mock_create)
+        handle.stop_on_errors = False
+        client.run_command.return_value = [
+            self._output('h1'),
+            self._output('h2', exception=HTTPConnectionError('down')),
+        ]
+        transport.check_connectivity.return_value = ['h2']
+
+        result = handle.exec('hostname')
+
+        transport.check_connectivity.assert_called_once_with(['h2'])
+        transport.rebuild.assert_called_once_with(['h1'])
+        self.assertEqual(handle.reachable_hosts, ['h1'])
+        self.assertEqual(handle.unreachable_hosts, ['h2'])
+        self.assertIn('ABORT: Host Unreachable Error', result['h2'])
+
+    @patch('cvs.lib.parallel.phandle.create_transport')
+    def test_empty_prune_exception_types_skips_pruning(self, mock_create):
+        from cvs.core.agent.http_client import HTTPConnectionError
+
+        handle, transport, client = self._handle(mock_create)
+        transport.prune_exception_types = ()
+        handle.stop_on_errors = False
+        client.run_command.return_value = [
+            self._output('h1'),
+            self._output('h2', exception=HTTPConnectionError('down')),
+        ]
+
+        handle.exec('hostname')
+
+        transport.check_connectivity.assert_not_called()
+        transport.rebuild.assert_not_called()
+        self.assertEqual(handle.reachable_hosts, ['h1', 'h2'])
+
+    @patch('cvs.lib.parallel.phandle.create_transport')
+    def test_download_file_destroys_subset_transport(self, mock_create):
+        handle, transport, client = self._handle(mock_create)
+        subset = MagicMock()
+        subset_client = MagicMock()
+        greenlet = MagicMock()
+        greenlet.get.return_value = None
+        subset_client.copy_remote_file.return_value = [greenlet]
+        subset.client = subset_client
+        transport.client_for_hosts.return_value = subset
+
+        result = handle.download_file('/remote', '/local', hosts=['h2'])
+
+        self.assertEqual(result, {'h2': '/local_h2'})
+        client.copy_remote_file.assert_not_called()
+        transport.client_for_hosts.assert_called_once_with(['h2'])
+        subset.destroy.assert_called_once_with()
 
 
 if __name__ == "__main__":

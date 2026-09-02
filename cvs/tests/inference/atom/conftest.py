@@ -127,9 +127,12 @@ def orch(cluster_dict, variant_config, lifecycle):
     cfg = OrchestratorConfig.from_configs(cluster_dict, testsuite_config)
     o = OrchestratorFactory.create_orchestrator(log, cfg)
     yield o
-    if not lifecycle.torn_down:
-        log.info("orch fixture leak-guard: tearing down ATOM containers")
-        o.teardown_containers()
+    try:
+        if not lifecycle.torn_down:
+            log.info("orch fixture leak-guard: tearing down ATOM containers")
+            o.teardown_containers()
+    finally:
+        o.close()
 
 
 @pytest.fixture(scope="module")

@@ -5,6 +5,7 @@ import os
 import json
 
 from cvs.core.agent.lifecycle import REGISTRATION_TIMEOUT_SECONDS, managed_rank, run_worker, start_rank0
+from cvs.core.agent.mesh import AgentMesh
 from cvs.core.run_layout import RunLayout
 from cvs.core.scheduler import is_managed_compute
 
@@ -108,6 +109,11 @@ Run Commands:
         except RuntimeError as e:
             print(f"Error: {e}")
             sys.exit(1)
+        # --workspace is a CLI argument, so any process we later spawn (pytest shard
+        # workers) would re-derive the layout from its own defaults and land on a
+        # different run_dir. Publishing the resolved answer keeps every descendant on
+        # the one directory this run already committed to.
+        os.environ["CVS_WORKSPACE"] = str(layout.workspace)
 
         test_args = (
             test_file,
@@ -135,11 +141,18 @@ Run Commands:
         coordinator = start_rank0(layout.agent_dir, world_size)
         try:
             try:
-                coordinator.wait_for_registrations(REGISTRATION_TIMEOUT_SECONDS)
+                snapshot = coordinator.wait_for_registrations(REGISTRATION_TIMEOUT_SECONDS)
             except (TimeoutError, asyncio.TimeoutError):
                 print("Warning: registration timeout expired; continuing with available ranks.")
+                snapshot = coordinator.registered_agents()
+            try:
+                AgentMesh.install_from_agent_dir(snapshot, layout.agent_dir)
+            except (ValueError, OSError) as e:
+                print(f"Error: {e}")
+                return sys.exit(1)
             exit_code = self.run_test(*test_args)
         finally:
+            AgentMesh.reset()
             coordinator.close()
         return sys.exit(exit_code)
 

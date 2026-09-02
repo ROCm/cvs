@@ -6,6 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from gevent import killall
+from pssh.exceptions import ConnectionError, SessionError, Timeout
 
 from cvs.lib import globals
 from cvs.lib.parallel.transport import BaseTransport
@@ -22,6 +23,12 @@ def _get_parallel_ssh_client():
 
 class SshTransport(BaseTransport):
     """SSH wire protocol via parallel-ssh ParallelSSHClient."""
+
+    prune_exception_types = (ConnectionError, Timeout, SessionError)
+
+    # parallel-ssh hands back live streams, so the per-line timer in
+    # ParallelHandle._iter_lines is what enforces inactivity here.
+    remote_inactivity_timeout = False
 
     def __init__(self, hosts, user=None, password=None, pkey='id_rsa', **ssh_client_kwargs):
         self.hosts = list(hosts)

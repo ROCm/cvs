@@ -6,6 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.core.orchestrators.base import Orchestrator
+from cvs.core.scheduler import is_managed_compute
 from cvs.lib.parallel_ssh_lib import Pssh
 from cvs.lib.utils_lib import get_passwordless_sudo_status
 
@@ -19,6 +20,11 @@ class BaremetalOrchestrator(Orchestrator):
 
     Integrates with OrchestratorConfig for standardized configuration.
     """
+
+    # Whether this orchestrator's own commands can go over the scheduler's HTTP agents.
+    # ContainerOrchestrator inherits this __init__ but still needs SSH into the container
+    # namespace, which the agents (running on the host) cannot reach.
+    _use_agent_transport = True
 
     def __init__(self, log, config, stop_on_errors=False):
         """
@@ -53,27 +59,58 @@ class BaremetalOrchestrator(Orchestrator):
         self.pkey = config.get('priv_key_file')
         self.password = config.get('password')  # Optional
 
+        # Resolved once, against every host this orchestrator may target, so a cluster
+        # file naming a node with no agent fails here rather than mid-suite.
+        self._agent_urls = None
+        self._agent_token = None
+        if is_managed_compute() and self._use_agent_transport:
+            from cvs.core.agent.mesh import AgentMesh
+
+            mesh = AgentMesh.get()
+            self._agent_urls = mesh.resolve(self.hosts)
+            self._agent_token = mesh.token
+
         # Initialize TWO ParallelSSH handles like original CVS pattern:
         # head - Single head node (for mpirun, result collection, etc.)
         # all - Parallel across all nodes (for setup, cleanup, verification)
-        self.head = Pssh(
-            log,
-            [self.head_node],
+        self.head = self._pssh([self.head_node])
+        self.all = self._pssh(self.hosts)
+
+    def _http_handle_kwargs(self):
+        if self._agent_urls is None:
+            return {}
+        return {
+            'transport': 'http',
+            'agent_urls': self._agent_urls,
+            'token': self._agent_token,
+        }
+
+    def _pssh(self, hosts):
+        return Pssh(
+            self.log,
+            hosts,
             user=self.user,
             password=self.password,
             pkey=self.pkey,
             host_key_check=False,
             stop_on_errors=self.stop_on_errors,
+            **self._http_handle_kwargs(),
         )
-        self.all = Pssh(
-            log,
-            self.hosts,
-            user=self.user,
-            password=self.password,
-            pkey=self.pkey,
-            host_key_check=False,
-            stop_on_errors=self.stop_on_errors,
-        )
+
+    def close(self):
+        """Destroy the two long-lived handles built in __init__.
+
+        Subset handles are already destroyed at their call sites, but head/all live as
+        long as the orchestrator does -- a whole test module under the ``orch`` fixture --
+        and each one holds either SSH sessions or an HTTP connection pool.
+        """
+        for handle in (getattr(self, 'head', None), getattr(self, 'all', None)):
+            if handle is None:
+                continue
+            try:
+                handle.destroy_clients()
+            except Exception as exc:
+                self.log.debug("Error destroying parallel handle: %s", exc)
 
     def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """
@@ -99,15 +136,7 @@ class BaremetalOrchestrator(Orchestrator):
             return self.all.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
         else:
             # For arbitrary subset (including head node), create temporary handle
-            pssh = Pssh(
-                self.log,
-                hosts,
-                user=self.user,
-                password=self.password,
-                pkey=self.pkey,
-                host_key_check=False,
-                stop_on_errors=self.stop_on_errors,
-            )
+            pssh = self._pssh(hosts)
             try:
                 return pssh.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
             finally:
@@ -164,15 +193,7 @@ class BaremetalOrchestrator(Orchestrator):
         elif len(hosts) == 1 and hosts[0] == self.head_node:
             result = self.exec_on_head(f"bash {env_script}", timeout=60, detailed=True)
         else:
-            pssh = Pssh(
-                self.log,
-                hosts,
-                user=self.user,
-                password=self.password,
-                pkey=self.pkey,
-                host_key_check=False,
-                stop_on_errors=self.stop_on_errors,
-            )
+            pssh = self._pssh(hosts)
             try:
                 result = pssh.exec(f"bash {env_script}", timeout=60, detailed=True)
             finally:
