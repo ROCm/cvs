@@ -8,7 +8,23 @@ Unit tests for inference_suite_lifecycle helpers.
 import unittest
 
 from cvs.lib.inference.utils.cache_probe import du_bytes
+from cvs.lib.inference.utils.inference_suite_lifecycle import _format_lifecycle_cell_value
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
+
+
+class TestFormatLifecycleCellValue(unittest.TestCase):
+    def test_formats_float_with_one_decimal(self):
+        self.assertEqual(_format_lifecycle_cell_value(1.234), "1.2")
+
+    def test_formats_int_and_str_without_float_spec(self):
+        self.assertEqual(_format_lifecycle_cell_value(15736427790659), "15736427790659")
+        self.assertEqual(
+            _format_lifecycle_cell_value("/it-share-prj2-1/models/Qwen3.5-397B-A17B-FP8"),
+            "/it-share-prj2-1/models/Qwen3.5-397B-A17B-FP8",
+        )
+
+    def test_none_renders_dash(self):
+        self.assertEqual(_format_lifecycle_cell_value(None), "-")
 
 
 class TestDuBytes(unittest.TestCase):
