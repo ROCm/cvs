@@ -230,6 +230,19 @@ class ScanForErrorsTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             job._scan_chunk_for_errors("h0", 0, "worker: Segmentation fault (core dumped)\n")
 
+    def test_import_error_caught_by_always_on_even_with_custom_patterns(self):
+        # A config that fully overrides error_patterns (no ImportError/Traceback)
+        # must STILL catch a fatal Python crash via the always-on set, so an
+        # import failure fails fast instead of running to the poll timeout.
+        job, _ = _make_job(hosts=["h0"], error_patterns={"custom": "MY_CUSTOM_ERR"})
+        chunk = (
+            "Traceback (most recent call last):\n"
+            "  File \".../jax_flash_attention.py\", line 21, in <module>\n"
+            "ImportError: cannot import name 'must_fuse_call' from 'jax.experimental.xla_metadata'\n"
+        )
+        with self.assertRaises(RuntimeError):
+            job._scan_chunk_for_errors("h0", 0, chunk)
+
 
 class DrainNewLogLinesTests(unittest.TestCase):
     def test_advances_cursor_and_returns_new_text(self):
@@ -469,6 +482,73 @@ class WriteMaxtextYamlTests(unittest.TestCase):
         written = "\n".join(str(c.args[0]) for c in orch.exec.call_args_list)
         self.assertIn('profiler: ""', written)
         self.assertNotIn("profiler: \n", written)
+
+
+class CheckoutMaxtextBranchTests(unittest.TestCase):
+    def test_noop_when_branch_empty(self):
+        # Default fixture has no maxtext_branch -> getattr returns "" -> no exec.
+        job, orch = _make_job(hosts=["h0"])
+        job.checkout_maxtext_branch()
+        orch.exec.assert_not_called()
+
+    def test_checks_out_and_verifies_branch(self):
+        job, orch = _make_job(hosts=["h0", "h1"], maxtext_branch="feature/x", maxtext_root="/workspace/maxtext")
+        orch.exec.return_value = {"h0": "feature/x", "h1": "feature/x"}
+        job.checkout_maxtext_branch()  # both nodes on the branch -> no raise
+        first_cmd = orch.exec.call_args_list[0].args[0]
+        self.assertIn("git reset --hard", first_cmd)
+        self.assertIn("git checkout", first_cmd)
+        self.assertIn("feature/x", first_cmd)
+        self.assertIn("/workspace/maxtext", first_cmd)
+
+    def test_raises_when_a_node_is_on_wrong_branch(self):
+        job, orch = _make_job(hosts=["h0", "h1"], maxtext_branch="feature/x")
+        orch.exec.return_value = {"h0": "feature/x", "h1": "main"}  # h1 mismatch
+        with self.assertRaises(RuntimeError):
+            job.checkout_maxtext_branch()
+
+    def test_install_cmd_runs_after_checkout(self):
+        job, orch = _make_job(
+            hosts=["h0"],
+            maxtext_branch="release/v26.7",
+            maxtext_install_cmd="python3 -m pip install -r rocm-requirements.txt && python3 -m pip install --no-deps -e .",
+        )
+        orch.exec.side_effect = [
+            {"h0": "release/v26.7"},  # checkout
+            {"h0": "release/v26.7"},  # verify HEAD
+            {"h0": "installed\n__MAXTEXT_INSTALL_OK__"},  # install cmd
+        ]
+        job.checkout_maxtext_branch()  # no raise
+        install_cmd = orch.exec.call_args_list[-1].args[0]
+        self.assertIn("rocm-requirements.txt", install_cmd)
+        self.assertIn("--no-deps -e .", install_cmd)
+
+    def test_install_cmd_failure_raises(self):
+        job, orch = _make_job(
+            hosts=["h0"], maxtext_branch="release/v26.7", maxtext_install_cmd="python3 -m pip install -e ."
+        )
+        orch.exec.side_effect = [
+            {"h0": "release/v26.7"},  # checkout
+            {"h0": "release/v26.7"},  # verify HEAD
+            {"h0": "ERROR: install failed"},  # no success marker
+        ]
+        with self.assertRaises(RuntimeError):
+            job.checkout_maxtext_branch()
+
+    def test_install_cmd_runs_without_branch(self):
+        # Install recipe is decoupled from branch checkout: with an empty branch
+        # but a set install_cmd (e.g. the tensorflow-cpu swap on the image's baked
+        # MaxText), the recipe still runs and no git checkout is attempted.
+        job, orch = _make_job(
+            hosts=["h0"],
+            maxtext_install_cmd="python3 -m pip install 'tensorflow-cpu>=2.20.0'",
+        )
+        orch.exec.return_value = {"h0": "ok\n__MAXTEXT_INSTALL_OK__"}
+        job.checkout_maxtext_branch()  # no raise
+        self.assertEqual(len(orch.exec.call_args_list), 1)  # only the install, no checkout/verify
+        install_cmd = orch.exec.call_args_list[0].args[0]
+        self.assertIn("tensorflow-cpu", install_cmd)
+        self.assertNotIn("git checkout", install_cmd)
 
 
 class WriteEnvScriptTests(unittest.TestCase):

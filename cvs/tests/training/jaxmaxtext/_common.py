@@ -197,6 +197,15 @@ def launch_container(orch, variant_config, lifecycle, request):
         lifecycle.failed = True
         pytest.fail(f"container {name} not running after setup_containers()")
 
+    # Optional: check out a specific MaxText branch inside the freshly launched
+    # container (no-op unless training.maxtext_branch is set). Do it here, once,
+    # so every downstream stage runs against the requested code.
+    try:
+        MaxTextTrainingJob(orch, variant_config, hf_token="").checkout_maxtext_branch()
+    except Exception as e:  # noqa: BLE001
+        lifecycle.failed = True
+        pytest.fail(f"MaxText branch checkout failed: {e}")
+
 
 def setup_rdma(orch, variant_config, hf_token, lifecycle, request):
     """Distributed-only: copy RDMA library into container (thor2 NIC only)."""

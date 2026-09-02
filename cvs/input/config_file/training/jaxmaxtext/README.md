@@ -207,6 +207,46 @@ tokenizer, so `test_setup_tokenizer` is skipped automatically when every enabled
 run is synthetic. Any other `dataset_type` (or an unset one, MaxText's tfds/C4
 default) triggers the HF tokenizer download from `training.tokenizer.hf_model_id`.
 
+Configs ship with `dataset_type: synthetic` by default. Synthetic is ideal for
+throughput/functional runs, but the model overfits the fixed random tokens, so
+the loss is **not** a real curve and eventually diverges to `NaN` on long runs -
+do not read a synthetic loss curve as convergence.
+
+### Using real data (HuggingFace C4)
+
+For a genuine loss curve, switch to real data. C4 is large (~300&nbsp;GB for the
+`en` split), but the HF pipeline **streams** it - nothing is fully downloaded.
+Set these keys **inside `maxtext_config`**:
+
+```json
+"dataset_type": "hf",
+"hf_path": "allenai/c4",
+"hf_data_dir": "en",
+"train_split": "train",
+"tokenizer_type": "huggingface"
+```
+
+Key notes:
+
+- `tokenizer_type: "huggingface"` is **required** when the tokenizer is a HF
+  `tokenizer.json` (e.g. DeepSeek-V4-Flash, Llama-3). MaxText's default is
+  `sentencepiece`, which expects a `.model` file and would mismatch a HF
+  tokenizer. Match the type to whatever `training.tokenizer.hf_model_id` ships.
+- Real data triggers the tokenizer download from `training.tokenizer.hf_model_id`
+  into `training.tokenizer.tokenizer_path` (skipped for synthetic), so ensure
+  those two fields point at the right repo/dir.
+- `hf_path`/`hf_data_dir`/`train_split` select the dataset, its config/subdir,
+  and the split. For a tiny alternative, point `hf_path` at a small public set
+  (e.g. `stas/c4-en-10k`) and drop `hf_data_dir`.
+- For a validation loss, also add `eval_interval > 0` (and `eval_steps`) plus a
+  validation split (`hf_eval_split`/`eval_split`); then `convergence.target_metric:
+  auto` reports `eval_loss`.
+
+> **Do not put comment (`_`-prefixed) keys inside `maxtext_config`.** Every key in
+> `maxtext_config` is written verbatim into the run YAML, and MaxText **rejects
+> unknown keys** - a stray `_comment` there will fail the run at config parse.
+> Keep notes at the `training` level (e.g. `_dataset_comment`) instead.
+
 ## Threshold files
 
 A threshold file maps each **sweep name** (cell key) to `{metric: spec}`. A
