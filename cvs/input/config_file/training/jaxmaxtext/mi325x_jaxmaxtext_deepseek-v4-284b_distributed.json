@@ -1,0 +1,234 @@
+{
+  "schema_version": 1,
+  "framework": "jaxmaxtext",
+  "gpu_arch": "mi325x",
+  "_enforce_thresholds_comment": "false = record-only: this is a brand-new model with NO measured MI325X baselines yet, so no metric gates. Populate the sibling *_threshold.json with real mins after the first runs, then flip this to true.",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_jaxmaxtext_deepseek-v4-284b_distributed_threshold.json",
+
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "{shared_fs}/cache/maxtext",
+    "log_dir": "{shared_fs}/LOGS/jaxmaxtext",
+    "hf_token_file": "{shared_fs}/.hf_token",
+    "temp_dir": "/tmp/{user-id}/jaxmaxtext"
+  },
+
+  "_model_comment": "DeepSeek-V4 284B. NOTE: 'DeepSeek-V4-Pro' has no MaxText training preset; the only 284B V4 preset shipped in maxtext is 'deepseek4-284b', whose yml header identifies it as DeepSeek-V4-Flash 284B (hf: deepseek-ai/DeepSeek-V4-Flash). This config uses that preset as the stand-in for the full-size V4 model. Swap model_name/tokenizer once a V4-Pro preset exists.",
+  "model": {
+    "id": "deepseek-v4-284b",
+    "remote": 0,
+    "precision": "bfloat16"
+  },
+
+  "__image__1": "rocm/jax-training:maxtext-v26.6",
+  "__image__2": "unifiedtrainingdockers.azurecr.io/utd/nightly:jax_the_rock_rocm10.1_jax_0.11.0_latest",
+  "__image": "rocm/jax-training:maxtext-v26.5-jax0.10.0-te2.15.0",
+  "container": {
+    "lifetime": "per_run",
+    "name": "rocm-jaxmaxtext-mi325x-deepseek-v4-284b",
+    "image": "rocm/jax-training:maxtext-v26.6",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm-size": "256G",
+        "ulimit": ["nofile=65535:65535"],
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/dev/infiniband:/dev/infiniband",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+          "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro",
+          "/lib/libibverbs.d:/lib/libibverbs.d",
+          "/tmp/{user-id}/jax/TRAINING_LOGS:/workspace/maxtext/output"
+        ]
+      }
+    }
+  },
+  "__volume_comment": "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+
+  "__maxtext_version<=26.3__train_script": "/workspace/maxtext/src/MaxText/train.py",
+  "__maxtext_version>=26.4__train_script": "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
+  "training": {
+    "distributed": true,
+    "gpus_per_node": 8,
+    "steps": 30,
+    "enable_checkpointing": false,
+    "train_script_paths": [
+      "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
+      "/workspace/maxtext/src/MaxText/train.py"
+    ],
+
+    "_maxtext_branch_comment": "After container launch, cd to maxtext_root, `git reset --hard`, and `git checkout maxtext_branch`. Empty maxtext_branch = leave the image's MaxText checkout as-is. maxtext_install_cmd (run verbatim from maxtext_root after checkout) installs the branch's deps: MaxText installs its CODE with --no-deps and its DEPS from a requirements file (see src/dependencies/scripts/setup.sh and maxtext_rocm_dependencies.Dockerfile), so a plain `pip install -e .` does NOT update deps like JAX. NOTE: the ROCm jax pjrt/plugin come from AMD's index and must match the base image's ROCm SDK; if a branch needs a newer JAX than the image ships, a runtime install may not fully fix it -- an image built from that branch is the clean fix.",
+    "_maxtext_install_cmd_comment": "maxtext_install_cmd runs verbatim from maxtext_root right after the branch checkout (empty = no install). Typical use: `python3 -m pip install --no-deps -e .` makes the checked-out branch the imported MaxText package without disturbing the image's jax/rocm stack. Add explicit packages here if the branch needs extra pure-python deps; avoid re-pinning jax/jaxlib/jax-rocm unless the image's versions are incompatible with the branch (a mismatched runtime pip install can break the image's compiled stack -- an image built from the branch is the clean fix).",
+    "maxtext_branch": "release/v26.7",
+    "maxtext_root": "/workspace/maxtext",
+    "maxtext_install_cmd": "python3 -m pip install --no-deps -e .",
+
+    "_model_name_comment": "DeepSeek-V4 284B = MaxText preset 'deepseek4-284b' (DeepSeek-V4-Flash 284B MoE). The architecture is supplied by maxtext's src/maxtext/configs/models/deepseek4-284b.yml; DO NOT restate arch params here (any unknown key in maxtext_config is written to the run yml and rejected by MaxText). The maxtext_config below only carries the runtime/sharding/precision knobs, mirroring the deepseek2-16b reference where applicable.",
+    "_model_arch_reference_comment": "For reference only (from deepseek4-284b.yml, NOT applied here): emb_dim=4096, query_heads=64, kv_heads=1, decoder_layers=43, mlp_dim=2048, moe_mlp_dim=2048, vocab_size=129280, head_dim=512, qk_rope_head_dim=64; decoder_block=deepseek4; MoE: num_experts=256, num_experts_per_tok=6, shared_experts=1, routed_scaling_factor=1.5, mlp_activations=[silu,linear]; attention_type=compressed, q_lora_rank=1024, o_lora_rank=1024, o_groups=8, sliding_window_size=128; rope theta=10000 (compressed=160000), max_position_embeddings=1048576.",
+    "_starting_point_comment": "Runtime/sharding/precision knobs for deepseek4-284b (arch itself comes from the preset yml -- see _model_name_comment). attention=dot_product; DENSE MoE (sparse_matmul=false, megablox=false -- GMM/megablox is TPU-only); ici_expert_parallelism=-1 + dcn_fsdp_parallelism=-1. NOTES: (1) NNODES is injected from the cluster_file. (2) BS=1 / seq=2048 is the memory-safe reference; raise only with headroom. (3) keep dense MoE until the image ships a GPU GMM. (4) training here is from random init on synthetic data; real convergence needs load_parameters_path from a converted DeepSeek-V4-Flash ckpt. Add or remove maxtext_config params below for your experiment.",
+    "_dataset_comment": "Data source for the run. Default 'synthetic' = random token ids (no tokenizer/data download; good for throughput/functional runs, but the model overfits fixed noise so the loss is NOT a real curve and eventually NaNs). For a genuine loss curve set INSIDE maxtext_config: dataset_type=hf, hf_path=allenai/c4, hf_data_dir=en, train_split=train, tokenizer_type=huggingface. HF C4 STREAMS data (no ~300GB download); tokenizer_type=huggingface is required so MaxText loads the DeepSeek-V4-Flash tokenizer.json (the sentencepiece default would mismatch it), and real data auto-downloads the tokenizer from tokenizer.hf_model_id. IMPORTANT: comment keys must stay OUT of maxtext_config -- every key inside maxtext_config is written verbatim to the run yml and any unknown key is rejected by MaxText; keep notes at this training level instead.",
+    "maxtext_config": {
+      "base_config": "base.yml",
+      "model_name": "deepseek4-284b",
+      "hardware": "gpu",
+      "attention": "dot_product",
+      "dcn_data_parallelism": 1,
+      "dcn_fsdp_parallelism": -1,
+      "dcn_pipeline_parallelism": 1,
+      "dcn_tensor_parallelism": 1,
+      "ici_fsdp_parallelism": 1,
+      "ici_data_parallelism": 1,
+      "ici_tensor_parallelism": 1,
+      "ici_pipeline_parallelism": 1,
+      "ici_expert_parallelism": -1,
+      "remat_policy": "full",
+      "async_checkpointing": false,
+      "max_target_length": 2048,
+      "per_device_batch_size": 1,
+      "megablox": false,
+      "capacity_factor": 1.0,
+      "sparse_matmul": false,
+      "sharding_tolerance": 0.05,
+      "dataset_type": "synthetic"
+    },
+
+    "tokenizer": {
+      "hf_model_id": "deepseek-ai/DeepSeek-V4-Flash",
+      "tokenizer_path": "{paths.models_dir}/DeepSeek-V4-Flash"
+    },
+
+    "nic_type": "thor2",
+
+    "_rdma_lib_comment": "Backup 2-stage user-lib copy, used ONLY when a direct read-only volume mount of the NIC's RDMA user lib (.so) into the container is not allowed. In that case mount the host lib as '<name>.so.host' (container_mount_file) and it is copied to the real '<name>.so' (container_dest_file) inside the container after launch. When the .so is bind-mounted :ro directly (the current default), this block is unused.",
+    "rdma_lib": {
+      "host_source_file": "/usr/local/lib/libbnxt_re-rdmav34.so",
+      "container_mount_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+      "container_dest_file": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so"
+    },
+
+    "_env_vars_comment": "Environment variables exported on every node before launch. NCCL_* are cluster-specific RDMA/NIC networking; NVTE_* tune the fused-attention / Composable-Kernel path; XLA_PYTHON_CLIENT_MEM_FRACTION caps the JIT allocator's share of GPU memory (0.85 leaves headroom on 256GB MI325X). Add or remove entries for your experiment.",
+    "env_vars": {
+      "NNODES": "auto",
+      "GPU_MAX_HW_QUEUES": "2",
+      "HSA_FORCE_FINE_GRAIN_PCIE": "1",
+      "HIP_FORCE_DEV_KERNARG": "1",
+      "HSA_NO_SCRATCH_RECLAIM": "1",
+      "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.85",
+      "NCCL_DEBUG": "VERSION",
+      "NCCL_IB_DISABLE": "0",
+      "NCCL_PROTO": "Simple",
+      "NCCL_IB_TC": "41",
+      "NCCL_IB_SL": "0",
+      "NCCL_CHECKS_DISABLE": "1",
+      "NCCL_CROSS_NIC": "0",
+      "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "1",
+      "NVTE_USE_HIPBLASLT": "1",
+      "NVTE_FUSED_ATTN": "1",
+      "NVTE_CK_USES_FWD_V3": "1",
+      "NVTE_CK_IS_V3_ATOMIC_FP32": "0",
+      "NVTE_CK_HOW_V3_BF16_CVT": "2",
+      "NVTE_FUSED_ATTN_CK": "1",
+      "NVTE_FUSED_ATTN_AOTRITON": "0"
+    },
+
+    "_xla_flags_comment": "Extra XLA knobs as name->value, exported as --name=value in XLA_FLAGS (empty {} = MaxText/XLA defaults). Add relevant xla_gpu_* flags for your experiment.",
+    "xla_flags": {},
+
+    "_nccl_comment": "Cluster-specific RDMA/NIC devices. Replace every '<changeme>' with your node's values (see the sibling _example_* entries); distributed runs hard-exit at config load until you do. Discover them with `ibv_devices` (HCAs) and `ip -br link` (host interface).",
+    "nccl": {
+      "_example_ib_hca_list": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "ib_hca_list": "<changeme>",
+      "_example_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+      "ib_hca": "<changeme>",
+      "_example_socket_ifname": "eno0",
+      "socket_ifname": "<changeme>",
+      "_example_gloo_socket_ifname": "eno0",
+      "gloo_socket_ifname": "<changeme>",
+      "_example_ib_gid_index": "3",
+      "ib_gid_index": "<changeme>"
+    },
+
+    "jax_distributed": {
+      "coordinator_ip": "auto",
+      "coordinator_port": "12346",
+      "initialization_timeout_seconds": "1800",
+      "heartbeat_timeout_seconds": "900"
+    },
+
+    "_scaling_baseline_comment": "1-node total tokens/sec baseline for scaling-efficiency %. 0.0 = disabled (record-only). A 284B model will not fit on a single node, so this likely stays disabled; use a multi-node run as the reference instead.",
+    "scaling_baseline": {
+      "tokens_per_sec_total": 0.0,
+      "num_nodes": 1
+    },
+
+    "_convergence_comment": "target_value <= 0 disables convergence (record-only). No baseline loss target for this model yet.",
+    "convergence": {
+      "target_metric": "auto",
+      "target_value": 0.0
+    },
+
+    "_loss_curve_comment": "Record-only (enforce=false) until we have a reference loss curve for this model. Samples training loss every `sample_every` steps.",
+    "loss_curve": {
+      "sample_every": 2,
+      "milestone_steps": [100, 500, 1000, 5000],
+      "max_slope": 0.0,
+      "enforce": false
+    },
+
+    "_smoke_comment": "Smoke test (test_smoke), ENABLED by default. Loads the model and runs `steps` steps at a small fixed batch/seqlen in BF16; passes if no error signature fires (no metric checks). A failure gates the rest of the suite. Set enabled=false to SKIP it during iterative experiments (opt-out). steps/per_device_batch_size/max_target_length tune the smoke run.",
+    "smoke": {
+      "enabled": true,
+      "steps": 5,
+      "per_device_batch_size": 1,
+      "max_target_length": 2048
+    },
+
+    "_checkpoint_resume_comment": "Opt-in checkpoint save+resume + I/O-time test (test_checkpoint_resume). enabled=false -> skipped. Runs ONE sweep (the `sweep` name, else the first enabled) twice: train steps_before_ckpt (checkpoint written at checkpoint_period), then resume + train steps_after_resume; passes if it restarts from the checkpoint step and the boundary loss matches within loss_tolerance. max_save_seconds/max_load_seconds gate checkpoint I/O time (0 = record-only). smoke_model_overrides can shrink the model while keeping the same tokenizer/vocab, e.g. {\"base_num_decoder_layers\": 4}; empty = the config's full model. delete_ckpt_dir=true deletes the checkpoint directory after the test to free disk (set false to keep the files for inspection).",
+    "checkpoint_resume": {
+      "enabled": false,
+      "sweep": "",
+      "steps_before_ckpt": 6,
+      "steps_after_resume": 6,
+      "checkpoint_period": 5,
+      "loss_tolerance": 0.1,
+      "max_save_seconds": 0.0,
+      "max_load_seconds": 0.0,
+      "delete_ckpt_dir": true,
+      "smoke_model_overrides": {}
+    },
+
+    "_error_patterns_comment": "Regexes (name -> pattern) scanned in each node's training.log during polling; a match fails that sweep's training_run with the matched name. Add/remove entries as you find new error signatures. Remove this block to use the built-in defaults. Escape backslashes per JSON (e.g. two backslashes for a regex \\d).",
+    "error_patterns": {
+      "NCCL ERROR": "NCCL ERROR|NCCL timeout|local work queue catastrophic error",
+      "GPU HW ERROR": "HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset",
+      "AssertionError": "AssertionError|ValueError:|JaxStackTrace|During handling of the above exception|triggered the following exception",
+      "rocm Err": "FAILED_PRECONDITION: No visible GPU devices|failed call to hipInit: HIP_ERROR_NoDevice|librocm reported version is: NOT_FOUND",
+      "python err": "ModuleNotFoundError: No module named|Fatal Python error:",
+      "tensorflow": "tensorflow.CoordinationServiceError|tensorflow.BarrierError|CoordinationServiceError",
+      "resource": "RESOURCE_EXHAUSTED: Out of memory|failed: RESOURCE_EXHAUSTED",
+      "segfault": "Segmentation fault|SIGSEGV|core dumped|std::bad_alloc"
+    },
+
+    "__comment_NNODES_": "NNODES is 'auto': the real node count is injected at runtime from the cluster_file (the training launcher exports NNODES=<num_nodes>), so this value is a placeholder and is overridden.",
+    "_sweeps_comment": "Each sweep = one full training run with per-run maxtext overrides; `name` is the threshold cell key. NNODES/GBS in the name are informational labels; per_device_batch_size drives the run and the real global batch = per_device_batch_size * (nodes * gpus_per_node) at runtime. DeepSeek-V4 284B is BF16 here. enabled_sweep_list selects which sweeps to run.",
+    "sweeps": [
+      {
+        "name": "NNODES=4,STEPS=30,PRECISION=BF16,BATCH=1,GBS=32,SEQLEN=2048",
+        "maxtext_overrides": {
+          "per_device_batch_size": 1,
+          "max_target_length": 2048,
+          "dtype": "bfloat16",
+          "weight_dtype": "bfloat16",
+          "quantization": ""
+        }
+      }
+    ],
+    "enabled_sweep_list": [
+      "NNODES=4,STEPS=30,PRECISION=BF16,BATCH=1,GBS=32,SEQLEN=2048"
+    ]
+  }
+}

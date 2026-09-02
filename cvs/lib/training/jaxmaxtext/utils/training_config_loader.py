@@ -202,6 +202,18 @@ class TrainingConfig(_Allow):
     # Deprecated single-path form; kept for backward compatibility and used as a
     # final fallback candidate when train_script_paths is empty.
     train_script: str = "/workspace/maxtext/src/MaxText/train.py"
+    # Optional: after container launch, cd to `maxtext_root`, `git reset --hard`,
+    # and check out `maxtext_branch`. Empty branch (default) = leave the image's
+    # MaxText checkout as-is (no-op). `maxtext_install_cmd`, when set, is run
+    # verbatim in the container from `maxtext_root` after checkout -- MaxText
+    # installs its CODE with `--no-deps` and its DEPENDENCIES from a requirements
+    # file (see src/dependencies/scripts/setup.sh and the rocm Dockerfile), so a
+    # plain `pip install -e .` does NOT pull a branch's updated deps (e.g. a
+    # newer JAX). Use the framework's own recipe, e.g. for ROCm:
+    #   python3 -m pip install -r src/dependencies/requirements/base_requirements/rocm-requirements.txt && python3 -m pip install --no-deps -e .
+    maxtext_branch: str = ""
+    maxtext_root: str = "/workspace/maxtext"
+    maxtext_install_cmd: str = ""
     maxtext_config: Dict[str, Any] = {}
     tokenizer: Tokenizer
     nic_type: str = "thor2"

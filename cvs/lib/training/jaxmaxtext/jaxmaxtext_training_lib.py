@@ -56,6 +56,15 @@ _TRAINING_ERR_PATTERNS = {
     'segfault': r'Segmentation fault|SIGSEGV|signal 11|core dumped',
 }
 
+# Fatal Python-crash signatures scanned on EVERY run, in addition to (and even
+# when) a config supplies its own `error_patterns` (which otherwise fully
+# replace `_TRAINING_ERR_PATTERNS`). An unhandled traceback / import failure
+# crashes the rank immediately, so catching it here fails fast instead of
+# waiting for the completion-timeout.
+_ALWAYS_ON_ERR_PATTERNS = {
+    'python crash': r'Traceback \(most recent call last\):|ImportError:|ModuleNotFoundError:|Fatal Python error:',
+}
+
 # NaN/Inf in any reported training metric -- loss/lm_loss/perplexity go NaN while
 # the throughput fields (TFLOP/s/device, Tokens/s/device) stay numeric, so those
 # alone are NOT enough; MaxText also emits an explicit abort line. NOTE: the
@@ -318,6 +327,72 @@ class MaxTextTrainingJob:
             if not re.search(r'hca_id:\s+(bnxt_|rocep|rdma)', output or "", re.I):
                 raise RuntimeError(f"RDMA library not properly configured on {host}: {(output or '')[:300]}")
 
+    # ---------- maxtext branch checkout ----------
+
+    def checkout_maxtext_branch(self):
+        """Optionally check out a MaxText branch and/or run an install recipe.
+
+        No-op when both ``training.maxtext_branch`` and
+        ``training.maxtext_install_cmd`` are empty. When a branch is set, on
+        every node: cd to ``training.maxtext_root``, discard local changes
+        (``git reset --hard``), best-effort ``git fetch``, then
+        ``git checkout <branch>``, verifying each node ended up on the requested
+        branch (a wrong/failed checkout fails the run rather than silently
+        training on the image's default code). The install recipe runs
+        independently: it executes whenever ``maxtext_install_cmd`` is set, even
+        with no branch checkout, so image-level fixes (e.g. swapping CUDA
+        ``tensorflow`` for ``tensorflow-cpu``) can be applied against the image's
+        baked-in MaxText.
+        """
+        branch = (getattr(self.training, "maxtext_branch", "") or "").strip()
+        install_cmd = (getattr(self.training, "maxtext_install_cmd", "") or "").strip()
+        if not branch and not install_cmd:
+            return
+        root = (getattr(self.training, "maxtext_root", "") or "/workspace/maxtext").strip()
+
+        if branch:
+            log.info("checking out MaxText branch '%s' in %s", branch, root)
+            cmd = (
+                f"cd {shlex.quote(root)} && git reset --hard && "
+                f"(git fetch --all --tags --quiet || true) && "
+                f"git checkout {shlex.quote(branch)} && git rev-parse --abbrev-ref HEAD"
+            )
+            out = self.orch.exec("bash -c " + shlex.quote(cmd))
+            for host, output in (out or {}).items():
+                text = output if isinstance(output, str) else (output or {}).get("output", "")
+                log.info("[maxtext checkout %s]\n%s", host, (text or "").strip()[-500:])
+
+            # Confirm every node is on the requested branch (detached HEAD or a
+            # failed checkout would report something else).
+            verify = self.orch.exec(
+                "bash -c " + shlex.quote(f"cd {shlex.quote(root)} && git rev-parse --abbrev-ref HEAD")
+            )
+            for host, output in (verify or {}).items():
+                text = output if isinstance(output, str) else (output or {}).get("output", "")
+                current = (text or "").strip().splitlines()[-1].strip() if (text or "").strip() else ""
+                if current != branch:
+                    raise RuntimeError(
+                        f"MaxText branch checkout failed on {host}: expected '{branch}', "
+                        f"HEAD is '{current or '<unknown>'}' (root={root})"
+                    )
+
+        # Optional: run the framework's install recipe from the checkout so a
+        # branch that changed its dependencies (e.g. a newer JAX) is actually
+        # installed. `git checkout` updates the CODE, but MaxText installs its
+        # deps from a requirements file (not pyproject), so a plain
+        # `pip install -e .` won't pull them -- the caller supplies the correct
+        # command via training.maxtext_install_cmd (run verbatim from root).
+        if install_cmd:
+            log.info("running MaxText install command in %s: %s", root, install_cmd)
+            full = f"cd {shlex.quote(root)} && {install_cmd} && echo __MAXTEXT_INSTALL_OK__"
+            out = self.orch.exec("bash -c " + shlex.quote(full), timeout=1800)
+            for host, output in (out or {}).items():
+                text = output if isinstance(output, str) else (output or {}).get("output", "")
+                text = (text or "").strip()
+                log.info("[maxtext install %s]\n%s", host, text[-1200:])
+                if "__MAXTEXT_INSTALL_OK__" not in text:
+                    raise RuntimeError(f"MaxText install command failed on {host} (root={root}): {text[-800:]}")
+
     # ---------- tokenizer ----------
 
     def setup_tokenizer(self):
@@ -502,7 +577,9 @@ class MaxTextTrainingJob:
         if _NAN_INF_RE.search(text):
             hit = "NaN/Inf in training metrics"
         else:
-            for err_name, err_pattern in self.error_patterns.items():
+            # Always-on fatal signatures first (scanned even when a config
+            # overrides error_patterns), then the config/default patterns.
+            for err_name, err_pattern in list(_ALWAYS_ON_ERR_PATTERNS.items()) + list(self.error_patterns.items()):
                 if err_pattern and re.search(err_pattern, text, re.I):
                     hit = f"error '{err_name}'"
                     break
