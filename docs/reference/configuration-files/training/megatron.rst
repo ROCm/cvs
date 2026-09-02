@@ -6,22 +6,29 @@
 Megatron training configuration files
 *************************************
 
-Megatron training enables scaling transformer models from millions to trillions of parameters by efficiently utilizing hundreds or thousands of GPUs across multiple nodes.
+JSON configs and sibling ``*_threshold.json`` files for ``megatron_single`` and ``megatron_distributed``. One file is one GPU architecture, model, and mode: ``mi{gpu}_megatron_{model}_{single|distributed}.json``. Match ``framework`` to the suite you run. Keep the sibling threshold file next to the config (``threshold_json`` is resolved relative to the config file).
 
-The Megatron tests check:
+How to run the suites: :doc:`/how-to/test-suites/training/megatron`.
 
-- **Container orchestration**: Docker setup with ROCm/RDMA
-- **Multi-node communication**: NCCL/RCCL initialization
-- **Model convergence**: Loss decreases and no NaN/Inf values
-- **Performance targets**: Throughput and memory usage within expected ranges
-- **Result verification**: Expected tokens/sec and TFLOPS metrics
+Use ``cvs config list training/megatron`` to list available templates, or
+``cvs config copy training/megatron/<name>`` to copy one to your working
+directory. Copy the sibling ``*_threshold.json`` into the same directory as the
+suite config.
 
-Use ``cvs copy-config --list`` to list available templates, or ``cvs copy-config <name>`` to copy one to your working directory.
+Backends
+========
+
+The suite selects the training backend from ``container.image`` (substring ``primus``, case-insensitive):
+
+* **Megatron-LM** — image name does not contain ``primus``. Training scripts live under ``config.megatron_root``. Log files use ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``.
+* **Primus** — image name contains ``primus``. In-image YAML lives under ``examples/megatron/configs/{gpu_arch}/``. Log files use ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``.
 
 .. note::
 
-  - Parameters with the ``<changeme>`` value must have that value modified to your specifications.
-  - ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username.
+  - Parameters with the ``<changeme>`` value must have that value modified to your specifications. Unresolved placeholders cause a hard exit at load time.
+  - ``{user-id}`` will be resolved to the cluster username (or the local OS user as fallback). You can also set this value yourself.
+  - Keys prefixed with ``_`` (for example ``_checkpoint_comment``) are inline comments and are ignored by the loader.
+  - ``sweep.runs`` is required. It must be a subset of (or equal to) the keys in ``sweep.combinations``. Omitting it fails config load.
 
 Available configurations
 ========================
@@ -59,6 +66,20 @@ Config files follow the naming pattern ``<gpu>_megatron_<model>_<mode>.json``. T
      - distributed only
 
 Single-node configs set ``framework: megatron_single`` and use ``nnodes: 1`` with ``master_address: 127.0.0.1``. Distributed configs set ``framework: megatron_distributed``, require the network fields (``nic_type``, ``nccl_ib_hca_list``, etc.), and add a ``scaling_baseline`` section and ``checkpoint_dir`` to the ``checkpoint`` block.
+
+Leftover files ``mi3xx_megatron_llama_*.json`` and ``mi35x_megatron_llama_single.json`` are nested-schema configs for the legacy ``megatron_llama3_1_*`` suites only. Do not pass them to ``megatron_single`` or ``megatron_distributed``.
+
+Required edits
+==============
+
+Set these before a run (full field tables are under `Common parameters`_):
+
+* ``container.image`` — Megatron-LM or Primus ROCm image on all nodes.
+* ``config.training_iterations`` — training steps (for example ``"30"``).
+* ``config.hf_token_file`` — Hugging Face token path on the nodes.
+* ``config.nccl_socket_ifname`` / ``config.gloo_socket_ifname`` — control NIC.
+* ``sweep.runs`` — combo IDs to execute.
+* **Distributed only:** ``config.nnodes``, ``config.master_address``, ``config.nic_type``, ``config.nccl_ib_hca_list`` / ``nccl_ib_hca``. When ``checkpoint.enforce`` is ``true``, also set ``checkpoint.checkpoint_dir`` and replace the last ``<changeme>:<changeme>`` volume with that shared path.
 
 Top-level fields
 ================
@@ -451,7 +472,7 @@ These sections appear in all config files. The parameter names and semantics are
      - Path to a Hugging Face token file for gated models and datasets.
    * - ``log_dir``
      - ``/home/{user-id}/LOGS/megatron``
-     - Host path where per-node training logs are written. Must be volume-mounted into the container.
+     - Host path where per-node training logs are written. Must be volume-mounted into the container. Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``; Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``.
    * - ``scripts_dir``
      - ``/home/{user-id}/SCRIPTS/megatron``
      - Host path where the lib writes per-rank wrapper scripts. Must be volume-mounted into the container.
@@ -463,7 +484,7 @@ These sections appear in all config files. The parameter names and semantics are
      - ROCm installation path inside the container. Leave empty for auto-detection.
    * - ``megatron_root``
      - ``/workspace/Megatron-LM``
-     - Root directory of the Megatron-LM checkout inside the container.
+     - Root directory of the Megatron-LM checkout inside the container. Used by the Megatron-LM backend; Primus jobs use in-image YAML under ``examples/megatron/configs/{gpu_arch}/`` instead.
    * - ``training_iterations``
      - ``<changeme>``
      - Number of training steps to run.
@@ -541,7 +562,7 @@ Distributed configs include all single-node fields above plus the following requ
      - Container instance name, e.g. ``megatron_llama3_1_8b_single``.
    * - ``image``
      - ``<changeme>``
-     - Docker image to run. Must be set to the Megatron-LM or Primus image available in your environment.
+     - Docker image to run. If the image name contains ``primus`` (case-insensitive), the suite uses the Primus backend; otherwise it uses Megatron-LM. Set this to the image available in your environment.
    * - ``runtime.name``
      - ``docker``
      - Container runtime. Currently only ``docker`` is supported.
@@ -564,9 +585,9 @@ Distributed configs include all single-node fields above plus the following requ
 ``checkpoint``
 --------------
 
-Controls the checkpoint save and resume test (``test_checkpoint``). The test runs in two phases: a save phase that trains for ``save_iters`` steps writing a checkpoint every ``save_interval`` steps, followed by a resume phase that loads the last checkpoint and trains to ``resume_iters`` steps, then verifies that loss does not spike across the boundary. Supported for both Primus and Megatron (llama2/llama3) backends.
+Controls the checkpoint save and resume test (``test_checkpoint``). The test is Primus-only: it is skipped when ``enforce`` is ``false``, and also skipped when the container image name does not contain ``primus``. On Primus it runs in two phases: a save phase that trains for ``save_iters`` steps writing a checkpoint every ``save_interval`` steps, followed by a resume phase that loads the last checkpoint and trains to ``resume_iters`` steps. Continuity is checked at the first resume step (``last_ckpt_step + 1``), which must not exceed the checkpoint-step loss by more than ``loss_rtol``.
 
-``checkpoint_dir`` is only present in distributed configs, where a shared filesystem path is required for all nodes to access the same checkpoint. Single-node configs omit it; the training script uses its default local path.
+``checkpoint_dir`` is only present in distributed configs. On Primus distributed runs it must be a shared filesystem path visible on every node. Single-node Primus ignores that field and writes under ``{log_dir}/ckpt_primus``. Megatron-LM never runs ``test_checkpoint``.
 
 .. list-table::
    :widths: 3 3 5
@@ -668,4 +689,30 @@ Controls the checkpoint save and resume test (``test_checkpoint``). The test run
      - Dict of named sweep cells. Each cell specifies ``global_batch_size``, ``micro_batch_size``, and optionally ``precision`` and ``name``. The combination key is used as the pytest parametrize ID.
    * - ``runs``
      - N/A
-     - Ordered list of combination keys to execute. Must be a subset of (or equal to) the keys in ``combinations``. Reorder or trim this list to run only specific cells.
+     - Required ordered list of combination keys to execute. Must be a subset of (or equal to) the keys in ``combinations``. Reorder or trim this list to run only specific cells. Omitting ``runs`` fails config load.
+
+Any key in a sweep combo overrides the matching ``model_params`` field (for example ``precision`` or ``tensor_parallelism``).
+
+Threshold files
+---------------
+
+Each suite JSON names a sibling file in ``threshold_json``. Cell keys must match ``MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>`` exactly, or that combo is record-only.
+
+A metric is gated only when ``enforce_thresholds`` is ``true`` and the cell has a numeric spec:
+
+.. list-table::
+   :widths: 2 5
+   :header-rows: 1
+
+   * - Kind
+     - Passes when
+   * - ``min``
+     - actual ≥ value
+   * - ``max``
+     - actual ≤ value
+   * - ``info``
+     - always; recorded only
+   * - ``min_ratio``
+     - actual / ``reference`` ≥ value
+
+Tracked metrics (namespace ``training.*``): ``throughput_per_gpu``, ``tokens_per_gpu``, ``elapsed_time_per_iteration``, ``mem_usage``, and on distributed configs ``scaling_efficiency_pct`` (always ``info``).

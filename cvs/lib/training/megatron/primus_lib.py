@@ -397,7 +397,7 @@ class PrimusTrainingJob:
             f'--train_iters {self.iterations}'
         )
         if self.checkpoint_dir and not self.load_checkpoint:
-            batch_args += f' --save_interval {self.save_interval or self.iterations}'
+            batch_args += f' --save --save_interval {self.save_interval or self.iterations}'
         if self.load_checkpoint and self.checkpoint_dir:
             batch_args += f' --load {self.checkpoint_dir}/checkpoints'
             if self.distributed_training:
