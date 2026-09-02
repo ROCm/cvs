@@ -18,7 +18,6 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from . import messages
 
 FILE_MODE_PREVIEW_LINES = 20
-TERMINATE_GRACE_PERIOD_SECONDS = 10.0
 
 
 def _read_secret(file_path: Path) -> str:
@@ -154,7 +153,7 @@ async def _communicate_with_timeouts(
             watchdog.cancel()
         await asyncio.gather(work, *([watchdog] if watchdog else []), return_exceptions=True)
     if timed_out:
-        await _terminate_process_group(process, TERMINATE_GRACE_PERIOD_SECONDS)
+        await _terminate_process_group(process, messages.TERMINATE_GRACE_PERIOD_SECONDS)
     return b"".join(stdout_chunks), b"".join(stderr_chunks), timed_out
 
 
@@ -188,7 +187,7 @@ async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> 
             try:
                 await asyncio.wait_for(process.wait(), timeout=request.timeout)
             except asyncio.TimeoutError:
-                await _terminate_process_group(process, TERMINATE_GRACE_PERIOD_SECONDS)
+                await _terminate_process_group(process, messages.TERMINATE_GRACE_PERIOD_SECONDS)
                 timed_out = True
         finally:
             await registry.unregister(request.cmd_id)
@@ -325,7 +324,10 @@ def create_app(
         registry: ProcessRegistry = http_request.app.state.process_registry
         processes = registry.snapshot()
         await asyncio.gather(
-            *(_terminate_process_group(process, TERMINATE_GRACE_PERIOD_SECONDS) for process in processes.values())
+            *(
+                _terminate_process_group(process, messages.TERMINATE_GRACE_PERIOD_SECONDS)
+                for process in processes.values()
+            )
         )
         # Self-signal rather than depending on a Server reference: uvicorn installs a SIGTERM
         # handler that drains in-flight requests (this one included) before exiting.
