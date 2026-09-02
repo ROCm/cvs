@@ -4,7 +4,6 @@
   "framework": "sglang",
   "topology": "disaggregated",
   "threshold_json": "mi3xx_sglang_deepseek_r1_0528_threshold.json",
-  "_container_image": "rocm/sgl-dev:v0.5.12.post1-rocm720-mi30x-20260601",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/root/models",
@@ -18,7 +17,8 @@
   "container": {
     "lifetime": "per_run",
     "name": "sglang_container",
-    "image": "rocm/sgl-dev:v0.5.12.post1-rocm720-mi30x-20260603",
+    "_image_example": "rocm/sgl-dev:v0.5.14-rocm720-mi30x-20260629",
+    "image": "<changeme>",
     "runtime": {
       "name": "docker",
       "args": {
