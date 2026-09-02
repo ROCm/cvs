@@ -513,6 +513,8 @@ class AtomJob:
         atom_argv = self._without_vllm_distributed_flags(self.atom_server_args)
         if not self._argv_has_flag(atom_argv, "--max-model-len", "-m"):
             atom_argv = list(atom_argv) + ["--max-model-len", self.max_model_length]
+        if not self._argv_has_flag(atom_argv, "--enforce-eager") and not self._is_deepseek_v4_model(self.model_id):
+            atom_argv = list(atom_argv) + ["--enforce-eager"]
         argv.extend(atom_argv)
         argv.extend(self._atom_multinode_argv())
         return argv

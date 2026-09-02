@@ -158,6 +158,16 @@ def pytest_addoption(parser):
         # Option already exists, skip
         pass
 
+    try:
+        parser.addoption(
+            "--config_profile",
+            action="store",
+            default=None,
+            help="Schema v2 config profile name (ATOM and other multi-profile suites)",
+        )
+    except ValueError:
+        pass
+
 
 def pytest_metadata(metadata):
     """Add CVS version metadata for both console output and HTML report."""

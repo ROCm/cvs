@@ -12,6 +12,7 @@ Generic paths/model/container/threshold plumbing lives in
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 from pydantic import Field, field_validator, model_validator
@@ -187,18 +188,7 @@ class AtomVariantConfig(BaseVariantConfig):
 
     def cell_key(self, isl, osl, concurrency):
         p = self.params
-        key = f"ISL={isl},OSL={osl},TP={p.tensor_parallelism}"
-        nnodes = int(p.nnodes)
-        pp = int(p.pipeline_parallel_size)
-        if p.driver == "atom":
-            if nnodes > 1:
-                key += f",DP={nnodes},NNODES={nnodes}"
-        elif p.driver in ATOM_PP_DRIVERS:
-            if pp > 1 or nnodes > 1:
-                key += f",PP={p.pipeline_parallel_size}"
-            if nnodes > 1:
-                key += f",NNODES={p.nnodes}"
-        return f"{key},CONC={concurrency}"
+        return f"ISL={isl},OSL={osl},TP={p.tensor_parallelism},PP={p.pipeline_parallel_size},CONC={concurrency}"
 
     def expected_cells(self) -> list[str]:
         by_name = {c.name: c for c in self.sweep.sequence_combinations}
@@ -216,6 +206,7 @@ class AtomVariantConfig(BaseVariantConfig):
             thresholds=self.thresholds,
             enforce_thresholds=self.enforce_thresholds,
             gated_metrics=GATED_METRICS,
+            gated_metric_prefix="",
         )
         if int(self.params.nnodes) > 1 and (self.params.scaling_baseline_output_throughput or "").strip():
             missing = []
@@ -345,8 +336,117 @@ def expand_sweep_parametrize(sweep, fixturenames):
     return None
 
 
-def load_variant(config_path, cluster_dict) -> AtomVariantConfig:
+_PROFILE_SHARED_KEYS = frozenset(
+    {
+        "schema_version",
+        "framework",
+        "gpu_arch",
+        "paths",
+        "model",
+        "threshold_json",
+    }
+)
+
+
+def _strip_profile_meta(raw: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in raw.items() if k not in _PROFILE_SHARED_KEYS and k != "profiles"}
+
+
+def resolve_atom_profile(
+    raw: dict[str, Any],
+    thresholds: dict[str, Any],
+    profile: str | None,
+) -> tuple[dict[str, Any], dict[str, Any], str]:
+    """Flatten a schema_version 2 multi-profile config into one variant dict."""
+    profiles = raw.get("profiles")
+    if not isinstance(profiles, dict) or not profiles:
+        threshold_profiles = thresholds.get("profiles") if isinstance(thresholds.get("profiles"), dict) else None
+        if threshold_profiles is not None:
+            selected = (profile or "perf").strip()
+            if selected not in threshold_profiles:
+                known = ", ".join(sorted(threshold_profiles))
+                raise ValueError(
+                    f"profiled threshold file requires --config_profile or CVS_CONFIG_PROFILE "
+                    f"(requested {selected!r}; known: {known})"
+                )
+            return raw, dict(threshold_profiles[selected]), selected
+        return raw, thresholds, profile or "perf"
+
+    selected = (profile or raw.get("default_profile") or "").strip()
+    if not selected:
+        known = ", ".join(sorted(profiles))
+        raise ValueError(f"multi-profile config requires --config_profile or default_profile (known: {known})")
+    if selected not in profiles:
+        known = ", ".join(sorted(profiles))
+        raise ValueError(f"unknown config profile {selected!r} (known: {known})")
+
+    profile_body_raw = dict(profiles[selected])
+    threshold_profile = (profile_body_raw.pop("threshold_profile", None) or selected).strip()
+
+    shared = {k: raw[k] for k in _PROFILE_SHARED_KEYS if k in raw}
+    merged = {**shared, **profile_body_raw}
+    merged["schema_version"] = 1
+
+    threshold_profiles = thresholds.get("profiles") if isinstance(thresholds.get("profiles"), dict) else None
+    if threshold_profiles is not None:
+        if threshold_profile not in threshold_profiles:
+            known = ", ".join(sorted(threshold_profiles))
+            raise ValueError(
+                f"threshold file missing profile {threshold_profile!r} referenced by config (known: {known})"
+            )
+        merged_thresholds = dict(threshold_profiles[threshold_profile])
+    else:
+        merged_thresholds = dict(thresholds)
+
+    return merged, merged_thresholds, selected
+
+
+def _expected_cells_from_raw(raw: dict[str, Any]) -> list[str]:
+    """Compute sweep cell keys from a resolved flat config dict (pre-pydantic)."""
+    params = raw["params"]
+    sweep = raw["sweep"]
+    by_name = {c["name"]: c for c in sweep["sequence_combinations"]}
+    tp = params["tensor_parallelism"]
+    pp = params.get("pipeline_parallel_size", "1")
+    cells = []
+    for run in sweep["runs"]:
+        combo = by_name[run["combo"]]
+        isl, osl, conc = combo["isl"], combo["osl"], run["concurrency"]
+        cells.append(f"ISL={isl},OSL={osl},TP={tp},PP={pp},CONC={conc}")
+    return cells
+
+
+def _prune_orphan_sweep_thresholds(thresholds: dict[str, Any], expected_cells: list[str]) -> dict[str, Any]:
+    """Drop sweep-cell threshold keys that belong to another topology/profile."""
+    expected = set(expected_cells)
+    pruned: dict[str, Any] = {}
+    for key, value in thresholds.items():
+        if key.startswith("ISL=") and key not in expected:
+            continue
+        pruned[key] = value
+    return pruned
+
+
+_CONFIG_STEM_GPU_ARCH = re.compile(r"^([^_]+)_atom_")
+
+
+def gpu_arch_from_config_path(config_path) -> str:
+    """Infer ``gpu_arch`` from ``{gpu}_atom_*.json`` config stems."""
+    stem = Path(config_path).stem
+    match = _CONFIG_STEM_GPU_ARCH.match(stem)
+    if not match:
+        raise ValueError(
+            f"config filename must be {{gpu}}_atom_*.json to infer gpu_arch (got {Path(config_path).name})"
+        )
+    return match.group(1)
+
+
+def load_variant(config_path, cluster_dict, profile: str | None = None) -> AtomVariantConfig:
     raw, thresholds = substitute_config(config_path, cluster_dict)
+    if not str(raw.get("gpu_arch") or "").strip():
+        raw["gpu_arch"] = gpu_arch_from_config_path(config_path)
+    raw, thresholds, _ = resolve_atom_profile(raw, thresholds, profile)
+    thresholds = _prune_orphan_sweep_thresholds(thresholds, _expected_cells_from_raw(raw))
     raw["thresholds"] = thresholds
     return AtomVariantConfig(**raw)
 
@@ -364,34 +464,34 @@ def placeholder_gated_threshold_cell(
     failed_max: int = 1_000_000_000,
     success_rate_min: float = 0,
 ) -> dict[str, Any]:
-    """Return one sweep cell's ``client.*`` specs covering every ``GATED_METRICS`` member."""
+    """Return one sweep cell's bare-metric specs covering every ``GATED_METRICS`` member."""
     loose_ms = {"kind": "max_ms", "value": 1_000_000}
     return {
-        "client.total_token_throughput": {"kind": "min_tok_s", "value": total_token_throughput_min},
-        "client.output_throughput": {"kind": "min_tok_s", "value": output_throughput_min},
-        "client.per_gpu_throughput": {"kind": "min_tok_s", "value": per_gpu_throughput_min},
-        "client.output_tput_per_gpu": {"kind": "min_tok_s", "value": output_tput_per_gpu_min},
-        "client.mean_ttft_ms": {"kind": "max_ms", "value": mean_ttft_max_ms},
-        "client.median_ttft_ms": loose_ms,
-        "client.p90_ttft_ms": loose_ms,
-        "client.p95_ttft_ms": loose_ms,
-        "client.p99_ttft_ms": {"kind": "max_ms", "value": p99_ttft_max_ms},
-        "client.mean_tpot_ms": {"kind": "max_ms", "value": mean_tpot_max_ms},
-        "client.median_tpot_ms": loose_ms,
-        "client.p90_tpot_ms": loose_ms,
-        "client.p95_tpot_ms": {"kind": "max_ms", "value": p95_tpot_max_ms},
-        "client.p99_tpot_ms": loose_ms,
-        "client.mean_itl_ms": loose_ms,
-        "client.median_itl_ms": loose_ms,
-        "client.p95_itl_ms": loose_ms,
-        "client.p99_itl_ms": loose_ms,
-        "client.mean_e2el_ms": loose_ms,
-        "client.median_e2el_ms": loose_ms,
-        "client.p90_e2el_ms": loose_ms,
-        "client.p95_e2el_ms": loose_ms,
-        "client.p99_e2el_ms": loose_ms,
-        "client.success_rate": {"kind": "min", "value": success_rate_min},
-        "client.failed": {"kind": "max", "value": failed_max},
+        "total_token_throughput": {"kind": "min_tok_s", "value": total_token_throughput_min},
+        "output_throughput": {"kind": "min_tok_s", "value": output_throughput_min},
+        "per_gpu_throughput": {"kind": "min_tok_s", "value": per_gpu_throughput_min},
+        "output_tput_per_gpu": {"kind": "min_tok_s", "value": output_tput_per_gpu_min},
+        "mean_ttft_ms": {"kind": "max_ms", "value": mean_ttft_max_ms},
+        "median_ttft_ms": loose_ms,
+        "p90_ttft_ms": loose_ms,
+        "p95_ttft_ms": loose_ms,
+        "p99_ttft_ms": {"kind": "max_ms", "value": p99_ttft_max_ms},
+        "mean_tpot_ms": {"kind": "max_ms", "value": mean_tpot_max_ms},
+        "median_tpot_ms": loose_ms,
+        "p90_tpot_ms": loose_ms,
+        "p95_tpot_ms": {"kind": "max_ms", "value": p95_tpot_max_ms},
+        "p99_tpot_ms": loose_ms,
+        "mean_itl_ms": loose_ms,
+        "median_itl_ms": loose_ms,
+        "p95_itl_ms": loose_ms,
+        "p99_itl_ms": loose_ms,
+        "mean_e2el_ms": loose_ms,
+        "median_e2el_ms": loose_ms,
+        "p90_e2el_ms": loose_ms,
+        "p95_e2el_ms": loose_ms,
+        "p99_e2el_ms": loose_ms,
+        "success_rate": {"kind": "min", "value": success_rate_min},
+        "failed": {"kind": "max", "value": failed_max},
     }
 
 

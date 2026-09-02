@@ -1,192 +1,397 @@
-.. meta::  :description: Configure the variables in the ATOM configuration files
-  :keywords: inference, ROCm, install, cvs, ATOM, ATOM
+﻿.. meta::
+  :description: Configure the ATOM inference benchmark suite in CVS
+  :keywords: inference, ROCm, cvs, ATOM, LLM, benchmark, multinode, thresholds
 
-***************************************
+**********************************
 ATOM inference configuration file
-***************************************
+**********************************
 
-ATOM tests validate LLM serving on AMD GPU clusters using the **ATOM** stack
-(``atom.entrypoints.openai_server`` + ``atom.benchmarks.benchmark_serving``). W1 workloads
-use ``params.driver: atom``. Multinode **pipeline parallel** (``PP=2``) uses a framework
-coordinator: ``params.driver: vllm_atom`` (vLLM + ATOM ROCm kernels) or ``params.driver: sglang``.
-A legacy ``params.driver: vllm`` path remains for GPT-OSS uplift only.
+The ATOM suite validates LLM serving on AMD Instinct GPUs. Single-node variants
+use ``params.driver: atom`` (native ``openai_server``). Shipped multinode
+**pipeline parallel** stems use ``params.driver: vllm_atom`` or ``sglang`` with
+``nnodes: 2`` and ``pipeline_parallel_size: 2``.
 
-The suite checks:
+Run the suite with:
 
-- **Container orchestration**: Docker with ROCm; cluster + variant container blocks merged
-- **Model serving**: ATOM OpenAI-compatible server, health + warmup probes
-- **Performance metrics**: Throughput, per-GPU throughput, TTFT/TPOT (including p99/p95 tails)
-- **Benchmarking**: Named ISL/OSL combos with explicit concurrency sweep cells
-- **Result verification**: Tiered ``client.*`` thresholds when ``enforce_thresholds`` is true
+.. code:: bash
 
-Configs use flat sibling pairs under
-``cvs/input/config_file/inference/atom/``, matching ``inference/vllm/`` naming:
-``{gpu}_atom_{model}_{precision}[_{mode}].json`` plus optional
-``…_threshold.json``. Pass ``--config_file`` to the main JSON;
-:func:`cvs.lib.utils.config_loader.substitute_config` discovers the sole sibling ``*threshold.json`` in the **config file's parent directory** when
-``threshold_json`` is omitted. If that directory contains more than one ``*threshold.json``,
-loading fails with an ambiguous-threshold ``ValueError``.
+  cvs run atom --cluster_file <cluster.json> --config_file <config.json>
 
-**Lab ``~/input`` layout:** the repo keeps every variant flat in one tree, but after
-``cvs config copy`` you should place each run's config + threshold pair in a dedicated
-subdirectory (for example ``~/input/.../atom/single/``) so only one
-threshold file sits beside the config you pass to ``--config_file``. Alternatively set
-``"threshold_json"`` in the config to an explicit path. See the in-tree README at
-``cvs/input/config_file/inference/atom/README.md`` for copy-paste commands.
+For a step-by-step first run, see :doc:`/how-to/test-suites/inference/atom`. Config
+JSON uses full param names (for example ``tensor_parallelism``); threshold cell
+keys use abbreviations (for example ``TP=``, ``PP=``).
 
-**Cluster file:** use ``cvs/input/cluster_file/atom_cluster.json``. Edit ``node_dict`` so host count matches variant ``params.nnodes`` (one host for single-node sweeps; two for multinode).
-Container ``name`` must match the variant (``atom_mi300x`` / ``atom_mi355x``);
-the suite deep-merges variant ``container`` over the cluster file.
+File layout
+===========
 
-**Launcher vs GPU node:** pytest and HTML/log output run on the host where you invoke
-``cvs run``. :class:`cvs.core.orchestrators.container.ContainerOrchestrator` SSHes to
-cluster nodes (``cluster_file`` ``mgmt_ip`` / ``node_dict``) and runs ``sudo docker`` there.
-``paths.models_dir`` and the ATOM image must exist on the GPU node; ``priv_key_file`` and
-``paths.hf_token_file`` are read on the launcher. Local Docker on the launcher is not required.
+Shipped files live under ``cvs/input/config_file/inference/atom/``:
 
-**ATOM server CLI:** set ``roles.server.atom_args`` inline in the config (vLLM-style, analogous to
-``roles.server.serve_args`` on ``vllm_single``). When ``params.driver`` is ``atom``, ``atom_args``
-is required. MTP3 variants also set ``params.bench_extra_args`` (for example ``--use-chat-template``).
+.. code:: text
 
-Pytest and HTML layout (atom)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  {gpu}_atom_{model}_{precision}_single.json
+  {gpu}_atom_{model}_{precision}_distributed.json   # when multinode PP is supported
+  {platform}_atom_{model}_{precision}_threshold.json
+
+Config stems use the **family** prefix ``mi3xx``. Threshold files use a
+**platform** prefix (shipped: ``mi325x``, lab-validated on MI325X / gfx942).
+Each config's ``threshold_json`` points at the matching ``mi325x_*_threshold.json``.
+
+Multi-profile configs (``schema_version: 2``) embed job shapes under ``profiles``.
+Select one at runtime with ``--config_profile NAME`` (or ``CVS_CONFIG_PROFILE``).
+Flat ``schema_version: 1`` files use an implicit ``perf`` profile.
+
+:func:`cvs.lib.utils.config_loader.substitute_config` resolves ``threshold_json``
+next to the config. Multiple ``*threshold.json`` files in one directory raises an
+ambiguous-threshold error ΓÇö on lab machines, copy each variant pair into its own
+subdirectory (see :doc:`/how-to/test-suites/inference/atom`).
+
+Shipped model inventory
+=======================
 
 .. list-table::
-   :widths: 10 35 55
+   :widths: 3 3 4
    :header-rows: 1
 
-   * - Stage
-     - Test
+   * - Model stem
+     - Topology files
      - Notes
-   * - 1
-     - ``test_launch_container``
-     - Host Docker launch; records ``container_launch``.
-   * - 2
-     - ``test_setup_sshd``
-     - Multinode only; single-node skips sshd probe.
-   * - 3
-     - ``test_model_fetch``
-     - Ensures model bytes under ``paths.models_dir``.
-   * - 4
-     - ``test_atom_inference``
-     - One parametrized cell; server start (or reuse), bench, parse ``results.json``.
-   * - 5
-     - ``test_cell_metrics``
-     - One HTML row per **metric tier** per cell (throughput, ttft, tpot, health, record).
-   * - 6
-     - ``test_print_results_table``
-     - Session results grid from ``inf_res_dict``.
-   * - 7
-     - ``test_teardown``
-     - Explicit teardown; sets ``lifecycle.torn_down``.
+   * - ``mi3xx_atom_deepseek-r1_fp8``
+     - ``_single``, ``_distributed``
+     - W1 — profiles: perf, accuracy, mtp3, baseline_sweep, vllm, sglang (single); perf, sglang, accuracy (distributed)
+   * - ``mi3xx_atom_gpt-oss-120b_mxfp4``
+     - ``_single``
+     - W2 — ``perf`` / ``native`` / ``vllm`` / ``sglang`` profiles
+   * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
+     - ``_single``
+     - W3 — ``perf`` / ``vllm`` / ``sglang`` profiles
+   * - Other P2 models
+     - ``_single`` only
+     - Flat schema_version 1 perf gate
 
-Example variant layout
-======================
+Config profiles
+===============
 
-Each stem has ``<stem>.json`` (``schema_version: 1``, ``framework: atom``)
-and sibling ``<stem>_threshold.json``. In the CVS source tree many stems share one directory;
-on a lab machine, copy only the pair you need into a per-variant subdirectory (or set
-``threshold_json``). See ``mi300x_atom_deepseek-r1_fp8_single.json``
-for the W1 MI300X reference.
+One topology JSON can host multiple **profiles** (driver + sweep + optional
+accuracy/MTP blocks):
 
-.. dropdown:: Example ``mi300x_atom_deepseek-r1_fp8_single_threshold.json`` (excerpt)
+.. code:: bash
 
-  .. code:: json
+  cvs run atom \
+    --config_file ~/input/.../mi3xx_atom_deepseek-r1_fp8_single.json \
+    --config_profile accuracy \
+    --cluster_file ~/input/cluster_file/atom_cluster.json
 
-    {
-      "ISL=1024,OSL=1024,TP=8,CONC=128": {
-        "client.output_throughput": {"kind": "min_tok_s", "value": 2590.98},
-        "client.per_gpu_throughput": {"kind": "min_tok_s", "value": 648.65},
-        "client.p99_ttft_ms": {"kind": "max_ms", "value": 1834.3},
-        "client.p95_tpot_ms": {"kind": "max_ms", "value": 53.76},
-        "client.success_rate": {"kind": "min", "value": 1},
-        "client.failed": {"kind": "max", "value": 0}
-      }
-    }
-
-  Every member of :data:`cvs.lib.inference.atom.atom_parsing.GATED_METRICS` needs a
-  spec in each cell when ``enforce_thresholds`` is true. W1 perf gates include
-  ``per_gpu_throughput``, ``output_tput_per_gpu``, ``p99_ttft_ms``, and ``p95_tpot_ms``.
-
-Parameters
-==========
-
-Top-level blocks follow the DTNI variant schema. ATOM-specific keys:
+W1 DeepSeek R1 FP8 ΓÇö profile reference:
 
 .. list-table::
-   :widths: 3 3 5
+   :widths: 2 2 2 4
    :header-rows: 1
 
-   * - Block / key
-     - Example
-     - Description
+   * - ``--config_profile``
+     - Topology
+     - Driver
+     - Use when
+   * - ``perf`` (default)
+     - single
+     - ``atom``
+     - Daily M1 perf gate (2 cells)
+   * - ``baseline_sweep``
+     - single
+     - ``atom``
+     - W1 P2 latency-vs-load (14 cells)
+   * - ``accuracy``
+     - single
+     - ``atom``
+     - M2 gsm8k / quality
+   * - ``mtp3`` / ``mtp3_accuracy``
+     - single
+     - ``atom``
+     - Speculative-decode perf / quality
+   * - ``vllm`` / ``sglang``
+     - single
+     - ``vllm_atom`` / ``sglang``
+     - M4 single-node parity
+   * - ``perf`` (default)
+     - distributed
+     - ``vllm_atom``
+     - M5 PP=2 perf
+   * - ``sglang``
+     - distributed
+     - ``sglang``
+     - M5 PP=2 via SGLang
+   * - ``accuracy``
+     - distributed
+     - ``vllm_atom``
+     - Scale accuracy scaffold
+
+Keys prefixed with ``_`` (for example ``_comment``) are ignored by the loader.
+
+Cluster and lab setup
+=====================
+
+**Cluster file:** ``cvs/input/cluster_file/atom_cluster.json``. Edit
+``node_dict`` so host count matches ``params.nnodes``.
+
+.. list-table::
+   :widths: 3 2 3
+   :header-rows: 1
+
+   * - Variant type
+     - ``params.nnodes``
+     - ``node_dict``
+   * - Single-node / baseline / MTP3
+     - ``1``
+     - Head node only
+   * - Multinode PP
+     - ``2``
+     - Head + worker
+
+Set ``enforce_thresholds`` to ``true`` for PASS/FAIL gating or ``false`` for
+record-only (MI355X stems often ship record-only until lab calibration).
+
+Fields you must customize
+-------------------------
+
+.. list-table::
+   :widths: 3 4
+   :header-rows: 1
+
+   * - Where
+     - Change to
+   * - ``container.image``
+     - Your ATOM ROCm image on GPU nodes
+   * - ``paths.shared_fs``, ``paths.models_dir``, ``paths.log_dir``, ``paths.hf_token_file``
+     - Lab paths; ``{user-id}`` resolves to cluster username
+   * - ``model.id``
+     - Model under test
+   * - ``params.driver``
+     - ``atom`` (single-node) or ``vllm_atom`` / ``sglang`` (multinode PP)
+   * - ``params.nnodes``, ``params.master_addr``, ``params.pipeline_parallel_size``
+     - Match topology (``2`` / head IP / ``2`` on distributed PP stems)
+   * - ``params.scaling_baseline_output_throughput``
+     - Single-node output tok/s for ``scaling.efficiency_pct`` (multinode)
+   * - ``roles.server.atom_args``
+     - Inline ATOM server CLI when ``driver=atom``
+   * - ``roles.server.serve_args``
+     - Multinode server flags when ``driver=vllm_atom``
+   * - ``roles.server.ib_hca_devices``, ``roles.server.ib_netdev``
+     - ``"auto"`` or explicit; netdev must not be ``mlx5_*``
+   * - Threshold JSON values
+     - Calibrated PASS/FAIL bounds for your hardware
+
+Placeholder substitution
+========================
+
+- ``{user-id}`` ΓÇö cluster username (or local OS user fallback).
+- ``{shared_fs}`` ΓÇö self-reference within ``paths``.
+- ``{paths.models_dir}`` and other ``{paths.*}`` ΓÇö cross-referenced anywhere.
+- ``{head-node-ip}`` ΓÇö replace manually in copied multinode configs.
+
+``threshold_json`` is a literal filename (no placeholder substitution).
+
+Configuration schema
+====================
+
+Top-level fields:
+
+.. list-table::
+   :widths: 3 5
+   :header-rows: 1
+
+   * - Field
+     - Meaning
+   * - ``schema_version``
+     - ``1`` (flat) or ``2`` (multi-profile)
    * - ``framework``
      - ``atom``
-     - Suite identifier for :func:`load_variant`.
    * - ``gpu_arch``
-     - ``mi300x``
-     - Hardware profile for the variant.
-   * - ``roles.server.atom_args``
-     - ``["-tp", "8", "--kv_cache_dtype", "fp8"]``
-     - Inline ATOM ``openai_server`` CLI tokens after ``--model`` / ``--server-port``.
-   * - ``roles.server.serve_args``
-     - ``{"kv-cache-dtype": "fp8", "enforce-eager": true}``
-     - vLLM / vLLM-ATOM path (``params.driver: vllm`` or ``vllm_atom``); merged into ``vllm serve`` argv.
-   * - ``roles.server.sglang_args``
-     - ``["--trust-remote-code", "--disable-cuda-graph"]``
-     - Extra tokens appended to ``sglang.launch_server`` when ``params.driver: sglang``.
-   * - ``roles.server.ib_netdev``
-     - ``ens51f1np1``
-     - **Required** when ``nnodes > 1`` and ``driver`` is ``vllm_atom`` or ``sglang``; sets ``NCCL_SOCKET_IFNAME``.
+     - Inferred from the config filename prefix (``{gpu}_atom_…``); optional override in JSON
    * - ``enforce_thresholds``
-     - ``true`` / ``false``
-     - When true, ``test_cell_metrics`` asserts via :func:`cvs.lib.utils.verdict.evaluate_all`.
-   * - ``paths.*``
-     - ``shared_fs``, ``models_dir`` (``/home/models``), ``log_dir``, ``hf_token_file``
-     - ``models_dir`` is an absolute HF hub cache path on GPU nodes; variant configs also bind-mount ``/home/models`` into the container.
-   * - ``model.id``
-     - ``deepseek-ai/DeepSeek-R1-0528``
-     - HuggingFace model id for ATOM server and bench.
-   * - ``container.image`` / ``container.name``
-     - ``rocm/atom-dev:latest``, ``atom_mi300x``
-     - Docker image and container name (override cluster file defaults).
-   * - ``roles.server.atom_args``
-     - ``-tp``, ``--kv_cache_dtype``
-     - Extra CLI tokens after ``--model`` / ``--server-port`` (ATOM driver).
-   * - ``roles.server.env``
-     - ``ATOM_DISABLE_MMAP``
-     - Merged into ``/tmp/server_env_script.sh`` before server launch.
-   * - ``params.driver``
-     - ``atom`` / ``vllm`` / ``vllm_atom`` / ``sglang``
-     - ``atom`` = standalone ATOM server + ``benchmark_serving`` (no native PP). ``vllm_atom`` = vLLM multinode PP coordinator + ATOM kernels. ``sglang`` = SGLang PP coordinator. ``vllm`` = interim uplift.
-   * - ``params.tensor_parallelism``
-     - ``8``
-     - TP size; appears in threshold cell keys as ``TP``.
-   * - ``params.reuse_server_across_sweep``
-     - ``true``
-     - Skip server restart when only concurrency changes between sweep cells.
-   * - ``params.nnodes`` / ``params.pipeline_parallel_size``
-     - ``2`` / ``2`` (multinode PP)
-     - True multinode pipeline parallel: set ``driver=vllm_atom`` or ``sglang`` with ``nnodes=2`` and ``pipeline_parallel_size=2`` (cell keys use ``PP=2``). Requires ``roles.server.ib_netdev``. Standalone ``driver=atom`` multinode uses SPMD data parallel (``DP`` in cell keys), not PP.
-   * - ``params.master_addr`` / ``params.master_port``
-     - head VPC IP / ``29501``
-     - Rendezvous for vLLM/SGLang distributed executor (``dist-init-addr`` for SGLang).
-   * - ``params.scaling_baseline_output_throughput``
-     - ``1500``
-     - Single-node reference ``output_throughput`` for ``scaling.efficiency_pct`` (record-only).
-   * - ``params.server_warmup_wait_s`` / ``client_initial_wait_s``
-     - ``330`` / ``120``
-     - Config-driven server warmup and client poll floor (use `-k` for a one-cell smoke).
-   * - ``params.metric_percentiles``
-     - ``95,99``
-     - Tail percentiles for W1 gates (p95 TPOT, p99 TTFT).
-   * - ``params.bench_max_failed_requests``
-     - ``0``
-     - Runtime cap on bench ``Failed requests``; pair with threshold ``client.failed``.
-   * - ``sweep.sequence_combinations`` / ``sweep.runs``
-     - named ISL/OSL + ``{combo, concurrency}``
-     - Explicit cell list (not a cartesian product).
+     - ``true`` = gate metrics; ``false`` = record-only
+   * - ``threshold_json``
+     - Sibling threshold filename
+   * - ``paths``, ``model``, ``container``, ``roles``, ``params``, ``sweep``
+     - See below
 
-Metric tiers and parsing live in :mod:`cvs.lib.inference.atom.atom_parsing`
-(see ``cvs/lib/inference/utils/docs/atom-parsing.md``). Legacy monolithic JSON
-(``config`` + ``benchmark_params``) and the deprecated ``inferencemax`` suite are not used.
+``params`` block
+----------------
+
+.. list-table::
+   :widths: 3 5
+   :header-rows: 1
+
+   * - Field
+     - Meaning
+   * - ``driver``
+     - ``atom``, ``vllm_atom``, ``sglang``, or interim ``vllm``
+   * - ``tensor_parallelism``
+     - TP size (W1: ``8``); appears as ``TP=`` in threshold keys
+   * - ``pipeline_parallel_size``
+     - PP size (``1`` single-node; ``2`` on distributed stems); ``PP=`` in keys
+   * - ``nnodes``
+     - Node count (not part of threshold cell key)
+   * - ``master_addr`` / ``master_port``
+     - Multinode PP coordinator
+   * - ``num_prompts``, ``max_model_length``, ``random_range_ratio``
+     - Benchmark client workload
+   * - ``metric_percentiles``
+     - Tail percentiles requested (e.g. ``95,99``)
+   * - ``reuse_server_across_sweep``
+     - Keep server warm across cells with matching session key
+   * - ``scaling_baseline_output_throughput``
+     - Baseline for ``scaling.efficiency_pct``
+   * - ``server_*`` / ``client_*`` poll waits
+     - Server ready and client completion timeouts
+
+``sweep`` block
+---------------
+
+.. list-table::
+   :widths: 3 5
+   :header-rows: 1
+
+   * - Field
+     - Meaning
+   * - ``sequence_combinations``
+     - Named ``{name, isl, osl}`` shapes
+   * - ``runs``
+     - ``{combo, concurrency}`` ΓÇö one benchmark cell each
+
+Each cell's threshold key is built by :meth:`cvs.lib.inference.atom.atom_config_loader.AtomVariantConfig.cell_key`:
+
+- Single-node: ``ISL=1024,OSL=1024,TP=8,PP=1,CONC=128``
+- Multinode PP: ``ISL=1024,OSL=1024,TP=8,PP=2,CONC=128``
+
+Always include ``PP=`` (use ``PP=1`` on single-node). ``params.nnodes`` is still
+required for multinode runs but is **not** part of the threshold key.
+
+Execution drivers
+-----------------
+
+.. list-table::
+   :widths: 2 3 3 2
+   :header-rows: 1
+
+   * - Driver
+     - When
+     - Server
+     - Native PP
+   * - ``atom``
+     - Single-node W1, baseline, MTP3
+     - ``atom.entrypoints.openai_server``
+     - No
+   * - ``vllm_atom``
+     - Shipped 2-node PP stems
+     - Multinode serve + ATOM ROCm env
+     - Yes
+
+Multinode fabric is probed in ``test_discover_topology`` on the **cluster host
+OS** (not inside the container).
+
+Optional blocks
+---------------
+
+.. list-table::
+   :widths: 3 5
+   :header-rows: 1
+
+   * - Block
+     - Purpose
+   * - ``functional.api_smoke`` / ``functional.health_check``
+     - FUNC-1 / FUNC-2 before sweep
+   * - ``platform.dmesg_scan`` / ``platform.gpu_metrics_poll``
+     - INF-6 dmesg / INF-7 GPU metrics
+   * - ``accuracy.tasks[]``
+     - lm-eval tasks (thresholds under top-level ``accuracy`` key)
+   * - ``long_context_accuracy.cells[]``
+     - NIAH long-context cells (ACC-12)
+   * - ``mtp_quality``
+     - MTP acceptance checks (ACC-4/5/13)
+
+Threshold files
+===============
+
+A threshold file maps each **cell key** to ``{metric: spec}``. Perf metrics use
+**bare names** (``output_throughput``, ``mean_ttft_ms``, ΓÇª). Multinode cells
+may also gate ``scaling.efficiency_pct``. Non-sweep keys include ``accuracy``,
+``mtp_quality``, and ``long_context_accuracy``.
+
+Threshold kinds:
+
+.. list-table::
+   :widths: 2 3 4
+   :header-rows: 1
+
+   * - ``kind``
+     - Passes when
+     - Notes
+   * - ``min`` / ``max``
+     - ``actual >=`` / ``actual <= value``
+     - e.g. ``success_rate``, ``failed``
+   * - ``max_ms``
+     - ``actual <= value``
+     - Latency upper bound
+   * - ``min_tok_s``
+     - ``actual >= value``
+     - Throughput lower bound
+   * - ``within`` / ``min_ratio``
+     - Tolerance or ratio vs reference
+     - Needs extra fields
+   * - ``info``
+     - Always record
+     - Calibrate later
+
+Example single-node cell:
+
+.. code:: json
+
+  "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128": {
+    "output_throughput": {"kind": "min_tok_s", "value": 1500},
+    "p99_ttft_ms": {"kind": "max_ms", "value": 5000},
+    "success_rate": {"kind": "min", "value": 1},
+    "failed": {"kind": "max", "value": 0}
+  }
+
+Example multinode cell:
+
+.. code:: json
+
+  "ISL=1024,OSL=1024,TP=8,PP=2,CONC=128": {
+    "output_throughput": {"kind": "min_tok_s", "value": 2500},
+    "scaling.efficiency_pct": {"kind": "min", "value": 80}
+  }
+
+When ``enforce_thresholds: true``, every member of
+:data:`cvs.lib.inference.atom.atom_parsing.GATED_METRICS` needs a spec in each
+gated cell. Metrics missing from the benchmark artifact are skipped at gate time.
+
+Run deck comparison (optional)
+==============================
+
+Set these env vars or sibling files for render-only comparison panels (no effect
+on pytest gates):
+
+.. list-table::
+   :widths: 3 2 5
+   :header-rows: 1
+
+   * - Env / file
+     - Panel
+     - Purpose
+   * - ``CVS_INFERENCE_PREV_REPORT_JSON``
+     - ``panels.prev_run``
+     - Per-cell throughput delta vs baseline
+   * - Baseline ``accuracy`` block + same env
+     - ``panels.accuracy_prev_run``
+     - gsm8k flexible-extract delta
+   * - ``CVS_ATOM_PARITY_REF_JSON``
+     - ``panels.framework_parity``
+     - M4 driver parity ratios
+
+See also
+========
+
+- :doc:`/how-to/test-suites/inference/atom` — step-by-step first run
+- :doc:`/reference/configuration-files/cluster-file` ΓÇö cluster file schema
+- :mod:`cvs.lib.inference.atom.atom_config_loader` ΓÇö loader and ``cell_key``
+- :mod:`cvs.lib.inference.atom.atom_parsing` ΓÇö metric tiers and parsing

@@ -50,6 +50,7 @@ class InferenceReportConfig:
     tier_metric_specs: TierMetricSpecsFn
     metric_units: dict[str, str]
     metric_prefix: str = "client."
+    threshold_metric_prefix: str | None = None
     cell_highlights: tuple[tuple[str, str], ...] = ()
     chart_series: tuple[ReportChartSeries, ...] = ()
     record_tier: str = "record"
@@ -77,4 +78,16 @@ class InferenceReportConfig:
     def full_metric(self, short: str) -> str:
         if short.startswith(f"{self.metric_prefix}"):
             return short
+        if short.startswith(("scaling.", "gpu.")):
+            return short
         return f"{self.metric_prefix}{short}"
+
+    def threshold_metric(self, short: str) -> str:
+        """Key used in threshold JSON (may differ from ``full_metric`` for actuals)."""
+        if short.startswith(("scaling.", "gpu.", "accuracy.", "mtp.", "quant_parity")):
+            return short
+        prefix = self.threshold_metric_prefix if self.threshold_metric_prefix is not None else self.metric_prefix
+        bare = short[len(self.metric_prefix) :] if short.startswith(self.metric_prefix) else short
+        if not prefix:
+            return bare
+        return f"{prefix}{bare}" if not bare.startswith(prefix) else bare

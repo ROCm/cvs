@@ -183,7 +183,7 @@ With ``{precision}``:
      - ``input/config_file/inference/atom/`` — ``mi{gpu}_atom_{model}_{precision}_{mode}.json`` + ``mi{gpu}_atom_{model}_{precision}_{mode}_threshold.json``
      - ``cvs config list inference/atom``
 
-       `Config README <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/inference/atom/README.md>`_
+       :doc:`How to run </how-to/test-suites/inference/atom>` · :doc:`Config reference </reference/configuration-files/inference/atom>`
    * - vLLM
      - ``input/config_file/inference/vllm/`` — ``mi{gpu}_vllm_{model}_{precision}_{single|distributed}.json``
      - ``cvs config list inference/vllm``

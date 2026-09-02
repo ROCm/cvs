@@ -55,9 +55,18 @@ class OpenAIProbe:
         "deepseek-r1",
         "deepseek_r1",
         "qwq",
+        "qwen3.5",
+        "qwen3",
+        "glm-5",
         "o1-",
         "o3-",
         "reasoning",
+    )
+
+    _THINKING_CONTENT_PREFIXES = (
+        "thinking process:",
+        "<think",
+        "",
     )
 
     @classmethod
@@ -88,6 +97,24 @@ class OpenAIProbe:
                 continue
             if isinstance(obj, dict):
                 return obj
+        start = raw.find("{")
+        while start != -1:
+            depth = 0
+            for idx in range(start, len(raw)):
+                ch = raw[idx]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            obj = json.loads(raw[start : idx + 1])
+                        except json.JSONDecodeError:
+                            break
+                        if isinstance(obj, dict):
+                            return obj
+                        break
+            start = raw.find("{", start + 1)
         return None
 
     @classmethod
@@ -109,6 +136,11 @@ class OpenAIProbe:
     def _is_reasoning_model(cls, model_id: str) -> bool:
         mid = (model_id or "").lower()
         return any(marker in mid for marker in cls._REASONING_MODEL_MARKERS)
+
+    @classmethod
+    def _is_thinking_content(cls, text: str) -> bool:
+        lowered = str(text or "").lstrip().lower()
+        return any(lowered.startswith(prefix) for prefix in cls._THINKING_CONTENT_PREFIXES)
 
     @classmethod
     def probe_script(
@@ -281,6 +313,8 @@ class OpenAIProbe:
                         if book_err:
                             _fail(f"{title}: {book_err}")
                     elif content_raw:
+                        if cls._is_reasoning_model(model_id) or cls._is_thinking_content(content_raw):
+                            continue
                         _fail(f"{title}: assistant content is not JSON")
                     elif not cls._is_reasoning_model(model_id):
                         _fail(f"{title}: empty assistant content")

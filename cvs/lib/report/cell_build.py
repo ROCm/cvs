@@ -71,7 +71,8 @@ class CellRecordBuilder:
         if not specs:
             return "na"
         for metric, spec in specs.items():
-            if metric_pass(metric, actuals.get(metric), spec) == "fail":
+            actual_key = metric if metric.startswith("scaling.") else self.config.full_metric(metric)
+            if metric_pass(metric, actuals.get(actual_key), spec) == "fail":
                 return "fail"
         return "pass"
 
@@ -130,7 +131,7 @@ class CellRecordBuilder:
         metrics = []
         for short, label in self.config.cell_highlights:
             full = self.config.full_metric(short)
-            spec = thresholds_cell.get(full)
+            spec = thresholds_cell.get(self.config.threshold_metric(short))
             actual = actuals.get(full)
             metrics.append(
                 {

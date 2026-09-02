@@ -502,6 +502,34 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertIn("ATOM_DP_RANK=1", launch_cmds[1])
         self.assertIn("ATOM_DP_SIZE=2", launch_cmds[0])
 
+    def test_atom_server_argv_injects_enforce_eager_by_default(self):
+        job = AtomJob(
+            orch=FakeOrch(hosts=["10.0.0.1"]),
+            variant=_fake_variant(driver="atom"),
+            hf_token="tok",
+            isl="128",
+            osl="32",
+            concurrency=1,
+            num_prompts=1,
+        )
+        argv = job._atom_server_argv()
+        self.assertIn("--enforce-eager", argv)
+
+    def test_atom_server_argv_respects_config_pinned_enforce_eager(self):
+        variant = _fake_variant(driver="atom")
+        variant.roles.server.atom_args = ["-tp", "8", "--enforce-eager"]
+        job = AtomJob(
+            orch=FakeOrch(hosts=["10.0.0.1"]),
+            variant=variant,
+            hf_token="tok",
+            isl="128",
+            osl="32",
+            concurrency=1,
+            num_prompts=1,
+        )
+        argv = job._atom_server_argv()
+        self.assertEqual(argv.count("--enforce-eager"), 1)
+
     def test_atom_server_argv_injects_max_model_len_from_params(self):
         job = AtomJob(
             orch=FakeOrch(hosts=["10.0.0.1"]),

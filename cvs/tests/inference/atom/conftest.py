@@ -26,13 +26,22 @@ from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 log = globals.log
 
 
-def _log_variant_run_card(variant_config):
+def _resolve_config_profile(pytestconfig):
+    profile = pytestconfig.getoption("config_profile", default=None)
+    if not profile:
+        profile = os.environ.get("CVS_CONFIG_PROFILE")
+    return (profile or "").strip() or None
+
+
+def _log_variant_run_card(variant_config, config_profile=None):
     rc = variant_config.run_card
     parts = [
         f"gpu_arch={variant_config.gpu_arch}",
         f"driver={variant_config.params.driver}",
         f"model={variant_config.model.id}",
     ]
+    if config_profile:
+        parts.append(f"profile={config_profile}")
     atom_args = variant_config.roles.server.atom_args
     if atom_args:
         parts.append(f"atom_args={len(atom_args)} tokens")
@@ -49,9 +58,14 @@ def _log_variant_run_card(variant_config):
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _emit_variant_run_card(variant_config):
+def _emit_variant_run_card(variant_config, config_profile):
     """Log the variant run card once per module (not once per sweep cell)."""
-    _log_variant_run_card(variant_config)
+    _log_variant_run_card(variant_config, config_profile)
+
+
+@pytest.fixture(scope="module")
+def config_profile(pytestconfig):
+    return _resolve_config_profile(pytestconfig)
 
 
 LIFECYCLE_RANK = {
@@ -101,11 +115,11 @@ def cluster_dict(pytestconfig):
 
 
 @pytest.fixture(scope="module")
-def variant_config(pytestconfig, cluster_dict):
+def variant_config(pytestconfig, cluster_dict, config_profile):
     config_file = pytestconfig.getoption("config_file")
     if not config_file:
         pytest.fail("--config_file is required")
-    return load_variant(config_file, cluster_dict)
+    return load_variant(config_file, cluster_dict, profile=config_profile)
 
 
 @pytest.fixture(scope="module")

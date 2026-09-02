@@ -97,6 +97,37 @@ class TestOpenAIProbeReasoningModels(unittest.TestCase):
         ok, err = OpenAIProbe.check_results(results, port=8000)
         self.assertTrue(ok, err)
 
+    def test_structured_book_accepts_qwen_thinking_content(self):
+        results = {
+            "model_endpoint": (200, {"data": [{"id": "/data/Qwen3.5-397B-A17B-FP8"}]}),
+            "chat_completion_endpoint": (
+                200,
+                _chat_body(
+                    model="/data/Qwen3.5-397B-A17B-FP8",
+                    content="Thinking Process:\n\n1. **Analyze",
+                ),
+            ),
+            "completion_endpoint": (200, {"model": "m", "choices": [{"text": " Paris."}]}),
+            "structured_output_book": (
+                200,
+                _chat_body(
+                    model="/data/Qwen3.5-397B-A17B-FP8",
+                    content="Thinking Process:\n\n1. **Analyze the Request:**",
+                ),
+            ),
+        }
+        ok, err = OpenAIProbe.check_results(results, port=8000)
+        self.assertTrue(ok, err)
+
+    def test_extract_json_object_finds_object_after_thinking_preamble(self):
+        text = (
+            "Thinking Process:\n\n"
+            'Here is the book: {"title": "1984", "author": "George Orwell", "year": 1949, "genre": "Dystopian"}'
+        )
+        obj = OpenAIProbe._extract_json_object(text)
+        self.assertIsNotNone(obj)
+        self.assertEqual(obj["title"], "1984")
+
 
 if __name__ == "__main__":
     unittest.main()
