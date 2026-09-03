@@ -193,6 +193,10 @@ class TestBuildLmEvalCmd(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "CVS-owned"):
             build_lm_eval_cmd(_task(extra_model_args="model=other"), _ctx())
 
+    def test_matching_extra_model_arg_is_idempotent(self):
+        cmd = build_lm_eval_cmd(_task(extra_model_args="tokenizer_backend=huggingface"), _ctx())
+        self.assertEqual(cmd.count("tokenizer_backend=huggingface"), 1)
+
     def test_shell_quoting_safety_for_special_characters(self):
         task = _task(
             id="weird id",
