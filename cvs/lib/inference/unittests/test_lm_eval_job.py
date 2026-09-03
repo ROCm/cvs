@@ -17,6 +17,7 @@ import unittest
 from cvs.lib.inference.utils.accuracy_config import AccuracyTask
 from cvs.lib.inference.utils.lm_eval_job import (
     LM_EVAL_INSTALL_CHECK_CMD,
+    LM_EVAL_VERSION,
     LmEvalCtx,
     build_lm_eval_cmd,
     normalize_client_base_url,
@@ -66,7 +67,10 @@ class TestBuildLmEvalCmd(unittest.TestCase):
             cmd,
         )
         self.assertIn("--tasks mmlu", cmd)
-        self.assertIn("--num_fewshot 0", cmd)
+        self.assertNotIn("--num_fewshot", cmd)
+        self.assertIn("--batch_size 1", cmd)
+        self.assertIn("--device cuda:0", cmd)
+        self.assertIn("--seed 0,1234,1234,1234", cmd)
         self.assertIn("--output_path /tmp/accuracy-out/mmlu", cmd)
         self.assertIn("--log_samples", cmd)
 
@@ -136,6 +140,59 @@ class TestBuildLmEvalCmd(unittest.TestCase):
         cmd = build_lm_eval_cmd(_task(gen_kwargs={}), _ctx())
         self.assertNotIn("--gen_kwargs", cmd)
 
+    def test_complete_lm_eval_surface_is_forwarded(self):
+        cmd = build_lm_eval_cmd(
+            _task(
+                tasks=["hellaswag", "gsm8k"],
+                task="hellaswag,gsm8k",
+                lm_eval_model="local-chat-completions",
+                extra_model_args="retry=5",
+                num_fewshot=5,
+                batch_size="auto:4",
+                max_batch_size=8,
+                device="cpu",
+                limit=100,
+                samples={"gsm8k": [0]},
+                use_cache="/tmp/cache.db",
+                cache_requests="refresh",
+                check_integrity=True,
+                system_instruction="Be concise",
+                apply_chat_template="chatml",
+                fewshot_as_multiturn=False,
+                include_path="/tmp/tasks",
+                predict_only=True,
+                seed=[1, None, 3, 4],
+                trust_remote_code=True,
+                confirm_run_unsafe_code=True,
+                metadata={"source": "test"},
+            ),
+            _ctx(),
+        )
+        for part in (
+            "--tasks hellaswag gsm8k",
+            "--batch_size auto:4",
+            "--max_batch_size 8",
+            "--device cpu",
+            "--limit 100.0",
+            "--use_cache /tmp/cache.db",
+            "--cache_requests refresh",
+            "--check_integrity",
+            "--system_instruction 'Be concise'",
+            "--apply_chat_template chatml",
+            "--fewshot_as_multiturn false",
+            "--include_path /tmp/tasks",
+            "--predict_only",
+            "--seed 1,None,3,4",
+            "--trust_remote_code",
+            "--confirm_run_unsafe_code",
+        ):
+            self.assertIn(part, cmd)
+        self.assertIn("retry=5", cmd)
+
+    def test_rejects_extra_model_arg_collision(self):
+        with self.assertRaisesRegex(ValueError, "CVS-owned"):
+            build_lm_eval_cmd(_task(extra_model_args="model=other"), _ctx())
+
     def test_shell_quoting_safety_for_special_characters(self):
         task = _task(
             id="weird id",
@@ -179,6 +236,9 @@ class TestInstallGuard(unittest.TestCase):
 
     def test_installs_math_extra(self):
         self.assertIn("lm-eval[api,math]", LM_EVAL_INSTALL_CHECK_CMD)
+
+    def test_pins_lm_eval_version(self):
+        self.assertIn(f"=={LM_EVAL_VERSION}", LM_EVAL_INSTALL_CHECK_CMD)
 
     def test_guard_probes_math_verify_import_not_just_lm_eval_presence(self):
         # A `pip list | grep lm_eval` guard short-circuits on an image that
@@ -330,6 +390,12 @@ class TestRunAccuracyTasks(unittest.TestCase):
         orch = FakeOrch(responses=["", "1700000000.0 /out/mmlu/model/results.json", json.dumps(payload)])
         run_accuracy_tasks(**self._run_kwargs(orch, [_task()]))
         self.assertTrue(orch.head_kwargs[0].get("detailed"))
+
+    def test_uses_task_specific_timeout(self):
+        payload = {"results": {"mmlu": {"acc,none": 0.5}}}
+        orch = FakeOrch(responses=["", "1700000000.0 /out/mmlu/model/results.json", json.dumps(payload)])
+        run_accuracy_tasks(**self._run_kwargs(orch, [_task(exec_timeout_sec=7200)]))
+        self.assertEqual(orch.head_kwargs[0]["timeout"], 7200)
 
     def test_zero_exit_code_with_dict_response_succeeds(self):
         payload = {"results": {"mmlu": {"acc,none": 0.5}}}
