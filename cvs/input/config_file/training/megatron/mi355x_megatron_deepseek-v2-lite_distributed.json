@@ -59,6 +59,14 @@
       }
     }
   },
+  "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",
+  "smoke": {
+    "enabled": true,
+    "iters": 10,
+    "micro_batch_size": "1",
+    "global_batch_size": "16",
+    "precision": "BF16"
+  },
   "_loss_curve_comment": "sample training loss every `sample_every` steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
   "loss_curve": {
     "sample_every": 10,

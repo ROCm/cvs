@@ -71,8 +71,8 @@ The same eight test stages run for both backends. ``_make_training_job`` in ``me
      - Downloads ``tokenizer.model`` into ``data_cache_dir`` for DeepSeek/Mixtral. Llama/Qwen skip (HF repo ID is enough)
      - Always a no-op (``_needs_local_tokenizer()`` is false; Primus takes HF repo IDs in YAML)
    * - ``test_smoke``
-     - Runs a fixed 10-iter cell via the Megatron-LM training script under ``config.megatron_root``
-     - Same cell via ``primus-cli direct -- train pretrain --config examples/megatron/configs/{gpu_arch}/{model}-{precision}-pretrain.yaml``. If the MI325X YAML is missing, Primus retries ``MI300X``
+     - Runs the cell from the config ``smoke`` block (default 10 iters) via the Megatron-LM training script under ``config.megatron_root``. Skipped when ``smoke.enabled`` is ``false``
+     - Same cell via ``primus-cli direct -- train pretrain --config examples/megatron/configs/{gpu_arch}/{model}-{precision}-pretrain.yaml``. If the MI325X YAML is missing, Primus retries ``MI300X``. Skipped when ``smoke.enabled`` is ``false``
    * - ``test_checkpoint``
      - Skipped (``checkpoint test is Primus-only``)
      - Runs only when ``checkpoint.enforce`` is ``true``. Single-node writes under ``{log_dir}/ckpt_primus``. Distributed requires ``checkpoint.checkpoint_dir`` on a shared filesystem
@@ -226,7 +226,7 @@ Tests run in this pinned order. ``[combo]`` = one row per enabled sweep combo.
    * - 2
      - ``test_smoke``
      - once
-     - Fixed small run confirming the model loads and trains without error
+     - Small run from the ``smoke`` config block confirming the model loads and trains without error. Skipped when ``smoke.enabled`` is ``false``
    * - 3
      - ``test_checkpoint``
      - once

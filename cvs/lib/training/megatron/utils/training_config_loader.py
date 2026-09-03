@@ -144,6 +144,20 @@ class CheckpointConfig(_Forbid):
     checkpoint_dir: str = ""  # shared path for distributed; empty = derive from log_dir (single-node)
 
 
+class SmokeConfig(_Forbid):
+    """Fixed cell for test_smoke (opt-OUT; on by default).
+
+    Empty global_batch_size lets the suite use its topology default
+    (single-node 8, distributed 16).
+    """
+
+    enabled: bool = True
+    iters: int = 10
+    micro_batch_size: str = "1"
+    global_batch_size: str = ""
+    precision: str = "BF16"
+
+
 class MegatronVariantConfig(_Forbid):
     schema_version: Literal[1]
     framework: Literal["megatron_single", "megatron_distributed"]
@@ -151,6 +165,7 @@ class MegatronVariantConfig(_Forbid):
     enforce_thresholds: bool = True
     threshold_json: str = ""
     scaling_baseline: ScalingBaseline = Field(default_factory=ScalingBaseline)
+    smoke: SmokeConfig = Field(default_factory=SmokeConfig)
     loss_curve: LossCurveConfig = Field(default_factory=LossCurveConfig)
     convergence: ConvergenceConfig = Field(default_factory=ConvergenceConfig)
     checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
