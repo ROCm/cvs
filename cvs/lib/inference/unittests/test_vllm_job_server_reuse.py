@@ -193,6 +193,13 @@ class TestRunClientEnsuresOutDir(unittest.TestCase):
             f"(which skips build_server_cmd) can still write client.log; head cmds: {job.orch.head_cmds}",
         )
 
+    def test_run_client_uses_harness_owned_percentiles(self):
+        job = _job("1024", "1024", 8)
+        job.run_client()
+        bench = next(command for command in job.orch.head_cmds if "vllm" in command and "bench" in command)
+        self.assertIn("--percentile-metrics ttft,tpot,itl,e2el", bench)
+        self.assertIn("--metric-percentiles 50,90,95,99", bench)
+
 
 class TestRunClientTrustRemoteCode(unittest.TestCase):
     """Models with a custom tokenizer (e.g. Kimi-K2.6's auto_map) need the bench

@@ -51,7 +51,7 @@ Round-4 coverage-gap additions (impl-blind against the same spec):
   R4.1 server_env pass-through pins KEY=VALUE (non-colliding) TestVllmJobBuildServerCmd
   R4.2 ray server_signature invariant to nnodes (2 vs 3) .... TestServerSignatureRay
   R4.3 cell_key pp>1 branch (PP= segment) + pp==1, subTest ... TestCellKeyRayMultiNode
-  R4.4 _flatten_serve_args list/tuple repeat branch ......... TestFlattenServeArgsBranches
+  R4.4 generic option list serialization .................... TestServeOptionListSerialization
 '''
 
 import unittest
@@ -60,7 +60,7 @@ import unittest.mock as mock
 from pydantic import ValidationError
 
 from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
-from cvs.lib.inference.utils.vllm_config_loader import VariantConfig
+from cvs.lib.inference.utils.vllm_config_loader import VariantConfig, serialize_cli_options
 from cvs.lib.inference.vllm_job import VllmJob
 
 RAY = {"distributed-executor-backend": "ray"}
@@ -479,27 +479,19 @@ class TestServerArgvRayVsMp(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# _flatten_serve_args: the four equivalence classes (RC8)
+# Generic option serialization
 # --------------------------------------------------------------------------- #
-class TestFlattenServeArgsBranches(unittest.TestCase):
-    """RC8: _flatten_serve_args has four branches -- True (bare flag), False
-    (omitted), list/tuple (flag repeated per element), scalar (flag + str(value)).
-    True/False/scalar are covered in test_vllm_job_server_reuse.py; the list/tuple
-    repeat branch (Round-4 finding 4) is covered here so all four cells of this
-    pure function's table are pinned (discipline rule B). A bug in the repeat branch
-    (wrong flag repeated, values not str()-cast, wrong order) is caught."""
+class TestServeOptionListSerialization(unittest.TestCase):
+    """List-valued vLLM options emit a single flag followed by ordered values."""
 
-    def test_list_and_tuple_values_repeat_the_flag_per_element(self):
-        # (value, expected) -- list and tuple both repeat "--<key>" before each
-        # element, in order; non-string elements are str()-cast.
+    def test_list_values_follow_one_flag(self):
         cases = [
-            (["a.b.C", "d.e.F"], ["--middleware", "a.b.C", "--middleware", "d.e.F"]),
-            (("a.b.C", "d.e.F"), ["--middleware", "a.b.C", "--middleware", "d.e.F"]),
-            ([1, 2], ["--middleware", "1", "--middleware", "2"]),  # str()-cast
+            (["a.b.C", "d.e.F"], ["--middleware", "a.b.C", "d.e.F"]),
+            ([1, 2], ["--middleware", "1", "2"]),
         ]
         for value, expected in cases:
             with self.subTest(value=value):
-                self.assertEqual(VllmJob._flatten_serve_args({"middleware": value}), expected)
+                self.assertEqual(serialize_cli_options({"middleware": value}), expected)
 
 
 # --------------------------------------------------------------------------- #
