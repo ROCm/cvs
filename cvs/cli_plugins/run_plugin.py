@@ -88,10 +88,10 @@ class RunPlugin(ListPlugin):
     def get_epilog(self):
         return """
 Run Commands:
-  cvs run agfhc                      Run all tests in agfhc
-  cvs run agfhc test1                Run specific test function
-  cvs run agfhc test1 test2 test3    Run multiple specific test functions
-  cvs run agfhc --html report.html   Run test and generate HTML report"""
+  cvs run agfhc_cvs                      Run all tests in agfhc_cvs
+  cvs run agfhc_cvs test1                Run specific test function
+  cvs run agfhc_cvs test1 test2 test3    Run multiple specific test functions
+  cvs run agfhc_cvs --html report.html   Run test and generate HTML report"""
 
     def run(self, args):
         # Pre-flight, in this order, before pytest is reached at all. Worker ranks
