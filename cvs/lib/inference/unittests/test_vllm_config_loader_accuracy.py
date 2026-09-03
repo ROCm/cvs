@@ -12,25 +12,23 @@ import unittest
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
 from cvs.lib.inference.utils.vllm_config_loader import VariantConfig
-from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
 
 
 def _base_kwargs(**overrides):
+    cell = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"
     kwargs = dict(
-        schema_version=1,
-        framework="vllm",
         enforce_thresholds=False,
+        threshold_json="threshold.json",
         paths={
             "shared_fs": "/home/x",
             "models_dir": "/home/x/models",
             "log_dir": "/home/x/LOGS",
             "hf_token_file": "/home/x/.hf",
         },
-        model={"id": "/models/test-model", "remote": 0},
-        sweep={
-            "sequence_combinations": [{"name": "a", "isl": "1024", "osl": "1024"}],
-            "runs": [{"combo": "a", "concurrency": 16}],
-        },
+        container={"name": "test", "image": "test", "runtime": {"name": "docker", "args": {}}},
+        server_params={"model": "/models/test-model", "tensor_parallel_size": 8},
+        sweeps={cell: {}},
+        runs=[cell],
         thresholds={},
     )
     kwargs.update(overrides)
@@ -68,7 +66,7 @@ class TestAccuracyThresholdKeyDoesNotTripSweepCoverage(unittest.TestCase):
     unrecognized sweep-cell key by _check_thresholds_cover_sweep, now that it
     delegates to the shared validate_thresholds_cover_sweep."""
 
-    _CELL = "ISL=1024,OSL=1024,TP=8,CONC=16"
+    _CELL = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"
 
     def _full_gated_specs(self):
         from cvs.lib.inference.utils.vllm_config_loader import GATED_GPU_METRICS
@@ -94,27 +92,18 @@ class TestAccuracyThresholdKeyDoesNotTripSweepCoverage(unittest.TestCase):
         )
         self.assertIn("accuracy", vc.thresholds)
 
-    def test_typo_key_is_rejected_by_runtime_coverage_check(self):
-        from cvs.lib.inference.utils.inferencing_config_loader import validate_thresholds_cover_sweep
-
-        variant = VariantConfig(
-            **_base_kwargs(
-                enforce_thresholds=True,
-                thresholds={
-                    self._CELL: self._full_gated_specs(),
-                    "accuracy": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.5}}},
-                    "acuracy": {},
-                },
+    def test_typo_key_is_rejected_at_config_load(self):
+        with self.assertRaisesRegex(ValueError, "threshold cells"):
+            VariantConfig(
+                **_base_kwargs(
+                    enforce_thresholds=True,
+                    thresholds={
+                        self._CELL: self._full_gated_specs(),
+                        "accuracy": {"mmlu": {"mmlu.acc__none": {"kind": "min", "value": 0.5}}},
+                        "acuracy": {},
+                    },
+                )
             )
-        )
-        variant.bind_effective_topology(EffectiveVllmTopology("single", ("node0",), 1))
-        with self.assertRaises(ValueError) as ctx:
-            validate_thresholds_cover_sweep(
-                expected_cells=variant.expected_cells(),
-                thresholds=variant.thresholds,
-                enforce_thresholds=variant.enforce_thresholds,
-            )
-        self.assertIn("threshold keys matching no sweep cell", str(ctx.exception))
 
 
 if __name__ == "__main__":

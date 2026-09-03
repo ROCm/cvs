@@ -124,9 +124,8 @@ class TestVllmDeckProfile(unittest.TestCase):
         cell_id = variant.expected_cells()[0]
         variant.enforce_thresholds = True
         variant.thresholds = {cell_id: {"client.output_throughput": {"kind": "min_tok_s", "value": 1000.0}}}
-        combo = variant.sweep.sequence_combinations[0]
-        run = variant.sweep.runs[0]
-        key = (variant.model.id, "", combo.isl, combo.osl, combo.name, run.concurrency)
+        run = variant.resolved_runs()[0]
+        key = (variant.model_id, "", str(run.cell.isl), str(run.cell.osl), run.cell.key, run.cell.concurrency)
         profile = load_json_profile("vllm_distributed")
         payload = build_inference_report_payload(
             config=build_inference_config_from_profile(profile),

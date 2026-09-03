@@ -11,7 +11,6 @@ import pytest
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
 from cvs.lib.inference.vllm_topology import resolve_vllm_topology, scope_vllm_cluster
-from cvs.lib.inference.utils.inferencing_config_loader import validate_thresholds_cover_sweep
 from cvs.lib.inference.utils.vllm_config_loader import load_variant
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
@@ -129,12 +128,6 @@ def vllm_targets(orch, variant_config, vllm_mode):
         pytest.fail(str(exc))
 
     variant_config.bind_effective_topology(topology)
-    validate_thresholds_cover_sweep(
-        expected_cells=variant_config.expected_cells(),
-        thresholds=variant_config.thresholds,
-        enforce_thresholds=variant_config.enforce_thresholds,
-        gated_metrics=set(),
-    )
     return topology.target_groups
 
 
@@ -142,11 +135,8 @@ def vllm_targets(orch, variant_config, vllm_mode):
 def hf_token(variant_config):
     path = variant_config.paths.hf_token_file
     if not os.path.isfile(path):
-        if variant_config.model.remote == 0:
-            # Pre-staged model: token not needed for download; server env sets
-            # HF_HUB_OFFLINE=1 to skip Hub auth checks entirely.
-            return ""
-        pytest.skip(f"hf_token file missing: {path}")
+        # vLLM configs always reference a mounted, pre-staged model.
+        return ""
     with open(path) as fp:
         return fp.read().strip()
 
