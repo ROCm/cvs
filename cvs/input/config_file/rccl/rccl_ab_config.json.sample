@@ -1,0 +1,68 @@
+{
+    "rccl": {
+        "mpi_params": {
+            "no_of_nodes": "1",
+            "no_of_local_ranks": "8",
+            "mpi_pml": "auto",
+            "mpi_dir": "/apps/sp/ompi-install",
+            "mpi_oob_port": "eth0"
+        },
+
+        "env_source_script": "None",
+
+        "rccl_test_params": {
+            "rccl_tests_dir": "/apps/sp/rccl-tests/build",
+            "start_msg_size": "1024",
+            "end_msg_size": "4G",
+            "step_function": "2",
+            "threads_per_gpu": "1",
+            "warmup_iterations": "10",
+            "no_of_iterations": "20",
+            "no_of_cycles": "1",
+            "check_iteration_count": "1",
+            "rccl_timeout": "1800",
+            "output_algo_proto_channels": false
+        },
+
+        "cvs_params": {
+            "cluster_snapshot_debug": "False",
+            "nic_model": "thor",
+            "cvs_exec_timeout": "3600",
+            "rccl_result_file": "/tmp/rccl_ab_result.json"
+        },
+
+        "_comment_regression": "NCCL env-combos to sweep. Keep small at first; each combo runs A and B x repeats.",
+        "regression": {
+            "NCCL_ALGO": [ "Ring" ],
+            "NCCL_PROTO": [ "Simple" ]
+        },
+
+        "rccl_collective": [ "all_reduce_perf" ],
+
+        "_comment_ab": "Paired A/B regression settings. control_mode=true runs the reference build as BOTH sides to measure on-hardware noise and derive thresholds (writes ab_derived_thresholds.json). Set control_mode=false with distinct builds for real detection.",
+        "ab_regression": {
+            "repeats": 7,
+            "control_mode": true,
+            "safety_factor": 2.0,
+            "adjacency_min_run": 2,
+            "min_repeats": 2,
+            "min_bandwidth_floor": 0.5,
+            "metric": "busBw",
+            "higher_is_better": true,
+            "output_dir": "/tmp/cvs_ab",
+            "reference": {
+                "label": "ref",
+                "rccl_tests_dir": "/apps/sp/rccl-tests/build",
+                "ld_library_path": "/apps/sp/rccl/build/release"
+            },
+            "candidate": {
+                "label": "cand",
+                "rccl_tests_dir": "/apps/sp/rccl-tests/build",
+                "ld_library_path": "/apps/sp/rccl/build/release"
+            },
+            "_comment_thresholds": "Optional fixed thresholds. In control_mode these are overwritten by derived values.",
+            "thresholds": { "small": 0.20, "mid": 0.10, "large": 0.05 },
+            "tier_boundaries": { "small_max_bytes": 1048576, "mid_max_bytes": 67108864 }
+        }
+    }
+}
