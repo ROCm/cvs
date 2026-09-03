@@ -39,8 +39,8 @@ Use ``cvs config list training/jaxmaxtext`` to list available templates, or
   - Keys prefixed with ``_`` (e.g. ``_nccl_comment``, ``_example_ib_hca``) are
     inline comments/examples and are ignored by the loader.
 
-The suite/lifecycle reference is in ``cvs/tests/training/jaxmaxtext/README.md``.
-The config files themselves live in
+The suite/lifecycle reference is in
+:doc:`/how-to/test-suites/training/jax`. The config files themselves live in
 ``cvs/input/config_file/training/jaxmaxtext/`` (each config plus a sibling
 ``_threshold.json``); this page documents every block and the threshold format.
 
@@ -51,31 +51,26 @@ Config files follow the naming pattern ``<gpu>_jaxmaxtext_<model>_<mode>.json``.
 Each config has a sibling ``_threshold.json`` referenced by ``threshold_json``.
 
 .. list-table::
-   :widths: 4 2 2 2 2
+   :widths: 4 2 2 3
    :header-rows: 1
 
    * - Model
      - MI300X
      - MI325X
-     - MI355X
      - Mode
    * - Llama 3.3 70B
-     - ✓
      - ✓
      - ✓
      - single (MI300X), distributed
    * - Llama 3.1 8B
      - ✓
      - ✓
-     - ✓
      - distributed
    * - Llama 3.1 405B
      - —
      - ✓
-     - ✓
      - distributed only
    * - DeepSeek V2 Lite
-     - ✓
      - ✓
      - ✓
      - distributed
@@ -284,6 +279,15 @@ sections below.
    * - ``train_script_paths``
      - *(list)*
      - Candidate in-container MaxText entrypoints; the job picks the first that exists (list newest-first, e.g. the v26.4+ path before the v26.3 path).
+   * - ``maxtext_branch``
+     - ``""``
+     - Optional. When set, after container launch the job runs ``git reset --hard`` + ``git checkout <branch>`` in ``maxtext_root`` on every node and verifies the checkout. Empty (default) = use the image's baked-in MaxText unchanged.
+   * - ``maxtext_root``
+     - ``/workspace/maxtext``
+     - MaxText repository root inside the container (used by the branch checkout / install command).
+   * - ``maxtext_install_cmd``
+     - ``""``
+     - Optional shell command run verbatim from ``maxtext_root`` after launch (e.g. ``python3 -m pip install --no-deps -e .`` to make a checked-out branch the imported package). Runs whenever set, even without a branch checkout. Empty (default) = no install step.
    * - ``nic_type``
      - ``thor2``
      - NIC family; ``thor2`` (Broadcom) enables the backup RDMA-lib copy, ``none`` skips it.
@@ -323,10 +327,13 @@ The most-edited keys:
      - Compute dtype and master-weight dtype.
    * - ``quantization``
      - ``""``
-     - ``""`` = BF16; ``nanoo_fp8`` (MI300X/MI325X, CDNA3) or ``fp8`` (MI355X/MI350X, CDNA4) for FP8.
+     - ``""`` = BF16; ``nanoo_fp8`` (MI300X/MI325X, CDNA3) for FP8.
    * - ``dataset_type``
      - ``synthetic``
-     - ``synthetic`` = random token ids (no tokenizer download). Any other value (or unset → MaxText tfds/C4) requires the tokenizer.
+     - ``synthetic`` = random token ids (no tokenizer or data download; good for throughput/functional runs). For a real loss curve use ``hf`` with a dataset (see the real-data note below); any non-synthetic value requires the tokenizer.
+   * - ``tokenizer_type``
+     - ``sentencepiece``
+     - Tokenizer backend. Set to ``huggingface`` when ``tokenizer.hf_model_id`` ships a HF ``tokenizer.json`` (e.g. Llama 3, DeepSeek); the default ``sentencepiece`` expects a ``.model`` file and would mismatch a HF tokenizer.
    * - ``per_device_batch_size`` / ``max_target_length``
      - ``3`` / ``8192``
      - Per-GPU batch and sequence length (typically overridden per sweep).
@@ -351,6 +358,27 @@ Other passthrough keys seen in the configs: ``packing``, ``megablox`` /
 ``shardy``, ``logits_dot_in_fp32``, ``param_scan_axis``, ``max_segments_per_seq``,
 ``kv_quant_*``, ``optimizer_memory_host_offload``, ``async_checkpointing``,
 ``enable_goodput_recording`` / ``monitor_goodput``.
+
+.. note::
+
+  **Using real data (HuggingFace).** Configs default to ``dataset_type:
+  synthetic`` (random tokens; no data/tokenizer download) for throughput and
+  functional runs. For a genuine loss curve, set these keys inside
+  ``maxtext_config`` (the HF pipeline streams data — no full download):
+
+  .. code:: json
+
+    "dataset_type": "hf",
+    "hf_path": "allenai/c4",
+    "hf_data_dir": "en",
+    "train_split": "train",
+    "tokenizer_type": "huggingface"
+
+  ``tokenizer_type: huggingface`` is required so MaxText loads the HF
+  ``tokenizer.json`` named by ``tokenizer.hf_model_id`` (the ``sentencepiece``
+  default would mismatch it), and real data triggers the tokenizer download.
+  Do **not** place comment (``_``-prefixed) keys inside ``maxtext_config`` — every
+  key there is written verbatim to the run YAML and MaxText rejects unknown keys.
 
 ``tokenizer``
 -------------
