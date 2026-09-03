@@ -117,8 +117,7 @@ class TestVllmDeckProfile(unittest.TestCase):
     def test_distributed_cell_uses_bound_threshold_key(self):
         root = Path(__file__).resolve().parents[3]
         variant = load_variant(
-            root
-            / "input/config_file/inference/vllm_mi300x_workloads/mi300x_vllm_llama33-70b_fp8_distributed_config.json",
+            root / "input/config_file/inference/vllm/mi3xx_vllm_llama33-70b_fp8_distributed.json",
             {"username": "test"},
         )
         variant.bind_effective_topology(EffectiveVllmTopology("distributed", ("node0", "node1"), 2))
@@ -127,7 +126,7 @@ class TestVllmDeckProfile(unittest.TestCase):
         variant.thresholds = {cell_id: {"client.output_throughput": {"kind": "min_tok_s", "value": 1000.0}}}
         combo = variant.sweep.sequence_combinations[0]
         run = variant.sweep.runs[0]
-        key = (variant.model.id, variant.gpu_arch, combo.isl, combo.osl, combo.name, run.concurrency)
+        key = (variant.model.id, "", combo.isl, combo.osl, combo.name, run.concurrency)
         profile = load_json_profile("vllm_distributed")
         payload = build_inference_report_payload(
             config=build_inference_config_from_profile(profile),

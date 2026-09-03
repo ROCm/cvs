@@ -12,7 +12,7 @@ both topologies.
 
 cell_key format:
   Single-node: ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<concurrency>
-  Distributed: ISL=<isl>,OSL=<osl>,TP=<tp>,PP=<pp>,NNODES=<n>,CONC=<concurrency>
+  Distributed: ISL=<isl>,OSL=<osl>,TP=<tp>,PP=<pp>,CONC=<concurrency>
 
 IB device config:
   roles.server.ib_hca_devices: list[str] | "auto" | absent
@@ -85,7 +85,8 @@ class RoleServer(_Forbid):
     # explicit list -> validated at preflight against ibv_devinfo output.
     ib_hca_devices: Union[Literal["auto"], List[str], None] = None
     # Linux netdev for NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME.
-    # Required when nnodes > 1. No "auto" — not reliably derivable from HCA names.
+    # Required for multi-host distributed execution. No "auto" — not reliably
+    # derivable from HCA names.
     ib_netdev: Optional[str] = None
 
     @field_validator("serve_args", mode="after")
@@ -203,40 +204,34 @@ class VariantConfig(_Forbid):
     def bind_effective_topology(self, topology) -> None:
         self._effective_topology = topology
 
-    def cell_key(self, isl, osl, concurrency, *, nnodes=None, pipeline_parallel_size=None):
+    def cell_key(self, isl, osl, concurrency, *, pipeline_parallel_size=None):
         """Canonical threshold key for one sweep cell.
 
         The effective topology is supplied by the suite after it has constructed
         the orchestrator. Configuration files do not declare a node count.
 
         Single-node: ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<concurrency>
-        Distributed:  ISL=<isl>,OSL=<osl>,TP=<tp>,PP=<pp>,NNODES=<n>,CONC=<concurrency>
+        Distributed:  ISL=<isl>,OSL=<osl>,TP=<tp>,PP=<pp>,CONC=<concurrency>
         """
         topology = self._effective_topology
-        if nnodes is None:
-            if topology is None:
-                raise RuntimeError("vLLM effective topology is not bound")
-            nnodes = topology.nnodes
+        if topology is None:
+            raise RuntimeError("vLLM effective topology is not bound")
         if pipeline_parallel_size is None:
-            pipeline_parallel_size = (
-                topology.pipeline_parallel_size if topology is not None else self.params.pipeline_parallel_size
-            )
+            pipeline_parallel_size = topology.pipeline_parallel_size
 
         base = f"ISL={isl},OSL={osl},TP={self.params.tensor_parallelism},"
         pp = int(pipeline_parallel_size)
-        if int(nnodes) > 1:
-            base += f"PP={pp},NNODES={int(nnodes)},"
+        if topology.mode == "distributed":
+            base += f"PP={pp},"
         return base + f"CONC={concurrency}"
 
-    def expected_cells(self, *, nnodes=None, pipeline_parallel_size=None):
+    def expected_cells(self):
         by_name = {c.name: c for c in self.sweep.sequence_combinations}
         return [
             self.cell_key(
                 by_name[r.combo].isl,
                 by_name[r.combo].osl,
                 r.concurrency,
-                nnodes=nnodes,
-                pipeline_parallel_size=pipeline_parallel_size,
             )
             for r in self.sweep.runs
         ]

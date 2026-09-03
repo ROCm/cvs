@@ -12,6 +12,7 @@ import unittest
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
 from cvs.lib.inference.utils.vllm_config_loader import VariantConfig
+from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
 
 
 def _base_kwargs(**overrides):
@@ -106,9 +107,10 @@ class TestAccuracyThresholdKeyDoesNotTripSweepCoverage(unittest.TestCase):
                 },
             )
         )
+        variant.bind_effective_topology(EffectiveVllmTopology("single", ("node0",), 1))
         with self.assertRaises(ValueError) as ctx:
             validate_thresholds_cover_sweep(
-                expected_cells=variant.expected_cells(nnodes=1),
+                expected_cells=variant.expected_cells(),
                 thresholds=variant.thresholds,
                 enforce_thresholds=variant.enforce_thresholds,
             )

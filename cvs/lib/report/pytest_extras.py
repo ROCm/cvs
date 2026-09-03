@@ -16,7 +16,7 @@ def sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency) -> t
     model = getattr(getattr(variant_config, "model", None), "id", "")
     gpu = getattr(variant_config, "gpu_arch", "")
     name = seq_combo.get("name", "default") if isinstance(seq_combo, dict) else "default"
-    return (model, gpu, isl, osl, name, concurrency)
+    return (model, gpu, str(isl), str(osl), str(name), int(concurrency))
 
 
 def _highlight_metric(item, report_config: InferenceReportConfig, cell: dict) -> Optional[str]:

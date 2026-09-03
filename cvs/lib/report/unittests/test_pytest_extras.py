@@ -11,3 +11,10 @@ class TestSweepCellResultKey(unittest.TestCase):
             sweep_cell_result_key(variant, {"name": "balanced", "policy": "ignored"}, "1024", "1024", 16),
             ("org/model", "mi300x", "1024", "1024", "balanced", 16),
         )
+
+    def test_normalizes_inputs_to_result_tuple_types(self):
+        variant = SimpleNamespace(model=SimpleNamespace(id="org/model"))
+        self.assertEqual(
+            sweep_cell_result_key(variant, {"name": 7}, 1024, 1024, "16"),
+            ("org/model", "", "1024", "1024", "7", 16),
+        )

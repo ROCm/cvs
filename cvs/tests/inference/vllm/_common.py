@@ -80,7 +80,14 @@ def pytest_generate_tests(metafunc):
 
 
 def _cell_result_key(variant, combo, concurrency):
-    return (variant.model.id, variant.gpu_arch, combo["isl"], combo["osl"], combo.get("name", "default"), concurrency)
+    return (
+        variant.model.id,
+        "",
+        str(combo["isl"]),
+        str(combo["osl"]),
+        str(combo.get("name", "default")),
+        int(concurrency),
+    )
 
 
 def test_launch_container(orch, vllm_targets, lifecycle, request):

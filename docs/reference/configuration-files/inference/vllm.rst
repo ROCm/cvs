@@ -727,7 +727,9 @@ Each run is one **cell**, identified by a canonical key used to look up threshol
   Single-node:  ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<conc>
   Distributed:  ISL=<isl>,OSL=<osl>,TP=<tp>,PP=<pp>,CONC=<conc>
 
-``PP=`` appears only when pipeline parallelism exceeds one, which keeps singleton keys backward compatible. The host count is placement information, not a threshold dimension. Examples::
+``PP=`` appears for multi-host distributed execution, including Ray runs with
+``PP=1``. The host count is placement information, not a threshold dimension.
+Examples::
 
   ISL=1000,OSL=1000,TP=8,CONC=16
   ISL=1000,OSL=1000,TP=8,PP=2,CONC=16

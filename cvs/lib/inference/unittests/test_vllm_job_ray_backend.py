@@ -345,18 +345,20 @@ class TestVariantConfigRayConsistency(unittest.TestCase):
 class TestCellKeyRayMultiNode(unittest.TestCase):
     def test_cell_key_format_both_pp_branches(self):
         cases = [
-            (1, "1", "ISL=1024,OSL=1024,TP=8,CONC=16"),
-            (2, "2", "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=16"),
+            ("single", ("node0",), "1", "ISL=1024,OSL=1024,TP=8,CONC=16"),
+            ("distributed", ("node0", "node1"), "1", "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"),
+            ("distributed", ("node0", "node1"), "2", "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"),
         ]
-        for nnodes, pp, expected in cases:
-            with self.subTest(nnodes=nnodes, pp=pp):
+        for mode, hosts, pp, expected in cases:
+            with self.subTest(mode=mode, pp=pp):
                 vc = _vc(pp=pp, tp="8")
-                self.assertEqual(vc.cell_key("1024", "1024", "16", nnodes=nnodes, pipeline_parallel_size=pp), expected)
+                vc.bind_effective_topology(EffectiveVllmTopology(mode, hosts, int(pp)))
+                self.assertEqual(vc.cell_key("1024", "1024", "16", pipeline_parallel_size=pp), expected)
 
     def test_bound_topology_drives_three_argument_key_and_expected_cells(self):
         vc = _vc(pp="2", tp="8")
         vc.bind_effective_topology(EffectiveVllmTopology("distributed", ("node0", "node1"), 2))
-        expected = "ISL=1024,OSL=1024,TP=8,PP=2,NNODES=2,CONC=16"
+        expected = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
         self.assertEqual(vc.cell_key("1024", "1024", "16"), expected)
         self.assertEqual(vc.expected_cells(), [expected])
 
