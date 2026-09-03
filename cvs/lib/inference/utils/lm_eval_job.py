@@ -103,10 +103,10 @@ def build_lm_eval_cmd(task: AccuracyTask, ctx: LmEvalCtx) -> str:
         "trust_remote_code": "True",
     }
     extras = _split_model_args(task.extra_model_args)
-    collisions = sorted(set(model_args) & set(extras))
+    collisions = sorted(key for key, value in extras.items() if key in model_args and model_args[key] != value)
     if collisions:
         raise ValueError(f"extra_model_args cannot override CVS-owned model args: {collisions}")
-    model_args.update(extras)
+    model_args.update({key: value for key, value in extras.items() if key not in model_args})
     rendered_model_args = ",".join(f"{key}={value}" for key, value in model_args.items())
 
     args = [
