@@ -17,16 +17,9 @@ import unittest
 from cvs.lib.inference.utils.vllm_config_loader import (
     GATED_GPU_METRICS,
     GATED_PROM_METRICS,
-    Run,
-    SeqCombo,
-    Sweep,
     VariantConfig,
 )
 from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
-
-
-def _combo(name, isl="128", osl="2048"):
-    return SeqCombo(name=name, isl=isl, osl=osl)
 
 
 def _full_gated_specs():
@@ -46,31 +39,32 @@ def _full_gated_specs():
     return out
 
 
+def _variant(thresholds, enforce):
+    cell = "ISL=128,OSL=2048,TP=8,PP=1,CONC=16"
+    return VariantConfig(
+        enforce_thresholds=enforce,
+        threshold_json="threshold.json",
+        paths={
+            "shared_fs": "/home/x",
+            "models_dir": "/home/x/models",
+            "log_dir": "/home/x/LOGS",
+            "hf_token_file": "/home/x/.hf",
+        },
+        container={"name": "test", "image": "test", "runtime": {"name": "docker", "args": {}}},
+        server_params={"model": "amd/Llama-3.1-70B-Instruct-FP8-KV", "tensor_parallel_size": 8},
+        sweeps={cell: {}},
+        runs=[cell],
+        thresholds=thresholds,
+    )
+
+
 class TestGpuGatedMetricCoverage(unittest.TestCase):
     """The gpu.* axis of vllm_config_loader's _check_thresholds_cover_sweep."""
 
-    _CELL = "ISL=128,OSL=2048,TP=8,CONC=16"
+    _CELL = "ISL=128,OSL=2048,TP=8,PP=1,CONC=16"
 
     def _variant_with(self, thresholds, enforce):
-        sw = Sweep(
-            sequence_combinations=[_combo("a")],
-            runs=[Run(combo="a", concurrency=16)],
-        )
-        return VariantConfig(
-            schema_version=1,
-            framework="vllm",
-            enforce_thresholds=enforce,
-            paths={
-                "shared_fs": "/home/x",
-                "models_dir": "/home/x/models",
-                "log_dir": "/home/x/LOGS",
-                "hf_token_file": "/home/x/.hf",
-            },
-            model={"id": "amd/Llama-3.1-70B-Instruct-FP8-KV", "remote": 0},
-            params={"tensor_parallelism": "8"},
-            sweep=sw,
-            thresholds=thresholds,
-        )
+        return _variant(thresholds, enforce)
 
     def test_full_gated_set_constructs(self):
         vc = self._variant_with({self._CELL: _full_gated_specs()}, enforce=True)
@@ -109,28 +103,10 @@ class TestPromGatedMetricCoverage(unittest.TestCase):
     is proven independently here rather than in test_vllm_deck_profile.py.
     """
 
-    _CELL = "ISL=128,OSL=2048,TP=8,CONC=16"
+    _CELL = "ISL=128,OSL=2048,TP=8,PP=1,CONC=16"
 
     def _variant_with(self, thresholds, enforce):
-        sw = Sweep(
-            sequence_combinations=[_combo("a")],
-            runs=[Run(combo="a", concurrency=16)],
-        )
-        return VariantConfig(
-            schema_version=1,
-            framework="vllm",
-            enforce_thresholds=enforce,
-            paths={
-                "shared_fs": "/home/x",
-                "models_dir": "/home/x/models",
-                "log_dir": "/home/x/LOGS",
-                "hf_token_file": "/home/x/.hf",
-            },
-            model={"id": "amd/Llama-3.1-70B-Instruct-FP8-KV", "remote": 0},
-            params={"tensor_parallelism": "8"},
-            sweep=sw,
-            thresholds=thresholds,
-        )
+        return _variant(thresholds, enforce)
 
     def test_full_gated_set_constructs(self):
         vc = self._variant_with({self._CELL: _full_gated_specs()}, enforce=True)

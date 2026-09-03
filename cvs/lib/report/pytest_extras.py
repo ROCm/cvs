@@ -13,7 +13,7 @@ from cvs.lib.report.types import InferenceReportConfig
 
 def sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency) -> tuple:
     """Build an ``inf_res_dict`` lookup key for a sweep cell."""
-    model = getattr(getattr(variant_config, "model", None), "id", "")
+    model = getattr(variant_config, "model_id", None) or getattr(getattr(variant_config, "model", None), "id", "")
     gpu = getattr(variant_config, "gpu_arch", "")
     name = seq_combo.get("name", "default") if isinstance(seq_combo, dict) else "default"
     return (model, gpu, str(isl), str(osl), str(name), int(concurrency))
@@ -55,14 +55,26 @@ def attach_inference_cell_row_extra(item, report) -> None:
     inf_res_dict = funcargs.get("inf_res_dict") or funcargs.get("cvs_results_dict")
     variant_config = funcargs.get("variant_config")
     lifecycle = funcargs.get("lifecycle")
+    run = funcargs.get("run")
     seq_combo = funcargs.get("seq_combo")
     concurrency = funcargs.get("concurrency")
-    if not all((inf_res_dict is not None, variant_config, lifecycle, seq_combo is not None, concurrency is not None)):
+    if not all((inf_res_dict is not None, variant_config, lifecycle)):
         return
-
-    isl = seq_combo["isl"]
-    osl = seq_combo["osl"]
-    key = sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency)
+    if run is not None:
+        key = (
+            variant_config.model_id,
+            "",
+            str(run.cell.isl),
+            str(run.cell.osl),
+            run.cell.key,
+            run.cell.concurrency,
+        )
+    else:
+        if seq_combo is None or concurrency is None:
+            return
+        isl = seq_combo["isl"]
+        osl = seq_combo["osl"]
+        key = sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency)
     host_dict = inf_res_dict.get(key)
     if not isinstance(host_dict, dict) or not host_dict:
         return

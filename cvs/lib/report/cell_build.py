@@ -78,12 +78,14 @@ class CellRecordBuilder:
                 return "na"
         return "pass"
 
-    def resolve_pytest_nodeids(self, concurrency: Any) -> dict[str, str]:
+    def resolve_pytest_nodeids(self, concurrency: Any, cell_id: str = "") -> dict[str, str]:
         conc_suffix = f"-{concurrency}]"
         inference_nid = ""
         metrics_nid = ""
         for nodeid in self._lifecycle_report():
-            if conc_suffix not in nodeid:
+            if cell_id and f"[{cell_id}" not in nodeid:
+                continue
+            if not cell_id and conc_suffix not in nodeid:
                 continue
             if self.config.inference_test_substring in nodeid:
                 inference_nid = inference_nid or nodeid
@@ -98,12 +100,18 @@ class CellRecordBuilder:
     def _lifecycle_report(self) -> Mapping[str, list]:
         return getattr(self, "_ctx_lifecycle", {})
 
-    def lifecycle_for_cell(self, lifecycle_report: Mapping[str, list], concurrency: Any) -> Dict[str, float]:
+    def lifecycle_for_cell(
+        self, lifecycle_report: Mapping[str, list], concurrency: Any, cell_id: str = ""
+    ) -> Dict[str, float]:
         conc = str(concurrency)
         suffix = f"-{conc}]"
         out: Dict[str, float] = {}
         for nodeid, rows in lifecycle_report.items():
-            if self.config.inference_test_substring not in nodeid or suffix not in nodeid:
+            if self.config.inference_test_substring not in nodeid:
+                continue
+            if cell_id and f"[{cell_id}" not in nodeid:
+                continue
+            if not cell_id and suffix not in nodeid:
                 continue
             for label, value, unit in rows:
                 if unit != "s" or label not in self.config.cell_lifecycle_labels:
@@ -125,7 +133,8 @@ class CellRecordBuilder:
         multi_host: bool,
     ) -> dict:
         model, gpu, isl, osl, policy, conc = key
-        cell_id = variant_config.cell_key(isl, osl, conc)
+        is_canonical_key = isinstance(policy, str) and policy.startswith("ISL=")
+        cell_id = policy if is_canonical_key else variant_config.cell_key(isl, osl, conc)
         thresholds_map = getattr(variant_config, "thresholds", {}) or {}
         thresholds_cell = thresholds_map.get(cell_id) or {}
         enforce = bool(getattr(variant_config, "enforce_thresholds", False))
@@ -152,7 +161,7 @@ class CellRecordBuilder:
             tier: self.tier_status(actuals, thresholds_cell, tier, enforce) for tier in self.config.metric_tier_order
         }
         self._ctx_lifecycle = lifecycle_report
-        pytest_links = self.resolve_pytest_nodeids(conc)
+        pytest_links = self.resolve_pytest_nodeids(conc, cell_id if is_canonical_key else "")
 
         return {
             "model": model,
@@ -167,7 +176,7 @@ class CellRecordBuilder:
             "metrics": metrics,
             "tiers": tiers,
             "actuals": dict(actuals),
-            "cell_lifecycle": self.lifecycle_for_cell(lifecycle_report, conc),
+            "cell_lifecycle": self.lifecycle_for_cell(lifecycle_report, conc, cell_id if is_canonical_key else ""),
             **pytest_links,
         }
 

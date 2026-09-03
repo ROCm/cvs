@@ -203,7 +203,12 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
     if task is None:
         pytest.skip(f"accuracy task {accuracy_task!r} not present in accuracy.tasks")
 
-    params = variant_config.params
+    if hasattr(variant_config, "server_params"):
+        base_url = f"http://0.0.0.0:{variant_config.server_params.port}"
+        model_id = variant_config.server_params.model
+    else:
+        base_url = f"{variant_config.params.base_url}:{variant_config.params.port_no}"
+        model_id = variant_config.model.id
     output_dir = f"{variant_config.paths.log_dir}/accuracy"
 
     t = time.monotonic()
@@ -211,9 +216,9 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
         actuals_by_id = run_accuracy_tasks(
             orch=orch,
             tasks=[task],
-            base_url=f"{params.base_url}:{params.port_no}",
-            model_id=variant_config.model.id,
-            model_path=variant_config.model.id,
+            base_url=base_url,
+            model_id=model_id,
+            model_path=model_id,
             output_dir=output_dir,
         )
     except RuntimeError as e:

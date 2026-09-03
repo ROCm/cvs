@@ -1,7 +1,5 @@
 '''Shared vLLM lifecycle tests for the explicit single and distributed suites.'''
 
-import json
-import os
 import pathlib
 import shlex
 import time
@@ -10,7 +8,7 @@ import pytest
 
 from cvs.lib import globals
 from cvs.lib.inference.utils.inference_suite_lifecycle import test_accuracy_eval  # noqa: F401
-from cvs.lib.inference.utils.vllm_config_loader import GoodputSlo, validate_sweep_selector
+from cvs.lib.inference.utils.vllm_config_loader import load_variant
 from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS, CLIENT_METRIC_UNITS
 from cvs.lib.inference.utils.vllm_server_metrics import PROM_METRICS, PROM_METRIC_UNITS, to_prom_metrics
 from cvs.lib.inference.vllm_job import VllmJob, scrape_vllm_metrics
@@ -37,56 +35,47 @@ _SMOKE_MAX_MODEL_LEN = 512
 
 def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
-    if not config_file or not os.path.isfile(config_file):
+    if not config_file:
         return
-    with open(config_file, encoding="utf-8") as fp:
-        raw = json.load(fp)
-    sweep = raw.get("sweep", {})
-    combos = sweep.get("sequence_combinations", [])
-    runs = sweep.get("runs", [])
-    for combo in combos:
-        if combo.get("goodput_slo") is not None:
-            GoodputSlo(**combo["goodput_slo"])
-    validate_sweep_selector([c["name"] for c in combos], [r["combo"] for r in runs])
-    by_name = {c["name"]: c for c in combos}
-    cases = [(by_name[run["combo"]], run["concurrency"]) for run in runs]
-    ids = [f'{run["combo"]}-conc{run["concurrency"]}' for run in runs]
-    if "metric" in metafunc.fixturenames and cases:
-        params = [(combo, conc, metric) for (combo, conc) in cases for metric, _ in CLIENT_METRICS]
+    variant = load_variant(config_file, {})
+    runs = variant.resolved_runs()
+    ids = [run.cell.key for run in runs]
+    if "metric" in metafunc.fixturenames and runs:
+        params = [(run, metric) for run in runs for metric, _ in CLIENT_METRICS]
         metafunc.parametrize(
-            "seq_combo,concurrency,metric",
+            "run,metric",
             params,
             ids=[f"{case_id}-{metric}" for case_id in ids for metric, _ in CLIENT_METRICS],
         )
-    elif "gpu_metric" in metafunc.fixturenames and cases:
-        params = [(combo, conc, metric) for (combo, conc) in cases for metric, _ in GPU_METRICS]
+    elif "gpu_metric" in metafunc.fixturenames and runs:
+        params = [(run, metric) for run in runs for metric, _ in GPU_METRICS]
         metafunc.parametrize(
-            "seq_combo,concurrency,gpu_metric",
+            "run,gpu_metric",
             params,
             ids=[f"{case_id}-{metric}" for case_id in ids for metric, _ in GPU_METRICS],
         )
-    elif "prom_metric" in metafunc.fixturenames and cases:
-        params = [(combo, conc, metric) for (combo, conc) in cases for metric, _ in PROM_METRICS]
+    elif "prom_metric" in metafunc.fixturenames and runs:
+        params = [(run, metric) for run in runs for metric, _ in PROM_METRICS]
         metafunc.parametrize(
-            "seq_combo,concurrency,prom_metric",
+            "run,prom_metric",
             params,
             ids=[f"{case_id}-{metric}" for case_id in ids for metric, _ in PROM_METRICS],
         )
     elif "accuracy_task" in metafunc.fixturenames:
-        tasks = [task["id"] for task in raw.get("accuracy", {}).get("tasks", [])]
+        tasks = [task.id for task in variant.accuracy.tasks]
         metafunc.parametrize("accuracy_task", tasks, ids=tasks)
-    elif "seq_combo" in metafunc.fixturenames and "concurrency" in metafunc.fixturenames and cases:
-        metafunc.parametrize("seq_combo,concurrency", cases, ids=ids)
+    elif "run" in metafunc.fixturenames and runs:
+        metafunc.parametrize("run", runs, ids=ids)
 
 
-def _cell_result_key(variant, combo, concurrency):
+def _cell_result_key(variant, run):
     return (
-        variant.model.id,
+        variant.model_id,
         "",
-        str(combo["isl"]),
-        str(combo["osl"]),
-        str(combo.get("name", "default")),
-        int(concurrency),
+        str(run.cell.isl),
+        str(run.cell.osl),
+        run.cell.key,
+        run.cell.concurrency,
     )
 
 
@@ -122,7 +111,7 @@ def test_discover_topology(orch, variant_config, vllm_targets, lifecycle, reques
         lifecycle.failed = True
         lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - started)
         pytest.fail(str(exc))
-    requested = variant_config.roles.server.ib_hca_devices
+    requested = variant_config.ib_hca_devices
     if requested and requested != "auto":
         try:
             validate_ib_hca_preflight(discovered, requested)
@@ -178,9 +167,8 @@ def test_openai_compatible_smoke(orch, variant_config, hf_token, vllm_targets, l
         concurrency=1,
         num_prompts=1,
         ib_hcas=getattr(lifecycle, "ib_hcas", []),
-        client_poll_count=int(variant_config.params.client_poll_count),
     )
-    job.serve_args.setdefault("max-model-len", str(_SMOKE_MAX_MODEL_LEN))
+    job.serve_args.setdefault("max_model_len", str(_SMOKE_MAX_MODEL_LEN))
     started = time.monotonic()
     try:
         job.stop_server()
@@ -198,24 +186,21 @@ def test_openai_compatible_smoke(orch, variant_config, hf_token, vllm_targets, l
     log.info("OpenAI-compatible smoke results:\n%s", "\n".join(summary))
 
 
-def test_vllm_inference(
-    orch, variant_config, hf_token, vllm_targets, seq_combo, concurrency, inf_res_dict, lifecycle, request
-):
+def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_res_dict, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
-    isl = seq_combo["isl"]
-    osl = seq_combo["osl"]
+    isl = run.cell.isl
+    osl = run.cell.osl
     job = VllmJob(
         orch=orch,
         variant=variant_config,
         hf_token=hf_token,
         isl=isl,
         osl=osl,
-        concurrency=concurrency,
-        num_prompts=variant_config.params.num_prompts,
+        concurrency=run.cell.concurrency,
+        num_prompts=run.benchmark_params["num_prompts"],
+        benchmark_params=run.benchmark_params,
         ib_hcas=getattr(lifecycle, "ib_hcas", []),
-        goodput_slo=seq_combo.get("goodput_slo"),
-        client_poll_count=int(variant_config.params.client_poll_count),
     )
     load_s = None
     load_mb = None
@@ -241,13 +226,13 @@ def test_vllm_inference(
         html_path = getattr(request.config.option, "htmlpath", None)
         html_dir = getattr(request.config, "_test_html_dir", "test_html")
         gpu_log = (
-            pathlib.Path(html_path).parent / html_dir / f"gpu_poll_isl{isl}_osl{osl}_conc{concurrency}.log"
+            pathlib.Path(html_path).parent / html_dir / f"gpu_poll_isl{isl}_osl{osl}_conc{run.cell.concurrency}.log"
             if html_path
             else None
         )
         handle = start_gpu_poller(
             orch,
-            run_id=f"{request.node.nodeid}_{isl}_{osl}_{concurrency}",
+            run_id=f"{request.node.nodeid}_{isl}_{osl}_{run.cell.concurrency}",
             nodes=None if int(job.nnodes) == 1 else list(job.hosts),
         )
         before_prom = scrape_vllm_metrics(orch, job.base_url, job.port_no)
@@ -282,15 +267,13 @@ def test_vllm_inference(
     for actuals in results.values():
         actuals.update(gpu_results)
         actuals.update(prom_results)
-    inf_res_dict[_cell_result_key(variant_config, seq_combo, concurrency)] = results
+    inf_res_dict[_cell_result_key(variant_config, run)] = results
 
 
-def _test_metric(
-    seq_combo, concurrency, metric, prefix, units, inf_res_dict, variant_config, vllm_targets, lifecycle, request
-):
+def _test_metric(run, metric, prefix, units, inf_res_dict, variant_config, vllm_targets, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
-    key = _cell_result_key(variant_config, seq_combo, concurrency)
+    key = _cell_result_key(variant_config, run)
     host_dict = inf_res_dict.get(key)
     if not host_dict:
         pytest.skip(f"no recorded results for {key!r}")
@@ -301,17 +284,16 @@ def _test_metric(
     request.node.user_properties.append(("metric_unit", units.get(metric, "-")))
     if prefix != "client." and value is None:
         pytest.skip(f"{full}: no value recorded")
-    cell = variant_config.cell_key(seq_combo["isl"], seq_combo["osl"], concurrency)
+    cell = run.cell.key
     spec = (variant_config.thresholds.get(cell) or {}).get(full)
     if not variant_config.enforce_thresholds or spec is None:
         return
     evaluate_all(actuals, {full: spec})
 
 
-def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, vllm_targets, lifecycle, request):
+def test_metric(run, metric, inf_res_dict, variant_config, vllm_targets, lifecycle, request):
     _test_metric(
-        seq_combo,
-        concurrency,
+        run,
         metric,
         "client.",
         CLIENT_METRIC_UNITS,
@@ -323,10 +305,9 @@ def test_metric(seq_combo, concurrency, metric, inf_res_dict, variant_config, vl
     )
 
 
-def test_gpu_metric(seq_combo, concurrency, gpu_metric, inf_res_dict, variant_config, vllm_targets, lifecycle, request):
+def test_gpu_metric(run, gpu_metric, inf_res_dict, variant_config, vllm_targets, lifecycle, request):
     _test_metric(
-        seq_combo,
-        concurrency,
+        run,
         gpu_metric,
         "gpu.",
         GPU_METRIC_UNITS,
@@ -338,12 +319,9 @@ def test_gpu_metric(seq_combo, concurrency, gpu_metric, inf_res_dict, variant_co
     )
 
 
-def test_prom_metric(
-    seq_combo, concurrency, prom_metric, inf_res_dict, variant_config, vllm_targets, lifecycle, request
-):
+def test_prom_metric(run, prom_metric, inf_res_dict, variant_config, vllm_targets, lifecycle, request):
     _test_metric(
-        seq_combo,
-        concurrency,
+        run,
         prom_metric,
         "prom.",
         PROM_METRIC_UNITS,

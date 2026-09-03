@@ -6,10 +6,11 @@ from cvs.lib.inference.vllm_topology import build_vllm_targets, resolve_vllm_top
 
 
 def _variant(pp="1", ray=False, ib_netdev=None):
-    serve_args = {"distributed-executor-backend": "ray"} if ray else {}
     return SimpleNamespace(
-        params=SimpleNamespace(pipeline_parallel_size=pp),
-        roles=SimpleNamespace(server=SimpleNamespace(serve_args=serve_args, ib_netdev=ib_netdev)),
+        server_params=SimpleNamespace(
+            pipeline_parallel_size=int(pp), distributed_executor_backend="ray" if ray else "mp"
+        ),
+        ib_netdev=ib_netdev,
     )
 
 
