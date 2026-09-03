@@ -112,7 +112,7 @@ These fields appear at the root of every config file.
 Model configurations
 ====================
 
-Each model section below shows only the ``model_params`` and ``sweep`` blocks, which are the parts that differ between models. All other sections (``config``, ``container``, ``checkpoint``, ``loss_curve``, ``convergence``, ``scaling_baseline``) are identical in structure across models and are documented in `Common parameters`_.
+Each model section below shows only the ``model_params`` and ``sweep`` blocks, which are the parts that differ between models. All other sections (``config``, ``container``, ``smoke``, ``loss_curve``, ``convergence``, ``checkpoint``, ``scaling_baseline``) are identical in structure across models and are documented in `Common parameters`_.
 
 Llama 3.1 8B
 ------------
@@ -614,6 +614,34 @@ Controls the checkpoint save and resume test (``test_checkpoint``). The test is 
    * - ``checkpoint_dir``
      - ``<changeme>``
      - *(Distributed only)* Shared filesystem path for checkpoints. Must be volume-mounted into the container at the same path on all nodes. Required only when ``checkpoint.enforce`` is ``true``; exempted from the placeholder check when ``enforce`` is ``false``.
+
+``smoke``
+---------
+
+Controls ``test_smoke``: a small fixed cell (not a ``sweep.runs`` entry) that loads the model and trains a few steps with no metric gating. Packaged configs set this explicitly; if the block is omitted the loader defaults to enabled with ``iters`` 10, MBS ``1``, precision ``BF16``, and an empty ``global_batch_size`` (the suite then uses 8 on single-node and 16 on distributed).
+
+.. list-table::
+   :widths: 3 3 5
+   :header-rows: 1
+
+   * - Parameter
+     - Default
+     - Description
+   * - ``enabled``
+     - ``true``
+     - If ``false``, ``test_smoke`` is skipped.
+   * - ``iters``
+     - ``10``
+     - Training steps for the smoke cell.
+   * - ``micro_batch_size``
+     - ``"1"``
+     - Micro-batch size for the smoke cell.
+   * - ``global_batch_size``
+     - ``"8"`` (single) / ``"16"`` (distributed) in packaged files; empty in schema default
+     - Global batch size. Empty string lets the suite pick the topology default above.
+   * - ``precision``
+     - ``BF16``
+     - Precision tag passed into the smoke training command.
 
 ``loss_curve``
 --------------
