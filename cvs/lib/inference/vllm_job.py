@@ -45,6 +45,8 @@ from cvs.lib.inference.utils.vllm_parsing import to_client_metrics
 from cvs.lib.utils.model_query_lib import OpenAIProbe
 
 log = globals.log
+_PERCENTILE_METRICS = "ttft,tpot,itl,e2el"
+_METRIC_PERCENTILES = "50,90,95,99"
 
 
 def scrape_vllm_metrics(orch, base_url: str, port_no: str, timeout_s: "float | None" = None) -> "str | None":
@@ -123,15 +125,7 @@ class VllmJob:
         num_prompts,
         benchmark_params=None,
         ib_hcas: Optional[list] = None,
-        goodput_slo=None,
         log_subdir="vllm",
-        server_precheck_wait_s=30,
-        server_warmup_wait_s=330,
-        server_poll_count=60,
-        server_poll_wait_s=60,
-        client_initial_wait_s=120,
-        client_poll_count=20,
-        client_poll_wait_s=60,
     ):
         self.orch = orch
         self.variant = variant
@@ -143,7 +137,6 @@ class VllmJob:
         # Discovered HCA names for NCCL_IB_HCA (multinode only). Passed in from
         # test_discover_topology so discovery runs once per lifecycle, not per cell.
         self.ib_hcas = ib_hcas or []
-        self.goodput_slo = goodput_slo
         self.log_subdir = log_subdir
         self.hosts = tuple(orch.hosts)
         if not self.hosts:
@@ -195,7 +188,7 @@ class VllmJob:
         self.server_log = f"{self.out_dir}/vllm_serve_server.log"
         self.client_log = f"{self.out_dir}/client.log"
 
-        self._precheck_wait = server_precheck_wait_s
+        self._precheck_wait = 30
         self._warmup_wait = p.server_warmup_wait_s
         self._server_poll_count = p.server_poll_iterations
         self._server_poll_wait = p.server_poll_wait_s
@@ -214,23 +207,6 @@ class VllmJob:
         exact lowercase string 'ray' matches (AC6/AC8 case-sensitivity).
         """
         return self.distributed_executor_backend == "ray"
-
-    @staticmethod
-    def _flatten_serve_args(mapping):
-        """Convert {flag: value} serve-args map to a flat vllm serve arg list."""
-        argv = []
-        for flag, value in mapping.items():
-            opt = f"--{flag}"
-            if value is True:
-                argv.append(opt)
-            elif value is False:
-                pass  # boolean False → omit the flag entirely
-            elif isinstance(value, (list, tuple)):
-                for v in value:
-                    argv.extend([opt, str(v)])
-            else:
-                argv.extend([opt, str(value)])
-        return argv
 
     def _server_argv(self, rank: int) -> list:
         """vllm serve arg list for a specific node rank.
@@ -553,6 +529,10 @@ class VllmJob:
             self.random_range_ratio,
             "--random-prefix-len",
             self.random_prefix_len,
+            "--percentile-metrics",
+            _PERCENTILE_METRICS,
+            "--metric-percentiles",
+            _METRIC_PERCENTILES,
             "--save-result",
             "--result-dir",
             self.out_dir,
@@ -563,12 +543,6 @@ class VllmJob:
             args.append("--ignore-eos")
         if self.variant.benchmark_params.trust_remote_code:
             args.append("--trust-remote-code")
-        if self.goodput_slo:
-            args.append("--goodput")
-            for metric, key in (("ttft", "ttft_ms"), ("tpot", "tpot_ms"), ("e2el", "e2el_ms")):
-                val = self.goodput_slo.get(key)
-                if val is not None:
-                    args.append(f"{metric}:{val}")
         args.extend(serialize_cli_options(self.benchmark_options))
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
         client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
