@@ -34,31 +34,23 @@ using 4 GPUs per node.
 Distributed configs support one-host fallback or exactly two hosts. CVS rejects
 larger clusters until a matching N-host recipe and threshold set are available.
 
-## Sweep
+## Sweeps
 
-Every config carries all three sweep shapes:
-
-| combo suffix | ISL | OSL |
-|---|---|---|
-| `1k1k` | 1024 | 1024 |
-| `1k8k` | 1024 | 8192 |
-| `8k1k` | 8192 | 1024 |
-
-Only `1k1k` is referenced by `sweep.runs`, at concurrencies 16 and 32, so those
-are the cells a run executes. To run another shape, add it to `sweep.runs`
-**and** add the matching cell key to the threshold file — the coverage check
-compares the two.
-
-Cell keys follow the loader's format:
+`sweeps` maps canonical run-cell keys to per-cell benchmark overrides.
+`runs` is a required, ordered, explicit list of the cells to execute. To run
+every available cell, list every key in `runs`; there is no implicit "all"
+selection.
 
 ```text
-single:      ISL=1024,OSL=1024,TP=<tp>,CONC=<16|32>
-distributed: ISL=1024,OSL=1024,TP=<tp>,PP=2,CONC=<16|32>
+ISL=1024,OSL=1024,TP=<tp>,PP=<pp>,CONC=<concurrency>
 ```
 
-`<tp>` is the config's own `params.tensor_parallelism` (4 or 8).
+The TP and PP in every key must match `server_params.tensor_parallel_size` and
+`server_params.pipeline_parallel_size`, including `PP=1` for single-node
+configs. Cell values override `benchmark_params`.
 
-`random_range_ratio` is `0.0` so ISL/OSL are exact rather than jittered ±80%.
+`benchmark_params.random_range_ratio` is `0.0` so ISL/OSL are exact rather
+than jittered ±80%.
 
 `num_prompts` is **320**, not the `3200` schema default used by the configs in
 `cvs/input/config_file/inference/vllm/`. That makes each cell a characterization
@@ -117,15 +109,15 @@ Every environment-specific value is redacted. Per config:
 
 | Field | What to set |
 |---|---|
-| `model.id` | Local model path (e.g. `/models/GLM-5.1-FP8`) or an HF repo id |
+| `server_params.model` | Local model path (e.g. `/models/GLM-5.1-FP8`) |
 | `container.image` | The vLLM/ROCm image tag under test |
 | `container.runtime.args.volumes[1]` | Replace `<changeme-models-mount>` with the host models directory |
-| `roles.server.ib_netdev` | *(distributed only)* socket interface name for `NCCL_SOCKET_IFNAME` / `GLOO_SOCKET_IFNAME` / `TP_SOCKET_IFNAME`. Must be **UP and hold a routable IPv4 reaching the other node** — check `ip -o -4 addr show`, not just `ip -o link show`. An interface that exists but is DOWN/addressless fails engine init with gloo `Unable to find address for: <name>` |
-| `params.master_addr` | *(distributed only)* head node IP |
+| `ib_netdev` | *(distributed only)* socket interface name for `NCCL_SOCKET_IFNAME` / `GLOO_SOCKET_IFNAME` / `TP_SOCKET_IFNAME`. Must be **UP and hold a routable IPv4 reaching the other node** — check `ip -o -4 addr show`, not just `ip -o link show`. |
 
 `paths.models_dir` is `/models`, the in-container mount point — it is exported
 as `HF_HUB_CACHE`. When `model.id` is an absolute path under `/models`, vLLM
-loads straight from the mount and no download occurs.
+loads straight from the mount and no download occurs. CVS derives the
+distributed rendezvous address from the cluster head.
 
 ## Workload set
 
@@ -146,9 +138,10 @@ loads straight from the mount and no download occurs.
 | `deepseek-r1-0528_fp8` | DeepSeek R1 0528 FP8 PTPC | |
 | `gpt-oss-120b_mxfp4` | GPT-OSS 120B MXFP4 | |
 
-Models with a custom tokenizer or modelling code set `trust-remote-code: true`;
-the suite mirrors that flag onto the bench client so it can load the same
-tokenizer.
+Server options live directly under `server_params` as snake-case vLLM options:
+`gpu_memory_utilization` becomes `--gpu-memory-utilization`. Benchmark options
+live under `benchmark_params`; `trust_remote_code` is set independently there
+when the bench client needs it.
 
 ## Running
 

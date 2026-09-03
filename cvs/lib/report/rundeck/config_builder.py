@@ -37,8 +37,14 @@ def thresholds_run_card_row(variant: Any) -> Tuple[str, str, bool]:
 
 
 def _default_run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
+    server_params = getattr(variant, "server_params", None)
+    model = (
+        getattr(server_params, "model", None)
+        if server_params is not None
+        else getattr(getattr(variant, "model", None), "id", None)
+    )
     rows: List[Tuple[str, str, bool]] = [
-        ("Model", getattr(getattr(variant, "model", None), "id", "\u2014"), False),
+        ("Model", model or "\u2014", False),
         ("GPU", getattr(variant, "gpu_arch", "\u2014"), False),
         thresholds_run_card_row(variant),
     ]
@@ -48,6 +54,8 @@ def _default_run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bo
     params = getattr(variant, "params", None)
     if params is not None and hasattr(params, "tensor_parallelism"):
         rows.append(("TP", str(params.tensor_parallelism), False))
+    elif server_params is not None:
+        rows.append(("TP", str(server_params.tensor_parallel_size), False))
     rows.extend(provenance_link_rows(provenance))
     return rows
 

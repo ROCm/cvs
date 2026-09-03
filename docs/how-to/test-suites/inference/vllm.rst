@@ -73,12 +73,11 @@ In the **configuration file**, set:
 - ``paths.shared_fs`` — the shared filesystem root. The other paths derive from it by default.
 - ``paths.models_dir`` — where the weights live. Make sure this path is also mounted into the container by ``container.runtime.args.volumes``.
 - ``paths.hf_token_file`` — path to your token file.
-- ``model.id`` — the model to serve.
+- ``server_params.model`` — the model to serve.
 
 For a **multinode** configuration, also set:
 
-- ``params.master_addr`` — the head node address.
-- ``roles.server.ib_netdev`` — the interface name you looked up in the prerequisites.
+- ``ib_netdev`` — the interface name you looked up in the prerequisites.
 
 .. tip::
 
@@ -139,7 +138,7 @@ A skipped ``test_setup_sshd`` row is expected. vLLM communicates over the host n
 Going multinode
 ===============
 
-The cluster file determines the host count. Current distributed recipes support exactly two hosts, or one-host fallback. For distributed runs, configure ``params.pipeline_parallel_size`` and ``roles.server.ib_netdev``. Which parallelism combination is valid depends on the distributed executor backend.
+The cluster file determines the host count. Current distributed recipes support exactly two hosts, or one-host fallback. For distributed runs, configure ``server_params.pipeline_parallel_size`` and top-level ``ib_netdev``. CVS derives the rendezvous address from the cluster head.
 
 Using the default backend (mp)
 ------------------------------
@@ -149,15 +148,10 @@ If you set nothing else, the suite uses ``mp``. It requires pipeline parallelism
 .. code:: json
 
     {
-      "params": {
-        "tensor_parallelism": "8",
-        "pipeline_parallel_size": "2",
-        "master_addr": "10.0.0.1"
-      },
-      "roles": {
-        "server": {
-          "ib_netdev": "ens51f1np1"
-        }
+      "ib_netdev": "ens51f1np1",
+      "server_params": {
+        "tensor_parallel_size": 8,
+        "pipeline_parallel_size": 2
       }
     }
 
@@ -166,23 +160,16 @@ CVS launches ``vllm serve`` on every node with the correct rank, adding ``--head
 Using ray
 ---------
 
-Ray is opt-in. Add it to ``serve_args``:
+Ray is opt-in. Set ``distributed_executor_backend`` in ``server_params``:
 
 .. code:: json
 
     {
-      "roles": {
-        "server": {
-          "serve_args": {
-            "distributed-executor-backend": "ray"
-          },
-          "ib_netdev": "ens51f1np1"
-        }
-      },
-      "params": {
-        "tensor_parallelism": "8",
-        "pipeline_parallel_size": "1",
-        "master_addr": "10.0.0.1"
+      "ib_netdev": "ens51f1np1",
+      "server_params": {
+        "tensor_parallel_size": 8,
+        "pipeline_parallel_size": 1,
+        "distributed_executor_backend": "ray"
       }
     }
 
@@ -192,7 +179,7 @@ CVS then bootstraps a Ray cluster before serving: ``ray start --head`` on rank 0
 
   Ray is not required for multinode — ``mp`` is the default and works across nodes. What ray changes is that it **removes the pipeline-parallelism requirement**, so ``pipeline_parallel_size`` of 1 becomes valid. Use ray when you want pure tensor-parallel serving across nodes; use the default otherwise.
 
-  Only the exact lowercase string ``"ray"`` selects it. ``"Ray"`` silently falls back to ``mp`` and then fails validation if ``pipeline_parallel_size`` is 1.
+  Only the exact lowercase string ``"ray"`` selects it. Other values are rejected by configuration validation.
 
 Common pitfalls
 ===============
@@ -201,13 +188,13 @@ Common pitfalls
 
 **Distributed topology validation fails.** You configured multiple hosts on the default ``mp`` backend without pipeline parallelism. Either raise ``pipeline_parallel_size``, or switch to ray.
 
-**"vllm_distributed requires roles.server.ib_netdev".** Set it to the interface name. There is deliberately no ``"auto"`` value — it cannot be derived reliably from HCA names.
+**"vllm_distributed requires ib_netdev".** Set it to the interface name. There is deliberately no ``"auto"`` value — it cannot be derived reliably from HCA names.
 
 **"Container image not specified in config".** ``container.image`` is empty. Watch for this specific trap: if your configuration file has a ``container`` block that omits ``image``, it overwrites the cluster file's image with an empty string. Set ``image`` in whichever file defines the block.
 
 **Container launch crashes with "too many values to unpack".** You placed ``env`` under ``container.runtime.args``. It belongs at the ``container`` top level.
 
-**A threshold fails with "missing from actuals".** The threshold gates a metric this run did not produce. The usual cause is ``params.metric_percentiles`` omitting a percentile that a threshold references — the default ``"50,90,95,99"`` covers all gated latency metrics.
+**A threshold fails with "missing from actuals".** The threshold gates a metric this run did not produce. The suite owns benchmark percentile collection; do not add percentile controls to workload config.
 
 **Every metric row skips.** The benchmark produced no parseable results. Check ``client.log`` and the server log for the cell.
 
