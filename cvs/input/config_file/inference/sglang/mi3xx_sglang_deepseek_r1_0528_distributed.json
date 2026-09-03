@@ -1,18 +1,12 @@
 {
   "_comment": "SGLang distributed DeepSeek-R1-0528 workload, TP=8 and PP=2 across two nodes.",
-  "schema_version": 1,
-  "framework": "sglang",
-  "topology": "distributed",
-  "threshold_json": "mi3xx_sglang_deepseek_r1_0528_threshold.json",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325_sglang_deepseek_r1_0528_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/root/models",
     "log_dir": "{shared_fs}/LOGS/sglang",
     "hf_token_file": "{shared_fs}/.hf_token"
-  },
-  "model": {
-    "id": "/root/models/DeepSeek-R1-0528",
-    "remote": 0
   },
   "container": {
     "lifetime": "per_run",
@@ -35,29 +29,29 @@
           "/lib/libibverbs.d:/lib/libibverbs.d"
         ],
         "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm"],
-        "env": {}
+        "env": {
+          "nic_type": "thor2",
+          "_example_nccl_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+          "nccl_ib_hca": "<changeme>",
+          "_example_hca_id_prefix": "rdma",
+          "hca_id_prefix": "<changeme>",
+          "_example_nccl_socket_ifname": "eno0",
+          "nccl_socket_ifname": "<changeme>",
+          "_example_gloo_socket_ifname": "eno0",
+          "gloo_socket_ifname": "<changeme>",
+          "nccl_ib_gid_index": "3",
+          "nccl_debug": "ERROR"
+        }
       }
     }
   },
   "roles": {
-    "server": {
-      "nnodes": "2",
-      "log_level": "info",
-      "nic_type": "thor2",
-      "nccl_ib_hca": "<changeme>",
-      "hca_id_prefix": "<changeme>",
-      "nccl_socket_ifname": "<changeme>",
-      "gloo_socket_ifname": "<changeme>",
-      "nccl_ib_gid_index": "3",
-      "nccl_debug": "ERROR",
-      "server_node_list": ["<changeme>", "<changeme>"],
-      "dist_init_port": "40001",
-      "benchmark_serv_node": "<changeme>",
-      "proxy_router_serv_port": "8000"
-    }
   },
-  "params": {
+  "server_params": {
     "backend": "sglang",
+    "nnodes": "2",
+    "log_level": "info",
+    "model": "/root/models/DeepSeek-R1-0528",
     "max_concurrency": "256",
     "tensor_parallelism": "8",
     "pipeline_parallelism": "2",
@@ -67,17 +61,30 @@
     "context_length": "205000",
     "add_export_env": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8", "GPU_ARCHS=gfx942"],
     "add_flags": ["--attention-backend aiter"],
-    "inference_tests": {
-      "bench_serv_random": {
+    "server_node_list": ["<changeme>", "<changeme>"],
+    "dist_init_port": "40001",
+    "benchmark_serv_node": "<changeme>",
+    "proxy_router_serv_port": "8000"
+  },
+  "benchmark_params": {
         "backend": "sglang",
         "enforce_thresholds": false,
         "data_set_name": "random",
         "num_prompts": "25",
         "random_range_ratio": "0.5",
         "model_num_params": "671000000000",
-        "peak_gpu_tflops": "2615"
+        "peak_gpu_tflops": "2615",    
+        "sweep": {
+            "_comment": "Combo-key runs of ISL, OSL, TP, PP, and CONC, comma-separated. Each listed run must exist in the threshold JSON. If this field is empty, every run in the threshold JSON is used.",
+            "runs": [
+              {
+                "combo": "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
+              },
+              {
+                "combo": "ISL=1024,OSL=1024,TP=8,PP=2,CONC=32"
+              }
+          ]
       }
-    }
   },
   "accuracy": {
     "tasks": [
