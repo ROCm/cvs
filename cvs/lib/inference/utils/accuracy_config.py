@@ -58,6 +58,30 @@ class AccuracyTask(_Forbid):
     # CVS controls execution duration, not lm-eval.
     exec_timeout_sec: int = 4 * 60 * 60
 
+    @field_validator("apply_chat_template", mode="before")
+    @classmethod
+    def _coerce_boolean_template_values(cls, value):
+        if isinstance(value, str) and value.lower() in {"true", "false", "0", "1"}:
+            return value.lower() in {"true", "1"}
+        return value
+
+    @field_validator("seed", mode="before")
+    @classmethod
+    def _normalize_seed(cls, value):
+        defaults = [0, 1234, 1234, 1234]
+        if isinstance(value, int):
+            return [value] * 4
+        if isinstance(value, str):
+            value = value.split(",")
+        if isinstance(value, list):
+            normalized = [None if item is None or item == "None" else int(item) for item in value]
+            if len(normalized) == 1:
+                return normalized * 4
+            if len(normalized) == 3:
+                return [*normalized, defaults[3]]
+            return normalized
+        return value
+
     @field_validator("tasks", mode="before")
     @classmethod
     def _reject_empty_task_lists(cls, value):

@@ -207,6 +207,10 @@ class TestAccuracyTaskBoolCoercion(unittest.TestCase):
         task = _task(apply_chat_template="chatml")
         self.assertEqual(task.apply_chat_template, "chatml")
 
+    def test_boolean_template_strings_keep_boolean_meaning(self):
+        self.assertIs(_task(apply_chat_template="false").apply_chat_template, False)
+        self.assertIs(_task(apply_chat_template="1").apply_chat_template, True)
+
 
 class TestAccuracyTaskStringTyping(unittest.TestCase):
     """AC22: id/task accept only str; non-str scalars are not auto-coerced."""
@@ -275,8 +279,14 @@ class TestAccuracyTaskLmEvalSurface(unittest.TestCase):
             AccuracyTask(id="a", task="gsm8k", tasks="hellaswag")
 
     def test_rejects_invalid_seed_length(self):
-        with self.assertRaises(ValidationError):
-            AccuracyTask(id="a", task="gsm8k", seed=[1, 2, 3])
+        for seed in ([1, 2], [1, 2, 3, 4, 5]):
+            with self.subTest(seed=seed):
+                with self.assertRaises(ValidationError):
+                    AccuracyTask(id="a", task="gsm8k", seed=seed)
+
+    def test_seed_accepts_upstream_single_and_three_value_forms(self):
+        self.assertEqual(AccuracyTask(id="a", task="gsm8k", seed=42).seed, [42, 42, 42, 42])
+        self.assertEqual(AccuracyTask(id="a", task="gsm8k", seed="1,None,3").seed, [1, None, 3, 1234])
 
 
 class TestAccuracyConfigConstruction(unittest.TestCase):
