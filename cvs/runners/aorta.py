@@ -308,7 +308,8 @@ class AortaRunner(BaseRunner):
             volumes=volumes,
             devices=devices,
             working_dir=self.config.container_mount_path,
-            group_add=["video"],
+            user="root",
+            group_add=["video", "render"],
             cap_add=["SYS_PTRACE"],
             security_opt=["seccomp=unconfined"],
             ulimits=[
@@ -553,6 +554,27 @@ class AortaRunner(BaseRunner):
         log.info(f"All {num_nodes} node(s) set up successfully")
         return True
 
+    def _build_base_env(self) -> Dict[str, str]:
+        """Build the environment dict exported into the container before launch."""
+        env = self.config.environment.to_dict()
+
+        rccl_path = self.config.rccl.build_path
+        env["LD_LIBRARY_PATH"] = (
+            f"{rccl_path}/build/release/:/opt/rocm/lib:/opt/rocm/lib64:"
+            f"/opt/openmpi/lib:/opt/rccl-tests/build:$LD_LIBRARY_PATH"
+        )
+        env["rccl_path"] = rccl_path
+
+        if self.config.training_overrides:
+            # aorta train.py exposes `--override` with `nargs="*"`; multiple
+            # `--override` groups collapse to the last group's values. Emit a
+            # single `--override` followed by all key=value tokens so that
+            # downstream legacy launch scripts also forward them correctly.
+            tokens = " ".join(f'{key}="{value}"' for key, value in self.config.training_overrides.items())
+            env["AORTA_OVERRIDE_ARGS"] = f"--override {tokens}"
+
+        return env
+
     def run(self, **kwargs) -> RunResult:
         """
         Execute the Aorta benchmark.
@@ -579,28 +601,9 @@ class AortaRunner(BaseRunner):
                     error_message=f"No container found for {node}",
                 )
 
-            # Build environment with computed values
-            env = self.config.environment.to_dict()
-
-            # Add RCCL library path
-            rccl_path = self.config.rccl.build_path
-            env["LD_LIBRARY_PATH"] = (
-                f"{rccl_path}/build/release/:/opt/rocm/lib:/opt/rocm/lib64:"
-                f"/opt/openmpi/lib:/opt/rccl-tests/build:$LD_LIBRARY_PATH"
-            )
-            env["rccl_path"] = rccl_path
-
-            # Build override arguments if any
-            override_args = ""
-            if self.config.training_overrides:
-                for key, value in self.config.training_overrides.items():
-                    override_args += f' --override {key}="{value}"'
-
-            # Execute experiment script with streaming output for real-time feedback
-            # Note: override_args is passed via environment if the script supports it
-            if override_args:
-                env["AORTA_OVERRIDE_ARGS"] = override_args.strip()
-                log.info(f"Training overrides: {override_args.strip()}")
+            env = self._build_base_env()
+            if env.get("AORTA_OVERRIDE_ARGS"):
+                log.info(f"Training overrides: {env['AORTA_OVERRIDE_ARGS']}")
 
             # Pass the base config file to the experiment script
             # launch_rocm.sh expects: CONFIG=${1:-default.yaml}
