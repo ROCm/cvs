@@ -6,19 +6,19 @@ Unified config schema for the vllm suite (single-node and distributed).
 
 Replaces inferencing_config_loader.py (single-node) and
 vllm_distributed_config_loader.py (distributed) with a single schema.
-Distributed params (pipeline_parallel_size, master_addr, master_port,
-nnodes) default to single-node values so the same VariantConfig works for
+Distributed params (pipeline_parallel_size, master_addr, master_port)
+default to single-node values so the same VariantConfig works for
 both topologies.
 
 cell_key format:
-  Single-node (pp=1): ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<concurrency>
-  Distributed (pp>1): ISL=<isl>,OSL=<osl>,TP=<tp>,PP=<pp>,CONC=<concurrency>
+  Single-node: ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<concurrency>
+  Distributed: ISL=<isl>,OSL=<osl>,TP=<tp>,PP=<pp>,CONC=<concurrency>
 
 IB device config:
   roles.server.ib_hca_devices: list[str] | "auto" | absent
       If absent or "auto", use everything ibv_devinfo -l reports.
       If an explicit list, validate at preflight (test_discover_topology).
-  roles.server.ib_netdev: str (required for distributed runs)
+  roles.server.ib_netdev: str (required for multi-host distributed runs)
       Linux network interface name for NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME.
       Not derivable from HCA names. Operator sets it explicitly.
       Optional for single-node (NCCL socket selection not critical).
@@ -29,11 +29,10 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 from typing_extensions import Literal
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
-from cvs.lib.inference.utils.inferencing_config_loader import validate_thresholds_cover_sweep
 from cvs.lib.inference.utils.vllm_server_metrics import PROM_METRICS
 from cvs.lib.utils.config_loader import substitute_config
 from cvs.lib.utils.gpu import GPU_METRICS
@@ -86,7 +85,8 @@ class RoleServer(_Forbid):
     # explicit list -> validated at preflight against ibv_devinfo output.
     ib_hca_devices: Union[Literal["auto"], List[str], None] = None
     # Linux netdev for NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME.
-    # Required when nnodes > 1. No "auto" — not reliably derivable from HCA names.
+    # Required for multi-host distributed execution. No "auto" — not reliably
+    # derivable from HCA names.
     ib_netdev: Optional[str] = None
 
     @field_validator("serve_args", mode="after")
@@ -161,11 +161,9 @@ class Params(_Forbid):
     random_range_ratio: str = "0.8"
     random_prefix_len: str = "0"
     tensor_parallelism: str = "8"
-    # Distributed params. Defaults encode single-node (no PP, one node, localhost).
     pipeline_parallel_size: str = "1"
     master_addr: str = "localhost"
     master_port: str = "29501"
-    nnodes: str = "1"
     tokenizer_mode: str = "auto"
     percentile_metrics: str = "ttft,tpot,itl,e2el"
     metric_percentiles: str = "50,90,95,99"
@@ -195,26 +193,7 @@ class VariantConfig(_Forbid):
     sweep: Sweep
     thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
-
-    @model_validator(mode="after")
-    def _check_distributed_consistency(self):
-        nn = int(self.params.nnodes)
-        pp = int(self.params.pipeline_parallel_size)
-        # Ray backend uses its own distributed orchestration and does not require
-        # pipeline parallelism (pp=1 is the expected ray multi-node configuration).
-        # Only the exact lowercase string "ray" triggers this relaxation (AC6).
-        is_ray = self.roles.server.serve_args.get("distributed-executor-backend") == "ray"
-        if nn > 1 and pp == 1 and not is_ray:
-            raise ValueError(f"nnodes={nn} > 1 requires pipeline_parallel_size > 1 (got pp={pp})")
-        if pp > 1 and nn == 1:
-            raise ValueError(f"pipeline_parallel_size={pp} > 1 requires nnodes > 1 (got nnodes={nn})")
-        if nn > 1 and not self.roles.server.ib_netdev:
-            raise ValueError(
-                "ib_netdev is required in roles.server when nnodes > 1. "
-                "Set it to the Linux network interface name for NCCL_SOCKET_IFNAME "
-                "(e.g. \"ens51f1np1\"). Cannot be auto-derived from HCA names."
-            )
-        return self
+    _effective_topology: Any = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def _check_remote_not_implemented(self):
@@ -222,40 +201,40 @@ class VariantConfig(_Forbid):
             raise NotImplementedError("model.remote=1 (remote model download) is not implemented.")
         return self
 
-    def cell_key(self, isl, osl, concurrency):
+    def bind_effective_topology(self, topology) -> None:
+        self._effective_topology = topology
+
+    def cell_key(self, isl, osl, concurrency, *, pipeline_parallel_size=None):
         """Canonical threshold key for one sweep cell.
 
-        Emits PP= segment only for distributed runs (pp > 1), preserving
-        backward-compatible single-node keys (no PP= segment).
+        The effective topology is supplied by the suite after it has constructed
+        the orchestrator. Configuration files do not declare a node count.
 
         Single-node: ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<concurrency>
         Distributed:  ISL=<isl>,OSL=<osl>,TP=<tp>,PP=<pp>,CONC=<concurrency>
         """
+        topology = self._effective_topology
+        if topology is None:
+            raise RuntimeError("vLLM effective topology is not bound")
+        if pipeline_parallel_size is None:
+            pipeline_parallel_size = topology.pipeline_parallel_size
+
         base = f"ISL={isl},OSL={osl},TP={self.params.tensor_parallelism},"
-        if int(self.params.pipeline_parallel_size) > 1:
-            base += f"PP={self.params.pipeline_parallel_size},"
+        pp = int(pipeline_parallel_size)
+        if topology.mode == "distributed":
+            base += f"PP={pp},"
         return base + f"CONC={concurrency}"
 
     def expected_cells(self):
         by_name = {c.name: c for c in self.sweep.sequence_combinations}
-        return [self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency) for r in self.sweep.runs]
-
-    @model_validator(mode="after")
-    def _check_thresholds_cover_sweep(self):
-        """Every sweep cell must have a threshold entry; no metric within it is
-        mandatory. Evaluation (``test_metric``/``test_gpu_metric``/
-        ``test_prom_metric``) already treats an absent ``client.*``/``gpu.*``/
-        ``prom.*`` spec as "don't gate this metric" (skips the assertion), so
-        a threshold.json is free to gate only the handful of metrics an
-        operator cares about instead of every member of every family.
-        """
-        validate_thresholds_cover_sweep(
-            expected_cells=self.expected_cells(),
-            thresholds=self.thresholds,
-            enforce_thresholds=self.enforce_thresholds,
-            gated_metrics=set(),
-        )
-        return self
+        return [
+            self.cell_key(
+                by_name[r.combo].isl,
+                by_name[r.combo].osl,
+                r.concurrency,
+            )
+            for r in self.sweep.runs
+        ]
 
 
 # ---------- public API ----------

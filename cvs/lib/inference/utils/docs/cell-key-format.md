@@ -15,16 +15,19 @@ of truth shared between:
 ## Format specification
 
 ```
-ISL={isl},OSL={osl},TP={tensor_parallelism},CONC={concurrency}
+ISL={isl},OSL={osl},TP={tensor_parallelism}[,PP={pipeline_parallel_size}],CONC={concurrency}
 ```
 
-**All four fields are required, in this exact order, with no spaces.**
+`ISL`, `OSL`, `TP`, and `CONC` are required, in this exact order, with no spaces.
+`PP` appears between `TP` and `CONC` for multi-host distributed execution. Host
+count is placement information and is not a threshold dimension.
 
 | Field | Source | Description |
 |---|---|---|
 | `ISL=` | `SeqCombo.isl` (string from config) | Input sequence length in tokens |
 | `OSL=` | `SeqCombo.osl` (string from config) | Output sequence length in tokens |
 | `TP=` | `Params.tensor_parallelism` (string from config) | Tensor parallelism degree; comes from `params`, not from the run |
+| `PP=` | Effective topology | Pipeline parallelism degree for multi-host distributed execution |
 | `CONC=` | `Run.concurrency` (integer from config) | Number of concurrent requests for this run |
 
 Values are interpolated verbatim from the config fields — no numeric normalization.
@@ -34,7 +37,10 @@ the key.
 
 **Implementation** (from `VariantConfig.cell_key`):
 ```python
-f"ISL={isl},OSL={osl},TP={self.params.tensor_parallelism},CONC={concurrency}"
+base = f"ISL={isl},OSL={osl},TP={self.params.tensor_parallelism},"
+if topology.mode == "distributed":
+    base += f"PP={effective_pp},"
+return base + f"CONC={concurrency}"
 ```
 
 ---
@@ -57,7 +63,7 @@ no spec is found, and the test falls through to the record-only branch — PASS 
 zero assertions, silently, even under `enforce_thresholds=true`.
 
 Note: `inf_res_dict` is keyed by the tuple
-`(model_id, gpu_arch, isl, osl, combo_name, concurrency)`, which `test_metric`
+`(model_id, "", isl, osl, combo_name, concurrency)`, which `test_metric`
 builds independently before `cell_key` is called. The cell_key string is not used
 to index `inf_res_dict`.
 

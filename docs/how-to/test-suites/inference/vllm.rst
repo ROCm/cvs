@@ -6,7 +6,11 @@
 Run vLLM inference benchmarks
 *****************************
 
-The vLLM suite measures LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. One parametrized suite covers both single-node and multinode runs — you select the topology in the configuration file, not by choosing a different suite.
+The vLLM suites measure LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` supports one-host fallback or the current two-host distributed recipes; larger clusters require an explicit recipe and calibrated thresholds.
+
+For a mapping-style ``node_dict``, "first cluster host" is the first JSON key
+in insertion order. ``vllm_single`` rewrites ``head_node_dict.mgmt_ip`` to that
+host, so put the intended single-node target first in ``node_dict``.
 
 This page walks through a first run. For the full schema, every metric, and the threshold grammar, see :doc:`/reference/configuration-files/inference/vllm`.
 
@@ -91,17 +95,17 @@ Step 3: Run the suite
 
 .. code:: bash
 
-  cvs run vllm \
+  cvs run vllm_single \
     --cluster_file /tmp/cvs/cluster.json \
     --config_file /tmp/cvs/vllm_singlenode_config.json \
     --html /tmp/cvs/vllm.html --self-contained-html \
     --log-file /tmp/cvs/cvs.log
 
-The suite name is ``vllm`` for every topology. There is no separate distributed suite — a multinode run is the same command with a multinode configuration file:
+Use ``vllm_distributed`` for one distributed service across a two-host cluster:
 
 .. code:: bash
 
-  cvs run vllm \
+  cvs run vllm_distributed \
     --cluster_file /tmp/cvs/cluster.json \
     --config_file /tmp/cvs/vllm_multinode_config.json \
     --html /tmp/cvs/vllm.html --self-contained-html \
@@ -139,7 +143,7 @@ A skipped ``test_setup_sshd`` row is expected. vLLM communicates over the host n
 Going multinode
 ===============
 
-Three settings turn a single-node configuration into a multinode one: ``params.nnodes``, ``params.pipeline_parallel_size``, and ``roles.server.ib_netdev``. Which combination is valid depends on the distributed executor backend.
+The cluster file determines the host count. Current distributed recipes support exactly two hosts, or one-host fallback. For distributed runs, configure ``params.pipeline_parallel_size`` and ``roles.server.ib_netdev``. Which parallelism combination is valid depends on the distributed executor backend.
 
 Using the default backend (mp)
 ------------------------------
@@ -152,7 +156,6 @@ If you set nothing else, the suite uses ``mp``. It requires pipeline parallelism
       "params": {
         "tensor_parallelism": "8",
         "pipeline_parallel_size": "2",
-        "nnodes": "2",
         "master_addr": "10.0.0.1"
       },
       "roles": {
@@ -183,7 +186,6 @@ Ray is opt-in. Add it to ``serve_args``:
       "params": {
         "tensor_parallelism": "8",
         "pipeline_parallel_size": "1",
-        "nnodes": "2",
         "master_addr": "10.0.0.1"
       }
     }
@@ -201,9 +203,9 @@ Common pitfalls
 
 **The run fails immediately with a validation error.** Configuration files are validated before anything launches, and every block except ``container`` rejects unknown keys — so a misspelled key is a hard error rather than a silently ignored setting. Read the message: it names the offending key.
 
-**"nnodes=2 > 1 requires pipeline_parallel_size > 1".** You configured multiple nodes on the default ``mp`` backend without pipeline parallelism. Either raise ``pipeline_parallel_size``, or switch to ray.
+**Distributed topology validation fails.** You configured multiple hosts on the default ``mp`` backend without pipeline parallelism. Either raise ``pipeline_parallel_size``, or switch to ray.
 
-**"ib_netdev is required in roles.server when nnodes > 1".** Set it to the interface name. There is deliberately no ``"auto"`` value — it cannot be derived reliably from HCA names.
+**"vllm_distributed requires roles.server.ib_netdev".** Set it to the interface name. There is deliberately no ``"auto"`` value — it cannot be derived reliably from HCA names.
 
 **"Container image not specified in config".** ``container.image`` is empty. Watch for this specific trap: if your configuration file has a ``container`` block that omits ``image``, it overwrites the cluster file's image with an empty string. Set ``image`` in whichever file defines the block.
 

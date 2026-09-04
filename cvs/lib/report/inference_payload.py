@@ -176,11 +176,15 @@ class InferencePayloadBuilder:
             return "na"
         if not enforce:
             return "record"
+        evaluated = False
         for cell in cells:
             for tier in self.config.gated_tiers:
-                if cell["tiers"].get(tier) == "fail":
+                status = cell["tiers"].get(tier)
+                if status == "fail":
                     return "fail"
-        return "pass"
+                if status == "pass":
+                    evaluated = True
+        return "pass" if evaluated else "na"
 
     def _build_run_card_display(
         self,

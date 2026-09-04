@@ -4,7 +4,10 @@ All rights reserved.
 '''
 
 import unittest
+from pathlib import Path
 
+from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
+from cvs.lib.inference.utils.vllm_config_loader import load_variant
 from cvs.lib.inference.utils.vllm_parsing import (
     CLIENT_METRICS,
     GATED_METRICS,
@@ -17,6 +20,7 @@ from cvs.lib.report.auto_register import try_auto_register_suite_report
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.registry import get_resolved_profile, resolve_suite_report_config
 from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
+from cvs.lib.report.inference import build_inference_report_payload
 
 
 class TestVllmDeckProfile(unittest.TestCase):
@@ -88,20 +92,51 @@ class TestVllmDeckProfile(unittest.TestCase):
         self.assertTrue(set(cfg.session_lifecycle_labels) <= suite_recorded)
         self.assertTrue(set(cfg.cell_lifecycle_labels) <= suite_recorded)
 
-    def test_auto_register_resolves_vllm_stem(self):
+    def test_auto_register_resolves_split_suite_stems(self):
         class _FakeConfig:
             pass
 
-        cfg = _FakeConfig()
-        cfg._suite_name = "vllm"
-        cfg._suite_report_config = None
-        registered = try_auto_register_suite_report(cfg)
-        self.assertTrue(registered)
-        profile = get_resolved_profile(cfg)
-        self.assertIsInstance(profile, dict)
-        self.assertEqual(profile["suite_id"], "vllm")
-        resolved = resolve_suite_report_config(cfg)
-        self.assertEqual(resolved.suite_id, "vllm")
+        for stem in ("vllm_single", "vllm_distributed"):
+            with self.subTest(stem=stem):
+                cfg = _FakeConfig()
+                cfg._suite_name = stem
+                cfg._suite_report_config = None
+                self.assertTrue(try_auto_register_suite_report(cfg))
+                profile = get_resolved_profile(cfg)
+                self.assertIsInstance(profile, dict)
+                self.assertEqual(profile["suite_id"], "vllm")
+                self.assertEqual(resolve_suite_report_config(cfg).suite_id, "vllm")
+
+    def test_split_suite_stems_reuse_vllm_profile(self):
+        for stem in ("vllm_single", "vllm_distributed"):
+            with self.subTest(stem=stem):
+                profile = load_json_profile(stem)
+                self.assertIsNotNone(profile)
+                self.assertEqual(profile["suite_id"], "vllm")
+
+    def test_distributed_cell_uses_bound_threshold_key(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = load_variant(
+            root / "input/config_file/inference/vllm/mi3xx_vllm_llama33-70b_fp8_distributed.json",
+            {"username": "test"},
+        )
+        variant.bind_effective_topology(EffectiveVllmTopology("distributed", ("node0", "node1"), 2))
+        cell_id = variant.expected_cells()[0]
+        variant.enforce_thresholds = True
+        variant.thresholds = {cell_id: {"client.output_throughput": {"kind": "min_tok_s", "value": 1000.0}}}
+        combo = variant.sweep.sequence_combinations[0]
+        run = variant.sweep.runs[0]
+        key = (variant.model.id, "", combo.isl, combo.osl, combo.name, run.concurrency)
+        profile = load_json_profile("vllm_distributed")
+        payload = build_inference_report_payload(
+            config=build_inference_config_from_profile(profile),
+            variant_config=variant,
+            inf_res_dict={key: {"node0": {"client.output_throughput": 500.0}}},
+            lifecycle_report={},
+        )
+        self.assertEqual(payload["cells"][0]["cell_id"], cell_id)
+        self.assertEqual(payload["cells"][0]["tiers"]["throughput"], "fail")
+        self.assertEqual(payload["overall_status"], "fail")
 
 
 if __name__ == "__main__":

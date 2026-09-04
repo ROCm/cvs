@@ -10,6 +10,8 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
+from cvs.lib.inference.vllm_topology import resolve_vllm_topology, scope_vllm_cluster
+from cvs.lib.inference.utils.inferencing_config_loader import validate_thresholds_cover_sweep
 from cvs.lib.inference.utils.vllm_config_loader import load_variant
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 
@@ -78,7 +80,7 @@ def lifecycle():
 
 
 @pytest.fixture(scope="module")
-def orch(cluster_dict, variant_config, lifecycle):
+def orch(cluster_dict, variant_config, lifecycle, vllm_mode):
     """Construct a ContainerOrchestrator and own ONLY its teardown safety net.
 
     The actual launch/sshd happen in test_launch_container / test_setup_sshd
@@ -92,20 +94,48 @@ def orch(cluster_dict, variant_config, lifecycle):
     # variant ONTO the cluster block so cluster-set scalar/dict keys survive, with the
     # variant winning on conflicting keys. (List keys like runtime.args are replaced
     # here but recombined additively downstream in container.py's getters.)
+    suite_cluster = scope_vllm_cluster(vllm_mode, cluster_dict)
     container_block = _deep_merge(
-        cluster_dict.get("container", {}),
+        suite_cluster.get("container", {}),
         variant_config.container.model_dump(),
     )
     testsuite_config = {
         "orchestrator": "container",
         "container": container_block,
     }
-    cfg = OrchestratorConfig.from_configs(cluster_dict, testsuite_config)
+    cfg = OrchestratorConfig.from_configs(suite_cluster, testsuite_config)
     o = OrchestratorFactory.create_orchestrator(log, cfg)
     yield o
     if not lifecycle.torn_down:
         log.info("orch fixture leak-guard: tearing down container (explicit teardown did not run)")
         o.teardown_containers()
+
+
+@pytest.fixture(scope="module")
+def vllm_mode(request):
+    stem = request.module.__name__.rsplit(".", 1)[-1]
+    if stem == "vllm_single":
+        return "single"
+    if stem == "vllm_distributed":
+        return "distributed"
+    pytest.fail(f"vLLM suite must be vllm_single or vllm_distributed, got {stem!r}")
+
+
+@pytest.fixture(scope="module")
+def vllm_targets(orch, variant_config, vllm_mode):
+    try:
+        topology = resolve_vllm_topology(vllm_mode, variant_config, orch.hosts)
+    except ValueError as exc:
+        pytest.fail(str(exc))
+
+    variant_config.bind_effective_topology(topology)
+    validate_thresholds_cover_sweep(
+        expected_cells=variant_config.expected_cells(),
+        thresholds=variant_config.thresholds,
+        enforce_thresholds=variant_config.enforce_thresholds,
+        gated_metrics=set(),
+    )
+    return topology.target_groups
 
 
 @pytest.fixture(scope="module")

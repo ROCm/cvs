@@ -13,13 +13,10 @@ from cvs.lib.report.types import InferenceReportConfig
 
 def sweep_cell_result_key(variant_config, seq_combo, isl, osl, concurrency) -> tuple:
     """Build an ``inf_res_dict`` lookup key for a sweep cell."""
-    cell_key_fn = getattr(variant_config, "cell_key", None)
-    if callable(cell_key_fn):
-        return cell_key_fn(isl, osl, concurrency)
     model = getattr(getattr(variant_config, "model", None), "id", "")
     gpu = getattr(variant_config, "gpu_arch", "")
-    policy = seq_combo.get("policy", "default") if isinstance(seq_combo, dict) else "default"
-    return (model, gpu, str(isl), str(osl), str(policy), int(concurrency))
+    name = seq_combo.get("name", "default") if isinstance(seq_combo, dict) else "default"
+    return (model, gpu, str(isl), str(osl), str(name), int(concurrency))
 
 
 def _highlight_metric(item, report_config: InferenceReportConfig, cell: dict) -> Optional[str]:
