@@ -26,6 +26,11 @@ is absent, but keeping one pair per directory avoids the trap entirely.
 | `single` | 1 | first cluster host only |
 | `distributed` | 2 | exactly two cluster hosts form one service |
 
+For mapping-style `node_dict`, "first cluster host" means the first JSON key in
+insertion order. `vllm_single` scopes the cluster to that host and rewrites
+`head_node_dict.mgmt_ip` to match, even when the original head names another
+node. Put the intended single-node target first in `node_dict`.
+
 TP is **per model**, following the source workload list: TP=4 for
 `deepseek-v4-flash`, `kimi-k26`, `kimi-k25` and `gpt-oss-120b`; TP=8 for
 everything else. A TP=4 distributed variant still spans 2 nodes via PP=2,

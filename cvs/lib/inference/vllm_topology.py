@@ -22,8 +22,10 @@ class EffectiveVllmTopology:
 def scope_vllm_cluster(mode, cluster):
     """Return the cluster used by the selected suite.
 
-    ``vllm_single`` is intentionally first-host-only. Distributed runs retain
-    the complete cluster and use their normal single-host fallback when needed.
+    ``vllm_single`` is intentionally first-host-only. For mapping-style
+    ``node_dict``, "first" means JSON insertion order; the scoped head is
+    rewritten to that host. Distributed runs retain the complete cluster and
+    use their normal single-host fallback when needed.
     """
     if mode != "single":
         return cluster

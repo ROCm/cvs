@@ -8,6 +8,10 @@ Run vLLM inference benchmarks
 
 The vLLM suites measure LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` supports one-host fallback or the current two-host distributed recipes; larger clusters require an explicit recipe and calibrated thresholds.
 
+For a mapping-style ``node_dict``, "first cluster host" is the first JSON key
+in insertion order. ``vllm_single`` rewrites ``head_node_dict.mgmt_ip`` to that
+host, so put the intended single-node target first in ``node_dict``.
+
 This page walks through a first run. For the full schema, every metric, and the threshold grammar, see :doc:`/reference/configuration-files/inference/vllm`.
 
 Prerequisites

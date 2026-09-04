@@ -23,7 +23,7 @@ class TestVllmTopology(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "first host"):
             build_vllm_targets("single", _variant(), ["node0", "node1"])
 
-    def test_single_cluster_scope_keeps_only_first_node(self):
+    def test_single_scope_uses_insertion_order_and_overwrites_configured_head(self):
         cluster = {
             "node_dict": {"node0": {"vpc_ip": "10.0.0.1"}, "node1": {"vpc_ip": "10.0.0.2"}},
             "head_node_dict": {"mgmt_ip": "node1"},
