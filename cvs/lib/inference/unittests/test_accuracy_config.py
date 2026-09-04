@@ -51,18 +51,23 @@ def _dupes_message(exc):
 
 
 class TestAccuracyTaskDefaults(unittest.TestCase):
-    """AC12, AC23, AC24: defaults, empty-string id, include_path (no I/O)."""
+    """Defaults mirror the pinned lm-eval 0.4.12 surface."""
 
     def test_defaults_on_minimal_task(self):
         t = AccuracyTask(id="a", task="gsm8k")
         self.assertEqual(t.id, "a")
         self.assertEqual(t.task, "gsm8k")
-        self.assertEqual(t.num_fewshot, 0)
+        self.assertEqual(t.tasks, "gsm8k")
+        self.assertIsNone(t.num_fewshot)
+        self.assertEqual(t.batch_size, "1")
+        self.assertEqual(t.device, "cuda:0")
         self.assertEqual(t.metadata, {})
-        self.assertEqual(t.include_path, "")
+        self.assertIsNone(t.include_path)
         self.assertEqual(t.num_concurrent, 8)
         self.assertIs(t.apply_chat_template, False)
         self.assertEqual(t.gen_kwargs, {})
+        self.assertEqual(t.seed, [0, 1234, 1234, 1234])
+        self.assertEqual(t.exec_timeout_sec, 4 * 60 * 60)
 
     def test_empty_string_id_is_valid(self):
         # AC23: "" is a valid id, not treated as missing.
@@ -80,6 +85,7 @@ class TestAccuracyTaskDefaults(unittest.TestCase):
         t2 = AccuracyTask(id="b", task="gsm8k")
         self.assertIsNot(t1.metadata, t2.metadata)
         self.assertIsNot(t1.gen_kwargs, t2.gen_kwargs)
+        self.assertIsNot(t1.seed, t2.seed)
 
 
 class TestAccuracyTaskRequiredFields(unittest.TestCase):
@@ -107,9 +113,7 @@ class TestAccuracyTaskExplicitNone(unittest.TestCase):
         for field in (
             "id",
             "task",
-            "num_fewshot",
             "metadata",
-            "include_path",
             "num_concurrent",
             "apply_chat_template",
             "gen_kwargs",
@@ -199,9 +203,13 @@ class TestAccuracyTaskBoolCoercion(unittest.TestCase):
         t = _task(apply_chat_template=False)
         self.assertIs(t.apply_chat_template, False)
 
-    def test_non_bool_word_raises(self):
-        with self.assertRaises(ValidationError):
-            _task(apply_chat_template="maybe")
+    def test_template_name_is_accepted(self):
+        task = _task(apply_chat_template="chatml")
+        self.assertEqual(task.apply_chat_template, "chatml")
+
+    def test_boolean_template_strings_keep_boolean_meaning(self):
+        self.assertIs(_task(apply_chat_template="false").apply_chat_template, False)
+        self.assertIs(_task(apply_chat_template="1").apply_chat_template, True)
 
 
 class TestAccuracyTaskStringTyping(unittest.TestCase):
@@ -227,6 +235,58 @@ class TestAccuracyTaskExtraForbid(unittest.TestCase):
     def test_unknown_field_raises(self):
         with self.assertRaises(ValidationError):
             AccuracyTask(id="a", task="gsm8k", extra_field=1)
+
+
+class TestAccuracyTaskLmEvalSurface(unittest.TestCase):
+    def test_accepts_every_exposed_lm_eval_0412_option(self):
+        task = AccuracyTask(
+            id="all",
+            tasks=["hellaswag", "gsm8k"],
+            backend="vllm",
+            lm_eval_model="local-completions",
+            extra_model_args="tokenizer_backend=huggingface",
+            num_fewshot=5,
+            batch_size="auto:4",
+            max_batch_size=8,
+            device="cuda:0",
+            gen_kwargs={"temperature": 0},
+            limit=100,
+            samples={"hellaswag": [0, 1]},
+            use_cache="/tmp/cache.db",
+            cache_requests="refresh",
+            check_integrity=True,
+            system_instruction="Answer concisely.",
+            apply_chat_template="chatml",
+            fewshot_as_multiturn=False,
+            include_path="/tmp/tasks",
+            predict_only=True,
+            seed=[1, None, 3, 4],
+            trust_remote_code=True,
+            confirm_run_unsafe_code=True,
+            metadata={"difficulty": "easy"},
+            exec_timeout_sec=7200,
+        )
+        self.assertEqual(task.task_names(), ["hellaswag", "gsm8k"])
+        self.assertEqual(task.task, "hellaswag,gsm8k")
+        self.assertEqual(task.resolved_lm_eval_model, "local-completions")
+
+    def test_task_is_accepted_as_legacy_alias(self):
+        task = AccuracyTask(id="a", task="gsm8k")
+        self.assertEqual(task.tasks, "gsm8k")
+
+    def test_task_and_tasks_must_agree(self):
+        with self.assertRaises(ValidationError):
+            AccuracyTask(id="a", task="gsm8k", tasks="hellaswag")
+
+    def test_rejects_invalid_seed_length(self):
+        for seed in ([1, 2], [1, 2, 3, 4, 5]):
+            with self.subTest(seed=seed):
+                with self.assertRaises(ValidationError):
+                    AccuracyTask(id="a", task="gsm8k", seed=seed)
+
+    def test_seed_accepts_upstream_single_and_three_value_forms(self):
+        self.assertEqual(AccuracyTask(id="a", task="gsm8k", seed=42).seed, [42, 42, 42, 42])
+        self.assertEqual(AccuracyTask(id="a", task="gsm8k", seed="1,None,3").seed, [1, None, 3, 1234])
 
 
 class TestAccuracyConfigConstruction(unittest.TestCase):
@@ -463,16 +523,7 @@ class TestValidationPrecedence(unittest.TestCase):
         with self.assertRaises(ValidationError) as ctx:
             AccuracyConfig(tasks=[{"id": "a", "task": "gsm8k"}, {"id": "a"}])
         msg = str(ctx.exception)
-        # The missing required 'task' field on element index 1 is what surfaces.
-        # Assert the fully-qualified error location "tasks.1.task" rather than a
-        # bare "task": the parent field name "tasks" means a plain "task"
-        # substring would also match "tasks.1.id" (i.e. the *other* field being
-        # the one missing), so it cannot tell which required field failed.
-        self.assertIn("tasks.1.task", msg)
-        self.assertTrue(
-            ("Field required" in msg) or ("missing" in msg),
-            f"expected a missing-required-field marker, got: {msg}",
-        )
+        self.assertIn("one of tasks or task is required", msg)
         # ...and the duplicate-id validator must NOT have run.
         self.assertNotIn("duplicate task id(s):", msg)
 
@@ -486,13 +537,32 @@ class TestModelFieldMembership(unittest.TestCase):
             set(AccuracyTask.model_fields),
             {
                 "id",
+                "tasks",
                 "task",
+                "backend",
+                "lm_eval_model",
+                "extra_model_args",
                 "num_fewshot",
-                "metadata",
-                "include_path",
+                "batch_size",
+                "max_batch_size",
+                "device",
+                "limit",
+                "samples",
+                "use_cache",
+                "cache_requests",
+                "check_integrity",
+                "system_instruction",
                 "num_concurrent",
                 "apply_chat_template",
+                "fewshot_as_multiturn",
+                "include_path",
                 "gen_kwargs",
+                "predict_only",
+                "seed",
+                "trust_remote_code",
+                "confirm_run_unsafe_code",
+                "metadata",
+                "exec_timeout_sec",
             },
         )
 
