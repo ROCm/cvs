@@ -119,6 +119,28 @@ def _normalize_cli_flags(raw: Any) -> list[str]:
     raise ValueError(f'add_flags must be a list or str, got {type(raw).__name__}')
 
 
+def _long_context_cli_flags(bp_dict: Mapping[str, Any]) -> list[str]:
+    """Build server flags required by an activated long-context workload."""
+    if bp_dict.get('lng_ctx_activate') is not True:
+        return []
+
+    required = {
+        'context_length': '--context-length',
+        'chunked_prefill_size': '--chunked-prefill-size',
+    }
+    flags = []
+    for key, option in required.items():
+        value = bp_dict.get(key)
+        if value in (None, ''):
+            raise ValueError(f'{key} is required when lng_ctx_activate is true')
+        flags.append(f'{option} {value}')
+
+    max_prefill_tokens = bp_dict.get('max_prefill_tokens')
+    if max_prefill_tokens not in (None, ''):
+        flags.append(f'--max-prefill-tokens {max_prefill_tokens}')
+    return flags
+
+
 def add_export_env_block(bp_dict: Mapping[str, Any], indent: str = '                      ') -> str:
     """Shell ``export`` lines from ``bp_dict['add_export_env']``."""
     env = _normalize_key_value_list(bp_dict.get('add_export_env'), 'add_export_env')
@@ -127,7 +149,7 @@ def add_export_env_block(bp_dict: Mapping[str, Any], indent: str = '            
 
 def add_cli_flags_block(bp_dict: Mapping[str, Any], indent: str = '                              ') -> str:
     """Extra ``launch_server`` CLI flag lines from ``bp_dict['add_flags']``."""
-    flags = _normalize_cli_flags(bp_dict.get('add_flags'))
+    flags = _normalize_cli_flags(bp_dict.get('add_flags')) + _long_context_cli_flags(bp_dict)
     if not flags:
         return ''
     return '\n'.join(f'{indent}{flag} \\' for flag in flags)
