@@ -51,8 +51,8 @@ Set up config
      cvs copy-config inference/sglang/mi3xx_sglang_llama_70b_single.json \
        --output ~/cvs_workspace/mi3xx_sglang_llama_70b_single.json
 
-     cvs copy-config inference/sglang/mi3xx_sglang_llama_70b_threshold.json \
-       --output ~/cvs_workspace/mi3xx_sglang_llama_70b_threshold.json
+     cvs copy-config inference/sglang/mi325_sglang_llama_70b_threshold.json \
+       --output ~/cvs_workspace/mi325_sglang_llama_70b_threshold.json
 
 3. Copy a cluster file (container backend recommended):
 
@@ -60,8 +60,8 @@ Set up config
 
      cvs copy-config cluster_container.json --output ~/cvs_workspace/cluster.json
 
-4. Edit the config — set ``container_image``, replace every ``<changeme>`` with
-   cluster-specific values, and ensure ``threshold_file`` resolves to your threshold JSON.
+4. Edit the config — set ``container.image``, replace every ``<changeme>`` with
+   cluster-specific values, and ensure ``threshold_json`` resolves to your threshold JSON.
 
 Shipped config templates:
 
@@ -86,8 +86,9 @@ Shipped config templates:
 
 .. note::
 
-  When a config's ``benchmark_params`` block has more than one variant key, export
-  ``SGLANG_BENCHMARK_KEY`` (for example ``llama-70b`` or ``deepseek-r1``) before running.
+  Shipped templates are a single workload per file. ``sweep.runs`` selects which
+  ``ISL,OSL,TP,PP,CONC`` cells to parametrize; empty ``runs`` uses every performance
+  cell in the threshold JSON.
 
 .. _sglang-run-tests:
 
@@ -118,8 +119,10 @@ List stages in a suite:
     - test_print_results_table
     - test_teardown
 
-``test_run_performance_benchmark_test`` is parametrized once per ISL/OSL/concurrency cell
-defined in the threshold file (for example ``isl1024-osl1024-c64``).
+``test_run_performance_benchmark_test`` is parametrized once per combo in ``sweep.runs``
+(for example ``isl1024-osl1024-c64``). Empty ``runs`` uses every performance cell in the
+threshold file. TP/PP in the combo may differ from the threshold-file key; matching is
+exact, then unique ``ISL,OSL,CONC``.
 
 Example run:
 
@@ -219,12 +222,12 @@ Key lifecycle stages to watch:
 - **Server ready** — ``test_poll_for_server_ready`` waits for the SGLang server log to show ready.
 - **Smoke** — ``test_openai_compatible_http_endpoints`` probes the OpenAI-compatible API.
 - **Performance** — ``test_run_performance_benchmark_test`` runs ``sglang.bench_serving`` for each
-  threshold cell. Set ``enforce_thresholds: false`` under ``bench_serv_random`` to record metrics
-  without failing on unc calibrated gates.
+  selected sweep cell. Set top-level ``enforce_thresholds: false`` to record metrics
+  without failing on uncalibrated gates.
 - **Accuracy** — ``test_run_lm_eval_hellaswag_benchmark_test`` and
-  ``test_run_lm_eval_gsm8k_benchmark_test`` run lm-eval tasks configured in ``inference_tests``.
+  ``test_run_lm_eval_gsm8k_benchmark_test`` run lm-eval tasks configured in ``accuracy.tasks``.
 - **Summary** — ``test_print_results_table`` prints throughput/latency/accuracy in the console and
   report.
 - **Teardown** — ``test_teardown`` stops containers even when a prior stage failed.
 
-Logs are written under ``log_dir`` from the config (default ``/home/{user-id}/LOGS/sglang``).
+Logs are written under ``paths.log_dir`` from the config (default ``/home/{user-id}/LOGS/sglang``).
