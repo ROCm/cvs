@@ -493,7 +493,13 @@ class SglangSingleVariantConfig(BaseVariantConfig):
 
 
 def orchestrator_container_from_variant(variant: SglangSingleVariantConfig) -> dict[str, Any]:
-    """``container`` block for ``OrchestratorConfig`` (includes server env)."""
+    """``container`` block for ``OrchestratorConfig`` (includes server env).
+
+    ``runtime.args.env`` is dropped: the container runtime renders ``-e`` flags
+    only from the top-level ``env`` here, and it holds list values
+    (``ADD_EXPORT_ENV``) that have no ``docker run`` representation. The scalar
+    entries are already flattened into ``roles.server.env`` by the loader.
+    """
     block = variant.container.model_dump()
     runtime = dict(block.get("runtime") or {})
     runtime_args = {key: value for key, value in dict(runtime.get("args") or {}).items() if key != "env"}
