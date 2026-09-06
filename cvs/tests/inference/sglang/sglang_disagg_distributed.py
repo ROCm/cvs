@@ -106,7 +106,7 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
     results = im_obj.verify_openai_compatible_endpoints()
     lifecycle.smoke_results = results
     lifecycle.complete_stage(request, "smoke_endpoints", t0)
-    
+
 
 # def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
 #     globals.error_list = []
