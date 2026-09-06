@@ -47,7 +47,7 @@ from cvs.lib.inference.sglang.sglang_config_loader import (
     flat_expected_from_specs,
     load_variant,
     orchestrator_container_from_variant,
-    perf_cells_from_thresholds,
+    perf_cells_for_variant,
 )
 from cvs.lib.inference.sglang.sglang_disagg_lib import SglangDisaggPD
 from cvs.lib.inference.sglang.sglang_distributed_lib import SglangDistributed
@@ -271,9 +271,9 @@ def pytest_generate_tests(metafunc):
 
     if "perf_cell" in metafunc.fixturenames:
         variant = load_variant(config_file, cluster_dict)
-        cells = perf_cells_from_thresholds(variant.thresholds)
+        cells = perf_cells_for_variant(variant)
         if not cells:
-            pytest.fail(f"No ISL=... performance cells in thresholds for {config_file!r}")
+            pytest.fail(f"No selected ISL=... performance cells for {config_file!r}")
         ids = [f"isl{c['isl']}-osl{c['osl']}-c{c['conc']}" for c in cells]
         metafunc.parametrize("perf_cell", cells, ids=ids)
 
