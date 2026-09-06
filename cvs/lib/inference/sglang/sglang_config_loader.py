@@ -520,7 +520,6 @@ def _accuracy_tasks_to_inference_tests(accuracy: Mapping[str, Any]) -> dict[str,
 
 
 _RUNTIME_ENV_TO_INFERENCE = {
-    "NCCL_IB_HCA_LIST": "nccl_ib_hca_list",
     "NCCL_IB_HCA": "nccl_ib_hca",
     "HCA_ID_PREFIX": "hca_id_prefix",
     "NCCL_SOCKET_IFNAME": "nccl_socket_ifname",
