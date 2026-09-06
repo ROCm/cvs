@@ -542,7 +542,7 @@ def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]
 
     if new_layout:
         benchmark = dict(raw.get("benchmark_params") or {})
-        benchmark.setdefault("enforce_thresholds", raw.get("enforce_thresholds", True))
+        benchmark["enforce_thresholds"] = raw.get("enforce_thresholds", True)
         inference_tests = {"bench_serv_random": benchmark}
     else:
         inference_tests = dict(params.get("inference_tests") or {})
