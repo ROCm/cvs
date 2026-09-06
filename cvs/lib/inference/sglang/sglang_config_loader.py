@@ -124,6 +124,22 @@ def perf_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, 
     return cells
 
 
+def selected_sweep_combo_keys(
+    sweep: Mapping[str, Any] | None,
+    threshold_cells: list[Mapping[str, Any]],
+) -> list[str]:
+    """Return combo keys to run from ``sweep.runs``, or every threshold cell if ``runs`` is empty."""
+    runs = (sweep or {}).get("runs") or []
+    if not runs:
+        return [str(cell["cell_key"]) for cell in threshold_cells]
+
+    combo_keys = []
+    for run in runs:
+        combo = run.get("combo") if isinstance(run, Mapping) else run
+        combo_keys.append(str(combo or "").strip())
+    return combo_keys
+
+
 def perf_cells_for_variant(variant: "SglangSingleVariantConfig") -> list[dict[str, Any]]:
     """Return configured performance cells with per-cell benchmark overrides."""
     threshold_cells = perf_cells_from_thresholds(variant.thresholds)
@@ -132,19 +148,7 @@ def perf_cells_for_variant(variant: "SglangSingleVariantConfig") -> list[dict[st
     for cell in threshold_cells:
         by_shape.setdefault((cell["isl"], cell["osl"], cell["conc"]), []).append(cell)
     base_benchmark = dict((variant.benchmark_params.get("inference_tests") or {}).get("bench_serv_random") or {})
-    tp = str(variant.benchmark_params.get("tensor_parallelism", "8"))
-    pp = str(variant.benchmark_params.get("pipeline_parallelism", "1"))
-    configured_runs = (variant.sweep or {}).get("runs") or []
-
-    if configured_runs:
-        combo_keys = []
-        for run in configured_runs:
-            combo = run.get("combo") if isinstance(run, Mapping) else run
-            combo_keys.append(str(combo or "").strip())
-    else:
-        combo_keys = [
-            f"ISL={cell['isl']},OSL={cell['osl']},TP={tp},PP={pp},CONC={cell['conc']}" for cell in threshold_cells
-        ]
+    combo_keys = selected_sweep_combo_keys(variant.sweep, threshold_cells)
 
     cells = []
     seen = set()
