@@ -314,6 +314,12 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
         self.assertFalse(params['inference_tests']['bench_serv_random']['enforce_thresholds'])
         self.assertEqual(params['add_export_env'], ['SGLANG_USE_AITER=1'])
         self.assertEqual(server['env']['NCCL_IB_HCA'], 'rdma0')
+        # ADD_EXPORT_ENV is expanded into individual keys; the aggregate name must
+        # not survive, since its repr would break `docker run -e KEY=VALUE`.
+        self.assertEqual(server['env']['SGLANG_USE_AITER'], '1')
+        self.assertNotIn('ADD_EXPORT_ENV', server['env'])
+        for key, value in server['env'].items():
+            self.assertNotIn(' ', value, f'{key} carries an unquotable space: {value!r}')
 
 
 class TestUnifiedPackagedConfigs(unittest.TestCase):
@@ -379,6 +385,8 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                 # only, and cannot represent the ADD_EXPORT_ENV list.
                 self.assertNotIn('env', container['runtime']['args'])
                 self.assertIn('volumes', container['runtime']['args'])
+                self.assertNotIn('ADD_EXPORT_ENV', container['env'])
+                self.assertEqual(container['env']['SGLANG_USE_AITER'], '1')
                 perf_cells = loader.perf_cells_for_variant(variant)
                 self.assertEqual(
                     [cell['cell_key'] for cell in perf_cells],
