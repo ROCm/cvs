@@ -96,6 +96,27 @@ class TestSglangCommonHelpers(unittest.TestCase):
 
         self.assertEqual(block, '--attention-backend aiter \\')
 
+    def test_add_cli_flags_block_omits_chunked_prefill_for_decode(self):
+        block = sglang_common.add_cli_flags_block(
+            {
+                'add_flags': ['--attention-backend aiter'],
+                'lng_ctx_activate': True,
+                'context_length': '262144',
+                'chunked_prefill_size': '8192',
+                'max_prefill_tokens': '8192',
+            },
+            indent='',
+            include_chunked_prefill=False,
+        )
+
+        self.assertEqual(
+            block.splitlines(),
+            [
+                '--attention-backend aiter \\',
+                '--context-length 262144 \\',
+            ],
+        )
+
     def test_add_cli_flags_block_requires_long_context_parameters(self):
         with self.assertRaisesRegex(ValueError, 'chunked_prefill_size'):
             sglang_common.add_cli_flags_block(

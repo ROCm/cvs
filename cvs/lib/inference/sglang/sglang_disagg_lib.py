@@ -560,7 +560,7 @@ class SglangDisaggPD:
         decode_node_list = self.decode_node_list
         log.info('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
         dist_init_addr = f"{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_coordinator_port']}"
-        flags_block = add_cli_flags_block(self.bp_dict, indent='    ')
+        flags_block = add_cli_flags_block(self.bp_dict, indent='    ', include_chunked_prefill=False)
 
         for i in range(0, int(self.decode_nnodes)):
             node = decode_node_list[i]
