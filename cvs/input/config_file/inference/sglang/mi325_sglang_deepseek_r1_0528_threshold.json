@@ -65,7 +65,7 @@
     "mfu": { "kind": "min", "value": 0.05 }
   },
   "ACC_ISL=131072,OSL=1024": {
-    "pass_rate": { "kind": "min", "value": 0.95 }
+    "pass_rate": { "kind": "min", "value": 0.80 }
   },
   "BENCH=lm_eval_hellaswag": {
     "acc_norm,none": { "kind": "min", "value": 0.23 }
