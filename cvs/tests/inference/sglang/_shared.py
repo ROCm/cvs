@@ -40,13 +40,14 @@ SGLANG_TEST_ORDER = {
     "test_poll_for_server_ready": 5,
     "test_launch_proxy_router": 6,
     "test_openai_compatible_http_endpoints": 7,
-    "test_run_lm_eval_hellaswag_benchmark_test": 8,
-    "test_run_lm_eval_gsm8k_benchmark_test": 9,
-    "test_run_performance_benchmark_test": 10,
-    "test_verify_dmesg_after_benchmark": 11,
-    "test_disagg_gpu_topology": 12,
-    "test_print_results_table": 13,
-    "test_teardown": 14,
+    "test_run_long_context_accuracy": 8,
+    "test_run_lm_eval_hellaswag_benchmark_test": 9,
+    "test_run_lm_eval_gsm8k_benchmark_test": 10,
+    "test_run_performance_benchmark_test": 11,
+    "test_verify_dmesg_after_benchmark": 12,
+    "test_disagg_gpu_topology": 13,
+    "test_print_results_table": 14,
+    "test_teardown": 15,
 }
 
 # Stable test order for sglang_single (one unified server, no PD).
