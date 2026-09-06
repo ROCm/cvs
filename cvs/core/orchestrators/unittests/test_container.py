@@ -67,7 +67,7 @@ class TestContainerOrchestrator(unittest.TestCase):
     def setUp(self):
         # Patch SSH transport + runtime factory for every test (replaces the
         # per-method @patch decorators). Mocks are torn down via addCleanup.
-        p_pssh = patch("cvs.core.orchestrators.baremetal.Pssh")
+        p_pssh = patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
         p_rf = patch("cvs.core.orchestrators.container.RuntimeFactory")
         self.mock_pssh = p_pssh.start()
         self.mock_rf = p_rf.start()
@@ -226,7 +226,8 @@ class TestContainerOrchestrator(unittest.TestCase):
     # setup_sshd single-node guard
     # ------------------------------------------------------------------
 
-    def test_setup_sshd_single_node_skips_and_returns_true(self):
+    @patch("cvs.core.orchestrators.container.is_managed_compute", return_value=False)
+    def test_setup_sshd_single_node_skips_and_returns_true(self, _managed):
         # The in-container sshd is only needed for multinode MPI. On a single-host
         # cluster setup_sshd must short-circuit: no exec into the container, no
         # dependency on the image shipping /usr/sbin/sshd.
@@ -247,7 +248,8 @@ class TestContainerOrchestrator(unittest.TestCase):
             orch.setup_sshd()
 
     @patch("time.sleep", lambda *_a, **_k: None)
-    def test_setup_sshd_multinode_attempts_setup(self):
+    @patch("cvs.core.orchestrators.container.is_managed_compute", return_value=False)
+    def test_setup_sshd_multinode_attempts_setup(self, _managed):
         # The guard must NOT skip a genuine multinode run: every setup command and
         # the final validation probe are exec'd into the container.
         orch, runtime = self._make(lifetime="per_run")
@@ -258,6 +260,13 @@ class TestContainerOrchestrator(unittest.TestCase):
         }
         self.assertTrue(orch.setup_sshd())
         self.assertTrue(runtime.exec.called)
+
+    @patch("cvs.core.orchestrators.container.is_managed_compute", return_value=True)
+    def test_setup_sshd_managed_run_skips(self, _managed):
+        orch, runtime = self._make(lifetime="per_run")
+        orch.container_id = "cvs_iter_test"
+        self.assertTrue(orch.setup_sshd())
+        runtime.exec.assert_not_called()
 
     def test_sshd_port_listen_probe_falls_back_to_dev_tcp(self):
         cmd = __import__(
@@ -319,7 +328,7 @@ class TestContainerOrchestratorExecForwarding(unittest.TestCase):
     """
 
     def setUp(self):
-        p_pssh = patch("cvs.core.orchestrators.baremetal.Pssh")
+        p_pssh = patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
         p_rf = patch("cvs.core.orchestrators.container.RuntimeFactory")
         self.mock_pssh = p_pssh.start()
         self.mock_rf = p_rf.start()
@@ -415,7 +424,7 @@ class TestResolveContainerLifetime(unittest.TestCase):
         # Baremetal path: empty container block stays empty (no lifetime injected).
         self.assertEqual(_resolve_container_lifetime({}), {})
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_orchestratorconfig_init_rejects_launch(self, _mock_pssh):
         # Direct construction routes through __init__ -> the same helper, so a
         # legacy launch flag is rejected identically to from_configs.

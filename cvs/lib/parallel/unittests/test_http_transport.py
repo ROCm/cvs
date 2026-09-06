@@ -26,28 +26,48 @@ class TestHttpTransport(unittest.TestCase):
         self.mock_http.shutdown = AsyncMock(return_value={'h1': True})
         self.mock_http.rebuild = MagicMock()
         self.mock_http_cls.return_value = self.mock_http
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.token_file = str(Path(self.tmp.name) / 'secret')
+        Path(self.token_file).write_text('tok\n')
 
-    def _make(self, hosts=None, urls=None, token='tok'):
+    def _make(self, hosts=None, ports=None, token_file=None):
         hosts = list(hosts or ['h1'])
-        urls = urls if urls is not None else {host: f'http://{host}:9' for host in hosts}
-        transport = HttpTransport(hosts, agent_urls=urls, token=token)
+        ports = ports if ports is not None else {host: 9 for host in hosts}
+        transport = HttpTransport(
+            hosts,
+            agent_port_map=ports,
+            token_file=token_file or self.token_file,
+        )
         self.addCleanup(transport.destroy)
         return transport
 
     def test_is_base_transport(self):
         self.assertTrue(issubclass(HttpTransport, BaseTransport))
 
-    def test_missing_token_raises(self):
-        with self.assertRaisesRegex(ValueError, "non-empty token"):
-            HttpTransport(['h1'], agent_urls={'h1': 'http://h1:9'}, token='')
+    def test_empty_token_file_raises(self):
+        empty = str(Path(self.tmp.name) / 'empty')
+        Path(empty).write_text('\n')
+        with self.assertRaisesRegex(ValueError, "empty"):
+            HttpTransport(['h1'], agent_port_map={'h1': 9}, token_file=empty)
 
-    def test_missing_agent_urls_raises(self):
-        with self.assertRaisesRegex(ValueError, "agent_urls"):
-            HttpTransport(['h1'], agent_urls={}, token='tok')
+    def test_missing_token_file_raises(self):
+        with self.assertRaisesRegex(ValueError, "token_file"):
+            HttpTransport(['h1'], agent_port_map={'h1': 9}, token_file=None)
+
+    def test_missing_agent_port_map_raises(self):
+        with self.assertRaisesRegex(ValueError, "agent_port_map"):
+            HttpTransport(['h1'], agent_port_map={}, token_file=self.token_file)
 
     def test_unknown_host_raises(self):
         with self.assertRaisesRegex(ValueError, "No agent URL"):
-            self._make(hosts=['h1', 'missing'], urls={'h1': 'http://h1:9'})
+            self._make(hosts=['h1', 'missing'], ports={'h1': 9})
+
+    def test_builds_urls_from_ports(self):
+        self._make(hosts=['h1'], ports={'h1': 9000})
+        args, kwargs = self.mock_http_cls.call_args
+        self.assertEqual(args[0], {'h1': 'http://h1:9000'})
+        self.assertEqual(args[1], 'tok')
 
     def test_run_command_is_synchronous(self):
         transport = self._make()
@@ -210,10 +230,12 @@ class TestHttpTransportSharedFsCopy(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        self.token_file = str(self.root / 'secret')
+        Path(self.token_file).write_text('tok\n')
         self.transport = HttpTransport(
             ['h1', 'h2'],
-            agent_urls={'h1': 'http://h1:9', 'h2': 'http://h2:9'},
-            token='tok',
+            agent_port_map={'h1': 9, 'h2': 9},
+            token_file=self.token_file,
         )
         self.addCleanup(self.transport.destroy)
 

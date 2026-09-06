@@ -1418,7 +1418,13 @@ class TestParallelHandleHttpTransport(unittest.TestCase):
         transport.prune_exception_types = HttpTransport.prune_exception_types
         transport.remote_inactivity_timeout = HttpTransport.remote_inactivity_timeout
         mock_create.return_value = transport
-        handle = ParallelHandle(MagicMock(), hosts, transport='http', agent_urls={}, token='tok')
+        handle = ParallelHandle(
+            MagicMock(),
+            hosts,
+            transport='http',
+            agent_port_map={},
+            token_file='/dev/null',
+        )
         handle.log = MagicMock()
         return handle, transport, client
 

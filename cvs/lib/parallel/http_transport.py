@@ -23,8 +23,33 @@ _HEALTH_POLL_SECONDS = 0.1
 _LOOP_START_TIMEOUT_SECONDS = 5
 
 
+def _url_host(host):
+    return f"[{host}]" if ":" in host and not host.startswith("[") else host
+
+
+def _urls_from_ports(agent_port_map):
+    missing = [host for host, port in agent_port_map.items() if not port]
+    if missing:
+        raise ValueError(f"HTTP transport requires agent_port for host(s): {missing}")
+    return {host: f"http://{_url_host(host)}:{int(port)}" for host, port in agent_port_map.items()}
+
+
+def _read_token(token_file):
+    if not token_file:
+        raise ValueError("HTTP transport requires token_file")
+    with open(token_file, encoding="utf-8") as stream:
+        token = stream.read().strip()
+    if not token:
+        raise ValueError(f"agent token file is empty: {token_file}")
+    return token
+
+
 class _Completed:
-    """Stand-in for a parallel-ssh copy greenlet. ``get()`` is already finished."""
+    """Immediate copy result for ParallelHandle, which always calls ``get()``.
+
+    pssh copy_file returns greenlets; HTTP copy already ran shutil on this node,
+    so get() does not wait—it raises the captured error or returns None.
+    """
 
     def __init__(self, error=None):
         self._error = error
@@ -166,7 +191,7 @@ class _SyncHTTPClient:
     def _copy_one(self, src, dst, recurse):
         try:
             _copy_path(src, dst, recurse)
-        except Exception as exc:  # noqa: BLE001 - surfaced via greenlet-style get()
+        except Exception as exc:  # noqa: BLE001 - surfaced when the caller invokes get()
             return _Completed(exc)
         return _Completed()
 
@@ -199,12 +224,13 @@ class HttpTransport(BaseTransport):
     # /v1/exec returns finished output, so the agent applies the inactivity timeout.
     remote_inactivity_timeout = True
 
-    def __init__(self, hosts, *, agent_urls, token, connect_timeout=None, **client_kwargs):
-        if not token:
-            raise ValueError("HTTP transport requires a non-empty token")
-        if not agent_urls:
-            raise ValueError("HTTP transport requires agent_urls")
-        self._all_urls = dict(agent_urls)
+    def __init__(self, hosts, *, agent_port_map, token_file, connect_timeout=None, **client_kwargs):
+        token = _read_token(token_file)
+        if not agent_port_map:
+            raise ValueError("HTTP transport requires agent_port_map")
+        self._agent_port_map = dict(agent_port_map)
+        self._token_file = token_file
+        self._all_urls = _urls_from_ports(self._agent_port_map)
         self._token = token
         self._connect_timeout = connect_timeout
         self._client_kwargs = client_kwargs
@@ -262,8 +288,8 @@ class HttpTransport(BaseTransport):
     def client_for_hosts(self, hosts):
         return HttpTransport(
             hosts,
-            agent_urls=self._all_urls,
-            token=self._token,
+            agent_port_map=self._agent_port_map,
+            token_file=self._token_file,
             connect_timeout=self._connect_timeout,
             **self._client_kwargs,
         )

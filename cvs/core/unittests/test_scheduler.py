@@ -14,7 +14,15 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from cvs.core.scheduler import Scheduler, _running_in_job_step, detect_scheduler, is_managed_compute
+from cvs.core.scheduler import (
+    Scheduler,
+    _expand_hostlist,
+    _running_in_job_step,
+    detect_scheduler,
+    is_managed_compute,
+    scheduler_hosts,
+    scheduler_rank,
+)
 
 JOB_STEP_ENV = {"SLURM_JOB_ID": "123", "SLURM_STEP_ID": "0", "SLURM_PROCID": "0"}
 
@@ -159,6 +167,67 @@ class TestIsManagedCompute(unittest.TestCase):
         # plain SSH login to a managed head node) but this process was never
         # launched via srun, so it must not be treated as managed compute.
         self.assertFalse(is_managed_compute())
+
+
+class TestExpandHostlist(unittest.TestCase):
+    def test_plain_names(self):
+        self.assertEqual(_expand_hostlist("a,b"), ["a", "b"])
+
+    def test_padded_range_and_singletons(self):
+        self.assertEqual(
+            _expand_hostlist("crsuse2-m2m-[006-007,020,093,191,289]"),
+            [
+                "crsuse2-m2m-006",
+                "crsuse2-m2m-007",
+                "crsuse2-m2m-020",
+                "crsuse2-m2m-093",
+                "crsuse2-m2m-191",
+                "crsuse2-m2m-289",
+            ],
+        )
+
+    def test_multiple_bracket_groups(self):
+        self.assertEqual(_expand_hostlist("n[01-02],gpu[1-2]"), ["n01", "n02", "gpu1", "gpu2"])
+
+    def test_rejects_unbalanced_brackets(self):
+        with self.assertRaises(ValueError):
+            _expand_hostlist("node[01-02")
+
+
+class TestSchedulerHosts(unittest.TestCase):
+    @patch.dict(os.environ, {"SLURM_NODELIST": "node[01-02]"}, clear=True)
+    def test_expands_slurm_nodelist(self):
+        self.assertEqual(scheduler_hosts(), ["node01", "node02"])
+
+    @patch.dict(os.environ, {"SPUR_NODES": "a,b", "SLURM_NODELIST": "ignored"}, clear=True)
+    def test_prefers_spur_nodes(self):
+        self.assertEqual(scheduler_hosts(), ["a", "b"])
+
+    @patch.dict(os.environ, {"SLURM_NODELIST": "node[01-02"}, clear=True)
+    def test_invalid_hostlist_is_a_runtime_error(self):
+        with self.assertRaisesRegex(RuntimeError, "could not expand scheduler node list"):
+            scheduler_hosts()
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_requires_a_nodelist(self):
+        with self.assertRaisesRegex(RuntimeError, "SPUR_NODES or SLURM_NODELIST"):
+            scheduler_hosts()
+
+
+class TestSchedulerRank(unittest.TestCase):
+    def test_reads_procid_and_ntasks(self):
+        with patch.dict(os.environ, {"SLURM_PROCID": "1", "SLURM_NTASKS": "2"}, clear=True):
+            self.assertEqual(scheduler_rank(), (1, 2))
+
+    def test_requires_job_step_variables(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "SLURM_PROCID and SLURM_NTASKS"):
+                scheduler_rank()
+
+    def test_rejects_rank_outside_world_size(self):
+        with patch.dict(os.environ, {"SLURM_PROCID": "2", "SLURM_NTASKS": "2"}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "invalid managed rank"):
+                scheduler_rank()
 
 
 if __name__ == "__main__":

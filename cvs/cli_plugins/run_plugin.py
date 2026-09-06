@@ -1,11 +1,9 @@
-import asyncio
 import pytest
 import sys
 import os
 import json
 
-from cvs.core.agent.lifecycle import REGISTRATION_TIMEOUT_SECONDS, managed_rank, run_worker, start_rank0
-from cvs.core.agent.mesh import AgentMesh
+from cvs.core.agent.lifecycle import AgentRunner
 from cvs.core.run_layout import RunLayout
 from cvs.core.scheduler import is_managed_compute
 
@@ -44,7 +42,10 @@ class RunPlugin(ListPlugin):
         parser = subparsers.add_parser("run", help="Run a specific test (wrapper over pytest)")
         parser.add_argument("test", help="Name of the test file to run")
         parser.add_argument("function", nargs="*", help="Optional: specific test functions to run")
-        parser.add_argument("--cluster_file", required=True, help="Path to cluster configuration JSON file")
+        parser.add_argument(
+            "--cluster_file",
+            help="Path to cluster configuration JSON; optional on a scheduler-managed run",
+        )
         parser.add_argument("--config_file", required=True, help="Path to test configuration JSON file")
         parser.add_argument(
             "--workspace",
@@ -95,12 +96,12 @@ Run Commands:
   cvs run agfhc --html report.html   Run test and generate HTML report"""
 
     def run(self, args):
-        # Pre-flight, in this order, before pytest is reached at all. Worker ranks
-        # in a Slurm/Spur job never enter pytest, so the run layout -- the
-        # rendezvous those ranks read -- has to be resolved here rather than in the
-        # handoff that launches it. Inputs are checked first because creating
-        # directories for a mistyped suite name would litter shared storage.
-        self._validate_json_config(args.cluster_file, "--cluster_file")
+        managed = is_managed_compute()
+        if not managed and not args.cluster_file:
+            print("Error: --cluster_file is required outside a scheduler-managed run")
+            return sys.exit(1)
+        if args.cluster_file:
+            self._validate_json_config(args.cluster_file, "--cluster_file")
         self._validate_json_config(args.config_file, "--config_file")
         test_file = self._resolve_test_file(args.test)
 
@@ -109,13 +110,8 @@ Run Commands:
         except RuntimeError as e:
             print(f"Error: {e}")
             sys.exit(1)
-        # --workspace is a CLI argument, so any process we later spawn (pytest shard
-        # workers) would re-derive the layout from its own defaults and land on a
-        # different run_dir. Publishing the resolved answer keeps every descendant on
-        # the one directory this run already committed to.
-        os.environ["CVS_WORKSPACE"] = str(layout.workspace)
 
-        test_args = (
+        test_args = [
             test_file,
             args.function,
             args.cluster_file,
@@ -126,34 +122,31 @@ Run Commands:
             args.log_level,
             args.capture,
             getattr(args, "extra_pytest_args", []),
-        )
-        if not is_managed_compute():
+        ]
+        if not managed:
             return sys.exit(self.run_test(*test_args))
 
         try:
-            rank, world_size = managed_rank()
+            runner = AgentRunner(layout, cluster_file=args.cluster_file)
         except RuntimeError as e:
             print(f"Error: {e}")
             return sys.exit(1)
-        if rank != 0:
-            return sys.exit(run_worker(layout.agent_dir, rank, world_size))
 
-        coordinator = start_rank0(layout.agent_dir, world_size)
+        if not runner.is_rank0:
+            # Workers host the HTTP agent; only rank 0 coordinates and runs pytest.
+            return sys.exit(runner.start())
+
+        runner.start()
         try:
             try:
-                snapshot = coordinator.wait_for_registrations(REGISTRATION_TIMEOUT_SECONDS)
-            except (TimeoutError, asyncio.TimeoutError):
-                print("Warning: registration timeout expired; continuing with available ranks.")
-                snapshot = coordinator.registered_agents()
-            try:
-                AgentMesh.install_from_agent_dir(snapshot, layout.agent_dir)
+                cluster_file = runner.wait()
             except (ValueError, OSError) as e:
                 print(f"Error: {e}")
                 return sys.exit(1)
+            test_args[2] = cluster_file
             exit_code = self.run_test(*test_args)
         finally:
-            AgentMesh.reset()
-            coordinator.close()
+            runner.stop()
         return sys.exit(exit_code)
 
     def _resolve_test_file(self, test_name):

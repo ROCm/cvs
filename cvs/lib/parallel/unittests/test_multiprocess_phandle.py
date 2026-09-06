@@ -76,8 +76,8 @@ class TestMultiProcessParallelHandleInitialization(unittest.TestCase):
             self.host_list,
             config=config,
             transport='http',
-            agent_urls={host: f'http://{host}:9' for host in self.host_list},
-            token='tok',
+            agent_port_map={host: 9 for host in self.host_list},
+            token_file='/dev/null',
         )
 
         self.assertIsNotNone(mph.phandle)

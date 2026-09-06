@@ -67,6 +67,7 @@ class OrchestratorConfig:
     - priv_key_file: Path to SSH private key file [required, no default]
     - password: Optional SSH password (if not using key-based auth) [default: None]
     - head_node_dict: Optional head node configuration with 'mgmt_ip' key [default: {}]
+    - agent_token_file: Optional path to the managed HTTP agent token [default: None]
     - container: Optional container configuration for docker orchestrator [default: {}]
           Example container configuration:
           ```json
@@ -124,6 +125,7 @@ class OrchestratorConfig:
         self.priv_key_file = kwargs['priv_key_file']
         self.password = kwargs.get('password')
         self.head_node_dict = kwargs.get('head_node_dict', {})
+        self.agent_token_file = kwargs.get('agent_token_file')
         # Normalize here (not in from_configs) so direct construction is validated too.
         self.container = _resolve_container_lifetime(kwargs.get('container', {}))
 
@@ -148,8 +150,8 @@ class OrchestratorConfig:
         Args:
             cluster_config: Cluster configuration (dict or path to cluster_config.json)
                            Required keys: orchestrator, node_dict, username, priv_key_file
-                           Optional keys: container,
-                           head_node_dict, password (defaults provided for missing optional keys)
+                           Optional keys: container, head_node_dict, password,
+                           agent_token_file (defaults provided for missing optional keys)
                            Container structure: {lifetime: 'no_launch'|'per_run'|'persistent', runtime: {name: str, args: dict}, image: str, name: str, ...}
             testsuite_config: Test suite specific configuration (dict or path to <testsuite>_config.json)
                             Can override any keys from cluster_config
@@ -196,6 +198,7 @@ class OrchestratorConfig:
             'priv_key_file': merged_config.get('priv_key_file'),
             'password': merged_config.get('password'),
             'head_node_dict': merged_config.get('head_node_dict', {}),
+            'agent_token_file': merged_config.get('agent_token_file'),
             'container': merged_config.get('container', {}),
         }
 

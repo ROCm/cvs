@@ -10,10 +10,9 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # migrated rvs_cvs.py orch fixture. Mocks Pssh so tests run with no SSH.
 
 import unittest
-from types import SimpleNamespace
+import tempfile
 from unittest.mock import MagicMock, patch
 
-from cvs.core.agent.mesh import AgentMesh
 from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 
@@ -33,24 +32,24 @@ def _make_orch_config():
 
 
 class TestBaremetalOrchestrator(unittest.TestCase):
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_init_constructs_pssh_handles(self, mock_pssh):
         BaremetalOrchestrator(MagicMock(), _make_orch_config())
         # __init__ creates two Pssh handles: self.head and self.all.
         self.assertEqual(mock_pssh.call_count, 2)
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_init_sets_orchestrator_type(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         self.assertEqual(orch.orchestrator_type, "baremetal")
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_init_picks_first_node_as_head(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         # _make_orch_config inserts 10.0.0.1 first.
         self.assertEqual(orch.head_node, "10.0.0.1")
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_delegates_to_all_when_targeting_full_set(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         orch.all = MagicMock()
@@ -59,7 +58,7 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.all.exec.assert_called_once_with("ls", timeout=5, detailed=False, print_console=True)
         self.assertEqual(result, {"10.0.0.1": "ok", "10.0.0.2": "ok"})
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_on_head_delegates_to_head_handle(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         orch.head = MagicMock()
@@ -68,7 +67,7 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.head.exec.assert_called_once_with("hostname", timeout=10, detailed=False, print_console=True)
         self.assertEqual(result, {"10.0.0.1": "ok"})
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_forwards_print_console_false_to_all(self, _mock_pssh):
         """print_console=False must reach the pssh handle, not be swallowed here.
 
@@ -80,7 +79,7 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         orch.exec("cat /tmp/huge", print_console=False)
         self.assertIs(orch.all.exec.call_args.kwargs["print_console"], False)
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_forwards_print_console_false_to_host_subset(self, mock_pssh):
         """The subset branch builds its own Pssh; it must forward too.
 
@@ -101,19 +100,19 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         subset_handle = mock_pssh.return_value
         self.assertIs(subset_handle.exec.call_args.kwargs["print_console"], False)
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_on_head_forwards_print_console_false(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         orch.head = MagicMock()
         orch.exec_on_head("cat /tmp/huge", print_console=False)
         self.assertIs(orch.head.exec.call_args.kwargs["print_console"], False)
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_cleanup_returns_true(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         self.assertTrue(orch.cleanup(orch.hosts))
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_build_mpi_cmd_hostfile_cleanup_uses_sudo_prefix(self, _mock_pssh):
         # The stale-hostfile `rm -f` on the head node must be built from a single
         # deterministic prefix (via sudo_prefix()), never the old `cmd || sudo -n
@@ -141,7 +140,7 @@ class TestBaremetalOrchestrator(unittest.TestCase):
                 )
                 self.assertEqual(first_call_cmd, f"{sudo_prefix}rm -f /tmp/mpi_hosts.txt")
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_build_mpi_cmd_hostfile_write_uses_same_sudo_prefix_as_removal(self, _mock_pssh):
         # Regression test: the hostfile write must use the SAME sudo_prefix() as
         # the removal. If a prior run left /tmp/mpi_hosts.txt root-owned (sudo
@@ -165,7 +164,7 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         self.assertTrue(remove_cmd.startswith("sudo -n "))
         self.assertTrue(write_cmd.startswith("sudo -n "))
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_build_mpi_cmd_raises_on_hostfile_removal_failure(self, _mock_pssh):
         # A failed removal (e.g. permission denied against a stale, differently
         # -owned file) must abort loudly instead of silently proceeding to launch
@@ -184,7 +183,7 @@ class TestBaremetalOrchestrator(unittest.TestCase):
                     mpi_install_dir="/opt/mpi",
                 )
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_build_mpi_cmd_raises_on_hostfile_write_failure(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         orch.head = MagicMock()
@@ -209,7 +208,7 @@ class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
     """Covers BaremetalOrchestrator.sudo_prefix(): the probe-once mechanism that
     replaced with_sudo_fallback's per-command `cmd || sudo -n cmd` retry."""
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_sudo_prefix_returns_sudo_prefix_when_passwordless_sudo_available(self, mock_pssh):
         pssh_instance = MagicMock()
         pssh_instance.exec.return_value = {"10.0.0.1": "0", "10.0.0.2": "0"}
@@ -219,7 +218,7 @@ class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
 
         self.assertEqual(orch.sudo_prefix(), "sudo -n ")
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_sudo_prefix_returns_empty_when_sudo_unavailable(self, mock_pssh):
         pssh_instance = MagicMock()
         pssh_instance.exec.return_value = {"10.0.0.1": "1", "10.0.0.2": "1"}
@@ -229,7 +228,7 @@ class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
 
         self.assertEqual(orch.sudo_prefix(), "")
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_sudo_prefix_warns_on_host_disagreement_but_still_returns_a_value(self, mock_pssh):
         # AC: hosts disagreeing on sudo need must log a warning but must NOT
         # raise or branch per-host -- the fleet-wide answer is the head node's
@@ -244,7 +243,7 @@ class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
         self.assertEqual(orch.sudo_prefix(), "sudo -n ")
         log.warning.assert_called_once()
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_sudo_prefix_disagreement_uses_head_node_not_dict_order(self, mock_pssh):
         # Regression test: the fleet-wide answer must come specifically from
         # the head node, not from whichever host the probe dict happens to
@@ -264,7 +263,7 @@ class TestBaremetalOrchestratorSudoPrefix(unittest.TestCase):
         self.assertEqual(orch.sudo_prefix(), "")
         log.warning.assert_called_once()
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_sudo_prefix_probes_at_most_once_across_multiple_calls(self, mock_pssh):
         # Regression test for the bug being fixed: the passwordless-sudo probe
         # must fire ONCE per orchestrator instance for its whole lifetime, no
@@ -289,7 +288,7 @@ class TestBaremetalOrchestratorSubsetHandleCleanup(unittest.TestCase):
     sshd's limit is hit.
     """
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_destroys_subset_handle(self, mock_pssh):
         # The timeout path is the one that leaks, so cleanup must not depend
         # on a clean return.
@@ -308,7 +307,7 @@ class TestBaremetalOrchestratorSubsetHandleCleanup(unittest.TestCase):
 
                 mock_pssh.return_value.destroy_clients.assert_called_once_with()
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_setup_env_destroys_subset_handle(self, mock_pssh):
         # Same subset branch as exec(); it has no callers today, but it is an
         # abstractmethod on the base class, so an implementation could reach it.
@@ -328,7 +327,7 @@ class TestBaremetalOrchestratorSubsetHandleCleanup(unittest.TestCase):
 
                 mock_pssh.return_value.destroy_clients.assert_called_once_with()
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_does_not_destroy_shared_all_handle(self, _mock_pssh):
         # self.all is long-lived and reused; tearing it down would break
         # every later call.
@@ -341,86 +340,72 @@ class TestBaremetalOrchestratorSubsetHandleCleanup(unittest.TestCase):
 
 
 class TestBaremetalOrchestratorHttpTransport(unittest.TestCase):
-    """_make_orch_config() names hosts 10.0.0.1/10.0.0.2, the management-IP style a real
-    cluster file uses; agents register under scheduler node names, so these exercise the
-    AgentMesh.resolve() bridge rather than assuming the two namespaces already match."""
+    """Managed jobs use HTTP when the cluster file has agent endpoints."""
 
     def setUp(self):
-        AgentMesh.reset()
-        self.addCleanup(AgentMesh.reset)
-        AgentMesh.install(
-            {
-                0: SimpleNamespace(hostname="node01", port=9000),
-                1: SimpleNamespace(hostname="node02", port=9001),
-            },
-            "tok",
-        )
-        mapping = {
-            "node01": ["10.0.0.1"],
-            "node02": ["10.0.0.2"],
-            "10.0.0.1": ["10.0.0.1"],
-            "10.0.0.2": ["10.0.0.2"],
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.token_file = f"{self.temp_dir.name}/secret"
+        with open(self.token_file, "w", encoding="utf-8") as stream:
+            stream.write("tok\n")
+        self.config = _make_orch_config()
+        self.config.node_dict = {
+            "10.0.0.1": {"agent_port": 9000},
+            "10.0.0.2": {"agent_port": 9001},
         }
-        patcher = patch("cvs.core.agent.mesh._addresses", side_effect=lambda n: mapping.get(n, []))
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        self.expected_urls = {"10.0.0.1": "http://node01:9000", "10.0.0.2": "http://node02:9001"}
+        self.config.agent_token_file = self.token_file
+        self.expected_ports = {"10.0.0.1": 9000, "10.0.0.2": 9001}
 
     @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
-    def test_init_uses_http_transport_when_managed(self, mock_pssh, _managed):
-        BaremetalOrchestrator(MagicMock(), _make_orch_config())
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_init_uses_http_transport_when_agent_config_present(self, mock_pssh, _managed):
+        BaremetalOrchestrator(MagicMock(), self.config)
         self.assertEqual(mock_pssh.call_count, 2)
         for call in mock_pssh.call_args_list:
             self.assertEqual(call.kwargs["transport"], "http")
-            self.assertEqual(call.kwargs["agent_urls"], self.expected_urls)
-            self.assertEqual(call.kwargs["token"], "tok")
+            self.assertEqual(call.kwargs["token_file"], self.token_file)
+            self.assertEqual(call.kwargs["agent_port_map"], self.expected_ports)
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_unmanaged_stays_on_ssh_even_with_agent_config(self, mock_pssh):
+        BaremetalOrchestrator(MagicMock(), self.config)
+        for call in mock_pssh.call_args_list:
+            self.assertNotIn("token_file", call.kwargs)
+            self.assertEqual(call.kwargs.get("transport", "ssh"), "ssh")
 
     @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_subset_exec_forwards_http_kwargs(self, mock_pssh, _managed):
-        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch = BaremetalOrchestrator(MagicMock(), self.config)
         orch.all = MagicMock()
         mock_pssh.reset_mock()
         orch.exec("hostname", hosts=["10.0.0.2"])
         mock_pssh.assert_called_once()
         self.assertEqual(mock_pssh.call_args.args[1], ["10.0.0.2"])
         self.assertEqual(mock_pssh.call_args.kwargs["transport"], "http")
-        self.assertEqual(mock_pssh.call_args.kwargs["token"], "tok")
-        # The full map is forwarded; HttpTransport narrows it to the subset it was given.
-        self.assertEqual(mock_pssh.call_args.kwargs["agent_urls"], self.expected_urls)
+        self.assertEqual(mock_pssh.call_args.kwargs["token_file"], self.token_file)
+        self.assertEqual(mock_pssh.call_args.kwargs["agent_port_map"], self.expected_ports)
 
-    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
-    def test_cluster_host_without_an_agent_fails_at_construction(self, _pssh, _managed):
-        cfg = _make_orch_config()
-        cfg.node_dict = {"10.0.0.1": {}, "10.0.0.9": {}}
-        with self.assertRaises(ValueError) as ctx:
-            BaremetalOrchestrator(MagicMock(), cfg)
-        self.assertIn("10.0.0.9", str(ctx.exception))
-
-    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
-    def test_close_destroys_both_persistent_handles(self, mock_pssh, _managed):
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_close_destroys_both_persistent_handles(self, mock_pssh):
         mock_pssh.side_effect = lambda *args, **kwargs: MagicMock()
-        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch = BaremetalOrchestrator(MagicMock(), self.config)
         orch.close()
         orch.head.destroy_clients.assert_called_once_with()
         orch.all.destroy_clients.assert_called_once_with()
 
-    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=False)
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
-    def test_close_survives_a_handle_that_raises(self, mock_pssh, _managed):
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_close_survives_a_handle_that_raises(self, mock_pssh):
         mock_pssh.side_effect = lambda *args, **kwargs: MagicMock()
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         orch.head.destroy_clients.side_effect = OSError("already gone")
         orch.close()
         orch.all.destroy_clients.assert_called_once_with()
 
-    @patch("cvs.core.orchestrators.container.RuntimeFactory")
     @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
-    def test_container_orchestrator_stays_on_ssh_when_managed(self, mock_pssh, _managed, _runtime):
+    @patch("cvs.core.orchestrators.container.RuntimeFactory")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_container_orchestrator_uses_http_with_agent_config(self, mock_pssh, _runtime, _managed):
         from cvs.core.orchestrators.container import ContainerOrchestrator
 
         cfg = OrchestratorConfig(
@@ -436,11 +421,13 @@ class TestBaremetalOrchestratorHttpTransport(unittest.TestCase):
                 "name": "cvs_iter_test",
                 "runtime": {"name": "docker", "args": {}},
             },
+            agent_token_file=self.token_file,
         )
-        with patch("cvs.core.agent.mesh.AgentMesh.get") as mock_get:
-            ContainerOrchestrator(MagicMock(), cfg)
-        mock_get.assert_not_called()
-        self.assertNotIn("transport", mock_pssh.call_args.kwargs)
+        cfg.node_dict["10.0.0.1"]["agent_port"] = 9000
+        cfg.node_dict["10.0.0.2"]["agent_port"] = 9001
+        ContainerOrchestrator(MagicMock(), cfg)
+        self.assertEqual(mock_pssh.call_args.kwargs["transport"], "http")
+        self.assertEqual(mock_pssh.call_args.kwargs["token_file"], self.token_file)
 
 
 if __name__ == "__main__":

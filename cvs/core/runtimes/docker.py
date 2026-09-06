@@ -247,23 +247,11 @@ class DockerRuntime:
         """
         exec_cmd = f"{self.orchestrator.sudo_prefix()}docker exec {container_name} bash -c {shlex.quote(cmd)}"
         if hosts:
-            # Build a fresh Pssh for the host subset, mirroring
-            # BaremetalOrchestrator.exec's subset branch.
-            from cvs.lib.parallel_ssh_lib import Pssh
-
-            pssh = Pssh(
-                self.orchestrator.log,
-                hosts,
-                user=self.orchestrator.user,
-                password=self.orchestrator.password,
-                pkey=self.orchestrator.pkey,
-                host_key_check=False,
-                stop_on_errors=self.orchestrator.stop_on_errors,
-            )
+            phandle = self.orchestrator._phandle(hosts)
             try:
-                return pssh.exec(exec_cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+                return phandle.exec(exec_cmd, timeout=timeout, detailed=detailed, print_console=print_console)
             finally:
-                pssh.destroy_clients()
+                phandle.destroy_clients()
 
         return self.orchestrator.all.exec(exec_cmd, timeout=timeout, detailed=detailed, print_console=print_console)
 

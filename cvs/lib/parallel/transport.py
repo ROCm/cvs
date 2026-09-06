@@ -61,7 +61,7 @@ def create_transport(
         transport: Wire protocol selector (``'ssh'`` or ``'http'``).
         user, password, pkey: SSH credentials (ignored by non-SSH transports).
         transport_kwargs: Protocol-specific options forwarded to the transport.
-            HTTP requires ``agent_urls`` (host → base URL) and ``token``.
+            HTTP requires ``agent_port_map`` (host → port) and ``token_file``.
     """
     if transport == 'ssh':
         from cvs.lib.parallel.ssh_transport import SshTransport
