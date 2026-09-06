@@ -80,6 +80,46 @@ class TestPerfCellsForVariant(unittest.TestCase):
         self.assertEqual(cells[0]['benchmark_overrides'], {'num_prompts': '50'})
         self.assertEqual(cells[0]['benchmark_params']['num_prompts'], '50')
 
+    def test_empty_runs_uses_every_threshold_cell(self):
+        variant = mock.Mock(
+            thresholds=_THRESHOLDS,
+            benchmark_params={'tensor_parallelism': '8', 'pipeline_parallelism': '1'},
+            sweeps={},
+            sweep={'runs': []},
+        )
+
+        cells = loader.perf_cells_for_variant(variant)
+
+        self.assertEqual(
+            [cell['cell_key'] for cell in cells],
+            ['ISL=1024,OSL=1024,TP=8,PP=1,CONC=64', 'ISL=8192,OSL=1024,TP=8,PP=1,CONC=64'],
+        )
+
+    def test_selected_sweep_combo_keys_empty_runs(self):
+        threshold_cells = loader.perf_cells_from_thresholds(_THRESHOLDS)
+        self.assertEqual(
+            loader.selected_sweep_combo_keys({'runs': []}, threshold_cells),
+            [cell['cell_key'] for cell in threshold_cells],
+        )
+
+    def test_selected_sweep_combo_keys_listed_runs(self):
+        threshold_cells = loader.perf_cells_from_thresholds(_THRESHOLDS)
+        self.assertEqual(
+            loader.selected_sweep_combo_keys(
+                {
+                    'runs': [
+                        {'combo': 'ISL=1024,OSL=1024,TP=8,PP=1,CONC=64'},
+                        {'combo': 'ISL=1024,OSL=1024,TP=8,PP=1,CONC=128'},
+                    ]
+                },
+                threshold_cells,
+            ),
+            [
+                'ISL=1024,OSL=1024,TP=8,PP=1,CONC=64',
+                'ISL=1024,OSL=1024,TP=8,PP=1,CONC=128',
+            ],
+        )
+
     def test_rejects_combo_without_matching_threshold_shape(self):
         variant = mock.Mock(
             thresholds=_THRESHOLDS,
