@@ -424,9 +424,6 @@ The results table and threshold files use:
 - **Goodput** — fraction of successful requests.
 - **MFU** — model FLOPs utilization derived from ``model_num_params`` and ``peak_gpu_tflops``.
 
-The performance summary TP/PP columns come from the ``sweep.runs`` combo string. Expected
-values still come from the matched threshold cell (ISL/OSL/CONC).
-
 Troubleshooting
 ===============
 

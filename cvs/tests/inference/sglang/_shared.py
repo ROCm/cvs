@@ -157,8 +157,6 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
         )
 
     bp = (getattr(variant_config, "benchmark_params", None) or {}) if variant_config else {}
-    tp = bp.get("tensor_parallelism", "8")
-    pp = bp.get("pipeline_parallelism", "1")
 
     _ACC_CELL_RE = re.compile(r"^ACC_ISL=(?P<isl>\d+),OSL=(?P<osl>\d+)$")
 
@@ -190,40 +188,7 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                 ),
             )
 
-    _CELL_RE = re.compile(r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$")
     enforce_thresholds = perf_enforce_thresholds(bp)
-    performance_by_cell = phase_labels.get("performance_by_cell") or {}
-    if performance_by_cell:
-        summary_rows = []
-        for cell_id, result in sorted(
-            performance_by_cell.items(),
-            key=lambda kv: (int(m.group("isl")), int(m.group("osl")), int(m.group("conc")))
-            if (m := _CELL_RE.match(str(kv[0])))
-            else (0, 0, 0),
-        ):
-            m = _CELL_RE.match(str(cell_id))
-            if m:
-                summary_rows.append(
-                    [
-                        m.group("isl"),
-                        m.group("osl"),
-                        m.group("tp"),
-                        m.group("pp"),
-                        m.group("conc"),
-                        result,
-                    ]
-                )
-            else:
-                summary_rows.append(["-", "-", tp, pp, str(cell_id), result])
-
-        log.info(
-            "\n\n\n\n======== Performance summary (by ISL/OSL cell) ========\n%s",
-            tabulate(
-                summary_rows,
-                headers=["ISL", "OSL", "TP", "PP", "Conc", "Result"],
-                tablefmt="github",
-            ),
-        )
 
     PERF_METRICS = [
         ("Mean TTFT (ms)", "mean_ttft_ms"),
@@ -299,5 +264,5 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                 tablefmt="github",
             ),
         )
-    elif not smoke_results and not acc_rows and not performance_by_cell:
+    elif not smoke_results and not acc_rows:
         log.info("inf_res_dict empty, nothing to print")
