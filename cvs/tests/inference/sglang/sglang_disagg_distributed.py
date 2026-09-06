@@ -130,6 +130,8 @@ def test_run_performance_benchmark_test(im_obj, inf_res_dict, lifecycle, request
     globals.error_list = []
     t0 = time.monotonic()
     bench = im_obj.bp_dict["inference_tests"]["bench_serv_random"]
+    bench.clear()
+    bench.update(perf_cell["benchmark_params"])
     bench["input_length"] = perf_cell["isl"]
     bench["output_length"] = perf_cell["osl"]
     bench.setdefault("expected_results", {})["auto"] = dict(perf_cell["specs"])
