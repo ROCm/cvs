@@ -375,6 +375,10 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                 container = loader.orchestrator_container_from_variant(variant)
                 self.assertEqual(container['env']['NCCL_DEBUG'], variant.inference['nccl_debug'])
                 self.assertEqual(container['env']['SGLANG_USE_AITER'], '1')
+                # The container runtime renders -e flags from the top-level env
+                # only, and cannot represent the ADD_EXPORT_ENV list.
+                self.assertNotIn('env', container['runtime']['args'])
+                self.assertIn('volumes', container['runtime']['args'])
                 perf_cells = loader.perf_cells_for_variant(variant)
                 self.assertEqual(
                     [cell['cell_key'] for cell in perf_cells],
