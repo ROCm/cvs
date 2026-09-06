@@ -125,7 +125,6 @@ class SglangDisaggPD:
         self._apply_bp_defaults()
 
         self.container_name = self.inf_dict['container_name']
-        self.nic_type = self.inf_dict['nic_type']
         self.nccl_ib_hca_list = self.inf_dict['nccl_ib_hca_list']
         self.nccl_ib_hca = self.inf_dict['nccl_ib_hca']
         self.nccl_socket_ifname = self.inf_dict['nccl_socket_ifname']
@@ -213,7 +212,6 @@ class SglangDisaggPD:
     def _apply_inf_defaults(self) -> None:
         self.inf_dict.setdefault('container_image', 'lmsysorg/sglang:dev')
         self.inf_dict.setdefault('container_name', 'sglang_container')
-        self.inf_dict.setdefault('nic_type', 'ainic')
         self.inf_dict.setdefault('nccl_ib_hca_list', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
         self.inf_dict.setdefault('nccl_ib_hca', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
         self.inf_dict.setdefault('hca_id_prefix', 'bnxt_')

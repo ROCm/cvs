@@ -283,7 +283,6 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
                         'volumes': ['/host:/container'],
                         'devices': ['/dev/kfd'],
                         'env': {
-                            'NIC_TYPE': 'thor2',
                             'NCCL_IB_HCA': 'rdma0',
                             'ADD_EXPORT_ENV': ['SGLANG_USE_AITER=1'],
                         },
@@ -307,7 +306,6 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
 
         inference, params, server = loader._unified_runtime_views(raw, self.thresholds)
 
-        self.assertEqual(inference['nic_type'], 'thor2')
         self.assertEqual(inference['nccl_ib_hca'], 'rdma0')
         self.assertEqual(inference['server_node_list'], ['node1', 'node2'])
         self.assertEqual(params['model'], '/models/model')
