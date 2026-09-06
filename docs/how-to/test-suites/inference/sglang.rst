@@ -86,8 +86,9 @@ Shipped config templates:
 
 .. note::
 
-  When a config's ``benchmark_params`` block has more than one variant key, export
-  ``SGLANG_BENCHMARK_KEY`` (for example ``llama-70b`` or ``deepseek-r1``) before running.
+  Shipped templates are a single workload per file. ``sweep.runs`` selects which
+  ``ISL,OSL,TP,PP,CONC`` cells to parametrize; empty ``runs`` uses every performance
+  cell in the threshold JSON.
 
 .. _sglang-run-tests:
 
@@ -229,4 +230,4 @@ Key lifecycle stages to watch:
   report.
 - **Teardown** — ``test_teardown`` stops containers even when a prior stage failed.
 
-Logs are written under ``log_dir`` from the config (default ``/home/{user-id}/LOGS/sglang``).
+Logs are written under ``paths.log_dir`` from the config (default ``/home/{user-id}/LOGS/sglang``).

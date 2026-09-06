@@ -45,8 +45,8 @@ Copy a template locally:
   cvs config list inference/sglang
   cvs config copy inference/sglang/mi3xx_sglang_llama_70b_single.json \
     --output ~/cvs_workspace/inference/sglang/mi3xx_sglang_llama_70b_single.json
-  cvs config copy inference/sglang/mi3xx_sglang_llama_70b_threshold.json \
-    --output ~/cvs_workspace/inference/sglang/mi3xx_sglang_llama_70b_threshold.json
+  cvs config copy inference/sglang/mi325_sglang_llama_70b_threshold.json \
+    --output ~/cvs_workspace/inference/sglang/mi325_sglang_llama_70b_threshold.json
 
 .. note::
 
@@ -103,6 +103,12 @@ threshold file via top-level ``threshold_json`` (a filename beside the config).
      - Llama 3.1 70B configs (single, distributed, disaggregated)
    * - ``mi325_sglang_deepseek_r1_0528_threshold.json``
      - DeepSeek-R1-0528 configs (single, distributed, disaggregated)
+   * - ``mi325_sglang_gpt_oss_120b_threshold.json``
+     - Custom / future GPT-OSS 120B runs (point ``threshold_json`` at this path)
+   * - ``mi325_sglang_glm_52_fp8_threshold.json``
+     - Custom / future GLM 5.2 FP8 runs
+   * - ``mi325_sglang_kimi_k26_threshold.json``
+     - Custom / future Kimi K2.6 runs
 
 Threshold keys use the form ``ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``. Each value is a
 metric map (for example ``output_throughput_per_sec``, ``mean_ttft_ms``, ``mean_tpot_ms``,
@@ -288,8 +294,9 @@ Additional ``server_params`` / ``container`` env fields beyond the single-node s
      - NCCL InfiniBand/RoCE device list and GID index (``container.runtime.args.env``).
    * - ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, ``GLOO_TCP_IFNAME``
      - Ethernet interfaces for socket/Gloo fallback.
-   * - ``hca_id_prefix``
-     - Used by ``test_setup_ibv_devices`` when ``nic_type`` matches Broadcom/Thor to match ``ibv_devinfo`` HCA names. The host ``libbnxt_re-rdmav34.so`` is bind-mounted via ``volume_dict``.
+   * - ``HCA_ID_PREFIX``
+     - Used by ``test_setup_ibv_devices`` to match ``ibv_devinfo`` HCA names. The host
+       ``libbnxt_re-rdmav34.so`` is bind-mounted via ``volumes``.
 
 Disaggregated prefill-decode (``sglang_disagg_distributed``)
 ------------------------------------------------------------
@@ -312,10 +319,6 @@ Uses the multi-node network env fields above, plus:
      - Rank-0 addresses for each role group.
    * - ``prefill_coordinator_port``, ``decode_coordinator_port``
      - Coordinator ports (defaults ``40001``, ``40002``).
-   * - ``gloo_tcp_ifname``
-     - TCP interface for Gloo (disaggregated templates; ``<changeme>``).
-   * - ``nccl_ib_hca_list``
-     - RDMA devices for disaggregation transfer (in addition to ``nccl_ib_hca``).
 
 ``benchmark_params`` / model settings
 =====================================
@@ -335,25 +338,26 @@ Uses the multi-node network env fields above, plus:
      - External JSON with per-cell performance thresholds.
    * - ``server_params.tensor_parallelism``, ``pipeline_parallelism``
      - ``8``, ``1`` or ``2``
-     - TP size per node; PP across nodes for distributed/disaggregated runs.
-   * - ``memory_fraction``
+     - TP size per node; PP across nodes for distributed/disaggregated runs. Sweep combo TP/PP
+       labels the cell; they do not relaunch the server.
+   * - ``server_params.memory_fraction``
      - ``0.85`` (Llama) / ``0.7`` (DeepSeek)
      - Static KV-cache memory fraction passed to ``launch_server``.
    * - ``server_params.max_concurrency``
      - ``256``
      - ``bench_serving`` concurrency sweep upper bound.
-   * - ``tokenizer_mode``
+   * - ``server_params.tokenizer_mode``
      - ``auto``
      - Tokenizer mode passed to ``launch_server``.
-   * - ``inference_poll_iterations``
+   * - ``server_params.inference_poll_iterations``
      - ``16``
      - Server-ready poll attempts.
-   * - ``add_export_env``, ``add_flags``
+   * - ``ADD_EXPORT_ENV``, ``server_params.add_flags``
      - ROCm/SGLang tuning (for example ``SGLANG_USE_AITER=1``, ``--attention-backend aiter``). DeepSeek templates also set ``GPU_ARCHS=gfx942``.
-   * - ``context_length``
+   * - ``server_params.context_length``
      - ``205000``
      - Long-context cap (distributed / disaggregated Llama and DeepSeek templates).
-   * - ``prefill_policy``, ``decode_policy``
+   * - ``server_params.prefill_policy``, ``decode_policy``
      - ``cache_aware``
      - Disaggregated templates only; PD routing policy.
 
@@ -425,6 +429,9 @@ The results table and threshold files use:
 - **E2E latency** (``mean_e2e_latency_ms``) — end-to-end request latency.
 - **Goodput** — fraction of successful requests.
 - **MFU** — model FLOPs utilization derived from ``model_num_params`` and ``peak_gpu_tflops``.
+
+The performance summary TP/PP columns come from the ``sweep.runs`` combo string. Expected
+values still come from the matched threshold cell (ISL/OSL/CONC).
 
 Troubleshooting
 ===============
