@@ -54,6 +54,50 @@ class TestPerfCellsFromThresholds(unittest.TestCase):
         )
 
 
+class TestPerfCellsForVariant(unittest.TestCase):
+    def test_selects_runs_and_attaches_overrides(self):
+        variant = mock.Mock(
+            thresholds=_THRESHOLDS,
+            benchmark_params={'tensor_parallelism': '8', 'pipeline_parallelism': '1'},
+            sweeps={
+                'ISL=8192,OSL=1024,TP=8,PP=1,CONC=64': {
+                    'num_prompts': '50',
+                }
+            },
+            sweep={
+                'runs': [
+                    {
+                        'combo': 'ISL=8192,OSL=1024,TP=8,PP=1,CONC=64',
+                    }
+                ]
+            },
+        )
+
+        cells = loader.perf_cells_for_variant(variant)
+
+        self.assertEqual(len(cells), 1)
+        self.assertEqual(cells[0]['isl'], '8192')
+        self.assertEqual(cells[0]['benchmark_overrides'], {'num_prompts': '50'})
+        self.assertEqual(cells[0]['benchmark_params']['num_prompts'], '50')
+
+    def test_rejects_combo_without_matching_threshold_shape(self):
+        variant = mock.Mock(
+            thresholds=_THRESHOLDS,
+            benchmark_params={'tensor_parallelism': '8', 'pipeline_parallelism': '1'},
+            sweeps={},
+            sweep={
+                'runs': [
+                    {
+                        'combo': 'ISL=4096,OSL=1024,TP=8,PP=1,CONC=64',
+                    }
+                ]
+            },
+        )
+
+        with self.assertRaisesRegex(ValueError, 'no matching threshold cell'):
+            loader.perf_cells_for_variant(variant)
+
+
 class TestPerfSpecsForCell(unittest.TestCase):
     def test_returns_flattened_gates(self):
         self.assertEqual(
@@ -181,6 +225,58 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'duplicate accuracy task id'):
             loader._unified_runtime_views(self.raw, self.thresholds)
 
+    def test_builds_controller_views_from_server_and_benchmark_blocks(self):
+        raw = {
+            'enforce_thresholds': False,
+            'threshold_json': 'threshold.json',
+            'paths': {
+                'log_dir': '/logs',
+                'hf_token_file': '/home/user/.hf_token',
+            },
+            'container': {
+                'name': 'sglang',
+                'image': 'image',
+                'lifetime': 'per_run',
+                'runtime': {
+                    'name': 'docker',
+                    'args': {
+                        'volumes': ['/host:/container'],
+                        'devices': ['/dev/kfd'],
+                        'env': {
+                            'NIC_TYPE': 'thor2',
+                            'NCCL_IB_HCA': 'rdma0',
+                            'ADD_EXPORT_ENV': ['SGLANG_USE_AITER=1'],
+                        },
+                    },
+                },
+            },
+            'server_params': {
+                'model': '/models/model',
+                'tensor_parallelism': '8',
+                'pipeline_parallelism': '2',
+                'server_node_list': ['node1', 'node2'],
+                'benchmark_serv_node': 'node1',
+            },
+            'benchmark_params': {
+                'backend': 'sglang',
+                'num_prompts': '25',
+                'model_num_params': '671000000000',
+            },
+            'accuracy': {'tasks': []},
+        }
+
+        inference, params, server = loader._unified_runtime_views(raw, self.thresholds)
+
+        self.assertEqual(inference['nic_type'], 'thor2')
+        self.assertEqual(inference['nccl_ib_hca'], 'rdma0')
+        self.assertEqual(inference['server_node_list'], ['node1', 'node2'])
+        self.assertEqual(params['model'], '/models/model')
+        self.assertEqual(params['tensor_parallelism'], '8')
+        self.assertEqual(params['inference_tests']['bench_serv_random']['num_prompts'], '25')
+        self.assertFalse(params['inference_tests']['bench_serv_random']['enforce_thresholds'])
+        self.assertEqual(params['add_export_env'], ['SGLANG_USE_AITER=1'])
+        self.assertEqual(server['env']['NCCL_IB_HCA'], 'rdma0')
+
 
 class TestUnifiedPackagedConfigs(unittest.TestCase):
     @staticmethod
@@ -215,9 +311,38 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                     set(variant.benchmark_params['inference_tests']),
                     {'bench_serv_random', 'lm_eval_hellaswag', 'lm_eval_gsm8k'},
                 )
-                self.assertEqual(set(variant.params.inference_tests), {'bench_serv_random'})
+                self.assertEqual(
+                    set(variant.params.inference_tests),
+                    {'bench_serv_random', 'lm_eval_hellaswag', 'lm_eval_gsm8k'},
+                )
                 self.assertEqual(variant.params.add_flags, ['--attention-backend aiter'])
                 self.assertFalse(variant.enforce_thresholds)
+                self.assertEqual(variant.model.id, raw['server_params']['model'])
+                self.assertEqual(
+                    variant.benchmark_params['tensor_parallelism'],
+                    raw['server_params']['tensor_parallelism'],
+                )
+                self.assertEqual(
+                    variant.benchmark_params['inference_tests']['bench_serv_random']['num_prompts'],
+                    raw['benchmark_params']['num_prompts'],
+                )
+                self.assertEqual(
+                    variant.inference['benchmark_serv_node'],
+                    raw['server_params']['benchmark_serv_node'],
+                )
+                self.assertEqual(
+                    variant.inference['nccl_debug'],
+                    raw['container']['runtime']['args']['env']['NCCL_DEBUG'],
+                )
+                container = loader.orchestrator_container_from_variant(variant)
+                self.assertEqual(container['env']['NCCL_DEBUG'], variant.inference['nccl_debug'])
+                self.assertEqual(container['env']['SGLANG_USE_AITER'], '1')
+                perf_cells = loader.perf_cells_for_variant(variant)
+                self.assertEqual(
+                    [cell['cell_key'] for cell in perf_cells],
+                    [run['combo'] for run in raw['sweep']['runs']],
+                )
+                self.assertTrue(all(cell['benchmark_overrides']['num_prompts'] == '50' for cell in perf_cells))
 
                 if 'llama_70b_distributed' in config_path.name:
                     self.assertEqual(
@@ -235,7 +360,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
         config_path = config_dir / 'mi3xx_sglang_llama_70b_distributed.json'
         raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
         raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
-        del raw['roles']['server']['server_node_list']
+        del raw['server_params']['server_node_list']
 
         with tempfile.TemporaryDirectory() as tmp:
             temp_config = Path(tmp) / config_path.name

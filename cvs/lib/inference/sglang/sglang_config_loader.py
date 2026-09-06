@@ -124,6 +124,79 @@ def perf_cells_from_thresholds(thresholds: Mapping[str, Any]) -> list[dict[str, 
     return cells
 
 
+def perf_cells_for_variant(variant: "SglangSingleVariantConfig") -> list[dict[str, Any]]:
+    """Return configured performance cells with per-cell benchmark overrides."""
+    threshold_cells = perf_cells_from_thresholds(variant.thresholds)
+    by_key = {str(cell["cell_key"]): cell for cell in threshold_cells}
+    by_shape: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for cell in threshold_cells:
+        by_shape.setdefault((cell["isl"], cell["osl"], cell["conc"]), []).append(cell)
+    base_benchmark = dict((variant.benchmark_params.get("inference_tests") or {}).get("bench_serv_random") or {})
+    tp = str(variant.benchmark_params.get("tensor_parallelism", "8"))
+    pp = str(variant.benchmark_params.get("pipeline_parallelism", "1"))
+    configured_runs = (variant.sweep or {}).get("runs") or []
+
+    if configured_runs:
+        combo_keys = []
+        for run in configured_runs:
+            combo = run.get("combo") if isinstance(run, Mapping) else run
+            combo_keys.append(str(combo or "").strip())
+    else:
+        combo_keys = [
+            f"ISL={cell['isl']},OSL={cell['osl']},TP={tp},PP={pp},CONC={cell['conc']}" for cell in threshold_cells
+        ]
+
+    cells = []
+    seen = set()
+    for combo_key in combo_keys:
+        match = _PERF_CELL_RE.fullmatch(combo_key)
+        if not match:
+            raise ValueError(f"invalid SGLang sweep combo key: {combo_key!r}")
+        shape = (match.group("isl"), match.group("osl"), match.group("conc"))
+        threshold_cell = by_key.get(combo_key)
+        candidates = by_shape.get(shape) or []
+        if threshold_cell is None and len(candidates) == 1:
+            threshold_cell = candidates[0]
+        if threshold_cell is None and not candidates:
+            raise ValueError(f"SGLang sweep combo {combo_key!r} has no matching threshold cell")
+        if threshold_cell is None:
+            raise ValueError(
+                f"SGLang sweep combo {combo_key!r} matches multiple threshold cells; use an exact TP/PP combo key"
+            )
+        if combo_key in seen:
+            raise ValueError(f"duplicate SGLang sweep combo: {combo_key!r}")
+        seen.add(combo_key)
+
+        overrides = variant.sweeps.get(combo_key)
+        if overrides is None:
+            matching_override_keys = [
+                key
+                for key in variant.sweeps
+                if (override_match := _PERF_CELL_RE.fullmatch(str(key)))
+                and (override_match.group("isl"), override_match.group("osl"), override_match.group("conc")) == shape
+            ]
+            if len(matching_override_keys) == 1:
+                overrides = variant.sweeps[matching_override_keys[0]]
+            elif len(matching_override_keys) > 1:
+                raise ValueError(
+                    f"SGLang sweep combo {combo_key!r} matches multiple sweeps overrides; use an exact TP/PP combo key"
+                )
+        overrides = overrides or {}
+        if not isinstance(overrides, Mapping):
+            raise TypeError(f"SGLang sweeps[{combo_key!r}] must be a JSON object")
+        cells.append(
+            {
+                **threshold_cell,
+                "cell_key": combo_key,
+                "tp": match.group("tp"),
+                "pp": match.group("pp"),
+                "benchmark_overrides": dict(overrides),
+                "benchmark_params": {**base_benchmark, **dict(overrides)},
+            }
+        )
+    return cells
+
+
 def perf_specs_for_cell(thresholds: Mapping[str, Any], isl, osl, conc) -> dict[str, float]:
     """Flattened threshold gates for one perf cell, or ``{}`` when the cell has none.
 
@@ -349,8 +422,8 @@ class SglangAccuracy(_Forbid):
 class SglangSingleVariantConfig(BaseVariantConfig):
     """Typed config shared by all SGLang topologies."""
 
-    framework: Literal["sglang", "sglang_single"]
-    gpu_arch: str
+    framework: Literal["sglang", "sglang_single"] = "sglang"
+    gpu_arch: str = "mi30x"
     topology: Literal["single", "distributed", "disaggregated"] = "single"
     variant_key: str = ""
     config_path: str = ""
@@ -360,6 +433,8 @@ class SglangSingleVariantConfig(BaseVariantConfig):
     # Legacy blocks kept for ``SglangSingle`` until that lib is refactored.
     inference: dict[str, Any] = Field(default_factory=dict)
     benchmark_params: dict[str, Any] = Field(default_factory=dict)
+    sweeps: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    sweep: dict[str, Any] = Field(default_factory=dict)
 
     roles: SglangRoles = Field(default_factory=SglangRoles)
 
@@ -449,20 +524,44 @@ def _accuracy_tasks_to_inference_tests(accuracy: Mapping[str, Any]) -> dict[str,
     return inference_tests
 
 
+_RUNTIME_ENV_TO_INFERENCE = {
+    "NIC_TYPE": "nic_type",
+    "NCCL_IB_HCA_LIST": "nccl_ib_hca_list",
+    "NCCL_IB_HCA": "nccl_ib_hca",
+    "HCA_ID_PREFIX": "hca_id_prefix",
+    "NCCL_SOCKET_IFNAME": "nccl_socket_ifname",
+    "GLOO_SOCKET_IFNAME": "gloo_socket_ifname",
+    "GLOO_TCP_IFNAME": "gloo_tcp_ifname",
+    "NCCL_IB_GID_INDEX": "nccl_ib_gid_index",
+    "NCCL_DEBUG": "nccl_debug",
+}
+
+
 def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]) -> tuple[dict, dict, dict]:
     """Build legacy controller views from the unified SGLang schema."""
     paths = dict(raw.get("paths") or {})
     container = dict(raw.get("container") or {})
     runtime = dict(container.get("runtime") or {})
     runtime_args = dict(runtime.get("args") or {})
-    server = dict((raw.get("roles") or {}).get("server") or {})
-    params = dict(raw.get("params") or {})
+    new_layout = isinstance(raw.get("server_params"), Mapping)
+    server = dict(raw.get("server_params") or {}) if new_layout else dict((raw.get("roles") or {}).get("server") or {})
+    params = dict(server) if new_layout else dict(raw.get("params") or {})
 
-    inference_tests = dict(params.get("inference_tests") or {})
+    if new_layout:
+        benchmark = dict(raw.get("benchmark_params") or {})
+        benchmark.setdefault("enforce_thresholds", raw.get("enforce_thresholds", True))
+        inference_tests = {"bench_serv_random": benchmark}
+    else:
+        inference_tests = dict(params.get("inference_tests") or {})
     inference_tests.update(_accuracy_tasks_to_inference_tests(raw.get("accuracy") or {}))
     params["inference_tests"] = inference_tests
-    params["model"] = str((raw.get("model") or {}).get("id") or "")
+    params["model"] = str(server.get("model") or "") if new_layout else str((raw.get("model") or {}).get("id") or "")
     params["threshold_file"] = str(raw.get("threshold_json") or "")
+
+    runtime_env = dict(runtime_args.get("env") or {})
+    add_export_env = runtime_env.get("ADD_EXPORT_ENV")
+    if add_export_env is not None:
+        params["add_export_env"] = list(add_export_env) if isinstance(add_export_env, list) else [str(add_export_env)]
 
     inference: dict[str, Any] = {
         "container_image": container.get("image"),
@@ -478,16 +577,24 @@ def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]
         },
     }
     for key, value in server.items():
-        if key.startswith("_") or key in ("env", "serve_port"):
+        if key.startswith("_") or key in ("env", "serve_port", "model"):
             continue
         inference[key] = value
+    for env_key, inference_key in _RUNTIME_ENV_TO_INFERENCE.items():
+        if env_key in runtime_env:
+            inference[inference_key] = runtime_env[env_key]
     if server.get("serve_port") and "proxy_router_serv_port" not in inference:
         inference["proxy_router_serv_port"] = server["serve_port"]
 
     _inject_thresholds_into_bp_dict(params, thresholds, inject_current_perf=False)
     server["env"] = {
-        **_legacy_server_env(inference, params),
-        **dict(server.get("env") or {}),
+        key: str(value)
+        for key, value in {
+            **runtime_env,
+            **_legacy_server_env(inference, params),
+            **dict(server.get("env") or {}),
+        }.items()
+        if not isinstance(value, (list, dict))
     }
     return inference, params, server
 
@@ -559,11 +666,35 @@ def _load_unified_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> 
     raw["thresholds"] = thresholds
     raw["config_path"] = str(Path(config_path).resolve())
 
+    server_params = dict(raw.get("server_params") or {})
+    if server_params:
+        if server_params.get("prefill_node_list") or server_params.get("decode_node_list"):
+            topology = "disaggregated"
+        elif server_params.get("server_node_list") or int(server_params.get("nnodes") or 1) > 1:
+            topology = "distributed"
+        else:
+            topology = "single"
+        raw.setdefault("schema_version", 1)
+        raw.setdefault("framework", "sglang")
+        raw.setdefault("gpu_arch", str(raw.get("gpu_name") or "mi30x"))
+        raw.setdefault("topology", topology)
+        raw.setdefault(
+            "model",
+            {
+                "id": str(server_params.get("model") or ""),
+                "remote": 0,
+            },
+        )
+        raw["container"] = {
+            key: value for key, value in dict(raw.get("container") or {}).items() if not str(key).startswith("_")
+        }
+
     raw["variant_key"] = raw.get("variant_key") or "default"
 
     inference, benchmark_params, server = _unified_runtime_views(raw, thresholds)
     raw["inference"] = inference
     raw["benchmark_params"] = benchmark_params
+    raw["params"] = benchmark_params
     raw.setdefault("roles", {})["server"] = server
     raw["enforce_thresholds"] = perf_enforce_thresholds(benchmark_params)
 
