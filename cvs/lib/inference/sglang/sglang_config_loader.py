@@ -334,8 +334,12 @@ def _legacy_server_env(inference: Mapping[str, Any], bp: Mapping[str, Any]) -> d
 
     cc_env = (inference.get("container_config") or {}).get("env_dict") or {}
     for k, v in cc_env.items():
-        if v is not None:
-            env[str(k)] = str(v)
+        # Container env holds single ``docker run -e KEY=VALUE`` scalars. Aggregate
+        # values (``ADD_EXPORT_ENV``) would stringify to a Python repr whose spaces
+        # break the command; their entries are expanded into real keys below.
+        if v is None or isinstance(v, (list, dict, tuple)):
+            continue
+        env[str(k)] = str(v)
 
     for entry in bp.get("add_export_env") or []:
         line = str(entry).strip()
