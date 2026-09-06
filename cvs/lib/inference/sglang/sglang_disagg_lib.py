@@ -284,15 +284,13 @@ class SglangDisaggPD:
     def exec_nic_setup_scripts(
         self,
     ):
-        if re.search('broadcom|thor', self.nic_type, re.I):
-            self.nccl_ib_gid_index = 3
-            hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
-            for hosts in (self.prefill_node_list, self.decode_node_list):
-                out_dict = self._container_exec("ibv_devinfo", hosts=hosts)
-                for node, out in out_dict.items():
-                    if not re.search(hca_id_regex, out or '', re.I):
-                        log.info("%s", out)
-                        fail_test(f'Broadcom HCA not visible on node {node}')
+        hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
+        for hosts in (self.prefill_node_list, self.decode_node_list):
+            out_dict = self._container_exec("ibv_devinfo", hosts=hosts)
+            for node, out in out_dict.items():
+                if not re.search(hca_id_regex, out or '', re.I):
+                    log.info("%s", out)
+                    fail_test(f'HCA not visible on node {node}')
 
     def check_ibv_devices(
         self,
