@@ -103,12 +103,6 @@ threshold file via top-level ``threshold_json`` (a filename beside the config).
      - Llama 3.1 70B configs (single, distributed, disaggregated)
    * - ``mi325_sglang_deepseek_r1_0528_threshold.json``
      - DeepSeek-R1-0528 configs (single, distributed, disaggregated)
-   * - ``mi325_sglang_gpt_oss_120b_threshold.json``
-     - Custom / future GPT-OSS 120B runs (point ``threshold_json`` at this path)
-   * - ``mi325_sglang_glm_52_fp8_threshold.json``
-     - Custom / future GLM 5.2 FP8 runs
-   * - ``mi325_sglang_kimi_k26_threshold.json``
-     - Custom / future Kimi K2.6 runs
 
 Threshold keys use the form ``ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``. Each value is a
 metric map (for example ``output_throughput_per_sec``, ``mean_ttft_ms``, ``mean_tpot_ms``,
