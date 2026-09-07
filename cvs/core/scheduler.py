@@ -37,8 +37,26 @@ def _command_succeeds(cmd):
     return result.returncode == 0
 
 
+def _scheduler_from_job_env():
+    """Classify from job-id env vars, which are set inside a step even when
+    spur/scontrol are not on PATH (compute nodes often have neither).
+
+    SPUR exports SPUR_* alongside SLURM_* twins; real Slurm sets no SPUR_*.
+    Check SPUR_JOB_ID first so a spur step is not labeled SLURM.
+    """
+    if os.environ.get("SPUR_JOB_ID"):
+        return Scheduler.SPUR
+    if os.environ.get("SLURM_JOB_ID"):
+        return Scheduler.SLURM
+    return None
+
+
 def detect_scheduler():
-    """Detect which scheduler, if any, manages this cluster's compute nodes."""
+    """Detect which scheduler, if any, manages this cluster's compute nodes.
+
+    Order: CVS_SCHEDULER override, then job-id env (inside a step), then the
+    spur/scontrol binary probe (head node before submission).
+    """
     scheduler = os.environ.get(SCHEDULER_ENV_VAR)
     if scheduler is not None:
         normalized = scheduler.strip().lower()
@@ -49,6 +67,9 @@ def detect_scheduler():
             raise ValueError(
                 f"Unknown scheduler type {scheduler!r} in {SCHEDULER_ENV_VAR}, expected one of: {valid}"
             ) from exc
+    from_job = _scheduler_from_job_env()
+    if from_job is not None:
+        return from_job
     for scheduler, cmds in SCHEDULER_CHECK_COMMANDS.items():
         if all(_command_succeeds(cmd) for cmd in cmds):
             return scheduler
