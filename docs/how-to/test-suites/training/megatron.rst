@@ -17,14 +17,14 @@ The suite drives a training job inside a Docker container on one or more cluster
 - **Training-log error scanning** — NCCL, GPU HW faults, OOM, and other signatures fail a run early with a clear reason.
 - **HTML report** — per-test rows with linked logs and a consolidated metric results page.
 
-The mode (single vs distributed) is determined by the config file's ``framework`` field (``megatron_single`` or ``megatron_distributed``). Match the suite name to that field.
+The mode is which suite you invoke (``megatron_single`` vs ``megatron_distributed``). Use a ``*_single.json`` config with the single-node suite and a ``*_distributed.json`` config with the distributed suite.
 
 Prerequisites
 =============
 
 - Passwordless SSH from the control host to each cluster node (key in the cluster file) and Docker available on the nodes.
-- A container image for ROCm (``container.image`` in the config). A Megatron-LM image must provide Megatron-LM at ``config.megatron_root`` (default ``/workspace/Megatron-LM``). A Primus image (name contains ``primus``) uses in-image YAML under ``examples/megatron/configs/{gpu_arch}/`` instead.
-- A Hugging Face token file at ``config.hf_token_file`` (used to fetch the tokenizer). Tokenizer download requires network access on the nodes. For gated models (LLaMA, DeepSeek), model access must be granted on huggingface.co.
+- A container image for ROCm (``container.image`` in the config). A Megatron-LM image must provide Megatron-LM at ``/workspace/Megatron-LM``. A Primus image (name contains ``primus``) uses in-image YAML under ``examples/megatron/configs/{gpu_arch}/`` instead.
+- A Hugging Face token file at ``paths.hf_token_file`` (used to fetch the tokenizer). Tokenizer download requires network access on the nodes. For gated models (LLaMA, DeepSeek), model access must be granted on huggingface.co.
 - For distributed runs: RDMA interfaces configured and reachable on all nodes; a shared filesystem path reachable from all nodes for logs and scripts.
 
 .. _megatron-set-up-config:
@@ -71,13 +71,13 @@ The same eight test stages run for both backends. ``_make_training_job`` in ``me
      - Downloads ``tokenizer.model`` into ``data_cache_dir`` for DeepSeek/Mixtral. Llama/Qwen skip (HF repo ID is enough)
      - Always a no-op (``_needs_local_tokenizer()`` is false; Primus takes HF repo IDs in YAML)
    * - ``test_smoke``
-     - Runs the cell from the config ``smoke`` block (default 10 iters) via the Megatron-LM training script under ``config.megatron_root``. Skipped when ``smoke.enabled`` is ``false``
+     - Runs the cell from the config ``smoke`` block (default 10 iters) via the Megatron-LM training script under ``/workspace/Megatron-LM``. Skipped when ``smoke.enabled`` is ``false``
      - Same cell via ``primus-cli direct -- train pretrain --config examples/megatron/configs/{gpu_arch}/{model}-{precision}-pretrain.yaml``. If the MI325X YAML is missing, Primus retries ``MI300X``. Skipped when ``smoke.enabled`` is ``false``
    * - ``test_checkpoint``
      - Skipped (``checkpoint test is Primus-only``)
      - Runs only when ``checkpoint.enforce`` is ``true``. Single-node writes under ``{log_dir}/ckpt_primus``. Distributed requires ``checkpoint.checkpoint_dir`` on a shared filesystem
    * - ``test_training[combo]``
-     - Wrapper script + Megatron-LM shell. Distributed also runs ``exec_nic_setup_scripts()`` (Broadcom ``libbnxt_re`` copy when ``nic_type`` matches thor/broadcom)
+     - Wrapper script + Megatron-LM shell. Distributed also runs ``exec_nic_setup_scripts()`` (Broadcom ``libbnxt_re`` copy when the GPU-derived NIC type is Thor/Broadcom: ``thor2`` on MI300X/MI325X, ``ainic`` on MI355X). After the copy, ``ibv_devinfo`` is matched against the library default HCA prefixes ``bnxt_|rocep``.
      - Wrapper script + ``primus-cli``. Distributed sets ``NCCL_IB_*`` env vars; no Broadcom lib copy
    * - ``test_metric`` / ``test_loss_curve``
      - Parse Megatron-LM log metrics
@@ -127,7 +127,7 @@ You can list all available test stages using the CLI:
     - test_loss_curve
     - test_teardown
 
-Use a single-node config with ``megatron_single`` and a distributed config with ``megatron_distributed``. The config's ``framework`` field must match the suite.
+Use a ``*_single.json`` config with ``megatron_single`` and a ``*_distributed.json`` config with ``megatron_distributed``.
 
 - ``--cluster_file`` — JSON describing the node(s); see :doc:`/how-to/configure/cluster-config`.
 - ``--config_file`` — one of the files under ``input/config_file/training/megatron/``; field reference: :doc:`/reference/configuration-files/training/megatron`.
@@ -276,6 +276,8 @@ Each ``test_metric[combo]`` compares the parsed metric against its threshold spe
      - value violates the threshold (row is red; aggregated in the summary)
    * - RECORD
      - no threshold defined, or ``enforce_thresholds: false`` — value logged, not gated
+   * - SKIPPED
+     - spec has ``optional: true`` and the metric is missing or None (for example Primus ``mem_usage``)
 
 Metrics surfaced (namespace ``training.*``):
 
@@ -292,9 +294,9 @@ Metrics surfaced (namespace ``training.*``):
    * - ``training.elapsed_time_per_iteration``
      - Wall time per training step (ms)
    * - ``training.mem_usage``
-     - GPU memory usage
+     - GPU memory usage (Megatron-LM ``mem usages:``). Primus does not emit this line; threshold specs set ``optional: true`` so ``test_metric`` skips instead of fails.
    * - ``training.scaling_efficiency_pct``
-     - Multi-node scaling efficiency % vs single-node baseline (distributed only)
+     - Multi-node scaling efficiency % vs single-node baseline (distributed only). Packaged specs use ``kind: info`` and ``optional: true`` so a missing value is skipped, not failed.
 
 Gating requires ``enforce_thresholds: true`` in the config. Set to ``false`` for record-only runs.
 
@@ -329,7 +331,19 @@ Checkpoint save and resume
 1. **Save phase** — trains to ``checkpoint.save_iters`` steps, saving a checkpoint every ``checkpoint.save_interval`` steps. Single-node uses ``{log_dir}/ckpt_primus``. Distributed uses ``checkpoint.checkpoint_dir`` (required; must be a shared path such as NFS).
 2. **Resume phase** — resumes from the saved checkpoint and trains to ``checkpoint.resume_iters`` steps.
 
-The suite passes when the loss at the first resume step (``last_ckpt_step + 1``) does not exceed the checkpoint-step loss by more than ``checkpoint.loss_rtol`` (relative tolerance).
+The suite passes when:
+
+1. **Step counter** — the resume phase starts at ``last_ckpt_step + 1``.
+2. **Loss continuity** — the loss at that first resume step does not exceed the checkpoint-step loss by more than ``checkpoint.loss_rtol`` (relative tolerance).
+
+Checkpoint I/O duration is parsed from the **node-0** Primus training log (informational; a parse miss logs a warning and does not fail the test):
+
+- **Save** — timestamps on ``saving checkpoint at iteration N`` / ``successfully saved checkpoint from iteration N``.
+- **Load start (single-node)** — ``loading checkpoint from ...``
+- **Load start (distributed)** — ``loading distributed checkpoint from ...``
+- **Load end (both)** — ``successfully loaded checkpoint from ...``
+
+Non-zero ranks (for example rank 15 of 16) typically omit those load lines, so distributed ``test_checkpoint`` uses ``out-node0/training.log``.
 
 Training-log error detection
 ============================
@@ -358,7 +372,7 @@ Log path fields:
    * - Placeholder
      - Source
    * - ``<log_dir>``
-     - ``config.log_dir`` in the config file
+     - ``paths.log_dir`` in the config file
    * - ``<combo_id>``
      - Sweep run ID (for example ``llama3_1_8b-mi325x-bs128-mbs4-fp8``)
    * - ``out-node<N>``

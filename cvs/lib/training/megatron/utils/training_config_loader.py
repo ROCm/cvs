@@ -16,8 +16,8 @@ file must match the combination keys in sweep.combinations exactly.
 
 enforce_thresholds gates whether threshold specs are asserted in test_metric.
 
-Both megatron_single and megatron_distributed are covered by MegatronVariantConfig
-via the framework field, which is a validated schema tag / config discriminator.
+Both megatron_single and megatron_distributed use MegatronVariantConfig. Suite
+choice is which pytest module you run, not a field in the JSON.
 '''
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ import warnings
 from collections import Counter
 from typing import Any, Dict, List
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from typing_extensions import Literal
 
 from cvs.lib.utils.config_loader import (
@@ -158,22 +158,76 @@ class SmokeConfig(_Forbid):
     precision: str = "BF16"
 
 
+class MegatronPaths(_Forbid):
+    hf_token_file: str
+    log_dir: str
+    scripts_dir: str
+    data_cache_dir: str
+    rocm_dir: str = ""
+
+
+class MegatronContainerSpec(ContainerSpec):
+    env: Dict[str, str] = Field(default_factory=dict)
+
+
+# container.env uses real process env names; jobs still read the lowercase aliases.
+_CONTAINER_ENV_TO_JOB = {
+    "NNODES": "nnodes",
+    "MASTER_ADDR": "master_address",
+    "NCCL_IB_HCA": "nccl_ib_hca",
+    "NCCL_SOCKET_IFNAME": "nccl_socket_ifname",
+    "GLOO_SOCKET_IFNAME": "gloo_socket_ifname",
+    "NCCL_DEBUG": "nccl_debug",
+    "NCCL_IB_GID_INDEX": "nccl_ib_gid_index",
+}
+
+
 class MegatronVariantConfig(_Forbid):
-    schema_version: Literal[1]
-    framework: Literal["megatron_single", "megatron_distributed"]
-    gpu_arch: str
+    gpu_name: str
     enforce_thresholds: bool = True
     threshold_json: str = ""
+    paths: MegatronPaths
+    verify_network_errors: str = "False"
     scaling_baseline: ScalingBaseline = Field(default_factory=ScalingBaseline)
     smoke: SmokeConfig = Field(default_factory=SmokeConfig)
     loss_curve: LossCurveConfig = Field(default_factory=LossCurveConfig)
     convergence: ConvergenceConfig = Field(default_factory=ConvergenceConfig)
     checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
-    config: Dict[str, Any]  # training knobs: megatron_root, nccl_*, nic_type, ...
-    model_params: Dict[str, Any]  # model knobs: model_name, precision, tp, pp, ...
-    container: ContainerSpec
+    train_params: Dict[str, Any]
+    container: MegatronContainerSpec
     sweep: MegatronSweep
     thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+
+    @field_validator("gpu_name")
+    @classmethod
+    def _uppercase_gpu_name(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @property
+    def gpu_arch(self) -> str:
+        return self.gpu_name
+
+    @property
+    def model_params(self) -> Dict[str, Any]:
+        return self.train_params
+
+    def job_config_dict(self) -> Dict[str, Any]:
+        """Flatten paths + container.env + train_params.training_iterations into the job dict."""
+        merged: Dict[str, Any] = {}
+        merged["verify_network_errors"] = self.verify_network_errors
+        merged["hf_token_file"] = self.paths.hf_token_file
+        merged["log_dir"] = self.paths.log_dir
+        merged["scripts_dir"] = self.paths.scripts_dir
+        merged["data_cache_dir"] = self.paths.data_cache_dir
+        merged["rocm_dir"] = self.paths.rocm_dir
+        merged.update(self.container.env)
+        for env_key, job_key in _CONTAINER_ENV_TO_JOB.items():
+            if env_key in self.container.env:
+                merged[job_key] = self.container.env[env_key]
+        iters = self.train_params.get("training_iterations")
+        if iters is not None:
+            merged["training_iterations"] = iters
+        return merged
 
     def cell_key(self, combo_key: str) -> str:
         """Canonical threshold lookup key for a sweep combo.

@@ -54,7 +54,7 @@ def variant_config(pytestconfig, cluster_dict):
 
 @pytest.fixture(scope="module")
 def hf_token(variant_config):
-    path = variant_config.config['hf_token_file']
+    path = variant_config.paths.hf_token_file
     if not os.path.isfile(path):
         pytest.skip(f"hf_token file missing: {path}")
     with open(path) as fp:

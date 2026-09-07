@@ -4,9 +4,7 @@ All rights reserved. This notice is intended as a precaution against inadvertent
 The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 
-Unified Megatron training suite for distributed (multi-node) runs.
-Topology is determined by the config file:
-  framework=megatron_distributed  -> multi-node (distributed_training=True)
+Unified Megatron training suite for distributed (multi-node) runs (distributed_training=True).
 
 Lifecycle (each stage is a separate test):
   test_launch_container  — launch the container once for all sweep combos
@@ -137,7 +135,7 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
         lifecycle.tokenizer_path = None
         log.info(
             "test_download_tokenizer: no local tokenizer needed for %s — skipping download",
-            variant_config.model_params["tokenizer_model"],
+            variant_config.train_params["tokenizer_model"],
         )
         return
 
@@ -524,11 +522,17 @@ def test_metric(variant_config, micro_batch_size, global_batch_size, precision, 
     violations = []
     for metric, spec in thresholds.items():
         if metric not in actuals:
+            if spec.get("optional"):
+                log.info("  SKIPPED  %s: missing from actuals", metric)
+                continue
             msg = f"{metric}: missing from actuals"
             log.error("  FAILED  %s", msg)
             violations.append(msg)
             continue
         if actuals[metric] is None:
+            if spec.get("optional"):
+                log.info("  SKIPPED  %s: value is None (metric unavailable for this run)", metric)
+                continue
             msg = f"{metric}: value is None (metric unavailable for this run)"
             log.error("  FAILED  %s", msg)
             violations.append(msg)
@@ -591,7 +595,7 @@ def test_loss_curve(
         _Path(out_dir).mkdir(parents=True, exist_ok=True)
         fname = f"loss_curve_{combo_key}_{str(_uuid.uuid4()).split('-')[-1]}.png"
         png_path = _Path(out_dir) / fname
-        title = f"Training Loss Curve — {variant_config.model_params.get('model_name', '')} [{combo_key}]"
+        title = f"Training Loss Curve — {variant_config.train_params.get('model_name', '')} [{combo_key}]"
         rendered = render_loss_curve_png(points, png_path, title=title)
         if rendered and mgr_enabled:
             rel_path = str(_Path(rendered).relative_to(mgr.htmlpath.parent))

@@ -6,7 +6,7 @@
 Megatron training configuration files
 *************************************
 
-JSON configs and sibling ``*_threshold.json`` files for ``megatron_single`` and ``megatron_distributed``. One file is one GPU architecture, model, and mode: ``mi{gpu}_megatron_{model}_{single|distributed}.json``. Match ``framework`` to the suite you run. Keep the sibling threshold file next to the config (``threshold_json`` is resolved relative to the config file).
+JSON configs and sibling ``*_threshold.json`` files for ``megatron_single`` and ``megatron_distributed``. One file is one GPU architecture, model, and mode: ``mi{gpu}_megatron_{model}_{single|distributed}.json``. Use a ``*_single.json`` file with ``megatron_single`` and a ``*_distributed.json`` file with ``megatron_distributed``. Keep the sibling threshold file next to the config (``threshold_json`` is resolved relative to the config file).
 
 How to run the suites: :doc:`/how-to/test-suites/training/megatron`.
 
@@ -20,7 +20,7 @@ Backends
 
 The suite selects the training backend from ``container.image`` (substring ``primus``, case-insensitive):
 
-* **Megatron-LM** — image name does not contain ``primus``. Training scripts live under ``config.megatron_root``. Log files use ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``.
+* **Megatron-LM** — image name does not contain ``primus``. Training scripts live under ``/workspace/Megatron-LM`` inside the image. Log files use ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``.
 * **Primus** — image name contains ``primus``. In-image YAML lives under ``examples/megatron/configs/{gpu_arch}/``. Log files use ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``.
 
 .. note::
@@ -65,7 +65,7 @@ Config files follow the naming pattern ``<gpu>_megatron_<model>_<mode>.json``. T
      - ✓
      - distributed only
 
-Single-node configs set ``framework: megatron_single`` and use ``nnodes: 1`` with ``master_address: 127.0.0.1``. Distributed configs set ``framework: megatron_distributed``, require the network fields (``nic_type``, ``nccl_ib_hca_list``, etc.), and add a ``scaling_baseline`` section and ``checkpoint_dir`` to the ``checkpoint`` block.
+Single-node configs set ``container.env.NNODES`` to ``1`` and ``MASTER_ADDR`` to ``127.0.0.1``. Distributed configs require the network fields (``container.env.NCCL_IB_HCA``, etc.) and add a ``scaling_baseline`` section and ``checkpoint_dir`` to the ``checkpoint`` block. NIC type is not in the JSON: Megatron-LM defaults to ``thor2`` for MI300X/MI325X and ``ainic`` for MI355X from ``gpu_name``.
 
 Leftover files ``mi3xx_megatron_llama_*.json`` and ``mi35x_megatron_llama_single.json`` are nested-schema configs for the legacy ``megatron_llama3_1_*`` suites only. Do not pass them to ``megatron_single`` or ``megatron_distributed``.
 
@@ -75,11 +75,11 @@ Required edits
 Set these before a run (full field tables are under `Common parameters`_):
 
 * ``container.image`` — Megatron-LM or Primus ROCm image on all nodes.
-* ``config.training_iterations`` — training steps (for example ``"30"``).
-* ``config.hf_token_file`` — Hugging Face token path on the nodes.
-* ``config.nccl_socket_ifname`` / ``config.gloo_socket_ifname`` — control NIC.
+* ``train_params.training_iterations`` — training steps (for example ``"30"``).
+* ``paths.hf_token_file`` — Hugging Face token path on the nodes.
+* ``container.env.NCCL_SOCKET_IFNAME`` / ``container.env.GLOO_SOCKET_IFNAME`` — control NIC.
 * ``sweep.runs`` — combo IDs to execute.
-* **Distributed only:** ``config.nnodes``, ``config.master_address``, ``config.nic_type``, ``config.nccl_ib_hca_list`` / ``nccl_ib_hca``. When ``checkpoint.enforce`` is ``true``, also set ``checkpoint.checkpoint_dir`` and replace the last ``<changeme>:<changeme>`` volume with that shared path.
+* **Distributed only:** ``container.env.NNODES``, ``container.env.MASTER_ADDR``, ``container.env.NCCL_IB_HCA``. When ``checkpoint.enforce`` is ``true``, also set ``checkpoint.checkpoint_dir`` and replace the last ``<changeme>:<changeme>`` volume with that shared path.
 
 Top-level fields
 ================
@@ -93,15 +93,18 @@ These fields appear at the root of every config file.
    * - Field
      - Example
      - Description
-   * - ``schema_version``
-     - ``1``
-     - Config schema version. Must be ``1``.
-   * - ``framework``
-     - ``megatron_single`` / ``megatron_distributed``
-     - Selects the test class. Use ``megatron_single`` for one-node runs and ``megatron_distributed`` for multi-node runs.
-   * - ``gpu_arch``
+   * - ``gpu_name``
      - ``MI300X``
-     - GPU architecture string used for logging and Primus EXP config path resolution.
+     - GPU architecture string used for logging and Primus YAML path resolution (``examples/megatron/configs/{gpu_name}/``). Loaded as uppercase (``mi300x`` becomes ``MI300X``).
+   * - ``paths``
+     - see `Common parameters`_
+     - Host paths: ``hf_token_file``, ``log_dir``, ``scripts_dir``, ``data_cache_dir``.
+   * - ``verify_network_errors``
+     - omitted (single) / ``True`` (distributed)
+     - Compare RDMA and ethtool error counters before and after training. Single-node templates omit it (schema/lib default ``False``).
+   * - ``train_params``
+     - see per-model tables
+     - Model knobs plus ``training_iterations``. Precision lives on the sweep cell, not here.
    * - ``enforce_thresholds``
      - ``true``
      - If ``false``, threshold checks in ``test_metric`` log results but do not fail the test.
@@ -112,7 +115,7 @@ These fields appear at the root of every config file.
 Model configurations
 ====================
 
-Each model section below shows only the ``model_params`` and ``sweep`` blocks, which are the parts that differ between models. All other sections (``config``, ``container``, ``smoke``, ``loss_curve``, ``convergence``, ``checkpoint``, ``scaling_baseline``) are identical in structure across models and are documented in `Common parameters`_.
+Each model section below shows only the ``train_params`` and ``sweep`` blocks, which are the parts that differ between models. All other sections (``paths``, ``container``, ``smoke``, ``loss_curve``, ``convergence``, ``checkpoint``, ``scaling_baseline``) are identical in structure across models and are documented in `Common parameters`_.
 
 Llama 3.1 8B
 ------------
@@ -124,12 +127,10 @@ Available as ``mi300x_megatron_llama-3.1-8b_{single,distributed}.json``, ``mi325
   .. code:: json
 
     {
-      "schema_version": 1,
-      "framework": "megatron_single",
-      "gpu_arch": "MI300X",
+      "gpu_name": "MI300X",
       "enforce_thresholds": true,
       "threshold_json": "mi300x_megatron_llama-3.1-8b_single_threshold.json",
-      "model_params": {
+      "train_params": {
         "model_name": "llama3.1_8B",
         "tokenizer_model": "meta-llama/Llama-3.1-8B",
         "model_size": "8",
@@ -138,7 +139,7 @@ Available as ``mi300x_megatron_llama-3.1-8b_{single,distributed}.json``, ``mi325
         "fsdp": "0",
         "tensor_parallelism": "1",
         "pipeline_parallelism": "1",
-        "precision": "FP8"
+        "training_iterations": "<changeme>"
       },
       "sweep": {
         "combinations": {
@@ -176,7 +177,7 @@ Available as ``mi300x_megatron_llama-3.1-8b_{single,distributed}.json``, ``mi325
       }
     }
 
-``model_params``
+``train_params``
 ~~~~~~~~~~~~~~~~
 
 .. list-table::
@@ -204,9 +205,9 @@ Available as ``mi300x_megatron_llama-3.1-8b_{single,distributed}.json``, ``mi325
    * - ``pipeline_parallelism``
      - ``1``
      - Single pipeline stage.
-   * - ``precision``
-     - ``FP8``
-     - Default precision (overridden per sweep cell).
+   * - ``training_iterations``
+     - ``<changeme>``
+     - Training steps (same field on every model).
 
 
 Llama 3.3 70B
@@ -219,12 +220,10 @@ Available as ``mi300x_megatron_llama-3.3-70b_{single,distributed}.json``, ``mi32
   .. code:: json
 
     {
-      "schema_version": 1,
-      "framework": "megatron_single",
-      "gpu_arch": "MI300X",
+      "gpu_name": "MI300X",
       "enforce_thresholds": true,
       "threshold_json": "mi300x_megatron_llama-3.3-70b_single_threshold.json",
-      "model_params": {
+      "train_params": {
         "model_name": "llama3.3_70B",
         "tokenizer_model": "meta-llama/Llama-3.3-70B-Instruct",
         "model_size": "70",
@@ -233,7 +232,7 @@ Available as ``mi300x_megatron_llama-3.3-70b_{single,distributed}.json``, ``mi32
         "fsdp": "0",
         "tensor_parallelism": "8",
         "pipeline_parallelism": "1",
-        "precision": "FP8"
+        "training_iterations": "<changeme>"
       },
       "sweep": {
         "combinations": {
@@ -257,7 +256,7 @@ Available as ``mi300x_megatron_llama-3.3-70b_{single,distributed}.json``, ``mi32
       }
     }
 
-``model_params``
+``train_params``
 ~~~~~~~~~~~~~~~~
 
 .. list-table::
@@ -285,9 +284,9 @@ Available as ``mi300x_megatron_llama-3.3-70b_{single,distributed}.json``, ``mi32
    * - ``pipeline_parallelism``
      - ``1``
      - Single pipeline stage.
-   * - ``precision``
-     - ``FP8``
-     - Default precision (overridden per sweep cell).
+   * - ``training_iterations``
+     - ``<changeme>``
+     - Training steps (same field on every model).
 
 
 DeepSeek V2 Lite
@@ -300,12 +299,10 @@ Available as ``mi300x_megatron_deepseek-v2-lite_{single,distributed}.json``, ``m
   .. code:: json
 
     {
-      "schema_version": 1,
-      "framework": "megatron_single",
-      "gpu_arch": "MI300X",
+      "gpu_name": "MI300X",
       "enforce_thresholds": true,
       "threshold_json": "mi300x_megatron_deepseek-v2-lite_single_threshold.json",
-      "model_params": {
+      "train_params": {
         "model_name": "deepseek_v2_lite",
         "tokenizer_model": "deepseek-ai/DeepSeek-V2-Lite",
         "model_size": "16",
@@ -314,7 +311,7 @@ Available as ``mi300x_megatron_deepseek-v2-lite_{single,distributed}.json``, ``m
         "fsdp": "0",
         "tensor_parallelism": "1",
         "pipeline_parallelism": "1",
-        "precision": "BF16"
+        "training_iterations": "<changeme>"
       },
       "sweep": {
         "combinations": {
@@ -338,7 +335,7 @@ Available as ``mi300x_megatron_deepseek-v2-lite_{single,distributed}.json``, ``m
       }
     }
 
-``model_params``
+``train_params``
 ~~~~~~~~~~~~~~~~
 
 .. list-table::
@@ -366,9 +363,9 @@ Available as ``mi300x_megatron_deepseek-v2-lite_{single,distributed}.json``, ``m
    * - ``pipeline_parallelism``
      - ``1``
      - Single pipeline stage.
-   * - ``precision``
-     - ``BF16``
-     - Default precision; FP8 also available as a sweep cell.
+   * - ``training_iterations``
+     - ``<changeme>``
+     - Training steps (same field on every model).
 
 
 Llama 3.1 405B
@@ -381,12 +378,10 @@ Available as ``mi300x_megatron_llama-3.1-405b_distributed.json``, ``mi325x_…``
   .. code:: json
 
     {
-      "schema_version": 1,
-      "framework": "megatron_distributed",
-      "gpu_arch": "MI325X",
+      "gpu_name": "MI325X",
       "enforce_thresholds": true,
       "threshold_json": "mi325x_megatron_llama-3.1-405b_distributed_threshold.json",
-      "model_params": {
+      "train_params": {
         "model_name": "llama3.1_405B",
         "tokenizer_model": "meta-llama/Llama-3.1-405B",
         "model_size": "405",
@@ -395,7 +390,7 @@ Available as ``mi300x_megatron_llama-3.1-405b_distributed.json``, ``mi325x_…``
         "fsdp": "0",
         "tensor_parallelism": "8",
         "pipeline_parallelism": "4",
-        "precision": "FP8"
+        "training_iterations": "<changeme>"
       },
       "sweep": {
         "combinations": {
@@ -419,7 +414,7 @@ Available as ``mi300x_megatron_llama-3.1-405b_distributed.json``, ``mi325x_…``
       }
     }
 
-``model_params``
+``train_params``
 ~~~~~~~~~~~~~~~~
 
 .. list-table::
@@ -447,9 +442,9 @@ Available as ``mi300x_megatron_llama-3.1-405b_distributed.json``, ``mi325x_…``
    * - ``pipeline_parallelism``
      - ``4``
      - Splits the model across 4 pipeline stages (requires at least 4 nodes).
-   * - ``precision``
-     - ``FP8``
-     - Default precision (overridden per sweep cell).
+   * - ``training_iterations``
+     - ``<changeme>``
+     - Training steps.
 
 
 Common parameters
@@ -457,8 +452,10 @@ Common parameters
 
 These sections appear in all config files. The parameter names and semantics are identical across models and GPU variants.
 
-``config`` (single-node)
-------------------------
+``paths``
+---------
+
+Host paths used by the job. They must be volume-mounted into the container (typically via the home-directory bind mount).
 
 .. list-table::
    :widths: 3 3 5
@@ -472,48 +469,21 @@ These sections appear in all config files. The parameter names and semantics are
      - Path to a Hugging Face token file for gated models and datasets.
    * - ``log_dir``
      - ``/home/{user-id}/LOGS/megatron``
-     - Host path where per-node training logs are written. Must be volume-mounted into the container. Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``; Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``.
+     - Host path where per-node training logs are written. Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``; Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``.
    * - ``scripts_dir``
      - ``/home/{user-id}/SCRIPTS/megatron``
-     - Host path where the lib writes per-rank wrapper scripts. Must be volume-mounted into the container.
+     - Host path where the lib writes per-rank wrapper scripts.
    * - ``data_cache_dir``
      - ``/home/{user-id}/cache``
      - Dataset and tokenizer cache directory.
    * - ``rocm_dir``
      - ``""``
      - ROCm installation path inside the container. Leave empty for auto-detection.
-   * - ``megatron_root``
-     - ``/workspace/Megatron-LM``
-     - Root directory of the Megatron-LM checkout inside the container. Used by the Megatron-LM backend; Primus jobs use in-image YAML under ``examples/megatron/configs/{gpu_arch}/`` instead.
-   * - ``training_iterations``
-     - ``<changeme>``
-     - Number of training steps to run.
-   * - ``nnodes``
-     - ``1``
-     - Always ``1`` for single-node configs.
-   * - ``master_address``
-     - ``127.0.0.1``
-     - Loopback address for single-node runs.
-   * - ``nccl_socket_ifname``
-     - ``<changeme>``
-     - Network interface for NCCL control channels (required even for single-node).
-   * - ``gloo_socket_ifname``
-     - ``<changeme>``
-     - Network interface for Gloo control channels.
-   * - ``nccl_ib_gid_index``
-     - ``3``
-     - GID index for InfiniBand addressing.
-   * - ``nccl_debug``
-     - ``ERROR``
-     - NCCL log verbosity level.
-   * - ``verify_network_errors``
-     - ``False``
-     - Disabled for single-node; no RDMA counters to compare.
 
-``config`` (distributed — additional fields)
---------------------------------------------
+``container.env``
+-----------------
 
-Distributed configs include all single-node fields above plus the following required network fields.
+These values are passed into the container as ``docker run -e`` flags and also flattened into the training job dict.
 
 .. list-table::
    :widths: 3 3 5
@@ -522,27 +492,27 @@ Distributed configs include all single-node fields above plus the following requ
    * - Parameter
      - Default
      - Description
-   * - ``nnodes``
+   * - ``NNODES``
+     - ``1`` (single) / ``<changeme>`` (distributed)
+     - Number of nodes in the job. Must match the cluster file on distributed runs.
+   * - ``MASTER_ADDR``
+     - ``127.0.0.1`` (single) / ``<changeme>`` (distributed)
+     - Rank-0 address (loopback on single-node).
+   * - ``NCCL_SOCKET_IFNAME``
      - ``<changeme>``
-     - Number of nodes in the distributed job. Must match the cluster file.
-   * - ``master_address``
+     - Network interface for NCCL control channels.
+   * - ``GLOO_SOCKET_IFNAME``
      - ``<changeme>``
-     - IP address of the rank-0 (master) node.
-   * - ``nic_type``
+     - Network interface for Gloo control channels.
+   * - ``NCCL_IB_GID_INDEX``
+     - ``3``
+     - GID index for InfiniBand addressing.
+   * - ``NCCL_DEBUG``
+     - ``ERROR``
+     - NCCL log verbosity.
+   * - ``NCCL_IB_HCA``
      - ``<changeme>``
-     - NIC hardware type (e.g. ``thor2``, ``cx7``). Controls Broadcom-specific in-container workarounds.
-   * - ``nccl_ib_hca_list``
-     - ``<changeme>``
-     - Comma-separated list of InfiniBand HCA device names for NCCL multi-rail.
-   * - ``nccl_ib_hca``
-     - ``<changeme>``
-     - Primary HCA name passed to ``NCCL_IB_HCA``.
-   * - ``hca_id_pattern``
-     - ``bnxt_|rocep``
-     - ``|``-separated NIC-name prefixes checked against ``ibv_devinfo`` after the libbnxt copy. Add ``|mlx5_`` for Mellanox/RoCE NICs.
-   * - ``verify_network_errors``
-     - ``True``
-     - Compare RDMA and ethtool error counters before and after training.
+     - *(Distributed)* Comma-separated InfiniBand HCA device names.
 
 ``container``
 -------------
@@ -588,6 +558,8 @@ Distributed configs include all single-node fields above plus the following requ
 Controls the checkpoint save and resume test (``test_checkpoint``). The test is Primus-only: it is skipped when ``enforce`` is ``false``, and also skipped when the container image name does not contain ``primus``. On Primus it runs in two phases: a save phase that trains for ``save_iters`` steps writing a checkpoint every ``save_interval`` steps, followed by a resume phase that loads the last checkpoint and trains to ``resume_iters`` steps. Continuity is checked at the first resume step (``last_ckpt_step + 1``), which must not exceed the checkpoint-step loss by more than ``loss_rtol``.
 
 ``checkpoint_dir`` is only present in distributed configs. On Primus distributed runs it must be a shared filesystem path visible on every node. Single-node Primus ignores that field and writes under ``{log_dir}/ckpt_primus``. Megatron-LM never runs ``test_checkpoint``.
+
+Load I/O timing is taken from the node-0 Primus log. Single-node resume lines say ``loading checkpoint from``; distributed resume lines say ``loading distributed checkpoint from``. Both end with ``successfully loaded checkpoint from``. A missing load-start line yields a warning, not a test failure.
 
 .. list-table::
    :widths: 3 3 5
@@ -719,7 +691,7 @@ Controls ``test_smoke``: a small fixed cell (not a ``sweep.runs`` entry) that lo
      - N/A
      - Required ordered list of combination keys to execute. Must be a subset of (or equal to) the keys in ``combinations``. Reorder or trim this list to run only specific cells. Omitting ``runs`` fails config load.
 
-Any key in a sweep combo overrides the matching ``model_params`` field (for example ``precision`` or ``tensor_parallelism``).
+Any key in a sweep combo overrides the matching ``train_params`` field (for example ``tensor_parallelism``). Precision is set only on the sweep cell.
 
 Threshold files
 ---------------
@@ -742,5 +714,7 @@ A metric is gated only when ``enforce_thresholds`` is ``true`` and the cell has 
      - always; recorded only
    * - ``min_ratio``
      - actual / ``reference`` ≥ value
+   * - ``optional`` (boolean on a spec, not a kind)
+     - if true, Megatron ``test_metric`` skips the metric when it is missing or None; a present value is still gated by ``kind``.
 
-Tracked metrics (namespace ``training.*``): ``throughput_per_gpu``, ``tokens_per_gpu``, ``elapsed_time_per_iteration``, ``mem_usage``, and on distributed configs ``scaling_efficiency_pct`` (always ``info``).
+Tracked metrics (namespace ``training.*``): ``throughput_per_gpu``, ``tokens_per_gpu``, ``elapsed_time_per_iteration``, ``mem_usage`` (Megatron-LM ``mem usages:``; Primus does not emit it; packaged specs set ``optional: true``), and on distributed configs ``scaling_efficiency_pct`` (``kind: info`` and ``optional: true`` in packaged files).

@@ -1,31 +1,16 @@
 {
-  "schema_version": 1,
-  "framework": "megatron_distributed",
-  "gpu_arch": "MI325X",
+  "gpu_name": "MI325X",
   "enforce_thresholds": true,
   "threshold_json": "mi325x_megatron_llama-3.1-8b_distributed_threshold.json",
-  "config": {
+  "paths": {
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOGS/megatron",
     "scripts_dir": "/home/{user-id}/SCRIPTS/megatron",
     "data_cache_dir": "/home/{user-id}/cache",
-    "rocm_dir": "",
-    "megatron_root": "/workspace/Megatron-LM",
-    "_example_training_iterations": "30",
-    "training_iterations": "<changeme>",
-    "nnodes": "<changeme>",
-    "master_address": "<changeme>",
-    "nic_type": "<changeme>",
-    "nccl_ib_hca_list": "<changeme>",
-    "nccl_ib_hca": "<changeme>",
-    "nccl_socket_ifname": "<changeme>",
-    "gloo_socket_ifname": "<changeme>",
-    "hca_id_pattern": "bnxt_|rocep",
-    "nccl_ib_gid_index": "3",
-    "nccl_debug": "ERROR",
-    "verify_network_errors": "True"
+    "rocm_dir": ""
   },
-  "model_params": {
+  "verify_network_errors": "True",
+  "train_params": {
     "model_name": "llama3.1_8B",
     "tokenizer_model": "meta-llama/Llama-3.1-8B",
     "model_size": "8",
@@ -34,7 +19,7 @@
     "fsdp": "0",
     "tensor_parallelism": "1",
     "pipeline_parallelism": "1",
-    "precision": "FP8"
+    "training_iterations": "<changeme>"
   },
   "container": {
     "lifetime": "per_run",
@@ -59,6 +44,15 @@
           "/dev/infiniband/rdma_cm"
         ]
       }
+    },
+    "env": {
+      "NNODES": "<changeme>",
+      "MASTER_ADDR": "<changeme>",
+      "NCCL_IB_HCA": "<changeme>",
+      "NCCL_SOCKET_IFNAME": "<changeme>",
+      "GLOO_SOCKET_IFNAME": "<changeme>",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_DEBUG": "ERROR"
     }
   },
   "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",

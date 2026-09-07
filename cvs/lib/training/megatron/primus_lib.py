@@ -143,7 +143,7 @@ class PrimusTrainingJob:
         run_label=None,
     ):
         self.orch = orch
-        self.model_name = variant_config.model_params['model_name']
+        self.model_name = variant_config.train_params['model_name']
         self.hf_token = hf_token
         self.tune_model_params = tune_model_params
         self.distributed_training = distributed_training
@@ -160,12 +160,12 @@ class PrimusTrainingJob:
         self.training_end_time = None
 
         self.home_dir = os.path.expanduser('~')
-        tdict = dict(variant_config.config)
+        tdict = variant_config.job_config_dict()
         tdict.setdefault('training_iterations', 10)
         tdict.setdefault('nnodes', '1')
         tdict.setdefault('nccl_socket_ifname', 'ensf1np1')
         tdict.setdefault('gloo_socket_ifname', 'ensf1np1')
-        tdict.setdefault('nccl_ib_hca_list', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
+        tdict.setdefault('nccl_ib_hca', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
         tdict.setdefault('nccl_ib_gid_index', '3')
         tdict.setdefault('nccl_debug', 'ERROR')
         tdict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
@@ -192,7 +192,7 @@ class PrimusTrainingJob:
 
         self.nccl_socket_ifname = tdict['nccl_socket_ifname']
         self.gloo_socket_ifname = tdict['gloo_socket_ifname']
-        self.nccl_ib_hca_list = tdict['nccl_ib_hca_list']
+        self.nccl_ib_hca = tdict['nccl_ib_hca']
         self.nccl_ib_gid_index = tdict['nccl_ib_gid_index']
         self.nccl_debug = tdict['nccl_debug']
         self.data_cache_dir = tdict['data_cache_dir']
@@ -202,9 +202,9 @@ class PrimusTrainingJob:
         self.verify_network_errors = tdict['verify_network_errors']
         self.primus_root = tdict['primus_root']
         self.primus_cli = tdict['primus_cli']
-        self.gpu_arch = getattr(variant_config, 'gpu_arch', '')
+        self.gpu_arch = variant_config.gpu_name
 
-        pdict = dict(variant_config.model_params)
+        pdict = dict(variant_config.train_params)
         pdict['micro_batch_size'] = micro_batch_size
         pdict['global_batch_size'] = global_batch_size
         if precision:
@@ -405,8 +405,7 @@ class PrimusTrainingJob:
 
         if self.distributed_training:
             env_exports += (
-                f'export NCCL_IB_HCA_LIST={self.nccl_ib_hca_list}; '
-                f'export NCCL_IB_HCA={self.nccl_ib_hca_list}; '
+                f'export NCCL_IB_HCA={self.nccl_ib_hca}; '
                 f'export NCCL_DEBUG={self.nccl_debug}; '
                 f'export NCCL_IB_GID_INDEX={self.nccl_ib_gid_index}; '
             )
