@@ -63,6 +63,18 @@ _TRAINING_ERR_PATTERNS = {
 # waiting for the completion-timeout.
 _ALWAYS_ON_ERR_PATTERNS = {
     'python crash': r'Traceback \(most recent call last\):|ImportError:|ModuleNotFoundError:|Fatal Python error:',
+    # JAX/XLA distributed death: the coordinator aborts the process when a peer
+    # task fails to register / drops (e.g. a rank never comes up), so the
+    # survivors would otherwise poll to timeout. Match ONLY the terminal abort
+    # message -- NOT generic "/tensorflow.CoordinationService/..." RPC lines,
+    # which JAX also emits as benign WARNINGs during normal shutdown
+    # (WatchJobState CANCELLED/UNAVAILABLE once peers exit).
+    'jax distributed fatal': r'Terminating process because the JAX distributed service detected fatal errors',
+    # Any glog FATAL line ("F<MMDD> HH:MM:SS.uuuuuu ...") means the process called
+    # abort(); it is always terminal, so fail fast instead of polling to timeout.
+    # glog uses 'F' only for FATAL, so this never matches the benign 'W'/'E'
+    # coordination-shutdown warnings above.
+    'glog fatal': r'\bF\d{4} \d\d:\d\d:\d\d\.\d',
 }
 
 # NaN/Inf in any reported training metric -- loss/lm_loss/perplexity go NaN while
@@ -133,7 +145,15 @@ class MaxTextTrainingJob:
         self.maxtext_config = merged
 
         self.log_dir = variant.paths.log_dir
-        self.out_dir = f"{self.log_dir}/jaxmaxtext/{self.sweep_tag}" if self.sweep_tag else f"{self.log_dir}/jaxmaxtext"
+        # Namespace the output tree by model (from maxtext_config.model_name, else
+        # the model id) so different models never share a sweep folder, then by
+        # the per-sweep tag.
+        model_name = self.maxtext_config.get("model_name") or self.variant.model.id or "model"
+        self.out_dir = (
+            f"{self.log_dir}/jaxmaxtext/{model_name}/{self.sweep_tag}"
+            if self.sweep_tag
+            else f"{self.log_dir}/jaxmaxtext/{model_name}"
+        )
         self.num_nodes = len(orch.hosts)
         # GPUs-per-node is config-driven -- do not assume a uniform 8-GPU topology.
         # It feeds num_gpus -> tokens_per_sec_total -> scaling efficiency, so an
@@ -217,56 +237,32 @@ class MaxTextTrainingJob:
     # ---------- setup ----------
 
     def setup_training_env(self):
-        """Write env script and MaxText YAML config into the container."""
+        """Write the MaxText YAML config into the container.
+
+        Common environment (the config's ``container.env{}`` plus the
+        ``XLA_FLAGS`` folded in from ``xla_flags{}``) is set on the container at
+        ``docker run`` time by the orchestrator and inherited by ``docker exec``,
+        so there is no env script to source. Only the per-run YAML is written
+        here; per-node/dynamic vars + credentials are exported inside each node's
+        launcher (see ``build_training_cmd``).
+        """
         self.orch.exec(f"mkdir -p {shlex.quote(self._get_scratch_dir())}")
         self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}")
         for i in range(self.num_nodes):
             self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}/out-node{i}")
-
-        self._write_env_script()
         self._write_maxtext_yaml()
 
-    def _build_xla_flags_str(self):
-        parts = []
-        for k, v in self.training.xla_flags.items():
-            parts.append(f"--{k}={v}")
-        return " ".join(parts)
+    def _node_log(self, i):
+        """Per-node training log path (one file per rank)."""
+        return f"{self.out_dir}/out-node{i}/training_node{i}.log"
 
-    def _write_env_script(self):
-        """Write the env script sourced before training launch."""
-        lines = []
+    def _node_dmesg_log(self, i):
+        """Per-node saved-dmesg log path (one file per rank)."""
+        return f"{self.out_dir}/out-node{i}/dmesg_node{i}.log"
 
-        lines.append(f"export HF_TOKEN={shlex.quote(self.hf_token)}")
-        lines.append(f"export HF_HOME={shlex.quote(self.variant.paths.models_dir)}")
-        lines.append("export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH")
-
-        for k, v in self.training.env_vars.items():
-            lines.append(f"export {k}={shlex.quote(str(v))}")
-
-        xla_flags = self._build_xla_flags_str()
-        if xla_flags:
-            lines.append(f'export XLA_FLAGS="{xla_flags}"')
-
-        if self.training.distributed:
-            nccl = self.training.nccl
-            if nccl.ib_hca:
-                lines.append(f"export NCCL_IB_HCA={shlex.quote(nccl.ib_hca)}")
-            if nccl.ib_hca_list:
-                lines.append(f"export NCCL_IB_HCA_LIST={shlex.quote(nccl.ib_hca_list)}")
-            if nccl.socket_ifname:
-                lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(nccl.socket_ifname)}")
-            if nccl.gloo_socket_ifname:
-                lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(nccl.gloo_socket_ifname)}")
-            if nccl.ib_gid_index:
-                lines.append(f"export NCCL_IB_GID_INDEX={shlex.quote(nccl.ib_gid_index)}")
-        else:
-            lines.append("export NCCL_IB_DISABLE=1")
-            lines.append("export NCCL_SHM_DISABLE=0")
-            lines.append("export NCCL_P2P_DISABLE=0")
-
-        env_script = "\n".join(lines) + "\n"
-        env_path = f"{self._get_scratch_dir()}/maxtext_env.sh"
-        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > {env_path}"))
+    def _node_dir(self, i):
+        """Per-node output dir (holds this rank's training/dmesg/redirect logs)."""
+        return f"{self.out_dir}/out-node{i}"
 
     def _write_maxtext_yaml(self):
         """Write the MaxText YAML config into the container."""
@@ -435,45 +431,26 @@ class MaxTextTrainingJob:
         """
         scratch = self._get_scratch_dir()
         train_script = self._resolve_train_script()
+        # Common env (container.env{} + XLA_FLAGS) is already set on the container
+        # via `docker run -e` and inherited here by `docker exec`. The launcher
+        # only adds credentials + the PER-NODE/dynamic vars that cannot be static:
+        # the coordinator address (first node), node count, and this rank's index.
+        coordinator_ip = self.orch.hosts[0] if self.training.distributed else "localhost"
         write_cmds = []
         for i in range(self.num_nodes):
             launcher_lines = [
                 "#!/bin/bash",
-                f"source {scratch}/maxtext_env.sh",
+                f"export HF_TOKEN={shlex.quote(self.hf_token)}",
+                f"export HF_HOME={shlex.quote(self.variant.paths.models_dir)}",
+                "export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH",
+                f"export JAX_COORDINATOR_IP={shlex.quote(coordinator_ip)}",
+                f"export NNODES={self.num_nodes}",
+                f"export NODE_RANK={i}",
+                f"export JAX_PROCESS_INDEX={i}",
+                "export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/",
             ]
 
-            if self.training.distributed:
-                jax_dist = self.training.jax_distributed
-                # "auto" (or empty) -> use the first cluster node (node_dict order,
-                # i.e. orch.hosts[0]) as the JAX coordinator; an explicit IP in the
-                # config overrides it.
-                coordinator_ip = (getattr(jax_dist, "coordinator_ip", "") or "").strip()
-                if not coordinator_ip or coordinator_ip.lower() == "auto":
-                    coordinator_ip = self.orch.hosts[0]
-                launcher_lines.extend(
-                    [
-                        f"export JAX_COORDINATOR_IP={shlex.quote(coordinator_ip)}",
-                        f"export JAX_COORDINATOR_PORT={shlex.quote(jax_dist.coordinator_port)}",
-                        f"export NNODES={self.num_nodes}",
-                        f"export NODE_RANK={i}",
-                        f"export JAX_PROCESS_INDEX={i}",
-                        f"export JAX_DISTRIBUTED_INITIALIZATION_TIMEOUT_SECONDS={jax_dist.initialization_timeout_seconds}",
-                        f"export JAX_DISTRIBUTED_HEARTBEAT_TIMEOUT_SECONDS={jax_dist.heartbeat_timeout_seconds}",
-                    ]
-                )
-            else:
-                launcher_lines.extend(
-                    [
-                        "export JAX_COORDINATOR_IP=localhost",
-                        "export JAX_COORDINATOR_PORT=12346",
-                        "export NNODES=1",
-                        "export NODE_RANK=0",
-                        "export JAX_PROCESS_INDEX=0",
-                    ]
-                )
-
-            launcher_lines.append("export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/")
-            log_file = f"{self.out_dir}/out-node{i}/training.log"
+            log_file = self._node_log(i)
             launcher_lines.append(
                 f"cd /workspace/maxtext && python {shlex.quote(train_script)} "
                 f"{scratch}/maxtext_config.yml 2>&1 | tee {shlex.quote(log_file)}"
@@ -507,25 +484,35 @@ class MaxTextTrainingJob:
 
         scratch = self._get_scratch_dir()
 
-        # Clear each node's previous training.log BEFORE launch. The launcher
-        # only truncates the log once it reaches `python ... | tee training.log`;
-        # if this run dies earlier (env source fails, launcher never starts,
-        # etc.) a STALE log with an old "completed step: N" marker would remain
-        # and is_complete() would report success on the first poll -- a
-        # fail-open that lets smoke/training pass without this run doing the
-        # work. Removing it here means a run that never reaches `tee` leaves no
-        # log, so is_complete() stays false and the stage correctly times out.
-        clear_cmds = [
-            "bash -c " + shlex.quote(f"rm -f {shlex.quote(f'{self.out_dir}/out-node{i}/training.log')}")
+        # Reset each node's OWN out-node dir BEFORE launch: this clears the stale
+        # per-node training/dmesg logs so is_complete() cannot false-pass on an old
+        # "completed step: N" marker.
+        #
+        # CRITICAL for the shared (NFS) FS: a directory is only ever removed by the
+        # node that writes to it. Removing a shared dir from a single node (the
+        # sweep parent, or another node's out-node) changes/deletes an inode that
+        # peer nodes still have cached, leaving them with a stale handle -- their
+        # launcher redirect then fails with "No such file or directory". Doing the
+        # rm+mkdir per node (cmd_list[i] runs on hosts[i]) keeps each node's own
+        # cache consistent. The checkpoint dir lives under out_dir/<run_name>/, NOT
+        # under out-node*, so a resume's checkpoint is untouched by this reset.
+        reset_cmds = [
+            "bash -c "
+            + shlex.quote(f"rm -rf {shlex.quote(self._node_dir(i))} && mkdir -p {shlex.quote(self._node_dir(i))}")
             for i in range(self.num_nodes)
         ]
-        self.orch.exec_cmd_list(clear_cmds)
+        self.orch.exec_cmd_list(reset_cmds)
 
         launch_cmds = []
         for i in range(self.num_nodes):
             script_path = f"{scratch}/training_launcher_node{i}.sh"
-            redirect_log = f"{self.out_dir}/out-node{i}/training_redirect_logs"
-            inner = f"nohup bash {script_path} > {shlex.quote(redirect_log)} 2>&1 &"
+            redirect_log = f"{self._node_dir(i)}/training_redirect_logs"
+            # Belt-and-suspenders: ensure the (node-local) out-node dir exists
+            # right before the redirect; idempotent after the reset above.
+            inner = (
+                f"mkdir -p {shlex.quote(self._node_dir(i))} && "
+                f"nohup bash {script_path} > {shlex.quote(redirect_log)} 2>&1 &"
+            )
             launch_cmds.append("bash -c " + shlex.quote(inner))
 
         self.orch.exec_cmd_list(launch_cmds)
@@ -549,8 +536,7 @@ class MaxTextTrainingJob:
         final_step = self.training.steps - 1
         pattern = f"completed step:\\s*{final_step},"
         cmd_list = [
-            f"grep -cE {shlex.quote(pattern)} "
-            f"{shlex.quote(f'{self.out_dir}/out-node{i}/training.log')} 2>/dev/null || true"
+            f"grep -cE {shlex.quote(pattern)} {shlex.quote(self._node_log(i))} 2>/dev/null || true"
             for i in range(self.num_nodes)
         ]
         out = self.orch.exec_cmd_list(cmd_list, print_console=False)
@@ -598,8 +584,7 @@ class MaxTextTrainingJob:
         repeated ``tail`` window per poll.
         """
         cmd_list = [
-            f"tail -n +{self._log_line_cursor[i] + 1} "
-            f"{shlex.quote(f'{self.out_dir}/out-node{i}/training.log')} 2>/dev/null || true"
+            f"tail -n +{self._log_line_cursor[i] + 1} {shlex.quote(self._node_log(i))} 2>/dev/null || true"
             for i in range(self.num_nodes)
         ]
         out = self.orch.exec_cmd_list(cmd_list, print_console=False)
@@ -680,7 +665,7 @@ class MaxTextTrainingJob:
         the pure `parse_training_log`, and stores both per-step and aggregate
         metrics on self.
         """
-        log_file = f"{self.out_dir}/out-node0/training.log"
+        log_file = self._node_log(0)
         # Read node 0's (coordinator) log. Only hosts[0] runs the cat; the other
         # nodes get a no-op so cmd_list[i] still lines up with hosts[i].
         cmd_list = [f"cat {shlex.quote(log_file)}" if i == 0 else "true" for i in range(self.num_nodes)]
@@ -747,9 +732,52 @@ class MaxTextTrainingJob:
                 from cvs.lib.verify_lib import verify_dmesg_for_errors as verify
             end_time = self._host_date()
             time.sleep(2)
+            # Save each node's dmesg alongside its training log (best-effort, own
+            # try) BEFORE the scan so it is captured even if the scan itself fails.
+            self._save_node_dmesg_logs(allh)
             verify(allh, self.training_start_time, end_time)
         except Exception as e:  # noqa: BLE001 - scan infra failure is non-fatal
             log.warning("dmesg verification skipped (scan failed): %s", e)
+
+    def _save_node_dmesg_logs(self, allh):
+        """Save each node's windowed dmesg to ``out-node{i}/dmesg_node{i}.log``.
+
+        Mirrors the scan's window: from the training start timestamp to the end of
+        the kernel buffer, NTP-aligned via node 0's start time (same derivation as
+        ``verify_dmesg_for_errors``). Writes one file per rank via the baremetal
+        host handle (``cmd_list[i]`` runs on ``hosts[i]``). Best-effort: never
+        raises, so a save failure cannot mask the training result.
+        """
+        try:
+            if not hasattr(allh, "exec_cmd_list"):
+                return
+            starts = self.training_start_time or {}
+            if not starts:
+                return
+            node0 = list(starts.keys())[0]
+            start_time = str(starts[node0]).rstrip("\n")
+            m = re.search(r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+:[0-9]+)", start_time)
+            if not m:
+                log.warning("dmesg save skipped: could not parse start time %r", start_time)
+                return
+            start_pattern = m.group(1)
+            cmd_list = []
+            for i in range(self.num_nodes):
+                node_dir = f"{self.out_dir}/out-node{i}"
+                # Run the whole capture+redirect as ROOT: dmesg needs sudo AND the
+                # per-node out-dir is created by the (root) container, so a non-root
+                # redirect into it is "Permission denied". `sudo bash -c` keeps the
+                # mkdir + dmesg + file write all as root (sudo alone would only
+                # elevate dmesg, leaving the redirect as the unprivileged user).
+                inner = (
+                    f"mkdir -p {shlex.quote(node_dir)} && "
+                    f"dmesg -T | sed -n '/{start_pattern}/,$p' > {shlex.quote(self._node_dmesg_log(i))}"
+                )
+                cmd_list.append("sudo bash -c " + shlex.quote(inner) + " || true")
+            allh.exec_cmd_list(cmd_list)
+            log.info("saved per-node dmesg logs (out-node*/dmesg_node*.log)")
+        except Exception as e:  # noqa: BLE001 - best-effort; never mask the training result
+            log.warning("could not save per-node dmesg logs: %s", e)
 
     # ---------- cleanup ----------
 

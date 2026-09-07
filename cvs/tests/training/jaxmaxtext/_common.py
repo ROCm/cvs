@@ -87,19 +87,18 @@ def _sweep_label(name):
 def _enabled_sweep_names(config_file):
     """Read sweep names to run from the raw config (collection time, no fixtures).
 
-    Honors training.enabled_sweep_list (subset selector); falls back to every
-    declared sweep, or a single implicit "default" when none are declared.
+    Reads the `sweeps` map ({name: overrides}) and the `runs` selector; falls back
+    to every declared sweep, or a single implicit "default" when none are declared.
     """
     try:
         with open(config_file) as fp:
             raw = json.load(fp)
     except Exception:
         return ["default"]
-    training = raw.get("training", {})
-    names = [s.get("name") for s in training.get("sweeps", []) if s.get("name")]
+    names = [n for n in (raw.get("sweeps") or {}).keys() if not str(n).startswith("_")]
     if not names:
         return ["default"]
-    enabled = training.get("enabled_sweep_list") or names
+    enabled = raw.get("runs") or names
     return [n for n in enabled if n in names] or names
 
 

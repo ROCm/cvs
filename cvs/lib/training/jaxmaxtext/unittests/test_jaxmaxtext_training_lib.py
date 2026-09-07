@@ -96,13 +96,8 @@ class ConstructorTests(unittest.TestCase):
         job, _ = _make_job(hosts=["h0", "h1"])
         self.assertEqual(job.num_nodes, 2)
         self.assertEqual(job.num_gpus, 16)
-        self.assertEqual(job.out_dir, "/logs/jaxmaxtext")
-
-    def test_build_xla_flags_str(self):
-        job, _ = _make_job()
-        s = job._build_xla_flags_str()
-        self.assertIn("--xla_gpu_autotune_level=0", s)
-        self.assertIn("--xla_gpu_enable_triton_gemm=False", s)
+        # out_dir is namespaced by model (from model_name, else model.id)
+        self.assertEqual(job.out_dir, "/logs/jaxmaxtext/llama3.3-70b")
 
     def test_gpus_per_node_from_config(self):
         # num_gpus derives from config gpus_per_node, not a hardcoded 8.
@@ -243,6 +238,32 @@ class ScanForErrorsTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             job._scan_chunk_for_errors("h0", 0, chunk)
 
+    def test_jax_distributed_fatal_caught_by_always_on(self):
+        # The glog FATAL from a JAX distributed coordination death must fail fast
+        # (always-on), even when the config overrides error_patterns.
+        job, _ = _make_job(hosts=["h0"], error_patterns={"custom": "MY_CUSTOM_ERR"})
+        chunk = (
+            "F0907 16:27:17.495912      69 client.h:80] Terminating process because the JAX "
+            "distributed service detected fatal errors. absl::Status: DEADLINE_EXCEEDED\n"
+            "RPC: /tensorflow.CoordinationService/RegisterTask\n"
+        )
+        with self.assertRaises(RuntimeError):
+            job._scan_chunk_for_errors("h0", 0, chunk)
+
+    def test_benign_coordination_shutdown_noise_not_flagged(self):
+        # After a run completes, JAX emits benign WARNINGs as peers exit; these
+        # mention CoordinationService/WatchJobState + CANCELLED/UNAVAILABLE but are
+        # NOT fatal, so they must not fail the (already succeeded) run.
+        job, _ = _make_job(hosts=["h0"])
+        chunk = (
+            "W0907 18:18:10.779063 1044 pjrt_client.cc:1604] WatchJobStateAsync failed for task 0: CANCELLED\n"
+            "Additional GRPC error information ... /tensorflow.CoordinationService/WatchJobState:\n"
+            "W0907 18:18:11.779792 1044 pjrt_client.cc:1604] WatchJobStateAsync failed for task 0: "
+            "UNAVAILABLE: failed to connect to all addresses ... Connection refused\n"
+        )
+        # must NOT raise
+        job._scan_chunk_for_errors("h0", 0, chunk)
+
 
 class DrainNewLogLinesTests(unittest.TestCase):
     def test_advances_cursor_and_returns_new_text(self):
@@ -355,10 +376,14 @@ class BuildTrainingCmdTests(unittest.TestCase):
         self.assertIn("NODE_RANK=1", cmds[1])
         # coordinator IP is host 0
         self.assertIn("JAX_COORDINATOR_IP=h0", cmds[0])
+        self.assertIn("NNODES=2", cmds[0])
         # resolved train script and user-namespaced scratch dir are wired in
         self.assertIn("/workspace/maxtext/src/MaxText/train.py", cmds[0])
-        self.assertIn("/tmp/tester/jaxmaxtext/maxtext_env.sh", cmds[0])
         self.assertIn("/tmp/tester/jaxmaxtext/maxtext_config.yml", cmds[0])
+        # per-node log file is one-per-rank; common env comes from docker -e, so
+        # the launcher no longer sources an env script.
+        self.assertIn("training_node0.log", cmds[0])
+        self.assertNotIn("maxtext_env.sh", cmds[0])
 
     def test_single_node_localhost_coordinator(self):
         job, orch = _make_job(hosts=["h0"], distributed=False)
@@ -377,21 +402,19 @@ class BuildTrainingCmdTests(unittest.TestCase):
         cmds = orch.exec_cmd_list.call_args.args[0]
         self.assertIn("JAX_COORDINATOR_IP=10.0.0.5", cmds[0])
 
-    def test_explicit_coordinator_ip_overrides_auto(self):
-        # A concrete coordinator_ip in the config wins over the first host.
-        job, orch = _make_job(
-            hosts=["10.0.0.5", "10.0.0.6"],
-            jax_distributed=SimpleNamespace(
-                coordinator_ip="10.9.9.9",
-                coordinator_port="12346",
-                initialization_timeout_seconds="1800",
-                heartbeat_timeout_seconds="900",
-            ),
-        )
+    def test_launcher_sets_creds_and_per_node_only(self):
+        # The launcher exports credentials + per-node/dynamic vars; the common
+        # env (NCCL/NVTE/XLA_FLAGS/JAX_COORDINATOR_PORT) is set on the container
+        # via docker -e, so it is NOT written into the launcher.
+        job, orch = _make_job(hosts=["10.0.0.5", "10.0.0.6"])
         _wire_container_exec(orch)
         job.build_training_cmd()
         cmds = orch.exec_cmd_list.call_args.args[0]
-        self.assertIn("JAX_COORDINATOR_IP=10.9.9.9", cmds[0])
+        self.assertIn("HF_TOKEN=", cmds[0])
+        self.assertIn("PYTHONPATH=", cmds[0])
+        self.assertIn("JAX_COORDINATOR_IP=10.0.0.5", cmds[1])  # first host, on every rank
+        self.assertNotIn("JAX_COORDINATOR_PORT", cmds[0])  # comes from container env (docker -e)
+        self.assertNotIn("NCCL_", cmds[0])
 
 
 class TrainScriptResolveTests(unittest.TestCase):
@@ -551,23 +574,6 @@ class CheckoutMaxtextBranchTests(unittest.TestCase):
         self.assertNotIn("git checkout", install_cmd)
 
 
-class WriteEnvScriptTests(unittest.TestCase):
-    def test_distributed_exports_nccl_ib_gid_index_from_nccl_block(self):
-        # nccl.ib_gid_index is now wired to export NCCL_IB_GID_INDEX (like ib_hca),
-        # so the nccl block -- not env_vars -- is authoritative for the GID index.
-        job, orch = _make_job(hosts=["h0", "h1"])  # distributed=True
-        job._write_env_script()
-        written = "\n".join(str(c.args[0]) for c in orch.exec.call_args_list)
-        self.assertIn("export NCCL_IB_GID_INDEX=3", written)
-        self.assertIn("export NCCL_IB_HCA=", written)
-
-    def test_single_node_does_not_export_nccl_ib_gid_index(self):
-        job, orch = _make_job(hosts=["h0"], distributed=False)
-        job._write_env_script()
-        written = "\n".join(str(c.args[0]) for c in orch.exec.call_args_list)
-        self.assertNotIn("NCCL_IB_GID_INDEX", written)
-
-
 class StartTrainingTests(unittest.TestCase):
     @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
     def test_launches_per_node_backgrounded(self, _sleep):
@@ -579,18 +585,36 @@ class StartTrainingTests(unittest.TestCase):
         _sleep.assert_called_once()
 
     @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
-    def test_clears_stale_log_before_launch(self, _sleep):
-        # A stale training.log with an old "completed step" marker would make
-        # is_complete() pass on the first poll (fail-open). start_training must
-        # rm each node's log BEFORE launching.
+    def test_resets_each_nodes_own_out_dir_before_launch(self, _sleep):
+        # A stale run's "completed step" marker would make is_complete() pass on
+        # the first poll (fail-open). Each node resets its OWN out-node dir
+        # (cmd_list[i] on hosts[i]) so no node ever removes a shared dir another
+        # node has cached (which would leave a stale NFS handle).
         job, orch = _make_job(hosts=["h0", "h1"])
         job.start_training()
-        clear_cmds = orch.exec_cmd_list.call_args_list[0].args[0]
-        self.assertEqual(len(clear_cmds), 2)
-        self.assertTrue(all("rm -f" in c and "training.log" in c for c in clear_cmds))
-        # ... and the clear precedes the launch.
+        reset_cmds = orch.exec_cmd_list.call_args_list[0].args[0]
+        self.assertEqual(len(reset_cmds), 2)
+        self.assertIn("rm -rf", reset_cmds[0])
+        self.assertIn("out-node0", reset_cmds[0])
+        self.assertIn("mkdir -p", reset_cmds[0])
+        self.assertIn("out-node1", reset_cmds[1])
+        # never removes the shared parent sweep folder from a single node
+        self.assertFalse(
+            any(f"rm -rf {job.out_dir} " in c or c.strip().endswith(f"rm -rf {job.out_dir}") for c in reset_cmds)
+        )
         launch_cmds = orch.exec_cmd_list.call_args_list[-1].args[0]
-        self.assertTrue(all("nohup bash" in c for c in launch_cmds))
+        self.assertTrue(all("mkdir -p" in c and "out-node" in c and "nohup bash" in c for c in launch_cmds))
+
+    @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
+    def test_checkpoint_reset_keeps_parent_and_checkpoint(self, _sleep):
+        # The per-node reset removes only out-node dirs; the checkpoint lives under
+        # out_dir/<run_name>/, so a resume is unaffected and the parent is kept.
+        job, orch = _make_job(hosts=["h0", "h1"], enable_checkpointing=True)
+        job.start_training()
+        reset_cmds = orch.exec_cmd_list.call_args_list[0].args[0]
+        self.assertTrue(all("out-node" in c for c in reset_cmds))
+        # the shared parent folder is never rm'd
+        self.assertFalse(any(c.strip().endswith(f"rm -rf {job.out_dir}") for c in reset_cmds))
 
     @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
     def test_captures_host_start_time(self, _sleep):
@@ -684,6 +708,24 @@ class ScanDmesgForErrorsTests(unittest.TestCase):
         job, _ = self._job_with_host()
         job.training_start_time = {"h0": "t"}
         job.scan_dmesg_for_errors()  # infra failure must not propagate
+
+    @patch(f"{_LIB}.time.sleep")
+    @patch(f"{_LIB}._verify_dmesg_for_errors")
+    def test_saves_per_node_dmesg_logs(self, _mock_verify, _sleep):
+        # Each rank's windowed dmesg is written to its own out-node{i}/dmesg_node{i}.log
+        # via the baremetal host handle (cmd_list[i] -> hosts[i]).
+        job, orch = self._job_with_host()
+        job.training_start_time = {"h0": "Mon Jan  2 03:00", "h1": "Mon Jan  2 03:00"}
+        job.scan_dmesg_for_errors()
+        orch.all.exec_cmd_list.assert_called_once()
+        cmds = orch.all.exec_cmd_list.call_args.args[0]
+        self.assertEqual(len(cmds), 2)
+        self.assertIn("dmesg_node0.log", cmds[0])
+        self.assertIn("dmesg_node1.log", cmds[1])
+        # whole capture+redirect runs as root (so it can write the root-owned out dir)
+        self.assertIn("sudo bash -c", cmds[0])
+        self.assertIn("dmesg -T", cmds[0])
+        self.assertIn("Mon Jan  2 03:00", cmds[0])  # windowed from the training start
 
 
 if __name__ == "__main__":
