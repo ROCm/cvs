@@ -10,12 +10,10 @@ import pytest
 import re
 import json
 
-from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib.rocm_plib import *
-
-from cvs.lib import globals
+from cvs.lib import globals, linux_utils
 
 log = globals.log
 
@@ -87,44 +85,11 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    """
-    Initialize and return a parallel SSH handle for all DUT nodes defined in the cluster config.
-
-    Behavior:
-      - Reads the node list from cluster_dict['node_dict'] keys.
-      - Constructs a Pssh handle using the shared username and private key path from cluster_dict.
-      - Returns the handle for use across tests within the same module scope.
-
-    Args:
-      cluster_dict (dict): Parsed cluster configuration containing at least:
-        - 'node_dict': Mapping of node names to node metadata
-        - 'username': SSH username to use for connections
-        - 'priv_key_file': Path to the SSH private key file
-
-    Returns:
-      Pssh: A handle that supports parallel command execution across the provided nodes.
-            Expected to expose APIs like:
-              - exec(cmd: str) -> Dict[node, str]
-              - exec_cmd_list(cmds: List[str]) -> Dict[node, str]
-
-    Notes:
-      - Scope is module-level so the connection is reused for all tests in this module.
-      - Assumes Pssh is available in scope and accepts (log, node_list, user, pkey) in its constructor.
-    """
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
-
-
 # Main Test cases start from here ..
 
 
 def test_check_os_release(
-    phdl,
+    orch,
     config_dict,
 ):
     """
@@ -150,7 +115,7 @@ def test_check_os_release(
     globals.error_list = []  # Reset error accumulator before running this test
     log.info('Testcase check OS Version')
     os_version = config_dict['os_version']  # Expected version substring/pattern
-    out_dict = phdl.exec('cat /etc/os-release')
+    out_dict = orch.all.exec('cat /etc/os-release')
     for node in out_dict.keys():
         # If expected version is not present, extract the actual version and fail
         if not re.search(f'{os_version}', out_dict[node], re.I):
@@ -161,7 +126,7 @@ def test_check_os_release(
     update_test_result()
 
 
-def test_check_kernel_version(phdl, config_dict):
+def test_check_kernel_version(orch, config_dict):
     """
     Validate that each node's kernel version matches the expected version.
 
@@ -185,7 +150,7 @@ def test_check_kernel_version(phdl, config_dict):
     globals.error_list = []
     log.info('Testcase check Kernel Version')
     kernel_version = config_dict['kernel_version']
-    out_dict = phdl.exec('uname -a')
+    out_dict = orch.all.exec('uname -a')
     for node in out_dict.keys():
         # If expected version is not present, extract the actual version and fail
         if not re.search(f'{kernel_version}', out_dict[node], re.I):
@@ -198,13 +163,13 @@ def test_check_kernel_version(phdl, config_dict):
     update_test_result()
 
 
-def test_check_bios_version(phdl, config_dict):
+def test_check_bios_version(orch, config_dict):
     """
     Verify that each node's BIOS/firmware version matches the expected value.
 
     This test:
       - Reads the expected BIOS version from config_dict['bios_version'].
-      - Executes 'sudo dmidecode -s bios-version' on all nodes via phdl.
+      - Executes 'sudo dmidecode -s bios-version' on all nodes via orch.all.
       - Fails the test for any node whose output does not contain the expected version.
       - Attempts to extract and report the actual BIOS version when a mismatch is found.
       - Calls update_test_result() at the end to record pass/fail.
@@ -220,7 +185,7 @@ def test_check_bios_version(phdl, config_dict):
     globals.error_list = []
     log.info('Testcase check BIOS Version')
     bios_version = config_dict['bios_version']
-    out_dict = phdl.exec('sudo dmidecode -s bios-version')
+    out_dict = orch.all.exec('sudo dmidecode -s bios-version')
     for node in out_dict.keys():
         if not re.search(f'{bios_version}', out_dict[node], re.I):
             match = re.search('([a-z0-9\_\.\-]+)', out_dict[node], re.I)
@@ -231,7 +196,7 @@ def test_check_bios_version(phdl, config_dict):
     update_test_result()
 
 
-def test_check_rocm_version(phdl, config_dict):
+def test_check_rocm_version(orch, config_dict):
     """
     Verify that each node's ROCm version matches the expected value.
 
@@ -256,7 +221,7 @@ def test_check_rocm_version(phdl, config_dict):
     globals.error_list = []
     log.info('Testcase check rocm version')
     rocm_version = config_dict['rocm_version']
-    out_dict = phdl.exec('amd-smi version')
+    out_dict = orch.all.exec('amd-smi version')
     for node in out_dict.keys():
         if not re.search(f'{rocm_version}', out_dict[node], re.I):
             match = re.search('ROCm version:\s+([0-9\.]+)', out_dict[node], re.I)
@@ -267,7 +232,7 @@ def test_check_rocm_version(phdl, config_dict):
     update_test_result()
 
 
-def test_check_gpu_fw_version(phdl, config_dict):
+def test_check_gpu_fw_version(orch, config_dict):
     """
     Validate GPU firmware versions on each node against expected versions.
 
@@ -304,7 +269,7 @@ def test_check_gpu_fw_version(phdl, config_dict):
     globals.error_list = []
     log.info('Testcase check GPU Firmware versions')
     fw_dict = config_dict['fw_dict']
-    out_dict = get_amd_smi_fw_dict(phdl)
+    out_dict = get_amd_smi_fw_dict(orch.all)
     for node in out_dict.keys():
         for gpu_dict in out_dict[node]:
             gpu_no = gpu_dict['gpu']
@@ -317,7 +282,7 @@ def test_check_gpu_fw_version(phdl, config_dict):
     update_test_result()
 
 
-def test_check_pci_realloc(phdl, config_dict):
+def test_check_pci_realloc(orch, config_dict):
     """
     Verify that the kernel command line contains the expected PCI realloc flag.
 
@@ -338,14 +303,14 @@ def test_check_pci_realloc(phdl, config_dict):
     globals.error_list = []
     log.info('Testcase check pci realloc')
     pci_realloc = config_dict['pci_realloc']
-    out_dict = phdl.exec('cat /proc/cmdline')
+    out_dict = orch.all.exec('cat /proc/cmdline')
     for node in out_dict.keys():
         if not re.search(f'pci=realloc={pci_realloc}', out_dict[node], re.I):
             fail_test(f'PCI realloc flag not set to {pci_realloc} on node {node}')
     update_test_result()
 
 
-def test_check_iommu_pt(phdl, config_dict):
+def test_check_iommu_pt(orch, config_dict):
     """
     Verify that IOMMU is configured in pass-through mode (iommu=pt) on all nodes.
 
@@ -364,19 +329,19 @@ def test_check_iommu_pt(phdl, config_dict):
 
     globals.error_list = []
     log.info('Testcase check IOMMU PT')
-    out_dict = phdl.exec('cat /proc/cmdline')
+    out_dict = orch.all.exec('cat /proc/cmdline')
     for node in out_dict.keys():
         if not re.search('iommu=pt', out_dict[node], re.I):
             fail_test(f'IOMMU not set to pt on node {node}')
     update_test_result()
 
 
-def test_check_numa_balancing(phdl, config_dict):
+def test_check_numa_balancing(orch, config_dict):
     """
     Verify that automatic NUMA balancing is disabled across all nodes.
 
     This test:
-      - Runs 'sudo sysctl kernel.numa_balancing' on each node via phdl.
+      - Runs 'sudo sysctl kernel.numa_balancing' on each node via orch.all.
       - Checks that the reported value is 0 (disabled). Accepts either '=0' or '= 0'.
       - Records a failure if any node does not report a disabled state.
       - Calls update_test_result() at the end to record pass/fail.
@@ -391,14 +356,14 @@ def test_check_numa_balancing(phdl, config_dict):
     """
     globals.error_list = []
     log.info('Testcase check NUMA balancing')
-    out_dict = phdl.exec('sudo sysctl kernel.numa_balancing')
+    out_dict = orch.all.exec('sudo sysctl kernel.numa_balancing')
     for node in out_dict.keys():
         if not re.search('=0|= 0', out_dict[node], re.I):
             fail_test(f'NUMA balancing not disabled on node {node}')
     update_test_result()
 
 
-def test_check_online_memory(phdl, config_dict):
+def test_check_online_memory(orch, config_dict):
     """
     Validate that the total online memory matches the expected value on each node.
 
@@ -421,7 +386,7 @@ def test_check_online_memory(phdl, config_dict):
     globals.error_list = []
     log.info('Testcase check online memory')
     online_mem = config_dict['online_memory']
-    out_dict = phdl.exec('lsmem')
+    out_dict = orch.all.exec('lsmem')
     for node in out_dict.keys():
         if not re.search(f'Total online memory:\s+{online_mem}', out_dict[node], re.I):
             match = re.search('Total online memory:\s+([0-9\.A-Za-z]+)', out_dict[node])
@@ -430,7 +395,7 @@ def test_check_online_memory(phdl, config_dict):
     update_test_result()
 
 
-def test_check_pci_accelerators(phdl, config_dict):
+def test_check_pci_accelerators(orch, config_dict):
     """
     Confirm that the expected number of GPUs (accelerators) are enumerated on PCIe.
 
@@ -454,7 +419,7 @@ def test_check_pci_accelerators(phdl, config_dict):
     globals.error_list = []
     log.info('Testcase check online GPUs in pcie')
     gpu_count = config_dict['gpu_count']
-    out_dict = phdl.exec('lspci | grep "accelerators" --color=never')
+    out_dict = orch.all.exec('lspci | grep "accelerators" --color=never')
     for node in out_dict.keys():
         match_list = re.findall('accelerators:\s+Advanced', out_dict[node], re.I)
         actual_gpu_count = len(match_list)
@@ -465,7 +430,7 @@ def test_check_pci_accelerators(phdl, config_dict):
     update_test_result()
 
 
-def test_check_gpu_pcie_speed_width(phdl, config_dict):
+def test_check_gpu_pcie_speed_width(orch, config_dict):
     """
     Verify PCIe link speed and width for each GPU on all nodes.
 
@@ -477,10 +442,10 @@ def test_check_gpu_pcie_speed_width(phdl, config_dict):
       - Assumes a homogeneous cluster (same set/order of GPUs on every node) and
         builds a command list per card index to run in parallel across nodes:
           sudo lspci -vvv -s <bus> | grep "LnkSta:"
-      - Checks each node?s ?LnkSta? line for:
+      - Checks each node's LnkSta line for:
           - Speed <gpu_pcie_speed>GT
           - Width x<gpu_pcie_width>
-          - Not in a ?downgrade? state
+          - Not in a downgrade state
       - Calls update_test_result() at the end to record pass/fail.
 
     Args:
@@ -502,7 +467,7 @@ def test_check_gpu_pcie_speed_width(phdl, config_dict):
     log.info('Testcase check online GPUs in pcie')
     gpu_pcie_speed = config_dict['gpu_pcie_speed']
     gpu_pcie_width = config_dict['gpu_pcie_width']
-    out_dict = get_gpu_pcie_bus_dict(phdl)
+    out_dict = get_gpu_pcie_bus_dict(orch.all)
     cmd_list = []
     node_0 = list(out_dict.keys())[0]
     card_list = list(out_dict[node_0].keys())
@@ -514,8 +479,9 @@ def test_check_gpu_pcie_speed_width(phdl, config_dict):
         for node in out_dict.keys():
             bus_no = out_dict[node][card_no]['PCI Bus']
             cmd_list.append(f'sudo lspci -vvv -s {bus_no} | grep "LnkSta:" --color=never')
-        pci_dict = phdl.exec_cmd_list(cmd_list)
+        pci_dict = orch.all.exec_cmd_list(cmd_list)
         for p_node in pci_dict.keys():
+            bus_no = out_dict[p_node][card_no]['PCI Bus']
             if not re.search(f'Speed {gpu_pcie_speed}GT', pci_dict[p_node]):
                 fail_test(
                     f'PCIe speed not matching for bus {bus_no} on node {p_node}, expected {gpu_pcie_speed}GT/s but got {pci_dict[p_node]}'
@@ -529,7 +495,7 @@ def test_check_gpu_pcie_speed_width(phdl, config_dict):
     update_test_result()
 
 
-def test_check_be_nic_pcie_speed_width(phdl, config_dict):
+def test_check_be_nic_pcie_speed_width(orch, config_dict):
     """
     Verify PCIe link speed and width for each Backend NIC on all nodes.
 
@@ -550,7 +516,7 @@ def test_check_be_nic_pcie_speed_width(phdl, config_dict):
     nic_pcie_speed = config_dict['nic_pcie_speed']
     nic_pcie_width = config_dict['nic_pcie_width']
 
-    out_dict = linux_utils.get_gpu_nic_mapping_dict(phdl)
+    out_dict = linux_utils.get_gpu_nic_mapping_dict(orch.all)
     node_0 = list(out_dict.keys())[0]
     card_list = list(out_dict[node_0].keys())
 
@@ -559,7 +525,7 @@ def test_check_be_nic_pcie_speed_width(phdl, config_dict):
         for node in out_dict:
             nic_bdf = out_dict[node][card_no]['nic_bdf']
             cmd_list.append(f'sudo lspci -vvv -s {nic_bdf} | grep "LnkSta:" --color=never')
-        pci_dict = phdl.exec_cmd_list(cmd_list)
+        pci_dict = orch.all.exec_cmd_list(cmd_list)
         for p_node in pci_dict:
             output = pci_dict[p_node]
             nic_bdf = out_dict[p_node][card_no]['nic_bdf']
@@ -577,7 +543,7 @@ def test_check_be_nic_pcie_speed_width(phdl, config_dict):
     update_test_result()
 
 
-def test_check_pci_acs(phdl, config_dict):
+def test_check_pci_acs(orch, config_dict):
     """
     Verify PCIe ACS is disabled on all nodes.
 
@@ -596,14 +562,14 @@ def test_check_pci_acs(phdl, config_dict):
     """
 
     globals.error_list = []
-    out_dict = phdl.exec('sudo lspci -vv | grep ACSCtl | grep SrcValid+ --color=never')
+    out_dict = orch.all.exec('sudo lspci -vv | grep ACSCtl | grep SrcValid+ --color=never')
     for node in out_dict.keys():
         if re.search('ACSCtl:', out_dict[node], re.I):
             fail_test(f'PCIe ACS not disabled on node {node}')
     update_test_result()
 
 
-def test_check_dmesg_driver_errors(phdl, config_dict):
+def test_check_dmesg_driver_errors(orch, config_dict):
     """
     Check dmesg for AMDGPU driver errors on each node.
 
@@ -623,12 +589,12 @@ def test_check_dmesg_driver_errors(phdl, config_dict):
     """
 
     globals.error_list = []
-    out_dict = phdl.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'fail|error' --color=never")
+    out_dict = orch.all.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'fail|error' --color=never")
     for node in out_dict.keys():
         if re.search('fail|error', out_dict[node], re.I):
             fail_test(f'Dmesg has amdgpu driver errors on node {node}')
     update_test_result()
-    out_dict = phdl.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'reset|hang|traceback' --color=never")
+    out_dict = orch.all.exec("sudo dmesg -T | grep -i amdgpu  | egrep -i 'reset|hang|traceback' --color=never")
     for node in out_dict.keys():
         if re.search('reset|hang', out_dict[node], re.I):
             fail_test(f'Dmesg has amdgpu reset/hang errors on node {node}')
