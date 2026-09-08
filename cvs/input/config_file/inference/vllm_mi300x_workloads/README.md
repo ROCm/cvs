@@ -137,7 +137,7 @@ loads straight from the mount and no download occurs.
 | `qwen35-397b-a17b_bf16` | Qwen3.5 397B A17B BF16 | |
 | `minimax-m3_bf16` | MiniMax M3 BF16 | |
 | `mimo-v25-pro_fp8` | MiMo V2.5 Pro FP8 | |
-| `mistral-large-3_bf16` | Mistral Large 3 BF16 | Mistral-native format flags. vLLM 0.23 can still fail at init in `MistralCommonPixtralProcessor` (dummy image / empty text). |
+| `mistral-large-3_bf16` | Mistral Large 3 BF16 | Mistral-native format: `tokenizer-mode`/`config-format`/`load-format` all `mistral` |
 | `deepseek-r1-0528_fp8` | DeepSeek R1 0528 FP8 PTPC | |
 | `gpt-oss-20b_fp8` | GPT-OSS 20B FP8 | |
 
