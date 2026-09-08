@@ -116,7 +116,7 @@ def build_lm_eval_cmd(task: AccuracyTask, ctx: LmEvalCtx) -> str:
         "--model_args",
         rendered_model_args,
         "--tasks",
-        *task.task_names(),
+        ",".join(task.task_names()),
         "--output_path",
         f"{ctx.output_dir}/{task.id}",
         "--log_samples",

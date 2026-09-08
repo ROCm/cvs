@@ -60,7 +60,7 @@ class TestAccuracyTaskDefaults(unittest.TestCase):
         self.assertEqual(t.tasks, "gsm8k")
         self.assertIsNone(t.num_fewshot)
         self.assertEqual(t.batch_size, "1")
-        self.assertEqual(t.device, "cuda:0")
+        self.assertIsNone(t.device)
         self.assertEqual(t.metadata, {})
         self.assertIsNone(t.include_path)
         self.assertEqual(t.num_concurrent, 8)

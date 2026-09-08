@@ -39,7 +39,7 @@ class AccuracyTask(_Forbid):
     num_fewshot: Optional[int] = None
     batch_size: str = "1"
     max_batch_size: Optional[int] = None
-    device: Optional[str] = "cuda:0"
+    device: Optional[str] = None
     gen_kwargs: Dict[str, Any] = Field(default_factory=dict)
     limit: Optional[float] = None
     samples: Optional[Union[str, Dict[str, Any]]] = None

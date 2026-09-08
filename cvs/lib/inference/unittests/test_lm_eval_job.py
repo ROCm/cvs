@@ -12,6 +12,7 @@ cvs/lib/inference/unittests/test_vllm_job_server_reuse.py.
 
 import copy
 import json
+import shlex
 import unittest
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyTask
@@ -69,10 +70,32 @@ class TestBuildLmEvalCmd(unittest.TestCase):
         self.assertIn("--tasks mmlu", cmd)
         self.assertNotIn("--num_fewshot", cmd)
         self.assertIn("--batch_size 1", cmd)
-        self.assertIn("--device cuda:0", cmd)
+        self.assertNotIn("--device", cmd)
         self.assertIn("--seed 0,1234,1234,1234", cmd)
         self.assertIn("--output_path /tmp/accuracy-out/mmlu", cmd)
         self.assertIn("--log_samples", cmd)
+
+    def test_list_tasks_emit_one_comma_joined_argv_value(self):
+        cmd = build_lm_eval_cmd(AccuracyTask(id="multi", tasks=["hellaswag", "gsm8k"]), _ctx())
+        argv = shlex.split(cmd)
+        tasks_index = argv.index("--tasks")
+        self.assertEqual(
+            argv[tasks_index : tasks_index + 3],
+            ["--tasks", "hellaswag,gsm8k", "--output_path"],
+        )
+        self.assertNotIn("hellaswag", argv)
+        self.assertNotIn("gsm8k", argv)
+
+    def test_legacy_task_emits_one_comma_joined_argv_value(self):
+        cmd = build_lm_eval_cmd(AccuracyTask(id="multi", task="hellaswag,gsm8k"), _ctx())
+        argv = shlex.split(cmd)
+        tasks_index = argv.index("--tasks")
+        self.assertEqual(
+            argv[tasks_index : tasks_index + 3],
+            ["--tasks", "hellaswag,gsm8k", "--output_path"],
+        )
+        self.assertNotIn("hellaswag", argv)
+        self.assertNotIn("gsm8k", argv)
 
     def test_trust_remote_code_always_present(self):
         # Models with custom tokenizer code (Qwen, ChatGLM, Phi, MPT, ...)
@@ -169,7 +192,7 @@ class TestBuildLmEvalCmd(unittest.TestCase):
             _ctx(),
         )
         for part in (
-            "--tasks hellaswag gsm8k",
+            "--tasks hellaswag,gsm8k",
             "--batch_size auto:4",
             "--max_batch_size 8",
             "--device cpu",
@@ -208,9 +231,7 @@ class TestBuildLmEvalCmd(unittest.TestCase):
         cmd = build_lm_eval_cmd(task, ctx)
         # Command must be shell-parseable without raising, and round-trip the
         # exact values through shlex (proves quoting, not just substring presence).
-        import shlex as _shlex
-
-        parts = _shlex.split(cmd)
+        parts = shlex.split(cmd)
         self.assertIn("weird task", parts)
         self.assertIn("/tmp/out dir/weird id", parts)
         self.assertIn("/path with spaces/tasks", parts)
