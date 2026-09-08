@@ -68,9 +68,6 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
      - ``_single``
      - W3 native ``atom`` perf + accuracy
-   * - ``mi3xx_atom_mistral-large-3_bf16``
-     - ``_single``
-     - P2 smoke (``/models/Mistral-Large-3-BF16``, 128/32 conc1)
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``
      - M4 vLLM parity (serving schema)
@@ -80,6 +77,11 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_sglang_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - M4/M5 SGLang parity (serving schema)
+
+**Not shipped.** Do not add ATOM JSON for **Mistral Large 3** until native
+``openai_server`` accepts Mistral-format configs (HF ``AutoConfig`` currently
+requires ``model_type``) and vLLM can init without
+``MistralCommonPixtralProcessor`` failing on dummy multimodal profiling.
 
 Config profiles
 ===============

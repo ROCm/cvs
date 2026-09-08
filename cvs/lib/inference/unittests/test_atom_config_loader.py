@@ -66,21 +66,6 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             ],
         )
 
-    def test_load_mistral_large_3_bf16_smoke_variant(self):
-        root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_mistral-large-3_bf16_single.json")
-        self.assertEqual(variant.schema_version, 1)
-        self.assertEqual(variant.params.driver, "atom")
-        self.assertEqual(variant.model.id, "/models/Mistral-Large-3-BF16")
-        self.assertEqual(variant.model.precision, "bf16")
-        self.assertNotIn("--block-size", variant.roles.server.atom_args)
-        self.assertTrue(variant.functional.api_smoke)
-        self.assertEqual(variant.accuracy.tasks, [])
-        self.assertEqual(
-            variant.expected_cells(),
-            ["ISL=128,OSL=32,TP=8,PP=1,CONC=1"],
-        )
-
     def test_gpu_arch_from_config_path_rejects_non_atom_stem(self):
         with self.assertRaises(ValueError):
             gpu_arch_from_config_path("custom_workload.json")
