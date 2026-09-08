@@ -20,6 +20,7 @@ from typing_extensions import Literal
 
 from cvs.lib import globals
 from cvs.lib.inference.atom.atom_parsing import GATED_METRICS
+from cvs.lib.inference.atom.atom_serving_config import is_serving_config, serving_to_atom_variant_raw
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
 from cvs.lib.inference.utils.functional_config import FunctionalConfig
 from cvs.lib.inference.utils.inferencing_config_loader import (
@@ -443,11 +444,18 @@ def gpu_arch_from_config_path(config_path) -> str:
 
 def load_variant(config_path, cluster_dict, profile: str | None = None) -> AtomVariantConfig:
     raw, thresholds = substitute_config(config_path, cluster_dict)
-    if not str(raw.get("gpu_arch") or "").strip():
-        raw["gpu_arch"] = gpu_arch_from_config_path(config_path)
-    raw, thresholds, _ = resolve_atom_profile(raw, thresholds, profile)
-    thresholds = _prune_orphan_sweep_thresholds(thresholds, _expected_cells_from_raw(raw))
-    raw["thresholds"] = thresholds
+    if is_serving_config(raw):
+        if profile:
+            raise ValueError("serving-schema atom configs do not support --config_profile")
+        if not str(raw.get("gpu_arch") or "").strip():
+            raw["gpu_arch"] = gpu_arch_from_config_path(config_path)
+        raw = serving_to_atom_variant_raw(raw, thresholds)
+    else:
+        if not str(raw.get("gpu_arch") or "").strip():
+            raw["gpu_arch"] = gpu_arch_from_config_path(config_path)
+        raw, thresholds, _ = resolve_atom_profile(raw, thresholds, profile)
+        thresholds = _prune_orphan_sweep_thresholds(thresholds, _expected_cells_from_raw(raw))
+        raw["thresholds"] = thresholds
     return AtomVariantConfig(**raw)
 
 

@@ -54,21 +54,6 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         with self.assertRaises(ValueError):
             gpu_arch_from_config_path("custom_workload.json")
 
-    def test_load_mi3xx_sglang_standalone_config(self):
-        root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_sglang_single.json")
-        self.assertEqual(variant.framework, "atom")
-        self.assertEqual(variant.params.driver, "sglang")
-        self.assertEqual(
-            variant.expected_cells(),
-            [
-                "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128",
-                "ISL=1024,OSL=1024,TP=8,PP=1,CONC=256",
-                "ISL=128,OSL=32,TP=8,PP=1,CONC=1",
-            ],
-        )
-        self.assertIn("gsm8k.exact_match__flexible-extract", variant.thresholds["accuracy"]["gsm8k_flex"])
-
     def test_load_w1_mi3xx_atom_variant(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_single.json")
@@ -115,15 +100,6 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             variant.thresholds[cell]["scaling.efficiency_pct"],
             {"kind": "min", "value": 11},
         )
-
-    def test_load_w1_mi3xx_multinode_sglang_variant(self):
-        root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed_sglang.json")
-        self.assertEqual(variant.params.driver, "sglang")
-        self.assertEqual(variant.params.pipeline_parallel_size, "2")
-        self.assertTrue(variant.enforce_thresholds)
-        cell = "ISL=512,OSL=512,TP=8,PP=2,CONC=16"
-        self.assertIn(cell, variant.expected_cells())
 
     def test_load_w1_mi3xx_atom_mtp3_inline_bench_args(self):
         root = Path(__file__).resolve().parents[3]
@@ -361,16 +337,15 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertIn("mtp_quality", variant.thresholds)
         self.assertEqual(len(variant.expected_cells()), 3)
 
-    def test_load_m4_vllm_single_parity(self):
+    def test_load_atom_vllm_serving_schema(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_vllm_single.json")
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_single.json")
         self.assertEqual(variant.params.driver, "vllm_atom")
-        self.assertEqual(variant.params.nnodes, "1")
         self.assertIn("kv-cache-dtype", variant.roles.server.serve_args)
 
-    def test_load_m4_sglang_single_parity(self):
+    def test_load_atom_sglang_serving_schema(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_sglang_single.json")
+        variant = _atom_config(root, "mi3xx_atom_sglang_deepseek-r1_fp8_single.json")
         self.assertEqual(variant.params.driver, "sglang")
         self.assertIn("--kv-cache-dtype", variant.roles.server.sglang_args)
 

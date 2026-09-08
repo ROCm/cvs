@@ -115,8 +115,9 @@ stem):
     --config_profile mtp3 \
     --html ~/cvs_results/atom-w1-mtp3.html --self-contained-html -vvv
 
-vLLM / SGLang parity use dedicated config stems (for example
-``mi3xx_atom_deepseek-r1_fp8_vllm_single.json``) — no ``--config_profile``.
+vLLM / SGLang parity use the unified serving schema in ``inference/atom/``
+(for example ``mi3xx_atom_vllm_deepseek-r1_fp8_single.json``) — still run with
+``cvs run atom``, not ``cvs run vllm`` or ``cvs run sglang``.
 
 Smoke one cell with pytest ``-k``, for example ``-k "w1_1k_1k-conc128"``.
 

@@ -49,8 +49,11 @@ Shipped model inventory
 =======================
 
 Lab-validated configs only. Native ATOM ``driver=atom`` workloads use flat
-``schema_version: 1`` JSON unless noted. Framework parity (vLLM / SGLang) uses
-separate config stems — not embedded profiles.
+``schema_version: 1`` JSON or ``schema_version: 2`` profiles (``perf``, ``mtp3``).
+
+Framework parity (vLLM / SGLang) uses the unified serving schema under
+``inference/atom/`` (stems ``mi3xx_atom_vllm_*``, ``mi3xx_atom_sglang_*``) and
+still runs with ``cvs run atom``.
 
 .. list-table::
    :widths: 3 3 4
@@ -60,16 +63,22 @@ separate config stems — not embedded profiles.
      - Config files
      - Notes
    * - ``mi3xx_atom_deepseek-r1_fp8``
-     - ``_single`` (``perf`` + ``mtp3`` profiles), ``_vllm_single``, ``_sglang_single``, ``_distributed``, ``_distributed_sglang``
-     - W1 — native perf + accuracy on ``_single``; MTP-3 via ``--config_profile mtp3``; M4/M5 parity on dedicated stems
+     - ``_single`` (``perf`` + ``mtp3`` profiles), ``_distributed`` (``vllm_atom`` PP=2)
+     - W1 native ATOM + multinode PP via atom suite
    * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
      - ``_single``
-     - W3 — flat native ``atom`` perf + accuracy
+     - W3 native ``atom`` perf + accuracy
+   * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
+     - ``_single``
+     - M4 vLLM parity (serving schema)
+   * - ``mi3xx_atom_sglang_deepseek-r1_fp8``
+     - ``_single``, ``_distributed``
+     - M4/M5 SGLang parity (serving schema)
 
 Config profiles
 ===============
 
-``schema_version: 2`` files embed job shapes under ``profiles``. Select one at
+``schema_version: 2`` atom files embed job shapes under ``profiles``. Select one at
 runtime with ``--config_profile`` (or ``CVS_CONFIG_PROFILE``). Flat
 ``schema_version: 1`` files use an implicit ``perf`` profile.
 
@@ -89,38 +98,23 @@ W1 DeepSeek R1 FP8 — ``mi3xx_atom_deepseek-r1_fp8_single.json`` profiles:
      - ``atom``
      - Speculative-decode perf + gsm8k quality
 
-Framework parity and multinode PP use **separate config files** (no
-``--config_profile``):
+``atom_vllm`` / ``atom_sglang`` parity (serving schema, same suite):
 
-.. list-table::
-   :widths: 3 2 3
-   :header-rows: 1
+.. code:: bash
 
-   * - Config stem suffix
-     - Driver
-     - Topology
-   * - ``_vllm_single``
-     - ``vllm_atom``
-     - single-node M4 parity
-   * - ``_sglang_single``
-     - ``sglang``
-     - single-node M4 parity
-   * - ``_distributed``
-     - ``vllm_atom``
-     - two-node PP=2 perf
-   * - ``_distributed_sglang``
-     - ``sglang``
-     - two-node PP=2 via SGLang
+  cvs run atom \
+    --config_file ~/input/.../mi3xx_atom_sglang_deepseek-r1_fp8_single.json \
+    --cluster_file ~/input/cluster_file/atom_cluster.json
+
+  cvs run atom \
+    --config_file ~/input/.../mi3xx_atom_vllm_deepseek-r1_fp8_single.json \
+    --cluster_file ~/input/cluster_file/atom_cluster.json
 
 .. code:: bash
 
   cvs run atom \
     --config_file ~/input/.../mi3xx_atom_deepseek-r1_fp8_single.json \
     --config_profile mtp3 \
-    --cluster_file ~/input/cluster_file/atom_cluster.json
-
-  cvs run atom \
-    --config_file ~/input/.../mi3xx_atom_deepseek-r1_fp8_vllm_single.json \
     --cluster_file ~/input/cluster_file/atom_cluster.json
 
 Keys prefixed with ``_`` (for example ``_comment``) are ignored by the loader.
