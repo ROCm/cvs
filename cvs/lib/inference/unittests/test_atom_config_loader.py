@@ -50,6 +50,22 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         variant = _atom_config(root, "mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json")
         self.assertEqual(variant.gpu_arch, "mi3xx")
 
+    def test_load_v4_pro_single_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_deepseek-v4-pro_single.json")
+        self.assertEqual(variant.schema_version, 1)
+        self.assertEqual(variant.gpu_arch, "mi3xx")
+        self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Pro")
+        self.assertEqual(variant.params.driver, "atom")
+        self.assertEqual(variant.params.server_warmup_wait_s, "900")
+        self.assertEqual(
+            variant.expected_cells(),
+            [
+                "ISL=5000,OSL=1024,TP=8,PP=1,CONC=16",
+                "ISL=5000,OSL=1024,TP=8,PP=1,CONC=32",
+            ],
+        )
+
     def test_gpu_arch_from_config_path_rejects_non_atom_stem(self):
         with self.assertRaises(ValueError):
             gpu_arch_from_config_path("custom_workload.json")
