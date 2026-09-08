@@ -219,9 +219,7 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                 if actual is None:
                     continue
                 expected = expected_map.get(metric_key)
-                expected_display = (
-                    f"{float(expected):.4f}" if expected is not None and enforce_thresholds else "-"
-                )
+                expected_display = f"{float(expected):.4f}" if expected is not None and enforce_thresholds else "-"
                 perf_rows.append(
                     [
                         model,
