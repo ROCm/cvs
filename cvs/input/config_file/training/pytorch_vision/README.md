@@ -40,6 +40,10 @@ cvs run pytorch_vision_training \
 - `timeout_s`: hard torchrun timeout.
 - `omp_num_threads`: CPU threads per rank.
 - `verify_dmesg`: enables bounded host-kernel error scanning.
+- `peak_tflops_per_gpu`: provisional dense-precision hardware peak used for MFU.
+- `checkpoint_enabled`: enables save/load and resume-parity validation.
+- `checkpoint_keep_file`: retains the checkpoint after validation when `true`.
+- `checkpoint_loss_tolerance`: maximum resumed-loss delta.
 - `env_vars`: exported only for the training process.
 - `error_patterns`: named regular expressions checked against `training.log`.
 - `sweeps`: full training runs. Each `name` must match a threshold cell.
@@ -55,9 +59,14 @@ cvs run pytorch_vision_training \
 - `precision`: `BF16`, `FP16`, or `FP32`.
 - `batch_size`: local images per GPU.
 - `image_size`: square synthetic input resolution.
+- `gradient_accumulation_steps`: microbatches per optimizer step.
+- `training_flops_per_image`: provisional forward+backward FLOPs used for
+  TFLOPS/s/GPU. W1 uses 4.1 GMAC forward × two FLOPs per multiply-add × three
+  for training = 24.6 GFLOP/image.
 
-The supplied W1 sweep uses one node, 50 measured steps, ResNet-50 BF16, local
-batch 256, global batch 2048, and 224×224 input.
+The supplied W1 sweeps use one node, 50 measured steps, ResNet-50 BF16, global
+batch 2048, and 224×224 input. GA=1 uses microbatch 256; GA=4 uses microbatch 64
+so the comparison holds effective global batch constant.
 
 ## Adding a sweep
 

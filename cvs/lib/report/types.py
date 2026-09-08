@@ -14,6 +14,7 @@ TierMetricSpecsFn = Callable[[dict, str], dict[str, dict]]
 RunCardDisplayFn = Callable[[Any, dict], List[Tuple[str, str, bool]]]
 LaunchProvenanceFn = Callable[[Any], dict[str, str]]
 CellNodeidTokenFn = Callable[[tuple], str]
+CellIdBuilderFn = Callable[[Any, tuple], str]
 
 DEFAULT_SESSION_LIFECYCLE_LABELS: tuple[str, ...] = (
     "container_launch",
@@ -71,6 +72,7 @@ class InferenceReportConfig:
     headline_unit: str = "tok/s"
     sweep_latency_label: str = "TTFT"
     cell_nodeid_token_builder: Optional[CellNodeidTokenFn] = None
+    cell_id_builder: Optional[CellIdBuilderFn] = None
     run_card_display_builder: RunCardDisplayFn = field(default=lambda _variant, _prov: [("Suite", "inference", False)])
     launch_provenance_builder: Optional[LaunchProvenanceFn] = None
 

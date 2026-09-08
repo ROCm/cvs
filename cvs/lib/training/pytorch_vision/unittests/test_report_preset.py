@@ -11,16 +11,18 @@ from cvs.lib.training.pytorch_vision.utils.metrics import METRICS
 
 class TestPyTorchVisionRunDeck(unittest.TestCase):
     def setUp(self):
-        self.cell_id = "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,BATCH=256,GBS=2048,RES=224"
+        self.cell_id = "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,MBS=256,GA=1,GBS=2048,RES=224"
         sweep = SimpleNamespace(
             name=self.cell_id,
-            label="W1-BF16-R224-B256",
+            label="W1-BF16-R224-MBS256-GA1",
             model="resnet50",
             precision="BF16",
             image_size=224,
             batch_size=256,
+            gradient_accumulation_steps=1,
+            training_flops_per_image=24600000000,
         )
-        thresholds = {f"training.{name}": {"kind": "info"} for name, _unit in METRICS}
+        thresholds = {f"training.{name}": {"kind": "info", "value": 0} for name, _unit in METRICS}
         thresholds["training.images_per_sec"] = {"kind": "min", "value": 24500}
         thresholds["training.images_per_sec_per_gpu"] = {"kind": "min", "value": 3062.5}
         thresholds["training.step_time_ms_p95"] = {"kind": "max_ms", "value": 88}
@@ -31,6 +33,7 @@ class TestPyTorchVisionRunDeck(unittest.TestCase):
             training=SimpleNamespace(
                 enabled_sweeps=lambda: [sweep],
                 gpus_per_node=8,
+                peak_tflops_per_gpu=1307.4,
             ),
             gpu_arch="MI325X",
             container=SimpleNamespace(image="rocm/pytorch:test@sha256:abc"),
@@ -51,9 +54,9 @@ class TestPyTorchVisionRunDeck(unittest.TestCase):
         key = (
             "resnet50",
             "MI325X",
-            "W1-BF16-R224-B256",
+            "W1-BF16-R224",
             224,
-            "BF16",
+            "GA1",
             256,
         )
         self.payload = build_inference_report_payload(
@@ -61,8 +64,8 @@ class TestPyTorchVisionRunDeck(unittest.TestCase):
             variant_config=self.variant,
             inf_res_dict={key: {"node0": actuals}},
             lifecycle_report={
-                "test_training[W1-BF16-R224-B256]": [("training", 30.0, "s")],
-                "test_training[OTHER-BF16-R224-B256]": [("training", 99.0, "s")],
+                "test_training[W1-BF16-R224-MBS256-GA1]": [("training", 30.0, "s")],
+                "test_training[OTHER-BF16-R224-MBS256-GA1]": [("training", 99.0, "s")],
             },
         )
 
@@ -72,15 +75,15 @@ class TestPyTorchVisionRunDeck(unittest.TestCase):
             self.payload["report"]["shape_axis_labels"],
             ("Workload", "Resolution"),
         )
-        self.assertEqual(self.payload["report"]["sweep_axis_label"], "BS/GPU")
+        self.assertEqual(self.payload["report"]["sweep_axis_label"], "MBS/GPU")
         self.assertEqual(self.payload["cells"][0]["cell_id"], self.cell_id)
         self.assertEqual(self.payload["cells"][0]["cell_lifecycle"]["training"], 30.0)
 
     def test_html_uses_training_vocabulary(self):
         document = render_report_html(self.payload)
         self.assertIn("PyTorch Vision W1 Run Deck", document)
-        self.assertIn("Workload=W1-BF16-R224-B256", document)
-        self.assertIn("BS/GPU=256", document)
+        self.assertIn("Workload=W1-BF16-R224", document)
+        self.assertIn("MBS/GPU=256", document)
         self.assertIn("images/s", document)
         self.assertNotIn("ISL=", document)
         self.assertNotIn("TTFT", document)

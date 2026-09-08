@@ -1,37 +1,45 @@
 {
-  "_comment": "Calibrated on MI325X with the pinned ROCm 7.14 / PyTorch 2.12 image. Non-gated metrics remain informational.",
-  "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,BATCH=256,GBS=2048,RES=224": {
-    "training.images_per_sec": {
-      "kind": "min",
-      "value": 24500
-    },
-    "training.images_per_sec_per_gpu": {
-      "kind": "min",
-      "value": 3062.5
-    },
-    "training.step_time_ms_mean": {
-      "kind": "info"
-    },
-    "training.step_time_ms_p50": {
-      "kind": "info"
-    },
-    "training.step_time_ms_p95": {
-      "kind": "max_ms",
-      "value": 88
-    },
-    "training.peak_memory_allocated_mb": {
-      "kind": "max",
-      "value": 13000
-    },
-    "training.peak_memory_reserved_mb": {
-      "kind": "max",
-      "value": 15000
-    },
-    "training.loss_initial": {
-      "kind": "info"
-    },
-    "training.loss_final": {
-      "kind": "info"
-    }
+  "_comment": "Calibrated from three MI325X runs per GA cell. Provisional FLOPS/MFU use 24.6 GFLOP per training image (4.1 GMAC forward x 2 FLOP/MAC x 3 training) and the published 1307.4 dense BF16 TFLOPS/GPU peak; they remain informational pending methodology approval.",
+  "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,MBS=256,GA=1,GBS=2048,RES=224": {
+    "training.images_per_sec": { "kind": "min", "value": 24500 },
+    "training.images_per_sec_per_gpu": { "kind": "min", "value": 3062.5 },
+    "training.tflops_per_sec_per_gpu": { "kind": "info", "value": 79.4 },
+    "training.mfu_pct": { "kind": "info", "value": 6.07 },
+    "training.step_time_ms_mean": { "kind": "info", "value": 80 },
+    "training.step_time_ms_p50": { "kind": "info", "value": 80 },
+    "training.step_time_ms_p95": { "kind": "max_ms", "value": 88 },
+    "training.peak_memory_allocated_mb": { "kind": "max", "value": 13000 },
+    "training.peak_memory_reserved_mb": { "kind": "max", "value": 15000 },
+    "training.device_memory_used_mb_observed": { "kind": "max", "value": 21000 },
+    "training.checkpoint_save_seconds": { "kind": "info", "value": 0 },
+    "training.checkpoint_load_seconds": { "kind": "info", "value": 0 },
+    "training.checkpoint_state_match": { "kind": "min", "value": 1 },
+    "training.checkpoint_loss_delta": { "kind": "max", "value": 0.00001 },
+    "training.checkpoint_resume_model_max_abs_delta": { "kind": "max", "value": 0.00002 },
+    "training.checkpoint_resume_optimizer_max_abs_delta": { "kind": "max", "value": 0.0002 },
+    "training.gradient_accumulation_overhead_pct": { "kind": "max", "value": 0 },
+    "training.loss_initial": { "kind": "info", "value": 0 },
+    "training.loss_final": { "kind": "info", "value": 0 }
+  },
+  "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,MBS=64,GA=4,GBS=2048,RES=224": {
+    "training.images_per_sec": { "kind": "min", "value": 15500 },
+    "training.images_per_sec_per_gpu": { "kind": "min", "value": 1937.5 },
+    "training.tflops_per_sec_per_gpu": { "kind": "info", "value": 0 },
+    "training.mfu_pct": { "kind": "info", "value": 0 },
+    "training.step_time_ms_mean": { "kind": "info", "value": 0 },
+    "training.step_time_ms_p50": { "kind": "info", "value": 0 },
+    "training.step_time_ms_p95": { "kind": "max_ms", "value": 136 },
+    "training.peak_memory_allocated_mb": { "kind": "max", "value": 4500 },
+    "training.peak_memory_reserved_mb": { "kind": "max", "value": 4500 },
+    "training.device_memory_used_mb_observed": { "kind": "max", "value": 10000 },
+    "training.checkpoint_save_seconds": { "kind": "info", "value": 0 },
+    "training.checkpoint_load_seconds": { "kind": "info", "value": 0 },
+    "training.checkpoint_state_match": { "kind": "min", "value": 1 },
+    "training.checkpoint_loss_delta": { "kind": "max", "value": 0.00001 },
+    "training.checkpoint_resume_model_max_abs_delta": { "kind": "max", "value": 0.00002 },
+    "training.checkpoint_resume_optimizer_max_abs_delta": { "kind": "max", "value": 0.0002 },
+    "training.gradient_accumulation_overhead_pct": { "kind": "max", "value": 60 },
+    "training.loss_initial": { "kind": "info", "value": 0 },
+    "training.loss_final": { "kind": "info", "value": 0 }
   }
 }

@@ -36,6 +36,7 @@ def _config():
             "gpus_per_node": 8,
             "warmup_steps": 2,
             "steps": 4,
+            "peak_tflops_per_gpu": 1307.4,
             "env_vars": {},
             "error_patterns": {},
             "sweeps": [
@@ -46,6 +47,8 @@ def _config():
                     "precision": "BF16",
                     "batch_size": 128,
                     "image_size": 224,
+                    "gradient_accumulation_steps": 1,
+                    "training_flops_per_image": 24600000000,
                 }
             ],
             "enabled_sweep_list": ["cell-w1"],
@@ -88,6 +91,27 @@ class TestVisionConfigLoader(unittest.TestCase):
         config = _config()
         config["training"]["sweeps"][0]["label"] = "cell-w1"
         with self.assertRaisesRegex(ValueError, "names and labels must be distinct"):
+            self._load(config=config)
+
+    def test_rejects_ga_sweep_without_enabled_baseline(self):
+        config = _config()
+        sweep = config["training"]["sweeps"][0]
+        sweep.update(
+            {
+                "name": "cell-ga4",
+                "label": "W1-GA4",
+                "batch_size": 32,
+                "gradient_accumulation_steps": 4,
+            }
+        )
+        config["training"]["enabled_sweep_list"] = ["cell-ga4"]
+        with self.assertRaisesRegex(ValueError, "requires exactly one enabled GA=1"):
+            self._load(config=config)
+
+    def test_rejects_disabled_checkpoint_validation(self):
+        config = _config()
+        config["training"]["checkpoint_enabled"] = False
+        with self.assertRaisesRegex(ValueError, "checkpoint_enabled"):
             self._load(config=config)
 
     def test_rejects_missing_gated_threshold_when_enforced(self):

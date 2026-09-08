@@ -47,6 +47,10 @@
     "timeout_s": 1800,
     "omp_num_threads": 1,
     "verify_dmesg": true,
+    "peak_tflops_per_gpu": 1307.4,
+    "checkpoint_enabled": true,
+    "checkpoint_keep_file": false,
+    "checkpoint_loss_tolerance": 0.00001,
     "env_vars": {
       "NNODES": "1",
       "NODE_RANK": "0",
@@ -63,17 +67,31 @@
     },
     "sweeps": [
       {
-        "name": "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,BATCH=256,GBS=2048,RES=224",
-        "label": "W1-BF16-R224-B256",
+        "name": "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,MBS=256,GA=1,GBS=2048,RES=224",
+        "label": "W1-BF16-R224-MBS256-GA1",
         "model": "resnet50",
         "backend": "torchvision",
         "precision": "BF16",
         "batch_size": 256,
-        "image_size": 224
+        "image_size": 224,
+        "gradient_accumulation_steps": 1,
+        "training_flops_per_image": 24600000000
+      },
+      {
+        "name": "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,MBS=64,GA=4,GBS=2048,RES=224",
+        "label": "W1-BF16-R224-MBS64-GA4",
+        "model": "resnet50",
+        "backend": "torchvision",
+        "precision": "BF16",
+        "batch_size": 64,
+        "image_size": 224,
+        "gradient_accumulation_steps": 4,
+        "training_flops_per_image": 24600000000
       }
     ],
     "enabled_sweep_list": [
-      "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,BATCH=256,GBS=2048,RES=224"
+      "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,MBS=256,GA=1,GBS=2048,RES=224",
+      "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,MBS=64,GA=4,GBS=2048,RES=224"
     ]
   }
 }

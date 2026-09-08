@@ -8,6 +8,7 @@ ROCm PyTorch container. The first workload is W1:
 - BF16 autocast and channels-last tensors
 - one MI325X node with eight DDP ranks
 - SGD with momentum
+- matched GA=1 and GA=4 sweeps at global batch 2048
 
 The synthetic batch is created once on each GPU. This intentionally measures the
 model, optimizer, and DDP path without storage or DataLoader variance. It does
@@ -56,8 +57,11 @@ Rank zero writes `results.json` below:
 The same directory contains `training.log`. The structured artifact records:
 
 - total and per-GPU images/second
+- provisional TFLOPS/s/GPU and MFU
 - mean, p50, and p95 distributed step time
-- peak allocated and reserved GPU memory
+- peak PyTorch allocated/reserved memory and observed device-wide used memory
+- checkpoint save/load time, exact state parity, and resumed-loss delta
+- gradient-accumulation overhead against the GA=1 fixed-global-batch baseline
 - initial and final measured loss
 - raw per-step critical-path times and runtime metadata
 
@@ -67,6 +71,26 @@ the timed region. Total throughput uses the slowest rank's wall-clock duration
 for the complete measured window, so Python launch overhead and rank skew are
 included. CVS also scans host dmesg over the bounded training window for GPU,
 driver, and hardware errors.
+
+`device_memory_used_mb_observed` is the larger of the CUDA device-wide samples
+taken immediately before and after the measured window. It includes non-PyTorch
+occupancy and is deliberately not labeled as an in-window peak; allocated and
+reserved values use PyTorch's true peak counters.
+
+The provisional compute metrics use 24.6 GFLOP per ResNet-50 training image
+(4.1 GMAC forward × two FLOPs per multiply-add × three for forward/backward)
+and AMD's published 1307.4 dense BF16 TFLOPS/GPU peak for MI325X. These
+assumptions are stored in the config and shown in the run deck. They are
+informational until a performance methodology owner approves them.
+
+Checkpoint validation saves model, optimizer, step, and RNG state, flushes the
+file to storage, restores it into a fresh model/optimizer, restores RNG state,
+takes one optimizer step on both the original and resumed paths, and checks
+exact state immediately after load plus post-step model/optimizer maximum
+absolute deltas and loss parity. The resumed GPU step uses calibrated numerical
+tolerances because independent convolution backward executions are not
+bitwise-deterministic. The checkpoint is deleted after verification by default;
+timing and parity remain in `results.json`.
 
 ## Run deck
 
@@ -88,17 +112,24 @@ pass/fail.
 ## Thresholds
 
 The checked-in MI325X thresholds were calibrated from three consecutive runs
-with the pinned image. Those runs measured 25.83–25.86k images/s total and
-79.19–79.27 ms mean step time. The enforced limits leave approximately 5%
-throughput headroom and 10% p95-latency headroom:
+per GA cell with the pinned image. GA=1 measured 25.76–25.80k images/s and GA=4
+measured 16.75–17.44k images/s at the same effective global batch. Proper GA
+suppresses DDP synchronization on the first three microbatches and added
+47.7–53.9% optimizer-step overhead. Checkpoint state loaded exactly; the
+independent resumed step had zero loss delta and stayed within the calibrated
+model/optimizer state tolerances.
 
 - total throughput: at least 24,500 images/s
 - per-GPU throughput: at least 3,062.5 images/s/GPU
 - p95 step time: at most 88 ms
-- peak allocated/reserved memory: at most 13,000/15,000 MB
+- GA=1 allocated/reserved/observed-device memory: at most 13,000/15,000/21,000 MB
+- GA=4 throughput: at least 15,500 images/s
+- GA=4 p95 step time and GA overhead: at most 136 ms and 60%
+- checkpoint state match: exactly represented by a minimum value of 1
 
-Mean/p50 timing and loss values remain informational. Recalibrate the gated
-limits when changing the image, GPU architecture, batch size, or workload.
+TFLOPS, MFU, checkpoint I/O time, mean/p50 timing, and loss values remain
+informational. Recalibrate the gated limits when changing the image, GPU
+architecture, batch size, storage target, or workload.
 
 ## Future data support
 

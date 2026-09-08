@@ -70,6 +70,7 @@ class PyTorchVisionJob:
         self.output_dir = f"{variant.paths.log_dir}/pytorch_vision/{self.sweep.label}/{run_id}"
         self.result_path = f"{self.output_dir}/results.json"
         self.log_path = f"{self.output_dir}/training.log"
+        self.checkpoint_path = f"{self.output_dir}/checkpoint.pt"
         self.training_start_time = None
 
     def stage_benchmark(self):
@@ -159,9 +160,26 @@ class PyTorchVisionJob:
             str(training.momentum),
             "--weight-decay",
             str(training.weight_decay),
+            "--gradient-accumulation-steps",
+            str(sweep.gradient_accumulation_steps),
+            "--training-flops-per-image",
+            str(sweep.training_flops_per_image),
+            "--peak-tflops-per-gpu",
+            str(training.peak_tflops_per_gpu),
             "--output",
             self.result_path,
         ]
+        if training.checkpoint_enabled:
+            args.extend(
+                [
+                    "--checkpoint-path",
+                    self.checkpoint_path,
+                    "--checkpoint-loss-tolerance",
+                    str(training.checkpoint_loss_tolerance),
+                ]
+            )
+            if training.checkpoint_keep_file:
+                args.append("--keep-checkpoint")
         if training.channels_last:
             args.append("--channels-last")
 
@@ -255,6 +273,10 @@ class PyTorchVisionJob:
                 "precision": self.sweep.precision,
                 "image_size": self.sweep.image_size,
                 "batch_size_per_gpu": self.sweep.batch_size,
+                "gradient_accumulation_steps": self.sweep.gradient_accumulation_steps,
+                "effective_global_batch_size": (
+                    self.sweep.batch_size * self.sweep.gradient_accumulation_steps * self.variant.training.gpus_per_node
+                ),
                 "world_size": self.variant.training.gpus_per_node,
                 "synthetic_data": True,
             }

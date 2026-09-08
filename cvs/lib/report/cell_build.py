@@ -133,7 +133,11 @@ def build_cell_record(
 ) -> dict:
     """One cell card record (same shape as payload ``cells[]`` entries)."""
     model, gpu, isl, osl, policy, conc = key
-    cell_id = variant_config.cell_key(isl, osl, conc)
+    cell_id = (
+        config.cell_id_builder(variant_config, key)
+        if config.cell_id_builder
+        else variant_config.cell_key(isl, osl, conc)
+    )
     thresholds_map = getattr(variant_config, "thresholds", {}) or {}
     thresholds_cell = thresholds_map.get(cell_id) or {}
     enforce = bool(getattr(variant_config, "enforce_thresholds", False))

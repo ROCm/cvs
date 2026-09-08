@@ -6,17 +6,28 @@ import math
 from typing import Any, Dict, Tuple
 
 
-METRICS: Tuple[Tuple[str, str], ...] = (
+ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (
     ("images_per_sec", "images/s"),
     ("images_per_sec_per_gpu", "images/s/GPU"),
+    ("tflops_per_sec_per_gpu", "TFLOPS/s/GPU"),
+    ("mfu_pct", "%"),
     ("step_time_ms_mean", "ms"),
     ("step_time_ms_p50", "ms"),
     ("step_time_ms_p95", "ms"),
     ("peak_memory_allocated_mb", "MB"),
     ("peak_memory_reserved_mb", "MB"),
+    ("device_memory_used_mb_observed", "MB"),
+    ("checkpoint_save_seconds", "s"),
+    ("checkpoint_load_seconds", "s"),
+    ("checkpoint_state_match", "bool"),
+    ("checkpoint_loss_delta", "-"),
+    ("checkpoint_resume_model_max_abs_delta", "-"),
+    ("checkpoint_resume_optimizer_max_abs_delta", "-"),
     ("loss_initial", "-"),
     ("loss_final", "-"),
 )
+DERIVED_METRICS: Tuple[Tuple[str, str], ...] = (("gradient_accumulation_overhead_pct", "%"),)
+METRICS = ARTIFACT_METRICS + DERIVED_METRICS
 
 METRIC_UNITS = dict(METRICS)
 GATED_METRICS = {
@@ -25,6 +36,12 @@ GATED_METRICS = {
     "step_time_ms_p95",
     "peak_memory_allocated_mb",
     "peak_memory_reserved_mb",
+    "device_memory_used_mb_observed",
+    "checkpoint_state_match",
+    "checkpoint_loss_delta",
+    "checkpoint_resume_model_max_abs_delta",
+    "checkpoint_resume_optimizer_max_abs_delta",
+    "gradient_accumulation_overhead_pct",
 }
 
 RESULTS_COLUMNS = (
@@ -32,16 +49,26 @@ RESULTS_COLUMNS = (
     ("GPU", None),
     ("Workload", None),
     ("Resolution", None),
-    ("Precision", None),
-    ("Batch/GPU", None),
+    ("GA", None),
+    ("MBS/GPU", None),
     ("Host", None),
     ("Images/s", "training.images_per_sec"),
     ("Images/s/GPU", "training.images_per_sec_per_gpu"),
+    ("TFLOPS/s/GPU", "training.tflops_per_sec_per_gpu"),
+    ("MFU (%)", "training.mfu_pct"),
     ("Mean step (ms)", "training.step_time_ms_mean"),
     ("P50 step (ms)", "training.step_time_ms_p50"),
     ("P95 step (ms)", "training.step_time_ms_p95"),
     ("Peak allocated (MB)", "training.peak_memory_allocated_mb"),
     ("Peak reserved (MB)", "training.peak_memory_reserved_mb"),
+    ("Observed device used (MB)", "training.device_memory_used_mb_observed"),
+    ("Checkpoint save (s)", "training.checkpoint_save_seconds"),
+    ("Checkpoint load (s)", "training.checkpoint_load_seconds"),
+    ("Checkpoint state match", "training.checkpoint_state_match"),
+    ("Checkpoint loss delta", "training.checkpoint_loss_delta"),
+    ("Resume model max abs delta", "training.checkpoint_resume_model_max_abs_delta"),
+    ("Resume optimizer max abs delta", "training.checkpoint_resume_optimizer_max_abs_delta"),
+    ("GA overhead (%)", "training.gradient_accumulation_overhead_pct"),
     ("Initial loss", "training.loss_initial"),
     ("Final loss", "training.loss_final"),
 )
@@ -50,6 +77,8 @@ METRIC_TIERS = {
     "throughput": (
         "images_per_sec",
         "images_per_sec_per_gpu",
+        "tflops_per_sec_per_gpu",
+        "mfu_pct",
     ),
     "latency": (
         "step_time_ms_mean",
@@ -59,7 +88,17 @@ METRIC_TIERS = {
     "memory": (
         "peak_memory_allocated_mb",
         "peak_memory_reserved_mb",
+        "device_memory_used_mb_observed",
     ),
+    "checkpoint": (
+        "checkpoint_save_seconds",
+        "checkpoint_load_seconds",
+        "checkpoint_state_match",
+        "checkpoint_loss_delta",
+        "checkpoint_resume_model_max_abs_delta",
+        "checkpoint_resume_optimizer_max_abs_delta",
+    ),
+    "overhead": ("gradient_accumulation_overhead_pct",),
 }
 METRIC_TIER_ORDER = tuple(METRIC_TIERS) + ("record",)
 _TIERED_METRICS = {metric for names in METRIC_TIERS.values() for metric in names}
@@ -78,6 +117,17 @@ def tier_metric_specs(thresholds_cell: dict, tier: str) -> Dict[str, dict]:
     return specs
 
 
+def gradient_accumulation_overhead_pct(baseline_step_ms: float, accumulated_step_ms: float) -> float:
+    """Return GA optimizer-step overhead while effective global batch is fixed."""
+    baseline = float(baseline_step_ms)
+    accumulated = float(accumulated_step_ms)
+    if not math.isfinite(baseline) or baseline <= 0:
+        raise ValueError(f"baseline step time must be finite and positive, got {baseline_step_ms!r}")
+    if not math.isfinite(accumulated) or accumulated <= 0:
+        raise ValueError(f"accumulated step time must be finite and positive, got {accumulated_step_ms!r}")
+    return (accumulated / baseline - 1.0) * 100.0
+
+
 def to_training_metrics(raw: Dict[str, Any]) -> Dict[str, float]:
     """Validate a rank-zero artifact and return namespaced numeric metrics."""
     metrics = raw.get("metrics")
@@ -86,7 +136,7 @@ def to_training_metrics(raw: Dict[str, Any]) -> Dict[str, float]:
 
     out = {}
     missing = []
-    for name, _unit in METRICS:
+    for name, _unit in ARTIFACT_METRICS:
         value = metrics.get(name)
         if value is None:
             missing.append(name)

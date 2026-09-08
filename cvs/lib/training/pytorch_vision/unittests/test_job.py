@@ -28,6 +28,8 @@ def _variant():
         precision="BF16",
         batch_size=128,
         image_size=224,
+        gradient_accumulation_steps=1,
+        training_flops_per_image=24600000000,
     )
     training = SimpleNamespace(
         gpus_per_node=8,
@@ -41,6 +43,10 @@ def _variant():
         timeout_s=1800,
         omp_num_threads=1,
         verify_dmesg=True,
+        peak_tflops_per_gpu=1307.4,
+        checkpoint_enabled=True,
+        checkpoint_keep_file=False,
+        checkpoint_loss_tolerance=1e-5,
         env_vars={"NCCL_DEBUG": "WARN"},
         error_patterns={"Process crash": "SIGSEGV"},
     )
@@ -60,6 +66,8 @@ def _artifact():
         "precision": "BF16",
         "image_size": 224,
         "batch_size_per_gpu": 128,
+        "gradient_accumulation_steps": 1,
+        "effective_global_batch_size": 1024,
         "world_size": 8,
         "synthetic_data": True,
         "metrics": {name: index + 1.0 for index, (name, _unit) in enumerate(METRICS)},
@@ -136,6 +144,9 @@ class TestPyTorchVisionJob(unittest.TestCase):
         command = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1").build_command()
         self.assertIn("--nproc-per-node=8", command)
         self.assertIn("--precision BF16", command)
+        self.assertIn("--gradient-accumulation-steps 1", command)
+        self.assertIn("--checkpoint-path", command)
+        self.assertIn("--peak-tflops-per-gpu 1307.4", command)
         self.assertIn("timeout --signal=TERM", command)
         self.assertIn("export NCCL_DEBUG=WARN", command)
 

@@ -15,11 +15,49 @@ from tabulate import tabulate
 from cvs.lib import globals
 from cvs.lib.training.pytorch_vision.job import PyTorchVisionJob
 from cvs.lib.training.pytorch_vision.utils.config_loader import validate_sweep_selector
-from cvs.lib.training.pytorch_vision.utils.metrics import GATED_METRICS, METRICS, METRIC_UNITS
+from cvs.lib.training.pytorch_vision.utils.metrics import (
+    GATED_METRICS,
+    METRICS,
+    METRIC_UNITS,
+    gradient_accumulation_overhead_pct,
+)
 from cvs.lib.utils.verdict import evaluate_all
 
 
 log = globals.log
+
+
+def _ga_group(sweep, gpus_per_node):
+    return (
+        sweep.model,
+        sweep.backend,
+        sweep.precision,
+        sweep.image_size,
+        sweep.batch_size * sweep.gradient_accumulation_steps * gpus_per_node,
+    )
+
+
+def _refresh_ga_overhead(variant_config, training_results):
+    sweeps = variant_config.training.enabled_sweeps()
+    baselines = {
+        _ga_group(sweep, variant_config.training.gpus_per_node): sweep
+        for sweep in sweeps
+        if sweep.gradient_accumulation_steps == 1 and sweep.name in training_results
+    }
+    for sweep in sweeps:
+        if sweep.name not in training_results:
+            continue
+        baseline = baselines.get(_ga_group(sweep, variant_config.training.gpus_per_node))
+        if baseline is None:
+            continue
+        for host, actuals in training_results[sweep.name].items():
+            baseline_actuals = training_results[baseline.name].get(host)
+            if baseline_actuals is None:
+                continue
+            actuals["training.gradient_accumulation_overhead_pct"] = gradient_accumulation_overhead_pct(
+                baseline_actuals["training.step_time_ms_mean"],
+                actuals["training.step_time_ms_mean"],
+            )
 
 
 def pytest_generate_tests(metafunc):
@@ -98,12 +136,13 @@ def test_training(orch, variant_config, sweep_name, training_results, inf_res_di
             report_key = (
                 sweep.model,
                 variant_config.gpu_arch,
-                sweep.label,
+                f"W1-{sweep.precision}-R{sweep.image_size}",
                 sweep.image_size,
-                sweep.precision,
+                f"GA{sweep.gradient_accumulation_steps}",
                 sweep.batch_size,
             )
             inf_res_dict[report_key] = host_results
+            _refresh_ga_overhead(variant_config, training_results)
         finally:
             try:
                 if job.training_start_time:

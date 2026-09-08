@@ -22,6 +22,8 @@ class VisionSweep(_Forbid):
     precision: Literal["BF16", "FP16", "FP32"] = "BF16"
     batch_size: int = Field(gt=0)
     image_size: int = Field(default=224, gt=0)
+    gradient_accumulation_steps: int = Field(default=1, ge=1)
+    training_flops_per_image: float = Field(gt=0)
 
 
 def validate_sweep_selector(sweep_names, enabled_names, sweep_labels=None) -> None:
@@ -59,6 +61,10 @@ class VisionTrainingConfig(_Forbid):
     timeout_s: int = Field(default=1800, gt=0)
     omp_num_threads: int = Field(default=1, gt=0)
     verify_dmesg: bool = True
+    peak_tflops_per_gpu: float = Field(gt=0)
+    checkpoint_enabled: Literal[True] = True
+    checkpoint_keep_file: bool = False
+    checkpoint_loss_tolerance: float = Field(default=1e-5, ge=0)
     env_vars: Dict[str, str] = Field(default_factory=dict)
     error_patterns: Dict[str, str] = Field(default_factory=dict)
     sweeps: List[VisionSweep]
@@ -74,6 +80,27 @@ class VisionTrainingConfig(_Forbid):
             enabled,
             [sweep.label for sweep in self.sweeps],
         )
+        by_name = {sweep.name: sweep for sweep in self.sweeps}
+        selected = [by_name[name] for name in enabled]
+        for sweep in selected:
+            if sweep.gradient_accumulation_steps == 1:
+                continue
+            effective_batch = sweep.batch_size * sweep.gradient_accumulation_steps * self.gpus_per_node
+            baselines = [
+                candidate
+                for candidate in selected
+                if candidate.gradient_accumulation_steps == 1
+                and candidate.model == sweep.model
+                and candidate.backend == sweep.backend
+                and candidate.precision == sweep.precision
+                and candidate.image_size == sweep.image_size
+                and candidate.batch_size * self.gpus_per_node == effective_batch
+            ]
+            if len(baselines) != 1:
+                raise ValueError(
+                    f"enabled GA={sweep.gradient_accumulation_steps} sweep {sweep.name!r} requires exactly one "
+                    "enabled GA=1 sweep with the same model, precision, resolution, and effective global batch"
+                )
         for name, pattern in self.error_patterns.items():
             try:
                 re.compile(pattern)

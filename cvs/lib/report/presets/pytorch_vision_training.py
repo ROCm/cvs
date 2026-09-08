@@ -19,7 +19,8 @@ from cvs.lib.training.pytorch_vision.utils.metrics import (
 
 
 def _run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
-    sweep = variant.training.enabled_sweeps()[0]
+    enabled_sweeps = variant.training.enabled_sweeps()
+    sweep = enabled_sweeps[0]
     rows: List[Tuple[str, str, bool]] = [
         ("Workload", "W1", False),
         ("Model", sweep.model, False),
@@ -28,6 +29,10 @@ def _run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
         ("Distributed", "DDP", False),
         ("Precision", sweep.precision, False),
         ("Input", f"synthetic 3\u00d7{sweep.image_size}\u00d7{sweep.image_size}", False),
+        ("Training FLOPs/image", f"{sweep.training_flops_per_image / 1e9:.1f} GFLOP (provisional)", False),
+        ("Peak BF16/GPU", f"{variant.training.peak_tflops_per_gpu:.1f} TFLOPS (provisional)", False),
+        ("Checkpoint", "exact load + tolerance-gated resumed step", False),
+        ("Sweeps", ", ".join(item.label for item in enabled_sweeps), False),
         ("Image", variant.container.image, False),
         thresholds_run_card_row(variant),
     ]
@@ -36,7 +41,23 @@ def _run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
 
 
 def _cell_nodeid_token(key: tuple) -> str:
-    return f"[{key[2]}"
+    return f"[W1-BF16-R{key[3]}-MBS{key[5]}-{key[4]}"
+
+
+def _cell_id(variant: Any, key: tuple) -> str:
+    model, _gpu, workload, image_size, ga_label, batch_size = key
+    matches = [
+        sweep.name
+        for sweep in variant.training.enabled_sweeps()
+        if sweep.model == model
+        and sweep.precision in str(workload)
+        and sweep.image_size == int(image_size)
+        and sweep.batch_size == int(batch_size)
+        and f"GA{sweep.gradient_accumulation_steps}" == ga_label
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"run-deck cell does not identify exactly one sweep: key={key}, matches={matches}")
+    return matches[0]
 
 
 PYTORCH_VISION_TRAINING_REPORT_CONFIG = make_inference_report_config(
@@ -54,14 +75,21 @@ PYTORCH_VISION_TRAINING_REPORT_CONFIG = make_inference_report_config(
     cell_highlights=(
         ("images_per_sec", "Images/s"),
         ("images_per_sec_per_gpu", "Images/s/GPU"),
+        ("tflops_per_sec_per_gpu", "TFLOPS/s/GPU (provisional)"),
+        ("mfu_pct", "MFU % (provisional)"),
         ("step_time_ms_p95", "P95 step (ms)"),
-        ("peak_memory_allocated_mb", "Peak allocated (MB)"),
-        ("peak_memory_reserved_mb", "Peak reserved (MB)"),
+        ("device_memory_used_mb_observed", "Observed device used (MB)"),
+        ("checkpoint_state_match", "Checkpoint state match"),
+        ("gradient_accumulation_overhead_pct", "GA overhead (%)"),
     ),
     chart_series=(
         ReportChartSeries("images_per_sec", "Training throughput", "images/s"),
+        ReportChartSeries("tflops_per_sec_per_gpu", "Provisional compute", "TFLOPS/s/GPU"),
+        ReportChartSeries("mfu_pct", "Provisional MFU", "%"),
         ReportChartSeries("step_time_ms_mean", "Mean step time", "ms", invert=True),
         ReportChartSeries("step_time_ms_p95", "P95 step time", "ms", invert=True),
+        ReportChartSeries("device_memory_used_mb_observed", "Observed device-used memory", "MB", invert=True),
+        ReportChartSeries("gradient_accumulation_overhead_pct", "GA overhead", "%", invert=True),
     ),
     sweep_throughput_metric="training.images_per_sec",
     sweep_ttft_metric="training.step_time_ms_p95",
@@ -77,10 +105,11 @@ PYTORCH_VISION_TRAINING_REPORT_CONFIG = make_inference_report_config(
     cell_lifecycle_labels=("training",),
     run_card_display_builder=_run_card,
     shape_axis_labels=("Workload", "Resolution"),
-    sweep_axis_label="BS/GPU",
-    sweep_axis_name="Batch-size",
+    sweep_axis_label="MBS/GPU",
+    sweep_axis_name="Microbatch-size",
     headline_unit="images/s",
     sweep_latency_label="P95 step",
     cell_nodeid_token_builder=_cell_nodeid_token,
+    cell_id_builder=_cell_id,
     interactive_viewer=False,
 )
