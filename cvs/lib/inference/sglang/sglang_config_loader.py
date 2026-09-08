@@ -334,9 +334,9 @@ def _legacy_server_env(inference: Mapping[str, Any], bp: Mapping[str, Any]) -> d
 
     cc_env = (inference.get("container_config") or {}).get("env_dict") or {}
     for k, v in cc_env.items():
-        # Container env holds single ``docker run -e KEY=VALUE`` scalars. Aggregate
-        # values (``ADD_EXPORT_ENV``) would stringify to a Python repr whose spaces
-        # break the command; their entries are expanded into real keys below.
+        # Container env holds single ``docker run -e KEY=VALUE`` scalars. A leftover
+        # ``ADD_EXPORT_ENV`` list would stringify to a Python repr whose spaces
+        # break the command; those entries are expanded into real keys below.
         if v is None or isinstance(v, (list, dict, tuple)):
             continue
         env[str(k)] = str(v)
@@ -496,9 +496,9 @@ def orchestrator_container_from_variant(variant: SglangSingleVariantConfig) -> d
     """``container`` block for ``OrchestratorConfig`` (includes server env).
 
     ``runtime.args.env`` is dropped: the container runtime renders ``-e`` flags
-    only from the top-level ``env`` here, and it holds list values
-    (``ADD_EXPORT_ENV``) that have no ``docker run`` representation. The scalar
-    entries are already flattened into ``roles.server.env`` by the loader.
+    only from the top-level ``env`` here. Scalar ``runtime.args.env`` entries
+    (and a leftover ``ADD_EXPORT_ENV`` list) are already flattened into
+    ``roles.server.env`` by the loader.
     """
     block = variant.container.model_dump()
     runtime = dict(block.get("runtime") or {})
@@ -545,6 +545,42 @@ _RUNTIME_ENV_TO_INFERENCE = {
 }
 
 
+def _add_export_env_from_runtime(runtime_env, existing=None):
+    """KEY=VALUE lines for in-container ``export`` from extra env (and legacy ADD_EXPORT_ENV)."""
+    entries = []
+    seen = set()
+
+    def _add(line):
+        line = str(line).strip()
+        if not line:
+            return
+        if line.startswith("export "):
+            line = line[7:].strip()
+        if line in seen:
+            return
+        seen.add(line)
+        entries.append(line)
+
+    if existing is not None:
+        items = existing if isinstance(existing, list) else [str(existing)]
+        for item in items:
+            _add(item)
+
+    raw = runtime_env.get("ADD_EXPORT_ENV")
+    if raw is not None:
+        items = raw if isinstance(raw, list) else [str(raw)]
+        for item in items:
+            _add(item)
+
+    for key, value in runtime_env.items():
+        if key == "ADD_EXPORT_ENV" or key in _RUNTIME_ENV_TO_INFERENCE:
+            continue
+        if value is None or isinstance(value, (list, dict, tuple)):
+            continue
+        _add(f"{key}={value}")
+    return entries
+
+
 def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]) -> tuple[dict, dict, dict]:
     """Build legacy controller views from the unified SGLang schema."""
     paths = dict(raw.get("paths") or {})
@@ -567,9 +603,9 @@ def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]
     params["threshold_file"] = str(raw.get("threshold_json") or "")
 
     runtime_env = dict(runtime_args.get("env") or {})
-    add_export_env = runtime_env.get("ADD_EXPORT_ENV")
-    if add_export_env is not None:
-        params["add_export_env"] = list(add_export_env) if isinstance(add_export_env, list) else [str(add_export_env)]
+    add_export_env = _add_export_env_from_runtime(runtime_env, params.get("add_export_env"))
+    if add_export_env:
+        params["add_export_env"] = add_export_env
 
     inference: dict[str, Any] = {
         "container_image": container.get("image"),

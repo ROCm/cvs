@@ -37,7 +37,10 @@
           "GLOO_SOCKET_IFNAME": "<changeme> eno0",
           "NCCL_IB_GID_INDEX": "3",
           "NCCL_DEBUG": "ERROR",
-          "ADD_EXPORT_ENV": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8", "GPU_ARCHS=gfx942"]
+          "SGLANG_USE_AITER": "1",
+          "AMDGCN_USE_BUFFER_OPS": "1",
+          "ROCM_QUICK_REDUCE_QUANTIZATION": "INT8",
+          "GPU_ARCHS": "gfx942"
         }
       }
     }

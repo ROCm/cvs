@@ -28,7 +28,9 @@
         "devices": ["/dev/dri", "/dev/kfd"],
         "env": {
           "NCCL_DEBUG": "ERROR",
-          "ADD_EXPORT_ENV": ["SGLANG_USE_AITER=1", "AMDGCN_USE_BUFFER_OPS=1", "ROCM_QUICK_REDUCE_QUANTIZATION=INT8"]
+          "SGLANG_USE_AITER": "1",
+          "AMDGCN_USE_BUFFER_OPS": "1",
+          "ROCM_QUICK_REDUCE_QUANTIZATION": "INT8"
         }
       }
     }

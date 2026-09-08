@@ -253,6 +253,8 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
             {'acc_norm,none': 0.23},
         )
         self.assertEqual(server['env']['SGLANG_USE_AITER'], '1')
+        self.assertIn('SGLANG_USE_AITER=1', params['add_export_env'])
+        self.assertIn('FROM_RUNTIME=1', params['add_export_env'])
 
     def test_duplicate_accuracy_task_ids_raise(self):
         self.raw['accuracy']['tasks'].append(
@@ -284,7 +286,7 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
                         'devices': ['/dev/kfd'],
                         'env': {
                             'NCCL_IB_HCA': 'rdma0',
-                            'ADD_EXPORT_ENV': ['SGLANG_USE_AITER=1'],
+                            'SGLANG_USE_AITER': '1',
                         },
                     },
                 },
@@ -314,12 +316,36 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
         self.assertFalse(params['inference_tests']['bench_serv_random']['enforce_thresholds'])
         self.assertEqual(params['add_export_env'], ['SGLANG_USE_AITER=1'])
         self.assertEqual(server['env']['NCCL_IB_HCA'], 'rdma0')
-        # ADD_EXPORT_ENV is expanded into individual keys; the aggregate name must
-        # not survive, since its repr would break `docker run -e KEY=VALUE`.
         self.assertEqual(server['env']['SGLANG_USE_AITER'], '1')
         self.assertNotIn('ADD_EXPORT_ENV', server['env'])
         for key, value in server['env'].items():
             self.assertNotIn(' ', value, f'{key} carries an unquotable space: {value!r}')
+
+
+class TestAddExportEnvFromRuntime(unittest.TestCase):
+    def test_extra_scalar_env_becomes_export_lines(self):
+        self.assertEqual(
+            loader._add_export_env_from_runtime(
+                {
+                    'NCCL_DEBUG': 'ERROR',
+                    'SGLANG_USE_AITER': '1',
+                    'GPU_ARCHS': 'gfx942',
+                }
+            ),
+            ['SGLANG_USE_AITER=1', 'GPU_ARCHS=gfx942'],
+        )
+
+    def test_legacy_add_export_env_list_merges_without_duplicates(self):
+        self.assertEqual(
+            loader._add_export_env_from_runtime(
+                {
+                    'ADD_EXPORT_ENV': ['SGLANG_USE_AITER=1', 'GPU_ARCHS=gfx942'],
+                    'SGLANG_USE_AITER': '1',
+                },
+                ['SGLANG_USE_AITER=1'],
+            ),
+            ['SGLANG_USE_AITER=1', 'GPU_ARCHS=gfx942'],
+        )
 
 
 class TestUnifiedPackagedConfigs(unittest.TestCase):
@@ -381,12 +407,12 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                 container = loader.orchestrator_container_from_variant(variant)
                 self.assertEqual(container['env']['NCCL_DEBUG'], variant.inference['nccl_debug'])
                 self.assertEqual(container['env']['SGLANG_USE_AITER'], '1')
-                # The container runtime renders -e flags from the top-level env
-                # only, and cannot represent the ADD_EXPORT_ENV list.
+                self.assertEqual(container['env']['AMDGCN_USE_BUFFER_OPS'], '1')
+                self.assertEqual(container['env']['ROCM_QUICK_REDUCE_QUANTIZATION'], 'INT8')
                 self.assertNotIn('env', container['runtime']['args'])
                 self.assertIn('volumes', container['runtime']['args'])
                 self.assertNotIn('ADD_EXPORT_ENV', container['env'])
-                self.assertEqual(container['env']['SGLANG_USE_AITER'], '1')
+                self.assertIn('SGLANG_USE_AITER=1', variant.params.add_export_env)
                 perf_cells = loader.perf_cells_for_variant(variant)
                 self.assertEqual(
                     [cell['cell_key'] for cell in perf_cells],
@@ -399,6 +425,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                         '100',
                     )
                 if 'deepseek' in config_path.name:
+                    self.assertEqual(container['env']['GPU_ARCHS'], 'gfx942')
                     self.assertIn('GPU_ARCHS=gfx942', variant.params.add_export_env)
                 if variant.topology == 'disaggregated':
                     self.assertEqual(variant.params.prefill_policy, 'cache_aware')

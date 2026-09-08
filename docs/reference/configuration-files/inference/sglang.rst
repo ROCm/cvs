@@ -177,7 +177,7 @@ Example: single-node template
                     "devices": [ "/dev/dri", "/dev/kfd" ],
                     "env": {
                         "NCCL_DEBUG": "ERROR",
-                        "ADD_EXPORT_ENV": [ "SGLANG_USE_AITER=1" ]
+                        "SGLANG_USE_AITER": "1"
                     }
                 }
             }
@@ -347,8 +347,8 @@ Uses the multi-node network env fields above, plus:
    * - ``server_params.inference_poll_iterations``
      - ``16``
      - Server-ready poll attempts.
-   * - ``ADD_EXPORT_ENV``, ``server_params.add_flags``
-     - ROCm/SGLang tuning (for example ``SGLANG_USE_AITER=1``, ``--attention-backend aiter``). DeepSeek templates also set ``GPU_ARCHS=gfx942``.
+   * - ``container.runtime.args.env``, ``server_params.add_flags``
+     - ROCm/SGLang tuning as scalar env (for example ``SGLANG_USE_AITER``, ``AMDGCN_USE_BUFFER_OPS``, ``ROCM_QUICK_REDUCE_QUANTIZATION``) plus ``--attention-backend aiter``. DeepSeek templates also set ``GPU_ARCHS=gfx942``.
    * - ``server_params.context_length``
      - ``205000``
      - Long-context cap (distributed / disaggregated Llama and DeepSeek templates).
@@ -430,8 +430,8 @@ Troubleshooting
 
 **Container launch**
   Verify ``container.image`` on all nodes, ``devices`` GPU paths, and ``shm_size``. Single-node
-  runs need only ``/dev/dri`` and ``/dev/kfd``. Keep ``ADD_EXPORT_ENV`` as a JSON list; do not
-  put it as a ``docker run -e`` scalar.
+  runs need only ``/dev/dri`` and ``/dev/kfd``. Put ROCm/SGLang knobs as scalar ``env``
+  keys (``SGLANG_USE_AITER``, ``GPU_ARCHS``, ...), not as an ``ADD_EXPORT_ENV`` list.
 
 **Multi-node networking**
   Confirm RDMA devices with ``ibv_devinfo`` inside the container after ``test_setup_ibv_devices``.
