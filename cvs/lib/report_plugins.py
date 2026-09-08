@@ -195,9 +195,11 @@ class HtmlReportManager:
 
             # Copy file to log directory (optionally under a caller-supplied unique name)
             dest_path = self.log_dir / (dest_name or source_path.name)
-            shutil.copy2(source_path, dest_path)
-
-            log.info("Added file to report bundle: %s -> %s", source_path, dest_path)
+            if source_path.resolve() != dest_path.resolve():
+                shutil.copy2(source_path, dest_path)
+                log.info("Added file to report bundle: %s -> %s", source_path, dest_path)
+            else:
+                log.info("File already resides in report bundle: %s", dest_path)
 
             # Return relative path for potential linking
             rel_path = dest_path.relative_to(self.htmlpath.parent)

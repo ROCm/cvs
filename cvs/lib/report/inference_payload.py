@@ -13,7 +13,6 @@ from cvs.lib.report.render.gate_matrix import build_gate_matrix_rows
 from cvs.lib.report.sweep_shape import (
     group_cells_by_shape,
     metric_values_by_concurrency,
-    shape_label,
 )
 from cvs.lib.report.types import InferenceReportConfig
 
@@ -88,7 +87,7 @@ def build_chart_series(config: InferenceReportConfig, cells: List[dict]) -> Dict
                     {
                         "isl": isl,
                         "osl": osl,
-                        "label": shape_label(isl, osl),
+                        "label": (f"{config.shape_axis_labels[0]}={isl} \u00b7 {config.shape_axis_labels[1]}={osl}"),
                         "points": points,
                     }
                 )
@@ -271,6 +270,11 @@ def build_inference_report_payload(
             "sweep_ttft_metric": config.sweep_ttft_metric,
             "session_lifecycle_labels": config.session_lifecycle_labels,
             "cell_lifecycle_labels": config.cell_lifecycle_labels,
+            "shape_axis_labels": config.shape_axis_labels,
+            "sweep_axis_label": config.sweep_axis_label,
+            "sweep_axis_name": config.sweep_axis_name,
+            "headline_unit": config.headline_unit,
+            "sweep_latency_label": config.sweep_latency_label,
         },
         "run_card_display": run_card_display,
         "run_card_notes": run_card_notes,

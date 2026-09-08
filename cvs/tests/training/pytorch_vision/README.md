@@ -64,6 +64,23 @@ for the complete measured window, so Python launch overhead and rank skew are
 included. CVS also scans host dmesg over the bounded training window for GPU,
 driver, and hardware errors.
 
+## Run deck
+
+When `--html` is supplied, CVS automatically loads
+`cvs.lib.report.presets.pytorch_vision_training` and adds these SGLang-style
+sidecars to the report bundle:
+
+```text
+pytorch_vision_training_run_deck.html
+pytorch_vision_training_run_deck.json
+pytorch_vision_training_run_deck_summary.html
+```
+
+The run deck presents the pinned image and topology, lifecycle timing, threshold
+status by throughput/latency/memory tier, per-cell gate margins, and the full
+metric table. It is render-only: pytest metric rows remain the source of
+pass/fail.
+
 ## Thresholds
 
 The checked-in MI325X thresholds were calibrated from three consecutive runs

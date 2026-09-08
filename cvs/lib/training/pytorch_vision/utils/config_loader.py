@@ -69,8 +69,12 @@ class VisionVariantConfig(BaseVariantConfig):
     env: Dict[str, str] = Field(default_factory=dict)
     sweep: VisionSweep
 
-    def cell_key(self, combo_key: str) -> str:
+    def cell_key(self, combo_key: str, image_size=None, batch_size=None) -> str:
         combo = self.sweep.combinations[combo_key]
+        if image_size is not None and str(image_size) != str(combo.image_size):
+            raise ValueError(f"report image size {image_size} does not match {combo_key}: {combo.image_size}")
+        if batch_size is not None and int(batch_size) != combo.batch_size:
+            raise ValueError(f"report batch size {batch_size} does not match {combo_key}: {combo.batch_size}")
         return (
             f"MODEL={combo.model},PRECISION={combo.precision},RES={combo.image_size},"
             f"BS={combo.batch_size},GPUS={self.params.nproc_per_node}"

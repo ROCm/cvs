@@ -37,14 +37,22 @@ def tier_status(
 def resolve_pytest_nodeids_for_cell(
     config: InferenceReportConfig,
     lifecycle_report: Mapping[str, list],
-    concurrency: Any,
+    key_or_concurrency: Any,
 ) -> dict[str, str]:
     """Best-effort pytest nodeids for inference and metric rows matching one sweep cell."""
-    conc_suffix = f"-{concurrency}]"
+    if isinstance(key_or_concurrency, tuple):
+        concurrency = key_or_concurrency[5]
+        token = (
+            config.cell_nodeid_token_builder(key_or_concurrency)
+            if config.cell_nodeid_token_builder
+            else f"-{concurrency}]"
+        )
+    else:
+        token = f"-{key_or_concurrency}]"
     inference_nid = ""
     metrics_nid = ""
     for nodeid in lifecycle_report:
-        if conc_suffix not in nodeid:
+        if token not in nodeid:
             continue
         if config.inference_test_substring in nodeid:
             inference_nid = inference_nid or nodeid
@@ -60,13 +68,12 @@ def resolve_pytest_nodeids_for_cell(
 def lifecycle_for_cell(
     config: InferenceReportConfig,
     lifecycle_report: Mapping[str, list],
-    concurrency: Any,
+    key: tuple,
 ) -> Dict[str, float]:
-    conc = str(concurrency)
-    suffix = f"-{conc}]"
+    token = config.cell_nodeid_token_builder(key) if config.cell_nodeid_token_builder else f"-{key[5]}]"
     out: Dict[str, float] = {}
     for nodeid, rows in lifecycle_report.items():
-        if config.inference_test_substring not in nodeid or suffix not in nodeid:
+        if config.inference_test_substring not in nodeid or token not in nodeid:
             continue
         for label, value, unit in rows:
             if unit != "s" or label not in config.cell_lifecycle_labels:
@@ -150,7 +157,7 @@ def build_cell_record(
         )
 
     tiers = {tier: tier_status(config, actuals, thresholds_cell, tier, enforce) for tier in config.metric_tier_order}
-    pytest_links = resolve_pytest_nodeids_for_cell(config, lifecycle_report, conc)
+    pytest_links = resolve_pytest_nodeids_for_cell(config, lifecycle_report, key)
 
     return {
         "model": model,
@@ -159,13 +166,15 @@ def build_cell_record(
         "osl": osl,
         "policy": policy,
         "concurrency": conc,
+        "shape_axis_labels": config.shape_axis_labels,
+        "sweep_axis_label": config.sweep_axis_label,
         "host": host,
         "show_host_in_label": multi_host,
         "cell_id": cell_id,
         "metrics": metrics,
         "tiers": tiers,
         "actuals": dict(actuals),
-        "cell_lifecycle": lifecycle_for_cell(config, lifecycle_report, conc),
+        "cell_lifecycle": lifecycle_for_cell(config, lifecycle_report, key),
         **pytest_links,
     }
 

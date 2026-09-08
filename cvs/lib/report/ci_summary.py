@@ -103,9 +103,10 @@ def render_ci_summary_html(
         tput = (cell.get("actuals") or {}).get(config.headline_metric)
         highlight_rows.append(
             f"<li><strong>{html.escape(str(cell.get('cell_id', '')))}</strong>"
-            f" &middot; C={cell.get('concurrency', '')}"
+            f" &middot; {html.escape(config.sweep_axis_label)}={cell.get('concurrency', '')}"
             f" &middot; {html.escape(reason)}"
-            f" &middot; {html.escape(str(tput) if tput is not None else '—')} tok/s</li>"
+            f" &middot; {html.escape(str(tput) if tput is not None else '—')} "
+            f"{html.escape(config.headline_unit)}</li>"
         )
     highlights_html = (
         "<ul class='highlights'>" + "".join(highlight_rows) + "</ul>"

@@ -80,6 +80,7 @@ def _render_bar_chart(
     unit: str,
     *,
     accent: str = "accent",
+    axis_label: str = "C",
 ) -> str:
     if len(points) < 2:
         return ""
@@ -100,13 +101,13 @@ def _render_bar_chart(
     bars = []
     for conc, val in points:
         h = _bar_height_pct(val, min_val, max_val)
-        tip = html.escape(f"C={conc}: {fmt_num(val)} {unit}".strip())
+        tip = html.escape(f"{axis_label}={conc}: {fmt_num(val)} {unit}".strip())
         bars.append(
             f"<div class='chart-col'>"
             f"<div class='chart-bar chart-bar-{accent} chart-has-tip' style='height:{h:.1f}%' "
             f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div></div>"
         )
-        x_labels.append(f"<span class='chart-xlbl'>C={conc}</span>")
+        x_labels.append(f"<span class='chart-xlbl'>{html.escape(axis_label)}={conc}</span>")
     return (
         f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
         f"<div class='chart-viz'>"
@@ -258,6 +259,11 @@ def render_report_html(payload: dict) -> str:
     gate_matrix = payload.get("gate_matrix") or []
     results_table = payload.get("results_table") or {}
     overall = payload.get("overall_status", "na")
+    shape_x, shape_y = report.get("shape_axis_labels", ("ISL", "OSL"))
+    sweep_axis = report.get("sweep_axis_label", "C")
+    sweep_axis_name = report.get("sweep_axis_name", "Concurrency")
+    headline_unit = report.get("headline_unit", "tok/s")
+    latency_label = report.get("sweep_latency_label", "TTFT")
     enforce = any(row[1] == "enforced" for row in payload.get("run_card_display", []) if row[0] == "Thresholds")
 
     hero_html = "".join(
@@ -286,13 +292,14 @@ def render_report_html(payload: dict) -> str:
 
     summary_html = (
         "".join(
-            f"<article class='summary-card'><h3>ISL={html.escape(str(s['isl']))} "
-            f"\u00b7 OSL={html.escape(str(s['osl']))}</h3>"
+            f"<article class='summary-card'><h3>{html.escape(shape_x)}={html.escape(str(s['isl']))} "
+            f"\u00b7 {html.escape(shape_y)}={html.escape(str(s['osl']))}</h3>"
             f"<div class='summary-stat'>{fmt_num(s['max_output_throughput'])} "
-            f"<span class='headline-unit'>tok/s</span></div>"
-            f"<div class='summary-meta'>Peak at C={s['conc_at_max_tput']}"
-            f" &middot; TTFT {fmt_num(s.get('ttft_at_max_tput'))} ms"
-            f"{' &middot; saturated at max C' if s.get('saturated') else ''}</div></article>"
+            f"<span class='headline-unit'>{html.escape(headline_unit)}</span></div>"
+            f"<div class='summary-meta'>Peak at {html.escape(sweep_axis)}={s['conc_at_max_tput']}"
+            f" &middot; {html.escape(latency_label)} {fmt_num(s.get('ttft_at_max_tput'))} ms"
+            f"{f' &middot; saturated at max {html.escape(sweep_axis)}' if s.get('saturated') else ''}"
+            f"</div></article>"
             for s in summaries
         )
         or "<p class='muted'>No sweep summary (no throughput data).</p>"
@@ -320,6 +327,7 @@ def render_report_html(payload: dict) -> str:
                 entry["points"],
                 chart["unit"],
                 accent=chart_accent[idx % 3],
+                axis_label=sweep_axis,
             )
             if part:
                 chart_parts.append(part)
@@ -332,7 +340,7 @@ def render_report_html(payload: dict) -> str:
     charts_html = (
         "".join(chart_sections)
         if chart_sections
-        else "<p class='muted'>Concurrency charts need two or more points per sweep shape.</p>"
+        else f"<p class='muted'>{html.escape(sweep_axis_name)} charts need two or more points per sweep shape.</p>"
     )
 
     sweep_chart_hint = ""
@@ -382,6 +390,7 @@ def render_report_html(payload: dict) -> str:
             enforce=enforce,
             cell_lifecycle_labels=cell_lifecycle_labels,
             pytest_html_basename=pytest_basename or None,
+            headline_unit=headline_unit,
         )
         for c in cells
     ]

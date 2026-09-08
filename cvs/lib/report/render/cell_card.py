@@ -132,6 +132,7 @@ def render_cell_card_html(
     compact: bool = False,
     highlight_metric: Optional[str] = None,
     pytest_html_basename: Optional[str] = None,
+    headline_unit: str = "tok/s",
 ) -> str:
     tier_chips = "".join(_tier_chip(cell["tiers"].get(t, "na"), t) for t in tier_order)
     metric_rows = []
@@ -186,13 +187,17 @@ def render_cell_card_html(
     pytest_link = ""
     if pytest_html_basename and pytest_nid:
         pytest_link = " &middot; " + pytest_row_link_html(pytest_html_basename, pytest_nid)
+    shape_x, shape_y = cell.get("shape_axis_labels", ("ISL", "OSL"))
+    sweep_axis = cell.get("sweep_axis_label", "C")
 
     return (
         f"<article class='{card_cls}'>"
         f"<header><div class='cell-title'>{html.escape(str(cell['policy']))}</div>"
-        f"<div class='cell-sub'>ISL={cell['isl']} OSL={cell['osl']} &middot; C={cell['concurrency']}</div></header>"
+        f"<div class='cell-sub'>{html.escape(shape_x)}={html.escape(str(cell['isl']))} "
+        f"{html.escape(shape_y)}={html.escape(str(cell['osl']))} &middot; "
+        f"{html.escape(sweep_axis)}={html.escape(str(cell['concurrency']))}</div></header>"
         f"{mini_tl if not compact else ''}"
-        f"<div class='headline'>{headline_val}<span class='headline-unit'>tok/s</span></div>"
+        f"<div class='headline'>{headline_val}<span class='headline-unit'>{html.escape(headline_unit)}</span></div>"
         f"{headline_margin_html}"
         f"<div class='tiers'>{tier_chips}</div>"
         f"<div class='metrics'>{''.join(metric_rows)}</div>"

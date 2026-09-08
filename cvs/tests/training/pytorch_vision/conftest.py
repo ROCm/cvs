@@ -60,6 +60,12 @@ def training_results():
 
 
 @pytest.fixture(scope="module")
+def inf_res_dict():
+    """Report-engine result map, shaped like the SGLang/vLLM run-deck contract."""
+    return {}
+
+
+@pytest.fixture(scope="module")
 def orch(cluster_dict, variant_config, lifecycle):
     container = _deep_merge(
         cluster_dict.get("container", {}),

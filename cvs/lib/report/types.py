@@ -13,6 +13,7 @@ from typing import Any, Callable, List, Optional, Tuple
 TierMetricSpecsFn = Callable[[dict, str], dict[str, dict]]
 RunCardDisplayFn = Callable[[Any, dict], List[Tuple[str, str, bool]]]
 LaunchProvenanceFn = Callable[[Any], dict[str, str]]
+CellNodeidTokenFn = Callable[[tuple], str]
 
 DEFAULT_SESSION_LIFECYCLE_LABELS: tuple[str, ...] = (
     "container_launch",
@@ -64,6 +65,12 @@ class InferenceReportConfig:
     interactive_viewer: bool = True
     viewer_cell_threshold: int = 24
     prev_run_json: str = ""
+    shape_axis_labels: tuple[str, str] = ("ISL", "OSL")
+    sweep_axis_label: str = "C"
+    sweep_axis_name: str = "Concurrency"
+    headline_unit: str = "tok/s"
+    sweep_latency_label: str = "TTFT"
+    cell_nodeid_token_builder: Optional[CellNodeidTokenFn] = None
     run_card_display_builder: RunCardDisplayFn = field(default=lambda _variant, _prov: [("Suite", "inference", False)])
     launch_provenance_builder: Optional[LaunchProvenanceFn] = None
 

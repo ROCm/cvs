@@ -7,7 +7,8 @@ from typing import Iterable, List, Mapping
 
 
 def gate_cell_label(cell: Mapping[str, object]) -> str:
-    base = f"{cell['policy']} \u00b7 C={cell['concurrency']}"
+    sweep_axis = cell.get("sweep_axis_label", "C")
+    base = f"{cell['policy']} \u00b7 {sweep_axis}={cell['concurrency']}"
     if cell.get("show_host_in_label"):
         return f"{base} \u00b7 {cell['host']}"
     return base

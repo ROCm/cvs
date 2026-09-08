@@ -1,4 +1,9 @@
-"""W1 ResNet-50 training performance suite."""
+"""W1 ResNet-50 training performance suite.
+
+When pytest HTML is enabled, the matching
+``cvs.lib.report.presets.pytorch_vision_training`` preset emits the run deck,
+JSON payload, and CI summary beside the standard report.
+"""
 
 import json
 import os
@@ -34,10 +39,14 @@ def pytest_generate_tests(metafunc):
         metafunc.parametrize(
             "combo_key,metric",
             cases,
-            ids=[f"{combo_key}-{metric}" for combo_key, metric in cases],
+            ids=[f"{combo_key}-{combinations[combo_key]['batch_size']}-{metric}" for combo_key, metric in cases],
         )
     elif "combo_key" in metafunc.fixturenames:
-        metafunc.parametrize("combo_key", runs, ids=runs)
+        metafunc.parametrize(
+            "combo_key",
+            runs,
+            ids=[f"{combo_key}-{combinations[combo_key]['batch_size']}" for combo_key in runs],
+        )
 
 
 def test_launch_container(orch, lifecycle, request):
@@ -67,7 +76,7 @@ def test_verify_environment(orch, variant_config, lifecycle, request):
     log.info("PyTorch Vision environment: %s", summary)
 
 
-def test_training(orch, variant_config, combo_key, training_results, lifecycle, request):
+def test_training(orch, variant_config, combo_key, training_results, inf_res_dict, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     job = PyTorchVisionJob(orch, variant_config, combo_key)
@@ -77,7 +86,18 @@ def test_training(orch, variant_config, combo_key, training_results, lifecycle, 
         try:
             job.stage_benchmark()
             job.run_benchmark()
-            training_results[combo_key] = job.parse_results()
+            host_results = job.parse_results()
+            training_results[combo_key] = host_results
+            combo = variant_config.sweep.combinations[combo_key]
+            report_key = (
+                combo.model,
+                variant_config.gpu_arch,
+                combo_key,
+                combo.image_size,
+                combo.precision,
+                combo.batch_size,
+            )
+            inf_res_dict[report_key] = host_results
         finally:
             try:
                 if job.training_start_time:
@@ -103,6 +123,7 @@ def test_metric(combo_key, metric, variant_config, training_results, lifecycle, 
     value = actuals[name]
     request.node.user_properties.append(("metric_value", value))
     request.node.user_properties.append(("metric_unit", METRIC_UNITS[metric]))
+    lifecycle.record(request.node.nodeid, "metric_evaluation", 0.0)
     log.info("%s %s=%s %s", host, name, value, METRIC_UNITS[metric])
 
     if variant_config.enforce_thresholds:
