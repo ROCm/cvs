@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import warnings
 from collections import Counter
 from typing import Any, Dict, List
@@ -13,8 +14,9 @@ from cvs.lib.training.pytorch_vision.utils.metrics import GATED_METRICS
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
 
 
-class VisionRun(_Forbid):
+class VisionSweep(_Forbid):
     name: str
+    label: str
     model: str
     backend: Literal["torchvision"] = "torchvision"
     precision: Literal["BF16", "FP16", "FP32"] = "BF16"
@@ -22,35 +24,33 @@ class VisionRun(_Forbid):
     image_size: int = Field(default=224, gt=0)
 
 
-def validate_sweep_selector(combo_keys, run_refs) -> None:
-    """Reject duplicate combinations and run selectors that reference no cell."""
-    counts = Counter(combo_keys)
+def validate_sweep_selector(sweep_names, enabled_names, sweep_labels=None) -> None:
+    """Reject duplicate sweeps/labels and enabled selectors with no declared run."""
+    counts = Counter(sweep_names)
     duplicates = sorted(key for key, count in counts.items() if count > 1)
     if duplicates:
-        raise ValueError(f"duplicate sweep.combinations keys: {duplicates}")
+        raise ValueError(f"duplicate training.sweeps names: {duplicates}")
 
     known = set(counts)
-    unknown = sorted(ref for ref in run_refs if ref not in known)
+    unknown = sorted(ref for ref in enabled_names if ref not in known)
     if unknown:
-        raise ValueError(f"sweep.runs references unknown combinations: {unknown} (known: {sorted(known)})")
+        raise ValueError(f"training.enabled_sweep_list references unknown sweeps: {unknown} (known: {sorted(known)})")
+
+    if sweep_labels is not None:
+        label_counts = Counter(sweep_labels)
+        duplicate_labels = sorted(key for key, count in label_counts.items() if count > 1)
+        if duplicate_labels:
+            raise ValueError(f"duplicate training.sweeps labels: {duplicate_labels}")
+        collisions = sorted(known & set(sweep_labels))
+        if collisions:
+            raise ValueError(f"training sweep names and labels must be distinct: {collisions}")
 
 
-class VisionSweep(_Forbid):
-    combinations: Dict[str, VisionRun]
-    runs: List[str]
-
-    @model_validator(mode="after")
-    def _validate_runs(self):
-        validate_sweep_selector(self.combinations.keys(), self.runs)
-        if not self.runs:
-            raise ValueError("sweep.runs must contain at least one workload")
-        return self
-
-
-class VisionParams(_Forbid):
-    nproc_per_node: int = Field(default=8, gt=0)
+class VisionTrainingConfig(_Forbid):
+    distributed: Literal[False] = False
+    gpus_per_node: int = Field(default=8, gt=0)
     warmup_steps: int = Field(default=10, ge=1)
-    measure_steps: int = Field(default=50, ge=1)
+    steps: int = Field(default=50, ge=1)
     num_classes: int = Field(default=1000, gt=1)
     channels_last: bool = True
     learning_rate: float = Field(default=0.1, gt=0)
@@ -59,29 +59,56 @@ class VisionParams(_Forbid):
     timeout_s: int = Field(default=1800, gt=0)
     omp_num_threads: int = Field(default=1, gt=0)
     verify_dmesg: bool = True
+    env_vars: Dict[str, str] = Field(default_factory=dict)
+    error_patterns: Dict[str, str] = Field(default_factory=dict)
+    sweeps: List[VisionSweep]
+    enabled_sweep_list: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_sweeps(self):
+        if not self.sweeps:
+            raise ValueError("training.sweeps must contain at least one workload")
+        enabled = self.enabled_sweep_list or [sweep.name for sweep in self.sweeps]
+        validate_sweep_selector(
+            [sweep.name for sweep in self.sweeps],
+            enabled,
+            [sweep.label for sweep in self.sweeps],
+        )
+        for name, pattern in self.error_patterns.items():
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"training.error_patterns[{name!r}] is invalid: {exc}") from exc
+        return self
+
+    def enabled_sweeps(self) -> List[VisionSweep]:
+        by_name = {sweep.name: sweep for sweep in self.sweeps}
+        names = self.enabled_sweep_list or list(by_name)
+        return [by_name[name] for name in names]
 
 
 class VisionVariantConfig(BaseVariantConfig):
     schema_version: Literal[1]
     framework: Literal["pytorch_vision_training"]
     gpu_arch: str
-    params: VisionParams
-    env: Dict[str, str] = Field(default_factory=dict)
-    sweep: VisionSweep
+    training: VisionTrainingConfig
 
-    def cell_key(self, combo_key: str, image_size=None, batch_size=None) -> str:
-        combo = self.sweep.combinations[combo_key]
-        if image_size is not None and str(image_size) != str(combo.image_size):
-            raise ValueError(f"report image size {image_size} does not match {combo_key}: {combo.image_size}")
-        if batch_size is not None and int(batch_size) != combo.batch_size:
-            raise ValueError(f"report batch size {batch_size} does not match {combo_key}: {combo.batch_size}")
-        return (
-            f"MODEL={combo.model},PRECISION={combo.precision},RES={combo.image_size},"
-            f"BS={combo.batch_size},GPUS={self.params.nproc_per_node}"
-        )
+    def sweep(self, sweep_ref: str) -> VisionSweep:
+        for sweep in self.training.sweeps:
+            if sweep_ref in (sweep.name, sweep.label):
+                return sweep
+        raise KeyError(f"unknown PyTorch Vision sweep: {sweep_ref}")
+
+    def cell_key(self, sweep_ref: str, image_size=None, batch_size=None) -> str:
+        sweep = self.sweep(sweep_ref)
+        if image_size is not None and str(image_size) != str(sweep.image_size):
+            raise ValueError(f"report image size {image_size} does not match {sweep.label}: {sweep.image_size}")
+        if batch_size is not None and int(batch_size) != sweep.batch_size:
+            raise ValueError(f"report batch size {batch_size} does not match {sweep.label}: {sweep.batch_size}")
+        return sweep.name
 
     def expected_cells(self) -> List[str]:
-        return [self.cell_key(key) for key in self.sweep.runs]
+        return [sweep.name for sweep in self.training.sweeps]
 
     @model_validator(mode="after")
     def _validate_threshold_coverage(self):

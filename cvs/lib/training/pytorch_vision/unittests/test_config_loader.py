@@ -31,26 +31,30 @@ def _config():
             "image": "rocm/pytorch:test",
             "runtime": {"name": "docker", "args": {}},
         },
-        "params": {"nproc_per_node": 8, "warmup_steps": 2, "measure_steps": 4},
-        "env": {},
-        "sweep": {
-            "combinations": {
-                "w1": {
-                    "name": "resnet50_bf16",
+        "training": {
+            "distributed": False,
+            "gpus_per_node": 8,
+            "warmup_steps": 2,
+            "steps": 4,
+            "env_vars": {},
+            "error_patterns": {},
+            "sweeps": [
+                {
+                    "name": "cell-w1",
+                    "label": "W1-BF16-R224-B128",
                     "model": "resnet50",
                     "precision": "BF16",
                     "batch_size": 128,
                     "image_size": 224,
                 }
-            },
-            "runs": ["w1"],
+            ],
+            "enabled_sweep_list": ["cell-w1"],
         },
     }
 
 
 def _thresholds():
-    cell = "MODEL=resnet50,PRECISION=BF16,RES=224,BS=128,GPUS=8"
-    return {cell: {f"training.{metric}": {"kind": "info"} for metric in GATED_METRICS}}
+    return {"cell-w1": {f"training.{metric}": {"kind": "info"} for metric in GATED_METRICS}}
 
 
 class TestVisionConfigLoader(unittest.TestCase):
@@ -65,15 +69,25 @@ class TestVisionConfigLoader(unittest.TestCase):
     def test_loads_and_resolves_paths(self):
         variant = self._load()
         self.assertEqual(variant.paths.log_dir, "/home/tester/LOGS")
-        self.assertEqual(
-            variant.cell_key("w1"),
-            "MODEL=resnet50,PRECISION=BF16,RES=224,BS=128,GPUS=8",
-        )
+        self.assertEqual(variant.cell_key("cell-w1"), "cell-w1")
+        self.assertEqual(variant.cell_key("W1-BF16-R224-B128", 224, 128), "cell-w1")
 
     def test_rejects_unknown_run(self):
         config = _config()
-        config["sweep"]["runs"] = ["missing"]
-        with self.assertRaisesRegex(ValueError, "unknown combinations"):
+        config["training"]["enabled_sweep_list"] = ["missing"]
+        with self.assertRaisesRegex(ValueError, "unknown sweeps"):
+            self._load(config=config)
+
+    def test_rejects_invalid_error_pattern(self):
+        config = _config()
+        config["training"]["error_patterns"] = {"bad": "["}
+        with self.assertRaisesRegex(ValueError, "is invalid"):
+            self._load(config=config)
+
+    def test_rejects_sweep_name_label_collision(self):
+        config = _config()
+        config["training"]["sweeps"][0]["label"] = "cell-w1"
+        with self.assertRaisesRegex(ValueError, "names and labels must be distinct"):
             self._load(config=config)
 
     def test_rejects_missing_gated_threshold_when_enforced(self):

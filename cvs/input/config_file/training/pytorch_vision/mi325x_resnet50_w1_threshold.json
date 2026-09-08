@@ -1,6 +1,6 @@
 {
   "_comment": "Calibrated on MI325X with the pinned ROCm 7.14 / PyTorch 2.12 image. Non-gated metrics remain informational.",
-  "MODEL=resnet50,PRECISION=BF16,RES=224,BS=256,GPUS=8": {
+  "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,BATCH=256,GBS=2048,RES=224": {
     "training.images_per_sec": {
       "kind": "min",
       "value": 24500

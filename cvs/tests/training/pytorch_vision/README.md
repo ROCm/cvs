@@ -37,16 +37,20 @@ cvs run pytorch_vision_training \
   --capture=tee-sys
 ```
 
-The config owns the image, batch size, warmup/measured step counts, optimizer,
-environment overrides, and selected sweep cells. The cluster file only owns
-node access.
+The config follows the JAX MaxText training layout: `training.distributed` and
+`training.gpus_per_node` define topology, `training.steps` and optimizer fields
+define execution, `training.env_vars` and `training.error_patterns` control the
+runtime, and `training.enabled_sweep_list` selects entries from
+`training.sweeps`. Each sweep `name` is also its threshold-file cell key; its
+short `label` is used in pytest rows and the run deck. The cluster file only
+owns node access.
 
 ## Results
 
 Rank zero writes `results.json` below:
 
 ```text
-{paths.log_dir}/pytorch_vision/<combo>/<run-id>/
+{paths.log_dir}/pytorch_vision/<sweep-label>/<run-id>/
 ```
 
 The same directory contains `training.log`. The structured artifact records:

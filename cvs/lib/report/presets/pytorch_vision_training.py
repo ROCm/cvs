@@ -19,15 +19,15 @@ from cvs.lib.training.pytorch_vision.utils.metrics import (
 
 
 def _run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
-    combo = variant.sweep.combinations[variant.sweep.runs[0]]
+    sweep = variant.training.enabled_sweeps()[0]
     rows: List[Tuple[str, str, bool]] = [
         ("Workload", "W1", False),
-        ("Model", combo.model, False),
+        ("Model", sweep.model, False),
         ("GPU", variant.gpu_arch, False),
-        ("Topology", f"1 node \u00d7 {variant.params.nproc_per_node} GPUs", False),
+        ("Topology", f"1 node \u00d7 {variant.training.gpus_per_node} GPUs", False),
         ("Distributed", "DDP", False),
-        ("Precision", combo.precision, False),
-        ("Input", f"synthetic 3\u00d7{combo.image_size}\u00d7{combo.image_size}", False),
+        ("Precision", sweep.precision, False),
+        ("Input", f"synthetic 3\u00d7{sweep.image_size}\u00d7{sweep.image_size}", False),
         ("Image", variant.container.image, False),
         thresholds_run_card_row(variant),
     ]
@@ -36,7 +36,7 @@ def _run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
 
 
 def _cell_nodeid_token(key: tuple) -> str:
-    return f"[{key[2]}-{key[5]}"
+    return f"[{key[2]}"
 
 
 PYTORCH_VISION_TRAINING_REPORT_CONFIG = make_inference_report_config(

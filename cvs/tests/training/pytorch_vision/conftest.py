@@ -39,6 +39,15 @@ def variant_config(pytestconfig, cluster_dict):
     return load_vision_variant(config_file, cluster_dict)
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _guard_single_node_config(cluster_dict, variant_config):
+    if variant_config.training.distributed:
+        pytest.fail("pytorch_vision_training requires training.distributed=false")
+    nodes = list((cluster_dict.get("node_dict") or {}).keys())
+    if len(nodes) != 1:
+        pytest.fail(f"pytorch_vision_training requires exactly one cluster node, received {nodes}")
+
+
 class Lifecycle:
     def __init__(self):
         self.failed = False

@@ -11,13 +11,15 @@ from cvs.lib.training.pytorch_vision.utils.metrics import METRICS
 
 class TestPyTorchVisionRunDeck(unittest.TestCase):
     def setUp(self):
-        combo = SimpleNamespace(
+        self.cell_id = "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,BATCH=256,GBS=2048,RES=224"
+        sweep = SimpleNamespace(
+            name=self.cell_id,
+            label="W1-BF16-R224-B256",
             model="resnet50",
             precision="BF16",
             image_size=224,
             batch_size=256,
         )
-        self.cell_id = "MODEL=resnet50,PRECISION=BF16,RES=224,BS=256,GPUS=8"
         thresholds = {f"training.{name}": {"kind": "info"} for name, _unit in METRICS}
         thresholds["training.images_per_sec"] = {"kind": "min", "value": 24500}
         thresholds["training.images_per_sec_per_gpu"] = {"kind": "min", "value": 3062.5}
@@ -25,11 +27,11 @@ class TestPyTorchVisionRunDeck(unittest.TestCase):
         thresholds["training.peak_memory_allocated_mb"] = {"kind": "max", "value": 13000}
         thresholds["training.peak_memory_reserved_mb"] = {"kind": "max", "value": 15000}
         self.variant = SimpleNamespace(
-            sweep=SimpleNamespace(
-                combinations={"w1-resnet50-bf16-bs256": combo},
-                runs=["w1-resnet50-bf16-bs256"],
+            sweep=lambda _ref: sweep,
+            training=SimpleNamespace(
+                enabled_sweeps=lambda: [sweep],
+                gpus_per_node=8,
             ),
-            params=SimpleNamespace(nproc_per_node=8),
             gpu_arch="MI325X",
             container=SimpleNamespace(image="rocm/pytorch:test@sha256:abc"),
             enforce_thresholds=True,
@@ -49,7 +51,7 @@ class TestPyTorchVisionRunDeck(unittest.TestCase):
         key = (
             "resnet50",
             "MI325X",
-            "w1-resnet50-bf16-bs256",
+            "W1-BF16-R224-B256",
             224,
             "BF16",
             256,
@@ -59,8 +61,8 @@ class TestPyTorchVisionRunDeck(unittest.TestCase):
             variant_config=self.variant,
             inf_res_dict={key: {"node0": actuals}},
             lifecycle_report={
-                "test_training[w1-resnet50-bf16-bs256-256]": [("training", 30.0, "s")],
-                "test_training[other-workload-256]": [("training", 99.0, "s")],
+                "test_training[W1-BF16-R224-B256]": [("training", 30.0, "s")],
+                "test_training[OTHER-BF16-R224-B256]": [("training", 99.0, "s")],
             },
         )
 
@@ -77,7 +79,7 @@ class TestPyTorchVisionRunDeck(unittest.TestCase):
     def test_html_uses_training_vocabulary(self):
         document = render_report_html(self.payload)
         self.assertIn("PyTorch Vision W1 Run Deck", document)
-        self.assertIn("Workload=w1-resnet50-bf16-bs256", document)
+        self.assertIn("Workload=W1-BF16-R224-B256", document)
         self.assertIn("BS/GPU=256", document)
         self.assertIn("images/s", document)
         self.assertNotIn("ISL=", document)

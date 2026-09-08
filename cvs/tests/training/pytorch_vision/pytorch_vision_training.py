@@ -29,23 +29,28 @@ def pytest_generate_tests(metafunc):
     with open(config_file) as stream:
         raw = json.load(stream)
 
-    sweep = raw.get("sweep", {})
-    combinations = sweep.get("combinations", {})
-    runs = sweep.get("runs", [])
-    validate_sweep_selector(combinations.keys(), runs)
+    training = raw.get("training", {})
+    sweeps = training.get("sweeps", [])
+    by_name = {sweep["name"]: sweep for sweep in sweeps}
+    enabled = training.get("enabled_sweep_list") or list(by_name)
+    validate_sweep_selector(
+        by_name.keys(),
+        enabled,
+        [sweep["label"] for sweep in sweeps],
+    )
 
     if "metric" in metafunc.fixturenames:
-        cases = [(combo_key, metric) for combo_key in runs for metric, _unit in METRICS]
+        cases = [(sweep_name, metric) for sweep_name in enabled for metric, _unit in METRICS]
         metafunc.parametrize(
-            "combo_key,metric",
+            "sweep_name,metric",
             cases,
-            ids=[f"{combo_key}-{combinations[combo_key]['batch_size']}-{metric}" for combo_key, metric in cases],
+            ids=[f"{by_name[sweep_name]['label']}-{metric}" for sweep_name, metric in cases],
         )
-    elif "combo_key" in metafunc.fixturenames:
+    elif "sweep_name" in metafunc.fixturenames:
         metafunc.parametrize(
-            "combo_key",
-            runs,
-            ids=[f"{combo_key}-{combinations[combo_key]['batch_size']}" for combo_key in runs],
+            "sweep_name",
+            enabled,
+            ids=[by_name[sweep_name]["label"] for sweep_name in enabled],
         )
 
 
@@ -64,8 +69,8 @@ def test_launch_container(orch, lifecycle, request):
 def test_verify_environment(orch, variant_config, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
-    combo_key = variant_config.sweep.runs[0]
-    job = PyTorchVisionJob(orch, variant_config, combo_key)
+    sweep_name = variant_config.training.enabled_sweeps()[0].name
+    job = PyTorchVisionJob(orch, variant_config, sweep_name)
     start = time.monotonic()
     try:
         summary = job.verify_environment()
@@ -76,26 +81,27 @@ def test_verify_environment(orch, variant_config, lifecycle, request):
     log.info("PyTorch Vision environment: %s", summary)
 
 
-def test_training(orch, variant_config, combo_key, training_results, inf_res_dict, lifecycle, request):
+def test_training(orch, variant_config, sweep_name, training_results, inf_res_dict, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
-    job = PyTorchVisionJob(orch, variant_config, combo_key)
+    job = PyTorchVisionJob(orch, variant_config, sweep_name)
     globals.error_list = []
     start = time.monotonic()
     try:
         try:
             job.stage_benchmark()
             job.run_benchmark()
+            job.verify_training_log()
             host_results = job.parse_results()
-            training_results[combo_key] = host_results
-            combo = variant_config.sweep.combinations[combo_key]
+            training_results[sweep_name] = host_results
+            sweep = variant_config.sweep(sweep_name)
             report_key = (
-                combo.model,
+                sweep.model,
                 variant_config.gpu_arch,
-                combo_key,
-                combo.image_size,
-                combo.precision,
-                combo.batch_size,
+                sweep.label,
+                sweep.image_size,
+                sweep.precision,
+                sweep.batch_size,
             )
             inf_res_dict[report_key] = host_results
         finally:
@@ -107,18 +113,17 @@ def test_training(orch, variant_config, combo_key, training_results, inf_res_dic
         if globals.error_list:
             pytest.fail("dmesg verification found errors: " + "; ".join(globals.error_list))
     except Exception:
-        lifecycle.failed = True
         raise
     lifecycle.record(request.node.nodeid, "training", time.monotonic() - start)
 
 
-def test_metric(combo_key, metric, variant_config, training_results, lifecycle, request):
+def test_metric(sweep_name, metric, variant_config, training_results, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
-    if combo_key not in training_results:
-        pytest.skip(f"no results recorded for {combo_key}")
+    if sweep_name not in training_results:
+        pytest.skip(f"no results recorded for {sweep_name}")
 
-    host, actuals = next(iter(training_results[combo_key].items()))
+    host, actuals = next(iter(training_results[sweep_name].items()))
     name = f"training.{metric}"
     value = actuals[name]
     request.node.user_properties.append(("metric_value", value))
@@ -127,7 +132,7 @@ def test_metric(combo_key, metric, variant_config, training_results, lifecycle, 
     log.info("%s %s=%s %s", host, name, value, METRIC_UNITS[metric])
 
     if variant_config.enforce_thresholds:
-        cell = variant_config.cell_key(combo_key)
+        cell = variant_config.cell_key(sweep_name)
         spec = (variant_config.thresholds.get(cell) or {}).get(name)
         if spec is None:
             if metric in GATED_METRICS:
@@ -142,11 +147,11 @@ def test_print_results_table(variant_config, training_results):
         return
     headers = ["Cell", "Host", *[name for name, _unit in METRICS]]
     rows = []
-    for combo_key, host_results in training_results.items():
+    for sweep_name, host_results in training_results.items():
         for host, actuals in host_results.items():
             rows.append(
                 [
-                    variant_config.cell_key(combo_key),
+                    variant_config.cell_key(sweep_name),
                     host,
                     *[actuals[f"training.{name}"] for name, _unit in METRICS],
                 ]

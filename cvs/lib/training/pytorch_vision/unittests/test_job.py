@@ -20,17 +20,19 @@ class FakeOrchestrator:
 
 
 def _variant():
-    combo = SimpleNamespace(
+    sweep = SimpleNamespace(
+        name="cell-w1",
+        label="W1-BF16-R224-B128",
         model="resnet50",
         backend="torchvision",
         precision="BF16",
         batch_size=128,
         image_size=224,
     )
-    params = SimpleNamespace(
-        nproc_per_node=8,
+    training = SimpleNamespace(
+        gpus_per_node=8,
         warmup_steps=10,
-        measure_steps=50,
+        steps=50,
         num_classes=1000,
         channels_last=True,
         learning_rate=0.1,
@@ -39,13 +41,14 @@ def _variant():
         timeout_s=1800,
         omp_num_threads=1,
         verify_dmesg=True,
+        env_vars={"NCCL_DEBUG": "WARN"},
+        error_patterns={"Process crash": "SIGSEGV"},
     )
     return SimpleNamespace(
-        sweep=SimpleNamespace(combinations={"w1": combo}),
-        params=params,
+        sweep=lambda _name: sweep,
+        training=training,
         paths=SimpleNamespace(log_dir="/tmp/logs"),
         gpu_arch="MI325X",
-        env={"NCCL_DEBUG": "WARN"},
     )
 
 
@@ -165,7 +168,7 @@ class TestPyTorchVisionJob(unittest.TestCase):
 
     def test_dmesg_scan_can_be_disabled(self):
         variant = _variant()
-        variant.params.verify_dmesg = False
+        variant.training.verify_dmesg = False
         orch = FakeOrchestrator()
         PyTorchVisionJob(orch, variant, "w1").scan_dmesg_for_errors()
         self.assertEqual(orch.commands, [])
@@ -199,9 +202,14 @@ class TestPyTorchVisionJob(unittest.TestCase):
 
     def test_rejects_invalid_environment_name(self):
         variant = _variant()
-        variant.env = {"BAD-NAME": "1"}
+        variant.training.env_vars = {"BAD-NAME": "1"}
         with self.assertRaisesRegex(ValueError, "invalid environment"):
             PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
+
+    def test_rejects_configured_training_log_error(self):
+        response = {"node0": {"exit_code": 0, "output": "worker died with SIGSEGV"}}
+        with self.assertRaisesRegex(RuntimeError, "Process crash"):
+            PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").verify_training_log()
 
 
 if __name__ == "__main__":

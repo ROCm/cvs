@@ -34,10 +34,11 @@
       }
     }
   },
-  "params": {
-    "nproc_per_node": 8,
+  "training": {
+    "distributed": false,
+    "gpus_per_node": 8,
+    "steps": 50,
     "warmup_steps": 10,
-    "measure_steps": 50,
     "num_classes": 1000,
     "channels_last": true,
     "learning_rate": 0.1,
@@ -45,26 +46,34 @@
     "weight_decay": 0.0001,
     "timeout_s": 1800,
     "omp_num_threads": 1,
-    "verify_dmesg": true
-  },
-  "env": {
-    "NCCL_DEBUG": "WARN",
-    "HSA_NO_SCRATCH_RECLAIM": "1",
-    "RCCL_USE_AMD_SMI_LIB": "1"
-  },
-  "sweep": {
-    "combinations": {
-      "w1-resnet50-bf16-bs256": {
-        "name": "resnet50_bf16_bs256",
+    "verify_dmesg": true,
+    "env_vars": {
+      "NNODES": "1",
+      "NODE_RANK": "0",
+      "NCCL_DEBUG": "WARN",
+      "HSA_NO_SCRATCH_RECLAIM": "1",
+      "RCCL_USE_AMD_SMI_LIB": "1"
+    },
+    "error_patterns": {
+      "NCCL ERROR": "NCCL ERROR|NCCL timeout|local work queue catastrophic error",
+      "GPU HW ERROR": "HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset",
+      "Python error": "Traceback \\(most recent call last\\)|ModuleNotFoundError|Fatal Python error",
+      "Resource exhaustion": "Out of memory|RESOURCE_EXHAUSTED|std::bad_alloc",
+      "Process crash": "Segmentation fault|SIGSEGV|core dumped"
+    },
+    "sweeps": [
+      {
+        "name": "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,BATCH=256,GBS=2048,RES=224",
+        "label": "W1-BF16-R224-B256",
         "model": "resnet50",
         "backend": "torchvision",
         "precision": "BF16",
         "batch_size": 256,
         "image_size": 224
       }
-    },
-    "runs": [
-      "w1-resnet50-bf16-bs256"
+    ],
+    "enabled_sweep_list": [
+      "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,BATCH=256,GBS=2048,RES=224"
     ]
   }
 }
