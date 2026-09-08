@@ -461,6 +461,12 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         self.assertTrue(job.EARLY_FAILURE_RE.search(crash))
         self.assertTrue(job.FATAL_LOG_RE.search(crash))
+        missing_vllm = (
+            "/opt/venv/bin/python3: Error while finding module specification for "
+            "'vllm.entrypoints.cli.main' (ModuleNotFoundError: No module named 'vllm')"
+        )
+        self.assertTrue(job.EARLY_FAILURE_RE.search(missing_vllm))
+        self.assertTrue(job.FATAL_LOG_RE.search(missing_vllm))
 
     def test_wait_ready_aborts_on_safetensors_engine_crash(self):
         crash = (

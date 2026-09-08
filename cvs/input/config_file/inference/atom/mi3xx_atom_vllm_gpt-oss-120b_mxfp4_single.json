@@ -1,5 +1,5 @@
 {
-  "_comment": "GPT-OSS-120B MXFP4 single-node vLLM parity (MI3xx/MI325X, W2).",
+  "_comment": "GPT-OSS-120B MXFP4 single-node vLLM parity (MI3xx/MI325X, W2). Requires an image with the vllm package. Native ATOM openai_server is not shipped: AITER shuffle_scale_moe UnboundLocalError on gfx942 (rc4 / atom-dev).",
   "schema_version": 1,
   "framework": "atom",
   "gpu_arch": "mi3xx",
