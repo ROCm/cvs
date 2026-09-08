@@ -37,6 +37,9 @@ from cvs.lib.utils.model_query_lib import OpenAIProbe
 
 log = globals.log
 
+# ROCm atom images install vLLM as a Python package without a ``vllm`` console script on PATH.
+_VLLM_CLI_PREFIX = ("python3", "-m", "vllm.entrypoints.cli.main")
+
 
 class AtomJob:
     """ATOM benchmark job driven by an injected ContainerOrchestrator."""
@@ -442,7 +445,7 @@ class AtomJob:
 
     def _server_argv(self, rank=0):
         argv = [
-            "vllm",
+            *_VLLM_CLI_PREFIX,
             "serve",
             self.model_id,
             "--host",
@@ -748,7 +751,9 @@ class AtomJob:
             self._exec_all("bash -c 'pkill -f \"sglang.launch_server\" || true'")
         else:
             log.info("stopping vllm server")
-            self._exec_all("bash -c 'pkill -f \"vllm serve\" || true'")
+            self._exec_all(
+                "bash -c " + shlex.quote('pkill -f "vllm.entrypoints.cli.main serve" || pkill -f "vllm serve" || true')
+            )
         time.sleep(5)
 
     def _atom_client_argv(self):
@@ -836,7 +841,7 @@ class AtomJob:
 
     def _vllm_client_argv(self):
         argv = [
-            "vllm",
+            *_VLLM_CLI_PREFIX,
             "bench",
             "serve",
             "--model",

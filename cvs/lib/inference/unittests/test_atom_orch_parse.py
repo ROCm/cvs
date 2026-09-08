@@ -364,6 +364,19 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         self.assertIn("--disable-tqdm", job._vllm_client_argv())
 
+    def test_vllm_argv_uses_python_module_cli(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertEqual(job._server_argv(0)[:4], ["python3", "-m", "vllm.entrypoints.cli.main", "serve"])
+        self.assertEqual(job._vllm_client_argv()[:5], ["python3", "-m", "vllm.entrypoints.cli.main", "bench", "serve"])
+
     def test_vllm_client_argv_honors_bench_extra_disable_tqdm(self):
         job = AtomJob(
             orch=FakeOrch(),
@@ -676,7 +689,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertNotIn("--headless", joined0)
         job.start_server()
         launch_cmds = [c for c, hosts in orch.commands if hosts]
-        self.assertIn("vllm serve", launch_cmds[0])
+        self.assertIn("vllm.entrypoints.cli.main serve", launch_cmds[0])
         self.assertIn("--pipeline-parallel-size 2", launch_cmds[1])
 
     def test_distributed_sglang_pp2_passes_sglang_dist_flags(self):
