@@ -1,6 +1,6 @@
 {
   "framework": "atom",
-  "threshold_json": "mi325x_atom_deepseek-r1_fp8_distributed_threshold.json",
+  "threshold_json": "mi325x_atom_deepseek-r1_fp8_vllm_single_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/home/models",
@@ -15,11 +15,11 @@
   "enforce_thresholds": true,
   "run_card": {
     "atom_image_pin": "rocm/atom-dev:latest",
-    "notes": "DeepSeek-R1-0528 FP8 two-node PP=2 via vllm_atom; align master_addr and ib_netdev with cluster"
+    "notes": "DeepSeek-R1-0528 FP8 single-node framework parity perf plus accuracy via vllm_atom"
   },
   "container": {
     "lifetime": "per_run",
-    "name": "atom_mi3xx_multi",
+    "name": "atom_mi3xx_vllm",
     "image": "<changeme>",
     "runtime": {
       "name": "docker",
@@ -49,8 +49,6 @@
         "block-size": 64,
         "no-enable-prefix-caching": true
       },
-      "ib_hca_devices": "auto",
-      "ib_netdev": "auto",
       "env": {
         "VLLM_ROCM_USE_AITER": "1",
         "AMDGCN_USE_BUFFER_OPS": "0"
@@ -61,49 +59,20 @@
     "driver": "vllm_atom",
     "port_no": "8000",
     "tensor_parallelism": "8",
-    "pipeline_parallel_size": "2",
-    "nnodes": "2",
-    "master_addr": "{head-node-ip}",
-    "master_port": "29501",
-    "scaling_baseline_output_throughput": "1500",
     "random_range_ratio": "0.8",
     "num_prompts": "1000",
-    "max_model_length": "8192",
+    "max_model_length": "4096",
     "metric_percentiles": "95,99",
     "reuse_server_across_sweep": "true",
-    "server_precheck_wait_s": "30",
-    "server_warmup_wait_s": "330",
-    "server_poll_count": "120",
-    "server_poll_wait_time": "60",
-    "client_poll_count": "150",
+    "client_poll_count": "80",
     "client_poll_wait_time": "60"
   },
   "sweep": {
     "sequence_combinations": [
       {
-        "name": "w1_512_512",
-        "isl": "512",
-        "osl": "512"
-      },
-      {
         "name": "w1_1k_1k",
         "isl": "1024",
         "osl": "1024"
-      },
-      {
-        "name": "w1_2k_1k",
-        "isl": "2048",
-        "osl": "1024"
-      },
-      {
-        "name": "w1_1k_2k",
-        "isl": "1024",
-        "osl": "2048"
-      },
-      {
-        "name": "w1_2k_2k",
-        "isl": "2048",
-        "osl": "2048"
       },
       {
         "name": "acc_warmup",
@@ -113,64 +82,12 @@
     ],
     "runs": [
       {
-        "combo": "w1_512_512",
-        "concurrency": 16
-      },
-      {
-        "combo": "w1_512_512",
-        "concurrency": 64
-      },
-      {
-        "combo": "w1_512_512",
-        "concurrency": 128
-      },
-      {
-        "combo": "w1_1k_1k",
-        "concurrency": 16
-      },
-      {
-        "combo": "w1_1k_1k",
-        "concurrency": 64
-      },
-      {
         "combo": "w1_1k_1k",
         "concurrency": 128
       },
       {
-        "combo": "w1_2k_1k",
-        "concurrency": 16
-      },
-      {
-        "combo": "w1_2k_1k",
-        "concurrency": 64
-      },
-      {
-        "combo": "w1_2k_1k",
-        "concurrency": 128
-      },
-      {
-        "combo": "w1_1k_2k",
-        "concurrency": 16
-      },
-      {
-        "combo": "w1_1k_2k",
-        "concurrency": 64
-      },
-      {
-        "combo": "w1_1k_2k",
-        "concurrency": 128
-      },
-      {
-        "combo": "w1_2k_2k",
-        "concurrency": 16
-      },
-      {
-        "combo": "w1_2k_2k",
-        "concurrency": 64
-      },
-      {
-        "combo": "w1_2k_2k",
-        "concurrency": 128
+        "combo": "w1_1k_1k",
+        "concurrency": 256
       },
       {
         "combo": "acc_warmup",
@@ -191,6 +108,24 @@
         "num_concurrent": 4
       },
       {
+        "id": "gsm8k_strict",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4,
+        "metadata": {
+          "filter": "strict-match"
+        }
+      },
+      {
+        "id": "gsm8k_stderr",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4,
+        "metadata": {
+          "filter": "flexible-extract"
+        }
+      },
+      {
         "id": "hellaswag",
         "task": "hellaswag",
         "num_fewshot": 0,
@@ -201,8 +136,37 @@
         "task": "mmlu_pro",
         "num_fewshot": 5,
         "num_concurrent": 4
+      },
+      {
+        "id": "bbh",
+        "task": "bbh",
+        "num_fewshot": 3,
+        "num_concurrent": 4
+      },
+      {
+        "id": "musr",
+        "task": "musr",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "arc_challenge",
+        "task": "arc_challenge",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "winogrande",
+        "task": "winogrande",
+        "num_fewshot": 0,
+        "num_concurrent": 4
       }
     ]
+  },
+  "quant_parity": {
+    "enabled": true,
+    "probe_prompt": "The capital of France is",
+    "reference_config_stem": ""
   },
   "schema_version": 1
 }

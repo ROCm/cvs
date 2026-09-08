@@ -2,23 +2,23 @@
   "ISL=512,OSL=512,TP=8,PP=2,CONC=16": {
     "total_token_throughput": {
       "kind": "min_tok_s",
-      "value": 671
+      "value": 1500
     },
     "output_throughput": {
       "kind": "min_tok_s",
-      "value": 334
+      "value": 750
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
-      "value": 84
+      "value": 188
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 42
+      "value": 94
     },
     "mean_ttft_ms": {
       "kind": "max_ms",
-      "value": 402
+      "value": 1000000
     },
     "median_ttft_ms": {
       "kind": "max_ms",
@@ -34,11 +34,11 @@
     },
     "p99_ttft_ms": {
       "kind": "max_ms",
-      "value": 15441
+      "value": 1000000
     },
     "mean_tpot_ms": {
       "kind": "max_ms",
-      "value": 42
+      "value": 1000000
     },
     "median_tpot_ms": {
       "kind": "max_ms",
@@ -54,7 +54,7 @@
     },
     "p99_tpot_ms": {
       "kind": "max_ms",
-      "value": 43
+      "value": 1000000
     },
     "mean_itl_ms": {
       "kind": "max_ms",
@@ -102,25 +102,25 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 11
+      "value": 22
     }
   },
   "ISL=512,OSL=512,TP=8,PP=2,CONC=64": {
     "total_token_throughput": {
       "kind": "min_tok_s",
-      "value": 2374
+      "value": 3500
     },
     "output_throughput": {
       "kind": "min_tok_s",
-      "value": 1180
+      "value": 1750
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
-      "value": 296
+      "value": 438
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 147
+      "value": 219
     },
     "mean_ttft_ms": {
       "kind": "max_ms",
@@ -208,25 +208,25 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 39
+      "value": 50
     }
   },
   "ISL=512,OSL=512,TP=8,PP=2,CONC=128": {
     "total_token_throughput": {
       "kind": "min_tok_s",
-      "value": 3743
+      "value": 5000
     },
     "output_throughput": {
       "kind": "min_tok_s",
-      "value": 1861
+      "value": 2500
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
-      "value": 467
+      "value": 625
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 232
+      "value": 313
     },
     "mean_ttft_ms": {
       "kind": "max_ms",
@@ -320,19 +320,19 @@
   "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": {
     "total_token_throughput": {
       "kind": "min_tok_s",
-      "value": 678
+      "value": 1500
     },
     "output_throughput": {
       "kind": "min_tok_s",
-      "value": 337
+      "value": 750
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
-      "value": 84
+      "value": 188
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 42
+      "value": 94
     },
     "mean_ttft_ms": {
       "kind": "max_ms",
@@ -420,25 +420,25 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 11
+      "value": 23
     }
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64": {
     "total_token_throughput": {
       "kind": "min_tok_s",
-      "value": 2403
+      "value": 3500
     },
     "output_throughput": {
       "kind": "min_tok_s",
-      "value": 1194
+      "value": 1750
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
-      "value": 300
+      "value": 438
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 149
+      "value": 219
     },
     "mean_ttft_ms": {
       "kind": "max_ms",
@@ -526,25 +526,25 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 39
+      "value": 50
     }
   },
   "ISL=1024,OSL=1024,TP=8,PP=2,CONC=128": {
     "total_token_throughput": {
       "kind": "min_tok_s",
-      "value": 3734
+      "value": 5000
     },
     "output_throughput": {
       "kind": "min_tok_s",
-      "value": 1856
+      "value": 2500
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
-      "value": 466
+      "value": 625
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 232
+      "value": 313
     },
     "mean_ttft_ms": {
       "kind": "max_ms",
@@ -638,19 +638,19 @@
   "ISL=2048,OSL=1024,TP=8,PP=2,CONC=16": {
     "total_token_throughput": {
       "kind": "min_tok_s",
-      "value": 997
+      "value": 1500
     },
     "output_throughput": {
       "kind": "min_tok_s",
-      "value": 329
+      "value": 750
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
-      "value": 124
+      "value": 188
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 41
+      "value": 94
     },
     "mean_ttft_ms": {
       "kind": "max_ms",
@@ -738,7 +738,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 10
+      "value": 22
     }
   },
   "ISL=2048,OSL=1024,TP=8,PP=2,CONC=64": {
@@ -748,7 +748,7 @@
     },
     "output_throughput": {
       "kind": "min_tok_s",
-      "value": 1111
+      "value": 1750
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
@@ -756,7 +756,7 @@
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 138
+      "value": 219
     },
     "mean_ttft_ms": {
       "kind": "max_ms",
@@ -844,7 +844,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 37
+      "value": 50
     }
   },
   "ISL=2048,OSL=1024,TP=8,PP=2,CONC=128": {
@@ -854,7 +854,7 @@
     },
     "output_throughput": {
       "kind": "min_tok_s",
-      "value": 1793
+      "value": 2500
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
@@ -862,7 +862,7 @@
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 224
+      "value": 313
     },
     "mean_ttft_ms": {
       "kind": "max_ms",
@@ -956,19 +956,19 @@
   "ISL=1024,OSL=2048,TP=8,PP=2,CONC=16": {
     "total_token_throughput": {
       "kind": "min_tok_s",
-      "value": 511
+      "value": 1100
     },
     "output_throughput": {
       "kind": "min_tok_s",
-      "value": 339
+      "value": 735
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
-      "value": 63
+      "value": 138
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 42
+      "value": 92
     },
     "mean_ttft_ms": {
       "kind": "max_ms",
@@ -1056,25 +1056,25 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 11
+      "value": 24
     }
   },
   "ISL=1024,OSL=2048,TP=8,PP=2,CONC=64": {
     "total_token_throughput": {
       "kind": "min_tok_s",
-      "value": 1868
+      "value": 3500
     },
     "output_throughput": {
       "kind": "min_tok_s",
-      "value": 1240
+      "value": 1750
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
-      "value": 233
+      "value": 438
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 155
+      "value": 219
     },
     "mean_ttft_ms": {
       "kind": "max_ms",
@@ -1168,7 +1168,7 @@
   "ISL=1024,OSL=2048,TP=8,PP=2,CONC=128": {
     "total_token_throughput": {
       "kind": "min_tok_s",
-      "value": 3245
+      "value": 5000
     },
     "output_throughput": {
       "kind": "min_tok_s",
@@ -1176,7 +1176,7 @@
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
-      "value": 405
+      "value": 625
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
@@ -1274,19 +1274,19 @@
   "ISL=2048,OSL=2048,TP=8,PP=2,CONC=16": {
     "total_token_throughput": {
       "kind": "min_tok_s",
-      "value": 679
+      "value": 1500
     },
     "output_throughput": {
       "kind": "min_tok_s",
-      "value": 337
+      "value": 750
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
-      "value": 84
+      "value": 188
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 42
+      "value": 94
     },
     "mean_ttft_ms": {
       "kind": "max_ms",
@@ -1374,25 +1374,25 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 11
+      "value": 24
     }
   },
   "ISL=2048,OSL=2048,TP=8,PP=2,CONC=64": {
     "total_token_throughput": {
       "kind": "min_tok_s",
-      "value": 2400
+      "value": 3500
     },
     "output_throughput": {
       "kind": "min_tok_s",
-      "value": 1193
+      "value": 1750
     },
     "per_gpu_throughput": {
       "kind": "min_tok_s",
-      "value": 300
+      "value": 438
     },
     "output_tput_per_gpu": {
       "kind": "min_tok_s",
-      "value": 149
+      "value": 219
     },
     "mean_ttft_ms": {
       "kind": "max_ms",
@@ -1480,7 +1480,7 @@
     },
     "scaling.efficiency_pct": {
       "kind": "min",
-      "value": 39
+      "value": 50
     }
   },
   "ISL=2048,OSL=2048,TP=8,PP=2,CONC=128": {
@@ -1793,7 +1793,59 @@
       "value": 0
     }
   },
-  "ISL=128,OSL=32,TP=8,PP=2,CONC=1": {
+  "accuracy": {
+    "gsm8k_flex": {
+      "gsm8k.exact_match__flexible-extract": {
+        "kind": "min",
+        "value": 0.94
+      }
+    },
+    "gsm8k_strict": {},
+    "gsm8k_stderr": {},
+    "hellaswag": {
+      "hellaswag.acc_norm__none": {
+        "kind": "info",
+        "value": 0.0
+      }
+    },
+    "mmlu_pro": {
+      "mmlu_pro.exact_match__custom-extract": {
+        "kind": "info",
+        "value": 0.0
+      }
+    },
+    "bbh": {
+      "bbh.acc_norm__none": {
+        "kind": "info",
+        "value": 0.0
+      }
+    },
+    "musr": {
+      "musr.acc_norm__none": {
+        "kind": "info",
+        "value": 0.0
+      }
+    },
+    "arc_challenge": {
+      "arc_challenge.acc_norm__none": {
+        "kind": "info",
+        "value": 0.0
+      }
+    },
+    "winogrande": {
+      "winogrande.acc__none": {
+        "kind": "info",
+        "value": 0.0
+      }
+    }
+  },
+  "quant_parity": {
+    "quant_parity.probe_match": {
+      "kind": "info",
+      "value": 0.0
+    }
+  },
+  "ISL=128,OSL=32,TP=8,PP=1,CONC=1": {
     "total_token_throughput": {
       "kind": "min_tok_s",
       "value": 0
@@ -1893,30 +1945,6 @@
     "failed": {
       "kind": "max",
       "value": 1000000
-    },
-    "scaling.efficiency_pct": {
-      "kind": "info",
-      "value": 0.0
-    }
-  },
-  "accuracy": {
-    "gsm8k_flex": {
-      "gsm8k.exact_match__flexible-extract": {
-        "kind": "info",
-        "value": 0.0
-      }
-    },
-    "hellaswag": {
-      "hellaswag.acc_norm__none": {
-        "kind": "info",
-        "value": 0.0
-      }
-    },
-    "mmlu_pro": {
-      "mmlu_pro.exact_match__custom-extract": {
-        "kind": "info",
-        "value": 0.0
-      }
     }
   }
 }

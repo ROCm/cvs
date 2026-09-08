@@ -54,17 +54,17 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         with self.assertRaises(ValueError):
             gpu_arch_from_config_path("custom_workload.json")
 
-    def test_load_mi3xx_sample_config(self):
+    def test_load_mi3xx_sglang_standalone_config(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_gpt-oss-120b_mxfp4_single.json", profile="sglang")
+        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_sglang_single.json")
         self.assertEqual(variant.framework, "atom")
         self.assertEqual(variant.params.driver, "sglang")
         self.assertEqual(
             variant.expected_cells(),
             [
-                "ISL=8192,OSL=1024,TP=4,PP=1,CONC=32",
-                "ISL=8192,OSL=1024,TP=4,PP=1,CONC=64",
-                "ISL=128,OSL=32,TP=4,PP=1,CONC=1",
+                "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128",
+                "ISL=1024,OSL=1024,TP=8,PP=1,CONC=256",
+                "ISL=128,OSL=32,TP=8,PP=1,CONC=1",
             ],
         )
         self.assertIn("gsm8k.exact_match__flexible-extract", variant.thresholds["accuracy"]["gsm8k_flex"])
@@ -118,7 +118,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_load_w1_mi3xx_multinode_sglang_variant(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed.json", profile="sglang")
+        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed_sglang.json")
         self.assertEqual(variant.params.driver, "sglang")
         self.assertEqual(variant.params.pipeline_parallel_size, "2")
         self.assertTrue(variant.enforce_thresholds)
@@ -361,66 +361,16 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertIn("mtp_quality", variant.thresholds)
         self.assertEqual(len(variant.expected_cells()), 3)
 
-    def test_load_w2_accuracy_long_context_cells(self):
-        root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_gpt-oss-120b_mxfp4_single.json", profile="perf")
-        self.assertTrue(variant.functional.api_smoke)
-        self.assertEqual(len(variant.long_context_accuracy.cells), 1)
-        self.assertEqual(variant.long_context_accuracy.cells[0].id, "niah_8k")
-        self.assertIn("long_context_accuracy", variant.thresholds)
-
-    def test_load_phase_c_w2_mxfp4_perf(self):
-        root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_gpt-oss-120b_mxfp4_single.json", profile="perf")
-        self.assertEqual(variant.params.driver, "vllm_atom")
-        self.assertEqual(variant.params.tensor_parallelism, "4")
-        self.assertEqual(variant.model.precision, "mxfp4")
-        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_MOE"), "1")
-        self.assertEqual(variant.roles.server.env.get("ATOM_USE_TRITON_GEMM"), "1")
-        self.assertEqual(
-            variant.expected_cells(),
-            [
-                "ISL=8192,OSL=1024,TP=4,PP=1,CONC=32",
-                "ISL=8192,OSL=1024,TP=4,PP=1,CONC=64",
-                "ISL=128,OSL=32,TP=4,PP=1,CONC=1",
-            ],
-        )
-
-    def test_load_minimax_m3_native_perf_atom_args(self):
-        root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_minimax-m3_single.json")
-        self.assertEqual(
-            variant.roles.server.atom_args,
-            [
-                "-tp",
-                "8",
-                "--trust-remote-code",
-                "--block-size",
-                "128",
-                "--enforce-eager",
-                "--level",
-                "0",
-                "--cudagraph-mode",
-                "NONE",
-            ],
-        )
-
-    def test_load_phase_c_w17_mxfp4_perf(self):
-        root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_mxfp4_single.json")
-        self.assertEqual(variant.model.id, "amd/DeepSeek-R1-0528-MXFP4")
-        self.assertEqual(variant.params.tensor_parallelism, "8")
-
     def test_load_m4_vllm_single_parity(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_single.json", profile="vllm")
+        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_vllm_single.json")
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(variant.params.nnodes, "1")
         self.assertIn("kv-cache-dtype", variant.roles.server.serve_args)
 
     def test_load_m4_sglang_single_parity(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_single.json", profile="sglang")
+        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_sglang_single.json")
         self.assertEqual(variant.params.driver, "sglang")
         self.assertIn("--kv-cache-dtype", variant.roles.server.sglang_args)
 
@@ -458,12 +408,6 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.params.nnodes, "2")
         self.assertIn("PP=2", variant.expected_cells()[0])
         self.assertIn("accuracy", variant.thresholds)
-
-    def test_load_w2_m4_vllm_parity(self):
-        root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_gpt-oss-120b_mxfp4_single.json")
-        self.assertEqual(variant.params.driver, "vllm_atom")
-        self.assertEqual(variant.model.id, "openai/gpt-oss-120b")
 
     def test_resolve_profile_merges_shared_fields(self):
         raw = {

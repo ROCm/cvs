@@ -1793,6 +1793,26 @@
       "value": 0
     }
   },
+  "accuracy": {
+    "gsm8k_flex": {
+      "gsm8k.exact_match__flexible-extract": {
+        "kind": "info",
+        "value": 0.0
+      }
+    },
+    "hellaswag": {
+      "hellaswag.acc_norm__none": {
+        "kind": "info",
+        "value": 0.0
+      }
+    },
+    "mmlu_pro": {
+      "mmlu_pro.exact_match__custom-extract": {
+        "kind": "info",
+        "value": 0.0
+      }
+    }
+  },
   "ISL=128,OSL=32,TP=8,PP=2,CONC=1": {
     "total_token_throughput": {
       "kind": "min_tok_s",
@@ -1897,26 +1917,6 @@
     "scaling.efficiency_pct": {
       "kind": "info",
       "value": 0.0
-    }
-  },
-  "accuracy": {
-    "gsm8k_flex": {
-      "gsm8k.exact_match__flexible-extract": {
-        "kind": "info",
-        "value": 0.0
-      }
-    },
-    "hellaswag": {
-      "hellaswag.acc_norm__none": {
-        "kind": "info",
-        "value": 0.0
-      }
-    },
-    "mmlu_pro": {
-      "mmlu_pro.exact_match__custom-extract": {
-        "kind": "info",
-        "value": 0.0
-      }
     }
   }
 }

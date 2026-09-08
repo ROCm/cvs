@@ -104,16 +104,19 @@ Multinode PP (``driver=vllm_atom``):
     --config_file ~/input/config_file/inference/atom/distributed/mi3xx_atom_deepseek-r1_fp8_distributed.json \
     --html ~/cvs_results/atom-w1-distributed.html --self-contained-html -vvv
 
-Multi-profile configs (``schema_version: 2``) select a job shape with
-``--config_profile``:
+MTP-3 speculative decode (``schema_version: 2`` profile on the native single-node
+stem):
 
 .. code:: bash
 
   cvs run atom \
     --cluster_file ~/input/cluster_file/atom_cluster.json \
     --config_file "$SINGLE_DIR/mi3xx_atom_deepseek-r1_fp8_single.json" \
-    --config_profile accuracy \
-    --html ~/cvs_results/atom-w1-accuracy.html --self-contained-html -vvv
+    --config_profile mtp3 \
+    --html ~/cvs_results/atom-w1-mtp3.html --self-contained-html -vvv
+
+vLLM / SGLang parity use dedicated config stems (for example
+``mi3xx_atom_deepseek-r1_fp8_vllm_single.json``) — no ``--config_profile``.
 
 Smoke one cell with pytest ``-k``, for example ``-k "w1_1k_1k-conc128"``.
 

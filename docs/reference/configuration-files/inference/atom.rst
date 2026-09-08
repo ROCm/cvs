@@ -48,81 +48,80 @@ subdirectory (see :doc:`/how-to/test-suites/inference/atom`).
 Shipped model inventory
 =======================
 
+Lab-validated configs only. Native ATOM ``driver=atom`` workloads use flat
+``schema_version: 1`` JSON unless noted. Framework parity (vLLM / SGLang) uses
+separate config stems — not embedded profiles.
+
 .. list-table::
    :widths: 3 3 4
    :header-rows: 1
 
    * - Model stem
-     - Topology files
+     - Config files
      - Notes
    * - ``mi3xx_atom_deepseek-r1_fp8``
-     - ``_single``, ``_distributed``
-     - W1 — profiles: perf, accuracy, mtp3, baseline_sweep, vllm, sglang (single); perf, sglang, accuracy (distributed)
-   * - ``mi3xx_atom_gpt-oss-120b_mxfp4``
-     - ``_single``
-     - W2 — ``perf`` / ``native`` / ``vllm`` / ``sglang`` profiles
+     - ``_single`` (``perf`` + ``mtp3`` profiles), ``_vllm_single``, ``_sglang_single``, ``_distributed``, ``_distributed_sglang``
+     - W1 — native perf + accuracy on ``_single``; MTP-3 via ``--config_profile mtp3``; M4/M5 parity on dedicated stems
    * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
      - ``_single``
-     - W3 — ``perf`` / ``vllm`` / ``sglang`` profiles
-   * - Other P2 models
-     - ``_single`` only
-     - Flat schema_version 1 perf gate
+     - W3 — flat native ``atom`` perf + accuracy
 
 Config profiles
 ===============
 
-One topology JSON can host multiple **profiles** (driver + sweep + optional
-accuracy/MTP blocks):
+``schema_version: 2`` files embed job shapes under ``profiles``. Select one at
+runtime with ``--config_profile`` (or ``CVS_CONFIG_PROFILE``). Flat
+``schema_version: 1`` files use an implicit ``perf`` profile.
+
+W1 DeepSeek R1 FP8 — ``mi3xx_atom_deepseek-r1_fp8_single.json`` profiles:
+
+.. list-table::
+   :widths: 2 2 4
+   :header-rows: 1
+
+   * - ``--config_profile``
+     - Driver
+     - Use when
+   * - ``perf`` (default)
+     - ``atom``
+     - Daily perf gate + full accuracy matrix
+   * - ``mtp3``
+     - ``atom``
+     - Speculative-decode perf + gsm8k quality
+
+Framework parity and multinode PP use **separate config files** (no
+``--config_profile``):
+
+.. list-table::
+   :widths: 3 2 3
+   :header-rows: 1
+
+   * - Config stem suffix
+     - Driver
+     - Topology
+   * - ``_vllm_single``
+     - ``vllm_atom``
+     - single-node M4 parity
+   * - ``_sglang_single``
+     - ``sglang``
+     - single-node M4 parity
+   * - ``_distributed``
+     - ``vllm_atom``
+     - two-node PP=2 perf
+   * - ``_distributed_sglang``
+     - ``sglang``
+     - two-node PP=2 via SGLang
 
 .. code:: bash
 
   cvs run atom \
     --config_file ~/input/.../mi3xx_atom_deepseek-r1_fp8_single.json \
-    --config_profile accuracy \
+    --config_profile mtp3 \
     --cluster_file ~/input/cluster_file/atom_cluster.json
 
-W1 DeepSeek R1 FP8 ΓÇö profile reference:
-
-.. list-table::
-   :widths: 2 2 2 4
-   :header-rows: 1
-
-   * - ``--config_profile``
-     - Topology
-     - Driver
-     - Use when
-   * - ``perf`` (default)
-     - single
-     - ``atom``
-     - Daily M1 perf gate (2 cells)
-   * - ``baseline_sweep``
-     - single
-     - ``atom``
-     - W1 P2 latency-vs-load (14 cells)
-   * - ``accuracy``
-     - single
-     - ``atom``
-     - M2 gsm8k / quality
-   * - ``mtp3`` / ``mtp3_accuracy``
-     - single
-     - ``atom``
-     - Speculative-decode perf / quality
-   * - ``vllm`` / ``sglang``
-     - single
-     - ``vllm_atom`` / ``sglang``
-     - M4 single-node parity
-   * - ``perf`` (default)
-     - distributed
-     - ``vllm_atom``
-     - M5 PP=2 perf
-   * - ``sglang``
-     - distributed
-     - ``sglang``
-     - M5 PP=2 via SGLang
-   * - ``accuracy``
-     - distributed
-     - ``vllm_atom``
-     - Scale accuracy scaffold
+  cvs run atom \
+    --config_file ~/input/.../mi3xx_atom_deepseek-r1_fp8_vllm_single.json \
+    --cluster_file ~/input/cluster_file/atom_cluster.json
 
 Keys prefixed with ``_`` (for example ``_comment``) are ignored by the loader.
 
