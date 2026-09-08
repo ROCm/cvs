@@ -450,6 +450,44 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertTrue(job.CLIENT_CRASH_RE.search("Traceback (most recent call last)"))
         self.assertTrue(job.CLIENT_LAUNCH_FAIL_RE.search("unrecognized arguments: --bad"))
         self.assertTrue(job.EARLY_FAILURE_RE.search("No such file or directory"))
+        crash = (
+            "safetensors._safetensors_rust.SafetensorError: Error while deserializing: "
+            "incomplete metadata, file not fully covered\n"
+            "[atom 20:48:35] AsyncIOProcManager(ModelRunner): [ModelRunner5/8] "
+            "proc died unexpectedly (exitcode=1), shutting down.\n"
+            "[atom 20:48:36] Engine Core: load model runner failed\n"
+            "RuntimeError: Engine Core Mgr: Received unexpected SHUTDOWN signal "
+            "from DP rank 0 during initialization\n"
+        )
+        self.assertTrue(job.EARLY_FAILURE_RE.search(crash))
+        self.assertTrue(job.FATAL_LOG_RE.search(crash))
+
+    def test_wait_ready_aborts_on_safetensors_engine_crash(self):
+        crash = (
+            "safetensors._safetensors_rust.SafetensorError: Error while deserializing: "
+            "incomplete metadata, file not fully covered\n"
+            "RuntimeError: Engine Core Mgr: Received unexpected SHUTDOWN signal "
+            "from DP rank 0 during initialization\n"
+        )
+        orch = FakeOrch(exec_return={"node0": crash}, exec_on_head_return={"node0": "NO\n"})
+        job = AtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="atom"),
+            hf_token="tok",
+            isl="5000",
+            osl="1024",
+            concurrency=16,
+            num_prompts=100,
+            server_precheck_wait_s=0,
+            server_warmup_wait_s=0,
+            server_poll_count=60,
+            server_poll_wait_s=0,
+        )
+        with patch("cvs.lib.inference.atom.atom_orch.time.sleep"):
+            with self.assertRaises(RuntimeError) as ctx:
+                job.wait_ready()
+        self.assertIn("atom server early failure", str(ctx.exception))
+        self.assertNotIn("did not become ready before timeout", str(ctx.exception))
 
     def test_distributed_start_server_targets_each_host(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])

@@ -57,13 +57,25 @@ class AtomJob:
         r"|unrecognized arguments|invalid choice|error: argument "
         r"|Free memory on device.*less than desired"
         r"|Engine core initialization failed"
-        r"|WorkerProc failed to start",
+        r"|WorkerProc failed to start"
+        r"|SafetensorError"
+        r"|incomplete metadata"
+        r"|proc died unexpectedly"
+        r"|load model runner failed"
+        r"|Failed to initialize all EngineCores"
+        r"|unexpected SHUTDOWN signal",
         re.I,
     )
     FATAL_LOG_RE = re.compile(
         r"Free memory on device.{0,80}less than desired"
         r"|Engine core initialization failed"
-        r"|RuntimeError:.*[Ee]ngine",
+        r"|RuntimeError:.*[Ee]ngine"
+        r"|SafetensorError"
+        r"|incomplete metadata"
+        r"|proc died unexpectedly"
+        r"|load model runner failed"
+        r"|Failed to initialize all EngineCores"
+        r"|unexpected SHUTDOWN signal",
         re.I,
     )
 
@@ -619,6 +631,11 @@ class AtomJob:
             return out
         return self._exec_all(f"tail -{lines} {shlex.quote(self.server_log)}")
 
+    def _raise_if_atom_server_log_failed(self, host, output):
+        text = output or ""
+        if self.EARLY_FAILURE_RE.search(text) or self.FATAL_LOG_RE.search(text):
+            raise RuntimeError(f"atom server early failure on {host}: {text[-500:]}")
+
     def wait_ready(self):
         log.info("waiting %ds for server log to materialise", self._precheck_wait)
         time.sleep(self._precheck_wait)
@@ -626,8 +643,7 @@ class AtomJob:
         if self.driver == "atom":
             out = self._tail_server_logs(30)
             for host, output in out.items():
-                if self.EARLY_FAILURE_RE.search(output or ""):
-                    raise RuntimeError(f"atom server early failure on {host}: {output[-500:]}")
+                self._raise_if_atom_server_log_failed(host, output)
         else:
             self._check_coordinator_early_failure(emit_tail=True)
 
@@ -637,8 +653,7 @@ class AtomJob:
         if self.driver == "atom":
             out = self._tail_server_logs(30)
             for host, output in out.items():
-                if self.EARLY_FAILURE_RE.search(output or ""):
-                    raise RuntimeError(f"atom server early failure on {host}: {output[-500:]}")
+                self._raise_if_atom_server_log_failed(host, output)
         else:
             self._check_coordinator_early_failure(emit_tail=True)
 
@@ -650,8 +665,7 @@ class AtomJob:
             if self.driver == "atom":
                 poll_out = self._tail_server_logs(30)
                 for host, output in poll_out.items():
-                    if self.EARLY_FAILURE_RE.search(output or ""):
-                        raise RuntimeError(f"atom server early failure on {host}: {output[-500:]}")
+                    self._raise_if_atom_server_log_failed(host, output)
             else:
                 self._check_coordinator_early_failure()
             time.sleep(self._server_poll_wait)
