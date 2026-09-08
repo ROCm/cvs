@@ -21,6 +21,14 @@ class TestPerfMetricTable(unittest.TestCase):
         self.assertEqual(len(out), 2)
         self.assertEqual(out[0]['status'], 'pass')
 
+    def test_dedupe_metric_rows_keeps_same_metric_from_multiple_nodes(self):
+        rows = [
+            {'node': 'head', 'metric': 'client.output_throughput', 'status': 'pass'},
+            {'node': 'worker', 'metric': 'client.output_throughput', 'status': 'pass'},
+        ]
+
+        self.assertEqual(len(dedupe_metric_rows(rows)), 2)
+
     def test_metric_display_label_uses_columns_when_provided(self):
         columns = (('Mean TTFT (ms)', 'mean_ttft_ms'),)
         self.assertEqual(metric_display_label('mean_ttft_ms', columns), 'Mean TTFT (ms)')
@@ -28,12 +36,19 @@ class TestPerfMetricTable(unittest.TestCase):
     def test_metric_display_label_prettifies_unknown_keys(self):
         self.assertEqual(metric_display_label('goodput'), 'Goodput')
 
-    def test_render_benchmark_metrics_html_includes_pass_and_fail_rows(self):
+    def test_render_benchmark_metrics_html_includes_tri_state_rows(self):
         columns = (('Mean TTFT (ms)', 'mean_ttft_ms'), ('Goodput', 'goodput'))
         html_out = render_benchmark_metrics_html(
             [
                 {'node': 'n1', 'metric': 'mean_ttft_ms', 'status': 'pass'},
                 {'node': 'n1', 'metric': 'goodput', 'status': 'fail'},
+                {
+                    'node': 'n1',
+                    'metric': 'gpu.gpu_compute_util_pct',
+                    'status': 'skip',
+                    'actual': None,
+                    'reason': 'metric unavailable',
+                },
             ],
             columns=columns,
         )
@@ -41,6 +56,8 @@ class TestPerfMetricTable(unittest.TestCase):
         self.assertIn('Mean TTFT (ms)', html_out)
         self.assertIn('Passed', html_out)
         self.assertIn('Failed', html_out)
+        self.assertIn('Skipped', html_out)
+        self.assertIn('metric unavailable', html_out)
 
     def test_is_benchmark_metrics_extra_detects_wrapped_table(self):
         html_out = render_benchmark_metrics_html([{'node': 'n1', 'metric': 'goodput', 'status': 'pass'}])

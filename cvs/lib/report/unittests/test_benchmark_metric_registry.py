@@ -22,6 +22,7 @@ class TestBenchmarkMetricRegistry(unittest.TestCase):
         registry._SUBTEST_SUMMARY_COUNTED.clear()
         registry._SUBTEST_SUMMARY['failed'] = 0
         registry._SUBTEST_SUMMARY['passed'] = 0
+        registry._SUBTEST_SUMMARY['skipped'] = 0
 
     def test_record_and_fetch_benchmark_metric_rows(self):
         node = SimpleNamespace(
@@ -66,13 +67,15 @@ class TestBenchmarkMetricRegistry(unittest.TestCase):
         rows = [
             {'node': 'n1', 'metric': 'mean_ttft_ms', 'status': 'pass'},
             {'node': 'n1', 'metric': 'goodput', 'status': 'fail'},
+            {'node': 'n1', 'metric': 'queue_time_p95_ms', 'status': 'skip'},
         ]
         registry.record_benchmark_metric_summary(nodeid, rows)
         registry.record_benchmark_metric_summary(nodeid, rows)
-        total, failed, passed = registry.benchmark_subtest_summary()
-        self.assertEqual(total, 2)
+        total, failed, passed, skipped = registry.benchmark_subtest_summary()
+        self.assertEqual(total, 3)
         self.assertEqual(failed, 1)
         self.assertEqual(passed, 1)
+        self.assertEqual(skipped, 1)
 
     def test_mark_collapsible_result_cell_adds_class(self):
         cell = '<td class="col-result">Passed</td>'
@@ -115,6 +118,41 @@ class TestBenchmarkMetricRegistry(unittest.TestCase):
             self.assertIn('cvs-benchmark-metrics-table', updated)
             self.assertIn('Mean TTFT (ms)', updated)
             self.assertIn('cvs-subtests-count', updated)
+
+    def test_patch_accepts_vllm_verification_parent(self):
+        nodeid = 'cvs/tests/inference/vllm/vllm_single.py::test_verify_cell_metrics[1k1k-conc16]'
+        registry._ROWS_BY_NODEID[nodeid] = [
+            {'node': 'n1', 'metric': 'gpu.gpu_compute_util_pct', 'status': 'skip', 'reason': 'unavailable'}
+        ]
+        payload = {
+            'tests': {
+                nodeid: [
+                    {
+                        'resultsTableRow': [
+                            '<td class="col-result">Skipped</td>',
+                            f'<td class="col-testId">{html.escape(nodeid)}</td>',
+                        ],
+                        'extras': [],
+                        'log': '',
+                    }
+                ]
+            }
+        }
+        blob = html.escape(json.dumps(payload), quote=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            html_path = Path(tmp) / 'report.html'
+            html_path.write_text(
+                '<html><body><div class="filters"></div><div class="collapse"></div>'
+                f'<div data-jsonblob="{blob}"></div></body></html>',
+                encoding='utf-8',
+            )
+            self.assertTrue(
+                registry.patch_benchmark_metrics_into_html(
+                    html_path,
+                    benchmark_test_name='test_verify_cell_metrics',
+                )
+            )
+            self.assertIn('Skipped', html_path.read_text(encoding='utf-8'))
 
 
 if __name__ == '__main__':

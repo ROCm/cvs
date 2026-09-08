@@ -9,18 +9,17 @@ import pytest
 from cvs.lib import globals
 from cvs.lib.inference.utils.inference_suite_lifecycle import test_accuracy_eval  # noqa: F401
 from cvs.lib.inference.utils.vllm_config_loader import load_variant
-from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS, CLIENT_METRIC_UNITS
-from cvs.lib.inference.utils.vllm_server_metrics import PROM_METRICS, PROM_METRIC_UNITS, to_prom_metrics
+from cvs.lib.inference.utils.vllm_parsing import VLLM_RESULTS_COLUMNS
+from cvs.lib.inference.utils.vllm_server_metrics import to_prom_metrics
+from cvs.lib.inference.utils.vllm_verification import evaluate_metric_verdicts
 from cvs.lib.inference.vllm_job import VllmJob, scrape_vllm_metrics
 from cvs.lib.utils.gpu import (
-    GPU_METRICS,
-    GPU_METRIC_UNITS,
     agg_readings,
     capture_gpu_metrics,
     start_gpu_poller,
     stop_and_collect_gpu_poller,
 )
-from cvs.lib.utils.verdict import evaluate_all
+from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
 
 from ._shared import test_print_results_table  # noqa: F401
 
@@ -40,28 +39,7 @@ def pytest_generate_tests(metafunc):
     variant = load_variant(config_file, {})
     runs = variant.resolved_runs()
     ids = [run.cell.key for run in runs]
-    if "metric" in metafunc.fixturenames and runs:
-        params = [(run, metric) for run in runs for metric, _ in CLIENT_METRICS]
-        metafunc.parametrize(
-            "run,metric",
-            params,
-            ids=[f"{case_id}-{metric}" for case_id in ids for metric, _ in CLIENT_METRICS],
-        )
-    elif "gpu_metric" in metafunc.fixturenames and runs:
-        params = [(run, metric) for run in runs for metric, _ in GPU_METRICS]
-        metafunc.parametrize(
-            "run,gpu_metric",
-            params,
-            ids=[f"{case_id}-{metric}" for case_id in ids for metric, _ in GPU_METRICS],
-        )
-    elif "prom_metric" in metafunc.fixturenames and runs:
-        params = [(run, metric) for run in runs for metric, _ in PROM_METRICS]
-        metafunc.parametrize(
-            "run,prom_metric",
-            params,
-            ids=[f"{case_id}-{metric}" for case_id in ids for metric, _ in PROM_METRICS],
-        )
-    elif "accuracy_task" in metafunc.fixturenames:
+    if "accuracy_task" in metafunc.fixturenames:
         tasks = [task.id for task in variant.accuracy.tasks]
         metafunc.parametrize("accuracy_task", tasks, ids=tasks)
     elif "run" in metafunc.fixturenames and runs:
@@ -271,67 +249,31 @@ def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_r
     inf_res_dict[_cell_result_key(variant_config, run)] = results
 
 
-def _test_metric(run, metric, prefix, units, inf_res_dict, variant_config, vllm_targets, lifecycle, request):
-    if lifecycle.failed:
-        pytest.skip("a prior lifecycle stage failed")
+def test_verify_cell_metrics(run, inf_res_dict, variant_config, lifecycle, request, subtests):
+    """Verify one collected cell's active threshold gates as pytest subtests."""
     key = _cell_result_key(variant_config, run)
     host_dict = inf_res_dict.get(key)
     if not host_dict:
-        pytest.skip(f"no recorded results for {key!r}")
-    full = prefix + metric
-    _host, actuals = next(iter(host_dict.items()))
-    value = actuals.get(full)
-    request.node.user_properties.append(("metric_value", value))
-    request.node.user_properties.append(("metric_unit", units.get(metric, "-")))
-    if prefix != "client." and value is None:
-        pytest.skip(f"{full}: no value recorded")
-    cell = run.cell.key
-    spec = (variant_config.thresholds.get(cell) or {}).get(full)
-    if not variant_config.enforce_thresholds or spec is None:
-        return
-    evaluate_all(actuals, {full: spec})
+        pytest.skip(f"no recorded inference result for {key!r}")
 
-
-def test_metric(run, metric, inf_res_dict, variant_config, vllm_targets, lifecycle, request):
-    _test_metric(
-        run,
-        metric,
-        "client.",
-        CLIENT_METRIC_UNITS,
-        inf_res_dict,
-        variant_config,
-        vllm_targets,
-        lifecycle,
-        request,
+    verdicts = evaluate_metric_verdicts(
+        host_dict,
+        variant_config.thresholds.get(run.cell.key) or {},
+        enforce_thresholds=variant_config.enforce_thresholds,
     )
+    if not verdicts:
+        pytest.skip(f"no active threshold gates for {run.cell.key}")
 
-
-def test_gpu_metric(run, gpu_metric, inf_res_dict, variant_config, vllm_targets, lifecycle, request):
-    _test_metric(
-        run,
-        gpu_metric,
-        "gpu.",
-        GPU_METRIC_UNITS,
-        inf_res_dict,
-        variant_config,
-        vllm_targets,
-        lifecycle,
-        request,
-    )
-
-
-def test_prom_metric(run, prom_metric, inf_res_dict, variant_config, vllm_targets, lifecycle, request):
-    _test_metric(
-        run,
-        prom_metric,
-        "prom.",
-        PROM_METRIC_UNITS,
-        inf_res_dict,
-        variant_config,
-        vllm_targets,
-        lifecycle,
-        request,
-    )
+    record_benchmark_metric_rows(request.node, verdicts, columns=VLLM_RESULTS_COLUMNS)
+    started = time.monotonic()
+    for verdict in verdicts:
+        with subtests.test(node=verdict["node"], metric=verdict["metric"]):
+            if verdict["status"] == "skip":
+                pytest.skip(verdict["reason"])
+            assert verdict["status"] == "pass", verdict["reason"]
+    lifecycle.record(request.node.nodeid, "metric_verification", time.monotonic() - started)
+    if all(verdict["status"] == "skip" for verdict in verdicts):
+        pytest.skip(f"all active metrics were unavailable for {run.cell.key}")
 
 
 def test_teardown(orch, lifecycle, request):

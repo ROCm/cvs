@@ -5,16 +5,74 @@ All rights reserved.
 
 import json
 import os
+from pathlib import Path
 
 import pytest
+
+try:
+    from _pytest.subtests import SubtestReport as _BuiltinSubtestReport
+except ImportError:
+    _BuiltinSubtestReport = None
+try:
+    from pytest_subtests.plugin import SubTestReport as _PluginSubtestReport
+except ImportError:
+    _PluginSubtestReport = None
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
 from cvs.lib.inference.vllm_topology import resolve_vllm_topology, scope_vllm_cluster
 from cvs.lib.inference.utils.vllm_config_loader import load_variant
+from cvs.lib.inference.utils.vllm_parsing import VLLM_RESULTS_COLUMNS
+from cvs.lib.report.benchmark_metric_registry import (
+    benchmark_metric_columns_for_nodeid,
+    benchmark_metric_rows_from_report,
+    mark_collapsible_result_cell,
+    patch_benchmark_metrics_into_html,
+    stamp_benchmark_metric_rows_on_report,
+)
+from cvs.lib.report.render.perf_metric_table import (
+    is_benchmark_metrics_extra,
+    render_benchmark_metrics_html,
+)
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
+from cvs.tests.inference.vllm._shared import validate_vllm_execution_mode
 
 log = globals.log
+VLLM_METRIC_VERIFICATION_TEST = 'test_verify_cell_metrics'
+
+
+def _is_subtest_report(report) -> bool:
+    if _BuiltinSubtestReport is not None and isinstance(report, _BuiltinSubtestReport):
+        return True
+    if _PluginSubtestReport is not None and isinstance(report, _PluginSubtestReport):
+        return True
+    return False
+
+
+def _is_verification_report(report) -> bool:
+    test_name = report.nodeid.rsplit('::', 1)[-1].split('[', 1)[0]
+    return report.when == 'call' and test_name == VLLM_METRIC_VERIFICATION_TEST and not _is_subtest_report(report)
+
+
+def _is_full_log_extra(extra: object) -> bool:
+    return isinstance(extra, dict) and extra.get('format_type') == 'url' and extra.get('name') == 'Full Log'
+
+
+def _attach_metric_panel(report, rows) -> None:
+    try:
+        import pytest_html
+    except ImportError:
+        return
+
+    extras = []
+    for extra in getattr(report, 'extras', []) or []:
+        if _is_full_log_extra(extra) or is_benchmark_metrics_extra(extra):
+            extras.append(extra)
+    if not any(is_benchmark_metrics_extra(extra) for extra in extras):
+        columns = benchmark_metric_columns_for_nodeid(report.nodeid) or VLLM_RESULTS_COLUMNS
+        extras.append(pytest_html.extras.html(render_benchmark_metrics_html(rows, columns=columns)))
+    report.extras = extras
+    stamp_benchmark_metric_rows_on_report(report, rows)
 
 
 def _deep_merge(base, override):
@@ -149,7 +207,7 @@ def inf_res_dict():
     return {}
 
 
-def pytest_collection_modifyitems(items):
+def pytest_collection_modifyitems(config, items):
     """Pin the lifecycle order explicitly instead of relying on definition order.
 
     `test_print_results_table` is an imported function (its source line points
@@ -158,6 +216,7 @@ def pytest_collection_modifyitems(items):
     the benchmark cells, the results table, then teardown last. Items from other
     modules keep their relative order.
     """
+    validate_vllm_execution_mode(config)
     rank = {
         "test_launch_container": 0,
         "test_setup_sshd": 1,
@@ -165,9 +224,7 @@ def pytest_collection_modifyitems(items):
         "test_model_fetch": 3,
         "test_openai_compatible_smoke": 4,
         "test_vllm_inference": 5,
-        "test_metric": 6,
-        "test_gpu_metric": 6,
-        "test_prom_metric": 6,
+        VLLM_METRIC_VERIFICATION_TEST: 6,
         "test_accuracy_eval": 7,
         "test_print_results_table": 8,
         "test_teardown": 9,
@@ -175,29 +232,30 @@ def pytest_collection_modifyitems(items):
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
 
-# def pytest_html_results_table_header(cells):
-#     """Add Value + Unit columns just before the trailing Links column.
-#
-#     Populated for test_metric rows; blank for lifecycle/inference rows (they
-#     record no metric_value user-property). Scoped to this suite's conftest, so
-#     other suites' result tables are unaffected.
-#     """
-#     cells.insert(-1, "<th>Value</th>")
-#     cells.insert(-1, "<th>Unit</th>")
-#
-#
-# def pytest_html_results_table_row(report, cells):
-#     props = dict(report.user_properties)
-#     has = "metric_value" in props
-#     val = props.get("metric_value")
-#     unit = props.get("metric_unit", "") if has else ""
-#     if not has:
-#         shown = ""
-#     elif val is None:
-#         shown = "-"
-#     elif isinstance(val, float):
-#         shown = f"{val:.3f}"
-#     else:
-#         shown = str(val)
-#     cells.insert(-1, f"<td>{shown}</td>")
-#     cells.insert(-1, f"<td>{unit}</td>")
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_logreport(report):
+    yield
+    if _is_verification_report(report):
+        rows = benchmark_metric_rows_from_report(report)
+        if rows:
+            _attach_metric_panel(report, rows)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_html_results_table_html(report, data):
+    if _is_verification_report(report) and benchmark_metric_rows_from_report(report):
+        del data[:]
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_html_results_table_row(report, cells):
+    if _is_verification_report(report) and benchmark_metric_rows_from_report(report):
+        cells[0] = mark_collapsible_result_cell(str(cells[0]))
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    yield
+    htmlpath = getattr(session.config.option, 'htmlpath', None)
+    if htmlpath:
+        patch_benchmark_metrics_into_html(Path(htmlpath), benchmark_test_name=VLLM_METRIC_VERIFICATION_TEST)

@@ -122,12 +122,12 @@ Use ``vllm_distributed`` for one distributed service across a two-host cluster:
 Step 4: Read the results
 ========================
 
-Open the HTML report. Each lifecycle stage and each metric is its own row:
+Open the HTML report. Each lifecycle stage, benchmark cell, and verification phase is its own row:
 
 - **Lifecycle rows** — container launch, topology discovery, model fetch, the OpenAI-compatible smoke test, then teardown. These tell you *how far* the run got.
 - **Inference rows** — one per sweep cell, labelled ``<combo>-conc<N>``.
-- **Metric rows** — one per metric per cell. A metric that could not be measured is skipped rather than failed.
-- **Results table** — the summary near the end, also printed to the console. This is where you read the measured numbers.
+- **Verification rows** — one per cell. Expand the row to see its active threshold metric subtests. Unavailable GPU and Prometheus metrics are skipped; unavailable client metrics with active thresholds fail.
+- **Results table** — the summary is also printed to the console. Use the per-cell logs for record-only client, GPU, and Prometheus values.
 
 Per-cell logs land under your configured ``log_dir``::
 
@@ -219,7 +219,7 @@ Common pitfalls
 
 **A threshold fails with "missing from actuals".** The threshold gates a metric this run did not produce. The suite owns benchmark percentile collection; do not add percentile controls to workload config.
 
-**Every metric row skips.** The benchmark produced no parseable results. Check ``client.log`` and the server log for the cell.
+**A verification row skips.** Either the benchmark produced no parseable result for that cell, threshold enforcement is disabled, or the cell has no active metric gates. Check ``client.log`` and the server log for collection failures.
 
 **The sweep is slower than expected.** Cells that differ only in concurrency reuse the running server; changing ISL, OSL, TP, PP, or any server argument forces a restart and a weight reload. Ordering ``runs`` so concurrency varies fastest avoids needless reloads.
 

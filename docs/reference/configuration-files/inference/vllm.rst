@@ -52,8 +52,8 @@ Each stage of the run is an independent test, so every stage becomes its own tim
      - ``test_vllm_inference``
      - Run one benchmark cell (parametrized per sweep run)
    * - 6
-     - ``test_metric``, ``test_gpu_metric``, ``test_prom_metric``
-     - One row per metric, per cell
+     - ``test_verify_cell_metrics``
+     - One verification parent per cell; configured threshold gates are listed as subtests
    * - 7
      - ``test_accuracy_eval``
      - lm-eval accuracy tasks, if any are configured
@@ -67,6 +67,12 @@ Each stage of the run is an independent test, so every stage becomes its own tim
 .. note::
 
   ``test_setup_sshd`` always skips in this suite. vLLM uses ``--distributed-executor-backend mp`` with NCCL over the host network, so no inter-container sshd is needed. A skipped row here is expected, not a problem.
+
+.. note::
+
+  vLLM suite execution is serial and single-pass. Do not use xdist workers or
+  ``pytest-repeat`` counts above one: the verification phase consumes results
+  collected earlier in the same pytest process.
 
 If a stage fails, later stages are skipped rather than cascading into confusing downstream errors. The container is still torn down by a leak-guard even when a mid-sweep test fails.
 
@@ -788,8 +794,11 @@ Threshold kinds
    * - ``min_ratio``
      - ``reference``
      - ``actual / <reference metric>`` is less than ``value``
+   * - ``info``
+     - —
+     - Never. The value is recorded, but no verification subtest is emitted.
 
-An unrecognized ``kind`` is a violation, not a silent skip. A metric that is missing from the results, or whose value is ``None``, is also a loud violation rather than a pass.
+An unrecognized ``kind`` is a violation, not a silent skip. A missing or ``None`` ``client.*`` value with an active threshold is a loud violation. Unavailable ``gpu.*`` and ``prom.*`` values are reported as skipped subtests.
 
 For ``min_ratio``, the ``reference`` names another metric in the same cell. If that reference is missing, ``None``, or zero, the check fails with a message naming the reason.
 
@@ -825,7 +834,7 @@ The threshold file is located in one of two ways:
 Metrics
 =======
 
-Metrics live in namespaces. Each numeric metric becomes one test, and therefore one row in the HTML report. A metric that could not be measured skips rather than failing. Read the measured values from the results table and the per-cell logs; the report's Value and Unit columns are currently disabled.
+Metrics live in namespaces. ``test_verify_cell_metrics`` is one parent phase per cell and lists each active threshold gate as a subtest in its expandable HTML panel. Missing ``gpu.*`` and ``prom.*`` values skip their subtests; missing ``client.*`` values with an active threshold fail. Record-only metrics do not create passing subtests; read them from the results table and per-cell logs.
 
 Client metrics
 --------------

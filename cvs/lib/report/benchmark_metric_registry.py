@@ -30,7 +30,7 @@ DEFAULT_BENCHMARK_TEST_NAME = 'test_run_performance_benchmark_test'
 
 _ROWS_BY_NODEID: dict[str, list[dict[str, Any]]] = {}
 _COLUMNS_BY_NODEID: dict[str, Sequence[MetricColumn]] = {}
-_SUBTEST_SUMMARY = {'failed': 0, 'passed': 0}
+_SUBTEST_SUMMARY = {'failed': 0, 'passed': 0, 'skipped': 0}
 _SUBTEST_SUMMARY_COUNTED: set[str] = set()
 
 
@@ -87,16 +87,20 @@ def record_benchmark_metric_summary(nodeid: str, rows: list[dict[str, Any]]) -> 
         return
     _SUBTEST_SUMMARY_COUNTED.add(nodeid)
     for row in dedupe_metric_rows(rows):
-        if str(row.get('status') or '').lower() == 'pass':
+        status = str(row.get('status') or '').lower()
+        if status == 'pass':
             _SUBTEST_SUMMARY['passed'] += 1
+        elif status == 'skip':
+            _SUBTEST_SUMMARY['skipped'] += 1
         else:
             _SUBTEST_SUMMARY['failed'] += 1
 
 
-def benchmark_subtest_summary() -> tuple[int, int, int]:
+def benchmark_subtest_summary() -> tuple[int, int, int, int]:
     failed = _SUBTEST_SUMMARY['failed']
     passed = _SUBTEST_SUMMARY['passed']
-    return failed + passed, failed, passed
+    skipped = _SUBTEST_SUMMARY['skipped']
+    return failed + passed + skipped, failed, passed, skipped
 
 
 def benchmark_metrics_extra(
@@ -164,7 +168,6 @@ def _apply_benchmark_entry_patch(
     *,
     columns: Sequence[MetricColumn] = (),
 ) -> None:
-    metrics_extra = benchmark_metrics_extra(rows, columns=columns)
     extras: list[dict[str, Any]] = []
     for extra in entry.get('extras') or []:
         if _is_full_log_extra(extra):
@@ -172,7 +175,7 @@ def _apply_benchmark_entry_patch(
         elif is_benchmark_metrics_extra(extra):
             extras.append(extra)
     if not any(is_benchmark_metrics_extra(e) for e in extras):
-        extras.append(metrics_extra)
+        extras.append(benchmark_metrics_extra(rows, columns=columns))
     entry['extras'] = extras
     entry['log'] = ''
 
@@ -181,32 +184,58 @@ def _apply_benchmark_entry_patch(
         entry['resultsTableRow'][0] = _mark_collapsible_result_cell(result_cell)
 
 
-def _dedupe_benchmark_call_entries(entries: list[dict[str, Any]], nodeid: str) -> tuple[list[dict[str, Any]], int]:
+def _dedupe_benchmark_call_entries(
+    entries: list[dict[str, Any]],
+    nodeid: str,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     main_calls = [entry for entry in entries if _is_main_call_entry(entry, nodeid)]
     if len(main_calls) <= 1:
-        return entries, 0
+        return entries, {}
 
     failed = [entry for entry in main_calls if _entry_outcome(entry) == 'failed']
     passed = [entry for entry in main_calls if _entry_outcome(entry) == 'passed']
-    if failed and passed:
-        drop = set(map(id, passed))
-        return [entry for entry in entries if id(entry) not in drop], len(passed)
-    return entries, 0
+    skipped = [entry for entry in main_calls if _entry_outcome(entry) == 'skipped']
+    retained = failed[:1] or passed[:1] or skipped[:1] or main_calls[:1]
+    retained_ids = set(map(id, retained))
+    dropped = [entry for entry in main_calls if id(entry) not in retained_ids]
+    if not dropped:
+        return entries, {}
+    dropped_ids = set(map(id, dropped))
+    counts = {}
+    for entry in dropped:
+        outcome = _entry_outcome(entry)
+        counts[outcome] = counts.get(outcome, 0) + 1
+    return [entry for entry in entries if id(entry) not in dropped_ids], counts
 
 
-def _adjust_passed_outcome_in_html(content: str, decrement: int) -> str:
-    """Drop phantom Passed counts left by pytest-html subtest call reports."""
-    if decrement <= 0:
+def _adjust_outcome_counts_in_html(content: str, decrements: dict[str, int]) -> str:
+    """Drop report counts for subtest rows removed from pytest-html's result data."""
+    total = sum(decrements.values())
+    if total <= 0:
         return content
 
-    def _dec_passed(match: re.Match[str]) -> str:
-        value = max(0, int(match.group(1)) - decrement)
-        return f'<span class="passed">{value} Passed,</span>'
+    for outcome, label in (
+        ('passed', 'Passed'),
+        ('failed', 'Failed'),
+        ('skipped', 'Skipped'),
+    ):
+        decrement = decrements.get(outcome, 0)
+        if decrement <= 0:
+            continue
 
-    content = re.sub(r'<span class="passed">(\d+) Passed,</span>', _dec_passed, content, count=1)
+        def _decrement(match: re.Match[str], decrement: int = decrement, label: str = label) -> str:
+            value = max(0, int(match.group(1)) - decrement)
+            return f'<span class="{outcome}">{value} {label},</span>'
+
+        content = re.sub(
+            rf'<span class="{outcome}">(\d+) {label},</span>',
+            _decrement,
+            content,
+            count=1,
+        )
 
     def _dec_run_count(match: re.Match[str]) -> str:
-        value = max(0, int(match.group(1)) - decrement)
+        value = max(0, int(match.group(1)) - total)
         label = 'tests' if value != 1 else 'test'
         return f'<p class="run-count">{value} {label} took {match.group(3)}</p>'
 
@@ -218,14 +247,16 @@ def _adjust_passed_outcome_in_html(content: str, decrement: int) -> str:
     )
 
 
-def _subtests_filter_summary_html(total: int, failed: int, passed: int) -> str:
+def _subtests_filter_summary_html(total: int, failed: int, passed: int, skipped: int) -> str:
     failed_cls = 'failed' if failed else 'filter'
     passed_cls = 'passed' if passed else 'filter'
+    skipped_cls = 'skipped' if skipped else 'filter'
     return (
         '<span class="filter"> | </span>'
         f'<span class="filter cvs-subtests-count">{total} subtests,</span>'
         f'<span class="{failed_cls}"> {failed} Failed,</span>'
-        f'<span class="{passed_cls}"> {passed} Passed</span>'
+        f'<span class="{passed_cls}"> {passed} Passed,</span>'
+        f'<span class="{skipped_cls}"> {skipped} Skipped</span>'
     )
 
 
@@ -250,9 +281,9 @@ def _strip_legacy_subtest_summary(content: str) -> str:
     return content
 
 
-def _inject_subtest_summary_into_filters(content: str, total: int, failed: int, passed: int) -> str:
+def _inject_subtest_summary_into_filters(content: str, total: int, failed: int, passed: int, skipped: int) -> str:
     content = _strip_legacy_subtest_summary(content)
-    summary_html = _subtests_filter_summary_html(total, failed, passed)
+    summary_html = _subtests_filter_summary_html(total, failed, passed, skipped)
     filters_match = re.search(r'(<div class="filters">.*?)(</div>\s*<div class="collapse">)', content, re.DOTALL)
     if not filters_match:
         return content
@@ -263,6 +294,10 @@ def _inject_subtest_summary_into_filters(content: str, total: int, failed: int, 
 
 def _strip_filter_metrics_summary(content: str) -> str:
     return _strip_legacy_subtest_summary(content)
+
+
+def _nodeid_test_name(nodeid: str) -> str:
+    return nodeid.rsplit('::', 1)[-1].split('[', 1)[0]
 
 
 def patch_benchmark_metrics_into_html(
@@ -284,18 +319,19 @@ def patch_benchmark_metrics_into_html(
     data = json.loads(html.unescape(match.group(1)))
     tests: dict[str, list[dict[str, Any]]] = data.get('tests') or {}
     patched = False
-    phantom_passed = 0
+    dropped_outcomes: dict[str, int] = {}
 
     for nodeid, rows in all_benchmark_metric_rows().items():
-        if benchmark_test_name not in nodeid:
+        if _nodeid_test_name(nodeid) != benchmark_test_name:
             continue
         entries = tests.get(nodeid)
         if not entries:
             continue
 
         record_benchmark_metric_summary(nodeid, rows)
-        entries, dropped_passed = _dedupe_benchmark_call_entries(entries, nodeid)
-        phantom_passed += dropped_passed
+        entries, counts = _dedupe_benchmark_call_entries(entries, nodeid)
+        for outcome, count in counts.items():
+            dropped_outcomes[outcome] = dropped_outcomes.get(outcome, 0) + count
         tests[nodeid] = entries
 
         for entry in entries:
@@ -309,13 +345,13 @@ def patch_benchmark_metrics_into_html(
             patched = True
 
     data['tests'] = tests
-    total, failed, passed = benchmark_subtest_summary()
+    total, failed, passed, skipped = benchmark_subtest_summary()
     if total:
-        content = _inject_subtest_summary_into_filters(content, total, failed, passed)
+        content = _inject_subtest_summary_into_filters(content, total, failed, passed, skipped)
         patched = True
 
-    if phantom_passed:
-        content = _adjust_passed_outcome_in_html(content, phantom_passed)
+    if dropped_outcomes:
+        content = _adjust_outcome_counts_in_html(content, dropped_outcomes)
         patched = True
 
     if not patched:

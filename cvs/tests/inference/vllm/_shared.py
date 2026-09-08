@@ -9,12 +9,24 @@ after `test_vllm_inference`.
 '''
 
 from tabulate import tabulate
+import pytest
 
 from cvs.lib import globals
 
 log = globals.log
 
-__all__ = ["test_print_results_table"]
+__all__ = ["test_print_results_table", "validate_vllm_execution_mode"]
+
+
+def validate_vllm_execution_mode(pytestconfig):
+    """Reject execution modes that split or overwrite process-local cell results."""
+    workers = pytestconfig.getoption("numprocesses", default=0)
+    if workers not in (None, 0, "0"):
+        raise pytest.UsageError("vLLM suites require serial pytest execution; xdist is unsupported")
+
+    repeat_count = pytestconfig.getoption("count", default=1)
+    if repeat_count not in (None, 1, "1"):
+        raise pytest.UsageError("vLLM suites do not support pytest-repeat counts above one")
 
 
 def _cell(m, key):
