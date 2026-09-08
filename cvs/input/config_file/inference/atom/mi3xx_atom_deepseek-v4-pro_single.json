@@ -1,53 +1,91 @@
 {
-    "_comment": "DeepSeek V4 Pro FP4+FP8 single-node native ATOM (5000/1024, TP8). Lab-validated P1 #10.",
-    "schema_version": 1,
-    "framework": "atom",
-    "threshold_json": "mi325x_atom_deepseek-v4-pro_single_threshold.json",
-    "paths": {
-        "shared_fs": "/home/{user-id}",
-        "models_dir": "/home/models",
-        "log_dir": "{shared_fs}/LOGS",
-        "hf_token_file": "{shared_fs}/.hf_token",
-    },
-    "model": {"id": "deepseek-ai/DeepSeek-V4-Pro", "remote": 0, "precision": "fp4+fp8"},
-    "enforce_thresholds": false,
-    "run_card": {
-        "atom_image_pin": "rocm/atom-dev:latest",
-        "notes": "W5 longctx perf (5000/1024); use HF model id on it-share; 900s server warmup for 64 shards",
-    },
-    "container": {
-        "lifetime": "per_run",
-        "name": "atom_mi3xx",
-        "image": "<changeme>",
-        "runtime": {
-            "name": "docker",
-            "args": {
-                "network": "host",
-                "ipc": "host",
-                "privileged": true,
-                "shm_size": "128G",
-                "volumes": ["/home/{user-id}:/home/{user-id}", "/home/models:/home/models"],
-                "devices": ["/dev/dri", "/dev/kfd"],
-            },
-        },
-    },
-    "roles": {"server": {"atom_args": ["-tp", "8", "--trust-remote-code"], "env": {"ATOM_DISABLE_MMAP": "true"}}},
-    "params": {
-        "driver": "atom",
-        "port_no": "8000",
-        "tensor_parallelism": "8",
-        "random_range_ratio": "0.8",
-        "num_prompts": "1000",
-        "max_model_length": "16384",
-        "metric_percentiles": "95,99",
-        "reuse_server_across_sweep": "true",
-        "server_warmup_wait_s": "900",
-        "client_poll_count": "80",
-        "client_poll_wait_time": "60",
-    },
-    "platform": {"gpu_metrics_poll": true},
-    "sweep": {
-        "sequence_combinations": [{"name": "v4pro_5k_1k", "isl": "5000", "osl": "1024"}],
-        "runs": [{"combo": "v4pro_5k_1k", "concurrency": 16}, {"combo": "v4pro_5k_1k", "concurrency": 32}],
-    },
+  "_comment": "DeepSeek V4 Pro FP4+FP8 single-node native ATOM (5000/1024, TP8). Lab-validated P1 #10.",
+  "schema_version": 1,
+  "framework": "atom",
+  "threshold_json": "mi325x_atom_deepseek-v4-pro_single_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/home/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "deepseek-ai/DeepSeek-V4-Pro",
+    "remote": 0,
+    "precision": "fp4+fp8"
+  },
+  "enforce_thresholds": false,
+  "run_card": {
+    "atom_image_pin": "rocm/atom-dev:latest",
+    "notes": "W5 longctx perf (5000/1024); use HF model id on it-share; 900s server warmup for 64 shards"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "atom_mi3xx",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "atom_args": [
+        "-tp",
+        "8",
+        "--trust-remote-code"
+      ],
+      "env": {
+        "ATOM_DISABLE_MMAP": "true"
+      }
+    }
+  },
+  "params": {
+    "driver": "atom",
+    "port_no": "8000",
+    "tensor_parallelism": "8",
+    "random_range_ratio": "0.8",
+    "num_prompts": "1000",
+    "max_model_length": "16384",
+    "metric_percentiles": "95,99",
+    "reuse_server_across_sweep": "true",
+    "server_warmup_wait_s": "900",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60"
+  },
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "sweep": {
+    "sequence_combinations": [
+      {
+        "name": "v4pro_5k_1k",
+        "isl": "5000",
+        "osl": "1024"
+      }
+    ],
+    "runs": [
+      {
+        "combo": "v4pro_5k_1k",
+        "concurrency": 16
+      },
+      {
+        "combo": "v4pro_5k_1k",
+        "concurrency": 32
+      }
+    ]
+  }
 }
