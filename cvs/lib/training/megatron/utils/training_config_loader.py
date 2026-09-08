@@ -46,6 +46,34 @@ class MegatronSweepCombo(_Forbid):
     precision: str = ""
 
 
+def sweep_cell_key(combo) -> str:
+    """Threshold / combination key: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>."""
+    if isinstance(combo, dict):
+        mbs = combo["micro_batch_size"]
+        gbs = combo["global_batch_size"]
+        precision = combo.get("precision", "")
+    else:
+        mbs = combo.micro_batch_size
+        gbs = combo.global_batch_size
+        precision = combo.precision
+    return f"MBS={mbs},GBS={gbs},PRECISION={precision}"
+
+
+def validate_combo_keys_match_params(combinations) -> None:
+    """Combination dict keys must equal sweep_cell_key() for that cell."""
+    mismatches = [
+        f"{key!r} (expected {sweep_cell_key(combo)!r})"
+        for key, combo in combinations.items()
+        if key != sweep_cell_key(combo)
+    ]
+    if mismatches:
+        raise ValueError(
+            "sweep.combinations keys must equal "
+            "MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>: "
+            + "; ".join(mismatches)
+        )
+
+
 def validate_sweep_selector(combo_keys, run_refs):
     """The sweep-selector rule: combination keys unique, every run references one.
 
@@ -115,6 +143,7 @@ class MegatronSweep(_Forbid):
             list(self.combinations.keys()),
             self.runs,
         )
+        validate_combo_keys_match_params(self.combinations)
         return self
 
 
@@ -235,8 +264,7 @@ class MegatronVariantConfig(_Forbid):
         Constructs a key from the combo's micro_batch_size, global_batch_size,
         and precision — must match the top-level keys in the threshold file exactly.
         """
-        combo = self.sweep.combinations[combo_key]
-        return f"MBS={combo.micro_batch_size},GBS={combo.global_batch_size},PRECISION={combo.precision}"
+        return sweep_cell_key(self.sweep.combinations[combo_key])
 
     def expected_cells(self) -> List[str]:
         """Return the threshold cell key for every run in sweep.runs."""

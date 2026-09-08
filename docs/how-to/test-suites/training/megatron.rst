@@ -77,8 +77,8 @@ The same eight test stages run for both backends. ``_make_training_job`` in ``me
      - Skipped (``checkpoint test is Primus-only``)
      - Runs only when ``checkpoint.enforce`` is ``true``. Single-node writes under ``{log_dir}/ckpt_primus``. Distributed requires ``checkpoint.checkpoint_dir`` on a shared filesystem
    * - ``test_training[combo]``
-     - Wrapper script + Megatron-LM shell. Distributed also runs ``exec_nic_setup_scripts()`` (Broadcom ``libbnxt_re`` copy when the GPU-derived NIC type is Thor/Broadcom: ``thor2`` on MI300X/MI325X, ``ainic`` on MI355X). After the copy, ``ibv_devinfo`` is matched against the library default HCA prefixes ``bnxt_|rocep``.
-     - Wrapper script + ``primus-cli``. Distributed sets ``NCCL_IB_*`` env vars; no Broadcom lib copy
+     - Wrapper script + Megatron-LM shell. Distributed also runs ``exec_nic_setup_scripts()`` (Broadcom ``libbnxt_re`` copy when the GPU-derived NIC type is Thor/Broadcom: ``thor2`` on MI300X/MI325X, ``ainic`` on MI355X). After the copy, ``ibv_devinfo`` is matched against the library default HCA prefixes ``bnxt_|rocep``. NCCL/socket/``NNODES``/``MASTER_ADDR`` come from ``container.env`` (``docker run -e``); the wrapper re-exports ``NCCL_IB_GID_INDEX`` only after Broadcom NIC setup.
+     - Wrapper script + ``primus-cli``. Distributed wrapper still exports ``NCCL_IB_*``; no Broadcom lib copy
    * - ``test_metric`` / ``test_loss_curve``
      - Parse Megatron-LM log metrics
      - Parse Primus log metrics (same ``training.*`` names)
@@ -86,7 +86,7 @@ The same eight test stages run for both backends. ``_make_training_job`` in ``me
      - Tear down the container
      - Same
 
-Logs for both backends use per-node files: ``<log_dir>/{megatron-logs|primus-logs}/<combo_id>/out-node<N>/training.log``.
+Logs for both backends use per-node files: ``<log_dir>/{megatron-logs|primus-logs}/<combo_id>/out-node<N>/training.log``. On disk ``<combo_id>`` is the sweep key with ``=`` and ``,`` replaced by ``_`` (for example ``MBS_4_GBS_128_PRECISION_FP8``).
 
 .. _megatron-run-tests:
 
@@ -255,9 +255,9 @@ On a training failure, lingering GPU processes are killed (``stop_training_proce
 Sweeps
 ======
 
-A sweep combo is one full training run declared in ``sweep.combinations``. ``sweep.runs`` is the ordered list of combo IDs to execute; set it to a subset to run only selected combos without editing ``combinations``.
+A sweep combo is one full training run declared in ``sweep.combinations``. Each combination key must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``; config load fails if the key does not match those three fields. ``sweep.runs`` is the ordered list of those keys to execute; set it to a subset to run only selected combos without editing ``combinations``.
 
-The combo ID (for example ``llama3_1_8b-mi325x-bs128-mbs4-fp8``) appears in every parametrized row: ``test_training[...]``, ``test_metric[...]``, and ``test_loss_curve[...]``.
+The combo ID (for example ``MBS=4,GBS=128,PRECISION=FP8``) appears in every parametrized row: ``test_training[...]``, ``test_metric[...]``, and ``test_loss_curve[...]``. It is also the threshold cell key.
 
 Metrics and PASS/FAIL
 =====================
@@ -361,7 +361,7 @@ Reports and logs
 
 - **Results table** — one row per test; metric rows show PASS/FAIL from the threshold check.
 - **Full log** — each test row links to its own captured log.
-- **Training logs** — Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``. Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``.
+- **Training logs** — Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``. Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``. Folder names use the sanitized combo ID (see the table below).
 
 Log path fields:
 
@@ -374,7 +374,7 @@ Log path fields:
    * - ``<log_dir>``
      - ``paths.log_dir`` in the config file
    * - ``<combo_id>``
-     - Sweep run ID (for example ``llama3_1_8b-mi325x-bs128-mbs4-fp8``)
+     - Sweep run ID (for example ``MBS=4,GBS=128,PRECISION=FP8``). On disk, ``=`` and ``,`` in that ID are replaced with ``_``.
    * - ``out-node<N>``
      - One directory per node; ``out-node0`` for single-node
 

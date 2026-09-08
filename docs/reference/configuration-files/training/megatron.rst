@@ -23,12 +23,15 @@ The suite selects the training backend from ``container.image`` (substring ``pri
 * **Megatron-LM** — image name does not contain ``primus``. Training scripts live under ``/workspace/Megatron-LM`` inside the image. Log files use ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``.
 * **Primus** — image name contains ``primus``. In-image YAML lives under ``examples/megatron/configs/{gpu_arch}/``. Log files use ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``.
 
+``<combo_id>`` on disk is the sweep combination key with non-filename characters replaced (``=`` and ``,`` become ``_``). Pytest still uses the unsanitized key (for example ``MBS=4,GBS=128,PRECISION=FP8``).
+
 .. note::
 
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications. Unresolved placeholders cause a hard exit at load time.
   - ``{user-id}`` will be resolved to the cluster username (or the local OS user as fallback). You can also set this value yourself.
   - Keys prefixed with ``_`` (for example ``_checkpoint_comment``) are inline comments and are ignored by the loader.
   - ``sweep.runs`` is required. It must be a subset of (or equal to) the keys in ``sweep.combinations``. Omitting it fails config load.
+  - Each key in ``sweep.combinations`` must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``. A mismatch with those three fields fails config load.
 
 Available configurations
 ========================
@@ -78,7 +81,7 @@ Set these before a run (full field tables are under `Common parameters`_):
 * ``train_params.training_iterations`` — training steps (for example ``"30"``).
 * ``paths.hf_token_file`` — Hugging Face token path on the nodes.
 * ``container.env.NCCL_SOCKET_IFNAME`` / ``container.env.GLOO_SOCKET_IFNAME`` — control NIC.
-* ``sweep.runs`` — combo IDs to execute.
+* ``sweep.runs`` — combination keys to execute (same ``MBS=…,GBS=…,PRECISION=…`` strings as in ``sweep.combinations``).
 * **Distributed only:** ``container.env.NNODES``, ``container.env.MASTER_ADDR``, ``container.env.NCCL_IB_HCA``. When ``checkpoint.enforce`` is ``true``, also set ``checkpoint.checkpoint_dir`` and replace the last ``<changeme>:<changeme>`` volume with that shared path.
 
 Top-level fields
@@ -143,25 +146,25 @@ Available as ``mi300x_megatron_llama-3.1-8b_{single,distributed}.json``, ``mi325
       },
       "sweep": {
         "combinations": {
-          "llama3_1_8b-mi300x-bs128-mbs4-fp8": {
+          "MBS=4,GBS=128,PRECISION=FP8": {
             "name": "llama3_1_8b_mbs4_gbs128_FP8",
             "global_batch_size": "128",
             "micro_batch_size": "4",
             "precision": "FP8"
           },
-          "llama3_1_8b-mi300x-bs128-mbs4-bf16": {
+          "MBS=4,GBS=128,PRECISION=BF16": {
             "name": "llama3_1_8b_mbs4_gbs128_BF16",
             "global_batch_size": "128",
             "micro_batch_size": "4",
             "precision": "BF16"
           },
-          "llama3_1_8b-mi300x-bs128-mbs4-mxfp4": {
+          "MBS=4,GBS=128,PRECISION=MXFP4": {
             "name": "llama3_1_8b_mbs4_gbs128_MXFP4",
             "global_batch_size": "128",
             "micro_batch_size": "4",
             "precision": "MXFP4"
           },
-          "llama3_1_8b-mi300x-bs128-mbs4-mxfp8": {
+          "MBS=4,GBS=128,PRECISION=MXFP8": {
             "name": "llama3_1_8b_mbs4_gbs128_MXFP8",
             "global_batch_size": "128",
             "micro_batch_size": "4",
@@ -169,10 +172,10 @@ Available as ``mi300x_megatron_llama-3.1-8b_{single,distributed}.json``, ``mi325
           }
         },
         "runs": [
-          "llama3_1_8b-mi300x-bs128-mbs4-fp8",
-          "llama3_1_8b-mi300x-bs128-mbs4-bf16",
-          "llama3_1_8b-mi300x-bs128-mbs4-mxfp4",
-          "llama3_1_8b-mi300x-bs128-mbs4-mxfp8"
+          "MBS=4,GBS=128,PRECISION=FP8",
+          "MBS=4,GBS=128,PRECISION=BF16",
+          "MBS=4,GBS=128,PRECISION=MXFP4",
+          "MBS=4,GBS=128,PRECISION=MXFP8"
         ]
       }
     }
@@ -236,13 +239,13 @@ Available as ``mi300x_megatron_llama-3.3-70b_{single,distributed}.json``, ``mi32
       },
       "sweep": {
         "combinations": {
-          "llama3_3_70b-mi300x-bs96-mbs3-fp8": {
+          "MBS=3,GBS=96,PRECISION=FP8": {
             "name": "llama3_3_70b_mbs3_gbs96_FP8",
             "global_batch_size": "96",
             "micro_batch_size": "3",
             "precision": "FP8"
           },
-          "llama3_3_70b-mi300x-bs96-mbs3-bf16": {
+          "MBS=3,GBS=96,PRECISION=BF16": {
             "name": "llama3_3_70b_mbs3_gbs96_BF16",
             "global_batch_size": "96",
             "micro_batch_size": "3",
@@ -250,8 +253,8 @@ Available as ``mi300x_megatron_llama-3.3-70b_{single,distributed}.json``, ``mi32
           }
         },
         "runs": [
-          "llama3_3_70b-mi300x-bs96-mbs3-fp8",
-          "llama3_3_70b-mi300x-bs96-mbs3-bf16"
+          "MBS=3,GBS=96,PRECISION=FP8",
+          "MBS=3,GBS=96,PRECISION=BF16"
         ]
       }
     }
@@ -315,13 +318,13 @@ Available as ``mi300x_megatron_deepseek-v2-lite_{single,distributed}.json``, ``m
       },
       "sweep": {
         "combinations": {
-          "deepseek_v2_lite-mi300x-bs128-mbs4-bf16": {
+          "MBS=4,GBS=128,PRECISION=BF16": {
             "name": "deepseek_v2_lite_mbs4_gbs128_BF16",
             "global_batch_size": "128",
             "micro_batch_size": "4",
             "precision": "BF16"
           },
-          "deepseek_v2_lite-mi300x-bs128-mbs4-fp8": {
+          "MBS=4,GBS=128,PRECISION=FP8": {
             "name": "deepseek_v2_lite_mbs4_gbs128_FP8",
             "global_batch_size": "128",
             "micro_batch_size": "4",
@@ -329,8 +332,8 @@ Available as ``mi300x_megatron_deepseek-v2-lite_{single,distributed}.json``, ``m
           }
         },
         "runs": [
-          "deepseek_v2_lite-mi300x-bs128-mbs4-bf16",
-          "deepseek_v2_lite-mi300x-bs128-mbs4-fp8"
+          "MBS=4,GBS=128,PRECISION=BF16",
+          "MBS=4,GBS=128,PRECISION=FP8"
         ]
       }
     }
@@ -394,13 +397,13 @@ Available as ``mi300x_megatron_llama-3.1-405b_distributed.json``, ``mi325x_…``
       },
       "sweep": {
         "combinations": {
-          "llama3_1_405b-mi325x-bs64-mbs1-fp8": {
+          "MBS=1,GBS=64,PRECISION=FP8": {
             "name": "llama3_1_405b_mbs1_gbs64_FP8",
             "global_batch_size": "64",
             "micro_batch_size": "1",
             "precision": "FP8"
           },
-          "llama3_1_405b-mi325x-bs64-mbs1-bf16": {
+          "MBS=1,GBS=64,PRECISION=BF16": {
             "name": "llama3_1_405b_mbs1_gbs64_BF16",
             "global_batch_size": "64",
             "micro_batch_size": "1",
@@ -408,8 +411,8 @@ Available as ``mi300x_megatron_llama-3.1-405b_distributed.json``, ``mi325x_…``
           }
         },
         "runs": [
-          "llama3_1_405b-mi325x-bs64-mbs1-fp8",
-          "llama3_1_405b-mi325x-bs64-mbs1-bf16"
+          "MBS=1,GBS=64,PRECISION=FP8",
+          "MBS=1,GBS=64,PRECISION=BF16"
         ]
       }
     }
@@ -469,7 +472,7 @@ Host paths used by the job. They must be volume-mounted into the container (typi
      - Path to a Hugging Face token file for gated models and datasets.
    * - ``log_dir``
      - ``/home/{user-id}/LOGS/megatron``
-     - Host path where per-node training logs are written. Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``; Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``.
+     - Host path where per-node training logs are written. Megatron-LM writes ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``; Primus writes ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``. On disk ``<combo_id>`` is the sanitized combination key (see `Backends`_).
    * - ``scripts_dir``
      - ``/home/{user-id}/SCRIPTS/megatron``
      - Host path where the lib writes per-rank wrapper scripts.
@@ -483,7 +486,7 @@ Host paths used by the job. They must be volume-mounted into the container (typi
 ``container.env``
 -----------------
 
-These values are passed into the container as ``docker run -e`` flags and also flattened into the training job dict.
+These values are passed into the container as ``docker run -e`` flags and also flattened into the training job dict. Megatron-LM does not re-export ``NCCL_*``, ``GLOO_SOCKET_IFNAME``, ``NNODES``, or ``MASTER_ADDR`` in the wrapper except ``NCCL_IB_GID_INDEX`` after Broadcom NIC setup. Primus still writes NCCL/socket exports in its wrapper.
 
 .. list-table::
    :widths: 3 3 5
@@ -686,17 +689,17 @@ Controls ``test_smoke``: a small fixed cell (not a ``sweep.runs`` entry) that lo
      - Description
    * - ``combinations``
      - N/A
-     - Dict of named sweep cells. Each cell specifies ``global_batch_size``, ``micro_batch_size``, and optionally ``precision`` and ``name``. The combination key is used as the pytest parametrize ID.
+     - Dict of sweep cells. Allowed fields are ``global_batch_size``, ``micro_batch_size``, ``precision``, and ``name``. The combination key must equal ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>`` (same string as the threshold cell and the pytest parametrize ID). Config load fails if a key does not match those fields.
    * - ``runs``
      - N/A
      - Required ordered list of combination keys to execute. Must be a subset of (or equal to) the keys in ``combinations``. Reorder or trim this list to run only specific cells. Omitting ``runs`` fails config load.
 
-Any key in a sweep combo overrides the matching ``train_params`` field (for example ``tensor_parallelism``). Precision is set only on the sweep cell.
+Each cell's ``micro_batch_size``, ``global_batch_size``, and ``precision`` are the sweep knobs. Other training knobs stay in ``train_params``.
 
 Threshold files
 ---------------
 
-Each suite JSON names a sibling file in ``threshold_json``. Cell keys must match ``MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>`` exactly, or that combo is record-only.
+Each suite JSON names a sibling file in ``threshold_json``. Top-level cell keys must be the same ``MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>`` strings as ``sweep.combinations``. A missing or extra cell fails load when ``enforce_thresholds`` is ``true``; when it is ``false``, the loader warns and metrics for unmatched cells are record-only.
 
 A metric is gated only when ``enforce_thresholds`` is ``true`` and the cell has a numeric spec:
 

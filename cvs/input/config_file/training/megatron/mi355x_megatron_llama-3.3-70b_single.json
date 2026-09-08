@@ -79,13 +79,13 @@
   },
   "sweep": {
     "combinations": {
-      "llama3_3_70b-mi355x-bs96-mbs3-fp8": {
+      "MBS=3,GBS=96,PRECISION=FP8": {
         "name": "llama3_3_70b_mbs3_gbs96_FP8",
         "global_batch_size": "96",
         "micro_batch_size": "3",
         "precision": "FP8"
       },
-      "llama3_3_70b-mi355x-bs96-mbs3-bf16": {
+      "MBS=3,GBS=96,PRECISION=BF16": {
         "name": "llama3_3_70b_mbs3_gbs96_BF16",
         "global_batch_size": "96",
         "micro_batch_size": "3",
@@ -93,8 +93,8 @@
       }
     },
     "runs": [
-      "llama3_3_70b-mi355x-bs96-mbs3-fp8",
-      "llama3_3_70b-mi355x-bs96-mbs3-bf16"
+      "MBS=3,GBS=96,PRECISION=FP8",
+      "MBS=3,GBS=96,PRECISION=BF16"
     ]
   }
 }

@@ -91,13 +91,13 @@
   },
   "sweep": {
     "combinations": {
-      "llama3_1_405b-mi300x-bs64-mbs1-fp8": {
+      "MBS=1,GBS=64,PRECISION=FP8": {
         "name": "llama3_1_405b_mbs1_gbs64_FP8",
         "global_batch_size": "64",
         "micro_batch_size": "1",
         "precision": "FP8"
       },
-      "llama3_1_405b-mi300x-bs64-mbs1-bf16": {
+      "MBS=1,GBS=64,PRECISION=BF16": {
         "name": "llama3_1_405b_mbs1_gbs64_BF16",
         "global_batch_size": "64",
         "micro_batch_size": "1",
@@ -105,8 +105,8 @@
       }
     },
     "runs": [
-      "llama3_1_405b-mi300x-bs64-mbs1-fp8",
-      "llama3_1_405b-mi300x-bs64-mbs1-bf16"
+      "MBS=1,GBS=64,PRECISION=FP8",
+      "MBS=1,GBS=64,PRECISION=BF16"
     ]
   }
 }
