@@ -14,7 +14,7 @@
   "container": {
     "lifetime": "per_run",
     "name": "rocm-jaxmaxtext-mi300x-llama3.1-8b",
-    "image": "rocm/jax-training:maxtext-v26.4",
+    "image": "rocm/jax-training:maxtext-v26.4 <changeme>",
     "runtime": {
       "name": "docker",
       "args": {
@@ -43,7 +43,6 @@
       "HSA_NO_SCRATCH_RECLAIM": "1",
       "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.97",
 
-      "NCCL_IB_HCA_LIST": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7 <changeme>",
       "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7 <changeme>",
       "NCCL_SOCKET_IFNAME": "eno0 <changeme>",
       "GLOO_SOCKET_IFNAME": "eno0 <changeme>",
@@ -149,6 +148,13 @@
     ],
     "max_slope": 0.0,
     "enforce": true
+  },
+  "_smoke_comment": "Smoke test (test_smoke), ENABLED by default. Loads the model and runs `steps` steps at a small fixed batch/seqlen in BF16; passes if no error signature fires (no metric checks). A failure gates the rest of the suite. Set enabled=false to SKIP it during iterative experiments (opt-out). steps/per_device_batch_size/max_target_length tune the smoke run.",
+  "smoke": {
+    "enabled": true,
+    "steps": 5,
+    "per_device_batch_size": 1,
+    "max_target_length": 2048
   },
   "_checkpoint_resume_comment": "Opt-in checkpoint save+resume + I/O-time test. enabled=false -> skipped. Runs ONE sweep twice: train steps_before_ckpt (checkpoint at checkpoint_period), then resume + train steps_after_resume; passes if it restarts from the checkpoint step and the boundary loss matches within loss_tolerance. max_save/load_seconds gate I/O time (0 = record-only). smoke_model_overrides can shrink the model while keeping the tokenizer/vocab; empty = full model. delete_ckpt_dir=true frees disk after the test.",
   "checkpoint_resume": {

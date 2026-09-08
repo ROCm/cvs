@@ -14,7 +14,7 @@
   "container": {
     "lifetime": "per_run",
     "name": "rocm-jaxmaxtext-llama3.1-70b-single",
-    "image": "rocm/jax-training:maxtext-v26.4",
+    "image": "rocm/jax-training:maxtext-v26.4 <changeme>",
     "runtime": {
       "name": "docker",
       "args": {
@@ -60,7 +60,7 @@
   },
   "_train_params_comment": "Canonical training params + framework passthrough. hf_model_id drives the tokenizer download from HuggingFace (skipped for dataset_type=synthetic). model_name (the MaxText preset) also labels the run/report and tokenizer_path is the download target -- both live in maxtext_config. Set an explicit model_id here only if a friendlier CVS label than the preset name is wanted. steps and enable_checkpointing live in maxtext_config. xla_flags stays structured here and is exported as a single XLA_FLAGS string.",
   "train_params": {
-    "hf_model_id": "NousResearch/Meta-Llama-3-70B",
+    "hf_model_id": "NousResearch/Meta-Llama-3.1-70B",
     "_model_name_comment": "model_name selects the MaxText model preset (layers/heads/dims). Kept in maxtext_config so the run trains Llama-3.1-70B rather than base.yml defaults.",
     "train_script_paths": [
       "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
@@ -69,7 +69,7 @@
     "maxtext_config": {
       "base_config": "base.yml",
       "model_name": "llama3.1-70b",
-      "tokenizer_path": "{paths.models_dir}/Meta-Llama-70-B",
+      "tokenizer_path": "{paths.models_dir}/Meta-Llama-3.1-70B",
       "hardware": "gpu",
       "steps": 30,
       "enable_checkpointing": false,

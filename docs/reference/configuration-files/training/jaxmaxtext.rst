@@ -32,9 +32,13 @@ Use ``cvs config list training/jaxmaxtext`` to list available templates, or
 .. note::
 
   - Any value containing ``<changeme>`` must be replaced for your setup.
-    Distributed configs ship the NCCL RDMA/NIC device-selection vars in
-    ``container.env`` with an example value plus a ``<changeme>`` tag
-    (``NCCL_IB_HCA_LIST``, ``NCCL_IB_HCA``, ``NCCL_SOCKET_IFNAME``,
+    ``container.image`` ships with a ``<changeme>`` tag (e.g.
+    ``rocm/jax-training:maxtext-v26.4 <changeme>``) — set the image tag your
+    cluster has before running; unlike the env placeholders it is not caught at
+    config load but fails at container launch until replaced.
+    Distributed configs additionally ship the NCCL RDMA/NIC device-selection
+    vars in ``container.env`` with an example value plus a ``<changeme>`` tag
+    (``NCCL_IB_HCA``, ``NCCL_SOCKET_IFNAME``,
     ``GLOO_SOCKET_IFNAME``, ``NCCL_IB_GID_INDEX``); the config **hard-exits at
     load** while any ``container.env`` value still contains ``<changeme>``.
   - ``{user-id}`` resolves to the cluster/OS username at runtime, and
@@ -158,14 +162,13 @@ A representative distributed config
       "container": {
         "lifetime": "per_run",
         "name": "rocm-jaxmaxtext-llama3.3-70b",
-        "image": "rocm/jax-training:maxtext-v26.4",
+        "image": "rocm/jax-training:maxtext-v26.4 <changeme>",
         "runtime": { "name": "docker", "args": { "network": "host", "ipc": "host", "privileged": true, "shm-size": "256G", "ulimit": ["nofile=65535:65535"], "volumes": ["..."] } },
         "env": {
           "GPU_MAX_HW_QUEUES": "2",
           "HSA_FORCE_FINE_GRAIN_PCIE": "1",
           "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.97",
 
-          "NCCL_IB_HCA_LIST": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7 <changeme>",
           "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7 <changeme>",
           "NCCL_SOCKET_IFNAME": "eno0 <changeme>",
           "GLOO_SOCKET_IFNAME": "eno0 <changeme>",
@@ -289,8 +292,8 @@ Top-level (CVS) fields
      - ``rocm-jaxmaxtext-llama3.3-70b``
      - Container instance name (any unique string).
    * - ``image``
-     - ``rocm/jax-training:maxtext-v26.4``
-     - **Required** — the MaxText/JAX ROCm image present on all nodes.
+     - ``rocm/jax-training:maxtext-v26.4 <changeme>``
+     - **Required** — the MaxText/JAX ROCm image present on all nodes. Ships with a ``<changeme>`` tag; replace it with the image tag your cluster has before running (not validated at config load, but the container launch fails until it is a valid image reference).
    * - ``runtime.args``
      - *(see snippet)*
      - Docker args: ``network: host``, ``ipc: host``, ``privileged: true``, ``shm-size``, ``ulimit``, and ``volumes``. Distributed configs mount ``/dev/infiniband`` and the NIC ``libibverbs`` provider (``:ro``); ``volumes`` also bind-mounts the home dir and the training-output dir.
@@ -322,7 +325,7 @@ structured ``train_params.xla_flags`` map. The vars are grouped for readability:
      - ``GPU_MAX_HW_QUEUES``, ``HSA_FORCE_FINE_GRAIN_PCIE``, ``HIP_FORCE_DEV_KERNARG``, ``HSA_NO_SCRATCH_RECLAIM``, ``XLA_PYTHON_CLIENT_MEM_FRACTION``
      - ROCm/HIP tuning and the fraction of GPU memory JAX may allocate (e.g. ``0.97``).
    * - NCCL device selection *(distributed)*
-     - ``NCCL_IB_HCA_LIST``, ``NCCL_IB_HCA``, ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, ``NCCL_IB_GID_INDEX``
+     - ``NCCL_IB_HCA``, ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, ``NCCL_IB_GID_INDEX``
      - Cluster-specific RDMA/NIC device selection, shipped as ``<example> <changeme>`` (see the :ref:`NCCL device selection note <jax-nccl-devices>`). Their presence marks the config as distributed.
    * - NCCL tuning
      - ``NCCL_DEBUG``, ``NCCL_IB_DISABLE``, ``NCCL_PROTO``, ``NCCL_IB_TC``, ``NCCL_IB_SL``, ``NCCL_CHECKS_DISABLE``, ``NCCL_CROSS_NIC``
@@ -338,7 +341,7 @@ structured ``train_params.xla_flags`` map. The vars are grouped for readability:
 
 .. note::
 
-  **NCCL device selection (distributed).** Each of ``NCCL_IB_HCA_LIST``,
+  **NCCL device selection (distributed).** Each of
   ``NCCL_IB_HCA``, ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, and
   ``NCCL_IB_GID_INDEX`` ships with an example value followed by a ``<changeme>``
   tag (e.g. ``"rdma0,...,rdma7 <changeme>"``, ``"eno0 <changeme>"``,

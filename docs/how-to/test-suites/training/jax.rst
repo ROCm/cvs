@@ -31,7 +31,7 @@ Set up config
      cvs config copy training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single.json --output ~/cvs_workspace/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single.json
      cvs config copy training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single_threshold.json --output ~/cvs_workspace/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single_threshold.json
 
-3. Replace every ``<changeme>`` with cluster-specific values (especially NCCL/RDMA fields on distributed configs).
+3. Replace every ``<changeme>`` with cluster-specific values: the ``container.image`` tag on every config, and the NCCL/RDMA fields in ``container.env`` on distributed configs.
 4. Change any other parameters relevant to your testing requirements.
 
 Full parameter list: :doc:`/reference/configuration-files/training/jaxmaxtext`.

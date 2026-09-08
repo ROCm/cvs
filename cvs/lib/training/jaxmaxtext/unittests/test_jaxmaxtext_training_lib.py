@@ -416,6 +416,16 @@ class BuildTrainingCmdTests(unittest.TestCase):
         self.assertNotIn("JAX_COORDINATOR_PORT", cmds[0])  # comes from container env (docker -e)
         self.assertNotIn("NCCL_", cmds[0])
 
+    def test_launcher_uses_custom_maxtext_root(self):
+        # cd + PYTHONPATH follow training.maxtext_root so a branch checkout in
+        # that tree is the code that actually trains (not the image default).
+        job, orch = _make_job(hosts=["h0"], maxtext_root="/opt/maxtext_v267")
+        _wire_container_exec(orch)
+        job.build_training_cmd()
+        cmds = orch.exec_cmd_list.call_args.args[0]
+        self.assertIn("cd /opt/maxtext_v267 &&", cmds[0])
+        self.assertIn("PYTHONPATH=$PYTHONPATH:/opt/maxtext_v267", cmds[0])
+
 
 class TrainScriptResolveTests(unittest.TestCase):
     def test_returns_first_existing_probed_path(self):
@@ -572,6 +582,22 @@ class CheckoutMaxtextBranchTests(unittest.TestCase):
         install_cmd = orch.exec.call_args_list[0].args[0]
         self.assertIn("tensorflow-cpu", install_cmd)
         self.assertNotIn("git checkout", install_cmd)
+
+    def test_raises_when_a_node_is_unreachable(self):
+        # A missing node in the result (e.g. unreachable) must fail rather than be
+        # treated as a silent success (the loop would otherwise be a no-op).
+        job, orch = _make_job(hosts=["h0", "h1"], maxtext_branch="feature/x")
+        orch.exec.return_value = {"h0": {"exit_code": 0, "output": "feature/x"}}  # h1 absent
+        with self.assertRaises(RuntimeError):
+            job.checkout_maxtext_branch()
+
+    def test_raises_on_nonzero_exit(self):
+        # Gate on the per-host exit code, not only stdout: a failed checkout with a
+        # non-zero exit must fail the run.
+        job, orch = _make_job(hosts=["h0"], maxtext_branch="feature/x")
+        orch.exec.return_value = {"h0": {"exit_code": 128, "output": "fatal: bad ref"}}
+        with self.assertRaises(RuntimeError):
+            job.checkout_maxtext_branch()
 
 
 class StartTrainingTests(unittest.TestCase):

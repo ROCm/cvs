@@ -353,19 +353,17 @@ class MaxTextTrainingJob:
                 f"(git fetch --all --tags --quiet || true) && "
                 f"git checkout {shlex.quote(branch)} && git rev-parse --abbrev-ref HEAD"
             )
-            out = self.orch.exec("bash -c " + shlex.quote(cmd))
-            for host, output in (out or {}).items():
-                text = output if isinstance(output, str) else (output or {}).get("output", "")
-                log.info("[maxtext checkout %s]\n%s", host, (text or "").strip()[-500:])
+            outs = self._exec_all_nodes_or_fail(cmd, "MaxText branch checkout")
+            for host, text in outs.items():
+                log.info("[maxtext checkout %s]\n%s", host, text.strip()[-500:])
 
             # Confirm every node is on the requested branch (detached HEAD or a
             # failed checkout would report something else).
-            verify = self.orch.exec(
-                "bash -c " + shlex.quote(f"cd {shlex.quote(root)} && git rev-parse --abbrev-ref HEAD")
+            verify = self._exec_all_nodes_or_fail(
+                f"cd {shlex.quote(root)} && git rev-parse --abbrev-ref HEAD", "MaxText branch verify"
             )
-            for host, output in (verify or {}).items():
-                text = output if isinstance(output, str) else (output or {}).get("output", "")
-                current = (text or "").strip().splitlines()[-1].strip() if (text or "").strip() else ""
+            for host, text in verify.items():
+                current = text.strip().splitlines()[-1].strip() if text.strip() else ""
                 if current != branch:
                     raise RuntimeError(
                         f"MaxText branch checkout failed on {host}: expected '{branch}', "
@@ -381,13 +379,38 @@ class MaxTextTrainingJob:
         if install_cmd:
             log.info("running MaxText install command in %s: %s", root, install_cmd)
             full = f"cd {shlex.quote(root)} && {install_cmd} && echo __MAXTEXT_INSTALL_OK__"
-            out = self.orch.exec("bash -c " + shlex.quote(full), timeout=1800)
-            for host, output in (out or {}).items():
-                text = output if isinstance(output, str) else (output or {}).get("output", "")
-                text = (text or "").strip()
+            outs = self._exec_all_nodes_or_fail(full, "MaxText install", timeout=1800)
+            for host, text in outs.items():
+                text = text.strip()
                 log.info("[maxtext install %s]\n%s", host, text[-1200:])
                 if "__MAXTEXT_INSTALL_OK__" not in text:
                     raise RuntimeError(f"MaxText install command failed on {host} (root={root}): {text[-800:]}")
+
+    def _exec_all_nodes_or_fail(self, cmd, what, timeout=None):
+        """Run ``cmd`` on every node and require all of them to succeed.
+
+        Uses ``detailed=True`` so the per-host exit code is available, and treats
+        a missing/short result (e.g. no reachable nodes) as a failure rather than
+        a silent success: raises unless every host in ``self.orch.hosts`` reported
+        back with exit code 0. Returns ``{host: output_text}``. (A backend that
+        returns a plain string per host -- no exit code -- is taken as success for
+        that host, so the completion markers checked by the caller still apply.)
+        """
+        res = self.orch.exec("bash -c " + shlex.quote(cmd), detailed=True, timeout=timeout) or {}
+        missing = [h for h in self.orch.hosts if h not in res]
+        if missing:
+            raise RuntimeError(f"{what}: no result from node(s) {missing} (ran on {sorted(res)} of {self.orch.hosts})")
+        outputs, failed = {}, []
+        for host in self.orch.hosts:
+            r = res[host]
+            code = r.get("exit_code", 0) if isinstance(r, dict) else 0
+            text = (r.get("output", "") if isinstance(r, dict) else r) or ""
+            outputs[host] = text
+            if code not in (0, None):
+                failed.append(f"{host} (exit {code}): {text.strip()[-300:]}")
+        if failed:
+            raise RuntimeError(f"{what} failed on: {'; '.join(failed)}")
+        return outputs
 
     # ---------- tokenizer ----------
 
@@ -431,6 +454,10 @@ class MaxTextTrainingJob:
         """
         scratch = self._get_scratch_dir()
         train_script = self._resolve_train_script()
+        # Train from the SAME tree that checkout_maxtext_branch() operates on so a
+        # branch checkout is actually the code that runs (cd + PYTHONPATH both use
+        # maxtext_root; train_script_paths are expected to live under it too).
+        root = (getattr(self.training, "maxtext_root", "") or "/workspace/maxtext").strip()
         # Common env (container.env{} + XLA_FLAGS) is already set on the container
         # via `docker run -e` and inherited here by `docker exec`. The launcher
         # only adds credentials + the PER-NODE/dynamic vars that cannot be static:
@@ -447,12 +474,12 @@ class MaxTextTrainingJob:
                 f"export NNODES={self.num_nodes}",
                 f"export NODE_RANK={i}",
                 f"export JAX_PROCESS_INDEX={i}",
-                "export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/",
+                f"export PYTHONPATH=$PYTHONPATH:{shlex.quote(root)}",
             ]
 
             log_file = self._node_log(i)
             launcher_lines.append(
-                f"cd /workspace/maxtext && python {shlex.quote(train_script)} "
+                f"cd {shlex.quote(root)} && python {shlex.quote(train_script)} "
                 f"{scratch}/maxtext_config.yml 2>&1 | tee {shlex.quote(log_file)}"
             )
 

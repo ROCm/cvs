@@ -314,9 +314,10 @@ class TrainingVariantConfig(BaseVariantConfig):
 
 # ---------- config layout normalization ----------
 
-# NCCL IB device keys used to infer whether a config is a multi-node/RDMA run
-# (single-node configs carry no IB device selection).
-_NCCL_IB_DEVICE_KEYS = ("NCCL_IB_HCA", "NCCL_IB_HCA_LIST")
+# NCCL IB device key used to infer whether a config is a multi-node/RDMA run
+# (single-node configs carry no IB device selection). NCCL_IB_HCA is the only
+# HCA-selection var NCCL/RCCL honors, so it alone is the distributed marker.
+_NCCL_IB_DEVICE_KEY = "NCCL_IB_HCA"
 
 
 def _build_xla_flags_env(xla_flags):
@@ -390,7 +391,7 @@ def normalize_training_config(raw):
         # A config that selects NCCL IB devices is a multi-node/RDMA run;
         # single-node configs carry no IB device env, so this infers `distributed`
         # without a run_mode field in the file.
-        "distributed": any(env.get(k) for k in _NCCL_IB_DEVICE_KEYS),
+        "distributed": bool(env.get(_NCCL_IB_DEVICE_KEY)),
         "gpus_per_node": raw.get("gpus_per_node", 8),
         "steps": mc.get("steps", 30),
         "enable_checkpointing": bool(mc.get("enable_checkpointing", False)),
