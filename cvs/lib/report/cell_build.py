@@ -82,6 +82,14 @@ class CellRecordBuilder:
         conc_suffix = f"-{concurrency}]"
         inference_nid = ""
         metrics_nid = ""
+        metric_test_priority = {
+            "test_verify_cell_metrics": 0,
+            "test_cell_metrics": 1,
+            "test_metric": 2,
+            "test_gpu_metric": 3,
+            "test_prom_metric": 4,
+        }
+        metrics_priority = len(metric_test_priority)
         for nodeid in self._lifecycle_report():
             if cell_id and f"[{cell_id}" not in nodeid:
                 continue
@@ -89,9 +97,11 @@ class CellRecordBuilder:
                 continue
             if self.config.inference_test_substring in nodeid:
                 inference_nid = inference_nid or nodeid
-            if "test_cell_metrics" in nodeid or "test_metric" in nodeid:
-                if not metrics_nid or "test_cell_metrics" in nodeid:
-                    metrics_nid = nodeid
+            test_name = nodeid.rsplit("::", 1)[-1].split("[", 1)[0]
+            priority = metric_test_priority.get(test_name)
+            if priority is not None and priority < metrics_priority:
+                metrics_nid = nodeid
+                metrics_priority = priority
         return {
             "pytest_inference_nodeid": inference_nid,
             "pytest_metrics_nodeid": metrics_nid,

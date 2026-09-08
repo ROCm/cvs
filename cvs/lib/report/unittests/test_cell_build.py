@@ -45,6 +45,19 @@ class TestCellBuild(unittest.TestCase):
         self.assertIn("test_inference", ids["pytest_inference_nodeid"])
         self.assertIn("test_cell_metrics", ids["pytest_metrics_nodeid"])
 
+    def test_resolve_pytest_nodeids_prefers_vllm_verification_parent(self):
+        config = generic_inference_report_config()
+        parent = "cvs/tests/inference/vllm/vllm_single.py::test_verify_cell_metrics[combo-128]"
+        lifecycle = {
+            "cvs/tests/inference/vllm/vllm_single.py::test_vllm_inference[combo-128]": [],
+            "cvs/tests/inference/vllm/vllm_single.py::test_metric[output-128]": [],
+            parent: [],
+        }
+
+        ids = resolve_pytest_nodeids_for_cell(config, lifecycle, 128)
+
+        self.assertEqual(ids["pytest_metrics_nodeid"], parent)
+
     def test_pytest_row_href_encodes_nodeid(self):
         href = pytest_row_href("run.html", "cvs/tests/x.py::test_metric[a-128]")
         self.assertTrue(href.startswith("run.html#"))

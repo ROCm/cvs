@@ -74,7 +74,7 @@
   "behavior": {
     "inference_test_substring": "test_vllm_inference",
     "row_card_extras": true,
-    "row_card_test_names": ["test_metric", "test_gpu_metric", "test_prom_metric"]
+    "row_card_test_names": ["test_verify_cell_metrics"]
   },
   "viewer": {
     "interactivity": {

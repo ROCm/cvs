@@ -30,7 +30,7 @@ DEFAULT_BENCHMARK_TEST_NAME = 'test_run_performance_benchmark_test'
 
 _ROWS_BY_NODEID: dict[str, list[dict[str, Any]]] = {}
 _COLUMNS_BY_NODEID: dict[str, Sequence[MetricColumn]] = {}
-_SUBTEST_SUMMARY = {'failed': 0, 'passed': 0, 'skipped': 0}
+_SUBTEST_SUMMARY = {'failed': 0, 'passed': 0, 'skipped': 0, 'recorded': 0}
 _SUBTEST_SUMMARY_COUNTED: set[str] = set()
 
 
@@ -92,15 +92,18 @@ def record_benchmark_metric_summary(nodeid: str, rows: list[dict[str, Any]]) -> 
             _SUBTEST_SUMMARY['passed'] += 1
         elif status == 'skip':
             _SUBTEST_SUMMARY['skipped'] += 1
+        elif status == 'record':
+            _SUBTEST_SUMMARY['recorded'] += 1
         else:
             _SUBTEST_SUMMARY['failed'] += 1
 
 
-def benchmark_subtest_summary() -> tuple[int, int, int, int]:
+def benchmark_subtest_summary() -> tuple[int, int, int, int, int]:
     failed = _SUBTEST_SUMMARY['failed']
     passed = _SUBTEST_SUMMARY['passed']
     skipped = _SUBTEST_SUMMARY['skipped']
-    return failed + passed + skipped, failed, passed, skipped
+    recorded = _SUBTEST_SUMMARY['recorded']
+    return failed + passed + skipped + recorded, failed, passed, skipped, recorded
 
 
 def benchmark_metrics_extra(
@@ -169,12 +172,16 @@ def _apply_benchmark_entry_patch(
     columns: Sequence[MetricColumn] = (),
 ) -> None:
     extras: list[dict[str, Any]] = []
+    has_full_log = False
+    has_metric_table = False
     for extra in entry.get('extras') or []:
-        if _is_full_log_extra(extra):
+        if _is_full_log_extra(extra) and not has_full_log:
             extras.append(extra)
-        elif is_benchmark_metrics_extra(extra):
+            has_full_log = True
+        elif is_benchmark_metrics_extra(extra) and not has_metric_table:
             extras.append(extra)
-    if not any(is_benchmark_metrics_extra(e) for e in extras):
+            has_metric_table = True
+    if not has_metric_table:
         extras.append(benchmark_metrics_extra(rows, columns=columns))
     entry['extras'] = extras
     entry['log'] = ''
@@ -247,20 +254,33 @@ def _adjust_outcome_counts_in_html(content: str, decrements: dict[str, int]) -> 
     )
 
 
-def _subtests_filter_summary_html(total: int, failed: int, passed: int, skipped: int) -> str:
+def _subtests_filter_summary_html(total: int, failed: int, passed: int, skipped: int, recorded: int) -> str:
     failed_cls = 'failed' if failed else 'filter'
     passed_cls = 'passed' if passed else 'filter'
     skipped_cls = 'skipped' if skipped else 'filter'
+    count_label = 'metrics' if recorded else 'subtests'
+    recorded_html = f'<span class="filter cvs-recorded-count"> {recorded} Recorded</span>' if recorded else ''
     return (
         '<span class="filter"> | </span>'
-        f'<span class="filter cvs-subtests-count">{total} subtests,</span>'
+        f'<span class="filter cvs-subtests-count">{total} {count_label},</span>'
         f'<span class="{failed_cls}"> {failed} Failed,</span>'
         f'<span class="{passed_cls}"> {passed} Passed,</span>'
         f'<span class="{skipped_cls}"> {skipped} Skipped</span>'
+        f'{recorded_html}'
     )
 
 
 def _strip_legacy_subtest_summary(content: str) -> str:
+    content = re.sub(
+        r'<span class="filter"> \| </span>\s*'
+        r'<span class="filter cvs-subtests-count">.*?</span>\s*'
+        r'<span class="[^"]+">\s*\d+ Failed,</span>\s*'
+        r'<span class="[^"]+">\s*\d+ Passed,</span>\s*'
+        r'<span class="[^"]+">\s*\d+ Skipped</span>\s*'
+        r'(?:<span class="filter cvs-recorded-count">\s*\d+ Recorded</span>)?',
+        '',
+        content,
+    )
     content = re.sub(
         r'<span class="filter"> \| \d+ subtests ran</span>.*?passed</span>',
         '',
@@ -281,9 +301,16 @@ def _strip_legacy_subtest_summary(content: str) -> str:
     return content
 
 
-def _inject_subtest_summary_into_filters(content: str, total: int, failed: int, passed: int, skipped: int) -> str:
+def _inject_subtest_summary_into_filters(
+    content: str,
+    total: int,
+    failed: int,
+    passed: int,
+    skipped: int,
+    recorded: int,
+) -> str:
     content = _strip_legacy_subtest_summary(content)
-    summary_html = _subtests_filter_summary_html(total, failed, passed, skipped)
+    summary_html = _subtests_filter_summary_html(total, failed, passed, skipped, recorded)
     filters_match = re.search(r'(<div class="filters">.*?)(</div>\s*<div class="collapse">)', content, re.DOTALL)
     if not filters_match:
         return content
@@ -345,9 +372,9 @@ def patch_benchmark_metrics_into_html(
             patched = True
 
     data['tests'] = tests
-    total, failed, passed, skipped = benchmark_subtest_summary()
+    total, failed, passed, skipped, recorded = benchmark_subtest_summary()
     if total:
-        content = _inject_subtest_summary_into_filters(content, total, failed, passed, skipped)
+        content = _inject_subtest_summary_into_filters(content, total, failed, passed, skipped, recorded)
         patched = True
 
     if dropped_outcomes:

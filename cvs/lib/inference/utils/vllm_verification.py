@@ -47,10 +47,19 @@ def active_metric_specs(
     if not enforce_thresholds:
         return ()
 
+    return tuple(
+        definition for definition in reportable_metric_specs(thresholds) if definition['spec'].get('kind') != 'info'
+    )
+
+
+def reportable_metric_specs(
+    thresholds: Mapping[str, Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    '''Return configured metric specs in display order, whether enforced or not.'''
     specs = []
     for definition in metric_definitions():
         spec = thresholds.get(definition['metric'])
-        if not isinstance(spec, Mapping) or spec.get('kind') == 'info':
+        if not isinstance(spec, Mapping):
             continue
         specs.append({**definition, 'spec': dict(spec)})
     return tuple(specs)
@@ -62,26 +71,37 @@ def evaluate_metric_verdicts(
     *,
     enforce_thresholds: bool,
 ) -> list[dict[str, Any]]:
-    '''Evaluate all active vLLM metric specs without stopping after a failure.'''
+    '''Build report rows and evaluate only enforced vLLM metric gates.'''
     verdicts = []
-    active_specs = active_metric_specs(thresholds, enforce_thresholds=enforce_thresholds)
+    reportable_specs = reportable_metric_specs(thresholds)
     for host, actuals in actuals_by_host.items():
-        for definition in active_specs:
+        for definition in reportable_specs:
             metric = definition['metric']
             value = actuals.get(metric)
+            enforced = enforce_thresholds and definition['spec'].get('kind') != 'info'
+            record_reason = (
+                'threshold enforcement disabled; no threshold asserted'
+                if not enforce_thresholds
+                else 'informational metric; no threshold asserted'
+            )
             verdict = {
                 'node': str(host),
                 'metric': metric,
                 'unit': definition['unit'],
                 'actual': value,
                 'spec': definition['spec'],
-                'status': 'pass',
-                'reason': '',
+                'enforced': enforced,
+                'status': 'pass' if enforced else 'record',
+                'reason': '' if enforced else record_reason,
             }
             if value is None:
-                verdict['status'] = definition['missing_status']
-                verdict['reason'] = f'{metric}: value is None (metric unavailable for this run)'
-            else:
+                unavailable = f'{metric}: value is None (metric unavailable for this run)'
+                if enforced:
+                    verdict['status'] = definition['missing_status']
+                    verdict['reason'] = unavailable
+                else:
+                    verdict['reason'] = f'{unavailable}; no threshold asserted'
+            elif enforced:
                 try:
                     evaluate_all(actuals, {metric: definition['spec']})
                 except ThresholdViolation as exc:

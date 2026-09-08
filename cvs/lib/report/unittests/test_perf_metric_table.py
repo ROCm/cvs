@@ -36,7 +36,7 @@ class TestPerfMetricTable(unittest.TestCase):
     def test_metric_display_label_prettifies_unknown_keys(self):
         self.assertEqual(metric_display_label('goodput'), 'Goodput')
 
-    def test_render_benchmark_metrics_html_includes_tri_state_rows(self):
+    def test_render_benchmark_metrics_html_includes_metric_statuses(self):
         columns = (('Mean TTFT (ms)', 'mean_ttft_ms'), ('Goodput', 'goodput'))
         html_out = render_benchmark_metrics_html(
             [
@@ -49,6 +49,15 @@ class TestPerfMetricTable(unittest.TestCase):
                     'actual': None,
                     'reason': 'metric unavailable',
                 },
+                {
+                    'node': 'n1',
+                    'metric': 'client.output_throughput',
+                    'status': 'record',
+                    'actual': 99,
+                    'spec': {'kind': 'min_tok_s', 'value': 100},
+                    'enforced': False,
+                    'reason': 'threshold enforcement disabled; no threshold asserted',
+                },
             ],
             columns=columns,
         )
@@ -57,6 +66,8 @@ class TestPerfMetricTable(unittest.TestCase):
         self.assertIn('Passed', html_out)
         self.assertIn('Failed', html_out)
         self.assertIn('Skipped', html_out)
+        self.assertIn('Recorded', html_out)
+        self.assertIn('reference: min_tok_s 100', html_out)
         self.assertIn('metric unavailable', html_out)
 
     def test_is_benchmark_metrics_extra_detects_wrapped_table(self):

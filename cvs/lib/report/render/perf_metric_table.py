@@ -42,7 +42,7 @@ def render_benchmark_metrics_html(
     *,
     columns: Sequence[MetricColumn] = (),
 ) -> str:
-    """Render a collapsible pass/fail/skip metric-verdict table."""
+    """Render a collapsible pass/fail/skip/record metric-verdict table."""
 
     def _display_value(value: Any, unit: Any) -> str:
         if value is None:
@@ -50,12 +50,13 @@ def render_benchmark_metrics_html(
         suffix = f' {unit}' if unit and unit != '-' else ''
         return f'{fmt_num(value)}{suffix}'
 
-    def _display_gate(spec: Any) -> str:
+    def _display_gate(spec: Any, *, enforced: bool) -> str:
         if not isinstance(spec, Mapping):
             return '—'
         kind = spec.get('kind', '')
         value = spec.get('value')
-        return str(kind) if value is None else f'{kind} {fmt_num(value)}'
+        rendered = str(kind) if value is None else f'{kind} {fmt_num(value)}'
+        return rendered if enforced else f'reference: {rendered}'
 
     body_rows = []
     for row in dedupe_metric_rows(rows):
@@ -63,6 +64,7 @@ def render_benchmark_metrics_html(
         outcome, outcome_cls = {
             'pass': ('Passed', 'passed'),
             'skip': ('Skipped', 'skipped'),
+            'record': ('Recorded', 'record'),
         }.get(status, ('Failed', 'failed'))
         label = str(row.get('label') or metric_display_label(str(row.get('metric') or ''), columns))
         node = row.get('node') or row.get('host')
@@ -70,7 +72,7 @@ def render_benchmark_metrics_html(
             label = f'{node}: {label}'
         label = html.escape(label)
         actual = html.escape(_display_value(row.get('actual'), row.get('unit')))
-        gate = html.escape(_display_gate(row.get('spec')))
+        gate = html.escape(_display_gate(row.get('spec'), enforced=bool(row.get('enforced', status != 'record'))))
         reason = html.escape(str(row.get('reason') or ''))
         body_rows.append(
             f"<tr class='cvs-benchmark-metric-row cvs-benchmark-metric-{outcome_cls} {outcome_cls}'>"
@@ -83,7 +85,7 @@ def render_benchmark_metrics_html(
         )
     return (
         f"<table class='cvs-benchmark-metrics-table {_BENCHMARK_METRICS_WRAP}'>"
-        "<thead><tr><th>Result</th><th>Metric</th><th>Actual</th><th>Gate</th><th>Note</th></tr></thead>"
+        "<thead><tr><th>Result</th><th>Metric</th><th>Actual</th><th>Gate / reference</th><th>Note</th></tr></thead>"
         f"<tbody>{''.join(body_rows)}</tbody></table>"
     )
 

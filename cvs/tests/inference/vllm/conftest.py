@@ -25,6 +25,7 @@ from cvs.lib.inference.utils.vllm_config_loader import load_variant
 from cvs.lib.inference.utils.vllm_parsing import VLLM_RESULTS_COLUMNS
 from cvs.lib.report.benchmark_metric_registry import (
     benchmark_metric_columns_for_nodeid,
+    benchmark_metric_rows_from_item,
     benchmark_metric_rows_from_report,
     mark_collapsible_result_cell,
     patch_benchmark_metrics_into_html,
@@ -59,18 +60,27 @@ def _is_full_log_extra(extra: object) -> bool:
 
 
 def _attach_metric_panel(report, rows) -> None:
+    if not rows:
+        return
+
     try:
-        import pytest_html
+        from pytest_html import extras as pytest_html_extras
     except ImportError:
         return
 
     extras = []
+    has_full_log = False
+    has_metric_table = False
     for extra in getattr(report, 'extras', []) or []:
-        if _is_full_log_extra(extra) or is_benchmark_metrics_extra(extra):
+        if _is_full_log_extra(extra) and not has_full_log:
             extras.append(extra)
-    if not any(is_benchmark_metrics_extra(extra) for extra in extras):
+            has_full_log = True
+        elif is_benchmark_metrics_extra(extra) and not has_metric_table:
+            extras.append(extra)
+            has_metric_table = True
+    if not has_metric_table:
         columns = benchmark_metric_columns_for_nodeid(report.nodeid) or VLLM_RESULTS_COLUMNS
-        extras.append(pytest_html.extras.html(render_benchmark_metrics_html(rows, columns=columns)))
+        extras.append(pytest_html_extras.html(render_benchmark_metrics_html(rows, columns=columns)))
     report.extras = extras
     stamp_benchmark_metric_rows_on_report(report, rows)
 
@@ -230,6 +240,16 @@ def pytest_collection_modifyitems(config, items):
         "test_teardown": 9,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_makereport(item, call):
+    """Attach metric rows before pytest-html consumes the parent call report."""
+    outcome = yield
+    report = outcome.get_result()
+    if not _is_verification_report(report):
+        return
+    _attach_metric_panel(report, benchmark_metric_rows_from_item(item))
 
 
 @pytest.hookimpl(hookwrapper=True, trylast=True)

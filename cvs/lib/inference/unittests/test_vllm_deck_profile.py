@@ -76,7 +76,7 @@ class TestVllmDeckProfile(unittest.TestCase):
         cfg = build_inference_config_from_profile(profile)
         self.assertEqual(cfg.suite_id, "vllm")
         self.assertEqual(cfg.inference_test_substring, "test_vllm_inference")
-        self.assertEqual(cfg.row_card_test_names, ("test_metric", "test_gpu_metric", "test_prom_metric"))
+        self.assertEqual(cfg.row_card_test_names, ("test_verify_cell_metrics",))
 
     def test_vllm_profile_lifecycle_labels_match_what_suite_records(self):
         profile = load_json_profile("vllm")

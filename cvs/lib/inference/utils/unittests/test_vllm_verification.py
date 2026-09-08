@@ -2,7 +2,12 @@
 
 import unittest
 
-from cvs.lib.inference.utils.vllm_verification import active_metric_specs, evaluate_metric_verdicts, metric_definitions
+from cvs.lib.inference.utils.vllm_verification import (
+    active_metric_specs,
+    evaluate_metric_verdicts,
+    metric_definitions,
+    reportable_metric_specs,
+)
 
 
 class TestMetricDefinitions(unittest.TestCase):
@@ -15,18 +20,60 @@ class TestMetricDefinitions(unittest.TestCase):
 
 
 class TestActiveMetricSpecs(unittest.TestCase):
-    def test_record_only_and_info_specs_are_not_active(self):
+    def test_reportable_specs_are_separate_from_active_gates(self):
         thresholds = {
             'client.output_throughput': {'kind': 'min_tok_s', 'value': 100},
             'client.goodput': {'kind': 'info', 'value': 0},
         }
 
         self.assertEqual(active_metric_specs(thresholds, enforce_thresholds=False), ())
+        self.assertEqual(
+            [item['metric'] for item in reportable_metric_specs(thresholds)],
+            ['client.goodput', 'client.output_throughput'],
+        )
         active = active_metric_specs(thresholds, enforce_thresholds=True)
         self.assertEqual([item['metric'] for item in active], ['client.output_throughput'])
 
 
 class TestEvaluateMetricVerdicts(unittest.TestCase):
+    def test_record_only_reports_configured_specs_without_asserted_passes(self):
+        thresholds = {
+            'client.output_throughput': {'kind': 'min_tok_s', 'value': 100},
+            'gpu.gpu_compute_util_pct': {'kind': 'min', 'value': 80},
+        }
+        actuals = {
+            'head': {
+                'client.output_throughput': 99,
+                'client.mean_ttft_ms': 40,
+                'gpu.gpu_compute_util_pct': None,
+            }
+        }
+
+        verdicts = evaluate_metric_verdicts(actuals, thresholds, enforce_thresholds=False)
+
+        self.assertEqual(
+            [(item['metric'], item['status'], item['enforced']) for item in verdicts],
+            [
+                ('client.output_throughput', 'record', False),
+                ('gpu.gpu_compute_util_pct', 'record', False),
+            ],
+        )
+        self.assertNotIn('client.mean_ttft_ms', {item['metric'] for item in verdicts})
+        self.assertIn('metric unavailable', verdicts[1]['reason'])
+        self.assertTrue(all('no threshold asserted' in item['reason'] for item in verdicts))
+
+    def test_info_spec_remains_record_only_when_other_gates_are_enforced(self):
+        thresholds = {
+            'client.output_throughput': {'kind': 'min_tok_s', 'value': 100},
+            'client.goodput': {'kind': 'info', 'value': 0},
+        }
+        actuals = {'head': {'client.output_throughput': 100, 'client.goodput': 10}}
+
+        verdicts = evaluate_metric_verdicts(actuals, thresholds, enforce_thresholds=True)
+
+        self.assertEqual([item['status'] for item in verdicts], ['record', 'pass'])
+        self.assertEqual([item['enforced'] for item in verdicts], [False, True])
+
     def test_evaluates_sibling_metrics_after_failure(self):
         thresholds = {
             'client.output_throughput': {'kind': 'min_tok_s', 'value': 100},

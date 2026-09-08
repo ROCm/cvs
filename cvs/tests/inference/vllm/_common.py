@@ -250,7 +250,7 @@ def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_r
 
 
 def test_verify_cell_metrics(run, inf_res_dict, variant_config, lifecycle, request, subtests):
-    """Verify one collected cell's active threshold gates as pytest subtests."""
+    """Report configured metrics and verify active gates as pytest subtests."""
     key = _cell_result_key(variant_config, run)
     host_dict = inf_res_dict.get(key)
     if not host_dict:
@@ -262,17 +262,20 @@ def test_verify_cell_metrics(run, inf_res_dict, variant_config, lifecycle, reque
         enforce_thresholds=variant_config.enforce_thresholds,
     )
     if not verdicts:
-        pytest.skip(f"no active threshold gates for {run.cell.key}")
+        pytest.skip(f"no configured metric specs for {run.cell.key}")
 
     record_benchmark_metric_rows(request.node, verdicts, columns=VLLM_RESULTS_COLUMNS)
+    asserted_verdicts = [verdict for verdict in verdicts if verdict["enforced"]]
     started = time.monotonic()
-    for verdict in verdicts:
+    for verdict in asserted_verdicts:
         with subtests.test(node=verdict["node"], metric=verdict["metric"]):
             if verdict["status"] == "skip":
                 pytest.skip(verdict["reason"])
             assert verdict["status"] == "pass", verdict["reason"]
     lifecycle.record(request.node.nodeid, "metric_verification", time.monotonic() - started)
-    if all(verdict["status"] == "skip" for verdict in verdicts):
+    if not asserted_verdicts:
+        pytest.skip(f"metrics recorded without active threshold gates for {run.cell.key}")
+    if all(verdict["status"] == "skip" for verdict in asserted_verdicts):
         pytest.skip(f"all active metrics were unavailable for {run.cell.key}")
 
 
