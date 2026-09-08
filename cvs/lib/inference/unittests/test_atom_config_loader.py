@@ -343,6 +343,23 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertIn("kv-cache-dtype", variant.roles.server.serve_args)
 
+    def test_load_atom_vllm_gpt_oss_serving_schema(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_vllm_gpt-oss-120b_mxfp4_single.json")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.model.precision, "mxfp4")
+        self.assertEqual(variant.params.tensor_parallelism, "4")
+        self.assertTrue(variant.platform.gpu_metrics_poll)
+        self.assertEqual(len(variant.long_context_accuracy.cells), 1)
+        self.assertEqual(
+            variant.expected_cells(),
+            [
+                "ISL=8192,OSL=1024,TP=4,PP=1,CONC=32",
+                "ISL=8192,OSL=1024,TP=4,PP=1,CONC=64",
+                "ISL=128,OSL=32,TP=4,PP=1,CONC=1",
+            ],
+        )
+
     def test_load_atom_sglang_serving_schema(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_sglang_deepseek-r1_fp8_single.json")

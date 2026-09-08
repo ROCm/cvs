@@ -71,6 +71,9 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``
      - M4 vLLM parity (serving schema)
+   * - ``mi3xx_atom_vllm_gpt-oss-120b_mxfp4``
+     - ``_single``
+     - W2 GPT-OSS MXFP4 vLLM parity (serving schema)
    * - ``mi3xx_atom_sglang_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - M4/M5 SGLang parity (serving schema)
@@ -108,6 +111,10 @@ W1 DeepSeek R1 FP8 — ``mi3xx_atom_deepseek-r1_fp8_single.json`` profiles:
 
   cvs run atom \
     --config_file ~/input/.../mi3xx_atom_vllm_deepseek-r1_fp8_single.json \
+    --cluster_file ~/input/cluster_file/atom_cluster.json
+
+  cvs run atom \
+    --config_file ~/input/.../mi3xx_atom_vllm_gpt-oss-120b_mxfp4_single.json \
     --cluster_file ~/input/cluster_file/atom_cluster.json
 
 .. code:: bash

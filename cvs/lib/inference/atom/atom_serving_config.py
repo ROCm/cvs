@@ -149,5 +149,7 @@ def serving_to_atom_variant_raw(raw: Mapping[str, Any], thresholds: Mapping[str,
         "accuracy": deepcopy(raw.get("accuracy") or {"tasks": []}),
         "functional": deepcopy(raw.get("functional") or {"api_smoke": True, "health_check": True}),
         "quant_parity": deepcopy(raw.get("quant_parity") or {"enabled": False}),
+        "long_context_accuracy": deepcopy(raw.get("long_context_accuracy") or {"cells": []}),
+        "platform": deepcopy(raw.get("platform") or {}),
         "thresholds": filter_thresholds_by_runs(thresholds, runs),
     }

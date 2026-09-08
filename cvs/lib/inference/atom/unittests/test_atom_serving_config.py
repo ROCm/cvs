@@ -56,6 +56,18 @@ class TestAtomServingConfig(unittest.TestCase):
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(len(variant.expected_cells()), 3)
 
+    def test_load_atom_vllm_gpt_oss_serving_config(self):
+        root = Path(__file__).resolve().parents[4]
+        cfg = root / "input/config_file/inference/atom/mi3xx_atom_vllm_gpt-oss-120b_mxfp4_single.json"
+        raw = json.loads(cfg.read_text(encoding="utf-8"))
+        th_path = cfg.parent / raw["threshold_json"]
+        thresholds = json.loads(th_path.read_text(encoding="utf-8"))
+        variant_raw = serving_to_atom_variant_raw(raw, thresholds)
+        variant = AtomVariantConfig(**variant_raw)
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.max_model_length, "12288")
+        self.assertTrue(variant.platform.gpu_metrics_poll)
+
     def test_load_atom_sglang_serving_config(self):
         root = Path(__file__).resolve().parents[4]
         cfg = root / "input/config_file/inference/atom/mi3xx_atom_sglang_deepseek-r1_fp8_single.json"

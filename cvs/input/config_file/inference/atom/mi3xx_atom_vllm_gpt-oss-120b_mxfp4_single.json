@@ -1,0 +1,121 @@
+{
+  "_comment": "GPT-OSS-120B MXFP4 single-node vLLM parity (MI3xx/MI325X, W2).",
+  "schema_version": 1,
+  "framework": "atom",
+  "gpu_arch": "mi3xx",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_atom_vllm_gpt-oss-120b_mxfp4_single_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/home/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "openai/gpt-oss-120b",
+    "remote": 0,
+    "precision": "mxfp4"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "atom_mi3xx_vllm",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/home/models:/home/models"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "server_params": {
+    "backend": "vllm_atom",
+    "nnodes": "1",
+    "model": "openai/gpt-oss-120b",
+    "tensor_parallelism": "4",
+    "pipeline_parallelism": "1",
+    "port_no": "8000",
+    "serve_args": {
+      "trust-remote-code": true,
+      "enforce-eager": true,
+      "gpu-memory-utilization": "0.95",
+      "block-size": 64,
+      "no-enable-prefix-caching": true
+    },
+    "env": {
+      "VLLM_ROCM_USE_AITER": "1",
+      "AMDGCN_USE_BUFFER_OPS": "0",
+      "ATOM_USE_TRITON_MOE": "1",
+      "ATOM_USE_TRITON_GEMM": "1"
+    }
+  },
+  "benchmark_params": {
+    "backend": "vllm",
+    "data_set_name": "random",
+    "num_prompts": "1000",
+    "random_range_ratio": "0",
+    "max_model_length": "12288",
+    "metric_percentiles": "95,99",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60",
+    "reuse_server_across_sweep": "true"
+  },
+  "sweeps": {
+    "ISL=8192,OSL=1024,TP=4,PP=1,CONC=32": {},
+    "ISL=8192,OSL=1024,TP=4,PP=1,CONC=64": {},
+    "ISL=128,OSL=32,TP=4,PP=1,CONC=1": {}
+  },
+  "runs": [
+    "ISL=8192,OSL=1024,TP=4,PP=1,CONC=32",
+    "ISL=8192,OSL=1024,TP=4,PP=1,CONC=64",
+    "ISL=128,OSL=32,TP=4,PP=1,CONC=1"
+  ],
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
+  "long_context_accuracy": {
+    "cells": [
+      {
+        "id": "niah_8k",
+        "isl": 8192,
+        "osl": 32,
+        "num_prompts": 4,
+        "seed": 42
+      }
+    ]
+  },
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      },
+      {
+        "id": "gsm8k_longctx",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 2,
+        "metadata": {
+          "filter": "flexible-extract",
+          "max_length": 8192
+        }
+      }
+    ]
+  }
+}
