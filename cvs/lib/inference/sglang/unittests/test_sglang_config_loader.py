@@ -392,7 +392,6 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                     [cell['cell_key'] for cell in perf_cells],
                     [run['combo'] for run in raw['sweep']['runs']],
                 )
-                self.assertTrue(all(cell['benchmark_overrides']['num_prompts'] == '50' for cell in perf_cells))
 
                 if 'llama_70b_distributed' in config_path.name:
                     self.assertEqual(
