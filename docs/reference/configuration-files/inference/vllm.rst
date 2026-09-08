@@ -548,8 +548,17 @@ How serve_args are flattened
      - one flag followed by its values
      - ``"x": ["a","b"]`` → ``--x a b``
 
-CVS does not derive ``max_model_len``. Set it in ``server_params`` whenever the
-image or model needs an explicit context limit.
+When ``server_params.max_model_len`` is absent, CVS derives one for each
+benchmark cell from its effective parameters after sweep overrides:
+
+.. code:: text
+
+  ceil((ISL + OSL) * (1 + random_range_ratio)) + random_prefix_len + 8
+
+An explicit non-null ``server_params.max_model_len`` takes precedence and
+emits exactly one ``--max-model-len`` flag. An explicit null value is an
+intentional opt-out: the generic option serializer emits no flag, and CVS
+suppresses the fallback so vLLM uses the model or image default.
 
 Environment variables: two mechanisms
 -------------------------------------
@@ -586,6 +595,20 @@ then, conditionally, ``NCCL_IB_HCA`` (from top-level ``ib_hca_devices``) and
 ``NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` / ``TP_SOCKET_IFNAME`` (from
 top-level ``ib_netdev``). Put static ROCm, NCCL, and vLLM exports in
 ``container.env``; it may not override those generated network variables.
+
+The packaged MI3xx vLLM catalog owns this static AITER baseline in
+``container.env``:
+
+.. code:: json
+
+  {
+    "VLLM_USE_AITER_UNIFIED_ATTENTION": "1",
+    "VLLM_ROCM_USE_AITER_MHA": "0",
+    "VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4": "1"
+  }
+
+Per-model settings such as ``VLLM_ROCM_USE_AITER`` and ``GPU_ARCHS`` remain
+additive entries in the same map.
 
 .. _vllm-params:
 
@@ -628,7 +651,7 @@ percentile reporting.
      - ``"inf"``
      - Arrival rate; ``inf`` sends as fast as concurrency allows
    * - ``random_range_ratio``
-     - ``"0.8"``
+     - ``"0.0"``
      - Length jitter around ISL/OSL; also feeds the derived max-model-len
    * - ``random_prefix_len``
      - ``"0"``
@@ -701,7 +724,17 @@ Examples::
 Server reuse
 ------------
 
-Cells that differ **only** in concurrency share a server identity, so the suite reuses the running server instead of stopping it, restarting, and reloading weights. Changing ISL, OSL, TP, PP, or any server argument forces a restart. Ordering runs so that concurrency varies fastest therefore makes a sweep substantially quicker.
+Cells with identical server arguments share a server identity, so the suite
+reuses the running server instead of stopping it, restarting, and reloading
+weights. The derived ``--max-model-len`` is part of that identity: different
+derived values force a restart, while cells with equal derived values reuse the
+server. For example, with zero range ratio and prefix, 1024/8192 and 8192/1024
+both derive ``9224`` and can share. An explicit
+non-null ``server_params.max_model_len`` can also allow different ISL/OSL
+cells to share. Explicit null removes the max-model-len option from the server
+identity entirely, so different ISL/OSL cells share when their other server
+arguments match. Concurrency remains client-only, so ordering runs with
+concurrency varying fastest makes a sweep substantially quicker.
 
 .. _vllm-thresholds:
 

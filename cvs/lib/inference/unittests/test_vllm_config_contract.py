@@ -13,6 +13,17 @@ from cvs.lib.inference.utils.vllm_config_loader import (
 
 
 CELL = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
+EXPECTED_PACKAGED_CONFIG_COUNT = 28
+STATIC_AITER_ENV = {
+    "VLLM_USE_AITER_UNIFIED_ATTENTION": "1",
+    "VLLM_ROCM_USE_AITER_MHA": "0",
+    "VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4": "1",
+}
+
+
+def _packaged_configs():
+    root = Path(__file__).resolve().parents[3] / "input" / "config_file" / "inference" / "vllm"
+    return sorted(path for path in root.glob("*.json") if not path.name.endswith("threshold.json"))
 
 
 def _config(**overrides):
@@ -152,9 +163,8 @@ class TestMetadataAndOptionSerialization(unittest.TestCase):
 
 class TestPackagedVllmCatalog(unittest.TestCase):
     def test_every_config_resolves_complete_run_contract(self):
-        root = Path(__file__).resolve().parents[3] / "input" / "config_file" / "inference" / "vllm"
-        configs = sorted(path for path in root.glob("*.json") if not path.name.endswith("threshold.json"))
-        self.assertEqual(len(configs), 28)
+        configs = _packaged_configs()
+        self.assertEqual(len(configs), EXPECTED_PACKAGED_CONFIG_COUNT)
         for path in configs:
             with self.subTest(config=path.name):
                 variant = load_variant(path, {"username": "test"})
@@ -166,6 +176,14 @@ class TestPackagedVllmCatalog(unittest.TestCase):
                 for run in runs:
                     self.assertEqual(run.cell.tp, variant.server_params.tensor_parallel_size)
                     self.assertEqual(run.cell.pp, variant.server_params.pipeline_parallel_size)
+
+    def test_every_config_owns_static_aiter_environment(self):
+        configs = _packaged_configs()
+        for path in configs:
+            with self.subTest(config=path.name):
+                variant = load_variant(path, {"username": "test"})
+                for name, expected in STATIC_AITER_ENV.items():
+                    self.assertEqual(variant.container.env.get(name), expected)
 
 
 if __name__ == "__main__":

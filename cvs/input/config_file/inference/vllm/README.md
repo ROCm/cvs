@@ -57,11 +57,42 @@ configs. Cell values override `benchmark_params`.
 `benchmark_params.random_range_ratio` is `0.0` so ISL/OSL are exact rather
 than jittered ±80%.
 
+When `server_params.max_model_len` is absent, CVS derives one from each
+cell's effective benchmark settings after sweep overrides:
+
+```text
+ceil((ISL + OSL) * (1 + random_range_ratio)) + random_prefix_len + 8
+```
+
+With the catalog's zero ratio and prefix, 1024/1024 derives `2056`, while
+1024/8192 and 8192/1024 both derive `9224`. An explicit non-null
+`server_params.max_model_len` overrides the fallback and emits exactly one
+`--max-model-len` flag. Explicit null intentionally emits no flag and
+suppresses the fallback, allowing the vLLM/model default. Because the option is
+part of the server identity, different derived values restart the server;
+equal derived values reuse it. Explicit null also permits reuse across
+different ISL/OSL cells when all other server arguments match.
+
 `num_prompts` is **320**, not the `3200` schema default used by the configs in
 `cvs/input/config_file/inference/vllm/`. That makes each cell a characterization
 pass — enough to shake out topology, AITER and kv-cache settings on new
 hardware, at roughly a tenth the wall-clock. Raise it to `3200` before quoting
 numbers that need to line up with the shipped examples.
+
+## Static container environment
+
+All 28 catalog configs carry the static AITER baseline in `container.env`:
+
+```json
+{
+  "VLLM_USE_AITER_UNIFIED_ATTENTION": "1",
+  "VLLM_ROCM_USE_AITER_MHA": "0",
+  "VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4": "1"
+}
+```
+
+Per-model settings such as `VLLM_ROCM_USE_AITER` and `GPU_ARCHS` are additive
+entries in the same map.
 
 ## Thresholds
 

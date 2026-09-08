@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import re
 import shlex
 import time
@@ -113,6 +114,7 @@ class VllmJob:
         r"|RuntimeError:.*[Ee]ngine",
         re.I,
     )
+    _MAX_MODEL_LEN_PAD = 8
 
     def __init__(
         self,
@@ -208,6 +210,11 @@ class VllmJob:
         """
         return self.distributed_executor_backend == "ray"
 
+    def _derive_max_model_len(self):
+        ratio = float(self.random_range_ratio)
+        worst_case_length = (int(self.isl) + int(self.osl)) * (1.0 + ratio)
+        return str(math.ceil(worst_case_length) + int(self.random_prefix_len) + self._MAX_MODEL_LEN_PAD)
+
     def _server_argv(self, rank: int) -> list:
         """vllm serve arg list for a specific node rank.
 
@@ -223,6 +230,8 @@ class VllmJob:
             "--port",
             str(self.port_no),
         ]
+        if "max_model_len" not in self.serve_args:
+            argv += ["--max-model-len", self._derive_max_model_len()]
         if int(self.nnodes) > 1 and not self._is_ray_backend:
             # mp multi-node: inject the full distributed-executor block.
             # Ray multi-node omits all of these (AC16); the backend flag arrives

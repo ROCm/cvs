@@ -3,7 +3,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
 Unit tests for cvs.lib.inference.vllm_job.VllmJob server-command construction:
-  - the duplicate --max-model-len fix (config-pin suppresses the derived value)
+  - per-cell --max-model-len fallback and explicit override precedence
   - server_signature(), which gates cross-cell server reuse
   - _flatten_serve_args boolean handling and log-level pass-through
   - _check_early_failure tail emission and CLI parse error detection
@@ -89,7 +89,7 @@ def _make_job_for_check(tail_output="", grep_exit=1):
     )
 
 
-def _variant(serve_args=None, benchmark_params=None):
+def _variant(serve_args=None, benchmark_params=None, sweep_options=None):
     options = {key.replace("-", "_"): value for key, value in (serve_args or {}).items()}
     distributed_executor_backend = options.pop("distributed_executor_backend", "mp")
     cell = f"ISL=1024,OSL=1024,TP={_TP},PP={_PP},CONC=16"
@@ -108,7 +108,7 @@ def _variant(serve_args=None, benchmark_params=None):
             **options,
         },
         benchmark_params=benchmark_params or {},
-        sweeps={cell: {}},
+        sweeps={cell: sweep_options or {}},
         runs=[cell],
     )
 
@@ -125,17 +125,48 @@ def _job(isl, osl, conc, serve_args=None, benchmark_params=None):
     )
 
 
-class TestMaxModelLenNoDuplicate(unittest.TestCase):
+class TestMaxModelLenFallback(unittest.TestCase):
     def test_config_pin_wins_and_no_duplicate(self):
-        argv = _job("1024", "1024", 16, serve_args={"max-model-len": "16384"})._server_argv(0)
+        argv = _job("1024", "1024", 16, serve_args={"max_model_len": "16384"})._server_argv(0)
         idxs = [i for i, a in enumerate(argv) if a == "--max-model-len"]
         self.assertEqual(len(idxs), 1, "config-pinned max-model-len must appear exactly once")
         self.assertEqual(argv[idxs[0] + 1], "16384", "config value must win")
 
-    def test_max_model_len_is_not_derived_when_omitted(self):
-        argv = _job("1024", "1024", 16, serve_args={})._server_argv(0)
-        idxs = [i for i, a in enumerate(argv) if a == "--max-model-len"]
-        self.assertEqual(idxs, [])
+    def test_explicit_null_suppresses_fallback_and_emits_no_flag(self):
+        argv = _job("1024", "1024", 16, serve_args={"max_model_len": None})._server_argv(0)
+        self.assertNotIn("--max-model-len", argv)
+
+    def test_derives_expected_catalog_lengths_when_omitted(self):
+        for isl, osl, expected in (
+            ("1024", "1024", "2056"),
+            ("1024", "8192", "9224"),
+            ("8192", "1024", "9224"),
+        ):
+            with self.subTest(isl=isl, osl=osl):
+                argv = _job(isl, osl, 16, serve_args={})._server_argv(0)
+                idx = argv.index("--max-model-len")
+                self.assertEqual(argv.count("--max-model-len"), 1)
+                self.assertEqual(argv[idx + 1], expected)
+
+    def test_uses_effective_per_cell_range_and_prefix_overrides(self):
+        variant = _variant(
+            benchmark_params={"random_range_ratio": 0.8, "random_prefix_len": 64},
+            sweep_options={"random_range_ratio": 0.25, "random_prefix_len": 7},
+        )
+        (run,) = variant.resolved_runs()
+        job = VllmJob(
+            orch=FakeOrch(),
+            variant=variant,
+            hf_token="tok",
+            isl=run.cell.isl,
+            osl=run.cell.osl,
+            concurrency=run.cell.concurrency,
+            num_prompts=run.benchmark_params["num_prompts"],
+            benchmark_params=run.benchmark_params,
+        )
+        argv = job._server_argv(0)
+        idx = argv.index("--max-model-len")
+        self.assertEqual(argv[idx + 1], "2575")
 
 
 class TestEffectiveHosts(unittest.TestCase):
@@ -163,10 +194,23 @@ class TestServerSignatureReuse(unittest.TestCase):
             _job("8192", "1024", 16, sa).server_signature(),
         )
 
-    def test_omitted_mml_shares_across_client_cells(self):
-        self.assertEqual(
+    def test_different_derived_mml_restarts_across_cells(self):
+        self.assertNotEqual(
             _job("1024", "1024", 16, serve_args={}).server_signature(),
             _job("1024", "8192", 16, serve_args={}).server_signature(),
+        )
+
+    def test_equal_derived_mml_reuses_across_cells(self):
+        self.assertEqual(
+            _job("1024", "8192", 16, serve_args={}).server_signature(),
+            _job("8192", "1024", 16, serve_args={}).server_signature(),
+        )
+
+    def test_explicit_null_mml_reuses_across_isl_osl(self):
+        serve_args = {"max_model_len": None}
+        self.assertEqual(
+            _job("1024", "1024", 16, serve_args).server_signature(),
+            _job("8192", "1024", 16, serve_args).server_signature(),
         )
 
     def test_signature_strips_node_rank_and_is_hashable(self):
