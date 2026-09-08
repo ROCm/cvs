@@ -17,9 +17,8 @@ class DockerRuntime:
 
     def check_image_exists(self, image_name):
         """Check if the Docker image exists on all nodes."""
-        cmd = f"{self.orchestrator.sudo_prefix()}docker images --format '{{{{.Repository}}}}:{{{{.Tag}}}}' | grep -q '^{image_name}$'"
+        cmd = f"{self.orchestrator.sudo_prefix()}docker image inspect {shlex.quote(image_name)} >/dev/null 2>&1"
         result = self.orchestrator.all.exec(cmd, timeout=30, detailed=True)
-        # If grep succeeds (exit 0), image exists; if not, not found
         return all(res.get('exit_code') == 0 for res in result.values())
 
     def registry_login(self, registry_config):

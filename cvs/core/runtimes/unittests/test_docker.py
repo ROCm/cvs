@@ -70,6 +70,18 @@ def _container_config(image="img:test", lifetime="per_run", extra_runtime_args=N
 
 
 class TestDockerRuntimeSetupContainers(unittest.TestCase):
+    def test_image_cache_probe_supports_digest_references(self):
+        orchestrator = MagicMock()
+        orchestrator.sudo_prefix.return_value = "sudo -n "
+        orchestrator.all.exec.return_value = {"host1": {"output": "", "exit_code": 0}}
+        runtime = DockerRuntime(MagicMock(), orchestrator)
+        image = "rocm/pytorch:release@sha256:abc123"
+
+        self.assertTrue(runtime.check_image_exists(image))
+        command = orchestrator.all.exec.call_args.args[0]
+        self.assertIn("docker image inspect", command)
+        self.assertIn(image, command)
+
     def test_setup_containers_always_proceeds(self):
         # The legacy `if not launch: return True` short-circuit was removed. The
         # orchestrator only calls runtime.setup_containers on start paths, so the
@@ -144,7 +156,7 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
 
         def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
             calls.append(cmd)
-            if "docker images" in cmd and "grep" in cmd:
+            if "docker image inspect" in cmd:
                 return {"host1": {"output": "", "exit_code": 1}}
             return {"host1": {"output": "", "exit_code": 0}}
 

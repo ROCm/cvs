@@ -1,0 +1,37 @@
+{
+  "_comment": "Calibrated on MI325X with the pinned ROCm 7.14 / PyTorch 2.12 image. Non-gated metrics remain informational.",
+  "MODEL=resnet50,PRECISION=BF16,RES=224,BS=256,GPUS=8": {
+    "training.images_per_sec": {
+      "kind": "min",
+      "value": 24500
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "min",
+      "value": 3062.5
+    },
+    "training.step_time_ms_mean": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p50": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p95": {
+      "kind": "max_ms",
+      "value": 88
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "max",
+      "value": 13000
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "max",
+      "value": 15000
+    },
+    "training.loss_initial": {
+      "kind": "info"
+    },
+    "training.loss_final": {
+      "kind": "info"
+    }
+  }
+}
