@@ -6,6 +6,7 @@ import os
 import tempfile
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 # Add the parent directory to sys.path to import cli_plugins
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -330,16 +331,16 @@ class TestManagedRunPlugin(unittest.TestCase):
         return layout
 
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
-    @patch("cvs.cli_plugins.run_plugin.is_managed_compute", return_value=False)
-    def test_unmanaged_run_requires_cluster_file(self, _managed, mock_exit):
+    @patch("cvs.cli_plugins.run_plugin.JobStep", new=SimpleNamespace(is_managed=False))
+    def test_unmanaged_run_requires_cluster_file(self, mock_exit):
         self.plugin.run(self.args)
         mock_exit.assert_called_once_with(1)
 
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
     @patch("cvs.cli_plugins.run_plugin.AgentRunner")
-    @patch("cvs.cli_plugins.run_plugin.is_managed_compute", return_value=True)
+    @patch("cvs.cli_plugins.run_plugin.JobStep", new=SimpleNamespace(is_managed=True))
     @patch("cvs.cli_plugins.run_plugin.RunLayout")
-    def test_worker_never_enters_pytest(self, mock_layout, _managed, mock_agent_class, mock_exit):
+    def test_worker_never_enters_pytest(self, mock_layout, mock_agent_class, mock_exit):
         mock_layout.get.return_value.agent_dir = "/shared/workspace/agent"
         runner = mock_agent_class.return_value
         runner.is_rank0 = False
@@ -354,9 +355,9 @@ class TestManagedRunPlugin(unittest.TestCase):
 
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
     @patch("cvs.cli_plugins.run_plugin.AgentRunner")
-    @patch("cvs.cli_plugins.run_plugin.is_managed_compute", return_value=True)
+    @patch("cvs.cli_plugins.run_plugin.JobStep", new=SimpleNamespace(is_managed=True))
     @patch("cvs.cli_plugins.run_plugin.RunLayout")
-    def test_rank0_writes_agent_cluster_and_runs_pytest(self, mock_layout, _managed, mock_agent_class, mock_exit):
+    def test_rank0_writes_agent_cluster_and_runs_pytest(self, mock_layout, mock_agent_class, mock_exit):
         with tempfile.TemporaryDirectory() as root:
             layout = self._layout(root)
             mock_layout.get.return_value = layout
@@ -376,10 +377,10 @@ class TestManagedRunPlugin(unittest.TestCase):
 
     @patch("cvs.cli_plugins.run_plugin.sys.exit")
     @patch("cvs.cli_plugins.run_plugin.AgentRunner")
-    @patch("cvs.cli_plugins.run_plugin.is_managed_compute", return_value=True)
+    @patch("cvs.cli_plugins.run_plugin.JobStep", new=SimpleNamespace(is_managed=True))
     @patch("cvs.cli_plugins.run_plugin.RunLayout")
     def test_registration_timeout_with_missing_agent_does_not_run_pytest(
-        self, mock_layout, _managed, mock_agent_class, mock_exit
+        self, mock_layout, mock_agent_class, mock_exit
     ):
         with tempfile.TemporaryDirectory() as root:
             mock_layout.get.return_value = self._layout(root)

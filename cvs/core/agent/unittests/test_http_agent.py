@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from cvs.core.agent import messages
 from cvs.core.agent.http_agent import AgentInfo, AgentRegistry, create_app, _terminate_process_group
+from cvs.core.agent.uds import UdsLaunchCoordinator
 
 
 class TestAgentRegistry(unittest.IsolatedAsyncioTestCase):
@@ -463,6 +464,45 @@ class TestExecConcurrency(HttpAgentTestBase):
                 messages.EXEC_PATH, content=third_req.model_dump_json(), headers=self._auth_headers()
             )
             self.assertEqual(third_response.status_code, 200)
+
+
+class TestLaunch(HttpAgentTestBase):
+    def test_launch_endpoint_runs_coordinator_slot_and_keeps_agent_alive(self):
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            agent_dir = root_path / "agent"
+            agent_dir.mkdir()
+            (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(self.TOKEN + "\n")
+            manager = UdsLaunchCoordinator(global_rank=0, expected_workers=0, socket_path=root_path / "launch.sock")
+            app = create_app(
+                agent_dir,
+                world_rank=0,
+                world_size=1,
+                own_hostname="localhost",
+                own_port=9000,
+                launch_manager=manager,
+            )
+            request = messages.LaunchRequest(
+                argv=["bash", "-c", "echo launched"],
+                env={},
+                cwd=root_path,
+                timeout=5,
+                launch_id="launch-one",
+                out_path=root_path / "output",
+                world_size=1,
+            )
+            with TestClient(app) as client:
+                first = client.post(
+                    messages.LAUNCH_PATH,
+                    content=request.model_dump_json(),
+                    headers=self._auth_headers(),
+                )
+                health = client.get(messages.HEALTH_PATH, headers=self._auth_headers())
+            self.assertEqual(first.status_code, 200)
+            result = messages.LaunchResponse(**first.json()).results[0]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(result.stdout_path.read_text(), "launched\n")
+            self.assertEqual(health.status_code, 200)
 
 
 class TestShutdown(HttpAgentTestBase):

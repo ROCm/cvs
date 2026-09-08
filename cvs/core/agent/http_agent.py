@@ -274,6 +274,7 @@ def create_app(
     world_size: int,
     own_hostname: str | None = None,
     own_port: int | None = None,
+    launch_manager=None,
 ) -> FastAPI:
     '''Build the agent app without blocking startup on rank registration.'''
     if world_rank == 0 and (own_hostname is None or own_port is None):
@@ -282,15 +283,23 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.auth_token = _read_secret(agent_dir / messages.AUTH_TOKEN_FILENAME)
+        if launch_manager is not None:
+            await launch_manager.start()
         if world_rank == 0:
             await app.state.registry.register(world_rank, own_hostname, own_port)
-        yield
+        try:
+            yield
+        finally:
+            if launch_manager is not None:
+                await launch_manager.stop()
 
     app = FastAPI(lifespan=lifespan, dependencies=[Depends(verify_auth)])
     app.state.world_rank = world_rank
     app.state.registry = AgentRegistry(world_size)
     app.state.process_registry = ProcessRegistry()
     app.state.exec_busy = False
+    app.state.launch_manager = launch_manager
+    app.state.launch_busy = False
 
     @app.post(messages.REGISTER_PATH)
     async def register_agent(request: messages.RegisterRequest, http_request: Request) -> messages.RegisterResponse:
@@ -318,9 +327,34 @@ def create_app(
         finally:
             http_request.app.state.exec_busy = False
 
+    @app.post(messages.LAUNCH_PATH)
+    async def launch(request: messages.LaunchRequest, http_request: Request) -> messages.LaunchResponse:
+        """Launch one child in every scheduler task on this node."""
+        manager = http_request.app.state.launch_manager
+        if manager is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="this agent has no scheduler launch slots")
+        if http_request.app.state.launch_busy:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="a launch is already in progress on this agent")
+        http_request.app.state.launch_busy = True
+        try:
+            return await manager.launch(request)
+        finally:
+            http_request.app.state.launch_busy = False
+
+    @app.post(messages.LAUNCH_CANCEL_PATH)
+    async def cancel_launch(http_request: Request) -> messages.ShutdownResponse:
+        """Best-effort cancellation for a launch whose HTTP fan-out failed."""
+        manager = http_request.app.state.launch_manager
+        if manager is not None:
+            await manager.cancel()
+        return messages.ShutdownResponse(ok=True)
+
     @app.post(messages.SHUTDOWN_PATH)
     async def run_shutdown(http_request: Request) -> messages.ShutdownResponse:
         '''Terminate every process this agent has spawned, then exit the agent itself'''
+        manager = http_request.app.state.launch_manager
+        if manager is not None:
+            await manager.cancel()
         registry: ProcessRegistry = http_request.app.state.process_registry
         processes = registry.snapshot()
         await asyncio.gather(

@@ -11,6 +11,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import unittest
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from cvs.core.orchestrators.factory import OrchestratorConfig
@@ -356,9 +357,9 @@ class TestBaremetalOrchestratorHttpTransport(unittest.TestCase):
         self.config.agent_token_file = self.token_file
         self.expected_ports = {"10.0.0.1": 9000, "10.0.0.2": 9001}
 
-    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
+    @patch("cvs.core.orchestrators.baremetal.JobStep", new=SimpleNamespace(is_managed=True))
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
-    def test_init_uses_http_transport_when_agent_config_present(self, mock_pssh, _managed):
+    def test_init_uses_http_transport_when_agent_config_present(self, mock_pssh):
         BaremetalOrchestrator(MagicMock(), self.config)
         self.assertEqual(mock_pssh.call_count, 2)
         for call in mock_pssh.call_args_list:
@@ -373,9 +374,9 @@ class TestBaremetalOrchestratorHttpTransport(unittest.TestCase):
             self.assertNotIn("token_file", call.kwargs)
             self.assertEqual(call.kwargs.get("transport", "ssh"), "ssh")
 
-    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
+    @patch("cvs.core.orchestrators.baremetal.JobStep", new=SimpleNamespace(is_managed=True))
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
-    def test_subset_exec_forwards_http_kwargs(self, mock_pssh, _managed):
+    def test_subset_exec_forwards_http_kwargs(self, mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), self.config)
         orch.all = MagicMock()
         mock_pssh.reset_mock()
@@ -385,6 +386,22 @@ class TestBaremetalOrchestratorHttpTransport(unittest.TestCase):
         self.assertEqual(mock_pssh.call_args.kwargs["transport"], "http")
         self.assertEqual(mock_pssh.call_args.kwargs["token_file"], self.token_file)
         self.assertEqual(mock_pssh.call_args.kwargs["agent_port_map"], self.expected_ports)
+
+    @patch(
+        "cvs.core.orchestrators.baremetal.JobStep",
+        new=SimpleNamespace(is_managed=True, world_size=2),
+    )
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_launch_flattens_and_orders_rank_results(self, mock_handle):
+        orch = BaremetalOrchestrator(MagicMock(), self.config)
+        rank0 = MagicMock(rank=0, error=None)
+        rank1 = MagicMock(rank=1, error=None)
+        orch.all.launch.return_value = [
+            MagicMock(results=[rank1]),
+            MagicMock(results=[rank0]),
+        ]
+        self.assertEqual(orch.launch(["/bin/true"]), [rank0, rank1])
+        orch.all.launch.assert_called_once_with(["/bin/true"], env=None, timeout=None, world_size=2)
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_close_destroys_both_persistent_handles(self, mock_pssh):
@@ -402,10 +419,10 @@ class TestBaremetalOrchestratorHttpTransport(unittest.TestCase):
         orch.close()
         orch.all.destroy_clients.assert_called_once_with()
 
-    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
+    @patch("cvs.core.orchestrators.baremetal.JobStep", new=SimpleNamespace(is_managed=True))
     @patch("cvs.core.orchestrators.container.RuntimeFactory")
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
-    def test_container_orchestrator_uses_http_with_agent_config(self, mock_pssh, _runtime, _managed):
+    def test_container_orchestrator_uses_http_with_agent_config(self, mock_pssh, _runtime):
         from cvs.core.orchestrators.container import ContainerOrchestrator
 
         cfg = OrchestratorConfig(

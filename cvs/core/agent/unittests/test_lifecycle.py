@@ -12,6 +12,18 @@ import httpx
 from cvs.core.agent import lifecycle, messages
 
 
+def _fake_step(*, rank, world_size, hosts, node_rank=None, local_id=0):
+    if node_rank is None:
+        node_rank = 0 if len(hosts) == 1 else rank // (world_size // len(hosts))
+    return SimpleNamespace(
+        rank=rank,
+        world_size=world_size,
+        hosts=hosts,
+        node_rank=node_rank,
+        local_id=local_id,
+    )
+
+
 class TestLifecycle(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -26,9 +38,8 @@ class TestLifecycle(unittest.TestCase):
         return runner
 
     @patch("cvs.core.agent.lifecycle.HttpAgentServer")
-    @patch("cvs.core.agent.lifecycle.scheduler_rank", return_value=(0, 1))
-    @patch("cvs.core.agent.lifecycle.scheduler_hosts", return_value=["rank0"])
-    def test_rank0_publishes_rendezvous_and_secret(self, _hosts, _rank, mock_http_agent):
+    @patch("cvs.core.agent.lifecycle.JobStep", new=_fake_step(rank=0, world_size=1, hosts=["rank0"]))
+    def test_rank0_publishes_rendezvous_and_secret(self, mock_http_agent):
         http_agent = mock_http_agent.return_value
         http_agent.host = "rank0"
         http_agent.wait_until_ready.return_value = 9000
@@ -123,11 +134,11 @@ class TestLifecycle(unittest.TestCase):
     @patch("cvs.core.agent.lifecycle.WorkerRunner._register")
     @patch("cvs.core.agent.lifecycle.WorkerRunner._rendezvous", return_value=("rank0", 9000, 10, "token"))
     @patch("cvs.core.agent.lifecycle.HttpAgentServer")
-    @patch("cvs.core.agent.lifecycle.scheduler_rank", return_value=(1, 2))
-    @patch("cvs.core.agent.lifecycle.scheduler_hosts", return_value=["node01", "node02"])
-    def test_worker_starts_registers_and_stops(
-        self, _hosts, _rank, mock_http_agent, mock_rendezvous, mock_register, mock_watch
-    ):
+    @patch(
+        "cvs.core.agent.lifecycle.JobStep",
+        new=_fake_step(rank=1, world_size=2, hosts=["node01", "node02"], local_id=0),
+    )
+    def test_worker_starts_registers_and_stops(self, mock_http_agent, mock_rendezvous, mock_register, mock_watch):
         http_agent = mock_http_agent.return_value
         http_agent.host = "node02"
         http_agent.wait_until_ready.return_value = 9001
@@ -136,7 +147,14 @@ class TestLifecycle(unittest.TestCase):
         status = runner.start()
 
         self.assertEqual(status, 0)
-        mock_http_agent.assert_called_once_with(self.agent_dir, 1, 2, host="node02")
+        mock_http_agent.assert_called_once_with(
+            self.agent_dir,
+            1,
+            2,
+            host="node02",
+            global_rank=1,
+            expected_local_workers=0,
+        )
         mock_rendezvous.assert_called_once_with(lifecycle.BOOTSTRAP_TIMEOUT_SECONDS)
         mock_register.assert_called_once_with("http://rank0:9000", "token", 9001)
         mock_watch.assert_called_once_with(10)
@@ -151,9 +169,11 @@ class TestLifecycle(unittest.TestCase):
 
     @patch("cvs.core.agent.lifecycle.ClusterFile")
     @patch("cvs.core.agent.lifecycle.HttpAgentServer")
-    @patch("cvs.core.agent.lifecycle.scheduler_rank", return_value=(0, 2))
-    @patch("cvs.core.agent.lifecycle.scheduler_hosts", return_value=["node01", "node02"])
-    def test_agent_runner_rank0_flow(self, _hosts, _rank, mock_http_agent, mock_managed_cluster):
+    @patch(
+        "cvs.core.agent.lifecycle.JobStep",
+        new=_fake_step(rank=0, world_size=2, hosts=["node01", "node02"]),
+    )
+    def test_agent_runner_rank0_flow(self, mock_http_agent, mock_managed_cluster):
         layout = MagicMock(agent_dir=self.agent_dir)
         http_agent = mock_http_agent.return_value
         http_agent.host = "node01"
@@ -170,11 +190,46 @@ class TestLifecycle(unittest.TestCase):
         path = runner.wait()
         runner.stop()
 
-        mock_http_agent.assert_called_once_with(self.agent_dir, 0, 2, host="node01")
+        mock_http_agent.assert_called_once_with(
+            self.agent_dir,
+            0,
+            2,
+            host="node01",
+            global_rank=0,
+            expected_local_workers=0,
+        )
         mock_managed_cluster.assert_called_once_with(["node01", "node02"], layout, {"username": "operator"})
         managed.create.assert_called_once_with(http_agent.wait_for_registrations.return_value)
         self.assertEqual(path, "/run/cluster_agents.json")
         http_agent.stop.assert_called_once()
+
+    @patch(
+        "cvs.core.agent.lifecycle.JobStep",
+        new=_fake_step(rank=8, world_size=16, hosts=["node01", "node02"], local_id=0),
+    )
+    def test_local_rank_zero_on_second_node_is_http_coordinator(self):
+        runner = lifecycle.AgentRunner(MagicMock(agent_dir=self.agent_dir))
+        self.assertIsInstance(runner._role, lifecycle.WorkerRunner)
+        self.assertEqual(runner._role._rank, 1)
+        self.assertEqual(runner._role._global_rank, 8)
+        self.assertEqual(runner._role._expected_local_workers, 7)
+
+    @patch(
+        "cvs.core.agent.lifecycle.JobStep",
+        new=_fake_step(rank=11, world_size=16, hosts=["node01", "node02"], local_id=3),
+    )
+    def test_nonzero_local_rank_is_uds_worker(self):
+        runner = lifecycle.AgentRunner(MagicMock(agent_dir=self.agent_dir))
+        self.assertIsInstance(runner._role, lifecycle.LocalWorkerRunner)
+        self.assertEqual(runner._role._rank, 11)
+
+    @patch(
+        "cvs.core.agent.lifecycle.JobStep",
+        new=_fake_step(rank=8, world_size=16, hosts=["node01", "node02"], local_id=1),
+    )
+    def test_rank_multiple_of_tasks_per_node_is_uds_when_not_local_zero(self):
+        runner = lifecycle.AgentRunner(MagicMock(agent_dir=self.agent_dir))
+        self.assertIsInstance(runner._role, lifecycle.LocalWorkerRunner)
 
 
 class TestClusterFile(unittest.TestCase):

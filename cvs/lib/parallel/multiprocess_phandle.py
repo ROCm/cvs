@@ -268,6 +268,12 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
 
         return cmd_output
 
+    def launch(self, argv, *, env=None, timeout=None, world_size):
+        """Launch is a managed-HTTP operation and is never process-sharded."""
+        if self.phandle is None:
+            raise NotImplementedError("launch is unavailable on sharded SSH handles")
+        return self.phandle.launch(argv, env=env, timeout=timeout, world_size=world_size)
+
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True, inactivity_timeout=None):
         """Execute command list with automatic sharding if needed.
 

@@ -1,10 +1,50 @@
 # cvs/lib/unittests/test_rccl_lib.py
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 import cvs.lib.rccl_lib as rccl_lib
 
 
 class TestRcclLib(unittest.TestCase):
+    @patch(
+        'cvs.lib.rccl_lib.JobStep',
+        new=SimpleNamespace(kind=rccl_lib.Scheduler.SPUR),
+    )
+    @patch('cvs.lib.rccl_lib.os.path.isdir', return_value=False)
+    def test_managed_rccl_env_contains_proven_spur_defaults(self, _isdir):
+        env = rccl_lib._managed_rccl_env('/opt/openmpi', {'NCCL_DEBUG': 'INFO'})
+        self.assertEqual(env['PMIX_GDS_MODULE'], 'hash')
+        self.assertEqual(env['OMPI_MCA_pml'], 'ucx')
+        self.assertEqual(env['NCCL_SOCKET_IFNAME'], 'ens3')
+        self.assertEqual(env['NCCL_IB_HCA'], 'ionic')
+        self.assertEqual(env['NCCL_IB_GID_INDEX'], '1')
+        self.assertEqual(env['NCCL_DMABUF_ENABLE'], '1')
+        self.assertEqual(env['NCCL_NET_PLUGIN'], 'none')
+        self.assertEqual(env['NCCL_DEBUG'], 'INFO')
+
+    def test_managed_rccl_argv_sources_env_then_execs_binary(self):
+        argv = rccl_lib._managed_rccl_argv(
+            '/opt/rccl-tests/all_reduce_perf',
+            ['-b', '8', '-e', '8G'],
+            '/tmp/rccl env.sh',
+        )
+        self.assertEqual(argv[:2], ['bash', '-c'])
+        self.assertIn("source '/tmp/rccl env.sh' && exec", argv[2])
+        self.assertIn('/opt/rccl-tests/all_reduce_perf -b 8 -e 8G', argv[2])
+
+    @patch(
+        'cvs.lib.rccl_lib.JobStep',
+        new=SimpleNamespace(rank=0, world_size=16, hosts=['n1', 'n2']),
+    )
+    def test_managed_layout_must_match_existing_srun_world(self):
+        orch = MagicMock(hosts=['n1', 'n2'])
+        self.assertEqual(
+            rccl_lib._validate_managed_layout(orch, {'no_of_nodes': 2, 'no_of_local_ranks': 8}),
+            16,
+        )
+        with self.assertRaisesRegex(RuntimeError, 'must match the existing srun step'):
+            rccl_lib._validate_managed_layout(orch, {'no_of_nodes': 1, 'no_of_local_ranks': 8})
+
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_check_avg_bus_bw_success(self, mock_fail_test):
         output = "# Avg bus bandwidth : 100.5"

@@ -6,7 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
-from cvs.core.scheduler import is_managed_compute
+from cvs.core.scheduler import JobStep
 import getpass
 import re
 from cvs.core.runtimes import RuntimeFactory
@@ -486,7 +486,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         if not self.container_id:
             raise RuntimeError("No containers running. Call setup_containers() first.")
 
-        if is_managed_compute():
+        if JobStep.is_managed:
             self.log.info("Managed run: skipping in-container sshd setup; Slurm/SPUR uses srun --mpi=pmix")
             return True
 

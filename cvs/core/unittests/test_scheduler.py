@@ -15,13 +15,11 @@ import unittest
 from unittest.mock import patch
 
 from cvs.core.scheduler import (
+    SCHEDULER_ENV_VAR,
+    JobStep,
     Scheduler,
     _expand_hostlist,
     _running_in_job_step,
-    detect_scheduler,
-    is_managed_compute,
-    scheduler_hosts,
-    scheduler_rank,
 )
 
 JOB_STEP_ENV = {"SLURM_JOB_ID": "123", "SLURM_STEP_ID": "0", "SLURM_PROCID": "0"}
@@ -34,8 +32,14 @@ def _which_only(*present):
     return fake_which
 
 
+def _reset_job_step(test_case):
+    JobStep._reset()
+    test_case.addCleanup(JobStep._reset)
+
+
 class TestDetectScheduler(unittest.TestCase):
     def setUp(self):
+        _reset_job_step(self)
         # CVS_SCHEDULER must not leak in from the ambient environment, since it
         # short-circuits detection entirely and several tests rely on the
         # command-probing path actually running.
@@ -47,14 +51,14 @@ class TestDetectScheduler(unittest.TestCase):
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only("spur"))
     def test_spur_present_and_responding(self, _mock_which, mock_run):
         mock_run.return_value.returncode = 0
-        self.assertEqual(detect_scheduler(), Scheduler.SPUR)
+        self.assertEqual(JobStep.kind, Scheduler.SPUR)
         mock_run.assert_called_once_with(["spur", "version"], timeout=5, capture_output=True, text=True)
 
     @patch("cvs.core.scheduler.subprocess.run")
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only("scontrol"))
     def test_slurm_present_and_responding(self, _mock_which, mock_run):
         mock_run.return_value.returncode = 0
-        self.assertEqual(detect_scheduler(), Scheduler.SLURM)
+        self.assertEqual(JobStep.kind, Scheduler.SLURM)
 
     @patch("cvs.core.scheduler.subprocess.run")
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only("spur", "scontrol"))
@@ -62,12 +66,12 @@ class TestDetectScheduler(unittest.TestCase):
         # spur ships its own scontrol/sinfo/squeue shims, so a spur cluster would also
         # pass a generic scontrol check. SPUR must win when both are present.
         mock_run.return_value.returncode = 0
-        self.assertEqual(detect_scheduler(), Scheduler.SPUR)
+        self.assertEqual(JobStep.kind, Scheduler.SPUR)
 
     @patch("cvs.core.scheduler.subprocess.run")
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
     def test_no_scheduler_binaries_on_path(self, _mock_which, mock_run):
-        self.assertEqual(detect_scheduler(), Scheduler.BARE_METAL)
+        self.assertEqual(JobStep.kind, Scheduler.BARE_METAL)
         mock_run.assert_not_called()
 
     @patch("cvs.core.scheduler.subprocess.run")
@@ -81,34 +85,34 @@ class TestDetectScheduler(unittest.TestCase):
             return result
 
         mock_run.side_effect = fake_run
-        self.assertEqual(detect_scheduler(), Scheduler.SLURM)
+        self.assertEqual(JobStep.kind, Scheduler.SLURM)
 
     @patch("cvs.core.scheduler.subprocess.run")
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only("spur", "scontrol"))
     def test_both_commands_fail_returns_bare_metal(self, _mock_which, mock_run):
         mock_run.return_value.returncode = 1
-        self.assertEqual(detect_scheduler(), Scheduler.BARE_METAL)
+        self.assertEqual(JobStep.kind, Scheduler.BARE_METAL)
 
     @patch("cvs.core.scheduler.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="spur", timeout=5))
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only("spur"))
     def test_hanging_command_treated_as_failure(self, _mock_which, _mock_run):
-        self.assertEqual(detect_scheduler(), Scheduler.BARE_METAL)
+        self.assertEqual(JobStep.kind, Scheduler.BARE_METAL)
 
     @patch("cvs.core.scheduler.subprocess.run")
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
     @patch.dict(os.environ, {"CVS_SCHEDULER": "slurm"})
     def test_env_override_takes_precedence_over_probing(self, _mock_which, mock_run):
-        self.assertEqual(detect_scheduler(), Scheduler.SLURM)
+        self.assertEqual(JobStep.kind, Scheduler.SLURM)
         mock_run.assert_not_called()
 
     @patch.dict(os.environ, {"CVS_SCHEDULER": "  SPUR  "})
     def test_env_override_normalizes_case_and_whitespace(self):
-        self.assertEqual(detect_scheduler(), Scheduler.SPUR)
+        self.assertEqual(JobStep.kind, Scheduler.SPUR)
 
     @patch.dict(os.environ, {"CVS_SCHEDULER": "kubernetes"})
     def test_env_override_rejects_unknown_value(self):
         with self.assertRaisesRegex(ValueError, "Unknown scheduler type 'kubernetes'"):
-            detect_scheduler()
+            JobStep.kind
 
     @patch("cvs.core.scheduler.subprocess.run")
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
@@ -116,28 +120,28 @@ class TestDetectScheduler(unittest.TestCase):
     def test_spur_job_id_wins_without_binaries(self, _mock_which, mock_run):
         # AIMVT-319: compute nodes have no spur/scontrol; SPUR still sets SPUR_JOB_ID
         # (and SLURM_* twins). Detection must not fall through to BARE_METAL.
-        self.assertEqual(detect_scheduler(), Scheduler.SPUR)
+        self.assertEqual(JobStep.kind, Scheduler.SPUR)
         mock_run.assert_not_called()
 
     @patch("cvs.core.scheduler.subprocess.run")
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
     @patch.dict(os.environ, {"SLURM_JOB_ID": "99"})
     def test_slurm_job_id_without_spur_job_id(self, _mock_which, mock_run):
-        self.assertEqual(detect_scheduler(), Scheduler.SLURM)
+        self.assertEqual(JobStep.kind, Scheduler.SLURM)
         mock_run.assert_not_called()
 
     @patch("cvs.core.scheduler.subprocess.run")
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only("scontrol"))
     @patch.dict(os.environ, {"SPUR_JOB_ID": "1", "SLURM_JOB_ID": "1"})
     def test_spur_job_id_checked_before_slurm_job_id(self, _mock_which, mock_run):
-        self.assertEqual(detect_scheduler(), Scheduler.SPUR)
+        self.assertEqual(JobStep.kind, Scheduler.SPUR)
         mock_run.assert_not_called()
 
     @patch("cvs.core.scheduler.subprocess.run")
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
     @patch.dict(os.environ, {"CVS_SCHEDULER": "slurm", "SPUR_JOB_ID": "1"})
     def test_env_override_takes_precedence_over_job_id(self, _mock_which, mock_run):
-        self.assertEqual(detect_scheduler(), Scheduler.SLURM)
+        self.assertEqual(JobStep.kind, Scheduler.SLURM)
         mock_run.assert_not_called()
 
 
@@ -149,6 +153,13 @@ class TestRunningInJobStep(unittest.TestCase):
 
     @patch.dict(os.environ, JOB_STEP_ENV)
     def test_true_when_all_three_vars_present(self):
+        self.assertTrue(_running_in_job_step())
+
+    @patch.dict(
+        os.environ,
+        {"SPUR_JOB_ID": "123", "PMIX_NAMESPACE": "spur.123", "PMIX_RANK": "0"},
+    )
+    def test_true_for_spur_pmix_vars_without_slurm_procid(self):
         self.assertTrue(_running_in_job_step())
 
     def test_false_when_no_vars_present(self):
@@ -172,31 +183,29 @@ class TestRunningInJobStep(unittest.TestCase):
 
 class TestIsManagedCompute(unittest.TestCase):
     def setUp(self):
+        _reset_job_step(self)
         patcher = patch.dict(os.environ, {}, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    @patch("cvs.core.scheduler.detect_scheduler", return_value=Scheduler.SPUR)
-    @patch.dict(os.environ, JOB_STEP_ENV)
-    def test_true_for_spur_in_job_step(self, _mock_detect):
-        self.assertTrue(is_managed_compute())
+    @patch.dict(os.environ, {**JOB_STEP_ENV, SCHEDULER_ENV_VAR: "spur"})
+    def test_true_for_spur_in_job_step(self):
+        self.assertTrue(JobStep.is_managed)
 
-    @patch("cvs.core.scheduler.detect_scheduler", return_value=Scheduler.SLURM)
-    @patch.dict(os.environ, JOB_STEP_ENV)
-    def test_true_for_slurm_in_job_step(self, _mock_detect):
-        self.assertTrue(is_managed_compute())
+    @patch.dict(os.environ, {**JOB_STEP_ENV, SCHEDULER_ENV_VAR: "slurm"})
+    def test_true_for_slurm_in_job_step(self):
+        self.assertTrue(JobStep.is_managed)
 
-    @patch("cvs.core.scheduler.detect_scheduler", return_value=Scheduler.BARE_METAL)
-    @patch.dict(os.environ, JOB_STEP_ENV)
-    def test_false_for_bare_metal_even_in_job_step(self, _mock_detect):
-        self.assertFalse(is_managed_compute())
+    @patch.dict(os.environ, {**JOB_STEP_ENV, SCHEDULER_ENV_VAR: "bare_metal"})
+    def test_false_for_bare_metal_even_in_job_step(self):
+        self.assertFalse(JobStep.is_managed)
 
-    @patch("cvs.core.scheduler.detect_scheduler", return_value=Scheduler.SLURM)
-    def test_false_when_scheduler_managed_but_not_in_job_step(self, _mock_detect):
+    @patch.dict(os.environ, {SCHEDULER_ENV_VAR: "slurm"}, clear=True)
+    def test_false_when_scheduler_managed_but_not_in_job_step(self):
         # The exact scenario from the PR review: scheduler tooling works (e.g. a
         # plain SSH login to a managed head node) but this process was never
         # launched via srun, so it must not be treated as managed compute.
-        self.assertFalse(is_managed_compute())
+        self.assertFalse(JobStep.is_managed)
 
     @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
     @patch.dict(
@@ -210,7 +219,7 @@ class TestIsManagedCompute(unittest.TestCase):
     )
     def test_true_in_spur_step_without_scheduler_binaries(self, _mock_which):
         # End-to-end AIMVT-319: a spur srun step on a compute node with empty PATH.
-        self.assertTrue(is_managed_compute())
+        self.assertTrue(JobStep.is_managed)
 
 
 class TestExpandHostlist(unittest.TestCase):
@@ -239,39 +248,91 @@ class TestExpandHostlist(unittest.TestCase):
 
 
 class TestSchedulerHosts(unittest.TestCase):
+    def setUp(self):
+        _reset_job_step(self)
+
     @patch.dict(os.environ, {"SLURM_NODELIST": "node[01-02]"}, clear=True)
     def test_expands_slurm_nodelist(self):
-        self.assertEqual(scheduler_hosts(), ["node01", "node02"])
+        self.assertEqual(JobStep.hosts, ["node01", "node02"])
 
     @patch.dict(os.environ, {"SPUR_NODES": "a,b", "SLURM_NODELIST": "ignored"}, clear=True)
     def test_prefers_spur_nodes(self):
-        self.assertEqual(scheduler_hosts(), ["a", "b"])
+        self.assertEqual(JobStep.hosts, ["a", "b"])
 
     @patch.dict(os.environ, {"SLURM_NODELIST": "node[01-02"}, clear=True)
     def test_invalid_hostlist_is_a_runtime_error(self):
         with self.assertRaisesRegex(RuntimeError, "could not expand scheduler node list"):
-            scheduler_hosts()
+            JobStep.hosts
 
     @patch.dict(os.environ, {}, clear=True)
     def test_requires_a_nodelist(self):
         with self.assertRaisesRegex(RuntimeError, "SPUR_NODES or SLURM_NODELIST"):
-            scheduler_hosts()
+            JobStep.hosts
 
 
 class TestSchedulerRank(unittest.TestCase):
+    def setUp(self):
+        _reset_job_step(self)
+
     def test_reads_procid_and_ntasks(self):
         with patch.dict(os.environ, {"SLURM_PROCID": "1", "SLURM_NTASKS": "2"}, clear=True):
-            self.assertEqual(scheduler_rank(), (1, 2))
+            self.assertEqual((JobStep.rank, JobStep.world_size), (1, 2))
 
     def test_requires_job_step_variables(self):
         with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "SLURM_PROCID and SLURM_NTASKS"):
-                scheduler_rank()
+            with self.assertRaisesRegex(RuntimeError, "scheduler/PMIx rank"):
+                JobStep.rank
+
+    def test_reads_spur_pmix_rank_and_size(self):
+        with patch.dict(os.environ, {"PMIX_RANK": "11", "PMIX_SIZE": "16"}, clear=True):
+            self.assertEqual((JobStep.rank, JobStep.world_size), (11, 16))
 
     def test_rejects_rank_outside_world_size(self):
         with patch.dict(os.environ, {"SLURM_PROCID": "2", "SLURM_NTASKS": "2"}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "invalid managed rank"):
-                scheduler_rank()
+                JobStep.rank
+
+
+class TestSchedulerLocalId(unittest.TestCase):
+    def setUp(self):
+        _reset_job_step(self)
+
+    def test_prefers_spur_localid(self):
+        with patch.dict(
+            os.environ,
+            {"SPUR_LOCALID": "3", "SLURM_LOCALID": "0", "OMPI_COMM_WORLD_LOCAL_RANK": "1"},
+            clear=True,
+        ):
+            self.assertEqual(JobStep.local_id, 3)
+
+    def test_reads_slurm_localid(self):
+        with patch.dict(os.environ, {"SLURM_LOCALID": "0"}, clear=True):
+            self.assertEqual(JobStep.local_id, 0)
+
+    def test_requires_a_local_rank_variable(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "SPUR_LOCALID"):
+                JobStep.local_id
+
+
+class TestJobStep(unittest.TestCase):
+    def setUp(self):
+        _reset_job_step(self)
+
+    def test_fields_share_one_cached_instance(self):
+        with patch.dict(os.environ, {"PMIX_RANK": "0", "PMIX_SIZE": "2"}, clear=True):
+            self.assertEqual(JobStep.rank, 0)
+            first = JobStep._instance
+            self.assertEqual(JobStep.world_size, 2)
+            self.assertIs(JobStep._instance, first)
+
+    def test_fields_do_not_reread_env_after_first_access(self):
+        with patch.dict(os.environ, {"SPUR_LOCALID": "0"}, clear=True):
+            self.assertEqual(JobStep.local_id, 0)
+            step = JobStep._instance
+            os.environ["SPUR_LOCALID"] = "7"
+            self.assertEqual(JobStep.local_id, 0)
+            self.assertIs(JobStep._instance, step)
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from cvs.core.run_layout import RunLayout
-from cvs.core.scheduler import SCHEDULER_ENV_VAR
+from cvs.core.scheduler import SCHEDULER_ENV_VAR, JobStep
 
 LOCAL_RUN_ID = re.compile(r"^local-\d{8}-\d{6}$")
 
@@ -38,6 +38,8 @@ class _RunLayoutTestCase(unittest.TestCase):
     def setUp(self):
         RunLayout._reset()
         self.addCleanup(RunLayout._reset)
+        JobStep._reset()
+        self.addCleanup(JobStep._reset)
         patcher = patch.dict(os.environ, {}, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -60,7 +62,7 @@ class _RunLayoutTestCase(unittest.TestCase):
 
         Step id and proc id are what cvs.core.scheduler keys its job-step check on;
         the layout itself only reads the job id. CVS_SCHEDULER is set because the
-        other half of is_managed_compute() shells out to `spur version` / `scontrol
+        other half of JobStep.is_managed shells out to `spur version` / `scontrol
         version`, which would otherwise make the result depend on what happens to be
         installed on the machine running the tests.
         '''

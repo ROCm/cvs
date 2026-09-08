@@ -15,6 +15,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # patched once in setUp (not per method); _make() returns a fresh orch + runtime mock.
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, _resolve_container_lifetime
@@ -226,8 +227,8 @@ class TestContainerOrchestrator(unittest.TestCase):
     # setup_sshd single-node guard
     # ------------------------------------------------------------------
 
-    @patch("cvs.core.orchestrators.container.is_managed_compute", return_value=False)
-    def test_setup_sshd_single_node_skips_and_returns_true(self, _managed):
+    @patch("cvs.core.orchestrators.container.JobStep", new=SimpleNamespace(is_managed=False))
+    def test_setup_sshd_single_node_skips_and_returns_true(self):
         # The in-container sshd is only needed for multinode MPI. On a single-host
         # cluster setup_sshd must short-circuit: no exec into the container, no
         # dependency on the image shipping /usr/sbin/sshd.
@@ -248,8 +249,8 @@ class TestContainerOrchestrator(unittest.TestCase):
             orch.setup_sshd()
 
     @patch("time.sleep", lambda *_a, **_k: None)
-    @patch("cvs.core.orchestrators.container.is_managed_compute", return_value=False)
-    def test_setup_sshd_multinode_attempts_setup(self, _managed):
+    @patch("cvs.core.orchestrators.container.JobStep", new=SimpleNamespace(is_managed=False))
+    def test_setup_sshd_multinode_attempts_setup(self):
         # The guard must NOT skip a genuine multinode run: every setup command and
         # the final validation probe are exec'd into the container.
         orch, runtime = self._make(lifetime="per_run")
@@ -261,8 +262,8 @@ class TestContainerOrchestrator(unittest.TestCase):
         self.assertTrue(orch.setup_sshd())
         self.assertTrue(runtime.exec.called)
 
-    @patch("cvs.core.orchestrators.container.is_managed_compute", return_value=True)
-    def test_setup_sshd_managed_run_skips(self, _managed):
+    @patch("cvs.core.orchestrators.container.JobStep", new=SimpleNamespace(is_managed=True))
+    def test_setup_sshd_managed_run_skips(self):
         orch, runtime = self._make(lifetime="per_run")
         orch.container_id = "cvs_iter_test"
         self.assertTrue(orch.setup_sshd())

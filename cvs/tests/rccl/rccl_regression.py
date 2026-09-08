@@ -116,7 +116,7 @@ def config_dict(config_file, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def phdl(cluster_dict):
+def phdl(orch):
     """
     Build and return a parallel SSH handle (Pssh) for all cluster nodes.
 
@@ -135,15 +135,11 @@ def phdl(cluster_dict):
       - nhdl_dict is currently unused; it can be removed unless used elsewhere.
       - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
     """
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
+    return orch.all
 
 
 @pytest.fixture(scope="module")
-def shdl(cluster_dict):
+def shdl(orch):
     """
     Build and return a parallel SSH handle (Pssh) for the head node only.
 
@@ -158,11 +154,7 @@ def shdl(cluster_dict):
       - Module scope ensures a single connection context for the duration of the module.
       - nhdl_dict is currently unused; it can be removed unless used elsewhere.
     """
-    node_list = list(cluster_dict['node_dict'].keys())
-    env_vars = cluster_dict.get("env_vars")
-    head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return shdl
+    return orch.head
 
 
 @pytest.fixture(scope="module")
@@ -339,7 +331,7 @@ def test_print_env_once(phdl, shdl, config_dict):
     update_test_result()
 
 
-def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regression_params):
+def test_rccl_perf(orch, phdl, shdl, cluster_dict, config_dict, rccl_collective, regression_params):
     """
     Execute RCCL regression test across the cluster with parametrized environment overrides.
 
@@ -414,6 +406,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regre
         node_list,
         vpc_node_list,
         env_overrides,
+        orch=orch,
     )
 
     log.info("%s", result_dict)
