@@ -32,7 +32,7 @@
         "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm"],
         "env": {
           "NCCL_IB_HCA": "<changeme> rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
-          "HCA_ID_PREFIX": "rdma <changeme>",
+          "HCA_ID_PREFIX": "<changeme> rdma, bnxt_, or mlx5_",
           "NCCL_SOCKET_IFNAME": "<changeme> eno0",
           "GLOO_SOCKET_IFNAME": "<changeme> eno0",
           "NCCL_IB_GID_INDEX": "3",
