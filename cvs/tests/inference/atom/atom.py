@@ -13,10 +13,12 @@ import pytest
 from cvs.lib import globals
 from cvs.lib.inference.atom.atom_config_loader import (
     expand_sweep_parametrize,
+    gpu_arch_from_config_path,
     resolve_atom_profile,
     reuse_server_flag,
     server_session_key,
 )
+from cvs.lib.inference.atom.atom_serving_config import is_serving_config, serving_to_atom_variant_raw
 from cvs.lib.inference.atom.atom_dmesg import verify_dmesg_window
 from cvs.lib.inference.atom.atom_gpu_metrics import (
     capture_gpu_snap,
@@ -142,7 +144,14 @@ def _collection_raw(config_file, pytestconfig):
         if threshold_path.is_file():
             thresholds = json.loads(threshold_path.read_text())
 
-    raw, _, _ = resolve_atom_profile(raw, thresholds, profile)
+    if is_serving_config(raw):
+        if profile:
+            raise pytest.UsageError("serving-schema atom configs do not support --config_profile")
+        if not str(raw.get("gpu_arch") or "").strip():
+            raw["gpu_arch"] = gpu_arch_from_config_path(config_file)
+        raw = serving_to_atom_variant_raw(raw, thresholds)
+    else:
+        raw, _, _ = resolve_atom_profile(raw, thresholds, profile)
     return raw
 
 
