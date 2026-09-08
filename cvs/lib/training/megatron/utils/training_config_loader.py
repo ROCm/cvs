@@ -69,8 +69,7 @@ def validate_combo_keys_match_params(combinations) -> None:
     if mismatches:
         raise ValueError(
             "sweep.combinations keys must equal "
-            "MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>: "
-            + "; ".join(mismatches)
+            "MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>: " + "; ".join(mismatches)
         )
 
 
