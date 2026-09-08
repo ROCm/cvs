@@ -7,7 +7,7 @@
   "threshold_json": "mi325x_atom_sglang_deepseek-r1_fp8_distributed_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
-    "models_dir": "/home/models",
+    "models_dir": "/models",
     "log_dir": "{shared_fs}/LOGS",
     "hf_token_file": "{shared_fs}/.hf_token"
   },
@@ -31,7 +31,7 @@
         "shm_size": "128G",
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
-          "{paths.models_dir}:/root/models",
+          "<changeme-models-mount>:/models:ro",
           "/dev/infiniband:/dev/infiniband"
         ],
         "devices": [

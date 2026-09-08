@@ -71,9 +71,15 @@ Step 2: Edit placeholders
 Replace cluster node IPs and trim ``node_dict`` to one host for single-node runs
 (two hosts for distributed PP). In the config, set at minimum:
 
-- ``container.image`` ΓÇö your ATOM ROCm image.
-- ``paths.shared_fs``, ``paths.models_dir``, ``paths.log_dir``, ``paths.hf_token_file``.
-- ``model.id`` ΓÇö model under test.
+- ``container.image`` — your ATOM ROCm image.
+- ``container.runtime.args.volumes`` — replace ``<changeme-models-mount>`` with the
+  host models directory (for example ``/it-share-prj2-1/models`` on prj2 lab nodes).
+- ``paths.shared_fs``, ``paths.log_dir``, ``paths.hf_token_file``.
+- ``model.id`` — model under test.
+
+``paths.models_dir`` is ``/models``, the in-container mount point exported as
+``HF_HUB_CACHE``. Keep it as shipped; only customize the host side of the models
+volume mount.
 
 For multinode PP, also set ``params.master_addr`` and verify
 ``roles.server.ib_netdev`` (``"auto"`` is the default on shipped distributed stems).
@@ -225,7 +231,7 @@ Launcher vs GPU node
    * - ``priv_key_file``, HF token file
      - Yes
      - No
-   * - ``/home/models`` (when ``model.remote: 0``)
+   * - Models host mount (``<changeme-models-mount>`` → ``/models`` in container)
      - No
      - Yes
    * - Container image, ``sudo docker``

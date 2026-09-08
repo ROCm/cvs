@@ -160,7 +160,9 @@ Fields you must customize
      - Change to
    * - ``container.image``
      - Your ATOM ROCm image on GPU nodes
-   * - ``paths.shared_fs``, ``paths.models_dir``, ``paths.log_dir``, ``paths.hf_token_file``
+   * - ``container.runtime.args.volumes`` (``<changeme-models-mount>``)
+     - Host directory holding HF cache / weights; mounted read-only at ``/models``
+   * - ``paths.shared_fs``, ``paths.log_dir``, ``paths.hf_token_file``
      - Lab paths; ``{user-id}`` resolves to cluster username
    * - ``model.id``
      - Model under test
@@ -185,6 +187,9 @@ Placeholder substitution
 - ``{user-id}`` ΓÇö cluster username (or local OS user fallback).
 - ``{shared_fs}`` ΓÇö self-reference within ``paths``.
 - ``{paths.models_dir}`` and other ``{paths.*}`` ΓÇö cross-referenced anywhere.
+- ``<changeme-models-mount>`` ΓÇö host path to the HF cache / weights tree; mounted at
+  ``/models`` in the container. Shipped configs set ``paths.models_dir`` to ``/models``
+  (the in-container path used for ``HF_HUB_CACHE``).
 - ``{head-node-ip}`` ΓÇö replace manually in copied multinode configs.
 
 ``threshold_json`` is a literal filename (no placeholder substitution).
