@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import pytest
 
+import re
 import json
 
 
@@ -184,6 +185,21 @@ def gpu_type(phdl):
     return gpu_type
 
 
+def test_disable_firewall(phdl):
+    globals.error_list = []
+    # Disable firewall otherwise we may have threads timing out to connect to Rendezvous
+    out_dict = phdl.exec('sudo service ufw status')
+    for node in out_dict.keys():
+        if not re.search('inactive', out_dict[node], re.I):
+            phdl.exec('sudo service ufw stop')
+            continue
+    out_dict = phdl.exec('sudo ufw status')
+    for node in out_dict.keys():
+        if not re.search('inactive|disabled', out_dict[node], re.I):
+            fail_test(f'Failed to disable firewall on node {node}')
+    update_test_result()
+
+
 def test_cleanup_stale_containers(phdl, training_dict):
     """
     Pytest: Clean up potentially stale Docker containers and volumes before tests.
@@ -208,7 +224,7 @@ def test_launch_torchtitan_containers(phdl, training_dict):
         - 'container_name': Name for the container(s)
         - 'container_image': Docker image to use
         - 'container_config': {
-            'device_list': device pass-through config (GPUs, etc.),
+            'device_list': device pass-through config (GPUs, RDMA, etc.),
             'volume_dict': bind mounts for datasets, logs, etc.
           }
     """
@@ -227,9 +243,9 @@ def test_launch_torchtitan_containers(phdl, training_dict):
     update_test_result()
 
 
-def test_deepseek_16b_distributed(phdl, gpu_type, training_dict, model_params_dict, hf_token):
+def test_llama_3_3_70b_distributed(phdl, gpu_type, training_dict, model_params_dict, hf_token):
     """
-    Pytest: Multi-node TorchTitan DeepSeek 16B distributed training lifecycle test.
+    Pytest: Multi-node TorchTitan Llama 3.3 70B distributed training lifecycle test.
 
     Args:
       phdl: Cluster handle used by the training job to execute commands.
@@ -241,7 +257,7 @@ def test_deepseek_16b_distributed(phdl, gpu_type, training_dict, model_params_di
     globals.error_list = []
     tt_obj = torchtitan_training_lib.TorchTitanTrainingJob(
         phdl,
-        'deepseek_v3_16b',
+        'llama3_3_70b',
         training_dict,
         model_params_dict,
         hf_token,

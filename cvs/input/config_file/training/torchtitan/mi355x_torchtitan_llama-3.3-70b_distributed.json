@@ -1,11 +1,102 @@
 {
   "schema_version": 1,
   "framework": "torchtitan_distributed",
-  "gpu_arch": "MI355X",
+  "gpu_name": "MI355X",
   "enforce_thresholds": true,
+  "threshold_json": "mi355x_torchtitan_llama-3.3-70b_distributed_threshold.json",
+  "paths": {
+    "hf_token_file": "/home/{user-id}/.hf_token",
+    "log_dir": "/home/{user-id}/LOG_DIR",
+    "scripts_dir": "/home/{user-id}/SCRIPTS",
+    "data_cache_dir": "/shared/data/amd_aac/rajesh/models",
+    "rocm_dir": ""
+  },
+  "train_params": {
+    "multi_node": {
+      "llama3_3_70b": {
+        "mi300x": {
+          "model_name": "llama3_3_70b",
+          "hf_model_name": "meta-llama/Llama-3.3-70B-Instruct",
+          "tokenizer_path": "meta-llama/Llama-3.3-70B-Instruct",
+          "model_size": "70b",
+          "sequence_length": "8192",
+          "dataset": "c4",
+          "lr": "3e-4",
+          "warmup_steps": "200",
+          "activation_checkpointing": "selective",
+          "compile": "false",
+          "tensor_parallel_degree": "4",
+          "pipeline_parallel_degree": "1",
+          "context_parallel_degree": "1",
+          "expert_parallel_degree": "1",
+          "enable_async_tensor_parallel": "false",
+          "precompute_float8_dynamic_scale_for_fsdp": "false",
+          "data_parallel_shard_degree": "4",
+          "global_batch_size": "512",
+          "micro_batch_size": "1",
+          "precision": "BF16",
+          "result_dict": {
+            "tokens_per_sec": "5000.0"
+          }
+        }
+      }
+    },
+    "training_iterations": "<changeme>",
+    "torchtitan_root": "/workspace/Primus/third_party/torchtitan",
+    "nic_type": "broadcom"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "torchtitan_llama3.3_70b_distributed",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/dev/infiniband:/dev/infiniband",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
+          "/lib/libibverbs.d:/lib/libibverbs.d",
+          "<changeme>:<changeme>",
+          "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1"
+        ],
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri",
+          "/dev/infiniband/rdma_cm"
+        ]
+      }
+    },
+    "env": {
+      "NNODES": "<changeme>",
+      "MASTER_ADDR": "<changeme>",
+      "NCCL_SOCKET_IFNAME": "<changeme>",
+      "GLOO_SOCKET_IFNAME": "<changeme>",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_DEBUG": "ERROR",
+      "NCCL_IB_HCA": "<changeme>"
+    }
+  },
+  "verify_network_errors": "True",
+  "smoke": {
+    "enabled": true,
+    "iters": 10,
+    "micro_batch_size": "1",
+    "global_batch_size": "16",
+    "precision": "BF16"
+  },
   "loss_curve": {
     "sample_every": 10,
-    "milestone_steps": [100, 500, 1000, 5000],
+    "milestone_steps": [
+      100,
+      500,
+      1000,
+      5000
+    ],
     "max_slope": 0.0,
     "enforce": true
   },
@@ -21,99 +112,26 @@
     "loss_rtol": 0.05,
     "checkpoint_dir": "/home/{user-id}/LOGS/torchtitan/checkpoints"
   },
-  "threshold_json": "mi355x_torchtitan_llama-3.3-70b_distributed_threshold.json",
   "scaling_baseline": {
     "tokens_per_sec_total": 0.0,
     "num_nodes": 1
   },
-  "config": {
-    "hf_token_file": "/home/{user-id}/.hf_token",
-    "log_dir": "/home/{user-id}/LOGS/torchtitan",
-    "scripts_dir": "/home/{user-id}/SCRIPTS/torchtitan",
-    "data_cache_dir": "/home/{user-id}/cache",
-    "rocm_dir": "",
-    "torchtitan_root": "/workspace/Primus/third_party/torchtitan",
-    "training_iterations": "10",
-    "nnodes": "4",
-    "nic_type": "thor2",
-    "nccl_ib_hca_list": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7",
-    "nccl_ib_hca": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7",
-    "nccl_socket_ifname": "ensf1np1",
-    "gloo_socket_ifname": "ensf1np1",
-    "nccl_ib_gid_index": "3",
-    "nccl_debug": "ERROR",
-    "master_address": "<changeme>",
-    "verify_network_errors": "False",
-    "use_generated_config": "True",
-    "hca_id_pattern": "bnxt_|rocep"
-  },
-  "model_params": {
-    "model_name": "llama3_3_70b",
-    "hf_model_name": "meta-llama/Llama-3.3-70B",
-    "sequence_length": "8192",
-    "dataset": "c4",
-    "lr": "3e-4",
-    "warmup_steps": "200",
-    "activation_checkpointing": "selective",
-    "compile": "false",
-    "tensor_parallel_degree": "8",
-    "pipeline_parallel_degree": "1",
-    "context_parallel_degree": "1",
-    "expert_parallel_degree": "1",
-    "enable_async_tensor_parallel": "false",
-    "precompute_float8_dynamic_scale_for_fsdp": "false",
-    "data_parallel_shard_degree": "4"
-  },
-  "container": {
-    "lifetime": "per_run",
-    "name": "torchtitan_llama3_3_70b_distributed",
-    "image": "<changeme>",
-    "runtime": {
-      "name": "docker",
-      "args": {
-        "network": "host",
-        "ipc": "host",
-        "privileged": true,
-        "shm_size": "128G",
-        "volumes": [
-          "/home/{user-id}:/home/{user-id}",
-          "/dev/infiniband:/dev/infiniband",
-          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so.host",
-          "/lib/libibverbs.d:/lib/libibverbs.d"
-        ],
-        "devices": [
-          "/dev/kfd",
-          "/dev/dri",
-          "/dev/infiniband/rdma_cm"
-        ]
-      }
-    }
-  },
+  "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",
+  "_loss_curve_comment": "sample training loss every sample_every steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
+  "_convergence_comment": "target_metric auto uses validation loss when available, else training loss. target_value <= 0 disables convergence checking (record-only).",
+  "_scaling_baseline_comment": "1-node total tokens/sec baseline for scaling-efficiency %. 0.0 = disabled (record-only). Populate from a prior MI355X single-node run (tok/s/GPU * 8) to enable the metric.",
+  "_checkpoint_comment": "checkpoint_dir is the shared filesystem path where TorchTitan writes and reads checkpoints across nodes. save_interval controls checkpoint frequency (steps); save_iters is the step at which the save-phase run stops; resume_iters is the step at which the resume-phase run stops. Loss at resume_iters must match the save-phase loss within loss_rtol. enforce=false makes checkpoint testing record-only.",
   "sweep": {
     "combinations": {
-      "llama3_3_70b-mi355-4n-bs64-mbs2-bf16": {
-        "name": "llama3_3_70b_mbs2_gbs64_BF16",
-        "global_batch_size": "64",
-        "micro_batch_size": "2",
+      "MBS=1,GBS=512,PRECISION=BF16": {
+        "name": "llama3_3_70b_mbs1_gbs512_BF16",
+        "global_batch_size": "512",
+        "micro_batch_size": "1",
         "precision": "BF16"
-      },
-      "llama3_3_70b-mi355-4n-bs64-mbs2-fp8": {
-        "name": "llama3_3_70b_mbs2_gbs64_FP8",
-        "global_batch_size": "64",
-        "micro_batch_size": "2",
-        "precision": "FP8"
-      },
-      "llama3_3_70b-mi355-4n-bs64-mbs2-mxfp8": {
-        "name": "llama3_3_70b_mbs2_gbs64_MXFP8",
-        "global_batch_size": "64",
-        "micro_batch_size": "2",
-        "precision": "MXFP8"
       }
     },
     "runs": [
-      "llama3_3_70b-mi355-4n-bs64-mbs2-bf16",
-      "llama3_3_70b-mi355-4n-bs64-mbs2-fp8",
-      "llama3_3_70b-mi355-4n-bs64-mbs2-mxfp8"
+      "MBS=1,GBS=512,PRECISION=BF16"
     ]
   }
 }

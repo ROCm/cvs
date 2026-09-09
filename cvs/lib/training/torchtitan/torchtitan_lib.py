@@ -154,10 +154,10 @@ class TorchTitanTrainingJob:
         self.save_interval = None
         self.load_checkpoint = False
 
-        # Get config and model params
-        self.config = variant_config.config
-        self.model_params = variant_config.model_params
-        self.gpu_arch = variant_config.gpu_arch
+        # Get flattened config dict (paths + container.env + train_params)
+        self.config = variant_config.job_config_dict()
+        self.model_params = variant_config.train_params
+        self.gpu_arch = variant_config.gpu_name
 
         # Training configs with defaults
         self.container_image = self.config.get('container_image', 'rocm/pytorch:latest')
@@ -630,9 +630,9 @@ class TorchTitanTrainingJob:
     def _needs_local_tokenizer(self):
         """TorchTitan uses HF download script, so always downloads tokenizer.
 
-        Returns False since we use download_hf_assets() instead of download_tokenizer_model().
+        Returns True to trigger download_tokenizer_model() which calls download_hf_assets().
         """
-        return False
+        return True
 
     def download_tokenizer_model(self):
         """Download tokenizer model (wrapper for download_hf_assets).

@@ -185,28 +185,36 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_smoke(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 3: smoke-test — model loads and runs _SMOKE_ITERS steps without error.
+    """Stage 2: smoke-test — model loads and runs smoke.iters steps without error.
 
-    Passes if training reaches iteration _SMOKE_ITERS/_SMOKE_ITERS without error.
-    No metric assertions — completion without error is the only requirement.
+    Knobs come from the top-level ``smoke`` block (defaults: 10 iters, MBS 1,
+    GBS 8, BF16). Set ``smoke.enabled`` false to skip. Completion without error
+    is the only requirement — no metric assertions.
     """
+    smoke = variant_config.smoke
+    if not smoke.enabled:
+        pytest.skip("smoke.enabled=false in config; skipping test_smoke")
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
     globals.error_list = []
+    mbs = smoke.micro_batch_size or _SMOKE_MBS
+    gbs = smoke.global_batch_size.strip() or _SMOKE_GBS
+    precision = smoke.precision or _SMOKE_PRECISION
+    iters = int(smoke.iters)
 
     tt_obj = _make_training_job(
         orch,
         variant_config,
         hf_token=hf_token,
-        micro_batch_size=_SMOKE_MBS,
-        global_batch_size=_SMOKE_GBS,
-        precision=_SMOKE_PRECISION,
+        micro_batch_size=mbs,
+        global_batch_size=gbs,
+        precision=precision,
         distributed_training=True,
         tune_model_params=False,
         run_label="smoke",
     )
-    tt_obj.iterations = int(_SMOKE_ITERS)
+    tt_obj.iterations = iters
     tt_obj.local_tokenizer_path = getattr(lifecycle, "tokenizer_path", None)
 
     t = time.monotonic()
@@ -224,7 +232,7 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
         lifecycle.failed = True
     update_test_result()
     lifecycle.record(request.node.nodeid, "smoke", time.monotonic() - t)
-    log.info("smoke PASSED | iters=%s", _SMOKE_ITERS)
+    log.info("smoke PASSED | iters=%s mbs=%s gbs=%s precision=%s", iters, mbs, gbs, precision)
 
 
 def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):

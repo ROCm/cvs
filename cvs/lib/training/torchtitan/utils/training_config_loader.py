@@ -26,7 +26,7 @@ import warnings
 from collections import Counter
 from typing import Any, Dict, List
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from typing_extensions import Literal
 
 from cvs.lib.utils.config_loader import (
@@ -44,6 +44,33 @@ class TorchTitanSweepCombo(_Forbid):
     micro_batch_size: str
     global_batch_size: str
     precision: str = ""
+
+
+def sweep_cell_key(combo) -> str:
+    """Threshold / combination key: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>."""
+    if isinstance(combo, dict):
+        mbs = combo["micro_batch_size"]
+        gbs = combo["global_batch_size"]
+        precision = combo.get("precision", "")
+    else:
+        mbs = combo.micro_batch_size
+        gbs = combo.global_batch_size
+        precision = combo.precision
+    return f"MBS={mbs},GBS={gbs},PRECISION={precision}"
+
+
+def validate_combo_keys_match_params(combinations) -> None:
+    """Combination dict keys must equal sweep_cell_key() for that cell."""
+    mismatches = [
+        f"{key!r} (expected {sweep_cell_key(combo)!r})"
+        for key, combo in combinations.items()
+        if key != sweep_cell_key(combo)
+    ]
+    if mismatches:
+        raise ValueError(
+            "sweep.combinations keys must equal "
+            "MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>: " + "; ".join(mismatches)
+        )
 
 
 def validate_sweep_selector(combo_keys, run_refs):
@@ -115,6 +142,7 @@ class TorchTitanSweep(_Forbid):
             list(self.combinations.keys()),
             self.runs,
         )
+        validate_combo_keys_match_params(self.combinations)
         return self
 
 
@@ -135,6 +163,20 @@ class ConvergenceConfig(_Forbid):
     target_value: float = 0.0
 
 
+class SmokeConfig(_Forbid):
+    """Fixed cell for test_smoke (opt-OUT; on by default).
+
+    Empty global_batch_size lets the suite use its topology default
+    (single-node 8, distributed 16).
+    """
+
+    enabled: bool = True
+    iters: int = 10
+    micro_batch_size: str = "1"
+    global_batch_size: str = ""
+    precision: str = "BF16"
+
+
 class CheckpointConfig(_Forbid):
     enforce: bool = False  # if False, test_checkpoint is skipped entirely
     save_interval: int = 20  # checkpoint written every N steps
@@ -144,21 +186,84 @@ class CheckpointConfig(_Forbid):
     checkpoint_dir: str = ""  # shared path for distributed; empty = derive from log_dir (single-node)
 
 
+class TorchTitanPaths(_Forbid):
+    hf_token_file: str
+    log_dir: str
+    scripts_dir: str
+    data_cache_dir: str
+    rocm_dir: str = ""
+
+
+class TorchTitanContainerSpec(ContainerSpec):
+    env: Dict[str, str] = Field(default_factory=dict)
+
+
+# container.env uses real process env names; jobs still read the lowercase aliases.
+_CONTAINER_ENV_TO_JOB = {
+    "NNODES": "nnodes",
+    "MASTER_ADDR": "master_address",
+    "NCCL_SOCKET_IFNAME": "nccl_socket_ifname",
+    "GLOO_SOCKET_IFNAME": "gloo_socket_ifname",
+    "NCCL_DEBUG": "nccl_debug",
+    "NCCL_IB_GID_INDEX": "nccl_ib_gid_index",
+}
+
+
 class TorchTitanVariantConfig(_Forbid):
     schema_version: Literal[1]
     framework: Literal["torchtitan_single", "torchtitan_distributed"]
-    gpu_arch: str
+    gpu_name: str
     enforce_thresholds: bool = True
     threshold_json: str = ""
+    paths: TorchTitanPaths
+    verify_network_errors: str = "False"
     scaling_baseline: ScalingBaseline = Field(default_factory=ScalingBaseline)
+    smoke: SmokeConfig = Field(default_factory=SmokeConfig)
     loss_curve: LossCurveConfig = Field(default_factory=LossCurveConfig)
     convergence: ConvergenceConfig = Field(default_factory=ConvergenceConfig)
     checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
-    config: Dict[str, Any]  # training knobs: torchtitan_root, nccl_*, nic_type, ...
-    model_params: Dict[str, Any]  # model knobs: model_name, precision, tp, pp, ...
-    container: ContainerSpec
+    train_params: Dict[str, Any]
+    container: TorchTitanContainerSpec
     sweep: TorchTitanSweep
     thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+
+    @field_validator("gpu_name")
+    @classmethod
+    def _uppercase_gpu_name(cls, value: str) -> str:
+        return value.strip().upper()
+
+    @property
+    def gpu_arch(self) -> str:
+        """Backward compatibility alias for gpu_name."""
+        return self.gpu_name
+
+    @property
+    def model_params(self) -> Dict[str, Any]:
+        """Backward compatibility alias for train_params."""
+        return self.train_params
+
+    def job_config_dict(self) -> Dict[str, Any]:
+        """Flatten paths + container.env + train_params.training_iterations into the job dict."""
+        merged: Dict[str, Any] = {}
+        merged["verify_network_errors"] = self.verify_network_errors
+        merged["hf_token_file"] = self.paths.hf_token_file
+        merged["log_dir"] = self.paths.log_dir
+        merged["scripts_dir"] = self.paths.scripts_dir
+        merged["data_cache_dir"] = self.paths.data_cache_dir
+        merged["rocm_dir"] = self.paths.rocm_dir
+        merged.update(self.container.env)
+        for env_key, job_key in _CONTAINER_ENV_TO_JOB.items():
+            if env_key in self.container.env:
+                merged[job_key] = self.container.env[env_key]
+        iters = self.train_params.get("training_iterations")
+        if iters is not None:
+            merged["training_iterations"] = iters
+        # TorchTitan-specific: add torchtitan_root and nic_type if present
+        if "torchtitan_root" in self.train_params:
+            merged["torchtitan_root"] = self.train_params["torchtitan_root"]
+        if "nic_type" in self.train_params:
+            merged["nic_type"] = self.train_params["nic_type"]
+        return merged
 
     def cell_key(self, combo_key: str) -> str:
         """Canonical threshold lookup key for a sweep combo.
@@ -166,8 +271,7 @@ class TorchTitanVariantConfig(_Forbid):
         Constructs a key from the combo's micro_batch_size, global_batch_size,
         and precision — must match the top-level keys in the threshold file exactly.
         """
-        combo = self.sweep.combinations[combo_key]
-        return f"MBS={combo.micro_batch_size},GBS={combo.global_batch_size},PRECISION={combo.precision}"
+        return sweep_cell_key(self.sweep.combinations[combo_key])
 
     def expected_cells(self) -> List[str]:
         """Return the threshold cell key for every run in sweep.runs."""
@@ -226,6 +330,17 @@ def load_training_variant(config_path, cluster_dict) -> TorchTitanVariantConfig:
     orphaned.
     """
     raw, thresholds = substitute_config(config_path, cluster_dict)
+
+    # When checkpoint testing is disabled, checkpoint_dir and its shared-FS
+    # volume mount are unused — exempt both from the <changeme> check so
+    # operators can use the template as-is without filling in checkpoint paths.
+    if not raw.get("checkpoint", {}).get("enforce", False):
+        raw.get("checkpoint", {}).pop("checkpoint_dir", None)
+        try:
+            vols = raw["container"]["runtime"]["args"]["volumes"]
+            raw["container"]["runtime"]["args"]["volumes"] = [v for v in vols if "<changeme>" not in v]
+        except (KeyError, TypeError):
+            pass
 
     _check_no_changeme(raw)
 

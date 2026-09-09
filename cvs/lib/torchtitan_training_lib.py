@@ -748,7 +748,7 @@ class TorchTitanTrainingJob:
         last_node = self.host_list[-1]
         last_node_num = len(self.host_list) - 1
 
-        for i in range(1, int(self.iterations) + 10):
+        for i in range(1, int(self.iterations) + 60):
             log.info(f'Starting Iteration {i}')
 
             if not self.scan_for_training_errors():

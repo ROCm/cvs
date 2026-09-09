@@ -1,6 +1,6 @@
 {
-  "_comment": "Llama 3.3 70B distributed thresholds for MI355X TorchTitan. Cell keys must match TorchTitanVariantConfig.cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>. Metrics: tokens_per_sec (tokens/s across all ranks), loss, mem_usage_gb (memory in GiB).",
-  "MBS=6,GBS=48,PRECISION=BF16": {
+  "_comment": "Qwen3 32B distributed thresholds for MI355X TorchTitan. Cell keys must match TorchTitanVariantConfig.cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>. Metrics: tokens_per_sec (tokens/s across all ranks), loss, mem_usage_gb (memory in GiB).",
+  "MBS=1,GBS=512,PRECISION=BF16": {
     "training.tokens_per_sec": {
       "kind": "min",
       "value": 100

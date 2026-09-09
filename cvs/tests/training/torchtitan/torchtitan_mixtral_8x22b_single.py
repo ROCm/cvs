@@ -227,9 +227,9 @@ def test_launch_torchtitan_containers(phdl, training_dict):
     update_test_result()
 
 
-def test_deepseek_16b_distributed(phdl, gpu_type, training_dict, model_params_dict, hf_token):
+def test_qwen3_32b_single_node(phdl, gpu_type, training_dict, model_params_dict, hf_token):
     """
-    Pytest: Multi-node TorchTitan DeepSeek 16B distributed training lifecycle test.
+    Pytest: Single-node TorchTitan Qwen3 32B training lifecycle test.
 
     Args:
       phdl: Cluster handle used by the training job to execute commands.
@@ -241,12 +241,12 @@ def test_deepseek_16b_distributed(phdl, gpu_type, training_dict, model_params_di
     globals.error_list = []
     tt_obj = torchtitan_training_lib.TorchTitanTrainingJob(
         phdl,
-        'deepseek_v3_16b',
+        'qwen3_32b',
         training_dict,
         model_params_dict,
         hf_token,
         gpu_type,
-        distributed_training=True,
+        distributed_training=False,
         tune_model_params=False,
     )
     tt_obj.exec_nic_setup_scripts()
