@@ -264,6 +264,28 @@ class TestRunClientTrustRemoteCode(unittest.TestCase):
         job = _job("1024", "1024", 8)
         self.assertNotIn("--trust-remote-code", self._bench_cmd(job))
 
+    def test_resolved_cell_flags_override_benchmark_defaults(self):
+        for base, override, present in ((False, True, True), (True, False, False)):
+            with self.subTest(base=base, override=override):
+                variant = _variant(
+                    benchmark_params={"ignore_eos": base, "trust_remote_code": base},
+                    sweep_options={"ignore_eos": override, "trust_remote_code": override},
+                )
+                (run,) = variant.resolved_runs()
+                job = VllmJob(
+                    orch=FakeOrch(),
+                    variant=variant,
+                    hf_token="tok",
+                    isl=run.cell.isl,
+                    osl=run.cell.osl,
+                    concurrency=run.cell.concurrency,
+                    num_prompts=run.benchmark_params["num_prompts"],
+                    benchmark_params=run.benchmark_params,
+                )
+                command = self._bench_cmd(job)
+                self.assertEqual("--ignore-eos" in command, present)
+                self.assertEqual("--trust-remote-code" in command, present)
+
 
 class TestSerializeServeArgs(unittest.TestCase):
     def test_false_value_is_rejected(self):

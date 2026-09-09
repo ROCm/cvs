@@ -116,7 +116,11 @@ class BenchmarkParams(_Options):
 
     @model_validator(mode="after")
     def _validate_upstream_options(self):
-        _validate_cli_option_map(self.extra_options(), section="benchmark_params")
+        options = self.extra_options()
+        _validate_cli_option_map(options, section="benchmark_params")
+        collisions = sorted(_BENCHMARK_RESERVED & set(options))
+        if collisions:
+            raise ValueError(f"benchmark_params cannot override harness fields: {collisions}")
         return self
 
 
@@ -161,7 +165,8 @@ def serialize_cli_options(options: Dict[str, Any]) -> List[str]:
         if value is True:
             argv.append(flag)
         elif isinstance(value, list):
-            argv.extend([flag, *(str(item) for item in value)])
+            for item in value:
+                argv.extend([flag, str(item)])
         elif isinstance(value, dict):
             argv.extend([flag, json.dumps(value, separators=(",", ":"))])
         else:
@@ -266,7 +271,12 @@ class VariantConfig(_Forbid):
             reserved = sorted(_BENCHMARK_RESERVED & set(overrides))
             if reserved:
                 raise ValueError(f"sweeps.{cell_key} cannot override harness fields: {reserved}")
-            _validate_cli_option_map(overrides, section=f"sweeps.{cell_key}")
+            boolean_fields = {"ignore_eos", "trust_remote_code"} & set(overrides)
+            for name in boolean_fields:
+                if not isinstance(overrides[name], bool):
+                    raise ValueError(f"sweeps.{cell_key}.{name} must be boolean")
+            cli_overrides = {name: value for name, value in overrides.items() if name not in boolean_fields}
+            _validate_cli_option_map(cli_overrides, section=f"sweeps.{cell_key}")
         threshold_cells = set(self.thresholds) - {"accuracy"}
         unknown_thresholds = sorted(threshold_cells - set(parsed))
         if unknown_thresholds:

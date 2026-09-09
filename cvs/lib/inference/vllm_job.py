@@ -171,6 +171,8 @@ class VllmJob:
         self.base_url = "http://0.0.0.0"
         self.dataset_name = str(b["dataset_name"])
         self.backend = str(b["backend"])
+        self.ignore_eos = bool(b["ignore_eos"])
+        self.trust_remote_code = bool(b["trust_remote_code"])
 
         self.model_id = p.model
         self.log_dir = variant.paths.log_dir
@@ -548,9 +550,9 @@ class VllmJob:
             "--result-filename",
             "results",
         ]
-        if self.variant.benchmark_params.ignore_eos:
+        if self.ignore_eos:
             args.append("--ignore-eos")
-        if self.variant.benchmark_params.trust_remote_code:
+        if self.trust_remote_code:
             args.append("--trust-remote-code")
         args.extend(serialize_cli_options(self.benchmark_options))
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)

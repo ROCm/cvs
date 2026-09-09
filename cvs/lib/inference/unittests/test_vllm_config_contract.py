@@ -177,6 +177,7 @@ class TestMetadataAndOptionSerialization(unittest.TestCase):
                 "8192",
                 "--served-model-name",
                 "first",
+                "--served-model-name",
                 "second",
                 "--structured-outputs",
                 '{"json":{"type":"object"}}',
@@ -197,6 +198,9 @@ class TestMetadataAndOptionSerialization(unittest.TestCase):
                     }
                 )
             )
+
+        with self.assertRaisesRegex(ValidationError, "benchmark_params cannot override harness"):
+            VariantConfig(**_config(benchmark_params={"num_prompts": 25, "percentile_metrics": "ttft"}))
 
 
 class TestPackagedVllmCatalog(unittest.TestCase):

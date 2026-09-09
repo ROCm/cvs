@@ -81,8 +81,5 @@
   "runs": [
     "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16",
     "ISL=1024,OSL=1024,TP=8,PP=2,CONC=32"
-  ],
-  "accuracy": {
-    "tasks": []
-  }
+  ]
 }

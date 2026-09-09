@@ -124,9 +124,9 @@ measured values from a calibration run before flipping `enforce_thresholds`.
 Accuracy is split across the two files, unlike the three families above:
 
 - **`config.json` → `accuracy.tasks`** selects *which* lm-eval tasks run.
-  Shipped empty, so no accuracy stage runs and the pytest node is auto-skipped.
+  Packaged configs omit this optional block, so no accuracy stage runs.
 - **`threshold.json` → `accuracy`** holds the gating values, keyed by task id
-  then by lm-eval metric key. Shipped as `{}`.
+  then by lm-eval metric key. Add it when configuring accuracy tasks.
 
 Because the threshold keys are derived from the task ids you choose, they
 cannot be pre-enumerated the way `client.*`/`gpu.*`/`prom.*` can — the two
@@ -156,7 +156,7 @@ Every environment-specific value is redacted. Per config:
 | `ib_netdev` | *(distributed only)* socket interface name for `NCCL_SOCKET_IFNAME` / `GLOO_SOCKET_IFNAME` / `TP_SOCKET_IFNAME`. Must be **UP and hold a routable IPv4 reaching the other node** — check `ip -o -4 addr show`, not just `ip -o link show`. |
 
 `paths.models_dir` is `/models`, the in-container mount point — it is exported
-as `HF_HUB_CACHE`. When `model.id` is an absolute path under `/models`, vLLM
+as `HF_HUB_CACHE`. When `server_params.model` is an absolute path under `/models`, vLLM
 loads straight from the mount and no download occurs. CVS derives the
 distributed rendezvous address from the cluster head.
 
