@@ -233,9 +233,7 @@ class MegatronVariantConfig(_Forbid):
     def _uppercase_gpu_name(cls, value: str) -> str:
         name = value.strip().upper()
         if name not in _ALLOWED_GPU_NAMES:
-            raise ValueError(
-                f"gpu_name must be one of {list(_ALLOWED_GPU_NAMES)}, got {value!r}"
-            )
+            raise ValueError(f"gpu_name must be one of {list(_ALLOWED_GPU_NAMES)}, got {value!r}")
         return name
 
     @property

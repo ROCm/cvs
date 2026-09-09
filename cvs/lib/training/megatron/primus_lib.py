@@ -362,10 +362,7 @@ class PrimusTrainingJob:
         exp_path = self._exp_config_path()
         log.info('Primus EXP config path: %s', exp_path)
 
-        env_exports = (
-            f'export HF_TOKEN="{self.hf_token}"; '
-            f'export LOG_DIR={self.log_dir}; '
-        )
+        env_exports = f'export HF_TOKEN="{self.hf_token}"; export LOG_DIR={self.log_dir}; '
 
         if re.search(r'MI3(00|25)X', self.gpu_arch, re.I):
             env_exports += 'export PRIMUS_TURBO_ATTN_V3_ATOMIC_FP32=1; export NVTE_CK_IS_V3_ATOMIC_FP32=1; '
