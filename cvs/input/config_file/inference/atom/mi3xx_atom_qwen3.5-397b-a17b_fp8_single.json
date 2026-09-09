@@ -1,5 +1,4 @@
 {
-  "framework": "atom",
   "threshold_json": "mi325x_atom_qwen3.5-397b-a17b_fp8_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -68,10 +67,7 @@
     "ISL=1024,OSL=8192,TP=8,PP=1,CONC=64": {},
     "ISL=128,OSL=32,TP=8,PP=1,CONC=1": {}
   },
-  "sweep": {
-    "_comment": "Combo-key runs of ISL, OSL, TP, PP, and CONC, comma-separated. Each listed run must exist in the threshold JSON. If this field is empty, every run in the threshold JSON is used.",
-    "runs": []
-  },
+  "runs": [],
   "platform": {
     "gpu_metrics_poll": true
   },
@@ -88,6 +84,5 @@
         "num_concurrent": 4
       }
     ]
-  },
-  "schema_version": 1
+  }
 }

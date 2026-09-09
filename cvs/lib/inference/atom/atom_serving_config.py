@@ -48,6 +48,7 @@ def materialize_atom_sweep(raw, thresholds=None):
     out = dict(raw)
     out["sweep"] = serving_runs_to_atom_sweep(serving_selected_cell_keys(raw, thresholds))
     out.pop("sweeps", None)
+    out.pop("runs", None)
     return out
 
 

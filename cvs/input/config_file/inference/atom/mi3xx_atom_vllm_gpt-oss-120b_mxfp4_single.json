@@ -1,7 +1,5 @@
 {
   "_comment": "GPT-OSS-120B MXFP4 single-node vLLM parity (MI3xx/MI325X, W2). Requires an image with the vllm package. Native ATOM openai_server is not shipped: AITER shuffle_scale_moe UnboundLocalError on gfx942 (rc4 / atom-dev).",
-  "schema_version": 1,
-  "framework": "atom",
   "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_vllm_gpt-oss-120b_mxfp4_single_threshold.json",
@@ -75,10 +73,7 @@
     "ISL=8192,OSL=1024,TP=4,PP=1,CONC=64": {},
     "ISL=128,OSL=32,TP=4,PP=1,CONC=1": {}
   },
-  "sweep": {
-    "_comment": "Combo-key runs of ISL, OSL, TP, PP, and CONC, comma-separated. Each listed run must exist in the threshold JSON. If this field is empty, every run in the threshold JSON is used.",
-    "runs": []
-  },
+  "runs": [],
   "platform": {
     "gpu_metrics_poll": true
   },

@@ -71,7 +71,7 @@ class TestAtomServingConfig(unittest.TestCase):
                     "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16": {},
                     "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32": {},
                 },
-                "sweep": {"runs": []},
+                "runs": [],
             }
         )
         self.assertEqual(
@@ -89,10 +89,11 @@ class TestAtomServingConfig(unittest.TestCase):
                     "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16": {},
                     "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32": {},
                 },
-                "sweep": {"runs": []},
+                "runs": [],
             }
         )
         self.assertNotIn("sweeps", raw)
+        self.assertNotIn("runs", raw)
         self.assertEqual(len(raw["sweep"]["runs"]), 2)
 
     def test_serving_runs_to_atom_sweep(self):

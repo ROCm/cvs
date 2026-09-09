@@ -459,6 +459,8 @@ def load_variant(config_path, cluster_dict, profile: str | None = None) -> AtomV
             raw["gpu_arch"] = gpu_arch_from_config_path(config_path)
         raw, thresholds, _ = resolve_atom_profile(raw, thresholds, profile)
         raw = materialize_atom_sweep(raw, thresholds)
+        raw.setdefault("schema_version", 1)
+        raw.setdefault("framework", "atom")
         thresholds = _prune_orphan_sweep_thresholds(thresholds, _expected_cells_from_raw(raw))
         raw["thresholds"] = thresholds
     return AtomVariantConfig(**raw)
