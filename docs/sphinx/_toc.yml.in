@@ -60,7 +60,7 @@ subtrees:
         - entries:
           - file: how-to/test-suites/training/aorta
             title: Aorta benchmark
-          - file: how-to/test-suites/training/jax
+          - file: how-to/test-suites/training/jaxmaxtext
             title: JAX MaxText tests
           - file: how-to/test-suites/training/megatron
             title: Megatron training tests

@@ -1,7 +1,7 @@
 {
   "_format_note": "CVS training-config layout. Top-level order: (1) cvs params at root, (2) container (incl. its env), (3) train_params (canonical keys + framework passthrough under maxtext_config), (4) tests blocks at root, (5) sweeps + runs. run_mode/nnodes/nic_type are handled internally; the NCCL device selection and JAX distributed knobs are exact env-var names inside container.env.",
-  "gpu_name": "mi300x",
-  "threshold_json": "mi300x_jaxmaxtext_llama-3.1-8b_distributed_threshold.json",
+  "gpu_name": "mi3xx",
+  "threshold_json": "mi325x_jaxmaxtext_llama-3.1-8b_distributed_threshold.json <changeme>",
   "enforce_thresholds": false,
   "gpus_per_node": 8,
   "paths": {
@@ -13,7 +13,7 @@
   },
   "container": {
     "lifetime": "per_run",
-    "name": "rocm-jaxmaxtext-mi300x-llama3.1-8b",
+    "name": "rocm-jaxmaxtext-mi3xx-llama3.1-8b",
     "image": "rocm/jax-training:maxtext-v26.4 <changeme>",
     "runtime": {
       "name": "docker",
@@ -93,7 +93,7 @@
       "remat_policy": "minimal_flash",
       "use_iota_embed": true,
       "scan_layers": true,
-      "per_device_batch_size": 2,
+      "per_device_batch_size": 4,
       "max_target_length": 8192,
       "async_checkpointing": false,
       "quantization": "",
@@ -182,15 +182,15 @@
   },
   "_sweeps_comment": "sweeps{} maps a sweep KEY to per-run overrides. The key encodes the primary params and is parsed by CVS into maxtext_config overrides: BS=<per_device_batch_size>, PRECISION=<BF16|FP8> (FP8 -> the GPU's fp8 flavor: nanoo_fp8 on MI300X/MI325X, fp8 on MI350-class), SL=<max_target_length>. The key is also the threshold-file cell key. Add any EXTRA maxtext_config override for a sweep inside its {} (takes precedence over the parsed values), e.g. \"steps\": 300. runs[] selects which sweep keys to execute.",
   "sweeps": {
-    "BS=2,PRECISION=BF16,SL=8192": {
+    "BS=4,PRECISION=BF16,SL=8192": {
       "_comment": "Add extra maxtext_config overrides for this sweep here (BS/PRECISION/SL come from the key), e.g. \"steps\": 300"
     },
-    "BS=2,PRECISION=FP8,SL=8192": {
+    "BS=4,PRECISION=FP8,SL=8192": {
       "_comment": "Add extra maxtext_config overrides for this sweep here (BS/PRECISION/SL come from the key), e.g. \"steps\": 300"
     }
   },
   "runs": [
-    "BS=2,PRECISION=BF16,SL=8192",
-    "BS=2,PRECISION=FP8,SL=8192"
+    "BS=4,PRECISION=BF16,SL=8192",
+    "BS=4,PRECISION=FP8,SL=8192"
   ]
 }

@@ -19,7 +19,7 @@ Distributed training benchmarks validate multi-node GPU training before producti
      - :doc:`/how-to/test-suites/training/aorta`
      - :doc:`/reference/configuration-files/training/aorta`
    * - JAX MaxText
-     - :doc:`/how-to/test-suites/training/jax`
+     - :doc:`/how-to/test-suites/training/jaxmaxtext`
      - :doc:`/reference/configuration-files/training/jaxmaxtext`
    * - Megatron
      - :doc:`/how-to/test-suites/training/megatron`

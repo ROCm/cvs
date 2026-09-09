@@ -47,7 +47,7 @@ Use ``cvs config list training/jaxmaxtext`` to list available templates, or
     are inline comments and are ignored by the loader.
 
 The suite/lifecycle reference is in
-:doc:`/how-to/test-suites/training/jax`. The config files themselves live in
+:doc:`/how-to/test-suites/training/jaxmaxtext`. The config files themselves live in
 ``cvs/input/config_file/training/jaxmaxtext/`` (each config plus a sibling
 ``_threshold.json``); this page documents every block and the threshold format.
 
@@ -61,62 +61,63 @@ RDMA device-selection vars in ``container.env`` (and add the ``test_setup_rdma``
 stage); single-node configs omit them. Run single-node configs with
 ``jaxmaxtext_single`` and distributed configs with ``jaxmaxtext_distributed``.
 
+The ``mi3xx_*`` configs are **GPU-generic and run on both MI300X and MI325X**
+(both CDNA3). They ship the MI325X batch sizes, so on MI300X (less HBM) a large
+batch may hit **OOM** — lower ``per_device_batch_size`` (the ``BS`` in the sweep
+key) if you see one. Because threshold targets are platform-specific, each
+``mi3xx_*`` config ships ``threshold_json`` with a ``<changeme>`` tag: point it at
+the ``mi300x_*`` or ``mi325x_*`` ``_threshold.json`` for your GPU **before
+running** (the config otherwise refuses to load). The ``mi35x_*`` config targets
+MI350-class (CDNA4) GPUs.
+
 .. list-table::
    :widths: 5 2 2 2
    :header-rows: 1
 
    * - Config file
-     - GPU
+     - GPU(s)
      - Mode
      - Precisions
-   * - ``mi300x_jaxmaxtext_llama-3.1-8b_distributed.json``
-     - MI300X
+   * - ``mi3xx_jaxmaxtext_llama-3.1-8b_distributed.json``
+     - MI300X / MI325X
      - distributed
      - BF16, FP8
-   * - ``mi300x_jaxmaxtext_llama-3.1-70b_single.json``
-     - MI300X
+   * - ``mi3xx_jaxmaxtext_llama-3.1-70b_single.json``
+     - MI300X / MI325X
      - single
      - BF16, FP8
-   * - ``mi300x_jaxmaxtext_llama-3.1-70b_distributed.json``
-     - MI300X
+   * - ``mi3xx_jaxmaxtext_llama-3.1-70b_distributed.json``
+     - MI300X / MI325X
      - distributed
      - BF16, FP8
-   * - ``mi300x_jaxmaxtext_llama-3.3-70b_single.json``
-     - MI300X
+   * - ``mi3xx_jaxmaxtext_llama-3.3-70b_single.json``
+     - MI300X / MI325X
      - single
      - BF16, FP8
-   * - ``mi300x_jaxmaxtext_llama-3.3-70b_distributed.json``
-     - MI300X
+   * - ``mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json``
+     - MI300X / MI325X
      - distributed
      - BF16, FP8
-   * - ``mi300x_jaxmaxtext_deepseek-v2-lite_distributed.json``
-     - MI300X
+   * - ``mi3xx_jaxmaxtext_deepseek-v2-lite_distributed.json``
+     - MI300X / MI325X
      - distributed
      - BF16
-   * - ``mi325x_jaxmaxtext_llama-3.1-8b_distributed.json``
-     - MI325X
+   * - ``mi3xx_jaxmaxtext_llama-3.1-405b_distributed.json``
+     - MI300X / MI325X
      - distributed
      - BF16, FP8
-   * - ``mi325x_jaxmaxtext_llama-3.1-405b_distributed.json``
-     - MI325X
-     - distributed
-     - BF16, FP8
-   * - ``mi325x_jaxmaxtext_llama-3.3-70b_distributed.json``
-     - MI325X
-     - distributed
-     - BF16, FP8
-   * - ``mi325x_jaxmaxtext_deepseek-v2-lite_distributed.json``
-     - MI325X
-     - distributed
-     - BF16
-   * - ``mi325x_jaxmaxtext_deepseek-v4-284b_distributed.json``
-     - MI325X
+   * - ``mi3xx_jaxmaxtext_deepseek-v4-284b_distributed.json``
+     - MI300X / MI325X
      - distributed
      - BF16
    * - ``mi35x_jaxmaxtext_llama-3.1-70b_single.json``
-     - MI35X
+     - MI350-class
      - single
      - BF16, FP8
+
+Threshold files stay **per-platform** (``mi300x_*_threshold.json`` and
+``mi325x_*_threshold.json``); the ``mi3xx_*`` config selects one via
+``threshold_json``.
 
 Config layout
 =============
@@ -141,15 +142,15 @@ Example configuration
 =====================
 
 A representative distributed config
-(``mi325x_jaxmaxtext_llama-3.3-70b_distributed.json``, abridged):
+(``mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json``, abridged):
 
-.. dropdown:: ``mi325x_jaxmaxtext_llama-3.3-70b_distributed.json`` (abridged)
+.. dropdown:: ``mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json`` (abridged)
 
   .. code:: json
 
     {
-      "gpu_name": "mi325x",
-      "threshold_json": "mi325x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json",
+      "gpu_name": "mi3xx",
+      "threshold_json": "mi325x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json <changeme>",
       "enforce_thresholds": false,
       "gpus_per_node": 8,
 
@@ -238,8 +239,10 @@ Top-level (CVS) fields
      - Example
      - Description
    * - ``gpu_name``
-     - ``mi325x``
+     - ``mi3xx``
      - GPU architecture label (informational; also used in run/report labels).
+       ``mi3xx`` = GPU-generic CDNA3 (MI300X/MI325X); also drives the FP8 flavor
+       (``mi35*`` → ``fp8``, else ``nanoo_fp8``).
    * - ``gpus_per_node``
      - ``8``
      - GPUs per node; ``num_gpus = num_nodes × gpus_per_node`` feeds
@@ -248,8 +251,11 @@ Top-level (CVS) fields
      - ``false``
      - If ``false``, ``test_metric`` records values but does not fail.
    * - ``threshold_json``
-     - ``mi325x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json``
-     - Companion threshold filename, resolved next to the config.
+     - ``mi325x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json <changeme>``
+     - Companion threshold filename, resolved next to the config. The
+       ``mi3xx_*`` configs ship this with a ``<changeme>`` tag (thresholds are
+       per-platform); set it to the ``mi300x_*`` or ``mi325x_*`` threshold for
+       your GPU before running — the config refuses to load while it is tagged.
 
 ``paths``
 ---------

@@ -19,7 +19,9 @@ coverage check validates the threshold file against those names directly.
 
 from __future__ import annotations
 
+import json
 import warnings
+from pathlib import Path
 from typing import Any, Dict, List, Literal
 
 from pydantic import field_validator
@@ -501,6 +503,20 @@ def load_training_variant(config_path, cluster_dict):
     internal shape (see `normalize_training_config`), attaches the thresholds, and
     builds the typed `TrainingVariantConfig`.
     """
+    # The GPU-generic mi3xx configs ship threshold_json with a '<changeme>' tag so
+    # the user selects the platform-specific threshold file (mi300x vs mi325x)
+    # before running. Guard here for a clear message -- otherwise substitute_config
+    # would fail with a generic file-not-found on the tagged name.
+    try:
+        _threshold_json = str(json.loads(Path(config_path).read_text()).get("threshold_json", ""))
+    except (OSError, ValueError):
+        _threshold_json = ""
+    if "<changeme>" in _threshold_json.lower():
+        raise ValueError(
+            f"threshold_json is still a placeholder ({_threshold_json!r}). Set it to your GPU "
+            "platform's threshold file (e.g. mi300x_..._threshold.json or mi325x_..._threshold.json) "
+            "before running."
+        )
     raw, thresholds = substitute_config(config_path, cluster_dict)
     raw = normalize_training_config(raw)
     raw["thresholds"] = thresholds

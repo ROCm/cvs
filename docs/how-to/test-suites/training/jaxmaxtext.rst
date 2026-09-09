@@ -24,15 +24,22 @@ Set up config
 
      cvs config list training/jaxmaxtext
 
-2. Copy the configuration file and its sibling threshold file, for example:
+2. Copy the configuration file and the platform threshold file for your GPU, for example:
 
    .. code:: bash
 
-     cvs config copy training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single.json --output ~/cvs_workspace/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single.json
+     cvs config copy training/jaxmaxtext/mi3xx_jaxmaxtext_llama-3.3-70b_single.json --output ~/cvs_workspace/training/jaxmaxtext/mi3xx_jaxmaxtext_llama-3.3-70b_single.json
      cvs config copy training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single_threshold.json --output ~/cvs_workspace/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single_threshold.json
 
-3. Replace every ``<changeme>`` with cluster-specific values: the ``container.image`` tag on every config, and the NCCL/RDMA fields in ``container.env`` on distributed configs.
-4. Change any other parameters relevant to your testing requirements.
+   The ``mi3xx_*`` configs run on both MI300X and MI325X; threshold files stay per-platform
+   (``mi300x_*`` / ``mi325x_*``).
+
+3. Replace every ``<changeme>`` with cluster-specific values: the ``threshold_json`` filename
+   for your GPU platform and the ``container.image`` tag on every config, plus the NCCL/RDMA
+   fields in ``container.env`` on distributed configs.
+4. Change any other parameters relevant to your testing requirements. On MI300X, if a sweep
+   OOMs, lower ``per_device_batch_size`` (the ``BS`` in the sweep key) — the ``mi3xx_*`` configs
+   ship the larger MI325X batch sizes.
 
 Full parameter list: :doc:`/reference/configuration-files/training/jaxmaxtext`.
 
@@ -87,13 +94,13 @@ Single-node:
 
 .. code:: bash
 
-  cvs run jaxmaxtext_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_single.json --html=/var/www/html/cvs/jaxmaxtext_single.html --capture=tee-sys --self-contained-html --log-file=/tmp/jaxmaxtext_single.log -vvv -s
+  cvs run jaxmaxtext_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi3xx_jaxmaxtext_llama-3.3-70b_single.json --html=/var/www/html/cvs/jaxmaxtext_single.html --capture=tee-sys --self-contained-html --log-file=/tmp/jaxmaxtext_single.log -vvv -s
 
 Distributed:
 
 .. code:: bash
 
-  cvs run jaxmaxtext_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi325x_jaxmaxtext_llama-3.3-70b_distributed.json --html=/var/www/html/cvs/jaxmaxtext_distributed.html --capture=tee-sys --self-contained-html --log-file=/tmp/jaxmaxtext_distributed.log -vvv -s
+  cvs run jaxmaxtext_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json --html=/var/www/html/cvs/jaxmaxtext_distributed.html --capture=tee-sys --self-contained-html --log-file=/tmp/jaxmaxtext_distributed.log -vvv -s
 
 The mode is inferred from the config: distributed configs carry the NCCL RDMA
 device-selection vars in ``container.env`` (and add the ``test_setup_rdma``

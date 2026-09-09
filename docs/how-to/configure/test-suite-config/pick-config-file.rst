@@ -86,10 +86,10 @@ Training workload templates use:
 .. code:: text
 
   input/config_file/training/jaxmaxtext/
-  ├── mi300x_jaxmaxtext_llama-3.3-70b_single.json
-  └── mi325x_jaxmaxtext_llama-3.3-70b_distributed.json
+  ├── mi3xx_jaxmaxtext_llama-3.3-70b_single.json
+  └── mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json
 
-``mi325x_jaxmaxtext_llama-3.3-70b_distributed.json`` → ``mi325x`` · ``jaxmaxtext`` · ``llama-3.3-70b`` · ``distributed``.
+``mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json`` → ``mi3xx`` · ``jaxmaxtext`` · ``llama-3.3-70b`` · ``distributed``.
 
 **Suites**
 

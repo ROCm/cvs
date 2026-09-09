@@ -1,7 +1,7 @@
 {
   "_format_note": "CVS training-config layout. Top-level order: (1) cvs params at root, (2) container (incl. its env), (3) train_params (canonical keys + framework passthrough under maxtext_config), (4) tests blocks at root, (5) sweeps + runs. run_mode/nnodes/nic_type are handled internally; the NCCL device selection and JAX distributed knobs are exact env-var names inside container.env.",
-  "gpu_name": "mi325x",
-  "threshold_json": "mi325x_jaxmaxtext_llama-3.1-405b_distributed_threshold.json",
+  "gpu_name": "mi3xx",
+  "threshold_json": "mi325x_jaxmaxtext_llama-3.1-405b_distributed_threshold.json <changeme>",
   "enforce_thresholds": false,
   "gpus_per_node": 8,
   "paths": {
@@ -13,7 +13,7 @@
   },
   "container": {
     "lifetime": "per_run",
-    "name": "rocm-jaxmaxtext-mi325x-llama3.1-405b",
+    "name": "rocm-jaxmaxtext-mi3xx-llama3.1-405b",
     "image": "rocm/jax-training:maxtext-v26.4 <changeme>",
     "runtime": {
       "name": "docker",
