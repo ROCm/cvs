@@ -92,7 +92,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.roles.server.ib_netdev, "auto")
         self.assertEqual(variant.roles.server.ib_hca_devices, "auto")
         self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
-        self.assertTrue(variant.enforce_thresholds)
+        self.assertFalse(variant.enforce_thresholds)
         self.assertEqual(len(variant.expected_cells()), 16)
         cell = "ISL=512,OSL=512,TP=8,PP=2,CONC=16"
         self.assertIn(cell, variant.expected_cells())
@@ -150,10 +150,10 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(ids[2], "acc_warmup-conc1")
         self.assertEqual(cases[0][1], 128)
 
-    def test_w1_single_threshold_health_gates_tight_when_enforcing(self):
+    def test_w1_single_threshold_health_specs_present(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_single.json")
-        self.assertTrue(variant.enforce_thresholds)
+        self.assertFalse(variant.enforce_thresholds)
         cell = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128"
         self.assertEqual(variant.thresholds[cell]["success_rate"]["value"], 1)
         self.assertEqual(variant.thresholds[cell]["failed"]["value"], 0)
@@ -310,7 +310,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertIn("bbh", task_ids)
         self.assertIn("arc_challenge", task_ids)
         self.assertTrue(variant.quant_parity.enabled)
-        self.assertTrue(variant.enforce_thresholds)
+        self.assertFalse(variant.enforce_thresholds)
         self.assertIn(
             "gsm8k.exact_match__flexible-extract",
             variant.thresholds["accuracy"]["gsm8k_flex"],

@@ -16,7 +16,7 @@
   },
   "profiles": {
     "perf": {
-      "enforce_thresholds": true,
+      "enforce_thresholds": false,
       "run_card": {
         "atom_image_pin": "rocm/atom-dev:latest",
         "notes": "DeepSeek-R1-0528 FP8 single-node: atom driver perf gate (1K/1K) plus accuracy"

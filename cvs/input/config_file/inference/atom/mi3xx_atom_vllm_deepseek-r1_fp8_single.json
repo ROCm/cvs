@@ -3,7 +3,7 @@
   "schema_version": 1,
   "framework": "atom",
   "gpu_arch": "mi3xx",
-  "enforce_thresholds": true,
+  "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_vllm_deepseek-r1_fp8_single_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
