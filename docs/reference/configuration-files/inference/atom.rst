@@ -187,13 +187,13 @@ Fields you must customize
 Placeholder substitution
 ========================
 
-- ``{user-id}`` ΓÇö cluster username (or local OS user fallback).
-- ``{shared_fs}`` ΓÇö self-reference within ``paths``.
-- ``{paths.models_dir}`` and other ``{paths.*}`` ΓÇö cross-referenced anywhere.
-- ``<changeme-models-mount>`` ΓÇö host path to the HF cache / weights tree; mounted at
+- ``{user-id}`` — cluster username (or local OS user fallback).
+- ``{shared_fs}`` — self-reference within ``paths``.
+- ``{paths.models_dir}`` and other ``{paths.*}`` — cross-referenced anywhere.
+- ``<changeme-models-mount>`` — host path to the HF cache / weights tree; mounted at
   ``/models`` in the container. Shipped configs set ``paths.models_dir`` to ``/models``
   (the in-container path used for ``HF_HUB_CACHE``).
-- ``{head-node-ip}`` ΓÇö replace manually in copied multinode configs.
+- ``{head-node-ip}`` — replace manually in copied multinode configs.
 
 ``threshold_json`` is a literal filename (no placeholder substitution).
 
@@ -263,7 +263,7 @@ Top-level fields:
    * - ``sequence_combinations``
      - Named ``{name, isl, osl}`` shapes
    * - ``runs``
-     - ``{combo, concurrency}`` ΓÇö one benchmark cell each
+     - ``{combo, concurrency}`` — one benchmark cell each
 
 Each cell's threshold key is built by :meth:`cvs.lib.inference.atom.atom_config_loader.AtomVariantConfig.cell_key`:
 
