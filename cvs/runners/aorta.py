@@ -932,6 +932,7 @@ class AortaRunner(BaseRunner):
             try:
                 # Suppress warnings during cleanup as SSH connections may already be closed
                 with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=BrokenPipeError)
                     warnings.filterwarnings("ignore", message=".*Broken pipe.*")
                     try:
                         client.close()

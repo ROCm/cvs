@@ -82,8 +82,8 @@ SGLANG_DISTRIBUTED_TEST_ORDER = {
 }
 
 
-def _perf_result(actual, expected, metric_key: str) -> str:
-    if actual is None or expected is None:
+def _perf_result(actual, expected, metric_key, *, enforce_thresholds=True):
+    if not enforce_thresholds or actual is None or expected is None:
         return "-"
     a, e = float(actual), float(expected)
     if "ms" in metric_key.lower():
