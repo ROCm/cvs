@@ -2,9 +2,6 @@
   "_comment": "vLLM single-node workload. Set container.image, server_params.model, and the models mount before running.",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_vllm_qwen35-397b-a17b_bf16_single_threshold.json",
-  "_comment_network": "HCA devices may be discovered automatically; ib_netdev selects the distributed socket interface.",
-  "ib_hca_devices": "auto",
-  "ib_netdev": null,
   "paths": {
     "_comment": "Host and container paths for model access, artifacts, and Hugging Face authentication.",
     "shared_fs": "/home/{user-id}",

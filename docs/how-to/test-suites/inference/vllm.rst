@@ -81,6 +81,7 @@ In the **configuration file**, set:
 
 For a **multinode** configuration, also set:
 
+- ``container.env.NCCL_IB_HCA`` — the comma-separated HCA names exposed on every node. The packaged MI3xx configurations use ``rdma0`` through ``rdma7``.
 - ``ib_netdev`` — the interface name you looked up in the prerequisites.
 
 .. tip::
@@ -142,7 +143,7 @@ A skipped ``test_setup_sshd`` row is expected. vLLM communicates over the host n
 Going multinode
 ===============
 
-The cluster file determines the host count. Current distributed recipes support exactly two hosts, or one-host fallback. For distributed runs, configure ``server_params.pipeline_parallel_size`` and top-level ``ib_netdev``. CVS derives the rendezvous address from the cluster head.
+The cluster file determines the host count. Current distributed recipes support exactly two hosts, or one-host fallback. For distributed runs, configure ``server_params.pipeline_parallel_size``, ``container.env.NCCL_IB_HCA``, and top-level ``ib_netdev``. CVS derives the rendezvous address from the cluster head.
 
 Using the default backend (mp)
 ------------------------------

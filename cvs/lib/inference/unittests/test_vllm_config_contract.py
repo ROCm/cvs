@@ -136,10 +136,23 @@ class TestVllmConfigContract(unittest.TestCase):
     def test_record_only_mode_allows_unmeasured_selected_cells(self):
         self.assertEqual(VariantConfig(**_config()).expected_cells(), [CELL])
 
-    def test_rejects_network_environment_collisions(self):
+    def test_accepts_container_hca_and_rejects_generated_socket_environment(self):
         config = _config()
         config["container"]["env"] = {"NCCL_IB_HCA": "rdma0"}
-        with self.assertRaisesRegex(ValidationError, "generated network"):
+        variant = VariantConfig(**config)
+        self.assertEqual(variant.container.nccl_ib_hcas, ["rdma0"])
+
+        for name in ("NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"):
+            with self.subTest(name=name):
+                config = _config()
+                config["container"]["env"] = {name: "eno0"}
+                with self.assertRaisesRegex(ValidationError, "generated network"):
+                    VariantConfig(**config)
+
+    def test_rejects_empty_container_hca(self):
+        config = _config()
+        config["container"]["env"] = {"NCCL_IB_HCA": " , "}
+        with self.assertRaisesRegex(ValidationError, "must name at least one device"):
             VariantConfig(**config)
 
 
@@ -241,6 +254,19 @@ class TestPackagedVllmCatalog(unittest.TestCase):
                 env = load_variant(path, {"username": "test"}).container.env
                 if "VLLM_ROCM_USE_AITER_MHA" in env:
                     self.assertEqual(env.get("VLLM_ROCM_USE_AITER"), "1")
+
+    def test_packaged_network_environment(self):
+        expected_hcas = "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7"
+        for path in _packaged_configs():
+            with self.subTest(config=path.name):
+                variant = load_variant(path, {"username": "test"})
+                self.assertNotIn("ib_hca_devices", variant.model_fields_set)
+                if path.name.endswith("_distributed.json"):
+                    self.assertEqual(variant.container.env.get("NCCL_IB_HCA"), expected_hcas)
+                    self.assertIn("ib_netdev", variant.model_fields_set)
+                else:
+                    self.assertNotIn("NCCL_IB_HCA", variant.container.env)
+                    self.assertNotIn("ib_netdev", variant.model_fields_set)
 
 
 if __name__ == "__main__":

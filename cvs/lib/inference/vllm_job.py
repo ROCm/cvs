@@ -22,9 +22,9 @@ distributed flags (--node-rank, --master-addr, --master-port, --nnodes,
 int(nnodes) > 1. Everything else is topology-blind.
 
 IB device config (distributed only):
-  ib_hcas: discovered HCA names for NCCL_IB_HCA, passed in from the
-      test_discover_topology lifecycle step. Written into the per-node env
-      script.
+  NCCL_IB_HCA: inherited from container.env when configured there. Otherwise,
+      ib_hcas discovered by test_discover_topology are written into the
+      per-node env script.
   ib_netdev: explicit Linux netdev name for NCCL_SOCKET_IFNAME /
       GLOO_SOCKET_IFNAME. Read directly from top-level variant.ib_netdev.
   Required for multi-host distributed execution.
@@ -81,8 +81,8 @@ def scrape_vllm_metrics(orch, base_url: str, port_no: str, timeout_s: "float | N
 class VllmJob:
     """Unified vLLM benchmark job for single-node and multinode distributed runs.
 
-    Construct with the result of test_discover_topology (ib_hcas) for distributed
-    runs; pass None (or omit) for single-node.
+    For distributed configurations without ``container.env.NCCL_IB_HCA``,
+    construct with the HCA names returned by test_discover_topology.
 
     The ``orch`` instance is expected to already have ``setup_containers()`` and
     (for multinode) ``setup_sshd()`` called against it by the test lifecycle.
@@ -136,9 +136,7 @@ class VllmJob:
         self.osl = str(osl)
         self.concurrency = str(concurrency)
         self.num_prompts = str(num_prompts)
-        # Discovered HCA names for NCCL_IB_HCA (multinode only). Passed in from
-        # test_discover_topology so discovery runs once per lifecycle, not per cell.
-        self.ib_hcas = ib_hcas or []
+        self.ib_hcas = [] if variant.container.nccl_ib_hcas is not None else (ib_hcas or [])
         self.log_subdir = log_subdir
         self.hosts = tuple(orch.hosts)
         if not self.hosts:

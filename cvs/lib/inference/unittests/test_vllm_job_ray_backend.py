@@ -1185,6 +1185,21 @@ class TestVllmJobBuildServerCmd(unittest.TestCase):
                 else:
                     self.assertNotIn("NCCL_IB_HCA", script)
 
+    def test_container_hca_is_not_overwritten_by_discovered_devices(self):
+        orch = RecordingOrch()
+        job = _job(
+            orch=orch,
+            serve_args={},
+            nnodes="2",
+            pp="2",
+            env={"NCCL_IB_HCA": "rdma0,rdma1"},
+            ib_hcas=["mlx5_0", "mlx5_1"],
+        )
+        job.build_server_cmd()
+        script = self._script(orch, None)
+        self.assertNotIn("NCCL_IB_HCA", script)
+        self.assertEqual(job.variant.container.env["NCCL_IB_HCA"], "rdma0,rdma1")
+
     def test_socket_ifname_exports_present_only_when_ib_netdev_set(self):
         # ib_netdev set -> the socket-interface exports are emitted (all three name
         # the device); ib_netdev None -> none are emitted.

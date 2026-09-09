@@ -2,8 +2,7 @@
   "_comment": "vLLM distributed workload. Set container.image, server_params.model, ib_netdev, and the models mount before running.",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_vllm_kimi-k27-code_mxfp4_distributed_threshold.json",
-  "_comment_network": "HCA devices may be discovered automatically; ib_netdev selects the distributed socket interface.",
-  "ib_hca_devices": "auto",
+  "_comment_network": "NCCL_IB_HCA is fixed in container.env; ib_netdev selects the distributed socket interface.",
   "ib_netdev": "<changeme>",
   "paths": {
     "_comment": "Host and container paths for model access, artifacts, and Hugging Face authentication.",
@@ -18,6 +17,7 @@
     "name": "vllm_kimi-k27-code_mxfp4_distributed_mi325x",
     "image": "<changeme>",
     "env": {
+      "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
       "HF_HUB_OFFLINE": "1",
       "TRANSFORMERS_OFFLINE": "1"
     },

@@ -88,9 +88,9 @@ A vLLM configuration file has these top-level keys:
    * - ``threshold_json``
      - yes
      - Explicit path to the threshold file. See :ref:`vllm-threshold-discovery`
-   * - ``ib_hca_devices`` / ``ib_netdev``
-     - no / distributed
-     - RDMA HCA selection and distributed socket interface
+   * - ``ib_netdev``
+     - distributed
+     - Distributed socket interface; RDMA HCA selection lives in ``container.env``
    * - ``container``
      - yes
      - Container/Docker settings. See :ref:`vllm-container`
@@ -251,7 +251,7 @@ Beyond the validation rules, a multinode run needs:
 
 - ``server_params.dist_init_port`` — default ``29501``; CVS derives the head address from the cluster.
 - Top-level ``ib_netdev`` — the Linux interface name. There is deliberately no ``"auto"`` value; it cannot be derived reliably from HCA names. This value populates ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, and ``TP_SOCKET_IFNAME``.
-- Top-level ``ib_hca_devices`` — ``"auto"``, an explicit list, or ``null``. When set, populates ``NCCL_IB_HCA``.
+- ``container.env.NCCL_IB_HCA`` — the comma-separated RDMA HCA names available on every node. The packaged MI3xx configurations set ``rdma0`` through ``rdma7``.
 
 .. _vllm-container:
 
@@ -571,7 +571,7 @@ These are separate and are frequently confused.
 
    * -
      - ``container.env``
-     - generated process environment
+     - generated per-command environment
    * - Applied by
      - ``docker run -e``
      - A sourced shell script inside the container after HCA discovery
@@ -585,16 +585,19 @@ These are separate and are frequently confused.
      - ``GPUS=8``, ``MULTINODE=true``
      - HCA and netdev selections
 
-The server environment script always exports:
+The generated per-command environment always exports:
 
 .. code:: bash
 
   export HF_TOKEN=<token>
   export HF_HUB_CACHE=<paths.models_dir>
-then, conditionally, ``NCCL_IB_HCA`` (from top-level ``ib_hca_devices``) and
-``NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` / ``TP_SOCKET_IFNAME`` (from
-top-level ``ib_netdev``). Put static ROCm, NCCL, and vLLM exports in
-``container.env``; it may not override those generated network variables.
+then, conditionally, ``NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` /
+``TP_SOCKET_IFNAME`` from top-level ``ib_netdev``. Packaged configurations set
+``NCCL_IB_HCA`` in ``container.env`` so it is inherited by every command and
+is not overwritten by HCA discovery. The legacy top-level ``ib_hca_devices``
+field remains an auto/explicit fallback for external configurations that omit
+``container.env.NCCL_IB_HCA``. Put other static ROCm, NCCL, and vLLM exports in
+``container.env``; it may not override the generated socket variables.
 
 The packaged MI3xx catalog's AITER settings are image- and model-scoped. For
 the image based on vLLM commit ``4bdc8a788``:
@@ -1198,8 +1201,8 @@ Troubleshooting
      - Multi-host ``vllm_distributed`` on the mp backend needs pipeline parallelism. Either raise ``pipeline_parallel_size``, or set ``distributed-executor-backend`` to ``"ray"``
    * - ``vllm_single requires pipeline_parallel_size=1``
      - Use ``vllm_distributed`` when the config requires pipeline parallelism
-   * - ``vllm_distributed requires roles.server.ib_netdev``
-     - Set ``roles.server.ib_netdev`` to the interface name. There is no ``"auto"``
+   * - ``vllm_distributed requires ib_netdev``
+     - Set top-level ``ib_netdev`` to the interface name. There is no ``"auto"``
    * - ``Container image not specified in config``
      - ``container.image`` is empty. Note that a variant ``container`` block with no ``image`` overwrites the cluster file's value
    * - ``duplicate sequence_combination names``

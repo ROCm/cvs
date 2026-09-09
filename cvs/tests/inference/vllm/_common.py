@@ -111,7 +111,8 @@ def test_discover_topology(orch, variant_config, vllm_targets, lifecycle, reques
         lifecycle.failed = True
         lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - started)
         pytest.fail(str(exc))
-    requested = variant_config.ib_hca_devices
+    container_hcas = variant_config.container.nccl_ib_hcas
+    requested = container_hcas if container_hcas is not None else variant_config.ib_hca_devices
     if requested and requested != "auto":
         try:
             validate_ib_hca_preflight(discovered, requested)
@@ -119,7 +120,7 @@ def test_discover_topology(orch, variant_config, vllm_targets, lifecycle, reques
             lifecycle.failed = True
             lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - started)
             pytest.fail(str(exc))
-        lifecycle.ib_hcas = requested
+        lifecycle.ib_hcas = [] if container_hcas is not None else requested
     else:
         lifecycle.ib_hcas = next(iter(discovered.values()))
     lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - started)
