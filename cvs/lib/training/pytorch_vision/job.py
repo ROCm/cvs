@@ -164,6 +164,14 @@ class PyTorchVisionJob:
             str(sweep.gradient_accumulation_steps),
             "--training-flops-per-image",
             str(sweep.training_flops_per_image),
+            "--data-mode",
+            sweep.data_mode,
+            "--rocal-num-threads",
+            str(sweep.rocal_num_threads),
+            "--loader-warmup-steps",
+            str(sweep.loader_warmup_steps),
+            "--loader-benchmark-steps",
+            str(sweep.loader_benchmark_steps),
             "--peak-tflops-per-gpu",
             str(training.peak_tflops_per_gpu),
             "--output",
@@ -182,6 +190,8 @@ class PyTorchVisionJob:
                 args.append("--keep-checkpoint")
         if training.channels_last:
             args.append("--channels-last")
+        if sweep.dataset_path:
+            args.extend(["--dataset-path", sweep.dataset_path])
 
         exports = {
             "OMP_NUM_THREADS": str(training.omp_num_threads),
@@ -278,7 +288,8 @@ class PyTorchVisionJob:
                     self.sweep.batch_size * self.sweep.gradient_accumulation_steps * self.variant.training.gpus_per_node
                 ),
                 "world_size": self.variant.training.gpus_per_node,
-                "synthetic_data": True,
+                "synthetic_data": self.sweep.data_mode == "synthetic",
+                "data_mode": self.sweep.data_mode,
             }
             mismatches = {
                 key: {"expected": expected, "actual": raw.get(key)}

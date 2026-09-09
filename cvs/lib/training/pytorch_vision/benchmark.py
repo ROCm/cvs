@@ -33,6 +33,11 @@ def _parse_args():
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
     parser.add_argument("--training-flops-per-image", type=float, required=True)
     parser.add_argument("--peak-tflops-per-gpu", type=float, required=True)
+    parser.add_argument("--data-mode", choices=["synthetic", "rocal"], default="synthetic")
+    parser.add_argument("--dataset-path", default="")
+    parser.add_argument("--rocal-num-threads", type=int, default=8)
+    parser.add_argument("--loader-warmup-steps", type=int, default=5)
+    parser.add_argument("--loader-benchmark-steps", type=int, default=20)
     parser.add_argument("--checkpoint-path")
     parser.add_argument("--checkpoint-loss-tolerance", type=float, default=1e-5)
     parser.add_argument("--keep-checkpoint", action="store_true")
@@ -156,6 +161,103 @@ def _to_cpu(value):
 def _device_used_mb(device):
     free_bytes, total_bytes = torch.cuda.mem_get_info(device)
     return (total_bytes - free_bytes) / 1e6
+
+
+def _build_rocal_loader(args, rank, world_size):
+    import amd.rocal.fn as fn
+    import amd.rocal.types as types
+    from amd.rocal.pipeline import Pipeline
+    from amd.rocal.plugin.pytorch import ROCALClassificationIterator
+
+    data_path = str(Path(args.dataset_path) / "train")
+    pipe = Pipeline(
+        batch_size=args.batch_size,
+        num_threads=args.rocal_num_threads,
+        device_id=int(os.environ["LOCAL_RANK"]),
+        seed=2026 + rank,
+        rocal_cpu=False,
+        tensor_dtype=types.FLOAT,
+        tensor_layout=types.NCHW,
+        prefetch_queue_depth=6,
+        mean=[0.485 * 255, 0.456 * 255, 0.406 * 255],
+        std=[0.229 * 255, 0.224 * 255, 0.225 * 255],
+        output_memory_type=types.DEVICE_MEMORY,
+    )
+    with pipe:
+        jpegs, _labels = fn.readers.file(file_root=data_path)
+        decoded = fn.decoders.image_slice(
+            jpegs,
+            output_type=types.RGB,
+            file_root=data_path,
+            shard_id=rank,
+            num_shards=world_size,
+            random_shuffle=True,
+        )
+        resized = fn.resize(
+            decoded,
+            resize_width=args.image_size,
+            resize_height=args.image_size,
+            output_layout=types.NHWC,
+            output_dtype=types.UINT8,
+            interpolation_type=types.TRIANGULAR_INTERPOLATION,
+        )
+        flip = fn.random.coin_flip(probability=0.5)
+        normalized = fn.crop_mirror_normalize(
+            resized,
+            output_layout=types.NCHW,
+            output_dtype=types.FLOAT,
+            crop=(args.image_size, args.image_size),
+            mirror=flip,
+            mean=[0.485 * 255, 0.456 * 255, 0.406 * 255],
+            std=[0.229 * 255, 0.224 * 255, 0.225 * 255],
+        )
+        pipe.set_outputs(normalized)
+    pipe.build()
+    return ROCALClassificationIterator(
+        pipe,
+        device="cuda",
+        device_id=int(os.environ["LOCAL_RANK"]),
+    )
+
+
+def _next_rocal_batches(loader, accumulation_steps, channels_last):
+    image_batches = []
+    label_batches = []
+    for _ in range(accumulation_steps):
+        try:
+            [images], labels = next(loader)
+        except StopIteration:
+            loader.reset()
+            [images], labels = next(loader)
+        if channels_last:
+            images = images.contiguous(memory_format=torch.channels_last)
+        image_batches.append(images)
+        label_batches.append(labels.long())
+    return image_batches, label_batches
+
+
+def _measure_rocal_loader(loader, args, device):
+    for _ in range(args.loader_warmup_steps):
+        _next_rocal_batches(
+            loader,
+            args.gradient_accumulation_steps,
+            args.channels_last,
+        )
+    torch.cuda.synchronize(device)
+    dist.barrier()
+    start = time.perf_counter()
+    for _ in range(args.loader_benchmark_steps):
+        _next_rocal_batches(
+            loader,
+            args.gradient_accumulation_steps,
+            args.channels_last,
+        )
+    torch.cuda.synchronize(device)
+    elapsed = _reduce_max(time.perf_counter() - start, device)
+    images = (
+        args.batch_size * args.gradient_accumulation_steps * int(os.environ["WORLD_SIZE"]) * args.loader_benchmark_steps
+    )
+    return images / elapsed
 
 
 def _checkpoint_roundtrip(model, optimizer, loss_fn, image_batches, label_batches, args, device, rank):
@@ -309,34 +411,51 @@ def main():
     optimizer = _build_optimizer(model, args)
     loss_fn = torch.nn.CrossEntropyLoss()
 
-    generator = torch.Generator(device=device)
-    generator.manual_seed(2026 + rank)
-    image_batches = [
-        torch.randn(
-            args.batch_size,
-            3,
-            args.image_size,
-            args.image_size,
-            device=device,
-            generator=generator,
+    rocal_loader = None
+    data_loader_images_per_sec = None
+    if args.data_mode == "rocal":
+        rocal_loader = _build_rocal_loader(args, rank, world_size)
+        data_loader_images_per_sec = _measure_rocal_loader(rocal_loader, args, device)
+        image_batches, label_batches = _next_rocal_batches(
+            rocal_loader,
+            args.gradient_accumulation_steps,
+            args.channels_last,
         )
-        for _ in range(args.gradient_accumulation_steps)
-    ]
-    label_batches = [
-        torch.randint(
-            0,
-            args.num_classes,
-            (args.batch_size,),
-            device=device,
-            generator=generator,
-        )
-        for _ in range(args.gradient_accumulation_steps)
-    ]
-    if args.channels_last:
-        image_batches = [images.contiguous(memory_format=torch.channels_last) for images in image_batches]
+    else:
+        generator = torch.Generator(device=device)
+        generator.manual_seed(2026 + rank)
+        image_batches = [
+            torch.randn(
+                args.batch_size,
+                3,
+                args.image_size,
+                args.image_size,
+                device=device,
+                generator=generator,
+            )
+            for _ in range(args.gradient_accumulation_steps)
+        ]
+        label_batches = [
+            torch.randint(
+                0,
+                args.num_classes,
+                (args.batch_size,),
+                device=device,
+                generator=generator,
+            )
+            for _ in range(args.gradient_accumulation_steps)
+        ]
+        if args.channels_last:
+            image_batches = [images.contiguous(memory_format=torch.channels_last) for images in image_batches]
 
     dist.barrier()
     for _ in range(args.warmup_steps):
+        if rocal_loader is not None:
+            image_batches, label_batches = _next_rocal_batches(
+                rocal_loader,
+                args.gradient_accumulation_steps,
+                args.channels_last,
+            )
         _train_step(
             model,
             optimizer,
@@ -355,6 +474,13 @@ def main():
     used_before_mb = _device_used_mb(device)
     window_start = time.perf_counter()
     for _ in range(args.measure_steps):
+        wall_start = time.perf_counter()
+        if rocal_loader is not None:
+            image_batches, label_batches = _next_rocal_batches(
+                rocal_loader,
+                args.gradient_accumulation_steps,
+                args.channels_last,
+            )
         start = torch.cuda.Event(enable_timing=True)
         stop = torch.cuda.Event(enable_timing=True)
         start.record()
@@ -368,7 +494,9 @@ def main():
         )
         stop.record()
         stop.synchronize()
-        local_times.append(float(start.elapsed_time(stop)))
+        local_times.append(
+            (time.perf_counter() - wall_start) * 1000.0 if rocal_loader is not None else float(start.elapsed_time(stop))
+        )
         loss_value = float(loss.detach())
         losses.append(loss_value)
         all_finite = all_finite and math.isfinite(loss_value)
@@ -423,7 +551,9 @@ def main():
                 "gradient_accumulation_steps": args.gradient_accumulation_steps,
                 "effective_global_batch_size": global_batch,
                 "world_size": world_size,
-                "synthetic_data": True,
+                "synthetic_data": args.data_mode == "synthetic",
+                "data_mode": args.data_mode,
+                "dataset_path": args.dataset_path,
                 "torch_version": torch.__version__,
                 "hip_version": torch.version.hip,
                 "device": torch.cuda.get_device_name(device),
@@ -442,6 +572,11 @@ def main():
                     "peak_memory_allocated_mb": allocated.item(),
                     "peak_memory_reserved_mb": reserved.item(),
                     "device_memory_used_mb_observed": used.item(),
+                    **(
+                        {"data_loader_images_per_sec": data_loader_images_per_sec}
+                        if data_loader_images_per_sec is not None
+                        else {}
+                    ),
                     **checkpoint_metrics,
                     "loss_initial": loss_initial,
                     "loss_final": loss_final,

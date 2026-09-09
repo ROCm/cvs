@@ -1,0 +1,20 @@
+FROM rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0@sha256:4449f856653602317e4101a76fce599c7fcd58ccec2e539951fce5f73083179e
+
+ARG ROCAL_VERSION=2.5.0.70204-93~24.04
+
+RUN echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/graphics/7.2.4/ubuntu noble main" \
+        > /etc/apt/sources.list.d/amdgpu-graphics.list \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        rocal=${ROCAL_VERSION} \
+        rocal-dev=${ROCAL_VERSION} \
+        rocal-test=${ROCAL_VERSION} \
+        rocdecode-dev=1.7.0.70204-93~24.04 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONPATH=/opt/rocm/lib
+
+RUN python -c "import torch, torchvision; from amd.rocal.plugin.pytorch import ROCALClassificationIterator; print(torch.__version__, torchvision.__version__, ROCALClassificationIterator)"
+
+LABEL org.opencontainers.image.source="https://github.com/ROCm/rocAL"
+LABEL org.opencontainers.image.version="rocm7.2.4-py3.12-torch2.10-rocal2.5.0"

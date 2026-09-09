@@ -26,8 +26,9 @@ ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (
     ("loss_initial", "-"),
     ("loss_final", "-"),
 )
+OPTIONAL_ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (("data_loader_images_per_sec", "images/s"),)
 DERIVED_METRICS: Tuple[Tuple[str, str], ...] = (("gradient_accumulation_overhead_pct", "%"),)
-METRICS = ARTIFACT_METRICS + DERIVED_METRICS
+METRICS = ARTIFACT_METRICS + OPTIONAL_ARTIFACT_METRICS + DERIVED_METRICS
 
 METRIC_UNITS = dict(METRICS)
 GATED_METRICS = {
@@ -71,6 +72,7 @@ RESULTS_COLUMNS = (
     ("GA overhead (%)", "training.gradient_accumulation_overhead_pct"),
     ("Initial loss", "training.loss_initial"),
     ("Final loss", "training.loss_final"),
+    ("Data loader images/s", "training.data_loader_images_per_sec"),
 )
 
 METRIC_TIERS = {
@@ -99,6 +101,7 @@ METRIC_TIERS = {
         "checkpoint_resume_optimizer_max_abs_delta",
     ),
     "overhead": ("gradient_accumulation_overhead_pct",),
+    "data": ("data_loader_images_per_sec",),
 }
 METRIC_TIER_ORDER = tuple(METRIC_TIERS) + ("record",)
 _TIERED_METRICS = {metric for names in METRIC_TIERS.values() for metric in names}
@@ -151,4 +154,12 @@ def to_training_metrics(raw: Dict[str, Any]) -> Dict[str, float]:
 
     if missing:
         raise ValueError(f"vision result artifact is missing metrics: {missing}")
+    for name, _unit in OPTIONAL_ARTIFACT_METRICS:
+        value = metrics.get(name)
+        if value is None:
+            continue
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            raise ValueError(f"vision metric {name!r} is not finite: {value!r}")
+        out[f"training.{name}"] = numeric
     return out

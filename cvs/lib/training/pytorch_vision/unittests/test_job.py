@@ -30,6 +30,11 @@ def _variant():
         image_size=224,
         gradient_accumulation_steps=1,
         training_flops_per_image=24600000000,
+        data_mode="synthetic",
+        dataset_path="",
+        rocal_num_threads=8,
+        loader_warmup_steps=5,
+        loader_benchmark_steps=20,
     )
     training = SimpleNamespace(
         gpus_per_node=8,
@@ -70,6 +75,7 @@ def _artifact():
         "effective_global_batch_size": 1024,
         "world_size": 8,
         "synthetic_data": True,
+        "data_mode": "synthetic",
         "metrics": {name: index + 1.0 for index, (name, _unit) in enumerate(METRICS)},
     }
 

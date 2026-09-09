@@ -28,7 +28,15 @@ def _run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
         ("Topology", f"1 node \u00d7 {variant.training.gpus_per_node} GPUs", False),
         ("Distributed", "DDP", False),
         ("Precision", sweep.precision, False),
-        ("Input", f"synthetic 3\u00d7{sweep.image_size}\u00d7{sweep.image_size}", False),
+        (
+            "Input",
+            (
+                f"rocAL GPU ImageNet-1k \u00b7 3\u00d7{sweep.image_size}\u00d7{sweep.image_size}"
+                if sweep.data_mode == "rocal"
+                else f"synthetic 3\u00d7{sweep.image_size}\u00d7{sweep.image_size}"
+            ),
+            False,
+        ),
         ("Training FLOPs/image", f"{sweep.training_flops_per_image / 1e9:.1f} GFLOP (provisional)", False),
         ("Peak BF16/GPU", f"{variant.training.peak_tflops_per_gpu:.1f} TFLOPS (provisional)", False),
         ("Checkpoint", "exact load + tolerance-gated resumed step", False),
@@ -41,7 +49,7 @@ def _run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
 
 
 def _cell_nodeid_token(key: tuple) -> str:
-    return f"[W1-BF16-R{key[3]}-MBS{key[5]}-{key[4]}"
+    return f"[{key[2]}-MBS{key[5]}-{key[4]}"
 
 
 def _cell_id(variant: Any, key: tuple) -> str:
@@ -51,6 +59,7 @@ def _cell_id(variant: Any, key: tuple) -> str:
         for sweep in variant.training.enabled_sweeps()
         if sweep.model == model
         and sweep.precision in str(workload)
+        and (sweep.data_mode == "rocal") == ("ROCAL" in str(workload))
         and sweep.image_size == int(image_size)
         and sweep.batch_size == int(batch_size)
         and f"GA{sweep.gradient_accumulation_steps}" == ga_label

@@ -21,6 +21,7 @@ class TestPyTorchVisionRunDeck(unittest.TestCase):
             batch_size=256,
             gradient_accumulation_steps=1,
             training_flops_per_image=24600000000,
+            data_mode="synthetic",
         )
         thresholds = {f"training.{name}": {"kind": "info", "value": 0} for name, _unit in METRICS}
         thresholds["training.images_per_sec"] = {"kind": "min", "value": 24500}

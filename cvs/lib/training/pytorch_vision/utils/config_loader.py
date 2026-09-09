@@ -24,6 +24,17 @@ class VisionSweep(_Forbid):
     image_size: int = Field(default=224, gt=0)
     gradient_accumulation_steps: int = Field(default=1, ge=1)
     training_flops_per_image: float = Field(gt=0)
+    data_mode: Literal["synthetic", "rocal"] = "synthetic"
+    dataset_path: str = ""
+    rocal_num_threads: int = Field(default=8, ge=1)
+    loader_warmup_steps: int = Field(default=5, ge=1)
+    loader_benchmark_steps: int = Field(default=20, ge=1)
+
+    @model_validator(mode="after")
+    def _validate_data(self):
+        if self.data_mode == "rocal" and not self.dataset_path:
+            raise ValueError("rocAL sweeps require dataset_path")
+        return self
 
 
 def validate_sweep_selector(sweep_names, enabled_names, sweep_labels=None) -> None:

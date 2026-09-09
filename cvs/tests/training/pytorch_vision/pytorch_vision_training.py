@@ -136,7 +136,11 @@ def test_training(orch, variant_config, sweep_name, training_results, inf_res_di
             report_key = (
                 sweep.model,
                 variant_config.gpu_arch,
-                f"W1-{sweep.precision}-R{sweep.image_size}",
+                (
+                    f"W1-ROCAL-{sweep.precision}-R{sweep.image_size}"
+                    if sweep.data_mode == "rocal"
+                    else f"W1-{sweep.precision}-R{sweep.image_size}"
+                ),
                 sweep.image_size,
                 f"GA{sweep.gradient_accumulation_steps}",
                 sweep.batch_size,
@@ -164,6 +168,10 @@ def test_metric(sweep_name, metric, variant_config, training_results, lifecycle,
 
     host, actuals = next(iter(training_results[sweep_name].items()))
     name = f"training.{metric}"
+    if name not in actuals:
+        if metric in GATED_METRICS:
+            pytest.fail(f"required metric was not produced: {name}")
+        pytest.skip(f"metric is not applicable to this sweep: {name}")
     value = actuals[name]
     request.node.user_properties.append(("metric_value", value))
     request.node.user_properties.append(("metric_unit", METRIC_UNITS[metric]))
@@ -192,7 +200,7 @@ def test_print_results_table(variant_config, training_results):
                 [
                     variant_config.cell_key(sweep_name),
                     host,
-                    *[actuals[f"training.{name}"] for name, _unit in METRICS],
+                    *[actuals.get(f"training.{name}", "-") for name, _unit in METRICS],
                 ]
             )
     log.info("\n%s", tabulate(rows, headers=headers, tablefmt="github", floatfmt=".3f"))

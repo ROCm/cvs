@@ -68,6 +68,32 @@ The supplied W1 sweeps use one node, 50 measured steps, ResNet-50 BF16, global
 batch 2048, and 224×224 input. GA=1 uses microbatch 256; GA=4 uses microbatch 64
 so the comparison holds effective global batch constant.
 
+## rocAL/ImageNet variant
+
+Build the matching image:
+
+```bash
+docker build \
+  -f build_tools/pytorch_vision/Dockerfile.rocal-7.2.4 \
+  -t cvs/pytorch-rocal:rocm7.2.4-py3.12-torch2.10-rocal2.5.0 \
+  .
+```
+
+Copy `mi325x_resnet50_w1_rocal_config.json` and its threshold file into a
+dedicated run directory. Replace `<changeme-imagenet-host-path>` with an
+ImageNet root containing `train/<class>/*.JPEG` and `val/<class>/*.JPEG`.
+
+The rocAL sweep:
+
+- shards the reader by global DDP rank
+- decodes and augments JPEGs on GPU
+- warms the loader before measuring loader-only images/s
+- includes data fetch in end-to-end step latency and training throughput
+
+The shipped thresholds are record-only because storage and metadata-cache
+behavior materially affect rocAL throughput. Calibrate on the target filesystem
+before setting `enforce_thresholds` to `true`.
+
 ## Adding a sweep
 
 Add the sweep object, add its exact `name` to `enabled_sweep_list`, and add a
