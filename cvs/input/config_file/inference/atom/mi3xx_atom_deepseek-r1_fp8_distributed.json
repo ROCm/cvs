@@ -78,105 +78,27 @@
     "client_poll_count": "150",
     "client_poll_wait_time": "60"
   },
+  "sweeps": {
+    "ISL=512,OSL=512,TP=8,PP=2,CONC=16": {},
+    "ISL=512,OSL=512,TP=8,PP=2,CONC=64": {},
+    "ISL=512,OSL=512,TP=8,PP=2,CONC=128": {},
+    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": {},
+    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64": {},
+    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=128": {},
+    "ISL=2048,OSL=1024,TP=8,PP=2,CONC=16": {},
+    "ISL=2048,OSL=1024,TP=8,PP=2,CONC=64": {},
+    "ISL=2048,OSL=1024,TP=8,PP=2,CONC=128": {},
+    "ISL=1024,OSL=2048,TP=8,PP=2,CONC=16": {},
+    "ISL=1024,OSL=2048,TP=8,PP=2,CONC=64": {},
+    "ISL=1024,OSL=2048,TP=8,PP=2,CONC=128": {},
+    "ISL=2048,OSL=2048,TP=8,PP=2,CONC=16": {},
+    "ISL=2048,OSL=2048,TP=8,PP=2,CONC=64": {},
+    "ISL=2048,OSL=2048,TP=8,PP=2,CONC=128": {},
+    "ISL=128,OSL=32,TP=8,PP=2,CONC=1": {}
+  },
   "sweep": {
-    "sequence_combinations": [
-      {
-        "name": "w1_512_512",
-        "isl": "512",
-        "osl": "512"
-      },
-      {
-        "name": "w1_1k_1k",
-        "isl": "1024",
-        "osl": "1024"
-      },
-      {
-        "name": "w1_2k_1k",
-        "isl": "2048",
-        "osl": "1024"
-      },
-      {
-        "name": "w1_1k_2k",
-        "isl": "1024",
-        "osl": "2048"
-      },
-      {
-        "name": "w1_2k_2k",
-        "isl": "2048",
-        "osl": "2048"
-      },
-      {
-        "name": "acc_warmup",
-        "isl": "128",
-        "osl": "32"
-      }
-    ],
-    "runs": [
-      {
-        "combo": "w1_512_512",
-        "concurrency": 16
-      },
-      {
-        "combo": "w1_512_512",
-        "concurrency": 64
-      },
-      {
-        "combo": "w1_512_512",
-        "concurrency": 128
-      },
-      {
-        "combo": "w1_1k_1k",
-        "concurrency": 16
-      },
-      {
-        "combo": "w1_1k_1k",
-        "concurrency": 64
-      },
-      {
-        "combo": "w1_1k_1k",
-        "concurrency": 128
-      },
-      {
-        "combo": "w1_2k_1k",
-        "concurrency": 16
-      },
-      {
-        "combo": "w1_2k_1k",
-        "concurrency": 64
-      },
-      {
-        "combo": "w1_2k_1k",
-        "concurrency": 128
-      },
-      {
-        "combo": "w1_1k_2k",
-        "concurrency": 16
-      },
-      {
-        "combo": "w1_1k_2k",
-        "concurrency": 64
-      },
-      {
-        "combo": "w1_1k_2k",
-        "concurrency": 128
-      },
-      {
-        "combo": "w1_2k_2k",
-        "concurrency": 16
-      },
-      {
-        "combo": "w1_2k_2k",
-        "concurrency": 64
-      },
-      {
-        "combo": "w1_2k_2k",
-        "concurrency": 128
-      },
-      {
-        "combo": "acc_warmup",
-        "concurrency": 1
-      }
-    ]
+    "_comment": "Combo-key runs of ISL, OSL, TP, PP, and CONC, comma-separated. Each listed run must exist in the threshold JSON. If this field is empty, every run in the threshold JSON is used.",
+    "runs": []
   },
   "functional": {
     "api_smoke": true,

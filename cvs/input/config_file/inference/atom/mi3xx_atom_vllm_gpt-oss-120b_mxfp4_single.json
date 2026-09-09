@@ -75,11 +75,10 @@
     "ISL=8192,OSL=1024,TP=4,PP=1,CONC=64": {},
     "ISL=128,OSL=32,TP=4,PP=1,CONC=1": {}
   },
-  "runs": [
-    "ISL=8192,OSL=1024,TP=4,PP=1,CONC=32",
-    "ISL=8192,OSL=1024,TP=4,PP=1,CONC=64",
-    "ISL=128,OSL=32,TP=4,PP=1,CONC=1"
-  ],
+  "sweep": {
+    "_comment": "Combo-key runs of ISL, OSL, TP, PP, and CONC, comma-separated. Each listed run must exist in the threshold JSON. If this field is empty, every run in the threshold JSON is used.",
+    "runs": []
+  },
   "platform": {
     "gpu_metrics_poll": true
   },

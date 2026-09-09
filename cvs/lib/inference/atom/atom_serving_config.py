@@ -3,7 +3,7 @@ Copyright 2026 Advanced Micro Devices, Inc.
 All rights reserved.
 
 Convert unified inference serving configs (server_params, benchmark_params,
-sweeps, runs) into ATOM AtomVariantConfig-compatible dicts.
+sweeps, sweep.runs) into ATOM AtomVariantConfig-compatible dicts.
 '''
 
 from __future__ import annotations
@@ -17,12 +17,53 @@ _PERF_CELL_RE = re.compile(r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),P
 
 
 def is_serving_config(raw: Mapping[str, Any]) -> bool:
-    return (
+    if not (
         isinstance(raw.get("server_params"), dict)
         and isinstance(raw.get("benchmark_params"), dict)
-        and isinstance(raw.get("runs"), list)
         and isinstance(raw.get("sweeps"), dict)
-    )
+    ):
+        return False
+    if isinstance(raw.get("sweep"), dict):
+        return True
+    return isinstance(raw.get("runs"), list)
+
+
+def _isl_keys(mapping):
+    return [key for key in (mapping or {}) if str(key).startswith("ISL=")]
+
+
+def _run_items_to_cell_keys(items):
+    keys = []
+    for item in items or []:
+        if isinstance(item, str):
+            keys.append(item)
+        elif isinstance(item, Mapping) and item.get("combo"):
+            keys.append(str(item["combo"]))
+    return keys
+
+
+def materialize_atom_sweep(raw, thresholds=None):
+    if not isinstance(raw.get("sweeps"), dict):
+        return raw
+    out = dict(raw)
+    out["sweep"] = serving_runs_to_atom_sweep(serving_selected_cell_keys(raw, thresholds))
+    out.pop("sweeps", None)
+    return out
+
+
+def serving_selected_cell_keys(raw, thresholds=None):
+    sweep = raw.get("sweep")
+    if isinstance(sweep, Mapping) and "runs" in sweep:
+        items = sweep.get("runs") or []
+    else:
+        items = raw.get("runs") or []
+    keys = _run_items_to_cell_keys(items)
+    if keys:
+        return keys
+    catalog = _isl_keys(raw.get("sweeps"))
+    if catalog:
+        return catalog
+    return _isl_keys(thresholds)
 
 
 def parse_perf_cell_key(cell_key: str) -> dict[str, str]:
@@ -93,9 +134,7 @@ def serving_to_atom_variant_raw(raw: Mapping[str, Any], thresholds: Mapping[str,
     server = dict(raw["server_params"])
     bench = dict(raw["benchmark_params"])
     container = deepcopy(raw.get("container") or {})
-    runs = list(raw.get("runs") or [])
-    if not runs:
-        runs = [key for key in (raw.get("sweeps") or {}) if str(key).startswith("ISL=")]
+    runs = serving_selected_cell_keys(raw, thresholds)
     driver = _resolve_atom_driver(server)
 
     roles_server: dict[str, Any] = {"env": dict(server.get("env") or {})}

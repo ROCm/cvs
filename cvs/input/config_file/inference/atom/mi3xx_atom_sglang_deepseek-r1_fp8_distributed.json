@@ -97,7 +97,10 @@
     "ISL=2048,OSL=2048,TP=8,PP=2,CONC=128": {},
     "ISL=128,OSL=32,TP=8,PP=2,CONC=1": {}
   },
-  "runs": [],
+  "sweep": {
+    "_comment": "Combo-key runs of ISL, OSL, TP, PP, and CONC, comma-separated. Each listed run must exist in the threshold JSON. If this field is empty, every run in the threshold JSON is used.",
+    "runs": []
+  },
   "accuracy": {
     "tasks": [
       {

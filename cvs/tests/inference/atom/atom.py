@@ -18,7 +18,11 @@ from cvs.lib.inference.atom.atom_config_loader import (
     reuse_server_flag,
     server_session_key,
 )
-from cvs.lib.inference.atom.atom_serving_config import is_serving_config, serving_to_atom_variant_raw
+from cvs.lib.inference.atom.atom_serving_config import (
+    is_serving_config,
+    materialize_atom_sweep,
+    serving_to_atom_variant_raw,
+)
 from cvs.lib.inference.atom.atom_dmesg import verify_dmesg_window
 from cvs.lib.inference.atom.atom_gpu_metrics import (
     capture_gpu_snap,
@@ -152,6 +156,7 @@ def _collection_raw(config_file, pytestconfig):
         raw = serving_to_atom_variant_raw(raw, thresholds)
     else:
         raw, _, _ = resolve_atom_profile(raw, thresholds, profile)
+        raw = materialize_atom_sweep(raw, thresholds)
     return raw
 
 

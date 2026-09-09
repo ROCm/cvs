@@ -145,9 +145,9 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_single.json")
         cases, ids = expand_sweep(variant.sweep)
         self.assertEqual(len(cases), 3)
-        self.assertEqual(ids[0], "w1_1k_1k-conc128")
-        self.assertEqual(ids[1], "w1_1k_1k-conc256")
-        self.assertEqual(ids[2], "acc_warmup-conc1")
+        self.assertEqual(ids[0], "isl1024_osl1024-conc128")
+        self.assertEqual(ids[1], "isl1024_osl1024-conc256")
+        self.assertEqual(ids[2], "isl128_osl32-conc1")
         self.assertEqual(cases[0][1], 128)
 
     def test_w1_single_threshold_health_specs_present(self):

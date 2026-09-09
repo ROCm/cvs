@@ -63,33 +63,14 @@
     "client_poll_count": "80",
     "client_poll_wait_time": "60"
   },
+  "sweeps": {
+    "ISL=1024,OSL=8192,TP=8,PP=1,CONC=32": {},
+    "ISL=1024,OSL=8192,TP=8,PP=1,CONC=64": {},
+    "ISL=128,OSL=32,TP=8,PP=1,CONC=1": {}
+  },
   "sweep": {
-    "sequence_combinations": [
-      {
-        "name": "qwen_1k_8k",
-        "isl": "1024",
-        "osl": "8192"
-      },
-      {
-        "name": "acc_warmup",
-        "isl": "128",
-        "osl": "32"
-      }
-    ],
-    "runs": [
-      {
-        "combo": "qwen_1k_8k",
-        "concurrency": 32
-      },
-      {
-        "combo": "qwen_1k_8k",
-        "concurrency": 64
-      },
-      {
-        "combo": "acc_warmup",
-        "concurrency": 1
-      }
-    ]
+    "_comment": "Combo-key runs of ISL, OSL, TP, PP, and CONC, comma-separated. Each listed run must exist in the threshold JSON. If this field is empty, every run in the threshold JSON is used.",
+    "runs": []
   },
   "platform": {
     "gpu_metrics_poll": true

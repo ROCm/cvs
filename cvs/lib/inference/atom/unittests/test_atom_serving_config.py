@@ -6,8 +6,10 @@ from cvs.lib.inference.atom.atom_config_loader import AtomVariantConfig
 from cvs.lib.inference.atom.atom_serving_config import (
     atom_sweep_to_serving,
     is_serving_config,
+    materialize_atom_sweep,
     parse_perf_cell_key,
     serving_runs_to_atom_sweep,
+    serving_selected_cell_keys,
     serving_to_atom_variant_raw,
 )
 
@@ -18,6 +20,16 @@ class TestAtomServingConfig(unittest.TestCase):
             is_serving_config(
                 {
                     "server_params": {"backend": "sglang"},
+                    "benchmark_params": {"data_set_name": "random"},
+                    "sweeps": {},
+                    "sweep": {"runs": []},
+                }
+            )
+        )
+        self.assertTrue(
+            is_serving_config(
+                {
+                    "server_params": {"backend": "vllm"},
                     "benchmark_params": {"data_set_name": "random"},
                     "sweeps": {},
                     "runs": [],
@@ -37,6 +49,51 @@ class TestAtomServingConfig(unittest.TestCase):
         )
         self.assertEqual(list(sweeps), ["ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"])
         self.assertEqual(runs, ["ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"])
+
+    def test_serving_selected_cell_keys_from_sweep_runs(self):
+        keys = serving_selected_cell_keys(
+            {
+                "sweeps": {
+                    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16": {},
+                    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32": {},
+                },
+                "sweep": {
+                    "runs": [{"combo": "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"}],
+                },
+            }
+        )
+        self.assertEqual(keys, ["ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"])
+
+    def test_serving_selected_cell_keys_empty_runs_uses_sweeps(self):
+        keys = serving_selected_cell_keys(
+            {
+                "sweeps": {
+                    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16": {},
+                    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32": {},
+                },
+                "sweep": {"runs": []},
+            }
+        )
+        self.assertEqual(
+            keys,
+            [
+                "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16",
+                "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32",
+            ],
+        )
+
+    def test_materialize_atom_sweep_empty_runs_uses_catalog(self):
+        raw = materialize_atom_sweep(
+            {
+                "sweeps": {
+                    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16": {},
+                    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32": {},
+                },
+                "sweep": {"runs": []},
+            }
+        )
+        self.assertNotIn("sweeps", raw)
+        self.assertEqual(len(raw["sweep"]["runs"]), 2)
 
     def test_serving_runs_to_atom_sweep(self):
         sweep = serving_runs_to_atom_sweep(
