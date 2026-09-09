@@ -119,7 +119,26 @@ class TestOpenAIProbeReasoningModels(unittest.TestCase):
         ok, err = OpenAIProbe.check_results(results, port=8000)
         self.assertTrue(ok, err)
 
-    def test_extract_json_object_finds_object_after_thinking_preamble(self):
+    def test_is_thinking_content_requires_a_real_prefix(self):
+        self.assertTrue(OpenAIProbe._is_thinking_content("Thinking Process:\n1."))
+        self.assertTrue(OpenAIProbe._is_thinking_content("<think>plan</think>"))
+        self.assertFalse(OpenAIProbe._is_thinking_content(""))
+        self.assertFalse(OpenAIProbe._is_thinking_content("Here is a book about cooking."))
+
+    def test_structured_book_rejects_plain_text_for_non_reasoning_models(self):
+        results = {
+            "model_endpoint": (200, {"data": [{"id": "meta/llama"}]}),
+            "chat_completion_endpoint": (200, _chat_body(content="OK")),
+            "completion_endpoint": (200, {"model": "m", "choices": [{"text": "x"}]}),
+            "structured_output_book": (
+                200,
+                _chat_body(model="meta/llama", content="Sure, I can describe a book."),
+            ),
+        }
+        ok, err = OpenAIProbe.check_results(results, port=8000)
+        self.assertFalse(ok)
+        self.assertIn("assistant content is not JSON", err or "")
+
         text = (
             "Thinking Process:\n\n"
             'Here is the book: {"title": "1984", "author": "George Orwell", "year": 1949, "genre": "Dystopian"}'

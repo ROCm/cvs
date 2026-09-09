@@ -66,7 +66,6 @@ class OpenAIProbe:
     _THINKING_CONTENT_PREFIXES = (
         "thinking process:",
         "<think",
-        "",
     )
 
     @classmethod
