@@ -1,7 +1,5 @@
 {
   "_comment": "DeepSeek-R1-0528 FP8 distributed SGLang PP=2 across two nodes.",
-  "schema_version": 1,
-  "framework": "atom",
   "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_sglang_deepseek-r1_fp8_distributed_threshold.json",
@@ -12,12 +10,8 @@
     "hf_token_file": "{shared_fs}/.hf_token"
   },
   "model": {
-    "id": "deepseek-ai/DeepSeek-R1-0528",
-    "remote": 0,
-    "precision": "fp8"
+    "id": "deepseek-ai/DeepSeek-R1-0528"
   },
-  "_example_hca_id_prefix": "rdma",
-  "hca_id_prefix": "<changeme>",
   "container": {
     "lifetime": "per_run",
     "name": "sglang_mi3xx_deepseek_r1_fp8_distributed",
@@ -38,15 +32,7 @@
           "/dev/dri",
           "/dev/kfd",
           "/dev/infiniband/rdma_cm"
-        ],
-        "env": {
-          "NCCL_IB_HCA": "<changeme> rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
-          "NCCL_SOCKET_IFNAME": "<changeme> eno0",
-          "GLOO_SOCKET_IFNAME": "<changeme> eno0",
-          "NCCL_IB_GID_INDEX": "3",
-          "NCCL_DEBUG": "ERROR",
-          "SGLANG_USE_AITER": "1"
-        }
+        ]
       }
     }
   },
@@ -78,7 +64,12 @@
     ],
     "dist_init_port": "29501",
     "benchmark_serv_node": "<changeme>",
-    "proxy_router_serv_port": "8000"
+    "proxy_router_serv_port": "8000",
+    "env": {
+      "SGLANG_USE_AITER": "1",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_DEBUG": "ERROR"
+    }
   },
   "benchmark_params": {
     "backend": "sglang",
@@ -106,24 +97,7 @@
     "ISL=2048,OSL=2048,TP=8,PP=2,CONC=128": {},
     "ISL=128,OSL=32,TP=8,PP=2,CONC=1": {}
   },
-  "runs": [
-    "ISL=512,OSL=512,TP=8,PP=2,CONC=16",
-    "ISL=512,OSL=512,TP=8,PP=2,CONC=64",
-    "ISL=512,OSL=512,TP=8,PP=2,CONC=128",
-    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16",
-    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64",
-    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=128",
-    "ISL=2048,OSL=1024,TP=8,PP=2,CONC=16",
-    "ISL=2048,OSL=1024,TP=8,PP=2,CONC=64",
-    "ISL=2048,OSL=1024,TP=8,PP=2,CONC=128",
-    "ISL=1024,OSL=2048,TP=8,PP=2,CONC=16",
-    "ISL=1024,OSL=2048,TP=8,PP=2,CONC=64",
-    "ISL=1024,OSL=2048,TP=8,PP=2,CONC=128",
-    "ISL=2048,OSL=2048,TP=8,PP=2,CONC=16",
-    "ISL=2048,OSL=2048,TP=8,PP=2,CONC=64",
-    "ISL=2048,OSL=2048,TP=8,PP=2,CONC=128",
-    "ISL=128,OSL=32,TP=8,PP=2,CONC=1"
-  ],
+  "runs": [],
   "accuracy": {
     "tasks": [
       {

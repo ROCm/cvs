@@ -92,12 +92,19 @@ def serving_to_atom_variant_raw(raw: Mapping[str, Any], thresholds: Mapping[str,
     """Build an ATOM ``AtomVariantConfig``-compatible dict from serving schema."""
     server = dict(raw["server_params"])
     bench = dict(raw["benchmark_params"])
-    container = dict(raw.get("container") or {})
+    container = deepcopy(raw.get("container") or {})
     runs = list(raw.get("runs") or [])
+    if not runs:
+        runs = [key for key in (raw.get("sweeps") or {}) if str(key).startswith("ISL=")]
     driver = _resolve_atom_driver(server)
 
     roles_server: dict[str, Any] = {"env": dict(server.get("env") or {})}
     roles_server["env"].update(_container_runtime_env(container))
+    runtime = container.get("runtime")
+    if isinstance(runtime, dict):
+        args = runtime.get("args")
+        if isinstance(args, dict):
+            args.pop("env", None)
     if driver == "vllm_atom":
         roles_server["serve_args"] = dict(server.get("serve_args") or {})
     elif driver == "sglang":
@@ -133,6 +140,9 @@ def serving_to_atom_variant_raw(raw: Mapping[str, Any], thresholds: Mapping[str,
     model = dict(raw.get("model") or {})
     if not model.get("id"):
         model["id"] = str(server.get("model") or "")
+    model.setdefault("remote", 0)
+    if not model.get("precision"):
+        model["precision"] = ""
 
     return {
         "schema_version": 1,
