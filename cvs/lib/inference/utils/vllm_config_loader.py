@@ -20,7 +20,7 @@ _CELL_RE = re.compile(
     r"^ISL=(?P<isl>[1-9]\d*),OSL=(?P<osl>[1-9]\d*),TP=(?P<tp>[1-9]\d*),PP=(?P<pp>[1-9]\d*),CONC=(?P<concurrency>[1-9]\d*)$"
 )
 _METADATA_PREFIXES = ("_comment", "_example")
-_GENERATED_SOCKET_ENV = {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"}
+_SOCKET_ENV = {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"}
 _SERVER_RESERVED = {"master_addr", "master_port", "nnodes", "node_rank", "headless"}
 
 
@@ -58,10 +58,14 @@ class ContainerConfig(_Forbid):
     runtime: Runtime = Field(default_factory=Runtime)
 
     @model_validator(mode="after")
-    def _reject_generated_network_env(self):
-        collisions = sorted(_GENERATED_SOCKET_ENV & set(self.env))
-        if collisions:
-            raise ValueError(f"container.env cannot set generated network variables: {collisions}")
+    def _validate_network_env(self):
+        configured_sockets = _SOCKET_ENV & set(self.env)
+        if configured_sockets and configured_sockets != _SOCKET_ENV:
+            missing = sorted(_SOCKET_ENV - configured_sockets)
+            raise ValueError(f"container.env must set all socket interface variables together; missing: {missing}")
+        empty_sockets = sorted(name for name in configured_sockets if not self.env[name].strip())
+        if empty_sockets:
+            raise ValueError(f"container.env socket interface variables cannot be empty: {empty_sockets}")
         if "NCCL_IB_HCA" in self.env and not self.nccl_ib_hcas:
             raise ValueError("container.env.NCCL_IB_HCA must name at least one device")
         return self
@@ -72,6 +76,10 @@ class ContainerConfig(_Forbid):
         if value is None:
             return None
         return [device.strip() for device in value.split(",") if device.strip()]
+
+    @property
+    def socket_env_configured(self):
+        return bool(_SOCKET_ENV & set(self.env))
 
 
 class Paths(_Forbid):

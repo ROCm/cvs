@@ -154,7 +154,8 @@ Every environment-specific value is redacted. Per config:
 | `container.image` | The vLLM/ROCm image tag under test |
 | `container.runtime.args.volumes[1]` | Replace `<changeme-models-mount>` with the host models directory |
 | `container.env.NCCL_IB_HCA` | *(distributed only)* fixed RDMA devices. The packaged MI3xx configs use `rdma0` through `rdma7`; change the value if your nodes expose different HCA names. |
-| `ib_netdev` | *(distributed only)* socket interface name for `NCCL_SOCKET_IFNAME` / `GLOO_SOCKET_IFNAME` / `TP_SOCKET_IFNAME`. Must be **UP and hold a routable IPv4 reaching the other node** — check `ip -o -4 addr show`, not just `ip -o link show`. |
+| `container.env.NCCL_SOCKET_IFNAME`, `GLOO_SOCKET_IFNAME`, `TP_SOCKET_IFNAME` | *(distributed only)* replace the `eno0 <changeme>` examples with an interface that is **UP and holds a routable IPv4 reaching the other node** — check `ip -o -4 addr show`, not just `ip -o link show`. |
+| `container.env.NCCL_IB_GID_INDEX` | *(distributed only)* replace the `3 <changeme>` example with the GID index for your fabric. |
 
 `paths.models_dir` is `/models`, the in-container mount point — it is exported
 as `HF_HUB_CACHE`. When `server_params.model` is an absolute path under `/models`, vLLM

@@ -25,9 +25,8 @@ IB device config (distributed only):
   NCCL_IB_HCA: inherited from container.env when configured there. Otherwise,
       ib_hcas discovered by test_discover_topology are written into the
       per-node env script.
-  ib_netdev: explicit Linux netdev name for NCCL_SOCKET_IFNAME /
-      GLOO_SOCKET_IFNAME. Read directly from top-level variant.ib_netdev.
-  Required for multi-host distributed execution.
+  Socket interfaces: inherited from container.env. The legacy top-level
+      ib_netdev fallback is written into the per-node environment script.
 '''
 
 from __future__ import annotations
@@ -184,7 +183,7 @@ class VllmJob:
         }
         self.server_env = {}
         self.models_dir = variant.paths.models_dir
-        self.ib_netdev = variant.ib_netdev
+        self.ib_netdev = None if variant.container.socket_env_configured else variant.ib_netdev
 
         self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
         self.server_log = f"{self.out_dir}/vllm_serve_server.log"

@@ -1218,6 +1218,18 @@ class TestVllmJobBuildServerCmd(unittest.TestCase):
         script_none = self._script(orch_none, None)
         self.assertNotIn("SOCKET_IFNAME", script_none, "no ib_netdev -> no socket-ifname exports")
 
+    def test_container_socket_environment_is_not_overwritten_by_legacy_ib_netdev(self):
+        env = {
+            "NCCL_SOCKET_IFNAME": "eno0",
+            "GLOO_SOCKET_IFNAME": "eno0",
+            "TP_SOCKET_IFNAME": "eno0",
+        }
+        orch = RecordingOrch()
+        job = _job(orch=orch, serve_args={}, nnodes="2", pp="2", ib_netdev="eth0", env=env)
+        job.build_server_cmd()
+        self.assertNotIn("SOCKET_IFNAME", self._script(orch, None))
+        self.assertEqual({name: job.variant.container.env[name] for name in env}, env)
+
     def test_static_environment_is_kept_on_container_config(self):
         orch = RecordingOrch()
         job = _job(

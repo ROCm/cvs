@@ -136,17 +136,25 @@ class TestVllmConfigContract(unittest.TestCase):
     def test_record_only_mode_allows_unmeasured_selected_cells(self):
         self.assertEqual(VariantConfig(**_config()).expected_cells(), [CELL])
 
-    def test_accepts_container_hca_and_rejects_generated_socket_environment(self):
+    def test_accepts_complete_container_network_environment(self):
         config = _config()
-        config["container"]["env"] = {"NCCL_IB_HCA": "rdma0"}
+        config["container"]["env"] = {
+            "NCCL_IB_HCA": "rdma0",
+            "NCCL_SOCKET_IFNAME": "eno0",
+            "GLOO_SOCKET_IFNAME": "eno0",
+            "TP_SOCKET_IFNAME": "eno0",
+        }
         variant = VariantConfig(**config)
         self.assertEqual(variant.container.nccl_ib_hcas, ["rdma0"])
+        self.assertTrue(variant.container.socket_env_configured)
 
-        for name in ("NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"):
-            with self.subTest(name=name):
+    def test_rejects_incomplete_container_socket_environment(self):
+        names = ("NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME")
+        for missing in names:
+            with self.subTest(missing=missing):
                 config = _config()
-                config["container"]["env"] = {name: "eno0"}
-                with self.assertRaisesRegex(ValidationError, "generated network"):
+                config["container"]["env"] = {name: "eno0" for name in names if name != missing}
+                with self.assertRaisesRegex(ValidationError, "must set all socket interface"):
                     VariantConfig(**config)
 
     def test_rejects_empty_container_hca(self):
@@ -261,12 +269,23 @@ class TestPackagedVllmCatalog(unittest.TestCase):
             with self.subTest(config=path.name):
                 variant = load_variant(path, {"username": "test"})
                 self.assertNotIn("ib_hca_devices", variant.model_fields_set)
+                self.assertNotIn("ib_netdev", variant.model_fields_set)
                 if path.name.endswith("_distributed.json"):
                     self.assertEqual(variant.container.env.get("NCCL_IB_HCA"), expected_hcas)
-                    self.assertIn("ib_netdev", variant.model_fields_set)
+                    self.assertEqual(variant.container.env.get("NCCL_SOCKET_IFNAME"), "eno0 <changeme>")
+                    self.assertEqual(variant.container.env.get("GLOO_SOCKET_IFNAME"), "eno0 <changeme>")
+                    self.assertEqual(variant.container.env.get("TP_SOCKET_IFNAME"), "eno0 <changeme>")
+                    self.assertEqual(variant.container.env.get("NCCL_IB_GID_INDEX"), "3 <changeme>")
+                    self.assertEqual(variant.container.env.get("NCCL_DEBUG"), "ERROR")
                 else:
-                    self.assertNotIn("NCCL_IB_HCA", variant.container.env)
-                    self.assertNotIn("ib_netdev", variant.model_fields_set)
+                    for name in (
+                        "NCCL_IB_HCA",
+                        "NCCL_SOCKET_IFNAME",
+                        "GLOO_SOCKET_IFNAME",
+                        "TP_SOCKET_IFNAME",
+                        "NCCL_IB_GID_INDEX",
+                    ):
+                        self.assertNotIn(name, variant.container.env)
 
 
 if __name__ == "__main__":

@@ -82,7 +82,8 @@ In the **configuration file**, set:
 For a **multinode** configuration, also set:
 
 - ``container.env.NCCL_IB_HCA`` — the comma-separated HCA names exposed on every node. The packaged MI3xx configurations use ``rdma0`` through ``rdma7``.
-- ``ib_netdev`` — the interface name you looked up in the prerequisites.
+- ``container.env.NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, and ``TP_SOCKET_IFNAME`` — the interface name you looked up in the prerequisites.
+- ``container.env.NCCL_IB_GID_INDEX`` — the GID index for your fabric.
 
 .. tip::
 
@@ -143,7 +144,7 @@ A skipped ``test_setup_sshd`` row is expected. vLLM communicates over the host n
 Going multinode
 ===============
 
-The cluster file determines the host count. Current distributed recipes support exactly two hosts, or one-host fallback. For distributed runs, configure ``server_params.pipeline_parallel_size``, ``container.env.NCCL_IB_HCA``, and top-level ``ib_netdev``. CVS derives the rendezvous address from the cluster head.
+The cluster file determines the host count. Current distributed recipes support exactly two hosts, or one-host fallback. For distributed runs, configure ``server_params.pipeline_parallel_size`` and the HCA, socket-interface, and GID settings under ``container.env``. CVS derives the rendezvous address from the cluster head.
 
 Using the default backend (mp)
 ------------------------------
@@ -153,7 +154,15 @@ If you set nothing else, the suite uses ``mp``. It requires pipeline parallelism
 .. code:: json
 
     {
-      "ib_netdev": "ens51f1np1",
+      "container": {
+        "env": {
+          "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+          "NCCL_SOCKET_IFNAME": "eno0",
+          "GLOO_SOCKET_IFNAME": "eno0",
+          "TP_SOCKET_IFNAME": "eno0",
+          "NCCL_IB_GID_INDEX": "3"
+        }
+      },
       "server_params": {
         "tensor_parallel_size": 8,
         "pipeline_parallel_size": 2
@@ -170,7 +179,15 @@ Ray is opt-in. Set ``distributed_executor_backend`` in ``server_params``:
 .. code:: json
 
     {
-      "ib_netdev": "ens51f1np1",
+      "container": {
+        "env": {
+          "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+          "NCCL_SOCKET_IFNAME": "eno0",
+          "GLOO_SOCKET_IFNAME": "eno0",
+          "TP_SOCKET_IFNAME": "eno0",
+          "NCCL_IB_GID_INDEX": "3"
+        }
+      },
       "server_params": {
         "tensor_parallel_size": 8,
         "pipeline_parallel_size": 1,
@@ -193,7 +210,7 @@ Common pitfalls
 
 **Distributed topology validation fails.** You configured multiple hosts on the default ``mp`` backend without pipeline parallelism. Either raise ``pipeline_parallel_size``, or switch to ray.
 
-**"vllm_distributed requires ib_netdev".** Set it to the interface name. There is deliberately no ``"auto"`` value — it cannot be derived reliably from HCA names.
+**"vllm_distributed requires container.env.NCCL_SOCKET_IFNAME".** Set all three socket-interface variables under ``container.env``. The interface cannot be derived reliably from HCA names.
 
 **"Container image not specified in config".** ``container.image`` is empty. Watch for this specific trap: if your configuration file has a ``container`` block that omits ``image``, it overwrites the cluster file's image with an empty string. Set ``image`` in whichever file defines the block.
 
