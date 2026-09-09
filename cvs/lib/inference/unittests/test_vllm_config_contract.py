@@ -177,7 +177,6 @@ class TestMetadataAndOptionSerialization(unittest.TestCase):
                 "8192",
                 "--served-model-name",
                 "first",
-                "--served-model-name",
                 "second",
                 "--structured-outputs",
                 '{"json":{"type":"object"}}',

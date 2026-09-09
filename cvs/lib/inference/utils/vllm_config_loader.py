@@ -165,8 +165,7 @@ def serialize_cli_options(options: Dict[str, Any]) -> List[str]:
         if value is True:
             argv.append(flag)
         elif isinstance(value, list):
-            for item in value:
-                argv.extend([flag, str(item)])
+            argv.extend([flag, *(str(item) for item in value)])
         elif isinstance(value, dict):
             argv.extend([flag, json.dumps(value, separators=(",", ":"))])
         else:

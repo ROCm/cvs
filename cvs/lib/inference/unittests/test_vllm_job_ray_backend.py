@@ -482,12 +482,12 @@ class TestServerArgvRayVsMp(unittest.TestCase):
 # Generic option serialization
 # --------------------------------------------------------------------------- #
 class TestServeOptionListSerialization(unittest.TestCase):
-    """List-valued vLLM options repeat the flag for each ordered value."""
+    """List-valued vLLM options emit a single flag followed by ordered values."""
 
-    def test_list_values_repeat_flag(self):
+    def test_list_values_follow_one_flag(self):
         cases = [
-            (["a.b.C", "d.e.F"], ["--middleware", "a.b.C", "--middleware", "d.e.F"]),
-            ([1, 2], ["--middleware", "1", "--middleware", "2"]),
+            (["a.b.C", "d.e.F"], ["--middleware", "a.b.C", "d.e.F"]),
+            ([1, 2], ["--middleware", "1", "2"]),
         ]
         for value, expected in cases:
             with self.subTest(value=value):
