@@ -82,8 +82,9 @@ In the **configuration file**, set:
 For a **multinode** configuration, also set:
 
 - ``container.env.NCCL_IB_HCA`` — the comma-separated HCA names exposed on every node. The packaged MI3xx configurations use ``rdma0`` through ``rdma7``.
-- ``container.env.NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, and ``TP_SOCKET_IFNAME`` — the interface name you looked up in the prerequisites.
-- ``container.env.NCCL_IB_GID_INDEX`` — the GID index for your fabric.
+- ``container.env.NCCL_SOCKET_IFNAME`` — the Linux netdev associated with the selected RNICs.
+- ``container.env.GLOO_SOCKET_IFNAME`` and ``TP_SOCKET_IFNAME`` — generally the frontend/control-plane interface.
+- ``container.env.NCCL_IB_GID_INDEX`` — the common fabric index reported by ``show_gids`` on every selected HCA and node. If ``show_gids`` is unavailable, inspect ``ibv_devinfo -v`` and the HCA's ``gid_attrs`` sysfs entries.
 
 .. tip::
 

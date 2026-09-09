@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 
@@ -271,12 +272,15 @@ class TestPackagedVllmCatalog(unittest.TestCase):
                 self.assertNotIn("ib_hca_devices", variant.model_fields_set)
                 self.assertNotIn("ib_netdev", variant.model_fields_set)
                 if path.name.endswith("_distributed.json"):
+                    raw = json.loads(path.read_text())
                     self.assertEqual(variant.container.env.get("NCCL_IB_HCA"), expected_hcas)
-                    self.assertEqual(variant.container.env.get("NCCL_SOCKET_IFNAME"), "eno0 <changeme>")
-                    self.assertEqual(variant.container.env.get("GLOO_SOCKET_IFNAME"), "eno0 <changeme>")
-                    self.assertEqual(variant.container.env.get("TP_SOCKET_IFNAME"), "eno0 <changeme>")
-                    self.assertEqual(variant.container.env.get("NCCL_IB_GID_INDEX"), "3 <changeme>")
+                    self.assertEqual(variant.container.env.get("NCCL_SOCKET_IFNAME"), "<changeme>")
+                    self.assertEqual(variant.container.env.get("GLOO_SOCKET_IFNAME"), "<changeme>")
+                    self.assertEqual(variant.container.env.get("TP_SOCKET_IFNAME"), "<changeme>")
+                    self.assertEqual(variant.container.env.get("NCCL_IB_GID_INDEX"), "<changeme>")
                     self.assertEqual(variant.container.env.get("NCCL_DEBUG"), "ERROR")
+                    self.assertIn("selected RNICs", raw["container"]["_comment_socket_interfaces"])
+                    self.assertIn("show_gids", raw["container"]["_comment_gid_index"])
                 else:
                     for name in (
                         "NCCL_IB_HCA",

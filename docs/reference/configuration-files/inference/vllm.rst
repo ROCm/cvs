@@ -246,8 +246,9 @@ Beyond the validation rules, a multinode run needs:
 
 - ``server_params.dist_init_port`` — default ``29501``; CVS derives the head address from the cluster.
 - ``container.env.NCCL_IB_HCA`` — the comma-separated RDMA HCA names available on every node. The packaged MI3xx configurations set ``rdma0`` through ``rdma7``.
-- ``container.env.NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, and ``TP_SOCKET_IFNAME`` — socket interfaces for NCCL, Gloo, and tensor-parallel traffic.
-- ``container.env.NCCL_IB_GID_INDEX`` — the GID index for the selected fabric.
+- ``container.env.NCCL_SOCKET_IFNAME`` — the Linux netdev associated with the selected RNICs.
+- ``container.env.GLOO_SOCKET_IFNAME`` and ``TP_SOCKET_IFNAME`` — generally the frontend/control-plane interface.
+- ``container.env.NCCL_IB_GID_INDEX`` — the index for the intended RoCE/IB fabric. Use ``show_gids`` inside the container and choose an entry available on every selected HCA and node. If that command is unavailable, inspect ``ibv_devinfo -v`` and ``/sys/class/infiniband/<hca>/ports/<port>/gid_attrs/``.
 
 .. _vllm-container:
 
