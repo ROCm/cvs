@@ -42,7 +42,7 @@ Flat ``schema_version: 1`` files use an implicit ``perf`` profile.
 
 :func:`cvs.lib.utils.config_loader.substitute_config` resolves ``threshold_json``
 next to the config. Multiple ``*threshold.json`` files in one directory raises an
-ambiguous-threshold error ΓÇö on lab machines, copy each variant pair into its own
+ambiguous-threshold error — on lab machines, copy each variant pair into its own
 subdirectory (see :doc:`/how-to/test-suites/inference/atom`).
 
 Shipped model inventory
@@ -64,24 +64,22 @@ still runs with ``cvs run atom``.
      - Notes
    * - ``mi3xx_atom_deepseek-r1_fp8``
      - ``_single`` (``perf`` + ``mtp3`` profiles), ``_distributed`` (``vllm_atom`` PP=2)
-     - W1 native ATOM + multinode PP via atom suite
+     - Native ATOM + multinode PP
+   * - ``mi3xx_atom_deepseek-v4-pro``
+     - ``_single``
+     - Native ATOM long-context
    * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
      - ``_single``
-     - W3 native ``atom`` perf + accuracy
+     - Native ATOM perf + accuracy
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``
-     - M4 vLLM parity (serving schema)
+     - vLLM parity (serving schema)
    * - ``mi3xx_atom_vllm_gpt-oss-120b_mxfp4``
      - ``_single``
-     - W2 GPT-OSS MXFP4 vLLM parity (serving schema)
+     - GPT-OSS MXFP4 vLLM parity (serving schema)
    * - ``mi3xx_atom_sglang_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
-     - M4/M5 SGLang parity (serving schema)
-
-**Not shipped.** Do not add ATOM JSON for **Mistral Large 3** until native
-``openai_server`` accepts Mistral-format configs (HF ``AutoConfig`` currently
-requires ``model_type``) and vLLM can init without
-``MistralCommonPixtralProcessor`` failing on dummy multimodal profiling.
+     - SGLang parity (serving schema)
 
 Config profiles
 ===============
@@ -90,7 +88,7 @@ Config profiles
 runtime with ``--config_profile`` (or ``CVS_CONFIG_PROFILE``). Flat
 ``schema_version: 1`` files use an implicit ``perf`` profile.
 
-W1 DeepSeek R1 FP8 — ``mi3xx_atom_deepseek-r1_fp8_single.json`` profiles:
+DeepSeek R1 FP8 — ``mi3xx_atom_deepseek-r1_fp8_single.json`` profiles:
 
 .. list-table::
    :widths: 2 2 4
@@ -396,12 +394,12 @@ on pytest gates):
      - gsm8k flexible-extract delta
    * - ``CVS_ATOM_PARITY_REF_JSON``
      - ``panels.framework_parity``
-     - M4 driver parity ratios
+     - Framework parity ratios
 
 See also
 ========
 
 - :doc:`/how-to/test-suites/inference/atom` — step-by-step first run
-- :doc:`/reference/configuration-files/cluster-file` ΓÇö cluster file schema
-- :mod:`cvs.lib.inference.atom.atom_config_loader` ΓÇö loader and ``cell_key``
-- :mod:`cvs.lib.inference.atom.atom_parsing` ΓÇö metric tiers and parsing
+- :doc:`/reference/configuration-files/cluster-file` — cluster file schema
+- :mod:`cvs.lib.inference.atom.atom_config_loader` — loader and ``cell_key``
+- :mod:`cvs.lib.inference.atom.atom_parsing` — metric tiers and parsing
