@@ -21,6 +21,7 @@ from cvs.lib.inference.atom.atom_config_loader import (
     orchestrator_container_from_variant,
     placeholder_gated_threshold_cell,
     resolve_atom_profile,
+    resolved_atom_image_pin,
     reuse_server_flag,
     server_session_key,
 )
@@ -370,6 +371,8 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json")
         self.assertEqual(variant.model.id, "amd/Qwen3.5-397B-A17B-FP8")
+        self.assertEqual(variant.run_card.atom_image_pin, "")
+        self.assertEqual(resolved_atom_image_pin(variant), variant.container.image)
         self.assertEqual(
             variant.expected_cells(),
             [

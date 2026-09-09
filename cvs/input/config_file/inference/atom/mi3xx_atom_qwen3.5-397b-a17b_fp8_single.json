@@ -12,10 +12,6 @@
     "precision": "fp8"
   },
   "enforce_thresholds": false,
-  "run_card": {
-    "atom_image_pin": "<changeme>",
-    "notes": "amd/Qwen3.5-397B-A17B-FP8 (fp8) single-node atom perf plus accuracy"
-  },
   "container": {
     "lifetime": "per_run",
     "name": "atom_mi3xx",
