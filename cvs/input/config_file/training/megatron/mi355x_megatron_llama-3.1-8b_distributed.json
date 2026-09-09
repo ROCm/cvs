@@ -44,13 +44,12 @@
       }
     },
     "env": {
-      "NNODES": "<changeme>",
       "MASTER_ADDR": "<changeme>",
-      "NCCL_IB_HCA": "<changeme>",
-      "NCCL_SOCKET_IFNAME": "<changeme>",
-      "GLOO_SOCKET_IFNAME": "<changeme>",
-      "NCCL_IB_GID_INDEX": "3",
-      "NCCL_DEBUG": "ERROR"
+      "NCCL_IB_HCA": "bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re7,bnxt_re8 <changeme>",
+      "NCCL_SOCKET_IFNAME": "enp193s0f1np1 <changeme>",
+      "GLOO_SOCKET_IFNAME": "enp193s0f1np1 <changeme>",
+      "NCCL_IB_GID_INDEX": "3 <changeme>",
+      "NCCL_DEBUG": "ERROR <changeme>"
     }
   },
   "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",

@@ -38,17 +38,18 @@ Set up config
 
      cvs config list training/megatron
 
-2. Copy the configuration file and its sibling threshold file, for example:
+2. Copy the configuration file and the SKU-specific threshold file, for example:
 
    .. code:: bash
 
-     cvs config copy training/megatron/mi325x_megatron_llama-3.1-8b_single.json --output ~/cvs_workspace/training/megatron/mi325x_megatron_llama-3.1-8b_single.json
-     cvs config copy training/megatron/mi325x_megatron_llama-3.1-8b_single_threshold.json --output ~/cvs_workspace/training/megatron/mi325x_megatron_llama-3.1-8b_single_threshold.json
+     cvs config copy training/megatron/mi3xx_megatron_llama-3.1-8b_single.json --output ~/cvs_workspace/training/megatron/mi3xx_megatron_llama-3.1-8b_single.json
+     cvs config copy training/megatron/mi300x_megatron_llama-3.1-8b_single_threshold.json --output ~/cvs_workspace/training/megatron/mi300x_megatron_llama-3.1-8b_single_threshold.json
+     # or mi325x_megatron_llama-3.1-8b_single_threshold.json for MI325X
 
-3. Replace every ``<changeme>`` with cluster-specific values (container image, NCCL/RDMA fields on distributed configs).
+3. Replace every ``<changeme>`` with cluster-specific values. For MI300X/MI325X shared templates, set ``gpu_name`` to ``MI300X`` or ``MI325X`` and ``threshold_json`` to the matching ``mi300x_*`` or ``mi325x_*`` threshold file. Also set ``container.image``, ``train_params.training_iterations``, and the ``container.env`` NIC fields (templates ship example interface/HCA/GID/debug strings that still contain ``<changeme>`` — keep or edit the example and remove the placeholder). Do not add ``NNODES``; the suite sets it from the cluster host count at ``docker run``. Distributed configs also need ``MASTER_ADDR`` and ``NCCL_IB_HCA``.
 4. Change any other parameters relevant to your testing requirements.
 
-The same folder also has DeepSeek V2 Lite (single and distributed) and Llama 3.1 405B (distributed only) configs for MI300X, MI325X, and MI355X. See `Config and threshold files`_ for the full inventory.
+The same folder also has DeepSeek V2 Lite (single and distributed) and Llama 3.1 405B (distributed only) configs. See `Config and threshold files`_ for the full inventory.
 
 Full parameter list: :doc:`/reference/configuration-files/training/megatron`.
 
@@ -75,10 +76,10 @@ The same eight test stages run for both backends. ``_make_training_job`` in ``me
      - Same cell via ``primus-cli direct -- train pretrain --config examples/megatron/configs/{gpu_arch}/{model}-{precision}-pretrain.yaml``. If the MI325X YAML is missing, Primus retries ``MI300X``. Skipped when ``smoke.enabled`` is ``false``
    * - ``test_checkpoint``
      - Skipped (``checkpoint test is Primus-only``)
-     - Runs only when ``checkpoint.enforce`` is ``true``. Single-node writes under ``{log_dir}/ckpt_primus``. Distributed requires ``checkpoint.checkpoint_dir`` on a shared filesystem
+     - Runs only when ``checkpoint.enforce`` is ``true``. Uses ``smoke`` MBS/GBS/precision. Single-node writes under ``{log_dir}/ckpt_primus``. Distributed requires ``checkpoint.checkpoint_dir`` on a shared filesystem
    * - ``test_training[combo]``
-     - Wrapper script + Megatron-LM shell. Distributed also runs ``exec_nic_setup_scripts()`` (Broadcom ``libbnxt_re`` copy when the GPU-derived NIC type is Thor/Broadcom: ``thor2`` on MI300X/MI325X, ``ainic`` on MI355X). After the copy, ``ibv_devinfo`` is matched against the library default HCA prefixes ``bnxt_|rocep``. NCCL/socket/``NNODES``/``MASTER_ADDR`` come from ``container.env`` (``docker run -e``); the wrapper re-exports ``NCCL_IB_GID_INDEX`` only after Broadcom NIC setup.
-     - Wrapper script + ``primus-cli``. Distributed wrapper still exports ``NCCL_IB_*``; no Broadcom lib copy
+     - Wrapper script + Megatron-LM shell. Distributed also runs ``exec_nic_setup_scripts()`` (Broadcom ``libbnxt_re`` copy when the GPU-derived NIC type is Thor/Broadcom: ``thor2`` on MI300X/MI325X, ``ainic`` on MI355X). After the copy, ``ibv_devinfo`` is matched against the library default HCA prefixes ``bnxt_|rocep``. NCCL/socket/``MASTER_ADDR`` come from ``container.env`` (``docker run -e``); ``NNODES`` is set from the cluster host count into that same env. The wrapper re-exports ``NCCL_IB_GID_INDEX`` after Broadcom NIC setup.
+     - Wrapper script + ``primus-cli``. Same ``docker run -e`` env (including ``NNODES``). The wrapper sets ``NODE_RANK`` per host; it does not re-export ``NNODES`` or NCCL/socket keys. No Broadcom lib copy
    * - ``test_metric`` / ``test_loss_curve``
      - Parse Megatron-LM log metrics
      - Parse Primus log metrics (same ``training.*`` names)
@@ -133,24 +134,16 @@ Use a ``*_single.json`` config with ``megatron_single`` and a ``*_distributed.js
 - ``--config_file`` — one of the files under ``input/config_file/training/megatron/``; field reference: :doc:`/reference/configuration-files/training/megatron`.
 - ``--html`` / ``--self-contained-html`` — write the HTML report.
 
-Single-node — MI300X
-~~~~~~~~~~~~~~~~~~~~
+Single-node — MI300X / MI325X
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use the shared ``mi3xx_`` template. Set ``gpu_name`` and ``threshold_json`` to the SKU before running.
 
 .. code:: bash
 
   cvs run megatron_single \
     --cluster_file input/cluster_file/cluster.json \
-    --config_file input/config_file/training/megatron/mi300x_megatron_llama-3.1-8b_single.json \
-    --html ./logs/megatron_single.html --self-contained-html -vvv -s
-
-Single-node — MI325X
-~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-  cvs run megatron_single \
-    --cluster_file input/cluster_file/cluster.json \
-    --config_file input/config_file/training/megatron/mi325x_megatron_llama-3.1-8b_single.json \
+    --config_file input/config_file/training/megatron/mi3xx_megatron_llama-3.1-8b_single.json \
     --html ./logs/megatron_single.html --self-contained-html -vvv -s
 
 Single-node — MI355X
@@ -163,24 +156,16 @@ Single-node — MI355X
     --config_file input/config_file/training/megatron/mi355x_megatron_llama-3.1-8b_single.json \
     --html ./logs/megatron_single.html --self-contained-html -vvv -s
 
-Distributed — MI300X
-~~~~~~~~~~~~~~~~~~~~~
+Distributed — MI300X / MI325X
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use the shared ``mi3xx_`` template. Set ``gpu_name`` and ``threshold_json`` to the SKU before running.
 
 .. code:: bash
 
   cvs run megatron_distributed \
     --cluster_file input/cluster_file/cluster.json \
-    --config_file input/config_file/training/megatron/mi300x_megatron_llama-3.3-70b_distributed.json \
-    --html ./logs/megatron_distributed.html --self-contained-html -vvv -s
-
-Distributed — MI325X
-~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-  cvs run megatron_distributed \
-    --cluster_file input/cluster_file/cluster.json \
-    --config_file input/config_file/training/megatron/mi325x_megatron_llama-3.3-70b_distributed.json \
+    --config_file input/config_file/training/megatron/mi3xx_megatron_llama-3.3-70b_distributed.json \
     --html ./logs/megatron_distributed.html --self-contained-html -vvv -s
 
 Distributed — MI355X
@@ -200,7 +185,7 @@ Run a specific stage
 
   cvs run megatron_single test_smoke \
     --cluster_file input/cluster_file/cluster.json \
-    --config_file input/config_file/training/megatron/mi325x_megatron_llama-3.1-8b_single.json
+    --config_file input/config_file/training/megatron/mi3xx_megatron_llama-3.1-8b_single.json
 
 Test lifecycle
 ==============
@@ -230,7 +215,7 @@ Tests run in this pinned order. ``[combo]`` = one row per enabled sweep combo.
    * - 3
      - ``test_checkpoint``
      - once
-     - Primus-only checkpoint save + resume with loss continuity at the first resume step. Skipped when ``checkpoint.enforce: false`` or the image name does not contain ``primus``.
+     - Primus-only checkpoint save + resume with loss continuity at the first resume step. Uses the ``smoke`` block for MBS, GBS, and precision. Skipped when ``checkpoint.enforce: false`` or the image name does not contain ``primus``.
    * - 4
      - ``test_training[combo]``
      - per combo
@@ -326,7 +311,7 @@ Convergence
 Checkpoint save and resume
 ==========================
 
-``test_checkpoint`` runs only for Primus images (``container.image`` contains ``primus``) and only when ``checkpoint.enforce`` is ``true``. Megatron-LM images skip this stage. When it runs, the suite launches the training job twice:
+``test_checkpoint`` runs only for Primus images (``container.image`` contains ``primus``) and only when ``checkpoint.enforce`` is ``true``. Megatron-LM images skip this stage. Batch size and precision come from the ``smoke`` block (same resolution as ``test_smoke``). Step counts come from ``checkpoint.save_iters`` / ``save_interval`` / ``resume_iters``. When it runs, the suite launches the training job twice:
 
 1. **Save phase** — trains to ``checkpoint.save_iters`` steps, saving a checkpoint every ``checkpoint.save_interval`` steps. Single-node uses ``{log_dir}/ckpt_primus``. Distributed uses ``checkpoint.checkpoint_dir`` (required; must be a shared path such as NFS).
 2. **Resume phase** — resumes from the saved checkpoint and trains to ``checkpoint.resume_iters`` steps.
@@ -383,69 +368,49 @@ Config and threshold files
 
 Located in ``cvs/input/config_file/training/megatron/``. Field-level schema: :doc:`/reference/configuration-files/training/megatron`.
 
+``container.env`` NIC fields include example values plus ``<changeme>``. ``NNODES`` is not a JSON field.
+
 Do not use leftover ``mi3xx_megatron_llama_*.json`` / ``mi35x_megatron_llama_single.json`` files with these suites. Those nested configs belong only to the legacy ``megatron_llama3_1_*`` test modules.
 
-MI300X
-~~~~~~
+MI300X / MI325X (shared config)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+One ``mi3xx_`` config per model and mode. Set ``gpu_name`` to ``MI300X`` or ``MI325X`` and ``threshold_json`` to the matching SKU file.
 
 .. list-table::
    :header-rows: 1
-   :widths: 45 45 10
+   :widths: 34 28 28 10
 
    * - Config
-     - Threshold
+     - MI300X threshold
+     - MI325X threshold
      - Mode
-   * - ``mi300x_megatron_deepseek-v2-lite_single.json``
+   * - ``mi3xx_megatron_deepseek-v2-lite_single.json``
      - ``mi300x_megatron_deepseek-v2-lite_single_threshold.json``
-     - single-node
-   * - ``mi300x_megatron_deepseek-v2-lite_distributed.json``
-     - ``mi300x_megatron_deepseek-v2-lite_distributed_threshold.json``
-     - distributed
-   * - ``mi300x_megatron_llama-3.1-8b_single.json``
-     - ``mi300x_megatron_llama-3.1-8b_single_threshold.json``
-     - single-node
-   * - ``mi300x_megatron_llama-3.1-8b_distributed.json``
-     - ``mi300x_megatron_llama-3.1-8b_distributed_threshold.json``
-     - distributed
-   * - ``mi300x_megatron_llama-3.1-405b_distributed.json``
-     - ``mi300x_megatron_llama-3.1-405b_distributed_threshold.json``
-     - distributed
-   * - ``mi300x_megatron_llama-3.3-70b_single.json``
-     - ``mi300x_megatron_llama-3.3-70b_single_threshold.json``
-     - single-node
-   * - ``mi300x_megatron_llama-3.3-70b_distributed.json``
-     - ``mi300x_megatron_llama-3.3-70b_distributed_threshold.json``
-     - distributed
-
-MI325X
-~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 45 45 10
-
-   * - Config
-     - Threshold
-     - Mode
-   * - ``mi325x_megatron_deepseek-v2-lite_single.json``
      - ``mi325x_megatron_deepseek-v2-lite_single_threshold.json``
      - single-node
-   * - ``mi325x_megatron_deepseek-v2-lite_distributed.json``
+   * - ``mi3xx_megatron_deepseek-v2-lite_distributed.json``
+     - ``mi300x_megatron_deepseek-v2-lite_distributed_threshold.json``
      - ``mi325x_megatron_deepseek-v2-lite_distributed_threshold.json``
      - distributed
-   * - ``mi325x_megatron_llama-3.1-8b_single.json``
+   * - ``mi3xx_megatron_llama-3.1-8b_single.json``
+     - ``mi300x_megatron_llama-3.1-8b_single_threshold.json``
      - ``mi325x_megatron_llama-3.1-8b_single_threshold.json``
      - single-node
-   * - ``mi325x_megatron_llama-3.1-8b_distributed.json``
+   * - ``mi3xx_megatron_llama-3.1-8b_distributed.json``
+     - ``mi300x_megatron_llama-3.1-8b_distributed_threshold.json``
      - ``mi325x_megatron_llama-3.1-8b_distributed_threshold.json``
      - distributed
-   * - ``mi325x_megatron_llama-3.1-405b_distributed.json``
+   * - ``mi3xx_megatron_llama-3.1-405b_distributed.json``
+     - ``mi300x_megatron_llama-3.1-405b_distributed_threshold.json``
      - ``mi325x_megatron_llama-3.1-405b_distributed_threshold.json``
      - distributed
-   * - ``mi325x_megatron_llama-3.3-70b_single.json``
+   * - ``mi3xx_megatron_llama-3.3-70b_single.json``
+     - ``mi300x_megatron_llama-3.3-70b_single_threshold.json``
      - ``mi325x_megatron_llama-3.3-70b_single_threshold.json``
      - single-node
-   * - ``mi325x_megatron_llama-3.3-70b_distributed.json``
+   * - ``mi3xx_megatron_llama-3.3-70b_distributed.json``
+     - ``mi300x_megatron_llama-3.3-70b_distributed_threshold.json``
      - ``mi325x_megatron_llama-3.3-70b_distributed_threshold.json``
      - distributed
 

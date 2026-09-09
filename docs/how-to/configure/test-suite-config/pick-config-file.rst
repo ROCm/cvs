@@ -106,7 +106,7 @@ Training workload templates use:
 
        `Config README <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/training/jaxmaxtext/README.md>`_
    * - Megatron
-     - ``input/config_file/training/megatron/`` — ``mi{gpu}_megatron_{model}_{single|distributed}.json`` + ``mi{gpu}_megatron_{model}_{single|distributed}_threshold.json``
+     - ``input/config_file/training/megatron/`` — MI300X/MI325X share ``mi3xx_megatron_{model}_{single|distributed}.json`` plus SKU ``mi300x_*`` / ``mi325x_*`` threshold files; MI355X uses ``mi355x_megatron_{model}_{single|distributed}.json`` + matching threshold. ``NNODES`` is not in JSON; ``container.env`` NIC values include examples plus ``<changeme>``.
      - ``cvs config list training/megatron``
 
        `docs/reference/configuration-files/training/megatron.rst <https://github.com/ROCm/cvs/blob/main/docs/reference/configuration-files/training/megatron.rst>`_

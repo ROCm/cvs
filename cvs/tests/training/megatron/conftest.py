@@ -106,6 +106,10 @@ def orch(cluster_dict, variant_config, lifecycle):
     double-tearing down in the normal case.
     """
     container_block = _deep_merge(cluster_dict.get("container", {}), variant_config.container.model_dump())
+    env = dict(container_block.get("env") or {})
+    node_dict = cluster_dict.get("node_dict") or {}
+    env["NNODES"] = str(len(node_dict))
+    container_block["env"] = env
     testsuite_config = {"orchestrator": "container", "container": container_block}
     cfg = OrchestratorConfig.from_configs(cluster_dict, testsuite_config)
     o = OrchestratorFactory.create_orchestrator(log, cfg)

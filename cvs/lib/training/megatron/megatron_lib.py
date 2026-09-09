@@ -270,7 +270,6 @@ class MegatronTrainingJob:
         self.home_dir = os.path.expanduser("~")
         tdict = variant_config.job_config_dict()
         tdict.setdefault('training_iterations', 10)
-        tdict.setdefault('nnodes', '1')
         tdict.setdefault('nic_type', _default_nic_type(variant_config.gpu_name))
         tdict.setdefault('hca_id_pattern', 'bnxt_|rocep')
         tdict.setdefault('nccl_ib_hca', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
@@ -290,13 +289,7 @@ class MegatronTrainingJob:
         self.container_image = orch.container_config["image"]
         self.distributed_training = distributed_training
         self.iterations = int(tdict['training_iterations'])
-        self.nnodes = str(tdict['nnodes'])
-        if int(self.nnodes) != len(orch.hosts):
-            log.warning(
-                f"config nnodes={self.nnodes} does not match cluster host count={len(orch.hosts)}; "
-                f"using cluster host count"
-            )
-            self.nnodes = str(len(orch.hosts))
+        self.nnodes = str(len(orch.hosts))
         self.nic_type = tdict['nic_type']
         self.hca_id_pattern = tdict['hca_id_pattern']
         self.nccl_ib_hca = tdict['nccl_ib_hca']
@@ -530,8 +523,6 @@ class MegatronTrainingJob:
         self,
     ):
         # Construct the main megatron training command
-        # Compute the batch size and mini batch size based on the cluster size
-        # Add NIC and Socket details for distributed training ..
         cmd = ''
 
         # cmd = f'docker exec {self.container_name} /bin/bash -c """'
@@ -550,18 +541,7 @@ class MegatronTrainingJob:
         )
 
         if self.distributed_training is True:
-            # Add the backend network related environment variables ..
-            cmd = (
-                cmd
-                + f'export NCCL_IB_HCA={self.nccl_ib_hca}; '
-                + f'export NCCL_SOCKET_IFNAME={self.nccl_socket_ifname}; '
-                + f'export GLOO_SOCKET_IFNAME={self.gloo_socket_ifname}; '
-                + f'export NCCL_DEBUG={self.nccl_debug}; '
-                + f'export NCCL_IB_GID_INDEX={self.nccl_ib_gid_index}; '
-            )
-
-        if self.distributed_training is True:
-            # Build base cmd; NODE_RANK={i} is injected per-host in start_training_job
+            # Build base cmd; NODE_RANK={i} is injected per-host
             cmd = (
                 cmd
                 + f'RECOMPUTE={self.recompute} '
@@ -572,7 +552,6 @@ class MegatronTrainingJob:
                 + f'MODEL_SIZE={self.model_size} {self.iters_env}={self.iterations} '
                 + self.precision_env
                 + ' '
-                + f'MASTER_ADDR={self.master_address} NNODES={self.nnodes} '
             )
 
             for i in range(len(self.orch.hosts)):

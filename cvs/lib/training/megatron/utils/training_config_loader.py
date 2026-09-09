@@ -35,6 +35,8 @@ from cvs.lib.utils.config_loader import (
     substitute_config,
 )
 
+_ALLOWED_GPU_NAMES = ("MI300X", "MI325X", "MI355X")
+
 
 # ---------- pydantic models (training) ----------
 
@@ -173,7 +175,7 @@ class CheckpointConfig(_Forbid):
 
 
 class SmokeConfig(_Forbid):
-    """Fixed cell for test_smoke (opt-OUT; on by default).
+    """Fixed cell for test_smoke and test_checkpoint (opt-OUT; on by default).
 
     Empty global_batch_size lets the suite use its topology default
     (single-node 8, distributed 16).
@@ -229,7 +231,12 @@ class MegatronVariantConfig(_Forbid):
     @field_validator("gpu_name")
     @classmethod
     def _uppercase_gpu_name(cls, value: str) -> str:
-        return value.strip().upper()
+        name = value.strip().upper()
+        if name not in _ALLOWED_GPU_NAMES:
+            raise ValueError(
+                f"gpu_name must be one of {list(_ALLOWED_GPU_NAMES)}, got {value!r}"
+            )
+        return name
 
     @property
     def gpu_arch(self) -> str:

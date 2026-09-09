@@ -216,6 +216,7 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
       - resume_losses[last_ckpt_step+1] <= save_losses[last_ckpt_step] + tol (no loss spike).
 
     Skipped if checkpoint.enforce=false or for non-Primus images.
+    MBS, GBS, and precision come from the ``smoke`` block (same as test_smoke).
     """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -226,6 +227,11 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
 
     if not re.search(r'primus', orch.container_config.get("image", ""), re.I):
         pytest.skip("checkpoint test is Primus-only")
+
+    smoke = variant_config.smoke
+    mbs = smoke.micro_batch_size or _SMOKE_MBS
+    gbs = smoke.global_batch_size.strip() or _SMOKE_GBS
+    precision = smoke.precision or _SMOKE_PRECISION
 
     # checkpoint_dir must be a shared path (e.g. NFS) visible on all nodes so
     # every rank can read the checkpoint written by rank-0 in the save phase.
@@ -242,9 +248,9 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
             orch,
             variant_config,
             hf_token=hf_token,
-            micro_batch_size=_SMOKE_MBS,
-            global_batch_size=_SMOKE_GBS,
-            precision=_SMOKE_PRECISION,
+            micro_batch_size=mbs,
+            global_batch_size=gbs,
+            precision=precision,
             distributed_training=True,
             tune_model_params=False,
             run_label=run_label,
