@@ -63,11 +63,6 @@ class OpenAIProbe:
         "reasoning",
     )
 
-    _THINKING_CONTENT_PREFIXES = (
-        "thinking process:",
-        "<think",
-    )
-
     @classmethod
     def _assistant_text(cls, msg: Mapping[str, Any]) -> str:
         content = str(msg.get("content") or "").strip()
@@ -135,11 +130,6 @@ class OpenAIProbe:
     def _is_reasoning_model(cls, model_id: str) -> bool:
         mid = (model_id or "").lower()
         return any(marker in mid for marker in cls._REASONING_MODEL_MARKERS)
-
-    @classmethod
-    def _is_thinking_content(cls, text: str) -> bool:
-        lowered = str(text or "").lstrip().lower()
-        return any(lowered.startswith(prefix) for prefix in cls._THINKING_CONTENT_PREFIXES)
 
     @classmethod
     def probe_script(
@@ -312,7 +302,7 @@ class OpenAIProbe:
                         if book_err:
                             _fail(f"{title}: {book_err}")
                     elif content_raw:
-                        if cls._is_reasoning_model(model_id) or cls._is_thinking_content(content_raw):
+                        if cls._is_reasoning_model(model_id):
                             continue
                         _fail(f"{title}: assistant content is not JSON")
                     elif not cls._is_reasoning_model(model_id):
