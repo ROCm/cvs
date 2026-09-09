@@ -596,19 +596,23 @@ then, conditionally, ``NCCL_IB_HCA`` (from top-level ``ib_hca_devices``) and
 top-level ``ib_netdev``). Put static ROCm, NCCL, and vLLM exports in
 ``container.env``; it may not override those generated network variables.
 
-The packaged MI3xx vLLM catalog owns this static AITER baseline in
-``container.env``:
+The packaged MI3xx catalog's AITER settings are image- and model-scoped. For
+the image based on vLLM commit ``4bdc8a788``:
 
-.. code:: json
+- DeepSeek V4 Flash, DeepSeek V4 Pro, GLM 5.1, and GLM 5.2 set
+  ``VLLM_ROCM_USE_AITER=1``, ``VLLM_ROCM_USE_AITER_MHA=0``, and
+  ``GPU_ARCHS=gfx942``.
+- Kimi K2.5 sets ``VLLM_ROCM_USE_AITER=1`` and disables
+  ``VLLM_ROCM_USE_AITER_MHA``, ``VLLM_ROCM_USE_AITER_FP4BMM``,
+  ``VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS``, and
+  ``VLLM_ROCM_USE_AITER_MLA``.
+- Other packaged model families carry no AITER overrides.
 
-  {
-    "VLLM_USE_AITER_UNIFIED_ATTENTION": "1",
-    "VLLM_ROCM_USE_AITER_MHA": "0",
-    "VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4": "1"
-  }
-
-Per-model settings such as ``VLLM_ROCM_USE_AITER`` and ``GPU_ARCHS`` remain
-additive entries in the same map.
+Do not add ``VLLM_USE_AITER_UNIFIED_ATTENTION`` or
+``VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4``: this image does not register them, so
+they are warning-only and ignored. Do not substitute
+``VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION`` or other attention-backend variables
+without validating both registration and call sites in the exact image.
 
 .. _vllm-params:
 

@@ -14,16 +14,54 @@ from cvs.lib.inference.utils.vllm_config_loader import (
 
 CELL = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
 EXPECTED_PACKAGED_CONFIG_COUNT = 28
-STATIC_AITER_ENV = {
-    "VLLM_USE_AITER_UNIFIED_ATTENTION": "1",
-    "VLLM_ROCM_USE_AITER_MHA": "0",
-    "VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4": "1",
+REJECTED_AITER_ENV = {
+    "VLLM_USE_AITER_UNIFIED_ATTENTION",
+    "VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4",
+}
+EXPECTED_AITER_ENV_BY_MODEL = {
+    "deepseek-v4-flash_fp8": {
+        "VLLM_ROCM_USE_AITER": "1",
+        "VLLM_ROCM_USE_AITER_MHA": "0",
+        "GPU_ARCHS": "gfx942",
+    },
+    "deepseek-v4-pro_fp8": {
+        "VLLM_ROCM_USE_AITER": "1",
+        "VLLM_ROCM_USE_AITER_MHA": "0",
+        "GPU_ARCHS": "gfx942",
+    },
+    "glm-51_fp8": {
+        "VLLM_ROCM_USE_AITER": "1",
+        "VLLM_ROCM_USE_AITER_MHA": "0",
+        "GPU_ARCHS": "gfx942",
+    },
+    "glm-52_fp8": {
+        "VLLM_ROCM_USE_AITER": "1",
+        "VLLM_ROCM_USE_AITER_MHA": "0",
+        "GPU_ARCHS": "gfx942",
+    },
+    "kimi-k25_w4a8": {
+        "VLLM_ROCM_USE_AITER": "1",
+        "VLLM_ROCM_USE_AITER_MHA": "0",
+        "VLLM_ROCM_USE_AITER_FP4BMM": "0",
+        "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS": "0",
+        "VLLM_ROCM_USE_AITER_MLA": "0",
+    },
 }
 
 
 def _packaged_configs():
     root = Path(__file__).resolve().parents[3] / "input" / "config_file" / "inference" / "vllm"
     return sorted(path for path in root.glob("*.json") if not path.name.endswith("threshold.json"))
+
+
+def _model_stem(path):
+    _prefix, separator, stem = path.name.partition("_vllm_")
+    if not separator:
+        raise AssertionError(f"unrecognized packaged vLLM config name: {path.name}")
+    for topology in ("_single.json", "_distributed.json"):
+        if stem.endswith(topology):
+            return stem.removesuffix(topology)
+    raise AssertionError(f"unrecognized packaged vLLM config name: {path.name}")
 
 
 def _config(**overrides):
@@ -177,13 +215,29 @@ class TestPackagedVllmCatalog(unittest.TestCase):
                     self.assertEqual(run.cell.tp, variant.server_params.tensor_parallel_size)
                     self.assertEqual(run.cell.pp, variant.server_params.pipeline_parallel_size)
 
-    def test_every_config_owns_static_aiter_environment(self):
-        configs = _packaged_configs()
-        for path in configs:
+    def test_rejected_aiter_names_are_absent(self):
+        for path in _packaged_configs():
             with self.subTest(config=path.name):
                 variant = load_variant(path, {"username": "test"})
-                for name, expected in STATIC_AITER_ENV.items():
-                    self.assertEqual(variant.container.env.get(name), expected)
+                self.assertFalse(REJECTED_AITER_ENV & set(variant.container.env))
+
+    def test_model_scoped_aiter_environment(self):
+        for path in _packaged_configs():
+            with self.subTest(config=path.name):
+                variant = load_variant(path, {"username": "test"})
+                actual = {
+                    name: value
+                    for name, value in variant.container.env.items()
+                    if "AITER" in name or name == "GPU_ARCHS"
+                }
+                self.assertEqual(actual, EXPECTED_AITER_ENV_BY_MODEL.get(_model_stem(path), {}))
+
+    def test_mha_setting_requires_master_aiter(self):
+        for path in _packaged_configs():
+            with self.subTest(config=path.name):
+                env = load_variant(path, {"username": "test"}).container.env
+                if "VLLM_ROCM_USE_AITER_MHA" in env:
+                    self.assertEqual(env.get("VLLM_ROCM_USE_AITER"), "1")
 
 
 if __name__ == "__main__":

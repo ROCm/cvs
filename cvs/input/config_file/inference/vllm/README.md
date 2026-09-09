@@ -79,20 +79,25 @@ pass — enough to shake out topology, AITER and kv-cache settings on new
 hardware, at roughly a tenth the wall-clock. Raise it to `3200` before quoting
 numbers that need to line up with the shipped examples.
 
-## Static container environment
+## Image- and model-scoped AITER environment
 
-All 28 catalog configs carry the static AITER baseline in `container.env`:
+The catalog AITER settings are validated for vLLM commit `4bdc8a788` and live
+in `container.env`:
 
-```json
-{
-  "VLLM_USE_AITER_UNIFIED_ATTENTION": "1",
-  "VLLM_ROCM_USE_AITER_MHA": "0",
-  "VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4": "1"
-}
-```
+- DeepSeek V4 Flash, DeepSeek V4 Pro, GLM 5.1, and GLM 5.2 set
+  `VLLM_ROCM_USE_AITER=1`, `VLLM_ROCM_USE_AITER_MHA=0`, and
+  `GPU_ARCHS=gfx942`.
+- Kimi K2.5 sets `VLLM_ROCM_USE_AITER=1` and disables
+  `VLLM_ROCM_USE_AITER_MHA`, `VLLM_ROCM_USE_AITER_FP4BMM`,
+  `VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS`, and
+  `VLLM_ROCM_USE_AITER_MLA`.
+- The other packaged model families carry no AITER overrides.
 
-Per-model settings such as `VLLM_ROCM_USE_AITER` and `GPU_ARCHS` are additive
-entries in the same map.
+Do not add `VLLM_USE_AITER_UNIFIED_ATTENTION` or
+`VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4`; this image does not register them, so
+they are warning-only and ignored. Do not substitute
+`VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION` or other attention-backend variables
+without validating both registration and call sites in the exact image.
 
 ## Thresholds
 

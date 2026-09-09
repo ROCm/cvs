@@ -20,10 +20,8 @@
     "env": {
       "HF_HUB_OFFLINE": "1",
       "TRANSFORMERS_OFFLINE": "1",
-      "VLLM_USE_AITER_UNIFIED_ATTENTION": "1",
-      "VLLM_ROCM_USE_AITER_MHA": "0",
-      "VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4": "1",
       "VLLM_ROCM_USE_AITER": "1",
+      "VLLM_ROCM_USE_AITER_MHA": "0",
       "GPU_ARCHS": "gfx942"
     },
     "runtime": {
