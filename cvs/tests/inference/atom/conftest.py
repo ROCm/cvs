@@ -17,6 +17,7 @@ from cvs.lib.inference.utils.inference_suite_lifecycle import (
 from cvs.lib.inference.atom.atom_config_loader import (
     load_variant,
     orchestrator_container_from_variant,
+    resolved_atom_image_pin,
 )
 from cvs.lib.inference.atom.atom_dmesg import capture_dmesg_timestamp
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
@@ -43,8 +44,9 @@ def _log_variant_run_card(variant_config, config_profile=None):
     atom_args = variant_config.roles.server.atom_args
     if atom_args:
         parts.append(f"atom_args={len(atom_args)} tokens")
-    if rc.atom_image_pin:
-        parts.append(f"image_pin={rc.atom_image_pin}")
+    image = resolved_atom_image_pin(variant_config)
+    if image:
+        parts.append(f"image={image}")
     if rc.upstream_run_url:
         parts.append(f"upstream_run={rc.upstream_run_url}")
     if rc.notes:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any, List, Tuple
 
+from cvs.lib.inference.atom.atom_config_loader import resolved_atom_image_pin
 from cvs.lib.inference.utils.inference_suite_results_table import ATOM_RESULTS_COLUMNS
 from cvs.lib.inference.atom.atom_parsing import (
     CLIENT_METRIC_UNITS,
@@ -53,11 +54,12 @@ _ATOM_CHART_SERIES = (
 
 def _atom_run_card_display(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
     rc = variant.run_card
+    image = resolved_atom_image_pin(variant) or "\u2014"
     rows: List[Tuple[str, str, bool]] = [
         ("Model", variant.model.id, False),
         ("GPU", variant.gpu_arch, False),
         ("Driver", variant.params.driver, False),
-        ("Image pin", rc.atom_image_pin or "\u2014", False),
+        ("Image pin", image, False),
         ("TP", str(variant.params.tensor_parallelism), False),
         thresholds_run_card_row(variant),
     ]

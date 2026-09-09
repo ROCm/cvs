@@ -161,6 +161,15 @@ class AtomRunCard(_Forbid):
     notes: str = ""
 
 
+def resolved_atom_image_pin(variant):
+    rc = getattr(variant, "run_card", None)
+    pin = (getattr(rc, "atom_image_pin", None) or "").strip() if rc is not None else ""
+    if pin:
+        return pin
+    container = getattr(variant, "container", None)
+    return str(getattr(container, "image", "") or "").strip()
+
+
 class MtpQualityConfig(_Forbid):
     enabled: bool = False
     chat_template_prompt: str = "Say hello in one short sentence."

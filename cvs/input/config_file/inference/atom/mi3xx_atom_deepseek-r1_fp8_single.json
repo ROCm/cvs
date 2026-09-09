@@ -17,10 +17,6 @@
   "profiles": {
     "perf": {
       "enforce_thresholds": false,
-      "run_card": {
-        "atom_image_pin": "<changeme>",
-        "notes": "DeepSeek-R1-0528 FP8 single-node: atom driver perf gate (1K/1K) plus accuracy"
-      },
       "container": {
         "lifetime": "per_run",
         "name": "atom_mi3xx",
@@ -154,10 +150,6 @@
     },
     "mtp3": {
       "enforce_thresholds": false,
-      "run_card": {
-        "atom_image_pin": "<changeme>",
-        "notes": "DeepSeek-R1-0528 FP8 single-node MTP-3 speculative decode perf and gsm8k quality"
-      },
       "container": {
         "lifetime": "per_run",
         "name": "atom_mi3xx",
