@@ -273,14 +273,23 @@ def upload_cluster_keys(orch, norm_config):
 
 
 def authorize_cluster_pubkey(orch, norm_config):
-    """Append cluster pubkey to authorized_keys on all nodes. Returns {node: bool}."""
+    """Append cluster pubkey to authorized_keys. NFS-shared dirs go via the head node only.
+
+    Returns {node: bool}.
+    """
     key_name = norm_config["key_name"]
     remote_ssh_dir = norm_config["remote_ssh_dir"]
+    nfs_shared = norm_config.get("ssh_dir_nfs_shared", False)
     pubkey_remote = f"{remote_ssh_dir}/{key_name}.pub"
 
     cmd = build_authorize_pubkey_cmd(remote_ssh_dir, pubkey_remote)
-    out = orch.exec(cmd, timeout=30, detailed=True)
-    return _detailed_to_bool(out)
+    exec_target = orch.exec_on_head if nfs_shared else orch.exec
+    out = exec_target(cmd, timeout=30, detailed=True)
+
+    results = {node: True for node in orch.all.reachable_hosts}
+    for node, ok in _detailed_to_bool(out).items():
+        results[node] = results.get(node, True) and ok
+    return results
 
 
 def authorize_controlling_station(orch, norm_config):
@@ -305,7 +314,8 @@ def authorize_controlling_station(orch, norm_config):
         return results
 
     cmd = build_authorize_pubkey_cmd(remote_ssh_dir, remote_tmp)
-    out = orch.exec(cmd, timeout=30, detailed=True)
+    exec_target = orch.exec_on_head if nfs_shared else orch.exec
+    out = exec_target(cmd, timeout=30, detailed=True)
     for node, ok in _detailed_to_bool(out).items():
         results[node] = results.get(node, True) and ok
 
@@ -313,11 +323,19 @@ def authorize_controlling_station(orch, norm_config):
 
 
 def install_ssh_config(orch, cluster_dict, norm_config):
-    """Derive host pattern, render config block, install on all nodes. Returns {node: bool}."""
+    """Derive host pattern, render config block, install ~/.ssh/config.
+
+    NFS-shared remote_ssh_dir writes the file via the head node only -- concurrent
+    sed -i (temp-file + rename) against the same underlying file from multiple nodes
+    at once can trip a stale NFS file handle on the other nodes.
+
+    Returns {node: bool}.
+    """
     remote_ssh_dir = norm_config["remote_ssh_dir"]
     key_name = norm_config["key_name"]
     override = norm_config.get("ssh_config_host_pattern", "")
     mode = norm_config.get("ssh_config_write_mode", "managed_block")
+    nfs_shared = norm_config.get("ssh_dir_nfs_shared", False)
     username = cluster_dict.get("username", "")
     identity_file = f"{remote_ssh_dir}/{key_name}"
 
@@ -326,8 +344,13 @@ def install_ssh_config(orch, cluster_dict, norm_config):
     block = render_ssh_config_block(pattern, username, identity_file)
 
     cmd = build_write_ssh_config_cmd(remote_ssh_dir, block, mode)
-    out = orch.exec(cmd, timeout=30, detailed=True)
-    return _detailed_to_bool(out)
+    exec_target = orch.exec_on_head if nfs_shared else orch.exec
+    out = exec_target(cmd, timeout=30, detailed=True)
+
+    results = {node: True for node in orch.all.reachable_hosts}
+    for node, ok in _detailed_to_bool(out).items():
+        results[node] = results.get(node, True) and ok
+    return results
 
 
 def verify_passwordless_ssh(orch, cluster_dict, norm_config):

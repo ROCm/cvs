@@ -357,6 +357,7 @@ class TestUploadClusterKeys(unittest.TestCase):
 class TestAuthorizeClusterPubkey(unittest.TestCase):
     def test_returns_success_dict(self):
         orch = MagicMock()
+        orch.all.reachable_hosts = ["n1", "n2"]
         orch.exec.return_value = {
             "n1": {"output": "", "exit_code": 0},
             "n2": {"output": "", "exit_code": 0},
@@ -371,10 +372,28 @@ class TestAuthorizeClusterPubkey(unittest.TestCase):
 
     def test_nonzero_exit_returns_false(self):
         orch = MagicMock()
+        orch.all.reachable_hosts = ["n1"]
         orch.exec.return_value = {"n1": {"output": "err", "exit_code": 1}}
         norm = {"key_name": "cluster_id", "remote_ssh_dir": "~/.ssh"}
         results = lib.authorize_cluster_pubkey(orch, norm)
         self.assertFalse(results["n1"])
+
+    def test_nfs_shared_authorizes_via_head_only(self):
+        orch = MagicMock()
+        orch.all.reachable_hosts = ["n1", "n2"]
+        orch.exec_on_head.return_value = {
+            "n1": {"output": "", "exit_code": 0},
+            "n2": {"output": "", "exit_code": 0},
+        }
+        norm = {
+            "key_name": "cluster_id",
+            "remote_ssh_dir": "~/.ssh",
+            "ssh_dir_nfs_shared": True,
+        }
+        results = lib.authorize_cluster_pubkey(orch, norm)
+        orch.exec_on_head.assert_called_once()
+        orch.exec.assert_not_called()
+        self.assertTrue(all(results.values()))
 
 
 class TestAuthorizeControllingStation(unittest.TestCase):
@@ -420,14 +439,13 @@ class TestAuthorizeControllingStation(unittest.TestCase):
         orch.all.reachable_hosts = ["n1", "n2"]
 
         def exec_side_effect(cmd, timeout=30, detailed=False):
-            if cmd.startswith("echo "):
-                return {"n1": "/home/user/.ssh", "n2": "/home/user/.ssh"}
-            return {
-                "n1": {"output": "", "exit_code": 0},
-                "n2": {"output": "", "exit_code": 0},
-            }
+            return {"n1": "/home/user/.ssh", "n2": "/home/user/.ssh"}
 
         orch.exec.side_effect = exec_side_effect
+        orch.exec_on_head.return_value = {
+            "n1": {"output": "", "exit_code": 0},
+            "n2": {"output": "", "exit_code": 0},
+        }
         norm = {
             "controlling_station_pubkey_path": "/local/ctrl.pub",
             "remote_ssh_dir": "~/.ssh",
@@ -436,12 +454,14 @@ class TestAuthorizeControllingStation(unittest.TestCase):
         results = lib.authorize_controlling_station(orch, norm)
         orch.head.upload_file.assert_called_once_with("/local/ctrl.pub", "/home/user/.ssh/.cvs_controlling_station.pub")
         orch.all.upload_file.assert_not_called()
+        orch.exec_on_head.assert_called_once()
         self.assertTrue(all(results.values()))
 
 
 class TestInstallSshConfig(unittest.TestCase):
     def test_uses_cluster_username(self):
         orch = MagicMock()
+        orch.all.reachable_hosts = ["n1"]
         orch.exec.return_value = {"n1": {"output": "", "exit_code": 0}}
         cluster = {"username": "myuser", "node_dict": {"n1": {}}}
         norm = {
@@ -456,6 +476,7 @@ class TestInstallSshConfig(unittest.TestCase):
 
     def test_returns_success_dict(self):
         orch = MagicMock()
+        orch.all.reachable_hosts = ["n1"]
         orch.exec.return_value = {"n1": {"output": "", "exit_code": 0}}
         cluster = {"username": "u", "node_dict": {"n1": {}}}
         norm = {
@@ -466,6 +487,26 @@ class TestInstallSshConfig(unittest.TestCase):
         }
         results = lib.install_ssh_config(orch, cluster, norm)
         self.assertTrue(results["n1"])
+
+    def test_nfs_shared_installs_via_head_only(self):
+        orch = MagicMock()
+        orch.all.reachable_hosts = ["n1", "n2"]
+        orch.exec_on_head.return_value = {
+            "n1": {"output": "", "exit_code": 0},
+            "n2": {"output": "", "exit_code": 0},
+        }
+        cluster = {"username": "u", "node_dict": {"n1": {}, "n2": {}}}
+        norm = {
+            "remote_ssh_dir": "~/.ssh",
+            "key_name": "cluster_id",
+            "ssh_config_host_pattern": "",
+            "ssh_config_write_mode": "managed_block",
+            "ssh_dir_nfs_shared": True,
+        }
+        results = lib.install_ssh_config(orch, cluster, norm)
+        orch.exec_on_head.assert_called_once()
+        orch.exec.assert_not_called()
+        self.assertTrue(all(results.values()))
 
 
 class TestVerifyPasswordlessSsh(unittest.TestCase):
