@@ -180,25 +180,17 @@
     "resource": "RESOURCE_EXHAUSTED: Out of memory|failed: RESOURCE_EXHAUSTED",
     "segfault": "Segmentation fault|SIGSEGV|core dumped|std::bad_alloc"
   },
-  "_sweeps_comment": "combinations{} + runs[] shape. Each combination = one full training run; the key is the threshold cell key. Values are per-run overrides applied on top of train_params.maxtext_config. `runs` selects which combinations to execute. The key is a compact label only (NN<nodes>_ST<steps>_<precision>_B<batch>_SL<seqlen>); real values come from the overrides. FP8 on MI300X/MI325X (CDNA3) uses quantization=nanoo_fp8.",
+  "_sweeps_comment": "sweeps{} maps a sweep KEY to per-run overrides. The key encodes the primary params and is parsed by CVS into maxtext_config overrides: BS=<per_device_batch_size>, PRECISION=<BF16|FP8> (FP8 -> the GPU's fp8 flavor: nanoo_fp8 on MI300X/MI325X, fp8 on MI350-class), SL=<max_target_length>. The key is also the threshold-file cell key. Add any EXTRA maxtext_config override for a sweep inside its {} (takes precedence over the parsed values), e.g. \"steps\": 300. runs[] selects which sweep keys to execute.",
   "sweeps": {
-    "NN2_ST30_BF16_B2_SL8192": {
-      "per_device_batch_size": 2,
-      "max_target_length": 8192,
-      "dtype": "bfloat16",
-      "weight_dtype": "bfloat16",
-      "quantization": ""
+    "BS=2,PRECISION=BF16,SL=8192": {
+      "_comment": "Add extra maxtext_config overrides for this sweep here (BS/PRECISION/SL come from the key), e.g. \"steps\": 300"
     },
-    "NN2_ST30_FP8_B2_SL8192": {
-      "per_device_batch_size": 2,
-      "max_target_length": 8192,
-      "dtype": "bfloat16",
-      "weight_dtype": "bfloat16",
-      "quantization": "nanoo_fp8"
+    "BS=2,PRECISION=FP8,SL=8192": {
+      "_comment": "Add extra maxtext_config overrides for this sweep here (BS/PRECISION/SL come from the key), e.g. \"steps\": 300"
     }
   },
   "runs": [
-    "NN2_ST30_BF16_B2_SL8192",
-    "NN2_ST30_FP8_B2_SL8192"
+    "BS=2,PRECISION=BF16,SL=8192",
+    "BS=2,PRECISION=FP8,SL=8192"
   ]
 }

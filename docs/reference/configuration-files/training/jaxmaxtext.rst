@@ -132,8 +132,10 @@ A config groups its keys into five areas:
    structured ``xla_flags`` (exported as one ``XLA_FLAGS`` env var).
 4. **tests blocks at the root** — ``scaling_baseline``, ``convergence``,
    ``loss_curve``, ``smoke``, ``checkpoint_resume``, ``error_patterns``.
-5. **sweeps + runs** — ``sweeps`` is a ``{name: overrides}`` map (one full
-   training run each); ``runs`` selects which sweep names to execute.
+5. **sweeps + runs** — ``sweeps`` is a ``{key: overrides}`` map (one full
+   training run each) whose key encodes the primary params
+   (``BS=..,PRECISION=..,SL=..``, parsed by CVS); ``runs`` selects which sweep
+   keys to execute.
 
 Example configuration
 =====================
@@ -219,10 +221,10 @@ A representative distributed config
       "error_patterns": { "NCCL ERROR": "NCCL ERROR|NCCL timeout", "...": "..." },
 
       "sweeps": {
-        "NN2_ST30_BF16_B3_SL8192": { "per_device_batch_size": 3, "max_target_length": 8192, "dtype": "bfloat16", "weight_dtype": "bfloat16", "quantization": "" },
-        "NN2_ST30_FP8_B3_SL8192":  { "per_device_batch_size": 3, "max_target_length": 8192, "dtype": "bfloat16", "weight_dtype": "bfloat16", "quantization": "nanoo_fp8" }
+        "BS=3,PRECISION=BF16,SL=8192": { "_comment": "extra maxtext_config overrides go here, e.g. \"steps\": 300" },
+        "BS=3,PRECISION=FP8,SL=8192":  { "_comment": "extra maxtext_config overrides go here, e.g. \"steps\": 300" }
       },
-      "runs": ["NN2_ST30_BF16_B3_SL8192", "NN2_ST30_FP8_B3_SL8192"]
+      "runs": ["BS=3,PRECISION=BF16,SL=8192", "BS=3,PRECISION=FP8,SL=8192"]
     }
 
 Top-level (CVS) fields
@@ -621,45 +623,69 @@ traces, ROCm init errors, Python fatal errors, TF coordination errors,
 Sweeps and runs
 ===============
 
-``sweeps`` is a ``{name: overrides}`` map — each entry is one full training run,
-and its ``name`` is also the **threshold cell key**. ``overrides`` merge onto
-``train_params.maxtext_config`` for that run (typically ``per_device_batch_size``,
-``max_target_length``, ``dtype`` / ``weight_dtype``, ``quantization``). ``runs``
-is the list of sweep names to actually execute.
+``sweeps`` is a ``{key: overrides}`` map — each entry is one full training run,
+and its **key** is both the parsed sweep spec and the **threshold cell key**.
+``runs`` is the list of sweep keys to actually execute.
 
-The sweep name is a compact label of the form
-``NN<nodes>_ST<steps>_<precision>_B<batch>_SL<seqlen>`` (e.g.
-``NN2_ST30_BF16_B3_SL8192``); the ``NN``/``ST`` parts are labels only and the
-real values come from the overrides. FP8 on MI300X/MI325X (CDNA3) uses
-``quantization: nanoo_fp8``.
+The key is a comma-separated, parseable spec that CVS turns into
+``maxtext_config`` overrides for that run:
+
+.. list-table::
+   :widths: 2 3 5
+   :header-rows: 1
+
+   * - Token
+     - Maps to
+     - Notes
+   * - ``BS``
+     - ``per_device_batch_size``
+     - Per-GPU batch size.
+   * - ``PRECISION``
+     - ``quantization``
+     - ``BF16`` → ``""``; ``FP8`` → the GPU's FP8 flavor (``nanoo_fp8`` on
+       MI300X/MI325X CDNA3, ``fp8`` on MI350-class CDNA4).
+   * - ``SL``
+     - ``max_target_length``
+     - Sequence length.
+
+``dtype`` / ``weight_dtype`` are always ``bfloat16`` (the ``maxtext_config``
+default) and are no longer repeated per sweep. Add **any extra** override inside
+the sweep's ``{}`` (it takes precedence over the parsed key), e.g. a per-sweep
+``steps`` — which CVS also uses for the run's timeout/poll budget and completion
+detection.
 
 .. code:: json
 
   "sweeps": {
-    "NN2_ST30_FP8_B3_SL8192": {
-      "per_device_batch_size": 3,
-      "max_target_length": 8192,
-      "dtype": "bfloat16",
-      "weight_dtype": "bfloat16",
-      "quantization": "nanoo_fp8"
+    "BS=3,PRECISION=FP8,SL=8192": {
+      "_comment": "extra maxtext_config overrides go here, e.g. \"steps\": 300"
     }
   },
-  "runs": ["NN2_ST30_FP8_B3_SL8192"]
+  "runs": ["BS=3,PRECISION=FP8,SL=8192"]
 
 Threshold files
 ===============
 
 Each config has a sibling ``<config-stem>_threshold.json`` referenced by
-``threshold_json``. It maps each **sweep name** (cell key) to a dict of
+``threshold_json``. It maps each **sweep key** (cell key) to a dict of
 ``{metric: spec}``, one spec per line. A metric is gated (PASS/FAIL) only when
 ``enforce_thresholds: true`` **and** it has a numeric spec whose ``kind`` is not
-``info``; otherwise it is recorded. The cell key must match the sweep name
+``info``; otherwise it is recorded. The cell key must match the sweep key
 exactly, or the metric falls back to ``RECORD``. Metrics not produced by a run
 report ``N/A`` (not a failure).
 
+.. note::
+
+  The shipped threshold values were captured on a **2-node (2N)** run
+  (single-node configs: **1N**; the large ``llama-3.1-405b`` and
+  ``deepseek-v4-284b`` configs: **4N**). Throughput and step-time scale with the
+  GPU count, so if you run a different number of nodes, update the values to the
+  appropriate targets for that node count (see the ``_node_count_comment`` in
+  each threshold file).
+
 .. code:: json
 
-  "NN2_ST30_BF16_B3_SL8192": {
+  "BS=3,PRECISION=BF16,SL=8192": {
     "training.tflops_per_sec_per_gpu": {"kind": "min", "value": 260.0},
     "training.tokens_per_sec_per_gpu": {"kind": "min", "value": 1217.0},
     "training.final_loss": {"kind": "max", "value": 15.0},

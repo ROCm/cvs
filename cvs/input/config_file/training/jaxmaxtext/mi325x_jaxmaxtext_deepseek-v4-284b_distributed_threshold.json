@@ -1,6 +1,7 @@
 {
+  "_node_count_comment": "Threshold values here were captured on a 2-node (2N) run. Single-node configs use 1N; large models (llama-3.1-405b, deepseek-v4-284b) use 4N. Throughput/step-time scale with the GPU count, so if you run a different number of nodes, update these values to the appropriate targets for that node count.",
   "_comment": "RECORD-ONLY placeholder thresholds for DeepSeek-V4 284B (deepseek4-284b / DeepSeek-V4-Flash MoE) on MI325X distributed, keyed by sweep name. Every metric is kind='info' so it always PASSES (no gating) -- we have NO measured MI325X baselines for this model yet. After the first clean runs, replace the tflops/tokens `info` entries with `min` gates and final_loss with a `max` gate, then set enforce_thresholds=true in the config. The sweep key MUST match the config's sweep name exactly.",
-  "NN4_ST30_BF16_B1_SL2048": {
+  "BS=1,PRECISION=BF16,SL=2048": {
     "training.tflops_per_sec_per_gpu": {"kind": "info", "value": 0.0},
     "training.tokens_per_sec_per_gpu": {"kind": "info", "value": 0.0},
     "training.tokens_per_sec_total": {"kind": "info", "value": 0},

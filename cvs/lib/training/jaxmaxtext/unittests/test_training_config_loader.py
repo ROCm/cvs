@@ -277,6 +277,38 @@ class NormalizeTrainingConfigTests(unittest.TestCase):
         self.assertNotIn("_env_comment", internal["container"])
 
 
+class SweepKeyParsingTests(unittest.TestCase):
+    """The sweep KEY (BS/PRECISION/SL) is parsed into maxtext overrides."""
+
+    def _overrides(self, gpu, key, sweep_val):
+        cfg = _new_format_config()
+        cfg["gpu_name"] = gpu
+        cfg["sweeps"] = {key: sweep_val}
+        cfg["runs"] = [key]
+        return normalize_training_config(cfg)["training"]["sweeps"][0]["maxtext_overrides"]
+
+    def test_key_parsed_bs_sl_and_cdna3_fp8(self):
+        ov = self._overrides("mi325x", "BS=3,PRECISION=FP8,SL=4096", {"_comment": "x"})
+        self.assertEqual(ov["per_device_batch_size"], 3)
+        self.assertEqual(ov["max_target_length"], 4096)
+        self.assertEqual(ov["quantization"], "nanoo_fp8")  # CDNA3
+
+    def test_fp8_maps_to_fp8_on_mi35x(self):
+        ov = self._overrides("mi35x", "BS=5,PRECISION=FP8,SL=8192", {})
+        self.assertEqual(ov["quantization"], "fp8")  # CDNA4
+
+    def test_bf16_clears_quant_comment_stripped_extra_override_kept(self):
+        ov = self._overrides("mi300x", "BS=2,PRECISION=BF16,SL=8192", {"_comment": "note", "steps": 300})
+        self.assertEqual(ov["quantization"], "")
+        self.assertNotIn("_comment", ov)  # underscore keys dropped from overrides
+        self.assertEqual(ov["steps"], 300)  # extra override preserved
+
+    def test_explicit_override_takes_precedence_over_parsed_key(self):
+        # A dict value wins over the parsed key (e.g. pin a different batch size).
+        ov = self._overrides("mi325x", "BS=2,PRECISION=BF16,SL=8192", {"per_device_batch_size": 8})
+        self.assertEqual(ov["per_device_batch_size"], 8)
+
+
 class RoundTripLoadTests(unittest.TestCase):
     """Full load_training_variant round-trip on a temp new-format config."""
 

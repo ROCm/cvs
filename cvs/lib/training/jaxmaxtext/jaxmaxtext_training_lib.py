@@ -144,6 +144,12 @@ class MaxTextTrainingJob:
             merged.update(sweep.maxtext_overrides)
         self.maxtext_config = merged
 
+        # Effective step count for THIS sweep. A sweep may override `steps` (merged
+        # above); use that value -- not the base maxtext_config.steps -- for the run
+        # YAML, the poll/timeout budget, and the completion marker so a per-sweep
+        # override actually takes effect end-to-end.
+        self.steps = int(self.maxtext_config.get("steps", getattr(self.training, "steps", 30)) or 30)
+
         self.log_dir = variant.paths.log_dir
         # Namespace the output tree by model (from maxtext_config.model_name, else
         # the model id) so different models never share a sweep folder, then by
@@ -177,7 +183,7 @@ class MaxTextTrainingJob:
         self.training_start_time = None
 
         self._poll_wait_s = 60
-        self._poll_count = int(self.training.steps * 10)
+        self._poll_count = int(self.steps * 10)
         self._initial_wait_s = 60
 
         self._scratch_dir = None  # resolved lazily from paths.temp_dir
@@ -272,7 +278,7 @@ class MaxTextTrainingJob:
         if self.sweep_tag:
             run_name = f"{run_name}_{self.sweep_tag}"
         mc["run_name"] = run_name
-        mc["steps"] = self.training.steps
+        mc["steps"] = self.steps
         mc["enable_checkpointing"] = self.training.enable_checkpointing
         mc["base_output_directory"] = self.out_dir
         mc["tokenizer_path"] = self.training.tokenizer.tokenizer_path
@@ -560,7 +566,7 @@ class MaxTextTrainingJob:
         ``grep -c`` already prints "0" and exits 1 on no match, so ``|| echo 0``
         would emit "0\\n0" and defeat the equality check below.
         """
-        final_step = self.training.steps - 1
+        final_step = self.steps - 1
         pattern = f"completed step:\\s*{final_step},"
         cmd_list = [
             f"grep -cE {shlex.quote(pattern)} {shlex.quote(self._node_log(i))} 2>/dev/null || true"

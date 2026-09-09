@@ -506,6 +506,19 @@ class WriteMaxtextYamlTests(unittest.TestCase):
         # scan_layers True -> lowercase bool
         self.assertIn("scan_layers: true", written)
 
+    def test_sweep_steps_override_drives_yaml_and_poll(self):
+        # A per-sweep `steps` override (merged into maxtext_config) must drive the
+        # run YAML, the poll/timeout budget, and completion -- not the base steps.
+        base, _ = _make_job()
+        sweep = SimpleNamespace(name="BS=2,PRECISION=BF16,SL=8192", maxtext_overrides={"steps": 7})
+        job = MaxTextTrainingJob(base.orch, base.variant, hf_token="dummy", sweep=sweep)
+        self.assertEqual(job.steps, 7)  # base training.steps is 3
+        self.assertEqual(job._poll_count, 70)
+        job._write_maxtext_yaml()
+        written = " ".join(str(c.args[0]) for c in job.orch.exec.call_args_list)
+        self.assertIn("steps: 7", written)
+        self.assertNotIn("steps: 3", written)
+
     def test_empty_string_rendered_as_quoted_not_bare(self):
         # An empty-string maxtext param (e.g. profiler) must render as 'key: ""',
         # never bare 'key:' (which YAML reads as null and breaks MaxText enums).

@@ -176,12 +176,13 @@ sweep launches.
 Sweeps
 ======
 
-A **sweep** is one full training run with per-run MaxText overrides. ``sweeps``
-is a ``{name: overrides}`` map and ``runs`` selects which sweep names to execute;
-the overrides merge onto ``train_params.maxtext_config`` for that run. The sweep
-``name`` is also the threshold cell key and appears (as a compact
-``NN<nodes>_ST<steps>_<precision>_B<batch>_SL<seqlen>`` label, e.g.
-``NN2_ST30_BF16_B3_SL8192``) in every parametrized row.
+A **sweep** is one full training run. ``sweeps`` is a ``{key: overrides}`` map
+and ``runs`` selects which sweep keys to execute. The key is a parseable spec —
+``BS=<batch>,PRECISION=<BF16|FP8>,SL=<seqlen>`` (e.g. ``BS=3,PRECISION=FP8,SL=8192``)
+— that CVS turns into ``maxtext_config`` overrides (``per_device_batch_size`` /
+``quantization`` / ``max_target_length``); add any extra override (e.g. a per-sweep
+``steps``) inside the sweep's ``{}``. The key is also the threshold cell key and
+appears in every parametrized row.
 
 Metrics and PASS/FAIL
 =====================

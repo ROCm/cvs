@@ -336,6 +336,42 @@ def _build_xla_flags_env(xla_flags):
     return f'"{joined}"'
 
 
+def _fp8_quantization(gpu_name):
+    """MaxText FP8 quantization value for a GPU family.
+
+    CDNA4 (MI350/MI355 class) supports OCP FP8 -> ``fp8``; CDNA3 (MI300X/MI325X)
+    uses the NANOO/fnuz FP8 format -> ``nanoo_fp8``.
+    """
+    return "fp8" if str(gpu_name or "").lower().startswith("mi35") else "nanoo_fp8"
+
+
+def _parse_sweep_key(name, gpu_name=""):
+    """Parse a sweep key like ``BS=3,PRECISION=FP8,SL=8192`` into maxtext overrides.
+
+    Recognized comma-separated tokens (case-insensitive keys):
+      - ``BS`` -> ``per_device_batch_size`` (int)
+      - ``SL`` -> ``max_target_length`` (int)
+      - ``PRECISION`` -> ``quantization`` (``BF16`` -> ``""``; ``FP8`` -> the GPU's
+        FP8 flavor via ``_fp8_quantization``)
+    Unrecognized tokens are ignored, so a config may still add any extra override
+    inside the sweep's ``{}`` (which takes precedence over the parsed values).
+    """
+    out = {}
+    for tok in str(name).split(","):
+        key, sep, val = tok.partition("=")
+        if not sep:
+            continue
+        key = key.strip().upper()
+        val = val.strip()
+        if key == "BS" and val.isdigit():
+            out["per_device_batch_size"] = int(val)
+        elif key == "SL" and val.isdigit():
+            out["max_target_length"] = int(val)
+        elif key == "PRECISION":
+            out["quantization"] = _fp8_quantization(gpu_name) if val.upper() == "FP8" else ""
+    return out
+
+
 def normalize_training_config(raw):
     """Map the on-disk training-config layout onto the internal config shape.
 
@@ -381,11 +417,18 @@ def normalize_training_config(raw):
                 "value (RDMA/NIC device, interface, ...) before running."
             )
 
-    sweeps = [
-        {"name": name, "maxtext_overrides": (ov or {})}
-        for name, ov in (raw.get("sweeps") or {}).items()
-        if not str(name).startswith("_")
-    ]
+    # sweeps: {key: overrides}. The key encodes the primary params (BS/PRECISION/
+    # SL) and is parsed into maxtext overrides; the per-sweep dict may add any
+    # extra override (e.g. "steps") and takes precedence over the parsed values.
+    # `_`-prefixed keys inside a sweep dict (e.g. "_comment") are ignored.
+    gpu_name = raw.get("gpu_name", "")
+    sweeps = []
+    for name, ov in (raw.get("sweeps") or {}).items():
+        if str(name).startswith("_"):
+            continue
+        overrides = _parse_sweep_key(name, gpu_name)
+        overrides.update({k: v for k, v in dict(ov or {}).items() if not str(k).startswith("_")})
+        sweeps.append({"name": name, "maxtext_overrides": overrides})
 
     training = {
         # A config that selects NCCL IB devices is a multi-node/RDMA run;
