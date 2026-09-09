@@ -177,16 +177,14 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         merged = AtomJob._merged_serve_args(variant)
         self.assertEqual(merged["gpu-memory-utilization"], "0.75")
 
-    def test_merged_serve_args_skips_enforce_eager_for_deepseek_v4(self):
+    def test_merged_serve_args_does_not_inject_enforce_eager(self):
         variant = _fake_variant(driver="vllm_atom")
-        variant.model.id = "deepseek-ai/DeepSeek-V4-Pro"
         merged = AtomJob._merged_serve_args(variant)
         self.assertNotIn("enforce-eager", merged)
 
-    def test_build_server_cmd_skips_r1_aiter_env_for_deepseek_v4(self):
+    def test_build_server_cmd_exports_aiter_env_for_vllm_atom(self):
         orch = FakeOrch()
         variant = _fake_variant(driver="vllm_atom")
-        variant.model.id = "deepseek-ai/DeepSeek-V4-Pro"
         job = AtomJob(
             orch=orch,
             variant=variant,
@@ -199,8 +197,8 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         job.build_server_cmd()
         env_cmd = orch.commands[0][0]
-        self.assertNotIn("VLLM_USE_AITER_UNIFIED_ATTENTION", env_cmd)
-        self.assertNotIn("VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4", env_cmd)
+        self.assertIn("VLLM_USE_AITER_UNIFIED_ATTENTION", env_cmd)
+        self.assertIn("VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4", env_cmd)
 
     def test_flatten_serve_args_omits_false_flags(self):
         argv = AtomJob._flatten_serve_args({"enforce-eager": False, "trust-remote-code": True})
@@ -559,7 +557,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertIn("ATOM_DP_RANK=1", launch_cmds[1])
         self.assertIn("ATOM_DP_SIZE=2", launch_cmds[0])
 
-    def test_atom_server_argv_injects_enforce_eager_by_default(self):
+    def test_atom_server_argv_does_not_inject_enforce_eager(self):
         job = AtomJob(
             orch=FakeOrch(hosts=["10.0.0.1"]),
             variant=_fake_variant(driver="atom"),
@@ -570,7 +568,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
             num_prompts=1,
         )
         argv = job._atom_server_argv()
-        self.assertIn("--enforce-eager", argv)
+        self.assertNotIn("--enforce-eager", argv)
 
     def test_atom_server_argv_respects_config_pinned_enforce_eager(self):
         variant = _fake_variant(driver="atom")

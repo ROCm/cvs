@@ -277,11 +277,6 @@ class AtomJob:
         else:
             self._exec_all(f"mkdir -p {shlex.quote(self.out_dir)}")
 
-    @staticmethod
-    def _is_deepseek_v4_model(model_id):
-        mid = (model_id or "").lower()
-        return "deepseek-v4" in mid or "deepseek_v4" in mid
-
     @classmethod
     def _merged_serve_args(cls, variant):
         merged = dict(cls._DEFAULT_SERVE_ARGS)
@@ -290,8 +285,6 @@ class AtomJob:
         gpu_mem = env.get("CVS_GPU_MEMORY_UTIL") or env.get("VLLM_GPU_MEMORY_UTIL")
         if gpu_mem is not None and "gpu-memory-utilization" not in merged:
             merged["gpu-memory-utilization"] = str(gpu_mem)
-        if "enforce-eager" not in merged and not cls._is_deepseek_v4_model(variant.model.id):
-            merged["enforce-eager"] = True
         return merged
 
     @staticmethod
@@ -418,7 +411,7 @@ class AtomJob:
             f"export HF_TOKEN={shlex.quote(self.hf_token)}",
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
         ]
-        if self._uses_vllm_serve() and not self._is_deepseek_v4_model(self.model_id):
+        if self._uses_vllm_serve():
             env_lines.extend(
                 [
                     "export VLLM_USE_AITER_UNIFIED_ATTENTION=1",
@@ -532,8 +525,6 @@ class AtomJob:
         atom_argv = self._without_vllm_distributed_flags(self.atom_server_args)
         if not self._argv_has_flag(atom_argv, "--max-model-len", "-m"):
             atom_argv = list(atom_argv) + ["--max-model-len", self.max_model_length]
-        if not self._argv_has_flag(atom_argv, "--enforce-eager") and not self._is_deepseek_v4_model(self.model_id):
-            atom_argv = list(atom_argv) + ["--enforce-eager"]
         argv.extend(atom_argv)
         argv.extend(self._atom_multinode_argv())
         return argv
