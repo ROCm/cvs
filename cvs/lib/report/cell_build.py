@@ -71,9 +71,11 @@ class CellRecordBuilder:
         if not specs:
             return "na"
         for metric, spec in specs.items():
-            actual_key = metric if metric.startswith("scaling.") else self.config.full_metric(metric)
-            if metric_pass(metric, actuals.get(actual_key), spec) == "fail":
+            status = metric_pass(metric, actuals.get(metric), spec)
+            if status == "fail":
                 return "fail"
+            if status == "na":
+                return "na"
         return "pass"
 
     def resolve_pytest_nodeids(self, concurrency: Any) -> dict[str, str]:
@@ -131,7 +133,7 @@ class CellRecordBuilder:
         metrics = []
         for short, label in self.config.cell_highlights:
             full = self.config.full_metric(short)
-            spec = thresholds_cell.get(self.config.threshold_metric(short))
+            spec = thresholds_cell.get(full)
             actual = actuals.get(full)
             metrics.append(
                 {

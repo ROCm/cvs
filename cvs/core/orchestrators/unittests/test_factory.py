@@ -46,20 +46,20 @@ def _make_orch_config(orchestrator="baremetal", with_container=False, lifetime="
 
 
 class TestOrchestratorFactory(unittest.TestCase):
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_create_returns_baremetal_for_baremetal_string(self, _mock_pssh):
         cfg = _make_orch_config(orchestrator="baremetal")
         orch = OrchestratorFactory.create_orchestrator(MagicMock(), cfg)
         self.assertIsInstance(orch, BaremetalOrchestrator)
 
     @patch("cvs.core.orchestrators.container.RuntimeFactory")
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_create_returns_container_for_container_string(self, _mock_pssh, _mock_rf):
         cfg = _make_orch_config(orchestrator="container")
         orch = OrchestratorFactory.create_orchestrator(MagicMock(), cfg)
         self.assertIsInstance(orch, ContainerOrchestrator)
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_create_raises_for_unsupported_string(self, _mock_pssh):
         # Bypass OrchestratorConfig.from_configs validation by constructing
         # the config object directly with an unsupported orchestrator value.
@@ -101,6 +101,16 @@ class TestOrchestratorConfig(unittest.TestCase):
         testsuite = {"username": "testsuite_user"}
         cfg = OrchestratorConfig.from_configs(cluster, testsuite)
         self.assertEqual(cfg.username, "testsuite_user")
+
+    def test_from_configs_preserves_agent_token_file(self):
+        cluster = {
+            "node_dict": {"node01": {"agent_port": 9000}},
+            "username": "u",
+            "priv_key_file": "/dev/null",
+            "agent_token_file": "/shared/run/agent/secret",
+        }
+        cfg = OrchestratorConfig.from_configs(cluster)
+        self.assertEqual(cfg.agent_token_file, "/shared/run/agent/secret")
 
     def test_from_configs_raises_when_node_dict_missing(self):
         cluster = {"username": "u", "priv_key_file": "/dev/null"}

@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from cvs.lib import globals
-from cvs.lib.parallel.pssh import Pssh
+from cvs.lib.parallel.phandle import ParallelHandle
 
 log = globals.log
 
@@ -90,15 +90,15 @@ def _secret_str(value: Any) -> str:
 
 
 def _ssh_credential_source(s_phdl) -> Any:
-    """Return the object holding SSH credentials (handles MultiProcessPssh wrapper)."""
-    inner = getattr(s_phdl, "pssh", None)
+    """Return the object holding SSH credentials (handles MultiProcessParallelHandle wrapper)."""
+    inner = getattr(s_phdl, "phandle", None)
     if inner is not None:
         return inner
     return s_phdl
 
 
 def _phdl_connection_kwargs(s_phdl) -> Dict[str, Any]:
-    """Best-effort SSH connection kwargs for a scoped one-node Pssh handle."""
+    """Best-effort SSH connection kwargs for a scoped one-node ParallelHandle."""
     src = _ssh_credential_source(s_phdl)
     env_vars = getattr(s_phdl, "env_vars", None)
     if env_vars is None:
@@ -166,7 +166,7 @@ def _exec_on_single_node(
             detailed=detailed,
         )
     else:
-        scoped = Pssh(
+        scoped = ParallelHandle(
             getattr(s_phdl, "log", log),
             [node],
             **_phdl_connection_kwargs(s_phdl),
@@ -235,7 +235,7 @@ def _exec_cmd_list_on_nodes(
     """
     Run per-node commands on an explicit node subset.
 
-    ``Pssh.exec_cmd_list`` maps commands to ``s_phdl.host_list`` order. This helper
+    ``ParallelHandle.exec_cmd_list`` maps commands to ``s_phdl.host_list`` order. This helper
     avoids mis-launch when the participating node set is a subset or reordered.
 
     When ``detailed=True``, runs one ``exec(..., detailed=True)`` per node so callers

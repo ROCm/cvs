@@ -6,7 +6,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.core.orchestrators.base import Orchestrator
-from cvs.lib.parallel_ssh_lib import Pssh
+from cvs.core.scheduler import is_managed_compute
+from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
 from cvs.lib.utils_lib import get_passwordless_sudo_status
 
 
@@ -56,24 +57,45 @@ class BaremetalOrchestrator(Orchestrator):
         # Initialize TWO ParallelSSH handles like original CVS pattern:
         # head - Single head node (for mpirun, result collection, etc.)
         # all - Parallel across all nodes (for setup, cleanup, verification)
-        self.head = Pssh(
-            log,
-            [self.head_node],
+        self.head = self._phandle([self.head_node])
+        self.all = self._phandle(self.hosts)
+
+    def _transport_kwargs(self):
+        token_file = self.config.get('agent_token_file')
+        node_dict = self.config.node_dict if isinstance(self.config.node_dict, dict) else {}
+        return {
+            'token_file': token_file,
+            'agent_port_map': {host: node_dict.get(host, {}).get('agent_port') for host in self.hosts},
+        }
+
+    def _phandle(self, hosts):
+        managed = is_managed_compute()
+        return MultiProcessParallelHandle(
+            self.log,
+            hosts,
             user=self.user,
             password=self.password,
             pkey=self.pkey,
             host_key_check=False,
             stop_on_errors=self.stop_on_errors,
+            transport='http' if managed else 'ssh',
+            **(self._transport_kwargs() if managed else {}),
         )
-        self.all = Pssh(
-            log,
-            self.hosts,
-            user=self.user,
-            password=self.password,
-            pkey=self.pkey,
-            host_key_check=False,
-            stop_on_errors=self.stop_on_errors,
-        )
+
+    def close(self):
+        """Destroy the two long-lived handles built in __init__.
+
+        Subset handles are already destroyed at their call sites, but head/all live as
+        long as the orchestrator does -- a whole test module under the ``orch`` fixture --
+        and each one holds either SSH sessions or an HTTP connection pool.
+        """
+        for handle in (getattr(self, 'head', None), getattr(self, 'all', None)):
+            if handle is None:
+                continue
+            try:
+                handle.destroy_clients()
+            except Exception as exc:
+                self.log.debug("Error destroying parallel handle: %s", exc)
 
     def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """
@@ -99,19 +121,11 @@ class BaremetalOrchestrator(Orchestrator):
             return self.all.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
         else:
             # For arbitrary subset (including head node), create temporary handle
-            pssh = Pssh(
-                self.log,
-                hosts,
-                user=self.user,
-                password=self.password,
-                pkey=self.pkey,
-                host_key_check=False,
-                stop_on_errors=self.stop_on_errors,
-            )
+            phandle = self._phandle(hosts)
             try:
-                return pssh.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+                return phandle.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
             finally:
-                pssh.destroy_clients()
+                phandle.destroy_clients()
 
     def sudo_prefix(self):
         """
@@ -164,19 +178,11 @@ class BaremetalOrchestrator(Orchestrator):
         elif len(hosts) == 1 and hosts[0] == self.head_node:
             result = self.exec_on_head(f"bash {env_script}", timeout=60, detailed=True)
         else:
-            pssh = Pssh(
-                self.log,
-                hosts,
-                user=self.user,
-                password=self.password,
-                pkey=self.pkey,
-                host_key_check=False,
-                stop_on_errors=self.stop_on_errors,
-            )
+            phandle = self._phandle(hosts)
             try:
-                result = pssh.exec(f"bash {env_script}", timeout=60, detailed=True)
+                result = phandle.exec(f"bash {env_script}", timeout=60, detailed=True)
             finally:
-                pssh.destroy_clients()
+                phandle.destroy_clients()
 
         # Check if all hosts succeeded
         success = all(output['exit_code'] == 0 for output in result.values())

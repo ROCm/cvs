@@ -81,6 +81,11 @@ class ContainerSpec(_Forbid):
     name: str
     image: str
     runtime: RuntimeSpec
+    # Environment variables passed to the container at `docker run` time (as
+    # `-e KEY=VALUE`, merged with the orchestrator defaults). The container
+    # orchestrator reads `container_config['env']`; carrying it on the spec means
+    # `container.model_dump()` forwards it verbatim to the runtime.
+    env: Dict[str, str] = Field(default_factory=dict)
 
 
 class BaseVariantConfig(_Forbid):

@@ -30,6 +30,14 @@ class Orchestrator(ABC):
         self.config = config
         self.stop_on_errors = stop_on_errors
 
+    def close(self):
+        """Release any long-lived connections held by this orchestrator.
+
+        Called when the owning fixture tears down. Not abstract: an orchestrator that
+        holds nothing beyond the life of a single exec has nothing to do here. Must be
+        safe to call more than once.
+        """
+
     @abstractmethod
     def exec(self, cmd, hosts=None, timeout=None):
         """

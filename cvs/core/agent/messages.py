@@ -28,6 +28,12 @@ HEALTH_PATH = "/v1/health"
 # Limits constants
 MAX_INLINE_RESPONSE_BYTES = 4 * 1024 * 1024  # INLINE output beyond this is truncated
 
+# Timing constants
+# How long the agent gives a process group between SIGTERM and SIGKILL. Part of the protocol, not
+# an agent-private detail: /v1/exec only responds once termination finishes, so a caller's HTTP read
+# deadline has to allow for this on top of the requested cmd timeout.
+TERMINATE_GRACE_PERIOD_SECONDS = 10.0
+
 
 class RegisterRequest(BaseModel):
     '''Data model for a agent to register itself with the server'''

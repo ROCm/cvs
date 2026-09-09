@@ -145,6 +145,7 @@ def test_example(orch, config_dict):
 - **Always report security issues** to the user immediately, even if unrelated to current task
 
 ### Code Quality & Comments
+- **Never add Python type annotations** — no parameter types, return types (`-> list[str]`), `typing` imports, or `x: T` / `T | None`. Docstrings can name types when they matter.
 - **Never add comments that explain what code does** - comments are only for why (non-obvious intent, trade-offs, constraints)
 - **Never reference issue/PR numbers in code comments** - that context belongs in git history
 - **Never add review feedback comments** ("changed per review", "moved to fix X") - code should stand alone

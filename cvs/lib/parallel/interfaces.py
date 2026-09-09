@@ -8,7 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 from abc import ABC, abstractmethod
 
 
-class ShardableSshInterface(ABC):
+class ShardableHandleInterface(ABC):
     """Abstract base class defining operations that MUST support sharding.
 
     Any class implementing this interface must provide sharded implementations

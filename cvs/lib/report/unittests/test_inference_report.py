@@ -42,6 +42,18 @@ class TestInferenceReport(unittest.TestCase):
         self.assertEqual(payload["chart_config"][0]["suffix"], "output_throughput")
         self.assertEqual(payload["accuracy"], {})
         self.assertNotIn("chart_comparison", payload)
+        self.assertEqual(payload["overall_status"], "pass")
+
+    def test_enforced_unevaluated_tiers_are_not_reported_as_pass(self):
+        key = ("org/example-model", "mi300x", "1024", "1024", "default", 128)
+        payload = build_inference_report_payload(
+            config=generic_inference_report_config(),
+            variant_config=generic_variant(),
+            inf_res_dict={key: {"node0": {}}},
+            lifecycle_report={},
+        )
+        self.assertEqual(payload["cells"][0]["tiers"]["throughput"], "na")
+        self.assertEqual(payload["overall_status"], "na")
 
     def test_render_report_html_from_payload(self):
         cfg = generic_inference_report_config()

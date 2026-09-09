@@ -1,0 +1,598 @@
+'''
+Copyright 2025 Advanced Micro Devices, Inc.
+All rights reserved. This notice is intended as a precaution against inadvertent publication and does not imply publication or any waiver of confidentiality.
+The year included in the foregoing notice is the year of creation of the work.
+All code contained here is Property of Advanced Micro Devices, Inc.
+'''
+
+from __future__ import print_function
+
+import warnings
+from gevent import Timeout as GTimeout
+from pssh.clients import ParallelSSHClient
+from pssh.exceptions import Timeout, SessionError
+
+from cvs.lib.env_lib import build_env_prefix
+from cvs.lib.parallel.transport import create_transport
+from cvs.lib import globals
+
+global_log = globals.log
+
+# Re-export for unit tests that patch ParallelSSHClient on this module.
+__all__ = ['ParallelHandle', 'ParallelSSHClient', '_select_reachable_hosts']
+
+
+def _select_reachable_hosts(reachable_hosts, hosts):
+    """Return requested reachable hosts in established host-list order."""
+    reachable = list(reachable_hosts)
+    if hosts is None:
+        return reachable
+    requested = list(hosts)
+    unknown_hosts = [host for host in requested if host not in reachable]
+    if unknown_hosts:
+        raise ValueError(f"Download requested unreachable host(s): {unknown_hosts}")
+    return [host for host in reachable if host in requested]
+
+
+class ParallelHandle:
+    """
+    Single-process parallel handle over a host list via a pluggable transport.
+
+    For large host counts, use MultiProcessParallelHandle, which shards hosts across processes.
+    """
+
+    def __init__(
+        self,
+        log,
+        host_list,
+        user=None,
+        password=None,
+        pkey='id_rsa',
+        host_key_check=False,
+        stop_on_errors=True,
+        env_vars=None,
+        process_output=True,
+        transport='ssh',
+        **transport_kwargs,
+    ):
+        # Backward compatibility warning for log parameter
+        if log is not None:
+            warnings.warn(
+                "Passing 'log' parameter is deprecated. "
+                "Configure logging via cvs.lib.globals instead. "
+                "This parameter will be removed in future versions.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        # Always use global logger but maintain self.log for backward compatibility
+        self.log = global_log
+        self.host_list = list(host_list)
+        self.reachable_hosts = list(host_list)
+        self.user = user
+        self.pkey = pkey
+        self.password = password
+        self.host_key_check = host_key_check
+        self.stop_on_errors = stop_on_errors
+        self.process_output = process_output
+        self.unreachable_hosts = []
+        self.transport_name = transport
+        self.transport_kwargs = transport_kwargs
+        self.env_prefix = build_env_prefix(env_vars)
+        self.log.debug(f"Environ vars: {self.env_prefix}")
+
+        if self.password is None:
+            self.log.info("%s", self.reachable_hosts)
+            self.log.info("%s", self.user)
+            self.log.info("%s", self.pkey)
+
+        self._transport = create_transport(
+            self.reachable_hosts,
+            transport=transport,
+            user=user,
+            password=password,
+            pkey=pkey,
+            **transport_kwargs,
+        )
+
+    @property
+    def client(self):
+        """Underlying protocol client (ParallelSSHClient for SSH transport)."""
+        return self._transport.client
+
+    @property
+    def ssh_client_kwargs(self):
+        """Backward-compatible alias for SSH transport kwargs."""
+        if hasattr(self._transport, 'ssh_client_kwargs'):
+            return self._transport.ssh_client_kwargs
+        return self.transport_kwargs
+
+    def _recreate_parallel_client(self):
+        self._transport.rebuild(self.reachable_hosts)
+
+    def _client_run_kwargs(self, timeout=None, inactivity_timeout=None, host_args=None):
+        """Build the client's run_command kwargs, enforcing the timeout contract once."""
+        if timeout is not None and inactivity_timeout is not None:
+            raise ValueError("Pass at most one of timeout and inactivity_timeout, not both.")
+
+        kwargs = {'stop_on_errors': self.stop_on_errors}
+        if host_args is not None:
+            kwargs['host_args'] = host_args
+        if inactivity_timeout is not None:
+            # An inactivity timeout disables the total read_timeout either way. Transports
+            # that return finished output enforce it remotely; the rest are enforced
+            # per-line by _iter_lines while the stream is still open.
+            if self._transport.remote_inactivity_timeout:
+                kwargs['inactivity_timeout'] = inactivity_timeout
+        elif timeout is not None:
+            kwargs['read_timeout'] = timeout
+        return kwargs
+
+    def _stream_inactivity_timeout(self, inactivity_timeout):
+        """The inactivity timeout _process_output should apply while reading streams.
+
+        None when the transport already enforced it, so the per-line gevent timer is not
+        armed around output that has already finished arriving.
+        """
+        if inactivity_timeout is None or self._transport.remote_inactivity_timeout:
+            return None
+        return inactivity_timeout
+
+    def _run_command_with_session_retry(self, *args, **kwargs):
+        try:
+            return self.client.run_command(*args, **kwargs)
+        except SessionError as e:
+            self.log.info(
+                "ParallelSSH: SessionError on first attempt; recreating client and retrying once (%s).",
+                e,
+            )
+            self.log.debug("ParallelSSH session retry detail", exc_info=True)
+            self.destroy_clients()
+            self._recreate_parallel_client()
+            return self.client.run_command(*args, **kwargs)
+
+    def check_connectivity(self, hosts):
+        """
+        Check connectivity for a list of hosts.
+        Returns a list of unreachable hosts.
+        """
+        return self._transport.check_connectivity(hosts)
+
+    def prune_nodes(self, nodes_to_remove):
+        """
+        Explicitly prune hosts from this Pssh instance and rebuild client.
+
+        Args:
+            nodes_to_remove: Iterable of hostnames/IPs to remove.
+
+        Returns:
+            list: Hosts actually removed from reachable_hosts.
+        """
+        if not nodes_to_remove:
+            return []
+
+        remove_set = {h for h in nodes_to_remove if h}
+        removed = [h for h in self.reachable_hosts if h in remove_set]
+        if not removed:
+            return []
+
+        for host in removed:
+            self.log.warning(f"Host {host} is unreachable, pruning from reachable hosts list.")
+
+        self.reachable_hosts = [h for h in self.reachable_hosts if h not in remove_set]
+        for host in removed:
+            if host not in self.unreachable_hosts:
+                self.unreachable_hosts.append(host)
+
+        self._transport.rebuild(self.reachable_hosts)
+        return removed
+
+    def prune_unreachable_hosts(self, output):
+        """
+        Prune unreachable hosts from self.reachable_hosts if they failed with one of the transport's
+        pruning-candidate exceptions and also fail a connectivity check.
+
+        Targeted pruning: only the exception types the transport declares in prune_exception_types
+        trigger pruning, to avoid removing hosts for transient failures like authentication errors or
+        protocol issues, which may succeed on the next try. Those types are merely indicative of
+        potential unreachability, so we perform an additional connectivity check before pruning. This
+        ensures that hosts are not permanently removed from the list for recoverable errors.
+        """
+        prune_types = self._transport.prune_exception_types
+        if not prune_types:
+            return
+        failed_hosts = [item.host for item in output if item.exception and isinstance(item.exception, prune_types)]
+        unreachable = self.check_connectivity(failed_hosts)
+        self.prune_nodes(unreachable)
+
+    def inform_unreachability(self, cmd_output, include_exit_codes=False):
+        """
+        Update cmd_output with "Host Unreachable" for all hosts in self.unreachable_hosts.
+        Handles both string and structured formats based on include_exit_codes.
+        """
+        for host in self.unreachable_hosts:
+            if include_exit_codes:
+                existing = cmd_output.get(host, {'output': '', 'exit_code': -1})
+                existing['output'] += "\nABORT: Host Unreachable Error"
+                existing['exit_code'] = -1  # Ensure unreachable hosts have error exit code
+                cmd_output[host] = existing
+            else:
+                cmd_output[host] = cmd_output.get(host, "") + "\nABORT: Host Unreachable Error"
+
+    def _iter_lines(self, stream, inactivity_timeout):
+        """
+        Yield lines from an stdout/stderr stream.
+
+        When inactivity_timeout is set, each individual line fetch is wrapped in a
+        fresh gevent.Timeout that is re-armed on every line, so the timer measures
+        the gap BETWEEN lines (inactivity) rather than the total command runtime.
+        A stream that keeps producing output never trips it; only a genuine stall
+        (no output for inactivity_timeout seconds) raises pssh Timeout. When
+        inactivity_timeout is None the stream is iterated normally (any total
+        read_timeout is enforced by parallel-ssh itself).
+        """
+        if not stream:
+            return
+        if inactivity_timeout is None:
+            for line in stream:
+                yield line
+            return
+        it = iter(stream)
+        while True:
+            try:
+                with GTimeout(seconds=inactivity_timeout, exception=Timeout):
+                    line = next(it)
+            except StopIteration:
+                return
+            yield line
+
+    def _process_output(
+        self,
+        output,
+        cmd=None,
+        cmd_list=None,
+        print_console=True,
+        include_exit_codes=False,
+        inactivity_timeout=None,
+    ):
+        """
+        Helper method to process output from run_command, collect results, and handle pruning.
+        Returns cmd_output dictionary. If include_exit_codes=True, returns structured format.
+
+        When inactivity_timeout is set, output reads use a per-line (inactivity)
+        timeout instead of a total-runtime cap: the timer resets on every line and
+        fires only after inactivity_timeout seconds with no new output.
+        """
+        cmd_output = {}
+        i = 0
+        for item in output:
+            self.log.info('#----------------------------------------------------------#')
+            self.log.info(f'Host == {item.host} ==')
+            self.log.info('#----------------------------------------------------------#')
+            cmd_out_str = ''
+            if cmd_list:
+                self.log.debug("%s", cmd_list[i])
+            else:
+                self.log.debug("%s", cmd)
+            try:
+                for line in self._iter_lines(item.stdout, inactivity_timeout):
+                    if print_console:
+                        self.log.info("%s", line)
+                    cmd_out_str += line.replace('\t', '   ') + '\n'
+                for line in self._iter_lines(item.stderr, inactivity_timeout):
+                    if print_console:
+                        self.log.info("%s", line)
+                    cmd_out_str += line.replace('\t', '   ') + '\n'
+            except Timeout as e:
+                if not self.stop_on_errors:
+                    self._handle_timeout_exception(output, e)
+                else:
+                    raise
+            if item.exception:
+                exc_str = str(item.exception) if str(item.exception) else repr(item.exception)
+                exc_str = exc_str.replace('\t', '   ')
+                if isinstance(item.exception, Timeout):
+                    exc_str += "\nABORT: Timeout Error in Host: " + item.host
+                self.log.warning("%s", exc_str)
+                cmd_out_str += exc_str + '\n'
+            if cmd_list:
+                i += 1
+
+            if include_exit_codes:
+                # -1 means "unknown / aborted": either the command raised before
+                # an exit code was available, or the SSH channel hasn't reached
+                # EOF yet (parallel-ssh's HostOutput.exit_code property returns
+                # None in that case, which would silently break consumers that
+                # compare against 0).
+                if item.exception is not None:
+                    exit_code = -1
+                else:
+                    exit_code = item.exit_code
+                    if exit_code is None:
+                        exit_code = -1
+                cmd_output[item.host] = {'output': cmd_out_str, 'exit_code': exit_code}
+            else:
+                cmd_output[item.host] = cmd_out_str
+
+        if not self.stop_on_errors:
+            self.prune_unreachable_hosts(output)
+            self.inform_unreachability(cmd_output, include_exit_codes)
+
+        return cmd_output
+
+    def _handle_timeout_exception(self, output, e):
+        """
+        Helper method to handle Timeout exceptions by setting exceptions for all hosts in output.
+        Since Timeout is raised once for the operation, assume all hosts are affected.
+        """
+        if output is not None and isinstance(e, Timeout):
+            for item in output:
+                if item.exception is None:
+                    item.exception = e
+
+    def exec(self, cmd, timeout=None, print_console=True, detailed=False, inactivity_timeout=None):
+        """
+        Returns a dictionary of host as key and command output as values.
+        If detailed=True, returns structured dict with 'output' and 'exit_code' keys.
+        If detailed=False (default), returns output strings.
+
+        timeout is parallel-ssh's read_timeout: a TOTAL wall-clock cap on reading
+        the command's output (it is NOT reset by activity). inactivity_timeout is
+        an alternative that measures the gap between output lines instead: the
+        command may run arbitrarily long as long as it keeps producing output, and
+        is aborted only after inactivity_timeout seconds of silence. When
+        inactivity_timeout is set, the underlying read_timeout is disabled so there
+        is no total cap. Pass at most one of the two.
+        """
+        if self.env_prefix:
+            full_cmd = f"{self.env_prefix} ; {cmd}"
+        else:
+            full_cmd = cmd
+
+        client_kwargs = self._client_run_kwargs(timeout=timeout, inactivity_timeout=inactivity_timeout)
+
+        self.log.info(f'cmd = {full_cmd}')
+
+        # Log command execution
+        if self.log:
+            if inactivity_timeout is not None:
+                self.log.debug(
+                    f"Executing command on {len(self.reachable_hosts)} host(s) "
+                    f"[inactivity_timeout={inactivity_timeout}s]: {full_cmd}"
+                )
+            elif timeout is not None:
+                self.log.debug(
+                    f"Executing command on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]: {full_cmd}"
+                )
+            else:
+                self.log.debug(f"Executing command on {len(self.reachable_hosts)} host(s): {full_cmd}")
+
+        output = self._run_command_with_session_retry(full_cmd, **client_kwargs)
+        cmd_output = self._process_output(
+            output,
+            cmd=full_cmd,
+            print_console=print_console,
+            include_exit_codes=detailed,
+            inactivity_timeout=self._stream_inactivity_timeout(inactivity_timeout),
+        )
+
+        # Log per-host execution completion
+        if self.log:
+            for host in cmd_output.keys():
+                self.log.debug(f"Command completed on {host}: {cmd}")
+
+        return cmd_output
+
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=True, inactivity_timeout=None):
+        """
+        Run different commands on different hosts compared to to exec
+        which runs the same command on all hosts.
+        Returns a dictionary of host as key and command output as values
+
+        timeout is parallel-ssh's read_timeout: a TOTAL wall-clock cap on reading
+        the command's output (it is NOT reset by activity). inactivity_timeout is
+        an alternative that measures the gap between output lines instead: the
+        command may run arbitrarily long as long as it keeps producing output, and
+        is aborted only after inactivity_timeout seconds of silence. When
+        inactivity_timeout is set, the underlying read_timeout is disabled so there
+        is no total cap. Pass at most one of the two.
+        """
+        if self.env_prefix:
+            cmd_list = [f"{self.env_prefix} ; {cmd}" for cmd in cmd_list]
+        else:
+            cmd_list = cmd_list
+
+        client_kwargs = self._client_run_kwargs(
+            timeout=timeout, inactivity_timeout=inactivity_timeout, host_args=cmd_list
+        )
+
+        self.log.info("%s", cmd_list)
+
+        # Log command list execution
+        if self.log:
+            if inactivity_timeout is not None:
+                self.log.debug(
+                    f"Executing command list on {len(self.reachable_hosts)} host(s) "
+                    f"[inactivity_timeout={inactivity_timeout}s]"
+                )
+            elif timeout is not None:
+                self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s) [timeout={timeout}s]")
+            else:
+                self.log.debug(f"Executing command list on {len(self.reachable_hosts)} host(s)")
+
+        output = self._run_command_with_session_retry('%s', **client_kwargs)
+
+        cmd_output = self._process_output(
+            output,
+            cmd_list=cmd_list,
+            print_console=print_console,
+            inactivity_timeout=self._stream_inactivity_timeout(inactivity_timeout),
+        )
+
+        # Log per-host command execution (only for processed output)
+        if self.process_output and self.log and isinstance(cmd_output, dict):
+            for host, cmd in zip(self.reachable_hosts, cmd_list):
+                self.log.debug(f"Command on {host}: {cmd}")
+
+        return cmd_output
+
+    def scp_file(self, local_file, remote_file, recurse=False):
+        """
+        Backward-compatible alias for upload_file.
+
+        Kept so existing callers (and log-grep tooling looking for the legacy
+        "About to copy local file..." line) keep working. New code should call
+        upload_file directly.
+        """
+        self.log.info('About to copy local file {} to remote {} on all Hosts'.format(local_file, remote_file))
+        self.upload_file(local_file, remote_file, recurse=recurse)
+
+    def upload_file(self, local_file, remote_file, recurse=False):
+        """
+        SFTP-upload a local file from the runner node to `remote_file` on every host
+        in this Pssh's reachable_hosts. Wraps ParallelSSHClient.copy_file.
+
+        Use this instead of embedding file contents in `exec()` command strings
+        (e.g. heredoc cat>EOF), which is bounded by libssh2's ~30 KB exec_request
+        cap. SFTP transfers go over a separate channel with no such limit and
+        auto-create missing parent directories when recurse=True.
+
+        For a 1:1 runner->head_node push, construct the Pssh with [head_node].
+
+        Parameters:
+          local_file: Path on the runner node to read from.
+          remote_file: Absolute destination path on each remote host.
+          recurse: If True, copy a directory tree (parent dirs auto-created).
+
+        Raises:
+          IOError: If transfer fails on any host. Message lists offending hosts.
+        """
+        self.log.info('SFTP upload %s -> %s on %s', local_file, remote_file, self.reachable_hosts)
+        cmds = self.client.copy_file(local_file, remote_file, recurse=recurse)
+        self.client.pool.join()
+        errors = []
+        for cmd, host in zip(cmds, self.reachable_hosts):
+            try:
+                cmd.get()
+            except Exception as e:
+                errors.append((host, e))
+        if errors:
+            raise IOError(
+                f"upload_file '{local_file}' -> '{remote_file}' failed on "
+                f"{len(errors)}/{len(self.reachable_hosts)} hosts: {errors}"
+            ) from errors[0][1]
+
+    def download_file(self, remote_file, local_file, recurse=False, suffix_separator='_', hosts=None):
+        """
+        SFTP-download ``remote_file`` from selected reachable hosts to the
+        runner node. Wraps ``ParallelSSHClient.copy_remote_file``.
+
+        Use this instead of `exec('cat <file>')` + parsing stdout when the file
+        may exceed a few KB. `cat`-over-exec reassembles bytes through the
+        line-oriented stdout pipeline of `_process_output`, which is fragile for
+        binary content and unnecessary work for any text payload of nontrivial
+        size.
+
+        Note: parallel-ssh suffixes the local filename with `<suffix_separator><host>`
+        to avoid collisions when downloading the same path from multiple hosts.
+        Use the returned dict to look up the actual on-disk path per host.
+
+        Parameters:
+          remote_file: Absolute path on each remote host.
+          local_file: Local path prefix on the runner node (host name will be appended).
+          recurse: If True, recursively download a directory tree.
+          suffix_separator: Separator placed between local_file and host. Default '_'.
+          hosts: Optional iterable of reachable hosts to fetch from. ``None``
+              fetches from every reachable host.
+
+        Returns:
+          dict: {host: actual_local_path} for each selected host.
+
+        Raises:
+          IOError: If transfer fails on any host. Message lists offending hosts.
+        """
+        target_hosts = _select_reachable_hosts(self.reachable_hosts, hosts)
+        if not target_hosts:
+            return {}
+
+        self.log.info('SFTP download %s -> %s from %s', remote_file, local_file, target_hosts)
+        subset_transport = None
+        try:
+            if target_hosts == self.reachable_hosts:
+                client = self.client
+            else:
+                subset_transport = self._transport.client_for_hosts(target_hosts)
+                client = subset_transport.client
+            cmds = client.copy_remote_file(remote_file, local_file, recurse=recurse, suffix_separator=suffix_separator)
+            client.pool.join()
+            errors = []
+            result = {}
+            for cmd, host in zip(cmds, target_hosts):
+                try:
+                    cmd.get()
+                    result[host] = f'{local_file}{suffix_separator}{host}'
+                except Exception as e:
+                    errors.append((host, e))
+            if errors:
+                raise IOError(
+                    f"download_file '{remote_file}' -> '{local_file}' failed on "
+                    f"{len(errors)}/{len(target_hosts)} hosts: {errors}"
+                ) from errors[0][1]
+            return result
+        finally:
+            if subset_transport is not None:
+                subset_transport.destroy()
+
+    def upload_file_list(self, node_path_map):
+        """
+        Upload different files to different hosts using SFTP.
+
+        Args:
+            node_path_map: dict mapping {host: (local_path, remote_path)}
+
+        Returns:
+            dict: {host: "host: SUCCESS" | "host: FAILED - ..."}
+        """
+        if not node_path_map:
+            return {}
+
+        # Build copy_args for each host
+        copy_args = []
+        valid_hosts = []
+
+        for host in self.reachable_hosts:
+            if host in node_path_map:
+                local_path, remote_path = node_path_map[host]
+                copy_args.append({'local_file': local_path, 'remote_file': remote_path})
+                valid_hosts.append(host)
+
+        if not copy_args:
+            return {}
+
+        self.log.info(f"Uploading {len(copy_args)} different files to {len(valid_hosts)} hosts")
+
+        # Use copy_file with copy_args - returns greenlets
+        cmds = self.client.copy_file("%(local_file)s", "%(remote_file)s", copy_args=copy_args)
+
+        # Wait for greenlets to complete (like upload_file does)
+        self.client.pool.join()
+
+        # Process greenlet results
+        results = {}
+        for cmd, host in zip(cmds, valid_hosts):
+            try:
+                cmd.get()  # This will raise if the greenlet failed
+                results[host] = f"{host}: SUCCESS"
+            except Exception as e:
+                results[host] = f"{host}: FAILED - {e}"
+
+        return results
+
+    def reboot_connections(self):
+        self.log.info('Rebooting Connections')
+        self.client.run_command('reboot -f', stop_on_errors=self.stop_on_errors)
+
+    def destroy_clients(self):
+        """Close the transport for every host and drop the client."""
+        self.log.info('Destroying Current phdl connections ..')
+        self._transport.destroy()

@@ -379,27 +379,19 @@ class TestDockerRuntimeExec(unittest.TestCase):
                 self.assertEqual(rendered, f"{sudo_prefix}docker exec cvs_iter_test bash -c 'echo hi'")
 
     def test_exec_with_hosts_subset_uses_sudo_prefix(self):
-        # The hosts-subset branch builds its own Pssh and must render the
-        # same sudo_prefix()-derived command as the default (all-hosts) branch.
         orchestrator = MagicMock()
-        orchestrator.log = MagicMock()
-        orchestrator.user = "u"
-        orchestrator.password = None
-        orchestrator.pkey = None
-        orchestrator.stop_on_errors = False
         orchestrator.sudo_prefix.return_value = "sudo -n "
+        mock_pssh = MagicMock()
+        mock_pssh.exec.return_value = {"host1": {"output": "", "exit_code": 0}}
+        orchestrator._phandle.return_value = mock_pssh
         rt = DockerRuntime(MagicMock(), orchestrator)
 
-        with patch("cvs.lib.parallel_ssh_lib.Pssh") as mock_pssh_cls:
-            mock_pssh = MagicMock()
-            mock_pssh.exec.return_value = {"host1": {"output": "", "exit_code": 0}}
-            mock_pssh_cls.return_value = mock_pssh
+        rt.exec("cvs_iter_test", "echo hi", hosts=["host1"])
 
-            rt.exec("cvs_iter_test", "echo hi", hosts=["host1"])
-
-            rendered = mock_pssh.exec.call_args[0][0]
-            self.assertNotIn("||", rendered, f"must not use the old fallback form: {rendered!r}")
-            self.assertTrue(rendered.startswith("sudo -n docker exec cvs_iter_test bash -c "))
+        orchestrator._phandle.assert_called_once_with(["host1"])
+        rendered = mock_pssh.exec.call_args[0][0]
+        self.assertNotIn("||", rendered, f"must not use the old fallback form: {rendered!r}")
+        self.assertTrue(rendered.startswith("sudo -n docker exec cvs_iter_test bash -c "))
 
     def test_exec_on_head_uses_sudo_prefix(self):
         orchestrator = MagicMock()
@@ -436,16 +428,14 @@ class TestDockerRuntimeExecPrintConsole(unittest.TestCase):
     def test_exec_with_hosts_subset_forwards_print_console_false(self):
         orchestrator = MagicMock()
         orchestrator.sudo_prefix.return_value = ""
+        mock_pssh = MagicMock()
+        mock_pssh.exec.return_value = {"host1": ""}
+        orchestrator._phandle.return_value = mock_pssh
         rt = DockerRuntime(MagicMock(), orchestrator)
 
-        with patch("cvs.lib.parallel_ssh_lib.Pssh") as mock_pssh_cls:
-            mock_pssh = MagicMock()
-            mock_pssh.exec.return_value = {"host1": ""}
-            mock_pssh_cls.return_value = mock_pssh
+        rt.exec("cvs_iter_test", "cat /tmp/huge", hosts=["host1"], print_console=False)
 
-            rt.exec("cvs_iter_test", "cat /tmp/huge", hosts=["host1"], print_console=False)
-
-            self.assertIs(mock_pssh.exec.call_args.kwargs["print_console"], False)
+        self.assertIs(mock_pssh.exec.call_args.kwargs["print_console"], False)
 
     def test_exec_on_head_forwards_print_console_false(self):
         orchestrator = MagicMock()
@@ -491,7 +481,7 @@ class TestDockerRuntimeSudoProbeCachedAcrossCalls(unittest.TestCase):
     passwordless-sudo probe must fire once total across multiple exec-family
     calls, not once per call."""
 
-    @patch("cvs.core.orchestrators.baremetal.Pssh")
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_sudo_probe_fires_once_across_exec_and_exec_on_head(self, mock_pssh):
         pssh_instance = MagicMock()
         pssh_instance.exec.return_value = {"10.0.0.1": "0", "10.0.0.2": "0"}
@@ -537,23 +527,21 @@ class TestDockerRuntimeExecSubsetHandleCleanup(unittest.TestCase):
         return DockerRuntime(MagicMock(), orchestrator), orchestrator
 
     def test_exec_destroys_subset_handle(self):
-        # The timeout path is the one that leaks, so cleanup must not depend
-        # on a clean return.
         for label, side_effect in (("returns", None), ("raises", RuntimeError("timed out"))):
             with self.subTest(label):
-                rt, _ = self._make_runtime()
+                rt, orch = self._make_runtime()
+                mock_pssh = MagicMock()
+                mock_pssh.exec.side_effect = side_effect
+                mock_pssh.exec.return_value = {"host1": {"output": "", "exit_code": 0}}
+                orch._phandle.return_value = mock_pssh
 
-                with patch("cvs.lib.parallel_ssh_lib.Pssh") as mock_pssh_cls:
-                    mock_pssh_cls.return_value.exec.side_effect = side_effect
-                    mock_pssh_cls.return_value.exec.return_value = {"host1": {"output": "", "exit_code": 0}}
+                if side_effect is None:
+                    rt.exec("cvs_iter_test", "echo hi", hosts=["host1"])
+                else:
+                    with self.assertRaises(RuntimeError):
+                        rt.exec("cvs_iter_test", "sleep 300", hosts=["host1"], timeout=1)
 
-                    if side_effect is None:
-                        rt.exec("cvs_iter_test", "echo hi", hosts=["host1"])
-                    else:
-                        with self.assertRaises(RuntimeError):
-                            rt.exec("cvs_iter_test", "sleep 300", hosts=["host1"], timeout=1)
-
-                    mock_pssh_cls.return_value.destroy_clients.assert_called_once_with()
+                mock_pssh.destroy_clients.assert_called_once_with()
 
 
 if __name__ == "__main__":

@@ -424,10 +424,13 @@ def orch(request, cluster_dict, variant_config, lifecycle):
 
     yield o
 
-    if not lifecycle.torn_down:
-        log.info("orch leak-guard: tearing down containers")
-        o.teardown_containers()
-        cleanup_sglang_log_dir(o, variant_config.paths.log_dir)
+    try:
+        if not lifecycle.torn_down:
+            log.info("orch leak-guard: tearing down containers")
+            o.teardown_containers()
+            cleanup_sglang_log_dir(o, variant_config.paths.log_dir)
+    finally:
+        o.close()
 
 
 @pytest.fixture(scope="module")
