@@ -24,7 +24,7 @@ Here are the tests available in the CVS:
 - **Inference tests**: Validate LLM serving performance and generative AI workloads across AMD GPU clusters.
 
   - ATOM benchmarks vLLM inference performance for models like GPT-OSS-120B, measuring throughput, TTFT (Time to First Token), and TPOT (Time Per Output Token).
-  - vLLM single-node tests support multiple models (GPT-OSS-120B, Qwen3-235B, Qwen3-80B, DeepSeek-V3.1) with various workload scenarios on MI355X GPUs.
+  - vLLM single-node and distributed serving tests cover a packaged MI3xx catalog (Llama 3.3 70B FP8 and 13 other workloads), measuring throughput, latency, and optional accuracy.
   - SGLang disaggregated prefill-decode architecture tests optimize LLM serving by separating prefill and decode phases across different nodes.
   - Flux.1 text-to-image generation tests validate distributed image generation using xDiT with Ulysses and Ring parallelization.
   - WAN 2.2 image-to-video generation tests validate 81-frame video generation with distributed inference.

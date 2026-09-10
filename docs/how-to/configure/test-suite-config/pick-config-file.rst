@@ -165,10 +165,10 @@ With ``{precision}``:
 .. code:: text
 
   input/config_file/inference/vllm/
-  ├── mi300x_vllm_llama31-70b_fp8_single.json
-  └── mi300x_vllm_llama31-70b_fp8_distributed.json
+  ├── mi3xx_vllm_llama33-70b_fp8_single.json
+  └── mi3xx_vllm_llama33-70b_fp8_distributed.json
 
-``mi300x_vllm_llama31-70b_fp8_single.json`` → ``mi300x`` · ``vllm`` · ``llama31-70b`` · ``fp8`` · ``single``.
+``mi3xx_vllm_llama33-70b_fp8_single.json`` → ``mi3xx`` · ``vllm`` · ``llama33-70b`` · ``fp8`` · ``single``.
 
 **Suites**
 
@@ -185,8 +185,10 @@ With ``{precision}``:
 
        :doc:`How to run </how-to/test-suites/inference/atom>` · :doc:`Config reference </reference/configuration-files/inference/atom>`
    * - vLLM
-     - ``input/config_file/inference/vllm/`` — ``mi{gpu}_vllm_{model}_{precision}_{single|distributed}.json``
+     - ``input/config_file/inference/vllm/`` — ``mi3xx_vllm_{model}_{precision}_{single|distributed}.json`` plus sibling ``mi325x_*_threshold.json`` files
      - ``cvs config list inference/vllm``
+
+       :doc:`How to run </how-to/test-suites/inference/vllm>` · :doc:`Config reference </reference/configuration-files/inference/vllm>`
    * - SGLang
      - ``input/config_file/inference/sglang/`` — ``mi{gpu}_sglang_{model}_{single|distributed|disaggregated}.json``
      - ``cvs config list inference/sglang``

@@ -528,8 +528,8 @@ Every other snake-case key is passed through to ``vllm serve``.
      - ``8888``
      - OpenAI-compatible server port
 
-How serve_args are flattened
-----------------------------
+How server_params are flattened
+-------------------------------
 
 .. list-table::
    :widths: 3 3 4
@@ -594,6 +594,7 @@ The generated per-command environment always exports:
 
   export HF_TOKEN=<token>
   export HF_HUB_CACHE=<paths.models_dir>
+
 Packaged configurations set the HCA, socket-interface, GID, and NCCL debug
 settings in ``container.env`` so every command inherits them and topology
 discovery does not overwrite them. The legacy top-level ``ib_hca_devices`` and
@@ -697,7 +698,7 @@ The sweep is an explicit list of canonical cells, not a cartesian product.
       "runs": [
         "ISL=1000,OSL=1000,TP=8,PP=2,CONC=16",
         "ISL=1000,OSL=1000,TP=8,PP=2,CONC=32"
-      }
+      ]
     }
 
 .. list-table::
@@ -1049,10 +1050,16 @@ Troubleshooting
      - Set all three socket-interface variables under ``container.env``
    * - ``Container image not specified in config``
      - ``container.image`` is empty. Note that a variant ``container`` block with no ``image`` overwrites the cluster file's value
-   * - ``duplicate sequence_combination names``
-     - Two entries in ``sequence_combinations`` share a ``name``
-   * - ``run.combo names no sequence_combination``
-     - A ``runs[].combo`` does not match any declared name; the message lists the valid ones
+   * - ``runs must be a nonempty explicit list``
+     - ``runs`` is missing or empty. List at least one canonical cell key from ``sweeps``
+   * - ``runs contains duplicate cells``
+     - The same cell key appears twice in ``runs``
+   * - ``runs reference unknown sweeps``
+     - A ``runs`` entry is not a key in ``sweeps``
+   * - ``run cell must be canonical ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``
+     - A sweep or run key is malformed
+   * - ``conflicts with server_params tensor/pipeline parallel size``
+     - The TP or PP in a cell key does not match ``server_params``
    * - ``duplicate task id(s)``
      - Two ``accuracy.tasks`` entries share an ``id``
    * - ``unknown vLLM threshold metric '<metric>'``
