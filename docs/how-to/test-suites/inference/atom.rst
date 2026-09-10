@@ -110,8 +110,8 @@ Multinode PP (``driver=vllm_atom``):
     --config_file ~/input/config_file/inference/atom/distributed/mi3xx_atom_deepseek-r1_fp8_distributed.json \
     --html ~/cvs_results/atom-w1-distributed.html --self-contained-html -vvv
 
-MTP-3 speculative decode (``schema_version: 2`` profile on the native single-node
-stem):
+MTP-3 speculative decode (``schema_version: 2`` profile on a native single-node
+stem — DeepSeek R1 or Qwen FP8):
 
 .. code:: bash
 
