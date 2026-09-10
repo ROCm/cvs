@@ -106,6 +106,13 @@ def orch(cluster_dict, variant_config, lifecycle):
     double-tearing down in the normal case.
     """
     container_block = _deep_merge(cluster_dict.get("container", {}), variant_config.container.model_dump())
+    
+    # Inject NNODES based on cluster node count (str(len(node_dict)) at docker launch)
+    # Distributed configs should not hard-code NNODES; calculate from actual cluster size
+    if "env" not in container_block:
+        container_block["env"] = {}
+    node_list = cluster_dict.get("nodes", [])
+    container_block["env"]["NNODES"] = str(len(node_list)) if node_list else "1"
     testsuite_config = {"orchestrator": "container", "container": container_block}
     cfg = OrchestratorConfig.from_configs(cluster_dict, testsuite_config)
     o = OrchestratorFactory.create_orchestrator(log, cfg)

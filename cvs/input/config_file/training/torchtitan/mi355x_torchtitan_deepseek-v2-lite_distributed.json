@@ -8,7 +8,7 @@
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOG_DIR",
     "scripts_dir": "/home/{user-id}/SCRIPTS",
-    "data_cache_dir": "/shared/data/amd_aac/rajesh/models",
+    "data_cache_dir": "/home/{user-id}/cache",
     "rocm_dir": ""
   },
   "train_params": {
@@ -64,7 +64,6 @@
       }
     },
     "env": {
-      "NNODES": "<changeme>",
       "MASTER_ADDR": "<changeme>",
       "NCCL_SOCKET_IFNAME": "<changeme>",
       "GLOO_SOCKET_IFNAME": "<changeme>",

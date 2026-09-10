@@ -167,7 +167,6 @@ class TorchTitanTrainingJob:
         self.nnodes = int(self.config.get('nnodes', 1))
         self.nic_type = self.config.get('nic_type', 'thor2')
         self.hca_id_pattern = self.config.get('hca_id_pattern', 'bnxt_|rocep')
-        self.nccl_ib_hca_list = self.config.get('nccl_ib_hca_list', '')
         self.nccl_ib_hca = self.config.get('nccl_ib_hca', '')
         self.nccl_socket_ifname = self.config.get('nccl_socket_ifname', '')
         self.gloo_socket_ifname = self.config.get('gloo_socket_ifname', '')
@@ -431,7 +430,7 @@ class TorchTitanTrainingJob:
 
         # Distributed env vars
         if self.distributed_training:
-            cmd += f'export NCCL_IB_HCA={self.nccl_ib_hca_list}; '
+            cmd += f'export NCCL_IB_HCA={self.nccl_ib_hca}; '
             cmd += f'export NCCL_SOCKET_IFNAME={self.nccl_socket_ifname}; '
             cmd += f'export GLOO_SOCKET_IFNAME={self.gloo_socket_ifname}; '
             cmd += f'export NCCL_DEBUG={self.nccl_debug}; '

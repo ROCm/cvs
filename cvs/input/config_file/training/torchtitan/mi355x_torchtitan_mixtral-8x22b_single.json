@@ -8,7 +8,7 @@
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOGS/torchtitan",
     "scripts_dir": "/home/{user-id}/SCRIPTS/torchtitan",
-    "data_cache_dir": "/shared/data/amd_aac/rajesh/models",
+    "data_cache_dir": "/home/{user-id}/cache",
     "rocm_dir": ""
   },
   "train_params": {

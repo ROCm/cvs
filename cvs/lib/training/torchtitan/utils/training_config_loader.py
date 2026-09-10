@@ -202,6 +202,7 @@ class TorchTitanContainerSpec(ContainerSpec):
 _CONTAINER_ENV_TO_JOB = {
     "NNODES": "nnodes",
     "MASTER_ADDR": "master_address",
+    "NCCL_IB_HCA": "nccl_ib_hca",
     "NCCL_SOCKET_IFNAME": "nccl_socket_ifname",
     "GLOO_SOCKET_IFNAME": "gloo_socket_ifname",
     "NCCL_DEBUG": "nccl_debug",
