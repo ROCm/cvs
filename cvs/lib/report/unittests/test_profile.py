@@ -16,6 +16,11 @@ class TestProfile(unittest.TestCase):
         )
         self.assertEqual(sources_for_profile(cfg), DEFAULT_SOURCES)
 
+    def test_rvs_cvs_profile_uses_table_dataset_builder(self):
+        profile = load_json_profile("rvs_cvs")
+        self.assertIsNotNone(profile)
+        self.assertEqual(profile["dataset_builder"], "table")
+
     def test_sglang_stems_share_one_profile(self):
         for stem in ("sglang_single", "sglang_distributed", "sglang_disagg_distributed"):
             profile = load_json_profile(stem)

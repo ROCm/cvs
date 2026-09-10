@@ -103,7 +103,10 @@ class RundeckPayloadBuilder:
             "chart_config": sweep_data.get("chart_config") or [],
             "sweep_summaries": sweep_data.get("sweep_summaries") or [],
             "gate_matrix": sweep_data.get("gate_matrix") or [],
-            "results_table": sweep_data.get("results_table") or datasets.get("series", {}).get("results_table") or {},
+            "results_table": sweep_data.get("results_table")
+            or datasets.get("series", {}).get("results_table")
+            or datasets.get("table", {}).get("results_table")
+            or {},
             "panels": panels,
             "datasets": datasets,
             "deck_profile": self.profile_dict or {"cards": default_deck_cards()},

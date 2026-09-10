@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "profile_id": "rvs_rundeck",
+  "suite_id": "rvs",
+  "report_basename": "rvs_run_deck",
+  "title": "RVS Run Deck",
+  "subtitle": "ROCm Validation Suite · per-node pass/fail",
+  "footer": "CVS rvs · render-only · does not affect gates",
+  "link_name": "RVS Run Deck",
+  "dataset_builder": "table",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "variant_config"
+  },
+  "hooks": {
+    "run_card_display": "cvs.lib.report.profiles.hooks.rvs_run_card:rvs_run_card_display"
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {"type": "table", "id": "results", "title": "RVS results", "bind": "datasets.table.results_table"}
+  ]
+}

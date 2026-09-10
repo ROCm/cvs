@@ -10,6 +10,7 @@ import pytest
 
 import re
 import json
+from types import SimpleNamespace
 from packaging import version
 
 from cvs.lib.utils_lib import *
@@ -17,6 +18,12 @@ from cvs.lib.utils_lib import *
 from cvs.lib import globals
 
 log = globals.log
+
+rvs_res_dict = {}
+
+
+def _record_rvs_result(test_name, node, status):
+    rvs_res_dict.setdefault(test_name, {})[node] = status
 
 
 # Importing additional cmd line args to script ..
@@ -83,6 +90,20 @@ def rvs_version(orch, config_dict):
     Returns the minimum version across all nodes.
     """
     return get_rvs_version(orch, config_dict['path'])
+
+
+@pytest.fixture(scope="module")
+def cvs_results_dict():
+    return rvs_res_dict
+
+
+@pytest.fixture(scope="module")
+def variant_config(config_dict, rvs_version, rvs_test_level):
+    return SimpleNamespace(
+        rvs_path=config_dict.get("path"),
+        rvs_version=rvs_version,
+        rvs_test_level=rvs_test_level,
+    )
 
 
 def get_rvs_version(orch, rvs_path):
@@ -396,8 +417,10 @@ def parse_rvs_test_results(test_config, out_dict):
     for node in out_dict.keys():
         # Check for failure pattern
         if re.search(fail_pattern, out_dict[node], re.I):
+            _record_rvs_result(test_name, node, "fail")
             fail_test(f'RVS {test_name} test failed on node {node}')
         else:
+            _record_rvs_result(test_name, node, "pass")
             log.info(f'RVS {test_name} test passed on node {node}')
 
 
@@ -517,8 +540,10 @@ def parse_rvs_level_results(test_config, out_dict, level):
             fail_msg = (
                 f'RVS LEVEL-{level} test failed on node {node}. Failure patterns found: {", ".join(failures_found)}'
             )
+            _record_rvs_result(f"level_{level}", node, "fail")
             fail_test(fail_msg)
         else:
+            _record_rvs_result(f"level_{level}", node, "pass")
             log.info(f'RVS LEVEL-{level} test passed on node {node}: All module checks passed')
 
 
@@ -612,7 +637,10 @@ def test_rvs_gpu_enumeration(orch, config_dict):
     # Validate that GPUs are detected
     for node in out_dict.keys():
         if re.search(r'No supported GPUs available', out_dict[node], re.I):
+            _record_rvs_result("gpu_enumeration", node, "fail")
             fail_test(f'No GPUs detected in RVS enumeration on node {node}')
+        else:
+            _record_rvs_result("gpu_enumeration", node, "pass")
 
     update_test_result()
 
