@@ -38,7 +38,6 @@ from cvs.lib.utils.config_loader import (
 )
 
 
-
 # ---------- constants ----------
 
 DEFAULT_SWEEP_NAME = "default"
@@ -166,7 +165,7 @@ class TorchTitanSweep(_Forbid):
     @classmethod
     def _assign_params_from_keys(cls, data):
         """Parse MBS/GBS/PRECISION from combination keys and inject into combo bodies.
-        
+
         Allows minimal combo bodies (just name + overlays) while validating key format.
         """
         if not isinstance(data, dict):
@@ -191,7 +190,6 @@ class TorchTitanSweep(_Forbid):
                 combo[param] = value
             normalized["combinations"][key] = combo
         return normalized
-
 
     @model_validator(mode="after")
     def _check_runs_reference_known_combos(self):
