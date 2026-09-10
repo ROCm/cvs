@@ -1,5 +1,5 @@
 {
-  "_comment": "Qwen3.5-397B-A17B FP8 distributed SGLang PP=2 across two nodes.",
+  "_comment": "Qwen3.5-397B-A17B FP8 distributed SGLang PP=2. Same Qwen3.5 hybrid/AITER flags as single-node; image must ship aiter.ops.flydsl.moe_common.",
   "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_sglang_qwen3.5-397b-a17b_fp8_distributed_threshold.json",
@@ -58,7 +58,10 @@
       "--mem-fraction-static",
       "0.9",
       "--attention-backend",
-      "aiter"
+      "aiter",
+      "--mamba-radix-cache-strategy",
+      "no_buffer",
+      "--disable-overlap-schedule"
     ],
     "server_node_list": [
       "<changeme>",
@@ -69,6 +72,10 @@
     "proxy_router_serv_port": "8000",
     "env": {
       "SGLANG_USE_AITER": "1",
+      "SGLANG_ROCM_ARCH": "gfx942",
+      "GPU_ARCHS": "gfx942",
+      "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
+      "HF_HOME": "{paths.shared_fs}/.cache/huggingface",
       "NCCL_IB_GID_INDEX": "3",
       "NCCL_DEBUG": "ERROR"
     }

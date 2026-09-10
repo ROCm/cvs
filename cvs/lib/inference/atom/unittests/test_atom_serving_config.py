@@ -156,6 +156,21 @@ class TestAtomServingConfig(unittest.TestCase):
         self.assertTrue(variant.platform.gpu_metrics_poll)
         self.assertIn("--kv-cache-dtype", variant.roles.server.sglang_args)
 
+    def test_load_atom_sglang_qwen397b_serving_config(self):
+        root = Path(__file__).resolve().parents[4]
+        cfg = root / "input/config_file/inference/atom/mi3xx_atom_sglang_qwen3.5-397b-a17b_fp8_single.json"
+        raw = json.loads(cfg.read_text(encoding="utf-8"))
+        th_path = cfg.parent / raw["threshold_json"]
+        thresholds = json.loads(th_path.read_text(encoding="utf-8"))
+        variant_raw = serving_to_atom_variant_raw(raw, thresholds)
+        variant = AtomVariantConfig(**variant_raw)
+        self.assertEqual(variant.params.driver, "sglang")
+        self.assertIn("--mamba-radix-cache-strategy", variant.roles.server.sglang_args)
+        self.assertIn("--disable-overlap-schedule", variant.roles.server.sglang_args)
+        self.assertEqual(variant.roles.server.env.get("SGLANG_ROCM_ARCH"), "gfx942")
+        self.assertEqual(variant.roles.server.env.get("GPU_ARCHS"), "gfx942")
+        self.assertTrue(str(variant.roles.server.env.get("HF_HUB_CACHE", "")).endswith(".cache/huggingface"))
+
     def test_load_atom_sglang_distributed_drops_container_runtime_env(self):
         root = Path(__file__).resolve().parents[4]
         cfg = root / "input/config_file/inference/atom/mi3xx_atom_sglang_deepseek-r1_fp8_distributed.json"
