@@ -47,13 +47,3 @@ Sample output snapshots from an SGLang inference run.
 
 .. image:: /images/inferece_pytest_report_sample.png
    :alt: Sample SGLang inference HTML test report
-
-**Interactivity graph**
-
-.. image:: /images/inference_interactivity_graph_sample.png
-   :alt: Sample SGLang inference interactivity graph
-
-**Sweep analytics bar graph**
-
-.. image:: /images/inference_sweep_analytics_bar_graph_sample.png
-   :alt: Sample SGLang inference sweep analytics bar graph
