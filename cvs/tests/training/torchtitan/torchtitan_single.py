@@ -66,39 +66,33 @@ _SMOKE_PRECISION = "BF16"
 
 
 def pytest_generate_tests(metafunc):
-    """Parametrize test_training and test_metric from sweep.combinations filtered by sweep.runs.
+    """Parametrize per-sweep tests for both suites from sweep.runs.
 
-    sweep.combinations is a dict of {run_id: {micro_batch_size, global_batch_size, ...}}.
-    sweep.runs is a list of run_ids to execute (subset or all).
-    One case is emitted per entry in sweep.runs — no cartesian product.
-    The pytest parametrize ID is the run_id so that request.node.callspec.id
-    can be passed directly to variant_config.cell_key().
+    Tests that take sweep_name get one row per combination key listed in
+    sweep.runs (must exist in sweep.combinations). No cartesian product.
+    The pytest ID is the combination key so it matches the threshold cell.
     """
-    config_file = metafunc.config.getoption("config_file")
-    if not config_file or not os.path.isfile(config_file):
+    if "sweep_name" not in metafunc.fixturenames:
         return
-    with open(config_file) as fp:
-        raw = json.load(fp)
+    names = []
+    combinations = {}
+    config_file = metafunc.config.getoption("config_file")
+    if config_file and os.path.isfile(config_file):
+        with open(config_file) as fp:
+            raw = json.load(fp)
 
-    sweep = raw.get("sweep", {})
-    combinations = sweep.get("combinations", {})
-    runs = sweep.get("runs", list(combinations.keys()))
-
-    cases = []
-    ids = []
-    for run_id in runs:
-        if run_id not in combinations:
-            log.warning("sweep.runs entry '%s' not found in sweep.combinations; skipping", run_id)
-            continue
-        combo = combinations[run_id]
-        mbs = combo["micro_batch_size"]
-        gbs = combo["global_batch_size"]
-        precision = combo.get("precision", "")
-        cases.append((mbs, gbs, precision))
-        ids.append(run_id)
-
-    if "micro_batch_size" in metafunc.fixturenames and "global_batch_size" in metafunc.fixturenames and cases:
-        metafunc.parametrize("micro_batch_size,global_batch_size,precision", cases, ids=ids)
+        sweep = raw.get("sweep") or {}
+        combinations = sweep.get("combinations") or {}
+        runs = sweep.get("runs", list(combinations.keys()))
+        for run_id in runs:
+            if run_id not in combinations:
+                log.warning("sweep.runs entry %s not found in sweep.combinations; skipping", run_id)
+                continue
+            names.append(run_id)
+    if not names and not combinations:
+        names = ["default"]
+    if names:
+        metafunc.parametrize("sweep_name", names, ids=names)
 
 
 def test_launch_container(orch, variant_config, lifecycle, request):
