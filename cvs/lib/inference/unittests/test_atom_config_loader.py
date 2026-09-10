@@ -381,6 +381,54 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                 "ISL=128,OSL=32,TP=8,PP=1,CONC=1",
             ],
         )
+        self.assertEqual(
+            [task.id for task in variant.accuracy.tasks],
+            [
+                "gsm8k_flex",
+                "hellaswag",
+                "mmlu_pro",
+                "bbh",
+                "musr",
+                "arc_challenge",
+                "winogrande",
+            ],
+        )
+
+    def test_load_qwen397b_fp8_parity_variants(self):
+        root = Path(__file__).resolve().parents[3]
+        cases = (
+            ("vllm", "single", "vllm_atom", "1", "1"),
+            ("vllm", "distributed", "vllm_atom", "2", "2"),
+            ("sglang", "single", "sglang", "1", "1"),
+            ("sglang", "distributed", "sglang", "2", "2"),
+        )
+        for engine, mode, driver, nnodes, pp in cases:
+            name = f"mi3xx_atom_{engine}_qwen3.5-397b-a17b_fp8_{mode}.json"
+            with self.subTest(name=name):
+                variant = _atom_config(root, name)
+                self.assertEqual(variant.model.id, "amd/Qwen3.5-397B-A17B-FP8")
+                self.assertEqual(variant.params.driver, driver)
+                self.assertEqual(variant.params.nnodes, nnodes)
+                self.assertEqual(variant.params.pipeline_parallel_size, pp)
+                self.assertTrue(variant.platform.gpu_metrics_poll)
+                self.assertEqual(
+                    [task.id for task in variant.accuracy.tasks],
+                    ["gsm8k_flex", "hellaswag", "mmlu_pro"],
+                )
+                self.assertTrue(all(f"PP={pp}" in cell for cell in variant.expected_cells()))
+                self.assertIn("accuracy", variant.thresholds)
+
+    def test_load_qwen397b_fp8_mtp3(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json", profile="mtp3")
+        self.assertEqual(variant.params.driver, "atom")
+        self.assertIn("--method", variant.roles.server.atom_args)
+        self.assertTrue(variant.mtp_quality.enabled)
+        self.assertIn("mtp.acceptance_rate", variant.thresholds["mtp_quality"])
+        self.assertEqual(
+            [task.id for task in variant.accuracy.tasks],
+            ["gsm8k_flex", "gsm8k_strict"],
+        )
 
     def test_load_w1_single_gpu_metrics_poll(self):
         root = Path(__file__).resolve().parents[3]
@@ -446,11 +494,12 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         with self.assertRaises(ValueError):
             resolve_atom_profile(raw, {}, "missing")
 
-    def test_legacy_flat_config_unchanged(self):
+    def test_qwen_native_resolves_perf_profile(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json")
         self.assertEqual(variant.schema_version, 1)
         self.assertEqual(variant.threshold_json, "mi325x_atom_qwen3.5-397b-a17b_fp8_threshold.json")
+        self.assertNotIn("--method", variant.roles.server.atom_args)
 
     def test_flat_config_slices_profiled_threshold(self):
         root = Path(__file__).resolve().parents[3]
