@@ -300,6 +300,7 @@ let interactivityTooltipLastMeta = null;
 let heatmapMetricKey = 'client.output_throughput';
 let marginMetricKey = 'client.output_throughput';
 let prevRunByKey = null;
+let baselineIncompatibility = '';
 let deltaThresholdPct = 5;
 
 const FALLBACK_VIEWER_CONFIG = {
@@ -490,8 +491,15 @@ function prevRunChangeFlags(deltaPct, threshold) {
 function applyPrevRunPanel(panel) {
   if (!panel || !panel.rows) {
     prevRunByKey = null;
+    baselineIncompatibility = '';
     return;
   }
+  if (panel.compatible === false) {
+    prevRunByKey = null;
+    baselineIncompatibility = panel.incompatibility || 'metric contract mismatch';
+    return;
+  }
+  baselineIncompatibility = '';
   prevRunByKey = new Map();
   panel.rows.forEach(r => {
     prevRunByKey.set(cellMapKey(r), r);
@@ -503,7 +511,33 @@ function applyPrevRunPanel(panel) {
   }
 }
 
+function baselineIncompatibilityReason(data) {
+  const expected = reportData && reportData.metric_contract;
+  if (!expected) return '';
+  if (data.schema_version !== reportData.schema_version) {
+    return 'schema_version ' + JSON.stringify(data.schema_version)
+      + ' does not match ' + JSON.stringify(reportData.schema_version);
+  }
+  if (data.suite_id !== reportData.suite_id) {
+    return 'suite_id ' + JSON.stringify(data.suite_id)
+      + ' does not match ' + JSON.stringify(reportData.suite_id);
+  }
+  const actual = data.metric_contract;
+  if (!actual || actual.id !== expected.id || actual.version !== expected.version) {
+    return 'metric_contract ' + JSON.stringify(actual)
+      + ' does not match ' + JSON.stringify(expected);
+  }
+  return '';
+}
+
 function buildPrevRunFromBaseline(data) {
+  const incompatibility = baselineIncompatibilityReason(data);
+  if (incompatibility) {
+    prevRunByKey = null;
+    baselineIncompatibility = incompatibility;
+    return;
+  }
+  baselineIncompatibility = '';
   const headline = (reportData.report || {}).headline_metric || 'client.output_throughput';
   const threshold = Number($('f-delta-threshold').value) || deltaThresholdPct;
   const baseMap = new Map();
@@ -1523,7 +1557,11 @@ function renderTable(rows) {
     + '<span><strong>' + passN + '</strong> pass</span>'
     + (failN ? '<span><strong>' + failN + '</strong> fail</span>' : '')
     + '<span>Charts and heatmap follow filters</span>'
-    + (prevRunByKey ? '<span>baseline comparison active</span>' : '');
+    + (prevRunByKey ? '<span>baseline comparison active</span>' : '')
+    + (baselineIncompatibility
+      ? '<span><strong>Baseline incompatible:</strong> ' + baselineIncompatibility
+        + '; comparisons suppressed</span>'
+      : '');
 
   updateCellsHeader();
   const tbody = $('rows');
@@ -1667,6 +1705,7 @@ if (baselineInput) {
     const file = ev.target.files && ev.target.files[0];
     if (!file) {
       prevRunByKey = null;
+      baselineIncompatibility = '';
       if (reportData && reportData.panels && reportData.panels.prev_run) {
         applyPrevRunPanel(reportData.panels.prev_run);
       }

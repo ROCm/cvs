@@ -8,6 +8,15 @@
     "schema_version": { "type": "integer", "const": 1 },
     "profile_id": { "type": "string" },
     "suite_id": { "type": "string" },
+    "metric_contract": {
+      "type": "object",
+      "required": ["id", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "version": { "type": "integer", "minimum": 1 }
+      }
+    },
     "report_basename": { "type": "string" },
     "title": { "type": "string" },
     "subtitle": { "type": "string" },
@@ -32,6 +41,8 @@
       "properties": {
         "tier_metric_specs": { "type": "string" },
         "metric_units": { "type": "string" },
+        "metric_categories": { "type": "string" },
+        "metric_verdict": { "type": "string" },
         "run_card_display": { "type": "string" },
         "launch_provenance": { "type": "string" }
       }

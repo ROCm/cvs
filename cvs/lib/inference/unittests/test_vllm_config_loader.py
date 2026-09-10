@@ -1,46 +1,21 @@
-'''
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
+'''Unit tests for strict vLLM threshold schema validation.'''
 
-Unit tests for cvs.lib.inference.utils.vllm_config_loader's gpu.*/prom.*
-threshold coverage in _check_thresholds_cover_sweep. No hardware.
-
-_check_thresholds_cover_sweep only requires that every sweep cell have a
-threshold entry -- it never requires that entry name every gated metric.
-Operators may gate only the metrics they care about; test_metric/
-test_gpu_metric/test_prom_metric already treat an absent spec as
-"don't gate this metric" at evaluation time.
-'''
-
+import math
 import unittest
+
+from pydantic import ValidationError
 
 from cvs.lib.inference.utils.vllm_config_loader import (
     GATED_GPU_METRICS,
     GATED_PROM_METRICS,
     VariantConfig,
 )
-from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
 
 
-def _full_gated_specs():
-    """A spec for every gated client.*, gpu.*, and prom.* metric -- the
-    minimum that satisfies coverage. Values are inert so the set passes
-    without asserting anything; these tests pin the coverage gate, not the
-    numbers."""
-    out = {}
-    for m in GATED_METRICS:
-        kind = "max_ms" if m.endswith("_ms") else "max" if m == "failed" else "min"
-        out[f"client.{m}"] = {"kind": kind, "value": 0 if kind == "min" else 1e12}
-    for m in GATED_GPU_METRICS:
-        kind = "max" if m in ("peak_gpu_memory_mb", "model_load_memory_mb", "model_load_s") else "min"
-        out[f"gpu.{m}"] = {"kind": kind, "value": 0 if kind == "min" else 1e12}
-    for m in GATED_PROM_METRICS:
-        out[f"prom.{m}"] = {"kind": "max_ms", "value": 1e12}
-    return out
+CELL = "ISL=128,OSL=2048,TP=8,PP=1,CONC=16"
 
 
-def _variant(thresholds, enforce):
-    cell = "ISL=128,OSL=2048,TP=8,PP=1,CONC=16"
+def _variant(thresholds, enforce=False):
     return VariantConfig(
         enforce_thresholds=enforce,
         threshold_json="threshold.json",
@@ -51,38 +26,106 @@ def _variant(thresholds, enforce):
             "hf_token_file": "/home/x/.hf",
         },
         container={"name": "test", "image": "test", "runtime": {"name": "docker", "args": {}}},
-        server_params={"model": "amd/Llama-3.1-70B-Instruct-FP8-KV", "tensor_parallel_size": 8},
-        sweeps={cell: {}},
-        runs=[cell],
+        server_params={"model": "amd/model", "tensor_parallel_size": 8},
+        sweeps={CELL: {}},
+        runs=[CELL],
         thresholds=thresholds,
     )
 
 
-class TestGpuGatedMetricCoverage(unittest.TestCase):
-    """The gpu.* axis of vllm_config_loader's _check_thresholds_cover_sweep."""
+class TestPartialThresholdCells(unittest.TestCase):
+    def test_one_spec_cell_loads_with_enforcement_off_and_on(self):
+        thresholds = {CELL: {"output_throughput": {"kind": "min", "value": 0}}}
+        for enforce in (False, True):
+            with self.subTest(enforce=enforce):
+                variant = _variant(thresholds, enforce=enforce)
+                self.assertEqual(variant.thresholds, thresholds)
 
-    _CELL = "ISL=128,OSL=2048,TP=8,PP=1,CONC=16"
+    def test_empty_cell_loads_with_enforcement_off_and_on(self):
+        for enforce in (False, True):
+            with self.subTest(enforce=enforce):
+                variant = _variant({CELL: {}}, enforce=enforce)
+                self.assertEqual(variant.thresholds[CELL], {})
 
-    def _variant_with(self, thresholds, enforce):
-        return _variant(thresholds, enforce)
+    def test_enforcement_still_requires_selected_run_cell(self):
+        _variant({}, enforce=False)
+        with self.assertRaisesRegex(ValidationError, "missing threshold coverage"):
+            _variant({}, enforce=True)
 
-    def test_full_gated_set_constructs(self):
-        vc = self._variant_with({self._CELL: _full_gated_specs()}, enforce=True)
-        self.assertEqual(vc.enforce_thresholds, True)
+    def test_accuracy_is_exempt_from_vllm_metric_validation(self):
+        accuracy = {
+            "gsm8k": {
+                "gsm8k.exact_match__strict-match": {
+                    "kind": "min",
+                    "value": 0,
+                    "tolerance_pct": 5,
+                }
+            }
+        }
+        variant = _variant({CELL: {}, "accuracy": accuracy}, enforce=True)
+        self.assertEqual(variant.thresholds["accuracy"], accuracy)
 
-    def test_missing_gpu_metric_does_not_raise_when_enforced(self):
-        # Operators may gate only a subset of gpu.* metrics; an absent one is
-        # simply not gated, not an authoring error.
-        specs = _full_gated_specs()
-        del specs["gpu.peak_gpu_memory_mb"]
-        vc = self._variant_with({self._CELL: specs}, enforce=True)
-        self.assertNotIn("gpu.peak_gpu_memory_mb", vc.thresholds[self._CELL])
 
-    def test_no_gpu_specs_at_all_does_not_raise_when_enforced(self):
-        vc = self._variant_with({self._CELL: {}}, enforce=True)
-        self.assertEqual(vc.thresholds[self._CELL], {})
+class TestStrictThresholdSpecs(unittest.TestCase):
+    def assertRejected(self, metric, spec):
+        with self.assertRaises(ValidationError):
+            _variant({CELL: {metric: spec}})
 
-    def test_all_five_gpu_metrics_are_gated(self):
+    def test_rejects_nonfinite_or_non_builtin_values(self):
+        for value in (True, "1", None, [], {}, math.nan, math.inf, -math.inf):
+            with self.subTest(value=value):
+                self.assertRejected(
+                    "output_throughput",
+                    {"kind": "min", "value": value},
+                )
+
+    def test_rejects_missing_unknown_and_legacy_kinds(self):
+        for spec in (
+            {"value": 1},
+            {"kind": "min"},
+            {"kind": "info", "value": 1},
+            {"kind": "min_tok_s", "value": 1},
+            {"kind": "max_ms", "value": 1},
+            {"kind": "within", "value": 1},
+            {"kind": "min_ratio", "value": 1},
+            {"kind": "other", "value": 1},
+        ):
+            with self.subTest(spec=spec):
+                self.assertRejected("output_throughput", spec)
+
+    def test_rejects_direction_mismatch(self):
+        self.assertRejected("output_throughput", {"kind": "max", "value": 1})
+        self.assertRejected("mean_ttft_ms", {"kind": "min", "value": 1})
+
+    def test_rejects_prefixed_and_unknown_metric_names(self):
+        for metric in ("client.output_throughput", "gpu.gpu_compute_util_pct", "prom.queue_time_p50_ms", "new_metric"):
+            with self.subTest(metric=metric):
+                self.assertRejected(metric, {"kind": "min", "value": 1})
+
+    def test_rejects_extra_spec_fields(self):
+        for field, value in (
+            ("unit", "tok/s"),
+            ("reference", "total_token_throughput"),
+            ("tolerance_pct", 5),
+            ("extra", 1),
+        ):
+            with self.subTest(field=field):
+                self.assertRejected(
+                    "output_throughput",
+                    {"kind": "min", "value": 1, field: value},
+                )
+
+    def test_accepts_finite_int_float_zero_and_negative(self):
+        for value in (0, -1, 1.5):
+            with self.subTest(value=value):
+                variant = _variant(
+                    {CELL: {"output_throughput": {"kind": "min", "value": value}}}
+                )
+                self.assertEqual(variant.thresholds[CELL]["output_throughput"]["value"], value)
+
+
+class TestDatasourceViews(unittest.TestCase):
+    def test_gpu_and_prometheus_names_are_bare_and_complete(self):
         self.assertEqual(
             GATED_GPU_METRICS,
             {
@@ -93,39 +136,6 @@ class TestGpuGatedMetricCoverage(unittest.TestCase):
                 "gpu_compute_util_pct",
             },
         )
-
-
-class TestPromGatedMetricCoverage(unittest.TestCase):
-    """The prom.* axis of vllm_config_loader's _check_thresholds_cover_sweep.
-
-    Mirrors TestGpuGatedMetricCoverage: prom.* is a fully separate, parallel
-    gated family, not part of client.*'s tiering machinery, so its coverage
-    is proven independently here rather than in test_vllm_deck_profile.py.
-    """
-
-    _CELL = "ISL=128,OSL=2048,TP=8,PP=1,CONC=16"
-
-    def _variant_with(self, thresholds, enforce):
-        return _variant(thresholds, enforce)
-
-    def test_full_gated_set_constructs(self):
-        vc = self._variant_with({self._CELL: _full_gated_specs()}, enforce=True)
-        self.assertEqual(vc.enforce_thresholds, True)
-
-    def test_missing_prom_metric_does_not_raise_when_enforced(self):
-        # Operators may gate only a subset of prom.* metrics; an absent one is
-        # simply not gated, not an authoring error.
-        specs = _full_gated_specs()
-        del specs["prom.queue_time_p50_ms"]
-        vc = self._variant_with({self._CELL: specs}, enforce=True)
-        self.assertNotIn("prom.queue_time_p50_ms", vc.thresholds[self._CELL])
-
-    def test_only_one_prom_metric_gated_does_not_raise_when_enforced(self):
-        specs = {"prom.queue_time_p50_ms": {"kind": "max_ms", "value": 200}}
-        vc = self._variant_with({self._CELL: specs}, enforce=True)
-        self.assertEqual(vc.thresholds[self._CELL], specs)
-
-    def test_all_four_prom_metrics_are_gated(self):
         self.assertEqual(
             GATED_PROM_METRICS,
             {

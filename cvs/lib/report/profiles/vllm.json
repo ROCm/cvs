@@ -2,6 +2,7 @@
   "schema_version": 1,
   "profile_id": "vllm_rundeck",
   "suite_id": "vllm",
+  "metric_contract": {"id": "vllm-bare", "version": 1},
   "report_basename": "vllm_run_deck",
   "title": "vLLM Run Deck",
   "subtitle": "vLLM · single-node & PP-distributed lab performance summary",
@@ -16,15 +17,16 @@
     "lifecycle": "lifecycle"
   },
   "hooks": {
-    "tier_metric_specs": "cvs.lib.inference.utils.vllm_parsing:tier_metric_specs",
-    "metric_units": "cvs.lib.inference.utils.vllm_parsing:CLIENT_METRIC_UNITS"
+    "tier_metric_specs": "cvs.lib.inference.utils.vllm_metrics:tier_metric_specs",
+    "metric_units": "cvs.lib.inference.utils.vllm_metrics:METRIC_UNITS",
+    "metric_categories": "cvs.lib.inference.utils.vllm_metrics:METRIC_CATEGORIES",
+    "metric_verdict": "cvs.lib.inference.utils.vllm_metrics:metric_verdict"
   },
   "sweep": {
-    "metric_prefix": "client.",
-    "tier_order": ["throughput", "ttft", "tpot", "latency", "health", "record"],
-    "throughput_metric": "client.output_throughput",
-    "ttft_metric": "client.mean_ttft_ms",
-    "headline_metric": "client.output_throughput",
+    "metric_prefix": "",
+    "throughput_metric": "output_throughput",
+    "ttft_metric": "mean_ttft_ms",
+    "headline_metric": "output_throughput",
     "results_table_columns": [
       ["Model", null],
       ["GPU", null],
@@ -33,14 +35,14 @@
       ["Policy", null],
       ["Conc", null],
       ["Host", null],
-      ["Req/s", "client.request_throughput"],
-      ["Total tok/s", "client.total_token_throughput"],
-      ["Mean TTFT (ms)", "client.mean_ttft_ms"],
-      ["P95 TTFT (ms)", "client.p95_ttft_ms"],
-      ["Mean TPOT (ms)", "client.mean_tpot_ms"],
-      ["P95 TPOT (ms)", "client.p95_tpot_ms"],
-      ["P99 ITL (ms)", "client.p99_itl_ms"],
-      ["Goodput (req/s)", "client.goodput"]
+      ["Req/s", "request_throughput"],
+      ["Total tok/s", "total_token_throughput"],
+      ["Mean TTFT (ms)", "mean_ttft_ms"],
+      ["P95 TTFT (ms)", "p95_ttft_ms"],
+      ["Mean TPOT (ms)", "mean_tpot_ms"],
+      ["P95 TPOT (ms)", "p95_tpot_ms"],
+      ["P99 ITL (ms)", "p99_itl_ms"],
+      ["Goodput (req/s)", "goodput"]
     ],
     "cell_highlights": [
       ["output_throughput", "Output tok/s"],
@@ -79,9 +81,9 @@
   "viewer": {
     "interactivity": {
       "enabled": true,
-      "tpot_metric": "client.mean_tpot_ms",
-      "output_throughput_metric": "client.output_throughput",
-      "total_throughput_metric": "client.total_token_throughput"
+      "tpot_metric": "mean_tpot_ms",
+      "output_throughput_metric": "output_throughput",
+      "total_throughput_metric": "total_token_throughput"
     }
   },
   "cards": [

@@ -65,7 +65,7 @@ class ViewerConfigBuilder:
         comparison_hint = self.viewer.get("comparison_hint") or (
             f"Compare {' / '.join(dim_labels.get(f, f.upper()) for f in group_by)} shapes at each concurrency"
         )
-        return {
+        config = {
             "group_by": group_by,
             "group_labels": dim_labels,
             "filters": [{"field": f, "label": self._field_label(f)} for f in filter_fields],
@@ -80,6 +80,10 @@ class ViewerConfigBuilder:
             "comparison_hint": comparison_hint,
             "interactivity": interactivity,
         }
+        metric_contract = getattr(self.config, "metric_contract", None)
+        if metric_contract is not None:
+            config["metric_contract"] = dict(metric_contract)
+        return config
 
     def _group_by(self) -> list[str]:
         return list(self.viewer.get("group_by") or self.sweep.get("group_by") or ("isl", "osl"))
@@ -186,7 +190,7 @@ class ViewerConfigBuilder:
                 field = LABEL_TO_FIELD.get(str(label))
                 if field and field != "cell_id":
                     columns.append({"field": field, "label": str(label)})
-            elif str(key).startswith("client."):
+            elif str(key).startswith("client.") or str(key) in self.config.metric_units:
                 columns.append({"metric": str(key), "label": str(label)})
         if len(columns) <= 1:
             columns.extend(

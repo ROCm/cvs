@@ -30,15 +30,7 @@ from __future__ import annotations
 
 import re
 
-# Human-readable derived metrics exposed as HTML rows (one row per entry per
-# cell), mirroring gpu.py's GPU_METRICS shape.
-PROM_METRICS: list[tuple[str, str]] = [
-    ("queue_time_p50_ms", "ms"),
-    ("queue_time_p95_ms", "ms"),
-    ("prefill_time_p50_ms", "ms"),
-    ("prefill_time_p95_ms", "ms"),
-]
-PROM_METRIC_UNITS: dict[str, str] = {k: u for k, u in PROM_METRICS}
+from cvs.lib.inference.utils.vllm_metrics import PROM_METRICS, PROM_METRIC_UNITS
 
 # vLLM Prometheus histogram names this module reads, and the (short_name
 # prefix, quantile) pairs each feeds into PROM_METRICS above.
@@ -177,14 +169,14 @@ def _quantile_ms(before_metrics: dict, after_metrics: dict, metric_name: str, q:
 
 
 def to_prom_metrics(before_text: "str | None", after_text: "str | None") -> dict:
-    """Composed entry point: two raw scrape texts -> the `prom.*` metric dict.
+    """Composed entry point: two raw scrape texts -> canonical vLLM metrics.
 
     Analogous to vllm_parsing.py's to_client_metrics(). Returns an all-None
     dict (never a partial one, never a raise) if either scrape is
     missing/unparseable: a transport failure must degrade every prom.* key
     for the cell, not crash it.
     """
-    all_none = {f"prom.{short}": None for short, _unit in PROM_METRICS}
+    all_none = {short: None for short, _unit in PROM_METRICS}
     if not before_text or not after_text:
         return all_none
 
@@ -195,6 +187,8 @@ def to_prom_metrics(before_text: "str | None", after_text: "str | None") -> dict
 
     result = dict(all_none)
     for qname, q in _QUANTILES.items():
-        result[f"prom.queue_time_{qname}_ms"] = _quantile_ms(before_metrics, after_metrics, _QUEUE_TIME_METRIC, q)
-        result[f"prom.prefill_time_{qname}_ms"] = _quantile_ms(before_metrics, after_metrics, _PREFILL_TIME_METRIC, q)
+        result[f"queue_time_{qname}_ms"] = _quantile_ms(before_metrics, after_metrics, _QUEUE_TIME_METRIC, q)
+        result[f"prefill_time_{qname}_ms"] = _quantile_ms(
+            before_metrics, after_metrics, _PREFILL_TIME_METRIC, q
+        )
     return result

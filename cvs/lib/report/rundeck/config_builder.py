@@ -110,8 +110,10 @@ def make_inference_report_config(
     row_card_extras = kwargs.pop("row_card_extras", True)
     interactive_viewer = kwargs.pop("interactive_viewer", True)
     viewer_cell_threshold = kwargs.pop("viewer_cell_threshold", 24)
+    metric_verdict = kwargs.pop("metric_verdict", None)
+    metric_contract = kwargs.pop("metric_contract", None)
 
-    return InferenceReportConfig(
+    config = InferenceReportConfig(
         suite_id=suite_id,
         report_basename=basename,
         title=display_title,
@@ -134,3 +136,8 @@ def make_inference_report_config(
         run_card_display_builder=run_card_display_builder or _default_run_card,
         **kwargs,
     )
+    if metric_verdict is not None:
+        object.__setattr__(config, "metric_verdict", metric_verdict)
+    if metric_contract is not None:
+        object.__setattr__(config, "metric_contract", dict(metric_contract))
+    return config

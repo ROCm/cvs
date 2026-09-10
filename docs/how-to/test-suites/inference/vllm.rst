@@ -126,8 +126,8 @@ Open the HTML report. Each lifecycle stage, benchmark cell, and verification pha
 
 - **Lifecycle rows** — container launch, topology discovery, model fetch, the OpenAI-compatible smoke test, then teardown. These tell you *how far* the run got.
 - **Inference rows** — one per sweep cell, labelled ``<combo>-conc<N>``.
-- **Verification rows** — one per cell. Expand the row to see its active threshold metric subtests. Unavailable GPU and Prometheus metrics are skipped; unavailable client metrics with active thresholds fail.
-- **Results table** — the summary is also printed to the console. Use the per-cell logs for record-only client, GPU, and Prometheus values.
+- **Verification rows** — one per cell. Expand the row to see every finite metric plus every configured threshold. Only configured thresholds create subtests when enforcement is enabled. A missing or invalid gated value fails for every datasource, including GPU and Prometheus.
+- **Results table** — the summary is also printed to the console. Metric names are bare (for example, ``output_throughput`` and ``queue_time_p95_ms``).
 
 Per-cell logs land under your configured ``log_dir``::
 
@@ -219,7 +219,12 @@ Common pitfalls
 
 **A threshold fails with "missing from actuals".** The threshold gates a metric this run did not produce. The suite owns benchmark percentile collection; do not add percentile controls to workload config.
 
-**A verification row skips.** Either the benchmark produced no parseable result for that cell, threshold enforcement is disabled, or the cell has no active metric gates. Check ``client.log`` and the server log for collection failures.
+**A verification parent skips.** Either the benchmark produced no parseable result for that cell, threshold enforcement is disabled, or the cell has no active metric gates. Finite values are still retained as record rows.
+
+**A Run Deck baseline is incompatible.** vLLM reports identify the bare metric
+contract as ``{"id":"vllm-bare","version":1}``. Historical reports containing
+``client.*``, ``gpu.*``, or ``prom.*`` metric keys cannot be compared. Generate
+a new baseline with the current suite.
 
 **The sweep is slower than expected.** Cells that differ only in concurrency reuse the running server; changing ISL, OSL, TP, PP, or any server argument forces a restart and a weight reload. Ordering ``runs`` so concurrency varies fastest avoids needless reloads.
 

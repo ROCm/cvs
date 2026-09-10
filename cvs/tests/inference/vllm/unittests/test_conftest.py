@@ -32,10 +32,10 @@ class TestVllmMetricReportHook(unittest.TestCase):
         rows = [
             {
                 'node': 'head',
-                'metric': 'client.output_throughput',
+                'metric': 'output_throughput',
                 'status': 'record',
                 'actual': 99,
-                'spec': {'kind': 'min_tok_s', 'value': 100},
+                'spec': {'kind': 'min', 'value': 100},
                 'enforced': False,
             }
         ]

@@ -7,15 +7,16 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, create_model, model_validator
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
-from cvs.lib.inference.utils.vllm_server_metrics import PROM_METRICS
+from cvs.lib.inference.utils.vllm_metrics import METRIC_REGISTRY, validate_threshold_spec
 from cvs.lib.utils.config_loader import substitute_config
-from cvs.lib.utils.gpu import GPU_METRICS
 
-GATED_GPU_METRICS = {key for key, _unit in GPU_METRICS}
-GATED_PROM_METRICS = {key for key, _unit in PROM_METRICS}
+GATED_GPU_METRICS = {definition.name for definition in METRIC_REGISTRY if definition.datasource == "gpu"}
+GATED_PROM_METRICS = {
+    definition.name for definition in METRIC_REGISTRY if definition.datasource == "prometheus"
+}
 _CELL_RE = re.compile(
     r"^ISL=(?P<isl>[1-9]\d*),OSL=(?P<osl>[1-9]\d*),TP=(?P<tp>[1-9]\d*),PP=(?P<pp>[1-9]\d*),CONC=(?P<concurrency>[1-9]\d*)$"
 )
@@ -35,6 +36,25 @@ class _Options(BaseModel):
 
     def extra_options(self) -> Dict[str, Any]:
         return dict(self.model_extra or {})
+
+
+VllmThresholdSpec = create_model(
+    "VllmThresholdSpec",
+    __base__=_Forbid,
+    kind=(Any, ...),
+    value=(Any, ...),
+)
+
+
+def _validate_vllm_thresholds(thresholds):
+    for cell_key, cell in thresholds.items():
+        if cell_key == "accuracy":
+            continue
+        if not isinstance(cell, dict):
+            raise ValueError(f"vLLM threshold cell {cell_key!r} must be an object")
+        for metric, raw_spec in cell.items():
+            spec = VllmThresholdSpec.model_validate(raw_spec).model_dump()
+            validate_threshold_spec(metric, spec)
 
 
 class RuntimeArgs(_Forbid):
@@ -267,6 +287,7 @@ class VariantConfig(_Forbid):
 
     @model_validator(mode="after")
     def _validate_runs_and_thresholds(self):
+        _validate_vllm_thresholds(self.thresholds)
         if not self.runs:
             raise ValueError("runs must be a nonempty explicit list")
         parsed = {key: RunCell.parse(key) for key in self.sweeps}

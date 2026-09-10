@@ -59,11 +59,13 @@ class ComparisonPanelBuilder:
                 cells,
                 Path(prev_run_path),
                 headline_metric=self.config.headline_metric,
+                expected_suite_id=self.config.suite_id,
+                expected_metric_contract=getattr(self.config, "metric_contract", None),
             )
             if prev_run_panel:
                 panels["prev_run"] = prev_run_panel
 
-            if lifecycle_report:
+            if lifecycle_report and (not prev_run_panel or prev_run_panel.get("compatible", True)):
                 current_accuracy = extract_accuracy_from_lifecycle(lifecycle_report)
                 baseline_payload = load_report_json(Path(prev_run_path)) or {}
                 accuracy_prev = build_accuracy_prev_run_panel(

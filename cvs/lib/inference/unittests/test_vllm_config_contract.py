@@ -11,6 +11,7 @@ from cvs.lib.inference.utils.vllm_config_loader import (
     load_variant,
     serialize_cli_options,
 )
+from cvs.lib.inference.utils.vllm_metrics import METRIC_REGISTRY
 
 
 CELL = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
@@ -239,6 +240,40 @@ class TestPackagedVllmCatalog(unittest.TestCase):
                 for run in runs:
                     self.assertEqual(run.cell.tp, variant.server_params.tensor_parallel_size)
                     self.assertEqual(run.cell.pp, variant.server_params.pipeline_parallel_size)
+
+    def test_threshold_catalog_matches_full_bare_registry_in_order(self):
+        definitions = list(METRIC_REGISTRY)
+        expected_names = [definition.name for definition in definitions]
+        configs = _packaged_configs()
+        paths = [
+            path.with_name(json.loads(path.read_text())["threshold_json"])
+            for path in configs
+        ]
+        self.assertEqual(len(paths), EXPECTED_PACKAGED_CONFIG_COUNT)
+        cell_count = 0
+        for config_path, threshold_path in zip(configs, paths):
+            with self.subTest(threshold=threshold_path.name):
+                self.assertFalse(load_variant(config_path, {"username": "test"}).enforce_thresholds)
+                payload = json.loads(threshold_path.read_text())
+                cells = {
+                    key: value
+                    for key, value in payload.items()
+                    if not key.startswith("_") and key != "accuracy"
+                }
+                cell_count += len(cells)
+                for specs in cells.values():
+                    self.assertEqual(list(specs), expected_names)
+                    self.assertEqual(
+                        specs,
+                        {
+                            definition.name: {
+                                "kind": definition.direction,
+                                "value": 0,
+                            }
+                            for definition in definitions
+                        },
+                    )
+        self.assertEqual(cell_count, 56)
 
     def test_rejected_aiter_names_are_absent(self):
         for path in _packaged_configs():

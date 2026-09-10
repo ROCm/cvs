@@ -107,6 +107,16 @@ class ProfileConfigResolver:
         if tier_metric_specs is None:
             raise ValueError("JSON sweep profile requires hooks.tier_metric_specs")
 
+        metric_verdict = None
+        if hooks.get("metric_verdict"):
+            metric_verdict = cls.import_callable(hooks["metric_verdict"])
+
+        metric_categories = None
+        if hooks.get("metric_categories"):
+            metric_categories = cls.import_object(hooks["metric_categories"])
+            if callable(metric_categories):
+                metric_categories = metric_categories()
+
         metric_units_spec = hooks.get("metric_units") or sweep.get("metric_units_hook")
         if metric_units_spec:
             metric_units = cls.import_object(str(metric_units_spec))
@@ -150,7 +160,10 @@ class ProfileConfigResolver:
             metric_units=metric_units,
             tier_metric_specs=tier_metric_specs,
             metric_tier_order=tuple(
-                sweep.get("tier_order") or profile.get("tier_order") or ("throughput", "health", "record")
+                metric_categories
+                or sweep.get("tier_order")
+                or profile.get("tier_order")
+                or ("throughput", "health", "record")
             ),
             metric_prefix=str(cls._sweep_setting(sweep, profile, "metric_prefix", "client.")),
             cell_highlights=cell_highlights or None,
@@ -177,6 +190,8 @@ class ProfileConfigResolver:
             headline_metric=sweep.get("headline_metric")
             or sweep.get("throughput_metric")
             or "client.output_throughput",
+            metric_verdict=metric_verdict,
+            metric_contract=profile.get("metric_contract"),
             **kwargs,
         )
 

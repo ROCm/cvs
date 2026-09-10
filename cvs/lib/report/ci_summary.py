@@ -112,12 +112,20 @@ class CiSummaryBuilder:
             else "<p class='muted'>No cells recorded.</p>"
         )
 
-        regressions = self._prev_run_regressions()
-        prev_line = (
-            f"<p><strong>Baseline regressions:</strong> {regressions}</p>"
-            if regressions
-            else "<p><strong>Baseline regressions:</strong> none flagged</p>"
-        )
+        prev_panel = (self.payload.get("panels") or {}).get("prev_run") or {}
+        if prev_panel.get("compatible") is False:
+            reason = html.escape(str(prev_panel.get("incompatibility") or "metric contract mismatch"))
+            prev_line = (
+                "<p><strong>Baseline comparison:</strong> incompatible; "
+                f"comparisons suppressed ({reason})</p>"
+            )
+        else:
+            regressions = self._prev_run_regressions()
+            prev_line = (
+                f"<p><strong>Baseline regressions:</strong> {regressions}</p>"
+                if regressions
+                else "<p><strong>Baseline regressions:</strong> none flagged</p>"
+            )
 
         if parity:
             parity_line = (

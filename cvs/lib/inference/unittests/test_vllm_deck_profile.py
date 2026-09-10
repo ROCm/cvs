@@ -8,11 +8,10 @@ from pathlib import Path
 
 from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
 from cvs.lib.inference.utils.vllm_config_loader import load_variant
-from cvs.lib.inference.utils.vllm_parsing import (
+from cvs.lib.inference.utils.vllm_metrics import (
     CLIENT_METRICS,
-    GATED_METRICS,
-    METRIC_TIER_ORDER,
-    METRIC_TIERS,
+    METRIC_CATEGORIES,
+    METRIC_REGISTRY,
     VLLM_RESULTS_COLUMNS,
     tier_metric_specs,
 )
@@ -40,35 +39,40 @@ class TestVllmDeckProfile(unittest.TestCase):
         )
 
     def test_metric_tiers_subset_of_tier_order(self):
-        self.assertTrue(set(METRIC_TIERS) <= set(METRIC_TIER_ORDER))
+        profile = load_json_profile("vllm")
+        config = build_inference_config_from_profile(profile)
+        self.assertEqual(config.metric_tier_order, METRIC_CATEGORIES)
+        self.assertNotIn("record", config.metric_tier_order)
 
     def test_gated_metrics_partitioned_exactly_once(self):
-        tiered = [m for names in METRIC_TIERS.values() for m in names]
-        self.assertEqual(len(tiered), len(set(tiered)))
-        self.assertEqual(set(tiered), set(GATED_METRICS))
+        tiered = [
+            definition.name
+            for category in METRIC_CATEGORIES
+            for definition in METRIC_REGISTRY
+            if definition.category == category
+        ]
+        self.assertEqual(tiered, [definition.name for definition in METRIC_REGISTRY])
 
     def test_gated_metrics_subset_of_client_metrics(self):
         client_short = {short for short, _unit in CLIENT_METRICS}
-        missing = GATED_METRICS - client_short
-        self.assertEqual(missing, set(), f"GATED_METRICS not in CLIENT_METRICS: {missing}")
+        registered_client = {
+            definition.name for definition in METRIC_REGISTRY if definition.datasource == "client"
+        }
+        self.assertEqual(client_short, registered_client)
 
     def test_tier_metric_specs_throughput(self):
         cell = {
-            "client.output_throughput": {"kind": "min_tok_s", "value": 1},
-            "client.mean_ttft_ms": {"kind": "max_ms", "value": 2},
+            "output_throughput": {"kind": "min", "value": 1},
+            "mean_ttft_ms": {"kind": "max", "value": 2},
         }
         specs = tier_metric_specs(cell, "throughput")
-        self.assertIn("client.output_throughput", specs)
-        self.assertNotIn("client.mean_ttft_ms", specs)
+        self.assertIn("output_throughput", specs)
+        self.assertNotIn("mean_ttft_ms", specs)
 
-    def test_tier_metric_specs_record_includes_non_tiered(self):
-        cell = {
-            "client.num_prompts": {"kind": "within", "value": 100},
-            "client.output_throughput": {"kind": "min_tok_s", "value": 1},
-        }
-        specs = tier_metric_specs(cell, "record")
-        self.assertIn("client.num_prompts", specs)
-        self.assertNotIn("client.output_throughput", specs)
+    def test_tier_metric_specs_has_no_static_record_tier(self):
+        cell = {"num_prompts": {"kind": "min", "value": 100}}
+        self.assertEqual(tier_metric_specs(cell, "record"), {})
+        self.assertEqual(tier_metric_specs(cell, "run_health"), cell)
 
     def test_vllm_json_profile_identity(self):
         profile = load_json_profile("vllm")
@@ -77,6 +81,8 @@ class TestVllmDeckProfile(unittest.TestCase):
         self.assertEqual(cfg.suite_id, "vllm")
         self.assertEqual(cfg.inference_test_substring, "test_vllm_inference")
         self.assertEqual(cfg.row_card_test_names, ("test_verify_cell_metrics",))
+        self.assertEqual(cfg.metric_prefix, "")
+        self.assertEqual(cfg.metric_contract, {"id": "vllm-bare", "version": 1})
 
     def test_vllm_profile_lifecycle_labels_match_what_suite_records(self):
         profile = load_json_profile("vllm")
@@ -123,19 +129,24 @@ class TestVllmDeckProfile(unittest.TestCase):
         variant.bind_effective_topology(EffectiveVllmTopology("distributed", ("node0", "node1"), 2))
         cell_id = variant.expected_cells()[0]
         variant.enforce_thresholds = True
-        variant.thresholds = {cell_id: {"client.output_throughput": {"kind": "min_tok_s", "value": 1000.0}}}
+        variant.thresholds = {cell_id: {"output_throughput": {"kind": "min", "value": 1000.0}}}
         run = variant.resolved_runs()[0]
         key = (variant.model_id, "", str(run.cell.isl), str(run.cell.osl), run.cell.key, run.cell.concurrency)
         profile = load_json_profile("vllm_distributed")
         payload = build_inference_report_payload(
             config=build_inference_config_from_profile(profile),
             variant_config=variant,
-            inf_res_dict={key: {"node0": {"client.output_throughput": 500.0}}},
+            inf_res_dict={key: {"node0": {"output_throughput": 500.0}}},
             lifecycle_report={},
         )
         self.assertEqual(payload["cells"][0]["cell_id"], cell_id)
         self.assertEqual(payload["cells"][0]["tiers"]["throughput"], "fail")
         self.assertEqual(payload["overall_status"], "fail")
+        self.assertEqual(payload["metric_contract"], {"id": "vllm-bare", "version": 1})
+        self.assertEqual(
+            payload["viewer_config"]["metric_contract"],
+            {"id": "vllm-bare", "version": 1},
+        )
 
 
 if __name__ == "__main__":
