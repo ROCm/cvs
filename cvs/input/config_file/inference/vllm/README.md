@@ -1,18 +1,13 @@
-# vLLM inference configs
+# vLLM Inference — Config and Threshold Files
 
-JSON configuration and threshold files for the `vllm_single` and
-`vllm_distributed` suites. Full documentation:
+The documentation for the vLLM **configuration and threshold files** now lives
+in the CVS docs and is the single source of truth:
 
-- **Configuration and threshold reference:**
+- **Configuration & threshold reference:**
   [`docs/reference/configuration-files/inference/vllm.rst`](../../../../../docs/reference/configuration-files/inference/vllm.rst)
-- **How to run the suites:**
+- **Running the suites (lifecycle, metrics, reports):**
   [`docs/how-to/test-suites/inference/vllm.rst`](../../../../../docs/how-to/test-suites/inference/vllm.rst)
 
-Each workload is shipped as a `single` / `distributed` pair:
 
-```text
-mi3xx_vllm_<model>_<precision>_<topology>.json
-mi325x_vllm_<model>_<precision>_<topology>_threshold.json
-```
-
-Each configuration names its sibling threshold file in `threshold_json`.
+The config files and their sibling `_threshold.json` files live in this
+directory (`<gpu>_vllm_<model>_<precision>_<mode>.json`).
