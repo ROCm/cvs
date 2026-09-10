@@ -1,7 +1,12 @@
 # Adding a new DTNI suite
 
 Step-by-step guide for adding a new Distributed Training aNd Inference suite.
-The `vllm_single` suite is the reference implementation throughout.
+The live vLLM reference is `cvs/lib/inference/utils/vllm_config_loader.py` plus
+`cvs/lib/inference/vllm_job.py` (not `inferencing_config_loader.load_variant`,
+which is unused). Cross-suite streamlining for vLLM / SGLang / ATOM:
+[SERVING_UNIFICATION.md](SERVING_UNIFICATION.md).
+
+The `vllm_single` suite is still the pytest lifecycle reference throughout.
 Follow this top to bottom; each step links to the authoritative contract at the
 moment you need it.
 
