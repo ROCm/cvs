@@ -1,40 +1,12 @@
 {
-  "_comment": "Uncalibrated zero placeholders for all 56 canonical bare vLLM metrics. The paired config keeps enforce_thresholds false, so these values record without gating. Replace every placeholder with a measured value before enabling enforcement.",
+  "_comment": "Uncalibrated zero placeholders for the packaged 32-metric assertion subset. The paired config keeps enforce_thresholds false, so all finite metrics record without gating. Add or remove registered metrics as needed, and replace every retained placeholder with a measured value before enabling enforcement.",
   "_comment_accuracy": "The optional top-level accuracy block is task-qualified and exempt from vLLM sweep metric validation. Its shape remains: \"accuracy\": {\"<task-id>\": {\"<lm-eval-metric>\": {\"kind\": \"min\", \"value\": 0}}}.",
   "ISL=1024,OSL=1024,TP=4,PP=1,CONC=16": {
-    "max_concurrency": {
-      "kind": "min",
-      "value": 0
-    },
-    "max_concurrent_requests": {
-      "kind": "min",
-      "value": 0
-    },
-    "num_prompts": {
-      "kind": "min",
-      "value": 0
-    },
-    "completed": {
-      "kind": "min",
-      "value": 0
-    },
     "failed": {
       "kind": "max",
       "value": 0
     },
     "success_rate": {
-      "kind": "min",
-      "value": 0
-    },
-    "duration": {
-      "kind": "max",
-      "value": 0
-    },
-    "request_throughput": {
-      "kind": "min",
-      "value": 0
-    },
-    "goodput": {
       "kind": "min",
       "value": 0
     },
@@ -46,43 +18,11 @@
       "kind": "min",
       "value": 0
     },
-    "per_gpu_throughput": {
-      "kind": "min",
-      "value": 0
-    },
-    "decode_throughput_p50": {
-      "kind": "min",
-      "value": 0
-    },
-    "max_output_tokens_per_s": {
-      "kind": "min",
-      "value": 0
-    },
-    "rtfx": {
-      "kind": "min",
-      "value": 0
-    },
-    "total_input_tokens": {
-      "kind": "min",
-      "value": 0
-    },
-    "total_output_tokens": {
-      "kind": "min",
-      "value": 0
-    },
     "mean_ttft_ms": {
       "kind": "max",
       "value": 0
     },
     "median_ttft_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "std_ttft_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "p50_ttft_ms": {
       "kind": "max",
       "value": 0
     },
@@ -98,23 +38,11 @@
       "kind": "max",
       "value": 0
     },
-    "normalized_ttft_ms_per_tok": {
-      "kind": "max",
-      "value": 0
-    },
     "mean_tpot_ms": {
       "kind": "max",
       "value": 0
     },
     "median_tpot_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "std_tpot_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "p50_tpot_ms": {
       "kind": "max",
       "value": 0
     },
@@ -138,18 +66,6 @@
       "kind": "max",
       "value": 0
     },
-    "std_itl_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "p50_itl_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "p90_itl_ms": {
-      "kind": "max",
-      "value": 0
-    },
     "p95_itl_ms": {
       "kind": "max",
       "value": 0
@@ -158,23 +74,11 @@
       "kind": "max",
       "value": 0
     },
-    "decode_latency_ratio": {
-      "kind": "max",
-      "value": 0
-    },
     "mean_e2el_ms": {
       "kind": "max",
       "value": 0
     },
     "median_e2el_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "std_e2el_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "p50_e2el_ms": {
       "kind": "max",
       "value": 0
     },
@@ -228,39 +132,11 @@
     }
   },
   "ISL=1024,OSL=1024,TP=4,PP=1,CONC=32": {
-    "max_concurrency": {
-      "kind": "min",
-      "value": 0
-    },
-    "max_concurrent_requests": {
-      "kind": "min",
-      "value": 0
-    },
-    "num_prompts": {
-      "kind": "min",
-      "value": 0
-    },
-    "completed": {
-      "kind": "min",
-      "value": 0
-    },
     "failed": {
       "kind": "max",
       "value": 0
     },
     "success_rate": {
-      "kind": "min",
-      "value": 0
-    },
-    "duration": {
-      "kind": "max",
-      "value": 0
-    },
-    "request_throughput": {
-      "kind": "min",
-      "value": 0
-    },
-    "goodput": {
       "kind": "min",
       "value": 0
     },
@@ -272,43 +148,11 @@
       "kind": "min",
       "value": 0
     },
-    "per_gpu_throughput": {
-      "kind": "min",
-      "value": 0
-    },
-    "decode_throughput_p50": {
-      "kind": "min",
-      "value": 0
-    },
-    "max_output_tokens_per_s": {
-      "kind": "min",
-      "value": 0
-    },
-    "rtfx": {
-      "kind": "min",
-      "value": 0
-    },
-    "total_input_tokens": {
-      "kind": "min",
-      "value": 0
-    },
-    "total_output_tokens": {
-      "kind": "min",
-      "value": 0
-    },
     "mean_ttft_ms": {
       "kind": "max",
       "value": 0
     },
     "median_ttft_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "std_ttft_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "p50_ttft_ms": {
       "kind": "max",
       "value": 0
     },
@@ -324,23 +168,11 @@
       "kind": "max",
       "value": 0
     },
-    "normalized_ttft_ms_per_tok": {
-      "kind": "max",
-      "value": 0
-    },
     "mean_tpot_ms": {
       "kind": "max",
       "value": 0
     },
     "median_tpot_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "std_tpot_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "p50_tpot_ms": {
       "kind": "max",
       "value": 0
     },
@@ -364,18 +196,6 @@
       "kind": "max",
       "value": 0
     },
-    "std_itl_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "p50_itl_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "p90_itl_ms": {
-      "kind": "max",
-      "value": 0
-    },
     "p95_itl_ms": {
       "kind": "max",
       "value": 0
@@ -384,23 +204,11 @@
       "kind": "max",
       "value": 0
     },
-    "decode_latency_ratio": {
-      "kind": "max",
-      "value": 0
-    },
     "mean_e2el_ms": {
       "kind": "max",
       "value": 0
     },
     "median_e2el_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "std_e2el_ms": {
-      "kind": "max",
-      "value": 0
-    },
-    "p50_e2el_ms": {
       "kind": "max",
       "value": 0
     },

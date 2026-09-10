@@ -88,7 +88,11 @@ For a **multinode** configuration, also set:
 
 .. tip::
 
-  Leave ``enforce_thresholds`` set to ``false`` for your first run on new hardware. The run then measures and records everything without failing on thresholds you have not calibrated yet. Set it to ``true`` once you know what good looks like.
+  Leave ``enforce_thresholds`` set to ``false`` for your first run on new
+  hardware. The run reports every finite value produced from the 56-metric
+  registry without gating. Packaged threshold templates intentionally retain
+  the previous 32-metric assertion subset; you may add any other registered
+  metric or remove entries before enabling calibrated thresholds.
 
 .. _vllm-run-tests:
 

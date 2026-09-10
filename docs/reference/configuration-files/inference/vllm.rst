@@ -792,8 +792,12 @@ Threshold file discovery
 
 Set ``threshold_json`` to the threshold file. A relative path resolves against
 the configuration file's directory. The packaged 28 files contain two cells
-each and all 56 metrics in canonical registry order. Their zero values are
-uncalibrated placeholders, and every paired config keeps enforcement disabled.
+each and intentionally retain the previous 32-metric assertion subset in
+canonical registry order. All 56 registry metrics remain supported, and every
+finite produced value is reported whether or not it has a threshold spec. The
+packaged zero values are uncalibrated placeholders, and every paired config
+keeps enforcement disabled. Users may add any other registered metric or
+remove any packaged entry.
 
 Metrics
 =======
