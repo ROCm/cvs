@@ -6,7 +6,7 @@
 vLLM inference configuration file
 **********************************
 
-The vLLM suites benchmark LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` supports one-host fallback or the current two-host distributed recipes. Larger clusters require an explicit recipe and calibrated thresholds.
+The vLLM suites benchmark LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file, with one-host fallback when only a single host is present. Packaged distributed recipes and thresholds are calibrated for two hosts; retune them before treating other sizes as pass/fail.
 
 For a mapping-style ``node_dict``, "first cluster host" means the first JSON key
 in insertion order. ``vllm_single`` scopes execution to that host and rewrites
@@ -228,14 +228,14 @@ These rules are enforced when the configuration file loads, before anything star
 
    * - Condition
      - Rule
-   * - exactly two cluster hosts, backend is not ray
+   * - two or more cluster hosts, backend is not ray
      - ``pipeline_parallel_size`` **must** be greater than 1
-   * - exactly two cluster hosts, backend is ray
+   * - two or more cluster hosts, backend is ray
      - ``pipeline_parallel_size`` of 1 is valid
    * - ``pipeline_parallel_size`` > 1
      - The distributed suite requires more than one cluster host
-   * - exactly two cluster hosts, either backend
-     - ``container.env.NCCL_SOCKET_IFNAME`` is **required**; larger clusters are rejected until a dedicated recipe exists
+   * - two or more cluster hosts, either backend
+     - ``container.env.NCCL_SOCKET_IFNAME`` is **required**
 
 The corresponding error messages are:
 

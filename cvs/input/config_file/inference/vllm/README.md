@@ -24,7 +24,7 @@ is absent, but keeping one pair per directory avoids the trap entirely.
 | Mode | PP | Host behavior |
 |---|---|---|
 | `single` | 1 | first cluster host only |
-| `distributed` | 2 | exactly two cluster hosts form one service |
+| `distributed` | from config | all cluster hosts form one service |
 
 For mapping-style `node_dict`, "first cluster host" means the first JSON key in
 insertion order. `vllm_single` scopes the cluster to that host and rewrites
@@ -36,8 +36,10 @@ TP is **per model**, following the source workload list: TP=4 for
 everything else. A TP=4 distributed variant still spans 2 nodes via PP=2,
 using 4 GPUs per node.
 
-Distributed configs support one-host fallback or exactly two hosts. CVS rejects
-larger clusters until a matching N-host recipe and threshold set are available.
+Distributed configs use every host in the cluster file, with one-host fallback
+when only a single host is present. Packaged recipes set PP=2 for two-host
+runs; align `pipeline_parallel_size` and thresholds with your host count
+before treating a larger cluster as pass/fail.
 
 ## Sweeps
 

@@ -68,11 +68,6 @@ def resolve_vllm_topology(mode, variant, hosts) -> EffectiveVllmTopology:
         raise ValueError(f"unknown vLLM mode: {mode!r}")
     if len(hosts) == 1:
         return EffectiveVllmTopology("single", hosts, 1)
-    if len(hosts) != 2:
-        raise ValueError(
-            "vllm_distributed currently supports exactly two cluster hosts; "
-            "add an explicit N-host recipe and thresholds before using a larger cluster"
-        )
 
     is_ray = variant.server_params.distributed_executor_backend == "ray"
     effective_pp = variant.server_params.pipeline_parallel_size
