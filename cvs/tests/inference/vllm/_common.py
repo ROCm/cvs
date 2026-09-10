@@ -12,6 +12,7 @@ from cvs.lib.inference.utils.inference_suite_lifecycle import test_accuracy_eval
 from cvs.lib.inference.utils.vllm_config_loader import load_variant
 from cvs.lib.inference.utils.vllm_metrics import (
     METRIC_REGISTRY,
+    UnknownMetricContractError,
     VLLM_RESULTS_COLUMNS,
     is_finite_number,
     merge_metric_sources,
@@ -143,23 +144,29 @@ def _gpu_snap(orch):
 
 
 def _clear_live_server(lifecycle):
-    lifecycle.live_server_state = None
+    lifecycle.live_server_sig = None
     lifecycle.live_server_job = None
+    lifecycle.model_load_s = None
+    lifecycle.model_load_memory_mb = None
 
 
 def _live_server_measurements(lifecycle, signature):
-    state = getattr(lifecycle, "live_server_state", None)
-    if not isinstance(state, tuple) or len(state) != 3 or state[0] != signature:
+    if getattr(lifecycle, "live_server_sig", None) != signature:
         return None
-    return state[1], state[2]
+    if getattr(lifecycle, "live_server_job", None) is None:
+        return None
+    return (
+        getattr(lifecycle, "model_load_s", None),
+        getattr(lifecycle, "model_load_memory_mb", None),
+    )
 
 
 def _load_measurements(before, after, elapsed):
     before_vram = before.get("gpu.used_vram")
     after_vram = after.get("gpu.used_vram")
-    if not all(is_finite_number(value) for value in (before_vram, after_vram, elapsed)):
-        return None
-    return elapsed, after_vram - before_vram
+    load_s = elapsed if is_finite_number(elapsed) else None
+    load_mb = after_vram - before_vram if is_finite_number(before_vram) and is_finite_number(after_vram) else None
+    return load_s, load_mb
 
 
 def _finite_or_none(value):
@@ -225,21 +232,22 @@ def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_r
         pytest.skip("a prior lifecycle stage failed")
     isl = run.cell.isl
     osl = run.cell.osl
-    job = VllmJob(
-        orch=orch,
-        variant=variant_config,
-        hf_token=hf_token,
-        isl=isl,
-        osl=osl,
-        concurrency=run.cell.concurrency,
-        num_prompts=run.benchmark_params["num_prompts"],
-        benchmark_params=run.benchmark_params,
-        ib_hcas=getattr(lifecycle, "ib_hcas", []),
-    )
+    job = None
     load_s = None
     load_mb = None
     poll_readings = []
     try:
+        job = VllmJob(
+            orch=orch,
+            variant=variant_config,
+            hf_token=hf_token,
+            isl=isl,
+            osl=osl,
+            concurrency=run.cell.concurrency,
+            num_prompts=run.benchmark_params["num_prompts"],
+            benchmark_params=run.benchmark_params,
+            ib_hcas=getattr(lifecycle, "ib_hcas", []),
+        )
         signature = job.server_signature()
         measurements = _live_server_measurements(lifecycle, signature)
         if measurements is not None:
@@ -249,7 +257,6 @@ def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_r
             _clear_live_server(lifecycle)
             job.stop_server()
             job.build_server_cmd()
-            lifecycle.live_server_job = job
             before = _gpu_snap(orch)
             started = time.monotonic()
             job.start_server()
@@ -257,10 +264,11 @@ def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_r
             elapsed = time.monotonic() - started
             lifecycle.record(request.node.nodeid, "server_ready", elapsed)
             after = _gpu_snap(orch)
-            measurements = _load_measurements(before, after, elapsed)
-            if measurements is not None:
-                load_s, load_mb = measurements
-                lifecycle.live_server_state = (signature, load_s, load_mb)
+            load_s, load_mb = _load_measurements(before, after, elapsed)
+            lifecycle.live_server_sig = signature
+            lifecycle.live_server_job = job
+            lifecycle.model_load_s = load_s
+            lifecycle.model_load_memory_mb = load_mb
 
         html_path = getattr(request.config.option, "htmlpath", None)
         html_dir = getattr(request.config, "_test_html_dir", "test_html")
@@ -288,25 +296,29 @@ def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_r
             )
         after_prom = scrape_vllm_metrics(orch, job.base_url, job.port_no)
         results = job.parse_results()
+
+        aggregate = agg_readings(poll_readings)
+        gpu_results = {
+            "peak_gpu_memory_mb": _finite_or_none(aggregate.get("peak_gpu_memory_mb")),
+            "model_load_memory_mb": load_mb,
+            "model_load_s": load_s,
+            "gpu_bandwidth_util_pct": _finite_or_none(aggregate.get("gpu_bandwidth_util_pct")),
+            "gpu_compute_util_pct": _finite_or_none(aggregate.get("gpu_compute_util_pct")),
+        }
+        prom_results = to_prom_metrics(before_prom, after_prom)
+        published_results = {
+            host: merge_metric_sources(actuals, gpu_results, prom_results) for host, actuals in results.items()
+        }
+        inf_res_dict[_cell_result_key(variant_config, run)] = published_results
+    except UnknownMetricContractError:
+        raise
     except Exception:
         lifecycle.failed = True
         dump_job = getattr(lifecycle, "live_server_job", None) or job
         _clear_live_server(lifecycle)
-        dump_job.dump_server_log()
+        if dump_job is not None:
+            dump_job.dump_server_log()
         raise
-
-    aggregate = agg_readings(poll_readings)
-    gpu_results = {
-        "peak_gpu_memory_mb": _finite_or_none(aggregate.get("peak_gpu_memory_mb")),
-        "model_load_memory_mb": load_mb,
-        "model_load_s": load_s,
-        "gpu_bandwidth_util_pct": _finite_or_none(aggregate.get("gpu_bandwidth_util_pct")),
-        "gpu_compute_util_pct": _finite_or_none(aggregate.get("gpu_compute_util_pct")),
-    }
-    prom_results = to_prom_metrics(before_prom, after_prom)
-    for host, actuals in results.items():
-        results[host] = merge_metric_sources(actuals, gpu_results, prom_results)
-    inf_res_dict[_cell_result_key(variant_config, run)] = results
 
 
 def test_verify_cell_metrics(run, inf_res_dict, variant_config, lifecycle, request, subtests):

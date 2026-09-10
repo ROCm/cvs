@@ -81,7 +81,7 @@ class CellRecordBuilder:
                 metric,
                 actuals.get(metric),
                 spec,
-                evaluator=getattr(self.config, "metric_verdict", None),
+                evaluator=self.config.metric_verdict,
             )
             if status == "fail":
                 return "fail"
@@ -177,14 +177,19 @@ class CellRecordBuilder:
                             full,
                             actual,
                             spec,
-                            evaluator=getattr(self.config, "metric_verdict", None),
+                            evaluator=self.config.metric_verdict,
                         )
                         if enforce and spec
                         else "record"
                     ),
                     "bar_pct": (
                         bar_pct(float(actual), spec)
-                        if spec is not None and type(actual) in (int, float) and math.isfinite(actual)
+                        if spec is not None
+                        and actual is not None
+                        and (
+                            self.config.metric_verdict is None
+                            or (type(actual) in (int, float) and math.isfinite(actual))
+                        )
                         else None
                     ),
                     "margin": margin_text(actual, spec) if spec else None,

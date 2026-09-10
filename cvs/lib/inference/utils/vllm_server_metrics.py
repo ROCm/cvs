@@ -4,18 +4,14 @@ All rights reserved.
 
 Pure parsers for vLLM's engine-side Prometheus `/metrics` endpoint.
 
-This module owns the *vocabulary and math* of the `prom.*` namespace -- the
-mapping from two raw Prometheus text-exposition scrapes (one taken before a
-sweep cell's client run, one taken after) to the namespaced metric dict that
-downstream code (threshold files, the per-metric HTML rows, `evaluate_all`)
-keys on. Deliberately free of I/O and orchestration, matching
-`vllm_parsing.py`'s split: callers (`vllm_job.py`) fetch the scrape text,
-this module turns it into numbers.
-
-Namespacing contract: `prom.*` -- percentile metrics interpolated from
-Prometheus Histograms scraped off the live vLLM server, distinct from
-`client.*` (measured by the load generator) and `gpu.*` (amd-smi snapshots).
-Its own namespace rather than joining either of those.
+This module maps two raw Prometheus text-exposition scrapes (one taken before
+a sweep cell's client run, one taken after) into the bare Prometheus-backed
+keys owned by the vLLM metric registry, such as `queue_time_p50_ms` and
+`prefill_time_p95_ms`. The registry records their Prometheus datasource; the
+threshold, verdict, and reporting surfaces all use the same bare names.
+Deliberately free of I/O and orchestration, matching the client projector's
+split: callers (`vllm_job.py`) fetch the scrape text, and this module turns it
+into numbers.
 
 vLLM's histogram buckets are cumulative per scrape (each `le` bucket already
 counts everything at or below it), but the *counters themselves* are
@@ -41,8 +37,6 @@ from cvs.lib.inference.utils.vllm_metrics import (
 PROM_METRICS = _REGISTRY_PROM_METRICS
 PROM_METRIC_UNITS = _REGISTRY_PROM_METRIC_UNITS
 
-# vLLM Prometheus histogram names this module reads, and the (short_name
-# prefix, quantile) pairs each feeds into PROM_METRICS above.
 _QUEUE_TIME_METRIC = "vllm:request_queue_time_seconds"
 _PREFILL_TIME_METRIC = "vllm:request_prefill_time_seconds"
 

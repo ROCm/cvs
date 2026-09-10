@@ -17,6 +17,7 @@ from cvs.lib.report.metrics import HEADLINE_THROUGHPUT_METRIC
 
 PREV_RUN_ENV = "CVS_INFERENCE_PREV_REPORT_JSON"
 DEFAULT_THRESHOLD_PCT = 5.0
+_UNSET = object()
 
 
 def resolve_prev_run_json_path(
@@ -44,10 +45,14 @@ def build_prev_run_panel(
     expected_schema_version=1,
     expected_suite_id="",
     expected_metric_contract=None,
+    baseline_payload=_UNSET,
 ) -> Optional[dict]:
     if not baseline_json_path.is_file():
         return None
-    baseline_payload = load_report_json(baseline_json_path) or {}
+    if baseline_payload is _UNSET:
+        baseline_payload = load_report_json(baseline_json_path)
+    if not isinstance(baseline_payload, dict):
+        baseline_payload = {}
     incompatibility = report_incompatibility(
         baseline_payload,
         expected_schema_version=expected_schema_version,

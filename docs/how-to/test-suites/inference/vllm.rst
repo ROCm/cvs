@@ -221,7 +221,7 @@ Common pitfalls
 
 **Container launch crashes with "too many values to unpack".** You placed ``env`` under ``container.runtime.args``. It belongs at the ``container`` top level.
 
-**A threshold fails with "missing from actuals".** The threshold gates a metric this run did not produce. The suite owns benchmark percentile collection; do not add percentile controls to workload config.
+**A threshold fails with "actual must be a finite built-in int or float".** The gated datasource did not produce a valid value. Inspect the raw benchmark artifact, GPU telemetry, or server metrics for that cell. The suite owns benchmark percentile collection; workload configuration cannot override it.
 
 **A verification parent skips.** Either the benchmark produced no parseable result for that cell, threshold enforcement is disabled, or the cell has no active metric gates. Finite values are still retained as record rows.
 

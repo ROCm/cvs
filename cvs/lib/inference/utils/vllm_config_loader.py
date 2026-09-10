@@ -51,6 +51,8 @@ def _validate_vllm_thresholds(thresholds):
         if not isinstance(cell, dict):
             raise ValueError(f"vLLM threshold cell {cell_key!r} must be an object")
         for metric, raw_spec in cell.items():
+            if metric.startswith(_METADATA_PREFIXES):
+                continue
             spec = VllmThresholdSpec.model_validate(raw_spec).model_dump()
             validate_threshold_spec(metric, spec)
 

@@ -136,6 +136,10 @@ class _Lifecycle:
         self.failed = False
         self.torn_down = False
         self.report = {}  # nodeid -> list[(label, value, unit)]
+        self.live_server_sig = None
+        self.live_server_job = None
+        self.model_load_s = None
+        self.model_load_memory_mb = None
 
     def record(self, nodeid, label, value, unit="s"):
         self.report.setdefault(nodeid, []).append((label, value, unit))

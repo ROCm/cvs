@@ -36,6 +36,10 @@ _METADATA_FIELDS = frozenset(
 )
 
 
+class UnknownMetricContractError(ValueError):
+    """A finite artifact field falls outside the canonical vLLM registry."""
+
+
 def _raw(name, unit, category, direction, raw_source=None):
     source = raw_source or name
     return MetricDefinition(name, source, 'identity', (source,), unit, 'client', category, direction)
@@ -337,7 +341,7 @@ def project_vllm_metrics(raw, *, tp, isl, pp='1', artifact_path='results'):
             continue
         if raw_name in _METADATA_FIELDS or not is_finite_number(value):
             continue
-        raise ValueError(f'unknown finite numeric vLLM result field {raw_name!r}: {artifact_path}')
+        raise UnknownMetricContractError(f'unknown finite numeric vLLM result field {raw_name!r}: {artifact_path}')
 
     context = {'tp': tp, 'pp': pp, 'isl': isl}
     for definition in _DERIVED_CLIENT_METRICS:

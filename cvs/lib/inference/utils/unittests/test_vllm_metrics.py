@@ -11,6 +11,7 @@ from cvs.lib.inference.utils.vllm_metrics import (
     METRIC_REGISTRY,
     METRIC_UNITS,
     PROM_METRICS,
+    UnknownMetricContractError,
     VLLM_GPU_METRICS,
     is_finite_number,
     merge_metric_sources,
@@ -160,7 +161,7 @@ class TestBareProjection(unittest.TestCase):
         self.assertNotIn("burstiness", metrics)
 
     def test_unknown_finite_numeric_field_names_artifact(self):
-        with self.assertRaisesRegex(ValueError, "node0:/tmp/results"):
+        with self.assertRaises(UnknownMetricContractError) as raised:
             project_vllm_metrics(
                 {"output_throughput": 1.0, "new_upstream_number": 2},
                 tp=1,
@@ -168,6 +169,10 @@ class TestBareProjection(unittest.TestCase):
                 isl=1,
                 artifact_path="node0:/tmp/results",
             )
+        self.assertEqual(
+            str(raised.exception),
+            "unknown finite numeric vLLM result field 'new_upstream_number': node0:/tmp/results",
+        )
 
     def test_unknown_nonnumeric_and_boolean_fields_are_ignored(self):
         metrics = project_vllm_metrics(

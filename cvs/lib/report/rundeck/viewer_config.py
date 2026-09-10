@@ -80,7 +80,7 @@ class ViewerConfigBuilder:
             "comparison_hint": comparison_hint,
             "interactivity": interactivity,
         }
-        metric_contract = getattr(self.config, "metric_contract", None)
+        metric_contract = self.config.metric_contract
         if metric_contract is not None:
             config["metric_contract"] = dict(metric_contract)
         return config

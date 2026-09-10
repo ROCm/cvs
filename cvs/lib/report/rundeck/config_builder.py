@@ -133,11 +133,9 @@ def make_inference_report_config(
         row_card_test_names=row_card_test_names,
         interactive_viewer=interactive_viewer,
         viewer_cell_threshold=viewer_cell_threshold,
+        metric_verdict=metric_verdict,
+        metric_contract=dict(metric_contract) if metric_contract is not None else None,
         run_card_display_builder=run_card_display_builder or _default_run_card,
         **kwargs,
     )
-    if metric_verdict is not None:
-        object.__setattr__(config, "metric_verdict", metric_verdict)
-    if metric_contract is not None:
-        object.__setattr__(config, "metric_contract", dict(metric_contract))
     return config

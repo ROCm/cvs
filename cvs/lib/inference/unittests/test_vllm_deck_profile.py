@@ -80,6 +80,7 @@ class TestVllmDeckProfile(unittest.TestCase):
         self.assertEqual(cfg.inference_test_substring, "test_vllm_inference")
         self.assertEqual(cfg.row_card_test_names, ("test_verify_cell_metrics",))
         self.assertEqual(cfg.metric_prefix, "")
+        self.assertTrue(callable(cfg.metric_verdict))
         self.assertEqual(cfg.metric_contract, {"id": "vllm-bare", "version": 1})
 
     def test_vllm_profile_lifecycle_labels_match_what_suite_records(self):

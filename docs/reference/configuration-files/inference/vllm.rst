@@ -774,6 +774,9 @@ Sweep specs are strict at load time regardless of enforcement:
 - ``kind`` must equal the registry direction, exactly ``min`` or ``max``.
 - ``value`` must be a finite JSON number. Booleans, strings, null, arrays,
   objects, NaN, and infinity are rejected.
+- Cell-level keys beginning with ``_comment`` or ``_example`` are metadata and
+  are ignored by metric validation; all other keys must name a registered
+  metric.
 - Prefixed names (``client.*``, ``gpu.*``, ``prom.*``), unknown names, legacy
   kinds (including ``min_tok_s`` and ``max_ms``), references, tolerances,
   units, ``info``, and extra fields are rejected.
@@ -851,9 +854,10 @@ GPU (5)
 ``peak_gpu_memory_mb``, ``model_load_memory_mb``, ``model_load_s``,
 ``gpu_bandwidth_util_pct``, ``gpu_compute_util_pct``. Load time and memory are
 captured once after successful readiness and reused for cells sharing that
-server. Both pre/post VRAM snapshots must be finite; otherwise both load
-measurements are unavailable and the server state is not reused. A real zero
-memory delta remains zero.
+server. Load time remains available whenever the elapsed measurement is finite.
+Load memory requires finite pre/post VRAM snapshots; missing snapshots do not
+disable server reuse or the elapsed measurement. A real zero memory delta
+remains zero.
 
 Prometheus (4)
 --------------
@@ -903,7 +907,9 @@ record-only HTML rows. The parent also emits one compact JUnit property with
 Run Deck tables, charts, and highlights use selected registry metrics rather
 than all 56 columns. Historical namespaced vLLM Run Deck artifacts do not match
 the contract: previous-run and manually selected viewer baselines display an
-explicit incompatibility and suppress comparisons.
+explicit incompatibility and suppress performance comparisons. A compatible
+task-qualified accuracy section in the same baseline remains independently
+eligible for accuracy comparison.
 
 Results table
 -------------
@@ -1049,10 +1055,12 @@ Troubleshooting
      - A ``runs[].combo`` does not match any declared name; the message lists the valid ones
    * - ``duplicate task id(s)``
      - Two ``accuracy.tasks`` entries share an ``id``
-   * - ``<metric>: unknown threshold kind``
-     - Typo or direction mismatch in ``kind``. The registry requires exactly ``min`` or ``max`` for each metric
-   * - ``<metric>: missing from actuals``
-     - A threshold gates a metric this run did not produce. Common cause: ``metric_percentiles`` omits the gated percentile
+   * - ``unknown vLLM threshold metric '<metric>'``
+     - The cell key does not begin with ``_`` and does not name one of the 56 registry metrics
+   * - ``<metric> threshold kind must be '<direction>', got '<kind>'``
+     - ``kind`` does not match the registry direction. Use the required ``min`` or ``max`` value shown in the message
+   * - ``<metric>: actual must be a finite built-in int or float, got <value>``
+     - The gated datasource did not produce a valid value. Inspect the benchmark artifact, GPU telemetry, or server metrics for that cell; percentile collection is harness-owned
    * - ``NotImplementedError: model.remote=1``
      - Remote model download is unimplemented. Pre-stage weights and set ``remote: 0``
    * - ``ValueError: too many values to unpack``

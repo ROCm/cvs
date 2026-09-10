@@ -290,7 +290,7 @@ class InferencePayloadBuilder:
             "results_table": self._results_builder.build(self.ctx.inf_res_dict),
             "panels": panels,
         }
-        metric_contract = getattr(self.config, "metric_contract", None)
+        metric_contract = self.config.metric_contract
         if metric_contract is not None:
             payload["metric_contract"] = dict(metric_contract)
         payload["viewer_config"] = build_viewer_config({}, self.config)

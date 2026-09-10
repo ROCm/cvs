@@ -3,6 +3,7 @@
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -113,8 +114,7 @@ class TestVllmReportContract(unittest.TestCase):
                     }
                 )
             )
-            config = _config()
-            object.__setattr__(config, "prev_run_json", str(baseline))
+            config = replace(_config(), prev_run_json=str(baseline))
             payload = build_inference_report_payload(
                 config=config,
                 variant_config=_variant(),

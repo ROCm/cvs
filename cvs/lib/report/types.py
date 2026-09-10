@@ -66,6 +66,8 @@ class InferenceReportConfig:
     viewer_cell_threshold: int = 24
     prev_run_json: str = ""
     framework_parity_ref_json: str = ""
+    metric_verdict: Optional[Callable] = None
+    metric_contract: Optional[dict] = None
     gsm8k_prev_run_metric: str = "gsm8k_flex.gsm8k.exact_match__flexible-extract"
     gsm8k_prev_run_max_drop: float = 0.01
     run_card_display_builder: RunCardDisplayFn = field(default=lambda _variant, _prov: [("Suite", "inference", False)])

@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
+import math
 import os
 from typing import Any, Dict, Mapping, Optional
 
 SCALE_ACCURACY_REF_ENV = "CVS_ATOM_SCALE_ACCURACY_REF_JSON"
+
+
+def _finite_accuracy_value(value):
+    if type(value) not in (int, float):
+        return None
+    try:
+        normalized = float(value)
+    except (OverflowError, ValueError):
+        return None
+    return normalized if math.isfinite(normalized) else None
 
 
 def resolve_scale_accuracy_ref_json_path(config_path: str = "") -> str:
@@ -23,10 +34,9 @@ def extract_accuracy_from_lifecycle(lifecycle_report: Mapping[str, list]) -> Dic
                 continue
             if "." not in str(label):
                 continue
-            try:
-                out[str(label)] = float(value)
-            except (TypeError, ValueError):
-                continue
+            normalized = _finite_accuracy_value(value)
+            if normalized is not None:
+                out[str(label)] = normalized
     return out
 
 
@@ -40,14 +50,11 @@ def build_accuracy_prev_run_panel(
     baseline = baseline_payload.get("accuracy") or {}
     if not isinstance(baseline, dict):
         return None
-    current_val = current.get(metric_key)
-    baseline_val = baseline.get(metric_key)
+    current_val = _finite_accuracy_value(current.get(metric_key))
+    baseline_val = _finite_accuracy_value(baseline.get(metric_key))
     if current_val is None or baseline_val is None:
         return None
-    try:
-        delta = float(current_val) - float(baseline_val)
-    except (TypeError, ValueError):
-        return None
+    delta = current_val - baseline_val
     regression = delta < -max_drop
     return {
         "metric_key": metric_key,
@@ -77,14 +84,11 @@ def build_scale_accuracy_panel(
     rows = []
     any_regression = False
     for metric_key in metric_keys:
-        current_val = current.get(metric_key)
-        baseline_val = baseline.get(metric_key)
+        current_val = _finite_accuracy_value(current.get(metric_key))
+        baseline_val = _finite_accuracy_value(baseline.get(metric_key))
         if current_val is None or baseline_val is None:
             continue
-        try:
-            delta = float(current_val) - float(baseline_val)
-        except (TypeError, ValueError):
-            continue
+        delta = current_val - baseline_val
         regression = delta < -max_drop
         any_regression = any_regression or regression
         rows.append(

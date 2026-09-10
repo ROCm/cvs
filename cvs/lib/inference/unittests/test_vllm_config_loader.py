@@ -47,6 +47,32 @@ class TestPartialThresholdCells(unittest.TestCase):
                 variant = _variant({CELL: {}}, enforce=enforce)
                 self.assertEqual(variant.thresholds[CELL], {})
 
+    def test_cell_metadata_loads_with_enforcement_off_and_on(self):
+        thresholds = {
+            CELL: {
+                "_comment": "calibrate before enforcing",
+                "_example": {"output_throughput": {"kind": "min", "value": 1}},
+                "output_throughput": {"kind": "min", "value": 0},
+            }
+        }
+        for enforce in (False, True):
+            with self.subTest(enforce=enforce):
+                variant = _variant(thresholds, enforce=enforce)
+                self.assertEqual(variant.thresholds, thresholds)
+
+    def test_non_metadata_unknown_key_is_rejected(self):
+        for enforce in (False, True):
+            for metric in ("notes", "_typo", "_metadata", "_"):
+                with self.subTest(enforce=enforce, metric=metric):
+                    with self.assertRaisesRegex(
+                        ValidationError,
+                        f"unknown vLLM threshold metric {metric!r}",
+                    ):
+                        _variant(
+                            {CELL: {metric: {"kind": "min", "value": 0}}},
+                            enforce=enforce,
+                        )
+
     def test_enforcement_still_requires_selected_run_cell(self):
         _variant({}, enforce=False)
         with self.assertRaisesRegex(ValidationError, "missing threshold coverage"):

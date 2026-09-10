@@ -2,11 +2,13 @@
 
 import unittest
 from dataclasses import replace
+import math
 from types import SimpleNamespace
 
+from cvs.lib.inference.utils.vllm_metrics import metric_verdict as vllm_metric_verdict
 from cvs.lib.report.cell_build import bar_pct, build_cell_record, resolve_pytest_nodeids_for_cell
 from cvs.lib.report.formatting import pytest_row_href
-from cvs.lib.report.testing.fixtures import generic_inference_report_config
+from cvs.lib.report.testing.fixtures import generic_inference_report_config, generic_variant
 
 
 class TestCellBuild(unittest.TestCase):
@@ -100,6 +102,51 @@ class TestCellBuild(unittest.TestCase):
         self.assertEqual(bar_pct(1.0, {"kind": "within", "value": 1.0}), 100.0)
         self.assertEqual(bar_pct(1.0, {"kind": "unknown", "value": 1.0}), 50.0)
         self.assertEqual(bar_pct(1.0, {"kind": "min", "value": 0.0}), 0.0)
+
+    def test_default_evaluator_preserves_legacy_bar_coercion(self):
+        variant = generic_variant()
+        variant.enforce_thresholds = False
+        key = ("org/example-model", "mi300x", "1024", "1024", "default", 128)
+        for actual, expected in (("500", 50.0), (True, 0.1)):
+            with self.subTest(actual=actual):
+                cell = build_cell_record(
+                    generic_inference_report_config(),
+                    key=key,
+                    host="10.0.0.1",
+                    actuals={"client.output_throughput": actual},
+                    variant_config=variant,
+                    lifecycle_report={},
+                    multi_host=False,
+                )
+                self.assertEqual(cell["metrics"][0]["bar_pct"], expected)
+
+    def test_vllm_evaluator_rejects_invalid_bar_values(self):
+        config = replace(
+            generic_inference_report_config(),
+            metric_prefix="",
+            cell_highlights=(("output_throughput", "Output tok/s"),),
+            metric_units={"output_throughput": "tok/s"},
+            metric_verdict=vllm_metric_verdict,
+        )
+        variant = generic_variant()
+        cell_id = variant.cell_key("1024", "1024", 128)
+        variant.thresholds = {cell_id: {"output_throughput": {"kind": "min", "value": 1000.0}}}
+        key = ("org/example-model", "mi300x", "1024", "1024", "default", 128)
+
+        for actual in (True, math.nan, math.inf, "500", "not-a-number"):
+            with self.subTest(actual=actual):
+                cell = build_cell_record(
+                    config,
+                    key=key,
+                    host="10.0.0.1",
+                    actuals={"output_throughput": actual},
+                    variant_config=variant,
+                    lifecycle_report={},
+                    multi_host=False,
+                )
+                metric = cell["metrics"][0]
+                self.assertEqual(metric["status"], "fail")
+                self.assertIsNone(metric["bar_pct"])
 
 
 if __name__ == "__main__":
