@@ -48,7 +48,8 @@ subdirectory (see :doc:`/how-to/test-suites/inference/atom`).
 Shipped model inventory
 =======================
 
-Lab-validated configs only. Native ATOM ``driver=atom`` workloads use flat
+Configs are lab-validated unless their inventory note says otherwise. Native
+ATOM ``driver=atom`` workloads use flat
 ``schema_version: 1`` JSON or ``schema_version: 2`` profiles (``perf``, ``mtp3``).
 
 Framework parity (vLLM / SGLang) uses the unified serving schema under
@@ -66,17 +67,23 @@ still runs with ``cvs run atom``.
      - ``_single`` (``perf`` + ``mtp3`` profiles), ``_distributed`` (``vllm_atom`` PP=2)
      - Native ATOM + multinode PP
    * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
-     - ``_single``
-     - Native ATOM perf + accuracy
+     - ``_single`` (``perf`` + ``mtp3`` profiles)
+     - Native ATOM perf + MTP-3; lab pending for ``mtp3``
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``
      - vLLM parity (serving schema)
    * - ``mi3xx_atom_vllm_gpt-oss-120b_mxfp4``
      - ``_single``
      - GPT-OSS MXFP4 vLLM parity (serving schema)
+   * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8``
+     - ``_single``, ``_distributed``
+     - Qwen FP8 vLLM parity; distributed uses PP=2; lab pending
    * - ``mi3xx_atom_sglang_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - SGLang parity (serving schema)
+   * - ``mi3xx_atom_sglang_qwen3.5-397b-a17b_fp8``
+     - ``_single``, ``_distributed``
+     - Qwen FP8 SGLang parity; distributed uses PP=2; lab pending
 
 Config profiles
 ===============
@@ -85,7 +92,9 @@ Config profiles
 runtime with ``--config_profile`` (or ``CVS_CONFIG_PROFILE``). Flat
 ``schema_version: 1`` files use an implicit ``perf`` profile.
 
-DeepSeek R1 FP8 — ``mi3xx_atom_deepseek-r1_fp8_single.json`` profiles:
+DeepSeek R1 FP8 and native Qwen FP8 single-node stems use the same profile names
+(``mi3xx_atom_deepseek-r1_fp8_single.json``,
+``mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json``):
 
 .. list-table::
    :widths: 2 2 4
