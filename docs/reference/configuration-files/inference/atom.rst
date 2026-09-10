@@ -77,13 +77,15 @@ still runs with ``cvs run atom``.
      - GPT-OSS MXFP4 vLLM parity (serving schema)
    * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
-     - Qwen FP8 vLLM parity; distributed uses PP=2; lab pending
+     - Qwen FP8 vLLM parity; ``_single`` lab-validated; distributed PP=2 pending
    * - ``mi3xx_atom_sglang_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - SGLang parity (serving schema)
    * - ``mi3xx_atom_sglang_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
-     - Qwen FP8 SGLang parity; distributed uses PP=2; lab pending
+     - Qwen FP8 SGLang parity; ``_single`` lab-validated (hybrid mamba ``no_buffer``,
+       writable ``HF_HUB_CACHE``, ``SGLANG_ROCM_ARCH=gfx942``); distributed PP=2 pending.
+       Image must include ``aiter.ops.flydsl.moe_common``.
 
 Config profiles
 ===============
