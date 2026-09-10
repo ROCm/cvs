@@ -1,10 +1,15 @@
-# vLLM benchmark server scripts (shared)
+# Legacy vLLM benchmark helpers
 
-Shell entrypoints for **`vllm serve`** kept for legacy **InferenceBaseJob** flows.
+Shell entrypoints and Python helpers kept for legacy **InferenceBaseJob** flows.
 
-- **`vllm_serve_mi300x.sh`** — reference MI300-class server flags (``enforce-eager``, ``gpu-memory-utilization``, etc.). **ATOM** and **vllm_single** encode equivalent flags in ``roles.server.serve_args`` instead of running this script.
+- **`vllm_serve_mi300x.sh`** — reference MI300-class server flags
+  (``enforce-eager``, ``gpu-memory-utilization``, etc.).
 
-**Client benchmarks** use ``vllm bench serve`` (stock results artifact). CVS no longer clones a third-party ``bench_serving`` git repo for ATOM.
+The current ATOM and vLLM suites use the unified ``server_params`` and
+``benchmark_params`` configuration instead of this server script.
+
+Legacy client benchmarks use ``vllm bench serve`` (stock results artifact).
+CVS no longer clones a third-party ``bench_serving`` git repo for ATOM.
 
 If **both** the script path and the bench CLI are unavailable, install bench-capable vLLM in the image (e.g. `pip install 'vllm[bench]'`) or bind-mount a matching `benchmarks/` tree from a vLLM checkout.
 
