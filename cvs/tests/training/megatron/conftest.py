@@ -18,6 +18,36 @@ from cvs.lib.training.megatron.utils.training_config_loader import load_training
 log = globals.log
 
 
+def pytest_generate_tests(metafunc):
+    """Parametrize per-sweep tests for both suites from sweep.runs.
+
+    Tests that take sweep_name get one row per combination key listed in
+    sweep.runs (must exist in sweep.combinations). No cartesian product.
+    The pytest ID is the combination key so it matches the threshold cell.
+    """
+    if "sweep_name" not in metafunc.fixturenames:
+        return
+    names = []
+    combinations = {}
+    config_file = metafunc.config.getoption("config_file")
+    if config_file and os.path.isfile(config_file):
+        with open(config_file) as fp:
+            raw = json.load(fp)
+
+        sweep = raw.get("sweep") or {}
+        combinations = sweep.get("combinations") or {}
+        runs = sweep.get("runs", list(combinations.keys()))
+        for run_id in runs:
+            if run_id not in combinations:
+                log.warning("sweep.runs entry '%s' not found in sweep.combinations; skipping", run_id)
+                continue
+            names.append(run_id)
+    if not names and not combinations:
+        names = ["default"]
+    if names:
+        metafunc.parametrize("sweep_name", names, ids=names)
+
+
 def _deep_merge(base, override):
     """Recursively merge `override` onto `base` (dicts merged key-wise, scalars/lists replaced).
 

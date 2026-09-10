@@ -141,6 +141,7 @@ class PrimusTrainingJob:
         tune_model_params=False,
         scripts_dir=None,
         run_label=None,
+        sweep_overrides=None,
     ):
         self.orch = orch
         self.model_name = variant_config.train_params['model_name']
@@ -161,7 +162,6 @@ class PrimusTrainingJob:
 
         self.home_dir = os.path.expanduser('~')
         tdict = variant_config.job_config_dict()
-        tdict.setdefault('training_iterations', 10)
         tdict.setdefault('nccl_socket_ifname', 'ensf1np1')
         tdict.setdefault('gloo_socket_ifname', 'ensf1np1')
         tdict.setdefault('nccl_ib_hca', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
@@ -175,7 +175,6 @@ class PrimusTrainingJob:
         tdict.setdefault('primus_root', '/workspace/Primus')
         tdict.setdefault('primus_cli', 'runner/primus-cli')
 
-        self.iterations = int(tdict['training_iterations'])
         self.checkpoint_dir = None
         self.save_interval = None
         self.load_checkpoint = False
@@ -197,6 +196,7 @@ class PrimusTrainingJob:
         self.gpu_arch = variant_config.gpu_name
 
         pdict = dict(variant_config.train_params)
+        pdict.update(sweep_overrides or {})
         pdict['micro_batch_size'] = micro_batch_size
         pdict['global_batch_size'] = global_batch_size
         if precision:
@@ -206,11 +206,13 @@ class PrimusTrainingJob:
         pdict.setdefault('precision', 'BF16')
         pdict.setdefault('micro_batch_size', '2')
         pdict.setdefault('global_batch_size', '128')
+        pdict.setdefault('training_iterations', 10)
 
         self.tokenizer_model = pdict['tokenizer_model']
         self.precision = pdict['precision']
         self.micro_batch_size = pdict['micro_batch_size']
         self.global_batch_size = pdict['global_batch_size']
+        self.iterations = int(pdict['training_iterations'])
 
         raw_label = run_label or f"{self.model_name}_mbs{micro_batch_size}_gbs{global_batch_size}_{self.precision}"
         self.run_label = re.sub(r'[^A-Za-z0-9._-]', '_', str(raw_label))

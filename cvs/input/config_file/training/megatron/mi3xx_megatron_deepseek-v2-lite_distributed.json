@@ -90,19 +90,14 @@
     "loss_rtol": 0.05,
     "checkpoint_dir": "<changeme>"
   },
+  "_sweep_comment": "combination key is MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>. Body overlays train_params; packaged cells set training_iterations (for example 20).",
   "sweep": {
     "combinations": {
       "MBS=4,GBS=128,PRECISION=BF16": {
-        "name": "deepseek_v2_lite_mbs4_gbs128_BF16",
-        "global_batch_size": "128",
-        "micro_batch_size": "4",
-        "precision": "BF16"
+        "training_iterations": "20"
       },
       "MBS=4,GBS=128,PRECISION=FP8": {
-        "name": "deepseek_v2_lite_mbs4_gbs128_FP8",
-        "global_batch_size": "128",
-        "micro_batch_size": "4",
-        "precision": "FP8"
+        "training_iterations": "20"
       }
     },
     "runs": [

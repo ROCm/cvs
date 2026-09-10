@@ -11,7 +11,7 @@ Cluster validation that runs Megatron-LM or Primus pre-training on AMD Instinct 
 The suite drives a training job inside a Docker container on one or more cluster nodes, then parses the training log to produce metrics and verdicts. It provides:
 
 - **Two suites** — ``megatron_single`` (single-node) and ``megatron_distributed`` (multi-node, adds RDMA/NIC setup).
-- **Megatron-LM or Primus** — if ``container.image`` contains ``primus`` (case-insensitive), the suite uses Primus; otherwise Megatron-LM. Primus reads YAML from ``examples/megatron/configs/{gpu_arch}/`` inside the image.
+- **Megatron-LM or Primus** — if ``container.image`` contains ``primus`` (case-insensitive), the suite uses Primus; otherwise Megatron-LM. Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite support both backends. Llama 3.1 405B is Primus only (distributed). Primus reads YAML from ``examples/megatron/configs/{gpu_arch}/`` inside the image.
 - **Parameter sweeps** — one full training run per enabled combo (for example FP8 and BF16), each with its own result rows in the report.
 - **Loss curve** — a per-combo decreasing-trend check on ``lm_loss`` at steps 100 / 500 / 1k / 5k.
 - **Training-log error scanning** — NCCL, GPU HW faults, OOM, and other signatures fail a run early with a clear reason.
@@ -46,17 +46,17 @@ Set up config
      cvs config copy training/megatron/mi300x_megatron_llama-3.1-8b_single_threshold.json --output ~/cvs_workspace/training/megatron/mi300x_megatron_llama-3.1-8b_single_threshold.json
      # or mi325x_megatron_llama-3.1-8b_single_threshold.json for MI325X
 
-3. Replace every ``<changeme>`` with cluster-specific values. For MI300X/MI325X shared templates, set ``gpu_name`` to ``MI300X`` or ``MI325X`` and ``threshold_json`` to the matching ``mi300x_*`` or ``mi325x_*`` threshold file. Also set ``container.image``, ``train_params.training_iterations``, and the ``container.env`` NIC fields (templates ship example interface/HCA/GID/debug strings that still contain ``<changeme>`` — keep or edit the example and remove the placeholder). Do not add ``NNODES``; the suite sets it from the cluster host count at ``docker run``. Distributed configs also need ``MASTER_ADDR`` and ``NCCL_IB_HCA``.
+3. Replace every ``<changeme>`` with cluster-specific values. For MI300X/MI325X shared templates, set ``gpu_name`` to ``MI300X`` or ``MI325X`` and ``threshold_json`` to the matching ``mi300x_*`` or ``mi325x_*`` threshold file. Also set ``container.image``, ``train_params.training_iterations``, and the ``container.env`` NIC fields (templates ship example interface/HCA/GID/debug strings that still contain ``<changeme>`` — keep or edit the example and remove the placeholder). Each sweep cell ships ``"training_iterations": "20"``; change that overlay per combo if needed. Do not add ``NNODES``; the suite sets it from the cluster host count at ``docker run``. Distributed configs also need ``MASTER_ADDR`` and ``NCCL_IB_HCA``.
 4. Change any other parameters relevant to your testing requirements.
 
-The same folder also has DeepSeek V2 Lite (single and distributed) and Llama 3.1 405B (distributed only) configs. See `Config and threshold files`_ for the full inventory.
+The same folder also has DeepSeek V2 Lite (single and distributed; Megatron-LM or Primus) and Llama 3.1 405B (distributed, **Primus only**). See `Config and threshold files`_ for the full inventory.
 
 Full parameter list: :doc:`/reference/configuration-files/training/megatron`.
 
 Primus vs Megatron-LM
 =====================
 
-The same eight test stages run for both backends. ``_make_training_job`` in ``megatron_single.py`` / ``megatron_distributed.py`` picks the job class from ``container.image`` (substring ``primus``, case-insensitive).
+The same eight test stages run for both backends. ``_make_training_job`` in ``megatron_single.py`` / ``megatron_distributed.py`` picks the job class from ``container.image`` (substring ``primus``, case-insensitive). Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite support **both** Megatron-LM and Primus. Llama 3.1 405B is **Primus only** (distributed).
 
 .. list-table::
    :header-rows: 1
@@ -240,9 +240,11 @@ On a training failure, lingering GPU processes are killed (``stop_training_proce
 Sweeps
 ======
 
-A sweep combo is one full training run declared in ``sweep.combinations``. Each combination key must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``; config load fails if the key does not match those three fields. ``sweep.runs`` is the ordered list of those keys to execute; set it to a subset to run only selected combos without editing ``combinations``.
+A sweep combo is one full training run declared in ``sweep.combinations``. Each combination key must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``; the suite parses those values from the key, so they are not repeated in the combination body. Packaged templates set ``{"training_iterations": "20"}`` in the body; you can change that per cell or add other ``train_params`` overlays. ``sweep.runs`` is the ordered list of combination keys to execute; set it to a subset to run only selected combos without editing ``combinations``.
 
-The combo ID (for example ``MBS=4,GBS=128,PRECISION=FP8``) appears in every parametrized row: ``test_training[...]``, ``test_metric[...]``, and ``test_loss_curve[...]``. It is also the threshold cell key.
+Omitting ``sweep`` (or leaving ``combinations`` empty) runs one implicit cell named ``default`` using ``train_params`` (MBS/GBS/precision fall back to 2 / 128 / BF16, matching the job defaults). The threshold file must then have a top-level ``default`` cell when ``enforce_thresholds`` is ``true``. When ``enforce_thresholds`` is ``false``, that cell is optional (load warns; metrics are record-only). Packaged configs already declare a ``sweep`` and keep ``MBS=…`` threshold keys; they do not use ``default``.
+
+Pytest parametrizes ``sweep_name`` (one row per ``sweep.runs`` entry, or ``default`` when there is no sweep) for ``test_training``, ``test_metric``, and ``test_loss_curve``. The combo ID (for example ``MBS=4,GBS=128,PRECISION=FP8``) is that pytest ID and the threshold cell key.
 
 Metrics and PASS/FAIL
 =====================
@@ -368,7 +370,7 @@ Config and threshold files
 
 Located in ``cvs/input/config_file/training/megatron/``. Field-level schema: :doc:`/reference/configuration-files/training/megatron`.
 
-``container.env`` NIC fields include example values plus ``<changeme>``. ``NNODES`` is not a JSON field.
+``container.env`` NIC fields include example values plus ``<changeme>``. ``NNODES`` is not a JSON field. Every config except Llama 3.1 405B supports Megatron-LM or Primus; 405B is Primus only.
 
 Do not use leftover ``mi3xx_megatron_llama_*.json`` / ``mi35x_megatron_llama_single.json`` files with these suites. Those nested configs belong only to the legacy ``megatron_llama3_1_*`` test modules.
 
@@ -404,7 +406,7 @@ One ``mi3xx_`` config per model and mode. Set ``gpu_name`` to ``MI300X`` or ``MI
    * - ``mi3xx_megatron_llama-3.1-405b_distributed.json``
      - ``mi300x_megatron_llama-3.1-405b_distributed_threshold.json``
      - ``mi325x_megatron_llama-3.1-405b_distributed_threshold.json``
-     - distributed
+     - distributed (Primus)
    * - ``mi3xx_megatron_llama-3.3-70b_single.json``
      - ``mi300x_megatron_llama-3.3-70b_single_threshold.json``
      - ``mi325x_megatron_llama-3.3-70b_single_threshold.json``
@@ -438,7 +440,7 @@ MI355X
      - distributed
    * - ``mi355x_megatron_llama-3.1-405b_distributed.json``
      - ``mi355x_megatron_llama-3.1-405b_distributed_threshold.json``
-     - distributed
+     - distributed (Primus)
    * - ``mi355x_megatron_llama-3.3-70b_single.json``
      - ``mi355x_megatron_llama-3.3-70b_single_threshold.json``
      - single-node

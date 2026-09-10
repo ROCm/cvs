@@ -76,19 +76,14 @@
     "resume_iters": 25,
     "loss_rtol": 0.05
   },
+  "_sweep_comment": "combination key is MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>. Body overlays train_params; packaged cells set training_iterations (for example 20).",
   "sweep": {
     "combinations": {
       "MBS=3,GBS=96,PRECISION=FP8": {
-        "name": "llama3_3_70b_mbs3_gbs96_FP8",
-        "global_batch_size": "96",
-        "micro_batch_size": "3",
-        "precision": "FP8"
+        "training_iterations": "20"
       },
       "MBS=3,GBS=96,PRECISION=BF16": {
-        "name": "llama3_3_70b_mbs3_gbs96_BF16",
-        "global_batch_size": "96",
-        "micro_batch_size": "3",
-        "precision": "BF16"
+        "training_iterations": "20"
       }
     },
     "runs": [

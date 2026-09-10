@@ -24,6 +24,8 @@ The suite selects the training backend from ``container.image`` (substring ``pri
 * **Megatron-LM** — image name does not contain ``primus``. Training scripts live under ``/workspace/Megatron-LM`` inside the image. Log files use ``<log_dir>/megatron-logs/<combo_id>/out-node<N>/training.log``.
 * **Primus** — image name contains ``primus``. In-image YAML lives under ``examples/megatron/configs/{gpu_arch}/``. Log files use ``<log_dir>/primus-logs/<combo_id>/out-node<N>/training.log``.
 
+Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite run on **both** Megatron-LM and Primus (same JSON; pick the backend with ``container.image``). **Llama 3.1 405B** is Primus only (distributed).
+
 ``<combo_id>`` on disk is the sweep combination key with non-filename characters replaced (``=`` and ``,`` become ``_``). Pytest still uses the unsanitized key (for example ``MBS=4,GBS=128,PRECISION=FP8``).
 
 .. note::
@@ -31,8 +33,8 @@ The suite selects the training backend from ``container.image`` (substring ``pri
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications. Unresolved placeholders cause a hard exit at load time.
   - ``{user-id}`` will be resolved to the cluster username (or the local OS user as fallback). You can also set this value yourself.
   - Keys prefixed with ``_`` (for example ``_checkpoint_comment``) are inline comments and are ignored by the loader.
-  - ``sweep.runs`` is required. It must be a subset of (or equal to) the keys in ``sweep.combinations``. Omitting it fails config load.
-  - Each key in ``sweep.combinations`` must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``. A mismatch with those three fields fails config load.
+  - ``sweep.runs`` is required when ``sweep.combinations`` is non-empty. It must be a subset of (or equal to) those keys. Omitting ``sweep`` entirely (or using empty ``combinations``) runs one implicit ``default`` cell from ``train_params``.
+  - Each key in ``sweep.combinations`` must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``. The suite parses those three values from the key; do not repeat them in the combination body.
 
 Available configurations
 ========================
@@ -50,19 +52,19 @@ MI300X and MI325X share ``mi3xx_megatron_<model>_<mode>.json``. MI355X uses ``mi
    * - Llama 3.1 8B
      - ``mi3xx_…``
      - ``mi355x_…``
-     - single, distributed
+     - single, distributed (Megatron-LM or Primus)
    * - Llama 3.3 70B
      - ``mi3xx_…``
      - ``mi355x_…``
-     - single, distributed
+     - single, distributed (Megatron-LM or Primus)
    * - DeepSeek V2 Lite
      - ``mi3xx_…``
      - ``mi355x_…``
-     - single, distributed
+     - single, distributed (Megatron-LM or Primus)
    * - Llama 3.1 405B
      - ``mi3xx_…``
      - ``mi355x_…``
-     - distributed only
+     - distributed (Primus only)
 
 Single-node configs set ``container.env.MASTER_ADDR`` to ``127.0.0.1``. ``NNODES`` is not in the JSON: the suite sets it from the cluster host count into ``docker run -e``. Distributed configs require ``MASTER_ADDR`` and ``NCCL_IB_HCA`` and add a ``scaling_baseline`` section and ``checkpoint_dir`` to the ``checkpoint`` block. NIC type is not in the JSON: Megatron-LM defaults to ``thor2`` for MI300X/MI325X and ``ainic`` for MI355X from ``gpu_name``.
 
@@ -75,7 +77,7 @@ Set these before a run (full field tables are under `Common parameters`_):
 
 * ``gpu_name`` / ``threshold_json`` — on ``mi3xx_`` templates, set ``MI300X`` or ``MI325X`` and the matching SKU threshold filename. ``gpu_name`` must be exactly ``MI300X``, ``MI325X``, or ``MI355X`` after uppercase.
 * ``container.image`` — Megatron-LM or Primus ROCm image on all nodes.
-* ``train_params.training_iterations`` — training steps (for example ``"30"``).
+* ``train_params.training_iterations`` — default training steps (for example ``"30"``). Each ``sweep.combinations`` body sets ``training_iterations`` (packaged value ``"20"``); that overlay wins for that cell.
 * ``paths.hf_token_file`` — Hugging Face token path on the nodes.
 * ``container.env.NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` / ``NCCL_IB_GID_INDEX`` / ``NCCL_DEBUG`` — templates include example values plus ``<changeme>`` (for example ``enp193s0f1np1 <changeme>``, ``3 <changeme>``, ``ERROR <changeme>``). Remove ``<changeme>`` and keep or edit the example. Required on single-node and distributed.
 * ``sweep.runs`` — combination keys to execute (same ``MBS=…,GBS=…,PRECISION=…`` strings as in ``sweep.combinations``).
@@ -105,7 +107,7 @@ These fields appear at the root of every config file.
      - Compare RDMA and ethtool error counters before and after training. Single-node templates omit it (schema/lib default ``False``).
    * - ``train_params``
      - see per-model tables
-     - Model knobs plus ``training_iterations``. Precision lives on the sweep cell, not here.
+     - Model knobs plus ``training_iterations``. With a ``sweep``, MBS/GBS/precision live on the combination key. With no ``sweep``, optional ``micro_batch_size``, ``global_batch_size``, and ``precision`` here feed the implicit ``default`` cell.
    * - ``enforce_thresholds``
      - ``true``
      - If ``false``, threshold checks in ``test_metric`` log results but do not fail the test.
@@ -145,28 +147,16 @@ Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/M
       "sweep": {
         "combinations": {
           "MBS=4,GBS=128,PRECISION=FP8": {
-            "name": "llama3_1_8b_mbs4_gbs128_FP8",
-            "global_batch_size": "128",
-            "micro_batch_size": "4",
-            "precision": "FP8"
+            "training_iterations": "20"
           },
           "MBS=4,GBS=128,PRECISION=BF16": {
-            "name": "llama3_1_8b_mbs4_gbs128_BF16",
-            "global_batch_size": "128",
-            "micro_batch_size": "4",
-            "precision": "BF16"
+            "training_iterations": "20"
           },
           "MBS=4,GBS=128,PRECISION=MXFP4": {
-            "name": "llama3_1_8b_mbs4_gbs128_MXFP4",
-            "global_batch_size": "128",
-            "micro_batch_size": "4",
-            "precision": "MXFP4"
+            "training_iterations": "20"
           },
           "MBS=4,GBS=128,PRECISION=MXFP8": {
-            "name": "llama3_1_8b_mbs4_gbs128_MXFP8",
-            "global_batch_size": "128",
-            "micro_batch_size": "4",
-            "precision": "MXFP8"
+            "training_iterations": "20"
           }
         },
         "runs": [
@@ -238,16 +228,10 @@ Available as ``mi3xx_megatron_llama-3.3-70b_{single,distributed}.json`` (MI300X/
       "sweep": {
         "combinations": {
           "MBS=3,GBS=96,PRECISION=FP8": {
-            "name": "llama3_3_70b_mbs3_gbs96_FP8",
-            "global_batch_size": "96",
-            "micro_batch_size": "3",
-            "precision": "FP8"
+            "training_iterations": "20"
           },
           "MBS=3,GBS=96,PRECISION=BF16": {
-            "name": "llama3_3_70b_mbs3_gbs96_BF16",
-            "global_batch_size": "96",
-            "micro_batch_size": "3",
-            "precision": "BF16"
+            "training_iterations": "20"
           }
         },
         "runs": [
@@ -317,16 +301,10 @@ Available as ``mi3xx_megatron_deepseek-v2-lite_{single,distributed}.json`` (MI30
       "sweep": {
         "combinations": {
           "MBS=4,GBS=128,PRECISION=BF16": {
-            "name": "deepseek_v2_lite_mbs4_gbs128_BF16",
-            "global_batch_size": "128",
-            "micro_batch_size": "4",
-            "precision": "BF16"
+            "training_iterations": "20"
           },
           "MBS=4,GBS=128,PRECISION=FP8": {
-            "name": "deepseek_v2_lite_mbs4_gbs128_FP8",
-            "global_batch_size": "128",
-            "micro_batch_size": "4",
-            "precision": "FP8"
+            "training_iterations": "20"
           }
         },
         "runs": [
@@ -372,7 +350,7 @@ Available as ``mi3xx_megatron_deepseek-v2-lite_{single,distributed}.json`` (MI30
 Llama 3.1 405B
 --------------
 
-Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X) and ``mi355x_…`` (distributed only).
+Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X) and ``mi355x_…`` (distributed only). Unlike the other models, 405B runs on **Primus only**: ``container.image`` must contain ``primus``. Megatron-LM does not support 405B.
 
 .. dropdown:: ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (representative)
 
@@ -396,16 +374,10 @@ Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X) 
       "sweep": {
         "combinations": {
           "MBS=1,GBS=64,PRECISION=FP8": {
-            "name": "llama3_1_405b_mbs1_gbs64_FP8",
-            "global_batch_size": "64",
-            "micro_batch_size": "1",
-            "precision": "FP8"
+            "training_iterations": "20"
           },
           "MBS=1,GBS=64,PRECISION=BF16": {
-            "name": "llama3_1_405b_mbs1_gbs64_BF16",
-            "global_batch_size": "64",
-            "micro_batch_size": "1",
-            "precision": "BF16"
+            "training_iterations": "20"
           }
         },
         "runs": [
@@ -684,17 +656,20 @@ Controls ``test_smoke``: a small fixed cell (not a ``sweep.runs`` entry) that lo
      - Description
    * - ``combinations``
      - N/A
-     - Dict of sweep cells. Allowed fields are ``global_batch_size``, ``micro_batch_size``, ``precision``, and ``name``. The combination key must equal ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>`` (same string as the threshold cell and the pytest parametrize ID). Config load fails if a key does not match those fields.
+     - Dict of sweep cells. The key must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>`` (the ``sweep_name`` pytest ID and threshold cell).
+   * - ``combinations.*.training_iterations``
+     - ``"20"``
+     - Per-cell step count. Overrides ``train_params.training_iterations`` for that run. Other ``train_params`` keys may also appear in the body.
    * - ``runs``
      - N/A
-     - Required ordered list of combination keys to execute. Must be a subset of (or equal to) the keys in ``combinations``. Reorder or trim this list to run only specific cells. Omitting ``runs`` fails config load.
+     - Ordered list of combination keys to execute. Required when ``combinations`` is non-empty. Omit ``sweep`` (or leave ``combinations`` empty) to run the implicit ``default`` cell.
 
-Each cell's ``micro_batch_size``, ``global_batch_size``, and ``precision`` are the sweep knobs. Other training knobs stay in ``train_params``.
+Pytest parametrizes ``sweep_name`` from ``sweep.runs``. The suite parses ``micro_batch_size``, ``global_batch_size``, and ``precision`` from each combination key. Additional fields in the combination body override the corresponding ``train_params`` values for that run, including ``training_iterations``. If ``sweep`` is omitted or ``combinations`` is empty, one cell named ``default`` trains with base ``train_params`` (MBS ``2``, GBS ``128``, precision ``BF16`` unless those keys are set in ``train_params``). The matching threshold cell is ``default`` and is required when ``enforce_thresholds`` is ``true``.
 
 Threshold files
 ---------------
 
-Each suite JSON names a sibling file in ``threshold_json``. Top-level cell keys must be the same ``MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>`` strings as ``sweep.combinations``. A missing or extra cell fails load when ``enforce_thresholds`` is ``true``; when it is ``false``, the loader warns and metrics for unmatched cells are record-only.
+Each suite JSON names a sibling file in ``threshold_json``. With a declared ``sweep``, top-level cell keys must be the same ``MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>`` strings as ``sweep.combinations``. With no ``sweep`` (generic / implicit ``default`` run), the threshold cell is the literal key ``default`` — not an ``MBS=…`` string built from ``train_params``. A missing or extra cell fails load when ``enforce_thresholds`` is ``true``. When it is ``false``, the ``default`` cell may be omitted: the loader warns and ``test_metric`` is record-only.
 
 A metric is gated only when ``enforce_thresholds`` is ``true`` and the cell has a numeric spec:
 

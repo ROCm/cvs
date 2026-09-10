@@ -22,6 +22,7 @@ choice is which pytest module you run, not a field in the JSON.
 
 from __future__ import annotations
 
+import re
 import warnings
 from collections import Counter
 from typing import Any, Dict, List
@@ -30,22 +31,75 @@ from pydantic import Field, field_validator, model_validator
 from typing_extensions import Literal
 
 from cvs.lib.utils.config_loader import (
+    _Allow,
     ContainerSpec,
     _Forbid,
     substitute_config,
 )
 
 _ALLOWED_GPU_NAMES = ("MI300X", "MI325X", "MI355X")
+# jaxmaxtext-style implicit cell when sweep.combinations is omitted/empty.
+DEFAULT_SWEEP_NAME = "default"
+_DEFAULT_MBS = "2"
+_DEFAULT_GBS = "128"
+_DEFAULT_PRECISION = "BF16"
+
+
+def _train_param_or_default(tp, key, default):
+    value = tp.get(key)
+    if value in (None, ""):
+        return default
+    return str(value)
+
+
+def _implicit_default_sweep(data):
+    """If sweep.combinations is missing/empty, insert one 'default' cell from train_params."""
+    if not isinstance(data, dict):
+        return data
+    data = dict(data)
+    sweep = dict(data.get("sweep") or {})
+    combos = sweep.get("combinations") or {}
+    if combos:
+        return data
+    tp = data.get("train_params") or {}
+    sweep["combinations"] = {
+        DEFAULT_SWEEP_NAME: {
+            "micro_batch_size": _train_param_or_default(tp, "micro_batch_size", _DEFAULT_MBS),
+            "global_batch_size": _train_param_or_default(tp, "global_batch_size", _DEFAULT_GBS),
+            "precision": _train_param_or_default(tp, "precision", _DEFAULT_PRECISION),
+        }
+    }
+    sweep["runs"] = [DEFAULT_SWEEP_NAME]
+    data["sweep"] = sweep
+    return data
+
+
+_SWEEP_KEY_PATTERN = re.compile(
+    r"^MBS=(?P<micro_batch_size>[^,]+),"
+    r"GBS=(?P<global_batch_size>[^,]+),"
+    r"PRECISION=(?P<precision>[^,]+)$"
+)
 
 
 # ---------- pydantic models (training) ----------
 
 
-class MegatronSweepCombo(_Forbid):
-    name: str
+class MegatronSweepCombo(_Allow):
+    name: str = ""
     micro_batch_size: str
     global_batch_size: str
     precision: str = ""
+
+
+def parse_sweep_cell_key(key):
+    """Parse MBS, GBS, and precision from a canonical sweep cell key."""
+    match = _SWEEP_KEY_PATTERN.fullmatch(key)
+    if not match:
+        raise ValueError(
+            f"invalid sweep combination key {key!r}; expected "
+            "MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>"
+        )
+    return match.groupdict()
 
 
 def sweep_cell_key(combo) -> str:
@@ -66,7 +120,7 @@ def validate_combo_keys_match_params(combinations) -> None:
     mismatches = [
         f"{key!r} (expected {sweep_cell_key(combo)!r})"
         for key, combo in combinations.items()
-        if key != sweep_cell_key(combo)
+        if key != DEFAULT_SWEEP_NAME and key != sweep_cell_key(combo)
     ]
     if mismatches:
         raise ValueError(
@@ -135,8 +189,35 @@ def validate_thresholds_cover_sweep(
 
 
 class MegatronSweep(_Forbid):
-    combinations: Dict[str, MegatronSweepCombo]
-    runs: List[str]
+    combinations: Dict[str, MegatronSweepCombo] = Field(default_factory=dict)
+    runs: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _assign_params_from_keys(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        normalized["combinations"] = {}
+        for key, raw_combo in data.get("combinations", {}).items():
+            combo = dict(raw_combo)
+            if key == DEFAULT_SWEEP_NAME:
+                combo.setdefault("micro_batch_size", _DEFAULT_MBS)
+                combo.setdefault("global_batch_size", _DEFAULT_GBS)
+                combo.setdefault("precision", _DEFAULT_PRECISION)
+                normalized["combinations"][key] = combo
+                continue
+            parsed = parse_sweep_cell_key(key)
+            for param, value in parsed.items():
+                configured = combo.get(param)
+                if configured is not None and str(configured) != value:
+                    raise ValueError(
+                        f"sweep combination {key!r} sets {param}={configured!r}; "
+                        f"the key defines {param}={value!r}"
+                    )
+                combo[param] = value
+            normalized["combinations"][key] = combo
+        return normalized
 
     @model_validator(mode="after")
     def _check_runs_reference_known_combos(self):
@@ -225,8 +306,13 @@ class MegatronVariantConfig(_Forbid):
     checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
     train_params: Dict[str, Any]
     container: MegatronContainerSpec
-    sweep: MegatronSweep
+    sweep: MegatronSweep = Field(default_factory=MegatronSweep)
     thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_implicit_default_sweep(cls, data):
+        return _implicit_default_sweep(data)
 
     @field_validator("gpu_name")
     @classmethod
@@ -267,7 +353,10 @@ class MegatronVariantConfig(_Forbid):
 
         Constructs a key from the combo's micro_batch_size, global_batch_size,
         and precision — must match the top-level keys in the threshold file exactly.
+        The implicit no-sweep cell is keyed ``default``.
         """
+        if combo_key == DEFAULT_SWEEP_NAME:
+            return DEFAULT_SWEEP_NAME
         return sweep_cell_key(self.sweep.combinations[combo_key])
 
     def expected_cells(self) -> List[str]:

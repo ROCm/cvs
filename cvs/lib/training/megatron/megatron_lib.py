@@ -233,6 +233,7 @@ class MegatronTrainingJob:
         tune_model_params=False,
         scripts_dir=None,
         run_label=None,
+        sweep_overrides=None,
     ):
         """
         Initialize job configuration from a MegatronVariantConfig + sweep-level params.
@@ -269,7 +270,6 @@ class MegatronTrainingJob:
         # Training config — copy to avoid mutating the variant_config dict
         self.home_dir = os.path.expanduser("~")
         tdict = variant_config.job_config_dict()
-        tdict.setdefault('training_iterations', 10)
         tdict.setdefault('nic_type', _default_nic_type(variant_config.gpu_name))
         tdict.setdefault('hca_id_pattern', 'bnxt_|rocep')
         tdict.setdefault('nccl_ib_hca', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
@@ -288,7 +288,6 @@ class MegatronTrainingJob:
 
         self.container_image = orch.container_config["image"]
         self.distributed_training = distributed_training
-        self.iterations = int(tdict['training_iterations'])
         self.nnodes = str(len(orch.hosts))
         self.nic_type = tdict['nic_type']
         self.hca_id_pattern = tdict['hca_id_pattern']
@@ -307,6 +306,7 @@ class MegatronTrainingJob:
         self.training_scripts = tdict['training_scripts']
 
         pdict = dict(variant_config.train_params)
+        pdict.update(sweep_overrides or {})
         pdict['micro_batch_size'] = micro_batch_size
         pdict['global_batch_size'] = global_batch_size
         if precision:
@@ -329,6 +329,7 @@ class MegatronTrainingJob:
         pdict.setdefault('tensor_parallelism', '1')
         pdict.setdefault('pipeline_parallelism', '1')
         pdict.setdefault('recompute', '0')
+        pdict.setdefault('training_iterations', 10)
 
         self.tokenizer_model = pdict['tokenizer_model']
         self.model_size = pdict['model_size']
@@ -340,6 +341,7 @@ class MegatronTrainingJob:
         self.pipeline_parallelism = pdict['pipeline_parallelism']
         self.recompute = pdict['recompute']
         self.precision = pdict['precision']
+        self.iterations = int(pdict['training_iterations'])
 
         # Resolve the training script for this tokenizer family. The mapping is
         # config-driven (training_scripts), so adding a new family (e.g. 'llama-4')
