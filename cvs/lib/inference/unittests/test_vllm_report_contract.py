@@ -158,6 +158,7 @@ class TestVllmReportContract(unittest.TestCase):
         self.assertLess(validator, indexing)
         self.assertIn("Baseline incompatible:", document)
         self.assertIn("comparisons suppressed", document)
+        self.assertIn("escapeHtmlText(baselineIncompatibility)", document)
 
 
 if __name__ == "__main__":

@@ -281,6 +281,22 @@ class TestToPromMetrics(unittest.TestCase):
         for k in out:
             self.assertIsNone(out[k])
 
+    def test_unbounded_only_histograms_do_not_emit_infinity(self):
+        before = _full_scrape_text(
+            {"+Inf": 0.0},
+            0.0,
+            {"+Inf": 0.0},
+            0.0,
+        )
+        after = _full_scrape_text(
+            {"+Inf": 1.0},
+            10.0,
+            {"+Inf": 1.0},
+            10.0,
+        )
+        out = to_prom_metrics(before, after)
+        self.assertTrue(all(value is None for value in out.values()))
+
     def test_end_to_end_realistic_before_after_pair(self):
         # "before" scrape: server already served 3 queue-wait observations
         # from a prior cell (0.1, 0.2, 0.4s) -- the reused-server baseline.

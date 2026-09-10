@@ -162,14 +162,18 @@ def _load_measurements(before, after, elapsed):
     return elapsed, after_vram - before_vram
 
 
+def _finite_or_none(value):
+    return value if is_finite_number(value) else None
+
+
 def _record_junit_metrics(node, actuals_by_host):
     actuals = {}
     for host in sorted(actuals_by_host, key=str):
         host_actuals = actuals_by_host[host]
         actuals[str(host)] = {
-            definition.name: host_actuals[definition.name]
+            definition.name: _finite_or_none(host_actuals[definition.name])
             for definition in METRIC_REGISTRY
-            if is_finite_number(host_actuals.get(definition.name))
+            if definition.name in host_actuals
         }
     payload = json.dumps(
         {
@@ -293,11 +297,11 @@ def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_r
 
     aggregate = agg_readings(poll_readings)
     gpu_results = {
-        "peak_gpu_memory_mb": aggregate.get("peak_gpu_memory_mb"),
+        "peak_gpu_memory_mb": _finite_or_none(aggregate.get("peak_gpu_memory_mb")),
         "model_load_memory_mb": load_mb,
         "model_load_s": load_s,
-        "gpu_bandwidth_util_pct": aggregate.get("gpu_bandwidth_util_pct"),
-        "gpu_compute_util_pct": aggregate.get("gpu_compute_util_pct"),
+        "gpu_bandwidth_util_pct": _finite_or_none(aggregate.get("gpu_bandwidth_util_pct")),
+        "gpu_compute_util_pct": _finite_or_none(aggregate.get("gpu_compute_util_pct")),
     }
     prom_results = to_prom_metrics(before_prom, after_prom)
     for host, actuals in results.items():

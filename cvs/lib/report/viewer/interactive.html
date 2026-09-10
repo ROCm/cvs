@@ -473,6 +473,16 @@ function initViewerUi() {
 
 function $(id) { return document.getElementById(id); }
 
+function escapeHtmlText(value) {
+  return String(value).replace(/[&<>"']/g, char => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[char]);
+}
+
 function cellMapKey(c) {
   return String(c.cell_id || '') + '\0' + String(c.host || '');
 }
@@ -1559,7 +1569,7 @@ function renderTable(rows) {
     + '<span>Charts and heatmap follow filters</span>'
     + (prevRunByKey ? '<span>baseline comparison active</span>' : '')
     + (baselineIncompatibility
-      ? '<span><strong>Baseline incompatible:</strong> ' + baselineIncompatibility
+      ? '<span><strong>Baseline incompatible:</strong> ' + escapeHtmlText(baselineIncompatibility)
         + '; comparisons suppressed</span>'
       : '');
 

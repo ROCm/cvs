@@ -58,6 +58,7 @@ class TestVerifyCellMetrics(unittest.TestCase):
                 'head': {
                     'output_throughput': 99,
                     'mean_ttft_ms': 40,
+                    'queue_time_p50_ms': None,
                 }
             }
         }
@@ -91,7 +92,11 @@ class TestVerifyCellMetrics(unittest.TestCase):
         self.assertEqual(payload["metric_contract"], {"id": "vllm-bare", "version": 1})
         self.assertEqual(
             payload["actuals_by_host"]["head"],
-            {"mean_ttft_ms": 40, "output_throughput": 99},
+            {
+                "mean_ttft_ms": 40,
+                "output_throughput": 99,
+                "queue_time_p50_ms": None,
+            },
         )
 
     def test_mixed_pass_fail_siblings_and_multiple_hosts_all_run(self):

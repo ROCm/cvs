@@ -28,6 +28,7 @@ never a single scrape.
 
 from __future__ import annotations
 
+import math
 import re
 
 from cvs.lib.inference.utils.vllm_metrics import (
@@ -173,7 +174,8 @@ def histogram_quantile(buckets: "dict[str, float] | None", q: float) -> "float |
 def _quantile_ms(before_metrics: dict, after_metrics: dict, metric_name: str, q: float) -> "float | None":
     diffed = diff_histogram(before_metrics.get(metric_name), after_metrics.get(metric_name))
     seconds = histogram_quantile(diffed, q)
-    return None if seconds is None else seconds * 1000.0
+    milliseconds = None if seconds is None else seconds * 1000.0
+    return milliseconds if type(milliseconds) in (int, float) and math.isfinite(milliseconds) else None
 
 
 def to_prom_metrics(before_text: "str | None", after_text: "str | None") -> dict:

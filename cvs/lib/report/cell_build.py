@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Mapping, Optional
 
 from cvs.lib.report.formatting import fmt_num
@@ -182,7 +183,9 @@ class CellRecordBuilder:
                         else "record"
                     ),
                     "bar_pct": (
-                        bar_pct(float(actual), spec) if spec is not None and type(actual) in (int, float) else None
+                        bar_pct(float(actual), spec)
+                        if spec is not None and type(actual) in (int, float) and math.isfinite(actual)
+                        else None
                     ),
                     "margin": margin_text(actual, spec) if spec else None,
                 }
