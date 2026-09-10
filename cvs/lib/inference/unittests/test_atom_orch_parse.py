@@ -465,6 +465,15 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         self.assertTrue(job.EARLY_FAILURE_RE.search(missing_vllm))
         self.assertTrue(job.FATAL_LOG_RE.search(missing_vllm))
+        ignored_optional = (
+            "[2026-09-10 18:47:23] Ignore import error when loading "
+            "sglang.srt.multimodal.processors.mimo_v2: No module named 'torchcodec'"
+        )
+        self.assertFalse(job.EARLY_FAILURE_RE.search(ignored_optional))
+        self.assertFalse(job.FATAL_LOG_RE.search(ignored_optional))
+        hip_assert = "AssertionError: extra_buffer needs CUDA/MUSA/NPU (FLA)."
+        self.assertTrue(job.EARLY_FAILURE_RE.search(hip_assert))
+        self.assertTrue(job.FATAL_LOG_RE.search(hip_assert))
 
     def test_wait_ready_aborts_on_safetensors_engine_crash(self):
         crash = (
