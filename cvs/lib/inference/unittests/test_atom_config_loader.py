@@ -578,15 +578,19 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         for cfg in sorted(atom_dir.glob("*.json")):
             if "threshold" in cfg.name:
                 continue
-            variant = load_variant(cfg, cluster)
-            if not variant.threshold_json:
-                continue
-            for cell in variant.expected_cells():
-                self.assertIn(
-                    cell,
-                    variant.thresholds,
-                    f"{cfg.name}: missing threshold cell {cell!r}",
+            raw = json.loads(cfg.read_text(encoding="utf-8"))
+            profiles = list(raw["profiles"]) if isinstance(raw.get("profiles"), dict) else [None]
+            for profile in profiles:
+                variant = load_variant(cfg, cluster, profile=profile)
+                if not variant.threshold_json:
+                    continue
+                isl_keys = [key for key in variant.thresholds if str(key).startswith("ISL=")]
+                self.assertCountEqual(
+                    isl_keys,
+                    variant.expected_cells(),
+                    f"{cfg.name} profile={profile}: threshold ISL keys must match the sweep",
                 )
+                self.assertTrue(variant.platform.gpu_metrics_poll, f"{cfg.name} profile={profile}")
 
 
 if __name__ == "__main__":

@@ -99,6 +99,9 @@
     "ISL=128,OSL=32,TP=8,PP=2,CONC=1": {}
   },
   "runs": [],
+  "platform": {
+    "gpu_metrics_poll": true
+  },
   "functional": {
     "api_smoke": true,
     "health_check": true
