@@ -1,6 +1,4 @@
 {
-  "schema_version": 1,
-  "framework": "torchtitan_single",
   "gpu_name": "MI355X",
   "enforce_thresholds": true,
   "threshold_json": "mi355x_torchtitan_llama-3.1-8b_single_threshold.json",
@@ -10,27 +8,6 @@
     "scripts_dir": "/home/{user-id}/SCRIPTS/torchtitan",
     "data_cache_dir": "/home/{user-id}/cache",
     "rocm_dir": ""
-  },
-  "train_params": {
-    "model_name": "llama3_1_8b",
-    "hf_model_name": "meta-llama/Llama-3.1-8B",
-    "sequence_length": "8192",
-    "dataset": "c4",
-    "lr": "3e-4",
-    "warmup_steps": "200",
-    "activation_checkpointing": "selective",
-    "compile": "false",
-    "tensor_parallel_degree": "1",
-    "pipeline_parallel_degree": "1",
-    "context_parallel_degree": "1",
-    "expert_parallel_degree": "1",
-    "enable_async_tensor_parallel": "false",
-    "precompute_float8_dynamic_scale_for_fsdp": "false",
-    "data_parallel_shard_degree": "8",
-    "torchtitan_root": "/workspace/Primus/third_party/torchtitan",
-    "training_iterations": "<changeme>",
-    "nic_type": "thor2",
-    "tokenizer_model": "meta-llama/Llama-3.1-8B"
   },
   "container": {
     "lifetime": "per_run",
@@ -57,11 +34,32 @@
     "env": {
       "NNODES": "1",
       "MASTER_ADDR": "127.0.0.1",
-      "NCCL_SOCKET_IFNAME": "<changeme>",
-      "GLOO_SOCKET_IFNAME": "<changeme>",
-      "NCCL_IB_GID_INDEX": "3",
-      "NCCL_DEBUG": "ERROR"
+      "NCCL_SOCKET_IFNAME": "eno0 <changeme>",
+      "GLOO_SOCKET_IFNAME": "eno0 <changeme>",
+      "NCCL_IB_GID_INDEX": "3 <changeme>",
+      "NCCL_DEBUG": "ERROR <changeme>"
     }
+  },
+  "train_params": {
+    "model_name": "llama3_1_8b",
+    "hf_model_name": "meta-llama/Llama-3.1-8B",
+    "sequence_length": "8192",
+    "dataset": "c4",
+    "lr": "3e-4",
+    "warmup_steps": "200",
+    "activation_checkpointing": "selective",
+    "compile": "false",
+    "tensor_parallel_degree": "1",
+    "pipeline_parallel_degree": "1",
+    "context_parallel_degree": "1",
+    "expert_parallel_degree": "1",
+    "enable_async_tensor_parallel": "false",
+    "precompute_float8_dynamic_scale_for_fsdp": "false",
+    "data_parallel_shard_degree": "8",
+    "torchtitan_root": "/workspace/Primus/third_party/torchtitan",
+    "training_iterations": "<changeme>",
+    "nic_type": "thor2",
+    "tokenizer_model": "meta-llama/Llama-3.1-8B"
   },
   "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",
   "smoke": {
@@ -99,28 +97,16 @@
   "sweep": {
     "combinations": {
       "MBS=6,GBS=48,PRECISION=BF16": {
-        "name": "llama3_1_8b_mbs6_gbs48_BF16",
-        "global_batch_size": "48",
-        "micro_batch_size": "6",
-        "precision": "BF16"
+        "name": "llama3_1_8b_mbs6_gbs48_BF16"
       },
       "MBS=6,GBS=48,PRECISION=FP8": {
-        "name": "llama3_1_8b_mbs6_gbs48_FP8",
-        "global_batch_size": "48",
-        "micro_batch_size": "6",
-        "precision": "FP8"
+        "name": "llama3_1_8b_mbs6_gbs48_FP8"
       },
       "MBS=6,GBS=48,PRECISION=MXFP8": {
-        "name": "llama3_1_8b_mbs6_gbs48_MXFP8",
-        "global_batch_size": "48",
-        "micro_batch_size": "6",
-        "precision": "MXFP8"
+        "name": "llama3_1_8b_mbs6_gbs48_MXFP8"
       },
       "MBS=6,GBS=48,PRECISION=MXFP4": {
-        "name": "llama3_1_8b_mbs6_gbs48_MXFP4",
-        "global_batch_size": "48",
-        "micro_batch_size": "6",
-        "precision": "MXFP4"
+        "name": "llama3_1_8b_mbs6_gbs48_MXFP4"
       }
     },
     "runs": [

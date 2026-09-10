@@ -111,8 +111,8 @@ def orch(cluster_dict, variant_config, lifecycle):
     # Distributed configs should not hard-code NNODES; calculate from actual cluster size
     if "env" not in container_block:
         container_block["env"] = {}
-    node_list = cluster_dict.get("nodes", [])
-    container_block["env"]["NNODES"] = str(len(node_list)) if node_list else "1"
+    node_dict = cluster_dict.get("node_dict") or {}
+    container_block["env"]["NNODES"] = str(len(node_dict))
     testsuite_config = {"orchestrator": "container", "container": container_block}
     cfg = OrchestratorConfig.from_configs(cluster_dict, testsuite_config)
     o = OrchestratorFactory.create_orchestrator(log, cfg)

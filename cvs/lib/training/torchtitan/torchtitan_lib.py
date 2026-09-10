@@ -164,7 +164,7 @@ class TorchTitanTrainingJob:
         self.container_name = self.config.get('container_name', 'torchtitan_training')
         self.torchtitan_root = self.config.get('torchtitan_root', '/workspace/Primus/third_party/torchtitan')
         self.iterations = int(self.config.get('training_iterations', 30))
-        self.nnodes = int(self.config.get('nnodes', 1))
+        self.nnodes = len(self.orch.hosts)
         self.nic_type = self.config.get('nic_type', 'thor2')
         self.hca_id_pattern = self.config.get('hca_id_pattern', 'bnxt_|rocep')
         self.nccl_ib_hca = self.config.get('nccl_ib_hca', '')

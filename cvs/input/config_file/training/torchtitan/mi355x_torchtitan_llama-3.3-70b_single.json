@@ -1,6 +1,4 @@
 {
-  "schema_version": 1,
-  "framework": "torchtitan_single",
   "gpu_name": "MI355X",
   "enforce_thresholds": true,
   "threshold_json": "mi355x_torchtitan_llama-3.3-70b_single_threshold.json",
@@ -10,6 +8,38 @@
     "scripts_dir": "/home/{user-id}/SCRIPTS/torchtitan",
     "data_cache_dir": "/home/{user-id}/cache",
     "rocm_dir": ""
+  },
+  "verify_network_errors": "False",
+  "container": {
+    "lifetime": "per_run",
+    "name": "torchtitan_llama3_3_70b_single",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/dev/infiniband:/dev/infiniband",
+          "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1"
+        ],
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri"
+        ]
+      }
+    },
+    "env": {
+      "NNODES": "1",
+      "MASTER_ADDR": "127.0.0.1",
+      "NCCL_SOCKET_IFNAME": "eno0 <changeme>",
+      "GLOO_SOCKET_IFNAME": "eno0 <changeme>",
+      "NCCL_IB_GID_INDEX": "3 <changeme>",
+      "NCCL_DEBUG": "ERROR <changeme>"
+    }
   },
   "train_params": {
     "model_name": "llama3_3_70b",
@@ -36,38 +66,7 @@
     "nic_type": "thor2",
     "tokenizer_model": "meta-llama/Llama-3.3-70B-Instruct"
   },
-  "container": {
-    "lifetime": "per_run",
-    "name": "torchtitan_llama3_3_70b_single",
-    "image": "<changeme>",
-    "runtime": {
-      "name": "docker",
-      "args": {
-        "network": "host",
-        "ipc": "host",
-        "privileged": true,
-        "shm_size": "128G",
-        "volumes": [
-          "/home/{user-id}:/home/{user-id}",
-          "/dev/infiniband:/dev/infiniband",
-          "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1"
-        ],
-        "devices": [
-          "/dev/kfd",
-          "/dev/dri"
-        ]
-      }
-    },
-    "env": {
-      "NNODES": "1",
-      "MASTER_ADDR": "127.0.0.1",
-      "NCCL_SOCKET_IFNAME": "<changeme>",
-      "GLOO_SOCKET_IFNAME": "<changeme>",
-      "NCCL_IB_GID_INDEX": "3",
-      "NCCL_DEBUG": "ERROR"
-    }
-  },
-  "verify_network_errors": "False",
+  "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",
   "smoke": {
     "enabled": true,
     "iters": 10,
@@ -75,6 +74,7 @@
     "global_batch_size": "8",
     "precision": "BF16"
   },
+  "_loss_curve_comment": "sample training loss every sample_every steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
   "loss_curve": {
     "sample_every": 10,
     "milestone_steps": [
@@ -86,10 +86,12 @@
     "max_slope": 0.0,
     "enforce": true
   },
+  "_convergence_comment": "target_metric auto uses validation loss when available, else training loss. target_value <= 0 disables convergence checking (record-only).",
   "convergence": {
     "target_metric": "auto",
     "target_value": 2.0
   },
+  "_checkpoint_comment": "save_interval controls checkpoint frequency (steps); save_iters is the step at which the save-phase run stops; resume_iters is the step at which the resume-phase run stops. Loss at resume_iters must match the save-phase loss within loss_rtol. enforce=false makes checkpoint testing record-only.",
   "checkpoint": {
     "enforce": false,
     "save_interval": 20,
@@ -98,29 +100,16 @@
     "loss_rtol": 0.05,
     "checkpoint_dir": ""
   },
-  "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",
-  "_loss_curve_comment": "sample training loss every sample_every steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
-  "_convergence_comment": "target_metric auto uses validation loss when available, else training loss. target_value <= 0 disables convergence checking (record-only).",
-  "_checkpoint_comment": "save_interval controls checkpoint frequency (steps); save_iters is the step at which the save-phase run stops; resume_iters is the step at which the resume-phase run stops. Loss at resume_iters must match the save-phase loss within loss_rtol. enforce=false makes checkpoint testing record-only.",
   "sweep": {
     "combinations": {
       "MBS=2,GBS=16,PRECISION=BF16": {
-        "name": "llama3_3_70b_mbs2_gbs16_BF16",
-        "global_batch_size": "16",
-        "micro_batch_size": "2",
-        "precision": "BF16"
+        "name": "llama3_3_70b_mbs2_gbs16_BF16"
       },
       "MBS=2,GBS=16,PRECISION=FP8": {
-        "name": "llama3_3_70b_mbs2_gbs16_FP8",
-        "global_batch_size": "16",
-        "micro_batch_size": "2",
-        "precision": "FP8"
+        "name": "llama3_3_70b_mbs2_gbs16_FP8"
       },
       "MBS=2,GBS=16,PRECISION=MXFP8": {
-        "name": "llama3_3_70b_mbs2_gbs16_MXFP8",
-        "global_batch_size": "16",
-        "micro_batch_size": "2",
-        "precision": "MXFP8"
+        "name": "llama3_3_70b_mbs2_gbs16_MXFP8"
       }
     },
     "runs": [
