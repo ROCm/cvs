@@ -46,8 +46,5 @@ def test_print_results_table(inf_res_dict):
     for key, host_dict in inf_res_dict.items():
         model, gpu, isl, osl, policy, conc = key
         for host, m in host_dict.items():
-            rows.append(
-                [model, gpu, isl, osl, policy, conc, host]
-                + [_cell(m, metric) for metric in metric_keys]
-            )
+            rows.append([model, gpu, isl, osl, policy, conc, host] + [_cell(m, metric) for metric in metric_keys])
     log.info("\n" + tabulate(rows, headers=headers, tablefmt="github"))

@@ -180,11 +180,7 @@ def _record_junit_metrics(node, actuals_by_host):
         separators=(",", ":"),
         sort_keys=True,
     )
-    properties = [
-        (key, value)
-        for key, value in getattr(node, "user_properties", [])
-        if key != VLLM_JUNIT_PROPERTY
-    ]
+    properties = [(key, value) for key, value in getattr(node, "user_properties", []) if key != VLLM_JUNIT_PROPERTY]
     properties.append((VLLM_JUNIT_PROPERTY, payload))
     node.user_properties = properties
 

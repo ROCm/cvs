@@ -123,9 +123,7 @@ class TestVllmReportingIntegration(unittest.TestCase):
         self.assertIn("mean_ttft_ms", html)
         self.assertNotIn("client.output_throughput", html)
         properties = [
-            prop
-            for prop in xml_root.findall(".//property")
-            if prop.attrib.get("name") == "cvs_vllm_metrics_v1"
+            prop for prop in xml_root.findall(".//property") if prop.attrib.get("name") == "cvs_vllm_metrics_v1"
         ]
         self.assertEqual(len(properties), 1)
         value = properties[0].attrib["value"]

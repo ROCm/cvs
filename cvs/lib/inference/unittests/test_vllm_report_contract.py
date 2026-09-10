@@ -38,9 +38,7 @@ class TestVllmReportContract(unittest.TestCase):
     def test_strict_verdict_hook_fails_missing_actual(self):
         payload = build_inference_report_payload(
             config=_config(),
-            variant_config=_variant(
-                {"output_throughput": {"kind": "min", "value": 1}}
-            ),
+            variant_config=_variant({"output_throughput": {"kind": "min", "value": 1}}),
             inf_res_dict={KEY: {"head": {}}},
             lifecycle_report={},
         )

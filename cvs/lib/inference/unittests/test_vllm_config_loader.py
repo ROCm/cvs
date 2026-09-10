@@ -118,9 +118,7 @@ class TestStrictThresholdSpecs(unittest.TestCase):
     def test_accepts_finite_int_float_zero_and_negative(self):
         for value in (0, -1, 1.5):
             with self.subTest(value=value):
-                variant = _variant(
-                    {CELL: {"output_throughput": {"kind": "min", "value": value}}}
-                )
+                variant = _variant({CELL: {"output_throughput": {"kind": "min", "value": value}}})
                 self.assertEqual(variant.thresholds[CELL]["output_throughput"]["value"], value)
 
 

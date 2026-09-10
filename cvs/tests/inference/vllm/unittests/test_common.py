@@ -85,11 +85,7 @@ class TestVerifyCellMetrics(unittest.TestCase):
         )
         subtests.test.assert_not_called()
         lifecycle.record.assert_called_once()
-        properties = [
-            value
-            for key, value in node.user_properties
-            if key == _common.VLLM_JUNIT_PROPERTY
-        ]
+        properties = [value for key, value in node.user_properties if key == _common.VLLM_JUNIT_PROPERTY]
         self.assertEqual(len(properties), 1)
         payload = json.loads(properties[0])
         self.assertEqual(payload["metric_contract"], {"id": "vllm-bare", "version": 1})

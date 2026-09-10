@@ -37,15 +37,11 @@ def report_incompatibility(
     if expected_metric_contract is None:
         return ""
     if report_json.get("schema_version") != expected_schema_version:
-        return (
-            f"schema_version {report_json.get('schema_version')!r} is incompatible with "
-            f"{expected_schema_version!r}"
-        )
+        return f"schema_version {report_json.get('schema_version')!r} is incompatible with {expected_schema_version!r}"
     if report_json.get("suite_id") != expected_suite_id:
         return f"suite_id {report_json.get('suite_id')!r} is incompatible with {expected_suite_id!r}"
     if report_json.get("metric_contract") != expected_metric_contract:
         return (
-            f"metric_contract {report_json.get('metric_contract')!r} is incompatible with "
-            f"{expected_metric_contract!r}"
+            f"metric_contract {report_json.get('metric_contract')!r} is incompatible with {expected_metric_contract!r}"
         )
     return ""

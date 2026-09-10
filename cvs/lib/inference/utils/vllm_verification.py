@@ -87,8 +87,6 @@ def evaluate_metric_verdicts(actuals_by_host, thresholds, *, enforce_thresholds)
             else:
                 verdict['reason'] = 'threshold enforcement disabled; no threshold asserted'
                 if not _is_finite_number(value):
-                    verdict['reason'] = (
-                        f'{metric}: unavailable or non-finite actual recorded; no threshold asserted'
-                    )
+                    verdict['reason'] = f'{metric}: unavailable or non-finite actual recorded; no threshold asserted'
             verdicts.append(verdict)
     return verdicts

@@ -55,9 +55,7 @@ class TestVllmDeckProfile(unittest.TestCase):
 
     def test_gated_metrics_subset_of_client_metrics(self):
         client_short = {short for short, _unit in CLIENT_METRICS}
-        registered_client = {
-            definition.name for definition in METRIC_REGISTRY if definition.datasource == "client"
-        }
+        registered_client = {definition.name for definition in METRIC_REGISTRY if definition.datasource == "client"}
         self.assertEqual(client_short, registered_client)
 
     def test_tier_metric_specs_throughput(self):

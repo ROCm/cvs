@@ -30,7 +30,15 @@ from __future__ import annotations
 
 import re
 
-from cvs.lib.inference.utils.vllm_metrics import PROM_METRICS, PROM_METRIC_UNITS
+from cvs.lib.inference.utils.vllm_metrics import (
+    PROM_METRICS as _REGISTRY_PROM_METRICS,
+)
+from cvs.lib.inference.utils.vllm_metrics import (
+    PROM_METRIC_UNITS as _REGISTRY_PROM_METRIC_UNITS,
+)
+
+PROM_METRICS = _REGISTRY_PROM_METRICS
+PROM_METRIC_UNITS = _REGISTRY_PROM_METRIC_UNITS
 
 # vLLM Prometheus histogram names this module reads, and the (short_name
 # prefix, quantile) pairs each feeds into PROM_METRICS above.
@@ -188,7 +196,5 @@ def to_prom_metrics(before_text: "str | None", after_text: "str | None") -> dict
     result = dict(all_none)
     for qname, q in _QUANTILES.items():
         result[f"queue_time_{qname}_ms"] = _quantile_ms(before_metrics, after_metrics, _QUEUE_TIME_METRIC, q)
-        result[f"prefill_time_{qname}_ms"] = _quantile_ms(
-            before_metrics, after_metrics, _PREFILL_TIME_METRIC, q
-        )
+        result[f"prefill_time_{qname}_ms"] = _quantile_ms(before_metrics, after_metrics, _PREFILL_TIME_METRIC, q)
     return result

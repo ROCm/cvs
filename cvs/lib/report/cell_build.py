@@ -182,9 +182,7 @@ class CellRecordBuilder:
                         else "record"
                     ),
                     "bar_pct": (
-                        bar_pct(float(actual), spec)
-                        if spec is not None and type(actual) in (int, float)
-                        else None
+                        bar_pct(float(actual), spec) if spec is not None and type(actual) in (int, float) else None
                     ),
                     "margin": margin_text(actual, spec) if spec else None,
                 }

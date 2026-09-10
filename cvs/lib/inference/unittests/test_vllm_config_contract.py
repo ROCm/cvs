@@ -245,21 +245,14 @@ class TestPackagedVllmCatalog(unittest.TestCase):
         definitions = list(METRIC_REGISTRY)
         expected_names = [definition.name for definition in definitions]
         configs = _packaged_configs()
-        paths = [
-            path.with_name(json.loads(path.read_text())["threshold_json"])
-            for path in configs
-        ]
+        paths = [path.with_name(json.loads(path.read_text())["threshold_json"]) for path in configs]
         self.assertEqual(len(paths), EXPECTED_PACKAGED_CONFIG_COUNT)
         cell_count = 0
         for config_path, threshold_path in zip(configs, paths):
             with self.subTest(threshold=threshold_path.name):
                 self.assertFalse(load_variant(config_path, {"username": "test"}).enforce_thresholds)
                 payload = json.loads(threshold_path.read_text())
-                cells = {
-                    key: value
-                    for key, value in payload.items()
-                    if not key.startswith("_") and key != "accuracy"
-                }
+                cells = {key: value for key, value in payload.items() if not key.startswith("_") and key != "accuracy"}
                 cell_count += len(cells)
                 for specs in cells.values():
                     self.assertEqual(list(specs), expected_names)

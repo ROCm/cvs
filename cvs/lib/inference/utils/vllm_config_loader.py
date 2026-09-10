@@ -14,9 +14,7 @@ from cvs.lib.inference.utils.vllm_metrics import METRIC_REGISTRY, validate_thres
 from cvs.lib.utils.config_loader import substitute_config
 
 GATED_GPU_METRICS = {definition.name for definition in METRIC_REGISTRY if definition.datasource == "gpu"}
-GATED_PROM_METRICS = {
-    definition.name for definition in METRIC_REGISTRY if definition.datasource == "prometheus"
-}
+GATED_PROM_METRICS = {definition.name for definition in METRIC_REGISTRY if definition.datasource == "prometheus"}
 _CELL_RE = re.compile(
     r"^ISL=(?P<isl>[1-9]\d*),OSL=(?P<osl>[1-9]\d*),TP=(?P<tp>[1-9]\d*),PP=(?P<pp>[1-9]\d*),CONC=(?P<concurrency>[1-9]\d*)$"
 )

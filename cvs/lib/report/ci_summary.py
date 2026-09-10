@@ -115,10 +115,7 @@ class CiSummaryBuilder:
         prev_panel = (self.payload.get("panels") or {}).get("prev_run") or {}
         if prev_panel.get("compatible") is False:
             reason = html.escape(str(prev_panel.get("incompatibility") or "metric contract mismatch"))
-            prev_line = (
-                "<p><strong>Baseline comparison:</strong> incompatible; "
-                f"comparisons suppressed ({reason})</p>"
-            )
+            prev_line = f"<p><strong>Baseline comparison:</strong> incompatible; comparisons suppressed ({reason})</p>"
         else:
             regressions = self._prev_run_regressions()
             prev_line = (

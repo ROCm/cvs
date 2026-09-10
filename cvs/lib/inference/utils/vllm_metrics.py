@@ -233,15 +233,11 @@ _RAW_CLIENT_METRICS = MappingProxyType(
     }
 )
 _DERIVED_CLIENT_METRICS = tuple(
-    definition
-    for definition in METRIC_REGISTRY
-    if definition.datasource == 'client' and definition.raw_source is None
+    definition for definition in METRIC_REGISTRY if definition.datasource == 'client' and definition.raw_source is None
 )
 _NAMES_BY_DATASOURCE = MappingProxyType(
     {
-        datasource: frozenset(
-            definition.name for definition in METRIC_REGISTRY if definition.datasource == datasource
-        )
+        datasource: frozenset(definition.name for definition in METRIC_REGISTRY if definition.datasource == datasource)
         for datasource in ('client', 'gpu', 'prometheus')
     }
 )
@@ -374,9 +370,7 @@ def validate_threshold_spec(metric, spec):
     if definition is None:
         raise ValueError(f'unknown vLLM threshold metric {metric!r}')
     if type(spec.get('kind')) is not str or spec['kind'] != definition.direction:
-        raise ValueError(
-            f'{metric} threshold kind must be {definition.direction!r}, got {spec.get("kind")!r}'
-        )
+        raise ValueError(f'{metric} threshold kind must be {definition.direction!r}, got {spec.get("kind")!r}')
     if not is_finite_number(spec.get('value')):
         raise ValueError(f'{metric} threshold value must be a finite built-in int or float')
 
