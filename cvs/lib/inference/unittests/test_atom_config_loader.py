@@ -86,7 +86,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_load_w1_mi3xx_multinode_variant(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed.json")
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
         self.assertEqual(variant.params.nnodes, "2")
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(variant.params.pipeline_parallel_size, "2")
@@ -446,7 +446,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_load_distributed_accuracy_scaffold(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed.json")
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(variant.params.nnodes, "2")
         self.assertIn("PP=2", variant.expected_cells()[0])
@@ -503,7 +503,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_flat_config_slices_profiled_threshold(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed.json")
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
         cell = "ISL=512,OSL=512,TP=8,PP=2,CONC=16"
         self.assertIn(cell, variant.expected_cells())
         self.assertIn("scaling.efficiency_pct", variant.thresholds[cell])
