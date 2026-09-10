@@ -12,35 +12,27 @@
     "rocm_dir": ""
   },
   "train_params": {
-    "multi_node": {
-      "qwen3_32b": {
-        "mi300x": {
-          "model_name": "qwen2",
-          "hf_model_name": "Qwen/Qwen2.5-32B",
-          "tokenizer_path": "Qwen/Qwen2.5-32B",
-          "model_size": "32b",
-          "sequence_length": "8192",
-          "dataset": "c4",
-          "lr": "3e-4",
-          "warmup_steps": "200",
-          "activation_checkpointing": "selective",
-          "compile": "false",
-          "tensor_parallel_degree": "1",
-          "pipeline_parallel_degree": "1",
-          "context_parallel_degree": "1",
-          "expert_parallel_degree": "1",
-          "enable_async_tensor_parallel": "false",
-          "precompute_float8_dynamic_scale_for_fsdp": "false",
-          "data_parallel_shard_degree": "16",
-          "global_batch_size": "512",
-          "micro_batch_size": "1",
-          "precision": "BF16",
-          "result_dict": {
-            "tokens_per_sec": "8000.0"
-          }
-        }
-      }
-    },
+    "model_name": "qwen3_32b",
+    "hf_model_name": "Qwen/Qwen2.5-32B",
+    "tokenizer_path": "Qwen/Qwen2.5-32B",
+    "model_size": "32b",
+    "sequence_length": "8192",
+    "dataset": "c4",
+    "lr": "3e-4",
+    "warmup_steps": "200",
+    "activation_checkpointing": "selective",
+    "compile": "false",
+    "tensor_parallel_degree": "1",
+    "pipeline_parallel_degree": "1",
+    "context_parallel_degree": "1",
+    "expert_parallel_degree": "1",
+    "enable_async_tensor_parallel": "false",
+    "precompute_float8_dynamic_scale_for_fsdp": "false",
+    "data_parallel_shard_degree": "16",
+    "global_batch_size": "512",
+    "micro_batch_size": "1",
+    "precision": "BF16",
+    "tokenizer_model": "Qwen/Qwen2.5-32B",
     "training_iterations": "<changeme>",
     "torchtitan_root": "/workspace/Primus/third_party/torchtitan",
     "nic_type": "broadcom"

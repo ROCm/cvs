@@ -12,35 +12,27 @@
     "rocm_dir": ""
   },
   "train_params": {
-    "multi_node": {
-      "llama3_1_8b": {
-        "mi300x": {
-          "model_name": "llama3",
-          "hf_model_name": "meta-llama/Llama-3.1-8B",
-          "tokenizer_path": "meta-llama/Llama-3.1-8B",
-          "model_size": "8b",
-          "sequence_length": "8192",
-          "dataset": "c4",
-          "lr": "3e-4",
-          "warmup_steps": "200",
-          "activation_checkpointing": "selective",
-          "compile": "false",
-          "tensor_parallel_degree": "1",
-          "pipeline_parallel_degree": "1",
-          "context_parallel_degree": "1",
-          "expert_parallel_degree": "1",
-          "enable_async_tensor_parallel": "false",
-          "precompute_float8_dynamic_scale_for_fsdp": "false",
-          "data_parallel_shard_degree": "16",
-          "global_batch_size": "512",
-          "micro_batch_size": "2",
-          "precision": "BF16",
-          "result_dict": {
-            "tokens_per_sec": "15000.0"
-          }
-        }
-      }
-    },
+    "model_name": "llama3_1_8b",
+    "hf_model_name": "meta-llama/Llama-3.1-8B",
+    "tokenizer_path": "meta-llama/Llama-3.1-8B",
+    "model_size": "8b",
+    "sequence_length": "8192",
+    "dataset": "c4",
+    "lr": "3e-4",
+    "warmup_steps": "200",
+    "activation_checkpointing": "selective",
+    "compile": "false",
+    "tensor_parallel_degree": "1",
+    "pipeline_parallel_degree": "1",
+    "context_parallel_degree": "1",
+    "expert_parallel_degree": "1",
+    "enable_async_tensor_parallel": "false",
+    "precompute_float8_dynamic_scale_for_fsdp": "false",
+    "data_parallel_shard_degree": "16",
+    "global_batch_size": "512",
+    "micro_batch_size": "2",
+    "precision": "BF16",
+    "tokenizer_model": "meta-llama/Llama-3.1-8B",
     "training_iterations": "<changeme>",
     "torchtitan_root": "/workspace/Primus/third_party/torchtitan",
     "nic_type": "broadcom"
