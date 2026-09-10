@@ -41,6 +41,10 @@ def variant_config(pytestconfig, cluster_dict):
 
 @pytest.fixture(scope="module", autouse=True)
 def _guard_single_node_config(cluster_dict, variant_config):
+    if not variant_config.training.enabled:
+        pytest.skip(
+            f"protected {variant_config.training.run_mode} profile is disabled; set training.enabled=true explicitly"
+        )
     if variant_config.training.distributed:
         pytest.fail("pytorch_vision_training requires training.distributed=false")
     nodes = list((cluster_dict.get("node_dict") or {}).keys())
@@ -95,10 +99,13 @@ def pytest_collection_modifyitems(items):
     order = {
         "test_launch_container": 0,
         "test_verify_environment": 1,
-        "test_training": 2,
-        "test_metric": 3,
-        "test_print_results_table": 4,
-        "test_teardown": 5,
+        "test_real_data_smoke": 2,
+        "test_training": 3,
+        "test_metric": 4,
+        "test_loss_curve": 5,
+        "test_convergence": 6,
+        "test_print_results_table": 7,
+        "test_teardown": 8,
     }
     items.sort(key=lambda item: order.get(item.originalname or item.name.split("[")[0], 99))
 

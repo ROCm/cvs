@@ -12,9 +12,15 @@ RUN echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.rad
         rocdecode-dev=1.7.0.70204-93~24.04 \
     && rm -rf /var/lib/apt/lists/*
 
-ENV PYTHONPATH=/opt/rocm/lib
+ENV PYTHONPATH=/opt/rocm/lib:/opt/rocm/share/amd_smi
 
-RUN python -c "import torch, torchvision; from amd.rocal.plugin.pytorch import ROCALClassificationIterator; print(torch.__version__, torchvision.__version__, ROCALClassificationIterator)"
+RUN python -m pip install --no-cache-dir \
+        "codecarbon @ git+https://github.com/mlco2/codecarbon.git@31b4dacc65185bb985b6a6fed2b945ac8961b164" \
+    && CODECARBON_DATA="$(python -c 'import site; print(site.getsitepackages()[0])')/codecarbon/data/private_infra" \
+    && curl -fsSL \
+        https://raw.githubusercontent.com/mlco2/codecarbon/31b4dacc65185bb985b6a6fed2b945ac8961b164/codecarbon/data/private_infra/nordic_emissions.json \
+        -o "${CODECARBON_DATA}/nordic_emissions.json" \
+    && python -c "import amdsmi, codecarbon, torch, torchvision; from amd.rocal.plugin.pytorch import ROCALClassificationIterator; assert codecarbon.__version__ == '3.2.4'; print(torch.__version__, torchvision.__version__, ROCALClassificationIterator, amdsmi)"
 
 LABEL org.opencontainers.image.source="https://github.com/ROCm/rocAL"
 LABEL org.opencontainers.image.version="rocm7.2.4-py3.12-torch2.10-rocal2.5.0"

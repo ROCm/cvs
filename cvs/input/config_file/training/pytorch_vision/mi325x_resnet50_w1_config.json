@@ -36,6 +36,9 @@
   },
   "training": {
     "distributed": false,
+    "enabled": true,
+    "phase": "performance",
+    "run_mode": "perf",
     "gpus_per_node": 8,
     "steps": 50,
     "warmup_steps": 10,

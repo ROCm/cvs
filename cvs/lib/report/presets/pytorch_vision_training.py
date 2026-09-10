@@ -27,6 +27,8 @@ def _run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
         ("GPU", variant.gpu_arch, False),
         ("Topology", f"1 node \u00d7 {variant.training.gpus_per_node} GPUs", False),
         ("Distributed", "DDP", False),
+        ("Phase", getattr(variant.training, "phase", "performance"), False),
+        ("Run mode", getattr(variant.training, "run_mode", "perf"), False),
         ("Precision", sweep.precision, False),
         (
             "Input",
@@ -37,11 +39,18 @@ def _run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
             ),
             False,
         ),
+        ("rocAL device", getattr(sweep, "rocal_device", "gpu"), False),
+        ("Augmentation", getattr(sweep, "augmentation", "standard"), False),
         ("Training FLOPs/image", f"{sweep.training_flops_per_image / 1e9:.1f} GFLOP (provisional)", False),
         ("Peak BF16/GPU", f"{variant.training.peak_tflops_per_gpu:.1f} TFLOPS (provisional)", False),
         ("Checkpoint", "exact load + tolerance-gated resumed step", False),
         ("Sweeps", ", ".join(item.label for item in enabled_sweeps), False),
         ("Image", variant.container.image, False),
+        (
+            "Result artifacts",
+            f"{getattr(getattr(variant, 'paths', None), 'log_dir', '')}/pytorch_vision",
+            True,
+        ),
         thresholds_run_card_row(variant),
     ]
     rows.extend(provenance_link_rows(provenance))
@@ -60,6 +69,8 @@ def _cell_id(variant: Any, key: tuple) -> str:
         if sweep.model == model
         and sweep.precision in str(workload)
         and (sweep.data_mode == "rocal") == ("ROCAL" in str(workload))
+        and (sweep.data_mode != "rocal" or getattr(sweep, "rocal_device", "gpu").upper() in str(workload))
+        and (sweep.data_mode != "rocal" or getattr(sweep, "augmentation", "standard").upper() in str(workload))
         and sweep.image_size == int(image_size)
         and sweep.batch_size == int(batch_size)
         and f"GA{sweep.gradient_accumulation_steps}" == ga_label
@@ -98,6 +109,15 @@ PYTORCH_VISION_TRAINING_REPORT_CONFIG = make_inference_report_config(
         ReportChartSeries("step_time_ms_mean", "Mean step time", "ms", invert=True),
         ReportChartSeries("step_time_ms_p95", "P95 step time", "ms", invert=True),
         ReportChartSeries("device_memory_used_mb_observed", "Observed device-used memory", "MB", invert=True),
+        ReportChartSeries("continuous_peak_device_memory_mb", "Sampled peak device memory", "MB", invert=True),
+        ReportChartSeries("top1_accuracy_pct", "Top-1 accuracy", "%"),
+        ReportChartSeries("top5_accuracy_pct", "Top-5 accuracy", "%"),
+        ReportChartSeries("eval_loss", "Evaluation loss", "-", invert=True),
+        ReportChartSeries("convergence_time_seconds", "Time to convergence", "s", invert=True),
+        ReportChartSeries("gpu_compute_util_pct", "GPU compute utilization", "%"),
+        ReportChartSeries("gpu_bandwidth_util_pct", "GPU bandwidth utilization", "%"),
+        ReportChartSeries("energy_kwh", "Training energy", "kWh", invert=True),
+        ReportChartSeries("images_per_kwh", "Energy efficiency", "images/kWh"),
         ReportChartSeries("gradient_accumulation_overhead_pct", "GA overhead", "%", invert=True),
     ),
     sweep_throughput_metric="training.images_per_sec",

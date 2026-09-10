@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import datetime
+import importlib.metadata
 import json
 import math
 import os
@@ -26,6 +28,19 @@ def _parse_args():
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--warmup-steps", type=int, default=10)
     parser.add_argument("--measure-steps", type=int, default=50)
+    parser.add_argument(
+        "--run-mode",
+        choices=["smoke", "perf", "train_1epoch", "train_5k", "train_90epoch", "soak_24h"],
+        default="perf",
+    )
+    parser.add_argument("--phase", choices=["smoke", "performance", "accuracy", "soak"], default="performance")
+    parser.add_argument("--epochs", type=int)
+    parser.add_argument("--max-duration-seconds", type=int)
+    parser.add_argument("--eval-enabled", action="store_true")
+    parser.add_argument("--eval-steps", type=int)
+    parser.add_argument("--eval-every-epochs", type=int, default=1)
+    parser.add_argument("--eval-sample-count", type=int, default=50000)
+    parser.add_argument("--milestone-steps", default="100,500,1000,5000")
     parser.add_argument("--channels-last", action="store_true")
     parser.add_argument("--learning-rate", type=float, default=0.1)
     parser.add_argument("--momentum", type=float, default=0.9)
@@ -35,12 +50,23 @@ def _parse_args():
     parser.add_argument("--peak-tflops-per-gpu", type=float, required=True)
     parser.add_argument("--data-mode", choices=["synthetic", "rocal"], default="synthetic")
     parser.add_argument("--dataset-path", default="")
+    parser.add_argument("--rocal-device", choices=["cpu", "gpu"], default="gpu")
+    parser.add_argument("--augmentation", choices=["standard", "heavy"], default="standard")
     parser.add_argument("--rocal-num-threads", type=int, default=8)
     parser.add_argument("--loader-warmup-steps", type=int, default=5)
     parser.add_argument("--loader-benchmark-steps", type=int, default=20)
     parser.add_argument("--checkpoint-path")
     parser.add_argument("--checkpoint-loss-tolerance", type=float, default=1e-5)
     parser.add_argument("--keep-checkpoint", action="store_true")
+    parser.add_argument("--loss-curve-sample-every", type=int, default=1)
+    parser.add_argument("--loss-curve-minimum-points", type=int, default=2)
+    parser.add_argument("--convergence-top1", type=float)
+    parser.add_argument("--convergence-eval-loss", type=float)
+    parser.add_argument("--codecarbon-enabled", action="store_true")
+    parser.add_argument("--codecarbon-required", action="store_true")
+    parser.add_argument("--codecarbon-measure-power-secs", type=int, default=5)
+    parser.add_argument("--codecarbon-country-iso-code")
+    parser.add_argument("--collective-timeout-seconds", type=int, default=120)
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
@@ -163,45 +189,64 @@ def _device_used_mb(device):
     return (total_bytes - free_bytes) / 1e6
 
 
-def _build_rocal_loader(args, rank, world_size):
+def _build_rocal_loader(args, rank, world_size, split="train"):
     import amd.rocal.fn as fn
     import amd.rocal.types as types
     from amd.rocal.pipeline import Pipeline
     from amd.rocal.plugin.pytorch import ROCALClassificationIterator
 
-    data_path = str(Path(args.dataset_path) / "train")
+    data_path = str(Path(args.dataset_path) / split)
+    cpu = args.rocal_device == "cpu"
     pipe = Pipeline(
         batch_size=args.batch_size,
         num_threads=args.rocal_num_threads,
         device_id=int(os.environ["LOCAL_RANK"]),
         seed=2026 + rank,
-        rocal_cpu=False,
+        rocal_cpu=cpu,
         tensor_dtype=types.FLOAT,
         tensor_layout=types.NCHW,
         prefetch_queue_depth=6,
         mean=[0.485 * 255, 0.456 * 255, 0.406 * 255],
         std=[0.229 * 255, 0.224 * 255, 0.225 * 255],
-        output_memory_type=types.DEVICE_MEMORY,
+        output_memory_type=types.HOST_MEMORY if cpu else types.DEVICE_MEMORY,
     )
     with pipe:
         jpegs, _labels = fn.readers.file(file_root=data_path)
-        decoded = fn.decoders.image_slice(
-            jpegs,
-            output_type=types.RGB,
-            file_root=data_path,
-            shard_id=rank,
-            num_shards=world_size,
-            random_shuffle=True,
-        )
-        resized = fn.resize(
-            decoded,
-            resize_width=args.image_size,
-            resize_height=args.image_size,
-            output_layout=types.NHWC,
-            output_dtype=types.UINT8,
-            interpolation_type=types.TRIANGULAR_INTERPOLATION,
-        )
-        flip = fn.random.coin_flip(probability=0.5)
+        if split == "train":
+            decoded = fn.decoders.image_slice(
+                jpegs,
+                output_type=types.RGB,
+                file_root=data_path,
+                shard_id=rank,
+                num_shards=world_size,
+                random_shuffle=True,
+            )
+            resized = fn.resize(
+                decoded,
+                resize_width=args.image_size,
+                resize_height=args.image_size,
+                output_layout=types.NHWC,
+                output_dtype=types.UINT8,
+                interpolation_type=types.TRIANGULAR_INTERPOLATION,
+            )
+        else:
+            decoded = fn.decoders.image(
+                jpegs,
+                output_type=types.RGB,
+                file_root=data_path,
+                shard_id=rank,
+                num_shards=world_size,
+                random_shuffle=False,
+            )
+            resized = fn.resize(
+                decoded,
+                resize_shorter=256,
+                scaling_mode=types.SCALING_MODE_NOT_SMALLER,
+                output_layout=types.NHWC,
+                output_dtype=types.UINT8,
+                interpolation_type=types.TRIANGULAR_INTERPOLATION,
+            )
+        flip = fn.random.coin_flip(probability=0.5 if split == "train" else 0.0)
         normalized = fn.crop_mirror_normalize(
             resized,
             output_layout=types.NCHW,
@@ -215,42 +260,101 @@ def _build_rocal_loader(args, rank, world_size):
     pipe.build()
     return ROCALClassificationIterator(
         pipe,
-        device="cuda",
+        device="cpu" if cpu else "cuda",
         device_id=int(os.environ["LOCAL_RANK"]),
     )
 
 
-def _next_rocal_batches(loader, accumulation_steps, channels_last):
+def _prepare_rocal_batch(images, labels, device, channels_last, heavy=False):
+    if images.device != device:
+        if images.device.type == "cpu" and not images.is_pinned():
+            images = images.pin_memory()
+        images = images.to(device, non_blocking=True)
+    if labels.device != device:
+        if labels.device.type == "cpu" and not labels.is_pinned():
+            labels = labels.pin_memory()
+        labels = labels.to(device, non_blocking=True)
+    if heavy:
+        mask = torch.rand(images.shape[0], device=device) < 0.25
+        if mask.any():
+            width = max(1, images.shape[-1] // 8)
+            images[mask, :, :width, :width] = 0
+    if channels_last:
+        images = images.contiguous(memory_format=torch.channels_last)
+    return images, labels.long().reshape(-1)
+
+
+def _next_rocal_batches(loader, accumulation_steps, channels_last, device, heavy=False, reset_on_end=True):
     image_batches = []
     label_batches = []
     for _ in range(accumulation_steps):
         try:
             [images], labels = next(loader)
         except StopIteration:
+            if not reset_on_end:
+                raise
             loader.reset()
             [images], labels = next(loader)
-        if channels_last:
-            images = images.contiguous(memory_format=torch.channels_last)
+        images, labels = _prepare_rocal_batch(images, labels, device, channels_last, heavy)
         image_batches.append(images)
-        label_batches.append(labels.long())
+        label_batches.append(labels)
     return image_batches, label_batches
+
+
+def _distributed_next_rocal_batches(
+    loader,
+    accumulation_steps,
+    channels_last,
+    device,
+    heavy=False,
+    reset_on_end=True,
+):
+    batches = None
+    error = None
+    status = 1
+    try:
+        batches = _next_rocal_batches(
+            loader,
+            accumulation_steps,
+            channels_last,
+            device,
+            heavy,
+            reset_on_end,
+        )
+    except StopIteration:
+        status = 0
+    except Exception as exc:
+        status = -1
+        error = f"{type(exc).__name__}: {exc}"
+    status_tensor = torch.tensor(status, dtype=torch.int32, device=device)
+    dist.all_reduce(status_tensor, op=dist.ReduceOp.MIN)
+    global_status = int(status_tensor.item())
+    if global_status < 0:
+        raise RuntimeError(f"rocAL iterator failed on at least one rank; local_error={error}")
+    if global_status == 0:
+        return None
+    return batches
 
 
 def _measure_rocal_loader(loader, args, device):
     for _ in range(args.loader_warmup_steps):
-        _next_rocal_batches(
+        _distributed_next_rocal_batches(
             loader,
             args.gradient_accumulation_steps,
             args.channels_last,
+            device,
+            args.augmentation == "heavy",
         )
     torch.cuda.synchronize(device)
     dist.barrier()
     start = time.perf_counter()
     for _ in range(args.loader_benchmark_steps):
-        _next_rocal_batches(
+        _distributed_next_rocal_batches(
             loader,
             args.gradient_accumulation_steps,
             args.channels_last,
+            device,
+            args.augmentation == "heavy",
         )
     torch.cuda.synchronize(device)
     elapsed = _reduce_max(time.perf_counter() - start, device)
@@ -258,6 +362,146 @@ def _measure_rocal_loader(loader, args, device):
         args.batch_size * args.gradient_accumulation_steps * int(os.environ["WORLD_SIZE"]) * args.loader_benchmark_steps
     )
     return images / elapsed
+
+
+def _accuracy_from_totals(top1_correct, top5_correct, sample_count):
+    if sample_count <= 0:
+        raise ValueError("evaluation produced no samples")
+    if not 0 <= top1_correct <= top5_correct <= sample_count:
+        raise ValueError("invalid distributed accuracy totals")
+    return 100.0 * top1_correct / sample_count, 100.0 * top5_correct / sample_count
+
+
+def _evaluate(model, loader, loss_fn, args, device):
+    model.eval()
+    loader.reset()
+    totals = torch.zeros(4, dtype=torch.float64, device=device)
+    steps = 0
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+    local_target = (
+        args.eval_sample_count // world_size + (1 if rank < args.eval_sample_count % world_size else 0)
+        if args.eval_steps is None
+        else None
+    )
+    local_samples = 0
+    try:
+        while steps < args.eval_steps if args.eval_steps is not None else local_samples < local_target:
+            try:
+                batches = _distributed_next_rocal_batches(
+                    loader,
+                    1,
+                    args.channels_last,
+                    device,
+                    heavy=False,
+                    reset_on_end=False,
+                )
+                if batches is None:
+                    break
+                images, labels = batches
+            except StopIteration:
+                break
+            if local_target is not None:
+                remaining = local_target - local_samples
+                images[0] = images[0][:remaining]
+                labels[0] = labels[0][:remaining]
+            with torch.no_grad(), _autocast(args.precision):
+                output = model(images[0])
+                loss = loss_fn(output, labels[0])
+            count = labels[0].numel()
+            predictions = output.topk(min(5, output.shape[1]), dim=1).indices
+            correct = predictions.eq(labels[0].view(-1, 1))
+            totals[0] += correct[:, :1].any(dim=1).sum()
+            totals[1] += correct.any(dim=1).sum()
+            totals[2] += loss.detach().double() * count
+            totals[3] += count
+            local_samples += count
+            steps += 1
+    finally:
+        loader.reset()
+        model.train()
+    dist.all_reduce(totals, op=dist.ReduceOp.SUM)
+    samples = int(totals[3].item())
+    if args.eval_steps is None and samples != args.eval_sample_count:
+        raise RuntimeError(f"evaluation consumed {samples} samples, expected exactly {args.eval_sample_count}")
+    top1, top5 = _accuracy_from_totals(int(totals[0].item()), int(totals[1].item()), samples)
+    return {
+        "top1_accuracy_pct": top1,
+        "top5_accuracy_pct": top5,
+        "eval_loss": totals[2].item() / samples,
+        "eval_sample_count": samples,
+        "eval_completed": 1.0,
+    }
+
+
+def _start_codecarbon(args, rank, world_size):
+    payload = {
+        "version": None,
+        "tracker": "amdsmi",
+        "gpu_count": 0,
+        "active": False,
+        "reason": "disabled",
+    }
+    tracker = None
+    if rank == 0 and args.codecarbon_enabled:
+        try:
+            version = importlib.metadata.version("codecarbon")
+            if version != "3.2.4":
+                raise RuntimeError(f"CodeCarbon 3.2.4 required, found {version}")
+            import amdsmi
+            from codecarbon import EmissionsTracker
+
+            amdsmi.amdsmi_init()
+            handles = amdsmi.amdsmi_get_processor_handles()
+            if len(handles) < world_size:
+                raise RuntimeError(f"AMDSMI found {len(handles)} GPUs, expected {world_size}")
+            kwargs = {
+                "measure_power_secs": args.codecarbon_measure_power_secs,
+                "tracking_mode": "machine",
+                "gpu_ids": list(range(world_size)),
+                "log_level": "error",
+                "save_to_file": False,
+            }
+            if args.codecarbon_country_iso_code:
+                kwargs["country_iso_code"] = args.codecarbon_country_iso_code
+            tracker = EmissionsTracker(**kwargs)
+            tracker.start()
+            payload.update(
+                {
+                    "version": version,
+                    "gpu_count": len(handles),
+                    "active": True,
+                    "reason": "",
+                }
+            )
+        except Exception as exc:
+            payload["reason"] = f"{type(exc).__name__}: {exc}"
+    state = [payload]
+    dist.broadcast_object_list(state, src=0)
+    if args.codecarbon_enabled and args.codecarbon_required and not state[0]["active"]:
+        raise RuntimeError(f"required CodeCarbon tracking unavailable: {state[0]['reason']}")
+    return tracker, state[0]
+
+
+def _stop_codecarbon(tracker, payload, rank):
+    if rank == 0 and tracker is not None:
+        try:
+            emissions = tracker.stop()
+            if emissions is None or not math.isfinite(float(emissions)):
+                raise RuntimeError(f"invalid emissions result: {emissions!r}")
+            payload["emissions_kg_co2eq"] = float(emissions)
+            final_data = getattr(tracker, "final_emissions_data", None)
+            energy_kwh = getattr(final_data, "energy_consumed", None)
+            if energy_kwh is not None and math.isfinite(float(energy_kwh)) and float(energy_kwh) > 0:
+                payload["energy_kwh"] = float(energy_kwh)
+            duration_seconds = getattr(final_data, "duration", None)
+            if duration_seconds is not None and math.isfinite(float(duration_seconds)) and float(duration_seconds) > 0:
+                payload["duration_seconds"] = float(duration_seconds)
+        except Exception as exc:
+            payload.update({"active": False, "reason": f"{type(exc).__name__}: {exc}"})
+    state = [payload]
+    dist.broadcast_object_list(state, src=0)
+    return state[0]
 
 
 def _checkpoint_roundtrip(model, optimizer, loss_fn, image_batches, label_batches, args, device, rank):
@@ -278,7 +522,7 @@ def _checkpoint_roundtrip(model, optimizer, loss_fn, image_batches, label_batche
         checkpoint_path = Path(args.checkpoint_path)
         try:
             raw_model = model.module
-            optimizer_step = args.warmup_steps + args.measure_steps
+            optimizer_step = args.warmup_steps + getattr(args, "completed_steps", args.measure_steps)
 
             save_start = time.perf_counter()
             model_state = _to_cpu(raw_model.state_dict())
@@ -397,7 +641,11 @@ def main():
 
     torch.cuda.set_device(local_rank)
     device = torch.device("cuda", local_rank)
-    dist.init_process_group(backend="nccl", device_id=device)
+    dist.init_process_group(
+        backend="nccl",
+        device_id=device,
+        timeout=datetime.timedelta(seconds=args.collective_timeout_seconds),
+    )
 
     torch.manual_seed(2026)
     torch.cuda.manual_seed_all(2026)
@@ -412,14 +660,20 @@ def main():
     loss_fn = torch.nn.CrossEntropyLoss()
 
     rocal_loader = None
+    validation_loader = None
     data_loader_images_per_sec = None
     if args.data_mode == "rocal":
-        rocal_loader = _build_rocal_loader(args, rank, world_size)
+        rocal_loader = _build_rocal_loader(args, rank, world_size, split="train")
+        if args.eval_enabled:
+            validation_loader = _build_rocal_loader(args, rank, world_size, split="val")
         data_loader_images_per_sec = _measure_rocal_loader(rocal_loader, args, device)
-        image_batches, label_batches = _next_rocal_batches(
+        rocal_loader.reset()
+        image_batches, label_batches = _distributed_next_rocal_batches(
             rocal_loader,
             args.gradient_accumulation_steps,
             args.channels_last,
+            device,
+            args.augmentation == "heavy",
         )
     else:
         generator = torch.Generator(device=device)
@@ -448,13 +702,16 @@ def main():
         if args.channels_last:
             image_batches = [images.contiguous(memory_format=torch.channels_last) for images in image_batches]
 
+    tracker, codecarbon = _start_codecarbon(args, rank, world_size)
     dist.barrier()
     for _ in range(args.warmup_steps):
         if rocal_loader is not None:
-            image_batches, label_batches = _next_rocal_batches(
+            image_batches, label_batches = _distributed_next_rocal_batches(
                 rocal_loader,
                 args.gradient_accumulation_steps,
                 args.channels_last,
+                device,
+                args.augmentation == "heavy",
             )
         _train_step(
             model,
@@ -467,19 +724,45 @@ def main():
     torch.cuda.synchronize(device)
     dist.barrier()
     torch.cuda.reset_peak_memory_stats(device)
+    if rocal_loader is not None:
+        rocal_loader.reset()
 
     local_times = []
     losses = []
+    loss_time_series = []
+    milestone_losses = {}
+    evaluations = []
     all_finite = True
     used_before_mb = _device_used_mb(device)
     window_start = time.perf_counter()
-    for _ in range(args.measure_steps):
+    milestones = {int(value) for value in args.milestone_steps.split(",") if value.strip()}
+    steps_per_epoch = (
+        max(
+            1,
+            math.ceil(len(rocal_loader) / args.gradient_accumulation_steps),
+        )
+        if rocal_loader is not None
+        else None
+    )
+    target_steps = args.measure_steps
+    if args.epochs is not None:
+        if rocal_loader is None:
+            raise ValueError("epoch-based modes require rocAL data")
+        target_steps = steps_per_epoch * args.epochs
+    step = 0
+    while step < target_steps:
+        if args.max_duration_seconds is not None and time.perf_counter() - window_start >= args.max_duration_seconds:
+            break
+        if rocal_loader is not None and steps_per_epoch and step and step % steps_per_epoch == 0:
+            rocal_loader.reset()
         wall_start = time.perf_counter()
         if rocal_loader is not None:
-            image_batches, label_batches = _next_rocal_batches(
+            image_batches, label_batches = _distributed_next_rocal_batches(
                 rocal_loader,
                 args.gradient_accumulation_steps,
                 args.channels_last,
+                device,
+                args.augmentation == "heavy",
             )
         start = torch.cuda.Event(enable_timing=True)
         stop = torch.cuda.Event(enable_timing=True)
@@ -498,8 +781,25 @@ def main():
             (time.perf_counter() - wall_start) * 1000.0 if rocal_loader is not None else float(start.elapsed_time(stop))
         )
         loss_value = float(loss.detach())
+        if args.run_mode != "perf":
+            loss_value = _reduce_mean(loss_value, world_size, device)
         losses.append(loss_value)
+        step += 1
+        elapsed = time.perf_counter() - window_start
+        if step % args.loss_curve_sample_every == 0:
+            loss_time_series.append({"step": step, "loss": loss_value, "time_seconds": elapsed})
+        if step in milestones:
+            milestone_losses[str(step)] = loss_value
         all_finite = all_finite and math.isfinite(loss_value)
+        epoch_boundary = steps_per_epoch and step % steps_per_epoch == 0
+        if validation_loader is not None and epoch_boundary and (step // steps_per_epoch) % args.eval_every_epochs == 0:
+            evaluation = _evaluate(model, validation_loader, loss_fn, args, device)
+            evaluation.update({"step": step, "time_seconds": elapsed})
+            evaluations.append(evaluation)
+    if validation_loader is not None and (not evaluations or evaluations[-1]["step"] != step):
+        evaluation = _evaluate(model, validation_loader, loss_fn, args, device)
+        evaluation.update({"step": step, "time_seconds": time.perf_counter() - window_start})
+        evaluations.append(evaluation)
     torch.cuda.synchronize(device)
     measured_window_s = _reduce_max(time.perf_counter() - window_start, device)
     used_after_mb = _device_used_mb(device)
@@ -520,16 +820,24 @@ def main():
     dist.all_reduce(reserved, op=dist.ReduceOp.MAX)
     dist.all_reduce(used, op=dist.ReduceOp.MAX)
 
-    checkpoint_metrics = _checkpoint_roundtrip(
-        model,
-        optimizer,
-        loss_fn,
-        image_batches,
-        label_batches,
-        args,
-        device,
-        rank,
+    args.completed_steps = step
+    checkpoint_metrics = (
+        _checkpoint_roundtrip(
+            model,
+            optimizer,
+            loss_fn,
+            image_batches,
+            label_batches,
+            args,
+            device,
+            rank,
+        )
+        if args.checkpoint_path
+        else {}
     )
+    codecarbon = _stop_codecarbon(tracker, codecarbon, rank)
+    if args.codecarbon_required and not codecarbon.get("active"):
+        raise RuntimeError(f"required CodeCarbon tracking failed: {codecarbon.get('reason')}")
 
     artifact_error = ""
     if rank == 0:
@@ -537,9 +845,37 @@ def main():
             ordered = sorted(critical_times)
             mean_ms = statistics.fmean(critical_times)
             global_batch = args.batch_size * args.gradient_accumulation_steps * world_size
-            images_per_sec = global_batch * args.measure_steps / measured_window_s
+            total_images = global_batch * step
+            images_per_sec = total_images / measured_window_s
             images_per_sec_per_gpu = images_per_sec / world_size
             tflops_per_sec_per_gpu = images_per_sec_per_gpu * args.training_flops_per_image / 1e12
+            loss_values = [point["loss"] for point in loss_time_series]
+            x_mean = (len(loss_values) - 1) / 2.0 if loss_values else 0.0
+            y_mean = statistics.fmean(loss_values) if loss_values else 0.0
+            slope_denominator = sum((index - x_mean) ** 2 for index in range(len(loss_values)))
+            slope = (
+                sum((index - x_mean) * (value - y_mean) for index, value in enumerate(loss_values)) / slope_denominator
+                if slope_denominator
+                else 0.0
+            )
+            convergence = None
+            if args.convergence_top1 is not None or args.convergence_eval_loss is not None:
+                convergence = next(
+                    (
+                        item
+                        for item in evaluations
+                        if (args.convergence_top1 is None or item["top1_accuracy_pct"] >= args.convergence_top1)
+                        and (args.convergence_eval_loss is None or item["eval_loss"] <= args.convergence_eval_loss)
+                    ),
+                    None,
+                )
+            final_evaluation = evaluations[-1] if evaluations else {}
+            codecarbon_metrics = {}
+            if codecarbon.get("active") and "emissions_kg_co2eq" in codecarbon:
+                codecarbon_metrics = {
+                    "codecarbon_tracking_active": 1.0,
+                    "emissions_kg_co2eq": codecarbon["emissions_kg_co2eq"],
+                }
             artifact = {
                 "schema_version": 1,
                 "workload": "W1",
@@ -551,13 +887,23 @@ def main():
                 "gradient_accumulation_steps": args.gradient_accumulation_steps,
                 "effective_global_batch_size": global_batch,
                 "world_size": world_size,
+                "phase": args.phase,
+                "run_mode": args.run_mode,
                 "synthetic_data": args.data_mode == "synthetic",
                 "data_mode": args.data_mode,
+                "rocal_device": args.rocal_device,
+                "augmentation": args.augmentation,
                 "dataset_path": args.dataset_path,
                 "torch_version": torch.__version__,
                 "hip_version": torch.version.hip,
                 "device": torch.cuda.get_device_name(device),
                 "measurement_window_s": measured_window_s,
+                "completed_steps": step,
+                "completed_epochs": step // steps_per_epoch if steps_per_epoch else None,
+                "loss_time_series": loss_time_series,
+                "milestone_losses": milestone_losses,
+                "evaluations": evaluations,
+                "codecarbon": codecarbon,
                 "training_flops_per_image": args.training_flops_per_image,
                 "peak_tflops_per_gpu": args.peak_tflops_per_gpu,
                 "step_times_ms": critical_times,
@@ -580,6 +926,20 @@ def main():
                     **checkpoint_metrics,
                     "loss_initial": loss_initial,
                     "loss_final": loss_final,
+                    "loss_curve_points": len(loss_time_series),
+                    "loss_curve_decreased": float(
+                        len(loss_time_series) >= args.loss_curve_minimum_points and slope < 0
+                    ),
+                    **final_evaluation,
+                    **(
+                        {
+                            "convergence_step": convergence["step"],
+                            "convergence_time_seconds": convergence["time_seconds"],
+                        }
+                        if convergence is not None
+                        else {}
+                    ),
+                    **codecarbon_metrics,
                 },
             }
             output_path = Path(args.output)

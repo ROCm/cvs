@@ -34,6 +34,30 @@ def test_margin_shown_when_record_only_and_spec_present():
     assert "above gate" in throughput["margin"]
 
 
+def test_info_spec_without_value_has_no_bar_or_margin():
+    variant = SimpleNamespace(
+        enforce_thresholds=False,
+        thresholds={
+            "ISL=1024,OSL=1024,TP=8,CONC=128": {
+                "client.output_throughput": {"kind": "info"},
+            },
+        },
+        cell_key=lambda isl, osl, conc: f"ISL={isl},OSL={osl},TP=8,CONC={conc}",
+    )
+    cell = build_cell_record(
+        generic_inference_report_config(),
+        key=("org/example-model", "mi300x", "1024", "1024", "default", 128),
+        host="10.0.0.1",
+        actuals={"client.output_throughput": 1200.0},
+        variant_config=variant,
+        lifecycle_report={},
+        multi_host=False,
+    )
+    throughput = next(m for m in cell["metrics"] if m["metric"] == "client.output_throughput")
+    assert throughput["bar_pct"] is None
+    assert throughput["margin"] is None
+
+
 def test_resolve_pytest_nodeids_for_cell():
     config = generic_inference_report_config()
     lifecycle = {

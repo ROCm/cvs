@@ -1,18 +1,21 @@
 # PyTorch Vision training
 
 `pytorch_vision_training` runs public torchvision training workloads in an AMD
-ROCm PyTorch container. The first workload is W1:
+ROCm PyTorch container. W1 has phased synthetic-performance and real
+ImageNet/rocAL coverage:
 
 - ResNet-50 with random initialization
-- ImageNet-shaped synthetic input (`3 × 224 × 224`, 1000 classes)
+- synthetic input or streaming ImageNet-1k train/validation input
 - BF16 autocast and channels-last tensors
 - one MI325X node with eight DDP ranks
 - SGD with momentum
-- matched GA=1 and GA=4 sweeps at global batch 2048
+- smoke, performance, one-epoch, 5k-step, protected 90-epoch, and protected
+  24-hour run modes
 
-The synthetic batch is created once on each GPU. This intentionally measures the
+In `perf` mode the synthetic batch is created once on each GPU. This intentionally measures the
 model, optimizer, and DDP path without storage or DataLoader variance. It does
-not measure ImageNet accuracy or input-pipeline performance.
+not measure ImageNet accuracy or input-pipeline performance. Real-data modes
+stream rocAL batches and validation without retaining all images.
 
 ## Container
 
@@ -64,10 +67,14 @@ The same directory contains `training.log`. The structured artifact records:
 - gradient-accumulation overhead against the GA=1 fixed-global-batch baseline
 - initial and final measured loss
 - raw per-step critical-path times and runtime metadata
+- sampled loss/time points and losses at steps 100/500/1000/5000
+- streamed evaluation loss, globally reduced Top-1/Top-5 accuracy, and sample count
+- convergence step/time when a target is configured
+- continuous AMD-SMI memory/utilization/energy and CodeCarbon 3.2.4 emissions
 
 Step throughput uses the slowest rank for each measured step. Warmup steps are
-excluded, and the benchmark adds no per-step barrier or metric collective to
-the timed region. Total throughput uses the slowest rank's wall-clock duration
+excluded. Accuracy is never formed by averaging rank percentages: ranks SUM
+correct counts, loss sums, and sample counts. Total throughput uses the slowest rank's wall-clock duration
 for the complete measured window, so Python launch overhead and rank skew are
 included. CVS also scans host dmesg over the bounded training window for GPU,
 driver, and hardware errors.
@@ -105,8 +112,9 @@ pytorch_vision_training_run_deck_summary.html
 ```
 
 The run deck presents the pinned image and topology, lifecycle timing, threshold
-status by throughput/latency/memory tier, per-cell gate margins, and the full
-metric table. It is render-only: pytest metric rows remain the source of
+status by throughput, latency, accuracy, convergence, data, energy, and
+continuous-memory tier, per-cell gate margins, charts, artifact links, and the
+full metric table. It is render-only: pytest metric rows remain the source of
 pass/fail.
 
 ## Thresholds
@@ -131,8 +139,15 @@ TFLOPS, MFU, checkpoint I/O time, mean/p50 timing, and loss values remain
 informational. Recalibrate the gated limits when changing the image, GPU
 architecture, batch size, storage target, or workload.
 
-## Future data support
+## Phased profiles and safety
 
-A later workload can mount an operator-provided ImageNet directory through the
-container config and add DataLoader/accuracy stages. ImageNet is not downloaded
-by this suite because its distribution requires separate access terms.
+The config directory provides smoke, rocAL performance, one-epoch, and 5k-step
+profiles plus disabled 90-epoch and 24-hour profiles. Long profiles ship with
+both `training.enabled=false` and `training.allow_long_run=false`; both settings
+must be changed explicitly before they can run. ImageNet is not downloaded by
+CVS because its distribution requires separate access terms.
+
+Real-data smoke, loss-curve, and convergence checks have separate pytest rows.
+Numerical accuracy, convergence, data, and energy values are record-only until
+calibrated. Evaluation completion, finite values, positive sample counts,
+AMDSMI activation when requested, and result artifacts are structural checks.

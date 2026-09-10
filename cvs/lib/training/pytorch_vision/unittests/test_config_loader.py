@@ -114,6 +114,55 @@ class TestVisionConfigLoader(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "checkpoint_enabled"):
             self._load(config=config)
 
+    def test_loads_explicit_phase_and_iterator_modes(self):
+        config = _config()
+        config["training"].update(
+            {
+                "phase": "smoke",
+                "run_mode": "smoke",
+                "eval_enabled": True,
+            }
+        )
+        config["training"]["sweeps"][0].update(
+            {
+                "data_mode": "rocal",
+                "dataset_path": "/datasets/imagenet",
+                "rocal_device": "cpu",
+                "augmentation": "heavy",
+            }
+        )
+        variant = self._load(config=config)
+        self.assertEqual(variant.training.run_mode, "smoke")
+        self.assertEqual(variant.training.enabled_sweeps()[0].rocal_device, "cpu")
+        self.assertEqual(variant.training.enabled_sweeps()[0].augmentation, "heavy")
+
+    def test_protects_long_profiles(self):
+        config = _config()
+        config["training"].update(
+            {
+                "run_mode": "train_90epoch",
+                "phase": "accuracy",
+                "epochs": 90,
+                "eval_enabled": True,
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "protected long run"):
+            self._load(config=config)
+
+    def test_allows_disabled_long_profile(self):
+        config = _config()
+        config["training"].update(
+            {
+                "enabled": False,
+                "run_mode": "soak_24h",
+                "phase": "soak",
+                "max_duration_seconds": 86400,
+                "eval_enabled": True,
+            }
+        )
+        variant = self._load(config=config)
+        self.assertFalse(variant.training.enabled)
+
     def test_rejects_missing_gated_threshold_when_enforced(self):
         thresholds = _thresholds()
         next(iter(thresholds.values())).pop("training.images_per_sec")

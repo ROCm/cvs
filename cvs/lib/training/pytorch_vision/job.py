@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import gzip
 import json
 import re
 import shlex
@@ -10,7 +11,8 @@ import time
 import uuid
 from pathlib import Path
 
-from cvs.lib.training.pytorch_vision.utils.metrics import to_training_metrics
+from cvs.lib.training.pytorch_vision.utils.metrics import parse_codecarbon_metrics, to_training_metrics
+from cvs.lib.utils.gpu import agg_readings, start_gpu_poller, stop_and_collect_gpu_poller
 
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -72,13 +74,16 @@ class PyTorchVisionJob:
         self.log_path = f"{self.output_dir}/training.log"
         self.checkpoint_path = f"{self.output_dir}/checkpoint.pt"
         self.training_start_time = None
+        self.monitor_metrics = {}
+        self.monitor_unavailable = []
+        self.run_elapsed_seconds = None
 
     def stage_benchmark(self):
         source = Path(__file__).with_name("benchmark.py").read_bytes()
-        encoded = base64.b64encode(source).decode("ascii")
+        encoded = base64.b64encode(gzip.compress(source, compresslevel=9)).decode("ascii")
         command = (
             f"mkdir -p {shlex.quote(self.output_dir)} && "
-            f"printf %s {shlex.quote(encoded)} | base64 -d > {shlex.quote(self.BENCHMARK_PATH)}"
+            f"printf %s {shlex.quote(encoded)} | base64 -d | gzip -d > {shlex.quote(self.BENCHMARK_PATH)}"
         )
         result = self.orch.exec(command, timeout=30, detailed=True, print_console=False)
         self._require_success(result, "stage PyTorch Vision benchmark")
@@ -154,6 +159,16 @@ class PyTorchVisionJob:
             str(training.warmup_steps),
             "--measure-steps",
             str(training.steps),
+            "--run-mode",
+            training.run_mode,
+            "--phase",
+            training.phase,
+            "--eval-every-epochs",
+            str(training.eval_every_epochs),
+            "--eval-sample-count",
+            str(training.eval_sample_count),
+            "--milestone-steps",
+            ",".join(str(step) for step in training.milestone_steps),
             "--learning-rate",
             str(training.learning_rate),
             "--momentum",
@@ -166,6 +181,10 @@ class PyTorchVisionJob:
             str(sweep.training_flops_per_image),
             "--data-mode",
             sweep.data_mode,
+            "--rocal-device",
+            sweep.rocal_device,
+            "--augmentation",
+            sweep.augmentation,
             "--rocal-num-threads",
             str(sweep.rocal_num_threads),
             "--loader-warmup-steps",
@@ -176,7 +195,37 @@ class PyTorchVisionJob:
             str(training.peak_tflops_per_gpu),
             "--output",
             self.result_path,
+            "--loss-curve-sample-every",
+            str(training.loss_curve.sample_every_steps),
+            "--loss-curve-minimum-points",
+            str(training.loss_curve.minimum_points),
+            "--collective-timeout-seconds",
+            str(min(120, training.timeout_s)),
         ]
+        if training.epochs is not None:
+            args.extend(["--epochs", str(training.epochs)])
+        if training.max_duration_seconds is not None:
+            args.extend(["--max-duration-seconds", str(training.max_duration_seconds)])
+        if training.eval_enabled:
+            args.append("--eval-enabled")
+        if training.eval_steps is not None:
+            args.extend(["--eval-steps", str(training.eval_steps)])
+        if training.convergence.target_top1_pct is not None:
+            args.extend(["--convergence-top1", str(training.convergence.target_top1_pct)])
+        if training.convergence.target_eval_loss is not None:
+            args.extend(["--convergence-eval-loss", str(training.convergence.target_eval_loss)])
+        if training.codecarbon.enabled:
+            args.extend(
+                [
+                    "--codecarbon-enabled",
+                    "--codecarbon-measure-power-secs",
+                    str(training.codecarbon.measure_power_secs),
+                ]
+            )
+            if training.codecarbon.required:
+                args.append("--codecarbon-required")
+            if training.codecarbon.country_iso_code:
+                args.extend(["--codecarbon-country-iso-code", training.codecarbon.country_iso_code])
         if training.checkpoint_enabled:
             args.extend(
                 [
@@ -196,6 +245,7 @@ class PyTorchVisionJob:
         exports = {
             "OMP_NUM_THREADS": str(training.omp_num_threads),
             "PYTHONUNBUFFERED": "1",
+            "TORCH_NCCL_ASYNC_ERROR_HANDLING": "1",
             **training.env_vars,
         }
         export_lines = []
@@ -215,14 +265,54 @@ class PyTorchVisionJob:
         )
 
     def run_benchmark(self):
+        if not self.variant.training.enabled:
+            raise RuntimeError("this PyTorch Vision profile is disabled")
         if self.variant.training.verify_dmesg:
             self.training_start_time = self._host_date()
-        result = self.orch.exec(
-            self.build_command(),
-            timeout=self.variant.training.timeout_s + 60,
-            detailed=True,
+        poller = start_gpu_poller(
+            self.orch,
+            self.sweep.label,
+            poll_interval_s=self.variant.training.gpu_poll_interval_seconds,
+            hard_cap_s=self.variant.training.timeout_s + 120,
         )
+        started = time.monotonic()
+        try:
+            result = self.orch.exec(
+                self.build_command(),
+                timeout=self.variant.training.timeout_s + 60,
+                detailed=True,
+            )
+        finally:
+            self.run_elapsed_seconds = time.monotonic() - started
+            readings = stop_and_collect_gpu_poller(self.orch, poller)
+            self._set_monitor_metrics(readings)
         self._require_success(result, f"run PyTorch Vision sweep {self.sweep_name}")
+
+    def _set_monitor_metrics(self, readings):
+        if not readings:
+            raise RuntimeError("continuous AMD-SMI tracking produced no valid samples")
+        aggregated = agg_readings(readings)
+        required = (
+            "peak_gpu_memory_mb",
+            "gpu_compute_util_pct",
+            "gpu_bandwidth_util_pct",
+        )
+        missing = [name for name in required if aggregated.get(name) is None]
+        if missing:
+            raise RuntimeError(f"continuous AMD-SMI tracking is missing metrics: {missing}")
+        self.monitor_metrics = {
+            "training.continuous_peak_device_memory_mb": aggregated["peak_gpu_memory_mb"],
+            "training.gpu_compute_util_pct": aggregated["gpu_compute_util_pct"],
+            "training.gpu_bandwidth_util_pct": aggregated["gpu_bandwidth_util_pct"],
+        }
+        energies = [reading.get("gpu.energy_j") for reading in readings if reading.get("gpu.energy_j") is not None]
+        if len(energies) >= 2 and energies[-1] >= energies[0]:
+            delta_j = energies[-1] - energies[0]
+            self.monitor_metrics["training.energy_tracking_available"] = 1.0
+            self.monitor_metrics["training.gpu_energy_delta_j"] = delta_j
+        else:
+            self.monitor_metrics["training.energy_tracking_available"] = 0.0
+            self.monitor_unavailable.append("energy")
 
     def scan_dmesg_for_errors(self):
         if not self.variant.training.verify_dmesg:
@@ -288,8 +378,12 @@ class PyTorchVisionJob:
                     self.sweep.batch_size * self.sweep.gradient_accumulation_steps * self.variant.training.gpus_per_node
                 ),
                 "world_size": self.variant.training.gpus_per_node,
+                "phase": self.variant.training.phase,
+                "run_mode": self.variant.training.run_mode,
                 "synthetic_data": self.sweep.data_mode == "synthetic",
                 "data_mode": self.sweep.data_mode,
+                "rocal_device": self.sweep.rocal_device,
+                "augmentation": self.sweep.augmentation,
             }
             mismatches = {
                 key: {"expected": expected, "actual": raw.get(key)}
@@ -298,7 +392,30 @@ class PyTorchVisionJob:
             }
             if mismatches:
                 raise RuntimeError(f"unexpected W1 result metadata on {host}: {mismatches}")
-            parsed[host] = to_training_metrics(raw)
+            metrics = to_training_metrics(raw)
+            if self.variant.training.codecarbon.enabled:
+                metrics.update(
+                    parse_codecarbon_metrics(
+                        raw.get("codecarbon") or {},
+                        self.variant.training.gpus_per_node,
+                    )
+                )
+            metrics.update(self.monitor_metrics)
+            energy_kwh = metrics.get("training.energy_kwh")
+            completed_steps = int(raw.get("completed_steps") or 0)
+            if energy_kwh is not None and energy_kwh > 0 and completed_steps > 0:
+                metrics["training.energy_tracking_available"] = 1.0
+                codecarbon_duration = (raw.get("codecarbon") or {}).get("duration_seconds")
+                if codecarbon_duration is not None and codecarbon_duration > 0:
+                    metrics["training.average_power_w"] = energy_kwh * 3_600_000.0 / codecarbon_duration
+                total_images = (
+                    completed_steps
+                    * self.sweep.batch_size
+                    * self.sweep.gradient_accumulation_steps
+                    * self.variant.training.gpus_per_node
+                )
+                metrics["training.images_per_kwh"] = total_images / energy_kwh
+            parsed[host] = metrics
         return parsed
 
     def stop_training_processes(self):

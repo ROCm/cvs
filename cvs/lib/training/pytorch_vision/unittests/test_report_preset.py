@@ -5,6 +5,7 @@ from cvs.lib.report.inference_html import render_report_html
 from cvs.lib.report.inference_payload import build_inference_report_payload
 from cvs.lib.report.presets.pytorch_vision_training import (
     PYTORCH_VISION_TRAINING_REPORT_CONFIG,
+    _cell_id,
 )
 from cvs.lib.training.pytorch_vision.utils.metrics import METRICS
 
@@ -89,6 +90,25 @@ class TestPyTorchVisionRunDeck(unittest.TestCase):
         self.assertNotIn("ISL=", document)
         self.assertNotIn("TTFT", document)
         self.assertNotIn("tok/s", document)
+
+    def test_rocal_comparison_key_matches_device_and_augmentation(self):
+        cpu = SimpleNamespace(
+            name="cpu-heavy",
+            model="resnet50",
+            precision="BF16",
+            data_mode="rocal",
+            rocal_device="cpu",
+            augmentation="heavy",
+            image_size=224,
+            batch_size=128,
+            gradient_accumulation_steps=1,
+        )
+        gpu = SimpleNamespace(
+            **{**cpu.__dict__, "name": "gpu-standard", "rocal_device": "gpu", "augmentation": "standard"}
+        )
+        variant = SimpleNamespace(training=SimpleNamespace(enabled_sweeps=lambda: [cpu, gpu]))
+        key = ("resnet50", "MI325X", "W1-ROCAL-CPU-HEAVY-BF16-R224", 224, "GA1", 128)
+        self.assertEqual(_cell_id(variant, key), "cpu-heavy")
 
 
 if __name__ == "__main__":

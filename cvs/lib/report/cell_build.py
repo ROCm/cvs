@@ -147,6 +147,7 @@ def build_cell_record(
         full = config.full_metric(short)
         spec = thresholds_cell.get(full)
         actual = actuals.get(full)
+        has_numeric_gate = spec is not None and spec.get("kind") != "info" and "value" in spec
         metrics.append(
             {
                 "label": label,
@@ -155,8 +156,8 @@ def build_cell_record(
                 "unit": config.metric_units.get(short, ""),
                 "spec": spec,
                 "status": metric_pass(full, actual, spec) if enforce and spec else "record",
-                "bar_pct": bar_pct(float(actual), spec) if spec is not None and actual is not None else None,
-                "margin": margin_text(actual, spec) if spec else None,
+                "bar_pct": bar_pct(float(actual), spec) if has_numeric_gate and actual is not None else None,
+                "margin": margin_text(actual, spec) if has_numeric_gate else None,
             }
         )
 

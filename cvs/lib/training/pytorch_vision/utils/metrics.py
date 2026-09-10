@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
 
 
 ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (
@@ -26,7 +26,28 @@ ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (
     ("loss_initial", "-"),
     ("loss_final", "-"),
 )
-OPTIONAL_ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (("data_loader_images_per_sec", "images/s"),)
+OPTIONAL_ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (
+    ("data_loader_images_per_sec", "images/s"),
+    ("top1_accuracy_pct", "%"),
+    ("top5_accuracy_pct", "%"),
+    ("eval_loss", "-"),
+    ("eval_sample_count", "images"),
+    ("eval_completed", "bool"),
+    ("loss_curve_points", "count"),
+    ("loss_curve_decreased", "bool"),
+    ("convergence_step", "step"),
+    ("convergence_time_seconds", "s"),
+    ("continuous_peak_device_memory_mb", "MB"),
+    ("gpu_compute_util_pct", "%"),
+    ("gpu_bandwidth_util_pct", "%"),
+    ("gpu_energy_delta_j", "J"),
+    ("energy_tracking_available", "bool"),
+    ("energy_kwh", "kWh"),
+    ("average_power_w", "W"),
+    ("images_per_kwh", "images/kWh"),
+    ("emissions_kg_co2eq", "kgCO2eq"),
+    ("codecarbon_tracking_active", "bool"),
+)
 DERIVED_METRICS: Tuple[Tuple[str, str], ...] = (("gradient_accumulation_overhead_pct", "%"),)
 METRICS = ARTIFACT_METRICS + OPTIONAL_ARTIFACT_METRICS + DERIVED_METRICS
 
@@ -73,6 +94,19 @@ RESULTS_COLUMNS = (
     ("Initial loss", "training.loss_initial"),
     ("Final loss", "training.loss_final"),
     ("Data loader images/s", "training.data_loader_images_per_sec"),
+    ("Top-1 (%)", "training.top1_accuracy_pct"),
+    ("Top-5 (%)", "training.top5_accuracy_pct"),
+    ("Eval loss", "training.eval_loss"),
+    ("Eval samples", "training.eval_sample_count"),
+    ("Convergence step", "training.convergence_step"),
+    ("Convergence time (s)", "training.convergence_time_seconds"),
+    ("Continuous peak memory (MB)", "training.continuous_peak_device_memory_mb"),
+    ("Compute util (%)", "training.gpu_compute_util_pct"),
+    ("Bandwidth util (%)", "training.gpu_bandwidth_util_pct"),
+    ("Energy tracking", "training.energy_tracking_available"),
+    ("Energy (kWh)", "training.energy_kwh"),
+    ("Images/kWh", "training.images_per_kwh"),
+    ("Emissions (kgCO2eq)", "training.emissions_kg_co2eq"),
 )
 
 METRIC_TIERS = {
@@ -102,6 +136,33 @@ METRIC_TIERS = {
     ),
     "overhead": ("gradient_accumulation_overhead_pct",),
     "data": ("data_loader_images_per_sec",),
+    "accuracy": (
+        "top1_accuracy_pct",
+        "top5_accuracy_pct",
+        "eval_loss",
+        "eval_sample_count",
+        "eval_completed",
+    ),
+    "convergence": (
+        "loss_curve_points",
+        "loss_curve_decreased",
+        "convergence_step",
+        "convergence_time_seconds",
+    ),
+    "continuous-memory": (
+        "continuous_peak_device_memory_mb",
+        "gpu_compute_util_pct",
+        "gpu_bandwidth_util_pct",
+    ),
+    "energy": (
+        "gpu_energy_delta_j",
+        "energy_tracking_available",
+        "energy_kwh",
+        "average_power_w",
+        "images_per_kwh",
+        "emissions_kg_co2eq",
+        "codecarbon_tracking_active",
+    ),
 }
 METRIC_TIER_ORDER = tuple(METRIC_TIERS) + ("record",)
 _TIERED_METRICS = {metric for names in METRIC_TIERS.values() for metric in names}
@@ -129,6 +190,109 @@ def gradient_accumulation_overhead_pct(baseline_step_ms: float, accumulated_step
     if not math.isfinite(accumulated) or accumulated <= 0:
         raise ValueError(f"accumulated step time must be finite and positive, got {accumulated_step_ms!r}")
     return (accumulated / baseline - 1.0) * 100.0
+
+
+def accuracy_from_counts(top1_correct: int, top5_correct: int, sample_count: int) -> Tuple[float, float]:
+    """Convert globally summed correct/sample counts into percentages."""
+    if sample_count <= 0:
+        raise ValueError("distributed accuracy requires a positive sample count")
+    if not 0 <= top1_correct <= top5_correct <= sample_count:
+        raise ValueError("distributed accuracy counts must satisfy 0 <= top1 <= top5 <= samples")
+    return 100.0 * top1_correct / sample_count, 100.0 * top5_correct / sample_count
+
+
+def loss_curve_decreased(losses: Sequence[float], minimum_points: int = 2) -> bool:
+    """Return whether the least-squares loss slope is finite and negative."""
+    if len(losses) < minimum_points:
+        return False
+    values = [float(value) for value in losses]
+    if not all(math.isfinite(value) for value in values):
+        return False
+    x_mean = (len(values) - 1) / 2.0
+    y_mean = sum(values) / len(values)
+    numerator = sum((index - x_mean) * (value - y_mean) for index, value in enumerate(values))
+    denominator = sum((index - x_mean) ** 2 for index in range(len(values)))
+    return denominator > 0 and numerator / denominator < 0
+
+
+def convergence_point(
+    evaluations: Iterable[Dict[str, float]],
+    target_top1_pct: Optional[float] = None,
+    target_eval_loss: Optional[float] = None,
+) -> Optional[Tuple[int, float]]:
+    """Return the first (step, elapsed seconds) satisfying every configured target."""
+    for item in evaluations:
+        top1_ok = target_top1_pct is None or item.get("top1_accuracy_pct", -math.inf) >= target_top1_pct
+        loss_ok = target_eval_loss is None or item.get("eval_loss", math.inf) <= target_eval_loss
+        if top1_ok and loss_ok:
+            return int(item["step"]), float(item["time_seconds"])
+    return None
+
+
+def codecarbon_tracking_active(payload: Dict[str, Any], expected_gpus: int) -> bool:
+    """Validate explicit CodeCarbon/AMDSMI activation evidence."""
+    return (
+        payload.get("version") == "3.2.4"
+        and payload.get("tracker") == "amdsmi"
+        and int(payload.get("gpu_count") or 0) >= expected_gpus
+        and payload.get("active") is True
+    )
+
+
+def parse_codecarbon_metrics(payload: Dict[str, Any], expected_gpus: int) -> Dict[str, float]:
+    """Parse CodeCarbon output without treating unavailable tracking as zero usage."""
+    if not codecarbon_tracking_active(payload, expected_gpus):
+        reason = payload.get("reason") or "AMDSMI tracking is not active"
+        raise ValueError(f"CodeCarbon metrics unavailable: {reason}")
+    emissions = float(payload["emissions_kg_co2eq"])
+    if not math.isfinite(emissions) or emissions < 0:
+        raise ValueError(f"invalid CodeCarbon emissions value: {emissions!r}")
+    metrics = {
+        "training.codecarbon_tracking_active": 1.0,
+        "training.emissions_kg_co2eq": emissions,
+    }
+    energy_kwh = payload.get("energy_kwh")
+    if energy_kwh is not None:
+        energy_kwh = float(energy_kwh)
+        if not math.isfinite(energy_kwh) or energy_kwh <= 0:
+            raise ValueError(f"invalid CodeCarbon energy value: {energy_kwh!r}")
+        metrics["training.energy_kwh"] = energy_kwh
+    return metrics
+
+
+def required_metrics_for_run(run_mode: str, data_mode: str, codecarbon_enabled: bool = False) -> set[str]:
+    """Return metrics whose absence is a structural failure for this run."""
+    required = set(GATED_METRICS)
+    required.update(
+        {
+            "continuous_peak_device_memory_mb",
+            "gpu_compute_util_pct",
+            "gpu_bandwidth_util_pct",
+            "energy_tracking_available",
+        }
+    )
+    if data_mode == "rocal":
+        required.add("data_loader_images_per_sec")
+    if run_mode != "perf":
+        required.update(
+            {
+                "top1_accuracy_pct",
+                "top5_accuracy_pct",
+                "eval_loss",
+                "eval_sample_count",
+                "eval_completed",
+            }
+        )
+    if run_mode not in {"smoke", "perf"}:
+        required.update(
+            {
+                "loss_curve_points",
+                "loss_curve_decreased",
+            }
+        )
+    if codecarbon_enabled:
+        required.add("codecarbon_tracking_active")
+    return required
 
 
 def to_training_metrics(raw: Dict[str, Any]) -> Dict[str, float]:
@@ -162,4 +326,10 @@ def to_training_metrics(raw: Dict[str, Any]) -> Dict[str, float]:
         if not math.isfinite(numeric):
             raise ValueError(f"vision metric {name!r} is not finite: {value!r}")
         out[f"training.{name}"] = numeric
+    if "eval_completed" in metrics and out["training.eval_completed"] != 1.0:
+        raise ValueError("vision evaluation did not complete")
+    if "eval_sample_count" in metrics and out["training.eval_sample_count"] <= 0:
+        raise ValueError("vision evaluation sample count must be positive")
+    if "codecarbon_tracking_active" in metrics and out["training.codecarbon_tracking_active"] != 1.0:
+        raise ValueError("vision artifact claims inactive CodeCarbon tracking")
     return out

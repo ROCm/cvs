@@ -5,13 +5,58 @@ from __future__ import annotations
 import re
 import warnings
 from collections import Counter
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import Field, model_validator
 from typing_extensions import Literal
 
 from cvs.lib.training.pytorch_vision.utils.metrics import GATED_METRICS
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
+
+
+RUN_MODES = (
+    "smoke",
+    "perf",
+    "train_1epoch",
+    "train_5k",
+    "train_90epoch",
+    "soak_24h",
+)
+LONG_RUN_MODES = {"train_90epoch", "soak_24h"}
+
+
+class LossCurveConfig(_Forbid):
+    enabled: bool = True
+    sample_every_steps: int = Field(default=1, ge=1)
+    minimum_points: int = Field(default=2, ge=2)
+    require_decrease: bool = True
+
+
+class ConvergenceConfig(_Forbid):
+    enabled: bool = False
+    target_top1_pct: Optional[float] = Field(default=None, ge=0, le=100)
+    target_eval_loss: Optional[float] = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_target(self):
+        if self.enabled and self.target_top1_pct is None and self.target_eval_loss is None:
+            raise ValueError("enabled convergence tracking requires a target")
+        return self
+
+
+class CodeCarbonConfig(_Forbid):
+    enabled: bool = False
+    required: bool = False
+    version: Literal["3.2.4"] = "3.2.4"
+    tracker: Literal["amdsmi"] = "amdsmi"
+    measure_power_secs: int = Field(default=5, ge=1)
+    country_iso_code: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _validate_required(self):
+        if self.required and not self.enabled:
+            raise ValueError("codecarbon.required=true requires codecarbon.enabled=true")
+        return self
 
 
 class VisionSweep(_Forbid):
@@ -26,6 +71,8 @@ class VisionSweep(_Forbid):
     training_flops_per_image: float = Field(gt=0)
     data_mode: Literal["synthetic", "rocal"] = "synthetic"
     dataset_path: str = ""
+    rocal_device: Literal["cpu", "gpu"] = "gpu"
+    augmentation: Literal["standard", "heavy"] = "standard"
     rocal_num_threads: int = Field(default=8, ge=1)
     loader_warmup_steps: int = Field(default=5, ge=1)
     loader_benchmark_steps: int = Field(default=20, ge=1)
@@ -61,9 +108,27 @@ def validate_sweep_selector(sweep_names, enabled_names, sweep_labels=None) -> No
 
 class VisionTrainingConfig(_Forbid):
     distributed: Literal[False] = False
+    enabled: bool = True
+    allow_long_run: bool = False
+    phase: Literal["smoke", "performance", "accuracy", "soak"] = "performance"
+    run_mode: Literal[
+        "smoke",
+        "perf",
+        "train_1epoch",
+        "train_5k",
+        "train_90epoch",
+        "soak_24h",
+    ] = "perf"
     gpus_per_node: int = Field(default=8, gt=0)
     warmup_steps: int = Field(default=10, ge=1)
     steps: int = Field(default=50, ge=1)
+    epochs: Optional[int] = Field(default=None, ge=1)
+    max_duration_seconds: Optional[int] = Field(default=None, ge=1)
+    eval_enabled: bool = False
+    eval_every_epochs: int = Field(default=1, ge=1)
+    eval_steps: Optional[int] = Field(default=None, ge=1)
+    eval_sample_count: int = Field(default=50_000, ge=1)
+    milestone_steps: List[int] = Field(default_factory=lambda: [100, 500, 1000, 5000])
     num_classes: int = Field(default=1000, gt=1)
     channels_last: bool = True
     learning_rate: float = Field(default=0.1, gt=0)
@@ -76,6 +141,10 @@ class VisionTrainingConfig(_Forbid):
     checkpoint_enabled: Literal[True] = True
     checkpoint_keep_file: bool = False
     checkpoint_loss_tolerance: float = Field(default=1e-5, ge=0)
+    loss_curve: LossCurveConfig = Field(default_factory=LossCurveConfig)
+    convergence: ConvergenceConfig = Field(default_factory=ConvergenceConfig)
+    codecarbon: CodeCarbonConfig = Field(default_factory=CodeCarbonConfig)
+    gpu_poll_interval_seconds: float = Field(default=5.0, gt=0)
     env_vars: Dict[str, str] = Field(default_factory=dict)
     error_patterns: Dict[str, str] = Field(default_factory=dict)
     sweeps: List[VisionSweep]
@@ -117,6 +186,35 @@ class VisionTrainingConfig(_Forbid):
                 re.compile(pattern)
             except re.error as exc:
                 raise ValueError(f"training.error_patterns[{name!r}] is invalid: {exc}") from exc
+        if len(set(self.milestone_steps)) != len(self.milestone_steps):
+            raise ValueError("training.milestone_steps must not contain duplicates")
+        if any(b <= a for a, b in zip(self.milestone_steps, self.milestone_steps[1:])):
+            raise ValueError("training.milestone_steps must be strictly increasing")
+        if self.run_mode == "train_1epoch" and self.epochs != 1:
+            raise ValueError("train_1epoch requires training.epochs=1")
+        if self.run_mode == "train_90epoch" and self.epochs != 90:
+            raise ValueError("train_90epoch requires training.epochs=90")
+        if self.run_mode == "train_5k" and self.steps < 5000:
+            raise ValueError("train_5k requires training.steps>=5000")
+        if self.run_mode == "soak_24h" and self.max_duration_seconds != 86400:
+            raise ValueError("soak_24h requires training.max_duration_seconds=86400")
+        expected_phase = {
+            "smoke": "smoke",
+            "perf": "performance",
+            "train_1epoch": "accuracy",
+            "train_5k": "accuracy",
+            "train_90epoch": "accuracy",
+            "soak_24h": "soak",
+        }[self.run_mode]
+        if self.phase != expected_phase:
+            raise ValueError(f"{self.run_mode} requires training.phase={expected_phase!r}")
+        if self.enabled and self.run_mode in LONG_RUN_MODES and not self.allow_long_run:
+            raise ValueError(
+                f"{self.run_mode} is a protected long run; set training.enabled=true and "
+                "training.allow_long_run=true explicitly"
+            )
+        if self.run_mode != "perf" and not self.eval_enabled:
+            raise ValueError(f"{self.run_mode} requires training.eval_enabled=true")
         return self
 
     def enabled_sweeps(self) -> List[VisionSweep]:

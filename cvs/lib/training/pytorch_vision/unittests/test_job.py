@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from cvs.lib.training.pytorch_vision.job import _BoundedHostHandle, PyTorchVisionJob
-from cvs.lib.training.pytorch_vision.utils.metrics import METRICS
+from cvs.lib.training.pytorch_vision.utils.metrics import ARTIFACT_METRICS
 
 
 class FakeOrchestrator:
@@ -32,14 +32,26 @@ def _variant():
         training_flops_per_image=24600000000,
         data_mode="synthetic",
         dataset_path="",
+        rocal_device="gpu",
+        augmentation="standard",
         rocal_num_threads=8,
         loader_warmup_steps=5,
         loader_benchmark_steps=20,
     )
     training = SimpleNamespace(
+        enabled=True,
+        phase="performance",
+        run_mode="perf",
         gpus_per_node=8,
         warmup_steps=10,
         steps=50,
+        epochs=None,
+        max_duration_seconds=None,
+        eval_enabled=False,
+        eval_every_epochs=1,
+        eval_steps=None,
+        eval_sample_count=50000,
+        milestone_steps=[100, 500, 1000, 5000],
         num_classes=1000,
         channels_last=True,
         learning_rate=0.1,
@@ -52,6 +64,15 @@ def _variant():
         checkpoint_enabled=True,
         checkpoint_keep_file=False,
         checkpoint_loss_tolerance=1e-5,
+        loss_curve=SimpleNamespace(sample_every_steps=1, minimum_points=2),
+        convergence=SimpleNamespace(target_top1_pct=None, target_eval_loss=None),
+        codecarbon=SimpleNamespace(
+            enabled=False,
+            required=False,
+            measure_power_secs=5,
+            country_iso_code=None,
+        ),
+        gpu_poll_interval_seconds=5,
         env_vars={"NCCL_DEBUG": "WARN"},
         error_patterns={"Process crash": "SIGSEGV"},
     )
@@ -74,9 +95,13 @@ def _artifact():
         "gradient_accumulation_steps": 1,
         "effective_global_batch_size": 1024,
         "world_size": 8,
+        "phase": "performance",
+        "run_mode": "perf",
         "synthetic_data": True,
         "data_mode": "synthetic",
-        "metrics": {name: index + 1.0 for index, (name, _unit) in enumerate(METRICS)},
+        "rocal_device": "gpu",
+        "augmentation": "standard",
+        "metrics": {name: index + 1.0 for index, (name, _unit) in enumerate(ARTIFACT_METRICS)},
     }
 
 
@@ -175,13 +200,43 @@ class TestPyTorchVisionJob(unittest.TestCase):
 
     def test_rejects_nonzero_remote_exit(self):
         response = {"node0": {"exit_code": 7, "output": "torchrun failed"}}
-        with self.assertRaisesRegex(RuntimeError, "torchrun failed"):
+        readings = [
+            {"gpu.used_vram": 1, "gpu.gfx_activity": 2, "gpu.umc_activity": 3, "gpu.energy_j": 1},
+            {"gpu.used_vram": 2, "gpu.gfx_activity": 3, "gpu.umc_activity": 4, "gpu.energy_j": 2},
+        ]
+        with (
+            patch("cvs.lib.training.pytorch_vision.job.start_gpu_poller"),
+            patch("cvs.lib.training.pytorch_vision.job.stop_and_collect_gpu_poller", return_value=readings),
+            self.assertRaisesRegex(RuntimeError, "torchrun failed"),
+        ):
             PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").run_benchmark()
 
     def test_run_captures_host_timestamp(self):
         orch = FakeOrchestrator()
-        PyTorchVisionJob(orch, _variant(), "w1").run_benchmark()
+        readings = [
+            {"gpu.used_vram": 1, "gpu.gfx_activity": 2, "gpu.umc_activity": 3, "gpu.energy_j": 1},
+            {"gpu.used_vram": 2, "gpu.gfx_activity": 3, "gpu.umc_activity": 4, "gpu.energy_j": 2},
+        ]
+        with (
+            patch("cvs.lib.training.pytorch_vision.job.start_gpu_poller"),
+            patch("cvs.lib.training.pytorch_vision.job.stop_and_collect_gpu_poller", return_value=readings),
+        ):
+            PyTorchVisionJob(orch, _variant(), "w1").run_benchmark()
         self.assertEqual(orch.commands[0][0], "date")
+
+    def test_monitor_marks_unsupported_energy_unavailable(self):
+        job = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1")
+        job.run_elapsed_seconds = 10
+        job._set_monitor_metrics(
+            [{"gpu.used_vram": 2, "gpu.gfx_activity": 3, "gpu.umc_activity": 4, "gpu.energy_j": None}]
+        )
+        self.assertEqual(job.monitor_metrics["training.energy_tracking_available"], 0.0)
+        self.assertNotIn("training.energy_kwh", job.monitor_metrics)
+
+    def test_monitor_rejects_inactive_amd_tracking(self):
+        job = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1")
+        with self.assertRaisesRegex(RuntimeError, "no valid samples"):
+            job._set_monitor_metrics([])
 
     def test_dmesg_scan_can_be_disabled(self):
         variant = _variant()

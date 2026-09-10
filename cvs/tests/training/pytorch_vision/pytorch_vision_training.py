@@ -20,6 +20,7 @@ from cvs.lib.training.pytorch_vision.utils.metrics import (
     METRICS,
     METRIC_UNITS,
     gradient_accumulation_overhead_pct,
+    required_metrics_for_run,
 )
 from cvs.lib.utils.verdict import evaluate_all
 
@@ -119,12 +120,9 @@ def test_verify_environment(orch, variant_config, lifecycle, request):
     log.info("PyTorch Vision environment: %s", summary)
 
 
-def test_training(orch, variant_config, sweep_name, training_results, inf_res_dict, lifecycle, request):
-    if lifecycle.failed:
-        pytest.skip("a prior lifecycle stage failed")
+def _execute_sweep(orch, variant_config, sweep_name, training_results, inf_res_dict):
     job = PyTorchVisionJob(orch, variant_config, sweep_name)
     globals.error_list = []
-    start = time.monotonic()
     try:
         try:
             job.stage_benchmark()
@@ -137,7 +135,8 @@ def test_training(orch, variant_config, sweep_name, training_results, inf_res_di
                 sweep.model,
                 variant_config.gpu_arch,
                 (
-                    f"W1-ROCAL-{sweep.precision}-R{sweep.image_size}"
+                    f"W1-ROCAL-{sweep.rocal_device.upper()}-{sweep.augmentation.upper()}-"
+                    f"{sweep.precision}-R{sweep.image_size}"
                     if sweep.data_mode == "rocal"
                     else f"W1-{sweep.precision}-R{sweep.image_size}"
                 ),
@@ -157,6 +156,34 @@ def test_training(orch, variant_config, sweep_name, training_results, inf_res_di
             pytest.fail("dmesg verification found errors: " + "; ".join(globals.error_list))
     except Exception:
         raise
+    return job
+
+
+def test_real_data_smoke(
+    orch,
+    variant_config,
+    sweep_name,
+    training_results,
+    inf_res_dict,
+    lifecycle,
+    request,
+):
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    sweep = variant_config.sweep(sweep_name)
+    if variant_config.training.run_mode != "smoke" or sweep.data_mode != "rocal":
+        pytest.skip("real-data smoke stage applies to rocAL smoke profiles")
+    start = time.monotonic()
+    _execute_sweep(orch, variant_config, sweep_name, training_results, inf_res_dict)
+    lifecycle.record(request.node.nodeid, "real_data_smoke", time.monotonic() - start)
+
+
+def test_training(orch, variant_config, sweep_name, training_results, inf_res_dict, lifecycle, request):
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
+    start = time.monotonic()
+    if sweep_name not in training_results:
+        _execute_sweep(orch, variant_config, sweep_name, training_results, inf_res_dict)
     lifecycle.record(request.node.nodeid, "training", time.monotonic() - start)
 
 
@@ -168,8 +195,13 @@ def test_metric(sweep_name, metric, variant_config, training_results, lifecycle,
 
     host, actuals = next(iter(training_results[sweep_name].items()))
     name = f"training.{metric}"
+    required = required_metrics_for_run(
+        variant_config.training.run_mode,
+        variant_config.sweep(sweep_name).data_mode,
+        variant_config.training.codecarbon.enabled,
+    )
     if name not in actuals:
-        if metric in GATED_METRICS:
+        if metric in required:
             pytest.fail(f"required metric was not produced: {name}")
         pytest.skip(f"metric is not applicable to this sweep: {name}")
     value = actuals[name]
@@ -186,6 +218,33 @@ def test_metric(sweep_name, metric, variant_config, training_results, lifecycle,
                 pytest.fail(f"threshold is missing for {cell}: {name}")
             return
         evaluate_all(actuals, {name: spec})
+
+
+def test_loss_curve(sweep_name, variant_config, training_results):
+    if variant_config.training.run_mode in {"smoke", "perf"}:
+        pytest.skip("loss-curve checks do not apply to performance-only phases")
+    if sweep_name not in training_results:
+        pytest.skip(f"no results recorded for {sweep_name}")
+    _host, actuals = next(iter(training_results[sweep_name].items()))
+    points = actuals.get("training.loss_curve_points")
+    decreased = actuals.get("training.loss_curve_decreased")
+    if points is None or decreased is None:
+        pytest.fail("training artifact is missing loss-curve evidence")
+    if points < variant_config.training.loss_curve.minimum_points:
+        pytest.fail(f"loss curve has only {points} points")
+    if variant_config.training.loss_curve.require_decrease and decreased != 1.0:
+        pytest.fail("training loss curve did not decrease")
+
+
+def test_convergence(sweep_name, variant_config, training_results):
+    config = variant_config.training.convergence
+    if not config.enabled:
+        pytest.skip("convergence target is not configured")
+    if sweep_name not in training_results:
+        pytest.skip(f"no results recorded for {sweep_name}")
+    _host, actuals = next(iter(training_results[sweep_name].items()))
+    if "training.convergence_step" not in actuals or "training.convergence_time_seconds" not in actuals:
+        pytest.fail("configured convergence target was not reached")
 
 
 def test_print_results_table(variant_config, training_results):
