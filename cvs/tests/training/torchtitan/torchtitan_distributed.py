@@ -203,7 +203,7 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
         hf_token=hf_token,
         micro_batch_size=mbs,
         global_batch_size=gbs,
-        precision=combo.precision,
+        precision=precision,
         distributed_training=True,
         tune_model_params=False,
         run_label="smoke",
@@ -525,7 +525,6 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
 
 def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
     """Stage 5 (parametrized): compare each combo's metrics against thresholds."""
-    combo = variant_config.sweep.combinations[sweep_name]
     if not train_res_dict.get(sweep_name):
         pytest.skip(f"no recorded results for combo '{sweep_name}' (training did not run)")
 
@@ -576,14 +575,11 @@ def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
     request.node.user_properties.append(("threshold_comparison", "PASSED"))
 
 
-def test_loss_curve(
-    orch, variant_config, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request
-):
+def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle, request):
     """Parametrized: slope-based loss curve check with PNG render."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
-    combo = variant_config.sweep.combinations[sweep_name]
     if not train_res_dict.get(sweep_name):
         pytest.skip(f"no recorded results for combo '{sweep_name}' (training did not run)")
 
