@@ -210,6 +210,11 @@ def substitute_config(config_path, cluster_dict):
     raw = json.loads(config_path.read_text())
 
     threshold_json = (raw.get("threshold_json") or "").strip()
+    if "<changeme>" in threshold_json.lower():
+        raise ValueError(
+            f"threshold_json is still a placeholder ('{threshold_json}'). Set it to the correct "
+            "threshold file for your setup (e.g. the GPU-specific *_threshold.json) before running."
+        )
     if threshold_json:
         threshold_path = Path(threshold_json)
         if not threshold_path.is_absolute():

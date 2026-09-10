@@ -308,6 +308,25 @@ class SweepKeyParsingTests(unittest.TestCase):
         ov = self._overrides("mi325x", "BS=2,PRECISION=BF16,SL=8192", {"per_device_batch_size": 8})
         self.assertEqual(ov["per_device_batch_size"], 8)
 
+    def test_unknown_token_raises(self):
+        # A typo'd token key (e.g. BATCH instead of BS) must fail loudly, not
+        # silently fall back to the base config.
+        with self.assertRaises(ValueError):
+            self._overrides("mi325x", "BATCH=3,PRECISION=BF16,SL=8192", {})
+
+    def test_invalid_precision_raises(self):
+        with self.assertRaises(ValueError):
+            self._overrides("mi325x", "BS=3,PRECISION=FP16,SL=8192", {})
+
+    def test_non_integer_bs_raises(self):
+        with self.assertRaises(ValueError):
+            self._overrides("mi325x", "BS=big,PRECISION=BF16,SL=8192", {})
+
+    def test_opaque_label_without_equals_is_allowed(self):
+        # A cell name with no KEY=VALUE tokens is opaque (overrides come from {}).
+        ov = self._overrides("mi325x", "default", {"per_device_batch_size": 4})
+        self.assertEqual(ov["per_device_batch_size"], 4)
+
 
 class RoundTripLoadTests(unittest.TestCase):
     """Full load_training_variant round-trip on a temp new-format config."""

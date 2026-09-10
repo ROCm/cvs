@@ -19,9 +19,7 @@ coverage check validates the threshold file against those names directly.
 
 from __future__ import annotations
 
-import json
 import warnings
-from pathlib import Path
 from typing import Any, Dict, List, Literal
 
 from pydantic import field_validator
@@ -350,13 +348,17 @@ def _fp8_quantization(gpu_name):
 def _parse_sweep_key(name, gpu_name=""):
     """Parse a sweep key like ``BS=3,PRECISION=FP8,SL=8192`` into maxtext overrides.
 
-    Recognized comma-separated tokens (case-insensitive keys):
+    Comma-separated ``KEY=VALUE`` tokens (case-insensitive keys):
       - ``BS`` -> ``per_device_batch_size`` (int)
       - ``SL`` -> ``max_target_length`` (int)
       - ``PRECISION`` -> ``quantization`` (``BF16`` -> ``""``; ``FP8`` -> the GPU's
         FP8 flavor via ``_fp8_quantization``)
-    Unrecognized tokens are ignored, so a config may still add any extra override
-    inside the sweep's ``{}`` (which takes precedence over the parsed values).
+
+    Malformed ``KEY=VALUE`` tokens raise (so a typo like ``BATCH=3`` or
+    ``PRECISION=FP16`` fails loudly at config load instead of silently running the
+    base config). Tokens without ``=`` are treated as opaque label parts and
+    ignored, so an arbitrary cell name (e.g. ``default``) still works; any extra
+    override goes in the sweep's ``{}`` and takes precedence over the parsed key.
     """
     out = {}
     for tok in str(name).split(","):
@@ -365,12 +367,21 @@ def _parse_sweep_key(name, gpu_name=""):
             continue
         key = key.strip().upper()
         val = val.strip()
-        if key == "BS" and val.isdigit():
+        if key == "BS":
+            if not val.isdigit():
+                raise ValueError(f"sweep key '{name}': BS must be a positive integer, got '{val}'")
             out["per_device_batch_size"] = int(val)
-        elif key == "SL" and val.isdigit():
+        elif key == "SL":
+            if not val.isdigit():
+                raise ValueError(f"sweep key '{name}': SL must be a positive integer, got '{val}'")
             out["max_target_length"] = int(val)
         elif key == "PRECISION":
-            out["quantization"] = _fp8_quantization(gpu_name) if val.upper() == "FP8" else ""
+            precision = val.upper()
+            if precision not in ("BF16", "FP8"):
+                raise ValueError(f"sweep key '{name}': PRECISION must be BF16 or FP8, got '{val}'")
+            out["quantization"] = _fp8_quantization(gpu_name) if precision == "FP8" else ""
+        else:
+            raise ValueError(f"sweep key '{name}': unknown token '{key}' (expected BS, PRECISION, or SL)")
     return out
 
 
@@ -499,24 +510,12 @@ def load_training_variant(config_path, cluster_dict):
     """Load and validate a jaxmaxtext variant config + its sibling threshold file.
 
     Delegates the file read + placeholder substitution + threshold discovery to
-    the generic `substitute_config`, normalizes the on-disk layout onto the
+    the generic `substitute_config` (which also rejects an unresolved
+    `<changeme>` in `threshold_json` -- the mi3xx configs ship it tagged so the
+    user picks the GPU-specific threshold), normalizes the on-disk layout onto the
     internal shape (see `normalize_training_config`), attaches the thresholds, and
     builds the typed `TrainingVariantConfig`.
     """
-    # The GPU-generic mi3xx configs ship threshold_json with a '<changeme>' tag so
-    # the user selects the platform-specific threshold file (mi300x vs mi325x)
-    # before running. Guard here for a clear message -- otherwise substitute_config
-    # would fail with a generic file-not-found on the tagged name.
-    try:
-        _threshold_json = str(json.loads(Path(config_path).read_text()).get("threshold_json", ""))
-    except (OSError, ValueError):
-        _threshold_json = ""
-    if "<changeme>" in _threshold_json.lower():
-        raise ValueError(
-            f"threshold_json is still a placeholder ({_threshold_json!r}). Set it to your GPU "
-            "platform's threshold file (e.g. mi300x_..._threshold.json or mi325x_..._threshold.json) "
-            "before running."
-        )
     raw, thresholds = substitute_config(config_path, cluster_dict)
     raw = normalize_training_config(raw)
     raw["thresholds"] = thresholds

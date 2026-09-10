@@ -1,5 +1,5 @@
 {
-  "_node_count_comment": "Threshold values here were captured on a 2-node (2N) run. Single-node configs use 1N; large models (llama-3.1-405b, deepseek-v4-284b) use 4N. Throughput/step-time scale with the GPU count, so if you run a different number of nodes, update these values to the appropriate targets for that node count.",
+  "_node_count_comment": "Threshold values here are from a 4-node (4N) run. Throughput and step-time scale with the GPU count, so if you run a different number of nodes, update these values to the appropriate targets for that node count.",
   "_comment": "APPROXIMATE placeholder thresholds for Llama-3.1-405B on MI325X distributed, keyed by sweep name. Gated metrics (min/max) drive PASS/FAIL; kind='info' metrics always PASS (record-only) but keep a default `value` to calibrate later. tflops/tokens mins are rough estimates (405B: high tflops/GPU, low tokens/s/GPU) -- replace with measured MI325X numbers. Requires enforce_thresholds=true.",
   "BS=2,PRECISION=BF16,SL=8192": {
     "training.tflops_per_sec_per_gpu": {"kind": "min", "value": 250.0},
