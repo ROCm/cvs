@@ -17,3 +17,23 @@ Test output examples
 .. image:: /images/failed.png
 
 .. image:: /images/stop.png
+
+Sample Training Test Results
+----------------------------
+
+Sample output snapshots from a JAX MaxText training run.
+
+**HTML test report**
+
+.. image:: /images/jaxmaxtext_Training_html_report_sample.png
+   :alt: Sample JAX MaxText training HTML test report
+
+**Metrics report**
+
+.. image:: /images/jaxmaxtext_Training_metrics_report_sample.png
+   :alt: Sample JAX MaxText training metrics report
+
+**Loss-curve graph**
+
+.. image:: /images/jaxmaxtext_Training_loss_curve_graph_sample.png
+   :alt: Sample JAX MaxText training loss-curve graph
