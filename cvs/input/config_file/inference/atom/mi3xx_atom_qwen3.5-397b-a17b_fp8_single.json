@@ -1,4 +1,7 @@
 {
+  "schema_version": 2,
+  "framework": "atom",
+  "default_profile": "perf",
   "threshold_json": "mi325x_atom_qwen3.5-397b-a17b_fp8_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
@@ -11,74 +14,114 @@
     "remote": 0,
     "precision": "fp8"
   },
-  "enforce_thresholds": false,
-  "container": {
-    "lifetime": "per_run",
-    "name": "atom_mi3xx",
-    "image": "<changeme>",
-    "runtime": {
-      "name": "docker",
-      "args": {
-        "network": "host",
-        "ipc": "host",
-        "privileged": true,
-        "shm_size": "128G",
-        "volumes": [
-          "/home/{user-id}:/home/{user-id}",
-          "<changeme-models-mount>:/models:ro"
-        ],
-        "devices": [
-          "/dev/dri",
-          "/dev/kfd"
+  "profiles": {
+    "perf": {
+      "enforce_thresholds": false,
+      "container": {
+        "lifetime": "per_run",
+        "name": "atom_mi3xx",
+        "image": "<changeme>",
+        "runtime": {
+          "name": "docker",
+          "args": {
+            "network": "host",
+            "ipc": "host",
+            "privileged": true,
+            "shm_size": "128G",
+            "volumes": [
+              "/home/{user-id}:/home/{user-id}",
+              "<changeme-models-mount>:/models:ro"
+            ],
+            "devices": [
+              "/dev/dri",
+              "/dev/kfd"
+            ]
+          }
+        }
+      },
+      "roles": {
+        "server": {
+          "atom_args": [
+            "-tp",
+            "8",
+            "--trust-remote-code"
+          ],
+          "env": {
+            "ATOM_DISABLE_MMAP": "true"
+          }
+        }
+      },
+      "params": {
+        "driver": "atom",
+        "port_no": "8000",
+        "tensor_parallelism": "8",
+        "random_range_ratio": "0.8",
+        "num_prompts": "1000",
+        "max_model_length": "12288",
+        "metric_percentiles": "95,99",
+        "reuse_server_across_sweep": "true",
+        "client_poll_count": "80",
+        "client_poll_wait_time": "60"
+      },
+      "platform": {
+        "gpu_metrics_poll": true
+      },
+      "sweeps": {
+        "ISL=1024,OSL=8192,TP=8,PP=1,CONC=32": {},
+        "ISL=1024,OSL=8192,TP=8,PP=1,CONC=64": {},
+        "ISL=128,OSL=32,TP=8,PP=1,CONC=1": {}
+      },
+      "runs": [],
+      "functional": {
+        "api_smoke": true,
+        "health_check": true
+      },
+      "accuracy": {
+        "tasks": [
+          {
+            "id": "gsm8k_flex",
+            "task": "gsm8k",
+            "num_fewshot": 5,
+            "num_concurrent": 4
+          },
+          {
+            "id": "hellaswag",
+            "task": "hellaswag",
+            "num_fewshot": 0,
+            "num_concurrent": 4
+          },
+          {
+            "id": "mmlu_pro",
+            "task": "mmlu_pro",
+            "num_fewshot": 5,
+            "num_concurrent": 4
+          },
+          {
+            "id": "bbh",
+            "task": "bbh",
+            "num_fewshot": 3,
+            "num_concurrent": 4
+          },
+          {
+            "id": "musr",
+            "task": "musr",
+            "num_fewshot": 0,
+            "num_concurrent": 4
+          },
+          {
+            "id": "arc_challenge",
+            "task": "arc_challenge",
+            "num_fewshot": 0,
+            "num_concurrent": 4
+          },
+          {
+            "id": "winogrande",
+            "task": "winogrande",
+            "num_fewshot": 0,
+            "num_concurrent": 4
+          }
         ]
       }
     }
-  },
-  "roles": {
-    "server": {
-      "atom_args": [
-        "-tp",
-        "8",
-        "--trust-remote-code"
-      ],
-      "env": {
-        "ATOM_DISABLE_MMAP": "true"
-      }
-    }
-  },
-  "params": {
-    "driver": "atom",
-    "port_no": "8000",
-    "tensor_parallelism": "8",
-    "random_range_ratio": "0.8",
-    "num_prompts": "1000",
-    "max_model_length": "12288",
-    "metric_percentiles": "95,99",
-    "reuse_server_across_sweep": "true",
-    "client_poll_count": "80",
-    "client_poll_wait_time": "60"
-  },
-  "sweeps": {
-    "ISL=1024,OSL=8192,TP=8,PP=1,CONC=32": {},
-    "ISL=1024,OSL=8192,TP=8,PP=1,CONC=64": {},
-    "ISL=128,OSL=32,TP=8,PP=1,CONC=1": {}
-  },
-  "runs": [],
-  "platform": {
-    "gpu_metrics_poll": true
-  },
-  "functional": {
-    "api_smoke": true,
-    "health_check": true
-  },
-  "accuracy": {
-    "tasks": [
-      {
-        "id": "gsm8k_flex",
-        "task": "gsm8k",
-        "num_fewshot": 5,
-        "num_concurrent": 4
-      }
-    ]
   }
 }
