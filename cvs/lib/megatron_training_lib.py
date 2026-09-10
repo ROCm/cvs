@@ -781,7 +781,7 @@ class MegatronLlamaTrainingJob:
 
         # Check if RDMA and Ethtool stats have errors ..
         if self.distributed_training is True:
-            if self.verify_network_errors is True:
+            if self.verify_network_errors == 'True':
                 self.rdma_stats_dict_after = linux_utils.get_rdma_stats_dict(self.phdl)
                 self.ethtool_stats_dict_after = linux_utils.get_nic_ethtool_stats_dict(self.phdl)
 
