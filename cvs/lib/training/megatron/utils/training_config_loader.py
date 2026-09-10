@@ -212,8 +212,7 @@ class MegatronSweep(_Forbid):
                 configured = combo.get(param)
                 if configured is not None and str(configured) != value:
                     raise ValueError(
-                        f"sweep combination {key!r} sets {param}={configured!r}; "
-                        f"the key defines {param}={value!r}"
+                        f"sweep combination {key!r} sets {param}={configured!r}; the key defines {param}={value!r}"
                     )
                 combo[param] = value
             normalized["combinations"][key] = combo
