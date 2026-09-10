@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run vLLM tests with CVS, single-node and multinode
+  :description: Run vLLM inference tests with CVS, single-node and multinode
   :keywords: CVS, vLLM, inference, benchmark, multinode, ray, LLM, ROCm
 
-***********
-vLLM tests
-***********
+**************************
+Run vLLM Inference Tests
+**************************
 
 The vLLM suites measure LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file, with one-host fallback when only a single host is present. Packaged distributed recipes and thresholds are calibrated for two hosts; retune them before treating other sizes as pass/fail.
 
