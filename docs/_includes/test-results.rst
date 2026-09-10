@@ -28,16 +28,6 @@ Sample output snapshots from a JAX MaxText training run.
 .. image:: /images/jaxmaxtext_Training_html_report_sample.png
    :alt: Sample JAX MaxText training HTML test report
 
-**Metrics report**
-
-.. image:: /images/jaxmaxtext_Training_metrics_report_sample.png
-   :alt: Sample JAX MaxText training metrics report
-
-**Loss-curve graph**
-
-.. image:: /images/jaxmaxtext_Training_loss_curve_graph_sample.png
-   :alt: Sample JAX MaxText training loss-curve graph
-
 Sample Inference Test Results
 -----------------------------
 
@@ -45,5 +35,5 @@ Sample output snapshot from an SGLang inference run.
 
 **HTML test report**
 
-.. image:: images/inference_pytest_report_sample.png
+.. image:: /images/inference_pytest_report_sample.png
    :alt: Sample SGLang inference HTML test report
