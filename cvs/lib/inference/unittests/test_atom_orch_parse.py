@@ -471,6 +471,9 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         self.assertFalse(job.EARLY_FAILURE_RE.search(ignored_optional))
         self.assertFalse(job.FATAL_LOG_RE.search(ignored_optional))
+        hip_assert = "AssertionError: extra_buffer needs CUDA/MUSA/NPU (FLA)."
+        self.assertTrue(job.EARLY_FAILURE_RE.search(hip_assert))
+        self.assertTrue(job.FATAL_LOG_RE.search(hip_assert))
 
     def test_wait_ready_aborts_on_safetensors_engine_crash(self):
         crash = (
