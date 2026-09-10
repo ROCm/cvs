@@ -3,7 +3,7 @@
 Minimal architecture proposal. xDiT is out of scope (Pssh + torchrun, not a serving sweep).
 Reference implementations stay separate; this is what to share, what to stop duplicating, and what not to merge.
 
-**Status:** draft — cheapest-first sequence, not a rewrite.
+**Status:** sound after critic pass against `main` @ `9081b8b0` — cheapest-first sequence, not a rewrite.
 
 ---
 
