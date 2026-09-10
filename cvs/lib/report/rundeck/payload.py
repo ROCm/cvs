@@ -60,6 +60,7 @@ class RundeckPayloadBuilder:
             prov,
         )
 
+        primary = datasets.get(self.builder_id) or {}
         sweep_data = datasets.get("sweep") or {}
         cells = sweep_data.get("all_cells") or sweep_data.get("cells") or []
         panels = ComparisonPanelBuilder(
@@ -87,7 +88,7 @@ class RundeckPayloadBuilder:
                 "title": self.config.title,
                 "subtitle": self.config.subtitle,
                 "footer": self.config.footer,
-                "metric_tier_order": self.config.metric_tier_order,
+                "metric_tier_order": primary.get("metric_tier_order") or self.config.metric_tier_order,
                 "headline_metric": self.config.headline_metric,
                 "sweep_ttft_metric": self.config.sweep_ttft_metric,
                 "session_lifecycle_labels": self.config.session_lifecycle_labels,
@@ -102,8 +103,8 @@ class RundeckPayloadBuilder:
             "chart_series": sweep_data.get("chart_series") or {},
             "chart_config": sweep_data.get("chart_config") or [],
             "sweep_summaries": sweep_data.get("sweep_summaries") or [],
-            "gate_matrix": sweep_data.get("gate_matrix") or [],
-            "results_table": sweep_data.get("results_table") or datasets.get("series", {}).get("results_table") or {},
+            "gate_matrix": sweep_data.get("gate_matrix") or primary.get("gate_matrix") or [],
+            "results_table": sweep_data.get("results_table") or primary.get("results_table") or {},
             "panels": panels,
             "datasets": datasets,
             "deck_profile": self.profile_dict or {"cards": default_deck_cards()},
