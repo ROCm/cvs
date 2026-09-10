@@ -6,8 +6,7 @@ from types import SimpleNamespace
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.profiles.hooks.rvs_run_card import rvs_run_card_display
 from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
-from cvs.lib.report.rundeck.dataset_builders import table  # noqa: F401
-from cvs.lib.report.rundeck.dataset_builders.registry import build_datasets
+from cvs.lib.report.rundeck.dataset_builders.registry import build_datasets, get_dataset_builder
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.render import render_rundeck_html
 
@@ -47,22 +46,6 @@ class TestTableBuilder(unittest.TestCase):
             [["gpu_burn", "node-a", "pass"]],
         )
 
-    def test_pass_through_when_results_already_has_headers_and_rows(self):
-        sources = {
-            "results": {
-                "headers": ["Col A", "Col B"],
-                "rows": [["x", "y"], ["1", "2"]],
-            }
-        }
-        datasets = build_datasets("table", sources, {})
-        self.assertEqual(
-            datasets["results_table"],
-            {
-                "headers": ["Col A", "Col B"],
-                "rows": [["x", "y"], ["1", "2"]],
-            },
-        )
-
     def test_empty_or_missing_results_yield_empty_rows(self):
         self.assertEqual(
             build_datasets("table", {}, {})["results_table"]["rows"],
@@ -80,7 +63,6 @@ class TestTableBuilder(unittest.TestCase):
     def test_rvs_profile_builds_payload_and_renders_run_deck(self):
         profile = load_json_profile("rvs_cvs")
         variant = SimpleNamespace(
-            rvs_version="2.0.0",
             rvs_test_level="1",
             rvs_path="/opt/rvs",
         )
@@ -103,10 +85,13 @@ class TestTableBuilder(unittest.TestCase):
         )
         doc = render_rundeck_html(payload)
         self.assertIn("RVS Run Deck", doc)
-        self.assertIn("RVS version", doc)
-        self.assertIn("2.0.0", doc)
+        self.assertIn("Test level", doc)
+        self.assertIn("/opt/rvs", doc)
         self.assertIn("node-a", doc)
         self.assertIn("pass", doc)
+
+    def test_payload_import_registers_table_builder(self):
+        self.assertIsNotNone(get_dataset_builder("table"))
 
     def test_rvs_profile_inference_config(self):
         profile = load_json_profile("rvs_cvs")

@@ -98,10 +98,9 @@ def cvs_results_dict():
 
 
 @pytest.fixture(scope="module")
-def variant_config(config_dict, rvs_version, rvs_test_level):
+def variant_config(config_dict, rvs_test_level):
     return SimpleNamespace(
         rvs_path=config_dict.get("path"),
-        rvs_version=rvs_version,
         rvs_test_level=rvs_test_level,
     )
 
@@ -440,6 +439,7 @@ def execute_rvs_test(orch, config_dict, test_name):
 
     if not test_config:
         fail_test(f'Test configuration for {test_name} not found')
+        _record_rvs_result(test_name, "—", "fail")
         update_test_result()
         return
 
@@ -504,6 +504,7 @@ def execute_rvs_test(orch, config_dict, test_name):
         parse_rvs_test_results(test_config, out_dict)
     else:
         fail_test(f'Configuration file [{config_file}] for {test_name} not found on any/some node.')
+        _record_rvs_result(test_name, "—", "fail")
 
     update_test_result()
 

@@ -11,7 +11,6 @@ from cvs.lib.report.rundeck.config_builder import provenance_link_rows
 def rvs_run_card_display(variant, provenance):
     rows = [
         ("Suite", "RVS", False),
-        ("RVS version", str(getattr(variant, "rvs_version", None) or "—"), False),
         ("Test level", str(getattr(variant, "rvs_test_level", "—")), False),
         ("RVS path", str(getattr(variant, "rvs_path", None) or "—"), False),
     ]

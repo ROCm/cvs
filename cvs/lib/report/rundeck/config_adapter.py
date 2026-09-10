@@ -81,11 +81,13 @@ class ProfileConfigResolver:
     def from_profile_dict(cls, profile: dict[str, Any]) -> InferenceReportConfig:
         """Materialize ``InferenceReportConfig`` from a JSON deck profile."""
         builder = profile.get("dataset_builder", "sweep")
+        hooks = profile.get("hooks") or {}
+        run_card_builder = None
+        if hooks.get("run_card_display"):
+            run_card_builder = cls.import_callable(hooks["run_card_display"])
+
         if builder in ("series", "matrix", "table"):
-            hooks = profile.get("hooks") or {}
-            run_card_builder = None
-            if hooks.get("run_card_display"):
-                run_card_builder = cls.import_callable(hooks["run_card_display"])
+            is_table = builder == "table"
             return make_inference_report_config(
                 suite_id=profile.get("suite_id") or profile.get("profile_id", "suite"),
                 report_basename=profile.get("report_basename") or f"{profile.get('suite_id', 'suite')}_run_deck",
@@ -93,14 +95,12 @@ class ProfileConfigResolver:
                 subtitle=profile.get("subtitle") or "",
                 footer=profile.get("footer") or "",
                 link_name=profile.get("link_name") or profile.get("title") or "Run Deck",
-                results_columns=(("Collective", None), ("Size", None), ("Bus BW", "bus_bw")),
-                metric_units={"bus_bw": "GB/s", "alg_bw": "GB/s"},
+                results_columns=() if is_table else (("Collective", None), ("Size", None), ("Bus BW", "bus_bw")),
+                metric_units={} if is_table else {"bus_bw": "GB/s", "alg_bw": "GB/s"},
                 tier_metric_specs=lambda _c, _t: {},
                 interactive_viewer=bool(profile.get("interactive_viewer", False)),
                 run_card_display_builder=run_card_builder,
             )
-
-        hooks = profile.get("hooks") or {}
         sweep = profile.get("sweep") or {}
 
         tier_metric_specs = (
@@ -127,10 +127,6 @@ class ProfileConfigResolver:
         cell_highlights = cls._parse_cell_highlights(
             sweep.get("cell_highlights") or profile.get("cell_highlights") or []
         )
-
-        run_card_builder = None
-        if hooks.get("run_card_display"):
-            run_card_builder = cls.import_callable(hooks["run_card_display"])
 
         launch_builder = None
         if hooks.get("launch_provenance"):

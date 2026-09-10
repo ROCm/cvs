@@ -18,6 +18,6 @@
   },
   "cards": [
     {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
-    {"type": "table", "id": "results", "title": "RVS results", "bind": "datasets.table.results_table"}
+    {"type": "table", "id": "results", "title": "RVS results", "bind": "results_table"}
   ]
 }

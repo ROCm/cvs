@@ -18,6 +18,7 @@ from cvs.lib.report.inference_payload import (
 from cvs.lib.report.panels.panel_builder import ComparisonPanelBuilder
 from cvs.lib.report.profile import DeckProfile
 from cvs.lib.report.rundeck.config_adapter import resolve_report_config
+from cvs.lib.report.rundeck import dataset_builders as _dataset_builders  # noqa: F401
 from cvs.lib.report.rundeck.dataset_builders.registry import build_datasets
 from cvs.lib.report.rundeck.dataset_builders.sweep import select_inline_cells
 from cvs.lib.report.types import InferenceReportConfig
@@ -103,10 +104,7 @@ class RundeckPayloadBuilder:
             "chart_config": sweep_data.get("chart_config") or [],
             "sweep_summaries": sweep_data.get("sweep_summaries") or [],
             "gate_matrix": sweep_data.get("gate_matrix") or [],
-            "results_table": sweep_data.get("results_table")
-            or datasets.get("series", {}).get("results_table")
-            or datasets.get("table", {}).get("results_table")
-            or {},
+            "results_table": sweep_data.get("results_table") or self._first_results_table(datasets),
             "panels": panels,
             "datasets": datasets,
             "deck_profile": self.profile_dict or {"cards": default_deck_cards()},
@@ -128,6 +126,14 @@ class RundeckPayloadBuilder:
         if self.builder_id:
             datasets[self.builder_id] = build_datasets(self.builder_id, self.sources, self.profile)
         return datasets
+
+    @staticmethod
+    def _first_results_table(datasets):
+        for data in (datasets or {}).values():
+            table = (data or {}).get("results_table")
+            if table:
+                return table
+        return {}
 
     def _provenance(self) -> dict[str, str]:
         prov = dict(self.ctx.provenance or {})
