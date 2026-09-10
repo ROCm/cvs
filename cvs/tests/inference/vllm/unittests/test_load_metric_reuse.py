@@ -174,10 +174,10 @@ class TestLoadMetricReuse(unittest.TestCase):
         self.assertEqual(self.metrics_for(second)["model_load_memory_mb"], 0)
         self.assertEqual(self.lifecycle.model_load_memory_mb, 0)
 
-    def test_contract_drift_fails_cell_but_preserves_server_for_next_cell(self):
-        first = _run(1)
-        first_job = _job(("same",))
-        first_job.parse_results.side_effect = lambda: project_vllm_metrics(
+    def test_contract_drift_marks_lifecycle_failed_and_clears_server(self):
+        run = _run(1)
+        job = _job(("same",))
+        job.parse_results.side_effect = lambda: project_vllm_metrics(
             {"output_throughput": 1.0, "new_metric": 2.0},
             tp=1,
             pp=1,
@@ -187,26 +187,18 @@ class TestLoadMetricReuse(unittest.TestCase):
 
         with self.assertRaises(UnknownMetricContractError):
             self.invoke(
-                first,
-                first_job,
+                run,
+                job,
                 [{"gpu.used_vram": 100}, {"gpu.used_vram": 125}],
             )
 
-        self.assertFalse(self.lifecycle.failed)
-        self.assertEqual(self.lifecycle.live_server_sig, ("same",))
-        self.assertIs(self.lifecycle.live_server_job, first_job)
-        self.assertEqual(self.lifecycle.model_load_s, 2.0)
-        self.assertEqual(self.lifecycle.model_load_memory_mb, 25)
-        self.assertNotIn(_common._cell_result_key(self.variant, first), self.results)
-        first_job.dump_server_log.assert_not_called()
-
-        second = _run(2)
-        second_job = _job(("same",))
-        gpu_snap = self.invoke(second, second_job, [])
-
-        self.assertEqual(gpu_snap.call_count, 0)
-        second_job.start_server.assert_not_called()
-        self.assertEqual(self.metrics_for(second)["output_throughput"], 1.0)
+        self.assertTrue(self.lifecycle.failed)
+        self.assertIsNone(self.lifecycle.live_server_sig)
+        self.assertIsNone(self.lifecycle.live_server_job)
+        self.assertIsNone(self.lifecycle.model_load_s)
+        self.assertIsNone(self.lifecycle.model_load_memory_mb)
+        self.assertNotIn(_common._cell_result_key(self.variant, run), self.results)
+        job.dump_server_log.assert_called_once()
 
     def test_generic_projection_value_error_stops_later_cells(self):
         run = _run(1)

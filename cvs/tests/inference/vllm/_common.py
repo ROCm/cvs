@@ -12,7 +12,6 @@ from cvs.lib.inference.utils.inference_suite_lifecycle import test_accuracy_eval
 from cvs.lib.inference.utils.vllm_config_loader import load_variant
 from cvs.lib.inference.utils.vllm_metrics import (
     METRIC_REGISTRY,
-    UnknownMetricContractError,
     VLLM_RESULTS_COLUMNS,
     is_finite_number,
     merge_metric_sources,
@@ -310,8 +309,6 @@ def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_r
             host: merge_metric_sources(actuals, gpu_results, prom_results) for host, actuals in results.items()
         }
         inf_res_dict[_cell_result_key(variant_config, run)] = published_results
-    except UnknownMetricContractError:
-        raise
     except Exception:
         lifecycle.failed = True
         dump_job = getattr(lifecycle, "live_server_job", None) or job
