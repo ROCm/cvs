@@ -22,6 +22,7 @@ via the framework field, which is a validated schema tag / config discriminator.
 
 from __future__ import annotations
 
+import re
 import warnings
 from collections import Counter
 from typing import Any, Dict, List
@@ -31,19 +32,44 @@ from typing_extensions import Literal
 
 from cvs.lib.utils.config_loader import (
     ContainerSpec,
+    _Allow,
     _Forbid,
     substitute_config,
 )
 
 
+
+# ---------- constants ----------
+
+DEFAULT_SWEEP_NAME = "default"
+_DEFAULT_MBS = "1"
+_DEFAULT_GBS = "16"
+_DEFAULT_PRECISION = "BF16"
+_SWEEP_KEY_PATTERN = re.compile(
+    r"^MBS=(?P<micro_batch_size>[^,]+),"
+    r"GBS=(?P<global_batch_size>[^,]+),"
+    r"PRECISION=(?P<precision>[^,]+)$"
+)
+
 # ---------- pydantic models (training) ----------
 
 
-class TorchTitanSweepCombo(_Forbid):
+class TorchTitanSweepCombo(_Allow):
     name: str
     micro_batch_size: str
     global_batch_size: str
     precision: str = ""
+
+
+def parse_sweep_cell_key(key):
+    """Parse MBS, GBS, and precision from a canonical sweep cell key."""
+    match = _SWEEP_KEY_PATTERN.fullmatch(key)
+    if not match:
+        raise ValueError(
+            f"invalid sweep combination key {key!r}; expected "
+            "MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>"
+        )
+    return match.groupdict()
 
 
 def sweep_cell_key(combo) -> str:
@@ -64,7 +90,7 @@ def validate_combo_keys_match_params(combinations) -> None:
     mismatches = [
         f"{key!r} (expected {sweep_cell_key(combo)!r})"
         for key, combo in combinations.items()
-        if key != sweep_cell_key(combo)
+        if key != DEFAULT_SWEEP_NAME and key != sweep_cell_key(combo)
     ]
     if mismatches:
         raise ValueError(
@@ -135,6 +161,37 @@ def validate_thresholds_cover_sweep(
 class TorchTitanSweep(_Forbid):
     combinations: Dict[str, TorchTitanSweepCombo]
     runs: List[str]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _assign_params_from_keys(cls, data):
+        """Parse MBS/GBS/PRECISION from combination keys and inject into combo bodies.
+        
+        Allows minimal combo bodies (just name + overlays) while validating key format.
+        """
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        normalized["combinations"] = {}
+        for key, raw_combo in data.get("combinations", {}).items():
+            combo = dict(raw_combo)
+            if key == DEFAULT_SWEEP_NAME:
+                combo.setdefault("micro_batch_size", _DEFAULT_MBS)
+                combo.setdefault("global_batch_size", _DEFAULT_GBS)
+                combo.setdefault("precision", _DEFAULT_PRECISION)
+                normalized["combinations"][key] = combo
+                continue
+            parsed = parse_sweep_cell_key(key)
+            for param, value in parsed.items():
+                configured = combo.get(param)
+                if configured is not None and str(configured) != value:
+                    raise ValueError(
+                        f"sweep combination {key!r} sets {param}={configured!r}; the key defines {param}={value!r}"
+                    )
+                combo[param] = value
+            normalized["combinations"][key] = combo
+        return normalized
+
 
     @model_validator(mode="after")
     def _check_runs_reference_known_combos(self):
@@ -211,8 +268,6 @@ _CONTAINER_ENV_TO_JOB = {
 
 
 class TorchTitanVariantConfig(_Forbid):
-    schema_version: Literal[1]
-    framework: Literal["torchtitan_single", "torchtitan_distributed"]
     gpu_name: str
     enforce_thresholds: bool = True
     threshold_json: str = ""

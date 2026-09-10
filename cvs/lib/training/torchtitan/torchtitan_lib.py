@@ -138,6 +138,7 @@ class TorchTitanTrainingJob:
         tune_model_params=True,
         scripts_dir=None,
         run_label=None,
+        sweep_overrides=None,
     ):
         self.orch = orch
         self.variant_config = variant_config
@@ -156,7 +157,11 @@ class TorchTitanTrainingJob:
 
         # Get flattened config dict (paths + container.env + train_params)
         self.config = variant_config.job_config_dict()
-        self.model_params = variant_config.train_params
+        # Copy train_params and apply sweep-level overrides
+        self.model_params = dict(variant_config.train_params)
+        if sweep_overrides:
+            self.model_params.update(sweep_overrides)
+
         self.gpu_arch = variant_config.gpu_name
 
         # Training configs with defaults

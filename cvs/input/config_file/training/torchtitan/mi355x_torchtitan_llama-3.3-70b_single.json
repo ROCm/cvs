@@ -9,7 +9,6 @@
     "data_cache_dir": "/home/{user-id}/cache",
     "rocm_dir": ""
   },
-  "verify_network_errors": "False",
   "container": {
     "lifetime": "per_run",
     "name": "torchtitan_llama3_3_70b_single",
@@ -24,7 +23,7 @@
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
           "/dev/infiniband:/dev/infiniband",
-          "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1"
+          "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro"
         ],
         "devices": [
           "/dev/kfd",
