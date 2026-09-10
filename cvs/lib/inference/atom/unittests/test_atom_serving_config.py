@@ -152,6 +152,8 @@ class TestAtomServingConfig(unittest.TestCase):
         variant_raw = serving_to_atom_variant_raw(raw, thresholds)
         variant = AtomVariantConfig(**variant_raw)
         self.assertEqual(variant.params.driver, "sglang")
+        self.assertEqual(variant.model.precision, "fp8")
+        self.assertTrue(variant.platform.gpu_metrics_poll)
         self.assertIn("--kv-cache-dtype", variant.roles.server.sglang_args)
 
     def test_load_atom_sglang_distributed_drops_container_runtime_env(self):
@@ -163,6 +165,8 @@ class TestAtomServingConfig(unittest.TestCase):
         variant_raw = serving_to_atom_variant_raw(raw, thresholds)
         variant = AtomVariantConfig(**variant_raw)
         self.assertNotIn("env", variant.container.runtime.args)
+        self.assertEqual(variant.model.precision, "fp8")
+        self.assertTrue(variant.platform.gpu_metrics_poll)
         self.assertEqual(variant.roles.server.env.get("SGLANG_USE_AITER"), "1")
         self.assertEqual(variant.roles.server.env.get("NCCL_IB_GID_INDEX"), "3")
         self.assertNotIn("NCCL_IB_HCA", variant.roles.server.env)
