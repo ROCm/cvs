@@ -160,8 +160,8 @@ def parse_rvs_output(text, node, module=None):
             key = (m.group("gpu"), m.group("action").strip())
             val = float(m.group("value"))
             prev = iet_peak.get(key)
-            if prev is None or val > prev:
-                iet_peak[key] = val
+            if prev is None or val > prev[0]:
+                iet_peak[key] = (val, current_module or "iet")
             continue
 
         m = _IET_PASS.search(line)
@@ -196,8 +196,8 @@ def parse_rvs_output(text, node, module=None):
                 )
             )
 
-    for (gpu, action), peak in sorted(iet_peak.items()):
-        records.append(_row(node, gpu, current_module or "iet", action, "power_w", peak, "W"))
+    for (gpu, action), (peak, iet_module) in sorted(iet_peak.items()):
+        records.append(_row(node, gpu, iet_module, action, "power_w", peak, "W"))
 
     if _NO_GPUS.search(text or ""):
         records.append(_row(node, "", current_module or "gpup", "enumerate", "status", None, "", passed=False))
@@ -223,9 +223,13 @@ def append_rvs_records(store, text, node, module=None, failed=None):
                 passed=None if failed is None else (not failed),
             )
         ]
-    elif failed:
+    elif failed is True:
         for rec in recs:
             if rec.get("passed") is None:
                 rec["passed"] = False
+    elif failed is False:
+        for rec in recs:
+            if rec.get("passed") is None:
+                rec["passed"] = True
     store.setdefault("records", []).extend(recs)
     return recs

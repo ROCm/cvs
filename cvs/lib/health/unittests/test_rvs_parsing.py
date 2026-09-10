@@ -100,6 +100,22 @@ class TestParseRvsOutput(unittest.TestCase):
         self.assertFalse(records[0]["passed"])
 
 
+    def test_iet_power_keeps_iet_module_after_later_module_line(self):
+        text = "\n".join(
+            [
+                "Module name :iet",
+                "[iet-stress-1400W-true] [GPU:: 42583] Power(W) 241.0",
+                "Module name :gst",
+                "[gst-Tflops-8K-trig-fp64] [GPU:: 42583] GFLOPS 100.0 Target GFLOPS: 50.0 met: TRUE",
+            ]
+        )
+        records = parse_rvs_output(text, "node1", module="level_config")
+        power = [r for r in records if r["metric"] == "power_w"]
+        self.assertEqual(len(power), 1)
+        self.assertEqual(power[0]["module"], "iet")
+        self.assertAlmostEqual(power[0]["value"], 241.0)
+
+
 class TestAppendRvsRecords(unittest.TestCase):
     def test_append_empty_output_adds_status_row(self):
         store = {}
@@ -119,6 +135,17 @@ class TestAppendRvsRecords(unittest.TestCase):
         recs = append_rvs_records(store, line, "node1", module="pebb", failed=True)
         self.assertEqual(len(recs), 1)
         self.assertFalse(recs[0]["passed"])
+
+    def test_append_success_sets_passed_true_on_unset_records(self):
+        line = (
+            "[pcie_h2d_bandwidth] pcie-bandwidth [ 1/16] [CPU:: 0] "
+            "[GPU:: 2 - 42583 - 0000:05:00.0] h2d::true d2h::false "
+            "57.678 GBps duration: 0.223392 secs"
+        )
+        store = {}
+        recs = append_rvs_records(store, line, "node1", module="pebb", failed=False)
+        self.assertEqual(len(recs), 1)
+        self.assertTrue(recs[0]["passed"])
 
 
 if __name__ == "__main__":
