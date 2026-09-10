@@ -81,7 +81,25 @@ class ProfileConfigResolver:
     def from_profile_dict(cls, profile: dict[str, Any]) -> InferenceReportConfig:
         """Materialize ``InferenceReportConfig`` from a JSON deck profile."""
         builder = profile.get("dataset_builder", "sweep")
-        if builder in ("series", "matrix"):
+        if builder in ("series", "matrix", "rvs"):
+            hooks = profile.get("hooks") or {}
+            kwargs = {}
+            if hooks.get("run_card_display"):
+                kwargs["run_card_display_builder"] = cls.import_callable(hooks["run_card_display"])
+            lifecycle = profile.get("lifecycle") or {}
+            if lifecycle.get("session_labels"):
+                kwargs["session_lifecycle_labels"] = tuple(lifecycle["session_labels"])
+            if profile.get("tier_order"):
+                kwargs["metric_tier_order"] = tuple(profile["tier_order"])
+            metric_units = {"bus_bw": "GB/s", "alg_bw": "GB/s"}
+            if builder == "rvs":
+                metric_units = {
+                    "gflops": "GFLOPS",
+                    "pcie_gbps": "GB/s",
+                    "p2p_gbps": "GB/s",
+                    "babel_mbytes_s": "MB/s",
+                    "power_w": "W",
+                }
             return make_inference_report_config(
                 suite_id=profile.get("suite_id") or profile.get("profile_id", "suite"),
                 report_basename=profile.get("report_basename") or f"{profile.get('suite_id', 'suite')}_run_deck",
@@ -90,9 +108,10 @@ class ProfileConfigResolver:
                 footer=profile.get("footer") or "",
                 link_name=profile.get("link_name") or profile.get("title") or "Run Deck",
                 results_columns=(("Collective", None), ("Size", None), ("Bus BW", "bus_bw")),
-                metric_units={"bus_bw": "GB/s", "alg_bw": "GB/s"},
+                metric_units=metric_units,
                 tier_metric_specs=lambda _c, _t: {},
                 interactive_viewer=bool(profile.get("interactive_viewer", False)),
+                **kwargs,
             )
 
         hooks = profile.get("hooks") or {}
