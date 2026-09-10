@@ -69,16 +69,7 @@ class TestAccuracyThresholdKeyDoesNotTripSweepCoverage(unittest.TestCase):
     _CELL = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"
 
     def _full_gated_specs(self):
-        from cvs.lib.inference.utils.vllm_config_loader import GATED_GPU_METRICS
-        from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
-
-        out = {}
-        for m in GATED_METRICS:
-            kind = "max_ms" if m.endswith("_ms") else "max" if m == "failed" else "min"
-            out[f"client.{m}"] = {"kind": kind, "value": 0 if kind == "min" else 1e12}
-        for m in GATED_GPU_METRICS:
-            out[f"gpu.{m}"] = {"kind": "min", "value": 0}
-        return out
+        return {"output_throughput": {"kind": "min", "value": 0}}
 
     def test_accuracy_key_alongside_full_sweep_coverage_constructs(self):
         vc = VariantConfig(

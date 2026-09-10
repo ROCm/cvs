@@ -16,7 +16,7 @@ Contract under test:
       to >= 0. None if `after` has no buckets.
   histogram_quantile(buckets, q) -> linear interpolation between bucket
       boundaries; None on empty/zero-count buckets.
-  to_prom_metrics(before_text, after_text) -> the composed prom.* dict;
+  to_prom_metrics(before_text, after_text) -> canonical bare metric dict;
       all-None (never partial, never a raise) if either scrape is
       missing/unparseable.
 
@@ -261,7 +261,7 @@ class TestHistogramQuantile(unittest.TestCase):
 
 class TestToPromMetrics(unittest.TestCase):
     def test_all_prom_metrics_keys_present_shape(self):
-        expected_keys = {f"prom.{short}" for short, _unit in PROM_METRICS}
+        expected_keys = {short for short, _unit in PROM_METRICS}
         out = to_prom_metrics(None, None)
         self.assertEqual(set(out.keys()), expected_keys)
 
@@ -281,6 +281,22 @@ class TestToPromMetrics(unittest.TestCase):
         for k in out:
             self.assertIsNone(out[k])
 
+    def test_unbounded_only_histograms_do_not_emit_infinity(self):
+        before = _full_scrape_text(
+            {"+Inf": 0.0},
+            0.0,
+            {"+Inf": 0.0},
+            0.0,
+        )
+        after = _full_scrape_text(
+            {"+Inf": 1.0},
+            10.0,
+            {"+Inf": 1.0},
+            10.0,
+        )
+        out = to_prom_metrics(before, after)
+        self.assertTrue(all(value is None for value in out.values()))
+
     def test_end_to_end_realistic_before_after_pair(self):
         # "before" scrape: server already served 3 queue-wait observations
         # from a prior cell (0.1, 0.2, 0.4s) -- the reused-server baseline.
@@ -297,14 +313,14 @@ class TestToPromMetrics(unittest.TestCase):
         # This cell's isolated queue-wait observations are exactly [0.6, 0.9]
         # (0.6 falls in bucket 0.8, 0.9 falls in bucket 1.0); p50 of 2 obs
         # falls in/around the first of the two remaining buckets.
-        self.assertIsNotNone(out["prom.queue_time_p50_ms"])
-        self.assertIsNotNone(out["prom.queue_time_p95_ms"])
-        self.assertIsNotNone(out["prom.prefill_time_p50_ms"])
-        self.assertIsNotNone(out["prom.prefill_time_p95_ms"])
+        self.assertIsNotNone(out["queue_time_p50_ms"])
+        self.assertIsNotNone(out["queue_time_p95_ms"])
+        self.assertIsNotNone(out["prefill_time_p50_ms"])
+        self.assertIsNotNone(out["prefill_time_p95_ms"])
         # Values are in ms (seconds * 1000), and in the right ballpark given
         # only [0.6, 0.9] contributed post-diff (600-1000ms range).
-        self.assertGreater(out["prom.queue_time_p50_ms"], 500)
-        self.assertLess(out["prom.queue_time_p50_ms"], 1100)
+        self.assertGreater(out["queue_time_p50_ms"], 500)
+        self.assertLess(out["queue_time_p50_ms"], 1100)
 
     def test_prom_metric_units_cover_every_metric(self):
         for short, unit in PROM_METRICS:

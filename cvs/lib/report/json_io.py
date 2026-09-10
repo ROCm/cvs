@@ -24,3 +24,24 @@ def index_cells_by_id_host(report_json: Mapping[str, Any]) -> dict[tuple[str, st
         if isinstance(cell, dict):
             index[cell_id_host_key(cell)] = cell
     return index
+
+
+def report_incompatibility(
+    report_json,
+    *,
+    expected_schema_version=1,
+    expected_suite_id="",
+    expected_metric_contract=None,
+):
+    """Return why a contract-qualified report cannot be used as a baseline."""
+    if expected_metric_contract is None:
+        return ""
+    if report_json.get("schema_version") != expected_schema_version:
+        return f"schema_version {report_json.get('schema_version')!r} is incompatible with {expected_schema_version!r}"
+    if report_json.get("suite_id") != expected_suite_id:
+        return f"suite_id {report_json.get('suite_id')!r} is incompatible with {expected_suite_id!r}"
+    if report_json.get("metric_contract") != expected_metric_contract:
+        return (
+            f"metric_contract {report_json.get('metric_contract')!r} is incompatible with {expected_metric_contract!r}"
+        )
+    return ""

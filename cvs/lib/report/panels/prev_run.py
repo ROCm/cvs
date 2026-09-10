@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import List, Optional
 
 from cvs.lib.report.compare import build_prev_run_compare_row
-from cvs.lib.report.json_io import cell_id_host_key, index_cells_by_id_host, load_report_json
+from cvs.lib.report.json_io import (
+    cell_id_host_key,
+    index_cells_by_id_host,
+    load_report_json,
+    report_incompatibility,
+)
 from cvs.lib.report.metrics import HEADLINE_THROUGHPUT_METRIC
 
 PREV_RUN_ENV = "CVS_INFERENCE_PREV_REPORT_JSON"
@@ -36,10 +41,27 @@ def build_prev_run_panel(
     *,
     headline_metric: str = HEADLINE_THROUGHPUT_METRIC,
     threshold_pct: float = DEFAULT_THRESHOLD_PCT,
+    expected_schema_version=1,
+    expected_suite_id="",
+    expected_metric_contract=None,
 ) -> Optional[dict]:
     if not baseline_json_path.is_file():
         return None
-    baseline = index_cells_by_id_host(load_report_json(baseline_json_path) or {})
+    baseline_payload = load_report_json(baseline_json_path) or {}
+    incompatibility = report_incompatibility(
+        baseline_payload,
+        expected_schema_version=expected_schema_version,
+        expected_suite_id=expected_suite_id,
+        expected_metric_contract=expected_metric_contract,
+    )
+    if incompatibility:
+        return {
+            "baseline_json": str(baseline_json_path),
+            "compatible": False,
+            "incompatibility": incompatibility,
+            "rows": [],
+        }
+    baseline = index_cells_by_id_host(baseline_payload)
     if not baseline:
         return None
 
@@ -59,5 +81,6 @@ def build_prev_run_panel(
         "baseline_json": str(baseline_json_path),
         "headline_metric": headline_metric,
         "threshold_pct": threshold_pct,
+        "compatible": True,
         "rows": rows,
     }

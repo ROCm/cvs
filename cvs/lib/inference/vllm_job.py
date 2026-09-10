@@ -41,7 +41,7 @@ from typing import Optional
 
 from cvs.lib import globals
 from cvs.lib.inference.utils.vllm_config_loader import serialize_cli_options
-from cvs.lib.inference.utils.vllm_parsing import to_client_metrics
+from cvs.lib.inference.utils.vllm_metrics import project_vllm_metrics
 from cvs.lib.utils.model_query_lib import OpenAIProbe
 
 log = globals.log
@@ -651,5 +651,11 @@ class VllmJob:
                 # stack trace or an HTML error page, and raw newlines there
                 # would break up CI output and pasted ticket bodies.
                 raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}: {text[:500]!r}") from e
-            results[host] = to_client_metrics(raw, tp=self.tp, isl=self.isl, pp=self.pp)
+            results[host] = project_vllm_metrics(
+                raw,
+                tp=self.tp,
+                isl=self.isl,
+                pp=self.pp,
+                artifact_path=f'{host}:{artifact}',
+            )
         return results

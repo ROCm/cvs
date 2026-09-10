@@ -1,111 +1,92 @@
 '''Threshold verdict helpers for vLLM metric verification subtests.'''
 
-from __future__ import annotations
+from cvs.lib.inference.utils.vllm_metrics import (
+    METRIC_CATEGORIES,
+    METRIC_CONTRACT,
+    METRIC_NAMES,
+    METRIC_REGISTRY,
+    METRIC_UNITS,
+    metric_contract,
+    metric_definitions,
+    metric_verdict,
+    report_metric_units,
+    tier_metric_specs,
+)
+from cvs.lib.inference.utils.vllm_metrics import is_finite_number as _is_finite_number
 
-from typing import Any, Mapping
-
-from cvs.lib.inference.utils.vllm_parsing import CLIENT_METRICS
-from cvs.lib.inference.utils.vllm_server_metrics import PROM_METRICS
-from cvs.lib.utils.gpu import GPU_METRICS
-from cvs.lib.utils.verdict import ThresholdViolation, evaluate_all
-
-
-def metric_definitions() -> tuple[dict[str, str], ...]:
-    '''Return ordered vLLM metric metadata keyed by fully qualified names.'''
-    definitions = []
-    for prefix, metrics, missing_status in (
-        ('client.', CLIENT_METRICS, 'fail'),
-        ('gpu.', GPU_METRICS, 'skip'),
-        ('prom.', PROM_METRICS, 'skip'),
-    ):
-        for short_name, unit in metrics:
-            definitions.append(
-                {
-                    'metric': f'{prefix}{short_name}',
-                    'unit': unit,
-                    'missing_status': missing_status,
-                }
-            )
-    return tuple(definitions)
-
-
-def report_metric_units() -> dict[str, str]:
-    '''Return units for fully qualified metrics and vLLM's client shorthand.'''
-    units = {definition['metric']: definition['unit'] for definition in metric_definitions()}
-    units.update(
-        {metric.removeprefix('client.'): unit for metric, unit in units.items() if metric.startswith('client.')}
-    )
-    return units
+__all__ = [
+    'METRIC_CATEGORIES',
+    'METRIC_CONTRACT',
+    'METRIC_NAMES',
+    'METRIC_REGISTRY',
+    'METRIC_UNITS',
+    'active_metric_specs',
+    'evaluate_metric_verdicts',
+    'metric_contract',
+    'metric_definitions',
+    'metric_verdict',
+    'report_metric_units',
+    'reportable_metric_specs',
+    'tier_metric_specs',
+]
 
 
-def active_metric_specs(
-    thresholds: Mapping[str, Mapping[str, Any]],
-    *,
-    enforce_thresholds: bool,
-) -> tuple[dict[str, Any], ...]:
-    '''Return configured, enforced, non-informational metric specs in display order.'''
+def active_metric_specs(thresholds, *, enforce_thresholds):
+    '''Return configured and enforced metric specs in registry order.'''
     if not enforce_thresholds:
         return ()
-
-    return tuple(
-        definition for definition in reportable_metric_specs(thresholds) if definition['spec'].get('kind') != 'info'
-    )
+    return reportable_metric_specs(thresholds)
 
 
-def reportable_metric_specs(
-    thresholds: Mapping[str, Mapping[str, Any]],
-) -> tuple[dict[str, Any], ...]:
-    '''Return configured metric specs in display order, whether enforced or not.'''
+def reportable_metric_specs(thresholds):
+    '''Return configured metric specs in registry order.'''
     specs = []
-    for definition in metric_definitions():
-        spec = thresholds.get(definition['metric'])
-        if not isinstance(spec, Mapping):
+    for definition in METRIC_REGISTRY:
+        spec = thresholds.get(definition.name)
+        if not isinstance(spec, dict):
             continue
-        specs.append({**definition, 'spec': dict(spec)})
+        specs.append(
+            {
+                'metric': definition.name,
+                'unit': definition.unit,
+                'datasource': definition.datasource,
+                'category': definition.category,
+                'direction': definition.direction,
+                'spec': dict(spec),
+            }
+        )
     return tuple(specs)
 
 
-def evaluate_metric_verdicts(
-    actuals_by_host: Mapping[str, Mapping[str, Any]],
-    thresholds: Mapping[str, Mapping[str, Any]],
-    *,
-    enforce_thresholds: bool,
-) -> list[dict[str, Any]]:
-    '''Build report rows and evaluate only enforced vLLM metric gates.'''
+def evaluate_metric_verdicts(actuals_by_host, thresholds, *, enforce_thresholds):
+    '''Build all vLLM rows before the parent emits threshold subtests.'''
     verdicts = []
-    reportable_specs = reportable_metric_specs(thresholds)
     for host, actuals in actuals_by_host.items():
-        for definition in reportable_specs:
-            metric = definition['metric']
+        for definition in METRIC_REGISTRY:
+            metric = definition.name
+            spec = thresholds.get(metric)
             value = actuals.get(metric)
-            enforced = enforce_thresholds and definition['spec'].get('kind') != 'info'
-            record_reason = (
-                'threshold enforcement disabled; no threshold asserted'
-                if not enforce_thresholds
-                else 'informational metric; no threshold asserted'
-            )
+            if not _is_finite_number(value) and spec is None:
+                continue
+            enforced = bool(enforce_thresholds and spec is not None)
             verdict = {
                 'node': str(host),
                 'metric': metric,
-                'unit': definition['unit'],
+                'label': metric,
+                'unit': definition.unit,
                 'actual': value,
-                'spec': definition['spec'],
+                'spec': spec,
                 'enforced': enforced,
                 'status': 'pass' if enforced else 'record',
-                'reason': '' if enforced else record_reason,
+                'reason': '',
             }
-            if value is None:
-                unavailable = f'{metric}: value is None (metric unavailable for this run)'
-                if enforced:
-                    verdict['status'] = definition['missing_status']
-                    verdict['reason'] = unavailable
-                else:
-                    verdict['reason'] = f'{unavailable}; no threshold asserted'
-            elif enforced:
-                try:
-                    evaluate_all(actuals, {metric: definition['spec']})
-                except ThresholdViolation as exc:
-                    verdict['status'] = 'fail'
-                    verdict['reason'] = str(exc)
+            if enforced:
+                verdict['status'], verdict['reason'] = metric_verdict(metric, value, spec)
+            elif spec is None:
+                verdict['reason'] = 'metric produced without a configured threshold'
+            else:
+                verdict['reason'] = 'threshold enforcement disabled; no threshold asserted'
+                if not _is_finite_number(value):
+                    verdict['reason'] = f'{metric}: unavailable or non-finite actual recorded; no threshold asserted'
             verdicts.append(verdict)
     return verdicts

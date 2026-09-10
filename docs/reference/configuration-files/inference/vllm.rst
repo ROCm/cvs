@@ -750,256 +750,134 @@ concurrency varying fastest makes a sweep substantially quicker.
 Thresholds
 ==========
 
-Thresholds turn measurements into pass/fail results. They are keyed by cell key, then by fully-qualified metric name:
+Thresholds are keyed by canonical cell, then by a bare metric name:
 
 .. code:: json
 
     {
-      "ISL=1000,OSL=1000,TP=8,CONC=16": {
-        "client.total_token_throughput": { "kind": "min_tok_s", "value": 4000 },
-        "client.mean_ttft_ms":           { "kind": "max_ms",    "value": 500 },
-        "client.failed":                 { "kind": "max",       "value": 0 },
-        "client.success_rate":           { "kind": "min",       "value": 0.99 },
-        "gpu.gpu_compute_util_pct":      { "kind": "within",    "value": 90, "tolerance_pct": 10 },
-        "client.output_throughput":      { "kind": "min_ratio", "value": 0.8,
-                                           "reference": "client.total_token_throughput" }
+      "ISL=1000,OSL=1000,TP=8,PP=1,CONC=16": {
+        "output_throughput": {"kind": "min", "value": 4000},
+        "mean_ttft_ms": {"kind": "max", "value": 500},
+        "failed": {"kind": "max", "value": 0}
       }
     }
 
-Threshold kinds
----------------
+A cell may contain any subset of the registry, including an empty object. When
+``enforce_thresholds`` is true, every selected run must have a threshold cell,
+but only specs present in that cell create verification subtests. When it is
+false, produced and configured values remain ``record`` rows and no threshold
+subtests run.
 
-.. list-table::
-   :widths: 2 2 6
-   :header-rows: 1
+Sweep specs are strict at load time regardless of enforcement:
 
-   * - ``kind``
-     - Extra keys
-     - Fails when
-   * - ``min``
-     - —
-     - ``actual < value``
-   * - ``max``
-     - —
-     - ``actual > value``. Unit-agnostic upper bound, for counts such as ``failed``
-   * - ``max_ms``
-     - —
-     - ``actual > value``. Identical comparison to ``max``, but the message says "ms"
-   * - ``min_tok_s``
-     - —
-     - ``actual < value``. Identical comparison to ``min``, but the message says "tok/s"
-   * - ``within``
-     - ``tolerance_pct``
-     - ``actual`` falls outside ``value ± tolerance_pct`` percent
-   * - ``min_ratio``
-     - ``reference``
-     - ``actual / <reference metric>`` is less than ``value``
-   * - ``info``
-     - —
-     - Never. The value is recorded, but no verification subtest is emitted.
+- A spec contains exactly ``kind`` and ``value``.
+- ``kind`` must equal the registry direction, exactly ``min`` or ``max``.
+- ``value`` must be a finite JSON number. Booleans, strings, null, arrays,
+  objects, NaN, and infinity are rejected.
+- Prefixed names (``client.*``, ``gpu.*``, ``prom.*``), unknown names, legacy
+  kinds (including ``min_tok_s`` and ``max_ms``), references, tolerances,
+  units, ``info``, and extra fields are rejected.
 
-An unrecognized ``kind`` is a violation, not a silent skip. A missing or ``None`` ``client.*`` value with an active threshold is a loud violation. Unavailable ``gpu.*`` and ``prom.*`` values are reported as skipped subtests.
+``min`` fails below its value and passes at or above it. ``max`` fails above
+its value and passes at or below it. A gated actual that is missing, null,
+boolean, string, collection, NaN, or infinity fails for every datasource.
 
-For ``min_ratio``, the ``reference`` names another metric in the same cell. If that reference is missing, ``None``, or zero, the check fails with a message naming the reason.
-
-.. _vllm-threshold-coverage:
-
-Coverage checking
------------------
-
-At load time, every threshold cell must name a key in ``sweeps``. When
-``enforce_thresholds`` is true, every selected ``runs`` cell must have a
-threshold entry. Record-only runs may select uncalibrated cells.
-
-There is no per-metric coverage requirement. A cell's entry may spec a single metric or two dozen — a threshold file is free to gate only the metrics you care about rather than every member of every family.
-
-The ``accuracy`` key is exempt from cell-coverage checking, since it is keyed by task rather than by cell.
-
-Setting ``enforce_thresholds`` to ``false`` stops threshold violations from
-failing tests. The run still measures and records everything, which makes it
-the right setting for a first calibration run on new hardware.
-
-Which metrics are asserted is then decided per metric at evaluation time, not at load time. A metric is checked only when its cell carries a spec for it; with no spec it is measured and reported but never asserted. A spec of ``null`` is the explicit way to say the same thing.
+The optional top-level ``accuracy`` block remains task-qualified and is exempt
+from these vLLM sweep-name and spec rules.
 
 .. _vllm-threshold-discovery:
 
 Threshold file discovery
 ------------------------
 
-The threshold file is located in one of two ways:
-
-- **Explicit** — set ``threshold_json`` to a path. A relative path resolves against the configuration file's directory.
-- **Implicit** — if ``threshold_json`` is absent, the loader looks for exactly one file matching ``*threshold.json`` beside the configuration file. Finding more than one is an error, so add ``threshold_json`` when several coexist in a directory.
+Set ``threshold_json`` to the threshold file. A relative path resolves against
+the configuration file's directory. The packaged 28 files contain two cells
+each and all 56 metrics in canonical registry order. Their zero values are
+uncalibrated placeholders, and every paired config keeps enforcement disabled.
 
 Metrics
 =======
 
-Metrics live in namespaces. ``test_verify_cell_metrics`` is one parent phase per cell and lists each active threshold gate as a subtest in its expandable HTML panel. Missing ``gpu.*`` and ``prom.*`` values skip their subtests; missing ``client.*`` values with an active threshold fail. Record-only metrics do not create passing subtests; read them from the results table and per-cell logs.
+vLLM uses one ordered 56-entry bare-name registry. The metric name owns its
+raw source or derivation inputs, display unit, datasource, display category,
+and exact threshold direction. ``median_*`` and ``p50_*`` remain separate.
 
-Client metrics
+Run and health (7)
+------------------
+
+``max_concurrency``, ``max_concurrent_requests``, ``num_prompts``,
+``completed``, ``failed``, ``success_rate``, ``duration``.
+
+Throughput and totals (10)
+--------------------------
+
+``request_throughput``, ``goodput``, ``output_throughput``,
+``total_token_throughput``, ``per_gpu_throughput``,
+``decode_throughput_p50``, ``max_output_tokens_per_s``, ``rtfx``,
+``total_input_tokens``, ``total_output_tokens``.
+
+TTFT (8)
+--------
+
+``mean_ttft_ms``, ``median_ttft_ms``, ``std_ttft_ms``, ``p50_ttft_ms``,
+``p90_ttft_ms``, ``p95_ttft_ms``, ``p99_ttft_ms``,
+``normalized_ttft_ms_per_tok``.
+
+TPOT (7)
+--------
+
+``mean_tpot_ms``, ``median_tpot_ms``, ``std_tpot_ms``, ``p50_tpot_ms``,
+``p90_tpot_ms``, ``p95_tpot_ms``, ``p99_tpot_ms``.
+
+ITL (8)
+-------
+
+``mean_itl_ms``, ``median_itl_ms``, ``std_itl_ms``, ``p50_itl_ms``,
+``p90_itl_ms``, ``p95_itl_ms``, ``p99_itl_ms``, ``decode_latency_ratio``.
+
+End-to-end latency (7)
+----------------------
+
+``mean_e2el_ms``, ``median_e2el_ms``, ``std_e2el_ms``, ``p50_e2el_ms``,
+``p90_e2el_ms``, ``p95_e2el_ms``, ``p99_e2el_ms``.
+
+GPU (5)
+-------
+
+``peak_gpu_memory_mb``, ``model_load_memory_mb``, ``model_load_s``,
+``gpu_bandwidth_util_pct``, ``gpu_compute_util_pct``. Load time and memory are
+captured once after successful readiness and reused for cells sharing that
+server. Both pre/post VRAM snapshots must be finite; otherwise both load
+measurements are unavailable and the server state is not reused. A real zero
+memory delta remains zero.
+
+Prometheus (4)
 --------------
 
-Measured by the load generator (``vllm bench serve``) and namespaced ``client.*``. **Gated** marks the metrics designated as pass/fail criteria: they populate the report's gate matrix and they are the ones a threshold file normally specs. The mark does not make a metric mandatory — any metric, gated or not, is asserted only when its cell carries a spec for it (see :ref:`vllm-threshold-coverage`).
+``queue_time_p50_ms``, ``queue_time_p95_ms``, ``prefill_time_p50_ms``, and
+``prefill_time_p95_ms``. CVS diffs before/after histogram scrapes so reused
+server counters remain isolated to one cell.
 
-.. list-table::
-   :widths: 4 1 1 4
-   :header-rows: 1
+Directions
+----------
 
-   * - Metric
-     - Unit
-     - Gated
-     - Notes
-   * - ``client.total_token_throughput``
-     - tok/s
-     - yes
-     - Input plus output tokens per second
-   * - ``client.output_throughput``
-     - tok/s
-     - yes
-     - Generated tokens per second
-   * - ``client.mean_ttft_ms``
-     - ms
-     - yes
-     - Time to first token
-   * - ``client.median_ttft_ms``
-     - ms
-     - yes
-     -
-   * - ``client.p90_ttft_ms``
-     - ms
-     - yes
-     -
-   * - ``client.p95_ttft_ms``
-     - ms
-     - yes
-     -
-   * - ``client.p99_ttft_ms``
-     - ms
-     - yes
-     -
-   * - ``client.mean_tpot_ms``
-     - ms
-     - yes
-     - Time per output token
-   * - ``client.median_tpot_ms``
-     - ms
-     - yes
-     -
-   * - ``client.p90_tpot_ms``
-     - ms
-     - yes
-     -
-   * - ``client.p95_tpot_ms``
-     - ms
-     - yes
-     -
-   * - ``client.p99_tpot_ms``
-     - ms
-     - yes
-     -
-   * - ``client.mean_itl_ms``
-     - ms
-     - yes
-     - Inter-token latency
-   * - ``client.median_itl_ms``
-     - ms
-     - yes
-     -
-   * - ``client.p95_itl_ms``
-     - ms
-     - yes
-     -
-   * - ``client.p99_itl_ms``
-     - ms
-     - yes
-     - ITL has no p90 producer
-   * - ``client.mean_e2el_ms``
-     - ms
-     - yes
-     - End-to-end latency
-   * - ``client.median_e2el_ms``
-     - ms
-     - yes
-     -
-   * - ``client.p90_e2el_ms``
-     - ms
-     - yes
-     -
-   * - ``client.p95_e2el_ms``
-     - ms
-     - yes
-     -
-   * - ``client.p99_e2el_ms``
-     - ms
-     - yes
-     -
-   * - ``client.success_rate``
-     - \-
-     - yes
-     - Derived; see below
-   * - ``client.failed``
-     - \-
-     - yes
-     - Failed request count
-   * - ``client.max_concurrency``
-     - \-
-     - no
-     -
-   * - ``client.max_concurrent_requests``
-     - \-
-     - no
-     -
-   * - ``client.num_prompts``
-     - \-
-     - no
-     -
-   * - ``client.completed``
-     - \-
-     - no
-     -
-   * - ``client.duration``
-     - s
-     - no
-     -
-   * - ``client.request_throughput``
-     - req/s
-     - no
-     -
-   * - ``client.goodput``
-     - req/s
-     - no
-     - Alias of the stock ``request_goodput``; meaningful only with ``goodput_slo``
-   * - ``client.per_gpu_throughput``
-     - tok/s
-     - no
-     - Derived; see below
-   * - ``client.decode_throughput_p50``
-     - tok/s
-     - no
-     - Derived; see below
-   * - ``client.max_output_tokens_per_s``
-     - tok/s
-     - no
-     -
-   * - ``client.total_input_tokens``
-     - \-
-     - no
-     -
-   * - ``client.total_output_tokens``
-     - \-
-     - no
-     -
-   * - ``client.normalized_ttft_ms_per_tok``
-     - ms/tok
-     - no
-     - Derived; see below
-   * - ``client.decode_latency_ratio``
-     - \-
-     - no
-     - Derived; see below
+The following are ``min``: ``max_concurrency``,
+``max_concurrent_requests``, ``num_prompts``, ``completed``, ``success_rate``,
+``request_throughput``, ``goodput``, every token throughput/total metric,
+``rtfx``, ``gpu_bandwidth_util_pct``, and ``gpu_compute_util_pct``. Every other
+registry metric is ``max``.
 
-Derived client metrics
-~~~~~~~~~~~~~~~~~~~~~~
+Projection and derivation
+-------------------------
+
+The vLLM result projector accepts only finite built-in integer and float values;
+booleans are not numeric. Known metadata is ignored: ``date``,
+``endpoint_type``, ``backend``, ``label``, ``model_id``, ``tokenizer_id``,
+``burstiness``, and ``request_rate`` (including a finite request rate). Any
+unknown finite top-level numeric field fails parsing and names the artifact.
+The raw ``request_goodput`` field maps only to ``goodput``.
+
+Derived metrics are emitted only when their result is finite:
 
 .. code:: text
 
@@ -1009,75 +887,26 @@ Derived client metrics
   decode_throughput_p50       = 1000 / median_tpot_ms
   success_rate                = completed / (completed + failed)
 
-Every division is guarded: a missing, ``None``, or zero divisor yields ``None`` — reported as ``-`` — rather than a bogus zero or a crash.
+Reporting and compatibility
+---------------------------
 
-.. note::
+``test_verify_cell_metrics`` remains one parent per cell. It computes all host
+rows before emitting one subtest for each present, enforced spec, so one failure
+does not hide sibling verdicts. Finite produced values without a spec are
+record-only HTML rows. The parent also emits one compact JUnit property with
+``actuals_by_host`` and metric contract ``{"id":"vllm-bare","version":1}``.
 
-  ``client.request_rate`` is not surfaced as a metric row, because the stock benchmark emits the string ``inf`` rather than a number.
-
-  A new metric is **record-only by default**. Adding its name to the gated set marks it as a pass/fail criterion and files it under one of the report's gate-matrix tiers; it still only fails a run in those cells whose threshold entry specs it.
-
-GPU metrics
------------
-
-Sampled from ``amd-smi`` during the run and namespaced ``gpu.*``. None are gated by default.
-
-.. list-table::
-   :widths: 4 1 5
-   :header-rows: 1
-
-   * - Metric
-     - Unit
-     - Description
-   * - ``gpu.peak_gpu_memory_mb``
-     - MB
-     - Peak VRAM observed
-   * - ``gpu.model_load_memory_mb``
-     - MB
-     - VRAM attributable to loading weights
-   * - ``gpu.model_load_s``
-     - s
-     - Weight load duration
-   * - ``gpu.gpu_bandwidth_util_pct``
-     - %
-     - Memory bandwidth utilization
-   * - ``gpu.gpu_compute_util_pct``
-     - %
-     - Compute utilization
-
-Server metrics
---------------
-
-Scraped from the vLLM ``/metrics`` Prometheus endpoint and namespaced ``prom.*``.
-
-.. list-table::
-   :widths: 4 1 5
-   :header-rows: 1
-
-   * - Metric
-     - Unit
-     - Source histogram
-   * - ``prom.queue_time_p50_ms``
-     - ms
-     - ``vllm:request_queue_time_seconds``
-   * - ``prom.queue_time_p95_ms``
-     - ms
-     - ``vllm:request_queue_time_seconds``
-   * - ``prom.prefill_time_p50_ms``
-     - ms
-     - ``vllm:request_prefill_time_seconds``
-   * - ``prom.prefill_time_p95_ms``
-     - ms
-     - ``vllm:request_prefill_time_seconds``
-
-vLLM's Prometheus counters are cumulative over the server process lifetime, so a raw scrape after cell three would include cells one and two. The suite therefore scrapes **before and after each cell** and diffs the histogram buckets, giving per-cell quantiles. Quantiles are computed with the same interpolation PromQL's ``histogram_quantile`` uses.
-
-If the endpoint cannot be reached, all four report ``-`` and skip rather than failing the run.
+Run Deck tables, charts, and highlights use selected registry metrics rather
+than all 56 columns. Historical namespaced vLLM Run Deck artifacts do not match
+the contract: previous-run and manually selected viewer baselines display an
+explicit incompatibility and suppress comparisons.
 
 Results table
 -------------
 
-The summary table emits seven fixed columns — Model, GPU, ISL, OSL, Policy, Conc, Host — followed by Req/s, Total tok/s, Mean TTFT, P95 TTFT, Mean TPOT, P95 TPOT, P99 ITL, and Goodput.
+The summary table emits seven fixed columns — Model, GPU, ISL, OSL, Policy,
+Conc, Host — followed by Req/s, Total tok/s, Mean TTFT, P95 TTFT, Mean TPOT,
+P95 TPOT, P99 ITL, and Goodput.
 
 .. _vllm-accuracy:
 
@@ -1217,7 +1046,7 @@ Troubleshooting
    * - ``duplicate task id(s)``
      - Two ``accuracy.tasks`` entries share an ``id``
    * - ``<metric>: unknown threshold kind``
-     - Typo in ``kind``. Valid values are ``min``, ``max``, ``max_ms``, ``min_tok_s``, ``within``, ``min_ratio``
+     - Typo or direction mismatch in ``kind``. The registry requires exactly ``min`` or ``max`` for each metric
    * - ``<metric>: missing from actuals``
      - A threshold gates a metric this run did not produce. Common cause: ``metric_percentiles`` omits the gated percentile
    * - ``NotImplementedError: model.remote=1``

@@ -22,7 +22,7 @@ from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFacto
 from cvs.lib import globals
 from cvs.lib.inference.vllm_topology import resolve_vllm_topology, scope_vllm_cluster
 from cvs.lib.inference.utils.vllm_config_loader import load_variant
-from cvs.lib.inference.utils.vllm_parsing import VLLM_RESULTS_COLUMNS
+from cvs.lib.inference.utils.vllm_metrics import VLLM_RESULTS_COLUMNS
 from cvs.lib.report.benchmark_metric_registry import (
     benchmark_metric_columns_for_nodeid,
     benchmark_metric_rows_from_item,

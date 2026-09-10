@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Mapping, Optional
 
 from cvs.lib.report.formatting import fmt_num
@@ -9,8 +10,13 @@ from cvs.lib.report.types import InferenceReportConfig
 from cvs.lib.report.verdict import _check_one
 
 
-def metric_pass(metric: str, actual: Any, spec: Optional[dict]) -> str:
-    if spec is None or actual is None:
+def metric_pass(metric: str, actual: Any, spec: Optional[dict], evaluator=None) -> str:
+    if spec is None:
+        return "na"
+    if evaluator is not None:
+        status, _reason = evaluator(metric, actual, spec)
+        return status
+    if actual is None:
         return "na"
     err = _check_one(metric, actual, spec)
     return "fail" if err else "pass"
@@ -71,7 +77,12 @@ class CellRecordBuilder:
         if not specs:
             return "na"
         for metric, spec in specs.items():
-            status = metric_pass(metric, actuals.get(metric), spec)
+            status = metric_pass(
+                metric,
+                actuals.get(metric),
+                spec,
+                evaluator=getattr(self.config, "metric_verdict", None),
+            )
             if status == "fail":
                 return "fail"
             if status == "na":
@@ -161,8 +172,21 @@ class CellRecordBuilder:
                     "actual": actual,
                     "unit": self.config.metric_units.get(short, ""),
                     "spec": spec,
-                    "status": metric_pass(full, actual, spec) if enforce and spec else "record",
-                    "bar_pct": bar_pct(float(actual), spec) if spec is not None and actual is not None else None,
+                    "status": (
+                        metric_pass(
+                            full,
+                            actual,
+                            spec,
+                            evaluator=getattr(self.config, "metric_verdict", None),
+                        )
+                        if enforce and spec
+                        else "record"
+                    ),
+                    "bar_pct": (
+                        bar_pct(float(actual), spec)
+                        if spec is not None and type(actual) in (int, float) and math.isfinite(actual)
+                        else None
+                    ),
                     "margin": margin_text(actual, spec) if spec else None,
                 }
             )

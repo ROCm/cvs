@@ -27,11 +27,15 @@ class TestProfile(unittest.TestCase):
                 "cvs.lib.report.profiles.hooks.sglang_run_card:sglang_run_card_display",
             )
 
-    def test_vllm_hooks_point_at_inference_parsing(self):
+    def test_vllm_hooks_point_at_canonical_metric_contract(self):
         profile = load_json_profile("vllm")
         self.assertEqual(
             profile["hooks"]["metric_units"],
-            "cvs.lib.inference.utils.vllm_parsing:CLIENT_METRIC_UNITS",
+            "cvs.lib.inference.utils.vllm_metrics:METRIC_UNITS",
+        )
+        self.assertEqual(
+            profile["hooks"]["metric_verdict"],
+            "cvs.lib.inference.utils.vllm_metrics:metric_verdict",
         )
         self.assertNotIn("run_card_display", profile.get("hooks", {}))
 
@@ -43,7 +47,7 @@ class TestProfile(unittest.TestCase):
         config = build_inference_config_from_profile(profile)
         shorts = [short for short, _label in config.cell_highlights]
         self.assertIn("output_throughput", shorts)
-        self.assertEqual(config.full_metric("output_throughput"), "client.output_throughput")
+        self.assertEqual(config.full_metric("output_throughput"), "output_throughput")
 
     def test_sglang_profile_preserves_empty_metric_prefix(self):
         from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
