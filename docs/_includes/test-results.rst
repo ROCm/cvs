@@ -41,9 +41,9 @@ Sample output snapshots from a JAX MaxText training run.
 Sample Inference Test Results
 -----------------------------
 
-Sample output snapshots from an SGLang inference run.
+Sample output snapshot from an SGLang inference run.
 
 **HTML test report**
 
-.. image:: /images/inferece_pytest_report_sample.png
+.. image:: images/inference_pytest_report_sample.png
    :alt: Sample SGLang inference HTML test report
