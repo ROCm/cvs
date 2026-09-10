@@ -71,7 +71,7 @@ subtrees:
         subtrees:
         - entries:
           - file: how-to/test-suites/inference/vllm
-            title: Run vLLM Inference Tests
+            title: vLLM tests
           - file: how-to/test-suites/inference/atom
             title: ATOM inference tests
           - file: how-to/test-suites/inference/sglang
