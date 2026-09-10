@@ -72,6 +72,7 @@ def evaluate_metric_verdicts(actuals_by_host, thresholds, *, enforce_thresholds)
             verdict = {
                 'node': str(host),
                 'metric': metric,
+                'label': metric,
                 'unit': definition.unit,
                 'actual': value,
                 'spec': spec,
