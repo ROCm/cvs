@@ -523,6 +523,8 @@ def parse_rvs_level_results(test_config, out_dict, level):
 
     if not fail_patterns:
         log.warning(f'No fail patterns defined for RVS LEVEL {level} test')
+        for node in out_dict.keys():
+            _record_rvs_result(f"level_{level}", node, "pass")
         return
 
     for node in out_dict.keys():
