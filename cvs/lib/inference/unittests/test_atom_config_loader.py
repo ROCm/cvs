@@ -93,6 +93,9 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.roles.server.ib_netdev, "auto")
         self.assertEqual(variant.roles.server.ib_hca_devices, "auto")
         self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
+        self.assertEqual(variant.params.server_poll_count, "120")
+        self.assertEqual(variant.params.client_poll_count, "150")
+        self.assertEqual(variant.params.max_model_length, "8192")
         self.assertFalse(variant.enforce_thresholds)
         self.assertEqual(len(variant.expected_cells()), 16)
         cell = "ISL=512,OSL=512,TP=8,PP=2,CONC=16"
@@ -343,6 +346,15 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_single.json")
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertIn("kv-cache-dtype", variant.roles.server.serve_args)
+
+    def test_load_atom_vllm_distributed_serving_schema(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertIn("kv-cache-dtype", variant.roles.server.serve_args)
+        self.assertEqual(variant.roles.server.ib_netdev, "auto")
 
     def test_load_atom_vllm_gpt_oss_serving_schema(self):
         root = Path(__file__).resolve().parents[3]

@@ -114,6 +114,23 @@ class TestAtomServingConfig(unittest.TestCase):
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(len(variant.expected_cells()), 3)
 
+    def test_load_atom_vllm_distributed_serving_config(self):
+        root = Path(__file__).resolve().parents[4]
+        cfg = root / "input/config_file/inference/atom/mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json"
+        raw = json.loads(cfg.read_text(encoding="utf-8"))
+        self.assertTrue(is_serving_config(raw))
+        th_path = cfg.parent / raw["threshold_json"]
+        thresholds = json.loads(th_path.read_text(encoding="utf-8"))
+        variant_raw = serving_to_atom_variant_raw(raw, thresholds)
+        variant = AtomVariantConfig(**variant_raw)
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
+        self.assertEqual(variant.params.server_poll_count, "120")
+        self.assertEqual(len(variant.expected_cells()), 16)
+        self.assertNotIn("env", variant.container.runtime.args)
+
     def test_load_atom_vllm_gpt_oss_serving_config(self):
         root = Path(__file__).resolve().parents[4]
         cfg = root / "input/config_file/inference/atom/mi3xx_atom_vllm_gpt-oss-120b_mxfp4_single.json"
