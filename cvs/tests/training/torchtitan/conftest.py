@@ -106,7 +106,7 @@ def orch(cluster_dict, variant_config, lifecycle):
     double-tearing down in the normal case.
     """
     container_block = _deep_merge(cluster_dict.get("container", {}), variant_config.container.model_dump())
-    
+
     # Inject NNODES based on cluster node count (str(len(node_dict)) at docker launch)
     # Distributed configs should not hard-code NNODES; calculate from actual cluster size
     if "env" not in container_block:
