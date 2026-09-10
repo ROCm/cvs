@@ -25,7 +25,7 @@ Prerequisites
 - Passwordless SSH from the control host to each cluster node (key in the cluster file) and Docker available on the nodes.
 - A container image for ROCm (``container.image`` in the config). A Megatron-LM image must provide Megatron-LM at ``/workspace/Megatron-LM``. A Primus image (name contains ``primus``) uses in-image YAML under ``examples/megatron/configs/{gpu_arch}/`` instead.
 - A Hugging Face token file at ``paths.hf_token_file`` (used to fetch the tokenizer). Tokenizer download requires network access on the nodes. For gated models (LLaMA, DeepSeek), model access must be granted on huggingface.co.
-- For distributed runs: RDMA interfaces configured and reachable on all nodes; a shared filesystem path reachable from all nodes for logs and scripts.
+- For distributed runs: RDMA interfaces configured and reachable on all nodes; a shared filesystem path reachable from all nodes for ``paths.data_cache_dir``, logs, and scripts.
 
 .. _megatron-set-up-config:
 
@@ -46,7 +46,7 @@ Set up config
      cvs config copy training/megatron/mi300x_megatron_llama-3.1-8b_single_threshold.json --output ~/cvs_workspace/training/megatron/mi300x_megatron_llama-3.1-8b_single_threshold.json
      # or mi325x_megatron_llama-3.1-8b_single_threshold.json for MI325X
 
-3. Replace every ``<changeme>`` with cluster-specific values. For MI300X/MI325X shared templates, set ``gpu_name`` to ``MI300X`` or ``MI325X`` and ``threshold_json`` to the matching ``mi300x_*`` or ``mi325x_*`` threshold file. Also set ``container.image``, ``train_params.training_iterations``, and the ``container.env`` NIC fields (templates ship example interface/HCA/GID/debug strings that still contain ``<changeme>`` — keep or edit the example and remove the placeholder). Each sweep cell ships ``"training_iterations": "20"``; change that overlay per combo if needed. Do not add ``NNODES``; the suite sets it from the cluster host count at ``docker run``. Distributed configs also need ``MASTER_ADDR`` and ``NCCL_IB_HCA``.
+3. Replace every ``<changeme>`` with cluster-specific values. For MI300X/MI325X shared templates, set ``gpu_name`` to ``MI300X`` or ``MI325X`` and ``threshold_json`` to the matching ``mi300x_*`` or ``mi325x_*`` threshold file. Also set ``container.image`` and the ``container.env`` NIC fields (templates ship example interface/HCA/GID/debug strings that still contain ``<changeme>`` — keep or edit the example and remove the placeholder). Packaged ``sweep.combinations`` cells already set ``training_iterations`` to ``"20"`` (that overlay wins over ``train_params.training_iterations``). Change the overlay per combo if needed. Do not add ``NNODES``; the suite sets it from the cluster host count at ``docker run``. Distributed configs also need ``MASTER_ADDR``, ``NCCL_IB_HCA``, and a shared ``paths.data_cache_dir``.
 4. Change any other parameters relevant to your testing requirements.
 
 The same folder also has DeepSeek V2 Lite (single and distributed; Megatron-LM or Primus) and Llama 3.1 405B (distributed, **Primus only**). See `Config and threshold files`_ for the full inventory.
@@ -168,16 +168,6 @@ Use the shared ``mi3xx_`` template. Set ``gpu_name`` and ``threshold_json`` to t
     --config_file input/config_file/training/megatron/mi3xx_megatron_llama-3.3-70b_distributed.json \
     --html ./logs/megatron_distributed.html --self-contained-html -vvv -s
 
-Distributed — MI355X
-~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-  cvs run megatron_distributed \
-    --cluster_file input/cluster_file/cluster.json \
-    --config_file input/config_file/training/megatron/mi355x_megatron_llama-3.3-70b_distributed.json \
-    --html ./logs/megatron_distributed.html --self-contained-html -vvv -s
-
 Run a specific stage
 ~~~~~~~~~~~~~~~~~~~~
 
@@ -240,7 +230,13 @@ On a training failure, lingering GPU processes are killed (``stop_training_proce
 Sweeps
 ======
 
-A sweep combo is one full training run declared in ``sweep.combinations``. Each combination key must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``; the suite parses those values from the key, so they are not repeated in the combination body. Packaged templates set ``{"training_iterations": "20"}`` in the body; you can change that per cell or add other ``train_params`` overlays. ``sweep.runs`` is the ordered list of combination keys to execute; set it to a subset to run only selected combos without editing ``combinations``.
+A sweep combo is one full training run declared in ``sweep.combinations``. Each combination key must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``; the suite parses those values from the key, so they are not repeated in the combination body. Packaged templates use this body (other ``train_params`` overlays are optional)::
+
+    "MBS=4,GBS=128,PRECISION=BF16": {
+      "training_iterations": "20"
+    }
+
+``sweep.runs`` is the ordered list of combination keys to execute; set it to a subset to run only selected combos without editing ``combinations``.
 
 Omitting ``sweep`` (or leaving ``combinations`` empty) runs one implicit cell named ``default`` using ``train_params`` (MBS/GBS/precision fall back to 2 / 128 / BF16, matching the job defaults). The threshold file must then have a top-level ``default`` cell when ``enforce_thresholds`` is ``true``. When ``enforce_thresholds`` is ``false``, that cell is optional (load warns; metrics are record-only). Packaged configs already declare a ``sweep`` and keep ``MBS=…`` threshold keys; they do not use ``default``.
 
@@ -426,27 +422,12 @@ MI355X
    * - Config
      - Threshold
      - Mode
-   * - ``mi355x_megatron_deepseek-v2-lite_single.json``
-     - ``mi355x_megatron_deepseek-v2-lite_single_threshold.json``
-     - single-node
-   * - ``mi355x_megatron_deepseek-v2-lite_distributed.json``
-     - ``mi355x_megatron_deepseek-v2-lite_distributed_threshold.json``
-     - distributed
    * - ``mi355x_megatron_llama-3.1-8b_single.json``
      - ``mi355x_megatron_llama-3.1-8b_single_threshold.json``
      - single-node
-   * - ``mi355x_megatron_llama-3.1-8b_distributed.json``
-     - ``mi355x_megatron_llama-3.1-8b_distributed_threshold.json``
-     - distributed
-   * - ``mi355x_megatron_llama-3.1-405b_distributed.json``
-     - ``mi355x_megatron_llama-3.1-405b_distributed_threshold.json``
-     - distributed (Primus)
    * - ``mi355x_megatron_llama-3.3-70b_single.json``
      - ``mi355x_megatron_llama-3.3-70b_single_threshold.json``
      - single-node
-   * - ``mi355x_megatron_llama-3.3-70b_distributed.json``
-     - ``mi355x_megatron_llama-3.3-70b_distributed_threshold.json``
-     - distributed
 
 Legacy suite names
 ==================

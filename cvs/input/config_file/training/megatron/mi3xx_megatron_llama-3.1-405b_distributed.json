@@ -11,18 +11,6 @@
     "data_cache_dir": "/home/{user-id}/cache",
     "rocm_dir": ""
   },
-  "verify_network_errors": "True",
-  "train_params": {
-    "model_name": "llama3.1_405B",
-    "tokenizer_model": "meta-llama/Llama-3.1-405B",
-    "model_size": "405",
-    "sequence_length": "8192",
-    "recompute": "0",
-    "fsdp": "0",
-    "tensor_parallelism": "8",
-    "pipeline_parallelism": "4",
-    "training_iterations": "<changeme>"
-  },
   "container": {
     "lifetime": "per_run",
     "name": "megatron_llama3_1_405b_distributed",
@@ -56,6 +44,18 @@
       "NCCL_DEBUG": "ERROR <changeme>"
     }
   },
+  "train_params": {
+    "model_name": "llama3.1_405B",
+    "tokenizer_model": "meta-llama/Llama-3.1-405B",
+    "model_size": "405",
+    "sequence_length": "8192",
+    "recompute": "0",
+    "fsdp": "0",
+    "tensor_parallelism": "8",
+    "pipeline_parallelism": "4",
+    "training_iterations": "<changeme>"
+  },
+  "verify_network_errors": "True",
   "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",
   "smoke": {
     "enabled": true,

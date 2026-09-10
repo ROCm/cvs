@@ -9,17 +9,6 @@
     "data_cache_dir": "/home/{user-id}/cache",
     "rocm_dir": ""
   },
-  "train_params": {
-    "model_name": "llama3.1_8B",
-    "tokenizer_model": "meta-llama/Llama-3.1-8B",
-    "model_size": "8",
-    "sequence_length": "8192",
-    "recompute": "0",
-    "fsdp": "0",
-    "tensor_parallelism": "1",
-    "pipeline_parallelism": "1",
-    "training_iterations": "<changeme>"
-  },
   "container": {
     "lifetime": "per_run",
     "name": "megatron_llama3_1_8b_single",
@@ -47,6 +36,17 @@
       "NCCL_IB_GID_INDEX": "3 <changeme>",
       "NCCL_DEBUG": "ERROR <changeme>"
     }
+  },
+  "train_params": {
+    "model_name": "llama3.1_8B",
+    "tokenizer_model": "meta-llama/Llama-3.1-8B",
+    "model_size": "8",
+    "sequence_length": "8192",
+    "recompute": "0",
+    "fsdp": "0",
+    "tensor_parallelism": "1",
+    "pipeline_parallelism": "1",
+    "training_iterations": "<changeme>"
   },
   "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",
   "smoke": {

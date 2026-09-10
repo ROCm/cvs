@@ -6,7 +6,7 @@
 Megatron training configuration files
 *************************************
 
-JSON configs and sibling ``*_threshold.json`` files for ``megatron_single`` and ``megatron_distributed``. MI300X and MI325X share one config per model and mode (``mi3xx_megatron_{model}_{single|distributed}.json``); set ``gpu_name`` and ``threshold_json`` to the SKU. MI355X keeps ``mi355x_megatron_{model}_{single|distributed}.json``. Use a ``*_single.json`` file with ``megatron_single`` and a ``*_distributed.json`` file with ``megatron_distributed``. ``threshold_json`` is resolved relative to the config file.
+JSON configs and sibling ``*_threshold.json`` files for ``megatron_single`` and ``megatron_distributed``. MI300X and MI325X share one config per model and mode (``mi3xx_megatron_{model}_{single|distributed}.json``); set ``gpu_name`` and ``threshold_json`` to the SKU. MI355X ships Llama 3.1 8B and Llama 3.3 70B single-node configs only (``mi355x_megatron_llama-3.1-8b_single.json``, ``mi355x_megatron_llama-3.3-70b_single.json``). Use a ``*_single.json`` file with ``megatron_single`` and a ``*_distributed.json`` file with ``megatron_distributed``. ``threshold_json`` is resolved relative to the config file.
 
 How to run the suites: :doc:`/how-to/test-suites/training/megatron`.
 
@@ -39,7 +39,7 @@ Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite run on **both** Megatron-LM an
 Available configurations
 ========================
 
-MI300X and MI325X share ``mi3xx_megatron_<model>_<mode>.json``. MI355X uses ``mi355x_megatron_<model>_<mode>.json``. Thresholds stay SKU-specific (``mi300x_*_threshold.json``, ``mi325x_*_threshold.json``, ``mi355x_*_threshold.json``) and are selected with ``threshold_json``.
+MI300X and MI325X share ``mi3xx_megatron_<model>_<mode>.json``. MI355X ships ``mi355x_megatron_llama-3.1-8b_single.json`` and ``mi355x_megatron_llama-3.3-70b_single.json``. Thresholds stay SKU-specific (``mi300x_*_threshold.json``, ``mi325x_*_threshold.json``, ``mi355x_*_threshold.json``) and are selected with ``threshold_json``.
 
 .. list-table::
    :widths: 4 3 3 2
@@ -51,19 +51,19 @@ MI300X and MI325X share ``mi3xx_megatron_<model>_<mode>.json``. MI355X uses ``mi
      - Mode
    * - Llama 3.1 8B
      - ``mi3xx_…``
-     - ``mi355x_…``
-     - single, distributed (Megatron-LM or Primus)
+     - ``mi355x_…`` (single only)
+     - single, distributed (Megatron-LM or Primus); MI355X packaged as single-node
    * - Llama 3.3 70B
      - ``mi3xx_…``
-     - ``mi355x_…``
-     - single, distributed (Megatron-LM or Primus)
+     - ``mi355x_…`` (single only)
+     - single, distributed (Megatron-LM or Primus); MI355X packaged as single-node
    * - DeepSeek V2 Lite
      - ``mi3xx_…``
-     - ``mi355x_…``
+     - —
      - single, distributed (Megatron-LM or Primus)
    * - Llama 3.1 405B
      - ``mi3xx_…``
-     - ``mi355x_…``
+     - —
      - distributed (Primus only)
 
 Single-node configs set ``container.env.MASTER_ADDR`` to ``127.0.0.1``. ``NNODES`` is not in the JSON: the suite sets it from the cluster host count into ``docker run -e``. Distributed configs require ``MASTER_ADDR`` and ``NCCL_IB_HCA`` and add a ``scaling_baseline`` section and ``checkpoint_dir`` to the ``checkpoint`` block. NIC type is not in the JSON: Megatron-LM defaults to ``thor2`` for MI300X/MI325X and ``ainic`` for MI355X from ``gpu_name``.
@@ -82,7 +82,7 @@ Set these before a run (full field tables are under `Common parameters`_):
 * ``container.env.NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` / ``NCCL_IB_GID_INDEX`` / ``NCCL_DEBUG`` — templates include example values plus ``<changeme>`` (for example ``enp193s0f1np1 <changeme>``, ``3 <changeme>``, ``ERROR <changeme>``). Remove ``<changeme>`` and keep or edit the example. Required on single-node and distributed.
 * ``sweep.runs`` — combination keys to execute (same ``MBS=…,GBS=…,PRECISION=…`` strings as in ``sweep.combinations``).
 * Do not set ``NNODES`` in JSON.
-* **Distributed only:** ``container.env.MASTER_ADDR``, ``container.env.NCCL_IB_HCA`` (example HCA list plus ``<changeme>``). When ``checkpoint.enforce`` is ``true``, also set ``checkpoint.checkpoint_dir`` and replace the last ``<changeme>:<changeme>`` volume with that shared path.
+* **Distributed only:** ``container.env.MASTER_ADDR``, ``container.env.NCCL_IB_HCA`` (example HCA list plus ``<changeme>``). ``paths.data_cache_dir`` must be a shared filesystem. When ``checkpoint.enforce`` is ``true``, also set ``checkpoint.checkpoint_dir`` and replace the last ``<changeme>:<changeme>`` volume with that shared path.
 
 Top-level fields
 ================
@@ -102,12 +102,15 @@ These fields appear at the root of every config file.
    * - ``paths``
      - see `Common parameters`_
      - Host paths: ``hf_token_file``, ``log_dir``, ``scripts_dir``, ``data_cache_dir``.
-   * - ``verify_network_errors``
-     - omitted (single) / ``True`` (distributed)
-     - Compare RDMA and ethtool error counters before and after training. Single-node templates omit it (schema/lib default ``False``).
+   * - ``container``
+     - see `Common parameters`_
+     - Image, runtime mounts, and ``container.env``. Packaged files keep this block immediately after ``paths``.
    * - ``train_params``
      - see per-model tables
      - Model knobs plus ``training_iterations``. With a ``sweep``, MBS/GBS/precision live on the combination key. With no ``sweep``, optional ``micro_batch_size``, ``global_batch_size``, and ``precision`` here feed the implicit ``default`` cell.
+   * - ``verify_network_errors``
+     - omitted (single) / ``True`` (distributed)
+     - Compare RDMA and ethtool error counters before and after training. Single-node templates omit it (schema/lib default ``False``).
    * - ``enforce_thresholds``
      - ``true``
      - If ``false``, threshold checks in ``test_metric`` log results but do not fail the test.
@@ -123,7 +126,7 @@ Each model section below shows only the ``train_params`` and ``sweep`` blocks, w
 Llama 3.1 8B
 ------------
 
-Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/MI325X) and ``mi355x_…``.
+Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/MI325X) and ``mi355x_megatron_llama-3.1-8b_single.json`` (MI355X).
 
 .. dropdown:: ``mi3xx_megatron_llama-3.1-8b_single.json`` (representative)
 
@@ -204,7 +207,7 @@ Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/M
 Llama 3.3 70B
 -------------
 
-Available as ``mi3xx_megatron_llama-3.3-70b_{single,distributed}.json`` (MI300X/MI325X) and ``mi355x_…``.
+Available as ``mi3xx_megatron_llama-3.3-70b_{single,distributed}.json`` (MI300X/MI325X) and ``mi355x_megatron_llama-3.3-70b_single.json`` (MI355X).
 
 .. dropdown:: ``mi3xx_megatron_llama-3.3-70b_single.json`` (representative)
 
@@ -277,7 +280,7 @@ Available as ``mi3xx_megatron_llama-3.3-70b_{single,distributed}.json`` (MI300X/
 DeepSeek V2 Lite
 ----------------
 
-Available as ``mi3xx_megatron_deepseek-v2-lite_{single,distributed}.json`` (MI300X/MI325X) and ``mi355x_…``.
+Available as ``mi3xx_megatron_deepseek-v2-lite_{single,distributed}.json`` (MI300X/MI325X).
 
 .. dropdown:: ``mi3xx_megatron_deepseek-v2-lite_single.json`` (representative)
 
@@ -350,7 +353,7 @@ Available as ``mi3xx_megatron_deepseek-v2-lite_{single,distributed}.json`` (MI30
 Llama 3.1 405B
 --------------
 
-Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X) and ``mi355x_…`` (distributed only). Unlike the other models, 405B runs on **Primus only**: ``container.image`` must contain ``primus``. Megatron-LM does not support 405B.
+Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; distributed only). Unlike the other models, 405B runs on **Primus only**: ``container.image`` must contain ``primus``. Megatron-LM does not support 405B.
 
 .. dropdown:: ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (representative)
 
@@ -448,7 +451,7 @@ Host paths used by the job. They must be volume-mounted into the container (typi
      - Host path where the lib writes per-rank wrapper scripts.
    * - ``data_cache_dir``
      - ``/home/{user-id}/cache``
-     - Dataset and tokenizer cache directory.
+     - Dataset and tokenizer cache directory. On distributed runs this path must be a shared filesystem.
    * - ``rocm_dir``
      - ``""``
      - ROCm installation path inside the container. Leave empty for auto-detection.
