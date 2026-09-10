@@ -62,7 +62,7 @@ before any subclass coverage check runs on a config that will be rejected anyway
 - **Accepts**: path to a variant `_config.json` + a resolved cluster dict
 - **`threshold_json` handling**: read as a literal absolute path from the raw (un-substituted) config
   before any substitution pass runs — **no placeholder substitution of any kind is applied to it**
-- **3-pass substitution** (see `docs/placeholder-substitution.md` for worked example):
+- **3-pass substitution**:
   1. Cluster placeholders (`{user-id}`, etc.) resolved everywhere in the document
   2. Self-reference within the `paths` block (`{shared_fs}` expanded inside other `paths.*` values)
   3. Cross-block references (`{paths.models_dir}`, etc.) resolved anywhere in the document

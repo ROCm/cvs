@@ -3,8 +3,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
 lm-eval-harness command construction and execution against an already-live
-inference server (see cvs/lib/inference/utils/AGENTS.md for the broader
-accuracy-evaluation design). Routes through `orch.exec_on_head` rather than a
+inference server. Routes through `orch.exec_on_head` rather than a
 raw `docker exec`, matching current suite conventions (mirrors
 `VllmJob.run_client`'s head-only execution rationale).
 '''

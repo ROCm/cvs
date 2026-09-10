@@ -191,8 +191,7 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
     no accuracy tasks configured; `pytest_generate_tests` parametrizes with an
     empty list in that case, which pytest auto-skips as a single node -- same
     convention as a perf metric with no threshold entry. Gating values live in
-    the sibling threshold.json's `accuracy` block, keyed by task id (see
-    cvs/lib/inference/utils/AGENTS.md for the full design).
+    the sibling threshold.json's `accuracy` block, keyed by task id.
     """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
