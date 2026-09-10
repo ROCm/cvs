@@ -10,7 +10,9 @@
     "hf_token_file": "{shared_fs}/.hf_token"
   },
   "model": {
-    "id": "deepseek-ai/DeepSeek-R1-0528"
+    "id": "deepseek-ai/DeepSeek-R1-0528",
+    "remote": 0,
+    "precision": "fp8"
   },
   "container": {
     "lifetime": "per_run",
@@ -76,6 +78,13 @@
     "ISL=128,OSL=32,TP=8,PP=1,CONC=1": {}
   },
   "runs": [],
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
   "accuracy": {
     "tasks": [
       {
