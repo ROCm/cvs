@@ -429,6 +429,14 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                 )
                 self.assertTrue(all(f"PP={pp}" in cell for cell in variant.expected_cells()))
                 self.assertIn("accuracy", variant.thresholds)
+                if engine == "sglang":
+                    self.assertIn("--mamba-radix-cache-strategy", variant.roles.server.sglang_args)
+                    self.assertIn("--disable-overlap-schedule", variant.roles.server.sglang_args)
+                    self.assertEqual(variant.roles.server.env.get("SGLANG_ROCM_ARCH"), "gfx942")
+                    self.assertEqual(variant.roles.server.env.get("GPU_ARCHS"), "gfx942")
+                    self.assertTrue(
+                        str(variant.roles.server.env.get("HF_HUB_CACHE", "")).endswith(".cache/huggingface")
+                    )
 
     def test_load_qwen397b_fp8_mtp3(self):
         root = Path(__file__).resolve().parents[3]

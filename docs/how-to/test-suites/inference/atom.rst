@@ -77,9 +77,12 @@ Replace cluster node IPs and trim ``node_dict`` to one host for single-node runs
 - ``paths.shared_fs``, ``paths.log_dir``, ``paths.hf_token_file``.
 - ``model.id`` — model under test.
 
-``paths.models_dir`` is ``/models``, the in-container mount point exported as
-``HF_HUB_CACHE``. Keep it as shipped; only customize the host side of the models
-volume mount.
+``paths.models_dir`` is ``/models``, the in-container weights mount (usually
+read-only). Keep it as shipped; only customize the host side of the models
+volume. ATOM still defaults ``HF_HUB_CACHE`` to that path for Hub weight
+lookups. SGLang ``bench_serving`` with ``dataset_name=random`` also downloads
+ShareGPT into ``HF_HUB_CACHE``, so Qwen SGLang samples override
+``HF_HUB_CACHE`` / ``HF_HOME`` to ``{paths.shared_fs}/.cache/huggingface``.
 
 For multinode PP, also set ``params.master_addr`` and verify
 ``roles.server.ib_netdev`` (``"auto"`` is the default on shipped distributed stems).

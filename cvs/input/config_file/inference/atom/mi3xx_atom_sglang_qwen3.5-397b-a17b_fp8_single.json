@@ -1,5 +1,5 @@
 {
-  "_comment": "Qwen3.5-397B-A17B FP8 single-node SGLang parity (MI3xx/MI325X).",
+  "_comment": "Qwen3.5-397B-A17B FP8 single-node SGLang parity (MI3xx/MI325X). Image must ship aiter.ops.flydsl.moe_common (UFB sglang-v0.5.13.post1 ...56476a34c8 does not; a later 0.5.13.post1 nightly with that file did).",
   "gpu_arch": "mi3xx",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_atom_sglang_qwen3.5-397b-a17b_fp8_single_threshold.json",
@@ -56,12 +56,19 @@
       "--mem-fraction-static",
       "0.9",
       "--attention-backend",
-      "aiter"
+      "aiter",
+      "--mamba-radix-cache-strategy",
+      "no_buffer",
+      "--disable-overlap-schedule"
     ],
     "benchmark_serv_node": "<changeme>",
     "proxy_router_serv_port": "8000",
     "env": {
-      "SGLANG_USE_AITER": "1"
+      "SGLANG_USE_AITER": "1",
+      "SGLANG_ROCM_ARCH": "gfx942",
+      "GPU_ARCHS": "gfx942",
+      "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
+      "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
     }
   },
   "benchmark_params": {
