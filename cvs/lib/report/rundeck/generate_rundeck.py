@@ -52,8 +52,7 @@ class RundeckPublisher:
         variant_config = store.get("variant_config")
         builder_id = profile.get("dataset_builder") if isinstance(profile, dict) else "sweep"
         if variant_config is None and builder_id == "sweep":
-            log.warning("Skipping Run Deck generation: variant_config not in session store")
-            return None
+            log.warning("Run Deck variant_config missing; publishing without variant metadata")
 
         config = resolve_report_config(profile)
         htmlpath = getattr(self.config.option, "htmlpath", None)
