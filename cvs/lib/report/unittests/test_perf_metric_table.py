@@ -63,6 +63,7 @@ class TestPerfMetricTable(unittest.TestCase):
         )
         self.assertIn('cvs-benchmark-metrics-table', html_out)
         self.assertIn('Mean TTFT (ms)', html_out)
+        self.assertNotIn('n1:', html_out)
         self.assertIn('Passed', html_out)
         self.assertIn('Failed', html_out)
         self.assertIn('Skipped', html_out)
