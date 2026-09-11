@@ -149,9 +149,7 @@ class SweepChartRenderer:
         for p in points:
             if isinstance(p, (list, tuple)) and len(p) >= 2:
                 normalized.append((p[0], p[1]))
-        return self.render_bar_chart(
-            title, normalized, unit, accent="accent2", x_label=x_label, min_points=1
-        )
+        return self.render_bar_chart(title, normalized, unit, accent="accent2", x_label=x_label, min_points=1)
 
 
 _DEFAULT_RENDERER = SweepChartRenderer()
