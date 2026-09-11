@@ -4,10 +4,14 @@ import unittest
 
 from cvs.lib.platform.host_inventory import (
     collected_fact_keys,
+    normalize_output,
     parse_gpu_count,
     parse_iommu,
     parse_kernel_version,
+    parse_numa_balancing,
+    parse_online_memory,
     parse_os_release,
+    parse_pci_acs,
     parse_pci_realloc,
     parse_pcie_link,
     parse_rocm_version,
@@ -67,6 +71,24 @@ class TestHostInventory(unittest.TestCase):
 
         self.assertEqual(results["firmware"]["node-a"]["0"]["CP_MEC1"], "32945")
         self.assertEqual(collected_fact_keys(results), ["firmware"])
+
+    def test_failed_firmware_collection_is_not_a_fact_category(self):
+        results = {}
+        record_gpu_firmware(results, {"n0": "sudo: a password is required", "n1": []})
+        self.assertNotIn("firmware", results)
+        self.assertEqual(collected_fact_keys(results), [])
+
+    def test_unparseable_remote_output_is_unavailable(self):
+        self.assertEqual(
+            normalize_output("ssh: connect to host 10.0.3.14 port 22: Connection timed out"), "unavailable"
+        )
+        self.assertEqual(
+            parse_kernel_version("Permission denied (publickey,password) for root@10.0.3.14"), "unavailable"
+        )
+        self.assertEqual(parse_online_memory("Total online memory: 1.3T"), "1.3T")
+        self.assertEqual(parse_numa_balancing("kernel.numa_balancing = 0"), "0")
+        self.assertEqual(parse_pci_acs("ACSCtl: SrcValid+"), "enabled")
+        self.assertEqual(parse_pci_acs(""), "disabled")
 
 
 if __name__ == "__main__":

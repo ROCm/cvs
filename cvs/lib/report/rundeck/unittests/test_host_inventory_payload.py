@@ -74,6 +74,43 @@ class TestHostInventoryPayload(unittest.TestCase):
         self.assertNotIn("Sweep analytics", doc)
         self.assertNotIn("tok/s", doc)
 
+    def test_empty_firmware_card_is_hidden_and_outliers_are_marked(self):
+        results = {
+            "nodes": {
+                "node-a": {"bios": "A1", "kernel": "k1"},
+                "node-b": {"bios": "A1", "kernel": "k1"},
+                "node-c": {"bios": "B9", "kernel": "k1"},
+            }
+        }
+        payload = build_rundeck_payload(
+            profile=self.profile,
+            store={"cvs_results_dict": results, "variant_config": results},
+            cvs_version="1.0.0",
+        )
+        self.assertEqual(payload["datasets"]["host_inventory"]["firmware_table"], {})
+        doc = render_rundeck_html(payload)
+        self.assertNotIn("GPU firmware inventory", doc)
+        self.assertIn("class='drift-cell-mismatch'>B9</td>", doc)
+        self.assertNotIn("class='drift-cell-mismatch'>A1</td>", doc)
+        self.assertIn("B9", doc)
+
+    def test_hostile_host_facts_are_escaped(self):
+        results = {
+            "nodes": {
+                "node-a": {"bios": "<script>alert(1)</script>"},
+                "node-b": {"bios": "<script>alert(1)</script>"},
+            }
+        }
+        doc = render_rundeck_html(
+            build_rundeck_payload(
+                profile=self.profile,
+                store={"cvs_results_dict": results, "variant_config": results},
+                cvs_version="1.0.0",
+            )
+        )
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", doc)
+        self.assertNotIn("<script>alert(1)</script>", doc)
+
 
 if __name__ == "__main__":
     unittest.main()

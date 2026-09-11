@@ -5,6 +5,8 @@ All rights reserved.
 Dataset builder for host configuration inventory and cross-node drift.
 '''
 
+import re
+
 from cvs.lib.platform.host_inventory import FACT_LABELS
 from cvs.lib.report.rundeck.dataset_builders.registry import register_dataset_builder
 
@@ -76,6 +78,10 @@ def _flatten_node_facts(results):
     return rows
 
 
+def _natural_key(label):
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", str(label))]
+
+
 def _fact_label(key):
     parts = key.split(".")
     if parts[0] == "firmware" and len(parts) >= 3:
@@ -88,7 +94,7 @@ def _fact_label(key):
 def _drift_matrix(results, nodes):
     flattened = _flatten_node_facts(results)
     rows = []
-    for key in sorted(flattened, key=lambda item: (_fact_label(item).lower(), item)):
+    for key in sorted(flattened, key=lambda item: (_natural_key(_fact_label(item)), item)):
         by_node = flattened[key]
         values = [by_node.get(node, "\u2014") for node in nodes]
         mismatch = len({str(value) for value in values}) > 1
@@ -117,6 +123,8 @@ def _firmware_table(results):
                 continue
             for firmware_id, version in sorted(firmware.items()):
                 rows.append([node, gpu, firmware_id, version])
+    if not rows:
+        return {}
     return {
         "headers": ["Node", "GPU", "Firmware", "Version"],
         "rows": rows,

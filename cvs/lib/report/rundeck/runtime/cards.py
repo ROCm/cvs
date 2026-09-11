@@ -8,6 +8,7 @@ Profile-driven card renderers for Run Deck static HTML.
 from __future__ import annotations
 
 import html
+from collections import Counter
 from typing import Any
 
 from cvs.lib.report.formatting import fmt_num, link_or_text_html
@@ -168,10 +169,15 @@ class DeckCardRenderer:
         body = []
         for row in rows:
             mismatch = bool(row.get("mismatch"))
-            value_class = "drift-cell-mismatch" if mismatch else "drift-cell-match"
-            values = "".join(
-                f"<td class='{value_class}'>{html.escape(str(value))}</td>" for value in row.get("values", [])
-            )
+            values_list = list(row.get("values", []))
+            counts = Counter(str(value) for value in values_list)
+            modal = counts.most_common(1)[0][0] if counts else ""
+            cells = []
+            for value in values_list:
+                outlier = mismatch and str(value) != modal
+                value_class = "drift-cell-mismatch" if outlier else "drift-cell-match"
+                cells.append(f"<td class='{value_class}'>{html.escape(str(value))}</td>")
+            values = "".join(cells)
             status = "Mismatch" if mismatch else "Consistent"
             status_class = "drift-status-mismatch" if mismatch else "drift-status-match"
             body.append(

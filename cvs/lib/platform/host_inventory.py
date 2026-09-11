@@ -25,9 +25,27 @@ FACT_LABELS = {
 }
 
 
-def normalize_output(output):
+_UNAVAILABLE_MARKERS = (
+    "permission denied",
+    "password is required",
+    "connection timed out",
+    "command not found",
+    "no such file",
+    "name or service not known",
+    "could not resolve hostname",
+)
+
+
+def normalize_output(output, max_len=80):
     value = str(output or "").strip()
-    return value or "\u2014"
+    if not value:
+        return "\u2014"
+    lowered = value.lower()
+    if any(marker in lowered for marker in _UNAVAILABLE_MARKERS) or value.count("\n") > 2:
+        return "unavailable"
+    if len(value) > max_len:
+        return value[: max_len - 1] + "\u2026"
+    return value
 
 
 def parse_os_release(output):
@@ -104,19 +122,25 @@ def record_indexed_node_facts(store, key, index, output_by_node, parser=normaliz
 
 
 def record_gpu_firmware(store, firmware_by_node):
-    firmware = store.setdefault("firmware", {})
+    firmware = None
     for node, gpu_entries in firmware_by_node.items():
-        node_firmware = firmware.setdefault(str(node), {})
         if not isinstance(gpu_entries, list):
             continue
+        node_firmware = None
         for gpu_entry in gpu_entries:
             if not isinstance(gpu_entry, dict):
                 continue
             gpu = str(gpu_entry.get("gpu", "\u2014"))
-            gpu_firmware = node_firmware.setdefault(gpu, {})
+            gpu_firmware = None
             for entry in gpu_entry.get("fw_list", []):
                 if not isinstance(entry, dict) or "fw_id" not in entry:
                     continue
+                if firmware is None:
+                    firmware = store.setdefault("firmware", {})
+                if node_firmware is None:
+                    node_firmware = firmware.setdefault(str(node), {})
+                if gpu_firmware is None:
+                    gpu_firmware = node_firmware.setdefault(gpu, {})
                 gpu_firmware[str(entry["fw_id"])] = normalize_output(entry.get("fw_version"))
 
 

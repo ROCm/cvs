@@ -84,7 +84,6 @@ make ut          # sdist -> .test_venv -> run_all_unittests.py
   ```
 - See `cvs/tests/rccl/rccl_perf.py`, `cvs/tests/preflight/preflight_checks.py` for examples
 - Run Deck profiles live at `cvs/lib/report/profiles/<suite-stem>.json`; populate `cvs_results_dict` from facts already collected by the suite and keep report generation separate from pass/fail gates
-- For consistency and inventory suites, prefer per-node tables plus a cross-node drift matrix, disable the interactive inference viewer, and do not invent performance metrics or throughput charts
 
 ### Configuration Management
 - Cluster files: node topology, SSH credentials, head-node settings (`cvs/input/cluster_file/`)
