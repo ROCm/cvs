@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "profile_id": "preflight_checks_rundeck",
+  "suite_id": "preflight_checks",
+  "report_basename": "preflight_checks_run_deck",
+  "title": "Preflight Checks Run Deck",
+  "subtitle": "Cluster readiness operator summary",
+  "footer": "CVS preflight checks · render-only · does not affect gates",
+  "link_name": "Preflight Checks Run Deck",
+  "dataset_builder": "preflight",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "preflight_run_deck_results",
+    "variant": "preflight_run_deck_context"
+  },
+  "hooks": {
+    "run_card_display": "cvs.lib.report.profiles.hooks.preflight_run_card:preflight_run_card_display"
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {"type": "table", "id": "headline", "title": "Check totals", "bind": "datasets.preflight.headline"},
+    {"type": "table", "id": "failures", "title": "Failures first", "bind": "datasets.preflight.failures", "when_empty": "hide"},
+    {"type": "table", "id": "matrix", "title": "Check × node matrix", "bind": "datasets.preflight.matrix"}
+  ]
+}
