@@ -75,6 +75,20 @@ class TestIbperfDatasetBuilder(unittest.TestCase):
         self.assertIn("Per-node bandwidth spread", document)
         self.assertIn("Message sizes", document)
         self.assertIn("2, 4", document)
+        self.assertIn("2 B", document)
+        self.assertNotIn("C=2", document)
+        self.assertEqual(payload.get("metric_contract"), {"id": "ibperf-bandwidth", "version": 1})
+
+    def test_single_message_size_still_renders_a_chart(self):
+        results = {"ib_write_bw": {2: {"8": {"node-a": {0: {"bw": "100.0"}}}}}}
+        payload = build_rundeck_payload(
+            profile=load_json_profile("ib_perf_bw_test"),
+            store={"cvs_results_dict": results, "variant_config": {"gid_index": "3"}},
+            cvs_version="1.0.0",
+        )
+        document = render_rundeck_html(payload)
+        self.assertIn("chart-bar", document)
+        self.assertNotIn("No series data.", document)
 
 
 if __name__ == "__main__":

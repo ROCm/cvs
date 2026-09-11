@@ -59,9 +59,9 @@ def build_ibperf_datasets(sources, _profile):
                             msg_size,
                             node,
                             len(values),
-                            min_bw,
-                            sum(values) / len(values),
-                            max(values),
+                            round(min_bw, 3),
+                            round(sum(values) / len(values), 3),
+                            round(max(values), 3),
                             min_instance,
                         ]
                     )
@@ -71,7 +71,9 @@ def build_ibperf_datasets(sources, _profile):
                 except (TypeError, ValueError):
                     continue
                 if all_samples:
-                    points_by_qp.setdefault(qp_count, []).append((size_number, sum(all_samples) / len(all_samples)))
+                    points_by_qp.setdefault(qp_count, []).append(
+                        (size_number, round(sum(all_samples) / len(all_samples), 3))
+                    )
 
         test_series = []
         for qp_count, points in sorted(points_by_qp.items(), key=lambda item: _sort_key(item[0])):
@@ -83,6 +85,8 @@ def build_ibperf_datasets(sources, _profile):
             )
         if test_series:
             charts[test_name] = test_series
+
+    table_rows.sort(key=lambda row: (str(row[0]), _sort_key(row[1]), _sort_key(row[2]), str(row[3])))
 
     return {
         "charts": {"bus_bw": charts},

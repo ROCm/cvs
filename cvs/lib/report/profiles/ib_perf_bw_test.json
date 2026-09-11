@@ -24,7 +24,7 @@
       "id": "bandwidth",
       "title": "Mean bandwidth by test and QP count",
       "bind": "datasets.ibperf",
-      "series": {"y_field": "bus_bw", "unit": "Gb/s"}
+      "series": {"y_field": "bus_bw", "unit": "Gb/s", "x_label": "{x} B"}
     },
     {
       "type": "table",
