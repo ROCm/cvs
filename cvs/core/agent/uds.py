@@ -267,8 +267,12 @@ class UdsWorker:
         """Read launch/cancel/shutdown until the coordinator closes the socket."""
         while raw := await self._reader.readline():
             message = json.loads(raw)
-            if message.get("kind") == "shutdown":
+            kind = message.get("kind")
+            if kind == "shutdown":
                 break
+            if kind == "cancel":
+                # No child between launches; in-flight cancel is handled in _run_one_launch.
+                continue
             request = messages.parse_message(messages.LaunchRequest, raw.decode())
             if await self._run_one_launch(request):
                 break

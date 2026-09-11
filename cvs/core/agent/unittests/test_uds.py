@@ -43,6 +43,33 @@ class TestUdsLaunchCoordinator(unittest.IsolatedAsyncioTestCase):
                 await manager.stop()
                 await asyncio.wait_for(worker, timeout=2)
 
+    async def test_idle_cancel_does_not_drop_the_worker(self):
+        with tempfile.TemporaryDirectory() as root:
+            socket_path = Path(root) / "agent.sock"
+            manager = UdsLaunchCoordinator(global_rank=0, expected_workers=1, socket_path=socket_path)
+            await manager.start()
+            worker = asyncio.create_task(UdsWorker(global_rank=1, socket_path=socket_path).start())
+            try:
+                await manager.wait_until_ready(timeout=2)
+                idle = next(iter(manager._workers.values()))
+                idle.writer.write(b'{"kind":"cancel"}\n')
+                await idle.writer.drain()
+                request = messages.LaunchRequest(
+                    argv=["true"],
+                    env={},
+                    cwd=Path(root),
+                    timeout=5,
+                    launch_id="idle-cancel",
+                    out_path=Path(root) / "output",
+                    world_size=2,
+                )
+                response = await manager.launch(request)
+                self.assertEqual([result.rank for result in response.results], [0, 1])
+                self.assertTrue(all(result.exit_code == 0 for result in response.results))
+            finally:
+                await manager.stop()
+                await asyncio.wait_for(worker, timeout=2)
+
     async def test_launch_fails_fast_when_a_worker_never_starts_its_child(self):
         with tempfile.TemporaryDirectory() as root:
             socket_path = Path(root) / "agent.sock"
