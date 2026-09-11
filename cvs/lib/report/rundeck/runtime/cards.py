@@ -183,7 +183,12 @@ class DeckCardRenderer:
                 continue
             points = entry.get("points") or []
             label = entry.get("label") or title
-            part = self._charts.render_series_chart(str(label), points, series_cfg.get("unit") or "GB/s")
+            part = self._charts.render_series_chart(
+                str(label),
+                points,
+                series_cfg.get("unit") or "GB/s",
+                x_label=series_cfg.get("x_label") or "X",
+            )
             if part:
                 parts.append(part)
         return f"<div class='chart-grid'>{''.join(parts)}</div>" if parts else "<p class='muted'>No series data.</p>"

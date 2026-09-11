@@ -26,6 +26,11 @@ PROFILE_STEM_ALIASES: dict[str, str] = {
     "sglang_disagg_distributed": "sglang",
     "vllm_single": "vllm",
     "vllm_distributed": "vllm",
+    "pytorch_xdit_flux_dev_single": "xdit",
+    "pytorch_xdit_flux_dev_distributed": "xdit",
+    "pytorch_xdit_wan22_14b_single": "xdit",
+    "pytorch_xdit_wan22_14b_diffusers_single": "xdit",
+    "pytorch_xdit_wan22_14b_diffusers_distributed": "xdit",
 }
 
 DEFAULT_SOURCES: dict[str, str] = {
