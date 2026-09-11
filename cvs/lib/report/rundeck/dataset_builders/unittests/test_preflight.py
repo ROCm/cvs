@@ -84,6 +84,8 @@ class TestPreflightDatasetBuilder(unittest.TestCase):
             ['FAIL', 'BLOCKED', 'WARNING'],
         )
         self.assertEqual(datasets['failures']['rows'][0][2], 'node-b')
+        warning = next(row for row in datasets['failures']['rows'] if row[0] == 'WARNING')
+        self.assertEqual(warning[2], 'node-b')
 
     def test_profile_renders_operator_summary_and_detailed_report_link(self):
         profile = load_json_profile('preflight_checks')
@@ -107,6 +109,33 @@ class TestPreflightDatasetBuilder(unittest.TestCase):
         self.assertIn('Check × node matrix', document)
         self.assertIn('href="preflight_report.html"', document)
         self.assertNotIn('Sweep analytics', document)
+
+    def test_package_import_registers_preflight_builder(self):
+        import cvs.lib.report.rundeck.dataset_builders  # noqa: F401
+        from cvs.lib.report.rundeck.dataset_builders.registry import get_dataset_builder
+
+        self.assertIsNotNone(get_dataset_builder('preflight'))
+
+    def test_clean_run_hides_failures_and_missing_summary_is_explicit(self):
+        clean = {
+            'summary': {
+                'overall_status': 'PASS',
+                'checks': {'node_health': {'status': 'PASS', 'summary': 'ok'}},
+            }
+        }
+        datasets = build_preflight_datasets({'results': clean, 'variant': {'cluster_nodes': ['n0']}}, {})
+        self.assertEqual(datasets['failures'], {})
+        document = render_rundeck_html(
+            build_rundeck_payload(
+                profile=load_json_profile('preflight_checks'),
+                store={'cvs_results_dict': clean, 'variant_config': {'cluster_nodes': ['n0'], 'cluster_size': 1}},
+            )
+        )
+        self.assertNotIn('Failures first', document)
+
+        empty = build_preflight_datasets({'results': {}, 'variant': {}}, {})
+        self.assertEqual(empty['overall_status'], 'na')
+        self.assertIn('No preflight summary recorded', empty['headline']['rows'][0][0])
 
 
 if __name__ == '__main__':

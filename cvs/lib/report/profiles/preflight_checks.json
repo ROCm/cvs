@@ -20,6 +20,6 @@
     {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
     {"type": "table", "id": "headline", "title": "Check totals", "bind": "datasets.preflight.headline"},
     {"type": "table", "id": "failures", "title": "Failures first", "bind": "datasets.preflight.failures", "when_empty": "hide"},
-    {"type": "table", "id": "matrix", "title": "Check × node matrix", "bind": "datasets.preflight.matrix"}
+    {"type": "table", "id": "matrix", "title": "Check × node matrix", "bind": "datasets.preflight.matrix", "when_empty": "hide"}
   ]
 }
