@@ -27,6 +27,14 @@ class TestProfile(unittest.TestCase):
                 "cvs.lib.report.profiles.hooks.sglang_run_card:sglang_run_card_display",
             )
 
+    def test_jaxmaxtext_stems_share_training_profile(self):
+        for stem in ("jaxmaxtext_single", "jaxmaxtext_distributed"):
+            profile = load_json_profile(stem)
+            self.assertIsNotNone(profile, stem)
+            self.assertEqual(profile["suite_id"], "jaxmaxtext")
+            self.assertEqual(profile["sweep"]["layout"], "jaxmaxtext")
+            self.assertFalse(profile["interactive_viewer"])
+
     def test_vllm_hooks_point_at_canonical_metric_contract(self):
         profile = load_json_profile("vllm")
         self.assertEqual(

@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "profile_id": "jaxmaxtext_rundeck",
+  "suite_id": "jaxmaxtext",
+  "report_basename": "jaxmaxtext_run_deck",
+  "title": "JAX MaxText Training Run Deck",
+  "subtitle": "JAX MaxText · single-node and distributed training performance",
+  "footer": "CVS jaxmaxtext · render-only · does not affect gates",
+  "link_name": "JAX MaxText Run Deck",
+  "dataset_builder": "sweep",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "training_res_dict",
+    "variant": "jaxmaxtext_report_variant",
+    "lifecycle": "lifecycle"
+  },
+  "hooks": {
+    "tier_metric_specs": "cvs.lib.report.rundeck.dataset_builders.jaxmaxtext:tier_metric_specs",
+    "metric_units": "cvs.lib.training.jaxmaxtext.utils.maxtext_parsing:TRAINING_METRIC_UNITS",
+    "run_card_display": "cvs.lib.report.profiles.hooks.jaxmaxtext_run_card:jaxmaxtext_run_card_display"
+  },
+  "sweep": {
+    "layout": "jaxmaxtext",
+    "metric_prefix": "training.",
+    "tier_order": ["throughput", "quality"],
+    "throughput_metric": "training.tokens_per_sec_per_gpu",
+    "headline_metric": "training.tokens_per_sec_per_gpu",
+    "results_table_columns": []
+  },
+  "behavior": {
+    "inference_test_substring": "test_training_run",
+    "row_card_extras": false,
+    "row_card_test_names": []
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {
+      "type": "line_chart",
+      "id": "throughput",
+      "title": "Training throughput vs sweep cells",
+      "bind": "datasets.sweep",
+      "series": {"y_field": "throughput", "unit": "tok/s"}
+    },
+    {
+      "type": "gate_matrix",
+      "id": "gates",
+      "title": "Gate matrix vs thresholds",
+      "bind": "gate_matrix",
+      "when_empty": "hide"
+    },
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}
