@@ -64,6 +64,22 @@ class TestProfile(unittest.TestCase):
         self.assertEqual(config.full_metric("output_throughput_per_sec"), "output_throughput_per_sec")
         self.assertEqual(config.metric_tier_order, ("throughput", "latency", "health", "record"))
 
+    def test_xdit_stems_share_static_series_profile(self):
+        stems = (
+            "pytorch_xdit_flux_dev_single",
+            "pytorch_xdit_flux_dev_distributed",
+            "pytorch_xdit_wan22_14b_single",
+            "pytorch_xdit_wan22_14b_diffusers_single",
+            "pytorch_xdit_wan22_14b_diffusers_distributed",
+        )
+        for stem in stems:
+            profile = load_json_profile(stem)
+            self.assertIsNotNone(profile, stem)
+            self.assertEqual(profile["suite_id"], "xdit")
+            self.assertEqual(profile["dataset_builder"], "series")
+            self.assertFalse(profile["interactive_viewer"])
+            self.assertEqual(profile["sources"]["results"], "xdit_results")
+
 
 if __name__ == "__main__":
     unittest.main()

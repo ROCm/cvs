@@ -32,6 +32,7 @@ from cvs.lib.inference.xdit.pytorch_xdit_wan_i2v import (
     WanI2vOutputParser,
     log_results_summary,
 )
+from cvs.lib.inference.xdit.pytorch_xdit_rundeck import build_xdit_result_record
 from cvs.lib.inference.xdit.pytorch_xdit_wan_job import (
     build_wan_output_cleanup_cmd,
     compute_world_size,
@@ -324,7 +325,14 @@ def test_run_wan22_diffusers_benchmark(s_phdl, cluster_dict, inference_dict, ben
     update_test_result()
 
 
-def test_parse_and_validate_results(s_phdl, cluster_dict, inference_dict, benchmark_params_dict, gpu_type):
+def test_parse_and_validate_results(
+    s_phdl,
+    cluster_dict,
+    inference_dict,
+    benchmark_params_dict,
+    gpu_type,
+    xdit_results,
+):
     """
     Parse rank-0 xFuser outputs and validate against pipe_time thresholds.
 
@@ -386,8 +394,24 @@ def test_parse_and_validate_results(s_phdl, cluster_dict, inference_dict, benchm
     passed, message = parser.validate_threshold(result, expected_results, gpu_type)
     log.info("%s", message)
 
+    server_nodes, nnodes = _distributed_server_nodes(cluster_dict, inference_dict)
+    rank0_label = output_dir.rstrip("/").split("/")[-1].replace("wan_22_", "").replace("_outputs", "")
+    xdit_results.append(
+        build_xdit_result_record(
+            workload="WAN 2.2 Diffusers image-to-video",
+            label=f"{rank0_label} (distributed)",
+            inference_config=inference_dict,
+            benchmark_params=wan_params,
+            gpu=gpu_type,
+            nnodes=nnodes,
+            sample_times=result.pipe_times,
+            average_time=result.avg_pipe_time_s,
+            sample_kind="repetition",
+            passed=passed,
+        )
+    )
+
     try:
-        server_nodes, _ = _distributed_server_nodes(cluster_dict, inference_dict)
         hostname_out = s_phdl.exec("hostname", print_console=False)
         results_summary = []
         for node in server_nodes:

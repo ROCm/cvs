@@ -37,6 +37,7 @@ from cvs.lib.inference.xdit.pytorch_xdit_model_verify import (
     wan_native_hf_snapshot_required_checks,
 )
 from cvs.lib.inference.xdit.pytorch_xdit_wan import WanOutputParser
+from cvs.lib.inference.xdit.pytorch_xdit_rundeck import build_xdit_result_record
 from cvs.lib.inference.xdit.pytorch_xdit_wan_job import (
     launch_wan_benchmark,
     store_resolved_wan_model_format_from_index,
@@ -480,7 +481,7 @@ def test_run_wan22_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     update_test_result()
 
 
-def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dict, gpu_type):
+def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dict, gpu_type, xdit_results):
     """
     Parse benchmark outputs and validate against thresholds.
 
@@ -561,6 +562,22 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
         parser = WanOutputParser(output_dir, expected_artifact="video.mp4")  # only used for threshold selection
         passed, message = parser.validate_threshold(overall_result, expected_results, gpu_type)
         log.info("%s", message)
+        for run in agg.per_run:
+            xdit_results.append(
+                build_xdit_result_record(
+                    workload="WAN 2.2 image-to-video",
+                    label=run.label,
+                    inference_config=inference_dict,
+                    benchmark_params=wan_params,
+                    gpu=gpu_type,
+                    nnodes=node_count,
+                    sample_times=[],
+                    average_time=run.avg_total_time_s,
+                    sample_kind="benchmark step",
+                    passed=passed,
+                    sample_count=run.step_count,
+                )
+            )
         if not passed:
             fail_test(message)
         update_test_result()
@@ -591,6 +608,21 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
 
     passed, message = parser.validate_threshold(result, expected_results, gpu_type)
     log.info("%s", message)
+    label = output_dir.rstrip("/").split("/")[-1].replace("wan_22_", "").replace("_outputs", "")
+    xdit_results.append(
+        build_xdit_result_record(
+            workload="WAN 2.2 image-to-video",
+            label=label,
+            inference_config=inference_dict,
+            benchmark_params=wan_params,
+            gpu=gpu_type,
+            nnodes=node_count,
+            sample_times=result.step_times,
+            average_time=result.avg_total_time_s,
+            sample_kind="benchmark step",
+            passed=passed,
+        )
+    )
     if not passed:
         fail_test(message)
     update_test_result()
