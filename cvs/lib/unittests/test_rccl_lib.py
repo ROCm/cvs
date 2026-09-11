@@ -1,10 +1,184 @@
 # cvs/lib/unittests/test_rccl_lib.py
 import unittest
-from unittest.mock import patch
+import json
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 import cvs.lib.rccl_lib as rccl_lib
 
 
 class TestRcclLib(unittest.TestCase):
+    @patch(
+        'cvs.lib.rccl_lib.JobStep',
+        new=SimpleNamespace(kind=rccl_lib.Scheduler.SPUR),
+    )
+    @patch('cvs.lib.rccl_lib.os.path.isdir', return_value=False)
+    def test_managed_rccl_env_contains_proven_spur_defaults(self, _isdir):
+        env = rccl_lib._managed_rccl_env('/opt/openmpi', {'NCCL_DEBUG': 'INFO'})
+        self.assertEqual(env['PMIX_GDS_MODULE'], 'hash')
+        self.assertEqual(env['OMPI_MCA_pml'], 'ucx')
+        self.assertEqual(env['NCCL_SOCKET_IFNAME'], 'ens3')
+        self.assertEqual(env['NCCL_IB_HCA'], 'ionic')
+        self.assertEqual(env['NCCL_IB_GID_INDEX'], '1')
+        self.assertEqual(env['NCCL_DMABUF_ENABLE'], '1')
+        self.assertEqual(env['NCCL_NET_PLUGIN'], 'none')
+        self.assertEqual(env['NCCL_DEBUG'], 'INFO')
+
+    def test_managed_rccl_argv_sources_env_then_execs_binary(self):
+        argv = rccl_lib._managed_rccl_argv(
+            '/opt/rccl-tests/all_reduce_perf',
+            ['-b', '8', '-e', '8G'],
+            '/tmp/rccl env.sh',
+        )
+        self.assertEqual(argv[:2], ['bash', '-c'])
+        self.assertIn("source '/tmp/rccl env.sh' && exec", argv[2])
+        self.assertIn('/opt/rccl-tests/all_reduce_perf -b 8 -e 8G', argv[2])
+
+    @patch(
+        'cvs.lib.rccl_lib.JobStep',
+        new=SimpleNamespace(rank=0, world_size=16, hosts=['n1', 'n2']),
+    )
+    def test_managed_layout_must_match_existing_srun_world(self):
+        orch = MagicMock(hosts=['n1', 'n2'])
+        self.assertEqual(
+            rccl_lib._validate_managed_layout(orch, {'no_of_nodes': 2, 'no_of_local_ranks': 8}),
+            16,
+        )
+        with self.assertRaisesRegex(RuntimeError, 'must match the existing srun step'):
+            rccl_lib._validate_managed_layout(orch, {'no_of_nodes': 1, 'no_of_local_ranks': 8})
+
+    @patch(
+        'cvs.lib.rccl_lib.JobStep',
+        new=SimpleNamespace(
+            is_managed=True,
+            kind=rccl_lib.Scheduler.SPUR,
+            world_size=2,
+            hosts=['n1', 'n2'],
+        ),
+    )
+    @patch('cvs.lib.rccl_lib.get_model_from_rocm_smi_output')
+    @patch('cvs.lib.rccl_lib.detect_rccl_output_flag', return_value='--output')
+    def test_regression_managed_uses_launch_without_mpirun(self, _output_flag, _model):
+        with tempfile.TemporaryDirectory() as root:
+            result_file = Path(root) / 'regression.json'
+            stdout = Path(root) / 'rank-0000.stdout'
+            stderr = Path(root) / 'rank-0000.stderr'
+            stdout.write_text('# Avg bus bandwidth : 100\n')
+            stderr.write_text('')
+            payload = [{'result': 'ok'}]
+
+            orch = MagicMock(hosts=['n1', 'n2'], head_node='n1')
+
+            def launch(argv, **_kwargs):
+                Path(argv[-1]).write_text(json.dumps(payload))
+                return [
+                    SimpleNamespace(
+                        rank=0,
+                        exit_code=0,
+                        timed_out=False,
+                        error=None,
+                        stdout_path=stdout,
+                        stderr_path=stderr,
+                    ),
+                    SimpleNamespace(
+                        rank=1,
+                        exit_code=0,
+                        timed_out=False,
+                        error=None,
+                        stdout_path=stdout,
+                        stderr_path=stderr,
+                    ),
+                ]
+
+            orch.launch.side_effect = launch
+            shdl = MagicMock()
+            shdl.exec.return_value = {'n1': 'gpu'}
+            result = rccl_lib.rccl_regression(
+                MagicMock(),
+                shdl,
+                'all_reduce_perf',
+                None,
+                {'no_of_nodes': 2, 'no_of_local_ranks': 1},
+                {},
+                {
+                    'rccl_result_file': str(result_file),
+                    'verify_bus_bw': 'False',
+                    'verify_bw_dip': 'False',
+                    'verify_lat_dip': 'False',
+                },
+                ['n1', 'n2'],
+                ['n1', 'n2'],
+                orch=orch,
+            )
+
+            self.assertEqual(result, payload)
+            orch.launch.assert_called_once()
+            self.assertNotIn('mpirun', ' '.join(call.args[0] for call in shdl.exec.call_args_list))
+
+    @patch(
+        'cvs.lib.rccl_lib.JobStep',
+        new=SimpleNamespace(
+            is_managed=True,
+            kind=rccl_lib.Scheduler.SPUR,
+            world_size=2,
+            hosts=['n1', 'n2'],
+        ),
+    )
+    @patch('cvs.lib.rccl_lib.aggregate_rccl_test_results', return_value=[])
+    @patch('cvs.lib.rccl_lib.RcclTestsMultinodeRaw.model_validate', side_effect=lambda item: item)
+    @patch('cvs.lib.rccl_lib.get_model_from_rocm_smi_output')
+    @patch('cvs.lib.rccl_lib.detect_rccl_output_flag', return_value='--output')
+    def test_perf_managed_uses_launch_without_mpirun(self, _output_flag, _model, _validate, _aggregate):
+        with tempfile.TemporaryDirectory() as root:
+            result_file = Path(root) / 'perf.json'
+            stdout = Path(root) / 'rank-0000.stdout'
+            stderr = Path(root) / 'rank-0000.stderr'
+            stdout.write_text('# Avg bus bandwidth : 100\n')
+            stderr.write_text('')
+            payload = [{'name': 'all_reduce_perf', 'type': 'float'}]
+
+            orch = MagicMock(hosts=['n1', 'n2'], head_node='n1')
+
+            def launch(argv, **_kwargs):
+                Path(argv[-1]).write_text(json.dumps(payload))
+                return [
+                    SimpleNamespace(
+                        rank=rank,
+                        exit_code=0,
+                        timed_out=False,
+                        error=None,
+                        stdout_path=stdout,
+                        stderr_path=stderr,
+                    )
+                    for rank in range(2)
+                ]
+
+            orch.launch.side_effect = launch
+            shdl = MagicMock()
+            shdl.exec.return_value = {'n1': 'gpu'}
+            result = rccl_lib.rccl_perf(
+                MagicMock(),
+                shdl,
+                'all_reduce_perf',
+                None,
+                {'no_of_nodes': 2, 'no_of_local_ranks': 1},
+                {'data_types': ['float']},
+                {
+                    'rccl_result_file': str(result_file),
+                    'verify_bus_bw': 'False',
+                    'verify_bw_dip': 'False',
+                    'verify_lat_dip': 'False',
+                },
+                ['n1', 'n2'],
+                ['n1', 'n2'],
+                orch=orch,
+            )
+
+            self.assertEqual(result, payload)
+            orch.launch.assert_called_once()
+            self.assertNotIn('mpirun', ' '.join(call.args[0] for call in shdl.exec.call_args_list))
+
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_check_avg_bus_bw_success(self, mock_fail_test):
         output = "# Avg bus bandwidth : 100.5"

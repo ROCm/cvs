@@ -48,6 +48,29 @@ def _exec_handler(request: httpx.Request) -> httpx.Response:
     )
 
 
+def _launch_handler(request):
+    body = json.loads(request.content)
+    host = request.url.host
+    rank = 0 if host == "h1" else 1
+    out_path = Path(body["out_path"])
+    return httpx.Response(
+        200,
+        json={
+            "results": [
+                {
+                    "rank": rank,
+                    "hostname": host,
+                    "exit_code": 0,
+                    "stdout_path": str(out_path / f"rank-{rank:04d}.stdout"),
+                    "stderr_path": str(out_path / f"rank-{rank:04d}.stderr"),
+                    "timed_out": False,
+                    "error": None,
+                }
+            ]
+        },
+    )
+
+
 class HttpClientTestBase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         # run_command's cwd/out_path derive from RunLayout; point it at a throwaway tempdir so
@@ -337,6 +360,26 @@ class TestRunCommand(HttpClientTestBase):
         self.assertTrue(outputs[0].truncated)
         self.assertEqual(outputs[0].exit_code, -15)
         self.assertIsNone(outputs[0].exception)
+
+
+class TestLaunch(HttpClientTestBase):
+    async def test_posts_same_launch_to_every_node_and_folds_rank_results(self):
+        requests = []
+        paths = []
+
+        def handler(request):
+            requests.append(json.loads(request.content))
+            paths.append(request.url.path)
+            return _launch_handler(request)
+
+        client = self._make_client({"h1": "http://h1", "h2": "http://h2"}, handler)
+        outputs = await client.launch(["/bin/true"], env={"A": "1"}, timeout=5, world_size=2)
+        self.assertEqual([result.rank for node in outputs for result in node.results], [0, 1])
+        self.assertEqual({request["launch_id"] for request in requests}, {requests[0]["launch_id"]})
+        self.assertTrue(all(request["world_size"] == 2 for request in requests))
+        self.assertTrue(all(request["env"] == {"A": "1"} for request in requests))
+        self.assertTrue(all(request["argv"] == ["/bin/true"] for request in requests))
+        self.assertEqual(paths, [messages.LAUNCH_PATH, messages.LAUNCH_PATH])
 
 
 def _file_mode_handler(request: httpx.Request) -> httpx.Response:

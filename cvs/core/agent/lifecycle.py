@@ -18,10 +18,11 @@ import time
 import httpx
 import uvicorn
 
-from cvs.core.scheduler import scheduler_hosts, scheduler_rank
+from cvs.core.scheduler import JobStep
 
 from . import messages
 from .http_agent import create_app
+from .uds import UdsLaunchCoordinator, UdsWorker
 
 RANK0_HOST_FILENAME = "rank0.host"
 RANK0_PORT_FILENAME = "rank0.port"
@@ -161,9 +162,17 @@ class Heartbeat:
 
 
 class HttpAgentServer:
-    """Run the HTTP agent application in the background for one scheduler rank."""
+    """Run the HTTP agent application in the background for one scheduler node."""
 
-    def __init__(self, agent_dir, rank, world_size, host=None):
+    def __init__(
+        self,
+        agent_dir,
+        rank,
+        world_size,
+        host=None,
+        global_rank=None,
+        expected_local_workers=0,
+    ):
         """Bind a port and build the FastAPI app for this rank."""
         self.host = (
             host or os.environ.get("SLURM_NODENAME") or os.environ.get("SLURMD_NODENAME") or socket.gethostname()
@@ -173,12 +182,17 @@ class HttpAgentServer:
         self._socket.bind(("0.0.0.0", 0))
         self._socket.listen(2048)
         self.port = self._socket.getsockname()[1]
+        self._launch_manager = UdsLaunchCoordinator(
+            global_rank=rank if global_rank is None else global_rank,
+            expected_workers=expected_local_workers,
+        )
         self._app = create_app(
             agent_dir,
             rank,
             world_size,
             own_hostname=self.host if rank == 0 else None,
             own_port=self.port if rank == 0 else None,
+            launch_manager=self._launch_manager,
         )
         self._server = uvicorn.Server(uvicorn.Config(self._app, log_level="warning"))
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -217,8 +231,21 @@ class HttpAgentServer:
         """Return the current rank → hostname/port map, even if incomplete."""
         return self._app.state.registry.snapshot()
 
+    def wait_for_local_workers(self, timeout):
+        """Wait until this node's non-coordinator scheduler tasks connected over UDS."""
+        if self._launch_manager is None:
+            return
+        future = asyncio.run_coroutine_threadsafe(self._launch_manager.wait_until_ready(timeout), self._event_loop)
+        return future.result(timeout=timeout + 1)
+
     def stop(self):
         """Ask uvicorn to exit and join the server thread."""
+        if self._launch_manager is not None and self._event_loop is not None and self._event_loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(self._launch_manager.cancel(), self._event_loop)
+            try:
+                future.result(timeout=messages.TERMINATE_GRACE_PERIOD_SECONDS + 1)
+            except (TimeoutError, asyncio.TimeoutError):
+                pass
         self._server.should_exit = True
         if self._thread.is_alive():
             self._thread.join(timeout=5)
@@ -229,13 +256,23 @@ class HttpAgentServer:
 class Rank0Runner:
     """Rank 0: HTTP agent, rendezvous files, heartbeat, and cluster_agents.json."""
 
-    def __init__(self, layout, host, hosts, cluster=None):
+    def __init__(
+        self,
+        layout,
+        host,
+        hosts,
+        cluster=None,
+        global_rank=0,
+        expected_local_workers=0,
+    ):
         """Store this job's layout, this node's host, and the scheduler host list."""
         self._layout = layout
         self._host = host
         self._hosts = hosts
         self._world_size = len(hosts)
         self._cluster_input = cluster or {}
+        self._global_rank = global_rank
+        self._expected_local_workers = expected_local_workers
         self._http_agent = None
         self._heartbeat = None
         self._stopped = False
@@ -245,7 +282,14 @@ class Rank0Runner:
         agent_dir = self._layout.agent_dir
         self.clear()
         self.create_auth_token()
-        self._http_agent = HttpAgentServer(agent_dir, 0, self._world_size, host=self._host)
+        self._http_agent = HttpAgentServer(
+            agent_dir,
+            0,
+            self._world_size,
+            host=self._host,
+            global_rank=self._global_rank,
+            expected_local_workers=self._expected_local_workers,
+        )
         try:
             self._http_agent.start()
             port = self._http_agent.wait_until_ready(STARTUP_TIMEOUT_SECONDS)
@@ -260,6 +304,7 @@ class Rank0Runner:
 
     def wait(self):
         """Wait for worker registrations and write cluster_agents.json; return its path."""
+        self._http_agent.wait_for_local_workers(REGISTRATION_TIMEOUT_SECONDS)
         try:
             registered = self._http_agent.wait_for_registrations(REGISTRATION_TIMEOUT_SECONDS)
         except (TimeoutError, asyncio.TimeoutError):
@@ -312,14 +357,24 @@ class Rank0Runner:
 
 
 class WorkerRunner:
-    """Non-zero rank: find rank 0, serve HTTP, register, and watch rank 0's heartbeat."""
+    """A non-root node coordinator: serve HTTP, register, and watch rank 0."""
 
-    def __init__(self, layout, rank, world_size, host):
+    def __init__(
+        self,
+        layout,
+        rank,
+        world_size,
+        host,
+        global_rank=None,
+        expected_local_workers=0,
+    ):
         """Store this rank's layout, scheduler rank, world size, and hostname."""
         self._layout = layout
         self._rank = rank
         self._world_size = world_size
         self._host = host
+        self._global_rank = rank if global_rank is None else global_rank
+        self._expected_local_workers = expected_local_workers
         self._http_agent = None
 
     def start(self):
@@ -334,10 +389,13 @@ class WorkerRunner:
             self._rank,
             self._world_size,
             host=self._host,
+            global_rank=self._global_rank,
+            expected_local_workers=self._expected_local_workers,
         )
         try:
             self._http_agent.start()
             port = self._http_agent.wait_until_ready(STARTUP_TIMEOUT_SECONDS)
+            self._http_agent.wait_for_local_workers(REGISTRATION_TIMEOUT_SECONDS)
             self._register(f"http://{rank0_host}:{rank0_port}", token, port)
             return self._watch(heartbeat_interval)
         finally:
@@ -416,23 +474,62 @@ class WorkerRunner:
             time.sleep(POLL_INTERVAL_SECONDS)
 
 
+class LocalWorkerRunner:
+    """A non-zero local rank that accepts launch requests over node-local UDS."""
+
+    def __init__(self, layout, rank):
+        self._layout = layout
+        self._rank = rank
+
+    def start(self):
+        return asyncio.run(UdsWorker(self._rank).start())
+
+    def wait(self):
+        raise RuntimeError("wait() is only valid on rank 0")
+
+    def stop(self):
+        return
+
+
 class AgentRunner:
-    """Start HTTP agents for a scheduler-managed CVS run; rank 0 writes the cluster file."""
+    """Start one HTTP agent per node and UDS workers for extra local scheduler tasks."""
 
     def __init__(self, layout, cluster_file=None):
         """Read scheduler rank/hosts and construct Rank0Runner or WorkerRunner."""
-        self._rank, world_size = scheduler_rank()
-        hosts = scheduler_hosts()
-        if len(hosts) != world_size:
+        self._rank = JobStep.rank
+        world_size = JobStep.world_size
+        hosts = JobStep.hosts
+        node_count = len(hosts)
+        if world_size % node_count:
             raise RuntimeError(
-                f"managed CVS requires one task per node: scheduler expanded {len(hosts)} hosts "
-                f"but SLURM_NTASKS is {world_size}"
+                f"managed CVS requires uniform tasks per node: {world_size} tasks across {node_count} nodes"
             )
-        host = hosts[self._rank]
+        tasks_per_node = world_size // node_count
+        node_rank = JobStep.node_rank
+        host = hosts[node_rank]
+        expected_local_workers = tasks_per_node - 1
         if self._rank == 0:
-            self._role = Rank0Runner(layout, host, hosts, self._load_cluster_file(cluster_file))
+            self._role = Rank0Runner(
+                layout,
+                host,
+                hosts,
+                self._load_cluster_file(cluster_file),
+                global_rank=self._rank,
+                expected_local_workers=expected_local_workers,
+            )
+        elif JobStep.local_id == 0:
+            # HTTP + UDS on other nodes: first task on this node, not rank % T
+            self._role = WorkerRunner(
+                layout,
+                node_rank,
+                node_count,
+                host,
+                global_rank=self._rank,
+                expected_local_workers=expected_local_workers,
+            )
         else:
-            self._role = WorkerRunner(layout, self._rank, world_size, host)
+            # UDS only
+            self._role = LocalWorkerRunner(layout, self._rank)
 
     def _load_cluster_file(self, cluster_file):
         """Load optional --cluster_file JSON; empty object when the path is omitted."""

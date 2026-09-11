@@ -47,6 +47,11 @@ def _exec_http_read_timeout(agent_timeout: int | None) -> float | None:
     return agent_timeout + messages.TERMINATE_GRACE_PERIOD_SECONDS + _EXEC_RESPONSE_BUFFER_SECONDS
 
 
+def _launch_http_read_timeout(agent_timeout):
+    """Same bound as /v1/exec: launch returns only after the child exits or is killed."""
+    return _exec_http_read_timeout(agent_timeout)
+
+
 def _validated_exec_output_path(reported: Path | None, out_dir: Path, cmd_id: str, stream: str) -> Path:
     '''Accept a FILE-mode path only if it resolves to <out_dir>/<cmd_id>.stdout|stderr.'''
     expected_name = f"{cmd_id}.{stream}"
@@ -68,6 +73,13 @@ class HostOutput:
     exception: Exception | None
     timed_out: bool = False
     truncated: bool | None = None
+
+
+@dataclass
+class HostLaunchOutput:
+    host: str
+    results: list[messages.LaunchRankResult]
+    exception: Exception | None
 
 
 class ParallelHTTPClientError(Exception):
@@ -282,6 +294,69 @@ class ParallelHTTPClient:
                 details = ", ".join(f"{output.host}: {output.exception}" for output in failed)
                 raise ParallelHTTPClientError(f"{len(failed)} host(s) failed: {details}")
         return outputs
+
+    async def _launch_one(self, client, host, url, request):
+        try:
+            response = await client.post(
+                f"{url}{messages.LAUNCH_PATH}",
+                json=request.model_dump(mode="json"),
+                timeout=self._http_timeout(_launch_http_read_timeout(request.timeout)),
+            )
+            response.raise_for_status()
+            launch_response = messages.parse_message(messages.LaunchResponse, response.text)
+            return HostLaunchOutput(host=host, results=launch_response.results, exception=None)
+        except Exception as exc:  # noqa: BLE001 - preserve failures per node
+            return HostLaunchOutput(host=host, results=[], exception=_classify_exception(exc))
+
+    async def launch(self, argv, *, env=None, timeout=None, world_size):
+        """Fan one launch id out to every node coordinator concurrently."""
+        from cvs.core.run_layout import RunLayout
+
+        if not argv:
+            raise ValueError("launch argv must not be empty")
+        launch_id = uuid.uuid4().hex
+        run_dir = RunLayout.get().run_dir
+        out_path = run_dir / "launch_output" / launch_id
+        out_path.mkdir(parents=True, exist_ok=True)
+        request = messages.LaunchRequest(
+            argv=argv,
+            env=env or {},
+            cwd=run_dir,
+            timeout=_agent_timeout_seconds(timeout, "timeout"),
+            launch_id=launch_id,
+            out_path=out_path,
+            world_size=world_size,
+        )
+        client = self._get_client()
+        pending = {
+            asyncio.create_task(self._launch_one(client, host, self._agent_urls[host], request))
+            for host in self._agent_urls
+        }
+        outputs = []
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            completed = [task.result() for task in done]
+            outputs.extend(completed)
+            if any(output.exception is not None for output in completed):
+                await self.cancel_launch()
+                outputs.extend(await asyncio.gather(*pending))
+                pending.clear()
+        host_order = {host: index for index, host in enumerate(self._agent_urls)}
+        outputs.sort(key=lambda output: host_order[output.host])
+        failed = [output for output in outputs if output.exception is not None]
+        if failed:
+            details = ", ".join(f"{output.host}: {output.exception}" for output in failed)
+            raise ParallelHTTPClientError(f"{len(failed)} node launch request(s) failed: {details}")
+        return outputs
+
+    async def cancel_launch(self):
+        """Best-effort cancellation of the one launch allowed per node agent."""
+        return await self._fan_out(
+            "POST",
+            messages.LAUNCH_CANCEL_PATH,
+            stop_on_errors=False,
+            read_timeout=_SHUTDOWN_READ_TIMEOUT_SECONDS,
+        )
 
     async def _fan_out(self, method: str, path: str, stop_on_errors: bool, read_timeout: float) -> dict[str, bool]:
         client = self._get_client()

@@ -181,6 +181,9 @@ class _SyncHTTPClient:
     def shutdown(self, stop_on_errors=False):
         return self._runner(self._http.shutdown(stop_on_errors=stop_on_errors))
 
+    def launch(self, argv, *, env=None, timeout=None, world_size):
+        return self._runner(self._http.launch(argv, env=env, timeout=timeout, world_size=world_size))
+
     def rebuild(self, agent_urls):
         self._http.rebuild(agent_urls)
         self._hosts = list(agent_urls)
@@ -318,3 +321,7 @@ class HttpTransport(BaseTransport):
 
     def shutdown_agents(self, stop_on_errors=False):
         return self.client.shutdown(stop_on_errors=stop_on_errors)
+
+    def launch(self, argv, *, env=None, timeout=None, world_size):
+        """Launch one child per scheduler task through the per-node agents."""
+        return self.client.launch(argv, env=env, timeout=timeout, world_size=world_size)

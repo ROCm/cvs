@@ -23,7 +23,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from cvs.core.scheduler import is_managed_compute
+from cvs.core.scheduler import JobStep
 
 
 def _default_workspace():
@@ -59,10 +59,10 @@ def _resolve_run_id():
     '''The scheduler's job id: the one name every rank of a step already agrees on.
 
     SPUR mirrors each SPUR_* variable it sets to a SLURM_* twin, so the SLURM name
-    resolves under either scheduler. is_managed_compute() is true only inside a job
+    resolves under either scheduler. JobStep.is_managed is true only inside a job
     step, which is what sets it.
     '''
-    if not is_managed_compute():
+    if not JobStep.is_managed:
         return f"local-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     return os.environ["SLURM_JOB_ID"]
 

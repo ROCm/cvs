@@ -37,27 +37,36 @@ def _command_succeeds(cmd):
     return result.returncode == 0
 
 
-def _scheduler_from_job_env():
+def _first_env(env, names):
+    """Return (name, value) for the first name in env that is set and non-empty."""
+    for name in names:
+        value = env.get(name)
+        if value not in (None, ""):
+            return name, value
+    return None, None
+
+
+def _scheduler_from_job_env(env):
     """Classify from job-id env vars, which are set inside a step even when
     spur/scontrol are not on PATH (compute nodes often have neither).
 
     SPUR exports SPUR_* alongside SLURM_* twins; real Slurm sets no SPUR_*.
     Check SPUR_JOB_ID first so a spur step is not labeled SLURM.
     """
-    if os.environ.get("SPUR_JOB_ID"):
+    if env.get("SPUR_JOB_ID"):
         return Scheduler.SPUR
-    if os.environ.get("SLURM_JOB_ID"):
+    if env.get("SLURM_JOB_ID"):
         return Scheduler.SLURM
     return None
 
 
-def detect_scheduler():
+def _detect_scheduler(env):
     """Detect which scheduler, if any, manages this cluster's compute nodes.
 
     Order: CVS_SCHEDULER override, then job-id env (inside a step), then the
     spur/scontrol binary probe (head node before submission).
     """
-    scheduler = os.environ.get(SCHEDULER_ENV_VAR)
+    scheduler = env.get(SCHEDULER_ENV_VAR)
     if scheduler is not None:
         normalized = scheduler.strip().lower()
         try:
@@ -67,7 +76,7 @@ def detect_scheduler():
             raise ValueError(
                 f"Unknown scheduler type {scheduler!r} in {SCHEDULER_ENV_VAR}, expected one of: {valid}"
             ) from exc
-    from_job = _scheduler_from_job_env()
+    from_job = _scheduler_from_job_env(env)
     if from_job is not None:
         return from_job
     for scheduler, cmds in SCHEDULER_CHECK_COMMANDS.items():
@@ -76,7 +85,7 @@ def detect_scheduler():
     return Scheduler.BARE_METAL
 
 
-def _running_in_job_step():
+def _running_in_job_step(env=None):
     """True if this process was itself launched by srun as part of a job step.
 
     scontrol/spur version succeeding only means scheduler tooling is installed
@@ -88,16 +97,11 @@ def _running_in_job_step():
     which is what "managed compute" actually needs to gate on. Verified
     identical on SPUR (SLURM_JOB_ID/SLURM_STEP_ID/SLURM_PROCID) and real SLURM.
     """
-    return (
-        os.environ.get("SLURM_JOB_ID") is not None
-        and os.environ.get("SLURM_STEP_ID") is not None
-        and os.environ.get("SLURM_PROCID") is not None
-    )
-
-
-def is_managed_compute():
-    """True if this process is running inside a scheduler-launched job step, False otherwise."""
-    return detect_scheduler() != Scheduler.BARE_METAL and _running_in_job_step()
+    env = os.environ if env is None else env
+    has_job = env.get("SPUR_JOB_ID") is not None or env.get("SLURM_JOB_ID") is not None
+    has_step = env.get("SLURM_STEP_ID") is not None or env.get("PMIX_NAMESPACE") is not None
+    has_rank = any(env.get(name) is not None for name in ("PMIX_RANK", "SPUR_PROCID", "SLURM_PROCID"))
+    return has_job and has_step and has_rank
 
 
 def _split_comma_outside_brackets(expression):
@@ -199,27 +203,148 @@ def _expand_hostlist(node_list):
     return hosts
 
 
-def scheduler_hosts():
-    """Expand the current Slurm/SPUR job's node list in scheduler order."""
-    node_list = os.environ.get("SPUR_NODES") or os.environ.get("SLURM_NODELIST")
-    if not node_list:
-        raise RuntimeError("managed CVS run requires SPUR_NODES or SLURM_NODELIST")
-    try:
-        hosts = _expand_hostlist(node_list)
-    except ValueError as exc:
-        raise RuntimeError(f"could not expand scheduler node list {node_list!r}: {exc}") from exc
-    if not hosts:
-        raise RuntimeError(f"scheduler node list {node_list!r} expanded to no hosts")
-    return hosts
+class _JobStepMeta(type):
+    """Expose the cached current step as readable class-level attributes."""
+
+    @property
+    def kind(cls):
+        return cls._get().kind
+
+    @property
+    def is_managed(cls):
+        return cls._get().is_managed
+
+    @property
+    def rank(cls):
+        return cls._get().rank
+
+    @property
+    def world_size(cls):
+        return cls._get().world_size
+
+    @property
+    def local_id(cls):
+        return cls._get().local_id
+
+    @property
+    def hosts(cls):
+        return cls._get().hosts
+
+    @property
+    def node_rank(cls):
+        return cls._get().node_rank
 
 
-def scheduler_rank():
-    """This process's task index and the job's task count (SLURM_PROCID, SLURM_NTASKS)."""
-    try:
-        rank = int(os.environ["SLURM_PROCID"])
-        world_size = int(os.environ["SLURM_NTASKS"])
-    except (KeyError, ValueError) as exc:
-        raise RuntimeError("managed CVS run requires SLURM_PROCID and SLURM_NTASKS") from exc
-    if not 0 <= rank < world_size:
-        raise RuntimeError(f"invalid managed rank {rank} for world size {world_size}")
-    return rank, world_size
+class JobStep(metaclass=_JobStepMeta):
+    """This process's place in the scheduler step, resolved once per process.
+
+    The first access to ``JobStep.rank``, ``JobStep.local_id``, or another
+    public field copies ``os.environ``. Later field accesses use that same
+    snapshot; srun does not change these variables mid-step.
+    """
+
+    _instance = None
+
+    def __init__(self, env):
+        self._env = env
+        self.kind = _detect_scheduler(env)
+
+    @classmethod
+    def _get(cls):
+        """Return the cached step, snapshotting env on first field access."""
+        if cls._instance is None:
+            cls._instance = cls(dict(os.environ))
+        return cls._instance
+
+    @classmethod
+    def _reset(cls):
+        """Drop the cached step. For unit-test isolation only."""
+        cls._instance = None
+
+    @property
+    def is_managed(self):
+        """True if this process is running inside a scheduler-launched job step."""
+        return self.kind != Scheduler.BARE_METAL and _running_in_job_step(self._env)
+
+    @property
+    def rank(self):
+        """This process's global task index, including Spur PMIx fallbacks."""
+        return self._rank_and_size()[0]
+
+    @property
+    def world_size(self):
+        """Task count of the current step, including Spur PMIx fallbacks."""
+        return self._rank_and_size()[1]
+
+    def _rank_and_size(self):
+        try:
+            _, rank_value = _first_env(self._env, ("PMIX_RANK", "SPUR_PROCID", "SLURM_PROCID"))
+            _, size_value = _first_env(self._env, ("PMIX_SIZE", "SPUR_NTASKS", "SLURM_NTASKS"))
+            if rank_value is None or size_value is None:
+                raise ValueError
+            rank = int(rank_value)
+            world_size = int(size_value)
+        except ValueError as exc:
+            raise RuntimeError("managed CVS run requires scheduler/PMIx rank and task-count variables") from exc
+        if not 0 <= rank < world_size:
+            raise RuntimeError(f"invalid managed rank {rank} for world size {world_size}")
+        return rank, world_size
+
+    @property
+    def local_id(self):
+        """Task index on this node (0 is the node coordinator).
+
+        Spur sets SPUR_LOCALID and does not set SLURM_LOCALID. Real Slurm sets
+        SLURM_LOCALID. Open MPI's local rank is a last resort for PMIx-only steps.
+        """
+        try:
+            _, value = _first_env(self._env, ("SPUR_LOCALID", "SLURM_LOCALID", "OMPI_COMM_WORLD_LOCAL_RANK"))
+            if value is None:
+                raise ValueError
+            local_id = int(value)
+        except ValueError as exc:
+            raise RuntimeError(
+                "managed CVS run requires SPUR_LOCALID, SLURM_LOCALID, or OMPI_COMM_WORLD_LOCAL_RANK"
+            ) from exc
+        if local_id < 0:
+            raise RuntimeError(f"invalid scheduler local id {local_id}")
+        return local_id
+
+    @property
+    def hosts(self):
+        """Expand the current Slurm/SPUR job's node list in scheduler order."""
+        _, node_list = _first_env(self._env, ("SPUR_NODES", "SLURM_NODELIST"))
+        if not node_list:
+            raise RuntimeError("managed CVS run requires SPUR_NODES or SLURM_NODELIST")
+        try:
+            hosts = _expand_hostlist(node_list)
+        except ValueError as exc:
+            raise RuntimeError(f"could not expand scheduler node list {node_list!r}: {exc}") from exc
+        if not hosts:
+            raise RuntimeError(f"scheduler node list {node_list!r} expanded to no hosts")
+        return hosts
+
+    @property
+    def node_rank(self):
+        """This task's node index in ``hosts`` order."""
+        return self._node_rank(self.hosts, self.rank, self.world_size)
+
+    def _node_rank(self, hosts, global_rank, world_size):
+        hosts = list(hosts)
+        name, value = _first_env(self._env, ("SPUR_NODEID", "SLURM_NODEID"))
+        if value is not None:
+            try:
+                node_rank = int(value)
+            except ValueError as exc:
+                raise RuntimeError(f"invalid {name}={value!r}") from exc
+            if not 0 <= node_rank < len(hosts):
+                raise RuntimeError(f"invalid scheduler node rank {node_rank}")
+            return node_rank
+
+        _, current_host = _first_env(self._env, ("SLURM_NODENAME", "SLURMD_NODENAME", "SPUR_NODENAME"))
+        if current_host in hosts:
+            return hosts.index(current_host)
+
+        if world_size % len(hosts):
+            raise RuntimeError("cannot derive node rank for non-uniform tasks per node")
+        return global_rank // (world_size // len(hosts))

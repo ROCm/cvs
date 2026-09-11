@@ -6,6 +6,7 @@ from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import globals
+from cvs.core.scheduler import JobStep
 
 log = globals.log
 
@@ -40,21 +41,13 @@ def config_dict(config_file, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
+def phdl(orch):
+    return orch.all
 
 
 @pytest.fixture(scope="module")
-def shdl(cluster_dict):
-    node_list = list(cluster_dict['node_dict'].keys())
-    env_vars = cluster_dict.get("env_vars")
-    head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return shdl
+def shdl(orch):
+    return orch.head
 
 
 @pytest.fixture(scope="module")
@@ -70,7 +63,7 @@ def vpc_node_list(cluster_dict):
 # ─────────────────────────────────────────────
 
 
-def run_pairwise_rccl(phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, phase_label):
+def run_pairwise_rccl(orch, phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, phase_label):
     """
     Run all_reduce_perf across exactly len(node_pair_mgmt) nodes and report
     whether the run was clean (no new entries in globals.error_list).
@@ -124,6 +117,7 @@ def run_pairwise_rccl(phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, ph
             config_dict['cvs_params'],
             node_pair_mgmt,  # cluster_node_list  (first entry = head node)
             node_pair_vpc,  # vpc_node_list       (passed to mpirun -H)
+            orch=orch,
         )
         log.info('Pairwise result for %s: %s', phase_label, result_dict)
     except Exception as exc:
@@ -249,7 +243,7 @@ def test_collect_networkinfo(phdl):
     update_test_result()
 
 
-def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
+def test_rccl_pairwise(orch, phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     """
     Phase 0 + Phase 1: reference-node sanity check then pairwise validation.
 
@@ -267,6 +261,8 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     Config knobs consumed from config_dict['cvs_params']:
       - pairwise_min_bw   (float, GB/s, default 0 → no BW check)
     """
+    if JobStep.is_managed:
+        pytest.skip("pairwise node subsets cannot change the PMIx world of an existing srun step")
     globals.error_list = []
 
     node_list = list(cluster_dict['node_dict'].keys())  # mgmt hostnames
@@ -286,6 +282,7 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     log.info('=' * 60)
 
     sanity_result, sanity_clean = run_pairwise_rccl(
+        orch,
         phdl,
         shdl,
         node_pair_vpc=[ref_vpc],
@@ -318,6 +315,7 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
         label = f'Phase1 {ref_mgmt} <-> {cand_mgmt}'
 
         result, clean_run = run_pairwise_rccl(
+            orch,
             phdl,
             shdl,
             node_pair_vpc=[ref_vpc, cand_vpc],
@@ -354,7 +352,7 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     update_test_result()
 
 
-def test_rccl_incremental(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
+def test_rccl_incremental(orch, phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     """
     Phase 2: incremental cluster build.
 
@@ -368,6 +366,8 @@ def test_rccl_incremental(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     Config knobs consumed from config_dict['cvs_params']:
       - pairwise_min_bw   (float, GB/s, default 0 → no BW check for Phase 2)
     """
+    if JobStep.is_managed:
+        pytest.skip("incremental node subsets cannot change the PMIx world of an existing srun step")
     globals.error_list = []
 
     node_list = list(cluster_dict['node_dict'].keys())
@@ -415,6 +415,7 @@ def test_rccl_incremental(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
         log.info('Attempting to add node: %s  (cluster size would be %d)', cand_mgmt, len(trial_mgmt))
 
         result, clean_run = run_pairwise_rccl(
+            orch,
             phdl,
             shdl,
             node_pair_vpc=trial_vpc,

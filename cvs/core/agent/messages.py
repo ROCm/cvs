@@ -22,6 +22,8 @@ AUTH_TOKEN_FILENAME = "secret"
 # Path constants
 REGISTER_PATH = "/v1/register"
 EXEC_PATH = "/v1/exec"
+LAUNCH_PATH = "/v1/launch"
+LAUNCH_CANCEL_PATH = "/v1/launch/cancel"
 SHUTDOWN_PATH = "/v1/shutdown"
 HEALTH_PATH = "/v1/health"
 
@@ -102,6 +104,36 @@ class ExecResponse(BaseModel):
     stderr_path: Path | None
     truncated: bool | None  # set for INLINE mode only; None when not applicable
     timed_out: bool
+
+
+class LaunchRequest(BaseModel):
+    """One executable to start in every scheduler task."""
+
+    argv: list[str] = Field(min_length=1)
+    env: dict[str, str]
+    cwd: Path
+    timeout: int | None
+    launch_id: str = Field(min_length=1)
+    out_path: Path
+    world_size: int = Field(gt=0)
+
+
+class LaunchRankResult(BaseModel):
+    """Result from one scheduler task's child process."""
+
+    rank: int = Field(ge=0)
+    hostname: str
+    exit_code: int | None
+    stdout_path: Path
+    stderr_path: Path
+    timed_out: bool
+    error: str | None = None
+
+
+class LaunchResponse(BaseModel):
+    """Results from every scheduler task represented by this node agent."""
+
+    results: list[LaunchRankResult]
 
 
 class ErrorResponse(BaseModel):

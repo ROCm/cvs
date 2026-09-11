@@ -6,7 +6,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
 from cvs.core.orchestrators.base import Orchestrator
-from cvs.core.scheduler import is_managed_compute
+from cvs.core.scheduler import JobStep
 from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
 from cvs.lib.utils_lib import get_passwordless_sudo_status
 
@@ -69,7 +69,7 @@ class BaremetalOrchestrator(Orchestrator):
         }
 
     def _phandle(self, hosts):
-        managed = is_managed_compute()
+        managed = JobStep.is_managed
         return MultiProcessParallelHandle(
             self.log,
             hosts,
@@ -163,6 +163,22 @@ class BaremetalOrchestrator(Orchestrator):
             Dictionary mapping head node to execution result
         """
         return self.head.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+
+    def launch(self, argv, *, env=None, timeout=None):
+        """Launch one child in every task of the current managed scheduler step."""
+        if not JobStep.is_managed:
+            raise NotImplementedError("launch requires cvs run inside a managed scheduler step")
+        world_size = JobStep.world_size
+        node_outputs = self.all.launch(argv, env=env, timeout=timeout, world_size=world_size)
+        results = [result for node in node_outputs for result in node.results]
+        ranks = [result.rank for result in results]
+        if len(results) != world_size or len(set(ranks)) != world_size:
+            raise RuntimeError(f"managed launch returned ranks {sorted(ranks)}, expected 0..{world_size - 1}")
+        setup_errors = [result for result in results if result.error]
+        if setup_errors:
+            details = "; ".join(f"rank {result.rank}: {result.error}" for result in setup_errors)
+            raise RuntimeError(f"managed launch failed before child completion: {details}")
+        return sorted(results, key=lambda result: result.rank)
 
     def setup_env(self, hosts, env_script=None):
         """Set up environment on hosts."""

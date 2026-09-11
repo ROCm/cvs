@@ -9,6 +9,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import os
 import re
 import json
+import shlex
 import tempfile
 from typing import List
 from pathlib import Path
@@ -21,8 +22,147 @@ from cvs.lib import globals
 from cvs.schema.rccl import RcclTests, RcclTestsAggregated, RcclTestsMultinodeRaw
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
+from cvs.core.run_layout import RunLayout
+from cvs.core.scheduler import JobStep, Scheduler
 
 log = globals.log
+
+
+def _managed_rccl_env(mpi_dir, env_overrides=None):
+    """Environment proven by fan_exec_working_2node.py for Spur's PMIx/RoCE image."""
+    env = {}
+    if JobStep.kind == Scheduler.SPUR:
+        env.update(
+            {
+                "PMIX_GDS_MODULE": "hash",
+                "OMPI_MCA_pml": "ucx",
+                "OMPI_MCA_btl_tcp_if_exclude": "lo,docker0,nodelocaldns,172.17.0.0/16,169.254.0.0/16",
+                "NCCL_SOCKET_IFNAME": "ens3",
+                "NCCL_IB_HCA": "ionic",
+                "NCCL_IB_GID_INDEX": "1",
+                "NCCL_DMABUF_ENABLE": "1",
+                "NCCL_NET_PLUGIN": "none",
+            }
+        )
+    prefixes = [mpi_dir.rstrip("/"), "/opt/pmix", "/opt/ucx"]
+    libs = [path for prefix in prefixes for path in (f"{prefix}/lib", f"{prefix}/lib64") if os.path.isdir(path)]
+    if libs:
+        inherited = [path for path in os.environ.get("LD_LIBRARY_PATH", "").split(":") if path]
+        env["LD_LIBRARY_PATH"] = ":".join(libs + [path for path in inherited if path not in libs])
+        env["OPAL_PREFIX"] = mpi_dir.rstrip("/")
+    if env_overrides:
+        env.update({key: str(value) for key, value in env_overrides.items()})
+    return env
+
+
+def _managed_rccl_argv(binary, args, env_file):
+    argv = [binary, *[str(arg) for arg in args]]
+    if env_file and str(env_file).lower() != "none" and str(env_file) != "/dev/null":
+        command = f"source {shlex.quote(str(env_file))} && exec {shlex.join(argv)}"
+        return ["bash", "-c", command]
+    return argv
+
+
+def _read_shared_json(path, label):
+    try:
+        with open(path, encoding="utf-8") as stream:
+            return json.load(stream)
+    except (OSError, json.JSONDecodeError) as exc:
+        fail_test(f"Unable to read managed RCCL JSON result {path} ({label}): {exc}")
+        return []
+
+
+def _managed_result_path(path):
+    result = Path(path).expanduser()
+    if result.is_absolute() and result.parent == Path("/tmp"):
+        result = RunLayout.get().run_dir / result.name
+    elif not result.is_absolute():
+        result = RunLayout.get().run_dir / result
+    result.parent.mkdir(parents=True, exist_ok=True)
+    return result
+
+
+def _scan_managed_rccl_logs(output):
+    """Scan all ranks without the old generic filesystem false-positive pattern."""
+    errors = []
+    warnings = []
+    for line in output.splitlines():
+        if re.search(rccl_err_dict["orte"], line) or re.search(rccl_err_dict["nccl"], line):
+            errors.append(line)
+        if "NCCL WARN" in line:
+            warnings.append(line)
+    if warnings:
+        log.warning("RCCL emitted NCCL warnings: %s", warnings)
+    if errors:
+        message = "Managed RCCL log errors:\n" + "\n".join(errors)
+        fail_test(message)
+        raise RuntimeError(message)
+    if not re.search(r"#\s*Avg bus bandwidth", output):
+        message = "RCCL test did not complete successfully, no bandwidth numbers printed - pls check"
+        fail_test(message)
+        raise RuntimeError(message)
+
+
+def _launch_managed_rccl(orch, argv, env, timeout):
+    """Launch one binary in every existing srun PMIx slot and validate its processes."""
+    world_size = JobStep.world_size
+    try:
+        results = orch.launch(argv, env=env, timeout=timeout)
+    except Exception as exc:
+        message = f"Managed RCCL launch transport failed: {exc}"
+        fail_test(message)
+        raise RuntimeError(message) from exc
+    output_parts = []
+    for result in results:
+        for path in (result.stdout_path, result.stderr_path):
+            try:
+                output_parts.append(Path(path).read_text(encoding="utf-8", errors="replace"))
+            except OSError as exc:
+                output_parts.append(f"rank {result.rank}: failed to read {path}: {exc}")
+    output = "\n".join(output_parts)
+    failures = [result for result in results if result.exit_code != 0 or result.timed_out or result.error]
+    if failures:
+        detail = ", ".join(
+            f"rank {result.rank}: rc={result.exit_code} timeout={result.timed_out} error={result.error}"
+            for result in failures
+        )
+        message = f"Managed RCCL launch failed ({detail})"
+        fail_test(message)
+        raise RuntimeError(message)
+    if len(results) != world_size:
+        message = f"Managed RCCL launch returned {len(results)}/{world_size} ranks"
+        fail_test(message)
+        raise RuntimeError(message)
+    _scan_managed_rccl_logs(output)
+
+
+def _validate_managed_layout(orch, mpi_params):
+    configured_nodes = int(mpi_params.get("no_of_nodes", 2))
+    configured_local_ranks = int(mpi_params.get("no_of_local_ranks", 8))
+    world_size = JobStep.world_size
+    step_hosts = JobStep.hosts
+    if (
+        configured_nodes != len(step_hosts)
+        or list(orch.hosts) != step_hosts
+        or configured_nodes * configured_local_ranks != world_size
+    ):
+        raise RuntimeError(
+            "managed RCCL config must match the existing srun step: "
+            f"config={configured_nodes}x{configured_local_ranks}, "
+            f"cluster_hosts={list(orch.hosts)}, step_hosts={step_hosts}, "
+            f"step_tasks={world_size}"
+        )
+    return world_size
+
+
+def _rccl_extra_args(rccl_test_params):
+    args = []
+    rccl_timeout = rccl_test_params.get("rccl_timeout")
+    if rccl_timeout is not None:
+        args.extend(["-T", str(rccl_timeout)])
+    if bool(rccl_test_params.get("output_algo_proto_channels", False)):
+        args.extend(["-A", "1"])
+    return args
 
 
 rccl_err_dict = {
@@ -650,6 +790,7 @@ def rccl_regression(
     cluster_node_list,
     vpc_node_list,
     env_overrides=None,
+    orch=None,
 ):
     """
     Run an RCCL collective test across a cluster via MPI and verify results.
@@ -673,36 +814,34 @@ def rccl_regression(
     """
 
     log.info(f'Starting RCCL Test ..........................................{test_name}')
+    managed = orch is not None and JobStep.is_managed
 
     # Extract parameters from grouped dicts
-    mpi_dir = mpi_params.get('mpi_dir', '/usr/local/bin')
+    mpi_dir = mpi_params.get('mpi_dir', '/opt/openmpi' if managed else '/usr/local/bin')
     no_of_nodes = int(mpi_params.get('no_of_nodes', 2))
     no_of_local_ranks = int(mpi_params.get('no_of_local_ranks', 8))
     mpi_pml = mpi_params.get('mpi_pml', 'auto')
     mpi_oob_port = mpi_params.get('mpi_oob_port', 'eth0')
     ucx_tls = mpi_params.get('ucx_tls', 'rc,self,sm,tcp') or 'rc,self,sm,tcp'
 
-    no_of_global_ranks = no_of_nodes * no_of_local_ranks
+    no_of_global_ranks = _validate_managed_layout(orch, mpi_params) if managed else no_of_nodes * no_of_local_ranks
 
     log.info(f'%% VPC Node IPs {vpc_node_list}')
 
     # Use the first cluster node as the head node (source for collected outputs)
-    head_node = cluster_node_list[0]
-    # Build hostfile
-    host_file_params = ''
-    proc_per_node = int(no_of_global_ranks / len(cluster_node_list))
-    for node in vpc_node_list:
-        host_file_params = f'{host_file_params}{node} slots={proc_per_node}\n'
+    head_node = orch.head_node if managed else cluster_node_list[0]
+    if not managed:
+        host_file_params = ''
+        proc_per_node = int(no_of_global_ranks / len(cluster_node_list))
+        for node in vpc_node_list:
+            host_file_params = f'{host_file_params}{node} slots={proc_per_node}\n'
 
-    hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
-    cmd = f'rm -f {hosts_file_path}'
-    shdl.exec(cmd)
+        hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
+        shdl.exec(f'rm -f {hosts_file_path}')
+        shdl.exec(f'echo "{host_file_params}" > {hosts_file_path}')
 
-    cmd = f'echo "{host_file_params}" > {hosts_file_path}'
-    shdl.exec(cmd)
-
-    # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
-    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, mpi_params, phdl, shdl, mpi_dir, head_node, ucx_tls)
+        # Determine PML (Point-to-Point Messaging Layer) for the mpirun path.
+        pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, mpi_params, phdl, shdl, mpi_dir, head_node, ucx_tls)
 
     # Build RCCL test command
     rccl_tests_dir = rccl_test_params.get('rccl_tests_dir', '/usr/local/rccl-tests/build')
@@ -714,68 +853,94 @@ def rccl_regression(
     no_of_iterations = rccl_test_params.get('no_of_iterations', 20)
     no_of_cycles = rccl_test_params.get('no_of_cycles', 1)
     check_iteration_count = rccl_test_params.get('check_iteration_count', 1)
-    rccl_timeout = rccl_test_params.get('rccl_timeout', None)
-    output_algo_proto_channels = bool(rccl_test_params.get('output_algo_proto_channels', False))
-
-    rccl_result_file = cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
+    configured_result_file = cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
+    rccl_result_file = str(_managed_result_path(configured_result_file)) if managed else configured_result_file
     cvs_exec_timeout = int(cvs_params.get('cvs_exec_timeout', 2400))
 
     # Detect which output file argument is supported by the RCCL test binary
     rccl_test_binary_path = f'{rccl_tests_dir}/{test_name}'
     output_flag = detect_rccl_output_flag(shdl, rccl_test_binary_path, head_node)
 
-    extra_flags = ''
-    if rccl_timeout is not None:
-        extra_flags += f' -T {rccl_timeout}'
-    if output_algo_proto_channels:
-        extra_flags += ' -A 1'
-
-    test_cmd = f'{rccl_tests_dir}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-        -t {threads_per_gpu} -w {warmup_iterations} -n {no_of_iterations} \
-        -N {no_of_cycles} -c {check_iteration_count}{extra_flags} -Z json {output_flag} {rccl_result_file}'
+    binary = f'{rccl_tests_dir}/{test_name}'
+    test_args = [
+        '-b',
+        str(start_msg_size),
+        '-e',
+        str(end_msg_size),
+        '-f',
+        str(step_function),
+        '-t',
+        str(threads_per_gpu),
+        '-w',
+        str(warmup_iterations),
+        '-n',
+        str(no_of_iterations),
+        '-N',
+        str(no_of_cycles),
+        '-c',
+        str(check_iteration_count),
+        *_rccl_extra_args(rccl_test_params),
+        '-Z',
+        'json',
+        output_flag,
+        str(rccl_result_file),
+    ]
+    test_cmd = shlex.join([binary, *test_args])
 
     # Wrap with env file sourcing
     if env_file and str(env_file).lower() != 'none':
-        test_cmd = f'bash -c "source {env_file} && {test_cmd}"'
+        test_cmd = f'bash -c {shlex.quote(f"source {shlex.quote(str(env_file))} && {test_cmd}")}'
     else:
-        # Always wrap in bash to interpret && shell operator
-        test_cmd = f'bash -c "{test_cmd}"'
+        test_cmd = f'bash -c {shlex.quote(test_cmd)}'
 
     # Build env override parameters for regression testing
     env_override_params = ''
     if env_overrides:
         env_override_params = ' '.join([f'-x {k}={v}' for k, v in env_overrides.items()])
 
-    # Build mpirun command
-    cmd = f'''{mpi_dir}/bin/mpirun \
-        --allow-run-as-root \
-        -np {no_of_global_ranks} \
-        --hostfile {hosts_file_path} \
-        --bind-to numa \
-        {ucx_params} \
-        --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {mpi_oob_port} \
-        --mca oob_tcp_if_include {mpi_oob_port} \
-        {pml_param} \
-        {env_override_params} \
-        {test_cmd}'''
+    if managed:
+        result_path = Path(rccl_result_file)
+        result_path.unlink(missing_ok=True)
+        _launch_managed_rccl(
+            orch,
+            _managed_rccl_argv(binary, test_args, env_file),
+            _managed_rccl_env(mpi_dir, env_overrides),
+            cvs_exec_timeout,
+        )
+    else:
+        cmd = f'''{mpi_dir}/bin/mpirun \
+            --allow-run-as-root \
+            -np {no_of_global_ranks} \
+            --hostfile {hosts_file_path} \
+            --bind-to numa \
+            {ucx_params} \
+            --mca btl ^vader,openib \
+            --mca btl_tcp_if_include {mpi_oob_port} \
+            --mca oob_tcp_if_include {mpi_oob_port} \
+            {pml_param} \
+            {env_override_params} \
+            {test_cmd}'''
 
-    log.info('%%%%%%%%%%%%%%%%')
-    log.info("%s", cmd)
-    log.info('%%%%%%%%%%%%%%%%')
+        log.info('%%%%%%%%%%%%%%%%')
+        log.info("%s", cmd)
+        log.info('%%%%%%%%%%%%%%%%')
 
-    try:
-        out_dict = shdl.exec(cmd, timeout=cvs_exec_timeout)
-        output = out_dict[head_node]
-        scan_rccl_logs(output)
-    except Exception as e:
-        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-        _cleanup_stale_rccl_processes(phdl, test_name, f'exception in rccl_regression: {repr(e)}')
-        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+        try:
+            out_dict = shdl.exec(cmd, timeout=cvs_exec_timeout)
+            output = out_dict[head_node]
+            scan_rccl_logs(output)
+        except Exception as e:
+            log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+            _cleanup_stale_rccl_processes(phdl, test_name, f'exception in rccl_regression: {repr(e)}')
+            fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
-    # Read the JSON results emitted by the RCCL test binary via SFTP
-    # (avoids fragile cat-over-exec stdout reassembly for large payloads)
-    result_out = _read_json_from_head_node(shdl, head_node, rccl_result_file, test_name)
+    result_out = (
+        _read_shared_json(rccl_result_file, test_name)
+        if managed
+        else _read_json_from_head_node(shdl, head_node, rccl_result_file, test_name)
+    )
+    if managed and not result_out:
+        raise RuntimeError(f"Managed RCCL produced no JSON rows in {rccl_result_file}")
 
     # Collect basic GPU information via rocm-smi
     smi_out_dict = shdl.exec('rocm-smi -a | head -30')
@@ -816,6 +981,7 @@ def rccl_perf(
     cvs_params,
     cluster_node_list,
     vpc_node_list,
+    orch=None,
 ):
     """
     Run an RCCL collective test across a cluster via MPI and verify results.
@@ -850,43 +1016,36 @@ def rccl_perf(
     """
 
     log.info(f'Starting RCCL Test ..........................................{test_name}')
+    managed = orch is not None and JobStep.is_managed
 
     # Extract parameters from grouped dicts
-    mpi_dir = mpi_params.get('mpi_dir', '/usr/local/bin')
+    mpi_dir = mpi_params.get('mpi_dir', '/opt/openmpi' if managed else '/usr/local/bin')
     no_of_nodes = int(mpi_params.get('no_of_nodes', 2))
     no_of_local_ranks = int(mpi_params.get('no_of_local_ranks', 8))
     mpi_pml = mpi_params.get('mpi_pml', 'auto')
     mpi_oob_port = mpi_params.get('mpi_oob_port', 'eth0')
     ucx_tls = mpi_params.get('ucx_tls', 'rc,self,sm,tcp') or 'rc,self,sm,tcp'
 
-    no_of_global_ranks = no_of_nodes * no_of_local_ranks
+    no_of_global_ranks = _validate_managed_layout(orch, mpi_params) if managed else no_of_nodes * no_of_local_ranks
 
     log.info(f'%% VPC Node IPs {vpc_node_list}')
 
     # Use the first cluster node as the head node (source for collected outputs)
-    head_node = cluster_node_list[0]
-    # host_params=''
-    # proc_per_node = int(int(no_of_global_ranks)/len(cluster_node_list))
-    # for node in vpc_node_list:
-    #    host_params = f'{host_params}{node}:{proc_per_node},'
-    # Compute processes per node and build the -H host mapping string: host:N,host:N,...
-    # host_params = host_params.rstrip(',')
-    # print(f'RCCL Hosts -H value {host_params}')
+    head_node = orch.head_node if managed else cluster_node_list[0]
+    if managed and int(rccl_test_params.get('threads_per_gpu', 1)) != 1:
+        raise RuntimeError("managed RCCL requires threads_per_gpu=1 to match --gpus-per-task=1")
+    if not managed:
+        host_file_params = ''
+        proc_per_node = int(no_of_global_ranks / len(cluster_node_list))
+        for node in vpc_node_list:
+            host_file_params = f'{host_file_params}{node} slots={proc_per_node}\n'
 
-    host_file_params = ''
-    proc_per_node = int(int(no_of_global_ranks) / len(cluster_node_list))
-    for node in vpc_node_list:
-        host_file_params = f'{host_file_params}' + f'{node} slots={proc_per_node}\n'
+        hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
+        shdl.exec(f'rm -f {hosts_file_path}')
+        shdl.exec(f'echo "{host_file_params}" > {hosts_file_path}')
 
-    hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
-    cmd = f'rm -f {hosts_file_path}'
-    shdl.exec(cmd)
-
-    cmd = f'echo "{host_file_params}" > {hosts_file_path}'
-    shdl.exec(cmd)
-
-    # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
-    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, mpi_params, phdl, shdl, mpi_dir, head_node, ucx_tls)
+        # Determine PML (Point-to-Point Messaging Layer) for the mpirun path.
+        pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, mpi_params, phdl, shdl, mpi_dir, head_node, ucx_tls)
 
     # Extract RCCL test parameters
     rccl_tests_dir = rccl_test_params.get('rccl_tests_dir', '/usr/local/rccl-tests/build')
@@ -899,10 +1058,8 @@ def rccl_perf(
     no_of_cycles = rccl_test_params.get('no_of_cycles', 1)
     check_iteration_count = rccl_test_params.get('check_iteration_count', 1)
     data_types = rccl_test_params.get('data_types', ['float'])
-    rccl_timeout = rccl_test_params.get('rccl_timeout', None)
-    output_algo_proto_channels = bool(rccl_test_params.get('output_algo_proto_channels', False))
-
-    rccl_result_file = cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
+    configured_result_file = cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
+    rccl_result_file = str(_managed_result_path(configured_result_file)) if managed else configured_result_file
     cvs_exec_timeout = int(cvs_params.get('cvs_exec_timeout', 2400))
 
     all_raw_results = []
@@ -913,56 +1070,84 @@ def rccl_perf(
     rccl_test_binary_path = f'{rccl_tests_dir}/{test_name}'
     output_flag = detect_rccl_output_flag(shdl, rccl_test_binary_path, head_node)
 
-    extra_flags = ''
-    if rccl_timeout is not None:
-        extra_flags += f' -T {rccl_timeout}'
-    if output_algo_proto_channels:
-        extra_flags += ' -A 1'
-
     for dtype in data_types:
         # Create a unique result file for each data type
         dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
         log.info(f'Running {test_name} with dtype={dtype}')
 
-        # Wrap test binary in shell to source env script if provided
-        test_cmd = f'{rccl_tests_dir}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-            -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-            -d {dtype} -n {no_of_iterations} -N {no_of_cycles}{extra_flags} -Z json {output_flag} {dtype_result_file}'
+        binary = f'{rccl_tests_dir}/{test_name}'
+        test_args = [
+            '-b',
+            str(start_msg_size),
+            '-e',
+            str(end_msg_size),
+            '-f',
+            str(step_function),
+            '-g',
+            str(threads_per_gpu),
+            '-c',
+            str(check_iteration_count),
+            '-w',
+            str(warmup_iterations),
+            '-d',
+            str(dtype),
+            '-n',
+            str(no_of_iterations),
+            '-N',
+            str(no_of_cycles),
+            *_rccl_extra_args(rccl_test_params),
+            '-Z',
+            'json',
+            output_flag,
+            dtype_result_file,
+        ]
+        test_cmd = shlex.join([binary, *test_args])
 
         if env_file and str(env_file).lower() != 'none':
-            test_cmd = f'bash -c "source {env_file} && {test_cmd}"'
+            test_cmd = f'bash -c {shlex.quote(f"source {shlex.quote(str(env_file))} && {test_cmd}")}'
         else:
-            # Always wrap in bash to interpret && shell operator
-            test_cmd = f'bash -c "{test_cmd}"'
+            test_cmd = f'bash -c {shlex.quote(test_cmd)}'
 
-        cmd = f'''{mpi_dir}/bin/mpirun --np {no_of_global_ranks} \
-        --allow-run-as-root \
-        --hostfile {hosts_file_path} \
-        --bind-to numa \
-        {ucx_params} \
-        --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {mpi_oob_port} \
-        --mca oob_tcp_if_include {mpi_oob_port} \
-        {pml_param} \
-        {test_cmd}
-        '''
+        if managed:
+            Path(dtype_result_file).unlink(missing_ok=True)
+            _launch_managed_rccl(
+                orch,
+                _managed_rccl_argv(binary, test_args, env_file),
+                _managed_rccl_env(mpi_dir),
+                cvs_exec_timeout,
+            )
+        else:
+            cmd = f'''{mpi_dir}/bin/mpirun --np {no_of_global_ranks} \
+            --allow-run-as-root \
+            --hostfile {hosts_file_path} \
+            --bind-to numa \
+            {ucx_params} \
+            --mca btl ^vader,openib \
+            --mca btl_tcp_if_include {mpi_oob_port} \
+            --mca oob_tcp_if_include {mpi_oob_port} \
+            {pml_param} \
+            {test_cmd}
+            '''
 
-        log.info('%%%%%%%%%%%%%%%%')
-        log.info("%s", cmd)
-        log.info('%%%%%%%%%%%%%%%%')
-        try:
-            out_dict = shdl.exec(cmd, timeout=cvs_exec_timeout)
-            output = out_dict[head_node]
-            # print(output)
-            scan_rccl_logs(output)
-        except Exception as e:
-            log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-            _cleanup_stale_rccl_processes(phdl, test_name, f'exception in rccl_perf ({dtype}): {repr(e)}')
-            fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+            log.info('%%%%%%%%%%%%%%%%')
+            log.info("%s", cmd)
+            log.info('%%%%%%%%%%%%%%%%')
+            try:
+                out_dict = shdl.exec(cmd, timeout=cvs_exec_timeout)
+                output = out_dict[head_node]
+                scan_rccl_logs(output)
+            except Exception as e:
+                log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+                _cleanup_stale_rccl_processes(phdl, test_name, f'exception in rccl_perf ({dtype}): {repr(e)}')
+                fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
-        # Read the JSON results emitted by the RCCL test binary via SFTP
-        # (avoids fragile cat-over-exec stdout reassembly for large payloads)
-        dtype_result_out = _read_json_from_head_node(shdl, head_node, dtype_result_file, f'{test_name}_{dtype}')
+        dtype_result_out = (
+            _read_shared_json(dtype_result_file, f'{test_name}_{dtype}')
+            if managed
+            else _read_json_from_head_node(shdl, head_node, dtype_result_file, f'{test_name}_{dtype}')
+        )
+        if managed and not dtype_result_out:
+            raise RuntimeError(f"Managed RCCL produced no JSON rows in {dtype_result_file}")
         # Validate the results against the schema fail if results are not valid
         try:
             validated = [RcclTestsMultinodeRaw.model_validate(test_result) for test_result in dtype_result_out]
@@ -993,13 +1178,15 @@ def rccl_perf(
             # IMPORTANT: schema validation failures should stop further iterations/data types
             raise RuntimeError(f'RCCL Test {dtype} schema validation failed') from e
 
-    # Save the combined raw results to the head node via SFTP through `shdl`.
-    # This is non-fatal: the benchmark and schema validation have already passed by this point;
-    # raw data also lives in test.log. A save failure logs an ERROR but does not fail the test.
-    if _save_json_to_head_node(shdl, head_node, rccl_result_file, all_raw_results, 'combined_rccl_results'):
+    if managed:
+        base_path.write_text(json.dumps(all_raw_results, indent=2), encoding='utf-8')
         log.info(f'Saved combined results from all data types to {rccl_result_file}')
     else:
-        log.error('Failed to save combined results to %s on head node %s', rccl_result_file, head_node)
+        # This is non-fatal: benchmark and validation have already passed; raw data is also in test.log.
+        if _save_json_to_head_node(shdl, head_node, rccl_result_file, all_raw_results, 'combined_rccl_results'):
+            log.info(f'Saved combined results from all data types to {rccl_result_file}')
+        else:
+            log.error('Failed to save combined results to %s on head node %s', rccl_result_file, head_node)
 
     # Validate the results against the schema and aggregate if multiple results are found, fail if results are not valid
     aggregated_rccl_tests = None
@@ -1010,10 +1197,15 @@ def rccl_perf(
             # Note: currently we are saving the aggregated results, but we could instead use this for final report generation
             aggregated_path = f'{base_path.parent}/{base_path.stem}_aggregated.json'
             aggregated_payload = [result.model_dump() for result in aggregated_rccl_tests]
-            if _save_json_to_head_node(shdl, head_node, aggregated_path, aggregated_payload, 'aggregated_rccl_results'):
+            if managed:
+                Path(aggregated_path).write_text(json.dumps(aggregated_payload, indent=2), encoding='utf-8')
                 log.info(f'Saved aggregated results to {aggregated_path}')
-            else:
+            elif not _save_json_to_head_node(
+                shdl, head_node, aggregated_path, aggregated_payload, 'aggregated_rccl_results'
+            ):
                 log.error('Failed to save aggregated results to %s on head node %s', aggregated_path, head_node)
+            else:
+                log.info(f'Saved aggregated results to {aggregated_path}')
         else:
             log.warning('Aggregation skipped: only one run found')
     except ValidationError as e:

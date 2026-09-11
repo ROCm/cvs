@@ -118,3 +118,7 @@ class Orchestrator(ABC):
             NotImplementedError: If MPI distribution is not supported
         """
         raise NotImplementedError(f"MPI distribution not supported by {self.__class__.__name__}")
+
+    def launch(self, argv, *, env=None, timeout=None):
+        """Launch one executable in every scheduler task."""
+        raise NotImplementedError(f"Managed launch not supported by {self.__class__.__name__}")

@@ -5,7 +5,7 @@ import json
 
 from cvs.core.agent.lifecycle import AgentRunner
 from cvs.core.run_layout import RunLayout
-from cvs.core.scheduler import is_managed_compute
+from cvs.core.scheduler import JobStep
 
 from .list_plugin import ListPlugin
 
@@ -96,7 +96,7 @@ Run Commands:
   cvs run agfhc --html report.html   Run test and generate HTML report"""
 
     def run(self, args):
-        managed = is_managed_compute()
+        managed = JobStep.is_managed
         if not managed and not args.cluster_file:
             print("Error: --cluster_file is required outside a scheduler-managed run")
             return sys.exit(1)

@@ -158,6 +158,13 @@ class ParallelHandle:
         """
         return self._transport.check_connectivity(hosts)
 
+    def launch(self, argv, *, env=None, timeout=None, world_size):
+        """Launch one executable in every managed scheduler task."""
+        launch = getattr(self._transport, "launch", None)
+        if launch is None:
+            raise NotImplementedError("launch is available only through managed HTTP agents")
+        return launch(argv, env=env, timeout=timeout, world_size=world_size)
+
     def prune_nodes(self, nodes_to_remove):
         """
         Explicitly prune hosts from this Pssh instance and rebuild client.
