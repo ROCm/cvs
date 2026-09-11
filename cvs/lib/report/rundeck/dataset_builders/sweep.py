@@ -20,6 +20,7 @@ from cvs.lib.report.inference_payload import (
 from cvs.lib.report.profile import DeckProfile
 from cvs.lib.report.render.gate_matrix import build_gate_matrix_rows
 from cvs.lib.report.rundeck.config_adapter import resolve_report_config
+from cvs.lib.report.rundeck.dataset_builders.jaxmaxtext import build_jaxmaxtext_datasets
 from cvs.lib.report.rundeck.dataset_builders.registry import register_dataset_builder
 from cvs.lib.report.types import InferenceReportConfig
 
@@ -30,6 +31,9 @@ def _results_dict(sources: Mapping[str, Any]) -> Mapping:
 
 @register_dataset_builder("sweep")
 def build_sweep_datasets(sources: dict[str, Any], profile: DeckProfile) -> dict[str, Any]:
+    if isinstance(profile, dict) and (profile.get("sweep") or {}).get("layout") == "jaxmaxtext":
+        return build_jaxmaxtext_datasets(sources, profile)
+
     config = resolve_report_config(profile)
     variant_config = sources.get("variant")
     lifecycle_report = sources.get("lifecycle_report") or {}
