@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "profile_id": "rvs_cvs_rundeck",
+  "suite_id": "rvs",
+  "report_basename": "rvs_run_deck",
+  "title": "RVS Run Deck",
+  "subtitle": "ROCm Validation Suite · GPU health and performance",
+  "footer": "CVS rvs_cvs · render-only · does not affect gates",
+  "link_name": "RVS Run Deck",
+  "dataset_builder": "rvs",
+  "interactive_viewer": false,
+  "tier_order": ["result"],
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "variant_config"
+  },
+  "hooks": {
+    "run_card_display": "cvs.lib.report.profiles.hooks.rvs_run_card:rvs_run_card_display"
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {"type": "gate_matrix", "id": "gates", "title": "Module results", "bind": "gate_matrix"},
+    {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
+    {
+      "type": "line_chart",
+      "id": "gst",
+      "title": "GST GFLOPS",
+      "bind": "datasets.rvs.charts.gst_gflops",
+      "when_empty": "hide",
+      "series": {"y_field": "gst_gflops", "unit": "GFLOPS", "x_label": "{x}"}
+    },
+    {
+      "type": "line_chart",
+      "id": "pebb",
+      "title": "PEBB PCIe bandwidth",
+      "bind": "datasets.rvs.charts.pebb_gbps",
+      "when_empty": "hide",
+      "series": {"y_field": "pebb_gbps", "unit": "GB/s", "x_label": "{x}"}
+    },
+    {
+      "type": "line_chart",
+      "id": "pbqt",
+      "title": "PBQT P2P bandwidth",
+      "bind": "datasets.rvs.charts.pbqt_gbps",
+      "when_empty": "hide",
+      "series": {"y_field": "pbqt_gbps", "unit": "GB/s", "x_label": "{x}"}
+    },
+    {
+      "type": "line_chart",
+      "id": "babel",
+      "title": "BABEL memory bandwidth",
+      "bind": "datasets.rvs.charts.babel_mbytes_s",
+      "when_empty": "hide",
+      "series": {"y_field": "babel_mbytes_s", "unit": "MB/s", "x_label": "{x}"}
+    },
+    {
+      "type": "line_chart",
+      "id": "iet",
+      "title": "IET peak power",
+      "bind": "datasets.rvs.charts.iet_power_w",
+      "when_empty": "hide",
+      "series": {"y_field": "iet_power_w", "unit": "W", "x_label": "{x}"}
+    },
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}

@@ -28,7 +28,7 @@ flowchart LR
 | Session store | `registry.py` |
 | Profile schema | `profiles/schema.json` |
 | Config resolution | `rundeck/config_adapter.py` |
-| Dataset builders | `rundeck/dataset_builders/` — `sweep`, `series`, `matrix` |
+| Dataset builders | `rundeck/dataset_builders/` — `sweep`, `series`, `matrix`, `rvs` |
 | Card runtime | `rundeck/runtime/` |
 | Publish entry | `rundeck/generate_rundeck.py` |
 
@@ -143,7 +143,7 @@ cvs/lib/report/
     render.py                # static HTML
     config_adapter.py        # JSON profile → RunDeckConfig
     viewer_config.py         # interactive viewer config
-    dataset_builders/        # sweep, series, matrix
+    dataset_builders/        # sweep, series, matrix, rvs
     runtime/                 # card components + theme
   profiles/schema.json
   pytest_hooks.py            # session fixture binding
