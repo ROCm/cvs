@@ -26,6 +26,9 @@ PROFILE_STEM_ALIASES: dict[str, str] = {
     "sglang_disagg_distributed": "sglang",
     "vllm_single": "vllm",
     "vllm_distributed": "vllm",
+    "rccl_perf": "rccl",
+    "rccl_regression": "rccl",
+    "rccl_pairwise": "rccl",
 }
 
 DEFAULT_SOURCES: dict[str, str] = {
