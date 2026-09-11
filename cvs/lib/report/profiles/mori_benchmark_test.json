@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "profile_id": "mori_benchmark_test_rundeck",
+  "suite_id": "mori_benchmark_test",
+  "metric_contract": {"id": "mori-network-performance", "version": 1},
+  "report_basename": "mori_benchmark_test_run_deck",
+  "title": "Mori Benchmark Run Deck",
+  "subtitle": "Torch IO and IBGDA network performance across message sizes",
+  "footer": "CVS Mori · render-only · does not affect validation gates",
+  "link_name": "Mori Benchmark Run Deck",
+  "dataset_builder": "series",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "mori_variant_config"
+  },
+  "hooks": {
+    "run_card_display": "cvs.lib.report.profiles.hooks.mori_run_card:mori_run_card_display"
+  },
+  "series": {
+    "x_field": "Message size (bytes)",
+    "y_fields": [
+      "Avg_BW_GBps",
+      "Avg_Lat_us",
+      "bandwidth_gb",
+      "time_ms",
+      "rate_mpps"
+    ],
+    "table_columns": [
+      {"label": "Series", "field": "$series"},
+      {"label": "Test", "field": "test"},
+      {"label": "Node", "field": "node"},
+      {"label": "Rank", "field": "rank"},
+      {"label": "Message size (bytes)", "field": "$x"},
+      {"label": "Buffer size", "field": "buffer_size"},
+      {"label": "Transfer batch", "field": "transfer_batch_size"},
+      {"label": "QP count", "field": "qp_count"},
+      {"label": "Test-case QP", "field": "case_qp_count"},
+      {"label": "Processes", "field": "processes"},
+      {"label": "CTAs", "field": "ctas"},
+      {"label": "Threads", "field": "threads"},
+      {"label": "Iterations", "field": "iterations"},
+      {"label": "Batch size", "field": "BatchSize"},
+      {"label": "Total size (MB)", "field": "TotalSize_MB"},
+      {"label": "Max BW (GB/s)", "field": "Max_BW_GBps"},
+      {"label": "Avg BW (GB/s)", "field": "Avg_BW_GBps"},
+      {"label": "Min latency (us)", "field": "Min_Lat_us"},
+      {"label": "Avg latency (us)", "field": "Avg_Lat_us"},
+      {"label": "IBGDA BW (GB)", "field": "bandwidth_gb"},
+      {"label": "IBGDA time (ms)", "field": "time_ms"},
+      {"label": "IBGDA rate (Mpps)", "field": "rate_mpps"},
+      {"label": "Status", "field": "status"}
+    ]
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {
+      "type": "line_chart",
+      "id": "io-bandwidth",
+      "title": "Torch IO average bandwidth by message size",
+      "bind": "datasets.series",
+      "series": {"y_field": "Avg_BW_GBps", "unit": "GB/s"}
+    },
+    {
+      "type": "line_chart",
+      "id": "io-latency",
+      "title": "Torch IO average latency by message size",
+      "bind": "datasets.series",
+      "series": {"y_field": "Avg_Lat_us", "unit": "us"}
+    },
+    {
+      "type": "line_chart",
+      "id": "ibgda-bandwidth",
+      "title": "IBGDA bandwidth by message size",
+      "bind": "datasets.series",
+      "series": {"y_field": "bandwidth_gb", "unit": "GB"}
+    },
+    {
+      "type": "line_chart",
+      "id": "ibgda-time",
+      "title": "IBGDA completion time by message size",
+      "bind": "datasets.series",
+      "series": {"y_field": "time_ms", "unit": "ms"}
+    },
+    {
+      "type": "line_chart",
+      "id": "ibgda-rate",
+      "title": "IBGDA packet rate by message size",
+      "bind": "datasets.series",
+      "series": {"y_field": "rate_mpps", "unit": "Mpps"}
+    },
+    {
+      "type": "table",
+      "id": "results",
+      "title": "Full Mori benchmark results",
+      "bind": "results_table"
+    }
+  ]
+}

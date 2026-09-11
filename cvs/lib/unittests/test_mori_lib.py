@@ -517,5 +517,55 @@ class TestMoriIoLaunch(_MoriBenchCase):
             self.assertIsNotNone(re.search(pattern, benchmark_proc), pattern)
 
 
+class TestResultCapture(_MoriBenchCase):
+    def test_ibgda_run_returns_parsed_metrics_per_node(self):
+        def responder(cmd, host):
+            if 'dist_write' in cmd and host == 'n0':
+                return (
+                    'Blocks: 2, Threads: 256, Iterations: 1, QPs: 4\n'
+                    'Index Size(B) bw(GB) Time(ms) Rate(Mpps)\n0 33554432 46.10 0.73 0.01'
+                )
+            return ''
+
+        result = MoriBenchmark(_ContainerFakeOrch(responder=responder), _mori_dict()).run_ibgda_dist_write(
+            no_of_procs=2, ctas=2, threads=256, qp_count=4, iters=1
+        )
+        self.assertEqual(
+            {k: v for k, v in result.items() if k != 'nodes'},
+            {'operation': 'ibgda_write', 'processes': 2, 'ctas': 2, 'threads': 256, 'qp_count': 4, 'iterations': 1},
+        )
+        # A node without a result table fails the test and contributes no rows.
+        self.assertEqual(list(result['nodes']), ['n0'])
+        self.assertEqual(result['nodes']['n0']['metadata']['qps'], 4)
+        self.assertEqual(
+            result['nodes']['n0']['rows'],
+            [{'size_bytes': 33554432, 'bandwidth_gb': 46.1, 'time_ms': 0.73, 'rate_mpps': 0.01}],
+        )
+        self.assertEqual(len(globals.error_list), 1)
+        self.assertIn('node n1', globals.error_list[0])
+
+    def test_io_run_returns_rank_metrics_with_effective_parameters(self):
+        result = MoriBenchmark(_ContainerFakeOrch(), _mori_dict()).run_mori_torch_io_test(
+            op_type='write', buffer_size=16384, transfer_batch_size=128, no_of_qp_per_transfer=4
+        )
+        self.assertEqual(result['operation'], 'io_write')
+        self.assertEqual(result['buffer_size'], 16384)
+        self.assertEqual(result['transfer_batch_size'], 128)
+        self.assertEqual(result['qp_count'], 4)
+        self.assertEqual(result['ranks'][0]['rows'][0]['Avg_BW_GBps'], 44.0)
+        self.assertEqual(globals.error_list, [])
+
+    def test_io_run_without_a_result_table_returns_none(self):
+        no_table = lambda cmd, host: '' if cmd.startswith('cat ') else _default_responder(cmd, host)  # noqa: E731
+        for orch, overrides in (
+            (_ContainerFakeOrch(), {'master_addr': '10.0.0.9'}),
+            (_ContainerFakeOrch(responder=no_table), {}),
+        ):
+            with self.subTest(overrides=overrides):
+                globals.error_list = []
+                self.assertIsNone(MoriBenchmark(orch, _mori_dict(**overrides)).run_mori_torch_io_test())
+                self.assertEqual(len(globals.error_list), 1)
+
+
 if __name__ == '__main__':
     unittest.main()
