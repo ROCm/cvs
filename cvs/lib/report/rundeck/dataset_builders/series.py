@@ -12,6 +12,17 @@ from typing import Any
 from cvs.lib.report.rundeck.dataset_builders.registry import register_dataset_builder
 
 
+def _format_msg_size(size_key):
+    try:
+        n = int(size_key)
+    except (TypeError, ValueError):
+        return str(size_key)
+    for base, suffix in ((1 << 30, "G"), (1 << 20, "M"), (1 << 10, "K")):
+        if n >= base and n % base == 0:
+            return f"{n // base}{suffix}"
+    return str(n)
+
+
 def _graph_to_series(graph_dict: dict, *, y_field: str = "bus_bw") -> dict[str, list[dict]]:
     """Convert RCCL ``convert_to_graph_dict`` output to chart series."""
     series_by_name: dict[str, list[dict]] = {}
@@ -27,7 +38,7 @@ def _graph_to_series(graph_dict: dict, *, y_field: str = "bus_bw") -> dict[str, 
             if y_val is None:
                 continue
             try:
-                points.append((int(size_key), float(y_val)))
+                points.append((_format_msg_size(size_key), float(y_val)))
             except (TypeError, ValueError):
                 continue
         if points:
