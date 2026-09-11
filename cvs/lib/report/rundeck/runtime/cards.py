@@ -23,6 +23,14 @@ from cvs.lib.report.types import DEFAULT_SESSION_LIFECYCLE_LABELS
 SESSION_FALLBACK = DEFAULT_SESSION_LIFECYCLE_LABELS
 
 
+def _chart_x_label(series_cfg):
+    if series_cfg.get("x_label"):
+        return series_cfg["x_label"]
+    if "x_label_prefix" in series_cfg:
+        return f"{series_cfg.get('x_label_prefix') or ''}{{x}}"
+    return "C={x}"
+
+
 class DeckCardRenderer:
     """Profile-driven card renderers for Run Deck static HTML sections."""
 
@@ -175,7 +183,7 @@ class DeckCardRenderer:
         elif isinstance(raw, list):
             entries = raw
         if not entries:
-            return "<p class='muted'>No series data.</p>"
+            return ""
         parts = []
         title = card.get("title") or y_field
         for entry in entries:
@@ -183,10 +191,15 @@ class DeckCardRenderer:
                 continue
             points = entry.get("points") or []
             label = entry.get("label") or title
-            part = self._charts.render_series_chart(str(label), points, series_cfg.get("unit") or "GB/s")
+            part = self._charts.render_series_chart(
+                str(label),
+                points,
+                series_cfg.get("unit") or "GB/s",
+                x_label=_chart_x_label(series_cfg),
+            )
             if part:
                 parts.append(part)
-        return f"<div class='chart-grid'>{''.join(parts)}</div>" if parts else "<p class='muted'>No series data.</p>"
+        return f"<div class='chart-grid'>{''.join(parts)}</div>" if parts else ""
 
     @staticmethod
     def render_heatmap(_payload: dict, card: dict, data: Any) -> str:

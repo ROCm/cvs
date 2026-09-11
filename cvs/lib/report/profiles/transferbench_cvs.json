@@ -39,7 +39,7 @@
       "title": "A2A receive bandwidth by GPU",
       "bind": "datasets.series",
       "when_empty": "hide",
-      "series": {"y_field": "a2a_bw", "unit": "GB/s"}
+      "series": {"y_field": "a2a_bw", "unit": "GB/s", "x_label": "GPU {x}"}
     },
     {
       "type": "line_chart",
@@ -47,7 +47,7 @@
       "title": "P2P bandwidth by GPU pair",
       "bind": "datasets.series",
       "when_empty": "hide",
-      "series": {"y_field": "p2p_bw", "unit": "GB/s"}
+      "series": {"y_field": "p2p_bw", "unit": "GB/s", "x_label": "\u2192GPU {x}"}
     },
     {
       "type": "line_chart",
@@ -55,7 +55,7 @@
       "title": "A2A sweep bandwidth by CU count",
       "bind": "datasets.series",
       "when_empty": "hide",
-      "series": {"y_field": "a2asweep_bw", "unit": "GB/s"}
+      "series": {"y_field": "a2asweep_bw", "unit": "GB/s", "x_label": "{x} CUs"}
     },
     {
       "type": "line_chart",
@@ -63,7 +63,7 @@
       "title": "Scaling bandwidth by CU count",
       "bind": "datasets.series",
       "when_empty": "hide",
-      "series": {"y_field": "scaling_bw", "unit": "GB/s"}
+      "series": {"y_field": "scaling_bw", "unit": "GB/s", "x_label": "{x} CUs"}
     },
     {
       "type": "line_chart",
@@ -71,7 +71,7 @@
       "title": "Schmoo bandwidth by CU count",
       "bind": "datasets.series",
       "when_empty": "hide",
-      "series": {"y_field": "schmoo_bw", "unit": "GB/s"}
+      "series": {"y_field": "schmoo_bw", "unit": "GB/s", "x_label": "{x} CUs"}
     },
     {"type": "table", "id": "results", "title": "TransferBench results", "bind": "results_table"}
   ]
