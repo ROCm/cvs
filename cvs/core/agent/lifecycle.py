@@ -264,7 +264,6 @@ class Rank0Runner:
         cluster=None,
         global_rank=0,
         expected_local_workers=0,
-        task_world_size=None,
     ):
         """Store this job's layout, this node's host, and the scheduler host list."""
         self._layout = layout
@@ -274,7 +273,6 @@ class Rank0Runner:
         self._cluster_input = cluster or {}
         self._global_rank = global_rank
         self._expected_local_workers = expected_local_workers
-        self._task_world_size = task_world_size or len(hosts)
         self._http_agent = None
         self._heartbeat = None
         self._stopped = False
@@ -518,7 +516,6 @@ class AgentRunner:
                 self._load_cluster_file(cluster_file),
                 global_rank=self._rank,
                 expected_local_workers=expected_local_workers,
-                task_world_size=world_size,
             )
         elif JobStep.local_id == 0:
             # HTTP + UDS on other nodes: first task on this node, not rank % T
