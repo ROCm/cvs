@@ -79,7 +79,10 @@ def render_rundeck_html(payload: dict) -> str:
         if pending_gate_nav:
             nav_items.append(pending_gate_nav)
 
-    model_label = next((v for lbl, v, _ in payload.get("run_card_display", []) if lbl == "Model"), "run")
+    model_label = next((v for lbl, v, _ in payload.get("run_card_display", []) if lbl == "Model"), None)
+    if not model_label or str(model_label).strip() in ("—", "-", ""):
+        report_meta = payload.get("report") or {}
+        model_label = payload.get("suite_id") or report_meta.get("title") or "run"
     overall = payload.get("overall_status", "na")
     viewer_name = (payload.get("summary") or {}).get("viewer_html")
     prev_panel = (payload.get("panels") or {}).get("prev_run") or {}
