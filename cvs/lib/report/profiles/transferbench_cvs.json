@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "profile_id": "transferbench_cvs_rundeck",
+  "suite_id": "transferbench_cvs",
+  "metric_contract": {"id": "transferbench-health", "version": 1},
+  "report_basename": "transferbench_cvs_run_deck",
+  "title": "TransferBench Run Deck",
+  "subtitle": "TransferBench health and bandwidth summary",
+  "footer": "CVS TransferBench · render-only · does not affect qualification gates",
+  "link_name": "TransferBench Run Deck",
+  "dataset_builder": "series",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "variant_config"
+  },
+  "hooks": {
+    "run_card_display": "cvs.lib.report.profiles.hooks.transferbench_run_card:transferbench_run_card_display"
+  },
+  "series": {
+    "x_field": "GPU, bytes, or CU count",
+    "y_fields": ["a2a_bw", "p2p_bw", "a2asweep_bw", "scaling_bw", "schmoo_bw"],
+    "table_columns": [
+      {"label": "Test", "field": "test"},
+      {"label": "Node", "field": "node"},
+      {"label": "Metric", "field": "metric"},
+      {"label": "GPU / bytes / CUs", "field": "$x"},
+      {"label": "Value", "field": "value"},
+      {"label": "Unit", "field": "unit"},
+      {"label": "Status", "field": "status"},
+      {"label": "Duration (s)", "field": "duration_s"}
+    ]
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {
+      "type": "line_chart",
+      "id": "a2a-bandwidth",
+      "title": "A2A receive bandwidth by GPU",
+      "bind": "datasets.series",
+      "when_empty": "hide",
+      "series": {"y_field": "a2a_bw", "unit": "GB/s"}
+    },
+    {
+      "type": "line_chart",
+      "id": "p2p-bandwidth",
+      "title": "P2P bandwidth by GPU pair",
+      "bind": "datasets.series",
+      "when_empty": "hide",
+      "series": {"y_field": "p2p_bw", "unit": "GB/s"}
+    },
+    {
+      "type": "line_chart",
+      "id": "a2a-sweep",
+      "title": "A2A sweep bandwidth by CU count",
+      "bind": "datasets.series",
+      "when_empty": "hide",
+      "series": {"y_field": "a2asweep_bw", "unit": "GB/s"}
+    },
+    {
+      "type": "line_chart",
+      "id": "scaling",
+      "title": "Scaling bandwidth by CU count",
+      "bind": "datasets.series",
+      "when_empty": "hide",
+      "series": {"y_field": "scaling_bw", "unit": "GB/s"}
+    },
+    {
+      "type": "line_chart",
+      "id": "schmoo",
+      "title": "Schmoo bandwidth by CU count",
+      "bind": "datasets.series",
+      "when_empty": "hide",
+      "series": {"y_field": "schmoo_bw", "unit": "GB/s"}
+    },
+    {"type": "table", "id": "results", "title": "TransferBench results", "bind": "results_table"}
+  ]
+}
