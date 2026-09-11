@@ -5,6 +5,7 @@ All rights reserved.
 
 import json
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -167,6 +168,19 @@ def hf_token(variant_config):
 @pytest.fixture(scope="module")
 def training_res_dict():
     return {}
+
+
+@pytest.fixture(scope="module")
+def jaxmaxtext_report_variant(variant_config, cluster_dict):
+    nodes = cluster_dict.get("node_dict") or []
+    return SimpleNamespace(
+        model=variant_config.model,
+        gpu_arch=variant_config.gpu_arch,
+        nnodes=len(nodes) or 1,
+        thresholds=variant_config.thresholds,
+        enforce_thresholds=variant_config.enforce_thresholds,
+        framework=variant_config.framework,
+    )
 
 
 def pytest_collection_modifyitems(items):

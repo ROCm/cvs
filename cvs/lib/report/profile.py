@@ -26,6 +26,8 @@ PROFILE_STEM_ALIASES: dict[str, str] = {
     "sglang_disagg_distributed": "sglang",
     "vllm_single": "vllm",
     "vllm_distributed": "vllm",
+    "jaxmaxtext_single": "jaxmaxtext",
+    "jaxmaxtext_distributed": "jaxmaxtext",
 }
 
 DEFAULT_SOURCES: dict[str, str] = {
