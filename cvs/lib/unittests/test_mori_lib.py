@@ -1,5 +1,6 @@
 '''Unit tests for Mori benchmark result capture.'''
 
+import textwrap
 import unittest
 from unittest.mock import Mock, patch
 
@@ -28,14 +29,16 @@ class TestMoriBenchmarkResultCapture(unittest.TestCase):
 
     @patch("cvs.lib.mori_lib.time.sleep")
     def test_torch_io_run_returns_rank_metrics_with_effective_parameters(self, _sleep):
-        output = """
-        Initiator Rank 0
-        +-------------+-----------+----------------+---------------+---------------+--------------+--------------+
-        | MsgSize (B) | BatchSize | TotalSize (MB) | Max BW (GB/s) | Avg Bw (GB/s) | Min Lat (us) | Avg Lat (us) |
-        +-------------+-----------+----------------+---------------+---------------+--------------+--------------+
-        | 524288      | 128       | 64             | 50.0          | 47.5          | 1000.0       | 1200.0       |
-        +-------------+-----------+----------------+---------------+---------------+--------------+--------------+
-        """
+        output = textwrap.dedent(
+            """
+            Initiator Rank 0
+            +-------------+-----------+----------------+---------------+---------------+--------------+--------------+
+            | MsgSize (B) | BatchSize | TotalSize (MB) | Max BW (GB/s) | Avg Bw (GB/s) | Min Lat (us) | Avg Lat (us) |
+            +-------------+-----------+----------------+---------------+---------------+--------------+--------------+
+            | 524288      | 128       | 64             | 50.0          | 47.5          | 1000.0       | 1200.0       |
+            +-------------+-----------+----------------+---------------+---------------+--------------+--------------+
+            """
+        )
         benchmark = MoriBenchmark.__new__(MoriBenchmark)
         benchmark.container_name = "mori"
         benchmark.mori_dir = "/mori"
