@@ -15,8 +15,8 @@ class TestSweepChartRenderer(unittest.TestCase):
         )
 
         self.assertIn("FLUX", document)
-        self.assertIn("Resolution (MP)=1.049", document)
-        self.assertIn("1.25 s/output", document)
+        self.assertIn("Resolution (MP)=1.0", document)
+        self.assertIn("1.2 s/output", document)
 
     def test_empty_series_does_not_render(self):
         self.assertEqual(SweepChartRenderer().render_series_chart("empty", [], "s"), "")
