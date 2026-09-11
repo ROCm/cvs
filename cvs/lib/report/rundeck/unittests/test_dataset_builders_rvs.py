@@ -43,14 +43,16 @@ def _sample_records():
             "value": 61.37,
             "unit": "GB/s",
             "passed": None,
+            "dst": "51771",
         },
         {
             "node": "node1",
             "gpu": "42583",
             "module": "babel",
-            "action": "Triad",
+            "action": "babel-1",
+            "kernel": "Triad",
             "metric": "babel_mbytes_s",
-            "value": 5950804.403,
+            "value": 4011893.551,
             "unit": "MB/s",
             "passed": None,
         },
@@ -102,6 +104,12 @@ class TestRvsDatasetBuilder(unittest.TestCase):
         self.assertIn("iet_power_w", charts)
         self.assertTrue(charts["gst_gflops"])
         self.assertTrue(charts["pebb_gbps"])
+        gst_points = charts["gst_gflops"]["gst-Tflops-8K-trig-fp64"][0]["points"]
+        self.assertEqual(gst_points[0][0], "node1/42583")
+        self.assertIn("Triad", charts["babel_mbytes_s"])
+        pbqt_points = charts["pbqt_gbps"]["xgmi_d2d_unidir_bandwidth"][0]["points"]
+        self.assertEqual(pbqt_points[0][0], "node1/11806->51771")
+        self.assertEqual(datasets["overall_status"], "fail")
         self.assertEqual(datasets["metric_tier_order"], ("result",))
 
 

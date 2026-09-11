@@ -69,7 +69,9 @@ class TestRvsRundeckPayload(unittest.TestCase):
         self.assertIn("rvs", payload["datasets"])
         doc = render_rundeck_html(payload)
         self.assertIn("RVS Run Deck", doc)
-        self.assertTrue("GST GFLOPS" in doc or "Full results" in doc)
+        self.assertIn("GST GFLOPS", doc)
+        self.assertIn("Full results", doc)
+        self.assertEqual(payload["overall_status"], "pass")
 
 
 if __name__ == "__main__":

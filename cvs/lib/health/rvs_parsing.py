@@ -49,7 +49,7 @@ _IET_PASS = re.compile(
 )
 _BABEL_ROW = re.compile(
     r"^\s*(?P<gpu>\d+)\s+(?P<kernel>Read|Write|Copy|Mul|Add|Triad|Dot)\s+"
-    r"(?P<mbytes>[\d.]+)\s+(?P<max_mb>[\d.]+)\s+(?P<min_mb>[\d.]+)\s+(?P<avg_mb>[\d.]+)\s*$",
+    r"(?P<mbytes_s>[\d.]+)\s+(?P<min_sec>[\d.]+)\s+(?P<max_sec>[\d.]+)\s+(?P<avg_sec>[\d.]+)\s*$",
     re.I,
 )
 _MODULE_NAME = re.compile(r"Module name\s*:\s*(?P<module>\S+)", re.I)
@@ -190,7 +190,7 @@ def parse_rvs_output(text, node, module=None):
                     current_module or "babel",
                     current_action or kernel,
                     "babel_mbytes_s",
-                    float(m.group("avg_mb")),
+                    float(m.group("mbytes_s")),
                     "MB/s",
                     extra={"kernel": kernel},
                 )
@@ -223,10 +223,6 @@ def append_rvs_records(store, text, node, module=None, failed=None):
                 passed=None if failed is None else (not failed),
             )
         ]
-    elif failed is True:
-        for rec in recs:
-            if rec.get("passed") is None:
-                rec["passed"] = False
     elif failed is False:
         for rec in recs:
             if rec.get("passed") is None:
