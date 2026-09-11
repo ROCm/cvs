@@ -39,6 +39,14 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         self.assertEqual(mock_pssh.call_count, 2)
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_init_forwards_cluster_env_vars(self, mock_pssh):
+        cfg = _make_orch_config()
+        cfg.env_vars = {"PATH": "/opt/rocm/bin", "LD_LIBRARY_PATH": "/opt/rocm/lib"}
+        BaremetalOrchestrator(MagicMock(), cfg)
+        for call in mock_pssh.call_args_list:
+            self.assertEqual(call.kwargs.get("env_vars"), cfg.env_vars)
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_init_sets_orchestrator_type(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         self.assertEqual(orch.orchestrator_type, "baremetal")

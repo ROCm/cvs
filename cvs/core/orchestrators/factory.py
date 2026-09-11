@@ -126,6 +126,10 @@ class OrchestratorConfig:
         self.password = kwargs.get('password')
         self.head_node_dict = kwargs.get('head_node_dict', {})
         self.agent_token_file = kwargs.get('agent_token_file')
+        # Optional cluster-level exports (PATH, LD_LIBRARY_PATH, fabric knobs).
+        # Forwarded onto orch.head / orch.all so RCCL and other suites keep the
+        # pre-orchestrator Pssh(env_vars=cluster_dict['env_vars']) behavior.
+        self.env_vars = kwargs.get('env_vars')
         # Normalize here (not in from_configs) so direct construction is validated too.
         self.container = _resolve_container_lifetime(kwargs.get('container', {}))
 
@@ -151,7 +155,7 @@ class OrchestratorConfig:
             cluster_config: Cluster configuration (dict or path to cluster_config.json)
                            Required keys: orchestrator, node_dict, username, priv_key_file
                            Optional keys: container, head_node_dict, password,
-                           agent_token_file (defaults provided for missing optional keys)
+                           agent_token_file, env_vars (defaults provided for missing optional keys)
                            Container structure: {lifetime: 'no_launch'|'per_run'|'persistent', runtime: {name: str, args: dict}, image: str, name: str, ...}
             testsuite_config: Test suite specific configuration (dict or path to <testsuite>_config.json)
                             Can override any keys from cluster_config
@@ -174,7 +178,7 @@ class OrchestratorConfig:
 
         # Resolve {user-id} on the CLUSTER PORTION ONLY, before merging. from_configs only
         # consumes cluster-portion keys (orchestrator, node_dict, username, priv_key_file,
-        # password, head_node_dict, container). Testsuite subsections (transferbench, rvs,
+        # password, head_node_dict, container, env_vars). Testsuite subsections (transferbench, rvs,
         # agfhc, ...) belong to per-test fixtures which do their own subsection-scoped
         # resolution via resolve_test_config_placeholders. Resolving the merged dict here
         # would walk testsuite subsections that use <changeme> as a legitimate auto-detect
@@ -199,6 +203,7 @@ class OrchestratorConfig:
             'password': merged_config.get('password'),
             'head_node_dict': merged_config.get('head_node_dict', {}),
             'agent_token_file': merged_config.get('agent_token_file'),
+            'env_vars': merged_config.get('env_vars'),
             'container': merged_config.get('container', {}),
         }
 
