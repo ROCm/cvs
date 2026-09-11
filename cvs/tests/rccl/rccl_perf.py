@@ -21,6 +21,7 @@ from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
 from cvs.lib import globals
+from cvs.lib.report.profiles.hooks.rccl_session import publish_graph, variant_from_config
 
 log = globals.log
 
@@ -29,6 +30,16 @@ rccl_res_dict = {}
 
 
 # Importing additional cmd line args to script ..
+@pytest.fixture(scope="module")
+def cvs_results_dict():
+    return {}
+
+
+@pytest.fixture(scope="module")
+def variant_config(config_dict, cluster_dict):
+    return variant_from_config(config_dict, cluster_dict)
+
+
 @pytest.fixture(scope="module")
 def cluster_file(pytestconfig):
     """
@@ -370,10 +381,10 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     update_test_result()
 
 
-def test_gen_graph(request):
+def test_gen_graph(request, cvs_results_dict):
     log.info('Final Global result dict')
     log.info("%s", rccl_res_dict)
-    rccl_graph_dict = rccl_lib.convert_to_graph_dict(rccl_res_dict)
+    rccl_graph_dict = publish_graph(rccl_res_dict, cvs_results_dict)
     log.info("%s", rccl_graph_dict)
 
     proc_id = os.getpid()

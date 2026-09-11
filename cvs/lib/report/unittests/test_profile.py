@@ -16,6 +16,17 @@ class TestProfile(unittest.TestCase):
         )
         self.assertEqual(sources_for_profile(cfg), DEFAULT_SOURCES)
 
+    def test_rccl_stems_share_one_profile(self):
+        for stem in ("rccl", "rccl_perf", "rccl_regression", "rccl_pairwise"):
+            profile = load_json_profile(stem)
+            self.assertIsNotNone(profile, stem)
+            self.assertEqual(profile["suite_id"], "rccl")
+            self.assertEqual(profile["dataset_builder"], "series")
+            self.assertEqual(
+                profile["hooks"]["run_card_display"],
+                "cvs.lib.report.profiles.hooks.rccl_run_card:rccl_run_card_display",
+            )
+
     def test_sglang_stems_share_one_profile(self):
         for stem in ("sglang_single", "sglang_distributed", "sglang_disagg_distributed"):
             profile = load_json_profile(stem)
