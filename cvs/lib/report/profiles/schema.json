@@ -23,7 +23,7 @@
     "footer": { "type": "string" },
     "link_name": { "type": "string" },
     "extends": { "type": "string", "description": "Stem of another profile JSON to merge before this one (child wins)." },
-    "dataset_builder": { "enum": ["sweep", "series", "matrix"] },
+    "dataset_builder": { "enum": ["sweep", "series", "matrix", "host_inventory"] },
     "interactive_viewer": { "type": "boolean" },
     "viewer_cell_threshold": { "type": "integer", "minimum": 1 },
     "sources": {
@@ -92,6 +92,7 @@
     },
     "series": { "type": "object" },
     "matrix": { "type": "object" },
+    "host_inventory": { "type": "object" },
     "lifecycle": { "type": "object" },
     "behavior": { "type": "object" }
   }

@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "profile_id": "host_configs_cvs_rundeck",
+  "suite_id": "host_configs",
+  "report_basename": "host_configs_run_deck",
+  "title": "Host Configuration Run Deck",
+  "subtitle": "Cross-node configuration inventory and drift",
+  "footer": "CVS host_configs_cvs · inventory-only · does not affect gates",
+  "link_name": "Host Configuration Run Deck",
+  "dataset_builder": "host_inventory",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "host_inventory_metadata"
+  },
+  "hooks": {
+    "run_card_display": "cvs.lib.report.profiles.hooks.host_configs_run_card:host_configs_run_card_display"
+  },
+  "host_inventory": {
+    "inventory_columns": [
+      ["os_release", "OS release"],
+      ["kernel", "Kernel"],
+      ["bios", "BIOS"],
+      ["rocm", "ROCm"],
+      ["gpu_count", "GPU count"],
+      ["online_memory", "Online memory"]
+    ]
+  },
+  "cards": [
+    {
+      "type": "run_card",
+      "id": "run-card",
+      "title": "Run card",
+      "bind": "run_card_display"
+    },
+    {
+      "type": "drift_matrix",
+      "id": "drift",
+      "title": "Cross-node drift matrix",
+      "bind": "datasets.host_inventory.drift_matrix"
+    },
+    {
+      "type": "table",
+      "id": "inventory",
+      "title": "Per-node inventory",
+      "bind": "datasets.host_inventory.inventory_table"
+    },
+    {
+      "type": "table",
+      "id": "firmware",
+      "title": "GPU firmware inventory",
+      "bind": "datasets.host_inventory.firmware_table",
+      "when_empty": "hide"
+    }
+  ]
+}
