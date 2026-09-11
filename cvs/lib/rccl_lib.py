@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 from pydantic import ValidationError
 
-from cvs.core.scheduler import Scheduler, detect_scheduler, is_managed_compute
+from cvs.core.scheduler import Scheduler, detect_scheduler, is_managed_compute, scheduler_hosts
 from cvs.lib import globals
 from cvs.schema.rccl import RcclTests, RcclTestsAggregated, RcclTestsMultinodeRaw
 from cvs.lib.utils_lib import *
@@ -639,17 +639,17 @@ def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[Rccl
 
 
 def _wrap_rccl_test_cmd(binary_cmd, env_file, env_overrides=None):
-    """Wrap the rccl-tests binary in bash -c, optionally sourcing env and exporting overrides."""
-    prelude = ''
-    if env_overrides:
-        prelude = ''.join(f'export {k}={shlex.quote(str(v))}; ' for k, v in env_overrides.items())
+    """Wrap the rccl-tests binary in bash -c, sourcing env then applying overrides.
+
+    Regression exports must win over the environment file: source first, then export.
+    """
+    chunks = []
     if env_file and str(env_file).lower() != 'none':
-        inner = f'{prelude}source {env_file} && {binary_cmd}'
-    elif prelude:
-        inner = f'{prelude}{binary_cmd}'
-    else:
-        inner = binary_cmd
-    return f'bash -c {shlex.quote(inner)}'
+        chunks.append(f'source {shlex.quote(str(env_file))}')
+    if env_overrides:
+        chunks.extend(f'export {k}={shlex.quote(str(v))}' for k, v in env_overrides.items())
+    chunks.append(binary_cmd)
+    return f'bash -c {shlex.quote(" && ".join(chunks))}'
 
 
 def _cpus_per_nested_task(local_ranks):
@@ -682,6 +682,7 @@ def _build_rccl_launch_cmd(
     Bare metal: mpirun --hostfile (existing path).
     Managed SPUR/Slurm: nested `spur run`/`srun --overlap --mpi=pmix` from rank 0,
     matching rccl-sn-ar.sh. Do not pass --jobid (pty exec-into-job ignores --mpi).
+    Spur 0.11 ignores --nodelist on job steps, so subset launches raise.
     """
     if is_managed_compute():
         launcher = 'spur run' if detect_scheduler() == Scheduler.SPUR else 'srun'
@@ -697,8 +698,9 @@ def _build_rccl_launch_cmd(
         cpus = _cpus_per_nested_task(no_of_local_ranks)
         if cpus is not None:
             parts.append(f'-c {cpus}')
-        if cluster_node_list:
-            parts.append(f'-w {",".join(cluster_node_list)}')
+        nodelist_flag = _managed_nodelist_flag(cluster_node_list)
+        if nodelist_flag:
+            parts.append(nodelist_flag)
         parts.extend(['--', test_cmd])
         return ' '.join(parts)
 
@@ -728,20 +730,74 @@ def _prepare_mpirun_launch(
     return pml_param, ucx_params, hosts_file_path
 
 
+def _require_spur_job_step():
+    """Prevent a bare Spur allocation from silently falling back to SSH/mpirun."""
+    in_job = os.environ.get('SPUR_JOB_ID') or os.environ.get('SLURM_JOB_ID')
+    if detect_scheduler() == Scheduler.SPUR and in_job and not is_managed_compute():
+        raise RuntimeError(
+            'CVS RCCL requires a SPUR job step. '
+            'Launch with `spur run --mpi=none` (one task per node). '
+            'An allocation shell alone does not start the per-node CVS agents.'
+        )
+
+
+def _managed_nodelist_flag(cluster_node_list):
+    """Slurm: -w for subset steps. Spur 0.11: omit -w on the full allocation, else raise."""
+    if not cluster_node_list:
+        return None
+    if detect_scheduler() != Scheduler.SPUR:
+        return f'-w {",".join(cluster_node_list)}'
+    allocated = scheduler_hosts()
+    if set(cluster_node_list) != set(allocated):
+        raise RuntimeError(
+            'SPUR 0.11 does not apply --nodelist to job steps; '
+            f'cannot restrict RCCL to {list(cluster_node_list)} inside allocation {allocated}. '
+            'Pairwise/incremental RCCL is not supported on this Spur version.'
+        )
+    return None
+
+
+def _fail_rccl_launch(phdl, test_name, reason, msg):
+    log.error("%s", msg)
+    _cleanup_stale_rccl_processes(phdl, test_name, reason)
+    fail_test(msg)
+    return None
+
+
+def _exec_result_payload(result):
+    """Normalize detailed exec output to (stdout, exit_code). Missing codes are failures."""
+    if isinstance(result, dict) and ('output' in result or 'exit_code' in result):
+        output = result.get('output') or ''
+        exit_code = result.get('exit_code')
+        if exit_code is None:
+            return output, -1
+        return output, exit_code
+    return result or '', -1
+
+
 def _exec_rccl_launch(phdl, shdl, head_node, cmd, test_name, timeout, reason):
     log.info('%%%%%%%%%%%%%%%%')
     log.info("%s", cmd)
     log.info('%%%%%%%%%%%%%%%%')
+    error_count_before = len(globals.error_list)
     try:
-        out_dict = shdl.exec(cmd, timeout=timeout)
-        output = out_dict[head_node]
+        out_dict = shdl.exec(cmd, timeout=timeout, detailed=True)
+        if not out_dict or head_node not in out_dict:
+            return _fail_rccl_launch(phdl, test_name, reason, f'RCCL launch produced no result from {head_node}: {cmd}')
+        output, exit_code = _exec_result_payload(out_dict[head_node])
+        if exit_code != 0:
+            return _fail_rccl_launch(
+                phdl,
+                test_name,
+                reason,
+                f'RCCL launch failed with exit code {exit_code}: {cmd}',
+            )
         scan_rccl_logs(output)
+        if len(globals.error_list) > error_count_before:
+            return _fail_rccl_launch(phdl, test_name, reason, f'RCCL launch output failed checks: {cmd}')
         return output
     except Exception as e:
-        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-        _cleanup_stale_rccl_processes(phdl, test_name, reason)
-        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-        return None
+        return _fail_rccl_launch(phdl, test_name, reason, f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
 
 
 # Main RCCL Test library which gets invoked from cvs/test/rccl tests and accepts most of the
@@ -781,6 +837,7 @@ def rccl_regression(
     """
 
     log.info(f'Starting RCCL Test ..........................................{test_name}')
+    _require_spur_job_step()
 
     # Extract parameters from grouped dicts
     mpi_dir = mpi_params.get('mpi_dir', '/usr/local/bin')
@@ -851,9 +908,11 @@ def rccl_regression(
         cluster_node_list=cluster_node_list,
         env_override_params=env_override_params,
     )
-    _exec_rccl_launch(
+    launched = _exec_rccl_launch(
         phdl, shdl, head_node, cmd, test_name, cvs_exec_timeout, f'exception in rccl_regression: {test_name}'
     )
+    if launched is None:
+        return []
 
     # Read the JSON results emitted by the RCCL test binary via SFTP
     # (avoids fragile cat-over-exec stdout reassembly for large payloads)
@@ -932,6 +991,7 @@ def rccl_perf(
     """
 
     log.info(f'Starting RCCL Test ..........................................{test_name}')
+    _require_spur_job_step()
 
     # Extract parameters from grouped dicts
     mpi_dir = mpi_params.get('mpi_dir', '/usr/local/bin')
@@ -1007,7 +1067,7 @@ def rccl_perf(
             hosts_file_path=hosts_file_path,
             cluster_node_list=cluster_node_list,
         )
-        _exec_rccl_launch(
+        launched = _exec_rccl_launch(
             phdl,
             shdl,
             head_node,
@@ -1016,6 +1076,8 @@ def rccl_perf(
             cvs_exec_timeout,
             f'exception in rccl_perf ({dtype})',
         )
+        if launched is None:
+            return all_raw_results
 
         # Read the JSON results emitted by the RCCL test binary via SFTP
         # (avoids fragile cat-over-exec stdout reassembly for large payloads)

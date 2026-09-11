@@ -295,10 +295,11 @@ class TestRcclLib(unittest.TestCase):
         self.assertNotIn('--mpi=pmix', cmd)
         self.assertNotIn('spur run', cmd)
 
+    @patch('cvs.lib.rccl_lib.scheduler_hosts', return_value=['n1', 'n2'])
     @patch('cvs.lib.rccl_lib._cpus_per_nested_task', return_value=None)
     @patch('cvs.lib.rccl_lib.detect_scheduler', return_value=rccl_lib.Scheduler.SPUR)
     @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
-    def test_build_launch_cmd_managed_spur(self, _managed, _sched, _cpus):
+    def test_build_launch_cmd_managed_spur(self, _managed, _sched, _cpus, _hosts):
         cmd = rccl_lib._build_rccl_launch_cmd('bash -c all_reduce_perf', **self._launch_kwargs())
         self.assertIn('spur run', cmd)
         self.assertIn('--overlap', cmd)
@@ -307,7 +308,7 @@ class TestRcclLib(unittest.TestCase):
         self.assertIn('-N 2', cmd)
         self.assertIn('-n 16', cmd)
         self.assertIn('--ntasks-per-node 8', cmd)
-        self.assertIn('-w n1,n2', cmd)
+        self.assertNotIn('-w ', cmd)
         self.assertNotIn('--jobid', cmd)
         self.assertNotIn('--hostfile', cmd)
         self.assertNotIn('--mca', cmd)
@@ -321,18 +322,30 @@ class TestRcclLib(unittest.TestCase):
         self.assertTrue(cmd.startswith('srun '))
         self.assertIn('--overlap', cmd)
         self.assertIn('--mpi=pmix', cmd)
+        self.assertIn('-w n1,n2', cmd)
         self.assertNotIn('spur run', cmd)
         self.assertNotIn('--jobid', cmd)
 
     @patch('cvs.lib.rccl_lib._cpus_per_nested_task', return_value=None)
-    @patch('cvs.lib.rccl_lib.detect_scheduler', return_value=rccl_lib.Scheduler.SPUR)
+    @patch('cvs.lib.rccl_lib.detect_scheduler', return_value=rccl_lib.Scheduler.SLURM)
     @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
-    def test_build_launch_cmd_pairwise_nodelist(self, _managed, _sched, _cpus):
+    def test_build_launch_cmd_pairwise_nodelist_slurm(self, _managed, _sched, _cpus):
         cmd = rccl_lib._build_rccl_launch_cmd(
             'bash -c all_reduce_perf',
             **self._launch_kwargs(cluster_node_list=['ref', 'cand'], no_of_nodes=2, no_of_global_ranks=16),
         )
         self.assertIn('-w ref,cand', cmd)
+
+    @patch('cvs.lib.rccl_lib.scheduler_hosts', return_value=['n1', 'n2', 'n3'])
+    @patch('cvs.lib.rccl_lib._cpus_per_nested_task', return_value=None)
+    @patch('cvs.lib.rccl_lib.detect_scheduler', return_value=rccl_lib.Scheduler.SPUR)
+    @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
+    def test_build_launch_cmd_spur_rejects_subset_nodelist(self, _managed, _sched, _cpus, _hosts):
+        with self.assertRaisesRegex(RuntimeError, 'does not apply --nodelist'):
+            rccl_lib._build_rccl_launch_cmd(
+                'bash -c all_reduce_perf',
+                **self._launch_kwargs(cluster_node_list=['ref', 'cand'], no_of_nodes=2, no_of_global_ranks=16),
+            )
 
     def test_wrap_rccl_test_cmd_env_overrides(self):
         wrapped = rccl_lib._wrap_rccl_test_cmd(
@@ -340,9 +353,108 @@ class TestRcclLib(unittest.TestCase):
             '/home/user/env.sh',
             {'NCCL_ALGO': 'Ring'},
         )
-        self.assertIn('export NCCL_ALGO=Ring', wrapped)
-        self.assertIn('source /home/user/env.sh', wrapped)
+        self.assertIn('source /home/user/env.sh && export NCCL_ALGO=Ring &&', wrapped)
+        self.assertNotRegex(wrapped, r'export NCCL_ALGO=Ring.*source ')
         self.assertTrue(wrapped.startswith('bash -c '))
+
+    def test_require_spur_job_step_rejects_bare_allocation(self):
+        env = {'SPUR_JOB_ID': '99', 'SLURM_JOB_ID': '99'}
+        with patch.dict('os.environ', env, clear=True):
+            with self.assertRaisesRegex(RuntimeError, 'requires a SPUR job step'):
+                rccl_lib._require_spur_job_step()
+
+    def test_require_spur_job_step_allows_managed_step(self):
+        env = {'SPUR_JOB_ID': '99', 'SLURM_JOB_ID': '99', 'SLURM_STEP_ID': '0', 'SLURM_PROCID': '0'}
+        with patch.dict('os.environ', env, clear=True):
+            rccl_lib._require_spur_job_step()
+
+    def test_require_spur_job_step_preserves_non_spur_runs(self):
+        for env in ({'CVS_SCHEDULER': 'bare_metal'}, {'SLURM_JOB_ID': '99'}):
+            with self.subTest(env=env), patch.dict('os.environ', env, clear=True):
+                rccl_lib._require_spur_job_step()
+
+    def test_exec_rccl_launch_nonzero_exit_does_not_scan(self):
+        rccl_lib.globals.error_list = []
+        shdl = MagicMock()
+        shdl.exec.return_value = {
+            'head': {'output': '# Avg bus bandwidth    : 1.8\n', 'exit_code': 3},
+        }
+        phdl = MagicMock()
+        with patch('cvs.lib.rccl_lib.scan_rccl_logs') as mock_scan:
+            result = rccl_lib._exec_rccl_launch(
+                phdl, shdl, 'head', 'spur run --overlap --mpi=pmix -- all_reduce_perf', 'all_reduce_perf', 60, 'unit'
+            )
+        self.assertIsNone(result)
+        mock_scan.assert_not_called()
+        phdl.exec.assert_called()
+        shdl.exec.assert_called_once()
+        self.assertTrue(shdl.exec.call_args.kwargs.get('detailed'))
+        self.assertTrue(any('exit code 3' in msg for msg in rccl_lib.globals.error_list))
+
+    def test_exec_rccl_launch_timeout_with_bandwidth_is_failure(self):
+        rccl_lib.globals.error_list = []
+        shdl = MagicMock()
+        shdl.exec.return_value = {
+            'head': {'output': '# Avg bus bandwidth    : 1.8\nABORT: Timeout\n', 'exit_code': -1},
+        }
+        phdl = MagicMock()
+        result = rccl_lib._exec_rccl_launch(phdl, shdl, 'head', 'spur run --overlap --', 'all_reduce_perf', 60, 'unit')
+        self.assertIsNone(result)
+        self.assertTrue(any('exit code -1' in msg for msg in rccl_lib.globals.error_list))
+
+    def test_exec_rccl_launch_success_scans_logs(self):
+        rccl_lib.globals.error_list = []
+        shdl = MagicMock()
+        shdl.exec.return_value = {
+            'head': {'output': '# Avg bus bandwidth    : 1.8\n', 'exit_code': 0},
+        }
+        phdl = MagicMock()
+        result = rccl_lib._exec_rccl_launch(phdl, shdl, 'head', 'spur run --overlap --', 'all_reduce_perf', 60, 'unit')
+        self.assertIn('Avg bus bandwidth', result)
+        self.assertEqual(rccl_lib.globals.error_list, [])
+        phdl.exec.assert_not_called()
+
+    def test_rccl_regression_failed_launch_preserves_graph_generation(self):
+        env = {
+            'SPUR_JOB_ID': '99',
+            'SLURM_JOB_ID': '99',
+            'SLURM_STEP_ID': '0',
+            'SLURM_PROCID': '0',
+            'SPUR_NODES': 'n1,n2',
+        }
+        phdl = MagicMock()
+        shdl = MagicMock()
+        shdl.exec.side_effect = [
+            {'n1': 'NEW'},
+            {'n1': {'output': '# Avg bus bandwidth : 1.8\n', 'exit_code': 3}},
+        ]
+        with (
+            patch.dict('os.environ', env, clear=True),
+            patch.object(rccl_lib.globals, 'error_list', []),
+            patch('cvs.lib.rccl_lib._read_json_from_head_node') as read_results,
+        ):
+            failed_results = rccl_lib.rccl_regression(
+                phdl,
+                shdl,
+                'all_reduce_perf',
+                '/dev/null',
+                {'no_of_nodes': 2, 'no_of_local_ranks': 1},
+                {},
+                {},
+                ['n1', 'n2'],
+                ['n1', 'n2'],
+            )
+            self.assertEqual(failed_results, [])
+            read_results.assert_not_called()
+            self.assertTrue(any('exit code 3' in msg for msg in rccl_lib.globals.error_list))
+            phdl.exec.assert_called()
+
+        successful_results = [
+            {'size': 1024, 'name': 'all_reduce_perf', 'inPlace': 1, 'busBw': 100.0, 'algBw': 90.0, 'time': 1.0}
+        ]
+        graph = rccl_lib.convert_to_graph_dict({'failed': failed_results, 'successful': successful_results})
+        self.assertEqual(graph['failed'], {})
+        self.assertEqual(graph['successful'][1024], {'bus_bw': 100.0, 'alg_bw': 90.0, 'time': 1.0})
 
     def test_cpus_per_nested_task_from_slurm_env(self):
         with patch.dict('os.environ', {'SLURM_CPUS_ON_NODE': '236'}, clear=True):

@@ -78,6 +78,7 @@ class BaremetalOrchestrator(Orchestrator):
             pkey=self.pkey,
             host_key_check=False,
             stop_on_errors=self.stop_on_errors,
+            env_vars=self.config.get('env_vars'),
             transport='http' if managed else 'ssh',
             **(self._transport_kwargs() if managed else {}),
         )

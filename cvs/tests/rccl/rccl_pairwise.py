@@ -1,11 +1,24 @@
 import json
 
+import pytest
+
+from cvs.core.scheduler import Scheduler, detect_scheduler, is_managed_compute
 from cvs.lib import rccl_lib
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import globals
 
 log = globals.log
+
+SPUR_SUBSET_SKIP = (
+    'SPUR 0.11 ignores --nodelist on job steps; pairwise/incremental RCCL is not '
+    'supported until Spur applies -w to nested steps.'
+)
+
+
+def _skip_if_spur_cannot_select_nodes():
+    if is_managed_compute() and detect_scheduler() == Scheduler.SPUR:
+        pytest.skip(SPUR_SUBSET_SKIP)
 
 
 def run_pairwise_rccl(phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, phase_label):
@@ -205,6 +218,7 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     Config knobs consumed from config_dict['cvs_params']:
       - pairwise_min_bw   (float, GB/s, default 0 → no BW check)
     """
+    _skip_if_spur_cannot_select_nodes()
     globals.error_list = []
 
     node_list = list(cluster_dict['node_dict'].keys())  # mgmt hostnames
@@ -306,6 +320,7 @@ def test_rccl_incremental(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     Config knobs consumed from config_dict['cvs_params']:
       - pairwise_min_bw   (float, GB/s, default 0 → no BW check for Phase 2)
     """
+    _skip_if_spur_cannot_select_nodes()
     globals.error_list = []
 
     node_list = list(cluster_dict['node_dict'].keys())
