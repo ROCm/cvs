@@ -64,7 +64,7 @@ class SweepAnalyticsBuilder:
             for (isl, osl), group_cells in sorted(groups.items()):
                 values_by_conc = metric_values_by_concurrency(group_cells, full)
                 points = sorted(values_by_conc.items())
-                if len(points) >= 2:
+                if len(points) >= 2 or (points and any(cell.get("named_cell") for cell in group_cells)):
                     group_entries.append(
                         {
                             "isl": isl,
