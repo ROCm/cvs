@@ -5,6 +5,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from cvs.lib.report.profile import load_json_profile
+from cvs.lib.report.rundeck.payload import build_rundeck_payload
+from cvs.lib.report.rundeck.render import render_rundeck_html
+
 
 _TB_PATH = Path(__file__).resolve().parents[2] / 'tests' / 'health' / 'transferbench_cvs.py'
 _SPEC = importlib.util.spec_from_file_location('transferbench_cvs_under_test', _TB_PATH)
@@ -26,6 +30,43 @@ P2P_EXPECT = {
     'avg_gpu_to_gpu_p2p_unidir_bw': '33.9',
     'avg_gpu_to_gpu_p2p_bidir_bw': '43.9',
 }
+
+A2A_OUTPUT = """\
+RTotal 320.0 321.0 322.0 323.0 324.0 325.0 326.0 327.0
+"""
+
+P2P_MATRIX_OUTPUT = """\
+NUM_CPU_DEVICES = 2 : Using 2 CPUs
+Bytes Per Direction 268435456
+Unidirectional copy peak bandwidth GB/s
+GPU 00 -> 55.0 55.0 1600.0 48.0
+GPU 01 -> 55.0 55.0 49.0 1700.0
+Averages (During UniDir): 37.0 34.0 55.0 48.5
+Bidirectional copy peak bandwidth GB/s
+GPU 00 <-> 80.0 80.0 N/A 92.0
+GPU 01 <-> 80.0 80.0 93.0 N/A
+Averages (During BiDir): 70.0 70.0 80.0 92.5
+"""
+
+A2A_SWEEP_OUTPUT = """\
+Blocksize: 256
+#CUs\\Unroll 1(Min) 2(Min)
+4 120.38 209.89
+8 229.32 314.99
+"""
+
+SCALING_OUTPUT = """\
+NumCUs CPU00 CPU01 GPU00 GPU01
+1 20.22 20.41 18.68 25.91
+32 57.15 56.35 493.17 49.23
+Best 57.15( 32) 56.35( 32) 493.17( 32) 49.23( 32)
+"""
+
+SCHMOO_OUTPUT = """\
+#CUs |G00->G00->N00|N00->G00->G00|G00->G00->G00|G01->G00->N00|N00->G00->G01|G00->G00->G01|
+1 51.0 53.0 54.0 23.0 46.0 26.0
+32 1700.0 1300.0 1300.0 49.0 49.0 49.0
+"""
 
 
 class TestCpuDeviceCount(unittest.TestCase):
@@ -101,6 +142,153 @@ class TestParseTbP2pBw(unittest.TestCase):
         with patch.object(tb, 'fail_test') as fail_test:
             tb.parse_tb_p2p_bw({'nodeA': HELIOS_R_P2P_SUCCESS}, P2P_EXPECT)
         fail_test.assert_not_called()
+
+
+class TestTransferBenchReportMetrics(unittest.TestCase):
+    def test_extracts_supported_bandwidth_shapes(self):
+        a2a = tb.extract_tb_a2a_metrics({'nodeA': A2A_OUTPUT})
+        p2p = tb.extract_tb_p2p_metrics({'nodeA': P2P_MATRIX_OUTPUT})
+        sweep = tb.extract_tb_a2asweep_metrics({'nodeA': A2A_SWEEP_OUTPUT})
+        scaling = tb.extract_tb_scaling_metrics({'nodeA': SCALING_OUTPUT})
+        schmoo = tb.extract_tb_schmoo_metrics({'nodeA': SCHMOO_OUTPUT})
+
+        self.assertEqual(a2a['a2a RTotal · nodeA']['0']['a2a_bw'], 320.0)
+        self.assertEqual(p2p['p2p UniDir GPU 0 · nodeA']['1']['p2p_bw'], 48.0)
+        self.assertNotIn('0', p2p['p2p UniDir GPU 0 · nodeA'])
+        self.assertEqual(sweep['a2asweep B256 U2 Min · nodeA']['8']['a2asweep_bw'], 314.99)
+        self.assertEqual(scaling['scaling GPU00 · nodeA']['32']['scaling_bw'], 493.17)
+        self.assertEqual(schmoo['schmoo Local Read · nodeA']['32']['schmoo_bw'], 1700.0)
+
+    def test_a2a_test_populates_session_results_with_mocked_orch(self):
+        orch = MagicMock()
+        orch.exec.side_effect = [
+            {'nodeA': '/opt/rocm/lib/libamdhip64.so.7'},
+            {'nodeA': A2A_OUTPUT},
+        ]
+        config = {
+            'path': '/opt/TransferBench',
+            'rocm_path': '/opt/rocm',
+            'num_cpu_devices': 2,
+            'results': {'gpu_to_gpu_a2a_rtotal': '300.0'},
+        }
+        results = {}
+        variant = {
+            'rocm_path': '—',
+            'tests_enabled': ['a2a'],
+            'duration_seconds': 0.0,
+        }
+
+        tb.test_transfer_bench_a2a(orch, config, results, variant)
+
+        self.assertIn('a2a RTotal · nodeA', results)
+        self.assertEqual(variant['rocm_path'], '/opt/rocm')
+        self.assertGreaterEqual(variant['duration_seconds'], 0.0)
+        self.assertEqual(orch.exec.call_count, 2)
+
+    def test_real_profile_builder_payload_and_render(self):
+        results = {}
+        variant = {
+            'rocm_path': '/opt/rocm/core-7.2',
+            'tests_enabled': list(tb._TB_TEST_NAMES),
+            'duration_seconds': 12.25,
+        }
+        tb.globals.error_list = []
+        tb.record_transferbench_results(results, variant, 'a2a', {'nodeA': A2A_OUTPUT}, 1.0)
+        tb.record_transferbench_results(results, variant, 'p2p', {'nodeA': P2P_MATRIX_OUTPUT}, 2.0)
+        tb.record_transferbench_results(results, variant, 'healthcheck', {'nodeA': 'PASS'}, 3.0)
+        tb.record_transferbench_results(results, variant, 'a2asweep', {'nodeA': A2A_SWEEP_OUTPUT}, 4.0)
+        tb.record_transferbench_results(results, variant, 'scaling', {'nodeA': SCALING_OUTPUT}, 5.0)
+        tb.record_transferbench_results(results, variant, 'schmoo', {'nodeA': SCHMOO_OUTPUT}, 6.0)
+
+        profile = load_json_profile('transferbench_cvs')
+        payload = build_rundeck_payload(
+            profile=profile,
+            store={'cvs_results_dict': results, 'variant_config': variant},
+            cvs_version='1.0.0',
+        )
+        document = render_rundeck_html(payload)
+
+        self.assertFalse(profile['interactive_viewer'])
+        self.assertEqual(
+            payload['results_table']['headers'],
+            ['Test', 'Node', 'Metric', 'GPU / bytes / CUs', 'Value', 'Unit', 'Status', 'Duration (s)'],
+        )
+        self.assertEqual(
+            (payload.get('metric_contract') or {}).get('id'),
+            'transferbench-health',
+        )
+        self.assertIn('a2asweep_bw', payload['datasets']['series']['charts'])
+        self.assertIn('TransferBench Run Deck', document)
+        self.assertIn('/opt/rocm/core-7.2', document)
+        self.assertIn('A2A sweep bandwidth by CU count', document)
+        self.assertIn('healthcheck', document)
+        self.assertNotIn('C=0', document)
+        self.assertNotIn('C=7', document)
+        self.assertIn('GPU 0', document)
+        self.assertIn('→GPU 1', document)
+        self.assertIn('4 CUs', document)
+        self.assertGreater(document.count('chart-bar'), 10)
+        self.assertGreater(document.count('chart-panel'), 4)
+
+    def test_empty_chart_cards_hidden_when_preset_missing(self):
+        results = {}
+        variant = {
+            'rocm_path': '/opt/rocm',
+            'tests_enabled': ['a2a'],
+            'duration_seconds': 1.0,
+        }
+        tb.globals.error_list = []
+        tb.record_transferbench_results(results, variant, 'a2a', {'nodeA': A2A_OUTPUT}, 1.0)
+
+        payload = build_rundeck_payload(
+            profile=load_json_profile('transferbench_cvs'),
+            store={'cvs_results_dict': results, 'variant_config': variant},
+            cvs_version='1.0.0',
+        )
+        document = render_rundeck_html(payload)
+        self.assertIn('A2A receive bandwidth by GPU', document)
+        self.assertNotIn('P2P bandwidth by GPU pair', document)
+        self.assertNotIn('A2A sweep bandwidth by CU count', document)
+        self.assertNotIn('Scaling bandwidth by CU count', document)
+        self.assertNotIn('Schmoo bandwidth by CU count', document)
+        self.assertNotIn('No series data.', document)
+        self.assertIn('TransferBench results', document)
+
+    def test_extractors_read_pipe_separated_tables(self):
+        schmoo = tb.extract_tb_schmoo_metrics(
+            {
+                'nodeA': (
+                    'TransferBench v1.65.00\n'
+                    '#CUs | Local | Write | Copy | RRead | RWrite | RCopy |\n'
+                    '  | 32 |  12.5 |  11.0 |  10.0 |  9.0 |  8.0 |  7.0 |\n'
+                    '  | 64 |  22.5 |  21.0 |  20.0 | 18.0 | 17.0 | 16.0 |\n'
+                )
+            }
+        )
+        scaling = tb.extract_tb_scaling_metrics(
+            {
+                'nodeA': (
+                    'TransferBench v1.65.00\n'
+                    'NumCUs | CPU00 | GPU00 |\n'
+                    '  | 32 |  40.0 |  80.0 |\n'
+                    '  | 64 |  50.0 | 160.0 |\n'
+                )
+            }
+        )
+        sweep = tb.extract_tb_a2asweep_metrics(
+            {
+                'nodeA': (
+                    'TransferBench v1.65.00\n'
+                    'Blocksize: 256\n'
+                    '#CUs\\Unroll 1(Min) 2(Min)\n'
+                    '  | 32 |  50.0 |  48.0 |\n'
+                    '  | 64 | 100.0 |  96.0 |\n'
+                )
+            }
+        )
+        self.assertEqual(schmoo['schmoo Local Read · nodeA']['32']['schmoo_bw'], 12.5)
+        self.assertEqual(scaling['scaling GPU00 · nodeA']['32']['scaling_bw'], 80.0)
+        self.assertEqual(sweep['a2asweep B256 U1 Min · nodeA']['32']['a2asweep_bw'], 50.0)
 
 
 class TestScanTestResultsNumaAbort(unittest.TestCase):
