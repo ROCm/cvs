@@ -1,0 +1,5 @@
+{
+  "name": "CVS (Cluster Validation Suite)",
+  "user": "ubuntu",
+  "install": "./.cursor/install.sh"
+}
