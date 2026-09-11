@@ -1,5 +1,34 @@
 {
     "rccl": {
+        "installation_params": {
+            "nfs_install": "True",
+            "_comment_nfs_install": "If nfs_install is True, rccl-tests and rccl library (optional) will be installed in NFS. Otherwise, all nodes will have local installation",
+            "rccl_lib_install": "True",
+            "_comment_rccl_lib_install": "Set True to sparse-clone projects/rccl from rocm-systems and build RCCL for rccl-tests (e.g. when bundled ROCm RCCL mismatches rccl-tests). rccl-tests then builds with CUSTOM_RCCL_LIB.",
+            "rccl_lib_build_timeout": "10800",
+            "_comment_rccl_lib_build_timeout": "SSH exec timeout in seconds for RCCL library source build. Some rccl lib tags take long time to build, thus the high timeout value, this upper bound doesn't have effect on actual build time",
+            "rccl_lib_install_dir": "<changeme>",
+            "_comment_rccl_lib_install_dir": "Install/build root for RCCL source when rccl_lib_install is True. Ignored when rccl_lib_install is False (bundled ROCm lib under rocm_path/lib is used instead).",
+            "rccl_tests_install_dir": "<changeme>",
+            "_comment_rccl_tests_install_dir": "Directory for sparse/full clone of rccl-tests (rocm-systems root). Binaries: <this-dir>/projects/rccl-tests/build when using rocm-systems sparse checkout.",
+            "rccl_repository": "https://github.com/ROCm/rocm-systems.git",
+            "_comment_rccl_repository": "Monorepo URL; install_rccl_tools sparse-checkouts projects/rccl and projects/rccl-tests automatically.",
+            "rccl_sparse_path": "projects/rccl",
+            "_comment_rccl_sparse_path": "Optional overrides for git sparse-checkout paths. Omit or leave as-is for rocm-systems defaults.",
+            "rccl_tests_sparse_path": "projects/rccl-tests",
+            "_comment_rccl_tests_sparse_path": "Optional overrides for git sparse-checkout paths. Omit or leave as-is for rocm-systems defaults.",
+            "rccl_git_tag": "<changeme>",
+            "_comment_rccl_git_tag": "Git tag or branch for projects/rccl sparse checkout from rccl_repository. Recommended: therock-7.11 for ROCm 7.2.0 (validated in CVS testing). See https://github.com/ROCm/rocm-systems/blob/therock-7.11/projects/rccl/CHANGELOG.md for release notes.",
+            "rccl_tests_git_tag": "<changeme>",
+            "_comment_rccl_tests_git_tag": "Git tag or branch for projects/rccl-tests sparse checkout. Recommended: therock-7.11 for ROCm 7.2.0 (validated in CVS testing).",
+            "rocm_path": "/opt/rocm",
+            "_comment_rocm_path": "ROCm install root for HIP/ROCm builds. When rccl_lib_install is False, bundled librccl under <rocm_path>/lib is used.",
+            "rccl_tests_use_amdclang": "False",
+            "_comment_rccl_tests_use_amdclang": "If True, rccl-tests builds with HIPCC/CXX set to $ROCM_PATH/llvm/bin/amdclang++. If False, uses $ROCM_PATH/bin/hipcc.",
+            "ompi_install_dir": "<changeme>",
+            "_comment_ompi_install_dir": "Open MPI install prefix (OMPI_PREFIX / MPI_HOME). Required for rccl-tests MPI build."
+        },
+
         "mpi_params": {
             "no_of_nodes": "2",
             "no_of_local_ranks": "8",
@@ -13,12 +42,13 @@
             "_comment_net_dev_list": "Leave empty for auto-detection from backend NICs, or set explicitly e.g. bnxt_re0:1,bnxt_re1:1,.."
         },
 
-        "_comment_env_script": "RCCL/NCCL/UCX tuning parameters. Path configurations (mpi_dir, rccl_tests_dir) are now in mpi_params and rccl_test_params respectively.",
+        "_comment_env_script": "Shell script sourced on cluster nodes before mpirun (templates: input/env_file/rccl/). Use for RCCL/NCCL/UCX tuning. For a custom RCCL build (see installation_params.rccl_lib_install / rccl_lib_install_dir), set RCCL_HOME to that install prefix and prepend RCCL_HOME/lib to LD_LIBRARY_PATH so librccl.so is loaded instead of the system ROCm copy. mpi_dir and rccl_tests_dir are in mpi_params and rccl_test_params.",
         "env_source_script": "/home/{user-id}/thor2_env_script.sh",
 
         "rccl_test_params": {
             "rccl_collective": [ "all_reduce_perf", "all_gather_perf", "scatter_perf", "gather_perf", "reduce_scatter_perf", "sendrecv_perf", "alltoall_perf", "alltoallv_perf", "broadcast_perf" ],
             "rccl_tests_dir": "/home/{user-id}/rccl-tests/build",
+            "_comment_rccl_tests_dir": "Directory containing built rccl-tests perf binaries (e.g. all_reduce_perf). Used by rccl_perf and rccl_regression. Must match the install build output: <rccl_tests_install_dir>/projects/rccl-tests/build when using rocm-systems sparse checkout via install_rccl_tools.",
             "start_msg_size": "1024",
             "end_msg_size": "16g",
             "step_function": "2",
