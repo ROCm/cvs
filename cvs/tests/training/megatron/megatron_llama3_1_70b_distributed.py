@@ -289,7 +289,15 @@ def test_launch_megatron_containers(phdl, training_dict):
     update_test_result()
 
 
-def test_llama_3_1_fp8_single_node(phdl, gpu_type, training_dict, model_params_dict, hf_token):
+def test_llama_3_1_fp8_single_node(
+    phdl,
+    gpu_type,
+    training_dict,
+    model_params_dict,
+    hf_token,
+    train_res_dict,
+    rundeck_variant,
+):
     """
     Pytest: Single-node Megatron Llama 3.1 FP8 training lifecycle test.
 
@@ -325,4 +333,5 @@ def test_llama_3_1_fp8_single_node(phdl, gpu_type, training_dict, model_params_d
     mt_obj.start_training_job()
     mt_obj.poll_for_training_completion()
     mt_obj.verify_training_results()
+    train_res_dict[rundeck_variant.sweep.runs[0]] = mt_obj.training_results_dict
     update_test_result()
