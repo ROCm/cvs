@@ -98,6 +98,7 @@ class ProfileConfigResolver:
                 tier_metric_specs=lambda _c, _t: {},
                 interactive_viewer=bool(profile.get("interactive_viewer", False)),
                 run_card_display_builder=run_card_builder,
+                metric_contract=profile.get("metric_contract"),
             )
 
         sweep = profile.get("sweep") or {}
