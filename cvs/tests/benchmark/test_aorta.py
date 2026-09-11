@@ -29,6 +29,10 @@ from cvs.runners.aorta import (
 from cvs.runners._base_runner import RunStatus
 from cvs.parsers.aorta_report import AortaReportParser
 from cvs.parsers.tracelens import TraceLensParser
+from cvs.lib.report.profiles.hooks.aorta import (
+    build_aorta_series,
+    update_aorta_run_summary,
+)
 from cvs.parsers.schemas import (
     ParseStatus,
     # Config validation schemas
@@ -219,6 +223,31 @@ def aorta_runner_config(
     )
 
 
+@pytest.fixture(scope="module")
+def cvs_results_dict():
+    return {}
+
+
+@pytest.fixture(scope="module")
+def variant_config(validated_aorta_config, aorta_runner_config):
+    nccl_channels = aorta_runner_config.environment.NCCL_MAX_NCHANNELS
+    num_nodes = len(aorta_runner_config.nodes)
+    return {
+        "status": "not run",
+        "parser": "—",
+        "parsed_ranks": 0,
+        "num_nodes": num_nodes,
+        "gpus_per_node": aorta_runner_config.gpus_per_node,
+        "total_gpus": num_nodes * aorta_runner_config.gpus_per_node,
+        "nccl_channels": nccl_channels,
+        "compute_channels": 256 - nccl_channels,
+        "rccl_branch": aorta_runner_config.rccl.branch,
+        "base_config": aorta_runner_config.base_config,
+        "image": aorta_runner_config.docker.image,
+        "thresholds": validated_aorta_config.expected_results.model_dump(exclude_none=True),
+    }
+
+
 # =============================================================================
 # Tests
 # =============================================================================
@@ -253,7 +282,7 @@ class TestAortaBenchmark:
 
         update_test_result()
 
-    def test_run_benchmark(self, aorta_runner_config):
+    def test_run_benchmark(self, aorta_runner_config, variant_config):
         """Execute the Aorta benchmark."""
         globals.error_list = []
 
@@ -264,6 +293,14 @@ class TestAortaBenchmark:
 
         # Store for subsequent tests
         TestAortaBenchmark.run_result = result
+        variant_config.update(
+            {
+                "status": result.status.value,
+                "duration_seconds": result.duration_seconds,
+                "launch_mode": result.metadata.get("launch_mode", "—"),
+                "artifacts": sorted(result.artifacts),
+            }
+        )
 
         # Check status
         if result.status != RunStatus.COMPLETED:
@@ -274,7 +311,13 @@ class TestAortaBenchmark:
 
         update_test_result()
 
-    def test_parse_results(self, aorta_runner_config, validated_aorta_config):
+    def test_parse_results(
+        self,
+        aorta_runner_config,
+        validated_aorta_config,
+        cvs_results_dict,
+        variant_config,
+    ):
         """Parse benchmark results on host from artifacts (container reports if present, else raw traces)."""
         globals.error_list = []
 
@@ -370,6 +413,15 @@ class TestAortaBenchmark:
             TestAortaBenchmark._parser = parser
 
             if benchmark_result:
+                parser_name = parser.__class__.__name__
+                cvs_results_dict.clear()
+                cvs_results_dict.update(build_aorta_series(benchmark_result, parser_name))
+                update_aorta_run_summary(
+                    variant_config,
+                    benchmark_result,
+                    parser_name,
+                    run_result,
+                )
                 log.info("Aggregated results:")
                 log.info(f"  Avg iteration time: {benchmark_result.avg_iteration_time_ms:.2f}ms")
                 log.info(f"  Compute ratio: {benchmark_result.avg_compute_ratio:.2%}")
