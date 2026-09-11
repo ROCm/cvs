@@ -42,6 +42,8 @@ class TestLongContextNiahBenchmark(unittest.TestCase):
         self.assertIn("/no_think", src)
         self.assertIn("def found(expected, actual):", src)
         self.assertIn("reasoning_content", src)
+        self.assertIn("print(req_str, flush=True)", src)
+        self.assertIn('"request": req_str or prompt', src)
 
     def test_prepare_passes_local_files_only_to_probe_kwargs(self):
         _, scoring = LongContextNiahBenchmark.prepare(
