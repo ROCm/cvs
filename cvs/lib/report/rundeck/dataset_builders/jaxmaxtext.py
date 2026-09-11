@@ -40,10 +40,7 @@ def sweep_label(name):
     dimensions = parse_sweep_key(name)
     if "\u2014" in dimensions.values():
         return str(name)
-    return (
-        f"BS={dimensions['batch_size']} \u00b7 {dimensions['precision']} "
-        f"\u00b7 SL={dimensions['sequence_length']}"
-    )
+    return f"BS={dimensions['batch_size']} \u00b7 {dimensions['precision']} \u00b7 SL={dimensions['sequence_length']}"
 
 
 def tier_metric_specs(thresholds_cell, tier):
