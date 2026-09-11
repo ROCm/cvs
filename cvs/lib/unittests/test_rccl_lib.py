@@ -1,6 +1,6 @@
 # cvs/lib/unittests/test_rccl_lib.py
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import cvs.lib.rccl_lib as rccl_lib
 
 
@@ -269,6 +269,97 @@ class TestRcclLib(unittest.TestCase):
 
         rccl_lib.check_lat_dip(test_name, output, None)
         mock_fail_test.assert_not_called()
+
+    def _launch_kwargs(self, **overrides):
+        kwargs = dict(
+            mpi_dir='/opt/ompi',
+            no_of_nodes=2,
+            no_of_local_ranks=8,
+            no_of_global_ranks=16,
+            mpi_oob_port='eth0',
+            pml_param='--mca pml ob1',
+            ucx_params='',
+            hosts_file_path='/tmp/rccl_hosts_file_cvs.txt',
+            cluster_node_list=['n1', 'n2'],
+            env_override_params='',
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=False)
+    def test_build_launch_cmd_bare_metal_mpirun(self, _managed):
+        cmd = rccl_lib._build_rccl_launch_cmd('bash -c all_reduce_perf', **self._launch_kwargs())
+        self.assertIn('mpirun', cmd)
+        self.assertIn('--hostfile /tmp/rccl_hosts_file_cvs.txt', cmd)
+        self.assertIn('--mca pml ob1', cmd)
+        self.assertNotIn('--mpi=pmix', cmd)
+        self.assertNotIn('spur run', cmd)
+
+    @patch('cvs.lib.rccl_lib._cpus_per_nested_task', return_value=None)
+    @patch('cvs.lib.rccl_lib.detect_scheduler', return_value=rccl_lib.Scheduler.SPUR)
+    @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
+    def test_build_launch_cmd_managed_spur(self, _managed, _sched, _cpus):
+        cmd = rccl_lib._build_rccl_launch_cmd('bash -c all_reduce_perf', **self._launch_kwargs())
+        self.assertIn('spur run', cmd)
+        self.assertIn('--overlap', cmd)
+        self.assertIn('--mpi=pmix', cmd)
+        self.assertIn('--gpu-bind=none', cmd)
+        self.assertIn('-N 2', cmd)
+        self.assertIn('-n 16', cmd)
+        self.assertIn('--ntasks-per-node 8', cmd)
+        self.assertIn('-w n1,n2', cmd)
+        self.assertNotIn('--jobid', cmd)
+        self.assertNotIn('--hostfile', cmd)
+        self.assertNotIn('--mca', cmd)
+        self.assertNotIn('mpirun', cmd)
+
+    @patch('cvs.lib.rccl_lib._cpus_per_nested_task', return_value=None)
+    @patch('cvs.lib.rccl_lib.detect_scheduler', return_value=rccl_lib.Scheduler.SLURM)
+    @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
+    def test_build_launch_cmd_managed_slurm(self, _managed, _sched, _cpus):
+        cmd = rccl_lib._build_rccl_launch_cmd('bash -c all_reduce_perf', **self._launch_kwargs())
+        self.assertTrue(cmd.startswith('srun '))
+        self.assertIn('--overlap', cmd)
+        self.assertIn('--mpi=pmix', cmd)
+        self.assertNotIn('spur run', cmd)
+        self.assertNotIn('--jobid', cmd)
+
+    @patch('cvs.lib.rccl_lib._cpus_per_nested_task', return_value=None)
+    @patch('cvs.lib.rccl_lib.detect_scheduler', return_value=rccl_lib.Scheduler.SPUR)
+    @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
+    def test_build_launch_cmd_pairwise_nodelist(self, _managed, _sched, _cpus):
+        cmd = rccl_lib._build_rccl_launch_cmd(
+            'bash -c all_reduce_perf',
+            **self._launch_kwargs(cluster_node_list=['ref', 'cand'], no_of_nodes=2, no_of_global_ranks=16),
+        )
+        self.assertIn('-w ref,cand', cmd)
+
+    def test_wrap_rccl_test_cmd_env_overrides(self):
+        wrapped = rccl_lib._wrap_rccl_test_cmd(
+            '/opt/all_reduce_perf -g 8',
+            '/home/user/env.sh',
+            {'NCCL_ALGO': 'Ring'},
+        )
+        self.assertIn('export NCCL_ALGO=Ring', wrapped)
+        self.assertIn('source /home/user/env.sh', wrapped)
+        self.assertTrue(wrapped.startswith('bash -c '))
+
+    def test_cpus_per_nested_task_from_slurm_env(self):
+        with patch.dict('os.environ', {'SLURM_CPUS_ON_NODE': '236'}, clear=True):
+            self.assertEqual(rccl_lib._cpus_per_nested_task(8), 29)
+
+    def test_cpus_per_nested_task_override(self):
+        with patch.dict('os.environ', {'RCCL_CPUS_PER_TASK': '16', 'SLURM_CPUS_ON_NODE': '236'}, clear=True):
+            self.assertEqual(rccl_lib._cpus_per_nested_task(8), 16)
+
+    def test_cleanup_does_not_pkill_scheduler(self):
+        phdl = MagicMock()
+        rccl_lib._cleanup_stale_rccl_processes(phdl, 'all_reduce_perf', 'unit-test')
+        commands = [call.args[0] for call in phdl.exec.call_args_list]
+        joined = ' '.join(commands)
+        self.assertNotRegex(joined, r'(^|[^a-z])srun([^a-z]|$)')
+        self.assertNotIn('spur', joined)
+        self.assertIn('all_reduce_perf', joined)
 
 
 if __name__ == '__main__':

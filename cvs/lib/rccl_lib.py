@@ -9,6 +9,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import os
 import re
 import json
+import shlex
 import tempfile
 from typing import List
 from pathlib import Path
@@ -17,6 +18,7 @@ from pathlib import Path
 import pandas as pd
 from pydantic import ValidationError
 
+from cvs.core.scheduler import Scheduler, detect_scheduler, is_managed_compute
 from cvs.lib import globals
 from cvs.schema.rccl import RcclTests, RcclTestsAggregated, RcclTestsMultinodeRaw
 from cvs.lib.utils_lib import *
@@ -636,6 +638,112 @@ def aggregate_rccl_test_results(validated_results: List[RcclTests]) -> List[Rccl
     return agg_results
 
 
+def _wrap_rccl_test_cmd(binary_cmd, env_file, env_overrides=None):
+    """Wrap the rccl-tests binary in bash -c, optionally sourcing env and exporting overrides."""
+    prelude = ''
+    if env_overrides:
+        prelude = ''.join(f'export {k}={shlex.quote(str(v))}; ' for k, v in env_overrides.items())
+    if env_file and str(env_file).lower() != 'none':
+        inner = f'{prelude}source {env_file} && {binary_cmd}'
+    elif prelude:
+        inner = f'{prelude}{binary_cmd}'
+    else:
+        inner = binary_cmd
+    return f'bash -c {shlex.quote(inner)}'
+
+
+def _cpus_per_nested_task(local_ranks):
+    """CPU count per inner PMIx task. Matches rccl-sn-ar.sh: SLURM_CPUS_ON_NODE / local ranks."""
+    override = os.environ.get('RCCL_CPUS_PER_TASK')
+    if override:
+        return max(1, int(override))
+    cpus_on_node = os.environ.get('SLURM_CPUS_ON_NODE')
+    if cpus_on_node:
+        return max(1, int(cpus_on_node) // max(1, int(local_ranks)))
+    return None
+
+
+def _build_rccl_launch_cmd(
+    test_cmd,
+    *,
+    mpi_dir,
+    no_of_nodes,
+    no_of_local_ranks,
+    no_of_global_ranks,
+    mpi_oob_port,
+    pml_param,
+    ucx_params,
+    hosts_file_path,
+    cluster_node_list,
+    env_override_params='',
+):
+    """Build the RCCL launch command.
+
+    Bare metal: mpirun --hostfile (existing path).
+    Managed SPUR/Slurm: nested `spur run`/`srun --overlap --mpi=pmix` from rank 0,
+    matching rccl-sn-ar.sh. Do not pass --jobid (pty exec-into-job ignores --mpi).
+    """
+    if is_managed_compute():
+        launcher = 'spur run' if detect_scheduler() == Scheduler.SPUR else 'srun'
+        parts = [
+            launcher,
+            '--overlap',
+            '--mpi=pmix',
+            f'-N {no_of_nodes}',
+            f'-n {no_of_global_ranks}',
+            f'--ntasks-per-node {no_of_local_ranks}',
+            '--gpu-bind=none',
+        ]
+        cpus = _cpus_per_nested_task(no_of_local_ranks)
+        if cpus is not None:
+            parts.append(f'-c {cpus}')
+        if cluster_node_list:
+            parts.append(f'-w {",".join(cluster_node_list)}')
+        parts.extend(['--', test_cmd])
+        return ' '.join(parts)
+
+    return (
+        f'{mpi_dir}/bin/mpirun --allow-run-as-root -np {no_of_global_ranks} '
+        f'--hostfile {hosts_file_path} --bind-to numa {ucx_params} '
+        f'--mca btl ^vader,openib --mca btl_tcp_if_include {mpi_oob_port} '
+        f'--mca oob_tcp_if_include {mpi_oob_port} {pml_param} {env_override_params} {test_cmd}'
+    )
+
+
+def _prepare_mpirun_launch(
+    phdl, shdl, mpi_params, mpi_dir, head_node, cluster_node_list, vpc_node_list, no_of_global_ranks
+):
+    """Hostfile + PML detection for the bare-metal mpirun path. Unused on SPUR/Slurm."""
+    mpi_pml = mpi_params.get('mpi_pml', 'auto')
+    ucx_tls = mpi_params.get('ucx_tls', 'rc,self,sm,tcp') or 'rc,self,sm,tcp'
+    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, mpi_params, phdl, shdl, mpi_dir, head_node, ucx_tls)
+
+    host_file_params = ''
+    proc_per_node = int(no_of_global_ranks / len(cluster_node_list))
+    for node in vpc_node_list:
+        host_file_params = f'{host_file_params}{node} slots={proc_per_node}\n'
+    hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
+    shdl.exec(f'rm -f {hosts_file_path}')
+    shdl.exec(f'echo "{host_file_params}" > {hosts_file_path}')
+    return pml_param, ucx_params, hosts_file_path
+
+
+def _exec_rccl_launch(phdl, shdl, head_node, cmd, test_name, timeout, reason):
+    log.info('%%%%%%%%%%%%%%%%')
+    log.info("%s", cmd)
+    log.info('%%%%%%%%%%%%%%%%')
+    try:
+        out_dict = shdl.exec(cmd, timeout=timeout)
+        output = out_dict[head_node]
+        scan_rccl_logs(output)
+        return output
+    except Exception as e:
+        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+        _cleanup_stale_rccl_processes(phdl, test_name, reason)
+        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+        return None
+
+
 # Main RCCL Test library which gets invoked from cvs/test/rccl tests and accepts most of the
 # standard NCCL environment variables ..
 #
@@ -678,9 +786,7 @@ def rccl_regression(
     mpi_dir = mpi_params.get('mpi_dir', '/usr/local/bin')
     no_of_nodes = int(mpi_params.get('no_of_nodes', 2))
     no_of_local_ranks = int(mpi_params.get('no_of_local_ranks', 8))
-    mpi_pml = mpi_params.get('mpi_pml', 'auto')
     mpi_oob_port = mpi_params.get('mpi_oob_port', 'eth0')
-    ucx_tls = mpi_params.get('ucx_tls', 'rc,self,sm,tcp') or 'rc,self,sm,tcp'
 
     no_of_global_ranks = no_of_nodes * no_of_local_ranks
 
@@ -688,21 +794,13 @@ def rccl_regression(
 
     # Use the first cluster node as the head node (source for collected outputs)
     head_node = cluster_node_list[0]
-    # Build hostfile
-    host_file_params = ''
-    proc_per_node = int(no_of_global_ranks / len(cluster_node_list))
-    for node in vpc_node_list:
-        host_file_params = f'{host_file_params}{node} slots={proc_per_node}\n'
-
-    hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
-    cmd = f'rm -f {hosts_file_path}'
-    shdl.exec(cmd)
-
-    cmd = f'echo "{host_file_params}" > {hosts_file_path}'
-    shdl.exec(cmd)
-
-    # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
-    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, mpi_params, phdl, shdl, mpi_dir, head_node, ucx_tls)
+    managed = is_managed_compute()
+    if managed:
+        pml_param, ucx_params, hosts_file_path = '', '', ''
+    else:
+        pml_param, ucx_params, hosts_file_path = _prepare_mpirun_launch(
+            phdl, shdl, mpi_params, mpi_dir, head_node, cluster_node_list, vpc_node_list, no_of_global_ranks
+        )
 
     # Build RCCL test command
     rccl_tests_dir = rccl_test_params.get('rccl_tests_dir', '/usr/local/rccl-tests/build')
@@ -730,48 +828,32 @@ def rccl_regression(
     if output_algo_proto_channels:
         extra_flags += ' -A 1'
 
-    test_cmd = f'{rccl_tests_dir}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-        -t {threads_per_gpu} -w {warmup_iterations} -n {no_of_iterations} \
-        -N {no_of_cycles} -c {check_iteration_count}{extra_flags} -Z json {output_flag} {rccl_result_file}'
-
-    # Wrap with env file sourcing
-    if env_file and str(env_file).lower() != 'none':
-        test_cmd = f'bash -c "source {env_file} && {test_cmd}"'
-    else:
-        # Always wrap in bash to interpret && shell operator
-        test_cmd = f'bash -c "{test_cmd}"'
-
-    # Build env override parameters for regression testing
+    binary_cmd = (
+        f'{rccl_tests_dir}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} '
+        f'-t {threads_per_gpu} -w {warmup_iterations} -n {no_of_iterations} '
+        f'-N {no_of_cycles} -c {check_iteration_count}{extra_flags} -Z json {output_flag} {rccl_result_file}'
+    )
+    test_cmd = _wrap_rccl_test_cmd(binary_cmd, env_file, env_overrides if managed else None)
     env_override_params = ''
-    if env_overrides:
+    if env_overrides and not managed:
         env_override_params = ' '.join([f'-x {k}={v}' for k, v in env_overrides.items()])
 
-    # Build mpirun command
-    cmd = f'''{mpi_dir}/bin/mpirun \
-        --allow-run-as-root \
-        -np {no_of_global_ranks} \
-        --hostfile {hosts_file_path} \
-        --bind-to numa \
-        {ucx_params} \
-        --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {mpi_oob_port} \
-        --mca oob_tcp_if_include {mpi_oob_port} \
-        {pml_param} \
-        {env_override_params} \
-        {test_cmd}'''
-
-    log.info('%%%%%%%%%%%%%%%%')
-    log.info("%s", cmd)
-    log.info('%%%%%%%%%%%%%%%%')
-
-    try:
-        out_dict = shdl.exec(cmd, timeout=cvs_exec_timeout)
-        output = out_dict[head_node]
-        scan_rccl_logs(output)
-    except Exception as e:
-        log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-        _cleanup_stale_rccl_processes(phdl, test_name, f'exception in rccl_regression: {repr(e)}')
-        fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+    cmd = _build_rccl_launch_cmd(
+        test_cmd,
+        mpi_dir=mpi_dir,
+        no_of_nodes=no_of_nodes,
+        no_of_local_ranks=no_of_local_ranks,
+        no_of_global_ranks=no_of_global_ranks,
+        mpi_oob_port=mpi_oob_port,
+        pml_param=pml_param,
+        ucx_params=ucx_params,
+        hosts_file_path=hosts_file_path,
+        cluster_node_list=cluster_node_list,
+        env_override_params=env_override_params,
+    )
+    _exec_rccl_launch(
+        phdl, shdl, head_node, cmd, test_name, cvs_exec_timeout, f'exception in rccl_regression: {test_name}'
+    )
 
     # Read the JSON results emitted by the RCCL test binary via SFTP
     # (avoids fragile cat-over-exec stdout reassembly for large payloads)
@@ -855,9 +937,7 @@ def rccl_perf(
     mpi_dir = mpi_params.get('mpi_dir', '/usr/local/bin')
     no_of_nodes = int(mpi_params.get('no_of_nodes', 2))
     no_of_local_ranks = int(mpi_params.get('no_of_local_ranks', 8))
-    mpi_pml = mpi_params.get('mpi_pml', 'auto')
     mpi_oob_port = mpi_params.get('mpi_oob_port', 'eth0')
-    ucx_tls = mpi_params.get('ucx_tls', 'rc,self,sm,tcp') or 'rc,self,sm,tcp'
 
     no_of_global_ranks = no_of_nodes * no_of_local_ranks
 
@@ -865,28 +945,13 @@ def rccl_perf(
 
     # Use the first cluster node as the head node (source for collected outputs)
     head_node = cluster_node_list[0]
-    # host_params=''
-    # proc_per_node = int(int(no_of_global_ranks)/len(cluster_node_list))
-    # for node in vpc_node_list:
-    #    host_params = f'{host_params}{node}:{proc_per_node},'
-    # Compute processes per node and build the -H host mapping string: host:N,host:N,...
-    # host_params = host_params.rstrip(',')
-    # print(f'RCCL Hosts -H value {host_params}')
-
-    host_file_params = ''
-    proc_per_node = int(int(no_of_global_ranks) / len(cluster_node_list))
-    for node in vpc_node_list:
-        host_file_params = f'{host_file_params}' + f'{node} slots={proc_per_node}\n'
-
-    hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
-    cmd = f'rm -f {hosts_file_path}'
-    shdl.exec(cmd)
-
-    cmd = f'echo "{host_file_params}" > {hosts_file_path}'
-    shdl.exec(cmd)
-
-    # Determine PML (Point-to-Point Messaging Layer) based on user config or auto-detection
-    pml_param, ucx_params = determine_mpi_pml_config(mpi_pml, mpi_params, phdl, shdl, mpi_dir, head_node, ucx_tls)
+    managed = is_managed_compute()
+    if managed:
+        pml_param, ucx_params, hosts_file_path = '', '', ''
+    else:
+        pml_param, ucx_params, hosts_file_path = _prepare_mpirun_launch(
+            phdl, shdl, mpi_params, mpi_dir, head_node, cluster_node_list, vpc_node_list, no_of_global_ranks
+        )
 
     # Extract RCCL test parameters
     rccl_tests_dir = rccl_test_params.get('rccl_tests_dir', '/usr/local/rccl-tests/build')
@@ -924,41 +989,33 @@ def rccl_perf(
         dtype_result_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
         log.info(f'Running {test_name} with dtype={dtype}')
 
-        # Wrap test binary in shell to source env script if provided
-        test_cmd = f'{rccl_tests_dir}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} \
-            -g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} \
-            -d {dtype} -n {no_of_iterations} -N {no_of_cycles}{extra_flags} -Z json {output_flag} {dtype_result_file}'
-
-        if env_file and str(env_file).lower() != 'none':
-            test_cmd = f'bash -c "source {env_file} && {test_cmd}"'
-        else:
-            # Always wrap in bash to interpret && shell operator
-            test_cmd = f'bash -c "{test_cmd}"'
-
-        cmd = f'''{mpi_dir}/bin/mpirun --np {no_of_global_ranks} \
-        --allow-run-as-root \
-        --hostfile {hosts_file_path} \
-        --bind-to numa \
-        {ucx_params} \
-        --mca btl ^vader,openib \
-        --mca btl_tcp_if_include {mpi_oob_port} \
-        --mca oob_tcp_if_include {mpi_oob_port} \
-        {pml_param} \
-        {test_cmd}
-        '''
-
-        log.info('%%%%%%%%%%%%%%%%')
-        log.info("%s", cmd)
-        log.info('%%%%%%%%%%%%%%%%')
-        try:
-            out_dict = shdl.exec(cmd, timeout=cvs_exec_timeout)
-            output = out_dict[head_node]
-            # print(output)
-            scan_rccl_logs(output)
-        except Exception as e:
-            log.error(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
-            _cleanup_stale_rccl_processes(phdl, test_name, f'exception in rccl_perf ({dtype}): {repr(e)}')
-            fail_test(f'Hit Exceptions with rccl cmd {cmd} - exception {repr(e)}')
+        binary_cmd = (
+            f'{rccl_tests_dir}/{test_name} -b {start_msg_size} -e {end_msg_size} -f {step_function} '
+            f'-g {threads_per_gpu} -c {check_iteration_count} -w {warmup_iterations} '
+            f'-d {dtype} -n {no_of_iterations} -N {no_of_cycles}{extra_flags} -Z json {output_flag} {dtype_result_file}'
+        )
+        test_cmd = _wrap_rccl_test_cmd(binary_cmd, env_file)
+        cmd = _build_rccl_launch_cmd(
+            test_cmd,
+            mpi_dir=mpi_dir,
+            no_of_nodes=no_of_nodes,
+            no_of_local_ranks=no_of_local_ranks,
+            no_of_global_ranks=no_of_global_ranks,
+            mpi_oob_port=mpi_oob_port,
+            pml_param=pml_param,
+            ucx_params=ucx_params,
+            hosts_file_path=hosts_file_path,
+            cluster_node_list=cluster_node_list,
+        )
+        _exec_rccl_launch(
+            phdl,
+            shdl,
+            head_node,
+            cmd,
+            test_name,
+            cvs_exec_timeout,
+            f'exception in rccl_perf ({dtype})',
+        )
 
         # Read the JSON results emitted by the RCCL test binary via SFTP
         # (avoids fragile cat-over-exec stdout reassembly for large payloads)
