@@ -13,13 +13,6 @@ from cvs.lib.parallel.transport import BaseTransport
 
 log = globals.log
 
-# A fresh SSH connection to a real host (TCP handshake + key exchange + pubkey auth) routinely
-# takes longer than 2s under real-world latency/load, especially right after a prior command kept
-# the host busy. A too-tight double-check turns transient slowness into permanent pruning instead
-# of just confirming true unreachability.
-DEFAULT_CONNECTIVITY_CHECK_TIMEOUT = 10
-DEFAULT_CONNECTIVITY_CHECK_RETRIES = 1
-
 
 def _get_parallel_ssh_client():
     """Resolve ParallelSSHClient from phandle so unit-test patches apply."""
@@ -42,12 +35,6 @@ class SshTransport(BaseTransport):
         self.user = user
         self.password = password
         self.pkey = pkey
-        self.connectivity_check_timeout = ssh_client_kwargs.pop(
-            'connectivity_check_timeout', DEFAULT_CONNECTIVITY_CHECK_TIMEOUT
-        )
-        self.connectivity_check_retries = ssh_client_kwargs.pop(
-            'connectivity_check_retries', DEFAULT_CONNECTIVITY_CHECK_RETRIES
-        )
         self.ssh_client_kwargs = ssh_client_kwargs
         self.client = self._make_client(self.hosts)
 
@@ -73,12 +60,10 @@ class SshTransport(BaseTransport):
         if not hosts:
             return []
         temp_ssh_client_kwargs = self.ssh_client_kwargs.copy()
-        temp_ssh_client_kwargs['timeout'] = self.connectivity_check_timeout
-        temp_ssh_client_kwargs['num_retries'] = self.connectivity_check_retries
+        temp_ssh_client_kwargs['timeout'] = 2
+        temp_ssh_client_kwargs['num_retries'] = 0
         temp_client = self._make_client_with_kwargs(hosts, temp_ssh_client_kwargs)
-        output = temp_client.run_command(
-            'echo 1', stop_on_errors=False, read_timeout=self.connectivity_check_timeout
-        )
+        output = temp_client.run_command('echo 1', stop_on_errors=False, read_timeout=2)
         return [item.host for item in output if item.exception]
 
     def _make_client_with_kwargs(self, hosts, client_kwargs):
@@ -105,8 +90,6 @@ class SshTransport(BaseTransport):
             user=self.user,
             password=self.password,
             pkey=self.pkey,
-            connectivity_check_timeout=self.connectivity_check_timeout,
-            connectivity_check_retries=self.connectivity_check_retries,
             **self.ssh_client_kwargs,
         )
 

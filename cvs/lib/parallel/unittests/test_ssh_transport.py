@@ -75,7 +75,7 @@ class TestSshTransportCheckConnectivity(unittest.TestCase):
         unreachable = transport.check_connectivity(['h1', 'h2'])
 
         self.assertEqual(unreachable, ['h2'])
-        probe_client.run_command.assert_called_once_with('echo 1', stop_on_errors=False, read_timeout=10)
+        probe_client.run_command.assert_called_once_with('echo 1', stop_on_errors=False, read_timeout=2)
         self.assertEqual(
             mock_client_cls.call_args_list[1],
             call(
@@ -83,41 +83,10 @@ class TestSshTransportCheckConnectivity(unittest.TestCase):
                 user='user',
                 password='pass',
                 keepalive_seconds=30,
-                timeout=10,
-                num_retries=1,
+                timeout=2,
+                num_retries=0,
             ),
         )
-
-    @patch('cvs.lib.parallel.phandle.ParallelSSHClient')
-    def test_check_connectivity_respects_custom_timeout_and_retries(self, mock_client_cls):
-        main_client = MagicMock()
-        probe_client = MagicMock()
-        mock_client_cls.side_effect = [main_client, probe_client]
-        probe_client.run_command.return_value = []
-
-        transport = SshTransport(
-            ['h1', 'h2'],
-            user='user',
-            password='pass',
-            connectivity_check_timeout=5,
-            connectivity_check_retries=3,
-        )
-        transport.check_connectivity(['h2'])
-
-        probe_client.run_command.assert_called_once_with('echo 1', stop_on_errors=False, read_timeout=5)
-        self.assertEqual(
-            mock_client_cls.call_args_list[1],
-            call(
-                ['h2'],
-                user='user',
-                password='pass',
-                keepalive_seconds=30,
-                timeout=5,
-                num_retries=3,
-            ),
-        )
-        self.assertNotIn('connectivity_check_timeout', transport.ssh_client_kwargs)
-        self.assertNotIn('connectivity_check_retries', transport.ssh_client_kwargs)
 
 
 class TestSshTransportClientForHosts(unittest.TestCase):
