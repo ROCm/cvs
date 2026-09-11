@@ -64,9 +64,10 @@ class SweepChartRenderer:
         unit: str,
         *,
         accent: str = "accent",
-        x_label_prefix="C=",
+        x_label="C={x}",
+        min_points=2,
     ) -> str:
-        if len(points) < 2:
+        if len(points) < min_points:
             return ""
         values = [p[1] for p in points]
         max_val = max(values) or 1.0
@@ -85,14 +86,17 @@ class SweepChartRenderer:
         x_labels = []
         for x_value, val in points:
             h = self._bar_height_pct(val, min_val, max_val)
-            x_label = f"{x_label_prefix}{x_value}"
-            tip = html.escape(f"{x_label}: {fmt_num(val)} {unit}".strip())
+            try:
+                xlabel = x_label.format(x=x_value)
+            except (KeyError, IndexError, ValueError):
+                xlabel = str(x_value)
+            tip = html.escape(f"{xlabel}: {fmt_num(val)} {unit}".strip())
             bars.append(
                 f"<div class='chart-col'>"
                 f"<div class='chart-bar chart-bar-{accent} chart-has-tip' style='height:{h:.1f}%' "
                 f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div></div>"
             )
-            x_labels.append(f"<span class='chart-xlbl'>{html.escape(str(x_label))}</span>")
+            x_labels.append(f"<span class='chart-xlbl'>{html.escape(str(xlabel))}</span>")
         return (
             f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
             f"<div class='chart-viz'>"
@@ -140,18 +144,12 @@ class SweepChartRenderer:
             else "<p class='muted'>Concurrency charts need two or more points per sweep shape.</p>"
         )
 
-    def render_series_chart(self, title: str, points: list, unit: str, x_label_prefix="C=") -> str:
+    def render_series_chart(self, title: str, points: list, unit: str, x_label="{x}"):
         normalized = []
         for p in points:
             if isinstance(p, (list, tuple)) and len(p) >= 2:
                 normalized.append((p[0], p[1]))
-        return self.render_bar_chart(
-            title,
-            normalized,
-            unit,
-            accent="accent2",
-            x_label_prefix=x_label_prefix,
-        )
+        return self.render_bar_chart(title, normalized, unit, accent="accent2", x_label=x_label, min_points=1)
 
 
 _DEFAULT_RENDERER = SweepChartRenderer()

@@ -122,6 +122,69 @@ class TestMegatronProfile(unittest.TestCase):
         self.assertNotIn("ISL=", document)
         self.assertNotIn("OSL=", document)
 
+    def test_legacy_lookup_mismatch_returns_none(self):
+        from cvs.lib.report.profiles.hooks.megatron_run_card import build_legacy_rundeck_variant
+
+        self.assertIsNone(
+            build_legacy_rundeck_variant(
+                {"config": {}},
+                "megatron_llama3_1_8b_single",
+                {},
+                {"single_node": {"llama3_1_8b": {"mi300x": {}}}},
+                "mi355",
+                object(),
+            )
+        )
+        self.assertIs(
+            build_legacy_rundeck_variant({"pydantic": True}, "megatron_single", {}, {}, None, "keep"),
+            "keep",
+        )
+
+    def test_crashed_combo_and_non_numeric_spec_do_not_raise(self):
+        profile = load_json_profile("megatron")
+        variant = _variant()
+        cell = "MBS=4,GBS=128,PRECISION=FP8"
+        variant.thresholds[cell]["training.throughput_per_gpu"] = {"kind": "info"}
+        datasets = build_sweep_datasets(
+            {
+                "results": {
+                    cell: {"throughput_per_gpu": "n/a", "tokens_per_gpu": ["1400"]},
+                    "MBS=4,GBS=128,PRECISION=BF16": None,
+                },
+                "variant": variant,
+            },
+            profile,
+        )
+        self.assertEqual(len(datasets["cells"]), 2)
+        self.assertEqual(datasets["cells"][1]["tiers"]["thresholds"], "na")
+        thru = next(m for m in datasets["cells"][0]["metrics"] if m["metric"].endswith("throughput_per_gpu"))
+        self.assertIsNone(thru["bar_pct"])
+
+    def test_min_gate_uses_worst_sample(self):
+        profile = load_json_profile("megatron")
+        results = {
+            "MBS=4,GBS=128,PRECISION=FP8": {"throughput_per_gpu": ["200", "90"], "tokens_per_gpu": ["1400"]},
+            "MBS=4,GBS=128,PRECISION=BF16": {"throughput_per_gpu": ["120"], "tokens_per_gpu": ["1100"]},
+        }
+        datasets = build_sweep_datasets({"results": results, "variant": _variant()}, profile)
+        self.assertEqual(datasets["cells"][0]["actuals"]["training.throughput_per_gpu"], 90.0)
+        self.assertEqual(datasets["cells"][0]["tiers"]["thresholds"], "fail")
+
+    def test_single_cell_renders_chart(self):
+        profile = load_json_profile("megatron")
+        cell = "MBS=4,GBS=128,PRECISION=FP8"
+        payload = build_rundeck_payload(
+            profile=profile,
+            store={
+                "cvs_results_dict": {cell: {"throughput_per_gpu": ["120.5"], "tokens_per_gpu": ["1400"]}},
+                "variant_config": _variant(),
+            },
+            cvs_version="test",
+        )
+        document = render_rundeck_html(payload)
+        self.assertIn("chart-bar", document)
+        self.assertNotIn("No series data.", document)
+
 
 if __name__ == "__main__":
     unittest.main()

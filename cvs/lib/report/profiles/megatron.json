@@ -23,6 +23,13 @@
   "sweep": {
     "layout": "named_cells",
     "metric_prefix": "training.",
+    "dimension_keys": ["micro_batch_size", "global_batch_size", "precision"],
+    "label_parts": ["micro_batch_size", "global_batch_size", "precision"],
+    "label_aliases": {
+      "micro_batch_size": "MBS",
+      "global_batch_size": "GBS",
+      "precision": "PRECISION"
+    },
     "tier_order": ["thresholds", "record"],
     "throughput_metric": "training.throughput_per_gpu",
     "headline_metric": "training.throughput_per_gpu",
@@ -88,14 +95,14 @@
       "id": "throughput",
       "title": "Throughput vs cells",
       "bind": "datasets.sweep",
-      "series": {"y_field": "throughput_per_gpu", "unit": "TFLOP/s/GPU", "x_label_prefix": ""}
+      "series": {"y_field": "throughput_per_gpu", "unit": "TFLOP/s/GPU", "x_label": "{x}"}
     },
     {
       "type": "line_chart",
       "id": "token-throughput",
       "title": "Token throughput vs cells",
       "bind": "datasets.sweep",
-      "series": {"y_field": "tokens_per_gpu", "unit": "tok/s/GPU", "x_label_prefix": ""}
+      "series": {"y_field": "tokens_per_gpu", "unit": "tok/s/GPU", "x_label": "{x}"}
     },
     {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
     {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
