@@ -71,9 +71,7 @@ def build_ibperf_datasets(sources, _profile):
                 except (TypeError, ValueError):
                     continue
                 if all_samples:
-                    points_by_qp.setdefault(qp_count, []).append(
-                        (size_number, sum(all_samples) / len(all_samples))
-                    )
+                    points_by_qp.setdefault(qp_count, []).append((size_number, sum(all_samples) / len(all_samples)))
 
         test_series = []
         for qp_count, points in sorted(points_by_qp.items(), key=lambda item: _sort_key(item[0])):
