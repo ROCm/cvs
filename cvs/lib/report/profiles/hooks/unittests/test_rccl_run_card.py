@@ -35,7 +35,7 @@ class TestRcclRunCard(unittest.TestCase):
             {
                 "mpi_params": {"no_of_nodes": "2"},
                 "rccl_test_params": {"start_msg_size": "1024"},
-                "cvs_params": {"verify_bus_bw": "True", "nic_model": "thor"},
+                "cvs_params": {"verify_bus_bw": "False", "verify_bw_dip": "True", "nic_model": "thor"},
             },
             {"node_dict": {"n0": {}, "n1": {}}},
         )
