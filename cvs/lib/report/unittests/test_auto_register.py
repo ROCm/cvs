@@ -34,6 +34,12 @@ class TestAutoRegister(unittest.TestCase):
         self.assertTrue(try_auto_register_suite_report(config))
         self.assertEqual(config._suite_report_config["suite_id"], "vllm")
 
+    def test_auto_register_loads_mori_benchmark_profile(self):
+        config = SimpleNamespace(_suite_name="mori_benchmark_test", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["dataset_builder"], "series")
+        self.assertFalse(config._suite_report_config["interactive_viewer"])
+
 
 if __name__ == "__main__":
     unittest.main()
