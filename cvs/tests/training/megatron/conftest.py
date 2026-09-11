@@ -7,11 +7,11 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import json
 import os
-
 import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
+from cvs.lib.report.profiles.hooks.megatron_run_card import build_legacy_rundeck_variant
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 from cvs.lib.training.megatron.utils.training_config_loader import load_training_variant
 
@@ -126,6 +126,28 @@ def train_res_dict():
 
 
 @pytest.fixture(scope="module")
+def rundeck_variant(request):
+    config_file = request.config.getoption("config_file")
+    try:
+        with open(config_file) as fp:
+            raw = json.load(fp)
+        variant_config = request.getfixturevalue("variant_config")
+        if not isinstance(raw, dict) or "config" not in raw:
+            return variant_config
+        return build_legacy_rundeck_variant(
+            raw,
+            getattr(request.config, "_suite_name", ""),
+            request.getfixturevalue("training_dict"),
+            request.getfixturevalue("model_params_dict"),
+            request.getfixturevalue("gpu_type"),
+            variant_config,
+        )
+    except Exception:
+        log.warning("rundeck_variant unavailable; Run Deck will omit variant metadata", exc_info=True)
+        return None
+
+
+@pytest.fixture(scope="module")
 def orch(cluster_dict, variant_config, lifecycle):
     """Construct a ContainerOrchestrator and own a final teardown safety net.
 
@@ -139,6 +161,7 @@ def orch(cluster_dict, variant_config, lifecycle):
     env = dict(container_block.get("env") or {})
     node_dict = cluster_dict.get("node_dict") or {}
     env["NNODES"] = str(len(node_dict))
+    variant_config.container.env["NNODES"] = env["NNODES"]
     container_block["env"] = env
     testsuite_config = {"orchestrator": "container", "container": container_block}
     cfg = OrchestratorConfig.from_configs(cluster_dict, testsuite_config)
