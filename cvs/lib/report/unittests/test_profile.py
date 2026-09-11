@@ -49,6 +49,26 @@ class TestProfile(unittest.TestCase):
         self.assertIn("output_throughput", shorts)
         self.assertEqual(config.full_metric("output_throughput"), "output_throughput")
 
+    def test_torchtitan_stems_share_training_profile(self):
+        stems = (
+            "torchtitan_single",
+            "torchtitan_distributed",
+            "torchtitan_deepseek_16b_single",
+            "torchtitan_deepseek_16b_distributed",
+            "torchtitan_llama3_1_8b_single",
+            "torchtitan_llama3_1_8b_distributed",
+            "torchtitan_llama3_1_70b_single",
+            "torchtitan_llama3_1_70b_distributed",
+            "torchtitan_qwen3_32b_single",
+            "torchtitan_qwen3_32b_distributed",
+        )
+        for stem in stems:
+            with self.subTest(stem=stem):
+                profile = load_json_profile(stem)
+                self.assertEqual(profile["suite_id"], "torchtitan")
+                self.assertEqual(profile["dataset_builder"], "sweep")
+                self.assertFalse(profile["interactive_viewer"])
+
     def test_sglang_profile_preserves_empty_metric_prefix(self):
         from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
 

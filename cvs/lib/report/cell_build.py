@@ -154,8 +154,13 @@ class CellRecordBuilder:
         multi_host: bool,
     ) -> dict:
         model, gpu, isl, osl, policy, conc = key
+        named_cell_id = actuals.get("_rundeck_cell_id")
+        is_named_cell = named_cell_id is not None
         is_canonical_key = isinstance(policy, str) and policy.startswith("ISL=")
-        cell_id = policy if is_canonical_key else variant_config.cell_key(isl, osl, conc)
+        if is_named_cell:
+            cell_id = str(named_cell_id)
+        else:
+            cell_id = policy if is_canonical_key else variant_config.cell_key(isl, osl, conc)
         thresholds_map = getattr(variant_config, "thresholds", {}) or {}
         thresholds_cell = thresholds_map.get(cell_id) or {}
         enforce = bool(getattr(variant_config, "enforce_thresholds", False))
@@ -212,6 +217,8 @@ class CellRecordBuilder:
             "host": host,
             "show_host_in_label": multi_host,
             "cell_id": cell_id,
+            "named_cell": is_named_cell,
+            "sweep_label": cell_id if is_named_cell else conc,
             "metrics": metrics,
             "tiers": tiers,
             "actuals": dict(actuals),
