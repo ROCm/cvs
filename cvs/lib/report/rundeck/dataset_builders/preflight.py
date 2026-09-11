@@ -85,7 +85,7 @@ def _node_status(check_name, result, node, overall_status):
     node_results = _node_result_map(check_name, result)
     node_result = node_results.get(node)
     if not isinstance(node_result, dict):
-        return 'NOT RUN' if node_results else overall_status
+        return 'NOT RUN' if node_results else '—'
     if check_name == 'rdma_connectivity':
         return _rdma_node_status(node_result)
     return _normalize_status(node_result.get('status'))
@@ -100,7 +100,14 @@ def _short_reason(check_summary):
 
 def _affected_nodes(check_summary):
     nodes = []
-    for key in ('failed_nodes', 'missing_nodes', 'incomplete_nodes', 'unknown_nodes', 'warning_nodes'):
+    for key in (
+        'failed_nodes',
+        'missing_nodes',
+        'incomplete_nodes',
+        'unknown_nodes',
+        'warning_nodes',
+        'unreachable_nodes',
+    ):
         nodes.extend(check_summary.get(key) or [])
     return ', '.join(dict.fromkeys(str(node) for node in nodes)) or '—'
 
@@ -143,6 +150,8 @@ def _failures_table(checks):
             ]
         )
     rows.sort(key=lambda row: (_STATUS_ORDER.get(row[0], 99), row[1]))
+    if not rows:
+        return {}
     return {
         'headers': ['Status', 'Check', 'Affected nodes', 'Reason'],
         'rows': rows,
@@ -156,6 +165,16 @@ def build_preflight_datasets(sources, _profile):
     summary = results.get('summary') or {}
     checks = summary.get('checks') or {}
     nodes = sorted(str(node) for node in (_context_value(context, 'cluster_nodes', []) or []))
+    if not summary:
+        return {
+            'overall_status': 'na',
+            'headline': {
+                'headers': ['Note'],
+                'rows': [['No preflight summary recorded in this run']],
+            },
+            'matrix': {},
+            'failures': {},
+        }
     overall = _normalize_status(summary.get('overall_status'))
     overall_status = 'pass' if overall == 'PASS' else ('fail' if overall == 'FAIL' else 'na')
 
