@@ -12,6 +12,7 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
+from cvs.lib.report.profiles.hooks.torchtitan import TorchTitanRundeckVariant
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 from cvs.lib.training.torchtitan.utils.training_config_loader import load_training_variant
 
@@ -93,6 +94,16 @@ def lifecycle():
 @pytest.fixture(scope="module")
 def train_res_dict():
     return {}
+
+
+@pytest.fixture(scope="module")
+def torchtitan_rundeck_results():
+    return {}
+
+
+@pytest.fixture(scope="module")
+def torchtitan_rundeck_variant(variant_config, cluster_dict):
+    return TorchTitanRundeckVariant(variant_config, max(1, len(cluster_dict.get("node_dict") or {})))
 
 
 @pytest.fixture(scope="module")
