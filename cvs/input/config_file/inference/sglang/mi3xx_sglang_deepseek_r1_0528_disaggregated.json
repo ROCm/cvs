@@ -59,7 +59,10 @@
     "memory_fraction": "0.7",
     "tokenizer_mode": "auto",
     "inference_poll_iterations": "16",
-    "context_length": "205000",
+    "lng_ctx_activate": true,
+    "context_length": "163840",
+    "chunked_prefill_size": "8192",
+    "max_prefill_tokens": "8192",
     "add_flags": ["--attention-backend aiter"],
     "prefill_node_list": ["<changeme>", "<changeme>"],
     "decode_node_list": ["<changeme>", "<changeme>"],
@@ -81,6 +84,13 @@
     "random_range_ratio": "0.5",
     "model_num_params": "671000000000",
     "peak_gpu_tflops": "2615"
+  },
+  "long_ctx_niah": {
+    "num_prompts": "6",
+    "seed": "42",
+    "request_timeout_sec": "7200",
+    "exec_timeout_sec": "21600",
+    "tolerance_frac": "0.05"
   },
   "accuracy": {
     "tasks": [

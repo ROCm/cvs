@@ -230,6 +230,9 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
                     }
                 ]
             },
+            'long_ctx_niah': {
+                'num_prompts': '6',
+            },
         }
         self.thresholds = {
             'ISL=1024,OSL=1024,TP=8,PP=2,CONC=4': {
@@ -248,6 +251,7 @@ class TestUnifiedRuntimeViews(unittest.TestCase):
         self.assertEqual(inference['container_config']['volume_dict']['/host-ro'], '/container-ro:ro')
         self.assertEqual(params['model'], '/models/model')
         self.assertEqual(params['inference_tests']['lm_eval_hellaswag']['tasks'], 'hellaswag')
+        self.assertEqual(params['inference_tests']['long_ctx_niah']['num_prompts'], '6')
         self.assertEqual(
             params['inference_tests']['lm_eval_hellaswag']['expected_results']['hellaswag'],
             {'acc_norm,none': 0.23},
@@ -377,13 +381,16 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
 
                 self.assertEqual(variant.framework, 'sglang')
                 self.assertEqual(len(variant.accuracy.tasks), 2)
+                expected_tests = {'bench_serv_random', 'lm_eval_hellaswag', 'lm_eval_gsm8k'}
+                if raw.get('long_ctx_niah'):
+                    expected_tests.add('long_ctx_niah')
                 self.assertEqual(
                     set(variant.benchmark_params['inference_tests']),
-                    {'bench_serv_random', 'lm_eval_hellaswag', 'lm_eval_gsm8k'},
+                    expected_tests,
                 )
                 self.assertEqual(
                     set(variant.params.inference_tests),
-                    {'bench_serv_random', 'lm_eval_hellaswag', 'lm_eval_gsm8k'},
+                    expected_tests,
                 )
                 self.assertEqual(variant.params.add_flags, ['--attention-backend aiter'])
                 self.assertFalse(variant.enforce_thresholds)
@@ -427,6 +434,8 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                 if 'deepseek' in config_path.name:
                     self.assertEqual(container['env']['GPU_ARCHS'], 'gfx942')
                     self.assertIn('GPU_ARCHS=gfx942', variant.params.add_export_env)
+                if raw.get('long_ctx_niah'):
+                    self.assertEqual(variant.params.inference_tests['long_ctx_niah']['num_prompts'], '6')
                 if variant.topology == 'disaggregated':
                     self.assertEqual(variant.params.prefill_policy, 'cache_aware')
                     self.assertEqual(variant.params.decode_policy, 'cache_aware')

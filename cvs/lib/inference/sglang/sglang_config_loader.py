@@ -597,6 +597,11 @@ def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]
         inference_tests = {"bench_serv_random": benchmark}
     else:
         inference_tests = dict(params.get("inference_tests") or {})
+    long_ctx_niah = raw.get("long_ctx_niah")
+    if long_ctx_niah is not None:
+        if not isinstance(long_ctx_niah, Mapping):
+            raise TypeError("long_ctx_niah must be an object")
+        inference_tests["long_ctx_niah"] = dict(long_ctx_niah)
     inference_tests.update(_accuracy_tasks_to_inference_tests(raw.get("accuracy") or {}))
     params["inference_tests"] = inference_tests
     params["model"] = str(server.get("model") or "") if new_layout else str((raw.get("model") or {}).get("id") or "")

@@ -61,6 +61,71 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertEqual(sglang_common.normalize_hosts(None), [])
         self.assertEqual(sglang_common.normalize_hosts('host1'), ['host1'])
 
+    def test_add_cli_flags_block_includes_activated_long_context_flags(self):
+        block = sglang_common.add_cli_flags_block(
+            {
+                'add_flags': ['--attention-backend aiter'],
+                'lng_ctx_activate': True,
+                'context_length': '262144',
+                'chunked_prefill_size': '8192',
+                'max_prefill_tokens': '8192',
+            },
+            indent='',
+        )
+
+        self.assertEqual(
+            block.splitlines(),
+            [
+                '--attention-backend aiter \\',
+                '--context-length 262144 \\',
+                '--chunked-prefill-size 8192 \\',
+                '--max-prefill-tokens 8192 \\',
+            ],
+        )
+
+    def test_add_cli_flags_block_omits_long_context_flags_when_disabled(self):
+        block = sglang_common.add_cli_flags_block(
+            {
+                'add_flags': ['--attention-backend aiter'],
+                'lng_ctx_activate': False,
+                'context_length': '262144',
+                'chunked_prefill_size': '8192',
+            },
+            indent='',
+        )
+
+        self.assertEqual(block, '--attention-backend aiter \\')
+
+    def test_add_cli_flags_block_omits_chunked_prefill_for_decode(self):
+        block = sglang_common.add_cli_flags_block(
+            {
+                'add_flags': ['--attention-backend aiter'],
+                'lng_ctx_activate': True,
+                'context_length': '262144',
+                'chunked_prefill_size': '8192',
+                'max_prefill_tokens': '8192',
+            },
+            indent='',
+            include_chunked_prefill=False,
+        )
+
+        self.assertEqual(
+            block.splitlines(),
+            [
+                '--attention-backend aiter \\',
+                '--context-length 262144 \\',
+            ],
+        )
+
+    def test_add_cli_flags_block_requires_long_context_parameters(self):
+        with self.assertRaisesRegex(ValueError, 'chunked_prefill_size'):
+            sglang_common.add_cli_flags_block(
+                {
+                    'lng_ctx_activate': True,
+                    'context_length': '262144',
+                }
+            )
+
     def test_thresholds_from_expected_latency(self):
         specs = sglang_common.thresholds_from_expected({'mean_ttft_ms': 100.0})
         self.assertEqual(specs['mean_ttft_ms']['kind'], 'max_ms')
