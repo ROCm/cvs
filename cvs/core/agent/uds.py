@@ -11,6 +11,9 @@ from . import messages
 from .launch import ActiveLaunches, run_launch_child
 
 LOCAL_WORKER_STARTUP_TIMEOUT_SECONDS = 60
+# How long a launch waits for every local rank to report that its child exists. MPI ranks then
+# rendezvous in MPI_Init on their own; this only catches a slot that never started a child.
+LAUNCH_SPAWN_TIMEOUT_SECONDS = 30
 
 
 def launch_socket_path():
@@ -30,6 +33,7 @@ class _WorkerConnection:
         self.responses = responses
         self.closed = closed
         self.in_launch = False
+        self.spawned = asyncio.Event()
 
 
 class UdsLaunchCoordinator:
@@ -114,6 +118,9 @@ class UdsLaunchCoordinator:
             if len(self._workers) == self.expected_workers:
                 self._ready.set()
             while raw := await reader.readline():
+                if json.loads(raw).get("kind") == "spawned":
+                    connection.spawned.set()
+                    continue
                 await connection.responses.put(messages.parse_message(messages.LaunchRankResult, raw.decode()))
         except Exception:
             pass
@@ -130,6 +137,7 @@ class UdsLaunchCoordinator:
         """Send LaunchRequest on one connection and wait for that worker's result."""
         async with worker.lock:
             worker.in_launch = True
+            worker.spawned.clear()
             try:
                 worker.writer.write(request.model_dump_json().encode() + b"\n")
                 await worker.writer.drain()
@@ -140,15 +148,49 @@ class UdsLaunchCoordinator:
             finally:
                 worker.in_launch = False
 
+    async def _wait_for_spawns(self, own_spawned, connections, running):
+        """Raise once it is clear a local rank never started its child.
+
+        running finishing first means every child already ran, so no ack is owed.
+        """
+        acked = asyncio.gather(own_spawned.wait(), *(worker.spawned.wait() for worker in connections))
+        try:
+            await asyncio.wait(
+                {acked, running},
+                timeout=LAUNCH_SPAWN_TIMEOUT_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if acked.done() or running.done():
+                return
+            missing = [] if own_spawned.is_set() else [self.global_rank]
+            missing += [worker.rank for worker in connections if not worker.spawned.is_set()]
+            raise TimeoutError(
+                f"local ranks {sorted(missing)} did not start a child within {LAUNCH_SPAWN_TIMEOUT_SECONDS}s"
+            )
+        finally:
+            acked.cancel()
+            await asyncio.gather(acked, return_exceptions=True)
+
     async def launch(self, request):
         """Run request.argv as this rank's child and on every connected UDS worker."""
         await self.wait_until_ready()
-        own = run_launch_child(request, self.global_rank, self.active)
+        own_spawned = asyncio.Event()
         connections = list(self._workers.values())
-        workers = [self._launch_on_worker(worker, request) for worker in connections]
-        gathered = await asyncio.gather(own, *workers, return_exceptions=True)
+        running = asyncio.gather(
+            run_launch_child(request, self.global_rank, self.active, on_spawn=own_spawned.set),
+            *(self._launch_on_worker(worker, request) for worker in connections),
+            return_exceptions=True,
+        )
+        try:
+            await self._wait_for_spawns(own_spawned, connections, running)
+        except TimeoutError:
+            # A rank that never spawned may also never answer, so drop the waiters after cancelling.
+            await self.cancel()
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+            raise
         results = []
-        for index, item in enumerate(gathered):
+        for index, item in enumerate(await running):
             if isinstance(item, messages.LaunchRankResult):
                 results.append(item)
             else:
@@ -211,9 +253,15 @@ class UdsWorker:
             if await self._run_one_launch(request):
                 break
 
+    def _send_spawned(self):
+        """Tell the coordinator this rank's child exists; the result line follows when it exits."""
+        self._writer.write(json.dumps({"kind": "spawned", "rank": self.global_rank}).encode() + b"\n")
+
     async def _run_one_launch(self, request):
         """Run request.argv; return True if the coordinator asked to shut down."""
-        launch_task = asyncio.create_task(run_launch_child(request, self.global_rank, self._active))
+        launch_task = asyncio.create_task(
+            run_launch_child(request, self.global_rank, self._active, on_spawn=self._send_spawned)
+        )
         shutdown = False
         while not launch_task.done():
             control_task = asyncio.create_task(self._reader.readline())

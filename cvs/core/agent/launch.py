@@ -76,8 +76,13 @@ async def run_launch_child(
     request,
     rank,
     active=None,
+    on_spawn=None,
 ):
-    """Start one child, write rank-scoped logs, and return without exiting the agent."""
+    """Start one child, write rank-scoped logs, and return without exiting the agent.
+
+    on_spawn is called once the child exists, so the node coordinator can tell a slow
+    MPI startup apart from a rank whose child never started.
+    """
     hostname = socket.gethostname()
     stdout_path = request.out_path / f"rank-{rank:04d}.stdout"
     stderr_path = request.out_path / f"rank-{rank:04d}.stderr"
@@ -98,6 +103,8 @@ async def run_launch_child(
         finally:
             stdout_file.close()
             stderr_file.close()
+        if on_spawn is not None:
+            on_spawn()
 
         timed_out = False
         if active is not None:

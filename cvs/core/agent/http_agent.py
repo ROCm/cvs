@@ -338,6 +338,8 @@ def create_app(
         http_request.app.state.launch_busy = True
         try:
             return await manager.launch(request)
+        except TimeoutError as exc:
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
         finally:
             http_request.app.state.launch_busy = False
 

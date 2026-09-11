@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from cvs.core.agent import messages
+from cvs.core.agent import messages, uds
 from cvs.core.agent.uds import UdsLaunchCoordinator, UdsWorker
 
 
@@ -42,6 +42,33 @@ class TestUdsLaunchCoordinator(unittest.IsolatedAsyncioTestCase):
             finally:
                 await manager.stop()
                 await asyncio.wait_for(worker, timeout=2)
+
+    async def test_launch_fails_fast_when_a_worker_never_starts_its_child(self):
+        with tempfile.TemporaryDirectory() as root:
+            socket_path = Path(root) / "agent.sock"
+            manager = UdsLaunchCoordinator(global_rank=0, expected_workers=1, socket_path=socket_path)
+            await manager.start()
+            # Registers like a worker but never acks a spawn, i.e. its rank's child never started.
+            _, writer = await asyncio.open_unix_connection(socket_path)
+            writer.write(b'{"kind": "register", "rank": 1}\n')
+            await writer.drain()
+            try:
+                await manager.wait_until_ready(timeout=2)
+                request = messages.LaunchRequest(
+                    argv=["sleep", "30"],
+                    env={},
+                    cwd=Path(root),
+                    timeout=60,
+                    launch_id="three",
+                    out_path=Path(root) / "output",
+                    world_size=2,
+                )
+                with patch.object(uds, "LAUNCH_SPAWN_TIMEOUT_SECONDS", 1):
+                    with self.assertRaisesRegex(TimeoutError, r"local ranks \[1\]"):
+                        await manager.launch(request)
+            finally:
+                writer.close()
+                await manager.stop()
 
     async def test_start_skips_uds_when_no_local_workers(self):
         with tempfile.TemporaryDirectory() as root:
