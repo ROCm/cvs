@@ -104,7 +104,10 @@ class RundeckPublisher:
         )
 
         viewer_path = self._write_viewer(profile, config, out_dir, payload)
-        summary_path = write_inference_ci_summary(payload, config, out_dir)
+        builder_id = profile.get("dataset_builder", "sweep") if isinstance(profile, dict) else "sweep"
+        summary_path = None
+        if builder_id == "sweep":
+            summary_path = write_inference_ci_summary(payload, config, out_dir)
         artifacts = {
             "html": html_path_written,
             "json": json_path,
@@ -152,7 +155,8 @@ class RundeckPublisher:
             return
         self.report_manager.add_html_to_report(artifacts["html"], link_name=config.link_name)
         self.report_manager.add_html_to_report(artifacts["json"], link_name=f"{config.link_name} JSON")
-        self.report_manager.add_html_to_report(artifacts["summary"], link_name=f"{config.link_name} summary")
+        if artifacts.get("summary") is not None:
+            self.report_manager.add_html_to_report(artifacts["summary"], link_name=f"{config.link_name} summary")
         viewer = artifacts.get("viewer")
         if viewer is not None:
             self.report_manager.add_html_to_report(viewer, link_name=f"{config.link_name} viewer")
