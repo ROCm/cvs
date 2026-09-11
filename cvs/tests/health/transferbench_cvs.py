@@ -172,6 +172,12 @@ def _metric_entry(test_name, node, metric, value, unit='GB/s'):
     }
 
 
+def _numeric_table_row(line):
+    cleaned = re.sub(r'[|│]', ' ', str(line or '').strip())
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return re.fullmatch(rf'(\d+)\s+((?:{_TB_NUMBER}\s*)+)', cleaned)
+
+
 def extract_tb_a2a_metrics(out_dict):
     metrics = {}
     for node, output in out_dict.items():
@@ -258,7 +264,7 @@ def extract_tb_a2asweep_metrics(out_dict):
                 continue
             if blocksize is None or not columns:
                 continue
-            match = re.fullmatch(rf'(\d+)\s+((?:{_TB_NUMBER}\s*)+)', line)
+            match = _numeric_table_row(line)
             if not match:
                 continue
             cu_count = match.group(1)
@@ -284,13 +290,13 @@ def extract_tb_scaling_metrics(out_dict):
     for node, output in out_dict.items():
         devices = []
         for raw_line in output.splitlines():
-            line = raw_line.strip()
-            if line.startswith('NumCUs '):
+            line = raw_line.strip().strip('│|').strip()
+            if line.startswith('NumCUs'):
                 devices = re.findall(r'(?:CPU|GPU)\d+', line)
                 continue
             if not devices:
                 continue
-            match = re.fullmatch(rf'(\d+)\s+((?:{_TB_NUMBER}\s*)+)', line)
+            match = _numeric_table_row(line)
             if not match:
                 continue
             cu_count = match.group(1)
@@ -324,7 +330,7 @@ def extract_tb_schmoo_metrics(out_dict):
                 continue
             if not in_table:
                 continue
-            match = re.fullmatch(rf'(\d+)\s+((?:{_TB_NUMBER}\s*)+)', line)
+            match = _numeric_table_row(line)
             if not match:
                 continue
             cu_count = match.group(1)
@@ -350,7 +356,11 @@ _TB_METRIC_EXTRACTORS = {
 
 def record_transferbench_results(cvs_results_dict, variant_config, test_name, out_dict, duration_s):
     status = 'pass' if not globals.error_list else 'fail'
-    extracted = _TB_METRIC_EXTRACTORS.get(test_name, lambda _outputs: {})(out_dict)
+    extractor = _TB_METRIC_EXTRACTORS.get(test_name)
+    try:
+        extracted = extractor(out_dict) if extractor else {}
+    except (TypeError, ValueError, KeyError, IndexError, AttributeError):
+        extracted = {}
     for series in extracted.values():
         for entry in series.values():
             entry['status'] = status
