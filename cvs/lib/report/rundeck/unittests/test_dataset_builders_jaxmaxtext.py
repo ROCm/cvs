@@ -109,9 +109,7 @@ class TestJaxMaxTextDatasetBuilder(unittest.TestCase):
             self.profile,
         )
         self.assertEqual(datasets["overall_status"], "record")
-        self.assertTrue(
-            all(status == "record" for row in datasets["gate_matrix"] for status in row["tiers"].values())
-        )
+        self.assertTrue(all(status == "record" for row in datasets["gate_matrix"] for status in row["tiers"].values()))
 
     def test_payload_renders_training_surfaces_without_inference_dimensions(self):
         payload = build_rundeck_payload(
