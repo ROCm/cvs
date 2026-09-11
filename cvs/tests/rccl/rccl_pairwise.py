@@ -1,73 +1,11 @@
-import pytest
 import json
 
 from cvs.lib import rccl_lib
-from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import globals
 
 log = globals.log
-
-
-@pytest.fixture(scope="module")
-def cluster_file(pytestconfig):
-    return pytestconfig.getoption("cluster_file")
-
-
-@pytest.fixture(scope="module")
-def config_file(pytestconfig):
-    return pytestconfig.getoption("config_file")
-
-
-@pytest.fixture(scope="module")
-def cluster_dict(cluster_file):
-    with open(cluster_file) as f:
-        cluster_dict = json.load(f)
-    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info("%s", cluster_dict)
-    return cluster_dict
-
-
-@pytest.fixture(scope="module")
-def config_dict(config_file, cluster_dict):
-    with open(config_file) as f:
-        config_dict_t = json.load(f)
-    config_dict = config_dict_t['rccl']
-    config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
-    log.info("%s", config_dict)
-    return config_dict
-
-
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
-
-
-@pytest.fixture(scope="module")
-def shdl(cluster_dict):
-    node_list = list(cluster_dict['node_dict'].keys())
-    env_vars = cluster_dict.get("env_vars")
-    head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return shdl
-
-
-@pytest.fixture(scope="module")
-def vpc_node_list(cluster_dict):
-    vpc_node_list = []
-    for node in list(cluster_dict['node_dict'].keys()):
-        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
-    return vpc_node_list
-
-
-# ─────────────────────────────────────────────
-# Helper: run one pairwise RCCL test
-# ─────────────────────────────────────────────
 
 
 def run_pairwise_rccl(phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, phase_label):
