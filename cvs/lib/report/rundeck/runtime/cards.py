@@ -182,10 +182,7 @@ class DeckCardRenderer:
 
         mismatch_count = matrix.get("mismatch_count", 0)
         summary = f"<p class='drift-summary'>{mismatch_count} configuration row(s) differ across nodes.</p>"
-        return (
-            f"{summary}<table class='results-table drift-matrix'><tr>{header_html}</tr>"
-            f"{''.join(body)}</table>"
-        )
+        return f"{summary}<table class='results-table drift-matrix'><tr>{header_html}</tr>{''.join(body)}</table>"
 
     @staticmethod
     def render_launch(_payload: dict, _card: dict, data: Any) -> str:
