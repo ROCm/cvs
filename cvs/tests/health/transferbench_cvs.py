@@ -10,6 +10,7 @@ import pytest
 import json
 import re
 import shlex
+import time
 
 from cvs.lib.env_lib import build_env_prefix
 from cvs.lib.utils_lib import *
@@ -34,6 +35,8 @@ _TB_NUMA_ABORT_HINT = (
     "transferbench.num_cpu_devices or transferbench.env.NUM_CPU_DEVICES to the "
     "populated CPU NUMA count (Helios-R / Venice: 2)."
 )
+_TB_NUMBER = r'[0-9]+(?:\.[0-9]+)?'
+_TB_TEST_NAMES = ('a2a', 'p2p', 'healthcheck', 'a2asweep', 'scaling', 'schmoo')
 
 
 def count_linux_id_list(spec):
@@ -145,16 +148,247 @@ def build_transferbench_command(path, rocm_path, preset, extra_env=None):
     return f'sudo bash -c {shlex.quote(inner)}'
 
 
-def run_transferbench(orch, config_dict, preset, timeout, extra_env=None):
+def run_transferbench(orch, config_dict, preset, timeout, extra_env=None, report_context=None):
     """Resolve ROCm/env and execute one TransferBench preset on all orch hosts."""
     path = config_dict['path']
     rocm_path = detect_rocm_path(orch, config_dict.get('rocm_path', ''))
+    if report_context is not None:
+        report_context['rocm_path'] = rocm_path
     env = resolve_runtime_tb_env(orch, config_dict)
     if extra_env:
         env.update(extra_env)
     cmd = build_transferbench_command(path, rocm_path, preset, env)
     log.info('TransferBench command: %s', cmd)
     return orch.exec(cmd, timeout=timeout)
+
+
+def _metric_entry(test_name, node, metric, value, unit='GB/s'):
+    return {
+        'test': test_name,
+        'node': node,
+        'metric': metric,
+        'value': value,
+        'unit': unit,
+    }
+
+
+def extract_tb_a2a_metrics(out_dict):
+    metrics = {}
+    for node, output in out_dict.items():
+        match = re.search(r'(?m)^[ \t│|]*RTotal[ \t│|]+(.+)$', output)
+        if not match:
+            continue
+        values = re.findall(_TB_NUMBER, match.group(1))
+        if not values:
+            continue
+        series = metrics.setdefault(f'a2a RTotal · {node}', {})
+        for gpu, value in enumerate(values):
+            entry = _metric_entry('a2a', node, f'GPU {gpu} receive total', float(value))
+            entry['a2a_bw'] = float(value)
+            series[str(gpu)] = entry
+    return metrics
+
+
+def extract_tb_p2p_metrics(out_dict):
+    metrics = {}
+    for node, output in out_dict.items():
+        cpu_match = re.search(r'NUM_CPU_DEVICES\s*=\s*(\d+)', output)
+        cpu_count = int(cpu_match.group(1)) if cpu_match else 0
+        bytes_match = re.search(r'Bytes (?:Per Direction|to transfer:)\s*(\d+)', output, re.I)
+        transfer_bytes = bytes_match.group(1) if bytes_match else '1'
+        direction = None
+        found_rows = False
+        for raw_line in output.splitlines():
+            line = raw_line.strip()
+            if line.startswith('Unidirectional copy'):
+                direction = 'UniDir'
+                continue
+            if line.startswith('Bidirectional copy'):
+                direction = 'BiDir'
+                continue
+            if direction == 'UniDir':
+                match = re.match(r'GPU\s+(\d+)\s+->\s+(.+)$', line)
+            elif direction == 'BiDir':
+                match = re.match(r'GPU\s+(\d+)\s+<->\s+(.+)$', line)
+            else:
+                match = None
+            if not match:
+                continue
+            values = match.group(2).split()[cpu_count:]
+            src_gpu = int(match.group(1))
+            series = metrics.setdefault(f'p2p {direction} GPU {src_gpu} · {node}', {})
+            for dst_gpu, value in enumerate(values):
+                if not re.fullmatch(_TB_NUMBER, value):
+                    continue
+                bw = float(value)
+                entry = _metric_entry('p2p', node, f'{direction} GPU {src_gpu}→{dst_gpu}', bw)
+                entry['p2p_bw'] = bw
+                series[str(dst_gpu)] = entry
+                found_rows = True
+        if found_rows:
+            continue
+        for label, pattern in (
+            ('UniDir', r'Averages\s+\(During\s+UniDir\):\s+(?:[0-9\.]+\s+){3}([0-9\.]+)'),
+            ('BiDir', r'Averages\s+\(During\s+BiDir\):\s+(?:[0-9\.]+\s+){3}([0-9\.]+)'),
+        ):
+            match = re.search(pattern, output, re.I)
+            if not match:
+                continue
+            bw = float(match.group(1))
+            entry = _metric_entry('p2p', node, f'{label} GPU average', bw)
+            entry['p2p_bw'] = bw
+            metrics[f'p2p {label} average · {node}'] = {transfer_bytes: entry}
+    return metrics
+
+
+def extract_tb_a2asweep_metrics(out_dict):
+    metrics = {}
+    for node, output in out_dict.items():
+        blocksize = None
+        columns = []
+        for raw_line in output.splitlines():
+            line = raw_line.strip().strip('│|').strip()
+            match = re.match(r'Blocksize:\s*(\d+)', line, re.I)
+            if match:
+                blocksize = match.group(1)
+                columns = []
+                continue
+            if line.startswith('#CUs\\Unroll'):
+                columns = re.findall(r'(\d+)\((Min|Max)\)', line, re.I)
+                continue
+            if blocksize is None or not columns:
+                continue
+            match = re.fullmatch(rf'(\d+)\s+((?:{_TB_NUMBER}\s*)+)', line)
+            if not match:
+                continue
+            cu_count = match.group(1)
+            values = re.findall(_TB_NUMBER, match.group(2))
+            if len(values) != len(columns):
+                continue
+            for (unroll, result_kind), value in zip(columns, values):
+                bw = float(value)
+                label = f'a2asweep B{blocksize} U{unroll} {result_kind.title()} · {node}'
+                entry = _metric_entry(
+                    'a2asweep',
+                    node,
+                    f'block {blocksize}, unroll {unroll}, {result_kind.lower()}',
+                    bw,
+                )
+                entry['a2asweep_bw'] = bw
+                metrics.setdefault(label, {})[cu_count] = entry
+    return metrics
+
+
+def extract_tb_scaling_metrics(out_dict):
+    metrics = {}
+    for node, output in out_dict.items():
+        devices = []
+        for raw_line in output.splitlines():
+            line = raw_line.strip()
+            if line.startswith('NumCUs '):
+                devices = re.findall(r'(?:CPU|GPU)\d+', line)
+                continue
+            if not devices:
+                continue
+            match = re.fullmatch(rf'(\d+)\s+((?:{_TB_NUMBER}\s*)+)', line)
+            if not match:
+                continue
+            cu_count = match.group(1)
+            values = re.findall(_TB_NUMBER, match.group(2))
+            if len(values) != len(devices):
+                continue
+            for device, value in zip(devices, values):
+                bw = float(value)
+                entry = _metric_entry('scaling', node, f'{device} bandwidth', bw)
+                entry['scaling_bw'] = bw
+                metrics.setdefault(f'scaling {device} · {node}', {})[cu_count] = entry
+    return metrics
+
+
+def extract_tb_schmoo_metrics(out_dict):
+    operations = (
+        'Local Read',
+        'Local Write',
+        'Local Copy',
+        'Remote Read',
+        'Remote Write',
+        'Remote Copy',
+    )
+    metrics = {}
+    for node, output in out_dict.items():
+        in_table = False
+        for raw_line in output.splitlines():
+            line = raw_line.strip().strip('│|').strip()
+            if line.startswith('#CUs'):
+                in_table = True
+                continue
+            if not in_table:
+                continue
+            match = re.fullmatch(rf'(\d+)\s+((?:{_TB_NUMBER}\s*)+)', line)
+            if not match:
+                continue
+            cu_count = match.group(1)
+            values = re.findall(_TB_NUMBER, match.group(2))
+            if len(values) != len(operations):
+                continue
+            for operation, value in zip(operations, values):
+                bw = float(value)
+                entry = _metric_entry('schmoo', node, operation, bw)
+                entry['schmoo_bw'] = bw
+                metrics.setdefault(f'schmoo {operation} · {node}', {})[cu_count] = entry
+    return metrics
+
+
+_TB_METRIC_EXTRACTORS = {
+    'a2a': extract_tb_a2a_metrics,
+    'p2p': extract_tb_p2p_metrics,
+    'a2asweep': extract_tb_a2asweep_metrics,
+    'scaling': extract_tb_scaling_metrics,
+    'schmoo': extract_tb_schmoo_metrics,
+}
+
+
+def record_transferbench_results(cvs_results_dict, variant_config, test_name, out_dict, duration_s):
+    status = 'pass' if not globals.error_list else 'fail'
+    extracted = _TB_METRIC_EXTRACTORS.get(test_name, lambda _outputs: {})(out_dict)
+    for series in extracted.values():
+        for entry in series.values():
+            entry['status'] = status
+            entry['duration_s'] = round(duration_s, 3)
+    if not extracted:
+        for node in out_dict:
+            extracted[f'{test_name} status · {node}'] = {
+                '0': {
+                    'test': test_name,
+                    'node': node,
+                    'metric': 'test status',
+                    'value': status,
+                    'unit': '',
+                    'status': status,
+                    'duration_s': round(duration_s, 3),
+                }
+            }
+    cvs_results_dict.update(extracted)
+    variant_config['duration_seconds'] += duration_s
+
+
+@pytest.fixture(scope='session')
+def cvs_results_dict():
+    return {}
+
+
+@pytest.fixture(scope='session')
+def variant_config(request):
+    selected = []
+    collected_names = {item.name for item in request.session.items}
+    for test_name in _TB_TEST_NAMES:
+        if f'test_transfer_bench_{test_name}' in collected_names:
+            selected.append(test_name)
+    return {
+        'rocm_path': '—',
+        'tests_enabled': selected,
+        'duration_seconds': 0.0,
+    }
 
 
 def _tb_output_excerpt(out, tail=6000):
@@ -379,93 +613,179 @@ def parse_tb_schmoo_bw(out_dict, exp_dict):
 def test_transfer_bench_a2a(
     orch,
     config_dict,
+    cvs_results_dict,
+    variant_config,
 ):
     globals.error_list = []
     log.info('Testcase Run Transferbench a2a')
     preset = config_dict.get('a2a_preset') or 'a2a'
-    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 5))
+    started = time.monotonic()
+    out_dict = run_transferbench(
+        orch,
+        config_dict,
+        preset,
+        timeout=(60 * 5),
+        report_context=variant_config,
+    )
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     parse_tb_a2a_bw(out_dict, config_dict['results'])
     scan_test_results(out_dict)
+    record_transferbench_results(
+        cvs_results_dict,
+        variant_config,
+        'a2a',
+        out_dict,
+        time.monotonic() - started,
+    )
     update_test_result()
 
 
 def test_transfer_bench_p2p(
     orch,
     config_dict,
+    cvs_results_dict,
+    variant_config,
 ):
     globals.error_list = []
     log.info('Testcase Run Transferbench p2p')
     preset = config_dict.get('p2p_preset') or 'p2p'
-    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 5))
+    started = time.monotonic()
+    out_dict = run_transferbench(
+        orch,
+        config_dict,
+        preset,
+        timeout=(60 * 5),
+        report_context=variant_config,
+    )
     print_test_output(log, out_dict)
     parse_tb_p2p_bw(out_dict, config_dict['results'])
     scan_test_results(out_dict)
+    record_transferbench_results(
+        cvs_results_dict,
+        variant_config,
+        'p2p',
+        out_dict,
+        time.monotonic() - started,
+    )
     update_test_result()
 
 
 def test_transfer_bench_healthcheck(
     orch,
     config_dict,
+    cvs_results_dict,
+    variant_config,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench healthcheck')
     preset = config_dict.get('healthcheck_preset') or 'healthcheck'
-    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 3))
+    started = time.monotonic()
+    out_dict = run_transferbench(
+        orch,
+        config_dict,
+        preset,
+        timeout=(60 * 3),
+        report_context=variant_config,
+    )
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
+    record_transferbench_results(
+        cvs_results_dict,
+        variant_config,
+        'healthcheck',
+        out_dict,
+        time.monotonic() - started,
+    )
     update_test_result()
 
 
 def test_transfer_bench_a2asweep(
     orch,
     config_dict,
+    cvs_results_dict,
+    variant_config,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench a2asweep')
     preset = config_dict.get('a2asweep_preset') or 'a2asweep'
-    out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 10))
+    started = time.monotonic()
+    out_dict = run_transferbench(
+        orch,
+        config_dict,
+        preset,
+        timeout=(60 * 10),
+        report_context=variant_config,
+    )
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
+    record_transferbench_results(
+        cvs_results_dict,
+        variant_config,
+        'a2asweep',
+        out_dict,
+        time.monotonic() - started,
+    )
     update_test_result()
 
 
 def test_transfer_bench_scaling(
     orch,
     config_dict,
+    cvs_results_dict,
+    variant_config,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench scaling')
     preset = config_dict.get('scaling_preset') or 'scaling'
+    started = time.monotonic()
     out_dict = run_transferbench(
         orch,
         config_dict,
         preset,
         timeout=(60 * 10),
         extra_env={'GFX_TEMPORAL': '3', 'GFX_UNROLL': '32'},
+        report_context=variant_config,
     )
     print_test_output(log, out_dict)
     parse_tb_scaling_bw(out_dict, config_dict['results'])
     scan_test_results(out_dict)
+    record_transferbench_results(
+        cvs_results_dict,
+        variant_config,
+        'scaling',
+        out_dict,
+        time.monotonic() - started,
+    )
     update_test_result()
 
 
 def test_transfer_bench_schmoo(
     orch,
     config_dict,
+    cvs_results_dict,
+    variant_config,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench schmoo')
     preset = config_dict.get('schmoo_preset') or 'schmoo'
+    started = time.monotonic()
     out_dict = run_transferbench(
         orch,
         config_dict,
         preset,
         timeout=(60 * 5),
         extra_env={'GFX_UNROLL': '32', 'SWEEP_MIN': '32'},
+        report_context=variant_config,
     )
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     parse_tb_schmoo_bw(out_dict, config_dict['results'])
+    record_transferbench_results(
+        cvs_results_dict,
+        variant_config,
+        'schmoo',
+        out_dict,
+        time.monotonic() - started,
+    )
     update_test_result()
