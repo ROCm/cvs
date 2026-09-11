@@ -81,7 +81,11 @@ class ProfileConfigResolver:
     def from_profile_dict(cls, profile: dict[str, Any]) -> InferenceReportConfig:
         """Materialize ``InferenceReportConfig`` from a JSON deck profile."""
         builder = profile.get("dataset_builder", "sweep")
-        if builder in ("series", "matrix"):
+        hooks = profile.get("hooks") or {}
+        if builder != "sweep":
+            run_card_builder = None
+            if hooks.get("run_card_display"):
+                run_card_builder = cls.import_callable(hooks["run_card_display"])
             return make_inference_report_config(
                 suite_id=profile.get("suite_id") or profile.get("profile_id", "suite"),
                 report_basename=profile.get("report_basename") or f"{profile.get('suite_id', 'suite')}_run_deck",
@@ -93,9 +97,9 @@ class ProfileConfigResolver:
                 metric_units={"bus_bw": "GB/s", "alg_bw": "GB/s"},
                 tier_metric_specs=lambda _c, _t: {},
                 interactive_viewer=bool(profile.get("interactive_viewer", False)),
+                run_card_display_builder=run_card_builder,
             )
 
-        hooks = profile.get("hooks") or {}
         sweep = profile.get("sweep") or {}
 
         tier_metric_specs = (
