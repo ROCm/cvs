@@ -154,6 +154,7 @@ class TestTransferBenchReportMetrics(unittest.TestCase):
 
         self.assertEqual(a2a['a2a RTotal · nodeA']['0']['a2a_bw'], 320.0)
         self.assertEqual(p2p['p2p UniDir GPU 0 · nodeA']['1']['p2p_bw'], 48.0)
+        self.assertNotIn('0', p2p['p2p UniDir GPU 0 · nodeA'])
         self.assertEqual(sweep['a2asweep B256 U2 Min · nodeA']['8']['a2asweep_bw'], 314.99)
         self.assertEqual(scaling['scaling GPU00 · nodeA']['32']['scaling_bw'], 493.17)
         self.assertEqual(schmoo['schmoo Local Read · nodeA']['32']['schmoo_bw'], 1700.0)

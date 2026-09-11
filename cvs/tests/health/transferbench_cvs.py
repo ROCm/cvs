@@ -218,7 +218,7 @@ def extract_tb_p2p_metrics(out_dict):
             src_gpu = int(match.group(1))
             series = metrics.setdefault(f'p2p {direction} GPU {src_gpu} · {node}', {})
             for dst_gpu, value in enumerate(values):
-                if not re.fullmatch(_TB_NUMBER, value):
+                if dst_gpu == src_gpu or not re.fullmatch(_TB_NUMBER, value):
                     continue
                 bw = float(value)
                 entry = _metric_entry('p2p', node, f'{direction} GPU {src_gpu}→{dst_gpu}', bw)
