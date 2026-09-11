@@ -70,6 +70,37 @@ class TestUdsLaunchCoordinator(unittest.IsolatedAsyncioTestCase):
                 writer.close()
                 await manager.stop()
 
+    async def test_launch_fails_immediately_when_a_ready_worker_disconnects(self):
+        with tempfile.TemporaryDirectory() as root:
+            socket_path = Path(root) / "agent.sock"
+            manager = UdsLaunchCoordinator(global_rank=0, expected_workers=1, socket_path=socket_path)
+            await manager.start()
+            _, writer = await asyncio.open_unix_connection(socket_path)
+            writer.write(b'{"kind": "register", "rank": 1}\n')
+            await writer.drain()
+            try:
+                await manager.wait_until_ready(timeout=2)
+                writer.close()
+
+                async def dropped():
+                    while manager._workers:
+                        await asyncio.sleep(0.01)
+
+                await asyncio.wait_for(dropped(), timeout=2)
+                request = messages.LaunchRequest(
+                    argv=["true"],
+                    env={},
+                    cwd=Path(root),
+                    timeout=5,
+                    launch_id="four",
+                    out_path=Path(root) / "output",
+                    world_size=2,
+                )
+                with self.assertRaisesRegex(RuntimeError, r"local UDS workers 0/1"):
+                    await manager.launch(request)
+            finally:
+                await manager.stop()
+
     async def test_start_skips_uds_when_no_local_workers(self):
         with tempfile.TemporaryDirectory() as root:
             socket_path = Path(root) / "agent.sock"

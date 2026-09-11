@@ -7,8 +7,12 @@ import socket
 import time
 from pathlib import Path
 
+from cvs.lib import globals
+
 from . import messages
 from .launch import ActiveLaunches, run_launch_child
+
+log = globals.log
 
 LOCAL_WORKER_STARTUP_TIMEOUT_SECONDS = 60
 # How long a launch waits for every local rank to report that its child exists. MPI ranks then
@@ -49,6 +53,7 @@ class UdsLaunchCoordinator:
         self.socket_path = None if expected_workers == 0 else Path(socket_path) if socket_path else launch_socket_path()
         self._workers = {}
         self._ready = asyncio.Event()
+        self._had_full_worker_set = expected_workers == 0
         self._server = None
         self.active = ActiveLaunches()
         if expected_workers == 0:
@@ -103,6 +108,7 @@ class UdsLaunchCoordinator:
 
     async def _accept_worker(self, reader, writer):
         """Handle one UDS worker: register, queue LaunchRankResult lines, drop on disconnect."""
+        connection = None
         try:
             raw = await asyncio.wait_for(reader.readline(), timeout=LOCAL_WORKER_STARTUP_TIMEOUT_SECONDS)
             registration = json.loads(raw)
@@ -117,15 +123,20 @@ class UdsLaunchCoordinator:
             self._workers[rank] = connection
             if len(self._workers) == self.expected_workers:
                 self._ready.set()
+                self._had_full_worker_set = True
             while raw := await reader.readline():
                 if json.loads(raw).get("kind") == "spawned":
                     connection.spawned.set()
                     continue
                 await connection.responses.put(messages.parse_message(messages.LaunchRankResult, raw.decode()))
+        except (ConnectionResetError, BrokenPipeError, ConnectionError, asyncio.TimeoutError) as exc:
+            rank = connection.rank if connection is not None else None
+            log.debug("UDS worker disconnected (rank=%s): %s", rank, exc)
         except Exception:
-            pass
+            rank = connection.rank if connection is not None else None
+            log.exception("UDS worker connection failed (rank=%s)", rank)
         finally:
-            if "connection" in locals():
+            if connection is not None:
                 connection.closed.set()
                 await connection.responses.put(None)
                 if self._workers.get(connection.rank) is connection:
@@ -171,9 +182,18 @@ class UdsLaunchCoordinator:
             acked.cancel()
             await asyncio.gather(acked, return_exceptions=True)
 
+    def _require_local_workers(self):
+        """Fail immediately when a worker that had registered is no longer connected."""
+        have = len(self._workers)
+        if have != self.expected_workers:
+            raise RuntimeError(f"local UDS workers {have}/{self.expected_workers}")
+
     async def launch(self, request):
         """Run request.argv as this rank's child and on every connected UDS worker."""
-        await self.wait_until_ready()
+        if self._had_full_worker_set:
+            self._require_local_workers()
+        else:
+            await self.wait_until_ready()
         own_spawned = asyncio.Event()
         connections = list(self._workers.values())
         running = asyncio.gather(
