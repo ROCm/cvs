@@ -85,7 +85,10 @@ class SweepChartRenderer:
         x_labels = []
         for conc, val in points:
             h = self._bar_height_pct(val, min_val, max_val)
-            xlabel = x_label.format(x=conc)
+            try:
+                xlabel = x_label.format(x=conc)
+            except (KeyError, IndexError, ValueError):
+                xlabel = str(conc)
             tip = html.escape(f"{xlabel}: {fmt_num(val)} {unit}".strip())
             bars.append(
                 f"<div class='chart-col'>"
@@ -120,9 +123,12 @@ class SweepChartRenderer:
                 )
                 if not entry:
                     continue
+                points = entry.get("points") or []
+                if len(points) < 2:
+                    continue
                 part = self.render_bar_chart(
                     chart["title"],
-                    entry["points"],
+                    points,
                     chart["unit"],
                     accent=self._ACCENTS[idx % 3],
                 )

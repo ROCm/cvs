@@ -53,20 +53,43 @@ def _gate_matrix(records):
     return [grouped[k] for k in sorted(grouped)]
 
 
+def _point_label(rec):
+    node = rec.get("node") or ""
+    gpu = rec.get("gpu") or ""
+    dst = rec.get("dst")
+    core = f"{gpu}->{dst}" if dst else gpu
+    if node and core:
+        return f"{node}/{core}"
+    return node or core or ""
+
+
+def _series_key(rec, metric):
+    if metric == "babel_mbytes_s":
+        return rec.get("kernel") or rec.get("action") or metric
+    return rec.get("action") or metric
+
+
 def _series_for(records, metric):
-    by_action = {}
+    by_key = {}
     for rec in records:
         if rec.get("metric") != metric or rec.get("value") is None:
             continue
-        action = rec.get("action") or metric
-        by_action.setdefault(action, []).append(rec)
+        by_key.setdefault(_series_key(rec, metric), []).append(rec)
     out = {}
-    for action, recs in by_action.items():
-        recs = sorted(recs, key=lambda r: (str(r.get("node")), str(r.get("gpu"))))
-        points = [(r.get("gpu") or i, r["value"]) for i, r in enumerate(recs)]
+    for key, recs in by_key.items():
+        recs = sorted(recs, key=lambda r: (str(r.get("node")), str(r.get("gpu")), str(r.get("dst") or "")))
+        points = [(_point_label(r) or i, r["value"]) for i, r in enumerate(recs)]
         if points:
-            out[action] = [{"label": action, "points": points}]
+            out[key] = [{"label": key, "points": points}]
     return out
+
+
+def _overall_status(records):
+    if any(rec.get("passed") is False for rec in records):
+        return "fail"
+    if any(rec.get("passed") is True for rec in records):
+        return "pass"
+    return "record"
 
 
 def _table(records):
@@ -107,5 +130,6 @@ def build_rvs_datasets(sources, profile):
         "charts": charts,
         "gate_matrix": _gate_matrix(records),
         "results_table": _table(records),
+        "overall_status": _overall_status(records),
         "metric_tier_order": tuple((profile or {}).get("tier_order") or ("result",)),
     }

@@ -81,16 +81,29 @@ class TestParseRvsOutput(unittest.TestCase):
         self.assertEqual(len(status), 1)
         self.assertTrue(status[0]["passed"])
 
-    def test_babel_triad_row_uses_avg_column(self):
-        line = "42583 Triad 6031416.066 6031416.066 5879289.313 5950804.403"
+    def test_babel_row_uses_mbytes_sec_column(self):
+        line = "42583 Triad 4011893.551 0.00020 0.00035 0.00028"
         records = parse_rvs_output(line, "node1", module="babel")
         self.assertEqual(len(records), 1)
         rec = records[0]
         self.assertEqual(rec["gpu"], "42583")
         self.assertEqual(rec["action"], "Triad")
+        self.assertEqual(rec["kernel"], "Triad")
         self.assertEqual(rec["metric"], "babel_mbytes_s")
-        self.assertAlmostEqual(rec["value"], 5950804.403)
-        self.assertEqual(rec["unit"], "MB/s")
+
+    def test_babel_action_name_does_not_collapse_kernels(self):
+        text = "\n".join(
+            [
+                "Action name :babel-1",
+                "42583 Read 100.0 0.001 0.002 0.0015",
+                "42583 Triad 4011893.551 0.00020 0.00035 0.00028",
+            ]
+        )
+        records = parse_rvs_output(text, "node1", module="babel")
+        self.assertEqual([r["kernel"] for r in records], ["Read", "Triad"])
+        self.assertEqual({r["action"] for r in records}, {"babel-1"})
+        self.assertAlmostEqual(records[0]["value"], 100.0)
+        self.assertAlmostEqual(records[1]["value"], 4011893.551)
 
     def test_gpu_enumeration_no_supported_gpus(self):
         records = parse_rvs_output("No supported GPUs available", "node1", module="gpu_enumeration")
@@ -124,7 +137,24 @@ class TestAppendRvsRecords(unittest.TestCase):
         self.assertIsNone(recs[0]["passed"])
         self.assertEqual(store["records"], recs)
 
-    def test_append_failed_sets_passed_false_on_unset_records(self):
+    def test_append_failed_does_not_override_explicit_verdicts(self):
+        text = "\n".join(
+            [
+                "Module name :gst",
+                "[gst-Tflops] [GPU:: 11806] GFLOPS 100.0 Target GFLOPS: 5000.0 met: FALSE",
+                "[gst-Tflops] [GPU:: 42583] GFLOPS 6478.0 Target GFLOPS: 5000.0 met: TRUE",
+                "Module name :iet",
+                "[iet_stress] [GPU:: 42583] pass: TRUE",
+            ]
+        )
+        store = {}
+        recs = append_rvs_records(store, text, "node1", module="level_config", failed=True)
+        by_key = {(r["module"], r["gpu"], r["metric"]): r for r in recs}
+        self.assertFalse(by_key[("gst", "11806", "gflops")]["passed"])
+        self.assertTrue(by_key[("gst", "42583", "gflops")]["passed"])
+        self.assertTrue(by_key[("iet", "42583", "status")]["passed"])
+
+    def test_append_failed_leaves_unset_records_unmarked(self):
         line = (
             "[pcie_h2d_bandwidth] pcie-bandwidth [ 1/16] [CPU:: 0] "
             "[GPU:: 2 - 42583 - 0000:05:00.0] h2d::true d2h::false "
@@ -133,7 +163,7 @@ class TestAppendRvsRecords(unittest.TestCase):
         store = {}
         recs = append_rvs_records(store, line, "node1", module="pebb", failed=True)
         self.assertEqual(len(recs), 1)
-        self.assertFalse(recs[0]["passed"])
+        self.assertIsNone(recs[0]["passed"])
 
     def test_append_success_sets_passed_true_on_unset_records(self):
         line = (
