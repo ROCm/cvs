@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import json
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -126,6 +127,45 @@ def train_res_dict():
 
 
 @pytest.fixture(scope="module")
+def rundeck_variant(request):
+    config_file = request.config.getoption("config_file")
+    with open(config_file) as fp:
+        raw = json.load(fp)
+    if "config" not in raw:
+        return request.getfixturevalue("variant_config")
+
+    stem = getattr(request.config, "_suite_name", "")
+    distributed = stem.endswith("_distributed")
+    model_name = "llama3_1_70b" if "70b" in stem else "llama3_1_8b"
+    training_dict = request.getfixturevalue("training_dict")
+    model_params = request.getfixturevalue("model_params_dict")
+    gpu_type = request.getfixturevalue("gpu_type")
+    topology = "multi_node" if distributed else "single_node"
+    params = dict(model_params[topology][model_name][gpu_type])
+    cell_id = f"MBS={params['micro_batch_size']},GBS={params['batch_size']},PRECISION={params['precision']}"
+    threshold_specs = {
+        f"training.{metric}": {"kind": "min", "value": value}
+        for metric, value in (params.get("result_dict") or {}).items()
+        if not metric.startswith("_")
+    }
+    params["model_name"] = model_name
+    params["nnodes"] = str(training_dict.get("nnodes") or 1)
+    combo = SimpleNamespace(
+        micro_batch_size=str(params["micro_batch_size"]),
+        global_batch_size=str(params["batch_size"]),
+        precision=str(params["precision"]),
+    )
+    return SimpleNamespace(
+        train_params=params,
+        gpu_arch=str(gpu_type).upper(),
+        enforce_thresholds=True,
+        thresholds={cell_id: threshold_specs},
+        sweep=SimpleNamespace(combinations={cell_id: combo}, runs=[cell_id]),
+        container=SimpleNamespace(env={"NNODES": params["nnodes"]}),
+    )
+
+
+@pytest.fixture(scope="module")
 def orch(cluster_dict, variant_config, lifecycle):
     """Construct a ContainerOrchestrator and own a final teardown safety net.
 
@@ -139,6 +179,7 @@ def orch(cluster_dict, variant_config, lifecycle):
     env = dict(container_block.get("env") or {})
     node_dict = cluster_dict.get("node_dict") or {}
     env["NNODES"] = str(len(node_dict))
+    variant_config.container.env["NNODES"] = env["NNODES"]
     container_block["env"] = env
     testsuite_config = {"orchestrator": "container", "container": container_block}
     cfg = OrchestratorConfig.from_configs(cluster_dict, testsuite_config)
