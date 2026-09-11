@@ -94,10 +94,7 @@ def aorta_run_card_display(variant, provenance):
     gpus_per_node = variant.get("gpus_per_node")
     total_gpus = variant.get("total_gpus")
     cluster = f"{nodes} nodes · {gpus_per_node} GPUs/node · {total_gpus} GPUs"
-    channels = (
-        f"{variant.get('nccl_channels', '—')} NCCL · "
-        f"{variant.get('compute_channels', '—')} compute"
-    )
+    channels = f"{variant.get('nccl_channels', '—')} NCCL · {variant.get('compute_channels', '—')} compute"
     artifacts = variant.get("artifacts") or []
     rows = [
         ("Status", variant.get("status") or "—", False),
