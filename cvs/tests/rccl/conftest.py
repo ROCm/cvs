@@ -10,6 +10,7 @@ import json
 import pytest
 
 from cvs.lib import globals
+from cvs.lib.report.profiles.hooks.rccl_session import variant_from_config
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders, resolve_test_config_placeholders
 
 log = globals.log
@@ -41,6 +42,16 @@ def config_dict(config_file, cluster_dict):
     config_dict = resolve_test_config_placeholders(config_dict_t['rccl'], cluster_dict)
     log.info("%s", config_dict)
     return config_dict
+
+
+@pytest.fixture(scope="module")
+def cvs_results_dict():
+    return {}
+
+
+@pytest.fixture(scope="module")
+def variant_config(config_dict, cluster_dict):
+    return variant_from_config(config_dict, cluster_dict)
 
 
 @pytest.fixture(scope="module")
