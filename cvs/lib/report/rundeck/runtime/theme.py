@@ -101,6 +101,14 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 .bar-track { height: 4px; background: var(--border); border-radius: 2px; margin-top: 0.35rem; overflow: hidden; }
 .bar-fill { height: 100%; border-radius: 2px; }
 .bar-pass { background: var(--pass); } .bar-fail { background: var(--fail); } .bar-record { background: var(--record); }
+.results-wrap { overflow-x: auto; }
+.drift-summary { color: var(--muted); font-size: 0.8rem; margin: 0 0 0.75rem; }
+.drift-matrix td { white-space: nowrap; }
+.drift-cell-mismatch, .drift-status-mismatch {
+  color: var(--fail); background: rgba(255, 92, 106, 0.12);
+}
+.drift-status-mismatch, .drift-status-match { font-weight: 600; }
+.drift-status-match { color: var(--pass); }
 .target { font-size: 0.7rem; color: var(--muted); margin-left: 0.25rem; }
 .margin { font-size: 0.7rem; color: var(--pass); display: block; margin-top: 0.15rem; }
 .margin-fail { color: var(--fail); }
