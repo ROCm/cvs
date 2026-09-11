@@ -299,7 +299,7 @@ def create_app(
     app.state.process_registry = ProcessRegistry()
     app.state.exec_busy = False
     app.state.launch_manager = launch_manager
-    app.state.launch_busy = False
+    app.state.launch_lock = asyncio.Lock()
 
     @app.post(messages.REGISTER_PATH)
     async def register_agent(request: messages.RegisterRequest, http_request: Request) -> messages.RegisterResponse:
@@ -333,15 +333,14 @@ def create_app(
         manager = http_request.app.state.launch_manager
         if manager is None:
             raise HTTPException(status.HTTP_409_CONFLICT, detail="this agent has no scheduler launch slots")
-        if http_request.app.state.launch_busy:
+        lock = http_request.app.state.launch_lock
+        if lock.locked():
             raise HTTPException(status.HTTP_409_CONFLICT, detail="a launch is already in progress on this agent")
-        http_request.app.state.launch_busy = True
-        try:
-            return await manager.launch(request)
-        except (TimeoutError, RuntimeError) as exc:
-            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
-        finally:
-            http_request.app.state.launch_busy = False
+        async with lock:
+            try:
+                return await manager.launch(request)
+            except (TimeoutError, RuntimeError) as exc:
+                raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
     @app.post(messages.LAUNCH_CANCEL_PATH)
     async def cancel_launch(http_request: Request) -> messages.ShutdownResponse:

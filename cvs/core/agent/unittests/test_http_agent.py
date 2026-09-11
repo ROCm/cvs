@@ -504,6 +504,74 @@ class TestLaunch(HttpAgentTestBase):
             self.assertEqual(result.stdout_path.read_text(), "launched\n")
             self.assertEqual(health.status_code, 200)
 
+    def test_concurrent_launch_is_rejected_with_409_and_lock_releases_after(self):
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            agent_dir = root_path / "agent"
+            agent_dir.mkdir()
+            (agent_dir / messages.AUTH_TOKEN_FILENAME).write_text(self.TOKEN + "\n")
+            manager = UdsLaunchCoordinator(global_rank=0, expected_workers=0, socket_path=root_path / "launch.sock")
+            app = create_app(
+                agent_dir,
+                world_rank=0,
+                world_size=1,
+                own_hostname="localhost",
+                own_port=9000,
+                launch_manager=manager,
+            )
+            marker_path = root_path / "started"
+            first = messages.LaunchRequest(
+                argv=["bash", "-c", f"touch {marker_path}; sleep 1"],
+                env={},
+                cwd=root_path,
+                timeout=5,
+                launch_id="launch-slow",
+                out_path=root_path / "output-slow",
+                world_size=1,
+            )
+            second = messages.LaunchRequest(
+                argv=["true"],
+                env={},
+                cwd=root_path,
+                timeout=5,
+                launch_id="launch-second",
+                out_path=root_path / "output-second",
+                world_size=1,
+            )
+            third = messages.LaunchRequest(
+                argv=["true"],
+                env={},
+                cwd=root_path,
+                timeout=5,
+                launch_id="launch-third",
+                out_path=root_path / "output-third",
+                world_size=1,
+            )
+            responses = {}
+            with TestClient(app) as client:
+
+                def run_first():
+                    responses["first"] = client.post(
+                        messages.LAUNCH_PATH, content=first.model_dump_json(), headers=self._auth_headers()
+                    )
+
+                first_thread = threading.Thread(target=run_first)
+                first_thread.start()
+                deadline = time.monotonic() + 5
+                while not marker_path.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(marker_path.exists(), "first launch never started")
+                second_response = client.post(
+                    messages.LAUNCH_PATH, content=second.model_dump_json(), headers=self._auth_headers()
+                )
+                self.assertEqual(second_response.status_code, 409)
+                first_thread.join(timeout=5)
+                self.assertEqual(responses["first"].status_code, 200)
+                third_response = client.post(
+                    messages.LAUNCH_PATH, content=third.model_dump_json(), headers=self._auth_headers()
+                )
+                self.assertEqual(third_response.status_code, 200)
+
 
 class TestShutdown(HttpAgentTestBase):
     def test_shutdown_with_no_running_processes_signals_self_and_returns_ok(self):
