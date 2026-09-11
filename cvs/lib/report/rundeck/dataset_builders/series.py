@@ -35,6 +35,32 @@ def _graph_to_series(graph_dict: dict, *, y_field: str = "bus_bw") -> dict[str, 
     return series_by_name
 
 
+def _table_columns(series_cfg):
+    columns = []
+    for item in series_cfg.get("table_columns") or []:
+        if isinstance(item, dict) and item.get("label") and item.get("field"):
+            columns.append((item["label"], item["field"]))
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            columns.append((item[0], item[1]))
+    if columns:
+        return columns
+    return [
+        ("Collective", "$series"),
+        ("Message size", "$x"),
+        ("Bus BW (GB/s)", "bus_bw"),
+        ("Alg BW (GB/s)", "alg_bw"),
+        ("Time (us)", "time"),
+    ]
+
+
+def _table_value(field, series_name, x_value, entry):
+    if field == "$series":
+        return series_name
+    if field == "$x":
+        return x_value
+    return entry.get(field, "—")
+
+
 @register_dataset_builder("series")
 def build_series_datasets(sources: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
     results = sources.get("results") or sources.get("cvs_results_dict") or {}
@@ -48,7 +74,8 @@ def build_series_datasets(sources: dict[str, Any], profile: dict[str, Any]) -> d
         charts[y_field] = _graph_to_series(results, y_field=y_field)
 
     table_rows = []
-    headers = ["Collective", "Message size", "Bus BW (GB/s)", "Alg BW (GB/s)", "Time (us)"]
+    table_columns = _table_columns(series_cfg)
+    headers = [label for label, _field in table_columns]
     for collective, sizes in sorted((results or {}).items()):
         if not isinstance(sizes, dict):
             continue
@@ -56,15 +83,7 @@ def build_series_datasets(sources: dict[str, Any], profile: dict[str, Any]) -> d
             entry = sizes[size_key]
             if not isinstance(entry, dict):
                 continue
-            table_rows.append(
-                [
-                    collective,
-                    size_key,
-                    entry.get("bus_bw", "—"),
-                    entry.get("alg_bw", "—"),
-                    entry.get("time", "—"),
-                ]
-            )
+            table_rows.append([_table_value(field, collective, size_key, entry) for _label, field in table_columns])
 
     return {
         "charts": charts,
