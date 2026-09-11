@@ -32,6 +32,7 @@ from cvs.lib.inference.xdit.pytorch_xdit_model_verify import (
     verify_required_checks_on_nodes,
 )
 from cvs.lib.inference.xdit.pytorch_xdit_flux import FluxOutputParser, log_results_summary
+from cvs.lib.inference.xdit.pytorch_xdit_rundeck import build_xdit_result_record
 from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
     launch_flux_benchmark,
     store_resolved_flux_model_type_from_index,
@@ -549,7 +550,7 @@ def test_run_flux1_benchmark(s_phdl, inference_dict, benchmark_params_dict, hf_t
     update_test_result()
 
 
-def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dict, gpu_type):
+def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dict, gpu_type, xdit_results):
     """
     Parse benchmark outputs and validate against thresholds.
 
@@ -644,6 +645,20 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
         passed, message = parser.validate_threshold(result, expected_results, gpu_type)
         log.info(f"{label}: {message}")
 
+        xdit_results.append(
+            build_xdit_result_record(
+                workload="FLUX text-to-image",
+                label=label,
+                inference_config=inference_dict,
+                benchmark_params=flux_params,
+                gpu=gpu_type,
+                nnodes=node_count,
+                sample_times=result.pipe_times,
+                average_time=result.avg_pipe_time_s,
+                sample_kind="repetition",
+                passed=passed,
+            )
+        )
         results_summary.append({'label': label, 'avg_pipe_time_s': result.avg_pipe_time_s, 'passed': passed})
 
         if not passed:

@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "profile_id": "xdit_rundeck",
+  "suite_id": "xdit",
+  "report_basename": "xdit_run_deck",
+  "title": "xDiT Run Deck",
+  "subtitle": "PyTorch xDiT · diffusion inference performance summary",
+  "footer": "CVS xDiT · diffusion timings and throughput",
+  "link_name": "xDiT Run Deck",
+  "dataset_builder": "series",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "xdit_results",
+    "variant": "xdit_results"
+  },
+  "hooks": {
+    "run_card_display": "cvs.lib.inference.xdit.pytorch_xdit_rundeck:xdit_run_card_display"
+  },
+  "series": {
+    "record_layout": true,
+    "charts": [
+      {
+        "id": "latency_by_resolution",
+        "x_field": "resolution_mp",
+        "y_field": "average_time_s",
+        "label_field": "workload"
+      },
+      {
+        "id": "throughput_by_resolution",
+        "x_field": "resolution_mp",
+        "y_field": "output_throughput_per_s",
+        "label_field": "workload"
+      },
+      {
+        "id": "sample_time",
+        "points_field": "sample_times_s",
+        "label_field": "label",
+        "x_start": 1
+      }
+    ],
+    "table_columns": [
+      ["Workload", "workload"],
+      ["Run", "label"],
+      ["Model", "model_name"],
+      ["GPU", "gpu"],
+      ["Nodes", "nnodes"],
+      ["Resolution", "resolution"],
+      ["Frames", "frame_count"],
+      ["Inference steps", "inference_steps"],
+      ["Samples", "sample_count"],
+      ["Average time (s)", "average_time_s"],
+      ["Output rate (/s)", "output_throughput_per_s"],
+      ["Status", "status"]
+    ]
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {
+      "type": "line_chart",
+      "id": "latency-resolution",
+      "title": "Latency vs resolution",
+      "bind": "datasets.series",
+      "series": {"y_field": "latency_by_resolution", "unit": "s/output", "x_label": "Resolution (MP)"}
+    },
+    {
+      "type": "line_chart",
+      "id": "throughput-resolution",
+      "title": "Throughput vs resolution",
+      "bind": "datasets.series",
+      "series": {"y_field": "throughput_by_resolution", "unit": "outputs/s", "x_label": "Resolution (MP)"}
+    },
+    {
+      "type": "line_chart",
+      "id": "sample-time",
+      "title": "Step and repetition time",
+      "bind": "datasets.series",
+      "series": {"y_field": "sample_time", "unit": "s", "x_label": "Sample"}
+    },
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}
