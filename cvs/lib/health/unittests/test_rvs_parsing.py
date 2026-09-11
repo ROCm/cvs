@@ -99,7 +99,6 @@ class TestParseRvsOutput(unittest.TestCase):
         self.assertEqual(records[0]["metric"], "status")
         self.assertFalse(records[0]["passed"])
 
-
     def test_iet_power_keeps_iet_module_after_later_module_line(self):
         text = "\n".join(
             [
