@@ -276,6 +276,7 @@ def smoke(orch, variant_config, hf_token, lifecycle, request):
     smoke_sweep = SimpleNamespace(
         name="SMOKE",
         maxtext_overrides={
+            "steps": steps,
             "per_device_batch_size": batch,
             "max_target_length": seqlen,
             "dtype": "bfloat16",
@@ -439,6 +440,7 @@ def checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecyc
         v.training.enable_checkpointing = enable_ckpt
         ov = dict(base_overrides)
         ov.update(extra_overrides or {})
+        ov["steps"] = total_steps
         sweep = SimpleNamespace(name="CKPT", maxtext_overrides=ov)
         return MaxTextTrainingJob(orch, v, hf_token, sweep=sweep)
 
