@@ -519,6 +519,30 @@ class WriteMaxtextYamlTests(unittest.TestCase):
         self.assertIn("steps: 7", written)
         self.assertNotIn("steps: 3", written)
 
+    def test_smoke_steps_override_wins_over_base_maxtext_config(self):
+        # Smoke passes training.smoke.steps via maxtext_overrides (not training.steps
+        # alone); base maxtext_config.steps must not leak into the run.
+        base, _ = _make_job()
+        base.variant.training.maxtext_config["steps"] = 30
+        sweep = SimpleNamespace(
+            name="SMOKE",
+            maxtext_overrides={
+                "steps": 5,
+                "per_device_batch_size": 1,
+                "max_target_length": 2048,
+                "dtype": "bfloat16",
+                "weight_dtype": "bfloat16",
+                "quantization": "",
+            },
+        )
+        job = MaxTextTrainingJob(base.orch, base.variant, hf_token="dummy", sweep=sweep)
+        self.assertEqual(job.steps, 5)
+        self.assertEqual(job._poll_count, 50)
+        job._write_maxtext_yaml()
+        written = " ".join(str(c.args[0]) for c in job.orch.exec.call_args_list)
+        self.assertIn("steps: 5", written)
+        self.assertNotIn("steps: 30", written)
+
     def test_empty_string_rendered_as_quoted_not_bare(self):
         # An empty-string maxtext param (e.g. profiler) must render as 'key: ""',
         # never bare 'key:' (which YAML reads as null and breaks MaxText enums).
