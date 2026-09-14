@@ -1,0 +1,5 @@
+  - name: {name}
+    address: {address}
+    port: "{port}"
+    labels:
+      model: {model}

@@ -1,0 +1,86 @@
+{
+  "_comment": "Independent vLLM replicas behind an llm-d EPP and Envoy gateway. Replace every <changeme> value.",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "<changeme>",
+    "log_dir": "{shared_fs}/LOGS/llm-d/vllm",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "container": {
+    "image": "docker.io/vllm/vllm-openai-rocm:v0.26.0",
+    "env": {},
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128g",
+        "volumes": [
+          "{paths.models_dir}:{paths.models_dir}:ro"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ],
+        "group_add": [
+          "video"
+        ],
+        "cap_add": [
+          "SYS_PTRACE"
+        ],
+        "security_opt": [
+          "seccomp=unconfined"
+        ]
+      }
+    }
+  },
+  "server_params": {
+    "backend": "vllm",
+    "model": "{paths.models_dir}",
+    "served_model_name": "Llama-3.3-70B-FP8",
+    "host": "0.0.0.0",
+    "tensor_parallel_size": 8,
+    "hip_visible_devices": "0,1,2,3,4,5,6,7",
+    "add_flags": [
+      "--disable-access-log-for-endpoints=/health,/metrics,/v1/models"
+    ],
+    "server_poll_iterations": 60,
+    "server_poll_wait_s": 30
+  },
+  "gateway": {
+    "node": "<changeme>",
+    "listen_port": 8081,
+    "admin_port": 19000,
+    "epp_grpc_port": 9002,
+    "epp_grpc_health_port": 9003,
+    "epp_metrics_port": 9090,
+    "config_dir": "/etc/epp",
+    "envoy_config_dir": "/etc/envoy",
+    "envoy_image": "docker.io/envoyproxy/envoy:distroless-v1.33.2",
+    "epp_image": "ghcr.io/llm-d/llm-d-router-endpoint-picker",
+    "epp_version": "v0.10.0",
+    "epp_container_name": "epp",
+    "envoy_container_name": "envoy",
+    "concurrency": 8,
+    "log_level": "warn",
+    "poll_iterations": 30,
+    "poll_wait_s": 2
+  },
+  "workers": [
+    {
+      "name": "vllm-0",
+      "node": "<changeme>",
+      "port": 8000
+    },
+    {
+      "name": "vllm-1",
+      "node": "<changeme>",
+      "port": 8001
+    }
+  ],
+  "smoke": {
+    "prompt": "How are you today?",
+    "timeout_s": 120
+  }
+}
