@@ -1,30 +1,11 @@
 # cvs/lib/unittests/test_rccl_lib.py
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 import cvs.lib.rccl_lib as rccl_lib
 
 
 class TestRcclLib(unittest.TestCase):
-    @patch('cvs.lib.rccl_lib.fail_test')
-    def test_check_avg_bus_bw_success(self, mock_fail_test):
-        output = "# Avg bus bandwidth : 100.5"
-        exp_res_dict = {'avg_bus_bw': 100.0}
-        rccl_lib.check_avg_bus_bw(output, exp_res_dict)
-        mock_fail_test.assert_not_called()
-
-    @patch('cvs.lib.rccl_lib.fail_test')
-    def test_check_avg_bus_bw_failure(self, mock_fail_test):
-        output = "# Avg bus bandwidth : 90.0"
-        exp_res_dict = {'avg_bus_bw': 100.0}
-        rccl_lib.check_avg_bus_bw(output, exp_res_dict)
-        mock_fail_test.assert_called_once()
-
-    def test_check_avg_bus_bw_no_match(self):
-        output = "No bandwidth info"
-        exp_res_dict = {'avg_bus_bw': 100.0}
-        # Should not raise or fail
-        rccl_lib.check_avg_bus_bw(output, exp_res_dict)
-
     def test_convert_to_graph_dict(self):
         # Test with sample data
         result_dict = {
@@ -47,7 +28,7 @@ class TestRcclLib(unittest.TestCase):
                 return "ValidationError with SEVERE DATA CORRUPTION"
 
         mock_error = MockValidationError()
-        self.assertTrue(rccl_lib._is_severe_wrong_corruption_error(mock_error))
+        self.assertTrue(rccl_lib.RcclVerifier.is_severe_wrong_corruption_error(mock_error))
 
         # Test with '#wrong' pattern
         class MockWrongError:
@@ -58,7 +39,7 @@ class TestRcclLib(unittest.TestCase):
                 return "ValidationError with wrong"
 
         mock_error = MockWrongError()
-        self.assertTrue(rccl_lib._is_severe_wrong_corruption_error(mock_error))
+        self.assertTrue(rccl_lib.RcclVerifier.is_severe_wrong_corruption_error(mock_error))
 
         # Test fallback to string search with '#wrong' pattern
         class MockStringError:
@@ -69,7 +50,7 @@ class TestRcclLib(unittest.TestCase):
                 return "ValidationError contains '#wrong' > 0"
 
         mock_error = MockStringError()
-        self.assertTrue(rccl_lib._is_severe_wrong_corruption_error(mock_error))
+        self.assertTrue(rccl_lib.RcclVerifier.is_severe_wrong_corruption_error(mock_error))
 
         # Test normal error (should not be severe)
         class MockNormalError:
@@ -80,7 +61,7 @@ class TestRcclLib(unittest.TestCase):
                 return "Normal validation error"
 
         mock_error = MockNormalError()
-        self.assertFalse(rccl_lib._is_severe_wrong_corruption_error(mock_error))
+        self.assertFalse(rccl_lib.RcclVerifier.is_severe_wrong_corruption_error(mock_error))
 
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_scan_rccl_logs_success(self, mock_fail_test):
@@ -92,7 +73,7 @@ class TestRcclLib(unittest.TestCase):
         Test completed successfully
         """
 
-        rccl_lib.scan_rccl_logs(output)
+        rccl_lib.RcclVerifier.scan_logs(output)
         mock_fail_test.assert_not_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -103,7 +84,7 @@ class TestRcclLib(unittest.TestCase):
         ORTE does not know how to route to destination
         """
 
-        rccl_lib.scan_rccl_logs(output)
+        rccl_lib.RcclVerifier.scan_logs(output)
         mock_fail_test.assert_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -114,7 +95,7 @@ class TestRcclLib(unittest.TestCase):
         NCCL ERROR: Something went wrong
         """
 
-        rccl_lib.scan_rccl_logs(output)
+        rccl_lib.RcclVerifier.scan_logs(output)
         mock_fail_test.assert_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -125,7 +106,7 @@ class TestRcclLib(unittest.TestCase):
         Test completed but no bandwidth printed
         """
 
-        rccl_lib.scan_rccl_logs(output)
+        rccl_lib.RcclVerifier.scan_logs(output)
         mock_fail_test.assert_called_with(
             'RCCL test did not complete successfully, no bandwidth numbers printed - pls check'
         )
@@ -147,7 +128,7 @@ class TestRcclLib(unittest.TestCase):
         ]
         exp_res_dict = {"1024": {"bus_bw": 80.0}}
 
-        rccl_lib.check_bus_bw(test_name, output, exp_res_dict)
+        rccl_lib.RcclVerifier(test_name, output, exp_res_dict).check_bus_bw()
         mock_fail_test.assert_not_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -169,7 +150,7 @@ class TestRcclLib(unittest.TestCase):
             "1024": {"bus_bw": 80.0}  # 95% threshold would be 76.0
         }
 
-        rccl_lib.check_bus_bw(test_name, output, exp_res_dict)
+        rccl_lib.RcclVerifier(test_name, output, exp_res_dict).check_bus_bw()
         mock_fail_test.assert_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -189,7 +170,7 @@ class TestRcclLib(unittest.TestCase):
         ]
         exp_res_dict = {"1024": {"bus_bw": 80.0}}
 
-        rccl_lib.check_bus_bw(test_name, output, exp_res_dict)
+        rccl_lib.RcclVerifier(test_name, output, exp_res_dict).check_bus_bw()
         mock_fail_test.assert_not_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -203,7 +184,7 @@ class TestRcclLib(unittest.TestCase):
         ]
         exp_res_dict = {"1024": {"bus_bw": 75.0}, "2048": {"bus_bw": 80.0}, "4096": {"bus_bw": 85.0}}
 
-        rccl_lib.check_bw_dip(test_name, output, exp_res_dict)
+        rccl_lib.RcclVerifier(test_name, output, exp_res_dict).check_bw_dip()
         mock_fail_test.assert_not_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -216,7 +197,7 @@ class TestRcclLib(unittest.TestCase):
         ]
         exp_res_dict = {"1024": {"bus_bw": 95.0}, "2048": {"bus_bw": 85.0}}
 
-        rccl_lib.check_bw_dip(test_name, output, exp_res_dict)
+        rccl_lib.RcclVerifier(test_name, output, exp_res_dict).check_bw_dip()
         mock_fail_test.assert_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -228,7 +209,7 @@ class TestRcclLib(unittest.TestCase):
             {"size": 2048, "inPlace": 1, "busBw": 50.0},  # Big drop but no reference
         ]
 
-        rccl_lib.check_bw_dip(test_name, output, None)
+        rccl_lib.RcclVerifier(test_name, output, None).check_bw_dip()
         mock_fail_test.assert_not_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -242,7 +223,7 @@ class TestRcclLib(unittest.TestCase):
         ]
         exp_res_dict = {"1024": {"bus_bw": 75.0}, "2048": {"bus_bw": 80.0}, "4096": {"bus_bw": 85.0}}
 
-        rccl_lib.check_lat_dip(test_name, output, exp_res_dict)
+        rccl_lib.RcclVerifier(test_name, output, exp_res_dict).check_lat_dip()
         mock_fail_test.assert_not_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -255,7 +236,7 @@ class TestRcclLib(unittest.TestCase):
         ]
         exp_res_dict = {"1024": {"bus_bw": 95.0}, "2048": {"bus_bw": 85.0}}
 
-        rccl_lib.check_lat_dip(test_name, output, exp_res_dict)
+        rccl_lib.RcclVerifier(test_name, output, exp_res_dict).check_lat_dip()
         mock_fail_test.assert_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
@@ -267,40 +248,49 @@ class TestRcclLib(unittest.TestCase):
             {"size": 2048, "inPlace": 1, "time": 5.0},  # Big drop but no reference
         ]
 
-        rccl_lib.check_lat_dip(test_name, output, None)
+        rccl_lib.RcclVerifier(test_name, output, None).check_lat_dip()
         mock_fail_test.assert_not_called()
 
-    def _launch_kwargs(self, **overrides):
-        kwargs = dict(
-            mpi_dir='/opt/ompi',
-            no_of_nodes=2,
-            no_of_local_ranks=8,
-            no_of_global_ranks=16,
-            mpi_oob_port='eth0',
-            pml_param='--mca pml ob1',
-            ucx_params='',
-            hosts_file_path='/tmp/rccl_hosts_file_cvs.txt',
-            cluster_node_list=['n1', 'n2'],
-            env_override_params='',
-        )
-        kwargs.update(overrides)
-        return kwargs
+    def _openmpi(self):
+        openmpi = rccl_lib.OpenMPI({'mpi_dir': '/opt/ompi', 'mpi_oob_port': 'eth0'})
+        openmpi.pml = 'ob1'
+        openmpi.prepared = True
+        return openmpi
 
-    @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=False)
-    def test_build_launch_cmd_bare_metal_mpirun(self, _managed):
-        cmd = rccl_lib._build_rccl_launch_cmd('bash -c all_reduce_perf', **self._launch_kwargs())
+    def _srun(self, nodes, no_of_nodes, local_ranks, global_ranks, openmpi=None, phdl=None):
+        return rccl_lib.Srun(
+            openmpi or self._openmpi(),
+            phdl or MagicMock(),
+            nodes,
+            no_of_nodes,
+            local_ranks,
+            global_ranks,
+        )
+
+    def test_mpirun_command(self):
+        launcher = rccl_lib.MpiRun(self._openmpi(), MagicMock(), ['n1', 'n2'], ['v1', 'v2'], 16)
+        cmd = launcher.command('all_reduce_perf')
         self.assertIn('mpirun', cmd)
-        self.assertIn('--hostfile /tmp/rccl_hosts_file_cvs.txt', cmd)
+        self.assertIn('--hostfile /tmp/rccl_hosts_file_', cmd)
         self.assertIn('--mca pml ob1', cmd)
         self.assertNotIn('--mpi=pmix', cmd)
         self.assertNotIn('spur run', cmd)
 
+    def test_mpirun_command_env_overrides_win_over_env_file(self):
+        launcher = rccl_lib.MpiRun(self._openmpi(), MagicMock(), ['n1', 'n2'], ['v1', 'v2'], 16)
+        cmd = launcher.command('all_reduce_perf', '/home/user/env.sh', {'NCCL_ALGO': 'Ring'})
+        self.assertIn('source /home/user/env.sh && export NCCL_ALGO=Ring && all_reduce_perf', cmd)
+        self.assertNotIn('-x NCCL_ALGO', cmd)
+
+    def test_mpirun_command_wraps_binary_without_env_file(self):
+        launcher = rccl_lib.MpiRun(self._openmpi(), MagicMock(), ['n1', 'n2'], ['v1', 'v2'], 16)
+        self.assertIn("bash -c all_reduce_perf", launcher.command('all_reduce_perf'))
+
     @patch('cvs.lib.rccl_lib.scheduler_hosts', return_value=['n1', 'n2'])
-    @patch('cvs.lib.rccl_lib._cpus_per_nested_task', return_value=None)
+    @patch('cvs.lib.rccl_lib.Srun._cpus_per_nested_task', return_value=None)
     @patch('cvs.lib.rccl_lib.detect_scheduler', return_value=rccl_lib.Scheduler.SPUR)
-    @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
-    def test_build_launch_cmd_managed_spur(self, _managed, _sched, _cpus, _hosts):
-        cmd = rccl_lib._build_rccl_launch_cmd('bash -c all_reduce_perf', **self._launch_kwargs())
+    def test_srun_command_on_spur(self, _sched, _cpus, _hosts):
+        cmd = self._srun(['n1', 'n2'], 2, 8, 16).command('all_reduce_perf')
         self.assertIn('spur run', cmd)
         self.assertIn('--overlap', cmd)
         self.assertIn('--mpi=pmix', cmd)
@@ -314,11 +304,10 @@ class TestRcclLib(unittest.TestCase):
         self.assertNotIn('--mca', cmd)
         self.assertNotIn('mpirun', cmd)
 
-    @patch('cvs.lib.rccl_lib._cpus_per_nested_task', return_value=None)
+    @patch('cvs.lib.rccl_lib.Srun._cpus_per_nested_task', return_value=None)
     @patch('cvs.lib.rccl_lib.detect_scheduler', return_value=rccl_lib.Scheduler.SLURM)
-    @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
-    def test_build_launch_cmd_managed_slurm(self, _managed, _sched, _cpus):
-        cmd = rccl_lib._build_rccl_launch_cmd('bash -c all_reduce_perf', **self._launch_kwargs())
+    def test_srun_command_on_slurm(self, _sched, _cpus):
+        cmd = self._srun(['n1', 'n2'], 2, 8, 16).command('all_reduce_perf')
         self.assertTrue(cmd.startswith('srun '))
         self.assertIn('--overlap', cmd)
         self.assertIn('--mpi=pmix', cmd)
@@ -326,52 +315,184 @@ class TestRcclLib(unittest.TestCase):
         self.assertNotIn('spur run', cmd)
         self.assertNotIn('--jobid', cmd)
 
-    @patch('cvs.lib.rccl_lib._cpus_per_nested_task', return_value=None)
+    @patch('cvs.lib.rccl_lib.Srun._cpus_per_nested_task', return_value=None)
     @patch('cvs.lib.rccl_lib.detect_scheduler', return_value=rccl_lib.Scheduler.SLURM)
-    @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
-    def test_build_launch_cmd_pairwise_nodelist_slurm(self, _managed, _sched, _cpus):
-        cmd = rccl_lib._build_rccl_launch_cmd(
-            'bash -c all_reduce_perf',
-            **self._launch_kwargs(cluster_node_list=['ref', 'cand'], no_of_nodes=2, no_of_global_ranks=16),
-        )
+    def test_srun_pairwise_nodelist_on_slurm(self, _sched, _cpus):
+        cmd = self._srun(['ref', 'cand'], 2, 8, 16).command('all_reduce_perf')
         self.assertIn('-w ref,cand', cmd)
 
     @patch('cvs.lib.rccl_lib.scheduler_hosts', return_value=['n1', 'n2', 'n3'])
-    @patch('cvs.lib.rccl_lib._cpus_per_nested_task', return_value=None)
+    @patch('cvs.lib.rccl_lib.Srun._cpus_per_nested_task', return_value=None)
     @patch('cvs.lib.rccl_lib.detect_scheduler', return_value=rccl_lib.Scheduler.SPUR)
-    @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
-    def test_build_launch_cmd_spur_rejects_subset_nodelist(self, _managed, _sched, _cpus, _hosts):
+    def test_srun_spur_rejects_subset_nodelist(self, _sched, _cpus, _hosts):
         with self.assertRaisesRegex(RuntimeError, 'does not apply --nodelist'):
-            rccl_lib._build_rccl_launch_cmd(
-                'bash -c all_reduce_perf',
-                **self._launch_kwargs(cluster_node_list=['ref', 'cand'], no_of_nodes=2, no_of_global_ranks=16),
-            )
+            self._srun(['ref', 'cand'], 2, 8, 16).command('all_reduce_perf')
 
     def test_wrap_rccl_test_cmd_env_overrides(self):
-        wrapped = rccl_lib._wrap_rccl_test_cmd(
+        wrapped = self._srun(['n1'], 1, 1, 1).command(
             '/opt/all_reduce_perf -g 8',
             '/home/user/env.sh',
             {'NCCL_ALGO': 'Ring'},
         )
         self.assertIn('source /home/user/env.sh && export NCCL_ALGO=Ring &&', wrapped)
         self.assertNotRegex(wrapped, r'export NCCL_ALGO=Ring.*source ')
-        self.assertTrue(wrapped.startswith('bash -c '))
+        self.assertIn('bash -c ', wrapped)
+
+    def test_mpi_install_prefix_strips_bin(self):
+        self.assertEqual(rccl_lib.OpenMPI._install_prefix('/opt/openmpi'), '/opt/openmpi')
+        self.assertEqual(rccl_lib.OpenMPI._install_prefix('/opt/openmpi/bin'), '/opt/openmpi')
+        self.assertEqual(rccl_lib.OpenMPI._install_prefix('/opt/openmpi/bin/'), '/opt/openmpi')
+
+    @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
+    def test_rccl_job_from_config_composes_openmpi_and_srun(self, _managed):
+        config = {
+            'env_source_script': '/tmp/ainic.sh',
+            'mpi_params': {
+                'mpi_dir': '/opt/openmpi/bin',
+                'no_of_nodes': '2',
+                'no_of_local_ranks': '4',
+                'mpi_oob_port': 'ens3',
+            },
+            'rccl_test_params': {'rccl_tests_dir': '/opt/rccl-tests/build'},
+            'cvs_params': {'cvs_exec_timeout': '600'},
+        }
+        job = rccl_lib.RcclJob.from_config(
+            MagicMock(), MagicMock(), 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2']
+        )
+        self.assertEqual(job.env_file, '/tmp/ainic.sh')
+        self.assertEqual(job.head_node, 'n1')
+        self.assertEqual(job.no_of_global_ranks, 8)
+        self.assertEqual(job.openmpi.oob_port, 'ens3')
+        self.assertEqual(job.cvs_exec_timeout, 600)
+        self.assertIsInstance(job.openmpi, rccl_lib.OpenMPI)
+        self.assertIsInstance(job.launcher, rccl_lib.Srun)
+
+    @patch.object(rccl_lib.RcclJob, '_detect_output_flag', return_value='-X')
+    @patch('cvs.lib.rccl_lib.Srun.prepare', autospec=True)
+    @patch('cvs.lib.rccl_lib.OpenMPI.prepare', autospec=True)
+    @patch.object(rccl_lib.RcclJob, '_require_spur_job_step')
+    @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
+    def test_rccl_job_prepare_is_idempotent(self, _managed, require_step, prepare_openmpi, prepare_srun, detect_output):
+        job = rccl_lib.RcclJob(
+            MagicMock(),
+            MagicMock(),
+            'all_reduce_perf',
+            '/dev/null',
+            {'mpi_pml': 'ob1'},
+            {},
+            {},
+            ['n1'],
+            ['v1'],
+        )
+        self.assertIs(job.prepare(), job)
+        self.assertIs(job.prepare(), job)
+        require_step.assert_called_once()
+        prepare_openmpi.assert_called_once()
+        prepare_srun.assert_called_once()
+        detect_output.assert_called_once()
+
+    def test_openmpi_process_env_cmds_from_mpi_params(self):
+        openmpi = rccl_lib.OpenMPI({'mpi_dir': '/opt/openmpi/bin', 'mpi_oob_port': 'ens3'})
+        openmpi.pml = 'ob1'
+        openmpi.ucx_env = {'UCX_TLS': 'rc,self,sm,tcp'}
+        cmds = self._srun(['n1'], 1, 1, 1, openmpi=openmpi).prepare().mpi_init_exports()
+        joined = ' && '.join(cmds)
+        self.assertIn('export OPAL_PREFIX=/opt/openmpi', joined)
+        self.assertIn('export OMPI_MCA_btl_tcp_if_include=ens3', joined)
+        self.assertIn('export OMPI_MCA_oob_tcp_if_include=ens3', joined)
+        self.assertIn('export OMPI_MCA_pml=ob1', joined)
+        self.assertIn('export PMIX_MCA_gds=hash', joined)
+        self.assertIn('OMPI_MCA_orte_create_session_dirs=0', joined)
+        self.assertIn('export UCX_TLS=rc,self,sm,tcp', joined)
+        self.assertNotIn('NCCL_', joined)
+
+    @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=False)
+    def test_srun_prepare_creates_session_dir_once_per_node(self):
+        phdl = MagicMock()
+        launcher = self._srun(['n1', 'n2'], 2, 8, 16, phdl=phdl)
+        self.assertIs(launcher.prepare(), launcher)
+        launcher.prepare()
+        self.assertEqual(launcher.session_dir, '/tmp/cvsuser/ompi-4242')
+        phdl.exec.assert_called_once()
+        mkdir_cmd = phdl.exec.call_args[0][0]
+        self.assertIn('mkdir -p -m 700 /tmp/cvsuser', mkdir_cmd)
+        self.assertIn('/tmp/cvsuser/ompi-4242', mkdir_cmd)
+
+    @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=False)
+    def test_srun_exports_literal_session_dir(self):
+        joined = ' && '.join(self._srun(['n1'], 1, 8, 8).prepare().mpi_init_exports())
+        self.assertIn('export OMPI_MCA_orte_tmpdir_base=/tmp/cvsuser/ompi-4242', joined)
+        self.assertIn('export OMPI_MCA_orte_top_session_dir=/tmp/cvsuser/ompi-4242', joined)
+        self.assertNotIn('TMPDIR=', joined)
+        self.assertNotIn('export TMP=', joined)
+        self.assertNotIn('mkdir', joined)
+        self.assertNotIn('$$', joined)
+
+    def test_srun_cleanup_removes_session_dir(self):
+        phdl = MagicMock()
+        launcher = self._srun(['n1'], 1, 8, 8, phdl=phdl).prepare()
+        session_dir = launcher.session_dir
+        launcher.cleanup()
+        self.assertIn(f'rm -rf {session_dir}', phdl.exec.call_args[0][0])
+        self.assertEqual(launcher.session_dir, '')
+
+    def test_wrap_rccl_test_cmd_mpi_setup_before_env_script(self):
+        openmpi = rccl_lib.OpenMPI({'mpi_dir': '/opt/openmpi', 'mpi_oob_port': 'ens3'})
+        openmpi.pml = 'ob1'
+        wrapped = self._srun(['n1'], 1, 1, 1, openmpi=openmpi).command(
+            '/opt/all_reduce_perf -g 8',
+            '/home/user/ainic_env_script.sh',
+            {'NCCL_ALGO': 'Ring'},
+        )
+        source_at = wrapped.find('source /home/user/ainic_env_script.sh')
+        ompi_at = wrapped.find('OMPI_MCA_btl_tcp_if_include=ens3')
+        nccl_at = wrapped.find('export NCCL_ALGO=Ring')
+        self.assertGreater(source_at, 0)
+        self.assertGreater(ompi_at, 0)
+        self.assertLess(ompi_at, source_at)
+        self.assertGreater(nccl_at, source_at)
+
+    def test_mpirun_normalizes_mpi_dir_bin(self):
+        launcher = rccl_lib.MpiRun(
+            rccl_lib.OpenMPI({'mpi_dir': '/opt/openmpi/bin'}),
+            MagicMock(),
+            ['n1'],
+            ['v1'],
+            8,
+        )
+        cmd = launcher.command('all_reduce_perf')
+        self.assertIn('/opt/openmpi/bin/mpirun', cmd)
+        self.assertNotIn('/opt/openmpi/bin/bin/mpirun', cmd)
 
     def test_require_spur_job_step_rejects_bare_allocation(self):
         env = {'SPUR_JOB_ID': '99', 'SLURM_JOB_ID': '99'}
         with patch.dict('os.environ', env, clear=True):
             with self.assertRaisesRegex(RuntimeError, 'requires a SPUR job step'):
-                rccl_lib._require_spur_job_step()
+                rccl_lib.RcclJob._require_spur_job_step()
 
     def test_require_spur_job_step_allows_managed_step(self):
         env = {'SPUR_JOB_ID': '99', 'SLURM_JOB_ID': '99', 'SLURM_STEP_ID': '0', 'SLURM_PROCID': '0'}
         with patch.dict('os.environ', env, clear=True):
-            rccl_lib._require_spur_job_step()
+            rccl_lib.RcclJob._require_spur_job_step()
 
     def test_require_spur_job_step_preserves_non_spur_runs(self):
         for env in ({'CVS_SCHEDULER': 'bare_metal'}, {'SLURM_JOB_ID': '99'}):
             with self.subTest(env=env), patch.dict('os.environ', env, clear=True):
-                rccl_lib._require_spur_job_step()
+                rccl_lib.RcclJob._require_spur_job_step()
+
+    def _job(self, phdl, shdl, head='head'):
+        with patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True):
+            return rccl_lib.RcclJob(
+                phdl,
+                shdl,
+                'all_reduce_perf',
+                '/dev/null',
+                {'mpi_pml': 'ob1'},
+                {},
+                {'cvs_exec_timeout': 60},
+                [head],
+                [head],
+            )
 
     def test_exec_rccl_launch_nonzero_exit_does_not_scan(self):
         rccl_lib.globals.error_list = []
@@ -380,10 +501,12 @@ class TestRcclLib(unittest.TestCase):
             'head': {'output': '# Avg bus bandwidth    : 1.8\n', 'exit_code': 3},
         }
         phdl = MagicMock()
-        with patch('cvs.lib.rccl_lib.scan_rccl_logs') as mock_scan:
-            result = rccl_lib._exec_rccl_launch(
-                phdl, shdl, 'head', 'spur run --overlap --mpi=pmix -- all_reduce_perf', 'all_reduce_perf', 60, 'unit'
-            )
+        job = self._job(phdl, shdl)
+        with (
+            patch.object(job, 'launch_command', return_value='spur run --overlap --mpi=pmix -- all_reduce_perf'),
+            patch('cvs.lib.rccl_lib.RcclVerifier.scan_logs') as mock_scan,
+        ):
+            result = job.execute('all_reduce_perf', 'unit')
         self.assertIsNone(result)
         mock_scan.assert_not_called()
         phdl.exec.assert_called()
@@ -398,7 +521,9 @@ class TestRcclLib(unittest.TestCase):
             'head': {'output': '# Avg bus bandwidth    : 1.8\nABORT: Timeout\n', 'exit_code': -1},
         }
         phdl = MagicMock()
-        result = rccl_lib._exec_rccl_launch(phdl, shdl, 'head', 'spur run --overlap --', 'all_reduce_perf', 60, 'unit')
+        job = self._job(phdl, shdl)
+        with patch.object(job, 'launch_command', return_value='spur run --overlap --'):
+            result = job.execute('all_reduce_perf', 'unit')
         self.assertIsNone(result)
         self.assertTrue(any('exit code -1' in msg for msg in rccl_lib.globals.error_list))
 
@@ -409,7 +534,9 @@ class TestRcclLib(unittest.TestCase):
             'head': {'output': '# Avg bus bandwidth    : 1.8\n', 'exit_code': 0},
         }
         phdl = MagicMock()
-        result = rccl_lib._exec_rccl_launch(phdl, shdl, 'head', 'spur run --overlap --', 'all_reduce_perf', 60, 'unit')
+        job = self._job(phdl, shdl)
+        with patch.object(job, 'launch_command', return_value='spur run --overlap --'):
+            result = job.execute('all_reduce_perf', 'unit')
         self.assertIn('Avg bus bandwidth', result)
         self.assertEqual(rccl_lib.globals.error_list, [])
         phdl.exec.assert_not_called()
@@ -431,19 +558,19 @@ class TestRcclLib(unittest.TestCase):
         with (
             patch.dict('os.environ', env, clear=True),
             patch.object(rccl_lib.globals, 'error_list', []),
-            patch('cvs.lib.rccl_lib._read_json_from_head_node') as read_results,
+            patch.object(rccl_lib.RcclJob, 'read_results') as read_results,
         ):
-            failed_results = rccl_lib.rccl_regression(
+            failed_results = rccl_lib.RcclJob(
                 phdl,
                 shdl,
                 'all_reduce_perf',
                 '/dev/null',
-                {'no_of_nodes': 2, 'no_of_local_ranks': 1},
+                {'no_of_nodes': 2, 'no_of_local_ranks': 1, 'mpi_pml': 'ob1', 'mpi_dir': '/opt/openmpi'},
                 {},
                 {},
                 ['n1', 'n2'],
                 ['n1', 'n2'],
-            )
+            ).run_regression()
             self.assertEqual(failed_results, [])
             read_results.assert_not_called()
             self.assertTrue(any('exit code 3' in msg for msg in rccl_lib.globals.error_list))
@@ -458,15 +585,15 @@ class TestRcclLib(unittest.TestCase):
 
     def test_cpus_per_nested_task_from_slurm_env(self):
         with patch.dict('os.environ', {'SLURM_CPUS_ON_NODE': '236'}, clear=True):
-            self.assertEqual(rccl_lib._cpus_per_nested_task(8), 29)
+            self.assertEqual(rccl_lib.Srun._cpus_per_nested_task(8), 29)
 
     def test_cpus_per_nested_task_override(self):
         with patch.dict('os.environ', {'RCCL_CPUS_PER_TASK': '16', 'SLURM_CPUS_ON_NODE': '236'}, clear=True):
-            self.assertEqual(rccl_lib._cpus_per_nested_task(8), 16)
+            self.assertEqual(rccl_lib.Srun._cpus_per_nested_task(8), 16)
 
     def test_cleanup_does_not_pkill_scheduler(self):
         phdl = MagicMock()
-        rccl_lib._cleanup_stale_rccl_processes(phdl, 'all_reduce_perf', 'unit-test')
+        self._job(phdl, MagicMock())._cleanup_stale_processes('unit-test')
         commands = [call.args[0] for call in phdl.exec.call_args_list]
         joined = ' '.join(commands)
         self.assertNotRegex(joined, r'(^|[^a-z])srun([^a-z]|$)')

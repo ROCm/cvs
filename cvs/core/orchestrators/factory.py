@@ -126,9 +126,7 @@ class OrchestratorConfig:
         self.password = kwargs.get('password')
         self.head_node_dict = kwargs.get('head_node_dict', {})
         self.agent_token_file = kwargs.get('agent_token_file')
-        # Optional cluster-level exports (PATH, LD_LIBRARY_PATH, fabric knobs).
-        # Forwarded onto orch.head / orch.all so RCCL and other suites keep the
-        # pre-orchestrator Pssh(env_vars=cluster_dict['env_vars']) behavior.
+        # Keep pre-orchestrator Pssh(env_vars=cluster_dict['env_vars']) on orch.head / orch.all.
         self.env_vars = kwargs.get('env_vars')
         # Normalize here (not in from_configs) so direct construction is validated too.
         self.container = _resolve_container_lifetime(kwargs.get('container', {}))

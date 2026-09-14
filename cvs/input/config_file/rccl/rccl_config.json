@@ -5,7 +5,9 @@
             "no_of_local_ranks": "8",
             "_comment_mpi_pml": "MPI Point-to-Point Messaging Layer: 'auto' (auto-detect UCX support), 'ucx' (force UCX), or 'ob1' (force OpenIB/TCP fallback). This remains in config because it is an MPI launch option, not an env-script setting.",
             "mpi_pml": "auto",
-            "mpi_dir": "/home/{user-id}/openmpi/bin",
+            "_comment_mpi_dir": "Open MPI install prefix. A trailing /bin is stripped. Used for mpirun and, on Spur/Slurm, OPAL_PREFIX plus OMPI_MCA_* exports — do not put those in the env script.",
+            "mpi_dir": "/home/{user-id}/openmpi",
+            "_comment_mpi_oob_port": "TCP OOB interface. Bare metal: mpirun --mca btl/oob_tcp_if_include. Managed: OMPI_MCA_btl_tcp_if_include / oob_tcp_if_include generated in rccl_lib.",
             "mpi_oob_port": "eth0",
             "ucx_tls": "rc,self,sm,tcp",
             "_comment_ucx_tls": "When user requested UCX either leave this parameter value blank for auto assignment or assign values e.g. rc,self,sm,tcp..",
@@ -13,7 +15,7 @@
             "_comment_net_dev_list": "Leave empty for auto-detection from backend NICs, or set explicitly e.g. bnxt_re0:1,bnxt_re1:1,.."
         },
 
-        "_comment_env_script": "RCCL/NCCL/UCX tuning parameters. Path configurations (mpi_dir, rccl_tests_dir) are now in mpi_params and rccl_test_params respectively.",
+        "_comment_env_script": "RCCL/NCCL/HSA/plugin tuning only. MPI/PMIx/ORTE (OMPI_MCA_*, OPAL_PREFIX, PMIX_MCA_gds, ORTE tmpdir) are set by rccl_lib from mpi_params.",
         "env_source_script": "/home/{user-id}/thor2_env_script.sh",
 
         "rccl_test_params": {

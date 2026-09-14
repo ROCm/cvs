@@ -192,7 +192,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regre
       1) Capture start time to bound dmesg checks later.
       2) Optionally snapshot cluster metrics before the test (for debugging/compare).
       3) Build env_overrides dict from all regression parameters.
-      4) Invoke rccl_lib.rccl_regression with parameters built from config and fixtures.
+      4) Invoke RcclJob.from_config(...).run_regression() with parameters built from config and fixtures.
       5) Capture end time and verify dmesg for errors between start/end.
       6) Optionally snapshot metrics again and compare before/after.
       7) Call update_test_result() to finalize test status.
@@ -239,19 +239,15 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regre
     # Build env_overrides from all regression parameters (convert values to strings)
     env_overrides = {k: str(v) for k, v in regression_params.items()}
 
-    env_script = config_dict.get('env_source_script', '/dev/null')
-    result_dict = rccl_lib.rccl_regression(
+    result_dict = rccl_lib.RcclJob.from_config(
         phdl,
         shdl,
         rccl_collective,
-        env_script,
-        config_dict['mpi_params'],
-        config_dict['rccl_test_params'],
-        config_dict['cvs_params'],
+        config_dict,
         node_list,
         vpc_node_list,
-        env_overrides,
-    )
+        env_overrides=env_overrides,
+    ).run_regression()
 
     log.info("%s", result_dict)
     key_name = f'{rccl_collective}-{params_str}'
