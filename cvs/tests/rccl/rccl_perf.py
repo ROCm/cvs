@@ -167,19 +167,9 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     ):
         cluster_dict_before = create_cluster_metrics_snapshot(phdl)
 
-    # Use the new grouped parameter function
-    env_script = config_dict.get('env_source_script', '/dev/null')
-    result_dict = rccl_lib.rccl_perf(
-        phdl,
-        shdl,
-        rccl_collective,
-        env_script,
-        config_dict['mpi_params'],
-        config_dict['rccl_test_params'],
-        config_dict['cvs_params'],
-        node_list,
-        vpc_node_list,
-    )
+    result_dict = rccl_lib.RcclJob.from_config(
+        phdl, shdl, rccl_collective, config_dict, node_list, vpc_node_list
+    ).run_perf()
 
     log.info("%s", result_dict)
     key_name = f'{rccl_collective}'

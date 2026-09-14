@@ -61,21 +61,18 @@ def run_pairwise_rccl(phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, ph
     mpi_params_pair = dict(config_dict['mpi_params'])
     mpi_params_pair['no_of_nodes'] = str(len(node_pair_mgmt))
 
-    env_script = config_dict.get('env_source_script', '/dev/null')
-
     error_count_before = len(globals.error_list)
     try:
-        result_dict = rccl_lib.rccl_perf(
+        pair_config = dict(config_dict)
+        pair_config['mpi_params'] = mpi_params_pair
+        result_dict = rccl_lib.RcclJob.from_config(
             phdl,
             shdl,
             'all_reduce_perf',
-            env_script,
-            mpi_params_pair,
-            config_dict['rccl_test_params'],
-            config_dict['cvs_params'],
-            node_pair_mgmt,  # cluster_node_list  (first entry = head node)
-            node_pair_vpc,  # vpc_node_list       (passed to mpirun -H)
-        )
+            pair_config,
+            node_pair_mgmt,
+            node_pair_vpc,
+        ).run_perf()
         log.info('Pairwise result for %s: %s', phase_label, result_dict)
     except Exception as exc:
         log.error('Pairwise RCCL failed for %s: %s', phase_label, exc)
@@ -100,7 +97,7 @@ def _extract_best_bw(result_dict):
     rccl_lib.rccl_perf returns a flat list of raw rccl-tests JSON entries
     (schema cvs/schema/rccl.py:RcclTests), each keyed 'busBw' (float),
     'size' (int, bytes), and 'inPlace' (0 or 1) — NOT a 'bus_bw' dict.
-    Selecting the largest-size, in-place row mirrors rccl_lib.check_bus_bw's
+    Selecting the largest-size, in-place row mirrors RcclVerifier.check_bus_bw's
     in-place branch and matches bash's get_final_bw_only (last/largest
     message-size row of a two-size 8G/16G sweep).
     """

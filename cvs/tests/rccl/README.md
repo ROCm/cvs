@@ -2,10 +2,8 @@
 
 ## Library entry points (for automation)
 
-- `cvs.lib.rccl_lib.run_rccl` — stages the env script on the cluster, sets `env_source_script`, then runs the selected runner (`single`, `cluster`, or `cluster_default`).
-- `cvs.lib.rccl_lib.run_rccl_from_context` — same with a `RcclRunContext` (handles + runner) and a separate `engine_params` dict for message sizes, `rccl_result_file`, `mpi_oob_port`, etc.
-- `cvs.lib.rccl_lib.rccl_perf` / `rccl_regression` — call `run_rccl` for perf or multi-case regression.
-- Low-level `rccl_cluster_test` / `rccl_cluster_test_default` / `rccl_single_node_test` remain for legacy calls; new code should prefer `run_rccl`.
+- `cvs.lib.rccl_lib.RcclJob.from_config(...)` — composes the rccl-tests command, `OpenMPI`, and either `MpiRun` or `Srun`. Call `run_perf()` or `run_regression()`.
+- `cvs.lib.rccl_lib.rccl_perf(...)` / `rccl_regression(...)` — compatibility wrappers for callers that still use the legacy positional API.
 
 RCCL tests in CVS are split into a small set of focused workflows:
 
@@ -26,8 +24,8 @@ All RCCL execution suites still collect host/network info and validate firewall 
 
 1. Provide a valid cluster file, for example `input/cluster_file/cluster.json`.
 2. Make sure your env script exports `RCCL_TESTS_BUILD_DIR` for the `*_perf` binaries.
-3. Make sure your env script exports `MPI_HOME` for the Open MPI install used by `mpirun`.
-4. Put RCCL/NCCL/UCX tuning into env scripts. CVS now stages and sources those env files instead of building `mpirun -x ...` lists from JSON.
+3. Make sure `mpi_params.mpi_dir` points at the Open MPI prefix used by `mpirun` / PMIx.
+4. Put RCCL/NCCL/HSA tuning into env scripts. MPI/PMIx/ORTE (`OMPI_MCA_*`, `OPAL_PREFIX`, Spur tmpdir) are set by `rccl_lib` from `mpi_params`, including on nested `spur run`/`srun --mpi=pmix`.
 5. Update `results` thresholds for your hardware and cluster size before relying on pass/fail.
 
 ## How to run

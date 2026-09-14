@@ -239,19 +239,15 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regre
     # Build env_overrides from all regression parameters (convert values to strings)
     env_overrides = {k: str(v) for k, v in regression_params.items()}
 
-    env_script = config_dict.get('env_source_script', '/dev/null')
-    result_dict = rccl_lib.rccl_regression(
+    result_dict = rccl_lib.RcclJob.from_config(
         phdl,
         shdl,
         rccl_collective,
-        env_script,
-        config_dict['mpi_params'],
-        config_dict['rccl_test_params'],
-        config_dict['cvs_params'],
+        config_dict,
         node_list,
         vpc_node_list,
-        env_overrides,
-    )
+        env_overrides=env_overrides,
+    ).run_regression()
 
     log.info("%s", result_dict)
     key_name = f'{rccl_collective}-{params_str}'
