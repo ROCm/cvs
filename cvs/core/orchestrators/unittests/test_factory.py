@@ -112,6 +112,17 @@ class TestOrchestratorConfig(unittest.TestCase):
         cfg = OrchestratorConfig.from_configs(cluster)
         self.assertEqual(cfg.agent_token_file, "/shared/run/agent/secret")
 
+    def test_from_configs_preserves_env_vars(self):
+        cluster = {
+            "node_dict": {"1.1.1.1": {}},
+            "username": "u",
+            "priv_key_file": "/dev/null",
+            "env_vars": {"PATH": "/opt/rocm/bin", "NCCL_DEBUG": "WARN"},
+        }
+        cfg = OrchestratorConfig.from_configs(cluster)
+        self.assertEqual(cfg.env_vars["PATH"], "/opt/rocm/bin")
+        self.assertEqual(cfg.env_vars["NCCL_DEBUG"], "WARN")
+
     def test_from_configs_raises_when_node_dict_missing(self):
         cluster = {"username": "u", "priv_key_file": "/dev/null"}
         with self.assertRaises(ValueError):
