@@ -7,22 +7,25 @@ xDiT inference configuration
 **********************************
 
 CVS ships five xDiT suites under ``cvs/tests/inference/xdit/``. Each suite reads a JSON
-file from ``cvs/input/config_file/inference/xdit/``. There is no separate threshold file;
-``expected_results`` live inside ``benchmark_params``.
+file from ``cvs/input/config_file/inference/xdit/``. Latency thresholds live in sibling
+``*_threshold.json`` files referenced by top-level ``threshold_json``.
 
-- **Single-node** templates run one independent docker+torchrun job on every node in the
-  cluster file.
-- **Distributed** templates run one coordinated torchrun job (``nnodes >= 2``). Replace
-  every ``<changeme>`` (NCCL/network fields) before running.
+- **Single-node** templates run one independent container+torchrun job on every node in
+  the cluster file.
+- **Distributed** templates run one coordinated torchrun job (``topology: distributed``,
+  ``nnodes >= 2``). Replace every ``<changeme>`` (image, model path, NCCL/network fields)
+  before running.
 
 How to run: :doc:`/how-to/test-suites/inference/xdit`.
 
 .. note::
 
-  - ``{user-id}`` and ``{home}`` in path strings are resolved at runtime.
+  - ``{user-id}``, ``{home}``, and ``{paths.*}`` placeholders are resolved at startup.
   - Models must already be staged on every participating node. Prefer an absolute path in
-    ``model_repo``; a Hugging Face repo id requires a pre-populated cache under ``hf_home``.
+    ``model.id``; a Hugging Face repo id requires a pre-populated cache under ``paths.models_dir``.
   - FLUX.1-dev and FLUX.2-dev share ``pytorch_xdit_flux_dev_*``; pick the matching JSON.
+  - There is no packaged WAN-native distributed workload; only the five implemented suites
+    have templates in this directory.
 
 Configuration files
 ===================
@@ -48,18 +51,20 @@ Configuration files
    * - ``mi3xx_pytorch_xdit_wan22_14b_diffusers_distributed.json``
      - ``pytorch_xdit_wan22_14b_diffusers_distributed``
 
-Copy a template:
+Copy a template and its threshold file together:
 
 .. code:: bash
 
   cvs config list inference/xdit
   cvs config copy inference/xdit/mi3xx_pytorch_xdit_flux1_dev_single.json \
     --output ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_flux1_dev_single.json
+  cvs config copy inference/xdit/mi3xx_pytorch_xdit_flux1_dev_single_threshold.json \
+    --output ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_flux1_dev_single_threshold.json
 
 File structure
 ==============
 
-Every template has two top-level keys:
+Unified templates use the same top-level layout as SGLang and vLLM inference configs:
 
 .. list-table::
    :widths: 2 6
@@ -67,10 +72,36 @@ Every template has two top-level keys:
 
    * - Key
      - Description
-   * - ``config``
-     - Image, model path, output dir, optional distributed rendezvous/NCCL, ``container_config``.
-   * - ``benchmark_params``
+   * - ``schema_version``
+     - Unified config version (``1``).
+   * - ``framework``
+     - ``xdit``.
+   * - ``gpu_arch``
+     - Target GPU family (templates ship ``mi3xx``).
+   * - ``topology``
+     - ``single`` or ``distributed``.
+   * - ``enforce_thresholds``
+     - When ``true``, benchmark results must satisfy the selected GPU thresholds.
+   * - ``threshold_json``
+     - Sibling threshold filename resolved relative to the config file.
+   * - ``paths``
+     - ``shared_fs``, ``models_dir``, ``log_dir``, ``hf_token_file``.
+   * - ``model``
+     - ``id`` (HF repo id or absolute host path) and ``remote`` (``0`` = offline/local).
+   * - ``container``
+     - ``lifetime``, ``name``, ``image``, ``env``, and ``runtime.name`` / ``runtime.args``.
+   * - ``params``
      - ``flux1_dev_t2i`` (FLUX.1 and FLUX.2) or ``wan22_i2v_a14b`` (WAN native and Diffusers).
+   * - ``inference``
+     - Optional runtime fields such as ``model_rev`` for pinned HF snapshots.
+   * - ``benchmark_serv_node``
+     - Required cluster ``node_dict`` key for single-node suites.
+   * - ``nnodes``, ``master_addr``, ``nccl_*``
+     - Distributed rendezvous and NCCL tuning (distributed templates only).
+
+Legacy ``config`` + ``benchmark_params`` files with embedded ``expected_results`` still
+validate through ``PytorchXditWanConfigFile`` / ``PytorchXditFluxConfigFile`` for backward
+compatibility.
 
 Example: FLUX.1-dev single-node
 ===============================
@@ -80,21 +111,41 @@ Example: FLUX.1-dev single-node
   .. code:: json
 
     {
-        "config": {
-            "container_image": "amdsiloai/pytorch-xdit:v25.11.2",
-            "container_name": "flux-benchmark",
-            "hf_token_file": "{home}/.hf_token",
-            "hf_home": "{home}/.cache/huggingface",
-            "output_base_dir": "{home}/cvs_flux_output",
-            "model_repo": "black-forest-labs/FLUX.1-dev",
-            "model_rev": "",
-            "container_config": {
-                "device_list": ["/dev/dri", "/dev/kfd"],
-                "volume_dict": {},
-                "env_dict": {}
+        "schema_version": 1,
+        "framework": "xdit",
+        "topology": "single",
+        "benchmark_serv_node": "<changeme>",
+        "enforce_thresholds": true,
+        "threshold_json": "mi3xx_pytorch_xdit_flux1_dev_single_threshold.json",
+        "paths": {
+            "shared_fs": "{home}",
+            "models_dir": "{home}/.cache/huggingface",
+            "log_dir": "{home}/cvs_flux_output",
+            "hf_token_file": "{home}/.hf_token"
+        },
+        "model": {
+            "id": "black-forest-labs/FLUX.1-dev",
+            "remote": 0
+        },
+        "container": {
+            "lifetime": "per_run",
+            "name": "flux-benchmark",
+            "image": "<changeme>",
+            "runtime": {
+                "name": "docker",
+                "args": {
+                    "network": "host",
+                    "ipc": "host",
+                    "privileged": true,
+                    "devices": ["/dev/dri", "/dev/kfd"],
+                    "volumes": [
+                        "{paths.models_dir}:/hf_home",
+                        "{paths.log_dir}:/outputs"
+                    ]
+                }
             }
         },
-        "benchmark_params": {
+        "params": {
             "flux1_dev_t2i": {
                 "prompt": "A small cat",
                 "num_inference_steps": 25,
@@ -104,19 +155,27 @@ Example: FLUX.1-dev single-node
                 "ulysses_degree": 8,
                 "ring_degree": 1,
                 "use_torch_compile": true,
-                "torchrun_nproc": 8,
-                "expected_results": {
-                    "auto": { "max_avg_pipe_time_s": 10.0 },
-                    "mi300x": { "max_avg_pipe_time_s": 3.0 },
-                    "mi350": { "max_avg_pipe_time_s": 2.0 },
-                    "mi355": { "max_avg_pipe_time_s": 7.0 }
-                }
+                "torchrun_nproc": 8
             }
         }
     }
 
-General ``config`` parameters
-=============================
+Threshold file
+--------------
+
+``mi3xx_pytorch_xdit_flux1_dev_single_threshold.json``:
+
+.. code:: json
+
+    {
+        "auto": { "max_avg_pipe_time_s": 10.0 },
+        "mi300x": { "max_avg_pipe_time_s": 3.0 },
+        "mi350": { "max_avg_pipe_time_s": 2.0 },
+        "mi355": { "max_avg_pipe_time_s": 7.0 }
+    }
+
+General ``paths`` and ``container`` parameters
+==============================================
 
 .. list-table::
    :widths: 3 3 5
@@ -125,41 +184,38 @@ General ``config`` parameters
    * - Parameter
      - Example
      - Description
-   * - ``container_image``
-     - ``amdsiloai/pytorch-xdit:v25.11.2``
-     - Image with PyTorch xDiT. FLUX.2 and WAN Diffusers templates use ``rocm/ufb-private:…``.
-   * - ``container_name``
-     - ``flux-benchmark``
-     - Docker name (distributed ranks use ``{container_name}-rankN``).
-   * - ``hf_token_file``
-     - ``{home}/.hf_token``
-     - Hugging Face token for gated models (FLUX.2 chat template).
-   * - ``hf_home``
+   * - ``paths.shared_fs``
+     - ``/home/{user-id}`` or ``{home}``
+     - Cluster-visible home or scratch root.
+   * - ``paths.models_dir``
      - ``{home}/.cache/huggingface``
-     - Host HF cache (mounted at ``/hf_home``). Must contain ``hub/`` when ``model_repo`` is a repo id.
-   * - ``output_base_dir``
+     - Host HF cache or staged model directory (mounted at ``/hf_home``).
+   * - ``paths.log_dir``
      - ``{home}/cvs_flux_output``
      - Host directory for ``flux_<target>_outputs`` or ``wan_22_<target>_outputs``.
-   * - ``model_repo``
-     - HF id or ``/data/models/…``
-     - Repo id (offline cache) or absolute host path (preferred). WAN Diffusers **requires** an absolute path.
-   * - ``model_rev``
-     - snapshot hash or ``""``
-     - HF snapshot id when using cache mode. WAN native template pins ``206a9ee1…``.
-   * - ``container_config.device_list``
+   * - ``paths.hf_token_file``
+     - ``{home}/.hf_token``
+     - Hugging Face token for gated models.
+   * - ``container.image``
+     - ``<changeme>``
+     - PyTorch xDiT image. FLUX.1/WAN native: ``amdsiloai/pytorch-xdit:v25.11.2``. FLUX.2/WAN Diffusers: ``rocm/ufb-private:…``.
+   * - ``container.name``
+     - ``flux-benchmark``
+     - Docker name (distributed ranks use ``{container.name}-rankN``).
+   * - ``container.runtime.args.devices``
      - ``["/dev/dri", "/dev/kfd"]``
      - GPU device nodes passed into the container.
-   * - ``container_config.volume_dict``
-     - host → container map
-     - Extra bind mounts. FLUX.2 mounts ``flux2_example.py``; WAN Diffusers mounts ``wan_i2v_example.py``.
-   * - ``container_config.env_dict``
+   * - ``container.runtime.args.volumes``
+     - host:container list
+     - Bind mounts. FLUX.2 mounts ``flux2_example.py``; WAN Diffusers mounts ``wan_i2v_example.py``.
+   * - ``container.env``
      - ``{"NCCL_PROTO": "Simple"}``
      - Extra environment variables inside the container.
 
-Distributed ``config`` fields
------------------------------
+Distributed fields
+------------------
 
-Present on ``*_distributed.json`` templates (FLUX.1, FLUX.2, WAN Diffusers):
+Present on ``topology: distributed`` templates:
 
 .. list-table::
    :widths: 3 5
@@ -167,6 +223,8 @@ Present on ``*_distributed.json`` templates (FLUX.1, FLUX.2, WAN Diffusers):
 
    * - Parameter
      - Description
+   * - ``topology``
+     - Must be ``distributed``.
    * - ``nnodes``
      - Participating node count (must be ``>= 2``). Optional ``server_node_list`` can subset the cluster.
    * - ``master_addr``, ``master_port``
@@ -178,8 +236,8 @@ Present on ``*_distributed.json`` templates (FLUX.1, FLUX.2, WAN Diffusers):
    * - ``nccl_debug``
      - NCCL log level (templates use ``INFO``).
 
-``benchmark_params.flux1_dev_t2i``
-==================================
+``params.flux1_dev_t2i``
+========================
 
 Used by all four FLUX templates. FLUX.2 sets ``model_type: flux2``.
 
@@ -223,12 +281,11 @@ Used by all four FLUX templates. FLUX.2 sets ``model_type: flux2``.
    * - ``torchrun_nproc``
      - ``8``
      - Processes (GPUs) per node.
-   * - ``expected_results``
-     - ``mi300x.max_avg_pipe_time_s``
-     - Pass/fail on average ``pipe_time`` from ``results/timing.json``. Keys: ``auto``, ``mi300x``, ``mi350``, ``mi355``.
 
-``benchmark_params.wan22_i2v_a14b``
-===================================
+FLUX threshold metric: ``max_avg_pipe_time_s`` in the sibling threshold JSON.
+
+``params.wan22_i2v_a14b``
+=========================
 
 Native WAN (``mi3xx_pytorch_xdit_wan22_14b_single.json``)
 --------------------------------------------------------
@@ -260,9 +317,6 @@ Runs ``/app/Wan2.2/run.py``. Threshold metric is ``max_avg_total_time_s``.
    * - ``torchrun_nproc``
      - ``8``
      - GPUs per node.
-   * - ``expected_results``
-     - ``mi300x.max_avg_total_time_s``
-     - Average ``total_time`` from ``rank0_step*.json``. Requires ``video.mp4``.
 
 Diffusers xFuser WAN
 --------------------
@@ -297,23 +351,24 @@ Diffusers xFuser WAN
      - Denoising and warmup (Diffusers templates: ``40`` and ``1``).
    * - ``ulysses_size``, ``ring_size``
      - Parallel layout. Distributed: product must equal ``nnodes × torchrun_nproc``.
-   * - ``expected_results``
-     - ``max_avg_pipe_time_s`` (``auto``, ``mi325`` in the shipped templates).
+
+WAN Diffusers threshold metric: ``max_avg_pipe_time_s`` (``auto``, ``mi325`` in the shipped templates).
 
 Volume mounts
 =============
 
-**FLUX.1 / WAN native** templates ship an empty ``volume_dict``. Bind-mount models via
-``model_repo`` as an absolute path, or rely on ``hf_home``.
+**FLUX.1 / WAN native** templates mount ``paths.models_dir`` and ``paths.log_dir`` only.
+Bind-mount models via ``model.id`` as an absolute path, or rely on the HF cache under
+``paths.models_dir``.
 
 **FLUX.2** mounts the in-tree example when the image lacks it:
 
 .. code:: json
 
   {
-      "volume_dict": {
-          "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py": "/benchmark/flux2_example.py"
-      }
+      "volumes": [
+          "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py:/benchmark/flux2_example.py"
+      ]
   }
 
 **WAN Diffusers** mounts the xFuser example:
@@ -321,9 +376,9 @@ Volume mounts
 .. code:: json
 
   {
-      "volume_dict": {
-          "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/wan_i2v_example.py": "/benchmark/wan_i2v_example.py"
-      }
+      "volumes": [
+          "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/wan_i2v_example.py:/benchmark/wan_i2v_example.py"
+      ]
   }
 
 Adjust the host path to your CVS checkout.
@@ -337,7 +392,7 @@ GPU type is detected from ``rocm-smi``. Lookup order: exact key → ``auto``.
 - **WAN native** — average ``total_time`` vs ``max_avg_total_time_s``; ``rank0_step*.json`` and ``video.mp4``.
 - **WAN Diffusers** — average pipe/epoch time vs ``max_avg_pipe_time_s``; ``results/timing.json`` and ``results/video_i2v.mp4``.
 
-Shipped numbers are starting points; tune ``expected_results`` for your stack before production gating.
+Shipped numbers are starting points; tune the sibling threshold JSON for your stack before production gating.
 
 Troubleshooting
 ===============
@@ -346,10 +401,10 @@ Troubleshooting
   Run on GPU compute nodes, not login nodes.
 
 **Container image not found locally**
-  ``docker pull`` the configured ``container_image`` on every execution node.
+  ``docker pull`` the configured ``container.image`` on every execution node.
 
 **Local model path not found**
-  Stage weights on every participating node. Diffusers WAN requires ``model_repo`` as an absolute path.
+  Stage weights on every participating node. Diffusers WAN requires ``model.id`` as an absolute path.
 
 **Parallel degree product != world_size**
   Align ``ulysses`` / ``ring`` (and FLUX pipefusion/TP/DP) with ``nnodes × torchrun_nproc``.

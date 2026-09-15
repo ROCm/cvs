@@ -267,6 +267,17 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         self.assertIn(RUN_USP_PATH, cmd)
         self.assertNotIn(FLUX2_EXAMPLE_PATH, cmd)
 
+    def test_orchestrated_output_directory_is_forwarded(self):
+        output_dir = "/outputs/flux_node_outputs"
+        cmd = build_torchrun_cmd(
+            self._FLUX1_PARAMS,
+            model_repo="black-forest-labs/FLUX.1-dev",
+            distributed=False,
+            output_dir_container=output_dir,
+        )
+
+        self.assertIn(f"--benchmark_output_directory {output_dir}", cmd)
+
     def test_flux2_uses_flux2_example_wrapper(self):
         params = {
             **self._FLUX1_PARAMS,
@@ -615,6 +626,20 @@ class TestFluxBenchmarkJob(unittest.TestCase):
     def test_validate_parallelism_single_node_pass(self):
         job, _ = _make_flux_job()
         self.assertIsNone(job.validate_parallelism())
+
+    def test_orchestrator_job_uses_per_run_output_directory(self):
+        job, _ = _make_flux_job()
+        job.uses_container_orchestrator = True
+        output_dir = "/outputs/flux_node_outputs"
+
+        cmd = job._build_torchrun_cmd(
+            node_rank=0,
+            host_output_dir=output_dir,
+            master_addr="127.0.0.1",
+            master_port=29500,
+        )
+
+        self.assertIn(f"--benchmark_output_directory {output_dir}", cmd)
 
     def test_validate_parallelism_distributed_fail(self):
         cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}

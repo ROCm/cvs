@@ -1,0 +1,11 @@
+{
+  "auto": {
+    "max_avg_pipe_time_s": 10.0
+  },
+  "mi300x": {
+    "max_avg_pipe_time_s": 8.0
+  },
+  "mi355": {
+    "max_avg_pipe_time_s": 7.0
+  }
+}

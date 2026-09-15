@@ -80,6 +80,33 @@ def _make_job(hosts=None, *, distributed=False, cluster_dict=None):
     )
 
 
+class _FakeContainerOrchestrator:
+    def __init__(self, hosts):
+        self.hosts = list(hosts)
+        self.calls = []
+
+    def exec_on_host(self, cmd, **kwargs):
+        raise AssertionError("benchmark jobs must execute inside the container")
+
+    def exec(self, cmd, hosts=None, timeout=None, print_console=False, detailed=False):
+        selected = list(hosts or self.hosts)
+        self.calls.append((cmd, selected, detailed))
+        output = {}
+        for host in selected:
+            if "test -e /dev/kfd" in cmd:
+                value = "KFD_OK"
+            elif cmd.strip() == "hostname":
+                value = f"container-{host}"
+            elif "hostname -I" in cmd:
+                value = host
+            elif "torchrun" in cmd:
+                value = "benchmark ok"
+            else:
+                value = ""
+            output[host] = {"output": value, "exit_code": 0} if detailed else value
+        return output
+
+
 class TestBenchmarkLaunchPlan(unittest.TestCase):
     def test_defaults(self):
         plan = BenchmarkLaunchPlan()
@@ -114,6 +141,35 @@ class TestPytorchXditBenchmarkJob(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(plan.docker_cmds), 1)
         self.assertIn("10.0.0.1", results)
+
+    def test_container_orchestrator_runs_torchrun_without_docker(self):
+        orch = _FakeContainerOrchestrator(["10.0.0.1"])
+        inference_dict = {
+            "container_image": "unused-after-external-setup",
+            "container_name": "stub-benchmark",
+            "hf_home": "/hf_home",
+            "output_base_dir": "/host/results",
+            "output_base_dir_container": "/outputs",
+            "container_config": {
+                "device_list": [],
+                "volume_dict": {},
+                "env_dict": {},
+            },
+        }
+        job = _StubBenchmarkJob(orch, inference_dict, nproc_per_node=8)
+
+        results, plan, errors = job.run(timeout=60)
+
+        self.assertEqual(errors, [])
+        self.assertIn("10.0.0.1", results)
+        self.assertNotIn("docker run", plan.docker_cmds[0])
+        self.assertIn("torchrun", plan.docker_cmds[0])
+        self.assertTrue(any(call[2] for call in orch.calls if "torchrun" in call[0]))
+        job.store_output_dir_hint(plan)
+        self.assertEqual(
+            inference_dict["_test_output_dir"],
+            "/host/results/stub_container-10.0.0.1_outputs",
+        )
 
 
 if __name__ == "__main__":

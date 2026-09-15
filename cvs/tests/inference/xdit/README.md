@@ -29,9 +29,9 @@ latency against per-GPU thresholds. It provides:
    fallback mount when the image does not ship `/app/external/xdit/examples/flux2_example.py`.
 5. **Exit-code gating** - benchmark pass/fail uses docker `exit_code` from
    `exec(..., detailed=True)`, not log-regex scanning.
-6. **Threshold gating** - average FLUX `pipe_time` or WAN `total_time` compared to
-   `expected_results` for the auto-detected GPU type (`mi300x`, `mi350`, `mi355`, or
-   `auto`).
+6. **Threshold gating** - average FLUX `pipe_time` or WAN `total_time` compared to the
+   sibling threshold JSON referenced by `threshold_json` for the auto-detected GPU type
+   (`mi300x`, `mi350`, `mi355`, or `auto`).
 
 Single-node output dirs use the cluster **SSH target** string from `node_dict`, not the
 remote `hostname` (`flux_<target>_outputs`, `wan_22_<target>_outputs`).
@@ -69,7 +69,9 @@ cvs run pytorch_xdit_wan22_14b_single \
 - `--config_file` - one of the templates under
   `cvs/input/config_file/inference/xdit/`. Replace every `<changeme>` (especially
   in distributed NCCL/network fields) before running.
-- `--html` / `--self-contained-html` - pytest HTML report for the suite run.
+- `--html` / `--self-contained-html` - pytest HTML report for the suite run. The
+  same output directory also receives `xdit_run_deck.html`,
+  `xdit_run_deck.json`, the interactive viewer, and the CI summary.
 
 > Use a **single-node** config with `pytorch_xdit_*_single` suites and a **distributed**
 > config (with `nnodes >= 2` and matching parallel degrees) with `pytorch_xdit_*_distributed`
@@ -82,14 +84,13 @@ On shared clusters, skip aggressive docker prune during cleanup:
 export CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1
 ```
 
-## The six suites
+## The five suites
 
 | Suite (`cvs run <name>`) | File | Model / launcher | Mode |
 |---|---|---|---|
 | `pytorch_xdit_flux_dev_single` | `pytorch_xdit_flux_dev_single.py` | FLUX.1 (`run_usp.py`) or FLUX.2 (`flux2_example.py`) | one job per node in cluster |
 | `pytorch_xdit_flux_dev_distributed` | `pytorch_xdit_flux_dev_distributed.py` | FLUX.1 / FLUX.2 unified torchrun | `nnodes >= 2`, shared rank-0 output |
 | `pytorch_xdit_wan22_14b_single` | `pytorch_xdit_wan22_14b_single.py` | WAN 2.2 I2V native (`/app/Wan2.2/run.py`) | one job per node |
-| `pytorch_xdit_wan22_14b_distributed` | `pytorch_xdit_wan22_14b_distributed.py` | WAN 2.2 native unified torchrun | `nnodes >= 2` |
 | `pytorch_xdit_wan22_14b_diffusers_single` | `pytorch_xdit_wan22_14b_diffusers_single.py` | WAN Diffusers xFuser (`wan_i2v_example.py`) | one job per node |
 | `pytorch_xdit_wan22_14b_diffusers_distributed` | `pytorch_xdit_wan22_14b_diffusers_distributed.py` | WAN Diffusers xFuser unified torchrun | `nnodes >= 2` |
 
@@ -106,12 +107,14 @@ Tests run in this order within each suite file.
 
 | Order | Test | Single | Distributed | Purpose |
 |---|---|---|---|---|
-| 1 | `test_cleanup_stale_containers` | yes | yes | Stop named benchmark container; optional `docker system prune` |
-| 2 | `test_verify_hf_cache_or_download` | FLUX, WAN native | FLUX, WAN native | Offline model presence on every node |
-| 2 | `test_verify_model_on_nodes` | WAN Diffusers | WAN Diffusers | Model / mount preflight for Diffusers layout |
-| 3 | `test_verify_parallelism_config` | no | yes | `ulysses × ring × … == nnodes × torchrun_nproc` |
-| 4 | `test_run_*_benchmark` | yes | yes | docker+torchrun benchmark; gates on exit code |
-| 5 | `test_parse_and_validate_results` | yes | yes | Parse artifacts, average latency, threshold PASS/FAIL |
+| 1 | `test_launch_container` | yes | yes | Start per-run container via `ContainerOrchestrator` |
+| 2 | `test_verify_prerequisites` | yes | yes | `/dev/kfd`, local image, and mount preflight |
+| 3 | `test_verify_model` | yes | yes | Offline model presence on every execution node |
+| 4 | `test_verify_parallelism` | no | yes | `ulysses × ring × … == nnodes × torchrun_nproc` |
+| 5 | `test_run_benchmark` | yes | yes | torchrun benchmark inside container; gates on exit code |
+| 6 | `test_parse_thresholds` | yes | yes | Parse artifacts and compare to sibling threshold JSON |
+| 7 | `test_verify_dmesg` | yes | yes | Time-bounded dmesg scan after hardware benchmark |
+| 8 | `test_teardown` | yes | yes | Leak-guard container teardown |
 
 Distributed suites scope `s_phdl` to `server_node_list` / `nnodes` participating nodes,
 not necessarily every entry in `cluster.json`.
@@ -121,11 +124,16 @@ not necessarily every entry in `cluster.json`.
 GPU type is detected once per suite from `rocm-smi` on rank-0 (or the sole node).
 Threshold lookup order: exact GPU key → `auto`.
 
+The xDiT Run Deck records the model, GPU, image/video shape, step or frame count,
+worker count, backend, output path, sample count, and parsed average timing. Its
+gate matrix uses the same selected threshold and `enforce_thresholds` setting as
+`test_parse_thresholds`.
+
 | Model family | Parsed metric | Threshold key | Required artifacts |
 |---|---|---|---|
 | FLUX | average `pipe_time` from `results/timing.json` | `max_avg_pipe_time_s` | non-empty `timing.json`, at least one `flux_*.png` |
 | WAN native | average `total_time` from `rank0_step*.json` | `max_avg_total_time_s` | step JSONs, `video.mp4` (recursive search) |
-| WAN Diffusers xFuser | average epoch time from `results/timing.json` | `max_avg_total_time_s` | `results/timing.json`, `results/video_i2v.mp4` |
+| WAN Diffusers xFuser | average epoch time from `results/timing.json` | `max_avg_pipe_time_s` | `results/timing.json`, `results/video_i2v.mp4` |
 
 A suite **passes** when model preflight succeeds, the benchmark exits 0 on every
 participating node, expected artifacts exist, and the averaged metric is at or below the
@@ -134,8 +142,8 @@ configured threshold.
 A suite **fails** when model paths are missing, preflight checks fail, docker exits
 non-zero, artifacts are missing/empty, or latency exceeds the threshold.
 
-Sample thresholds in-repo are starting points; tune `expected_results` for your hardware,
-software stack, and benchmark settings before production gating.
+Sample thresholds in-repo are starting points; tune the sibling threshold JSON for your
+hardware, software stack, and benchmark settings before production gating.
 
 ## Output layout
 
@@ -176,47 +184,48 @@ Templates live in `cvs/input/config_file/inference/xdit/`:
 | `mi3xx_pytorch_xdit_flux2_dev_single.json` | `pytorch_xdit_flux_dev_single` |
 | `mi3xx_pytorch_xdit_flux2_dev_distributed.json` | `pytorch_xdit_flux_dev_distributed` |
 | `mi3xx_pytorch_xdit_wan22_14b_single.json` | `pytorch_xdit_wan22_14b_single` |
-| `mi3xx_pytorch_xdit_wan22_14b_distributed.json` | `pytorch_xdit_wan22_14b_distributed` |
 | `mi3xx_pytorch_xdit_wan22_14b_diffusers_single.json` | `pytorch_xdit_wan22_14b_diffusers_single` |
 | `mi3xx_pytorch_xdit_wan22_14b_diffusers_distributed.json` | `pytorch_xdit_wan22_14b_diffusers_distributed` |
 
-**Placeholders** (test JSON): `{user-id}`, `{user}`, `{home}` — resolved at startup.
-Cluster JSON resolves `{user-id}` only; use real absolute paths for `priv_key_file` when
-`/home/{user-id}/.ssh/id_rsa` is wrong on your system.
+Each workload JSON names a sibling `*_threshold.json` via top-level `threshold_json`.
+Copy both files together and keep them in the same directory.
 
-**Key config fields:**
+**Placeholders** (test JSON): `{user-id}`, `{user}`, `{home}`, `{paths.*}` — resolved at
+startup. Cluster JSON resolves `{user-id}` only; use real absolute paths for
+`priv_key_file` when `/home/{user-id}/.ssh/id_rsa` is wrong on your system.
 
-- `hf_home` - host Hugging Face cache root (mounted at `/hf_home`); must contain `hub/`
-  when using repo-id + offline cache mode. See
-  [HF cache docs](https://huggingface.co/docs/huggingface_hub/guides/manage-cache).
-- `model_repo` - Hugging Face repo id or absolute on-disk model path (preferred at scale).
-- `output_base_dir` - host directory for benchmark outputs.
-- `container_config.device_list` - typically `["/dev/dri", "/dev/kfd"]`.
-- `container_config.volume_dict` - optional host:container bind mounts. WAN Diffusers
-  xFuser requires mounting `cvs/lib/inference/xdit/scripts/wan_i2v_example.py`.
-  FLUX.2 probes `/app/external/xdit/examples/flux2_example.py` in the image and, when
-  it is missing, bind-mounts `cvs/lib/inference/xdit/scripts/flux2_example.py` to
-  `/benchmark/flux2_example.py` (same pattern as WAN xFuser). Flux2 sample configs
-  already set this mapping in `volume_dict`.
+**Key unified config fields:**
+
+- `paths.models_dir` - host Hugging Face cache root (mounted at `/hf_home`); must contain
+  `hub/` when using repo-id + offline cache mode.
+- `paths.log_dir` - host directory for benchmark outputs.
+- `model.id` - Hugging Face repo id or absolute on-disk model path (preferred at scale).
+- `container.image` - docker image (`<changeme>` in templates; see `_image_example`).
+- `container.runtime.args.devices` - typically `["/dev/dri", "/dev/kfd"]`.
+- `container.runtime.args.volumes` - host:container bind mounts. WAN Diffusers xFuser
+  requires mounting `cvs/lib/inference/xdit/scripts/wan_i2v_example.py`. FLUX.2 mounts
+  `cvs/lib/inference/xdit/scripts/flux2_example.py` to `/benchmark/flux2_example.py`
+  when the image does not ship the example.
 - `CVS_WAN_XFUSER_PYPACKAGES` - optional extra Python path for WAN xFuser. Set it in
   the environment (`export CVS_WAN_XFUSER_PYPACKAGES=/path/to/pypackages`) or in
-  `container_config.env_dict`; do not commit cluster-specific paths in sample JSON.
-- `nnodes`, `master_addr`, `nccl_*`, `gloo_socket_ifname` - distributed rendezvous and
-  NCCL tuning (replace `<changeme>` values).
-- `benchmark_params.flux1_dev_t2i` or `benchmark_params.wan22_i2v_a14b` - torchrun
-  parallelism, warmup/repetition counts, and `expected_results`.
+  `container.env`; do not commit cluster-specific paths in sample JSON.
+- `topology`, `nnodes`, `master_addr`, `nccl_*`, `gloo_socket_ifname` - distributed
+  rendezvous and NCCL tuning (replace `<changeme>` values).
+- `benchmark_serv_node` - required cluster `node_dict` key for single-node suites.
+- `params.flux1_dev_t2i` or `params.wan22_i2v_a14b` - torchrun parallelism and warmup
+  settings. Thresholds live in the sibling threshold JSON, not in `params`.
 
-Configs are validated through Pydantic schemas (`PytorchXditFluxConfigFile`,
-`PytorchXditWanConfigFile`) at load time.
+Configs load through `xdit_config_loader.load_variant()` and validate through
+`PytorchXditUnifiedConfigFile` (or legacy `PytorchXditFluxConfigFile` /
+`PytorchXditWanConfigFile` for older `config` + `benchmark_params` layouts).
 
 ## First-time setup
 
 1. SSH to each compute node (or a shared staging host with cluster-visible storage).
-2. Stage models under a real `hf_home` or bind-mount path (`hf download` or rsync).
-3. `docker pull` the configured `container_image` on every execution node.
+2. Stage models under a real `paths.models_dir` or bind-mount path (`hf download` or rsync).
+3. `docker pull` the configured `container.image` on every execution node.
 4. Create `cluster.json` with the same SSH target string for `mgmt_ip`, `node_dict` key,
    and `vpc_ip`.
-5. Run with `CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1` on shared systems.
 
 **Model download examples** (on the node):
 
@@ -233,9 +242,9 @@ test -e /dev/kfd && echo KFD_OK
 docker image inspect amdsiloai/pytorch-xdit:v25.11.2 >/dev/null && echo IMG_OK
 ```
 
-**Multi-node storage:** `hf_home` is verified independently per node. If `$HOME` is not
-shared across the cluster, each node needs its own full model copy unless you mount a
-shared path via `container_config.volume_dict`.
+**Multi-node storage:** `paths.models_dir` is verified independently per node. If `$HOME`
+is not shared across the cluster, each node needs its own full model copy unless
+`container.runtime.args.volumes` mounts shared storage.
 
 ## Prerequisites
 
@@ -251,12 +260,13 @@ shared path via `container_config.volume_dict`.
 
 ## Operational notes
 
-- **Cleanup:** `test_cleanup_stale_containers` kills the named container and runs
-  `docker system prune --force` unless `CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1`.
-- **SSH retries:** long benchmark sessions may hit stale SSH clients; `Pssh` retries once
-  on `SessionError`.
-- **Local single-node:** when the sole cluster target resolves to localhost, single suites
-  may use a `LocalPssh` path instead of SSH.
+- **Lifecycle:** `ContainerOrchestrator` launches one long-running container per scoped
+  execution node. Benchmark stages run through `orch.exec()`, and teardown removes only
+  the suite-owned per-run containers.
+- **Cleanup:** stale xDiT output directories are removed before each benchmark. The suite
+  does not run global Docker prune operations.
+- **Single-node scope:** single suites run only on the configured `benchmark_serv_node`,
+  matching the SGLang single-node orchestration model.
 - **WAN xFuser:** Diffusers suites may require bind-mounting `wan_i2v_example.py` and an
   I2V input image in `volume_dict`, or enabling auto-generated in-container input.
 
@@ -268,5 +278,5 @@ shared path via `container_config.volume_dict`.
 | `Container image not found locally` | image not pulled | `docker pull` on each node |
 | `Local model path not found` | model not staged | rsync/`hf download` to every node |
 | `Parallel degree product != world_size` | config mismatch | align ulysses/ring/… with `nnodes × nproc` |
-| Threshold exceeded | slow hardware or wrong baseline | tune workload or `expected_results` |
+| Threshold exceeded | slow hardware or wrong baseline | tune workload or sibling threshold JSON |
 | Missing `video.mp4` / `timing.json` | benchmark failed mid-run | inspect benchmark log tail on failing node |

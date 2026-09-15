@@ -334,6 +334,7 @@ class TestBuildTorchrunCmd(unittest.TestCase):
         self.assertIn("--compile", cmd)
 
     def test_single_node_diffusers_xfuser(self):
+        output_dir = "/outputs/wan_22_node_outputs"
         cmd = build_torchrun_cmd(
             {
                 **self._BASE_PARAMS,
@@ -344,10 +345,13 @@ class TestBuildTorchrunCmd(unittest.TestCase):
             ckpt_dir="/model",
             distributed=False,
             model_repo_hints=["Wan-AI/Wan2.2-I2V-A14B-Diffusers"],
+            output_dir_container=output_dir,
         )
         self.assertIn(WAN_XFUSER_EXAMPLE_CONTAINER_PATH, cmd)
         self.assertIn(f"--input_image {WAN_XFUSER_AUTO_INPUT_IMAGE}", cmd)
-        self.assertIn("mkdir -p /outputs/results", cmd)
+        self.assertIn(f"mkdir -p {output_dir}/results", cmd)
+        self.assertIn(f"--output_directory {output_dir}", cmd)
+        self.assertIn(f"{output_dir}/results/video_i2v.mp4", cmd)
         self.assertIn("imageio", cmd)
         self.assertIn("i2v_input.jpg", cmd)
         self.assertNotIn(RUN_WAN_DIFFUSERS_PATH, cmd)
@@ -500,6 +504,21 @@ class TestWanBenchmarkJob(unittest.TestCase):
     def test_validate_parallelism_single_node_skips_check(self):
         job, _ = _make_wan_job()
         self.assertIsNone(job.validate_parallelism())
+
+    def test_orchestrator_job_uses_per_run_output_directory(self):
+        job, _ = _make_wan_job()
+        job.uses_container_orchestrator = True
+        output_dir = "/outputs/wan_22_node_outputs"
+
+        cmd = job._build_torchrun_cmd(
+            node_rank=0,
+            host_output_dir=output_dir,
+            master_addr="127.0.0.1",
+            master_port=29500,
+        )
+
+        self.assertIn(f"--benchmark_output_directory {output_dir}", cmd)
+        self.assertIn(f"--save_file {output_dir}/outputs/video.mp4", cmd)
 
     def test_validate_parallelism_distributed_fail(self):
         cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}

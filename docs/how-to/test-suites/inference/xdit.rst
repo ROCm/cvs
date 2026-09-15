@@ -10,8 +10,8 @@ CVS provides five xDiT suites under ``cvs/tests/inference/xdit/``. Each suite is
 separate pytest module; pick the one that matches your topology and launcher, then point
 ``--config_file`` at a template from ``cvs/input/config_file/inference/xdit/``.
 
-- **Single-node** suites run one independent docker+torchrun job on **every** node in
-  the cluster file (full model on each node).
+- **Single-node** suites run one torchrun job inside the orchestrated container on
+  ``benchmark_serv_node``.
 - **Distributed** suites run one coordinated torchrun job across ``nnodes`` (``nnodes >= 2``),
   using ``server_node_list`` when set.
 
@@ -75,9 +75,12 @@ Set up config
 
      cvs config copy cluster_container.json --output ~/cvs_workspace/cluster.json
 
-4. Edit the config — set ``container_image``, ``model_repo`` / ``hf_home``, ``nnodes``
-   for distributed runs, and replace every ``<changeme>``. Resolve ``{user-id}`` /
-   ``{home}`` or leave them for CVS to expand.
+4. Copy the sibling ``*_threshold.json`` beside each workload config and keep both files
+   in the same directory.
+
+5. Edit the config — set ``container.image``, ``model.id`` / ``paths.models_dir``,
+   ``nnodes`` for distributed runs, and replace every ``<changeme>``. Resolve
+   ``{user-id}`` / ``{home}`` or leave them for CVS to expand.
 
 Shipped config templates:
 
@@ -132,10 +135,15 @@ List stages in a suite:
 .. code:: text
 
   Available tests in pytorch_xdit_flux_dev_single:
-    - test_cleanup_stale_containers
-    - test_verify_hf_cache_or_download
-    - test_run_flux1_benchmark
-    - test_parse_and_validate_results
+    - test_launch_container
+    - test_verify_prerequisites
+    - test_verify_model
+    - test_verify_parallelism
+    - test_run_benchmark
+    - test_parse_thresholds
+    - test_verify_dmesg
+    - test_print_results
+    - test_teardown
 
 Example run (FLUX.1-dev; use the flux2 JSON for FLUX.2-dev):
 
@@ -153,13 +161,17 @@ Example run (FLUX.1-dev; use the flux2 JSON for FLUX.2-dev):
 .. code:: text
 
   Available tests in pytorch_xdit_flux_dev_distributed:
-    - test_cleanup_stale_containers
-    - test_verify_hf_cache_or_download
-    - test_verify_parallelism_config
-    - test_run_flux1_benchmark
-    - test_parse_and_validate_results
+    - test_launch_container
+    - test_verify_prerequisites
+    - test_verify_model
+    - test_verify_parallelism
+    - test_run_benchmark
+    - test_parse_thresholds
+    - test_verify_dmesg
+    - test_print_results
+    - test_teardown
 
-``test_verify_parallelism_config`` checks that
+``test_verify_parallelism`` checks that
 ``ulysses × ring × pipefusion × tp × dp == nnodes × torchrun_nproc``.
 
 Example run:
@@ -178,10 +190,15 @@ Example run:
 .. code:: text
 
   Available tests in pytorch_xdit_wan22_14b_single:
-    - test_cleanup_stale_containers
-    - test_verify_hf_cache_or_download
-    - test_run_wan22_benchmark
-    - test_parse_and_validate_results
+    - test_launch_container
+    - test_verify_prerequisites
+    - test_verify_model
+    - test_verify_parallelism
+    - test_run_benchmark
+    - test_parse_thresholds
+    - test_verify_dmesg
+    - test_print_results
+    - test_teardown
 
 Example run:
 
@@ -199,10 +216,15 @@ Example run:
 .. code:: text
 
   Available tests in pytorch_xdit_wan22_14b_diffusers_single:
-    - test_cleanup_stale_containers
-    - test_verify_model_on_nodes
-    - test_run_wan22_diffusers_benchmark
-    - test_parse_and_validate_results
+    - test_launch_container
+    - test_verify_prerequisites
+    - test_verify_model
+    - test_verify_parallelism
+    - test_run_benchmark
+    - test_parse_thresholds
+    - test_verify_dmesg
+    - test_print_results
+    - test_teardown
 
 Example run:
 
@@ -220,13 +242,17 @@ Example run:
 .. code:: text
 
   Available tests in pytorch_xdit_wan22_14b_diffusers_distributed:
-    - test_cleanup_stale_containers
-    - test_verify_model_on_nodes
-    - test_verify_parallelism_config
-    - test_run_wan22_diffusers_benchmark
-    - test_parse_and_validate_results
+    - test_launch_container
+    - test_verify_prerequisites
+    - test_verify_model
+    - test_verify_parallelism
+    - test_run_benchmark
+    - test_parse_thresholds
+    - test_verify_dmesg
+    - test_print_results
+    - test_teardown
 
-``test_verify_parallelism_config`` checks that ``ulysses_size × ring_size == nnodes × torchrun_nproc``.
+``test_verify_parallelism`` checks that ``ulysses_size × ring_size == nnodes × torchrun_nproc``.
 
 Example run:
 
@@ -259,17 +285,14 @@ exit code plus parsed artifacts and GPU-specific thresholds (``mi300x``, ``mi350
 
 Key stages to watch:
 
-- **Cleanup** — ``test_cleanup_stale_containers`` stops the named container (and
-  ``{container_name}-rankN`` on distributed suites). It also runs
-  ``docker system prune`` unless ``CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1``.
-- **Model preflight** — ``test_verify_hf_cache_or_download`` (FLUX and WAN native) or
-  ``test_verify_model_on_nodes`` (WAN Diffusers). Fails if the model is missing on any
-  participating node.
-- **Parallelism** — ``test_verify_parallelism_config`` (distributed suites only).
-- **Benchmark** — ``test_run_flux1_benchmark``, ``test_run_wan22_benchmark``, or
-  ``test_run_wan22_diffusers_benchmark``.
-- **Parse** — ``test_parse_and_validate_results`` compares average latency to
-  ``expected_results``.
+- **Container lifecycle** — ``test_launch_container`` starts the scoped containers;
+  ``test_teardown`` removes only the suite-owned per-run containers.
+- **Model preflight** — ``test_verify_model`` fails if the staged model is missing on
+  any participating node.
+- **Parallelism** — ``test_verify_parallelism`` validates the configured topology.
+- **Benchmark** — ``test_run_benchmark`` executes torchrun inside the containers.
+- **Parse** — ``test_parse_thresholds`` compares average latency to the sibling
+  threshold JSON referenced by ``threshold_json``.
 
 .. list-table::
    :widths: 2 3 3 3
@@ -289,9 +312,9 @@ Key stages to watch:
      - step JSONs, ``video.mp4``
    * - WAN Diffusers
      - average epoch / pipe time from ``results/timing.json``
-     - ``max_avg_total_time_s``
+     - ``max_avg_pipe_time_s``
      - ``results/timing.json``, ``results/video_i2v.mp4``
 
 Single-node output dirs use the cluster SSH target, for example
-``${output_base_dir}/flux_<target>_outputs`` or ``wan_22_<target>_outputs``.
+``${paths.log_dir}/flux_<target>_outputs`` or ``wan_22_<target>_outputs``.
 Distributed runs write to the rank-0 target directory.
