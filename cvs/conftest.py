@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import importlib.metadata
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,8 @@ from cvs.lib.report.pytest_hooks import (
     cvs_rundeck_session_fixture,
 )
 from cvs.lib.report_plugins import HtmlReportManager, cli_option_value
+
+log = logging.getLogger(__name__)
 
 
 def _maybe_autocollect_html(config, suite_name):
@@ -234,5 +237,8 @@ def pytest_html_results_summary(prefix, summary, postfix):
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
     yield  # wait for pytest-html and all other plugins to finish writing the report
     mgr = _ensure_html_report_manager(session.config)
-    mgr.generate_suite_reports(session)
+    try:
+        mgr.generate_suite_reports(session)
+    except Exception:
+        log.exception("Run Deck publish failed; continuing so the report bundle is still written")
     mgr.create_zip_bundle(session)
