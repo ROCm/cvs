@@ -86,13 +86,16 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_load_w1_mi3xx_multinode_variant(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed.json")
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
         self.assertEqual(variant.params.nnodes, "2")
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(variant.params.pipeline_parallel_size, "2")
         self.assertEqual(variant.roles.server.ib_netdev, "auto")
         self.assertEqual(variant.roles.server.ib_hca_devices, "auto")
         self.assertEqual(variant.params.scaling_baseline_output_throughput, "1500")
+        self.assertEqual(variant.params.server_poll_count, "120")
+        self.assertEqual(variant.params.client_poll_count, "150")
+        self.assertEqual(variant.params.max_model_length, "8192")
         self.assertFalse(variant.enforce_thresholds)
         self.assertEqual(len(variant.expected_cells()), 16)
         cell = "ISL=512,OSL=512,TP=8,PP=2,CONC=16"
@@ -344,6 +347,15 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertIn("kv-cache-dtype", variant.roles.server.serve_args)
 
+    def test_load_atom_vllm_distributed_serving_schema(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertEqual(variant.params.nnodes, "2")
+        self.assertEqual(variant.params.pipeline_parallel_size, "2")
+        self.assertIn("kv-cache-dtype", variant.roles.server.serve_args)
+        self.assertEqual(variant.roles.server.ib_netdev, "auto")
+
     def test_load_atom_vllm_gpt_oss_serving_schema(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_vllm_gpt-oss-120b_mxfp4_single.json")
@@ -381,6 +393,62 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                 "ISL=128,OSL=32,TP=8,PP=1,CONC=1",
             ],
         )
+        self.assertEqual(
+            [task.id for task in variant.accuracy.tasks],
+            [
+                "gsm8k_flex",
+                "hellaswag",
+                "mmlu_pro",
+                "bbh",
+                "musr",
+                "arc_challenge",
+                "winogrande",
+            ],
+        )
+
+    def test_load_qwen397b_fp8_parity_variants(self):
+        root = Path(__file__).resolve().parents[3]
+        cases = (
+            ("vllm", "single", "vllm_atom", "1", "1"),
+            ("vllm", "distributed", "vllm_atom", "2", "2"),
+            ("sglang", "single", "sglang", "1", "1"),
+            ("sglang", "distributed", "sglang", "2", "2"),
+        )
+        for engine, mode, driver, nnodes, pp in cases:
+            name = f"mi3xx_atom_{engine}_qwen3.5-397b-a17b_fp8_{mode}.json"
+            with self.subTest(name=name):
+                variant = _atom_config(root, name)
+                self.assertEqual(variant.model.id, "amd/Qwen3.5-397B-A17B-FP8")
+                self.assertEqual(variant.params.driver, driver)
+                self.assertEqual(variant.params.nnodes, nnodes)
+                self.assertEqual(variant.params.pipeline_parallel_size, pp)
+                self.assertTrue(variant.platform.gpu_metrics_poll)
+                self.assertEqual(
+                    [task.id for task in variant.accuracy.tasks],
+                    ["gsm8k_flex", "hellaswag", "mmlu_pro"],
+                )
+                self.assertTrue(all(f"PP={pp}" in cell for cell in variant.expected_cells()))
+                self.assertIn("accuracy", variant.thresholds)
+                if engine == "sglang":
+                    self.assertIn("--mamba-radix-cache-strategy", variant.roles.server.sglang_args)
+                    self.assertIn("--disable-overlap-schedule", variant.roles.server.sglang_args)
+                    self.assertEqual(variant.roles.server.env.get("SGLANG_ROCM_ARCH"), "gfx942")
+                    self.assertEqual(variant.roles.server.env.get("GPU_ARCHS"), "gfx942")
+                    self.assertTrue(
+                        str(variant.roles.server.env.get("HF_HUB_CACHE", "")).endswith(".cache/huggingface")
+                    )
+
+    def test_load_qwen397b_fp8_mtp3(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json", profile="mtp3")
+        self.assertEqual(variant.params.driver, "atom")
+        self.assertIn("--method", variant.roles.server.atom_args)
+        self.assertTrue(variant.mtp_quality.enabled)
+        self.assertIn("mtp.acceptance_rate", variant.thresholds["mtp_quality"])
+        self.assertEqual(
+            [task.id for task in variant.accuracy.tasks],
+            ["gsm8k_flex", "gsm8k_strict"],
+        )
 
     def test_load_w1_single_gpu_metrics_poll(self):
         root = Path(__file__).resolve().parents[3]
@@ -398,7 +466,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_load_distributed_accuracy_scaffold(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed.json")
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
         self.assertEqual(variant.params.driver, "vllm_atom")
         self.assertEqual(variant.params.nnodes, "2")
         self.assertIn("PP=2", variant.expected_cells()[0])
@@ -446,15 +514,16 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         with self.assertRaises(ValueError):
             resolve_atom_profile(raw, {}, "missing")
 
-    def test_legacy_flat_config_unchanged(self):
+    def test_qwen_native_resolves_perf_profile(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json")
         self.assertEqual(variant.schema_version, 1)
         self.assertEqual(variant.threshold_json, "mi325x_atom_qwen3.5-397b-a17b_fp8_threshold.json")
+        self.assertNotIn("--method", variant.roles.server.atom_args)
 
     def test_flat_config_slices_profiled_threshold(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_deepseek-r1_fp8_distributed.json")
+        variant = _atom_config(root, "mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json")
         cell = "ISL=512,OSL=512,TP=8,PP=2,CONC=16"
         self.assertIn(cell, variant.expected_cells())
         self.assertIn("scaling.efficiency_pct", variant.thresholds[cell])
@@ -517,15 +586,19 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         for cfg in sorted(atom_dir.glob("*.json")):
             if "threshold" in cfg.name:
                 continue
-            variant = load_variant(cfg, cluster)
-            if not variant.threshold_json:
-                continue
-            for cell in variant.expected_cells():
-                self.assertIn(
-                    cell,
-                    variant.thresholds,
-                    f"{cfg.name}: missing threshold cell {cell!r}",
+            raw = json.loads(cfg.read_text(encoding="utf-8"))
+            profiles = list(raw["profiles"]) if isinstance(raw.get("profiles"), dict) else [None]
+            for profile in profiles:
+                variant = load_variant(cfg, cluster, profile=profile)
+                if not variant.threshold_json:
+                    continue
+                isl_keys = [key for key in variant.thresholds if str(key).startswith("ISL=")]
+                self.assertCountEqual(
+                    isl_keys,
+                    variant.expected_cells(),
+                    f"{cfg.name} profile={profile}: threshold ISL keys must match the sweep",
                 )
+                self.assertTrue(variant.platform.gpu_metrics_poll, f"{cfg.name} profile={profile}")
 
 
 if __name__ == "__main__":
