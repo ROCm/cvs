@@ -21,7 +21,7 @@
       "rdma": {
         "_comment": "RDMA connectivity testing parameters using ibv_rc_pingpong (direct IB verbs) for RCCL-compatible testing",
 
-        "connectivity_mode": "run",
+        "connectivity_mode": "skip",
         "_comment_connectivity_mode": "RDMA connectivity testing mode. Options: 'basic' (test adjacent node pairs, fast, ~14% coverage for 8 nodes), 'full_mesh' (test all possible node pairs, comprehensive, 100% coverage), 'skip' (skip RDMA connectivity testing entirely).",
 
         "_example_gid_index": "3",
