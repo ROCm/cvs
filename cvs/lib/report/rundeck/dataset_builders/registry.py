@@ -2,7 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Registry for Run Deck dataset builders (``sweep``, ``series``, ``matrix``).
+Registry for Run Deck dataset builders (``sweep``, ``series``, ``matrix``, ``rvs``).
 
 Builders are the Python extension point for new data shapes. Card types consume
 builder output; they are not builders themselves.

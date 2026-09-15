@@ -163,8 +163,10 @@ class DeckCardRenderer:
     def render_line_chart(self, _payload: dict, card: dict, data: Any) -> str:
         series_cfg = card.get("series") or {}
         y_field = series_cfg.get("y_field") or "bus_bw"
-        charts = data.get("charts") if isinstance(data, dict) else {}
-        raw = charts.get(y_field) if isinstance(charts, dict) else None
+        if isinstance(data, dict) and "charts" in data:
+            raw = (data.get("charts") or {}).get(y_field)
+        else:
+            raw = data
         entries: list = []
         if isinstance(raw, dict):
             for series_list in raw.values():
@@ -178,12 +180,15 @@ class DeckCardRenderer:
             return "<p class='muted'>No series data.</p>"
         parts = []
         title = card.get("title") or y_field
+        x_label = series_cfg.get("x_label") or "{x}"
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
             points = entry.get("points") or []
             label = entry.get("label") or title
-            part = self._charts.render_series_chart(str(label), points, series_cfg.get("unit") or "GB/s")
+            part = self._charts.render_series_chart(
+                str(label), points, series_cfg.get("unit") or "GB/s", x_label=x_label
+            )
             if part:
                 parts.append(part)
         return f"<div class='chart-grid'>{''.join(parts)}</div>" if parts else "<p class='muted'>No series data.</p>"
