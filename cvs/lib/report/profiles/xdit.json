@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "profile_id": "xdit_rundeck",
+  "suite_id": "xdit",
+  "report_basename": "xdit_run_deck",
+  "title": "xDiT Run Deck",
+  "subtitle": "xDiT · diffusion performance summary",
+  "footer": "CVS xDiT · render-only · does not affect gates",
+  "link_name": "xDiT Run Deck",
+  "dataset_builder": "sweep",
+  "interactive_viewer": true,
+  "viewer_cell_threshold": 16,
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "variant_config",
+    "lifecycle": "lifecycle"
+  },
+  "hooks": {
+    "tier_metric_specs": "cvs.lib.inference.xdit.xdit_parsing:tier_metric_specs",
+    "metric_units": "cvs.lib.inference.xdit.xdit_parsing:XDIT_METRIC_UNITS",
+    "run_card_display": "cvs.lib.report.profiles.hooks.xdit_run_card:xdit_run_card_display"
+  },
+  "sweep": {
+    "metric_prefix": "",
+    "tier_order": ["latency", "record"],
+    "throughput_metric": "avg_pipe_time_s",
+    "ttft_metric": "avg_pipe_time_s",
+    "headline_metric": "avg_pipe_time_s",
+    "results_table_columns": [
+      ["Model", null],
+      ["GPU", null],
+      ["Shape", null],
+      ["Steps/frames", null],
+      ["Cell", null],
+      ["Workers", null],
+      ["Host", null],
+      ["Avg pipe time (s)", "avg_pipe_time_s"],
+      ["Avg total time (s)", "avg_total_time_s"],
+      ["Samples", "sample_count"],
+      ["Backend", "backend"],
+      ["Output", "output_dir"]
+    ],
+    "cell_highlights": [
+      ["avg_pipe_time_s", "Avg pipe time"],
+      ["avg_total_time_s", "Avg total time"],
+      ["sample_count", "Samples"]
+    ],
+    "chart_series": [
+      {"metric_suffix": "avg_pipe_time_s", "title": "Avg pipe time", "unit": "s", "invert": true},
+      {"metric_suffix": "avg_total_time_s", "title": "Avg total time", "unit": "s", "invert": true}
+    ]
+  },
+  "lifecycle": {
+    "session_labels": [
+      "container_launch",
+      "prerequisites",
+      "model_verify",
+      "parallelism",
+      "benchmark",
+      "parse_thresholds",
+      "dmesg",
+      "teardown"
+    ],
+    "cell_labels": ["benchmark", "parse_thresholds"]
+  },
+  "behavior": {
+    "inference_test_substring": "test_run_benchmark",
+    "row_card_extras": false,
+    "row_card_test_names": []
+  },
+  "viewer": {
+    "interactivity": {
+      "enabled": true,
+      "tpot_metric": "avg_pipe_time_s",
+      "output_throughput_metric": "avg_pipe_time_s",
+      "total_throughput_metric": "avg_total_time_s"
+    }
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {"type": "lifecycle_timeline", "id": "lifecycle", "title": "Lifecycle timeline", "bind": "lifecycle"},
+    {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
+    {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
+    {"type": "sweep_cell_cards", "id": "cells", "title": "Benchmark result", "bind": "cells"},
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}

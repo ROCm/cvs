@@ -64,6 +64,29 @@ class TestProfile(unittest.TestCase):
         self.assertEqual(config.full_metric("output_throughput_per_sec"), "output_throughput_per_sec")
         self.assertEqual(config.metric_tier_order, ("throughput", "latency", "health", "record"))
 
+    def test_xdit_stems_share_one_profile(self):
+        stems = (
+            "pytorch_xdit_flux_dev_single",
+            "pytorch_xdit_flux_dev_distributed",
+            "pytorch_xdit_wan22_14b_single",
+            "pytorch_xdit_wan22_14b_diffusers_single",
+            "pytorch_xdit_wan22_14b_diffusers_distributed",
+        )
+        for stem in stems:
+            with self.subTest(stem=stem):
+                profile = load_json_profile(stem)
+                self.assertEqual(profile["suite_id"], "xdit")
+                self.assertEqual(profile["report_basename"], "xdit_run_deck")
+
+    def test_xdit_profile_resolves_latency_metrics(self):
+        from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
+
+        config = build_inference_config_from_profile(load_json_profile("xdit"))
+
+        self.assertEqual(config.metric_prefix, "")
+        self.assertEqual(config.metric_tier_order, ("latency", "record"))
+        self.assertEqual(config.full_metric("avg_pipe_time_s"), "avg_pipe_time_s")
+
 
 if __name__ == "__main__":
     unittest.main()
