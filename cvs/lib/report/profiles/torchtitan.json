@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "profile_id": "torchtitan_rundeck",
+  "suite_id": "torchtitan",
+  "metric_contract": {"id": "torchtitan-training", "version": 1},
+  "report_basename": "torchtitan_run_deck",
+  "title": "TorchTitan Training Run Deck",
+  "subtitle": "TorchTitan · single-node and distributed training performance",
+  "footer": "CVS TorchTitan · render-only · does not affect training gates",
+  "link_name": "TorchTitan Training Run Deck",
+  "dataset_builder": "sweep",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "torchtitan_rundeck_results",
+    "variant": "torchtitan_rundeck_variant",
+    "lifecycle": "lifecycle"
+  },
+  "hooks": {
+    "tier_metric_specs": "cvs.lib.report.profiles.hooks.torchtitan:torchtitan_tier_metric_specs",
+    "metric_units": "cvs.lib.report.profiles.hooks.torchtitan:METRIC_UNITS",
+    "metric_verdict": "cvs.lib.report.profiles.hooks.torchtitan:torchtitan_metric_verdict",
+    "run_card_display": "cvs.lib.report.profiles.hooks.torchtitan:torchtitan_run_card_display"
+  },
+  "sweep": {
+    "metric_prefix": "training.",
+    "tier_order": ["gates", "record"],
+    "throughput_metric": "training.tokens_per_sec",
+    "headline_metric": "training.tokens_per_sec",
+    "results_table_columns": [
+      ["Model", null],
+      ["GPU", null],
+      ["MBS", null],
+      ["GBS", null],
+      ["Cell", null],
+      ["Precision", null],
+      ["Host", null],
+      ["nnodes", "nnodes"],
+      ["Parallelism", "parallelism"],
+      ["Tokens/s", "training.tokens_per_sec"],
+      ["Loss", "training.loss"],
+      ["Memory (GiB)", "training.mem_usage_gb"],
+      ["Throughput/GPU", "training.throughput_per_gpu"],
+      ["Scaling efficiency (%)", "training.scaling_efficiency_pct"],
+      ["Steps to target", "training.steps_to_target"],
+      ["Time to target (s)", "training.time_to_target_seconds"]
+    ],
+    "cell_highlights": [
+      ["tokens_per_sec", "Tokens/s"],
+      ["loss", "Loss"],
+      ["mem_usage_gb", "Memory (GiB)"],
+      ["throughput_per_gpu", "Throughput/GPU"],
+      ["scaling_efficiency_pct", "Scaling efficiency (%)"]
+    ],
+    "chart_series": [
+      {"metric_suffix": "tokens_per_sec", "title": "Training throughput vs cells", "unit": "tok/s", "invert": false}
+    ]
+  },
+  "lifecycle": {
+    "session_labels": [
+      "container_launch",
+      "rdma_setup",
+      "tokenizer_download",
+      "smoke",
+      "training",
+      "teardown"
+    ],
+    "cell_labels": ["training"]
+  },
+  "behavior": {
+    "inference_test_substring": "test_training",
+    "row_card_extras": false,
+    "row_card_test_names": ["test_metric"]
+  },
+  "viewer": {
+    "interactivity": {
+      "enabled": false
+    }
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {
+      "type": "sweep_analytics",
+      "id": "training-throughput",
+      "title": "Training throughput vs cells",
+      "bind": "datasets.sweep"
+    },
+    {"type": "gate_matrix", "id": "gates", "title": "Gate matrix vs thresholds", "bind": "gate_matrix"},
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}
