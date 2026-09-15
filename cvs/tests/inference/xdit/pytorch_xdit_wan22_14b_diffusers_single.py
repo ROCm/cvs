@@ -35,6 +35,7 @@ from cvs.lib.inference.xdit.pytorch_xdit_wan_i2v import (
     WanI2vOutputParser,
     log_results_summary,
 )
+from cvs.lib.inference.xdit.pytorch_xdit_rundeck import build_xdit_result_record
 from cvs.lib.inference.xdit.pytorch_xdit_wan_job import (
     build_wan_output_cleanup_cmd,
     launch_wan_benchmark,
@@ -299,7 +300,7 @@ def test_run_wan22_diffusers_benchmark(s_phdl, inference_dict, benchmark_params_
     update_test_result()
 
 
-def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dict, gpu_type):
+def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dict, gpu_type, xdit_results):
     globals.error_list = []
 
     output_base_dir = inference_dict.get("output_base_dir")
@@ -356,6 +357,20 @@ def test_parse_and_validate_results(s_phdl, inference_dict, benchmark_params_dic
 
         passed, message = parser.validate_threshold(result, expected_results, gpu_type)
         log.info("%s: %s", label, message)
+        xdit_results.append(
+            build_xdit_result_record(
+                workload="WAN 2.2 Diffusers image-to-video",
+                label=label,
+                inference_config=inference_dict,
+                benchmark_params=wan_params,
+                gpu=gpu_type,
+                nnodes=len(s_phdl.host_list),
+                sample_times=result.pipe_times,
+                average_time=result.avg_pipe_time_s,
+                sample_kind="repetition",
+                passed=passed,
+            )
+        )
         results_summary.append({"label": label, "avg_pipe_time_s": result.avg_pipe_time_s, "passed": passed})
         if not passed:
             all_passed = False
