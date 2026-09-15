@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "profile_id": "ib_perf_bw_test_rundeck",
+  "suite_id": "ib_perf_bw_test",
+  "metric_contract": {"id": "ibperf-bandwidth", "version": 1},
+  "report_basename": "ib_perf_bw_test_run_deck",
+  "title": "IB Performance Bandwidth Run Deck",
+  "subtitle": "Write, read, and send bandwidth across message sizes and QP counts",
+  "footer": "CVS ibperf · render-only · does not affect validation gates",
+  "link_name": "IB Performance Bandwidth Run Deck",
+  "dataset_builder": "ibperf",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "ibperf_variant_config"
+  },
+  "hooks": {
+    "run_card_display": "cvs.lib.report.profiles.hooks.ibperf_run_card:ibperf_run_card_display"
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {
+      "type": "line_chart",
+      "id": "bandwidth",
+      "title": "Mean bandwidth by test and QP count",
+      "bind": "datasets.ibperf",
+      "series": {"y_field": "bus_bw", "unit": "Gb/s", "x_label": "{x} B"}
+    },
+    {
+      "type": "table",
+      "id": "node-spread",
+      "title": "Per-node bandwidth spread",
+      "bind": "datasets.ibperf.results_table"
+    }
+  ]
+}
