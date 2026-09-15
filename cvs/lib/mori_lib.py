@@ -261,11 +261,13 @@ class MoriBenchmark:
                     -b {min_val} -e {max_val} -f 2 -q {qp_count} -n {iters}" '''
         out_dict = self.phdl.exec(cmd)
         exp_res_dict = self.expected_results_dict['ibgda_write']
+        node_results = {}
         for node in out_dict.keys():
             if not re.search('Index\s+Size', out_dict[node], re.I):
                 fail_test('ERROR - dist_write did not complete properly - results not seen')
             else:
                 meta_data, results = parse_ibgda_output(out_dict[node])
+                node_results[node] = {"metadata": meta_data, "rows": results}
                 log.info("%s", results)
                 m_key = f'''PROCS:{no_of_procs},CTAS:{ctas},THREADS:{threads},QP_COUNT:{qp_count}'''
                 if m_key in exp_res_dict.keys():
@@ -290,6 +292,15 @@ class MoriBenchmark:
                                       PROCS:{no_of_procs},CTAS:{ctas},THREADS:{threads},QP_COUNT:{qp_count} \
                                       expected = {exp_bw}, actual = {actual_bw}'
                                     )
+        return {
+            "operation": "ibgda_write",
+            "processes": no_of_procs,
+            "ctas": ctas,
+            "threads": threads,
+            "qp_count": qp_count,
+            "iterations": iters,
+            "nodes": node_results,
+        }
 
     def run_dispatch_combine(
         self,
@@ -457,6 +468,17 @@ class MoriBenchmark:
         # ------------------------------------------------------------------
         # act_res_dict = parse_pretty_table_to_dict( script_out )
         act_res_dict = parse_pretty_tables_multi_rank(script_out)
+        act_res_dict.update(
+            {
+                "operation": f"io_{op_type}",
+                "buffer_size": buffer_size,
+                "transfer_batch_size": transfer_batch_size,
+                "qp_count": no_of_qp_per_transfer,
+                "initiators": no_of_initiators,
+                "targets": no_of_targets,
+                "session_enabled": enable_sess,
+            }
+        )
         if op_type == "read":
             op_key = "io_read"
         elif op_type == "write":
@@ -519,3 +541,4 @@ class MoriBenchmark:
                                       expected Avg Lat {exp_avg_lat}, \
                                       buffer_size,transfer_batch_size,no_of_qp_per_transfer = \
                                       {m_key}''')
+        return act_res_dict
