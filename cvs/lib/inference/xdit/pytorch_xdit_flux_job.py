@@ -2,8 +2,8 @@
 PyTorch XDit FLUX benchmark launcher (FLUX.1-dev, FLUX.2-dev; single-node + unified distributed).
 
 Single mode:
-  - One independent torchrun job per node in ``s_phdl.host_list``.
-  - Each node writes to ``flux_{hostname}_outputs``.
+  - One torchrun job on the suite's scoped ``benchmark_serv_node`` container.
+  - The job writes to ``flux_{hostname}_outputs`` under the configured output mount.
 
 Distributed mode:
   - One coordinated torchrun job across ``nnodes`` with distinct ``--node_rank``.
@@ -91,7 +91,7 @@ def _secret_str(value: Any) -> str:
 
 def _ssh_credential_source(s_phdl) -> Any:
     """Return the object holding SSH credentials (handles MultiProcessParallelHandle wrapper)."""
-    inner = getattr(s_phdl, "phandle", None)
+    inner = getattr(s_phdl, "phandle", None) or getattr(s_phdl, "pssh", None)
     if inner is not None:
         return inner
     return s_phdl
@@ -157,6 +157,21 @@ def _exec_on_single_node(
     detailed: bool = False,
 ) -> Any:
     """Run ``cmd`` on exactly one node, even when ``s_phdl`` covers more hosts."""
+    if isinstance(getattr(s_phdl, "hosts", None), (list, tuple)) and callable(getattr(s_phdl, "exec_on_host", None)):
+        out = s_phdl.exec(
+            cmd,
+            hosts=[node],
+            timeout=timeout,
+            print_console=print_console,
+            detailed=detailed,
+        )
+        node_out = (out or {}).get(node)
+        if detailed:
+            if isinstance(node_out, dict):
+                return node_out
+            return {"output": str(node_out or ""), "exit_code": -1}
+        return str(node_out or "")
+
     phdl_hosts = list(getattr(s_phdl, "host_list", []) or [])
     if phdl_hosts == [node]:
         out = s_phdl.exec(
@@ -197,6 +212,17 @@ def _exec_on_nodes(
 ) -> Dict[str, Any]:
     """Run the same command on an explicit node subset."""
     node_list = list(nodes)
+    if isinstance(getattr(s_phdl, "hosts", None), (list, tuple)) and callable(getattr(s_phdl, "exec_on_host", None)):
+        return (
+            s_phdl.exec(
+                cmd,
+                hosts=node_list,
+                timeout=timeout,
+                print_console=print_console,
+                detailed=detailed,
+            )
+            or {}
+        )
     phdl_hosts = list(getattr(s_phdl, "host_list", []) or [])
 
     if phdl_hosts == node_list:
@@ -247,6 +273,24 @@ def _exec_cmd_list_on_nodes(
     commands = list(cmd_list)
     if len(node_list) != len(commands):
         raise ValueError(f"node/cmd length mismatch: {len(node_list)} nodes vs {len(commands)} commands")
+
+    if isinstance(getattr(s_phdl, "hosts", None), (list, tuple)) and callable(getattr(s_phdl, "exec_on_host", None)):
+        cmd_by_node = dict(zip(node_list, commands))
+
+        def _run_orch(node):
+            result = s_phdl.exec(
+                cmd_by_node[node],
+                hosts=[node],
+                timeout=timeout,
+                print_console=print_console,
+                detailed=detailed,
+            )
+            value = (result or {}).get(node)
+            if detailed and not isinstance(value, dict):
+                return {"output": str(value or ""), "exit_code": -1}
+            return value
+
+        return _exec_on_nodes_concurrently(node_list, _run_orch)
 
     phdl_hosts = list(getattr(s_phdl, "host_list", []) or [])
     if not detailed and phdl_hosts == node_list:
@@ -754,6 +798,23 @@ def ensure_flux2_example_available(
         return ["FLUX.2 example setup requires at least one execution node"]
 
     existing_mount = resolve_flux2_example_host_mount(inference_dict)
+    if isinstance(getattr(s_phdl, "hosts", None), (list, tuple)) and callable(getattr(s_phdl, "exec_on_host", None)):
+        container_path = existing_mount[1] if existing_mount else FLUX2_EXAMPLE_PATH
+        check_cmd = f"test -f {shlex.quote(container_path)} && echo FLUX2_EXAMPLE_PRESENT || echo FLUX2_EXAMPLE_MISSING"
+        try:
+            checks = _exec_on_nodes(s_phdl, node_list, check_cmd, print_console=False)
+        except Exception as exc:
+            return [f"Failed to verify FLUX.2 example inside the container: {exc}"]
+        missing = [node for node in node_list if "FLUX2_EXAMPLE_PRESENT" not in (checks.get(node) or "")]
+        if missing:
+            return [
+                f"FLUX.2 example {container_path} is missing inside the externally managed "
+                f"container on {len(missing)} node(s): {', '.join(missing)}. "
+                "Add the script bind mount to the orchestrator container config before setup."
+            ]
+        inference_dict["_flux2_example_container_path"] = container_path
+        return []
+
     if existing_mount:
         host_path, container_path = existing_mount
         log.info(
@@ -864,7 +925,10 @@ def build_flux2_benchmark_cmd(
         model_repo_hints=model_repo_hints,
         resolved_hf_repo_id=resolved_hf_repo_id or hf_repo_id,
     )
-    ensure_chat_template = build_flux2_ensure_chat_template_cmd(hf_repo_id=resolved_repo)
+    ensure_chat_template = build_flux2_ensure_chat_template_cmd(
+        hf_repo_id=resolved_repo,
+        model_mount=model_repo,
+    )
     torchrun_prefix = _build_torchrun_prefix(
         distributed=distributed,
         nproc=nproc,
@@ -938,6 +1002,7 @@ def build_torchrun_cmd(
     resolved_model_type: Optional[str] = None,
     resolved_hf_repo_id: Optional[str] = None,
     flux2_example_path: Optional[str] = None,
+    output_dir_container: str = CONTAINER_OUTPUT_MOUNT,
 ) -> str:
     nproc = int(nproc_per_node or flux_params["torchrun_nproc"])
     model_type = resolve_flux_model_type_for_job(
@@ -958,12 +1023,17 @@ def build_torchrun_cmd(
             nproc_per_node=nproc,
             master_addr=master_addr,
             master_port=master_port,
+            output_dir_container=output_dir_container,
             model_repo_hints=model_repo_hints,
             resolved_hf_repo_id=resolved_hf_repo_id,
             example_path=flux2_example_path or FLUX2_EXAMPLE_PATH,
         )
 
-    run_usp_args = build_run_usp_args(flux_params, model_repo=model_repo)
+    run_usp_args = build_run_usp_args(
+        flux_params,
+        model_repo=model_repo,
+        output_dir_container=output_dir_container,
+    )
     torchrun_prefix = _build_torchrun_prefix(
         distributed=distributed,
         nproc=nproc,
@@ -1002,7 +1072,7 @@ FluxLaunchPlan = BenchmarkLaunchPlan
 
 
 class FluxBenchmarkJob(PytorchXditBenchmarkJob):
-    """Build and run FLUX docker+torchrun commands (FLUX.1 via run_usp, FLUX.2 via flux2_example)."""
+    """Run FLUX torchrun commands inside orchestrated containers."""
 
     def __init__(
         self,
@@ -1071,14 +1141,14 @@ class FluxBenchmarkJob(PytorchXditBenchmarkJob):
                 hints.append(str(value))
         return hints
 
-    def _build_env_args(self) -> str:
+    def _build_env_dict(self):
         user_env = dict(self.inference_dict["container_config"].get("env_dict") or {})
         env_dict: Dict[str, str] = {}
         if self.distributed:
             env_dict.update(build_nccl_env(self.inference_dict))
         env_dict.update(user_env)
         env_dict["OMP_NUM_THREADS"] = "16"
-        env_dict["HF_HOME"] = "/hf_home"
+        env_dict["HF_HOME"] = self.inference_dict.get("hf_home_container", "/hf_home")
         env_dict["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(self.nproc_per_node))
         if self.hf_token:
             env_dict["HF_TOKEN"] = _secret_str(self.hf_token)
@@ -1095,6 +1165,10 @@ class FluxBenchmarkJob(PytorchXditBenchmarkJob):
                 self._flux_model_type_hints(),
                 self.inference_dict.get("_resolved_flux_hf_repo_id"),
             )
+        return env_dict
+
+    def _build_env_args(self) -> str:
+        env_dict = self._build_env_dict()
         return " ".join(f"-e {key}={value}" for key, value in env_dict.items())
 
     def _build_torchrun_cmd(
@@ -1118,6 +1192,7 @@ class FluxBenchmarkJob(PytorchXditBenchmarkJob):
             resolved_model_type=self.inference_dict.get("_resolved_flux_model_type"),
             resolved_hf_repo_id=self.inference_dict.get("_resolved_flux_hf_repo_id"),
             flux2_example_path=self.inference_dict.get("_flux2_example_container_path"),
+            output_dir_container=(host_output_dir if self.uses_container_orchestrator else CONTAINER_OUTPUT_MOUNT),
         )
 
 

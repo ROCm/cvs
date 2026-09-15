@@ -2,8 +2,8 @@
 PyTorch XDit WAN 2.2 benchmark launcher (single-node scale-out + unified distributed).
 
 Single mode:
-  - One independent torchrun job per node in ``s_phdl.host_list``.
-  - Each node writes to ``wan_22_{hostname}_outputs``.
+  - One torchrun job on the suite's scoped ``benchmark_serv_node`` container.
+  - The job writes to ``wan_22_{hostname}_outputs`` under the configured output mount.
 
 Distributed mode:
   - One coordinated torchrun job across ``nnodes`` with distinct ``--node_rank``.
@@ -352,7 +352,7 @@ def build_run_wan_native_args(
         f"--size {shlex.quote(str(wan_params['size']))} "
         f"--ckpt_dir {shlex.quote(ckpt_dir)} "
         f"--image {I2V_INPUT_IMAGE_NATIVE} "
-        f"--save_file {CONTAINER_OUTPUT_MOUNT}/outputs/video.mp4 "
+        f"--save_file {shlex.quote(output_dir_container)}/outputs/video.mp4 "
         f"--ulysses_size {_ulysses_size(wan_params)} "
         f"--ring_size {_ring_size(wan_params)} "
         f"--vae_dtype bfloat16 "
@@ -375,6 +375,7 @@ def build_run_wan_xfuser_example_args(
     *,
     model_path: str,
     i2v_image_path: str,
+    output_dir_container=CONTAINER_OUTPUT_MOUNT,
 ) -> str:
     height, width = parse_wan_size(str(wan_params["size"]))
     num_inference_steps = _optional_int(
@@ -387,9 +388,14 @@ def build_run_wan_xfuser_example_args(
     )
     warmup_steps = _optional_int(wan_params.get("warmup_steps"), 1)
     output_type = str(wan_params.get("wan_xfuser_output_type") or "pil")
-    output_directory = WAN_XFUSER_BENCHMARK_OUTPUT_DIR
+    output_directory = output_dir_container
     save_video_path = str(wan_params.get("wan_diffusers_save_video_path") or WAN_XFUSER_VIDEO_CONTAINER_PATH)
     timing_json_path = str(wan_params.get("wan_diffusers_timing_json_path") or "results/timing.json")
+    if output_dir_container != CONTAINER_OUTPUT_MOUNT:
+        if save_video_path.startswith(CONTAINER_OUTPUT_MOUNT + "/"):
+            save_video_path = output_dir_container + save_video_path[len(CONTAINER_OUTPUT_MOUNT) :]
+        if timing_json_path.startswith(CONTAINER_OUTPUT_MOUNT + "/"):
+            timing_json_path = output_dir_container + timing_json_path[len(CONTAINER_OUTPUT_MOUNT) :]
     video_fps = _optional_int(wan_params.get("wan_diffusers_video_fps"), 16)
 
     log.info(
@@ -493,6 +499,7 @@ def _build_wan_torchrun_body(
     master_addr: str,
     master_port: int,
     inference_dict: Optional[Mapping[str, Any]] = None,
+    output_dir_container=CONTAINER_OUTPUT_MOUNT,
 ) -> str:
     if is_wan_diffusers_model(model_format):
         run_script = resolve_wan_diffusers_run_script(wan_params, inference_dict)
@@ -507,6 +514,7 @@ def _build_wan_torchrun_body(
                 wan_params,
                 model_path=model_path,
                 i2v_image_path=i2v_image,
+                output_dir_container=output_dir_container,
             )
         else:
             run_args = build_run_wan_diffusers_args(
@@ -522,7 +530,11 @@ def _build_wan_torchrun_body(
         )
     else:
         run_script = RUN_WAN_NATIVE_PATH
-        run_args = build_run_wan_native_args(wan_params, ckpt_dir=model_path)
+        run_args = build_run_wan_native_args(
+            wan_params,
+            ckpt_dir=model_path,
+            output_dir_container=output_dir_container,
+        )
         log.info("WAN native run.py: ckpt_dir=%s", model_path)
 
     if distributed:
@@ -546,9 +558,9 @@ def _build_wan_torchrun_body(
             run_script=run_script if is_wan_diffusers_model(model_format) else None,
         )
         if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER:
-            output_subdir = WAN_XFUSER_RESULTS_DIR
+            output_subdir = f"{output_dir_container}/results"
         else:
-            output_subdir = f"{CONTAINER_OUTPUT_MOUNT}/{WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR}"
+            output_subdir = f"{output_dir_container}/{WAN_DIFFUSERS_BENCHMARK_OUTPUT_DIR}"
         prep_cmds: List[str] = []
         if launcher == WAN_DIFFUSERS_LAUNCHER_XFUSER:
             if should_wan_xfuser_auto_generate_input_image(wan_params, inference_dict):
@@ -559,7 +571,7 @@ def _build_wan_torchrun_body(
         if prep_prefix:
             prep_prefix = f"{prep_prefix} && "
         inner = (
-            f"cd {shlex.quote(CONTAINER_OUTPUT_MOUNT)} && "
+            f"cd {shlex.quote(output_dir_container)} && "
             f"mkdir -p {shlex.quote(output_subdir)} && "
             f"{prep_prefix}{torchrun}"
         )
@@ -581,6 +593,7 @@ def build_torchrun_cmd(
     model_repo_hints: Optional[Sequence[str]] = None,
     resolved_model_format: Optional[str] = None,
     inference_dict: Optional[Mapping[str, Any]] = None,
+    output_dir_container=CONTAINER_OUTPUT_MOUNT,
 ) -> str:
     nproc = int(nproc_per_node or wan_params["torchrun_nproc"])
     resolved_format = resolve_wan_model_format_for_job(
@@ -599,6 +612,7 @@ def build_torchrun_cmd(
         master_addr=master_addr,
         master_port=master_port,
         inference_dict=inference_dict,
+        output_dir_container=output_dir_container,
     )
 
 
@@ -677,6 +691,27 @@ def validate_wan_xfuser_mounts(
     Catches placeholder paths and missing host files before ``docker run``.
     """
     if resolve_wan_diffusers_launcher(wan_params, inference_dict) != WAN_DIFFUSERS_LAUNCHER_XFUSER:
+        return []
+
+    if isinstance(getattr(s_phdl, "hosts", None), (list, tuple)) and callable(getattr(s_phdl, "exec_on_host", None)):
+        container_paths = [resolve_wan_diffusers_run_script(wan_params, inference_dict)]
+        if not should_wan_xfuser_auto_generate_input_image(wan_params, inference_dict):
+            container_paths.append(resolve_wan_diffusers_i2v_image(wan_params, inference_dict))
+        check_cmd = (
+            " && ".join(f"test -e {shlex.quote(path)}" for path in container_paths)
+            + " && echo WAN_MOUNT_OK || echo WAN_MOUNT_MISSING"
+        )
+        try:
+            checks = s_phdl.exec(check_cmd, hosts=list(nodes), print_console=False)
+        except Exception as exc:
+            return [f"Failed to verify xFuser assets inside the container: {exc}"]
+        missing = [node for node in nodes if "WAN_MOUNT_OK" not in ((checks or {}).get(node, ""))]
+        if missing:
+            return [
+                "xFuser assets are missing inside the externally managed container on "
+                f"{len(missing)} node(s): {', '.join(missing)}. "
+                "Configure all bind mounts before orchestrator setup."
+            ]
         return []
 
     errors: List[str] = []
@@ -758,7 +793,7 @@ WanLaunchPlan = BenchmarkLaunchPlan
 
 
 class WanBenchmarkJob(PytorchXditBenchmarkJob):
-    """Build and run WAN 2.2 docker+torchrun commands via a Pssh-like handle."""
+    """Run WAN 2.2 torchrun commands inside orchestrated containers."""
 
     def __init__(
         self,
@@ -817,7 +852,8 @@ class WanBenchmarkJob(PytorchXditBenchmarkJob):
         model_repo = self.inference_dict["model_repo"]
         model_rev = self.inference_dict.get("model_rev") or ""
         model_path_safe = model_repo.replace("/", "--")
-        return f"/hf_home/hub/models--{model_path_safe}/snapshots/{model_rev}"
+        hf_home = self.inference_dict.get("hf_home_container", "/hf_home").rstrip("/")
+        return f"{hf_home}/hub/models--{model_path_safe}/snapshots/{model_rev}"
 
     def _wan_model_repo_hints(self) -> List[str]:
         hints: List[str] = []
@@ -827,7 +863,7 @@ class WanBenchmarkJob(PytorchXditBenchmarkJob):
                 hints.append(str(value))
         return hints
 
-    def _build_env_args(self) -> str:
+    def _build_env_dict(self):
         user_env = dict(self.inference_dict["container_config"].get("env_dict") or {})
         env_dict: Dict[str, str] = {}
         if self.distributed:
@@ -838,9 +874,13 @@ class WanBenchmarkJob(PytorchXditBenchmarkJob):
             env_dict[WAN_XFUSER_PYPACKAGES_ENV] = pypackages
         env_dict["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(self.nproc_per_node))
         env_dict["OMP_NUM_THREADS"] = "16"
-        env_dict["HF_HOME"] = "/hf_home"
+        env_dict["HF_HOME"] = self.inference_dict.get("hf_home_container", "/hf_home")
         if self.hf_token:
             env_dict["HF_TOKEN"] = _secret_str(self.hf_token)
+        return env_dict
+
+    def _build_env_args(self) -> str:
+        env_dict = self._build_env_dict()
         return " ".join(f"-e {key}={value}" for key, value in env_dict.items())
 
     def _build_torchrun_cmd(
@@ -863,6 +903,7 @@ class WanBenchmarkJob(PytorchXditBenchmarkJob):
             model_repo_hints=self._wan_model_repo_hints(),
             resolved_model_format=self.inference_dict.get("_resolved_wan_model_format"),
             inference_dict=self.inference_dict,
+            output_dir_container=(host_output_dir if self.uses_container_orchestrator else CONTAINER_OUTPUT_MOUNT),
         )
 
     def _pre_launch_validation(self, plan: BenchmarkLaunchPlan) -> List[str]:
@@ -948,6 +989,16 @@ class WanBenchmarkJob(PytorchXditBenchmarkJob):
 
     def _cleanup_stuck_containers(self, plan: WanLaunchPlan) -> None:
         if not self.distributed:
+            return
+        if self.uses_container_orchestrator:
+            try:
+                self.orch.exec(
+                    "bash -c 'pkill -f \"torchrun\" || true'",
+                    hosts=plan.node_order,
+                    print_console=False,
+                )
+            except Exception as exc:
+                log.warning("Failed to clean up distributed WAN processes: %s", exc)
             return
         container_name = self.inference_dict["container_name"]
         cleanup_cmds = build_wan_distributed_container_cleanup_cmds(container_name, self.nnodes)

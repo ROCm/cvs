@@ -1,5 +1,5 @@
 """
-Shared PyTorch XDit docker+torchrun benchmark job base (FLUX, WAN, etc.).
+Shared PyTorch xDiT orchestrated torchrun benchmark job base (FLUX, WAN, etc.).
 
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
@@ -32,7 +32,7 @@ class BenchmarkLaunchPlan:
 
 
 class PytorchXditBenchmarkJob(ABC):
-    """Build and run PyTorch XDit docker+torchrun benchmark commands via a Pssh-like handle."""
+    """Build and run PyTorch XDit torchrun commands in an externally managed container."""
 
     def __init__(
         self,
@@ -45,6 +45,10 @@ class PytorchXditBenchmarkJob(ABC):
         nproc_per_node: int,
     ):
         self.s_phdl = s_phdl
+        self.orch = s_phdl
+        self.uses_container_orchestrator = isinstance(getattr(s_phdl, "hosts", None), (list, tuple)) and callable(
+            getattr(s_phdl, "exec_on_host", None)
+        )
         self.inference_dict = inference_dict
         self.hf_token = hf_token
         self.distributed = distributed
@@ -69,6 +73,8 @@ class PytorchXditBenchmarkJob(ABC):
             if len(nodes) < nnodes:
                 raise ValueError(f"Cluster/server_node_list has {len(nodes)} node(s) but nnodes={nnodes}")
             return nodes[:nnodes]
+        if self.uses_container_orchestrator:
+            return list(self.orch.hosts)
         return list(self.s_phdl.host_list)
 
     @abstractmethod
@@ -152,6 +158,12 @@ class PytorchXditBenchmarkJob(ABC):
             master_port=master_port,
         )
 
+        if self.uses_container_orchestrator:
+            exports = " ".join(
+                f"export {key}={shlex.quote(str(value))};" for key, value in self._build_env_dict().items()
+            )
+            return f"bash -c {shlex.quote(f'{exports} {torchrun_cmd}')}"
+
         container_name = self.inference_dict["container_name"]
         if self.distributed:
             container_name = f"{container_name}-rank{node_rank}"
@@ -173,6 +185,17 @@ class PytorchXditBenchmarkJob(ABC):
             f"{torchrun_cmd}"
         )
 
+    def _build_env_dict(self):
+        """Return environment values needed by the in-container benchmark command."""
+        env = {}
+        for token in self._build_env_args().split("-e "):
+            token = token.strip()
+            if not token or "=" not in token:
+                continue
+            key, value = token.split("=", 1)
+            env[key.strip()] = value.strip()
+        return env
+
     def build_launch_plan(self) -> BenchmarkLaunchPlan:
         from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
             DEFAULT_MASTER_PORT,
@@ -182,6 +205,8 @@ class PytorchXditBenchmarkJob(ABC):
 
         node_to_hostname = self._fetch_hostnames()
         output_base_dir = self.inference_dict["output_base_dir"]
+        if self.uses_container_orchestrator:
+            output_base_dir = self.inference_dict.get("output_base_dir_container") or output_base_dir
         master_port = int(self.inference_dict.get("master_port") or DEFAULT_MASTER_PORT)
 
         plan = BenchmarkLaunchPlan(
@@ -373,7 +398,7 @@ class PytorchXditBenchmarkJob(ABC):
             f" [timeout={effective_timeout}s]" if effective_timeout else "",
         )
         if plan.docker_cmds:
-            log.debug("Docker command (sample): %s", _redact_secrets(plan.docker_cmds[0]))
+            log.debug("Benchmark command (sample): %s", _redact_secrets(plan.docker_cmds[0]))
 
         results: Dict[str, str] = {}
         raw_results: Dict[str, Any] = {}
@@ -389,7 +414,7 @@ class PytorchXditBenchmarkJob(ABC):
             results = _normalize_exec_results(raw_results, plan.node_order)
         except Exception as exc:
             exec_error = exc
-            log.warning("Benchmark docker exec ended with exception: %s", exc)
+            log.warning("Benchmark container exec ended with exception: %s", exc)
             results = _normalize_exec_results(raw_results, plan.node_order)
 
         if exec_error is not None:
@@ -412,7 +437,13 @@ class PytorchXditBenchmarkJob(ABC):
 
     def store_output_dir_hint(self, plan: BenchmarkLaunchPlan) -> None:
         if plan.primary_output_dir:
-            self.inference_dict["_test_output_dir"] = plan.primary_output_dir
+            output_dir = plan.primary_output_dir
+            if self.uses_container_orchestrator:
+                container_base = str(self.inference_dict.get("output_base_dir_container") or "").rstrip("/")
+                host_base = str(self.inference_dict.get("output_base_dir") or "").rstrip("/")
+                if container_base and host_base and output_dir.startswith(container_base + "/"):
+                    output_dir = host_base + output_dir[len(container_base) :]
+            self.inference_dict["_test_output_dir"] = output_dir
             return
 
         if not self.distributed and len(plan.node_order) == 1:
