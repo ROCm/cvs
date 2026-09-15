@@ -14,6 +14,22 @@ from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib.rocm_plib import *
 from cvs.lib import globals, linux_utils
+from cvs.lib.platform.host_inventory import (
+    normalize_output,
+    parse_gpu_count,
+    parse_iommu,
+    parse_kernel_version,
+    parse_numa_balancing,
+    parse_online_memory,
+    parse_os_release,
+    parse_pci_acs,
+    parse_pci_realloc,
+    parse_pcie_link,
+    parse_rocm_version,
+    record_gpu_firmware,
+    record_indexed_node_facts,
+    record_node_facts,
+)
 
 log = globals.log
 
@@ -85,12 +101,23 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
+@pytest.fixture(scope="session")
+def cvs_results_dict():
+    return {"nodes": {}, "firmware": {}}
+
+
+@pytest.fixture(scope="session")
+def host_inventory_metadata(cvs_results_dict):
+    return cvs_results_dict
+
+
 # Main Test cases start from here ..
 
 
 def test_check_os_release(
     orch,
     config_dict,
+    cvs_results_dict,
 ):
     """
     Validate that each node's OS release matches the expected version.
@@ -116,6 +143,7 @@ def test_check_os_release(
     log.info('Testcase check OS Version')
     os_version = config_dict['os_version']  # Expected version substring/pattern
     out_dict = orch.all.exec('cat /etc/os-release')
+    record_node_facts(cvs_results_dict, "os_release", out_dict, parse_os_release)
     for node in out_dict.keys():
         # If expected version is not present, extract the actual version and fail
         if not re.search(f'{os_version}', out_dict[node], re.I):
@@ -126,7 +154,7 @@ def test_check_os_release(
     update_test_result()
 
 
-def test_check_kernel_version(orch, config_dict):
+def test_check_kernel_version(orch, config_dict, cvs_results_dict):
     """
     Validate that each node's kernel version matches the expected version.
 
@@ -151,6 +179,7 @@ def test_check_kernel_version(orch, config_dict):
     log.info('Testcase check Kernel Version')
     kernel_version = config_dict['kernel_version']
     out_dict = orch.all.exec('uname -a')
+    record_node_facts(cvs_results_dict, "kernel", out_dict, parse_kernel_version)
     for node in out_dict.keys():
         # If expected version is not present, extract the actual version and fail
         if not re.search(f'{kernel_version}', out_dict[node], re.I):
@@ -163,7 +192,7 @@ def test_check_kernel_version(orch, config_dict):
     update_test_result()
 
 
-def test_check_bios_version(orch, config_dict):
+def test_check_bios_version(orch, config_dict, cvs_results_dict):
     """
     Verify that each node's BIOS/firmware version matches the expected value.
 
@@ -186,6 +215,7 @@ def test_check_bios_version(orch, config_dict):
     log.info('Testcase check BIOS Version')
     bios_version = config_dict['bios_version']
     out_dict = orch.all.exec('sudo dmidecode -s bios-version')
+    record_node_facts(cvs_results_dict, "bios", out_dict, normalize_output)
     for node in out_dict.keys():
         if not re.search(f'{bios_version}', out_dict[node], re.I):
             match = re.search('([a-z0-9\_\.\-]+)', out_dict[node], re.I)
@@ -196,7 +226,7 @@ def test_check_bios_version(orch, config_dict):
     update_test_result()
 
 
-def test_check_rocm_version(orch, config_dict):
+def test_check_rocm_version(orch, config_dict, cvs_results_dict):
     """
     Verify that each node's ROCm version matches the expected value.
 
@@ -222,6 +252,7 @@ def test_check_rocm_version(orch, config_dict):
     log.info('Testcase check rocm version')
     rocm_version = config_dict['rocm_version']
     out_dict = orch.all.exec('amd-smi version')
+    record_node_facts(cvs_results_dict, "rocm", out_dict, parse_rocm_version)
     for node in out_dict.keys():
         if not re.search(f'{rocm_version}', out_dict[node], re.I):
             match = re.search('ROCm version:\s+([0-9\.]+)', out_dict[node], re.I)
@@ -232,7 +263,7 @@ def test_check_rocm_version(orch, config_dict):
     update_test_result()
 
 
-def test_check_gpu_fw_version(orch, config_dict):
+def test_check_gpu_fw_version(orch, config_dict, cvs_results_dict):
     """
     Validate GPU firmware versions on each node against expected versions.
 
@@ -270,6 +301,7 @@ def test_check_gpu_fw_version(orch, config_dict):
     log.info('Testcase check GPU Firmware versions')
     fw_dict = config_dict['fw_dict']
     out_dict = get_amd_smi_fw_dict(orch.all)
+    record_gpu_firmware(cvs_results_dict, out_dict)
     for node in out_dict.keys():
         for gpu_dict in out_dict[node]:
             gpu_no = gpu_dict['gpu']
@@ -282,7 +314,7 @@ def test_check_gpu_fw_version(orch, config_dict):
     update_test_result()
 
 
-def test_check_pci_realloc(orch, config_dict):
+def test_check_pci_realloc(orch, config_dict, cvs_results_dict):
     """
     Verify that the kernel command line contains the expected PCI realloc flag.
 
@@ -304,13 +336,14 @@ def test_check_pci_realloc(orch, config_dict):
     log.info('Testcase check pci realloc')
     pci_realloc = config_dict['pci_realloc']
     out_dict = orch.all.exec('cat /proc/cmdline')
+    record_node_facts(cvs_results_dict, "pci_realloc", out_dict, parse_pci_realloc)
     for node in out_dict.keys():
         if not re.search(f'pci=realloc={pci_realloc}', out_dict[node], re.I):
             fail_test(f'PCI realloc flag not set to {pci_realloc} on node {node}')
     update_test_result()
 
 
-def test_check_iommu_pt(orch, config_dict):
+def test_check_iommu_pt(orch, config_dict, cvs_results_dict):
     """
     Verify that IOMMU is configured in pass-through mode (iommu=pt) on all nodes.
 
@@ -330,13 +363,14 @@ def test_check_iommu_pt(orch, config_dict):
     globals.error_list = []
     log.info('Testcase check IOMMU PT')
     out_dict = orch.all.exec('cat /proc/cmdline')
+    record_node_facts(cvs_results_dict, "iommu", out_dict, parse_iommu)
     for node in out_dict.keys():
         if not re.search('iommu=pt', out_dict[node], re.I):
             fail_test(f'IOMMU not set to pt on node {node}')
     update_test_result()
 
 
-def test_check_numa_balancing(orch, config_dict):
+def test_check_numa_balancing(orch, config_dict, cvs_results_dict):
     """
     Verify that automatic NUMA balancing is disabled across all nodes.
 
@@ -357,13 +391,14 @@ def test_check_numa_balancing(orch, config_dict):
     globals.error_list = []
     log.info('Testcase check NUMA balancing')
     out_dict = orch.all.exec('sudo sysctl kernel.numa_balancing')
+    record_node_facts(cvs_results_dict, "numa_balancing", out_dict, parse_numa_balancing)
     for node in out_dict.keys():
         if not re.search('=0|= 0', out_dict[node], re.I):
             fail_test(f'NUMA balancing not disabled on node {node}')
     update_test_result()
 
 
-def test_check_online_memory(orch, config_dict):
+def test_check_online_memory(orch, config_dict, cvs_results_dict):
     """
     Validate that the total online memory matches the expected value on each node.
 
@@ -387,6 +422,7 @@ def test_check_online_memory(orch, config_dict):
     log.info('Testcase check online memory')
     online_mem = config_dict['online_memory']
     out_dict = orch.all.exec('lsmem')
+    record_node_facts(cvs_results_dict, "online_memory", out_dict, parse_online_memory)
     for node in out_dict.keys():
         if not re.search(f'Total online memory:\s+{online_mem}', out_dict[node], re.I):
             match = re.search('Total online memory:\s+([0-9\.A-Za-z]+)', out_dict[node])
@@ -395,7 +431,7 @@ def test_check_online_memory(orch, config_dict):
     update_test_result()
 
 
-def test_check_pci_accelerators(orch, config_dict):
+def test_check_pci_accelerators(orch, config_dict, cvs_results_dict):
     """
     Confirm that the expected number of GPUs (accelerators) are enumerated on PCIe.
 
@@ -420,6 +456,7 @@ def test_check_pci_accelerators(orch, config_dict):
     log.info('Testcase check online GPUs in pcie')
     gpu_count = config_dict['gpu_count']
     out_dict = orch.all.exec('lspci | grep "accelerators" --color=never')
+    record_node_facts(cvs_results_dict, "gpu_count", out_dict, parse_gpu_count)
     for node in out_dict.keys():
         match_list = re.findall('accelerators:\s+Advanced', out_dict[node], re.I)
         actual_gpu_count = len(match_list)
@@ -430,7 +467,7 @@ def test_check_pci_accelerators(orch, config_dict):
     update_test_result()
 
 
-def test_check_gpu_pcie_speed_width(orch, config_dict):
+def test_check_gpu_pcie_speed_width(orch, config_dict, cvs_results_dict):
     """
     Verify PCIe link speed and width for each GPU on all nodes.
 
@@ -480,6 +517,7 @@ def test_check_gpu_pcie_speed_width(orch, config_dict):
             bus_no = out_dict[node][card_no]['PCI Bus']
             cmd_list.append(f'sudo lspci -vvv -s {bus_no} | grep "LnkSta:" --color=never')
         pci_dict = orch.all.exec_cmd_list(cmd_list)
+        record_indexed_node_facts(cvs_results_dict, "gpu_pcie", card_no, pci_dict, parse_pcie_link)
         for p_node in pci_dict.keys():
             bus_no = out_dict[p_node][card_no]['PCI Bus']
             if not re.search(f'Speed {gpu_pcie_speed}GT', pci_dict[p_node]):
@@ -495,7 +533,7 @@ def test_check_gpu_pcie_speed_width(orch, config_dict):
     update_test_result()
 
 
-def test_check_be_nic_pcie_speed_width(orch, config_dict):
+def test_check_be_nic_pcie_speed_width(orch, config_dict, cvs_results_dict):
     """
     Verify PCIe link speed and width for each Backend NIC on all nodes.
 
@@ -526,6 +564,7 @@ def test_check_be_nic_pcie_speed_width(orch, config_dict):
             nic_bdf = out_dict[node][card_no]['nic_bdf']
             cmd_list.append(f'sudo lspci -vvv -s {nic_bdf} | grep "LnkSta:" --color=never')
         pci_dict = orch.all.exec_cmd_list(cmd_list)
+        record_indexed_node_facts(cvs_results_dict, "nic_pcie", card_no, pci_dict, parse_pcie_link)
         for p_node in pci_dict:
             output = pci_dict[p_node]
             nic_bdf = out_dict[p_node][card_no]['nic_bdf']
@@ -543,7 +582,7 @@ def test_check_be_nic_pcie_speed_width(orch, config_dict):
     update_test_result()
 
 
-def test_check_pci_acs(orch, config_dict):
+def test_check_pci_acs(orch, config_dict, cvs_results_dict):
     """
     Verify PCIe ACS is disabled on all nodes.
 
@@ -563,6 +602,7 @@ def test_check_pci_acs(orch, config_dict):
 
     globals.error_list = []
     out_dict = orch.all.exec('sudo lspci -vv | grep ACSCtl | grep SrcValid+ --color=never')
+    record_node_facts(cvs_results_dict, "pci_acs", out_dict, parse_pci_acs)
     for node in out_dict.keys():
         if re.search('ACSCtl:', out_dict[node], re.I):
             fail_test(f'PCIe ACS not disabled on node {node}')
