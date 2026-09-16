@@ -5,7 +5,7 @@
   "gpu_arch": "mi3xx",
   "topology": "distributed",
   "enforce_thresholds": true,
-  "threshold_json": "mi3xx_pytorch_xdit_flux1_dev_distributed_threshold.json",
+  "threshold_json": "mi325_pytorch_xdit_flux1_dev_distributed_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/home/{user-id}",

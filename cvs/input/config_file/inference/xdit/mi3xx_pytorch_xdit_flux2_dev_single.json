@@ -5,7 +5,7 @@
   "gpu_arch": "mi3xx",
   "topology": "single",
   "enforce_thresholds": true,
-  "threshold_json": "mi3xx_pytorch_xdit_flux2_dev_single_threshold.json",
+  "threshold_json": "mi325_pytorch_xdit_flux2_dev_single_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/home/{user-id}/.cache/huggingface",
