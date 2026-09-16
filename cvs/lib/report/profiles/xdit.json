@@ -34,6 +34,7 @@
       ["Cell", null],
       ["Workers", null],
       ["Host", null],
+      ["Topology", "topology"],
       ["Avg pipe time (s)", "avg_pipe_time_s"],
       ["Avg total time (s)", "avg_total_time_s"],
       ["Samples", "sample_count"],

@@ -25,6 +25,7 @@ class TestXditRundeck(unittest.TestCase):
                     "avg_pipe_time_s": 2.5,
                     "sample_count": 25,
                     "backend": "diffusers",
+                    "topology": "single",
                     "output_dir": "/outputs/flux",
                 }
             }
@@ -40,7 +41,7 @@ class TestXditRundeck(unittest.TestCase):
 
         self.assertEqual(payload["overall_status"], "pass")
         self.assertEqual(payload["cells"][0]["tiers"]["latency"], "pass")
-        self.assertEqual(payload["results_table"]["rows"][0][7], 2.5)
+        self.assertEqual(payload["results_table"]["rows"][0][8], 2.5)
 
 
 if __name__ == "__main__":

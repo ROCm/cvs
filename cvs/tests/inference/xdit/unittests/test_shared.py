@@ -2,6 +2,7 @@
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from cvs.tests.inference.xdit import conftest
 from cvs.tests.inference.xdit._shared import (
@@ -11,6 +12,7 @@ from cvs.tests.inference.xdit._shared import (
     _report_threshold,
     benchmark_params_from_variant,
     inference_from_variant,
+    log_topology,
     resolve_execution_hosts,
     scoped_cluster_dict,
     suite_spec,
@@ -93,8 +95,70 @@ class TestOutputDirsByHost(unittest.TestCase):
 
         self.assertEqual(_output_dirs_by_host({"_test_output_dir": "/out/a"}, lifecycle), {"node-a": "/out/a"})
 
-    def test_returns_empty_without_any_output(self):
-        self.assertEqual(_output_dirs_by_host({}, Lifecycle()), {})
+    def test_collapses_hosts_that_share_one_output_dir(self):
+        lifecycle = Lifecycle()
+        inference = {
+            "_test_output_dirs_by_node": {
+                "10.32.80.110": "/out/flux_rank0_outputs",
+                "10.32.80.111": "/out/flux_rank0_outputs",
+            }
+        }
+
+        self.assertEqual(
+            _output_dirs_by_host(inference, lifecycle),
+            {"10.32.80.110, 10.32.80.111": "/out/flux_rank0_outputs"},
+        )
+
+
+class TestLogTopology(unittest.TestCase):
+    def _messages(self, variant, cluster_dict, spec):
+        with patch("cvs.tests.inference.xdit._shared.log") as mock_log:
+            log_topology(variant, cluster_dict, spec)
+        return [str(call.args[0]) % tuple(call.args[1:]) for call in mock_log.info.call_args_list]
+
+    def test_distributed_flux_lists_ranks_and_world_size(self):
+        variant = SimpleNamespace(
+            inference={"nnodes": 2, "master_addr": "10.0.0.1", "master_port": 29502},
+            benchmark_params={
+                "flux1_dev_t2i": {"torchrun_nproc": 8, "ulysses_degree": 8, "ring_degree": 2},
+            },
+        )
+        cluster = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
+
+        messages = self._messages(variant, cluster, {"family": "flux", "distributed": True, "diffusers": False})
+
+        self.assertIn("Distributed FLUX topology", messages)
+        self.assertIn("  rank 0 -> 10.0.0.1 (8 GPUs)", messages)
+        self.assertIn("  rank 1 -> 10.0.0.2 (8 GPUs)", messages)
+        self.assertIn("Total GPU ranks (world_size): 16 = 2 nodes × 8 nproc", messages)
+        self.assertIn("Rendezvous: 10.0.0.1:29502", messages)
+        self.assertIn("Parallelism check: PASS (product 16 == world_size 16)", messages)
+
+    def test_single_node_lists_one_job_per_host(self):
+        variant = SimpleNamespace(
+            inference={"_execution_hosts": ["10.0.0.1", "10.0.0.2"]},
+            benchmark_params={
+                "flux1_dev_t2i": {"torchrun_nproc": 8, "ulysses_degree": 8, "ring_degree": 1},
+            },
+        )
+
+        messages = self._messages(variant, {}, {"family": "flux", "distributed": False, "diffusers": False})
+
+        self.assertIn("Single-node FLUX topology", messages)
+        self.assertIn("Independent jobs: 2 (one per node)", messages)
+        self.assertIn("Total GPU ranks (world_size): 8 = 1 nodes × 8 nproc", messages)
+        self.assertNotIn("Rendezvous: :29500", messages)
+
+    def test_wan_uses_ulysses_and_ring_sizes(self):
+        variant = SimpleNamespace(
+            inference={"_execution_hosts": ["10.0.0.1"]},
+            benchmark_params={"wan22_i2v_a14b": {"torchrun_nproc": 8, "ulysses_size": 8}},
+        )
+
+        messages = self._messages(variant, {}, {"family": "wan", "distributed": False, "diffusers": False})
+
+        self.assertIn("Single-node WAN topology", messages)
+        self.assertIn("xDiT parallel layout: ulysses=8 × ring=1 = 8", messages)
 
 
 class TestHostScoping(unittest.TestCase):

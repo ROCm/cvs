@@ -241,12 +241,84 @@ def verify_model_stage(orch, variant, spec, lifecycle, request):
     _complete(lifecycle, request, "model_verify", started)
 
 
+def _parallel_degrees(workload, spec):
+    if spec["family"] == "flux":
+        return [
+            ("ulysses", int(workload["ulysses_degree"])),
+            ("ring", int(workload["ring_degree"])),
+            ("pipefusion", int(workload.get("pipefusion_parallel_degree", 1))),
+            ("tp", int(workload.get("tensor_parallel_degree", 1))),
+            ("dp", int(workload.get("data_parallel_degree", 1))),
+        ]
+    nproc = int(workload["torchrun_nproc"])
+    return [
+        ("ulysses", int(workload.get("ulysses_size", nproc))),
+        ("ring", int(workload.get("ring_size", 1))),
+    ]
+
+
+def _topology_nodes(variant, cluster_dict, spec):
+    inference = inference_from_variant(variant)
+    if not spec["distributed"]:
+        return list(inference.get("_execution_hosts") or cluster_dict.get("node_dict") or [])
+
+    from cvs.lib.inference.xdit.pytorch_xdit_flux_job import resolve_nnodes, resolve_server_nodes
+
+    nodes = resolve_server_nodes(cluster_dict, inference)
+    return nodes[: resolve_nnodes(inference, nodes)]
+
+
+def log_topology(variant, cluster_dict, spec):
+    inference = inference_from_variant(variant)
+    workload = _workload_params(variant, spec)
+    nodes = _topology_nodes(variant, cluster_dict, spec)
+    nproc = int(workload["torchrun_nproc"])
+    degrees = _parallel_degrees(workload, spec)
+    product = 1
+    for _, degree in degrees:
+        product *= degree
+    nnodes = len(nodes) if spec["distributed"] else 1
+    world_size = nnodes * nproc
+    family = "FLUX" if spec["family"] == "flux" else "WAN"
+    mode = "Distributed" if spec["distributed"] else "Single-node"
+
+    log.info("=" * 60)
+    log.info("%s %s topology", mode, family)
+    log.info("=" * 60)
+    if spec["distributed"]:
+        log.info("Participating nodes: %d", nnodes)
+        for rank, node in enumerate(nodes):
+            log.info("  rank %d -> %s (%d GPUs)", rank, node, nproc)
+    else:
+        log.info("Independent jobs: %d (one per node)", len(nodes))
+        for node in nodes:
+            log.info("  %s (%d GPUs)", node, nproc)
+    log.info("GPUs per node (torchrun_nproc): %d", nproc)
+    log.info("Total GPU ranks (world_size): %d = %d nodes × %d nproc", world_size, nnodes, nproc)
+    log.info(
+        "xDiT parallel layout: %s = %d",
+        " × ".join(f"{name}={degree}" for name, degree in degrees),
+        product,
+    )
+    log.info("Sequence-parallel size (ulysses × ring): %d", degrees[0][1] * degrees[1][1])
+    if spec["distributed"]:
+        log.info(
+            "Rendezvous: %s:%s",
+            inference.get("master_addr") or "<auto rank-0>",
+            inference.get("master_port", 29500),
+        )
+    if product == world_size:
+        log.info("Parallelism check: PASS (product %d == world_size %d)", product, world_size)
+    log.info("=" * 60)
+
+
 def verify_parallelism_stage(variant, cluster_dict, spec, lifecycle, request):
     lifecycle.skip_if_failed()
     globals.error_list = []
     started = time.monotonic()
     inference = inference_from_variant(variant)
     params = benchmark_params_from_variant(variant)
+    log_topology(variant, cluster_dict, spec)
     validator = validate_flux_parallelism_config if spec["family"] == "flux" else validate_wan_parallelism_config
     error = validator(
         inference,
@@ -298,10 +370,14 @@ def run_benchmark_stage(orch, variant, hf_token, cluster_dict, spec, lifecycle, 
     _complete(lifecycle, request, "benchmark", started)
 
 
-def _threshold_inputs(variant, spec):
+def _workload_params(variant, spec):
     params = benchmark_params_from_variant(variant)
-    key = "flux1_dev_t2i" if spec["family"] == "flux" else "wan22_i2v_a14b"
-    return params[key], params[key]["expected_results"]
+    return params["flux1_dev_t2i" if spec["family"] == "flux" else "wan22_i2v_a14b"]
+
+
+def _threshold_inputs(variant, spec):
+    workload = _workload_params(variant, spec)
+    return workload, workload["expected_results"]
 
 
 def _metric_name(spec):
@@ -323,7 +399,10 @@ def _output_parser(spec, params, output_dir):
 def _output_dirs_by_host(inference, lifecycle):
     by_host = inference.get("_test_output_dirs_by_node") or {}
     if by_host:
-        return dict(by_host)
+        grouped = {}
+        for host, output_dir in by_host.items():
+            grouped.setdefault(output_dir, []).append(host)
+        return {", ".join(hosts): output_dir for output_dir, hosts in grouped.items()}
     output_dir = inference.get("_test_output_dir")
     if output_dir:
         return {lifecycle.benchmark_host or "unknown": output_dir}
@@ -372,6 +451,7 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
     metric = _metric_name(spec)
     enforce_thresholds = bool(value_from_variant(variant, "enforce_thresholds", True))
     model_id, shape, steps, backend, workers, cell_id = _report_dimensions(variant, params, spec)
+    topology = "distributed" if spec["distributed"] else "single"
     cell = lifecycle.report_results.setdefault((model_id, gpu_type, shape, steps, cell_id, str(workers)), {})
     report_spec = _report_threshold(thresholds, gpu_type, metric)
     if report_spec is not None:
@@ -389,6 +469,7 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
         cell[host] = {
             metric: value,
             "backend": backend,
+            "topology": topology,
             "sample_count": getattr(result, "repetition_count", getattr(result, "step_count", 0)),
             "output_dir": output_dir,
         }
@@ -396,6 +477,7 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
             (
                 host,
                 spec["family"],
+                topology,
                 output_dir,
                 metric,
                 value,
@@ -419,19 +501,20 @@ def print_results_stage(lifecycle):
         [
             host,
             family,
+            topology,
             output,
             metric,
             f"{value:.3f}",
             "RECORDED" if passed is None else "PASS" if passed else "FAIL",
             message,
         ]
-        for host, family, output, metric, value, passed, message in lifecycle.results
+        for host, family, topology, output, metric, value, passed, message in lifecycle.results
     ]
     log.info(
         "\n======== xDiT benchmark results ========\n%s",
         tabulate(
             rows,
-            headers=["Host", "Family", "Output", "Metric", "Value", "Result", "Threshold"],
+            headers=["Host", "Family", "Topology", "Output", "Metric", "Value", "Result", "Threshold"],
             tablefmt="github",
         ),
     )
