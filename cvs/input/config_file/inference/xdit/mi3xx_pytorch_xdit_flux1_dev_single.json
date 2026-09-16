@@ -28,8 +28,6 @@
         "network": "host",
         "ipc": "host",
         "privileged": true,
-        "cap_add": ["SYS_PTRACE"],
-        "security_opt": ["seccomp=unconfined"],
         "devices": ["/dev/dri", "/dev/kfd"],
         "volumes": [
           "{paths.models_dir}:/hf_home",
