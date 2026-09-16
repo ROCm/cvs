@@ -66,21 +66,43 @@ def _mounted_path(volume_dict, host_path, default):
     return best[1] + normalized[len(best[0]) :]
 
 
+_INFERENCE_TO_ENV = {
+    "nccl_ib_hca": "NCCL_IB_HCA",
+    "nccl_ib_gid_index": "NCCL_IB_GID_INDEX",
+    "nccl_socket_ifname": "NCCL_SOCKET_IFNAME",
+    "gloo_socket_ifname": "GLOO_SOCKET_IFNAME",
+    "gloo_tcp_ifname": "GLOO_TCP_IFNAME",
+    "nccl_debug": "NCCL_DEBUG",
+}
+_ENV_TO_INFERENCE = {target: source for source, target in _INFERENCE_TO_ENV.items()}
+
+
 def _container_env(inference):
     env = dict((inference.get("container_config") or {}).get("env_dict") or {})
-    mapping = {
-        "nccl_ib_hca": "NCCL_IB_HCA",
-        "nccl_ib_gid_index": "NCCL_IB_GID_INDEX",
-        "nccl_socket_ifname": "NCCL_SOCKET_IFNAME",
-        "gloo_socket_ifname": "GLOO_SOCKET_IFNAME",
-        "gloo_tcp_ifname": "GLOO_TCP_IFNAME",
-        "nccl_debug": "NCCL_DEBUG",
-    }
-    for source, target in mapping.items():
+    for source, target in _INFERENCE_TO_ENV.items():
         value = inference.get(source)
         if value is not None and str(value).strip():
             env[target] = str(value)
     return {str(key): str(value) for key, value in env.items() if value is not None}
+
+
+def _merged_container_env(container):
+    runtime_args = dict((container.get("runtime") or {}).get("args") or {})
+    env = dict(container.get("env") or {})
+    env.update(dict(runtime_args.get("env") or {}))
+    return {str(key): str(value) for key, value in env.items() if value is not None}
+
+
+def _flatten_orchestrator_container(container):
+    block = dict(container)
+    runtime = dict(block.get("runtime") or {})
+    runtime_args = dict(runtime.get("args") or {})
+    env = _merged_container_env(block)
+    runtime_args.pop("env", None)
+    runtime["args"] = runtime_args
+    block["runtime"] = runtime
+    block["env"] = env
+    return block
 
 
 def _legacy_container(inference, volume_dict):
@@ -165,6 +187,51 @@ def _read_unified(config_path, cluster_dict):
     return _load_without_threshold(config_path, cluster_dict)
 
 
+def _workload_key(params):
+    if params.get("model_format") == "diffusers" or params.get("wan_diffusers_launcher"):
+        return "wan22_i2v_a14b"
+    if "ulysses_degree" in params or "height" in params:
+        return "flux1_dev_t2i"
+    if "frame_num" in params or "size" in params:
+        return "wan22_i2v_a14b"
+    raise ValueError("cannot infer xDiT workload from benchmark_params")
+
+
+def _normalize_root(raw):
+    raw = dict(raw)
+    server = dict(raw.get("server_params") or {})
+    if server:
+        model_id = server.get("model") or ""
+        if model_id and not raw.get("model"):
+            raw["model"] = {"id": str(model_id), "remote": 0}
+        nnodes = int(server.get("nnodes") or raw.get("nnodes") or 1)
+        raw.setdefault("nnodes", nnodes)
+        raw.setdefault("topology", "distributed" if nnodes > 1 else "single")
+        for key in ("benchmark_serv_node", "master_addr", "master_port", "server_node_list"):
+            if key in server and key not in raw:
+                raw[key] = server[key]
+        inference = dict(raw.get("inference") or {})
+        if server.get("model_rev"):
+            inference.setdefault("model_rev", server["model_rev"])
+        if server.get("model"):
+            inference.setdefault("model_repo", server["model"])
+        raw["inference"] = inference
+        raw.setdefault("gpu_arch", str(raw.get("gpu_name") or "mi3xx"))
+        raw.setdefault("framework", str(server.get("backend") or "xdit"))
+
+    params = dict(raw.get("params") or {})
+    nested = any(isinstance(params.get(key), dict) for key in ("flux1_dev_t2i", "wan22_i2v_a14b"))
+    bp = raw.get("benchmark_params")
+    if not nested:
+        if isinstance(bp, dict) and any(isinstance(bp.get(key), dict) for key in ("flux1_dev_t2i", "wan22_i2v_a14b")):
+            params = dict(bp)
+        elif isinstance(bp, dict) and bp:
+            params = {_workload_key(bp): dict(bp)}
+        raw["params"] = params
+        raw["benchmark_params"] = params
+    return raw
+
+
 def _unified_runtime_views(raw):
     paths = dict(raw.get("paths") or {})
     container = dict(raw.get("container") or {})
@@ -199,11 +266,15 @@ def _unified_runtime_views(raw):
     )
     inference.setdefault("model_repo", model.get("id"))
     inference.setdefault("model_rev", "")
+    env_dict = _merged_container_env(container)
     inference["container_config"] = {
         "device_list": list(runtime_args.get("devices") or []),
         "volume_dict": volume_dict,
-        "env_dict": dict(container.get("env") or runtime_args.get("env") or {}),
+        "env_dict": env_dict,
     }
+    for env_key, inference_key in _ENV_TO_INFERENCE.items():
+        if inference_key not in inference and env_dict.get(env_key):
+            inference[inference_key] = env_dict[env_key]
 
     model_id = str(model.get("id") or "")
     if model_id.startswith("/"):
@@ -238,7 +309,7 @@ def _is_legacy_root(raw):
 
 
 def orchestrator_container_from_variant(variant):
-    return variant.container.model_dump()
+    return _flatten_orchestrator_container(variant.container.model_dump())
 
 
 def load_variant(config_path, cluster_dict):
@@ -271,6 +342,7 @@ def load_variant(config_path, cluster_dict):
         return XditVariantConfig(**raw)
 
     raw, thresholds = _read_unified(str(path), cluster_dict)
+    raw = _normalize_root(raw)
     framework = raw.get("framework")
     if framework not in (None, "xdit", "pytorch_xdit"):
         raise ValueError(f"unsupported framework {framework!r} in {config_path!r}; expected 'xdit'")

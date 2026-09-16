@@ -1,9 +1,6 @@
 {
   "_comment": "FLUX.1-dev distributed xDiT workload. Replace every <changeme> NCCL/network field before running.",
-  "schema_version": 1,
-  "framework": "xdit",
-  "gpu_arch": "mi3xx",
-  "topology": "distributed",
+  "gpu_name" : "<changeme> mi325",
   "enforce_thresholds": true,
   "threshold_json": "mi325_pytorch_xdit_flux1_dev_distributed_threshold.json",
   "paths": {
@@ -12,60 +9,64 @@
     "log_dir": "/home/{user-id}/cvs_flux_output",
     "hf_token_file": "/home/{user-id}/.hf_token"
   },
-  "model": {
-    "id": "<changeme>",
-    "remote": 0
-  },
   "container": {
     "lifetime": "per_run",
-    "name": "flux-benchmark-dist",
+    "name": "flux-benchmark_distributed",
     "_image_example": "amdsiloai/pytorch-xdit:v25.11.2",
     "image": "<changeme>",
-    "env": {
-      "NCCL_PROTO": "Simple"
-    },
     "runtime": {
       "name": "docker",
       "args": {
         "network": "host",
         "ipc": "host",
         "privileged": true,
-        "devices": ["/dev/dri", "/dev/kfd"],
+        "shm_size": "128G",
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
           "{paths.models_dir}:/hf_home",
-          "{paths.log_dir}:/outputs"
-        ]
+          "{paths.log_dir}:/outputs",
+          "/dev/infiniband:/dev/infiniband",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+          "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro",
+          "/lib/libibverbs.d:/lib/libibverbs.d"
+        ],
+        "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm"],
+        "env": {
+          "NCCL_PROTO": "Simple",
+          "NCCL_IB_HCA": "<changeme> rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+          "NCCL_SOCKET_IFNAME": "<changeme> eno0",
+          "GLOO_SOCKET_IFNAME": "<changeme> eno0",
+          "GLOO_TCP_IFNAME": "<changeme> eno0",
+          "NCCL_IB_GID_INDEX": "3",
+          "NCCL_DEBUG": "ERROR"
+        }
       }
     }
   },
-  "nnodes": 2,
-  "master_addr": "<changeme>",
-  "master_port": 29500,
-  "_example_nccl_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
-  "nccl_ib_hca": "<changeme>",
-  "_example_nccl_socket_ifname": "eno0",
-  "nccl_socket_ifname": "<changeme>",
-  "_example_gloo_socket_ifname": "eno0",
-  "gloo_socket_ifname": "<changeme>",
-  "nccl_ib_gid_index": 3,
-  "nccl_debug": "INFO",
-  "params": {
-    "flux1_dev_t2i": {
-      "prompt": "A small cat",
-      "seed": 42,
-      "num_inference_steps": 25,
-      "max_sequence_length": 256,
-      "no_use_resolution_binning": true,
-      "warmup_steps": 1,
-      "warmup_calls": 5,
-      "num_repetitions": 25,
-      "height": 1024,
-      "width": 1024,
-      "ulysses_degree": 8,
-      "ring_degree": 2,
-      "use_torch_compile": true,
-      "torchrun_nproc": 8
-    }
+  "server_params": {
+    "backend": "xdit",
+    "nnodes": "2",
+    "log_level": "info",
+    "model": "<changeme>",
+    "server_node_list": ["<changeme>", "<changeme>"],
+    "master_addr": "<changeme>",
+    "master_port": "29500",
+    "benchmark_serv_node": "<changeme>"
+  },
+  "benchmark_params": {
+    "prompt": "A small cat",
+    "seed": 42,
+    "num_inference_steps": 25,
+    "max_sequence_length": 256,
+    "no_use_resolution_binning": true,
+    "warmup_steps": 1,
+    "warmup_calls": 5,
+    "num_repetitions": 25,
+    "height": 1024,
+    "width": 1024,
+    "ulysses_degree": 8,
+    "ring_degree": 2,
+    "use_torch_compile": true,
+    "torchrun_nproc": 8
   }
 }

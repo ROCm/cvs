@@ -1,75 +1,78 @@
 {
   "_comment": "WAN 2.2 Diffusers xFuser distributed workload. Replace every <changeme> NCCL/network field before running.",
-  "schema_version": 1,
-  "framework": "xdit",
-  "gpu_arch": "mi3xx",
-  "topology": "distributed",
+  "gpu_name" : "<changeme> mi325",
   "enforce_thresholds": true,
   "threshold_json": "mi325_pytorch_xdit_wan22_14b_diffusers_distributed_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/home/{user-id}",
-    "log_dir": "/home/{user-id}/cvs_outputs",
+    "log_dir": "/home/{user-id}/cvs_outputs_wan",
     "hf_token_file": "/home/{user-id}/.hf_token"
-  },
-  "model": {
-    "id": "<changeme>",
-    "remote": 0
   },
   "container": {
     "lifetime": "per_run",
-    "name": "wan22-benchmark-dist",
+    "name": "wan22-benchmark_diffusers_distributed",
     "_image_example": "rocm/ufb-private:xdit-gfx942-py3.12-prereleases-rocm10.0.0rc3-2805c93",
     "image": "<changeme>",
-    "env": {},
     "runtime": {
       "name": "docker",
       "args": {
         "network": "host",
         "ipc": "host",
         "privileged": true,
-        "devices": ["/dev/dri", "/dev/kfd"],
+        "shm_size": "128G",
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
           "{paths.models_dir}:/hf_home",
           "{paths.log_dir}:/outputs",
-          "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/wan_i2v_example.py:/benchmark/wan_i2v_example.py"
-        ]
+          "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/wan_i2v_example.py:/benchmark/wan_i2v_example.py",
+          "/dev/infiniband:/dev/infiniband",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+          "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro",
+          "/lib/libibverbs.d:/lib/libibverbs.d"
+        ],
+        "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm"],
+        "env": {
+          "NCCL_PROTO": "Simple",
+          "NCCL_IB_HCA": "<changeme> rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+          "NCCL_SOCKET_IFNAME": "<changeme> eno0",
+          "GLOO_SOCKET_IFNAME": "<changeme> eno0",
+          "GLOO_TCP_IFNAME": "<changeme> eno0",
+          "NCCL_IB_GID_INDEX": "3",
+          "NCCL_DEBUG": "ERROR"
+        }
       }
     }
   },
-  "nnodes": 2,
-  "master_addr": "<changeme>",
-  "master_port": 29500,
-  "_example_nccl_ib_hca": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
-  "nccl_ib_hca": "<changeme>",
-  "_example_nccl_socket_ifname": "eno0",
-  "nccl_socket_ifname": "<changeme>",
-  "_example_gloo_socket_ifname": "eno0",
-  "gloo_socket_ifname": "<changeme>",
-  "nccl_ib_gid_index": 3,
-  "nccl_debug": "INFO",
-  "params": {
-    "wan22_i2v_a14b": {
-      "model_format": "diffusers",
-      "wan_diffusers_launcher": "xfuser_example",
-      "wan_diffusers_run_script": "/benchmark/wan_i2v_example.py",
-      "wan_xfuser_auto_input_image": true,
-      "wan_xfuser_install_video_deps": true,
-      "wan_xfuser_output_type": "pil",
-      "wan_diffusers_save_video_path": "/outputs/results/video_i2v.mp4",
-      "wan_diffusers_timing_json_path": "results/timing.json",
-      "require_video_artifact": true,
-      "prompt": "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
-      "size": "720*1280",
-      "frame_num": 81,
-      "num_benchmark_steps": 1,
-      "num_inference_steps": 40,
-      "warmup_steps": 1,
-      "compile": false,
-      "torchrun_nproc": 8,
-      "ulysses_size": 8,
-      "ring_size": 2
-    }
+  "server_params": {
+    "backend": "xdit",
+    "nnodes": "2",
+    "log_level": "info",
+    "model": "<changeme>",
+    "server_node_list": ["<changeme>", "<changeme>"],
+    "master_addr": "<changeme>",
+    "master_port": "29500",
+    "benchmark_serv_node": "<changeme>"
+  },
+  "benchmark_params": {
+    "model_format": "diffusers",
+    "wan_diffusers_launcher": "xfuser_example",
+    "wan_diffusers_run_script": "/benchmark/wan_i2v_example.py",
+    "wan_xfuser_auto_input_image": true,
+    "wan_xfuser_install_video_deps": true,
+    "wan_xfuser_output_type": "pil",
+    "wan_diffusers_save_video_path": "/outputs/results/video_i2v.mp4",
+    "wan_diffusers_timing_json_path": "results/timing.json",
+    "require_video_artifact": true,
+    "prompt": "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
+    "size": "720*1280",
+    "frame_num": 81,
+    "num_benchmark_steps": 1,
+    "num_inference_steps": 40,
+    "warmup_steps": 1,
+    "compile": false,
+    "torchrun_nproc": 8,
+    "ulysses_size": 8,
+    "ring_size": 2
   }
 }

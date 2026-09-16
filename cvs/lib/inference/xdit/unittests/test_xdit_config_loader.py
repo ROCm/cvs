@@ -115,6 +115,115 @@ class TestXditConfigLoader(unittest.TestCase):
             {"auto": {"max_avg_pipe_time_s": 300.0}},
         )
 
+    def test_runtime_args_env_flattens_into_orchestrator_and_inference(self):
+        path = self._write_config(
+            {
+                "schema_version": 1,
+                "framework": "xdit",
+                "gpu_arch": "mi300x",
+                "topology": "distributed",
+                "threshold_json": "threshold.json",
+                "paths": {
+                    "shared_fs": "/shared",
+                    "models_dir": "/shared/models",
+                    "log_dir": "/shared/results",
+                    "hf_token_file": "/shared/token",
+                },
+                "model": {"id": "/shared/models/wan", "remote": 0},
+                "container": {
+                    "lifetime": "per_run",
+                    "name": "wan-job",
+                    "image": "xdit:test",
+                    "runtime": {
+                        "name": "docker",
+                        "args": {
+                            "network": "host",
+                            "ipc": "host",
+                            "privileged": True,
+                            "shm_size": "128G",
+                            "volumes": ["/shared/models:/models", "/shared/results:/outputs"],
+                            "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm"],
+                            "env": {
+                                "NCCL_IB_HCA": "rdma0,rdma1",
+                                "NCCL_SOCKET_IFNAME": "eno0",
+                                "GLOO_SOCKET_IFNAME": "eno0",
+                                "NCCL_DEBUG": "ERROR",
+                            },
+                        },
+                    },
+                },
+                "params": {"wan22_i2v_a14b": {"torchrun_nproc": 8}},
+                "nnodes": 2,
+                "master_addr": "10.0.0.1",
+            },
+            {"auto": {"max_avg_pipe_time_s": 300.0}},
+        )
+
+        variant = load_variant(path, {})
+        container = orchestrator_container_from_variant(variant)
+
+        self.assertEqual(variant.inference["nccl_ib_hca"], "rdma0,rdma1")
+        self.assertEqual(variant.inference["nccl_socket_ifname"], "eno0")
+        self.assertEqual(container["env"]["NCCL_IB_HCA"], "rdma0,rdma1")
+        self.assertNotIn("env", container["runtime"]["args"])
+        self.assertEqual(container["runtime"]["args"]["shm_size"], "128G")
+
+    def test_loads_sglang_style_flat_benchmark_params(self):
+        path = self._write_config(
+            {
+                "gpu_name": "mi325",
+                "enforce_thresholds": True,
+                "threshold_json": "threshold.json",
+                "paths": {
+                    "shared_fs": "/shared",
+                    "models_dir": "/shared/models",
+                    "log_dir": "/shared/results",
+                    "hf_token_file": "/shared/token",
+                },
+                "container": {
+                    "lifetime": "per_run",
+                    "name": "flux-benchmark_single",
+                    "image": "xdit:test",
+                    "runtime": {
+                        "name": "docker",
+                        "args": {
+                            "network": "host",
+                            "ipc": "host",
+                            "privileged": True,
+                            "volumes": ["/shared/models:/hf_home", "/shared/results:/outputs"],
+                            "devices": ["/dev/dri", "/dev/kfd"],
+                            "env": {"NCCL_DEBUG": "ERROR"},
+                        },
+                    },
+                },
+                "server_params": {
+                    "backend": "xdit",
+                    "nnodes": "1",
+                    "model": "black-forest-labs/FLUX.1-dev",
+                    "benchmark_serv_node": "node-a",
+                },
+                "benchmark_params": {
+                    "prompt": "A small cat",
+                    "height": 1024,
+                    "width": 1024,
+                    "ulysses_degree": 8,
+                    "torchrun_nproc": 8,
+                },
+            },
+            {"auto": {"max_avg_pipe_time_s": 10.0}},
+        )
+
+        variant = load_variant(path, {"node_dict": {"node-a": {}}})
+
+        self.assertEqual(variant.topology, "single")
+        self.assertEqual(variant.model.id, "black-forest-labs/FLUX.1-dev")
+        self.assertEqual(variant.inference["benchmark_serv_node"], "node-a")
+        self.assertEqual(variant.benchmark_params["flux1_dev_t2i"]["torchrun_nproc"], 8)
+        self.assertEqual(
+            variant.benchmark_params["flux1_dev_t2i"]["expected_results"],
+            {"auto": {"max_avg_pipe_time_s": 10.0}},
+        )
+
     def test_rejects_other_unified_framework(self):
         path = self._write_config(
             {

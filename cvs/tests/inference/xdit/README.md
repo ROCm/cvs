@@ -199,7 +199,7 @@ startup. Cluster JSON resolves `{user-id}` only; use real absolute paths for
 - `paths.models_dir` - host Hugging Face cache root (mounted at `/hf_home`); must contain
   `hub/` when using repo-id + offline cache mode.
 - `paths.log_dir` - host directory for benchmark outputs.
-- `model.id` - Hugging Face repo id or absolute on-disk model path (preferred at scale).
+- `model.id` / `server_params.model` - Hugging Face repo id or absolute on-disk model path.
 - `container.image` - docker image (`<changeme>` in templates; see `_image_example`).
 - `container.runtime.args.devices` - typically `["/dev/dri", "/dev/kfd"]`.
 - `container.runtime.args.volumes` - host:container bind mounts. WAN Diffusers xFuser
@@ -208,12 +208,14 @@ startup. Cluster JSON resolves `{user-id}` only; use real absolute paths for
   when the image does not ship the example.
 - `CVS_WAN_XFUSER_PYPACKAGES` - optional extra Python path for WAN xFuser. Set it in
   the environment (`export CVS_WAN_XFUSER_PYPACKAGES=/path/to/pypackages`) or in
-  `container.env`; do not commit cluster-specific paths in sample JSON.
-- `topology`, `nnodes`, `master_addr`, `nccl_*`, `gloo_socket_ifname` - distributed
-  rendezvous and NCCL tuning (replace `<changeme>` values).
-- `benchmark_serv_node` - required cluster `node_dict` key for single-node suites.
-- `params.flux1_dev_t2i` or `params.wan22_i2v_a14b` - torchrun parallelism and warmup
-  settings. Thresholds live in the sibling threshold JSON, not in `params`.
+  `container.runtime.args.env`; do not commit cluster-specific paths in sample JSON.
+- `server_params.nnodes`, `server_params.master_addr`, `server_params.master_port` -
+  distributed torchrun rendezvous. NCCL/Gloo settings live under
+  `container.runtime.args.env`.
+- `server_params.benchmark_serv_node` - required cluster `node_dict` key for
+  single-node suites.
+- `benchmark_params` - torchrun parallelism and warmup settings. Thresholds live in
+  the sibling threshold JSON.
 
 Configs load through `xdit_config_loader.load_variant()` and validate through
 `PytorchXditUnifiedConfigFile` (or legacy `PytorchXditFluxConfigFile` /

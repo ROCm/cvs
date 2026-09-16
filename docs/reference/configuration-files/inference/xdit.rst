@@ -89,15 +89,17 @@ Unified templates use the same top-level layout as SGLang and vLLM inference con
    * - ``model``
      - ``id`` (HF repo id or absolute host path) and ``remote`` (``0`` = offline/local).
    * - ``container``
-     - ``lifetime``, ``name``, ``image``, ``env``, and ``runtime.name`` / ``runtime.args``.
+     - ``lifetime``, ``name``, ``image``, and ``runtime.name`` / ``runtime.args``
+       (including ``env``, matching SGLang).
    * - ``params``
      - ``flux1_dev_t2i`` (FLUX.1 and FLUX.2) or ``wan22_i2v_a14b`` (WAN native and Diffusers).
    * - ``inference``
      - Optional runtime fields such as ``model_rev`` for pinned HF snapshots.
    * - ``benchmark_serv_node``
      - Required cluster ``node_dict`` key for single-node suites.
-   * - ``nnodes``, ``master_addr``, ``nccl_*``
-     - Distributed rendezvous and NCCL tuning (distributed templates only).
+   * - ``nnodes``, ``master_addr``, ``master_port``
+     - Distributed torchrun rendezvous. NCCL/IB env lives under
+       ``container.runtime.args.env``.
 
 Legacy ``config`` + ``benchmark_params`` files with embedded ``expected_results`` still
 validate through ``PytorchXditWanConfigFile`` / ``PytorchXditFluxConfigFile`` for backward
@@ -137,11 +139,15 @@ Example: FLUX.1-dev single-node
                     "network": "host",
                     "ipc": "host",
                     "privileged": true,
-                    "devices": ["/dev/dri", "/dev/kfd"],
+                    "shm_size": "128G",
                     "volumes": [
                         "{paths.models_dir}:/hf_home",
                         "{paths.log_dir}:/outputs"
-                    ]
+                    ],
+                    "devices": ["/dev/dri", "/dev/kfd"],
+                    "env": {
+                        "NCCL_DEBUG": "ERROR"
+                    }
                 }
             }
         },
@@ -204,13 +210,15 @@ General ``paths`` and ``container`` parameters
      - Docker name (distributed ranks use ``{container.name}-rankN``).
    * - ``container.runtime.args.devices``
      - ``["/dev/dri", "/dev/kfd"]``
-     - GPU device nodes passed into the container.
+     - GPU device nodes. Distributed templates also pass ``/dev/infiniband/rdma_cm``.
    * - ``container.runtime.args.volumes``
      - host:container list
      - Bind mounts. FLUX.2 mounts ``flux2_example.py``; WAN Diffusers mounts ``wan_i2v_example.py``.
-   * - ``container.env``
-     - ``{"NCCL_PROTO": "Simple"}``
-     - Extra environment variables inside the container.
+       Distributed templates also mount InfiniBand libraries, matching SGLang.
+   * - ``container.runtime.args.env``
+     - ``{"NCCL_DEBUG": "ERROR"}``
+     - Container environment. Distributed templates put NCCL/Gloo interface
+       settings here (``NCCL_IB_HCA``, ``NCCL_SOCKET_IFNAME``, and so on).
 
 Distributed fields
 ------------------
@@ -229,12 +237,14 @@ Present on ``topology: distributed`` templates:
      - Participating node count (must be ``>= 2``). Optional ``server_node_list`` can subset the cluster.
    * - ``master_addr``, ``master_port``
      - torchrun rendezvous (port default ``29500``). ``master_addr`` is ``<changeme>``.
-   * - ``nccl_ib_hca``, ``nccl_ib_gid_index``
-     - NCCL InfiniBand/RoCE devices and GID index.
-   * - ``nccl_socket_ifname``, ``gloo_socket_ifname``
+   * - ``container.runtime.args.env.NCCL_IB_HCA``
+     - InfiniBand/RoCE devices. Templates include an example list plus ``<changeme>``.
+   * - ``container.runtime.args.env.NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` / ``GLOO_TCP_IFNAME``
      - Ethernet interfaces for socket/Gloo fallback.
-   * - ``nccl_debug``
-     - NCCL log level (templates use ``INFO``).
+   * - ``container.runtime.args.env.NCCL_IB_GID_INDEX``
+     - GID index for IB/RoCE (templates use ``3``).
+   * - ``container.runtime.args.env.NCCL_DEBUG``
+     - NCCL log level (templates use ``ERROR``).
 
 ``params.flux1_dev_t2i``
 ========================

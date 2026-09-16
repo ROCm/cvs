@@ -1285,11 +1285,34 @@ class PytorchXditUnifiedInference(BaseModel):
     )
 
 
+class PytorchXditServerParams(BaseModel):
+    """SGLang-style server block used by packaged xDiT configs."""
+
+    model_config = ConfigDict(extra="allow")
+
+    backend: str = Field(default="xdit", description="Inference backend identifier")
+    nnodes: Any = Field(default="1", description="Participating node count")
+    log_level: str = Field(default="info", description="Server log level")
+    model: str = Field(description="Hugging Face repo id or absolute on-disk model path")
+    benchmark_serv_node: Optional[str] = Field(
+        default=None,
+        description="Single execution node selected from cluster node_dict",
+    )
+    server_node_list: Optional[List[str]] = Field(
+        default=None,
+        description="Ordered server nodes for distributed jobs",
+    )
+    master_addr: str = Field(default="", description="torchrun rendezvous address")
+    master_port: Any = Field(default="29500", description="torchrun rendezvous port")
+    model_rev: str = Field(default="", description="Pinned Hugging Face snapshot when model is a repo id")
+
+
 class PytorchXditUnifiedConfigFile(BaseModel):
     """
     Schema for unified PyTorch xDiT inference configuration files.
 
     Thresholds are supplied in a sibling ``threshold_json`` file referenced at the top level.
+    Packaged files use the SGLang-style ``server_params`` + flat ``benchmark_params`` layout.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -1301,6 +1324,7 @@ class PytorchXditUnifiedConfigFile(BaseModel):
     )
     schema_version: int = Field(default=1, ge=1, description="Unified config schema version")
     framework: str = Field(default="xdit", description="Inference framework identifier")
+    gpu_name: Optional[str] = Field(default=None, description="Target GPU name, e.g. '<changeme> mi325'")
     gpu_arch: str = Field(default="mi3xx", description="Target GPU architecture family")
     topology: str = Field(default="single", description="Execution topology: single or distributed")
     enforce_thresholds: bool = Field(
@@ -1309,9 +1333,20 @@ class PytorchXditUnifiedConfigFile(BaseModel):
     )
     threshold_json: str = Field(description="Sibling threshold JSON filename")
     paths: PytorchXditUnifiedPaths = Field(description="Host path block")
-    model: PytorchXditUnifiedModel = Field(description="Model identifier block")
+    model: Optional[PytorchXditUnifiedModel] = Field(default=None, description="Legacy model identifier block")
     container: PytorchXditUnifiedContainer = Field(description="Container definition")
-    params: PytorchXditUnifiedParams = Field(description="Benchmark parameters without embedded thresholds")
+    params: Optional[PytorchXditUnifiedParams] = Field(
+        default=None,
+        description="Legacy nested benchmark parameters without embedded thresholds",
+    )
+    server_params: Optional[PytorchXditServerParams] = Field(
+        default=None,
+        description="SGLang-style model, topology, and execution-host fields",
+    )
+    benchmark_params: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Flat xDiT workload parameters (FLUX or WAN)",
+    )
     inference: Optional[PytorchXditUnifiedInference] = Field(
         default=None,
         description="Optional runtime fields such as model_rev",
@@ -1350,23 +1385,56 @@ class PytorchXditUnifiedConfigFile(BaseModel):
 
     @model_validator(mode="after")
     def validate_benchmark_present(self):
-        if self.framework not in ("xdit", "pytorch_xdit"):
-            raise ValueError("framework must be 'xdit' or 'pytorch_xdit'")
+        backend = self.framework
+        if self.server_params is not None and self.server_params.backend:
+            backend = self.server_params.backend
+        if str(backend).lower() not in ("xdit", "pytorch_xdit"):
+            raise ValueError("framework/backend must be 'xdit' or 'pytorch_xdit'")
         if self.topology not in ("single", "distributed"):
             raise ValueError("topology must be 'single' or 'distributed'")
-        if self.topology == "single" and not self.benchmark_serv_node:
+        nnodes = self.nnodes
+        if nnodes is None and self.server_params is not None and self.server_params.nnodes not in (None, ""):
+            nnodes = int(self.server_params.nnodes)
+        elif nnodes is not None:
+            nnodes = int(nnodes)
+        else:
+            nnodes = 1
+        topology = "distributed" if nnodes > 1 else self.topology
+        bench_node = self.benchmark_serv_node
+        if not bench_node and self.server_params is not None:
+            bench_node = self.server_params.benchmark_serv_node
+        if topology == "single" and not bench_node:
             raise ValueError("topology='single' requires benchmark_serv_node")
-        workloads = [
-            self.params.wan22_i2v_a14b,
-            self.params.flux1_dev_t2i,
-        ]
-        if sum(workload is not None for workload in workloads) != 1:
-            raise ValueError("params must include exactly one of wan22_i2v_a14b or flux1_dev_t2i")
+        nested = 0
+        if self.params is not None:
+            nested = sum(
+                workload is not None
+                for workload in (
+                    self.params.wan22_i2v_a14b,
+                    self.params.flux1_dev_t2i,
+                )
+            )
+        flat = self.benchmark_params if isinstance(self.benchmark_params, dict) else {}
+        has_flat = bool(flat) and not any(key in flat for key in ("flux1_dev_t2i", "wan22_i2v_a14b"))
+        has_nested_bp = any(isinstance(flat.get(key), dict) for key in ("flux1_dev_t2i", "wan22_i2v_a14b"))
+        if nested != 1 and not has_flat and not has_nested_bp:
+            raise ValueError(
+                "config must include params.flux1_dev_t2i, params.wan22_i2v_a14b, or flat benchmark_params"
+            )
+        if self.server_params is None and self.model is None:
+            raise ValueError("config must include server_params.model or model.id")
         return self
 
     @model_validator(mode="after")
     def validate_distributed_topology(self):
-        if self.topology == "distributed" and (self.nnodes is None or self.nnodes < 2):
+        nnodes = self.nnodes
+        if nnodes is None and self.server_params is not None and self.server_params.nnodes not in (None, ""):
+            nnodes = int(self.server_params.nnodes)
+        elif nnodes is not None:
+            nnodes = int(nnodes)
+        else:
+            nnodes = 1
+        if (self.topology == "distributed" or nnodes > 1) and nnodes < 2:
             raise ValueError("topology='distributed' requires nnodes >= 2")
         return self
 
@@ -1407,10 +1475,16 @@ def is_pytorch_xdit_unified_config(raw_config):
     """Return True when a loaded dict uses the unified xDiT layout."""
     if not isinstance(raw_config, dict):
         return False
-    framework = str(raw_config.get("framework") or "").lower()
-    if framework not in ("xdit", "pytorch_xdit"):
+    if not isinstance(raw_config.get("paths"), dict) or not isinstance(raw_config.get("container"), dict):
         return False
-    return isinstance(raw_config.get("paths"), dict) and isinstance(raw_config.get("container"), dict)
+    framework = str(raw_config.get("framework") or "").lower()
+    if framework in ("xdit", "pytorch_xdit"):
+        return True
+    backend = str((raw_config.get("server_params") or {}).get("backend") or "").lower()
+    if backend in ("xdit", "pytorch_xdit"):
+        return True
+    threshold = str(raw_config.get("threshold_json") or "").lower()
+    return "pytorch_xdit" in threshold
 
 
 # =============================================================================

@@ -1,9 +1,6 @@
 {
   "_comment": "FLUX.1-dev single-node xDiT workload. Thresholds live in the sibling threshold JSON.",
-  "schema_version": 1,
-  "framework": "xdit",
-  "gpu_arch": "mi3xx",
-  "topology": "single",
+  "gpu_name" : "<changeme> mi325",
   "enforce_thresholds": true,
   "threshold_json": "mi325_pytorch_xdit_flux1_dev_single_threshold.json",
   "paths": {
@@ -12,47 +9,50 @@
     "log_dir": "{home}/cvs_flux_output",
     "hf_token_file": "{home}/.hf_token"
   },
-  "model": {
-    "id": "black-forest-labs/FLUX.1-dev",
-    "remote": 0
-  },
   "container": {
     "lifetime": "per_run",
-    "name": "flux-benchmark",
+    "name": "flux-benchmark_single",
     "_image_example": "amdsiloai/pytorch-xdit:v25.11.2",
     "image": "<changeme>",
-    "env": {},
     "runtime": {
       "name": "docker",
       "args": {
         "network": "host",
         "ipc": "host",
         "privileged": true,
-        "devices": ["/dev/dri", "/dev/kfd"],
+        "shm_size": "128G",
         "volumes": [
           "{paths.models_dir}:/hf_home",
           "{paths.log_dir}:/outputs"
-        ]
+        ],
+        "devices": ["/dev/dri", "/dev/kfd"],
+        "env": {
+          "NCCL_DEBUG": "ERROR"
+        }
       }
     }
   },
-  "benchmark_serv_node": "<changeme>",
-  "params": {
-    "flux1_dev_t2i": {
-      "prompt": "A small cat",
-      "seed": 42,
-      "num_inference_steps": 25,
-      "max_sequence_length": 256,
-      "no_use_resolution_binning": true,
-      "warmup_steps": 1,
-      "warmup_calls": 5,
-      "num_repetitions": 25,
-      "height": 1024,
-      "width": 1024,
-      "ulysses_degree": 8,
-      "ring_degree": 1,
-      "use_torch_compile": true,
-      "torchrun_nproc": 8
-    }
+  "server_params": {
+    "backend": "xdit",
+    "nnodes": "1",
+    "log_level": "info",
+    "model": "black-forest-labs/FLUX.1-dev",
+    "benchmark_serv_node": "<changeme>"
+  },
+  "benchmark_params": {
+    "prompt": "A small cat",
+    "seed": 42,
+    "num_inference_steps": 25,
+    "max_sequence_length": 256,
+    "no_use_resolution_binning": true,
+    "warmup_steps": 1,
+    "warmup_calls": 5,
+    "num_repetitions": 25,
+    "height": 1024,
+    "width": 1024,
+    "ulysses_degree": 8,
+    "ring_degree": 1,
+    "use_torch_compile": true,
+    "torchrun_nproc": 8
   }
 }

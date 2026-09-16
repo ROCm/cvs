@@ -70,15 +70,16 @@ def _unified_flux_config():
             "lifetime": "per_run",
             "name": "flux-benchmark",
             "image": "<changeme>",
-            "env": {},
             "runtime": {
                 "name": "docker",
                 "args": {
                     "network": "host",
                     "ipc": "host",
                     "privileged": True,
-                    "devices": ["/dev/dri", "/dev/kfd"],
+                    "shm_size": "128G",
                     "volumes": ["{paths.models_dir}:/hf_home", "{paths.log_dir}:/outputs"],
+                    "devices": ["/dev/dri", "/dev/kfd"],
+                    "env": {"NCCL_DEBUG": "ERROR"},
                 },
             },
         },
@@ -196,6 +197,9 @@ class TestPytorchXditUnifiedSchemas(unittest.TestCase):
         for path in workload_files:
             validated = validate_config_file(path)
             self.assertIsInstance(validated, PytorchXditUnifiedConfigFile)
+            self.assertIsNotNone(validated.server_params)
+            self.assertEqual(validated.server_params.backend, "xdit")
+            self.assertTrue(validated.benchmark_params)
             threshold_path = config_dir / validated.threshold_json
             self.assertTrue(threshold_path.is_file(), msg=f"missing threshold for {path.name}")
             PytorchXditThresholdFile.model_validate(json.loads(threshold_path.read_text(encoding="utf-8")))

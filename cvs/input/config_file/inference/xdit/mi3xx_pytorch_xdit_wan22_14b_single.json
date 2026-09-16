@@ -1,53 +1,50 @@
 {
   "_comment": "WAN 2.2 I2V native single-node xDiT workload.",
-  "schema_version": 1,
-  "framework": "xdit",
-  "gpu_arch": "mi3xx",
-  "topology": "single",
+  "gpu_name" : "<changeme> mi325",
   "enforce_thresholds": true,
   "threshold_json": "mi325_pytorch_xdit_wan22_14b_single_threshold.json",
   "paths": {
     "shared_fs": "{home}",
     "models_dir": "{home}/.cache/huggingface",
-    "log_dir": "{home}/cvs_outputs",
+    "log_dir": "{home}/cvs_outputs_wan",
     "hf_token_file": "{home}/.hf_token"
-  },
-  "model": {
-    "id": "Wan-AI/Wan2.2-I2V-A14B",
-    "remote": 0
-  },
-  "inference": {
-    "model_rev": "206a9ee1b7bfaaf8f7e4d81335650533490646a3"
   },
   "container": {
     "lifetime": "per_run",
-    "name": "wan22-benchmark",
+    "name": "wan22-benchmark_single",
     "_image_example": "amdsiloai/pytorch-xdit:v25.11.2",
     "image": "<changeme>",
-    "env": {},
     "runtime": {
       "name": "docker",
       "args": {
         "network": "host",
         "ipc": "host",
         "privileged": true,
-        "devices": ["/dev/dri", "/dev/kfd"],
+        "shm_size": "128G",
         "volumes": [
           "{paths.models_dir}:/hf_home",
           "{paths.log_dir}:/outputs"
-        ]
+        ],
+        "devices": ["/dev/dri", "/dev/kfd"],
+        "env": {
+          "NCCL_DEBUG": "ERROR"
+        }
       }
     }
   },
-  "benchmark_serv_node": "<changeme>",
-  "params": {
-    "wan22_i2v_a14b": {
-      "prompt": "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
-      "size": "720*1280",
-      "frame_num": 81,
-      "num_benchmark_steps": 5,
-      "compile": true,
-      "torchrun_nproc": 8
-    }
+  "server_params": {
+    "backend": "xdit",
+    "nnodes": "1",
+    "log_level": "info",
+    "model": "/root/models/DeepSeek-R1-0528",
+    "benchmark_serv_node": "<changeme>"
+  },
+  "benchmark_params": {
+    "prompt": "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
+    "size": "720*1280",
+    "frame_num": 81,
+    "num_benchmark_steps": 5,
+    "compile": true,
+    "torchrun_nproc": 8
   }
 }
