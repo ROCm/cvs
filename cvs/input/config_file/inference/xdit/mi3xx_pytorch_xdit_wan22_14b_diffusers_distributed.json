@@ -57,12 +57,9 @@
   "benchmark_params": {
     "model_format": "diffusers",
     "wan_diffusers_launcher": "xfuser_example",
-    "wan_diffusers_run_script": "/benchmark/wan_i2v_example.py",
     "wan_xfuser_auto_input_image": true,
     "wan_xfuser_install_video_deps": true,
     "wan_xfuser_output_type": "pil",
-    "wan_diffusers_save_video_path": "/outputs/results/video_i2v.mp4",
-    "wan_diffusers_timing_json_path": "results/timing.json",
     "require_video_artifact": true,
     "prompt": "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
     "size": "720*1280",
