@@ -16,7 +16,6 @@ ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (
     ("step_time_ms_p95", "ms"),
     ("peak_memory_allocated_mb", "MB"),
     ("peak_memory_reserved_mb", "MB"),
-    ("device_memory_used_mb_observed", "MB"),
     ("checkpoint_save_seconds", "s"),
     ("checkpoint_load_seconds", "s"),
     ("checkpoint_state_match", "bool"),
@@ -28,6 +27,13 @@ ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (
 )
 OPTIONAL_ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (
     ("data_loader_images_per_sec", "images/s"),
+    ("peak_memory_used_mb", "MB"),
+    ("learning_rate_initial", "-"),
+    ("learning_rate_final", "-"),
+    ("loss_step_100", "-"),
+    ("loss_step_500", "-"),
+    ("loss_step_1000", "-"),
+    ("loss_step_5000", "-"),
     ("top1_accuracy_pct", "%"),
     ("top5_accuracy_pct", "%"),
     ("eval_loss", "-"),
@@ -37,18 +43,15 @@ OPTIONAL_ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (
     ("loss_curve_decreased", "bool"),
     ("convergence_step", "step"),
     ("convergence_time_seconds", "s"),
-    ("continuous_peak_device_memory_mb", "MB"),
-    ("gpu_compute_util_pct", "%"),
-    ("gpu_bandwidth_util_pct", "%"),
-    ("gpu_energy_delta_j", "J"),
-    ("energy_tracking_available", "bool"),
     ("energy_kwh", "kWh"),
-    ("average_power_w", "W"),
     ("images_per_kwh", "images/kWh"),
-    ("emissions_kg_co2eq", "kgCO2eq"),
     ("codecarbon_tracking_active", "bool"),
 )
-DERIVED_METRICS: Tuple[Tuple[str, str], ...] = (("gradient_accumulation_overhead_pct", "%"),)
+DERIVED_METRICS: Tuple[Tuple[str, str], ...] = (
+    ("gradient_accumulation_overhead_pct", "%"),
+    ("augmentation_overhead_pct", "%"),
+    ("rocal_cpu_overhead_pct", "%"),
+)
 METRICS = ARTIFACT_METRICS + OPTIONAL_ARTIFACT_METRICS + DERIVED_METRICS
 
 METRIC_UNITS = dict(METRICS)
@@ -58,7 +61,7 @@ GATED_METRICS = {
     "step_time_ms_p95",
     "peak_memory_allocated_mb",
     "peak_memory_reserved_mb",
-    "device_memory_used_mb_observed",
+    "peak_memory_used_mb",
     "checkpoint_state_match",
     "checkpoint_loss_delta",
     "checkpoint_resume_model_max_abs_delta",
@@ -83,7 +86,7 @@ RESULTS_COLUMNS = (
     ("P95 step (ms)", "training.step_time_ms_p95"),
     ("Peak allocated (MB)", "training.peak_memory_allocated_mb"),
     ("Peak reserved (MB)", "training.peak_memory_reserved_mb"),
-    ("Observed device used (MB)", "training.device_memory_used_mb_observed"),
+    ("Peak used (MB)", "training.peak_memory_used_mb"),
     ("Checkpoint save (s)", "training.checkpoint_save_seconds"),
     ("Checkpoint load (s)", "training.checkpoint_load_seconds"),
     ("Checkpoint state match", "training.checkpoint_state_match"),
@@ -91,22 +94,25 @@ RESULTS_COLUMNS = (
     ("Resume model max abs delta", "training.checkpoint_resume_model_max_abs_delta"),
     ("Resume optimizer max abs delta", "training.checkpoint_resume_optimizer_max_abs_delta"),
     ("GA overhead (%)", "training.gradient_accumulation_overhead_pct"),
+    ("Augmentation overhead (%)", "training.augmentation_overhead_pct"),
+    ("rocAL CPU overhead (%)", "training.rocal_cpu_overhead_pct"),
     ("Initial loss", "training.loss_initial"),
     ("Final loss", "training.loss_final"),
+    ("Loss @100", "training.loss_step_100"),
+    ("Loss @500", "training.loss_step_500"),
+    ("Loss @1000", "training.loss_step_1000"),
+    ("Loss @5000", "training.loss_step_5000"),
     ("Data loader images/s", "training.data_loader_images_per_sec"),
+    ("Initial LR", "training.learning_rate_initial"),
+    ("Final LR", "training.learning_rate_final"),
     ("Top-1 (%)", "training.top1_accuracy_pct"),
     ("Top-5 (%)", "training.top5_accuracy_pct"),
     ("Eval loss", "training.eval_loss"),
     ("Eval samples", "training.eval_sample_count"),
     ("Convergence step", "training.convergence_step"),
     ("Convergence time (s)", "training.convergence_time_seconds"),
-    ("Continuous peak memory (MB)", "training.continuous_peak_device_memory_mb"),
-    ("Compute util (%)", "training.gpu_compute_util_pct"),
-    ("Bandwidth util (%)", "training.gpu_bandwidth_util_pct"),
-    ("Energy tracking", "training.energy_tracking_available"),
     ("Energy (kWh)", "training.energy_kwh"),
     ("Images/kWh", "training.images_per_kwh"),
-    ("Emissions (kgCO2eq)", "training.emissions_kg_co2eq"),
 )
 
 METRIC_TIERS = {
@@ -124,7 +130,7 @@ METRIC_TIERS = {
     "memory": (
         "peak_memory_allocated_mb",
         "peak_memory_reserved_mb",
-        "device_memory_used_mb_observed",
+        "peak_memory_used_mb",
     ),
     "checkpoint": (
         "checkpoint_save_seconds",
@@ -134,7 +140,11 @@ METRIC_TIERS = {
         "checkpoint_resume_model_max_abs_delta",
         "checkpoint_resume_optimizer_max_abs_delta",
     ),
-    "overhead": ("gradient_accumulation_overhead_pct",),
+    "overhead": (
+        "gradient_accumulation_overhead_pct",
+        "augmentation_overhead_pct",
+        "rocal_cpu_overhead_pct",
+    ),
     "data": ("data_loader_images_per_sec",),
     "accuracy": (
         "top1_accuracy_pct",
@@ -142,6 +152,10 @@ METRIC_TIERS = {
         "eval_loss",
         "eval_sample_count",
         "eval_completed",
+        "loss_step_100",
+        "loss_step_500",
+        "loss_step_1000",
+        "loss_step_5000",
     ),
     "convergence": (
         "loss_curve_points",
@@ -149,18 +163,9 @@ METRIC_TIERS = {
         "convergence_step",
         "convergence_time_seconds",
     ),
-    "continuous-memory": (
-        "continuous_peak_device_memory_mb",
-        "gpu_compute_util_pct",
-        "gpu_bandwidth_util_pct",
-    ),
     "energy": (
-        "gpu_energy_delta_j",
-        "energy_tracking_available",
         "energy_kwh",
-        "average_power_w",
         "images_per_kwh",
-        "emissions_kg_co2eq",
         "codecarbon_tracking_active",
     ),
 }
@@ -190,6 +195,17 @@ def gradient_accumulation_overhead_pct(baseline_step_ms: float, accumulated_step
     if not math.isfinite(accumulated) or accumulated <= 0:
         raise ValueError(f"accumulated step time must be finite and positive, got {accumulated_step_ms!r}")
     return (accumulated / baseline - 1.0) * 100.0
+
+
+def throughput_overhead_pct(baseline_images_per_sec: float, candidate_images_per_sec: float) -> float:
+    """Return candidate time-per-image overhead from two throughput measurements."""
+    baseline = float(baseline_images_per_sec)
+    candidate = float(candidate_images_per_sec)
+    if not math.isfinite(baseline) or baseline <= 0:
+        raise ValueError(f"baseline throughput must be finite and positive, got {baseline_images_per_sec!r}")
+    if not math.isfinite(candidate) or candidate <= 0:
+        raise ValueError(f"candidate throughput must be finite and positive, got {candidate_images_per_sec!r}")
+    return (baseline / candidate - 1.0) * 100.0
 
 
 def accuracy_from_counts(top1_correct: int, top5_correct: int, sample_count: int) -> Tuple[float, float]:
@@ -247,10 +263,7 @@ def parse_codecarbon_metrics(payload: Dict[str, Any], expected_gpus: int) -> Dic
     emissions = float(payload["emissions_kg_co2eq"])
     if not math.isfinite(emissions) or emissions < 0:
         raise ValueError(f"invalid CodeCarbon emissions value: {emissions!r}")
-    metrics = {
-        "training.codecarbon_tracking_active": 1.0,
-        "training.emissions_kg_co2eq": emissions,
-    }
+    metrics = {"training.codecarbon_tracking_active": 1.0}
     energy_kwh = payload.get("energy_kwh")
     if energy_kwh is not None:
         energy_kwh = float(energy_kwh)
@@ -263,14 +276,6 @@ def parse_codecarbon_metrics(payload: Dict[str, Any], expected_gpus: int) -> Dic
 def required_metrics_for_run(run_mode: str, data_mode: str, codecarbon_enabled: bool = False) -> set[str]:
     """Return metrics whose absence is a structural failure for this run."""
     required = set(GATED_METRICS)
-    required.update(
-        {
-            "continuous_peak_device_memory_mb",
-            "gpu_compute_util_pct",
-            "gpu_bandwidth_util_pct",
-            "energy_tracking_available",
-        }
-    )
     if data_mode == "rocal":
         required.add("data_loader_images_per_sec")
     if run_mode != "perf":
@@ -290,8 +295,32 @@ def required_metrics_for_run(run_mode: str, data_mode: str, codecarbon_enabled: 
                 "loss_curve_decreased",
             }
         )
+    if run_mode == "train_5k":
+        required.update(
+            {
+                "loss_step_100",
+                "loss_step_500",
+                "loss_step_1000",
+                "loss_step_5000",
+            }
+        )
+    if run_mode == "train_to_accuracy":
+        required.update(
+            {
+                "learning_rate_initial",
+                "learning_rate_final",
+                "convergence_step",
+                "convergence_time_seconds",
+            }
+        )
     if codecarbon_enabled:
-        required.add("codecarbon_tracking_active")
+        required.update(
+            {
+                "codecarbon_tracking_active",
+                "energy_kwh",
+                "images_per_kwh",
+            }
+        )
     return required
 
 

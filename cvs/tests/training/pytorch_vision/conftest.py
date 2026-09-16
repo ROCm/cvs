@@ -101,11 +101,12 @@ def pytest_collection_modifyitems(items):
         "test_verify_environment": 1,
         "test_real_data_smoke": 2,
         "test_training": 3,
-        "test_metric": 4,
-        "test_loss_curve": 5,
-        "test_convergence": 6,
-        "test_print_results_table": 7,
-        "test_teardown": 8,
+        "test_rocal_overhead_comparisons": 4,
+        "test_metric": 5,
+        "test_loss_curve": 6,
+        "test_convergence": 7,
+        "test_print_results_table": 8,
+        "test_teardown": 9,
     }
     items.sort(key=lambda item: order.get(item.originalname or item.name.split("[")[0], 99))
 

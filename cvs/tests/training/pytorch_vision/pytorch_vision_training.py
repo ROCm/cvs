@@ -21,6 +21,7 @@ from cvs.lib.training.pytorch_vision.utils.metrics import (
     METRIC_UNITS,
     gradient_accumulation_overhead_pct,
     required_metrics_for_run,
+    throughput_overhead_pct,
 )
 from cvs.lib.utils.verdict import evaluate_all
 
@@ -35,6 +36,9 @@ def _ga_group(sweep, gpus_per_node):
         sweep.precision,
         sweep.image_size,
         sweep.batch_size * sweep.gradient_accumulation_steps * gpus_per_node,
+        sweep.data_mode,
+        sweep.rocal_device,
+        sweep.augmentation,
     )
 
 
@@ -59,6 +63,51 @@ def _refresh_ga_overhead(variant_config, training_results):
                 baseline_actuals["training.step_time_ms_mean"],
                 actuals["training.step_time_ms_mean"],
             )
+
+
+def _pipeline_group(sweep):
+    return (
+        sweep.model,
+        sweep.backend,
+        sweep.precision,
+        sweep.image_size,
+        sweep.batch_size,
+        sweep.gradient_accumulation_steps,
+    )
+
+
+def _refresh_pipeline_overheads(variant_config, training_results):
+    sweeps = variant_config.training.enabled_sweeps()
+    baselines = {
+        _pipeline_group(sweep): sweep
+        for sweep in sweeps
+        if sweep.data_mode == "rocal"
+        and sweep.rocal_device == "gpu"
+        and sweep.augmentation == "standard"
+        and sweep.name in training_results
+    }
+    for sweep in sweeps:
+        if sweep.name not in training_results or sweep.data_mode != "rocal":
+            continue
+        baseline = baselines.get(_pipeline_group(sweep))
+        if baseline is None:
+            continue
+        for host, actuals in training_results[sweep.name].items():
+            baseline_actuals = training_results[baseline.name].get(host)
+            if baseline_actuals is None:
+                continue
+            baseline_ips = baseline_actuals["training.data_loader_images_per_sec"]
+            candidate_ips = actuals["training.data_loader_images_per_sec"]
+            if sweep.rocal_device == "gpu" and sweep.augmentation in {"standard", "heavy"}:
+                actuals["training.augmentation_overhead_pct"] = throughput_overhead_pct(
+                    baseline_ips,
+                    candidate_ips,
+                )
+            if sweep.augmentation == "standard" and sweep.rocal_device in {"gpu", "cpu"}:
+                actuals["training.rocal_cpu_overhead_pct"] = throughput_overhead_pct(
+                    baseline_ips,
+                    candidate_ips,
+                )
 
 
 def pytest_generate_tests(metafunc):
@@ -146,6 +195,7 @@ def _execute_sweep(orch, variant_config, sweep_name, training_results, inf_res_d
             )
             inf_res_dict[report_key] = host_results
             _refresh_ga_overhead(variant_config, training_results)
+            _refresh_pipeline_overheads(variant_config, training_results)
         finally:
             try:
                 if job.training_start_time:
@@ -187,6 +237,21 @@ def test_training(orch, variant_config, sweep_name, training_results, inf_res_di
     lifecycle.record(request.node.nodeid, "training", time.monotonic() - start)
 
 
+def test_rocal_overhead_comparisons(variant_config, training_results):
+    sweeps = variant_config.training.enabled_sweeps()
+    _refresh_pipeline_overheads(variant_config, training_results)
+    for sweep in sweeps:
+        if sweep.name not in training_results or sweep.data_mode != "rocal":
+            continue
+        _host, actuals = next(iter(training_results[sweep.name].items()))
+        if sweep.rocal_device == "gpu" and sweep.augmentation == "heavy":
+            if "training.augmentation_overhead_pct" not in actuals:
+                pytest.fail(f"{sweep.name} has no matching GPU-standard augmentation baseline")
+        if sweep.rocal_device == "cpu" and sweep.augmentation == "standard":
+            if "training.rocal_cpu_overhead_pct" not in actuals:
+                pytest.fail(f"{sweep.name} has no matching GPU-standard rocAL baseline")
+
+
 def test_metric(sweep_name, metric, variant_config, training_results, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -201,6 +266,9 @@ def test_metric(sweep_name, metric, variant_config, training_results, lifecycle,
         variant_config.training.codecarbon.enabled,
     )
     if name not in actuals:
+        cell = variant_config.cell_key(sweep_name)
+        if name in (variant_config.thresholds.get(cell) or {}):
+            pytest.fail(f"declared metric was not produced for {cell}: {name}")
         if metric in required:
             pytest.fail(f"required metric was not produced: {name}")
         pytest.skip(f"metric is not applicable to this sweep: {name}")

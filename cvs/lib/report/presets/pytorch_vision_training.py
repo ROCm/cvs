@@ -53,6 +53,28 @@ def _run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
         ),
         thresholds_run_card_row(variant),
     ]
+    schedule = getattr(variant.training, "lr_schedule", None)
+    if schedule is not None:
+        rows.append(
+            (
+                "LR schedule",
+                (
+                    f"{schedule.name} · base {variant.training.learning_rate:g} · "
+                    f"warmup {schedule.warmup_epochs} epochs · "
+                    f"milestones {schedule.milestones_epochs} · gamma {schedule.gamma:g}"
+                ),
+                False,
+            )
+        )
+    accuracy = getattr(variant.training, "accuracy", None)
+    if accuracy is not None and accuracy.target_top1_pct is not None and accuracy.target_top5_pct is not None:
+        rows.append(
+            (
+                "Accuracy targets",
+                f"Top-1 ≥ {accuracy.target_top1_pct:g}% · Top-5 ≥ {accuracy.target_top5_pct:g}%",
+                False,
+            )
+        )
     rows.extend(provenance_link_rows(provenance))
     return rows
 
@@ -98,9 +120,11 @@ PYTORCH_VISION_TRAINING_REPORT_CONFIG = make_inference_report_config(
         ("tflops_per_sec_per_gpu", "TFLOPS/s/GPU (provisional)"),
         ("mfu_pct", "MFU % (provisional)"),
         ("step_time_ms_p95", "P95 step (ms)"),
-        ("device_memory_used_mb_observed", "Observed device used (MB)"),
+        ("peak_memory_used_mb", "Peak used memory (MB)"),
         ("checkpoint_state_match", "Checkpoint state match"),
         ("gradient_accumulation_overhead_pct", "GA overhead (%)"),
+        ("augmentation_overhead_pct", "Augmentation overhead (%)"),
+        ("rocal_cpu_overhead_pct", "rocAL CPU overhead (%)"),
     ),
     chart_series=(
         ReportChartSeries("images_per_sec", "Training throughput", "images/s"),
@@ -108,17 +132,20 @@ PYTORCH_VISION_TRAINING_REPORT_CONFIG = make_inference_report_config(
         ReportChartSeries("mfu_pct", "Provisional MFU", "%"),
         ReportChartSeries("step_time_ms_mean", "Mean step time", "ms", invert=True),
         ReportChartSeries("step_time_ms_p95", "P95 step time", "ms", invert=True),
-        ReportChartSeries("device_memory_used_mb_observed", "Observed device-used memory", "MB", invert=True),
-        ReportChartSeries("continuous_peak_device_memory_mb", "Sampled peak device memory", "MB", invert=True),
+        ReportChartSeries("peak_memory_used_mb", "Peak used memory", "MB", invert=True),
         ReportChartSeries("top1_accuracy_pct", "Top-1 accuracy", "%"),
         ReportChartSeries("top5_accuracy_pct", "Top-5 accuracy", "%"),
+        ReportChartSeries("loss_step_100", "Training loss @100", "-"),
+        ReportChartSeries("loss_step_500", "Training loss @500", "-"),
+        ReportChartSeries("loss_step_1000", "Training loss @1000", "-"),
+        ReportChartSeries("loss_step_5000", "Training loss @5000", "-"),
         ReportChartSeries("eval_loss", "Evaluation loss", "-", invert=True),
         ReportChartSeries("convergence_time_seconds", "Time to convergence", "s", invert=True),
-        ReportChartSeries("gpu_compute_util_pct", "GPU compute utilization", "%"),
-        ReportChartSeries("gpu_bandwidth_util_pct", "GPU bandwidth utilization", "%"),
         ReportChartSeries("energy_kwh", "Training energy", "kWh", invert=True),
         ReportChartSeries("images_per_kwh", "Energy efficiency", "images/kWh"),
         ReportChartSeries("gradient_accumulation_overhead_pct", "GA overhead", "%", invert=True),
+        ReportChartSeries("augmentation_overhead_pct", "Augmentation overhead", "%", invert=True),
+        ReportChartSeries("rocal_cpu_overhead_pct", "rocAL CPU overhead", "%", invert=True),
     ),
     sweep_throughput_metric="training.images_per_sec",
     sweep_ttft_metric="training.step_time_ms_p95",

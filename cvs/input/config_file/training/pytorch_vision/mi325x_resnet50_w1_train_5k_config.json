@@ -17,7 +17,7 @@
   },
   "training": {
     "distributed": false, "enabled": true, "phase": "accuracy", "run_mode": "train_5k",
-    "gpus_per_node": 8, "steps": 5000, "warmup_steps": 5,
+    "gpus_per_node": 8, "steps": 5000, "warmup_steps": 0,
     "eval_enabled": true, "eval_every_epochs": 1,
     "milestone_steps": [100, 500, 1000, 5000],
     "num_classes": 1000, "channels_last": true,

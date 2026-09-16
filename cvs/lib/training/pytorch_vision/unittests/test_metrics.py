@@ -9,6 +9,7 @@ from cvs.lib.training.pytorch_vision.utils.metrics import (
     loss_curve_decreased,
     parse_codecarbon_metrics,
     required_metrics_for_run,
+    throughput_overhead_pct,
     to_training_metrics,
 )
 
@@ -54,6 +55,14 @@ class TestTrainingMetrics(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "baseline"):
             gradient_accumulation_overhead_pct(0.0, 88.0)
 
+    def test_throughput_overhead_uses_time_per_image(self):
+        self.assertAlmostEqual(throughput_overhead_pct(1000.0, 800.0), 25.0)
+        self.assertAlmostEqual(throughput_overhead_pct(1000.0, 1250.0), -20.0)
+
+    def test_throughput_overhead_rejects_bad_candidate(self):
+        with self.assertRaisesRegex(ValueError, "candidate"):
+            throughput_overhead_pct(1000.0, 0.0)
+
     def test_distributed_accuracy_uses_summed_counts(self):
         self.assertEqual(accuracy_from_counts(7, 9, 10), (70.0, 90.0))
 
@@ -92,8 +101,8 @@ class TestTrainingMetrics(unittest.TestCase):
         }
         self.assertTrue(codecarbon_tracking_active(payload, 8))
         self.assertEqual(
-            parse_codecarbon_metrics(payload, 8)["training.emissions_kg_co2eq"],
-            0.25,
+            parse_codecarbon_metrics(payload, 8)["training.codecarbon_tracking_active"],
+            1.0,
         )
         self.assertEqual(parse_codecarbon_metrics(payload, 8)["training.energy_kwh"], 1.5)
 

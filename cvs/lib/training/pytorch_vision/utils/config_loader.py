@@ -17,12 +17,10 @@ from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_c
 RUN_MODES = (
     "smoke",
     "perf",
-    "train_1epoch",
     "train_5k",
-    "train_90epoch",
-    "soak_24h",
+    "train_to_accuracy",
 )
-LONG_RUN_MODES = {"train_90epoch", "soak_24h"}
+LONG_RUN_MODES = {"train_to_accuracy"}
 
 
 class LossCurveConfig(_Forbid):
@@ -34,6 +32,7 @@ class LossCurveConfig(_Forbid):
 
 class ConvergenceConfig(_Forbid):
     enabled: bool = False
+    stop_when_reached: bool = False
     target_top1_pct: Optional[float] = Field(default=None, ge=0, le=100)
     target_eval_loss: Optional[float] = Field(default=None, gt=0)
 
@@ -41,6 +40,40 @@ class ConvergenceConfig(_Forbid):
     def _validate_target(self):
         if self.enabled and self.target_top1_pct is None and self.target_eval_loss is None:
             raise ValueError("enabled convergence tracking requires a target")
+        return self
+
+
+class AccuracyConfig(_Forbid):
+    target_top1_pct: Optional[float] = Field(default=None, ge=0, le=100)
+    target_top5_pct: Optional[float] = Field(default=None, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def _validate_targets(self):
+        if (
+            self.target_top1_pct is not None
+            and self.target_top5_pct is not None
+            and self.target_top1_pct > self.target_top5_pct
+        ):
+            raise ValueError("accuracy target_top1_pct cannot exceed target_top5_pct")
+        return self
+
+
+class LearningRateScheduleConfig(_Forbid):
+    name: Literal["constant", "multistep"] = "constant"
+    warmup_epochs: int = Field(default=0, ge=0)
+    milestones_epochs: List[int] = Field(default_factory=list)
+    gamma: float = Field(default=0.1, gt=0, le=1)
+
+    @model_validator(mode="after")
+    def _validate_schedule(self):
+        if len(set(self.milestones_epochs)) != len(self.milestones_epochs):
+            raise ValueError("lr_schedule.milestones_epochs must not contain duplicates")
+        if any(b <= a for a, b in zip(self.milestones_epochs, self.milestones_epochs[1:])):
+            raise ValueError("lr_schedule.milestones_epochs must be strictly increasing")
+        if self.name == "constant" and (self.warmup_epochs or self.milestones_epochs):
+            raise ValueError("constant lr_schedule cannot define warmup or milestones")
+        if self.name == "multistep" and not self.milestones_epochs:
+            raise ValueError("multistep lr_schedule requires milestones_epochs")
         return self
 
 
@@ -110,19 +143,17 @@ class VisionTrainingConfig(_Forbid):
     distributed: Literal[False] = False
     enabled: bool = True
     allow_long_run: bool = False
-    phase: Literal["smoke", "performance", "accuracy", "soak"] = "performance"
+    phase: Literal["smoke", "performance", "accuracy"] = "performance"
     run_mode: Literal[
         "smoke",
         "perf",
-        "train_1epoch",
         "train_5k",
-        "train_90epoch",
-        "soak_24h",
+        "train_to_accuracy",
     ] = "perf"
     gpus_per_node: int = Field(default=8, gt=0)
-    warmup_steps: int = Field(default=10, ge=1)
+    warmup_steps: int = Field(default=10, ge=0)
     steps: int = Field(default=50, ge=1)
-    epochs: Optional[int] = Field(default=None, ge=1)
+    max_epochs: Optional[int] = Field(default=None, ge=1)
     max_duration_seconds: Optional[int] = Field(default=None, ge=1)
     eval_enabled: bool = False
     eval_every_epochs: int = Field(default=1, ge=1)
@@ -134,6 +165,7 @@ class VisionTrainingConfig(_Forbid):
     learning_rate: float = Field(default=0.1, gt=0)
     momentum: float = Field(default=0.9, ge=0)
     weight_decay: float = Field(default=0.0001, ge=0)
+    lr_schedule: LearningRateScheduleConfig = Field(default_factory=LearningRateScheduleConfig)
     timeout_s: int = Field(default=1800, gt=0)
     omp_num_threads: int = Field(default=1, gt=0)
     verify_dmesg: bool = True
@@ -142,9 +174,9 @@ class VisionTrainingConfig(_Forbid):
     checkpoint_keep_file: bool = False
     checkpoint_loss_tolerance: float = Field(default=1e-5, ge=0)
     loss_curve: LossCurveConfig = Field(default_factory=LossCurveConfig)
+    accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
     convergence: ConvergenceConfig = Field(default_factory=ConvergenceConfig)
     codecarbon: CodeCarbonConfig = Field(default_factory=CodeCarbonConfig)
-    gpu_poll_interval_seconds: float = Field(default=5.0, gt=0)
     env_vars: Dict[str, str] = Field(default_factory=dict)
     error_patterns: Dict[str, str] = Field(default_factory=dict)
     sweeps: List[VisionSweep]
@@ -175,6 +207,9 @@ class VisionTrainingConfig(_Forbid):
                 and candidate.precision == sweep.precision
                 and candidate.image_size == sweep.image_size
                 and candidate.batch_size * self.gpus_per_node == effective_batch
+                and candidate.data_mode == sweep.data_mode
+                and candidate.rocal_device == sweep.rocal_device
+                and candidate.augmentation == sweep.augmentation
             ]
             if len(baselines) != 1:
                 raise ValueError(
@@ -190,24 +225,43 @@ class VisionTrainingConfig(_Forbid):
             raise ValueError("training.milestone_steps must not contain duplicates")
         if any(b <= a for a, b in zip(self.milestone_steps, self.milestone_steps[1:])):
             raise ValueError("training.milestone_steps must be strictly increasing")
-        if self.run_mode == "train_1epoch" and self.epochs != 1:
-            raise ValueError("train_1epoch requires training.epochs=1")
-        if self.run_mode == "train_90epoch" and self.epochs != 90:
-            raise ValueError("train_90epoch requires training.epochs=90")
+        if self.lr_schedule.warmup_epochs or self.lr_schedule.milestones_epochs:
+            if self.max_epochs is None:
+                raise ValueError("epoch-based lr_schedule requires training.max_epochs")
+            if self.lr_schedule.warmup_epochs >= self.max_epochs:
+                raise ValueError("lr_schedule.warmup_epochs must be less than training.max_epochs")
+            if self.lr_schedule.milestones_epochs[-1] >= self.max_epochs:
+                raise ValueError("lr_schedule milestones must be less than training.max_epochs")
+            if (
+                self.lr_schedule.milestones_epochs
+                and self.lr_schedule.warmup_epochs >= self.lr_schedule.milestones_epochs[0]
+            ):
+                raise ValueError("lr_schedule warmup must finish before the first milestone")
+        if self.run_mode == "train_to_accuracy" and self.max_epochs is None:
+            raise ValueError("train_to_accuracy requires training.max_epochs as a safety cap")
+        if self.run_mode == "train_to_accuracy" and (
+            self.accuracy.target_top1_pct is None or self.accuracy.target_top5_pct is None
+        ):
+            raise ValueError("train_to_accuracy requires explicit Top-1 and Top-5 accuracy targets")
+        if self.run_mode == "train_to_accuracy" and self.convergence.target_top1_pct != self.accuracy.target_top1_pct:
+            raise ValueError("train_to_accuracy convergence Top-1 target must match the final Top-1 target")
+        if self.run_mode == "train_to_accuracy" and not self.convergence.stop_when_reached:
+            raise ValueError("train_to_accuracy requires convergence.stop_when_reached=true")
         if self.run_mode == "train_5k" and self.steps < 5000:
             raise ValueError("train_5k requires training.steps>=5000")
-        if self.run_mode == "soak_24h" and self.max_duration_seconds != 86400:
-            raise ValueError("soak_24h requires training.max_duration_seconds=86400")
         expected_phase = {
             "smoke": "smoke",
             "perf": "performance",
-            "train_1epoch": "accuracy",
             "train_5k": "accuracy",
-            "train_90epoch": "accuracy",
-            "soak_24h": "soak",
+            "train_to_accuracy": "accuracy",
         }[self.run_mode]
         if self.phase != expected_phase:
             raise ValueError(f"{self.run_mode} requires training.phase={expected_phase!r}")
+        if self.phase == "accuracy" and self.warmup_steps:
+            raise ValueError(
+                "accuracy profiles require training.warmup_steps=0 so uncounted optimizer updates "
+                "cannot alter the training recipe"
+            )
         if self.enabled and self.run_mode in LONG_RUN_MODES and not self.allow_long_run:
             raise ValueError(
                 f"{self.run_mode} is a protected long run; set training.enabled=true and "
@@ -260,13 +314,41 @@ class VisionVariantConfig(BaseVariantConfig):
             problems.append(f"threshold keys matching no sweep cell: {extra_cells}")
 
         missing_metrics = {}
-        required = [f"training.{name}" for name in sorted(GATED_METRICS)]
+        required_names = set(GATED_METRICS)
+        if self.training.run_mode == "train_to_accuracy":
+            required_names.update(
+                {
+                    "top1_accuracy_pct",
+                    "top5_accuracy_pct",
+                    "eval_completed",
+                    "eval_sample_count",
+                    "loss_curve_decreased",
+                    "convergence_step",
+                    "convergence_time_seconds",
+                    "learning_rate_initial",
+                    "learning_rate_final",
+                    "data_loader_images_per_sec",
+                    "codecarbon_tracking_active",
+                }
+            )
+        required = [f"training.{name}" for name in sorted(required_names)]
         for cell in sorted(expected & present):
             absent = [name for name in required if name not in (self.thresholds.get(cell) or {})]
             if absent:
                 missing_metrics[cell] = absent
         if missing_metrics:
             problems.append(f"cells missing gated-metric specs: {missing_metrics}")
+        if self.training.run_mode == "train_to_accuracy":
+            expected_accuracy = {
+                "training.top1_accuracy_pct": self.training.accuracy.target_top1_pct,
+                "training.top5_accuracy_pct": self.training.accuracy.target_top5_pct,
+            }
+            for cell in sorted(expected & present):
+                cell_thresholds = self.thresholds.get(cell) or {}
+                for metric, target in expected_accuracy.items():
+                    spec = cell_thresholds.get(metric) or {}
+                    if spec.get("kind") != "min" or spec.get("value") != target:
+                        problems.append(f"{cell} {metric} must be a min gate matching configured target {target}")
 
         if problems:
             message = "threshold.json does not match the PyTorch Vision sweep; " + "; ".join(problems)

@@ -15,10 +15,11 @@ Contract under test (from spec):
   parse_mem_usage(gpu_entry) -> {"gpu.total_vram", "gpu.used_vram",
                                  "gpu.free_vram"}; int|None each. Degrades; never raises.
   parse_energy(gpu_entry)    -> {"gpu.energy_j"}; float|None. Degrades; never raises.
-  parse_gpu_metrics(raw)     -> single dict with all 7 gpu.* keys.
+  parse_gpu_metrics(raw)     -> single dict with all 8 gpu.* keys.
                                  activity fields averaged across GPUs;
-                                 vram + energy_j summed across GPUs.
-                                 [] -> all 7 keys present, all None. Never raises.
+                                 vram + energy_j summed across GPUs, plus maximum
+                                 individual-GPU used VRAM.
+                                 [] -> all 8 keys present, all None. Never raises.
   GPU_METRICS / GPU_METRIC_UNITS: every metric short_name has a matching unit;
                                  parse_gpu_metrics([full]) emits "gpu.<k>" for every k.
 
@@ -51,16 +52,17 @@ from cvs.lib.utils.gpu import (
 # Shared fixtures — amd-smi JSON schema (one GPU entry)
 # ---------------------------------------------------------------------------
 
-# The seven spec'd metrics, each as the bare "gpu.<short_name>" key produced by
+# The eight spec'd metrics, each as the bare "gpu.<short_name>" key produced by
 # the parsers / aggregator.
 ACTIVITY_KEYS = ["gpu.gfx_activity", "gpu.umc_activity", "gpu.mm_activity"]
 VRAM_KEYS = ["gpu.total_vram", "gpu.used_vram", "gpu.free_vram"]
+MAX_USED_KEY = "gpu.max_used_vram"
 ENERGY_KEY = "gpu.energy_j"
-ALL_KEYS = ACTIVITY_KEYS + VRAM_KEYS + [ENERGY_KEY]
+ALL_KEYS = ACTIVITY_KEYS + VRAM_KEYS + [MAX_USED_KEY, ENERGY_KEY]
 
 
 def _full_gpu_entry(gfx=30, umc=20, mm=10, total=196608, used=4096, free=192512, energy=12345.5):
-    """A complete amd-smi entry for one GPU with all seven fields present."""
+    """A complete amd-smi entry for one GPU with all source fields present."""
     return {
         "usage": {
             "gfx_activity": {"value": gfx},
@@ -322,13 +324,13 @@ class TestParseGpuMetrics(unittest.TestCase):
 
     # --- key-presence contract ---
 
-    def test_all_seven_keys_present_for_full_entry(self):
+    def test_all_eight_keys_present_for_full_entry(self):
         out = parse_gpu_metrics([_full_gpu_entry()])
         self.assertIsInstance(out, dict)
         self.assertEqual(set(out.keys()), set(ALL_KEYS))
 
     def test_empty_list_yields_all_keys_none(self):
-        """[] -> all 7 keys present, every value None. Never raises."""
+        """[] -> all 8 keys present, every value None. Never raises."""
         out = parse_gpu_metrics([])
         self.assertEqual(set(out.keys()), set(ALL_KEYS))
         for k in ALL_KEYS:
@@ -367,6 +369,7 @@ class TestParseGpuMetrics(unittest.TestCase):
         out = parse_gpu_metrics([g0, g1])
         self.assertEqual(out["gpu.total_vram"], 300)
         self.assertEqual(out["gpu.used_vram"], 80)
+        self.assertEqual(out["gpu.max_used_vram"], 50)
         self.assertEqual(out["gpu.free_vram"], 220)
         self.assertEqual(out["gpu.energy_j"], 4.0)
 
@@ -567,7 +570,7 @@ class TestCaptureGpuMetrics(unittest.TestCase):
         return orch
 
     def test_happy_path_key_set_matches_all_keys(self):
-        """Given a valid amd-smi JSON list, capture_gpu_metrics returns all 7 keys,
+        """Given a valid amd-smi JSON list, capture_gpu_metrics returns all 8 keys,
         delegates to parse_gpu_metrics, and passes the parsed values through."""
         orch = self._make_orch([_full_gpu_entry()])
         with patch("cvs.lib.utils.gpu.parse_gpu_metrics", wraps=parse_gpu_metrics) as mock_parse:
@@ -599,7 +602,7 @@ class TestCaptureGpuMetrics(unittest.TestCase):
         self.assertAlmostEqual(out["gpu.gfx_activity"], 15.0)
 
     def test_no_raise_on_empty_gpu_list(self):
-        """Empty GPU list -> all 7 keys, all None. Must not raise."""
+        """Empty GPU list -> all 8 keys, all None. Must not raise."""
         orch = self._make_orch([])
         out = capture_gpu_metrics(orch)
         self.assertEqual(set(out.keys()), set(ALL_KEYS))
@@ -666,6 +669,7 @@ class TestGpuMetricsConstants(unittest.TestCase):
         "mm_activity",
         "total_vram",
         "used_vram",
+        "max_used_vram",
         "free_vram",
         "energy_j",
     }
@@ -685,7 +689,7 @@ class TestGpuMetricsConstants(unittest.TestCase):
 
     # --- _RAW_GPU_FIELDS (amd-smi parser output) ---
 
-    def test_raw_fields_covers_all_seven_amd_smi_fields(self):
+    def test_raw_fields_covers_all_eight_amd_smi_fields(self):
         raw_names = {short for short, _unit in _RAW_GPU_FIELDS}
         self.assertEqual(raw_names, self.EXPECTED_RAW_NAMES)
 
@@ -696,6 +700,7 @@ class TestGpuMetricsConstants(unittest.TestCase):
             "mm_activity": "%",
             "total_vram": "MB",
             "used_vram": "MB",
+            "max_used_vram": "MB",
             "free_vram": "MB",
             "energy_j": "J",
         }

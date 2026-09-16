@@ -32,20 +32,23 @@ cvs run pytorch_vision_training \
 
 - `distributed`: must be `false` for the current single-node suite.
 - `enabled`: module-level safety switch. Disabled profiles skip before container launch.
-- `allow_long_run`: second explicit opt-in required for 90-epoch and 24-hour modes.
-- `phase`: `smoke`, `performance`, `accuracy`, or `soak`.
-- `run_mode`: `smoke`, `perf`, `train_1epoch`, `train_5k`,
-  `train_90epoch`, or `soak_24h`.
+- `allow_long_run`: second explicit opt-in for target-accuracy training.
+- `phase`: `smoke`, `performance`, or `accuracy`.
+- `run_mode`: `smoke`, `perf`, `train_5k`, or `train_to_accuracy`.
 - `gpus_per_node`: expected visible GPU count and torchrun rank count.
 - `steps`: measured optimizer steps.
-- `warmup_steps`: untimed steps before measurement.
-- `epochs`, `max_duration_seconds`: epoch and wall-clock termination controls.
+- `warmup_steps`: untimed optimizer steps before performance measurement;
+  accuracy profiles require zero because these updates are not part of the
+  declared epoch/step count.
+- `max_epochs`, `max_duration_seconds`: safety caps for target-accuracy training.
 - `eval_enabled`, `eval_every_epochs`, `eval_steps`: streaming validation cadence
   and optional validation-step cap.
 - `milestone_steps`: optimizer steps whose losses are copied into the artifact.
 - `num_classes`: classifier output classes; W1 uses 1000.
 - `channels_last`: enables NHWC-compatible tensor storage.
 - `learning_rate`, `momentum`, `weight_decay`: SGD settings.
+- `lr_schedule`: constant or epoch-based multistep decay, with optional linear
+  warmup and explicit epoch milestones.
 - `timeout_s`: hard torchrun timeout.
 - `omp_num_threads`: CPU threads per rank.
 - `verify_dmesg`: enables bounded host-kernel error scanning.
@@ -54,9 +57,9 @@ cvs run pytorch_vision_training \
 - `checkpoint_keep_file`: retains the checkpoint after validation when `true`.
 - `checkpoint_loss_tolerance`: maximum resumed-loss delta.
 - `loss_curve`: sampling cadence, minimum points, and decreasing-slope check.
+- `accuracy`: explicit final Top-1 and Top-5 qualification targets.
 - `convergence`: optional Top-1/evaluation-loss targets.
 - `codecarbon`: CodeCarbon 3.2.4 AMDSMI activation, sampling, and required/optional policy.
-- `gpu_poll_interval_seconds`: continuous AMD-SMI device telemetry cadence.
 - `env_vars`: exported only for the training process.
 - `error_patterns`: named regular expressions checked against `training.log`.
 - `sweeps`: full training runs. Each `name` must match a threshold cell.
@@ -104,7 +107,7 @@ The rocAL sweep:
 
 - shards the reader by global DDP rank
 - decodes and augments JPEGs on GPU
-- warms the loader before measuring loader-only images/s
+- warms the loader before measuring input-pipeline-only images/s
 - includes data fetch in end-to-end step latency and training throughput
 
 The shipped thresholds are record-only because storage and metadata-cache
@@ -116,10 +119,11 @@ explicit reset. Images are consumed as a stream. Distributed Top-1, Top-5, and
 evaluation loss are computed from SUM-reduced correct counts, loss sums, and
 sample counts rather than averaged percentages.
 
-The 90-epoch and 24-hour examples are deliberately named `disabled`, set
-`enabled=false`, and leave `allow_long_run=false`. Copy them before use and make
-both opt-ins explicit. The one-epoch profile includes rocAL CPU-vs-GPU and
-standard-vs-heavy comparisons.
+The disabled target-accuracy profile stops after the first evaluation that
+reaches both its Top-1 and Top-5 targets. Its epoch count is a safety cap, not
+a required duration. Copy it before use and explicitly enable both safety fields.
+The short rocAL performance profile owns CPU-vs-GPU, standard-vs-heavy, and
+gradient-accumulation comparisons.
 
 CodeCarbon metrics are accepted only when the artifact records version 3.2.4,
 the AMDSMI tracker, and all expected GPUs. Continuous AMD-SMI collection runs

@@ -45,7 +45,7 @@ def _variant():
         gpus_per_node=8,
         warmup_steps=10,
         steps=50,
-        epochs=None,
+        max_epochs=None,
         max_duration_seconds=None,
         eval_enabled=False,
         eval_every_epochs=1,
@@ -57,6 +57,12 @@ def _variant():
         learning_rate=0.1,
         momentum=0.9,
         weight_decay=0.0001,
+        lr_schedule=SimpleNamespace(
+            name="constant",
+            warmup_epochs=0,
+            milestones_epochs=[],
+            gamma=0.1,
+        ),
         timeout_s=1800,
         omp_num_threads=1,
         verify_dmesg=True,
@@ -65,7 +71,12 @@ def _variant():
         checkpoint_keep_file=False,
         checkpoint_loss_tolerance=1e-5,
         loss_curve=SimpleNamespace(sample_every_steps=1, minimum_points=2),
-        convergence=SimpleNamespace(target_top1_pct=None, target_eval_loss=None),
+        accuracy=SimpleNamespace(target_top1_pct=None, target_top5_pct=None),
+        convergence=SimpleNamespace(
+            target_top1_pct=None,
+            target_eval_loss=None,
+            stop_when_reached=False,
+        ),
         codecarbon=SimpleNamespace(
             enabled=False,
             required=False,
@@ -85,7 +96,7 @@ def _variant():
 
 
 def _artifact():
-    return {
+    artifact = {
         "workload": "W1",
         "model": "resnet50",
         "backend": "torchvision",
@@ -101,8 +112,21 @@ def _artifact():
         "data_mode": "synthetic",
         "rocal_device": "gpu",
         "augmentation": "standard",
+        "lr_schedule": {
+            "name": "constant",
+            "warmup_epochs": 0,
+            "milestones_epochs": [],
+            "gamma": 0.1,
+        },
         "metrics": {name: index + 1.0 for index, (name, _unit) in enumerate(ARTIFACT_METRICS)},
     }
+    artifact["metrics"].update(
+        {
+            "learning_rate_initial": 0.1,
+            "learning_rate_final": 0.1,
+        }
+    )
+    return artifact
 
 
 class TestPyTorchVisionJob(unittest.TestCase):
@@ -178,8 +202,29 @@ class TestPyTorchVisionJob(unittest.TestCase):
         self.assertIn("--gradient-accumulation-steps 1", command)
         self.assertIn("--checkpoint-path", command)
         self.assertIn("--peak-tflops-per-gpu 1307.4", command)
+        self.assertIn("--lr-schedule constant", command)
         self.assertIn("timeout --signal=TERM", command)
         self.assertIn("export NCCL_DEBUG=WARN", command)
+
+    def test_builds_target_accuracy_early_stop_command(self):
+        variant = _variant()
+        variant.training.run_mode = "train_to_accuracy"
+        variant.training.phase = "accuracy"
+        variant.training.max_epochs = 90
+        variant.training.accuracy = SimpleNamespace(
+            target_top1_pct=75.5,
+            target_top5_pct=92.5,
+        )
+        variant.training.convergence = SimpleNamespace(
+            target_top1_pct=75.5,
+            target_eval_loss=None,
+            stop_when_reached=True,
+        )
+        command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
+        self.assertIn("--max-epochs 90", command)
+        self.assertIn("--convergence-top1 75.5", command)
+        self.assertIn("--target-top5 92.5", command)
+        self.assertIn("--stop-on-convergence", command)
 
     def test_parses_namespaced_artifact(self):
         response = {
@@ -191,6 +236,25 @@ class TestPyTorchVisionJob(unittest.TestCase):
         results = PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").parse_results()
         self.assertEqual(results["node0"]["training.images_per_sec"], 1.0)
 
+    def test_energy_efficiency_uses_artifact_processed_image_count(self):
+        variant = _variant()
+        variant.training.codecarbon.enabled = True
+        artifact = _artifact()
+        artifact["processed_images"] = 1024
+        artifact["completed_steps"] = 1
+        artifact["codecarbon"] = {
+            "version": "3.2.4",
+            "tracker": "amdsmi",
+            "gpu_count": 8,
+            "active": True,
+            "emissions_kg_co2eq": 0.1,
+            "energy_kwh": 0.5,
+            "duration_seconds": 10,
+        }
+        response = {"node0": {"exit_code": 0, "output": json.dumps(artifact)}}
+        results = PyTorchVisionJob(FakeOrchestrator(response), variant, "w1").parse_results()
+        self.assertEqual(results["node0"]["training.images_per_kwh"], 2048)
+
     def test_rejects_mismatched_artifact_metadata(self):
         artifact = _artifact()
         artifact["batch_size_per_gpu"] = 64
@@ -198,12 +262,32 @@ class TestPyTorchVisionJob(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "batch_size_per_gpu"):
             PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").parse_results()
 
+    def test_rejects_wrong_learning_rate_trajectory(self):
+        artifact = _artifact()
+        artifact["metrics"]["learning_rate_final"] = 0.2
+        response = {"node0": {"exit_code": 0, "output": json.dumps(artifact)}}
+        with self.assertRaisesRegex(RuntimeError, "learning-rate trajectory"):
+            PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").parse_results()
+
+    def test_rejects_invalid_epoch_accounting(self):
+        variant = _variant()
+        variant.training.max_epochs = 1
+        artifact = _artifact()
+        artifact.update(
+            {
+                "completed_epochs": 1,
+                "samples_per_rank_per_epoch": 10,
+                "batches_per_epoch": 0,
+                "steps_per_epoch": 0,
+            }
+        )
+        response = {"node0": {"exit_code": 0, "output": json.dumps(artifact)}}
+        with self.assertRaisesRegex(RuntimeError, "epoch accounting"):
+            PyTorchVisionJob(FakeOrchestrator(response), variant, "w1").parse_results()
+
     def test_rejects_nonzero_remote_exit(self):
         response = {"node0": {"exit_code": 7, "output": "torchrun failed"}}
-        readings = [
-            {"gpu.used_vram": 1, "gpu.gfx_activity": 2, "gpu.umc_activity": 3, "gpu.energy_j": 1},
-            {"gpu.used_vram": 2, "gpu.gfx_activity": 3, "gpu.umc_activity": 4, "gpu.energy_j": 2},
-        ]
+        readings = [{"gpu.used_vram": 16, "gpu.max_used_vram": 2}]
         with (
             patch("cvs.lib.training.pytorch_vision.job.start_gpu_poller"),
             patch("cvs.lib.training.pytorch_vision.job.stop_and_collect_gpu_poller", return_value=readings),
@@ -213,10 +297,7 @@ class TestPyTorchVisionJob(unittest.TestCase):
 
     def test_run_captures_host_timestamp(self):
         orch = FakeOrchestrator()
-        readings = [
-            {"gpu.used_vram": 1, "gpu.gfx_activity": 2, "gpu.umc_activity": 3, "gpu.energy_j": 1},
-            {"gpu.used_vram": 2, "gpu.gfx_activity": 3, "gpu.umc_activity": 4, "gpu.energy_j": 2},
-        ]
+        readings = [{"gpu.used_vram": 16, "gpu.max_used_vram": 2}]
         with (
             patch("cvs.lib.training.pytorch_vision.job.start_gpu_poller"),
             patch("cvs.lib.training.pytorch_vision.job.stop_and_collect_gpu_poller", return_value=readings),
@@ -224,19 +305,15 @@ class TestPyTorchVisionJob(unittest.TestCase):
             PyTorchVisionJob(orch, _variant(), "w1").run_benchmark()
         self.assertEqual(orch.commands[0][0], "date")
 
-    def test_monitor_marks_unsupported_energy_unavailable(self):
+    def test_monitor_records_maximum_per_device_used_memory(self):
         job = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1")
-        job.run_elapsed_seconds = 10
         job._set_monitor_metrics(
-            [{"gpu.used_vram": 2, "gpu.gfx_activity": 3, "gpu.umc_activity": 4, "gpu.energy_j": None}]
+            [
+                {"gpu.used_vram": 16, "gpu.max_used_vram": 2},
+                {"gpu.used_vram": 24, "gpu.max_used_vram": 4},
+            ]
         )
-        self.assertEqual(job.monitor_metrics["training.energy_tracking_available"], 0.0)
-        self.assertNotIn("training.energy_kwh", job.monitor_metrics)
-
-    def test_monitor_rejects_inactive_amd_tracking(self):
-        job = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1")
-        with self.assertRaisesRegex(RuntimeError, "no valid samples"):
-            job._set_monitor_metrics([])
+        self.assertEqual(job.monitor_metrics["training.peak_memory_used_mb"], 4)
 
     def test_dmesg_scan_can_be_disabled(self):
         variant = _variant()

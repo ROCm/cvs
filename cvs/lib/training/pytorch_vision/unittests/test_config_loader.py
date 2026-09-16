@@ -60,6 +60,51 @@ def _thresholds():
     return {"cell-w1": {f"training.{metric}": {"kind": "info"} for metric in GATED_METRICS}}
 
 
+def _target_accuracy_config(enabled=True):
+    config = _config()
+    config["training"].update(
+        {
+            "enabled": enabled,
+            "run_mode": "train_to_accuracy",
+            "phase": "accuracy",
+            "max_epochs": 90,
+            "eval_enabled": True,
+            "eval_every_epochs": 1,
+            "eval_sample_count": 50_000,
+            "warmup_steps": 0,
+            "learning_rate": 0.8,
+            "momentum": 0.9,
+            "weight_decay": 0.0001,
+            "lr_schedule": {
+                "name": "multistep",
+                "warmup_epochs": 5,
+                "milestones_epochs": [30, 60, 80],
+                "gamma": 0.1,
+            },
+            "accuracy": {"target_top1_pct": 75.5, "target_top5_pct": 92.5},
+            "convergence": {
+                "enabled": True,
+                "stop_when_reached": True,
+                "target_top1_pct": 75.5,
+            },
+        }
+    )
+    config["training"]["sweeps"][0].update(
+        {
+            "model": "resnet50",
+            "precision": "BF16",
+            "batch_size": 256,
+            "image_size": 224,
+            "gradient_accumulation_steps": 1,
+            "data_mode": "rocal",
+            "dataset_path": "/datasets/imagenet",
+            "rocal_device": "gpu",
+            "augmentation": "standard",
+        }
+    )
+    return config
+
+
 class TestVisionConfigLoader(unittest.TestCase):
     def _load(self, config=None, thresholds=None):
         tmp = tempfile.TemporaryDirectory()
@@ -137,31 +182,48 @@ class TestVisionConfigLoader(unittest.TestCase):
         self.assertEqual(variant.training.enabled_sweeps()[0].augmentation, "heavy")
 
     def test_protects_long_profiles(self):
-        config = _config()
-        config["training"].update(
-            {
-                "run_mode": "train_90epoch",
-                "phase": "accuracy",
-                "epochs": 90,
-                "eval_enabled": True,
-            }
-        )
+        config = _target_accuracy_config()
         with self.assertRaisesRegex(ValueError, "protected long run"):
             self._load(config=config)
 
-    def test_allows_disabled_long_profile(self):
+    def test_target_accuracy_requires_early_stop(self):
+        config = _target_accuracy_config(enabled=False)
+        config["training"]["convergence"]["stop_when_reached"] = False
+        with self.assertRaisesRegex(ValueError, "stop_when_reached"):
+            self._load(config=config)
+
+    def test_accepts_target_accuracy_with_safety_cap(self):
+        config = _target_accuracy_config(enabled=False)
+        config["enforce_thresholds"] = False
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            variant = self._load(config=config)
+        self.assertEqual(variant.training.lr_schedule.milestones_epochs, [30, 60, 80])
+        self.assertEqual(variant.training.warmup_steps, 0)
+        self.assertTrue(variant.training.convergence.stop_when_reached)
+
+    def test_target_accuracy_recipe_is_configurable(self):
+        config = _target_accuracy_config(enabled=False)
+        config["enforce_thresholds"] = False
+        config["training"]["learning_rate"] = 0.4
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            variant = self._load(config=config)
+        self.assertEqual(variant.training.learning_rate, 0.4)
+
+    def test_accuracy_profile_rejects_uncounted_optimizer_warmup(self):
         config = _config()
         config["training"].update(
             {
-                "enabled": False,
-                "run_mode": "soak_24h",
-                "phase": "soak",
-                "max_duration_seconds": 86400,
+                "run_mode": "train_5k",
+                "phase": "accuracy",
+                "steps": 5000,
                 "eval_enabled": True,
+                "warmup_steps": 5,
             }
         )
-        variant = self._load(config=config)
-        self.assertFalse(variant.training.enabled)
+        with self.assertRaisesRegex(ValueError, "uncounted optimizer updates"):
+            self._load(config=config)
 
     def test_rejects_missing_gated_threshold_when_enforced(self):
         thresholds = _thresholds()

@@ -6,7 +6,7 @@
     "training.step_time_ms_p95": {"kind": "info", "value": 0},
     "training.peak_memory_allocated_mb": {"kind": "info", "value": 0},
     "training.peak_memory_reserved_mb": {"kind": "info", "value": 0},
-    "training.device_memory_used_mb_observed": {"kind": "info", "value": 0},
+    "training.peak_memory_used_mb": {"kind": "info", "value": 0},
     "training.checkpoint_state_match": {"kind": "min", "value": 1},
     "training.checkpoint_loss_delta": {"kind": "max", "value": 0.00001},
     "training.checkpoint_resume_model_max_abs_delta": {"kind": "info", "value": 0},

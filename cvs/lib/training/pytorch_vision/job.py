@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import gzip
 import json
+import math
 import re
 import shlex
 import time
@@ -75,7 +76,6 @@ class PyTorchVisionJob:
         self.checkpoint_path = f"{self.output_dir}/checkpoint.pt"
         self.training_start_time = None
         self.monitor_metrics = {}
-        self.monitor_unavailable = []
         self.run_elapsed_seconds = None
 
     def stage_benchmark(self):
@@ -175,6 +175,14 @@ class PyTorchVisionJob:
             str(training.momentum),
             "--weight-decay",
             str(training.weight_decay),
+            "--lr-schedule",
+            training.lr_schedule.name,
+            "--lr-warmup-epochs",
+            str(training.lr_schedule.warmup_epochs),
+            "--lr-milestones-epochs",
+            ",".join(str(epoch) for epoch in training.lr_schedule.milestones_epochs),
+            "--lr-gamma",
+            str(training.lr_schedule.gamma),
             "--gradient-accumulation-steps",
             str(sweep.gradient_accumulation_steps),
             "--training-flops-per-image",
@@ -202,8 +210,8 @@ class PyTorchVisionJob:
             "--collective-timeout-seconds",
             str(min(120, training.timeout_s)),
         ]
-        if training.epochs is not None:
-            args.extend(["--epochs", str(training.epochs)])
+        if training.max_epochs is not None:
+            args.extend(["--max-epochs", str(training.max_epochs)])
         if training.max_duration_seconds is not None:
             args.extend(["--max-duration-seconds", str(training.max_duration_seconds)])
         if training.eval_enabled:
@@ -214,6 +222,10 @@ class PyTorchVisionJob:
             args.extend(["--convergence-top1", str(training.convergence.target_top1_pct)])
         if training.convergence.target_eval_loss is not None:
             args.extend(["--convergence-eval-loss", str(training.convergence.target_eval_loss)])
+        if training.accuracy.target_top5_pct is not None:
+            args.extend(["--target-top5", str(training.accuracy.target_top5_pct)])
+        if training.convergence.stop_when_reached:
+            args.append("--stop-on-convergence")
         if training.codecarbon.enabled:
             args.extend(
                 [
@@ -272,7 +284,7 @@ class PyTorchVisionJob:
         poller = start_gpu_poller(
             self.orch,
             self.sweep.label,
-            poll_interval_s=self.variant.training.gpu_poll_interval_seconds,
+            poll_interval_s=1.0,
             hard_cap_s=self.variant.training.timeout_s + 120,
         )
         started = time.monotonic()
@@ -290,29 +302,12 @@ class PyTorchVisionJob:
 
     def _set_monitor_metrics(self, readings):
         if not readings:
-            raise RuntimeError("continuous AMD-SMI tracking produced no valid samples")
+            raise RuntimeError("AMD-SMI memory tracking produced no valid samples")
         aggregated = agg_readings(readings)
-        required = (
-            "peak_gpu_memory_mb",
-            "gpu_compute_util_pct",
-            "gpu_bandwidth_util_pct",
-        )
-        missing = [name for name in required if aggregated.get(name) is None]
-        if missing:
-            raise RuntimeError(f"continuous AMD-SMI tracking is missing metrics: {missing}")
-        self.monitor_metrics = {
-            "training.continuous_peak_device_memory_mb": aggregated["peak_gpu_memory_mb"],
-            "training.gpu_compute_util_pct": aggregated["gpu_compute_util_pct"],
-            "training.gpu_bandwidth_util_pct": aggregated["gpu_bandwidth_util_pct"],
-        }
-        energies = [reading.get("gpu.energy_j") for reading in readings if reading.get("gpu.energy_j") is not None]
-        if len(energies) >= 2 and energies[-1] >= energies[0]:
-            delta_j = energies[-1] - energies[0]
-            self.monitor_metrics["training.energy_tracking_available"] = 1.0
-            self.monitor_metrics["training.gpu_energy_delta_j"] = delta_j
-        else:
-            self.monitor_metrics["training.energy_tracking_available"] = 0.0
-            self.monitor_unavailable.append("energy")
+        peak_used = aggregated.get("peak_gpu_memory_per_device_mb")
+        if peak_used is None:
+            raise RuntimeError("AMD-SMI memory tracking did not report per-device used memory")
+        self.monitor_metrics = {"training.peak_memory_used_mb": peak_used}
 
     def scan_dmesg_for_errors(self):
         if not self.variant.training.verify_dmesg:
@@ -384,6 +379,12 @@ class PyTorchVisionJob:
                 "data_mode": self.sweep.data_mode,
                 "rocal_device": self.sweep.rocal_device,
                 "augmentation": self.sweep.augmentation,
+                "lr_schedule": {
+                    "name": self.variant.training.lr_schedule.name,
+                    "warmup_epochs": self.variant.training.lr_schedule.warmup_epochs,
+                    "milestones_epochs": self.variant.training.lr_schedule.milestones_epochs,
+                    "gamma": self.variant.training.lr_schedule.gamma,
+                },
             }
             mismatches = {
                 key: {"expected": expected, "actual": raw.get(key)}
@@ -393,6 +394,53 @@ class PyTorchVisionJob:
             if mismatches:
                 raise RuntimeError(f"unexpected W1 result metadata on {host}: {mismatches}")
             metrics = to_training_metrics(raw)
+            expected_epochs = self.variant.training.max_epochs
+            completed_epochs_raw = raw.get("completed_epochs")
+            if expected_epochs is not None:
+                if self.variant.training.run_mode == "train_to_accuracy":
+                    if not isinstance(completed_epochs_raw, int) or not 0 < completed_epochs_raw <= expected_epochs:
+                        raise RuntimeError(
+                            f"invalid target-accuracy W1 run length on {host}: "
+                            f"cap {expected_epochs} epochs, completed {completed_epochs_raw}"
+                        )
+                elif completed_epochs_raw != expected_epochs:
+                    raise RuntimeError(
+                        f"incomplete epoch-based W1 run on {host}: "
+                        f"expected {expected_epochs} epochs, completed {completed_epochs_raw}"
+                    )
+            if expected_epochs is not None:
+                samples_per_rank = int(raw.get("samples_per_rank_per_epoch") or 0)
+                batches_per_epoch = int(raw.get("batches_per_epoch") or 0)
+                steps_per_epoch = int(raw.get("steps_per_epoch") or 0)
+                expected_batches = math.ceil(samples_per_rank / self.sweep.batch_size)
+                expected_steps = math.ceil(expected_batches / self.sweep.gradient_accumulation_steps)
+                if samples_per_rank <= 0 or batches_per_epoch != expected_batches or steps_per_epoch != expected_steps:
+                    raise RuntimeError(
+                        f"invalid W1 epoch accounting on {host}: samples_per_rank={samples_per_rank}, "
+                        f"batches={batches_per_epoch}/{expected_batches}, "
+                        f"steps={steps_per_epoch}/{expected_steps}"
+                    )
+            schedule = self.variant.training.lr_schedule
+            expected_initial_lr = self.variant.training.learning_rate
+            if schedule.warmup_epochs:
+                steps_per_epoch = int(raw.get("steps_per_epoch") or 0)
+                if steps_per_epoch <= 0:
+                    raise RuntimeError(f"scheduled W1 artifact has no valid steps_per_epoch on {host}")
+                expected_initial_lr /= schedule.warmup_epochs * steps_per_epoch
+            completed_epochs = int(raw.get("completed_epochs") or 0)
+            expected_final_lr = self.variant.training.learning_rate * schedule.gamma ** sum(
+                completed_epochs >= milestone for milestone in schedule.milestones_epochs
+            )
+            for metric_name, expected_lr in (
+                ("training.learning_rate_initial", expected_initial_lr),
+                ("training.learning_rate_final", expected_final_lr),
+            ):
+                actual_lr = metrics.get(metric_name)
+                if actual_lr is None or not math.isclose(actual_lr, expected_lr, rel_tol=1e-9, abs_tol=1e-12):
+                    raise RuntimeError(
+                        f"unexpected W1 learning-rate trajectory on {host}: "
+                        f"{metric_name} expected {expected_lr}, got {actual_lr}"
+                    )
             if self.variant.training.codecarbon.enabled:
                 metrics.update(
                     parse_codecarbon_metrics(
@@ -404,16 +452,9 @@ class PyTorchVisionJob:
             energy_kwh = metrics.get("training.energy_kwh")
             completed_steps = int(raw.get("completed_steps") or 0)
             if energy_kwh is not None and energy_kwh > 0 and completed_steps > 0:
-                metrics["training.energy_tracking_available"] = 1.0
-                codecarbon_duration = (raw.get("codecarbon") or {}).get("duration_seconds")
-                if codecarbon_duration is not None and codecarbon_duration > 0:
-                    metrics["training.average_power_w"] = energy_kwh * 3_600_000.0 / codecarbon_duration
-                total_images = (
-                    completed_steps
-                    * self.sweep.batch_size
-                    * self.sweep.gradient_accumulation_steps
-                    * self.variant.training.gpus_per_node
-                )
+                total_images = int(raw.get("processed_images") or 0)
+                if total_images <= 0:
+                    raise RuntimeError(f"W1 artifact has no positive processed_images count on {host}")
                 metrics["training.images_per_kwh"] = total_images / energy_kwh
             parsed[host] = metrics
         return parsed

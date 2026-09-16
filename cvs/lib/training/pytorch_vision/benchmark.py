@@ -30,11 +30,11 @@ def _parse_args():
     parser.add_argument("--measure-steps", type=int, default=50)
     parser.add_argument(
         "--run-mode",
-        choices=["smoke", "perf", "train_1epoch", "train_5k", "train_90epoch", "soak_24h"],
+        choices=["smoke", "perf", "train_5k", "train_to_accuracy"],
         default="perf",
     )
-    parser.add_argument("--phase", choices=["smoke", "performance", "accuracy", "soak"], default="performance")
-    parser.add_argument("--epochs", type=int)
+    parser.add_argument("--phase", choices=["smoke", "performance", "accuracy"], default="performance")
+    parser.add_argument("--max-epochs", type=int)
     parser.add_argument("--max-duration-seconds", type=int)
     parser.add_argument("--eval-enabled", action="store_true")
     parser.add_argument("--eval-steps", type=int)
@@ -45,6 +45,10 @@ def _parse_args():
     parser.add_argument("--learning-rate", type=float, default=0.1)
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight-decay", type=float, default=0.0001)
+    parser.add_argument("--lr-schedule", choices=["constant", "multistep"], default="constant")
+    parser.add_argument("--lr-warmup-epochs", type=int, default=0)
+    parser.add_argument("--lr-milestones-epochs", default="")
+    parser.add_argument("--lr-gamma", type=float, default=0.1)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
     parser.add_argument("--training-flops-per-image", type=float, required=True)
     parser.add_argument("--peak-tflops-per-gpu", type=float, required=True)
@@ -62,6 +66,8 @@ def _parse_args():
     parser.add_argument("--loss-curve-minimum-points", type=int, default=2)
     parser.add_argument("--convergence-top1", type=float)
     parser.add_argument("--convergence-eval-loss", type=float)
+    parser.add_argument("--target-top5", type=float)
+    parser.add_argument("--stop-on-convergence", action="store_true")
     parser.add_argument("--codecarbon-enabled", action="store_true")
     parser.add_argument("--codecarbon-required", action="store_true")
     parser.add_argument("--codecarbon-measure-power-secs", type=int, default=5)
@@ -142,6 +148,25 @@ def _build_optimizer(model, args):
     )
 
 
+def _build_lr_scheduler(optimizer, args, steps_per_epoch):
+    if args.lr_schedule == "constant":
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _step: 1.0)
+    if steps_per_epoch is None:
+        raise ValueError("multistep learning-rate schedule requires epoch-based training")
+    warmup_steps = args.lr_warmup_epochs * steps_per_epoch
+    milestone_steps = [int(epoch) * steps_per_epoch for epoch in args.lr_milestones_epochs.split(",") if epoch.strip()]
+    if not milestone_steps:
+        raise ValueError("multistep learning-rate schedule requires milestones")
+
+    def multiplier(step):
+        if warmup_steps and step < warmup_steps:
+            return float(step + 1) / warmup_steps
+        decays = sum(step >= milestone for milestone in milestone_steps)
+        return args.lr_gamma**decays
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, multiplier)
+
+
 def _nested_equal(left, right):
     if isinstance(left, torch.Tensor) and isinstance(right, torch.Tensor):
         return torch.equal(left.cpu(), right.cpu())
@@ -184,11 +209,6 @@ def _to_cpu(value):
     return value
 
 
-def _device_used_mb(device):
-    free_bytes, total_bytes = torch.cuda.mem_get_info(device)
-    return (total_bytes - free_bytes) / 1e6
-
-
 def _build_rocal_loader(args, rank, world_size, split="train"):
     import amd.rocal.fn as fn
     import amd.rocal.types as types
@@ -211,7 +231,10 @@ def _build_rocal_loader(args, rank, world_size, split="train"):
         output_memory_type=types.HOST_MEMORY if cpu else types.DEVICE_MEMORY,
     )
     with pipe:
-        jpegs, _labels = fn.readers.file(file_root=data_path)
+        jpegs, _labels = fn.readers.file(
+            file_root=data_path,
+            pad_last_batch=split == "train",
+        )
         if split == "train":
             decoded = fn.decoders.image_slice(
                 jpegs,
@@ -292,13 +315,29 @@ def _next_rocal_batches(loader, accumulation_steps, channels_last, device, heavy
             [images], labels = next(loader)
         except StopIteration:
             if not reset_on_end:
+                if image_batches:
+                    break
                 raise
             loader.reset()
             [images], labels = next(loader)
         images, labels = _prepare_rocal_batch(images, labels, device, channels_last, heavy)
+        if accumulation_steps > 1:
+            # rocAL reuses the same output tensors on every __next__ call.
+            # Gradient accumulation must own each microbatch until the optimizer
+            # step has consumed all of them.
+            images = images.clone(memory_format=torch.preserve_format)
+            labels = labels.clone()
         image_batches.append(images)
         label_batches.append(labels)
     return image_batches, label_batches
+
+
+def _rocal_batches_per_epoch(loader):
+    sample_count = int(loader.iterator_length)
+    batch_size = int(loader.batch_size)
+    if sample_count <= 0 or batch_size <= 0:
+        raise ValueError(f"invalid rocAL iterator dimensions: samples={sample_count}, batch_size={batch_size}")
+    return math.ceil(sample_count / batch_size)
 
 
 def _distributed_next_rocal_batches(
@@ -336,7 +375,7 @@ def _distributed_next_rocal_batches(
     return batches
 
 
-def _measure_rocal_loader(loader, args, device):
+def _measure_rocal_loader(loader, args, device, rank, world_size):
     for _ in range(args.loader_warmup_steps):
         _distributed_next_rocal_batches(
             loader,
@@ -345,10 +384,10 @@ def _measure_rocal_loader(loader, args, device):
             device,
             args.augmentation == "heavy",
         )
-    torch.cuda.synchronize(device)
-    dist.barrier()
-    start = time.perf_counter()
+    critical_times_ms = []
     for _ in range(args.loader_benchmark_steps):
+        torch.cuda.synchronize(device)
+        start = time.perf_counter()
         _distributed_next_rocal_batches(
             loader,
             args.gradient_accumulation_steps,
@@ -356,12 +395,16 @@ def _measure_rocal_loader(loader, args, device):
             device,
             args.augmentation == "heavy",
         )
-    torch.cuda.synchronize(device)
-    elapsed = _reduce_max(time.perf_counter() - start, device)
-    images = (
-        args.batch_size * args.gradient_accumulation_steps * int(os.environ["WORLD_SIZE"]) * args.loader_benchmark_steps
-    )
-    return images / elapsed
+        torch.cuda.synchronize(device)
+        critical_times_ms.append((time.perf_counter() - start) * 1000.0)
+    critical_times_ms = _gather_step_times(critical_times_ms, rank, world_size, device)
+    if rank != 0:
+        return None
+    mean_ms = statistics.fmean(critical_times_ms)
+    images_per_step = args.batch_size * args.gradient_accumulation_steps * world_size
+    return {
+        "data_loader_images_per_sec": images_per_step * 1000.0 / mean_ms,
+    }
 
 
 def _accuracy_from_totals(top1_correct, top5_correct, sample_count):
@@ -370,6 +413,26 @@ def _accuracy_from_totals(top1_correct, top5_correct, sample_count):
     if not 0 <= top1_correct <= top5_correct <= sample_count:
         raise ValueError("invalid distributed accuracy totals")
     return 100.0 * top1_correct / sample_count, 100.0 * top5_correct / sample_count
+
+
+def _evaluation_meets_convergence_target(evaluation, args):
+    return (args.convergence_top1 is None or evaluation["top1_accuracy_pct"] >= args.convergence_top1) and (
+        args.convergence_eval_loss is None or evaluation["eval_loss"] <= args.convergence_eval_loss
+    )
+
+
+def _evaluation_meets_stop_target(evaluation, args):
+    return _evaluation_meets_convergence_target(evaluation, args) and (
+        args.target_top5 is None or evaluation["top5_accuracy_pct"] >= args.target_top5
+    )
+
+
+def _scorecard_milestone_metrics(milestone_losses):
+    return {
+        f"loss_step_{milestone}": milestone_losses[str(milestone)]
+        for milestone in (100, 500, 1000, 5000)
+        if str(milestone) in milestone_losses
+    }
 
 
 def _evaluate(model, loader, loss_fn, args, device):
@@ -504,7 +567,7 @@ def _stop_codecarbon(tracker, payload, rank):
     return state[0]
 
 
-def _checkpoint_roundtrip(model, optimizer, loss_fn, image_batches, label_batches, args, device, rank):
+def _checkpoint_roundtrip(model, optimizer, scheduler, loss_fn, image_batches, label_batches, args, device, rank):
     metrics = {
         "checkpoint_save_seconds": 0.0,
         "checkpoint_load_seconds": 0.0,
@@ -527,9 +590,11 @@ def _checkpoint_roundtrip(model, optimizer, loss_fn, image_batches, label_batche
             save_start = time.perf_counter()
             model_state = _to_cpu(raw_model.state_dict())
             optimizer_state = _to_cpu(optimizer.state_dict())
+            scheduler_state = _to_cpu(scheduler.state_dict())
             checkpoint = {
                 "model": model_state,
                 "optimizer": optimizer_state,
+                "scheduler": scheduler_state,
                 "optimizer_step": optimizer_step,
                 "cpu_rng_state": torch.get_rng_state(),
                 "cuda_rng_state": torch.cuda.get_rng_state(device).cpu(),
@@ -543,15 +608,18 @@ def _checkpoint_roundtrip(model, optimizer, loss_fn, image_batches, label_batche
 
             restored_model = _build_model(args, device)
             restored_optimizer = _build_optimizer(restored_model, args)
+            restored_scheduler = _build_lr_scheduler(restored_optimizer, args, args.steps_per_epoch)
             load_start = time.perf_counter()
             loaded = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
             restored_model.load_state_dict(loaded["model"], strict=True)
             restored_optimizer.load_state_dict(loaded["optimizer"])
+            restored_scheduler.load_state_dict(loaded["scheduler"])
             torch.cuda.synchronize(device)
             metrics["checkpoint_load_seconds"] = time.perf_counter() - load_start
 
             initial_model_match = _nested_equal(model_state, restored_model.state_dict())
             initial_optimizer_match = _nested_equal(optimizer_state, restored_optimizer.state_dict())
+            initial_scheduler_match = _nested_equal(scheduler_state, restored_scheduler.state_dict())
             step_match = loaded["optimizer_step"] == optimizer_step
 
             torch.set_rng_state(loaded["cpu_rng_state"])
@@ -567,8 +635,10 @@ def _checkpoint_roundtrip(model, optimizer, loss_fn, image_batches, label_batche
                     args.precision,
                 )
             )
+            scheduler.step()
             reference_model_state = _to_cpu(raw_model.state_dict())
             reference_optimizer_state = _to_cpu(optimizer.state_dict())
+            reference_scheduler_state = _to_cpu(scheduler.state_dict())
 
             torch.set_rng_state(loaded["cpu_rng_state"])
             torch.cuda.set_rng_state(loaded["cuda_rng_state"], device)
@@ -583,6 +653,7 @@ def _checkpoint_roundtrip(model, optimizer, loss_fn, image_batches, label_batche
                     args.precision,
                 )
             )
+            restored_scheduler.step()
             torch.cuda.synchronize(device)
 
             metrics["checkpoint_loss_delta"] = abs(reference_loss - resumed_loss)
@@ -594,6 +665,10 @@ def _checkpoint_roundtrip(model, optimizer, loss_fn, image_batches, label_batche
                 reference_optimizer_state,
                 restored_optimizer.state_dict(),
             )
+            resumed_scheduler_match = _nested_equal(
+                reference_scheduler_state,
+                restored_scheduler.state_dict(),
+            )
             resumed_model_delta = _nested_max_abs_delta(
                 reference_model_state,
                 restored_model.state_dict(),
@@ -602,16 +677,24 @@ def _checkpoint_roundtrip(model, optimizer, loss_fn, image_batches, label_batche
                 reference_optimizer_state,
                 restored_optimizer.state_dict(),
             )
-            metrics["checkpoint_state_match"] = float(initial_model_match and initial_optimizer_match and step_match)
+            metrics["checkpoint_state_match"] = float(
+                initial_model_match
+                and initial_optimizer_match
+                and initial_scheduler_match
+                and step_match
+                and resumed_scheduler_match
+            )
             metrics["checkpoint_resume_model_max_abs_delta"] = resumed_model_delta
             metrics["checkpoint_resume_optimizer_max_abs_delta"] = resumed_optimizer_delta
             print(
                 "CHECKPOINT_PARITY "
                 f"initial_model={initial_model_match} "
                 f"initial_optimizer={initial_optimizer_match} "
+                f"initial_scheduler={initial_scheduler_match} "
                 f"step={step_match} "
                 f"resumed_model={resumed_model_match} "
                 f"resumed_optimizer={resumed_optimizer_match} "
+                f"resumed_scheduler={resumed_scheduler_match} "
                 f"resumed_model_max_abs_delta={resumed_model_delta} "
                 f"resumed_optimizer_max_abs_delta={resumed_optimizer_delta} "
                 f"loss_delta={metrics['checkpoint_loss_delta']}",
@@ -661,12 +744,14 @@ def main():
 
     rocal_loader = None
     validation_loader = None
-    data_loader_images_per_sec = None
+    data_loader_metrics = {}
     if args.data_mode == "rocal":
         rocal_loader = _build_rocal_loader(args, rank, world_size, split="train")
         if args.eval_enabled:
             validation_loader = _build_rocal_loader(args, rank, world_size, split="val")
-        data_loader_images_per_sec = _measure_rocal_loader(rocal_loader, args, device)
+        measured_loader_metrics = _measure_rocal_loader(rocal_loader, args, device, rank, world_size)
+        if measured_loader_metrics is not None:
+            data_loader_metrics = measured_loader_metrics
         rocal_loader.reset()
         image_batches, label_batches = _distributed_next_rocal_batches(
             rocal_loader,
@@ -702,6 +787,14 @@ def main():
         if args.channels_last:
             image_batches = [images.contiguous(memory_format=torch.channels_last) for images in image_batches]
 
+    batches_per_epoch = _rocal_batches_per_epoch(rocal_loader) if rocal_loader is not None else None
+    steps_per_epoch = (
+        math.ceil(batches_per_epoch / args.gradient_accumulation_steps) if batches_per_epoch is not None else None
+    )
+    args.steps_per_epoch = steps_per_epoch
+    scheduler = _build_lr_scheduler(optimizer, args, steps_per_epoch)
+    learning_rate_initial = optimizer.param_groups[0]["lr"]
+
     tracker, codecarbon = _start_codecarbon(args, rank, world_size)
     dist.barrier()
     for _ in range(args.warmup_steps):
@@ -721,6 +814,7 @@ def main():
             label_batches,
             args.precision,
         )
+        scheduler.step()
     torch.cuda.synchronize(device)
     dist.barrier()
     torch.cuda.reset_peak_memory_stats(device)
@@ -733,23 +827,16 @@ def main():
     milestone_losses = {}
     evaluations = []
     all_finite = True
-    used_before_mb = _device_used_mb(device)
     window_start = time.perf_counter()
     milestones = {int(value) for value in args.milestone_steps.split(",") if value.strip()}
-    steps_per_epoch = (
-        max(
-            1,
-            math.ceil(len(rocal_loader) / args.gradient_accumulation_steps),
-        )
-        if rocal_loader is not None
-        else None
-    )
     target_steps = args.measure_steps
-    if args.epochs is not None:
+    if args.max_epochs is not None:
         if rocal_loader is None:
             raise ValueError("epoch-based modes require rocAL data")
-        target_steps = steps_per_epoch * args.epochs
+        target_steps = steps_per_epoch * args.max_epochs
     step = 0
+    local_images_processed = 0
+    epoch_local_samples = 0
     while step < target_steps:
         if args.max_duration_seconds is not None and time.perf_counter() - window_start >= args.max_duration_seconds:
             break
@@ -757,13 +844,20 @@ def main():
             rocal_loader.reset()
         wall_start = time.perf_counter()
         if rocal_loader is not None:
-            image_batches, label_batches = _distributed_next_rocal_batches(
+            batches = _distributed_next_rocal_batches(
                 rocal_loader,
                 args.gradient_accumulation_steps,
                 args.channels_last,
                 device,
                 args.augmentation == "heavy",
+                reset_on_end=args.max_epochs is None,
             )
+            if batches is None:
+                raise RuntimeError(f"rocAL epoch ended before expected optimizer step {step + 1}/{target_steps}")
+            image_batches, label_batches = batches
+            if args.max_epochs is not None:
+                epoch_local_samples += sum(labels.numel() for labels in label_batches)
+        local_images_processed += sum(labels.numel() for labels in label_batches)
         start = torch.cuda.Event(enable_timing=True)
         stop = torch.cuda.Event(enable_timing=True)
         start.record()
@@ -775,6 +869,7 @@ def main():
             label_batches,
             args.precision,
         )
+        scheduler.step()
         stop.record()
         stop.synchronize()
         local_times.append(
@@ -792,18 +887,32 @@ def main():
             milestone_losses[str(step)] = loss_value
         all_finite = all_finite and math.isfinite(loss_value)
         epoch_boundary = steps_per_epoch and step % steps_per_epoch == 0
+        if args.max_epochs is not None and epoch_boundary:
+            expected_local_samples = int(rocal_loader.iterator_length)
+            complete = torch.tensor(
+                int(epoch_local_samples == expected_local_samples),
+                dtype=torch.int32,
+                device=device,
+            )
+            dist.all_reduce(complete, op=dist.ReduceOp.MIN)
+            if not complete.item():
+                raise RuntimeError(
+                    "rocAL epoch sample mismatch on at least one rank; "
+                    f"local_consumed={epoch_local_samples}, local_expected={expected_local_samples}"
+                )
+            epoch_local_samples = 0
         if validation_loader is not None and epoch_boundary and (step // steps_per_epoch) % args.eval_every_epochs == 0:
             evaluation = _evaluate(model, validation_loader, loss_fn, args, device)
             evaluation.update({"step": step, "time_seconds": elapsed})
             evaluations.append(evaluation)
+            if args.stop_on_convergence and _evaluation_meets_stop_target(evaluation, args):
+                break
     if validation_loader is not None and (not evaluations or evaluations[-1]["step"] != step):
         evaluation = _evaluate(model, validation_loader, loss_fn, args, device)
         evaluation.update({"step": step, "time_seconds": time.perf_counter() - window_start})
         evaluations.append(evaluation)
     torch.cuda.synchronize(device)
     measured_window_s = _reduce_max(time.perf_counter() - window_start, device)
-    used_after_mb = _device_used_mb(device)
-
     critical_times = _gather_step_times(local_times, rank, world_size, device)
     loss_initial = _reduce_mean(losses[0], world_size, device)
     loss_final = _reduce_mean(losses[-1], world_size, device)
@@ -815,16 +924,18 @@ def main():
 
     allocated = torch.tensor(torch.cuda.max_memory_allocated(device) / 1e6, device=device)
     reserved = torch.tensor(torch.cuda.max_memory_reserved(device) / 1e6, device=device)
-    used = torch.tensor(max(used_before_mb, used_after_mb), device=device)
+    processed_images = torch.tensor(local_images_processed, dtype=torch.int64, device=device)
     dist.all_reduce(allocated, op=dist.ReduceOp.MAX)
     dist.all_reduce(reserved, op=dist.ReduceOp.MAX)
-    dist.all_reduce(used, op=dist.ReduceOp.MAX)
+    dist.all_reduce(processed_images, op=dist.ReduceOp.SUM)
 
     args.completed_steps = step
+    learning_rate_final = optimizer.param_groups[0]["lr"]
     checkpoint_metrics = (
         _checkpoint_roundtrip(
             model,
             optimizer,
+            scheduler,
             loss_fn,
             image_batches,
             label_batches,
@@ -845,7 +956,7 @@ def main():
             ordered = sorted(critical_times)
             mean_ms = statistics.fmean(critical_times)
             global_batch = args.batch_size * args.gradient_accumulation_steps * world_size
-            total_images = global_batch * step
+            total_images = int(processed_images.item())
             images_per_sec = total_images / measured_window_s
             images_per_sec_per_gpu = images_per_sec / world_size
             tflops_per_sec_per_gpu = images_per_sec_per_gpu * args.training_flops_per_image / 1e12
@@ -861,21 +972,14 @@ def main():
             convergence = None
             if args.convergence_top1 is not None or args.convergence_eval_loss is not None:
                 convergence = next(
-                    (
-                        item
-                        for item in evaluations
-                        if (args.convergence_top1 is None or item["top1_accuracy_pct"] >= args.convergence_top1)
-                        and (args.convergence_eval_loss is None or item["eval_loss"] <= args.convergence_eval_loss)
-                    ),
+                    (item for item in evaluations if _evaluation_meets_stop_target(item, args)),
                     None,
                 )
             final_evaluation = evaluations[-1] if evaluations else {}
+            milestone_metrics = _scorecard_milestone_metrics(milestone_losses)
             codecarbon_metrics = {}
             if codecarbon.get("active") and "emissions_kg_co2eq" in codecarbon:
-                codecarbon_metrics = {
-                    "codecarbon_tracking_active": 1.0,
-                    "emissions_kg_co2eq": codecarbon["emissions_kg_co2eq"],
-                }
+                codecarbon_metrics = {"codecarbon_tracking_active": 1.0}
             artifact = {
                 "schema_version": 1,
                 "workload": "W1",
@@ -899,13 +1003,25 @@ def main():
                 "device": torch.cuda.get_device_name(device),
                 "measurement_window_s": measured_window_s,
                 "completed_steps": step,
+                "processed_images": total_images,
                 "completed_epochs": step // steps_per_epoch if steps_per_epoch else None,
+                "steps_per_epoch": steps_per_epoch,
+                "batches_per_epoch": batches_per_epoch,
+                "samples_per_rank_per_epoch": (int(rocal_loader.iterator_length) if rocal_loader is not None else None),
                 "loss_time_series": loss_time_series,
                 "milestone_losses": milestone_losses,
                 "evaluations": evaluations,
                 "codecarbon": codecarbon,
                 "training_flops_per_image": args.training_flops_per_image,
                 "peak_tflops_per_gpu": args.peak_tflops_per_gpu,
+                "lr_schedule": {
+                    "name": args.lr_schedule,
+                    "warmup_epochs": args.lr_warmup_epochs,
+                    "milestones_epochs": [
+                        int(epoch) for epoch in args.lr_milestones_epochs.split(",") if epoch.strip()
+                    ],
+                    "gamma": args.lr_gamma,
+                },
                 "step_times_ms": critical_times,
                 "metrics": {
                     "images_per_sec": images_per_sec,
@@ -917,15 +1033,13 @@ def main():
                     "step_time_ms_p95": _percentile(ordered, 95),
                     "peak_memory_allocated_mb": allocated.item(),
                     "peak_memory_reserved_mb": reserved.item(),
-                    "device_memory_used_mb_observed": used.item(),
-                    **(
-                        {"data_loader_images_per_sec": data_loader_images_per_sec}
-                        if data_loader_images_per_sec is not None
-                        else {}
-                    ),
+                    **data_loader_metrics,
+                    "learning_rate_initial": learning_rate_initial,
+                    "learning_rate_final": learning_rate_final,
                     **checkpoint_metrics,
                     "loss_initial": loss_initial,
                     "loss_final": loss_final,
+                    **milestone_metrics,
                     "loss_curve_points": len(loss_time_series),
                     "loss_curve_decreased": float(
                         len(loss_time_series) >= args.loss_curve_minimum_points and slope < 0

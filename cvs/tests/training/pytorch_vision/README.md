@@ -9,13 +9,29 @@ ImageNet/rocAL coverage:
 - BF16 autocast and channels-last tensors
 - one MI325X node with eight DDP ranks
 - SGD with momentum
-- smoke, performance, one-epoch, 5k-step, protected 90-epoch, and protected
-  24-hour run modes
+- smoke, short performance, 5k-step loss-curve, and protected target-accuracy modes
 
 In `perf` mode the synthetic batch is created once on each GPU. This intentionally measures the
 model, optimizer, and DDP path without storage or DataLoader variance. It does
 not measure ImageNet accuracy or input-pipeline performance. Real-data modes
 stream rocAL batches and validation without retaining all images.
+
+## W1 scorecard scope
+
+W1 owns exactly ten performance rows: training throughput, TFLOPS/GPU,
+mean/p50/p95 step time, input-only loader throughput with rocAL CPU-vs-GPU,
+MFU, peak allocated/reserved/used memory, images/kWh, checkpoint save/load
+time, gradient-accumulation overhead, and heavy-augmentation overhead.
+
+W1 owns exactly five accuracy rows: Top-1, Top-5, the step
+100/500/1000/5000 training-loss curve, time/steps to target accuracy, and
+validation loss.
+
+Scaling efficiency, multimodal throughput, mAP, mIoU, scale-parity accuracy,
+pixel accuracy, and VLM scores are deliberately outside W1. Supporting
+integrity fields such as checkpoint state parity, exact evaluation sample
+count, scheduler state, and CodeCarbon activation validate scorecard
+measurements but do not add benchmark rows.
 
 ## Container
 
@@ -62,15 +78,20 @@ The same directory contains `training.log`. The structured artifact records:
 - total and per-GPU images/second
 - provisional TFLOPS/s/GPU and MFU
 - mean, p50, and p95 distributed step time
-- peak PyTorch allocated/reserved memory and observed device-wide used memory
+- rocAL input-only loader throughput and CPU-vs-GPU comparison
+- peak PyTorch allocated/reserved memory and per-step sampled device-wide used memory
 - checkpoint save/load time, exact state parity, and resumed-loss delta
 - gradient-accumulation overhead against the GA=1 fixed-global-batch baseline
+- isolated heavy-augmentation and rocAL CPU time-per-image overhead against the
+  matching GPU-standard pipeline
+- initial/final learning rate and the complete scheduler contract
+- exact processed-image counts, including partial final accumulation groups
 - initial and final measured loss
 - raw per-step critical-path times and runtime metadata
 - sampled loss/time points and losses at steps 100/500/1000/5000
 - streamed evaluation loss, globally reduced Top-1/Top-5 accuracy, and sample count
 - convergence step/time when a target is configured
-- continuous AMD-SMI memory/utilization/energy and CodeCarbon 3.2.4 emissions
+- CodeCarbon 3.2.4 energy and images/kWh
 
 Step throughput uses the slowest rank for each measured step. Warmup steps are
 excluded. Accuracy is never formed by averaging rank percentages: ranks SUM
@@ -79,10 +100,15 @@ for the complete measured window, so Python launch overhead and rank skew are
 included. CVS also scans host dmesg over the bounded training window for GPU,
 driver, and hardware errors.
 
-`device_memory_used_mb_observed` is the larger of the CUDA device-wide samples
-taken immediately before and after the measured window. It includes non-PyTorch
-occupancy and is deliberately not labeled as an in-window peak; allocated and
-reserved values use PyTorch's true peak counters.
+rocAL reuses its iterator output buffers. GA profiles clone each microbatch
+before requesting the next one so earlier inputs and labels cannot be
+overwritten. Epoch-based runs derive batch counts from rocAL's sample count,
+consume a partial final accumulation group without resetting into the next
+epoch, and fail if any rank does not consume its declared epoch sample count.
+
+`peak_memory_used_mb` is the maximum per-GPU device-wide used-memory sample
+collected after optimizer steps across all ranks. It includes non-PyTorch
+occupancy; allocated and reserved values use PyTorch's own peak counters.
 
 The provisional compute metrics use 24.6 GFLOP per ResNet-50 training image
 (4.1 GMAC forward × two FLOPs per multiply-add × three for forward/backward)
@@ -90,8 +116,8 @@ and AMD's published 1307.4 dense BF16 TFLOPS/GPU peak for MI325X. These
 assumptions are stored in the config and shown in the run deck. They are
 informational until a performance methodology owner approves them.
 
-Checkpoint validation saves model, optimizer, step, and RNG state, flushes the
-file to storage, restores it into a fresh model/optimizer, restores RNG state,
+Checkpoint validation saves model, optimizer, scheduler, step, and RNG state,
+flushes the file to storage, restores it into a fresh model/optimizer/scheduler, restores RNG state,
 takes one optimizer step on both the original and resumed paths, and checks
 exact state immediately after load plus post-step model/optimizer maximum
 absolute deltas and loss parity. The resumed GPU step uses calibrated numerical
@@ -141,13 +167,28 @@ architecture, batch size, storage target, or workload.
 
 ## Phased profiles and safety
 
-The config directory provides smoke, rocAL performance, one-epoch, and 5k-step
-profiles plus disabled 90-epoch and 24-hour profiles. Long profiles ship with
-both `training.enabled=false` and `training.allow_long_run=false`; both settings
-must be changed explicitly before they can run. ImageNet is not downloaded by
-CVS because its distribution requires separate access terms.
+The config directory provides smoke, rocAL performance, and 5k-step
+loss-curve profiles plus a disabled target-accuracy profile. ImageNet is not
+downloaded by CVS because its distribution requires separate access terms.
+
+The target-accuracy profile evaluates the fixed 50,000-image validation set
+after each epoch and stops as soon as Top-1 reaches 75.5% and Top-5 reaches
+92.5%. Its `max_epochs=90`
+setting is only a safety cap based on the conventional ResNet-50 ImageNet
+recipe; it is not a required run length and it is not a soak/stress test.
+Accuracy profiles set the separate
+benchmark warmup-step count to zero so uncounted optimizer updates cannot
+change the declared recipe.
+
+The target-accuracy profile remains protected by `training.enabled=false` and
+`training.allow_long_run=false` because time-to-target can still take several
+hours from random initialization. Keep the checked-in profile disabled; make
+an operational copy with the ImageNet host path filled before enabling both
+safety fields.
 
 Real-data smoke, loss-curve, and convergence checks have separate pytest rows.
-Numerical accuracy, convergence, data, and energy values are record-only until
-calibrated. Evaluation completion, finite values, positive sample counts,
-AMDSMI activation when requested, and result artifacts are structural checks.
+Short-profile accuracy, data, and energy values remain record-only. The
+protected target-accuracy profile owns the numerical accuracy and convergence gates.
+Evaluation completion, finite values, positive sample counts, scheduler
+trajectory, AMDSMI activation when requested, and result artifacts are
+structural checks.
