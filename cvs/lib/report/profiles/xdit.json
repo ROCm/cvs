@@ -35,6 +35,8 @@
       ["Workers", null],
       ["Host", null],
       ["Topology", "topology"],
+      ["Ulysses", "ulysses_degree"],
+      ["Ring", "ring_degree"],
       ["Avg pipe time (s)", "avg_pipe_time_s"],
       ["Avg total time (s)", "avg_total_time_s"],
       ["Samples", "sample_count"],
@@ -44,6 +46,8 @@
     "cell_highlights": [
       ["avg_pipe_time_s", "Avg pipe time"],
       ["avg_total_time_s", "Avg total time"],
+      ["ulysses_degree", "Ulysses"],
+      ["ring_degree", "Ring"],
       ["sample_count", "Samples"]
     ],
     "chart_series": [

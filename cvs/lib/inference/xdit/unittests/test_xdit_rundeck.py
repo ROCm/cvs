@@ -26,6 +26,8 @@ class TestXditRundeck(unittest.TestCase):
                     "sample_count": 25,
                     "backend": "diffusers",
                     "topology": "single",
+                    "ulysses_degree": 8,
+                    "ring_degree": 1,
                     "output_dir": "/outputs/flux",
                 }
             }
@@ -41,7 +43,45 @@ class TestXditRundeck(unittest.TestCase):
 
         self.assertEqual(payload["overall_status"], "pass")
         self.assertEqual(payload["cells"][0]["tiers"]["latency"], "pass")
-        self.assertEqual(payload["results_table"]["rows"][0][8], 2.5)
+        self.assertEqual(payload["results_table"]["rows"][0][10], 2.5)
+
+    def test_run_card_shows_ulysses_ring_and_total_workers(self):
+        from cvs.lib.report.profiles.hooks.xdit_run_card import xdit_run_card_display
+
+        flux = SimpleNamespace(
+            enforce_thresholds=True,
+            gpu_arch="mi325",
+            topology="distributed",
+            model=SimpleNamespace(id="/data/models/FLUX.2-dev"),
+            inference={"_execution_hosts": ["10.32.80.110", "10.32.80.111"]},
+            benchmark_params={"flux1_dev_t2i": {"torchrun_nproc": 8, "ulysses_degree": 8, "ring_degree": 1}},
+        )
+        flux_rows = {label: value for label, value, _ in xdit_run_card_display(flux, {})}
+        self.assertEqual(flux_rows["GPUs/node"], "8")
+        self.assertEqual(flux_rows["Workers"], "16")
+        self.assertEqual(flux_rows["Ulysses"], "8")
+        self.assertEqual(flux_rows["Ring"], "1")
+
+        wan = SimpleNamespace(
+            enforce_thresholds=True,
+            gpu_arch="mi325",
+            topology="distributed",
+            model=SimpleNamespace(id="Wan-AI/Wan2.2-I2V-A14B"),
+            inference={"nnodes": 2, "_execution_hosts": ["n1", "n2"]},
+            benchmark_params={
+                "wan22_i2v_a14b": {
+                    "torchrun_nproc": 8,
+                    "ulysses_size": 8,
+                    "ring_size": 2,
+                    "model_format": "diffusers",
+                }
+            },
+        )
+        wan_rows = {label: value for label, value, _ in xdit_run_card_display(wan, {})}
+        self.assertEqual(wan_rows["Workload"], "WAN (Diffusers)")
+        self.assertEqual(wan_rows["Workers"], "16")
+        self.assertEqual(wan_rows["Ulysses"], "8")
+        self.assertEqual(wan_rows["Ring"], "2")
 
 
 if __name__ == "__main__":

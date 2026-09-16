@@ -257,6 +257,11 @@ def _parallel_degrees(workload, spec):
     ]
 
 
+def _ulysses_ring(workload, spec):
+    degrees = _parallel_degrees(workload, spec)
+    return degrees[0][1], degrees[1][1]
+
+
 def _topology_nodes(variant, cluster_dict, spec):
     inference = inference_from_variant(variant)
     if not spec["distributed"]:
@@ -402,7 +407,14 @@ def _output_dirs_by_host(inference, lifecycle):
         grouped = {}
         for host, output_dir in by_host.items():
             grouped.setdefault(output_dir, []).append(host)
-        return {", ".join(hosts): output_dir for output_dir, hosts in grouped.items()}
+        labeled = {}
+        for output_dir, hosts in grouped.items():
+            if lifecycle.benchmark_host and lifecycle.benchmark_host in hosts:
+                label = lifecycle.benchmark_host
+            else:
+                label = hosts[0]
+            labeled[label] = output_dir
+        return labeled
     output_dir = inference.get("_test_output_dir")
     if output_dir:
         return {lifecycle.benchmark_host or "unknown": output_dir}
@@ -420,11 +432,21 @@ def _report_dimensions(variant, params, spec):
         shape = params.get("size", "-")
         steps = params.get("frame_num", "-")
         backend = "diffusers" if spec["diffusers"] else "native"
-    workers = params.get("torchrun_nproc", 1)
-    if spec["distributed"]:
-        workers = int(workers) * int(inference_from_variant(variant).get("nnodes", 1))
+    workers = _world_size(variant, params, spec)
     cell_id = f"ISL={shape},OSL={steps},C={workers}"
     return str(model_id), shape, steps, backend, workers, cell_id
+
+
+def _world_size(variant, params, spec):
+    nproc = int(params.get("torchrun_nproc", 1))
+    if not spec["distributed"]:
+        return nproc
+    inference = inference_from_variant(variant)
+    nnodes = inference.get("nnodes")
+    if nnodes is not None and str(nnodes).strip() != "":
+        return nproc * int(nnodes)
+    hosts = inference.get("_execution_hosts") or inference.get("server_node_list") or []
+    return nproc * max(len(hosts), 1)
 
 
 def _report_threshold(thresholds, gpu_type, metric):
@@ -452,6 +474,7 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
     enforce_thresholds = bool(value_from_variant(variant, "enforce_thresholds", True))
     model_id, shape, steps, backend, workers, cell_id = _report_dimensions(variant, params, spec)
     topology = "distributed" if spec["distributed"] else "single"
+    ulysses_degree, ring_degree = _ulysses_ring(params, spec)
     cell = lifecycle.report_results.setdefault((model_id, gpu_type, shape, steps, cell_id, str(workers)), {})
     report_spec = _report_threshold(thresholds, gpu_type, metric)
     if report_spec is not None:
@@ -470,6 +493,8 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
             metric: value,
             "backend": backend,
             "topology": topology,
+            "ulysses_degree": ulysses_degree,
+            "ring_degree": ring_degree,
             "sample_count": getattr(result, "repetition_count", getattr(result, "step_count", 0)),
             "output_dir": output_dir,
         }
@@ -478,6 +503,8 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
                 host,
                 spec["family"],
                 topology,
+                ulysses_degree,
+                ring_degree,
                 output_dir,
                 metric,
                 value,
@@ -502,19 +529,32 @@ def print_results_stage(lifecycle):
             host,
             family,
             topology,
+            ulysses_degree,
+            ring_degree,
             output,
             metric,
             f"{value:.3f}",
             "RECORDED" if passed is None else "PASS" if passed else "FAIL",
             message,
         ]
-        for host, family, topology, output, metric, value, passed, message in lifecycle.results
+        for host, family, topology, ulysses_degree, ring_degree, output, metric, value, passed, message in lifecycle.results
     ]
     log.info(
         "\n======== xDiT benchmark results ========\n%s",
         tabulate(
             rows,
-            headers=["Host", "Family", "Topology", "Output", "Metric", "Value", "Result", "Threshold"],
+            headers=[
+                "Host",
+                "Family",
+                "Topology",
+                "Ulysses",
+                "Ring",
+                "Output",
+                "Metric",
+                "Value",
+                "Result",
+                "Threshold",
+            ],
             tablefmt="github",
         ),
     )

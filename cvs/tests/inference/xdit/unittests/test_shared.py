@@ -69,6 +69,21 @@ class TestReportResults(unittest.TestCase):
         self.assertEqual(values[:5], ("black-forest-labs/FLUX.1-dev", "1024x768", 25, "diffusers", 16))
         self.assertEqual(values[5], "ISL=1024x768,OSL=25,C=16")
 
+    def test_distributed_workers_use_execution_hosts_when_nnodes_missing(self):
+        variant = SimpleNamespace(
+            model=SimpleNamespace(id="FLUX.1-dev"),
+            inference={"_execution_hosts": ["10.0.0.1", "10.0.0.2"]},
+        )
+
+        values = _report_dimensions(
+            variant,
+            {"height": 1024, "width": 1024, "num_inference_steps": 25, "torchrun_nproc": 8},
+            {"family": "flux", "distributed": True, "diffusers": False},
+        )
+
+        self.assertEqual(values[4], 16)
+        self.assertEqual(values[5], "ISL=1024x1024,OSL=25,C=16")
+
     def test_report_threshold_uses_gpu_then_auto_fallback(self):
         thresholds = {
             "mi300x": {"max_avg_pipe_time_s": 3.0},
@@ -97,6 +112,7 @@ class TestOutputDirsByHost(unittest.TestCase):
 
     def test_collapses_hosts_that_share_one_output_dir(self):
         lifecycle = Lifecycle()
+        lifecycle.benchmark_host = "10.32.80.110"
         inference = {
             "_test_output_dirs_by_node": {
                 "10.32.80.110": "/out/flux_rank0_outputs",
@@ -106,7 +122,7 @@ class TestOutputDirsByHost(unittest.TestCase):
 
         self.assertEqual(
             _output_dirs_by_host(inference, lifecycle),
-            {"10.32.80.110, 10.32.80.111": "/out/flux_rank0_outputs"},
+            {"10.32.80.110": "/out/flux_rank0_outputs"},
         )
 
 
@@ -159,6 +175,30 @@ class TestLogTopology(unittest.TestCase):
 
         self.assertIn("Single-node WAN topology", messages)
         self.assertIn("xDiT parallel layout: ulysses=8 × ring=1 = 8", messages)
+
+
+class TestUlyssesRing(unittest.TestCase):
+    def test_flux_reads_degree_keys(self):
+        from cvs.tests.inference.xdit._shared import _ulysses_ring
+
+        self.assertEqual(
+            _ulysses_ring(
+                {"ulysses_degree": 8, "ring_degree": 1},
+                {"family": "flux"},
+            ),
+            (8, 1),
+        )
+
+    def test_wan_reads_size_keys(self):
+        from cvs.tests.inference.xdit._shared import _ulysses_ring
+
+        self.assertEqual(
+            _ulysses_ring(
+                {"torchrun_nproc": 8, "ulysses_size": 4, "ring_size": 2},
+                {"family": "wan"},
+            ),
+            (4, 2),
+        )
 
 
 class TestHostScoping(unittest.TestCase):
