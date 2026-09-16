@@ -1,15 +1,16 @@
 .. meta::
   :description: Burn-in and diagnostic test configuration schemas
-  :keywords: CVS, platform, health, preflight, config schema
+  :keywords: CVS, platform, health, preflight, ANC, config schema
 
 ****************
 Burn-in / Diag
 ****************
 
-JSON configuration schemas for host validation, GPU burn-in, and preflight suites under ``cvs/input/config_file/``.
+JSON configuration schemas for host validation, GPU burn-in, preflight, and ANC suites under ``cvs/input/config_file/``.
 
 - :doc:`Platform </reference/configuration-files/burn-in-diag/platform>` — host OS, BIOS, firmware, and PCIe checks
 - :doc:`Health </reference/configuration-files/burn-in-diag/health>` — AGFHC, TransferBench, and RVS burn-in configs
 - :doc:`Preflight </reference/configuration-files/burn-in-diag/preflight>` — node smoke and cluster preflight checks
+- :doc:`ANC </reference/configuration-files/burn-in-diag/anc>` — AMD Node Check CPU and GPU diagnostic groups
 
 How to run these suites: :doc:`/how-to/test-suites/burn-in-diag/index`.
