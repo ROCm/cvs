@@ -35,6 +35,7 @@ Burn-in / Diag
 - :doc:`Platform </reference/configuration-files/burn-in-diag/platform>` — host OS, BIOS, firmware, and PCIe checks
 - :doc:`Health </reference/configuration-files/burn-in-diag/health>` — AGFHC, TransferBench, and RVS burn-in configs
 - :doc:`Preflight </reference/configuration-files/burn-in-diag/preflight>` — node smoke and cluster preflight checks
+- :doc:`ANC </reference/configuration-files/burn-in-diag/anc>` — AMD Node Check CPU and GPU diagnostic groups
 
 Network
 -------

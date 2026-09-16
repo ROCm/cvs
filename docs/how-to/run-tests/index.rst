@@ -76,7 +76,7 @@ Test suites
 
 Per-suite **Set up config** and **Run tests** steps are grouped by category:
 
-- :doc:`Burn-in / Diag tests </how-to/test-suites/burn-in-diag/index>` — platform, health, preflight
+- :doc:`Burn-in / Diag tests </how-to/test-suites/burn-in-diag/index>` — platform, health, preflight, ANC
 - :doc:`Network tests </how-to/test-suites/network/index>` — IB Perf, RCCL, MORI
 - :doc:`Training tests </how-to/test-suites/training/index>` — Aorta, JAX MaxText, Megatron
 - :doc:`Inference tests </how-to/test-suites/inference/index>` — vLLM, ATOM, SGLang, xDiT

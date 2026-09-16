@@ -44,6 +44,8 @@ subtrees:
             title: Health (burn-in) tests
           - file: how-to/test-suites/burn-in-diag/preflight
             title: Preflight tests
+          - file: how-to/test-suites/burn-in-diag/anc
+            title: ANC tests
       - file: how-to/test-suites/network/index
         title: Network tests
         subtrees:
@@ -119,6 +121,8 @@ subtrees:
             title: Health
           - file: reference/configuration-files/burn-in-diag/preflight
             title: Preflight
+          - file: reference/configuration-files/burn-in-diag/anc
+            title: ANC
       - file: reference/configuration-files/network/index
         title: Network
         subtrees:
