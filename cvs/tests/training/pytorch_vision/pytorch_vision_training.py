@@ -5,9 +5,12 @@ When pytest HTML is enabled, the matching
 JSON payload, and CI summary beside the standard report.
 """
 
+import html as _html
 import json
 import os
 import time
+import uuid as _uuid
+from pathlib import Path as _Path
 
 import pytest
 from tabulate import tabulate
@@ -23,6 +26,7 @@ from cvs.lib.training.pytorch_vision.utils.metrics import (
     required_metrics_for_run,
     throughput_overhead_pct,
 )
+from cvs.lib.utils.loss_curve import render_loss_curve_png
 from cvs.lib.utils.verdict import evaluate_all
 
 
@@ -169,7 +173,9 @@ def test_verify_environment(orch, variant_config, lifecycle, request):
     log.info("PyTorch Vision environment: %s", summary)
 
 
-def _execute_sweep(orch, variant_config, sweep_name, training_results, inf_res_dict):
+def _execute_sweep(  # noqa: PLR0913
+    orch, variant_config, sweep_name, training_results, inf_res_dict, loss_series
+):
     job = PyTorchVisionJob(orch, variant_config, sweep_name)
     globals.error_list = []
     try:
@@ -194,6 +200,7 @@ def _execute_sweep(orch, variant_config, sweep_name, training_results, inf_res_d
                 sweep.batch_size,
             )
             inf_res_dict[report_key] = host_results
+            loss_series[sweep_name] = job.loss_series
             _refresh_ga_overhead(variant_config, training_results)
             _refresh_pipeline_overheads(variant_config, training_results)
         finally:
@@ -215,6 +222,7 @@ def test_real_data_smoke(
     sweep_name,
     training_results,
     inf_res_dict,
+    loss_series,
     lifecycle,
     request,
 ):
@@ -224,16 +232,18 @@ def test_real_data_smoke(
     if variant_config.training.run_mode != "smoke" or sweep.data_mode != "rocal":
         pytest.skip("real-data smoke stage applies to rocAL smoke profiles")
     start = time.monotonic()
-    _execute_sweep(orch, variant_config, sweep_name, training_results, inf_res_dict)
+    _execute_sweep(orch, variant_config, sweep_name, training_results, inf_res_dict, loss_series)
     lifecycle.record(request.node.nodeid, "real_data_smoke", time.monotonic() - start)
 
 
-def test_training(orch, variant_config, sweep_name, training_results, inf_res_dict, lifecycle, request):
+def test_training(  # noqa: PLR0913
+    orch, variant_config, sweep_name, training_results, inf_res_dict, loss_series, lifecycle, request
+):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     start = time.monotonic()
     if sweep_name not in training_results:
-        _execute_sweep(orch, variant_config, sweep_name, training_results, inf_res_dict)
+        _execute_sweep(orch, variant_config, sweep_name, training_results, inf_res_dict, loss_series)
     lifecycle.record(request.node.nodeid, "training", time.monotonic() - start)
 
 
@@ -252,7 +262,9 @@ def test_rocal_overhead_comparisons(variant_config, training_results):
                 pytest.fail(f"{sweep.name} has no matching GPU-standard rocAL baseline")
 
 
-def test_metric(sweep_name, metric, variant_config, training_results, lifecycle, request):
+def test_metric(  # noqa: PLR0913
+    sweep_name, metric, variant_config, training_results, metric_rows, lifecycle, request
+):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     if sweep_name not in training_results:
@@ -278,17 +290,28 @@ def test_metric(sweep_name, metric, variant_config, training_results, lifecycle,
     lifecycle.record(request.node.nodeid, "metric_evaluation", 0.0)
     log.info("%s %s=%s %s", host, name, value, METRIC_UNITS[metric])
 
-    if variant_config.enforce_thresholds:
-        cell = variant_config.cell_key(sweep_name)
-        spec = (variant_config.thresholds.get(cell) or {}).get(name)
-        if spec is None:
-            if metric in GATED_METRICS:
-                pytest.fail(f"threshold is missing for {cell}: {name}")
-            return
+    label = variant_config.sweep(sweep_name).label
+    cell = variant_config.cell_key(sweep_name)
+    spec = (variant_config.thresholds.get(cell) or {}).get(name)
+    unit = METRIC_UNITS[metric]
+
+    if not variant_config.enforce_thresholds or spec is None:
+        _record_metric_row(metric_rows, label, name, spec, value, unit, "RECORD")
+        if variant_config.enforce_thresholds and metric in GATED_METRICS:
+            pytest.fail(f"threshold is missing for {cell}: {name}")
+        return
+
+    try:
         evaluate_all(actuals, {name: spec})
+    except Exception:
+        _record_metric_row(metric_rows, label, name, spec, value, unit, "FAIL")
+        raise
+    _record_metric_row(metric_rows, label, name, spec, value, unit, "PASS")
 
 
-def test_loss_curve(sweep_name, variant_config, training_results):
+def test_loss_curve(  # noqa: PLR0913
+    sweep_name, variant_config, training_results, loss_series, lifecycle, request
+):
     if variant_config.training.run_mode in {"smoke", "perf"}:
         pytest.skip("loss-curve checks do not apply to performance-only phases")
     if sweep_name not in training_results:
@@ -298,10 +321,36 @@ def test_loss_curve(sweep_name, variant_config, training_results):
     decreased = actuals.get("training.loss_curve_decreased")
     if points is None or decreased is None:
         pytest.fail("training artifact is missing loss-curve evidence")
+    _attach_loss_curve_png(sweep_name, variant_config, loss_series, lifecycle, request)
     if points < variant_config.training.loss_curve.minimum_points:
         pytest.fail(f"loss curve has only {points} points")
     if variant_config.training.loss_curve.require_decrease and decreased != 1.0:
         pytest.fail("training loss curve did not decrease")
+
+
+def _attach_loss_curve_png(sweep_name, variant_config, loss_series, lifecycle, request):
+    """Render the per-sweep loss curve and link it from this test's report row.
+
+    Rendering is best-effort: the loss-curve verdict above is computed from the
+    artifact, so a missing plot never changes the result.
+    """
+    points = loss_series.get(sweep_name) or []
+    mgr = getattr(request.config, "_html_report_manager", None)
+    if not points or mgr is None or not getattr(mgr, "is_enabled", False):
+        return
+    label = variant_config.sweep(sweep_name).label
+    try:
+        out_dir = mgr.log_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        fname = f"loss_curve_{label}_{_uuid.uuid4().hex[:12]}.png"
+        abs_path = out_dir / fname
+        title = f"Training Loss - {variant_config.gpu_arch} / {label}"
+        if render_loss_curve_png(points, abs_path, title=title) is None:
+            return
+        rel_path = str(_Path(abs_path).relative_to(mgr.htmlpath.parent))
+        lifecycle.add_artifact(request.node.nodeid, f"Loss Curve [{label}]", rel_path, str(abs_path))
+    except Exception as exc:  # noqa: BLE001 - reporting must never break the run
+        log.warning("could not attach loss curve PNG for %s: %s", label, exc)
 
 
 def test_convergence(sweep_name, variant_config, training_results):
@@ -315,7 +364,66 @@ def test_convergence(sweep_name, variant_config, training_results):
         pytest.fail("configured convergence target was not reached")
 
 
-def test_print_results_table(variant_config, training_results):
+_STATUS_COLORS = {"PASS": "#137333", "FAIL": "#c5221f", "RECORD": "#5f6368"}
+
+
+def _format_expected(spec):
+    """Render a threshold spec the way the metric-results page shows it."""
+    if not spec:
+        return "record-only"
+    kind = spec.get("kind")
+    value = spec.get("value")
+    if kind == "info" or value is None:
+        return "record-only"
+    symbol = {"min": ">=", "max": "<=", "max_ms": "<= (ms)"}.get(kind, kind)
+    return f"{symbol} {value}"
+
+
+def _record_metric_row(metric_rows, sweep_label, name, spec, value, unit, status):
+    metric_rows.append(
+        {
+            "sweep": sweep_label,
+            "metric": name,
+            "expected": _format_expected(spec),
+            "actual": f"{value:.4f}" if isinstance(value, float) else str(value),
+            "unit": unit,
+            "status": status,
+        }
+    )
+
+
+def _write_metric_results_html(metric_rows, variant_config, request):
+    """Write every metric verdict to ONE HTML page in the report bundle dir."""
+    mgr = getattr(request.config, "_html_report_manager", None)
+    if not metric_rows or mgr is None or not getattr(mgr, "is_enabled", False):
+        return
+    try:
+        out_dir = mgr.log_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        body = ""
+        for row in metric_rows:
+            color = _STATUS_COLORS.get(row["status"], "#000000")
+            cells = "".join(
+                f"<td>{_html.escape(str(row[key]))}</td>" for key in ("sweep", "metric", "expected", "actual", "unit")
+            )
+            body += f"<tr>{cells}<td style=\"color:{color};font-weight:bold;\">{_html.escape(row['status'])}</td></tr>"
+        title = f"PyTorch Vision Metric Results ({variant_config.gpu_arch})"
+        doc = (
+            f"<html><head><meta charset='utf-8'><title>{_html.escape(title)}</title></head>"
+            f"<body><h2>{_html.escape(title)}</h2>"
+            "<table border='1' cellpadding='6' cellspacing='0'>"
+            "<tr><th>Sweep</th><th>Metric</th><th>Expected</th>"
+            "<th>Actual</th><th>Unit</th><th>Status</th></tr>"
+            f"{body}</table></body></html>"
+        )
+        (out_dir / "metric_results.html").write_text(doc, encoding="utf-8")
+        log.info("wrote metric results HTML: %s", out_dir / "metric_results.html")
+    except Exception as exc:  # noqa: BLE001 - reporting must never break the run
+        log.warning("could not write metric results HTML: %s", exc)
+
+
+def test_print_results_table(variant_config, training_results, metric_rows, request):
+    _write_metric_results_html(metric_rows, variant_config, request)
     if not training_results:
         log.info("No PyTorch Vision results to print")
         return

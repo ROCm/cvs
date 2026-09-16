@@ -57,9 +57,14 @@ class Lifecycle:
         self.failed = False
         self.torn_down = False
         self.report = {}
+        self.artifacts = {}
 
     def record(self, nodeid, label, value, unit="s"):
         self.report.setdefault(nodeid, []).append((label, value, unit))
+
+    def add_artifact(self, nodeid, name, rel_path, abs_path):
+        """Register a per-test report artifact (e.g. loss-curve PNG) for linking."""
+        self.artifacts.setdefault(nodeid, []).append((name, rel_path, abs_path))
 
 
 @pytest.fixture(scope="module")
@@ -70,6 +75,18 @@ def lifecycle():
 @pytest.fixture(scope="module")
 def training_results():
     return {}
+
+
+@pytest.fixture(scope="module")
+def loss_series():
+    """Ordered (step, loss) pairs per sweep, used to render loss-curve PNGs."""
+    return {}
+
+
+@pytest.fixture(scope="module")
+def metric_rows():
+    """Accumulated metric verdicts rendered into the shared metric-results page."""
+    return []
 
 
 @pytest.fixture(scope="module")
@@ -119,13 +136,43 @@ def pytest_runtest_makereport(item, call):
         return
     current = item.funcargs.get("lifecycle")
     rows = getattr(current, "report", {}).get(item.nodeid) if current else None
-    if not rows:
+    artifacts = getattr(current, "artifacts", {}).get(item.nodeid) if current else None
+
+    # Every metric row also links to the one shared metric-results page written
+    # by test_print_results_table, alongside its own per-test log link.
+    metric_link = None
+    if (item.originalname or "") == "test_metric":
+        mgr = getattr(item.config, "_html_report_manager", None)
+        if mgr is not None and getattr(mgr, "is_enabled", False):
+            metric_link = f"{mgr._test_html_dir}/metric_results.html"
+
+    if not rows and not artifacts and not metric_link:
         return
     try:
         import pytest_html
     except ImportError:
         return
-    body = "".join(f"<tr><td>{label}</td><td>{value:.3f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
+
     extras = getattr(report, "extras", [])
-    extras.append(pytest_html.extras.html(f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"))
+
+    if metric_link:
+        extras.append(pytest_html.extras.url(metric_link, name="Metric Results"))
+
+    if rows:
+        body = "".join(f"<tr><td>{label}</td><td>{value:.3f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
+        extras.append(
+            pytest_html.extras.html(f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>")
+        )
+
+    for name, rel_path, abs_path in artifacts or []:
+        extras.append(pytest_html.extras.url(rel_path, name=name))
+        try:
+            import base64
+
+            with open(abs_path, "rb") as fp:
+                b64 = base64.b64encode(fp.read()).decode("ascii")
+            extras.append(pytest_html.extras.png(b64, name=name))
+        except Exception:  # noqa: BLE001 - a missing thumbnail must not fail the row
+            pass
+
     report.extras = extras

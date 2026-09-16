@@ -72,6 +72,7 @@ class PyTorchVisionJob:
         run_id = time.strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:8]
         self.output_dir = f"{variant.paths.log_dir}/pytorch_vision/{self.sweep.label}/{run_id}"
         self.result_path = f"{self.output_dir}/results.json"
+        self.loss_series = []
         self.log_path = f"{self.output_dir}/training.log"
         self.checkpoint_path = f"{self.output_dir}/checkpoint.pt"
         self.training_start_time = None
@@ -457,6 +458,13 @@ class PyTorchVisionJob:
                     raise RuntimeError(f"W1 artifact has no positive processed_images count on {host}")
                 metrics["training.images_per_kwh"] = total_images / energy_kwh
             parsed[host] = metrics
+            # Ordered (step, loss) pairs for the loss-curve PNG. Kept off the
+            # metric dict because it is an artifact input, not a gated metric.
+            self.loss_series = [
+                (int(p["step"]), float(p["loss"]))
+                for p in (raw.get("loss_time_series") or [])
+                if p.get("step") is not None and p.get("loss") is not None
+            ]
         return parsed
 
     def stop_training_processes(self):
