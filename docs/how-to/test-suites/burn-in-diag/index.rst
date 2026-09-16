@@ -1,12 +1,12 @@
 .. meta::
   :description: Run burn-in and diagnostic CVS test suites
-  :keywords: CVS, platform, health, preflight, burn-in, diag
+  :keywords: CVS, platform, health, preflight, ANC, burn-in, diag
 
 ********************
 Burn-in / Diag tests
 ********************
 
-Host validation, GPU burn-in, and preflight checks run before network, training, or inference workloads.
+Host validation, GPU burn-in, preflight checks, and AMD Node Check (ANC) diagnostics run before network, training, or inference workloads.
 
 .. list-table::
    :header-rows: 1
@@ -24,5 +24,8 @@ Host validation, GPU burn-in, and preflight checks run before network, training,
    * - Preflight
      - :doc:`/how-to/test-suites/burn-in-diag/preflight`
      - :doc:`/reference/configuration-files/burn-in-diag/preflight`
+   * - ANC (AMD Node Check)
+     - :doc:`/how-to/test-suites/burn-in-diag/anc`
+     - :doc:`/reference/configuration-files/burn-in-diag/anc`
 
 See also :doc:`/how-to/run-tests/index` for common ``cvs run`` flags and workflow.
