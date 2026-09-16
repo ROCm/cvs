@@ -368,8 +368,10 @@ Volume mounts
 =============
 
 **FLUX.1 / WAN native** templates mount ``paths.models_dir`` and ``paths.log_dir`` only.
-Bind-mount models via ``model.id`` as an absolute path, or rely on the HF cache under
-``paths.models_dir``.
+When ``model.id`` (or ``server_params.model``) is an absolute host path outside those
+mounts, the loader bind-mounts it at ``/model`` and passes ``/model`` to the workload.
+Adding an explicit ``container.runtime.args.volumes`` entry that covers the path
+overrides this and the container path is derived from that mount instead.
 
 **FLUX.2** mounts the in-tree example when the image lacks it:
 

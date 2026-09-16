@@ -105,6 +105,22 @@ def _flatten_orchestrator_container(container):
     return block
 
 
+_LOCAL_MODEL_MOUNT = "/model"
+
+
+def _append_container_volume(raw, mount):
+    container = dict(raw.get("container") or {})
+    runtime = dict(container.get("runtime") or {})
+    args = dict(runtime.get("args") or {})
+    volumes = list(args.get("volumes") or [])
+    if mount not in volumes:
+        volumes.append(mount)
+    args["volumes"] = volumes
+    runtime["args"] = args
+    container["runtime"] = runtime
+    raw["container"] = container
+
+
 def _legacy_container(inference, volume_dict):
     container_config = inference.get("container_config") or {}
     runtime_args = {
@@ -276,9 +292,15 @@ def _unified_runtime_views(raw):
         if inference_key not in inference and env_dict.get(env_key):
             inference[inference_key] = env_dict[env_key]
 
-    model_id = str(model.get("id") or "")
+    model_id = str(model.get("id") or "").rstrip("/")
     if model_id.startswith("/"):
-        mounted_model = _mounted_path(volume_dict, model_id, model_id)
+        mounted_model = _mounted_path(volume_dict, model_id, "")
+        if not mounted_model:
+            # A host model directory is invisible to the workload unless it is
+            # bind-mounted, so cover it instead of passing the host path through.
+            mounted_model = _LOCAL_MODEL_MOUNT
+            volume_dict[model_id] = mounted_model
+            _append_container_volume(raw, f"{model_id}:{mounted_model}")
         inference.setdefault("_resolved_model_mount_host", model_id)
         inference.setdefault("_resolved_model_path_container", mounted_model)
         inference.setdefault("_resolved_ckpt_dir_container", mounted_model)

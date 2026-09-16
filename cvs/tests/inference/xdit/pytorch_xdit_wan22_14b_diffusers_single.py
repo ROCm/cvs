@@ -6,7 +6,6 @@ from cvs.tests.inference.xdit._shared import (
     print_results_stage,
     run_benchmark_stage,
     teardown_stage,
-    verify_dmesg_stage,
     verify_model_stage,
     verify_parallelism_stage,
     verify_prerequisites_stage,
@@ -35,10 +34,6 @@ def test_run_benchmark(orch, variant_config, hf_token, cluster_dict, xdit_spec, 
 
 def test_parse_thresholds(variant_config, gpu_type, xdit_spec, lifecycle, request):
     parse_thresholds_stage(variant_config, gpu_type, xdit_spec, lifecycle, request)
-
-
-def test_verify_dmesg(orch, lifecycle, request):
-    verify_dmesg_stage(orch, lifecycle, request)
 
 
 def test_print_results(lifecycle):

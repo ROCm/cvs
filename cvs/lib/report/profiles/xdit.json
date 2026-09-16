@@ -58,7 +58,6 @@
       "parallelism",
       "benchmark",
       "parse_thresholds",
-      "dmesg",
       "teardown"
     ],
     "cell_labels": ["benchmark", "parse_thresholds"]

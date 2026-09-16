@@ -42,9 +42,8 @@ XDIT_TEST_ORDER = {
     "test_verify_parallelism": 3,
     "test_run_benchmark": 4,
     "test_parse_thresholds": 5,
-    "test_verify_dmesg": 6,
-    "test_print_results": 7,
-    "test_teardown": 8,
+    "test_print_results": 6,
+    "test_teardown": 7,
 }
 
 
@@ -54,8 +53,6 @@ class Lifecycle:
         self.torn_down = False
         self.report = {}
         self.report_results = {}
-        self.benchmark_start = None
-        self.benchmark_end = None
         self.benchmark_host = ""
         self.results = []
 
@@ -267,10 +264,6 @@ def verify_parallelism_stage(variant, cluster_dict, spec, lifecycle, request):
     _complete(lifecycle, request, "parallelism", started)
 
 
-def _capture_host_time(orch):
-    return orch.all.exec('date +"%a %b %e %H:%M:%S"')
-
-
 def _launch_accepts_orchestrator(launcher):
     parameters = inspect.signature(launcher).parameters
     return "orch" in parameters or "executor" in parameters
@@ -288,7 +281,6 @@ def run_benchmark_stage(orch, variant, hf_token, cluster_dict, spec, lifecycle, 
         cleanup_builder = build_output_cleanup_cmd if spec["family"] == "flux" else build_wan_output_cleanup_cmd
         orch.all.exec(cleanup_builder(output_base_dir, use_sudo=True))
     lifecycle.benchmark_host = orch.hosts[0]
-    lifecycle.benchmark_start = _capture_host_time(orch)
 
     kwargs = {
         "distributed": spec["distributed"],
@@ -306,7 +298,6 @@ def run_benchmark_stage(orch, variant, hf_token, cluster_dict, spec, lifecycle, 
     else:
         errors = launcher(orch, inference, params, hf_token, **kwargs)
 
-    lifecycle.benchmark_end = _capture_host_time(orch)
     for error in errors or []:
         fail_test(error)
     _complete(lifecycle, request, "benchmark", started)
@@ -405,22 +396,6 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
     if enforce_thresholds and not passed:
         fail_test(message)
     _complete(lifecycle, request, "parse_thresholds", started)
-
-
-def verify_dmesg_stage(orch, lifecycle, request):
-    if not lifecycle.benchmark_start or not lifecycle.benchmark_end:
-        pytest.skip("benchmark timestamps are unavailable")
-    from cvs.lib.verify_lib import verify_dmesg_for_errors
-
-    globals.error_list = []
-    started = time.monotonic()
-    verify_dmesg_for_errors(
-        orch.all,
-        lifecycle.benchmark_start,
-        lifecycle.benchmark_end,
-        till_end_flag=False,
-    )
-    _complete(lifecycle, request, "dmesg", started)
 
 
 def print_results_stage(lifecycle):

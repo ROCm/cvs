@@ -224,6 +224,94 @@ class TestXditConfigLoader(unittest.TestCase):
             {"auto": {"max_avg_pipe_time_s": 10.0}},
         )
 
+    def test_local_model_path_is_mounted_into_container(self):
+        path = self._write_config(
+            {
+                "gpu_name": "mi325",
+                "paths": {
+                    "shared_fs": "/shared",
+                    "models_dir": "/shared/models",
+                    "log_dir": "/shared/results",
+                    "hf_token_file": "/shared/token",
+                },
+                "container": {
+                    "lifetime": "per_run",
+                    "name": "flux-benchmark_single",
+                    "image": "xdit:test",
+                    "runtime": {
+                        "name": "docker",
+                        "args": {
+                            "volumes": ["/shared/models:/hf_home", "/shared/results:/outputs"],
+                            "devices": ["/dev/kfd"],
+                        },
+                    },
+                },
+                "server_params": {
+                    "backend": "xdit",
+                    "nnodes": "1",
+                    "model": "/data/models/FLUX.1-dev",
+                    "benchmark_serv_node": "node-a",
+                },
+                "benchmark_params": {
+                    "height": 1024,
+                    "ulysses_degree": 8,
+                    "torchrun_nproc": 8,
+                },
+            }
+        )
+
+        variant = load_variant(path, {"node_dict": {"node-a": {}}})
+
+        self.assertEqual(variant.inference["_resolved_model_mount_host"], "/data/models/FLUX.1-dev")
+        self.assertEqual(variant.inference["_resolved_model_path_container"], "/model")
+        container = orchestrator_container_from_variant(variant)
+        self.assertIn("/data/models/FLUX.1-dev:/model", container["runtime"]["args"]["volumes"])
+
+    def test_local_model_path_under_existing_mount_is_reused(self):
+        path = self._write_config(
+            {
+                "gpu_name": "mi325",
+                "paths": {
+                    "shared_fs": "/shared",
+                    "models_dir": "/data/models",
+                    "log_dir": "/shared/results",
+                    "hf_token_file": "/shared/token",
+                },
+                "container": {
+                    "lifetime": "per_run",
+                    "name": "flux-benchmark_single",
+                    "image": "xdit:test",
+                    "runtime": {
+                        "name": "docker",
+                        "args": {
+                            "volumes": ["/data/models:/hf_home", "/shared/results:/outputs"],
+                            "devices": ["/dev/kfd"],
+                        },
+                    },
+                },
+                "server_params": {
+                    "backend": "xdit",
+                    "nnodes": "1",
+                    "model": "/data/models/FLUX.1-dev",
+                    "benchmark_serv_node": "node-a",
+                },
+                "benchmark_params": {
+                    "height": 1024,
+                    "ulysses_degree": 8,
+                    "torchrun_nproc": 8,
+                },
+            }
+        )
+
+        variant = load_variant(path, {"node_dict": {"node-a": {}}})
+
+        self.assertEqual(variant.inference["_resolved_model_path_container"], "/hf_home/FLUX.1-dev")
+        container = orchestrator_container_from_variant(variant)
+        self.assertNotIn(
+            "/data/models/FLUX.1-dev:/model",
+            container["runtime"]["args"]["volumes"],
+        )
+
     def test_rejects_other_unified_framework(self):
         path = self._write_config(
             {

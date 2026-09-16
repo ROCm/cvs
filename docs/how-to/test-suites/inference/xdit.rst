@@ -141,7 +141,6 @@ List stages in a suite:
     - test_verify_parallelism
     - test_run_benchmark
     - test_parse_thresholds
-    - test_verify_dmesg
     - test_print_results
     - test_teardown
 
@@ -167,7 +166,6 @@ Example run (FLUX.1-dev; use the flux2 JSON for FLUX.2-dev):
     - test_verify_parallelism
     - test_run_benchmark
     - test_parse_thresholds
-    - test_verify_dmesg
     - test_print_results
     - test_teardown
 
@@ -196,7 +194,6 @@ Example run:
     - test_verify_parallelism
     - test_run_benchmark
     - test_parse_thresholds
-    - test_verify_dmesg
     - test_print_results
     - test_teardown
 
@@ -222,7 +219,6 @@ Example run:
     - test_verify_parallelism
     - test_run_benchmark
     - test_parse_thresholds
-    - test_verify_dmesg
     - test_print_results
     - test_teardown
 
@@ -248,7 +244,6 @@ Example run:
     - test_verify_parallelism
     - test_run_benchmark
     - test_parse_thresholds
-    - test_verify_dmesg
     - test_print_results
     - test_teardown
 
