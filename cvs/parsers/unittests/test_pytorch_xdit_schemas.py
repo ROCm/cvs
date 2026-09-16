@@ -56,7 +56,6 @@ def _unified_flux_config():
         "framework": "xdit",
         "gpu_arch": "mi3xx",
         "topology": "single",
-        "benchmark_serv_node": "<changeme>",
         "enforce_thresholds": False,
         "threshold_json": "mi3xx_pytorch_xdit_flux1_dev_single_threshold.json",
         "paths": {
@@ -200,6 +199,11 @@ class TestPytorchXditUnifiedSchemas(unittest.TestCase):
             self.assertIsNotNone(validated.server_params)
             self.assertEqual(validated.server_params.backend, "xdit")
             self.assertTrue(validated.benchmark_params)
+            if path.name.endswith("_single.json"):
+                self.assertIsNone(
+                    validated.server_params.benchmark_serv_node,
+                    msg=f"{path.name} runs on every node and must not pin benchmark_serv_node",
+                )
             threshold_path = config_dir / validated.threshold_json
             self.assertTrue(threshold_path.is_file(), msg=f"missing threshold for {path.name}")
             PytorchXditThresholdFile.model_validate(json.loads(threshold_path.read_text(encoding="utf-8")))

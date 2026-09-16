@@ -10,10 +10,12 @@ from cvs.lib.report.rundeck.config_builder import provenance_link_rows, threshol
 
 def _nodes(variant):
     inference = variant.inference
-    if variant.topology == "distributed":
-        nodes = inference.get("server_node_list") or []
-    else:
-        nodes = [inference.get("benchmark_serv_node")]
+    nodes = inference.get("_execution_hosts") or []
+    if not nodes:
+        if variant.topology == "distributed":
+            nodes = inference.get("server_node_list") or []
+        else:
+            nodes = [inference.get("benchmark_serv_node")]
     return ", ".join(str(node) for node in nodes if node) or "\u2014"
 
 

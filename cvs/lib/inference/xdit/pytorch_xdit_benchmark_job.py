@@ -435,17 +435,23 @@ class PytorchXditBenchmarkJob(ABC):
 
         return results or {}, plan, errors
 
+    def _host_output_path(self, output_dir: str) -> str:
+        if not self.uses_container_orchestrator:
+            return output_dir
+        container_base = str(self.inference_dict.get("output_base_dir_container") or "").rstrip("/")
+        host_base = str(self.inference_dict.get("output_base_dir") or "").rstrip("/")
+        if container_base and host_base and output_dir.startswith(container_base + "/"):
+            return host_base + output_dir[len(container_base) :]
+        return output_dir
+
     def store_output_dir_hint(self, plan: BenchmarkLaunchPlan) -> None:
+        by_node = {node: self._host_output_path(path) for node, path in plan.output_dirs_by_node.items()}
+        if by_node:
+            self.inference_dict["_test_output_dirs_by_node"] = by_node
+
         if plan.primary_output_dir:
-            output_dir = plan.primary_output_dir
-            if self.uses_container_orchestrator:
-                container_base = str(self.inference_dict.get("output_base_dir_container") or "").rstrip("/")
-                host_base = str(self.inference_dict.get("output_base_dir") or "").rstrip("/")
-                if container_base and host_base and output_dir.startswith(container_base + "/"):
-                    output_dir = host_base + output_dir[len(container_base) :]
-            self.inference_dict["_test_output_dir"] = output_dir
+            self.inference_dict["_test_output_dir"] = self._host_output_path(plan.primary_output_dir)
             return
 
         if not self.distributed and len(plan.node_order) == 1:
-            node = plan.node_order[0]
-            self.inference_dict["_test_output_dir"] = plan.output_dirs_by_node[node]
+            self.inference_dict["_test_output_dir"] = by_node[plan.node_order[0]]

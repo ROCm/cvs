@@ -111,12 +111,7 @@ def resolve_execution_hosts(cluster_dict, inference, distributed):
             raise ValueError(f"xDiT config requests {nnodes} nodes but only {len(nodes)} are available")
         hosts = nodes[:nnodes]
     else:
-        configured = inference.get("benchmark_serv_node") or inference.get("server_node")
-        if isinstance(configured, list):
-            configured = configured[0] if configured else None
-        if not configured:
-            raise ValueError("single-node xDiT suite requires benchmark_serv_node")
-        hosts = [configured]
+        hosts = list(node_dict)
 
     hosts = [host for host in hosts if host]
     missing = [host for host in hosts if host not in node_dict]
@@ -309,6 +304,32 @@ def _threshold_inputs(variant, spec):
     return params[key], params[key]["expected_results"]
 
 
+def _metric_name(spec):
+    return "avg_total_time_s" if spec["family"] == "wan" and not spec["diffusers"] else "avg_pipe_time_s"
+
+
+def _output_parser(spec, params, output_dir):
+    if spec["family"] == "flux":
+        return FluxOutputParser(output_dir, expected_image_pattern="flux_*.png")
+    if spec["diffusers"]:
+        return WanI2vOutputParser(
+            output_dir,
+            require_video_artifact=bool(params.get("require_video_artifact", True)),
+        )
+    artifact = "video.mp4" if params.get("require_video_artifact", True) else ""
+    return WanOutputParser(output_dir, expected_artifact=artifact)
+
+
+def _output_dirs_by_host(inference, lifecycle):
+    by_host = inference.get("_test_output_dirs_by_node") or {}
+    if by_host:
+        return dict(by_host)
+    output_dir = inference.get("_test_output_dir")
+    if output_dir:
+        return {lifecycle.benchmark_host or "unknown": output_dir}
+    return {}
+
+
 def _report_dimensions(variant, params, spec):
     model = value_from_variant(variant, "model")
     model_id = getattr(model, "id", None) or inference_from_variant(variant).get("model_repo", "unknown")
@@ -341,60 +362,52 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
     globals.error_list = []
     started = time.monotonic()
     inference = inference_from_variant(variant)
-    output_dir = inference.get("_test_output_dir")
-    if not output_dir:
-        fail_test("xDiT benchmark did not publish _test_output_dir")
+    outputs = _output_dirs_by_host(inference, lifecycle)
+    if not outputs:
+        fail_test("xDiT benchmark did not publish any output directory")
         _complete(lifecycle, request, "parse_thresholds", started)
         return
 
     params, thresholds = _threshold_inputs(variant, spec)
-    if spec["family"] == "flux":
-        parser = FluxOutputParser(output_dir, expected_image_pattern="flux_*.png")
-        metric = "avg_pipe_time_s"
-    elif spec["diffusers"]:
-        parser = WanI2vOutputParser(
-            output_dir,
-            require_video_artifact=bool(params.get("require_video_artifact", True)),
-        )
-        metric = "avg_pipe_time_s"
-    else:
-        artifact = "video.mp4" if params.get("require_video_artifact", True) else ""
-        parser = WanOutputParser(output_dir, expected_artifact=artifact)
-        metric = "avg_total_time_s"
-
-    result, errors = parser.parse()
-    if result is None:
-        fail_test(f"Failed to parse xDiT output from {output_dir}: {errors}")
-        _complete(lifecycle, request, "parse_thresholds", started)
-        return
-    passed, message = parser.validate_threshold(result, thresholds, gpu_type)
-    value = getattr(result, metric)
+    metric = _metric_name(spec)
     enforce_thresholds = bool(value_from_variant(variant, "enforce_thresholds", True))
     model_id, shape, steps, backend, workers, cell_id = _report_dimensions(variant, params, spec)
-    host = lifecycle.benchmark_host or "unknown"
-    lifecycle.report_results[(model_id, gpu_type, shape, steps, cell_id, str(workers))] = {
-        host: {
+    cell = lifecycle.report_results.setdefault((model_id, gpu_type, shape, steps, cell_id, str(workers)), {})
+    report_spec = _report_threshold(thresholds, gpu_type, metric)
+    if report_spec is not None:
+        variant.thresholds[cell_id] = {metric: report_spec}
+
+    failures = []
+    for host, output_dir in outputs.items():
+        parser = _output_parser(spec, params, output_dir)
+        result, errors = parser.parse()
+        if result is None:
+            failures.append(f"Failed to parse xDiT output on {host} from {output_dir}: {errors}")
+            continue
+        passed, message = parser.validate_threshold(result, thresholds, gpu_type)
+        value = getattr(result, metric)
+        cell[host] = {
             metric: value,
             "backend": backend,
             "sample_count": getattr(result, "repetition_count", getattr(result, "step_count", 0)),
             "output_dir": output_dir,
         }
-    }
-    report_spec = _report_threshold(thresholds, gpu_type, metric)
-    if report_spec is not None:
-        variant.thresholds[cell_id] = {metric: report_spec}
-    lifecycle.results.append(
-        (
-            spec["family"],
-            output_dir,
-            metric,
-            value,
-            passed if enforce_thresholds else None,
-            message,
+        lifecycle.results.append(
+            (
+                host,
+                spec["family"],
+                output_dir,
+                metric,
+                value,
+                passed if enforce_thresholds else None,
+                message,
+            )
         )
-    )
-    if enforce_thresholds and not passed:
-        fail_test(message)
+        if enforce_thresholds and not passed:
+            failures.append(f"{host}: {message}")
+
+    for failure in failures:
+        fail_test(failure)
     _complete(lifecycle, request, "parse_thresholds", started)
 
 
@@ -404,6 +417,7 @@ def print_results_stage(lifecycle):
         return
     rows = [
         [
+            host,
             family,
             output,
             metric,
@@ -411,11 +425,15 @@ def print_results_stage(lifecycle):
             "RECORDED" if passed is None else "PASS" if passed else "FAIL",
             message,
         ]
-        for family, output, metric, value, passed, message in lifecycle.results
+        for host, family, output, metric, value, passed, message in lifecycle.results
     ]
     log.info(
         "\n======== xDiT benchmark results ========\n%s",
-        tabulate(rows, headers=["Family", "Output", "Metric", "Value", "Result", "Threshold"], tablefmt="github"),
+        tabulate(
+            rows,
+            headers=["Host", "Family", "Output", "Metric", "Value", "Result", "Threshold"],
+            tablefmt="github",
+        ),
     )
 
 

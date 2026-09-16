@@ -135,6 +135,44 @@ class TestPytorchXditBenchmarkJob(unittest.TestCase):
         job.store_output_dir_hint(plan)
         self.assertIn("_test_output_dir", job.inference_dict)
 
+    def test_store_output_dir_hint_maps_every_single_node(self):
+        job = _make_job(["10.0.0.1", "10.0.0.2"])
+        plan = job.build_launch_plan()
+
+        job.store_output_dir_hint(plan)
+
+        self.assertEqual(
+            job.inference_dict["_test_output_dirs_by_node"],
+            {
+                "10.0.0.1": "/home/user/stub_output/stub_host-0_outputs",
+                "10.0.0.2": "/home/user/stub_output/stub_host-1_outputs",
+            },
+        )
+        self.assertNotIn("_test_output_dir", job.inference_dict)
+
+    def test_store_output_dir_hint_translates_container_paths_per_node(self):
+        orch = _FakeContainerOrchestrator(["10.0.0.1", "10.0.0.2"])
+        inference_dict = {
+            "container_image": "unused-after-external-setup",
+            "container_name": "stub-benchmark",
+            "hf_home": "/hf_home",
+            "output_base_dir": "/host/results",
+            "output_base_dir_container": "/outputs",
+            "container_config": {"device_list": [], "volume_dict": {}, "env_dict": {}},
+        }
+        job = _StubBenchmarkJob(orch, inference_dict, nproc_per_node=8)
+        plan = job.build_launch_plan()
+
+        job.store_output_dir_hint(plan)
+
+        self.assertEqual(
+            inference_dict["_test_output_dirs_by_node"],
+            {
+                "10.0.0.1": "/host/results/stub_container-10.0.0.1_outputs",
+                "10.0.0.2": "/host/results/stub_container-10.0.0.2_outputs",
+            },
+        )
+
     def test_run_success(self):
         job = _make_job(["10.0.0.1"])
         results, plan, errors = job.run(timeout=60)

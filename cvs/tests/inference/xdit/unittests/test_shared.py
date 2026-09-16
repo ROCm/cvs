@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 from cvs.tests.inference.xdit import conftest
 from cvs.tests.inference.xdit._shared import (
+    Lifecycle,
+    _output_dirs_by_host,
     _report_dimensions,
     _report_threshold,
     benchmark_params_from_variant,
@@ -75,6 +77,26 @@ class TestReportResults(unittest.TestCase):
         self.assertEqual(_report_threshold(thresholds, "other", "avg_pipe_time_s"), {"kind": "max", "value": 10.0})
 
 
+class TestOutputDirsByHost(unittest.TestCase):
+    def test_prefers_per_node_map(self):
+        lifecycle = Lifecycle()
+        inference = {
+            "_test_output_dirs_by_node": {"node-a": "/out/a", "node-b": "/out/b"},
+            "_test_output_dir": "/out/a",
+        }
+
+        self.assertEqual(_output_dirs_by_host(inference, lifecycle), {"node-a": "/out/a", "node-b": "/out/b"})
+
+    def test_falls_back_to_benchmark_host(self):
+        lifecycle = Lifecycle()
+        lifecycle.benchmark_host = "node-a"
+
+        self.assertEqual(_output_dirs_by_host({"_test_output_dir": "/out/a"}, lifecycle), {"node-a": "/out/a"})
+
+    def test_returns_empty_without_any_output(self):
+        self.assertEqual(_output_dirs_by_host({}, Lifecycle()), {})
+
+
 class TestHostScoping(unittest.TestCase):
     def setUp(self):
         self.cluster = {
@@ -86,14 +108,19 @@ class TestHostScoping(unittest.TestCase):
             "username": "tester",
         }
 
-    def test_single_uses_only_configured_benchmark_host(self):
+    def test_single_uses_every_cluster_node(self):
+        hosts = resolve_execution_hosts(self.cluster, {}, distributed=False)
+
+        self.assertEqual(hosts, ["node-a", "node-b", "unused"])
+
+    def test_single_ignores_benchmark_serv_node(self):
         hosts = resolve_execution_hosts(
             self.cluster,
             {"benchmark_serv_node": "node-b"},
             distributed=False,
         )
 
-        self.assertEqual(hosts, ["node-b"])
+        self.assertEqual(hosts, ["node-a", "node-b", "unused"])
 
     def test_scoped_cluster_excludes_unrelated_hosts(self):
         scoped = scoped_cluster_dict(self.cluster, ["node-a", "node-b"])
@@ -102,17 +129,9 @@ class TestHostScoping(unittest.TestCase):
         self.assertEqual(scoped["head_node_dict"], {"mgmt_ip": "node-a"})
         self.assertEqual(scoped["username"], "tester")
 
-    def test_missing_single_host_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "absent"):
-            resolve_execution_hosts(
-                self.cluster,
-                {"benchmark_serv_node": "missing"},
-                distributed=False,
-            )
-
-    def test_single_requires_benchmark_host(self):
-        with self.assertRaisesRegex(ValueError, "requires benchmark_serv_node"):
-            resolve_execution_hosts(self.cluster, {}, distributed=False)
+    def test_empty_cluster_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "could not resolve an execution host"):
+            resolve_execution_hosts({"node_dict": {}}, {}, distributed=False)
 
 
 class TestConftestHelpers(unittest.TestCase):

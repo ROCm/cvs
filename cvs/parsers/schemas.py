@@ -1399,12 +1399,6 @@ class PytorchXditUnifiedConfigFile(BaseModel):
             nnodes = int(nnodes)
         else:
             nnodes = 1
-        topology = "distributed" if nnodes > 1 else self.topology
-        bench_node = self.benchmark_serv_node
-        if not bench_node and self.server_params is not None:
-            bench_node = self.server_params.benchmark_serv_node
-        if topology == "single" and not bench_node:
-            raise ValueError("topology='single' requires benchmark_serv_node")
         nested = 0
         if self.params is not None:
             nested = sum(

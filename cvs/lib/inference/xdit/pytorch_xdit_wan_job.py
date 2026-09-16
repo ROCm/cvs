@@ -2,8 +2,8 @@
 PyTorch XDit WAN 2.2 benchmark launcher (single-node scale-out + unified distributed).
 
 Single mode:
-  - One torchrun job on the suite's scoped ``benchmark_serv_node`` container.
-  - The job writes to ``wan_22_{hostname}_outputs`` under the configured output mount.
+  - One independent torchrun job per execution node container.
+  - Each job writes to ``wan_22_{hostname}_outputs`` under the configured output mount.
 
 Distributed mode:
   - One coordinated torchrun job across ``nnodes`` with distinct ``--node_rank``.

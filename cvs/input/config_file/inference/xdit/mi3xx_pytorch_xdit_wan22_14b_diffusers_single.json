@@ -37,8 +37,7 @@
     "backend": "xdit",
     "nnodes": "1",
     "log_level": "info",
-    "model": "<changeme>",
-    "benchmark_serv_node": "<changeme>"
+    "model": "<changeme>"
   },
   "benchmark_params": {
     "model_format": "diffusers",

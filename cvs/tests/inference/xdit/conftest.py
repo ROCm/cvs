@@ -138,6 +138,7 @@ def orch(cluster_dict, variant_config, xdit_spec, lifecycle):
         hosts = resolve_execution_hosts(cluster_dict, inference, xdit_spec["distributed"])
     except ValueError as exc:
         pytest.fail(str(exc))
+    inference["_execution_hosts"] = list(hosts)
     scoped_cluster = scoped_cluster_dict(cluster_dict, hosts)
     log.info("xDiT orchestrator scoped to hosts=%s head=%s", hosts, hosts[0])
     orchestrator = _create_container_orchestrator(scoped_cluster, variant_config)

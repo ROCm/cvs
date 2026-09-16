@@ -96,7 +96,7 @@ Unified templates use the same top-level layout as SGLang and vLLM inference con
    * - ``inference``
      - Optional runtime fields such as ``model_rev`` for pinned HF snapshots.
    * - ``benchmark_serv_node``
-     - Required cluster ``node_dict`` key for single-node suites.
+     - Unused by single-node suites, which run on every cluster ``node_dict`` entry.
    * - ``nnodes``, ``master_addr``, ``master_port``
      - Distributed torchrun rendezvous. NCCL/IB env lives under
        ``container.runtime.args.env``.
@@ -116,7 +116,6 @@ Example: FLUX.1-dev single-node
         "schema_version": 1,
         "framework": "xdit",
         "topology": "single",
-        "benchmark_serv_node": "<changeme>",
         "enforce_thresholds": true,
         "threshold_json": "mi3xx_pytorch_xdit_flux1_dev_single_threshold.json",
         "paths": {

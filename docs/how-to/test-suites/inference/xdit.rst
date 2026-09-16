@@ -10,8 +10,8 @@ CVS provides five xDiT suites under ``cvs/tests/inference/xdit/``. Each suite is
 separate pytest module; pick the one that matches your topology and launcher, then point
 ``--config_file`` at a template from ``cvs/input/config_file/inference/xdit/``.
 
-- **Single-node** suites run one torchrun job inside the orchestrated container on
-  ``benchmark_serv_node``.
+- **Single-node** suites run one independent torchrun job inside the orchestrated
+  container on every node in the cluster ``node_dict``, and report per-host results.
 - **Distributed** suites run one coordinated torchrun job across ``nnodes`` (``nnodes >= 2``),
   using ``server_node_list`` when set.
 

@@ -2,8 +2,8 @@
 PyTorch XDit FLUX benchmark launcher (FLUX.1-dev, FLUX.2-dev; single-node + unified distributed).
 
 Single mode:
-  - One torchrun job on the suite's scoped ``benchmark_serv_node`` container.
-  - The job writes to ``flux_{hostname}_outputs`` under the configured output mount.
+  - One independent torchrun job per execution node container.
+  - Each job writes to ``flux_{hostname}_outputs`` under the configured output mount.
 
 Distributed mode:
   - One coordinated torchrun job across ``nnodes`` with distinct ``--node_rank``.
