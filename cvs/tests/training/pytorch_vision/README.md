@@ -76,7 +76,7 @@ Rank zero writes `results.json` below:
 The same directory contains `training.log`. The structured artifact records:
 
 - total and per-GPU images/second
-- provisional TFLOPS/s/GPU and MFU
+- TFLOPS/s/GPU and MFU
 - mean, p50, and p95 distributed step time
 - rocAL input-only loader throughput and CPU-vs-GPU comparison
 - peak PyTorch allocated/reserved memory and per-step sampled device-wide used memory
@@ -110,11 +110,12 @@ epoch, and fail if any rank does not consume its declared epoch sample count.
 collected after optimizer steps across all ranks. It includes non-PyTorch
 occupancy; allocated and reserved values use PyTorch's own peak counters.
 
-The provisional compute metrics use 24.6 GFLOP per ResNet-50 training image
-(4.1 GMAC forward × two FLOPs per multiply-add × three for forward/backward)
-and AMD's published 1307.4 dense BF16 TFLOPS/GPU peak for MI325X. These
-assumptions are stored in the config and shown in the run deck. They are
-informational until a performance methodology owner approves them.
+The compute metrics use 24.6 GFLOP per ResNet-50 training image (4.1 GMAC
+forward × two FLOPs per multiply-add × three for forward/backward) and AMD's
+published 1307.4 dense BF16 TFLOPS/GPU peak for MI325X. Both values are stored
+in the config and shown in the run deck so any result carries the convention it
+was computed under. Comparisons against figures derived from a different
+FLOPs-per-image convention are not meaningful.
 
 Checkpoint validation saves model, optimizer, scheduler, step, and RNG state,
 flushes the file to storage, restores it into a fresh model/optimizer/scheduler, restores RNG state,

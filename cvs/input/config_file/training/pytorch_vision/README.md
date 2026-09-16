@@ -52,7 +52,7 @@ cvs run pytorch_vision_training \
 - `timeout_s`: hard torchrun timeout.
 - `omp_num_threads`: CPU threads per rank.
 - `verify_dmesg`: enables bounded host-kernel error scanning.
-- `peak_tflops_per_gpu`: provisional dense-precision hardware peak used for MFU.
+- `peak_tflops_per_gpu`: dense-precision hardware peak used for MFU.
 - `checkpoint_enabled`: enables save/load and resume-parity validation.
 - `checkpoint_keep_file`: retains the checkpoint after validation when `true`.
 - `checkpoint_loss_tolerance`: maximum resumed-loss delta.
@@ -76,7 +76,7 @@ cvs run pytorch_vision_training \
 - `batch_size`: local images per GPU.
 - `image_size`: square synthetic input resolution.
 - `gradient_accumulation_steps`: microbatches per optimizer step.
-- `training_flops_per_image`: provisional forward+backward FLOPs used for
+- `training_flops_per_image`: forward+backward FLOPs used for
   TFLOPS/s/GPU. W1 uses 4.1 GMAC forward × two FLOPs per multiply-add × three
   for training = 24.6 GFLOP/image.
 - `data_mode`: `synthetic` or `rocal`.

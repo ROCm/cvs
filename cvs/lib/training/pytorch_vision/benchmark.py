@@ -795,7 +795,6 @@ def main():
     scheduler = _build_lr_scheduler(optimizer, args, steps_per_epoch)
     learning_rate_initial = optimizer.param_groups[0]["lr"]
 
-    tracker, codecarbon = _start_codecarbon(args, rank, world_size)
     dist.barrier()
     for _ in range(args.warmup_steps):
         if rocal_loader is not None:
@@ -827,6 +826,9 @@ def main():
     milestone_losses = {}
     evaluations = []
     all_finite = True
+    # Energy is scoped to the measured window only. Warmup, the loader benchmark, and
+    # checkpoint validation are excluded so images/kWh divides the same work it measures.
+    tracker, codecarbon = _start_codecarbon(args, rank, world_size)
     window_start = time.perf_counter()
     milestones = {int(value) for value in args.milestone_steps.split(",") if value.strip()}
     target_steps = args.measure_steps
@@ -913,6 +915,7 @@ def main():
         evaluations.append(evaluation)
     torch.cuda.synchronize(device)
     measured_window_s = _reduce_max(time.perf_counter() - window_start, device)
+    codecarbon = _stop_codecarbon(tracker, codecarbon, rank)
     critical_times = _gather_step_times(local_times, rank, world_size, device)
     loss_initial = _reduce_mean(losses[0], world_size, device)
     loss_final = _reduce_mean(losses[-1], world_size, device)
@@ -946,7 +949,6 @@ def main():
         if args.checkpoint_path
         else {}
     )
-    codecarbon = _stop_codecarbon(tracker, codecarbon, rank)
     if args.codecarbon_required and not codecarbon.get("active"):
         raise RuntimeError(f"required CodeCarbon tracking failed: {codecarbon.get('reason')}")
 
