@@ -40,38 +40,27 @@ from cvs.lib.utils.config_loader import (
 _ALLOWED_GPU_NAMES = ("MI300X", "MI325X", "MI355X")
 # jaxmaxtext-style implicit cell when sweep.combinations is omitted/empty.
 DEFAULT_SWEEP_NAME = "default"
-_DEFAULT_MBS = "2"
-_DEFAULT_GBS = "128"
-_DEFAULT_PRECISION = "BF16"
+_DEFAULT_COMBO_KEYS = ("micro_batch_size", "global_batch_size", "precision")
 
 
-def _train_param_or_default(tp, key, default):
-    value = tp.get(key)
-    if value in (None, ""):
-        return default
-    return str(value)
+def _require_train_params_batch_precision(tp):
+    missing = [
+        key for key in _DEFAULT_COMBO_KEYS if (tp or {}).get(key) in (None, "")
+    ]
+    if missing:
+        raise ValueError(
+            "train_params requires "
+            + ", ".join(f"train_params.{key}" for key in missing)
+        )
 
 
-def _implicit_default_sweep(data):
-    """If sweep.combinations is missing/empty, insert one 'default' cell from train_params."""
-    if not isinstance(data, dict):
-        return data
-    data = dict(data)
-    sweep = dict(data.get("sweep") or {})
-    combos = sweep.get("combinations") or {}
-    if combos:
-        return data
-    tp = data.get("train_params") or {}
-    sweep["combinations"] = {
-        DEFAULT_SWEEP_NAME: {
-            "micro_batch_size": _train_param_or_default(tp, "micro_batch_size", _DEFAULT_MBS),
-            "global_batch_size": _train_param_or_default(tp, "global_batch_size", _DEFAULT_GBS),
-            "precision": _train_param_or_default(tp, "precision", _DEFAULT_PRECISION),
-        }
-    }
-    sweep["runs"] = [DEFAULT_SWEEP_NAME]
-    data["sweep"] = sweep
-    return data
+def _fill_missing_combo_fields(combo, src):
+    filled = dict(combo)
+    for key, value in src.items():
+        if filled.get(key) not in (None, ""):
+            continue
+        filled[key] = str(value)
+    return filled
 
 
 _SWEEP_KEY_PATTERN = re.compile(
@@ -100,6 +89,44 @@ def parse_sweep_cell_key(key):
             "MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>"
         )
     return match.groupdict()
+
+
+def _fill_combo_from_train_params(combo, tp, combo_key=None):
+    filled = dict(combo)
+    if combo_key and combo_key != DEFAULT_SWEEP_NAME:
+        filled = _fill_missing_combo_fields(filled, parse_sweep_cell_key(combo_key))
+    return _fill_missing_combo_fields(
+        filled, {key: tp[key] for key in _DEFAULT_COMBO_KEYS}
+    )
+
+
+def _implicit_default_sweep(data):
+    """Fill each combo's missing MBS/GBS/precision from the key, then train_params.
+
+    Combo body values win, then the combination key (MBS/GBS/PRECISION), then
+    train_params. If combinations is missing/empty, insert one 'default' cell.
+    """
+    if not isinstance(data, dict):
+        return data
+    data = dict(data)
+    tp = data.get("train_params") or {}
+    _require_train_params_batch_precision(tp)
+    sweep = dict(data.get("sweep") or {})
+    combos = dict(sweep.get("combinations") or {})
+    if not combos:
+        sweep["combinations"] = {
+            DEFAULT_SWEEP_NAME: _fill_combo_from_train_params({}, tp)
+        }
+        sweep["runs"] = [DEFAULT_SWEEP_NAME]
+        data["sweep"] = sweep
+        return data
+    filled_combos = {}
+    for key, raw_combo in combos.items():
+        combo = dict(raw_combo) if isinstance(raw_combo, dict) else {}
+        filled_combos[key] = _fill_combo_from_train_params(combo, tp, key)
+    sweep["combinations"] = filled_combos
+    data["sweep"] = sweep
+    return data
 
 
 def sweep_cell_key(combo) -> str:
@@ -144,6 +171,10 @@ def validate_sweep_selector(combo_keys, run_refs):
     if dupes:
         raise ValueError(f"duplicate sweep.combinations keys: {dupes}")
     known = set(counts)
+    if known and not list(run_refs):
+        raise ValueError(
+            "sweep.runs is empty; list at least one sweep.combinations key to execute"
+        )
     unknown = sorted(r for r in run_refs if r not in known)
     if unknown:
         raise ValueError(f"sweep.runs references unknown combinations: {unknown} (known: {sorted(known)})")
@@ -202,9 +233,6 @@ class MegatronSweep(_Forbid):
         for key, raw_combo in data.get("combinations", {}).items():
             combo = dict(raw_combo)
             if key == DEFAULT_SWEEP_NAME:
-                combo.setdefault("micro_batch_size", _DEFAULT_MBS)
-                combo.setdefault("global_batch_size", _DEFAULT_GBS)
-                combo.setdefault("precision", _DEFAULT_PRECISION)
                 normalized["combinations"][key] = combo
                 continue
             parsed = parse_sweep_cell_key(key)
