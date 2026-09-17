@@ -43,6 +43,27 @@ class TestParallelHandleExec(unittest.TestCase):
         self.assertIn("output1 line1", result["host1"])
         self.assertIn("output2 line1", result["host2"])
 
+    def _single_host_output(self):
+        item = MagicMock()
+        item.host = "host1"
+        item.stdout = ["line1"]
+        item.stderr = []
+        item.exception = None
+        return [item]
+
+    def test_host_banner_suppressed_when_print_console_false(self):
+        """print_console=False must not log the per-host banner (polling noise)."""
+        self.mock_client.run_command.return_value = self._single_host_output()
+        self.handle.exec("echo hello", print_console=False)
+        info_msgs = [str(c.args[0]) for c in self.mock_log.info.call_args_list if c.args]
+        self.assertFalse(any("Host ==" in m or m.startswith("#---") for m in info_msgs))
+
+    def test_host_banner_shown_when_print_console_true(self):
+        self.mock_client.run_command.return_value = self._single_host_output()
+        self.handle.exec("echo hello", print_console=True)
+        info_msgs = [str(c.args[0]) for c in self.mock_log.info.call_args_list if c.args]
+        self.assertTrue(any("Host == host1 ==" in m for m in info_msgs))
+
     def test_exec_retries_once_on_session_error(self):
         from pssh.exceptions import SessionError
 
