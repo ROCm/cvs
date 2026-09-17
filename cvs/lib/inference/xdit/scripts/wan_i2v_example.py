@@ -16,6 +16,8 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
+_RANK_STRING_FIELDS = ("determinism_check_report_ranks",)
+
 _EXTRA_PYPACKAGES = os.environ.get("CVS_WAN_XFUSER_PYPACKAGES", "").strip()
 if _EXTRA_PYPACKAGES and _EXTRA_PYPACKAGES not in sys.path:
     sys.path.insert(0, _EXTRA_PYPACKAGES)
@@ -180,6 +182,27 @@ def _string_only_defaults(args_cls, names):
     return {name: "" for name in names if name in supported}
 
 
+def _as_rank_string(value):
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return ",".join(str(item) for item in value)
+    return str(value)
+
+
+def _stringify_rank_fields(raw_args, names):
+    """``__post_init__`` rewrites these to lists, but re-parsing the same dict demands strings again."""
+    for name in names:
+        if name not in raw_args:
+            continue
+        coerced = _as_rank_string(raw_args[name])
+        if coerced != raw_args[name]:
+            print(f"wan_i2v_example: coerced {name}={raw_args[name]!r} to {coerced!r}")
+        raw_args[name] = coerced
+
+
 def _write_timing_json(timing_json_path, pipe_times):
     parent = os.path.dirname(timing_json_path)
     if parent:
@@ -221,15 +244,18 @@ def main():
         "input_images": [args.input_image],
         "output_directory": args.output_directory,
     }
-    config_kwargs.update(_string_only_defaults(xFuserArgs, ("determinism_check_report_ranks",)))
+    config_kwargs.update(_string_only_defaults(xFuserArgs, _RANK_STRING_FIELDS))
 
     config = xFuserArgs(**config_kwargs)
 
-    runner = xFuserModelRunner(vars(config))
-    runner.model.settings.model_name = args.model
     raw_args = vars(config)
+    _stringify_rank_fields(raw_args, _RANK_STRING_FIELDS)
+
+    runner = xFuserModelRunner(raw_args)
+    runner.model.settings.model_name = args.model
     if raw_args.get("input_images") is None:
         raw_args["input_images"] = [args.input_image]
+    _stringify_rank_fields(raw_args, _RANK_STRING_FIELDS)
     input_args = runner.preprocess_args(raw_args)
     runner.initialize(input_args)
 
