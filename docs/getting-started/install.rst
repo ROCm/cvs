@@ -30,7 +30,7 @@ CVS supports these Linux distributions:
    * - Ubuntu 24.04.3
      - 6.8 [GA], 6.14 [HWE]
      - 10.1
-     - 3.10
+     - 3.12
    * - Ubuntu 22.04.5
      - 5.15 [GA], 6.8 [HWE]
      - 10.1
