@@ -8,33 +8,34 @@ All rights reserved.
 from cvs.lib.report.rundeck.config_builder import provenance_link_rows, thresholds_run_card_row
 
 
-def _nodes(variant):
-    inference = variant.inference
-    nodes = inference.get("_execution_hosts") or []
-    if not nodes:
-        if variant.topology == "distributed":
-            nodes = inference.get("server_node_list") or []
-        else:
-            nodes = [inference.get("benchmark_serv_node")]
-    return ", ".join(str(node) for node in nodes if node) or "\u2014"
-
-
-def _workload(variant):
-    if variant.benchmark_params.get("flux1_dev_t2i"):
-        return "FLUX", variant.benchmark_params["flux1_dev_t2i"]
-    params = variant.benchmark_params.get("wan22_i2v_a14b") or {}
-    backend = "Diffusers" if params.get("model_format") == "diffusers" else "native"
-    return f"WAN ({backend})", params
+def _format_nodes(raw):
+    if not raw:
+        return "\u2014"
+    if isinstance(raw, (list, tuple)):
+        hosts = [str(host) for host in raw if host]
+    else:
+        hosts = [str(raw)]
+    return ", ".join(hosts) if hosts else "\u2014"
 
 
 def _nnodes(variant, inference):
     nnodes = inference.get("nnodes")
     if nnodes is not None and str(nnodes).strip() != "":
-        return int(nnodes)
+        return str(nnodes)
     nodes = inference.get("_execution_hosts") or inference.get("server_node_list") or []
     if variant.topology == "distributed":
-        return max(len(nodes), 1)
-    return 1
+        return str(max(len(nodes), 1))
+    return "1"
+
+
+def _benchmark_node(inference):
+    bench = inference.get("benchmark_serv_node")
+    if bench:
+        return _format_nodes(bench)
+    hosts = inference.get("_execution_hosts") or inference.get("server_node_list") or []
+    if hosts:
+        return str(hosts[0])
+    return "\u2014"
 
 
 def _ulysses_ring(params):
@@ -44,20 +45,20 @@ def _ulysses_ring(params):
     return int(ulysses), int(ring)
 
 
+def _workload_params(variant):
+    if variant.benchmark_params.get("flux1_dev_t2i"):
+        return variant.benchmark_params["flux1_dev_t2i"]
+    return variant.benchmark_params.get("wan22_i2v_a14b") or {}
+
+
 def xdit_run_card_display(variant, provenance):
-    workload, params = _workload(variant)
     inference = variant.inference or {}
-    nproc = int(params.get("torchrun_nproc") or 1)
-    ulysses, ring = _ulysses_ring(params)
-    workers = _nnodes(variant, inference) * nproc
+    ulysses, ring = _ulysses_ring(_workload_params(variant))
     rows = [
         ("Model", variant.model.id, False),
         ("GPU", variant.gpu_arch, False),
-        ("Workload", workload, False),
-        ("Topology", variant.topology, False),
-        ("Execution nodes", _nodes(variant), False),
-        ("GPUs/node", str(nproc), False),
-        ("Workers", str(workers), False),
+        ("nnodes", _nnodes(variant, inference), False),
+        ("Benchmark node", _benchmark_node(inference), False),
         ("Ulysses", str(ulysses), False),
         ("Ring", str(ring), False),
         thresholds_run_card_row(variant),

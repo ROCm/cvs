@@ -18,7 +18,7 @@ class TestXditRundeck(unittest.TestCase):
             inference={"benchmark_serv_node": "node-a"},
             benchmark_params={"flux1_dev_t2i": {"torchrun_nproc": 8}},
         )
-        key = ("FLUX.1-dev", "mi300x", "1024x1024", 25, cell_id, "8")
+        key = ("FLUX.1-dev", "mi300x", "1024x1024", 25, cell_id, "1")
         results = {
             key: {
                 "node-a": {
@@ -43,9 +43,13 @@ class TestXditRundeck(unittest.TestCase):
 
         self.assertEqual(payload["overall_status"], "pass")
         self.assertEqual(payload["cells"][0]["tiers"]["latency"], "pass")
-        self.assertEqual(payload["results_table"]["rows"][0][10], 2.5)
+        self.assertEqual(payload["results_table"]["headers"][5], "nnodes")
+        self.assertEqual(payload["results_table"]["headers"][6], "Host")
+        self.assertNotIn("Workers", payload["results_table"]["headers"])
+        self.assertNotIn("Topology", payload["results_table"]["headers"])
+        self.assertEqual(payload["results_table"]["rows"][0][9], 2.5)
 
-    def test_run_card_shows_ulysses_ring_and_total_workers(self):
+    def test_run_card_shows_nnodes_and_benchmark_node(self):
         from cvs.lib.report.profiles.hooks.xdit_run_card import xdit_run_card_display
 
         flux = SimpleNamespace(
@@ -57,8 +61,12 @@ class TestXditRundeck(unittest.TestCase):
             benchmark_params={"flux1_dev_t2i": {"torchrun_nproc": 8, "ulysses_degree": 8, "ring_degree": 1}},
         )
         flux_rows = {label: value for label, value, _ in xdit_run_card_display(flux, {})}
-        self.assertEqual(flux_rows["GPUs/node"], "8")
-        self.assertEqual(flux_rows["Workers"], "16")
+        self.assertEqual(flux_rows["nnodes"], "2")
+        self.assertEqual(flux_rows["Benchmark node"], "10.32.80.110")
+        self.assertNotIn("GPUs/node", flux_rows)
+        self.assertNotIn("Workers", flux_rows)
+        self.assertNotIn("Workload", flux_rows)
+        self.assertNotIn("Topology", flux_rows)
         self.assertEqual(flux_rows["Ulysses"], "8")
         self.assertEqual(flux_rows["Ring"], "1")
 
@@ -67,7 +75,7 @@ class TestXditRundeck(unittest.TestCase):
             gpu_arch="mi325",
             topology="distributed",
             model=SimpleNamespace(id="Wan-AI/Wan2.2-I2V-A14B"),
-            inference={"nnodes": 2, "_execution_hosts": ["n1", "n2"]},
+            inference={"nnodes": 2, "benchmark_serv_node": "n1", "_execution_hosts": ["n1", "n2"]},
             benchmark_params={
                 "wan22_i2v_a14b": {
                     "torchrun_nproc": 8,
@@ -78,8 +86,8 @@ class TestXditRundeck(unittest.TestCase):
             },
         )
         wan_rows = {label: value for label, value, _ in xdit_run_card_display(wan, {})}
-        self.assertEqual(wan_rows["Workload"], "WAN (Diffusers)")
-        self.assertEqual(wan_rows["Workers"], "16")
+        self.assertEqual(wan_rows["nnodes"], "2")
+        self.assertEqual(wan_rows["Benchmark node"], "n1")
         self.assertEqual(wan_rows["Ulysses"], "8")
         self.assertEqual(wan_rows["Ring"], "2")
 

@@ -470,8 +470,20 @@ def _report_dimensions(variant, params, spec):
         steps = params.get("frame_num", "-")
         backend = "diffusers" if spec["diffusers"] else "native"
     workers = _world_size(variant, params, spec)
+    nnodes = _nnodes_count(variant, spec)
     cell_id = f"ISL={shape},OSL={steps},C={workers}"
-    return str(model_id), shape, steps, backend, workers, cell_id
+    return str(model_id), shape, steps, backend, nnodes, cell_id
+
+
+def _nnodes_count(variant, spec):
+    if not spec["distributed"]:
+        return 1
+    inference = inference_from_variant(variant)
+    nnodes = inference.get("nnodes")
+    if nnodes is not None and str(nnodes).strip() != "":
+        return int(nnodes)
+    hosts = inference.get("_execution_hosts") or inference.get("server_node_list") or []
+    return max(len(hosts), 1)
 
 
 def _world_size(variant, params, spec):
@@ -509,10 +521,10 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
     params, thresholds = _threshold_inputs(variant, spec)
     metric = _metric_name(spec)
     enforce_thresholds = bool(value_from_variant(variant, "enforce_thresholds", True))
-    model_id, shape, steps, backend, workers, cell_id = _report_dimensions(variant, params, spec)
+    model_id, shape, steps, backend, nnodes, cell_id = _report_dimensions(variant, params, spec)
     topology = "distributed" if spec["distributed"] else "single"
     ulysses_degree, ring_degree = _ulysses_ring(params, spec)
-    cell = lifecycle.report_results.setdefault((model_id, gpu_type, shape, steps, cell_id, str(workers)), {})
+    cell = lifecycle.report_results.setdefault((model_id, gpu_type, shape, steps, cell_id, str(nnodes)), {})
     report_spec = _report_threshold(thresholds, gpu_type, metric)
     if report_spec is not None:
         variant.thresholds[cell_id] = {metric: report_spec}

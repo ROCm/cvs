@@ -297,7 +297,7 @@ Used by all four FLUX templates. FLUX.2 sets ``model_type: flux2``.
      - Enable ``torch.compile``.
    * - ``torchrun_nproc``
      - ``8``
-     - GPUs per node. Run Deck **Workers** is ``nnodes × torchrun_nproc``.
+     - GPUs per node for torchrun.
 
 FLUX threshold metric: ``max_avg_pipe_time_s`` in the sibling threshold JSON.
 
@@ -333,7 +333,7 @@ Runs ``/app/Wan2.2/run.py``. Threshold metric is ``max_avg_total_time_s``.
      - Enable compile on the native launcher.
    * - ``torchrun_nproc``
      - ``8``
-     - GPUs per node. Run Deck **Workers** is ``nnodes × torchrun_nproc``.
+     - GPUs per node for torchrun.
 
 Diffusers xFuser WAN
 --------------------
@@ -408,9 +408,9 @@ GPU type is detected from ``rocm-smi``. Lookup order: exact key → ``auto``.
 - **WAN native** — average ``total_time`` vs ``max_avg_total_time_s``; ``rank0_step*.json`` and ``video.mp4``.
 - **WAN Diffusers** — average pipe/epoch time vs ``max_avg_pipe_time_s``; ``results/timing.json`` and ``results/video_i2v.mp4``.
 
-The xDiT Run Deck also lists topology, Ulysses, Ring, **GPUs/node** (``torchrun_nproc``),
-and **Workers** (``nnodes × torchrun_nproc``). Distributed result rows use the
-benchmark (rank-0) host.
+The xDiT Run Deck run card lists **nnodes** and **Benchmark node** (first execution
+host, or ``benchmark_serv_node`` when set), plus Ulysses and Ring. Distributed
+result rows use the benchmark (rank-0) host.
 
 Shipped numbers are starting points; tune the sibling threshold JSON for your stack before production gating.
 

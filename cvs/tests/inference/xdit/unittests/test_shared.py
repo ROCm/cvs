@@ -75,7 +75,7 @@ class TestSuiteSpec(unittest.TestCase):
 
 
 class TestReportResults(unittest.TestCase):
-    def test_flux_dimensions_use_shape_steps_and_total_workers(self):
+    def test_flux_dimensions_use_shape_steps_and_nnodes(self):
         variant = SimpleNamespace(
             model=SimpleNamespace(id="black-forest-labs/FLUX.1-dev"),
             inference={"nnodes": 2},
@@ -87,10 +87,10 @@ class TestReportResults(unittest.TestCase):
             {"family": "flux", "distributed": True, "diffusers": False},
         )
 
-        self.assertEqual(values[:5], ("black-forest-labs/FLUX.1-dev", "1024x768", 25, "diffusers", 16))
+        self.assertEqual(values[:5], ("black-forest-labs/FLUX.1-dev", "1024x768", 25, "diffusers", 2))
         self.assertEqual(values[5], "ISL=1024x768,OSL=25,C=16")
 
-    def test_distributed_workers_use_execution_hosts_when_nnodes_missing(self):
+    def test_distributed_nnodes_use_execution_hosts_when_nnodes_missing(self):
         variant = SimpleNamespace(
             model=SimpleNamespace(id="FLUX.1-dev"),
             inference={"_execution_hosts": ["10.0.0.1", "10.0.0.2"]},
@@ -102,7 +102,7 @@ class TestReportResults(unittest.TestCase):
             {"family": "flux", "distributed": True, "diffusers": False},
         )
 
-        self.assertEqual(values[4], 16)
+        self.assertEqual(values[4], 2)
         self.assertEqual(values[5], "ISL=1024x1024,OSL=25,C=16")
 
     def test_report_threshold_uses_gpu_then_auto_fallback(self):

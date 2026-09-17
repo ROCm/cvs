@@ -292,9 +292,9 @@ Key stages to watch:
   ``${paths.log_dir}/flux_*_outputs`` or ``wan_22_*_outputs`` trees, then runs
   torchrun inside the containers.
 - **Parse / print** — ``test_parse_thresholds`` compares average latency to the
-  sibling threshold JSON. ``test_print_results`` and the xDiT Run Deck show
-  topology, Ulysses, Ring, and **Workers** as ``nnodes × torchrun_nproc``
-  (GPUs per node stay on **GPUs/node**).
+  sibling threshold JSON. ``test_print_results`` still prints topology, Ulysses,
+  and Ring. The xDiT Run Deck run card shows **nnodes**, **Benchmark node**,
+  Ulysses, and Ring (same Benchmark-node pattern as SGLang).
 
 .. list-table::
    :widths: 2 3 3 3
