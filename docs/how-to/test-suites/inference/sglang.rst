@@ -42,23 +42,23 @@ Set up config
 
    .. code:: bash
 
-     cvs copy-config --list | grep inference/sglang
+     cvs config list inference/sglang
 
 2. Copy the configuration (and threshold file, if you edit thresholds locally):
 
    .. code:: bash
 
-     cvs copy-config inference/sglang/mi3xx_sglang_llama_70b_single.json \
+     cvs config copy inference/sglang/mi3xx_sglang_llama_70b_single.json \
        --output ~/cvs_workspace/mi3xx_sglang_llama_70b_single.json
 
-     cvs copy-config inference/sglang/mi325_sglang_llama_70b_threshold.json \
+     cvs config copy inference/sglang/mi325_sglang_llama_70b_threshold.json \
        --output ~/cvs_workspace/mi325_sglang_llama_70b_threshold.json
 
 3. Copy a cluster file (container backend recommended):
 
    .. code:: bash
 
-     cvs copy-config cluster_container.json --output ~/cvs_workspace/cluster.json
+     cvs config copy cluster_container.json --output ~/cvs_workspace/cluster.json
 
 4. Edit the config — set ``container.image``, replace every ``<changeme>`` with
    cluster-specific values, and ensure ``threshold_json`` resolves to your threshold JSON.
@@ -178,6 +178,7 @@ Example run:
     - test_poll_for_server_ready
     - test_launch_proxy_router
     - test_openai_compatible_http_endpoints
+    - test_run_long_context_accuracy
     - test_run_lm_eval_hellaswag_benchmark_test
     - test_run_lm_eval_gsm8k_benchmark_test
     - test_run_performance_benchmark_test
@@ -185,6 +186,10 @@ Example run:
     - test_disagg_gpu_topology
     - test_print_results_table
     - test_teardown
+
+``test_run_long_context_accuracy`` is parametrized from ``ACC_ISL=…,OSL=…`` cells in the
+threshold JSON. It runs only when ``server_params.lng_ctx_activate`` is ``true``
+(DeepSeek disaggregated template). Llama disaggregated skips this stage.
 
 Example run:
 
@@ -226,6 +231,9 @@ Key lifecycle stages to watch:
   without failing on uncalibrated gates.
 - **Accuracy** — ``test_run_lm_eval_hellaswag_benchmark_test`` and
   ``test_run_lm_eval_gsm8k_benchmark_test`` run lm-eval tasks configured in ``accuracy.tasks``.
+  Disaggregated runs also include ``test_run_long_context_accuracy`` (needle-in-a-haystack)
+  when ``lng_ctx_activate`` is ``true``; cells come from ``ACC_ISL=…`` keys in the
+  threshold file.
 - **Summary** — ``test_print_results_table`` prints throughput/latency/accuracy in the console and
   report.
 - **Teardown** — ``test_teardown`` stops containers even when a prior stage failed.

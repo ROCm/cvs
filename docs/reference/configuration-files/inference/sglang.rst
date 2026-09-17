@@ -107,7 +107,11 @@ threshold file via top-level ``threshold_json`` (a filename beside the config).
 Threshold keys use the form ``ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``. Each value is a
 metric map (for example ``output_throughput_per_sec``, ``mean_ttft_ms``, ``mean_tpot_ms``,
 ``goodput``, ``mfu``) with ``kind`` and ``value`` fields. Accuracy cells use
-``BENCH=lm_eval_hellaswag`` and ``BENCH=lm_eval_gsm8k``.
+``BENCH=lm_eval_hellaswag`` and ``BENCH=lm_eval_gsm8k``. Long-context NIAH cells use
+``ACC_ISL=<n>,OSL=<n>`` (shipped files currently have ``ACC_ISL=131072,OSL=1024`` with
+``pass_rate``). Those cells parametrize ``test_run_long_context_accuracy`` on
+``sglang_disagg_distributed``; the stage still skips unless ``lng_ctx_activate`` is
+``true``.
 
 File structure
 ==============
@@ -122,7 +126,8 @@ Shipped templates use these top-level keys:
      - Description
    * - ``enforce_thresholds``
      - When ``false``, performance metrics are recorded but do not fail the run. When ``true``,
-       results are compared against the threshold file. Does not gate lm-eval accuracy.
+       results are compared against the threshold file. Does not gate lm-eval or NIAH
+       accuracy (those always use their threshold cells when the stage runs).
    * - ``threshold_json``
      - Filename of the threshold JSON in the same directory.
    * - ``paths``
@@ -135,6 +140,9 @@ Shipped templates use these top-level keys:
      - ``bench_serving`` workload (``num_prompts``, ``data_set_name``, MFU inputs).
    * - ``accuracy``
      - ``tasks`` list (``lm_eval_hellaswag``, ``lm_eval_gsm8k``).
+   * - ``long_ctx_niah``
+     - Optional NIAH workload for ``test_run_long_context_accuracy`` (DeepSeek disaggregated
+       template). Loaded into ``inference_tests.long_ctx_niah``.
    * - ``sweeps``
      - Optional per-combo overrides (for example ``num_prompts``).
    * - ``sweep``
@@ -350,8 +358,25 @@ Uses the multi-node network env fields above, plus:
    * - ``container.runtime.args.env``, ``server_params.add_flags``
      - ROCm/SGLang tuning as scalar env (for example ``SGLANG_USE_AITER``, ``AMDGCN_USE_BUFFER_OPS``, ``ROCM_QUICK_REDUCE_QUANTIZATION``) plus ``--attention-backend aiter``. DeepSeek templates also set ``GPU_ARCHS=gfx942``.
    * - ``server_params.context_length``
-     - ``205000``
-     - Long-context cap (distributed / disaggregated Llama and DeepSeek templates).
+     - ``205000`` (Llama / unified DeepSeek) or ``163840`` (DeepSeek disaggregated)
+     - KV-cache context cap passed to ``launch_server`` as ``--context-length``. On
+       disaggregated runs this flag is applied to both prefill and decode. Required when
+       ``lng_ctx_activate`` is ``true``.
+   * - ``server_params.lng_ctx_activate``
+     - ``true`` (DeepSeek disaggregated only)
+     - Enables ``test_run_long_context_accuracy`` and injects long-context CLI flags.
+       Omit or set to anything other than ``true`` to skip NIAH (Llama disaggregated).
+   * - ``server_params.chunked_prefill_size``
+     - ``8192``
+     - Required when ``lng_ctx_activate`` is ``true``. Passed as ``--chunked-prefill-size``
+       on prefill (and unified) servers only — not on decode.
+   * - ``server_params.max_prefill_tokens``
+     - ``8192``
+     - Optional with ``lng_ctx_activate``. Passed as ``--max-prefill-tokens`` on prefill
+       (and unified) servers only.
+   * - ``long_ctx_niah.num_prompts``, ``seed``, ``request_timeout_sec``, ``exec_timeout_sec``, ``tolerance_frac``
+     - ``6``, ``42``, ``7200``, ``21600``, ``0.05``
+     - NIAH client settings. ISL/OSL come from the ``ACC_ISL=…`` threshold cell, not this block.
    * - ``server_params.prefill_policy``, ``decode_policy``
      - ``cache_aware``
      - Disaggregated templates only; PD routing policy.
@@ -377,6 +402,12 @@ Inference tests
 ``accuracy.tasks`` (``lm_eval_hellaswag``, ``lm_eval_gsm8k``)
   Accuracy tasks via lm-eval. Thresholds for accuracy metrics are always enforced when configured
   in the threshold file.
+
+``long_ctx_niah`` (``sglang_disagg_distributed``)
+  Needle-in-a-haystack long-context accuracy. Collection parametrizes one pytest case per
+  ``ACC_ISL=<n>,OSL=<n>`` threshold cell. The test skips unless ``server_params.lng_ctx_activate``
+  is ``true``. When it runs, ``pass_rate`` from that cell is always enforced.
+  ``mi3xx_sglang_deepseek_r1_0528_disaggregated.json`` ships with this enabled.
 
 .. _sglang-volume-mounts:
 
@@ -413,6 +444,10 @@ SGLang disaggregated prefill-decode separates inference into:
 Use ``sglang_disagg_distributed`` with ``mi3xx_sglang_*_disaggregated.json`` templates. Unified
 multi-node serving (no PD split) uses ``sglang_distributed`` instead.
 
+When ``lng_ctx_activate`` is ``true``, prefill launch includes ``--context-length``,
+``--chunked-prefill-size``, and optional ``--max-prefill-tokens``. Decode launch includes
+``--context-length`` only so it can hold the transferred KV cache.
+
 Performance metrics
 ===================
 
@@ -441,6 +476,12 @@ Troubleshooting
 **Sweep collection**
   Each listed ``sweep.runs`` combo must match a threshold cell exactly or uniquely by
   ``ISL,OSL,CONC``. Empty ``runs`` selects every performance cell in the threshold JSON.
+
+**Long-context NIAH**
+  ``sglang_disagg_distributed`` requires at least one ``ACC_ISL=…,OSL=…`` cell in the
+  threshold file (collection fails without it). The stage then skips unless
+  ``lng_ctx_activate`` is ``true``. If the server OOMs at 131k ISL, confirm
+  ``context_length`` / ``chunked_prefill_size`` on the DeepSeek disaggregated template.
 
 **Model access**
   Set ``paths.hf_token_file`` for HuggingFace models or mount local weights under ``/root/models`` via
