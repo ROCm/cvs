@@ -91,40 +91,32 @@ def parse_sweep_cell_key(key):
     return match.groupdict()
 
 
-def _fill_combo_from_train_params(combo, tp, combo_key=None):
-    filled = dict(combo)
-    if combo_key and combo_key != DEFAULT_SWEEP_NAME:
-        filled = _fill_missing_combo_fields(filled, parse_sweep_cell_key(combo_key))
+def _fill_combo_from_train_params(combo, tp):
     return _fill_missing_combo_fields(
-        filled, {key: tp[key] for key in _DEFAULT_COMBO_KEYS}
+        combo, {key: tp[key] for key in _DEFAULT_COMBO_KEYS}
     )
 
 
 def _implicit_default_sweep(data):
-    """Fill each combo's missing MBS/GBS/precision from the key, then train_params.
+    """If sweep.combinations is missing/empty, insert one 'default' cell from train_params.
 
-    Combo body values win, then the combination key (MBS/GBS/PRECISION), then
-    train_params. If combinations is missing/empty, insert one 'default' cell.
+    Declared combos are unchanged here. MBS/GBS/precision for those cells come from
+    the combination key and body (MegatronSweep._assign_params_from_keys).
     """
     if not isinstance(data, dict):
         return data
     data = dict(data)
-    tp = data.get("train_params") or {}
-    _require_train_params_batch_precision(tp)
     sweep = dict(data.get("sweep") or {})
-    combos = dict(sweep.get("combinations") or {})
-    if not combos:
-        sweep["combinations"] = {
-            DEFAULT_SWEEP_NAME: _fill_combo_from_train_params({}, tp)
-        }
-        sweep["runs"] = [DEFAULT_SWEEP_NAME]
+    combos = sweep.get("combinations") or {}
+    if combos:
         data["sweep"] = sweep
         return data
-    filled_combos = {}
-    for key, raw_combo in combos.items():
-        combo = dict(raw_combo) if isinstance(raw_combo, dict) else {}
-        filled_combos[key] = _fill_combo_from_train_params(combo, tp, key)
-    sweep["combinations"] = filled_combos
+    tp = data.get("train_params") or {}
+    _require_train_params_batch_precision(tp)
+    sweep["combinations"] = {
+        DEFAULT_SWEEP_NAME: _fill_combo_from_train_params({}, tp)
+    }
+    sweep["runs"] = [DEFAULT_SWEEP_NAME]
     data["sweep"] = sweep
     return data
 
