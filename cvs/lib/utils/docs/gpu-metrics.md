@@ -25,6 +25,11 @@ Five derived metrics are produced per run:
 Each metric appears as its own row in the HTML report, with value, unit, and a
 pass/fail result if a threshold is configured.
 
+The raw poll payload also preserves `gpu.max_used_vram`, the largest
+individual-device value in each poll. Training suites use the maximum of this
+field across polls when a scorecard requires per-GPU peak used memory rather
+than node-total memory.
+
 ---
 
 ## How polling works

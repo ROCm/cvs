@@ -35,6 +35,7 @@ _RAW_GPU_FIELDS: list[tuple[str, str]] = [
     ("mm_activity", "%"),
     ("total_vram", "MB"),
     ("used_vram", "MB"),
+    ("max_used_vram", "MB"),
     ("free_vram", "MB"),
     ("energy_j", "J"),
 ]
@@ -101,6 +102,7 @@ def parse_gpu_metrics(raw: list) -> dict:
     raw: the parsed JSON list (one dict per GPU per host).
     Activity metrics (%) -> averaged across GPUs (only non-None values counted).
     Memory / energy metrics -> summed across GPUs (only non-None values counted).
+    ``gpu.max_used_vram`` preserves the largest individual-GPU used value.
     Empty/missing -> all None.
     """
     all_none = {f"gpu.{k}": None for k, _u in _RAW_GPU_FIELDS}
@@ -116,6 +118,7 @@ def parse_gpu_metrics(raw: list) -> dict:
     activity_counts: dict[str, int] = {k: 0 for k in activity_keys}
     vram_sums: dict[str, int | None] = {k: None for k in vram_keys}
     energy_sum: float | None = None
+    max_used_vram: int | None = None
 
     for entry in raw:
         usage = parse_usage(entry)
@@ -135,6 +138,9 @@ def parse_gpu_metrics(raw: list) -> dict:
                     vram_sums[key] = val
                 else:
                     vram_sums[key] += val
+        used = mem["gpu.used_vram"]
+        if used is not None:
+            max_used_vram = used if max_used_vram is None else max(max_used_vram, used)
 
         e = eng[energy_key]
         if e is not None:
@@ -150,6 +156,7 @@ def parse_gpu_metrics(raw: list) -> dict:
 
     for key in vram_keys:
         result[key] = vram_sums[key]
+    result["gpu.max_used_vram"] = max_used_vram
 
     result[energy_key] = energy_sum
     return result
@@ -220,16 +227,18 @@ def _mean(values: list) -> "float | None":
 
 def agg_readings(readings: list) -> dict:
     """Aggregate poll readings into derived metrics.
-    Returns dict with peak_gpu_memory_mb, gpu_compute_util_pct, gpu_bandwidth_util_pct.
+    Returns node-total and per-device peak memory plus utilization metrics.
     Any metric is None if no valid readings exist for it.
 
     Readings are raw snapshot dicts from capture_gpu_metrics (keys use gpu.* prefix).
     """
     used_vrams = [r.get("gpu.used_vram") for r in readings if r.get("gpu.used_vram") is not None]
+    max_used_vrams = [r.get("gpu.max_used_vram") for r in readings if r.get("gpu.max_used_vram") is not None]
     gfx_vals = [r.get("gpu.gfx_activity") for r in readings if r.get("gpu.gfx_activity") is not None]
     umc_vals = [r.get("gpu.umc_activity") for r in readings if r.get("gpu.umc_activity") is not None]
     return {
         "peak_gpu_memory_mb": max(used_vrams) if used_vrams else None,
+        "peak_gpu_memory_per_device_mb": max(max_used_vrams) if max_used_vrams else None,
         "gpu_compute_util_pct": _mean(gfx_vals),
         "gpu_bandwidth_util_pct": _mean(umc_vals),
     }
