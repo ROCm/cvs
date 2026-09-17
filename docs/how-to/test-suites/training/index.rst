@@ -1,6 +1,6 @@
 .. meta::
   :description: Run distributed training CVS test suites
-  :keywords: CVS, JAX, Megatron, TorchTitan, Aorta, training
+  :keywords: CVS, JAX, Megatron, TorchTitan, Aorta, PyTorch Vision, training
 
 ****************
 Training tests
@@ -24,6 +24,9 @@ Distributed training benchmarks validate multi-node GPU training before producti
    * - Megatron
      - :doc:`/how-to/test-suites/training/megatron`
      - :doc:`/reference/configuration-files/training/megatron`
+   * - PyTorch Vision
+     - :doc:`/how-to/test-suites/training/pytorch_vision`
+     - :doc:`/reference/configuration-files/training/pytorch_vision`
    * - TorchTitan
      - :doc:`/how-to/test-suites/training/torchtitan`
      - :doc:`/reference/configuration-files/training/torchtitan`

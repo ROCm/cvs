@@ -1,6 +1,6 @@
 .. meta::
   :description: Training test configuration schemas
-  :keywords: CVS, JAX, Megatron, TorchTitan, Aorta, config schema
+  :keywords: CVS, JAX, Megatron, TorchTitan, Aorta, PyTorch Vision, config schema
 
 ********
 Training
@@ -10,6 +10,7 @@ JSON configuration schemas for distributed training benchmarks under ``cvs/input
 
 - :doc:`JAX MaxText </reference/configuration-files/training/jaxmaxtext>` — MaxText pre-training (single-node and distributed)
 - :doc:`Megatron </reference/configuration-files/training/megatron>` — Llama and DeepSeek, single-node and distributed
+- :doc:`PyTorch Vision </reference/configuration-files/training/pytorch_vision>` — torchvision ResNet-50 on ImageNet via rocAL (single-node and distributed)
 - :doc:`TorchTitan </reference/configuration-files/training/torchtitan>` — TorchTitan pre-training (single-node and distributed)
 - :doc:`Aorta (Distributed Training) </reference/configuration-files/training/aorta>` — Aorta RCCL/training throughput benchmark
 

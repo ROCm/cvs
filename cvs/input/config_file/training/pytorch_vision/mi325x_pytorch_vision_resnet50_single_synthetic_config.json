@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "framework": "pytorch_vision_training",
+  "gpu_arch": "MI325X",
+  "enforce_thresholds": true,
+  "threshold_json": "mi325x_pytorch_vision_resnet50_single_synthetic_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "{shared_fs}/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "torchvision/resnet50",
+    "remote": 0
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "cvs_pytorch_vision_w1",
+    "image": "rocm/pytorch:rocm7.14_ubuntu24.04_py3.12_pytorch_release_2.12.0@sha256:c38eeda81d85f00fbe35d3d50ce42ce59c524e87d810624f4eb5c52fddb3b9ad",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}"
+        ],
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri"
+        ]
+      }
+    }
+  },
+  "training": {
+    "distributed": false,
+    "enabled": true,
+    "phase": "performance",
+    "run_mode": "perf",
+    "gpus_per_node": 8,
+    "steps": 50,
+    "warmup_steps": 10,
+    "num_classes": 1000,
+    "channels_last": true,
+    "learning_rate": 0.1,
+    "momentum": 0.9,
+    "weight_decay": 0.0001,
+    "timeout_s": 1800,
+    "omp_num_threads": 1,
+    "verify_dmesg": true,
+    "peak_tflops_per_gpu": 1307.4,
+    "checkpoint_enabled": true,
+    "checkpoint_keep_file": false,
+    "checkpoint_loss_tolerance": 1e-05,
+    "env_vars": {
+      "NNODES": "1",
+      "NODE_RANK": "0",
+      "NCCL_DEBUG": "WARN",
+      "HSA_NO_SCRATCH_RECLAIM": "1",
+      "RCCL_USE_AMD_SMI_LIB": "1"
+    },
+    "error_patterns": {
+      "NCCL ERROR": "NCCL ERROR|NCCL timeout|local work queue catastrophic error",
+      "GPU HW ERROR": "HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset",
+      "Python error": "Traceback \\(most recent call last\\)|ModuleNotFoundError|Fatal Python error",
+      "Resource exhaustion": "Out of memory|RESOURCE_EXHAUSTED|std::bad_alloc",
+      "Process crash": "Segmentation fault|SIGSEGV|core dumped"
+    },
+    "sweeps": [
+      {
+        "name": "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,MBS=256,GA=1,GBS=2048,RES=224",
+        "label": "W1-BF16-R224-MBS256-GA1",
+        "model": "resnet50",
+        "backend": "torchvision",
+        "precision": "BF16",
+        "batch_size": 256,
+        "image_size": 224,
+        "gradient_accumulation_steps": 1,
+        "training_flops_per_image": 24600000000
+      },
+      {
+        "name": "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,MBS=64,GA=4,GBS=2048,RES=224",
+        "label": "W1-BF16-R224-MBS64-GA4",
+        "model": "resnet50",
+        "backend": "torchvision",
+        "precision": "BF16",
+        "batch_size": 64,
+        "image_size": 224,
+        "gradient_accumulation_steps": 4,
+        "training_flops_per_image": 24600000000
+      }
+    ],
+    "enabled_sweep_list": [
+      "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,MBS=256,GA=1,GBS=2048,RES=224",
+      "NNODES=1,STEPS=50,MODEL=resnet50,PRECISION=BF16,MBS=64,GA=4,GBS=2048,RES=224"
+    ]
+  }
+}
