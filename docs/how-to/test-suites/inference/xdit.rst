@@ -109,8 +109,9 @@ Shipped config templates:
 
   FLUX.2 configs bind-mount ``cvs/lib/inference/xdit/scripts/flux2_example.py`` when the
   image does not ship ``/app/external/xdit/examples/flux2_example.py``. WAN Diffusers
-  suites require ``model_repo`` as an absolute host path on every node and typically
-  mount ``cvs/lib/inference/xdit/scripts/wan_i2v_example.py``.
+  typically mounts ``cvs/lib/inference/xdit/scripts/wan_i2v_example.py``.
+  ``server_params.model`` may be a Hugging Face repo id (downloaded at
+  ``test_verify_model``) or an absolute host path.
 
   On shared clusters, skip aggressive docker prune during cleanup:
 
@@ -282,8 +283,9 @@ Key stages to watch:
 
 - **Container lifecycle** — ``test_launch_container`` starts the scoped containers;
   ``test_teardown`` removes only the suite-owned per-run containers.
-- **Model preflight** — ``test_verify_model`` fails if the staged model is missing on
-  any participating node.
+- **Model preflight** — ``test_verify_model`` downloads a Hugging Face repo id into
+  ``HF_HOME`` when needed, or checks an absolute local model path on every
+  participating node.
 - **Parallelism** — ``test_verify_parallelism`` validates the configured topology.
 - **Benchmark** — ``test_run_benchmark`` executes torchrun inside the containers.
 - **Parse** — ``test_parse_thresholds`` compares average latency to the sibling

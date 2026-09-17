@@ -21,8 +21,9 @@ How to run: :doc:`/how-to/test-suites/inference/xdit`.
 .. note::
 
   - ``{user-id}``, ``{home}``, and ``{paths.*}`` placeholders are resolved at startup.
-  - Models must already be staged on every participating node. Prefer an absolute path in
-    ``model.id``; a Hugging Face repo id requires a pre-populated cache under ``paths.models_dir``.
+  - Models: ``server_params.model`` may be a Hugging Face repo id (downloaded into
+    ``paths.models_dir`` / ``HF_HOME`` during ``test_verify_model``) or an absolute host
+    path (bind-mounted at ``/model``). Gated repos need ``paths.hf_token_file``.
   - FLUX.1-dev and FLUX.2-dev share ``pytorch_xdit_flux_dev_*``; pick the matching JSON.
   - There is no packaged WAN-native distributed workload; only the five implemented suites
     have templates in this directory.
@@ -341,19 +342,13 @@ Diffusers xFuser WAN
    * - ``model_format``
      - ``diffusers``.
    * - ``wan_diffusers_launcher``
-     - ``xfuser_example``.
-   * - ``wan_diffusers_run_script``
-     - In-container path to ``wan_i2v_example.py`` (default ``/benchmark/wan_i2v_example.py``).
+     - ``xfuser_example``. Run script, save-video, and timing JSON paths use job defaults unless overridden.
    * - ``wan_xfuser_auto_input_image``
      - Generate an in-container input image when true.
    * - ``wan_xfuser_install_video_deps``
      - Install video encode deps inside the container when true.
    * - ``wan_xfuser_output_type``
      - ``pil``.
-   * - ``wan_diffusers_save_video_path``
-     - ``/outputs/results/video_i2v.mp4``.
-   * - ``wan_diffusers_timing_json_path``
-     - ``results/timing.json``.
    * - ``require_video_artifact``
      - Fail parse if ``video_i2v.mp4`` is missing.
    * - ``num_inference_steps``, ``warmup_steps``
@@ -415,7 +410,9 @@ Troubleshooting
   ``docker pull`` the configured ``container.image`` on every execution node.
 
 **Local model path not found**
-  Stage weights on every participating node. Diffusers WAN requires ``model.id`` as an absolute path.
+  For an absolute ``server_params.model``, stage that directory on every node.
+  For a Hugging Face repo id, ensure the container can reach the Hub and
+  ``paths.hf_token_file`` is set for gated models.
 
 **Parallel degree product != world_size**
   Align ``ulysses`` / ``ring`` (and FLUX pipefusion/TP/DP) with ``nnodes × torchrun_nproc``.
