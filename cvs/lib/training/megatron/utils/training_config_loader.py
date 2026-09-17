@@ -44,14 +44,9 @@ _DEFAULT_COMBO_KEYS = ("micro_batch_size", "global_batch_size", "precision")
 
 
 def _require_train_params_batch_precision(tp):
-    missing = [
-        key for key in _DEFAULT_COMBO_KEYS if (tp or {}).get(key) in (None, "")
-    ]
+    missing = [key for key in _DEFAULT_COMBO_KEYS if (tp or {}).get(key) in (None, "")]
     if missing:
-        raise ValueError(
-            "train_params requires "
-            + ", ".join(f"train_params.{key}" for key in missing)
-        )
+        raise ValueError("train_params requires " + ", ".join(f"train_params.{key}" for key in missing))
 
 
 def _fill_missing_combo_fields(combo, src):
@@ -92,9 +87,7 @@ def parse_sweep_cell_key(key):
 
 
 def _fill_combo_from_train_params(combo, tp):
-    return _fill_missing_combo_fields(
-        combo, {key: tp[key] for key in _DEFAULT_COMBO_KEYS}
-    )
+    return _fill_missing_combo_fields(combo, {key: tp[key] for key in _DEFAULT_COMBO_KEYS})
 
 
 def _implicit_default_sweep(data):
@@ -113,9 +106,7 @@ def _implicit_default_sweep(data):
         return data
     tp = data.get("train_params") or {}
     _require_train_params_batch_precision(tp)
-    sweep["combinations"] = {
-        DEFAULT_SWEEP_NAME: _fill_combo_from_train_params({}, tp)
-    }
+    sweep["combinations"] = {DEFAULT_SWEEP_NAME: _fill_combo_from_train_params({}, tp)}
     sweep["runs"] = [DEFAULT_SWEEP_NAME]
     data["sweep"] = sweep
     return data
@@ -164,9 +155,7 @@ def validate_sweep_selector(combo_keys, run_refs):
         raise ValueError(f"duplicate sweep.combinations keys: {dupes}")
     known = set(counts)
     if known and not list(run_refs):
-        raise ValueError(
-            "sweep.runs is empty; list at least one sweep.combinations key to execute"
-        )
+        raise ValueError("sweep.runs is empty; list at least one sweep.combinations key to execute")
     unknown = sorted(r for r in run_refs if r not in known)
     if unknown:
         raise ValueError(f"sweep.runs references unknown combinations: {unknown} (known: {sorted(known)})")
