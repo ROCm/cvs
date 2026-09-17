@@ -4,6 +4,7 @@ Usage: torchrun ... wan_i2v_example.py --model /path/to/model --input_image /pat
 """
 
 import argparse
+import dataclasses
 import glob
 import json
 import os
@@ -171,6 +172,14 @@ def _copy_first_mp4(output_directory, save_path):
     return True
 
 
+def _string_only_defaults(args_cls, names):
+    """Some xFuser builds default these fields to None but reject non-strings in __post_init__."""
+    if not dataclasses.is_dataclass(args_cls):
+        return {}
+    supported = {field.name for field in dataclasses.fields(args_cls)}
+    return {name: "" for name in names if name in supported}
+
+
 def _write_timing_json(timing_json_path, pipe_times):
     parent = os.path.dirname(timing_json_path)
     if parent:
@@ -197,21 +206,24 @@ def main():
     ring = args.ring_degree
     dit_parallel_size = ulysses * ring
 
-    config = xFuserArgs(
-        model="Wan2.2-I2V",
-        dit_parallel_size=dit_parallel_size,
-        ulysses_degree=ulysses,
-        ring_degree=ring,
-        height=args.height,
-        width=args.width,
-        num_frames=args.num_frames,
-        num_inference_steps=args.num_inference_steps,
-        prompt=args.prompt,
-        output_type=args.output_type,
-        warmup_steps=args.warmup_steps,
-        input_images=[args.input_image],
-        output_directory=args.output_directory,
-    )
+    config_kwargs = {
+        "model": "Wan2.2-I2V",
+        "dit_parallel_size": dit_parallel_size,
+        "ulysses_degree": ulysses,
+        "ring_degree": ring,
+        "height": args.height,
+        "width": args.width,
+        "num_frames": args.num_frames,
+        "num_inference_steps": args.num_inference_steps,
+        "prompt": args.prompt,
+        "output_type": args.output_type,
+        "warmup_steps": args.warmup_steps,
+        "input_images": [args.input_image],
+        "output_directory": args.output_directory,
+    }
+    config_kwargs.update(_string_only_defaults(xFuserArgs, ("determinism_check_report_ranks",)))
+
+    config = xFuserArgs(**config_kwargs)
 
     runner = xFuserModelRunner(vars(config))
     runner.model.settings.model_name = args.model
