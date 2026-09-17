@@ -6,7 +6,6 @@ All rights reserved.
 """
 
 import json
-import os
 
 import pytest
 
@@ -23,20 +22,6 @@ from cvs.tests.inference.xdit._shared import (
 )
 
 log = globals.log
-
-
-class _SecretValue:
-    def __init__(self, value):
-        self.value = value or ""
-
-    def __bool__(self):
-        return bool(self.value)
-
-    def __str__(self):
-        return self.value
-
-    def __repr__(self):
-        return "<redacted>"
 
 
 def _deep_merge(base, override):
@@ -117,18 +102,6 @@ def benchmark_params_dict(variant_config):
     if value is None and isinstance(variant_config, dict):
         value = variant_config.get("benchmark_params")
     return value
-
-
-@pytest.fixture(scope="module")
-def hf_token(inference_dict):
-    path = inference_dict.get("hf_token_file") or ""
-    if not path:
-        return _SecretValue("")
-    if not os.path.isfile(path):
-        log.warning("HF token file missing: %s", path)
-        return _SecretValue("")
-    with open(path, encoding="utf-8") as fp:
-        return _SecretValue(fp.read().strip())
 
 
 @pytest.fixture(scope="module")

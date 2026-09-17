@@ -20,16 +20,16 @@ def test_verify_prerequisites(orch, lifecycle, request):
     verify_prerequisites_stage(orch, lifecycle, request)
 
 
-def test_verify_model(orch, variant_config, xdit_spec, lifecycle, request, hf_token):
-    verify_model_stage(orch, variant_config, xdit_spec, lifecycle, request, hf_token)
+def test_verify_model(orch, variant_config, xdit_spec, lifecycle, request):
+    verify_model_stage(orch, variant_config, xdit_spec, lifecycle, request)
 
 
 def test_verify_parallelism(variant_config, cluster_dict, xdit_spec, lifecycle, request):
     verify_parallelism_stage(variant_config, cluster_dict, xdit_spec, lifecycle, request)
 
 
-def test_run_benchmark(orch, variant_config, hf_token, cluster_dict, xdit_spec, lifecycle, request):
-    run_benchmark_stage(orch, variant_config, hf_token, cluster_dict, xdit_spec, lifecycle, request)
+def test_run_benchmark(orch, variant_config, cluster_dict, xdit_spec, lifecycle, request):
+    run_benchmark_stage(orch, variant_config, cluster_dict, xdit_spec, lifecycle, request)
 
 
 def test_parse_thresholds(variant_config, gpu_type, xdit_spec, lifecycle, request):

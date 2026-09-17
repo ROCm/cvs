@@ -1,5 +1,7 @@
 """Unit tests for xDiT pytest wiring helpers."""
 
+import os
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -11,6 +13,7 @@ from cvs.tests.inference.xdit._shared import (
     _report_dimensions,
     _report_threshold,
     benchmark_params_from_variant,
+    hf_token_from_variant,
     inference_from_variant,
     log_topology,
     resolve_execution_hosts,
@@ -37,6 +40,24 @@ class TestVariantHelpers(unittest.TestCase):
 
         self.assertEqual(inference_from_variant(variant), variant["config"])
         self.assertEqual(benchmark_params_from_variant(variant), variant["benchmark_params"])
+
+    def test_reads_hf_token_from_paths_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            token_path = os.path.join(tmp, ".hf_token")
+            with open(token_path, "w", encoding="utf-8") as handle:
+                handle.write("hf_from_config\n")
+            variant = SimpleNamespace(
+                paths=SimpleNamespace(hf_token_file=token_path),
+                inference={"hf_token_file": token_path},
+            )
+            self.assertEqual(hf_token_from_variant(variant), "hf_from_config")
+
+    def test_missing_hf_token_file_returns_empty(self):
+        variant = SimpleNamespace(
+            paths=SimpleNamespace(hf_token_file="/missing/.hf_token"),
+            inference={"hf_token_file": "/missing/.hf_token"},
+        )
+        self.assertEqual(hf_token_from_variant(variant), "")
 
 
 class TestSuiteSpec(unittest.TestCase):

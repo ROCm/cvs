@@ -6,6 +6,7 @@ All rights reserved.
 """
 
 import inspect
+import os
 import shlex
 import time
 
@@ -187,7 +188,25 @@ def _model_host_path(orch, inference):
     return None
 
 
-def verify_model_stage(orch, variant, spec, lifecycle, request, hf_token=""):
+def hf_token_from_variant(variant):
+    path = ""
+    paths = value_from_variant(variant, "paths")
+    if paths is not None:
+        path = getattr(paths, "hf_token_file", None) or ""
+        if not path and isinstance(paths, dict):
+            path = paths.get("hf_token_file") or ""
+    if not path:
+        path = inference_from_variant(variant).get("hf_token_file") or ""
+    if not path:
+        return ""
+    if not os.path.isfile(path):
+        log.warning("HF token file missing: %s", path)
+        return ""
+    with open(path, encoding="utf-8") as fp:
+        return fp.read().strip()
+
+
+def verify_model_stage(orch, variant, spec, lifecycle, request):
     lifecycle.skip_if_failed()
     globals.error_list = []
     started = time.monotonic()
@@ -196,7 +215,7 @@ def verify_model_stage(orch, variant, spec, lifecycle, request, hf_token=""):
     if is_local_model_path(model_id):
         model_path = model_id
     elif inference.get("model_repo"):
-        snapshots, errors = download_hf_snapshot(orch, inference, token=hf_token)
+        snapshots, errors = download_hf_snapshot(orch, inference, token=hf_token_from_variant(variant))
         if errors:
             fail_test("; ".join(errors))
             _complete(lifecycle, request, "model_verify", started)
@@ -358,12 +377,13 @@ def _launch_accepts_orchestrator(launcher):
     return "orch" in parameters or "executor" in parameters
 
 
-def run_benchmark_stage(orch, variant, hf_token, cluster_dict, spec, lifecycle, request):
+def run_benchmark_stage(orch, variant, cluster_dict, spec, lifecycle, request):
     lifecycle.skip_if_failed()
     globals.error_list = []
     started = time.monotonic()
     inference = inference_from_variant(variant)
     params = benchmark_params_from_variant(variant)
+    hf_token = hf_token_from_variant(variant)
     launcher = launch_flux_benchmark if spec["family"] == "flux" else launch_wan_benchmark
     output_base_dir = inference.get("output_base_dir")
     if output_base_dir:
