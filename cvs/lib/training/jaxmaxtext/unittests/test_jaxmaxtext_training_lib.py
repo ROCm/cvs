@@ -14,7 +14,13 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import MaxTextTrainingJob, needs_hf_tokenizer
+from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import (
+    MaxTextTrainingJob,
+    _ALWAYS_ON_ERR_PATTERNS,
+    _NAN_INF_RE,
+    needs_hf_tokenizer,
+)
+from cvs.lib.utils.log_poller import LogPoller
 
 
 def _training(**overrides):
@@ -91,6 +97,30 @@ def _log(steps=3):
     return "\n".join(lines) + "\n"
 
 
+def _scan(job, host, i, text, log=None):
+    """Scan a chunk with the SAME wiring poll_for_completion gives the LogPoller.
+
+    Exercises jaxmaxtext's error-signature data (always-on + config error_patterns
+    + NaN/Inf) through the generic LogPoller.scan mechanism, built with the SAME
+    collision-safe merge (setdefault) production uses so built-ins are not clobbered.
+    """
+    error_patterns = {
+        "NaN/Inf in training metrics": _NAN_INF_RE.pattern,
+        **_ALWAYS_ON_ERR_PATTERNS,
+    }
+    for name, pattern in job.error_patterns.items():
+        error_patterns.setdefault(name, pattern)
+    LogPoller(
+        job.orch,
+        [job._node_log(k) for k in range(job.num_nodes)],
+        complete_pattern="x",
+        error_patterns=error_patterns,
+        error_label="Training",
+        timeout_s=1,
+        log=log,
+    ).scan(host, i, text)
+
+
 class ConstructorTests(unittest.TestCase):
     def test_node_and_gpu_counts(self):
         job, _ = _make_job(hosts=["h0", "h1"])
@@ -122,46 +152,24 @@ class StopTrainingTests(unittest.TestCase):
         self.assertIn("[t]raining_launcher_node", cmd)
 
 
-class IsCompleteTests(unittest.TestCase):
-    def test_all_nodes_complete(self):
-        job, orch = _make_job(hosts=["h0", "h1"])
-        orch.exec_cmd_list.return_value = {"h0": "1", "h1": "1"}
-        self.assertTrue(job.is_complete())
-
-    def test_one_node_incomplete(self):
-        job, orch = _make_job(hosts=["h0", "h1"])
-        orch.exec_cmd_list.return_value = {"h0": "1", "h1": "0"}
-        self.assertFalse(job.is_complete())
-
-    def test_missing_host_output(self):
-        job, orch = _make_job(hosts=["h0", "h1"])
-        orch.exec_cmd_list.return_value = {"h0": "1"}
-        self.assertFalse(job.is_complete())
-
-    def test_dict_shaped_result(self):
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": {"output": "1"}}
-        self.assertTrue(job.is_complete())
-
-
 class ScanForErrorsTests(unittest.TestCase):
     def test_clean_log_no_raise(self):
         job, _ = _make_job(hosts=["h0"])
-        job._scan_chunk_for_errors("h0", 0, _log())  # should not raise
+        _scan(job, "h0", 0, _log())  # should not raise
 
     def test_empty_chunk_no_raise(self):
         job, _ = _make_job(hosts=["h0"])
-        job._scan_chunk_for_errors("h0", 0, "")  # should not raise
+        _scan(job, "h0", 0, "")  # should not raise
 
     def test_nccl_error_raises(self):
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "some log\nNCCL ERROR: unhandled\n")
+            _scan(job, "h0", 0, "some log\nNCCL ERROR: unhandled\n")
 
     def test_nan_metric_raises(self):
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "completed step: 1, TFLOP/s/device: NaN\n")
+            _scan(job, "h0", 0, "completed step: 1, TFLOP/s/device: NaN\n")
 
     def test_nan_loss_raises_even_when_throughput_numeric(self):
         # Real failure signature: loss/lm_loss/perplexity go NaN while
@@ -173,12 +181,12 @@ class ScanForErrorsTests(unittest.TestCase):
             "lm_loss: nan, perplexity: nan, moe_lb_loss: 0.000\n"
         )
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, line)
+            _scan(job, "h0", 0, line)
 
     def test_aborting_nan_loss_line_raises(self):
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "metric_logger.py:270] Aborting training due to NaN loss.\n")
+            _scan(job, "h0", 0, "metric_logger.py:270] Aborting training due to NaN loss.\n")
 
     def test_failure_chunk_is_logged_before_raising(self):
         # The offending chunk (e.g. a compile traceback) must be logged so it
@@ -186,9 +194,9 @@ class ScanForErrorsTests(unittest.TestCase):
         # can miss the root cause, and non-node-0 chunks are not otherwise streamed.
         job, _ = _make_job(hosts=["h0", "h1"])
         chunk = "some log\nValueError: Compiler params for platform tpu cannot be used for gpu lowering.\ngrpc tail\n"
-        with patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.log") as mock_log:
-            with self.assertRaises(RuntimeError):
-                job._scan_chunk_for_errors("h1", 1, chunk)
+        mock_log = MagicMock()
+        with self.assertRaises(RuntimeError):
+            _scan(job, "h1", 1, chunk, log=mock_log)
         logged = " ".join(str(c) for c in mock_log.error.call_args_list)
         self.assertIn("FAILURE chunk", logged)
         self.assertIn("Compiler params for platform tpu", logged)
@@ -197,7 +205,8 @@ class ScanForErrorsTests(unittest.TestCase):
         # Regression guard: valid numeric metrics (incl. a big perplexity) must
         # NOT trip the NaN detector.
         job, _ = _make_job(hosts=["h0"])
-        job._scan_chunk_for_errors(
+        _scan(
+            job,
             "h0",
             0,
             "completed step: 2, TFLOP/s/device: 38.530, Tokens/s/device: 296.258, "
@@ -208,22 +217,22 @@ class ScanForErrorsTests(unittest.TestCase):
         # A config-provided error_patterns set fully REPLACES the built-in defaults.
         job, _ = _make_job(hosts=["h0"], error_patterns={"custom": "MY_CUSTOM_ERR"})
         # The default NCCL signature is no longer active -> no raise.
-        job._scan_chunk_for_errors("h0", 0, "some log\nNCCL ERROR: unhandled\n")
+        _scan(job, "h0", 0, "some log\nNCCL ERROR: unhandled\n")
         # The custom signature IS active -> raises.
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "boom MY_CUSTOM_ERR here\n")
+            _scan(job, "h0", 0, "boom MY_CUSTOM_ERR here\n")
 
     def test_default_error_patterns_used_when_config_empty(self):
         # No config error_patterns -> built-in defaults apply.
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "RESOURCE_EXHAUSTED: Out of memory\n")
+            _scan(job, "h0", 0, "RESOURCE_EXHAUSTED: Out of memory\n")
 
     def test_default_segfault_pattern_raises(self):
         # segfault is part of the built-in default signatures.
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "worker: Segmentation fault (core dumped)\n")
+            _scan(job, "h0", 0, "worker: Segmentation fault (core dumped)\n")
 
     def test_import_error_caught_by_always_on_even_with_custom_patterns(self):
         # A config that fully overrides error_patterns (no ImportError/Traceback)
@@ -236,7 +245,15 @@ class ScanForErrorsTests(unittest.TestCase):
             "ImportError: cannot import name 'must_fuse_call' from 'jax.experimental.xla_metadata'\n"
         )
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, chunk)
+            _scan(job, "h0", 0, chunk)
+
+    def test_colliding_config_key_cannot_disable_always_on_crash_detection(self):
+        # A config that reuses the always-on 'python crash' KEY with a harmless
+        # pattern must NOT disable fast-fail on a real traceback -- the built-in
+        # value wins the collision, so the crash is still caught.
+        job, _ = _make_job(hosts=["h0"], error_patterns={"python crash": "NEVER_MATCHES_THIS", "custom": "MY_ERR"})
+        with self.assertRaises(RuntimeError):
+            _scan(job, "h0", 0, "Traceback (most recent call last):\n  File x\nModuleNotFoundError: no mod\n")
 
     def test_jax_distributed_fatal_caught_by_always_on(self):
         # The glog FATAL from a JAX distributed coordination death must fail fast
@@ -248,7 +265,7 @@ class ScanForErrorsTests(unittest.TestCase):
             "RPC: /tensorflow.CoordinationService/RegisterTask\n"
         )
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, chunk)
+            _scan(job, "h0", 0, chunk)
 
     def test_benign_coordination_shutdown_noise_not_flagged(self):
         # After a run completes, JAX emits benign WARNINGs as peers exit; these
@@ -262,36 +279,7 @@ class ScanForErrorsTests(unittest.TestCase):
             "UNAVAILABLE: failed to connect to all addresses ... Connection refused\n"
         )
         # must NOT raise
-        job._scan_chunk_for_errors("h0", 0, chunk)
-
-
-class DrainNewLogLinesTests(unittest.TestCase):
-    def test_advances_cursor_and_returns_new_text(self):
-        job, orch = _make_job(hosts=["h0", "h1"])
-        orch.exec_cmd_list.return_value = {"h0": "l1\nl2\nl3\n", "h1": "a\nb\n"}
-        new = job._drain_new_log_lines()
-        self.assertEqual(new[0], "l1\nl2\nl3\n")
-        self.assertEqual(new[1], "a\nb\n")
-        # cursor advances by the number of lines read on each node.
-        self.assertEqual(job._log_line_cursor, [3, 2])
-
-    def test_uses_cursor_offset_in_tail_and_no_console_echo(self):
-        job, orch = _make_job(hosts=["h0"])
-        job._log_line_cursor = [5]
-        orch.exec_cmd_list.return_value = {"h0": "l6\n"}
-        job._drain_new_log_lines()
-        # tail starts at the line after the cursor (5 -> +6) ...
-        cmd = orch.exec_cmd_list.call_args.args[0][0]
-        self.assertIn("tail -n +6", cmd)
-        # ... and the bulk read is NOT echoed to the console.
-        self.assertEqual(orch.exec_cmd_list.call_args.kwargs.get("print_console"), False)
-
-    def test_empty_output_leaves_cursor_unchanged(self):
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": ""}
-        new = job._drain_new_log_lines()
-        self.assertEqual(new, {})
-        self.assertEqual(job._log_line_cursor, [0])
+        _scan(job, "h0", 0, chunk)
 
 
 class ParseResultsTests(unittest.TestCase):
@@ -694,41 +682,46 @@ class StartTrainingTests(unittest.TestCase):
 class PollForCompletionTests(unittest.TestCase):
     _LIB = "cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib"
 
-    @patch(f"{_LIB}.time.sleep")
-    def test_completion_path_scans_final_drain_for_nan(self, _sleep):
-        # The chunk fetched on the completion path (final "completed step" +
-        # anything after) must be error-scanned before declaring success.
-        job, _ = _make_job(hosts=["h0"])
-        job.is_complete = MagicMock(return_value=True)
-        job._drain_new_log_lines = MagicMock(
-            side_effect=[
-                {},  # loop-body drain: nothing new yet
-                {0: "completed step: 2, TFLOP/s/device: NaN\n"},  # completion-path drain
-            ]
-        )
-        with self.assertRaises(RuntimeError):
-            job.poll_for_completion()
+    @patch(f"{_LIB}.LogPoller")
+    def test_delegates_to_log_poller_with_expected_wiring(self, mock_poller_cls):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        job.poll_for_completion(timeout_s=1234)
+        mock_poller_cls.assert_called_once()
+        args, kwargs = mock_poller_cls.call_args
+        self.assertIs(args[0], orch)  # orchestrator
+        self.assertEqual(args[1], [job._node_log(0), job._node_log(1)])  # per-node logs
+        self.assertIn("completed step", kwargs["complete_pattern"])
+        self.assertEqual(kwargs["complete_policy"], "all")
+        # error_patterns is the merged dict: NaN/Inf + always-on + config.
+        ep = kwargs["error_patterns"]
+        self.assertEqual(ep["NaN/Inf in training metrics"], _NAN_INF_RE.pattern)
+        for k, v in _ALWAYS_ON_ERR_PATTERNS.items():
+            self.assertEqual(ep[k], v)
+        for k, v in job.error_patterns.items():
+            self.assertEqual(ep[k], v)
+        self.assertEqual(kwargs["stream_node"], 0)
+        # Defaults are passed explicitly so adopters see the knobs.
+        self.assertIsNone(kwargs["ignore_error_patterns"])
+        self.assertTrue(kwargs["silent_poll"])
+        self.assertEqual(kwargs["timeout_s"], 1234)
+        mock_poller_cls.return_value.poll.assert_called_once()
 
-    @patch(f"{_LIB}.time.sleep")
-    def test_completion_path_scans_worker_node_not_just_node0(self, _sleep):
-        # A worker-only (non-0) error in the completion window must still raise.
-        job, _ = _make_job(hosts=["h0", "h1"])
-        job.is_complete = MagicMock(return_value=True)
-        job._drain_new_log_lines = MagicMock(
-            side_effect=[
-                {},
-                {1: "some log\nNCCL ERROR: boom\n"},
-            ]
-        )
-        with self.assertRaises(RuntimeError):
-            job.poll_for_completion()
+    @patch(f"{_LIB}.LogPoller")
+    def test_config_cannot_clobber_always_on_signatures(self, mock_poller_cls):
+        # A config error_patterns key that collides with an always-on key must NOT
+        # override the built-in fast-fail pattern; non-colliding keys still apply.
+        collide = next(iter(_ALWAYS_ON_ERR_PATTERNS))
+        job, _ = _make_job(hosts=["h0"], error_patterns={collide: "CONFIG_OVERRIDE", "custom": "MY_ERR"})
+        job.poll_for_completion(timeout_s=1)
+        ep = mock_poller_cls.call_args.kwargs["error_patterns"]
+        self.assertEqual(ep[collide], _ALWAYS_ON_ERR_PATTERNS[collide])  # built-in wins
+        self.assertEqual(ep["custom"], "MY_ERR")  # non-colliding config key kept
 
-    @patch(f"{_LIB}.time.sleep")
-    def test_clean_completion_returns(self, _sleep):
+    @patch(f"{_LIB}.LogPoller")
+    def test_default_timeout_is_the_poll_budget(self, mock_poller_cls):
         job, _ = _make_job(hosts=["h0"])
-        job.is_complete = MagicMock(return_value=True)
-        job._drain_new_log_lines = MagicMock(side_effect=[{}, {0: _log()}])
-        job.poll_for_completion()  # should not raise
+        job.poll_for_completion()
+        self.assertEqual(mock_poller_cls.call_args.kwargs["timeout_s"], job._poll_count * job._poll_wait_s)
 
 
 class ScanDmesgForErrorsTests(unittest.TestCase):
