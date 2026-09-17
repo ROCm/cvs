@@ -16,6 +16,104 @@ from cvs.lib.inference.xdit.pytorch_xdit_wan_job import (
 )
 from cvs.lib.utils_lib import wan_hf_snapshot_offline_check_commands
 
+HF_SNAPSHOT_MARKER = "HF_SNAPSHOT="
+HF_DOWNLOAD_ERROR_MARKER = "HF_DOWNLOAD_ERROR="
+HF_SNAPSHOT_DOWNLOAD_TIMEOUT_S = 14400
+_HF_DOWNLOAD_SCRIPT = """
+import os
+import sys
+
+try:
+    from huggingface_hub import snapshot_download
+except ImportError as exc:
+    print("HF_DOWNLOAD_ERROR=huggingface_hub is required in the container: %s" % exc)
+    raise SystemExit(1)
+
+kwargs = {"repo_id": os.environ["XDIT_HF_REPO"]}
+revision = os.environ.get("XDIT_HF_REVISION") or ""
+if revision:
+    kwargs["revision"] = revision
+try:
+    path = snapshot_download(**kwargs)
+except Exception as exc:
+    print("HF_DOWNLOAD_ERROR=%s" % exc)
+    raise SystemExit(1)
+print("HF_SNAPSHOT=%s" % path)
+"""
+
+
+def is_local_model_path(model):
+    return isinstance(model, str) and model.startswith("/")
+
+
+def _exec_text(value):
+    if isinstance(value, dict):
+        return str(value.get("output") or value.get("stdout") or "")
+    return str(value or "")
+
+
+def _secret_str(value):
+    if value is None:
+        return ""
+    return str(value)
+
+
+def build_hf_snapshot_download_cmd(repo, revision="", hf_home="/hf_home", token=""):
+    parts = [
+        f"HF_HOME={shlex.quote(hf_home)}",
+        f"XDIT_HF_REPO={shlex.quote(repo)}",
+    ]
+    if revision:
+        parts.append(f"XDIT_HF_REVISION={shlex.quote(revision)}")
+    token = _secret_str(token)
+    if token:
+        parts.append(f"HF_TOKEN={shlex.quote(token)}")
+    parts.append("python -c")
+    parts.append(shlex.quote(_HF_DOWNLOAD_SCRIPT.strip()))
+    return " ".join(parts)
+
+
+def parse_hf_snapshot_output(output):
+    text = _exec_text(output)
+    snapshot = None
+    error = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(HF_SNAPSHOT_MARKER):
+            snapshot = stripped[len(HF_SNAPSHOT_MARKER) :].strip()
+        elif stripped.startswith(HF_DOWNLOAD_ERROR_MARKER):
+            error = stripped[len(HF_DOWNLOAD_ERROR_MARKER) :].strip()
+    return snapshot, error
+
+
+def container_snapshot_to_host(container_path, inference):
+    container_path = str(container_path or "").rstrip("/")
+    hf_home = str(inference.get("hf_home") or "").rstrip("/")
+    hf_home_container = str(inference.get("hf_home_container") or "/hf_home").rstrip("/")
+    if not container_path or not hf_home:
+        return None
+    if container_path == hf_home_container or container_path.startswith(hf_home_container + "/"):
+        return hf_home + container_path[len(hf_home_container) :]
+    return None
+
+
+def download_hf_snapshot(orch, inference, token="", timeout=HF_SNAPSHOT_DOWNLOAD_TIMEOUT_S):
+    repo = str(inference.get("model_repo") or "")
+    revision = str(inference.get("model_rev") or "")
+    hf_home = str(inference.get("hf_home_container") or "/hf_home")
+    cmd = build_hf_snapshot_download_cmd(repo, revision=revision, hf_home=hf_home, token=token)
+    results = orch.exec(cmd, timeout=timeout)
+    snapshots = {}
+    errors = []
+    for host, output in (results or {}).items():
+        snapshot, error = parse_hf_snapshot_output(output)
+        if snapshot:
+            snapshots[host] = snapshot
+            continue
+        detail = error or _exec_text(output).strip() or "no snapshot path printed"
+        errors.append(f"{host}: Hugging Face download of {repo!r} failed: {detail}")
+    return snapshots, errors
+
 
 def build_diffusers_local_model_required_checks(host_model_path: str) -> Dict[str, str]:
     """Shell checks for a complete diffusers model tree (FLUX, WAN Diffusers)."""

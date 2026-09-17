@@ -21,6 +21,9 @@ from cvs.lib.inference.xdit.pytorch_xdit_flux_job import (
 )
 from cvs.lib.inference.xdit.pytorch_xdit_model_verify import (
     build_diffusers_local_model_required_checks,
+    container_snapshot_to_host,
+    download_hf_snapshot,
+    is_local_model_path,
     resolve_wan_local_model_required_checks,
     verify_required_checks_on_nodes,
 )
@@ -184,14 +187,28 @@ def _model_host_path(orch, inference):
     return None
 
 
-def verify_model_stage(orch, variant, spec, lifecycle, request):
+def verify_model_stage(orch, variant, spec, lifecycle, request, hf_token=""):
     lifecycle.skip_if_failed()
     globals.error_list = []
     started = time.monotonic()
     inference = inference_from_variant(variant)
-    model_path = _model_host_path(orch, inference)
+    model_id = inference.get("_resolved_model_mount_host") or inference.get("model_repo")
+    if is_local_model_path(model_id):
+        model_path = model_id
+    elif inference.get("model_repo"):
+        snapshots, errors = download_hf_snapshot(orch, inference, token=hf_token)
+        if errors:
+            fail_test("; ".join(errors))
+            _complete(lifecycle, request, "model_verify", started)
+            return
+        container_snapshot = next(iter(snapshots.values()), "")
+        inference["_resolved_model_path_container"] = container_snapshot
+        inference["_resolved_ckpt_dir_container"] = container_snapshot
+        model_path = container_snapshot_to_host(container_snapshot, inference) or _model_host_path(orch, inference)
+    else:
+        model_path = None
     if not model_path:
-        fail_test("xDiT model must be an absolute local path or a pinned offline HF snapshot")
+        fail_test("xDiT server_params.model must be a Hugging Face repo id or an absolute host path")
         _complete(lifecycle, request, "model_verify", started)
         return
 
@@ -221,7 +238,7 @@ def verify_model_stage(orch, variant, spec, lifecycle, request):
     if error:
         fail_test(error)
     else:
-        local_model = str(inference.get("model_repo", "")).startswith("/")
+        local_model = is_local_model_path(inference.get("model_repo", ""))
         if local_model:
             inference["_resolved_model_mount_host"] = model_path
         if spec["family"] == "flux":

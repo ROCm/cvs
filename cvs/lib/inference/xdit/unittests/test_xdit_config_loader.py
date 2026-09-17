@@ -218,6 +218,8 @@ class TestXditConfigLoader(unittest.TestCase):
         self.assertEqual(variant.topology, "single")
         self.assertEqual(variant.model.id, "black-forest-labs/FLUX.1-dev")
         self.assertEqual(variant.inference["benchmark_serv_node"], "node-a")
+        container = orchestrator_container_from_variant(variant)
+        self.assertEqual(container["env"]["HF_HOME"], "/hf_home")
         self.assertEqual(variant.benchmark_params["flux1_dev_t2i"]["torchrun_nproc"], 8)
         self.assertEqual(
             variant.benchmark_params["flux1_dev_t2i"]["expected_results"],

@@ -1,5 +1,5 @@
 {
-  "_comment": "WAN 2.2 Diffusers xFuser distributed workload. Replace every <changeme> NCCL/network field before running.",
+  "_comment": "WAN 2.2 Diffusers xFuser distributed workload. server_params.model is a Hugging Face repo id or an absolute host path. Replace every <changeme> NCCL/network field before running.",
   "gpu_name" : "<changeme> mi325",
   "enforce_thresholds": true,
   "threshold_json": "mi325_pytorch_xdit_wan22_14b_diffusers_distributed_threshold.json",

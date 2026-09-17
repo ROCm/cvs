@@ -1,5 +1,5 @@
 {
-  "_comment": "WAN 2.2 Diffusers xFuser single-node workload. server_params.model must be an absolute host path on every node.",
+  "_comment": "WAN 2.2 Diffusers xFuser single-node workload. server_params.model is a Hugging Face repo id or an absolute host path.",
   "gpu_name" : "<changeme> mi325",
   "enforce_thresholds": true,
   "threshold_json": "mi325_pytorch_xdit_wan22_14b_diffusers_single_threshold.json",

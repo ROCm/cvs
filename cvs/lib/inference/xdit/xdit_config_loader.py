@@ -275,6 +275,14 @@ def _unified_runtime_views(raw):
         "hf_home_container",
         _mounted_path(volume_dict, paths.get("models_dir"), "/hf_home"),
     )
+    env_dict = _merged_container_env(container)
+    env_dict.setdefault("HF_HOME", inference["hf_home_container"])
+    runtime = dict(container.get("runtime") or {})
+    args = dict(runtime.get("args") or {})
+    args["env"] = env_dict
+    runtime["args"] = args
+    container["runtime"] = runtime
+    raw["container"] = container
     inference.setdefault("output_base_dir", paths.get("log_dir"))
     inference.setdefault(
         "output_base_dir_container",
