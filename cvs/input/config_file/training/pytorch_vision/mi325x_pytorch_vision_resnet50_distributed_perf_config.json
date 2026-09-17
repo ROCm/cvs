@@ -97,6 +97,10 @@
     "enabled_sweep_list": [
       "NNODES=2,STEPS=50,MODEL=resnet50,DATA=rocAL-GPU-STANDARD,PRECISION=BF16,MBS=128,GA=1,GBS=2048,RES=224"
     ],
-    "master_port": 29500
+    "master_port": 29500,
+    "scaling_baseline": {
+      "images_per_sec_total": 0.0,
+      "num_nodes": 1
+    }
   }
 }

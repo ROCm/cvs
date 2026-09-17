@@ -87,6 +87,13 @@ Training block
 - ``accuracy``: explicit final Top-1 and Top-5 qualification targets.
 - ``convergence``: optional Top-1 and evaluation-loss targets, and
   ``stop_when_reached``.
+- ``scaling_baseline``: reference throughput for scaling efficiency %.
+  ``images_per_sec_total`` is the TOTAL images/sec from a prior run on
+  ``num_nodes`` nodes, taken from that run's ``results.json``. Efficiency % =
+  throughput_N / ((N / num_nodes) x images_per_sec_total) x 100, matching the
+  JAX MaxText definition so the two suites are comparable. Leave
+  ``images_per_sec_total`` at ``0.0`` to disable it; the metric is then omitted
+  rather than reported as a misleading zero.
 - ``codecarbon``: CodeCarbon 3.2.4 AMDSMI activation, sampling, and
   required/optional policy.
 - ``env_vars``: exported only for the training process. ``NNODES`` and

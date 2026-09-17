@@ -160,6 +160,13 @@ collapse a multi-node launch to one rank.
 The dataset path must resolve identically on every node, and rank zero owns the
 result artifact.
 
+Scaling efficiency needs a calibrated reference. Set
+``training.scaling_baseline.images_per_sec_total`` from a prior single-node
+run's ``results.json``, and ``num_nodes`` to that run's node count, before the
+metric appears. Left at ``0.0`` it is omitted rather than reported as a
+misleading zero, so a distributed run never claims an efficiency it cannot
+substantiate.
+
 Metrics and PASS/FAIL
 =====================
 

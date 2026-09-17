@@ -74,6 +74,7 @@ def _variant():
         checkpoint_loss_tolerance=1e-5,
         loss_curve=SimpleNamespace(sample_every_steps=1, minimum_points=2),
         accuracy=SimpleNamespace(target_top1_pct=None, target_top5_pct=None),
+        scaling_baseline=SimpleNamespace(images_per_sec_total=0.0, num_nodes=1),
         convergence=SimpleNamespace(
             target_top1_pct=None,
             target_eval_loss=None,
@@ -281,6 +282,26 @@ class TestPyTorchVisionJob(unittest.TestCase):
         }
         results = PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").parse_results()
         self.assertEqual(results["node0"]["training.images_per_sec"], 1.0)
+
+    def test_scaling_efficiency_absent_without_a_calibrated_baseline(self):
+        """The default baseline is 0.0, so the metric must simply not appear
+        rather than show up as a zero that a threshold could gate on."""
+        response = {"node0": {"exit_code": 0, "output": json.dumps(_artifact())}}
+        results = PyTorchVisionJob(FakeOrchestrator(response), _variant(), "w1").parse_results()
+        self.assertNotIn("training.scaling_efficiency_pct", results["node0"])
+
+    def test_scaling_efficiency_uses_node_count_and_configured_baseline(self):
+        variant = _variant()
+        # Artifact reports 1.0 images/sec; a 0.5 single-node reference over two
+        # nodes gives an ideal of 1.0, so efficiency is 100%.
+        variant.training.scaling_baseline = SimpleNamespace(images_per_sec_total=0.5, num_nodes=1)
+        response = {"node0": {"exit_code": 0, "output": json.dumps(_artifact())}}
+        orch = FakeOrchestrator(response)
+        orch.hosts = ["node0", "node1"]
+
+        results = PyTorchVisionJob(orch, variant, "w1").parse_results()
+
+        self.assertAlmostEqual(results["node0"]["training.scaling_efficiency_pct"], 100.0)
 
     def test_energy_efficiency_uses_artifact_processed_image_count(self):
         variant = _variant()

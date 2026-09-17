@@ -1,6 +1,7 @@
 import unittest
 
 from cvs.lib.training.pytorch_vision.utils.metrics import (
+    compute_scaling_efficiency,
     ARTIFACT_METRICS,
     accuracy_from_counts,
     codecarbon_tracking_active,
@@ -113,3 +114,36 @@ class TestTrainingMetrics(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestScalingEfficiency(unittest.TestCase):
+    """P1 scorecard row: efficiency % = throughput_N / ((N/ref_N) * throughput_ref)."""
+
+    def test_perfectly_linear_scaling_is_100_pct(self):
+        self.assertAlmostEqual(compute_scaling_efficiency(20000.0, 2, 10000.0, 1), 100.0)
+
+    def test_sublinear_scaling_reports_below_100(self):
+        self.assertAlmostEqual(compute_scaling_efficiency(18000.0, 2, 10000.0, 1), 90.0)
+
+    def test_superlinear_scaling_reports_above_100(self):
+        self.assertAlmostEqual(compute_scaling_efficiency(21000.0, 2, 10000.0, 1), 105.0)
+
+    def test_honours_a_multi_node_reference(self):
+        """A 2-node reference scaled to 4 nodes must not be treated as 1-node."""
+        self.assertAlmostEqual(compute_scaling_efficiency(40000.0, 4, 20000.0, 2), 100.0)
+
+    def test_single_node_against_itself_is_100_pct(self):
+        self.assertAlmostEqual(compute_scaling_efficiency(10000.0, 1, 10000.0, 1), 100.0)
+
+    def test_uncalibrated_baseline_is_record_only(self):
+        """A zero baseline must report nothing rather than divide by zero or
+        invent a number that could then be gated on."""
+        self.assertIsNone(compute_scaling_efficiency(20000.0, 2, 0.0, 1))
+
+    def test_missing_throughput_is_record_only(self):
+        self.assertIsNone(compute_scaling_efficiency(None, 2, 10000.0, 1))
+        self.assertIsNone(compute_scaling_efficiency(0.0, 2, 10000.0, 1))
+
+    def test_missing_node_counts_are_record_only(self):
+        self.assertIsNone(compute_scaling_efficiency(20000.0, 0, 10000.0, 1))
+        self.assertIsNone(compute_scaling_efficiency(20000.0, 2, 10000.0, 0))

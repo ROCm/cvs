@@ -43,6 +43,21 @@ class ConvergenceConfig(_Forbid):
         return self
 
 
+class ScalingBaselineConfig(_Forbid):
+    """Reference (typically single-node) throughput for scaling-efficiency %.
+
+    ``images_per_sec_total`` is the TOTAL images/sec measured on a prior run of
+    ``num_nodes`` nodes, sourced from that run's results.json. Scaling
+    efficiency % = throughput_N / ((N / num_nodes) * images_per_sec_total) * 100.
+
+    Leave ``images_per_sec_total`` at 0.0 to disable the metric; it then reports
+    record-only rather than gating on an uncalibrated baseline.
+    """
+
+    images_per_sec_total: float = Field(default=0.0, ge=0)
+    num_nodes: int = Field(default=1, gt=0)
+
+
 class AccuracyConfig(_Forbid):
     target_top1_pct: Optional[float] = Field(default=None, ge=0, le=100)
     target_top5_pct: Optional[float] = Field(default=None, ge=0, le=100)
@@ -176,6 +191,7 @@ class VisionTrainingConfig(_Forbid):
     checkpoint_loss_tolerance: float = Field(default=1e-5, ge=0)
     loss_curve: LossCurveConfig = Field(default_factory=LossCurveConfig)
     accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
+    scaling_baseline: ScalingBaselineConfig = Field(default_factory=ScalingBaselineConfig)
     convergence: ConvergenceConfig = Field(default_factory=ConvergenceConfig)
     codecarbon: CodeCarbonConfig = Field(default_factory=CodeCarbonConfig)
     env_vars: Dict[str, str] = Field(default_factory=dict)

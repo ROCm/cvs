@@ -27,6 +27,7 @@ ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (
 )
 OPTIONAL_ARTIFACT_METRICS: Tuple[Tuple[str, str], ...] = (
     ("data_loader_images_per_sec", "images/s"),
+    ("scaling_efficiency_pct", "%"),
     ("peak_memory_used_mb", "MB"),
     ("learning_rate_initial", "-"),
     ("learning_rate_final", "-"),
@@ -103,6 +104,7 @@ RESULTS_COLUMNS = (
     ("Loss @1000", "training.loss_step_1000"),
     ("Loss @5000", "training.loss_step_5000"),
     ("Data loader images/s", "training.data_loader_images_per_sec"),
+    ("Scaling efficiency (%)", "training.scaling_efficiency_pct"),
     ("Initial LR", "training.learning_rate_initial"),
     ("Final LR", "training.learning_rate_final"),
     ("Top-1 (%)", "training.top1_accuracy_pct"),
@@ -119,6 +121,7 @@ METRIC_TIERS = {
     "throughput": (
         "images_per_sec",
         "images_per_sec_per_gpu",
+        "scaling_efficiency_pct",
         "tflops_per_sec_per_gpu",
         "mfu_pct",
     ),
@@ -195,6 +198,38 @@ def gradient_accumulation_overhead_pct(baseline_step_ms: float, accumulated_step
     if not math.isfinite(accumulated) or accumulated <= 0:
         raise ValueError(f"accumulated step time must be finite and positive, got {accumulated_step_ms!r}")
     return (accumulated / baseline - 1.0) * 100.0
+
+
+def compute_scaling_efficiency(
+    images_per_sec_total,
+    num_nodes,
+    baseline_images_per_sec_total,
+    baseline_num_nodes=1,
+):
+    """Scaling efficiency % for a training run.
+
+    efficiency % = throughput_N / ((N / ref_N) * throughput_ref) * 100
+
+    where throughput_N is this run's total images/sec on ``num_nodes`` nodes and
+    throughput_ref is the reference (typically single-node) total images/sec
+    measured on ``baseline_num_nodes`` nodes. 100% means perfectly linear
+    scaling; lower means communication or straggler overhead is eating into the
+    added nodes.
+
+    Mirrors the JAX MaxText definition so scaling numbers are comparable across
+    the two training suites.
+
+    Returns None (record-only) when any input is missing or non-positive, so an
+    uncalibrated baseline never produces a misleading number or a crash.
+    """
+    if not images_per_sec_total or not baseline_images_per_sec_total:
+        return None
+    if not num_nodes or not baseline_num_nodes:
+        return None
+    ideal = (num_nodes / baseline_num_nodes) * baseline_images_per_sec_total
+    if ideal <= 0:
+        return None
+    return images_per_sec_total / ideal * 100.0
 
 
 def throughput_overhead_pct(baseline_images_per_sec: float, candidate_images_per_sec: float) -> float:

@@ -12,7 +12,11 @@ import time
 import uuid
 from pathlib import Path
 
-from cvs.lib.training.pytorch_vision.utils.metrics import parse_codecarbon_metrics, to_training_metrics
+from cvs.lib.training.pytorch_vision.utils.metrics import (
+    compute_scaling_efficiency,
+    parse_codecarbon_metrics,
+    to_training_metrics,
+)
 from cvs.lib.utils.gpu import agg_readings, start_gpu_poller, stop_and_collect_gpu_poller
 
 
@@ -488,6 +492,15 @@ class PyTorchVisionJob:
                 if total_images <= 0:
                     raise RuntimeError(f"W1 artifact has no positive processed_images count on {host}")
                 metrics["training.images_per_kwh"] = total_images / energy_kwh
+            baseline = self.variant.training.scaling_baseline
+            efficiency = compute_scaling_efficiency(
+                metrics.get("training.images_per_sec"),
+                self.num_nodes,
+                baseline.images_per_sec_total,
+                baseline.num_nodes,
+            )
+            if efficiency is not None:
+                metrics["training.scaling_efficiency_pct"] = efficiency
             parsed[host] = metrics
             # Ordered (step, loss) pairs for the loss-curve PNG. Kept off the
             # metric dict because it is an artifact input, not a gated metric.
