@@ -408,9 +408,10 @@ GPU type is detected from ``rocm-smi``. Lookup order: exact key → ``auto``.
 - **WAN native** — average ``total_time`` vs ``max_avg_total_time_s``; ``rank0_step*.json`` and ``video.mp4``.
 - **WAN Diffusers** — average pipe/epoch time vs ``max_avg_pipe_time_s``; ``results/timing.json`` and ``results/video_i2v.mp4``.
 
-The xDiT Run Deck run card lists **nnodes** and **Benchmark node** (first execution
-host, or ``benchmark_serv_node`` when set), plus Ulysses and Ring. Distributed
-result rows use the benchmark (rank-0) host.
+The xDiT Run Deck run card lists **Server nodes** (``server_node_list`` or the
+execution hosts), **nnodes**, and **Benchmark node** (first execution host, or
+``benchmark_serv_node`` when set), plus Ulysses and Ring. Distributed result rows
+use the benchmark (rank-0) host.
 
 Shipped numbers are starting points; tune the sibling threshold JSON for your stack before production gating.
 
