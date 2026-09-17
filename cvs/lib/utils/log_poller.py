@@ -106,7 +106,8 @@ class LogPoller:
 
         Runs quietly by default (``silent_poll``) so the orchestrator does not
         re-echo the bulk output; the caller streams/scans it. Advances each node's
-        cursor by the number of new lines so the next drain starts right after them.
+        cursor by the number of complete newline-terminated records so the next
+        ``tail -n +`` starts on the same record GNU tail would.
         """
         cmd_list = [
             f"tail -n +{self._cursor[i] + 1} {shlex.quote(self._log_paths[i])} 2>/dev/null || true"
@@ -120,7 +121,16 @@ class LogPoller:
             i = node_of.get(host)
             if i is None or not text:
                 continue
-            self._cursor[i] += len(text.splitlines())
+            # GNU tail -n +K counts newline-terminated records. splitlines() also
+            # splits on \r and counts a last line with no \n, which would advance
+            # the cursor past that record so the next tail skips it. Keep only
+            # complete \n records; a trailing fragment is re-read next drain.
+            if not text.endswith('\n'):
+                last_nl = text.rfind('\n')
+                if last_nl == -1:
+                    continue
+                text = text[: last_nl + 1]
+            self._cursor[i] += text.count('\n')
             new_by_node[i] = text
         return new_by_node
 
