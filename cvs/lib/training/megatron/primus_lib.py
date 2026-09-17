@@ -207,12 +207,16 @@ class PrimusTrainingJob:
         pdict.setdefault('micro_batch_size', '2')
         pdict.setdefault('global_batch_size', '128')
         pdict.setdefault('training_iterations', 10)
+        pdict.setdefault('tensor_parallelism', '1')
+        pdict.setdefault('pipeline_parallelism', '1')
 
         self.tokenizer_model = pdict['tokenizer_model']
         self.precision = pdict['precision']
         self.micro_batch_size = pdict['micro_batch_size']
         self.global_batch_size = pdict['global_batch_size']
         self.iterations = int(pdict['training_iterations'])
+        self.tensor_parallelism = pdict['tensor_parallelism']
+        self.pipeline_parallelism = pdict['pipeline_parallelism']
 
         raw_label = run_label or f"{self.model_name}_mbs{micro_batch_size}_gbs{global_batch_size}_{self.precision}"
         self.run_label = re.sub(r'[^A-Za-z0-9._-]', '_', str(raw_label))
@@ -383,7 +387,9 @@ class PrimusTrainingJob:
         batch_args = (
             f'--micro_batch_size {self.micro_batch_size} '
             f'--global_batch_size {self.global_batch_size} '
-            f'--train_iters {self.iterations}'
+            f'--train_iters {self.iterations} '
+            f'--tensor_model_parallel_size {self.tensor_parallelism} '
+            f'--pipeline_model_parallel_size {self.pipeline_parallelism}'
         )
         if self.checkpoint_dir and not self.load_checkpoint:
             batch_args += f' --save --save_interval {self.save_interval or self.iterations}'
