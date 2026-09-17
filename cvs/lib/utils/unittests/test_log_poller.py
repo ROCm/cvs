@@ -5,6 +5,9 @@ All rights reserved.
 Unit tests for cvs/lib/utils/log_poller.py::LogPoller.
 '''
 
+import os
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -42,6 +45,65 @@ class DrainTests(unittest.TestCase):
     def test_log_paths_length_must_match_hosts(self):
         with self.assertRaises(ValueError):
             LogPoller(_orch(["h0", "h1"]), ["/only-one"], complete_pattern="done")
+
+
+class _LocalTailOrch:
+    """Run the poller's ``tail -n +K`` commands against a real file with GNU tail."""
+
+    def __init__(self, path):
+        self.hosts = ["h0"]
+        self.path = path
+
+    def exec_cmd_list(self, cmd_list, print_console=False):
+        # Keep \r as \r so this matches GNU tail's on-disk records (text=True would
+        # turn \r into \n and reintroduce the cursor skew these tests catch).
+        out = subprocess.check_output(["bash", "-c", cmd_list[0]])
+        return {"h0": out.decode("utf-8", errors="surrogateescape")}
+
+
+class DrainCursorVsTailTests(unittest.TestCase):
+    """Cursor must match GNU tail -n records, not str.splitlines()."""
+
+    def _poller(self, path):
+        return LogPoller(_LocalTailOrch(path), [path], complete_pattern="done")
+
+    def test_incomplete_last_line_is_reread_when_completed(self):
+        """File 'hello\\nwor' then append 'ld\\n' must still surface 'world'."""
+        fd, path = tempfile.mkstemp(prefix="logpoller-partial-")
+        os.close(fd)
+        try:
+            with open(path, "wb") as fh:
+                fh.write(b"hello\nwor")
+            p = self._poller(path)
+            first = p.drain()
+            self.assertEqual(first[0], "hello\n")
+            self.assertEqual(p._cursor[0], 1)
+
+            with open(path, "ab") as fh:
+                fh.write(b"ld\n")
+            second = p.drain()
+            self.assertIn("world", second[0])
+            self.assertEqual(p._cursor[0], 2)
+        finally:
+            os.unlink(path)
+
+    def test_carriage_return_does_not_skip_a_later_line(self):
+        """GNU tail treats 'a\\rb\\n' as one record; a following line must still drain."""
+        fd, path = tempfile.mkstemp(prefix="logpoller-cr-")
+        os.close(fd)
+        try:
+            with open(path, "wb") as fh:
+                fh.write(b"step 1\rstep 2\n")
+            p = self._poller(path)
+            p.drain()
+            self.assertEqual(p._cursor[0], 1)
+
+            with open(path, "ab") as fh:
+                fh.write(b"line3\n")
+            second = p.drain()
+            self.assertIn("line3", second[0])
+        finally:
+            os.unlink(path)
 
 
 class IsCompleteTests(unittest.TestCase):
