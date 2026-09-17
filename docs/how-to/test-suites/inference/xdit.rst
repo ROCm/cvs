@@ -16,8 +16,9 @@ separate pytest module; pick the one that matches your topology and launcher, th
   using ``server_node_list`` when set.
 
 FLUX.1-dev and FLUX.2-dev share the ``pytorch_xdit_flux_dev_*`` suites; choose the matching
-``flux1`` or ``flux2`` JSON. Models must already be staged on every participating node
-(no runtime Hugging Face downloads).
+``flux1`` or ``flux2`` JSON. ``server_params.model`` may be a Hugging Face repo id
+(downloaded into ``paths.models_dir`` / ``HF_HOME`` during ``test_verify_model``) or an
+absolute host path (bind-mounted at ``/model``). Gated repos need ``paths.hf_token_file``.
 
 Config reference: :doc:`/reference/configuration-files/inference/xdit`.
 
@@ -109,9 +110,9 @@ Shipped config templates:
 
   FLUX.2 configs bind-mount ``cvs/lib/inference/xdit/scripts/flux2_example.py`` when the
   image does not ship ``/app/external/xdit/examples/flux2_example.py``. WAN Diffusers
-  typically mounts ``cvs/lib/inference/xdit/scripts/wan_i2v_example.py``.
-  ``server_params.model`` may be a Hugging Face repo id (downloaded at
-  ``test_verify_model``) or an absolute host path.
+  mounts ``cvs/lib/inference/xdit/scripts/wan_i2v_example.py`` from the CVS checkout on
+  the cluster (not a copy baked into the image). Keep that file current on every
+  execution node; current xFuser images require the in-tree launcher.
 
   On shared clusters, skip aggressive docker prune during cleanup:
 
@@ -287,9 +288,13 @@ Key stages to watch:
   ``HF_HOME`` when needed, or checks an absolute local model path on every
   participating node.
 - **Parallelism** — ``test_verify_parallelism`` validates the configured topology.
-- **Benchmark** — ``test_run_benchmark`` executes torchrun inside the containers.
-- **Parse** — ``test_parse_thresholds`` compares average latency to the sibling
-  threshold JSON referenced by ``threshold_json``.
+- **Benchmark** — ``test_run_benchmark`` deletes previous
+  ``${paths.log_dir}/flux_*_outputs`` or ``wan_22_*_outputs`` trees, then runs
+  torchrun inside the containers.
+- **Parse / print** — ``test_parse_thresholds`` compares average latency to the
+  sibling threshold JSON. ``test_print_results`` and the xDiT Run Deck show
+  topology, Ulysses, Ring, and **Workers** as ``nnodes × torchrun_nproc``
+  (GPUs per node stay on **GPUs/node**).
 
 .. list-table::
    :widths: 2 3 3 3
