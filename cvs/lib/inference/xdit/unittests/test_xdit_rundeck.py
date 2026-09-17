@@ -61,6 +61,7 @@ class TestXditRundeck(unittest.TestCase):
             benchmark_params={"flux1_dev_t2i": {"torchrun_nproc": 8, "ulysses_degree": 8, "ring_degree": 1}},
         )
         flux_rows = {label: value for label, value, _ in xdit_run_card_display(flux, {})}
+        self.assertEqual(flux_rows["Server nodes"], "10.32.80.110, 10.32.80.111")
         self.assertEqual(flux_rows["nnodes"], "2")
         self.assertEqual(flux_rows["Benchmark node"], "10.32.80.110")
         self.assertNotIn("GPUs/node", flux_rows)
@@ -86,6 +87,7 @@ class TestXditRundeck(unittest.TestCase):
             },
         )
         wan_rows = {label: value for label, value, _ in xdit_run_card_display(wan, {})}
+        self.assertEqual(wan_rows["Server nodes"], "n1, n2")
         self.assertEqual(wan_rows["nnodes"], "2")
         self.assertEqual(wan_rows["Benchmark node"], "n1")
         self.assertEqual(wan_rows["Ulysses"], "8")

@@ -550,7 +550,7 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
         lifecycle.results.append(
             (
                 host,
-                spec["family"],
+                model_id,
                 topology,
                 ulysses_degree,
                 ring_degree,
@@ -576,7 +576,7 @@ def print_results_stage(lifecycle):
     rows = [
         [
             host,
-            family,
+            model_id,
             topology,
             ulysses_degree,
             ring_degree,
@@ -586,7 +586,7 @@ def print_results_stage(lifecycle):
             "RECORDED" if passed is None else "PASS" if passed else "FAIL",
             message,
         ]
-        for host, family, topology, ulysses_degree, ring_degree, output, metric, value, passed, message in lifecycle.results
+        for host, model_id, topology, ulysses_degree, ring_degree, output, metric, value, passed, message in lifecycle.results
     ]
     log.info(
         "\n======== xDiT benchmark results ========\n%s",
@@ -594,7 +594,7 @@ def print_results_stage(lifecycle):
             rows,
             headers=[
                 "Host",
-                "Family",
+                "Model",
                 "Topology",
                 "Ulysses",
                 "Ring",

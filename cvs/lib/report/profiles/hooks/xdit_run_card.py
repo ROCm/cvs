@@ -28,6 +28,11 @@ def _nnodes(variant, inference):
     return "1"
 
 
+def _server_nodes(inference):
+    nodes = inference.get("server_node_list") or inference.get("_execution_hosts") or []
+    return _format_nodes(nodes)
+
+
 def _benchmark_node(inference):
     bench = inference.get("benchmark_serv_node")
     if bench:
@@ -57,6 +62,7 @@ def xdit_run_card_display(variant, provenance):
     rows = [
         ("Model", variant.model.id, False),
         ("GPU", variant.gpu_arch, False),
+        ("Server nodes", _server_nodes(inference), False),
         ("nnodes", _nnodes(variant, inference), False),
         ("Benchmark node", _benchmark_node(inference), False),
         ("Ulysses", str(ulysses), False),
