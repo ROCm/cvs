@@ -22,22 +22,27 @@ def _nnodes(variant, inference):
     nnodes = inference.get("nnodes")
     if nnodes is not None and str(nnodes).strip() != "":
         return str(nnodes)
-    nodes = inference.get("_execution_hosts") or inference.get("server_node_list") or []
+    nodes = _execution_hosts(inference)
     if variant.topology == "distributed":
         return str(max(len(nodes), 1))
     return "1"
 
 
 def _server_nodes(inference):
-    nodes = inference.get("server_node_list") or inference.get("_execution_hosts") or []
-    return _format_nodes(nodes)
+    return _format_nodes(_execution_hosts(inference))
 
 
-def _benchmark_node(inference):
+def _execution_hosts(inference):
+    return inference.get("_execution_hosts") or inference.get("server_node_list") or []
+
+
+def _benchmark_node(variant, inference):
+    hosts = _execution_hosts(inference)
+    if variant.topology != "distributed":
+        return _format_nodes(hosts)
     bench = inference.get("benchmark_serv_node")
     if bench:
         return _format_nodes(bench)
-    hosts = inference.get("_execution_hosts") or inference.get("server_node_list") or []
     if hosts:
         return str(hosts[0])
     return "\u2014"
@@ -64,7 +69,7 @@ def xdit_run_card_display(variant, provenance):
         ("GPU", variant.gpu_arch, False),
         ("Server nodes", _server_nodes(inference), False),
         ("nnodes", _nnodes(variant, inference), False),
-        ("Benchmark node", _benchmark_node(inference), False),
+        ("Benchmark node", _benchmark_node(variant, inference), False),
         ("Ulysses", str(ulysses), False),
         ("Ring", str(ring), False),
         thresholds_run_card_row(variant),

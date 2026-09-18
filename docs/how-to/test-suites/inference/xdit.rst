@@ -294,7 +294,8 @@ Key stages to watch:
 - **Parse / print** — ``test_parse_thresholds`` compares average latency to the
   sibling threshold JSON. ``test_print_results`` prints Host, Model, topology,
   Ulysses, and Ring. The xDiT Run Deck run card shows **Server nodes**, **nnodes**,
-  **Benchmark node**, Ulysses, and Ring.
+  **Benchmark node** (all execution hosts on single; rank-0 on distributed),
+  Ulysses, and Ring.
 
 .. list-table::
    :widths: 2 3 3 3

@@ -93,6 +93,23 @@ class TestXditRundeck(unittest.TestCase):
         self.assertEqual(wan_rows["Ulysses"], "8")
         self.assertEqual(wan_rows["Ring"], "2")
 
+        single = SimpleNamespace(
+            enforce_thresholds=True,
+            gpu_arch="mi325",
+            topology="single",
+            model=SimpleNamespace(id="FLUX.1-dev"),
+            inference={
+                "nnodes": 1,
+                "benchmark_serv_node": "node-a",
+                "_execution_hosts": ["10.32.80.110", "10.32.80.111"],
+            },
+            benchmark_params={"flux1_dev_t2i": {"torchrun_nproc": 8, "ulysses_degree": 8, "ring_degree": 1}},
+        )
+        single_rows = {label: value for label, value, _ in xdit_run_card_display(single, {})}
+        self.assertEqual(single_rows["Server nodes"], "10.32.80.110, 10.32.80.111")
+        self.assertEqual(single_rows["nnodes"], "1")
+        self.assertEqual(single_rows["Benchmark node"], "10.32.80.110, 10.32.80.111")
+
 
 if __name__ == "__main__":
     unittest.main()
