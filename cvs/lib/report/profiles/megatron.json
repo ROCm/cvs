@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "profile_id": "megatron_rundeck",
+  "suite_id": "megatron",
+  "report_basename": "megatron_run_deck",
+  "title": "Megatron Training Run Deck",
+  "subtitle": "Megatron · training sweep performance summary",
+  "footer": "CVS Megatron · render-only · does not affect gates",
+  "link_name": "Megatron Training Run Deck",
+  "dataset_builder": "sweep",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "train_res_dict",
+    "variant": "rundeck_variant",
+    "lifecycle": "lifecycle"
+  },
+  "hooks": {
+    "tier_metric_specs": "cvs.lib.report.profiles.hooks.megatron_run_card:megatron_tier_metric_specs",
+    "metric_units": "cvs.lib.report.profiles.hooks.megatron_run_card:MEGATRON_METRIC_UNITS",
+    "metric_verdict": "cvs.lib.report.profiles.hooks.megatron_run_card:megatron_metric_verdict",
+    "run_card_display": "cvs.lib.report.profiles.hooks.megatron_run_card:megatron_run_card_display"
+  },
+  "sweep": {
+    "layout": "named_cells",
+    "metric_prefix": "training.",
+    "dimension_keys": ["micro_batch_size", "global_batch_size", "precision"],
+    "label_parts": ["micro_batch_size", "global_batch_size", "precision"],
+    "label_aliases": {
+      "micro_batch_size": "MBS",
+      "global_batch_size": "GBS",
+      "precision": "PRECISION"
+    },
+    "tier_order": ["thresholds", "record"],
+    "throughput_metric": "training.throughput_per_gpu",
+    "headline_metric": "training.throughput_per_gpu",
+    "results_table_columns": [
+      ["Cell", null],
+      ["Model", "model"],
+      ["GPU", "gpu"],
+      ["Nodes", "nnodes"],
+      ["MBS", "micro_batch_size"],
+      ["GBS", "global_batch_size"],
+      ["Precision", "precision"],
+      ["Throughput/GPU", "training.throughput_per_gpu"],
+      ["Tokens/GPU/s", "training.tokens_per_gpu"],
+      ["Iteration time", "training.elapsed_time_per_iteration"],
+      ["Memory usage", "training.mem_usage"],
+      ["Scaling efficiency", "training.scaling_efficiency_pct"],
+      ["LM loss", "training.lm_loss"],
+      ["Gradient norm", "training.grad_norm"],
+      ["HIP memory ratio", "training.hip_mem_usage_ratio"],
+      ["ROCm memory ratio", "training.rocm_mem_usage_ratio"],
+      ["Steps to target", "training.steps_to_target"],
+      ["Time to target", "training.time_to_target_seconds"]
+    ],
+    "cell_highlights": [
+      ["throughput_per_gpu", "Throughput/GPU"],
+      ["tokens_per_gpu", "Tokens/GPU/s"],
+      ["elapsed_time_per_iteration", "Iteration time"],
+      ["scaling_efficiency_pct", "Scaling efficiency"]
+    ],
+    "chart_series": [
+      {
+        "metric_suffix": "throughput_per_gpu",
+        "title": "Throughput per GPU",
+        "unit": "TFLOP/s/GPU",
+        "invert": false
+      },
+      {
+        "metric_suffix": "tokens_per_gpu",
+        "title": "Token throughput per GPU",
+        "unit": "tok/s/GPU",
+        "invert": false
+      }
+    ]
+  },
+  "lifecycle": {
+    "session_labels": ["container_launch", "tokenizer_download", "smoke", "training", "teardown"],
+    "cell_labels": []
+  },
+  "behavior": {
+    "inference_test_substring": "test_training",
+    "row_card_extras": false,
+    "row_card_test_names": []
+  },
+  "viewer": {
+    "interactivity": {
+      "enabled": false
+    }
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {
+      "type": "line_chart",
+      "id": "throughput",
+      "title": "Throughput vs cells",
+      "bind": "datasets.sweep",
+      "series": {"y_field": "throughput_per_gpu", "unit": "TFLOP/s/GPU", "x_label": "{x}"}
+    },
+    {
+      "type": "line_chart",
+      "id": "token-throughput",
+      "title": "Token throughput vs cells",
+      "bind": "datasets.sweep",
+      "series": {"y_field": "tokens_per_gpu", "unit": "tok/s/GPU", "x_label": "{x}"}
+    },
+    {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}

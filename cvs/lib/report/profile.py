@@ -21,6 +21,12 @@ _PROFILES_DIR = Path(__file__).resolve().parent / "profiles"
 
 # Multiple ``cvs run`` stems may share one deck profile (same sweep/report layout).
 PROFILE_STEM_ALIASES: dict[str, str] = {
+    "megatron_single": "megatron",
+    "megatron_distributed": "megatron",
+    "megatron_llama3_1_8b_single": "megatron",
+    "megatron_llama3_1_8b_distributed": "megatron",
+    "megatron_llama3_1_70b_single": "megatron",
+    "megatron_llama3_1_70b_distributed": "megatron",
     "sglang_single": "sglang",
     "sglang_distributed": "sglang",
     "sglang_disagg_distributed": "sglang",
