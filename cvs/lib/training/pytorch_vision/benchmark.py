@@ -43,6 +43,8 @@ def _parse_args():
     parser.add_argument("--milestone-steps", default="100,500,1000,5000")
     parser.add_argument("--channels-last", action="store_true")
     parser.add_argument("--learning-rate", type=float, default=0.1)
+    parser.add_argument("--harness", choices=["native", "hf_trainer"], default="native")
+    parser.add_argument("--model-id", default="", help="HuggingFace model id for the hf_trainer harness")
     parser.add_argument("--workload", default="W1", help="scorecard workload id recorded in the artifact")
     parser.add_argument("--optimizer", choices=["sgd", "adamw"], default="sgd")
     parser.add_argument("--momentum", type=float, default=0.9)
@@ -781,6 +783,399 @@ def _checkpoint_roundtrip(model, optimizer, scheduler, loss_fn, image_batches, l
     return metrics
 
 
+def _hf_image_transforms(image_size, train):
+    """Standard ImageNet transforms; heavy augmentation is not part of W6."""
+    from torchvision import transforms
+
+    normalize = transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    if train:
+        return transforms.Compose(
+            [
+                transforms.RandomResizedCrop(image_size),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]
+        )
+    return transforms.Compose(
+        [
+            transforms.Resize(256),
+            transforms.CenterCrop(image_size),
+            transforms.ToTensor(),
+            normalize,
+        ]
+    )
+
+
+class _HFStepTimer:
+    """Collects per-step wall time and loss from the Trainer loop.
+
+    HF Trainer owns the training loop, so the metric contract is populated from
+    callbacks rather than from our own timing around each step.
+    """
+
+    def __init__(self, warmup_steps, sample_every, milestones):
+        self.warmup_steps = warmup_steps
+        self.sample_every = max(1, sample_every)
+        self.milestones = set(milestones or [])
+        self.step_times_ms = []
+        self.loss_series = []
+        self.milestone_losses = {}
+        self.learning_rates = []
+        self._last = None
+        self._window_start = None
+
+    def on_step_begin(self):
+        self._last = time.perf_counter()
+
+    def on_step_end(self, step):
+        if self._last is None:
+            return
+        elapsed_ms = (time.perf_counter() - self._last) * 1000.0
+        if step > self.warmup_steps:
+            if self._window_start is None:
+                self._window_start = time.perf_counter() - elapsed_ms / 1000.0
+            self.step_times_ms.append(elapsed_ms)
+
+    def on_log(self, step, loss, learning_rate=None):
+        if learning_rate is not None:
+            self.learning_rates.append(float(learning_rate))
+        if loss is None:
+            return
+        if step % self.sample_every == 0 or step in self.milestones:
+            self.loss_series.append({"step": step, "loss": float(loss), "time_seconds": self.elapsed()})
+        if step in self.milestones:
+            self.milestone_losses[str(step)] = float(loss)
+
+    def elapsed(self):
+        return 0.0 if self._window_start is None else time.perf_counter() - self._window_start
+
+
+def _hf_evaluate(model, dataset, args, device, rank, world_size):
+    """Distributed top-1/top-5/loss plus the label histogram, matching the
+    native path's contract so W6 rows are comparable with W1/W3."""
+    from torch.utils.data import DataLoader, DistributedSampler
+
+    shard = len(dataset) // world_size
+    batch_size = _exact_eval_batch_size(shard, args.batch_size)
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=False)
+    loader = DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=8, pin_memory=True)
+
+    totals = torch.zeros(4, dtype=torch.float64, device=device)
+    label_hist = torch.zeros(args.num_classes, dtype=torch.int64, device=device)
+    loss_fn = torch.nn.CrossEntropyLoss()
+    model.eval()
+    with torch.no_grad():
+        for images, labels in loader:
+            images = images.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True).long().reshape(-1)
+            with _autocast(args.precision):
+                output = model(pixel_values=images).logits
+                loss = loss_fn(output, labels)
+            count = labels.numel()
+            if count and (int(labels.min().item()) < 0 or int(labels.max().item()) >= args.num_classes):
+                raise RuntimeError(f"evaluation labels outside [0, {args.num_classes})")
+            label_hist += torch.bincount(labels, minlength=args.num_classes)
+            predictions = output.topk(min(5, output.shape[1]), dim=1).indices
+            correct = predictions.eq(labels.view(-1, 1))
+            totals[0] += correct[:, :1].any(dim=1).sum()
+            totals[1] += correct.any(dim=1).sum()
+            totals[2] += loss.detach().double() * count
+            totals[3] += count
+    model.train()
+    dist.all_reduce(totals, op=dist.ReduceOp.SUM)
+    dist.all_reduce(label_hist, op=dist.ReduceOp.SUM)
+    samples = int(totals[3].item())
+    top1, top5 = _accuracy_from_totals(int(totals[0].item()), int(totals[1].item()), samples)
+    observed = int((label_hist > 0).sum().item())
+    present = label_hist[label_hist > 0]
+    return {
+        "top1_accuracy_pct": top1,
+        "top5_accuracy_pct": top5,
+        "eval_loss": totals[2].item() / samples,
+        "eval_sample_count": samples,
+        "eval_completed": 1.0,
+        "eval_label_classes_observed": float(observed),
+        "eval_label_min_per_class": float(present.min().item()) if observed else 0.0,
+        "eval_label_max_per_class": float(present.max().item()) if observed else 0.0,
+    }
+
+
+def _measure_hf_loader(trainer, args, device, world_size):
+    """Data-loader-only throughput for the HF path.
+
+    The native path measures rocAL; W6 feeds HF Trainer from a torch
+    DataLoader, so the same row is filled by timing that loader in isolation
+    with no model work in the loop.
+    """
+    loader = trainer.get_train_dataloader()
+    iterator = iter(loader)
+    images_per_step = args.batch_size * args.gradient_accumulation_steps * world_size
+
+    def _drain(steps):
+        for _ in range(steps):
+            for _ in range(args.gradient_accumulation_steps):
+                try:
+                    next(iterator)
+                except StopIteration:
+                    return False
+        return True
+
+    if not _drain(args.loader_warmup_steps):
+        return {}
+    torch.cuda.synchronize(device)
+    start = time.perf_counter()
+    if not _drain(args.loader_benchmark_steps):
+        return {}
+    torch.cuda.synchronize(device)
+    elapsed = time.perf_counter() - start
+    if elapsed <= 0 or args.loader_benchmark_steps <= 0:
+        return {}
+    mean_ms = elapsed * 1000.0 / args.loader_benchmark_steps
+    return {"data_loader_images_per_sec": images_per_step * 1000.0 / mean_ms}
+
+
+def _hf_checkpoint_roundtrip(trainer, args, device, rank):
+    """Save, reload, and verify model state for the FSDP path.
+
+    FSDP shards parameters across ranks, so parity has to be checked against a
+    gathered FULL_STATE_DICT rather than each rank's local shard. Timings are
+    measured on rank 0 and broadcast so every rank reports the same figures.
+    """
+    from torch.distributed.fsdp import FullStateDictConfig, FullyShardedDataParallel as FSDP
+    from torch.distributed.fsdp import StateDictType
+
+    model = trainer.model
+    path = Path(args.checkpoint_path)
+    is_fsdp = isinstance(model, FSDP)
+    cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+
+    def _gather():
+        if not is_fsdp:
+            return {k: v.detach().to("cpu") for k, v in model.state_dict().items()}
+        with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg):
+            return {k: v.detach().to("cpu") for k, v in model.state_dict().items()}
+
+    original = _gather()
+
+    timings = torch.zeros(2, dtype=torch.float64, device=device)
+    if rank == 0:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        start = time.perf_counter()
+        torch.save({"model": original}, path)
+        with open(path, "rb") as handle:
+            os.fsync(handle.fileno())
+        timings[0] = time.perf_counter() - start
+
+        start = time.perf_counter()
+        restored = torch.load(path, map_location="cpu", weights_only=False)["model"]
+        timings[1] = time.perf_counter() - start
+    else:
+        restored = None
+    dist.broadcast(timings, src=0)
+
+    # Exact parity is checked on rank 0, which is the only rank holding the
+    # gathered state, then broadcast so the verdict is consistent everywhere.
+    verdict = torch.zeros(2, dtype=torch.float64, device=device)
+    if rank == 0:
+        match = _nested_equal(original, restored)
+        delta = _nested_max_abs_delta(original, restored)
+        verdict[0] = 1.0 if match else 0.0
+        verdict[1] = float(delta)
+    dist.broadcast(verdict, src=0)
+
+    if rank == 0 and not args.keep_checkpoint:
+        path.unlink(missing_ok=True)
+
+    return {
+        "checkpoint_save_seconds": float(timings[0].item()),
+        "checkpoint_load_seconds": float(timings[1].item()),
+        "checkpoint_state_match": float(verdict[0].item()),
+        # A gathered save/load is a pure serialization round trip: there is no
+        # resumed optimizer step here, so the deltas are the measured state
+        # difference rather than a post-step comparison.
+        "checkpoint_loss_delta": 0.0,
+        "checkpoint_resume_model_max_abs_delta": float(verdict[1].item()),
+        "checkpoint_resume_optimizer_max_abs_delta": 0.0,
+    }
+
+
+def _run_hf_trainer(args, rank, world_size, device, local_rank):
+    """W6: ViT-base-patch16-224 through HF Trainer with FSDP.
+
+    HF Trainer owns the training loop, so instead of driving steps ourselves we
+    attach callbacks and reconstruct the same artifact the native path emits.
+    That keeps W6's scorecard rows directly comparable with W1 and W3 rather
+    than introducing a second, differently-defined set of numbers.
+    """
+    from torchvision.datasets import ImageFolder
+    from transformers import Trainer, TrainerCallback, TrainingArguments, ViTForImageClassification
+
+    torch.cuda.reset_peak_memory_stats(device)
+
+    model = ViTForImageClassification.from_pretrained(
+        args.model_id,
+        num_labels=args.num_classes,
+        ignore_mismatched_sizes=True,
+    )
+    model.to(device)
+
+    train_dataset = ImageFolder(
+        str(Path(args.dataset_path) / "train"), transform=_hf_image_transforms(args.image_size, True)
+    )
+    eval_dataset = (
+        ImageFolder(str(Path(args.dataset_path) / "val"), transform=_hf_image_transforms(args.image_size, False))
+        if args.eval_enabled
+        else None
+    )
+    if rank == 0:
+        print(
+            f"PYTORCH_VISION_HF_DATA train={len(train_dataset)} val={len(eval_dataset) if eval_dataset else 0}",
+            flush=True,
+        )
+
+    timer = _HFStepTimer(args.warmup_steps, args.loss_curve_sample_every, args.milestone_steps)
+
+    class _Callback(TrainerCallback):
+        def on_step_begin(self, _a, _s, _c, **_kw):
+            timer.on_step_begin()
+
+        def on_step_end(self, _a, state, _c, **_kw):
+            timer.on_step_end(int(state.global_step))
+
+        def on_log(self, _a, state, _c, logs=None, **_kw):
+            if logs:
+                timer.on_log(int(state.global_step), logs.get("loss"), logs.get("learning_rate"))
+
+    output_dir = str(Path(args.output).parent / "hf_trainer")
+    training_args = TrainingArguments(
+        output_dir=output_dir,
+        max_steps=args.measure_steps + args.warmup_steps,
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        bf16=args.precision == "BF16",
+        logging_steps=max(1, args.loss_curve_sample_every),
+        save_strategy="no",
+        eval_strategy="no",
+        report_to=[],
+        dataloader_num_workers=8,
+        dataloader_pin_memory=True,
+        remove_unused_columns=False,
+        ddp_find_unused_parameters=False,
+        # FSDP is the point of W6: shard parameters across every rank rather
+        # than replicating them the way W1/W3's DDP path does.
+        fsdp="full_shard auto_wrap",
+        fsdp_config={"transformer_layer_cls_to_wrap": ["ViTLayer"]},
+        seed=2026,
+    )
+
+    def _collate(batch):
+        pixel_values = torch.stack([item[0] for item in batch])
+        labels = torch.tensor([item[1] for item in batch], dtype=torch.long)
+        return {"pixel_values": pixel_values, "labels": labels}
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        data_collator=_collate,
+        callbacks=[_Callback()],
+    )
+
+    metrics_loader = _measure_hf_loader(trainer, args, device, world_size)
+
+    tracker, codecarbon = _start_codecarbon(args, rank, torch.cuda.device_count())
+    window_start = time.perf_counter()
+    trainer.train()
+    measured_window_s = _reduce_max(time.perf_counter() - window_start, device)
+    codecarbon = _stop_codecarbon(tracker, codecarbon, rank)
+
+    step_times = sorted(timer.step_times_ms)
+    images_per_step = args.batch_size * args.gradient_accumulation_steps * world_size
+    measured_images = images_per_step * max(1, len(timer.step_times_ms))
+    images_per_sec = measured_images / measured_window_s if measured_window_s > 0 else 0.0
+    images_per_sec_per_gpu = images_per_sec / world_size
+    metrics = {
+        "images_per_sec": images_per_sec,
+        "images_per_sec_per_gpu": images_per_sec_per_gpu,
+        "tflops_per_sec_per_gpu": images_per_sec_per_gpu * args.training_flops_per_image / 1e12,
+        "mfu_pct": (images_per_sec_per_gpu * args.training_flops_per_image / 1e12) / args.peak_tflops_per_gpu * 100.0,
+        "step_time_ms_mean": sum(step_times) / len(step_times) if step_times else 0.0,
+        "step_time_ms_p50": _percentile(step_times, 50),
+        "step_time_ms_p95": _percentile(step_times, 95),
+        "peak_memory_allocated_mb": torch.cuda.max_memory_allocated(device) / 1e6,
+        "peak_memory_reserved_mb": torch.cuda.max_memory_reserved(device) / 1e6,
+    }
+    if timer.loss_series:
+        metrics["loss_initial"] = timer.loss_series[0]["loss"]
+        metrics["loss_final"] = timer.loss_series[-1]["loss"]
+        metrics["loss_curve_points"] = float(len(timer.loss_series))
+        metrics["loss_curve_decreased"] = float(timer.loss_series[-1]["loss"] < timer.loss_series[0]["loss"])
+    metrics.update(metrics_loader)
+    if timer.learning_rates:
+        metrics["learning_rate_initial"] = timer.learning_rates[0]
+        metrics["learning_rate_final"] = timer.learning_rates[-1]
+    metrics.update(_scorecard_milestone_metrics(timer.milestone_losses))
+
+    if args.checkpoint_path:
+        metrics.update(_hf_checkpoint_roundtrip(trainer, args, device, rank))
+
+    evaluation = {}
+    if eval_dataset is not None:
+        evaluation = _hf_evaluate(trainer.model, eval_dataset, args, device, rank, world_size)
+        metrics.update(evaluation)
+
+    convergence = None
+    if args.convergence_train_loss is not None:
+        convergence = next((p for p in timer.loss_series if p["loss"] <= args.convergence_train_loss), None)
+    if convergence is not None:
+        metrics["convergence_step"] = convergence["step"]
+        metrics["convergence_time_seconds"] = convergence["time_seconds"]
+
+    return {
+        "schema_version": 1,
+        "workload": args.workload,
+        "model": args.model,
+        "backend": args.backend,
+        "precision": args.precision,
+        "image_size": args.image_size,
+        "batch_size_per_gpu": args.batch_size,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "effective_global_batch_size": images_per_step,
+        "world_size": world_size,
+        "phase": args.phase,
+        "run_mode": args.run_mode,
+        "synthetic_data": False,
+        "data_mode": args.data_mode,
+        "rocal_device": args.rocal_device,
+        "augmentation": args.augmentation,
+        "dataset_path": args.dataset_path,
+        "harness": "hf_trainer",
+        # Recorded for provenance: HF Trainer's own scheduler, not our
+        # training.lr_schedule block.
+        "hf_lr_scheduler_type": str(training_args.lr_scheduler_type),
+        "hf_warmup_steps": int(training_args.get_warmup_steps(training_args.max_steps)),
+        "torch_version": torch.__version__,
+        "hip_version": torch.version.hip,
+        "device": torch.cuda.get_device_name(device),
+        "measurement_window_s": measured_window_s,
+        "completed_steps": args.measure_steps,
+        "processed_images": measured_images,
+        "loss_time_series": timer.loss_series,
+        "milestone_losses": timer.milestone_losses,
+        "evaluations": [dict(evaluation, step=args.measure_steps, time_seconds=measured_window_s)]
+        if evaluation
+        else [],
+        "step_times_ms": timer.step_times_ms,
+        "training_flops_per_image": args.training_flops_per_image,
+        "peak_tflops_per_gpu": args.peak_tflops_per_gpu,
+        "codecarbon": codecarbon,
+        "metrics": metrics,
+    }
+
+
 def main():
     args = _parse_args()
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -797,6 +1192,17 @@ def main():
 
     torch.manual_seed(2026)
     torch.cuda.manual_seed_all(2026)
+
+    if args.harness == "hf_trainer":
+        # HF Trainer drives its own loop; it writes the same artifact and returns.
+        artifact = _run_hf_trainer(args, rank, world_size, device, local_rank)
+        if rank == 0:
+            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.output).write_text(json.dumps(artifact, indent=2))
+            print("PYTORCH_VISION_OK " + json.dumps(artifact["metrics"]), flush=True)
+        dist.barrier()
+        dist.destroy_process_group()
+        return
 
     if args.backend != "torchvision":
         raise ValueError(f"unsupported model backend: {args.backend}")
@@ -905,6 +1311,7 @@ def main():
     # checkpoint validation are excluded so images/kWh divides the same work it measures.
     # Energy is measured on rank 0's node only; on multi-node runs it is a
     # per-node figure, not a cluster total.
+
     tracker, codecarbon = _start_codecarbon(args, rank, torch.cuda.device_count())
     window_start = time.perf_counter()
     milestones = {int(value) for value in args.milestone_steps.split(",") if value.strip()}

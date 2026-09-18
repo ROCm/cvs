@@ -21,6 +21,7 @@ class FakeOrchestrator:
 
 def _variant():
     sweep = SimpleNamespace(
+        model_id="",
         name="cell-w1",
         label="W1-BF16-R224-B128",
         model="resnet50",
@@ -59,6 +60,7 @@ def _variant():
         channels_last=True,
         learning_rate=0.1,
         optimizer="sgd",
+        harness="native",
         momentum=0.9,
         weight_decay=0.0001,
         lr_schedule=SimpleNamespace(
@@ -489,3 +491,20 @@ class TestDynamicTopology(unittest.TestCase):
         orch.hosts = ["node0", "node1", "node2", "node3"]
         with self.assertRaisesRegex(RuntimeError, "world_size"):
             PyTorchVisionJob(orch, variant, "w1").parse_results()
+
+
+class TestHFTrainerHarness(unittest.TestCase):
+    """The hf_trainer harness hands the training loop to HF Trainer, so checks
+    that describe our own loop must not be asserted against it."""
+
+    def test_harness_and_model_id_reach_the_launcher(self):
+        variant = _variant()
+        variant.training.harness = "hf_trainer"
+        variant.sweep("cell-w1").model_id = "google/vit-base-patch16-224"
+        command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
+        self.assertIn("--harness hf_trainer", command)
+        self.assertIn("--model-id google/vit-base-patch16-224", command)
+
+    def test_native_harness_is_the_default(self):
+        command = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1").build_command()
+        self.assertIn("--harness native", command)

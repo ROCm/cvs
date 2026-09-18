@@ -13,14 +13,17 @@ run on performance and correctness metrics with a PASS/FAIL HTML report.
 Overview
 ========
 
-The suites drive a torchvision training job (ResNet-50 for W1, ViT-B/16 for
-W3) inside a container on one or more
+The suites drive a vision training job (ResNet-50 for W1/W2, ViT-B/16 for W3,
+ViT-base-patch16-224 for W6) inside a container on one or more
 cluster nodes, then parse the rank-zero result artifact to produce metrics and
 verdicts. They provide:
 
 #. **Config-selected workload** — the model, FLOPs/image, optimizer, and
    scorecard workload id all come from the config, so the same suite code
-   serves W1, W3, and future vision rows without modification.
+   serves W1, W3, W6, and future vision rows without modification.
+#. **Two training harnesses** — ``training.harness`` selects ``native`` (our
+   own DDP loop, W1-W3) or ``hf_trainer`` (HuggingFace Trainer with FSDP, W6).
+   Both emit the same result artifact so their scorecard rows stay comparable.
 #. **Two suites** — ``pytorch_vision_single`` (one node) and
    ``pytorch_vision_distributed`` (two or more nodes, one ``torchrun`` rank
    group per node).
@@ -279,3 +282,31 @@ See also :doc:`/how-to/run-tests/index` for common ``cvs run`` flags and
 workflow, and
 :doc:`/reference/configuration-files/training/pytorch_vision` for the
 variable-by-variable config reference.
+
+The ``hf_trainer`` harness (W6)
+===============================
+
+W6 runs ViT-base-patch16-224 through the HuggingFace ``Trainer`` with FSDP
+rather than our own DDP loop. It differs from W3 in more than node count:
+
+* **Image** — ``transformers``, ``accelerate``, and ``datasets`` are not in the
+  rocAL image. W6 uses ``cvs/pytorch-vision-hf``, built by
+  ``build_tools/pytorch_vision/Dockerfile.hf-7.2.4`` on top of the rocAL image
+  so both harnesses share one ROCm/PyTorch baseline.
+* **Data** — ``Trainer`` builds its own ``DataLoader`` from a torchvision
+  ``ImageFolder``, so the rocAL pipeline is not used. The data loader
+  throughput row is filled by timing that loader in isolation instead.
+* **Sharding** — FSDP with ``transformer_layer_cls_to_wrap=["ViTLayer"]``,
+  replacing the parameter replication DDP performs in W1-W3.
+* **Checkpoints** — FSDP shards parameters, so save/resume parity is verified
+  against a gathered ``FULL_STATE_DICT`` rather than each rank's local shard.
+* **Weights** — ``google/vit-base-patch16-224`` is a pretrained checkpoint, so
+  W6 is a fine-tune. Eval reports real accuracy from the first step, but the
+  training loss curve is nearly flat and convergence-to-a-loss-target is not
+  meaningful the way it is for W3's from-scratch run.
+
+Because ``Trainer`` owns the loop, it also owns the optimizer and LR schedule.
+The ``training.lr_schedule`` block and the learning-rate trajectory assertion
+apply to the ``native`` harness only; for W6 the scheduler actually used is
+recorded in the artifact as ``hf_lr_scheduler_type``.
+

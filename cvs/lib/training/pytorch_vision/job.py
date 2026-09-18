@@ -186,6 +186,10 @@ class PyTorchVisionJob:
             self.benchmark_path,
             "--workload",
             self.workload,
+            "--harness",
+            training.harness,
+            "--model-id",
+            sweep.model_id,
             "--model",
             sweep.model,
             "--backend",
@@ -450,12 +454,21 @@ class PyTorchVisionJob:
                 "data_mode": self.sweep.data_mode,
                 "rocal_device": self.sweep.rocal_device,
                 "augmentation": self.sweep.augmentation,
-                "lr_schedule": {
-                    "name": self.variant.training.lr_schedule.name,
-                    "warmup_epochs": self.variant.training.lr_schedule.warmup_epochs,
-                    "milestones_epochs": self.variant.training.lr_schedule.milestones_epochs,
-                    "gamma": self.variant.training.lr_schedule.gamma,
-                },
+                # training.lr_schedule drives the native loop only; HF Trainer
+                # owns its own scheduler, so asserting our block against an
+                # hf_trainer run would compare against something that never ran.
+                **(
+                    {
+                        "lr_schedule": {
+                            "name": self.variant.training.lr_schedule.name,
+                            "warmup_epochs": self.variant.training.lr_schedule.warmup_epochs,
+                            "milestones_epochs": self.variant.training.lr_schedule.milestones_epochs,
+                            "gamma": self.variant.training.lr_schedule.gamma,
+                        }
+                    }
+                    if self.variant.training.harness == "native"
+                    else {}
+                ),
             }
             mismatches = {
                 key: {"expected": expected, "actual": raw.get(key)}
@@ -491,6 +504,9 @@ class PyTorchVisionJob:
                         f"batches={batches_per_epoch}/{expected_batches}, "
                         f"steps={steps_per_epoch}/{expected_steps}"
                     )
+            # The LR trajectory is derived from training.lr_schedule, which only
+            # drives the native loop. HF Trainer runs its own scheduler, so the
+            # recorded values are provenance there rather than an assertion.
             schedule = self.variant.training.lr_schedule
             expected_initial_lr = self.variant.training.learning_rate
             if schedule.warmup_epochs:
@@ -502,10 +518,15 @@ class PyTorchVisionJob:
             expected_final_lr = self.variant.training.learning_rate * schedule.gamma ** sum(
                 completed_epochs >= milestone for milestone in schedule.milestones_epochs
             )
-            for metric_name, expected_lr in (
-                ("training.learning_rate_initial", expected_initial_lr),
-                ("training.learning_rate_final", expected_final_lr),
-            ):
+            lr_expectations = (
+                (
+                    ("training.learning_rate_initial", expected_initial_lr),
+                    ("training.learning_rate_final", expected_final_lr),
+                )
+                if self.variant.training.harness == "native"
+                else ()
+            )
+            for metric_name, expected_lr in lr_expectations:
                 actual_lr = metrics.get(metric_name)
                 if actual_lr is None or not math.isclose(actual_lr, expected_lr, rel_tol=1e-9, abs_tol=1e-12):
                     raise RuntimeError(

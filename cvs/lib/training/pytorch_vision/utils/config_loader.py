@@ -115,6 +115,8 @@ class CodeCarbonConfig(_Forbid):
 
 
 class VisionSweep(_Forbid):
+    # HuggingFace model id, required by the hf_trainer harness.
+    model_id: str = ""
     name: str
     label: str
     model: str
@@ -191,6 +193,10 @@ class VisionTrainingConfig(_Forbid):
     channels_last: bool = True
     learning_rate: float = Field(default=0.1, gt=0)
     optimizer: Literal["sgd", "adamw"] = "sgd"
+    # "native" drives our own DDP loop; "hf_trainer" hands the loop to
+    # HuggingFace Trainer with FSDP and reconstructs the same metric contract
+    # from callbacks. hf_trainer requires an image carrying transformers.
+    harness: Literal["native", "hf_trainer"] = "native"
     momentum: float = Field(default=0.9, ge=0)
     weight_decay: float = Field(default=0.0001, ge=0)
     lr_schedule: LearningRateScheduleConfig = Field(default_factory=LearningRateScheduleConfig)
@@ -276,6 +282,10 @@ class VisionTrainingConfig(_Forbid):
             raise ValueError("train_to_accuracy convergence Top-1 target must match the final Top-1 target")
         if self.run_mode == "train_to_accuracy" and not self.convergence.stop_when_reached:
             raise ValueError("train_to_accuracy requires convergence.stop_when_reached=true")
+        if self.harness == "hf_trainer":
+            missing = [s.name for s in self.enabled_sweeps() if not s.model_id]
+            if missing:
+                raise ValueError(f"hf_trainer harness requires sweep.model_id for: {missing}")
         if self.run_mode == "train_5k" and self.steps < 5000:
             raise ValueError("train_5k requires training.steps>=5000")
         expected_phase = {
