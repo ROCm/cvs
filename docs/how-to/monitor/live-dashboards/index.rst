@@ -1,12 +1,14 @@
 .. meta::
-  :description: Live GPU cluster dashboards with CVS
-  :keywords: CVS, monitoring, dashboard, Prometheus, SSH
+  :description: View live AMD Instinct GPU cluster dashboards with CVS using agentless SSH polling or Prometheus exporter-based monitoring with Grafana.
+  :keywords: CVS, ROCm, monitoring, dashboard, Prometheus, Grafana, SSH, AMD Instinct, GPU, AMD, RDMA, InfiniBand, metrics
 
-****************
-Live dashboards
-****************
+****************************************************************************
+Live AMD Instinct GPU cluster dashboards with Cluster Validation Suite (CVS)
+****************************************************************************
 
 Live dashboards keep GPU and network metrics visible while workloads run—real-time views and historical trends in Grafana or the CVS Cluster Monitor UI. CVS ships two approaches under ``cvs/monitors/``:
+
+The following options are available.
 
 .. list-table::
    :header-rows: 1

@@ -1,10 +1,10 @@
 .. meta::
-  :description: Burn-in and diagnostic test configuration schemas
-  :keywords: CVS, platform, health, preflight, ANC, config schema
+  :description: JSON configuration schemas for CVS burn-in and diagnostic test suites, including platform, health, preflight, and ANC tests for AMD GPU clusters.
+  :keywords: CVS, burn-in, diagnostic, platform, health, preflight, ANC, JSON, ROCm, GPU, AMD, AGFHC, RVS
 
-****************
-Burn-in / Diag
-****************
+***************************************************************************
+Cluster Validation Suite (CVS) burn-in and diagnostic test configuration schemas
+***************************************************************************
 
 JSON configuration schemas for host validation, GPU burn-in, preflight, and ANC suites under ``cvs/input/config_file/``.
 

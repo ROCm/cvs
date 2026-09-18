@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run CVS test scripts
-  :keywords: CVS, health, network, tests, RCCL
+  :description: Run CVS test suites on AMD Instinct GPU clusters: health, RCCL, training, and inference tests using cvs run with cluster and config files.
+  :keywords: CVS, ROCm, health, network, tests, RCCL, AMD Instinct, GPU, AMD, training, inference, cluster, CLI
 
-*********
-Run tests
-*********
+***************************************************************************
+Run Cluster Validation Suite (CVS) test suites on AMD Instinct GPU clusters
+***************************************************************************
 
 To run a test suite you need two files: a **cluster file** (``--cluster_file``) that describes your nodes and SSH access, and a **test suite config** (``--config_file``) with suite-specific settings. Set those up first — see :doc:`/how-to/configure/cluster-config` and :doc:`/how-to/configure/test-suite-config/index`. To choose the right template, see :doc:`/how-to/configure/test-suite-config/pick-config-file`.
 
@@ -12,6 +12,8 @@ Then use ``cvs run`` on the head node to execute tests across the cluster.
 
 List available suites
 =============================
+
+Run the following command to see all available test suites:
 
 .. code:: bash
 
@@ -74,19 +76,36 @@ Common ``cvs run`` options
 Test suites
 ===========
 
-Per-suite **Set up config** and **Run tests** steps are grouped by category:
+Run suites in the order shown: validate single-node health before exercising the network, and validate the network before distributed training or inference. Each suite's page includes setup and run steps.
 
-- :doc:`Burn-in / Diag tests </how-to/test-suites/burn-in-diag/index>` — platform, health, preflight, ANC
-- :doc:`Network tests </how-to/test-suites/network/index>` — IB Perf, RCCL, MORI
-- :doc:`Training tests </how-to/test-suites/training/index>` — Aorta, JAX MaxText, Megatron
-- :doc:`Inference tests </how-to/test-suites/inference/index>` — vLLM, ATOM, SGLang, xDiT
+.. list-table::
+   :header-rows: 1
+   :widths: 20 50 30
+
+   * - Category
+     - What it validates
+     - Suites
+   * - :doc:`Burn-in / Diag </how-to/test-suites/burn-in-diag/index>`
+     - Single-node GPU and host health: OS config, BIOS/firmware, driver load, GPU burn-in, and device access. Run before any cluster-wide workload.
+     - Platform, Health, Preflight, ANC
+   * - :doc:`Network </how-to/test-suites/network/index>`
+     - Interconnect bandwidth, latency, and GPU collective communication across all nodes. Run after burn-in passes and before distributed workloads.
+     - IB Perf, RCCL, MORI
+   * - :doc:`Training </how-to/test-suites/training/index>`
+     - Multi-node distributed training throughput, scaling efficiency, and model convergence. Run after network validation.
+     - Aorta, JAX MaxText, Megatron, TorchTitan
+   * - :doc:`Inference </how-to/test-suites/inference/index>`
+     - LLM serving throughput, latency, accuracy, and diffusion model performance on AMD Instinct GPUs.
+     - vLLM, ATOM, SGLang, xDiT
 
 Scalability
 ===========
 
-For clusters with 32+ nodes, see :doc:`/concepts/cvs-at-scale`.
+For clusters with 32 or more nodes, CVS automatically shards work across parallel worker processes. See :doc:`/concepts/cvs-at-scale` for tuning ``CVS_HOSTS_PER_SHARD`` and ``CVS_WORKERS_PER_CPU``.
 
 Test results
 ============
+
+CVS writes a pytest HTML report after each run. The report includes per-node pass/fail status, captured output, and links to any custom suite-specific reports (for example RCCL performance charts).
 
 .. include:: /_includes/test-results.rst

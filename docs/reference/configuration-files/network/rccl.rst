@@ -1,6 +1,6 @@
 .. meta::
-  :description: Configure RCCL benchmark configuration file variables
-  :keywords: RCCL, ROCm, benchmark, CVS
+  :description: Reference for RCCL test configuration files in CVS, covering collective benchmarks, regression sweeps, environment scripts, and heatmap generation for AMD GPU clusters.
+  :keywords: CVS, RCCL, ROCm, benchmark, collective, InfiniBand, RDMA, GPU, AMD, JSON, configuration, network, heatmap
 
 **********************************************************************
 ROCm Communication Collectives Library (RCCL) test configuration files
@@ -26,8 +26,8 @@ CVS provides the following RCCL suites:
 
 All suites also collect host/network information and check firewall state before performance runs.
 
-How to run
-==========
+Run RCCL test commands
+======================
 
 See :doc:`/how-to/test-suites/network/rccl` for ``cvs run`` examples, environment script staging, and heatmap generation.
 
@@ -227,6 +227,8 @@ The ``results`` section is used for threshold validation. Values are keyed by co
 Collective meanings
 -------------------
 
+The following collectives can be specified in the ``results`` block; each name maps to a distinct RCCL operation.
+
 - ``all_reduce_perf``: all ranks reduce then receive the reduced result.
 - ``all_gather_perf``: each rank receives data from all ranks.
 - ``scatter_perf``: root rank distributes shards to all ranks.
@@ -270,6 +272,8 @@ Heatmap generation
 
 Generate performance heatmaps by comparing actual test results against a golden reference:
 
+The following command generates an HTML heatmap that highlights per-collective bandwidth deviations from the reference.
+
 .. code-block:: bash
 
   cvs generate heatmap \
@@ -292,6 +296,8 @@ Environment script setup
 =========================
 
 All cluster configurations require an environment script to be sourced before RCCL tests, regardless of NIC type (Broadcom/ConnectX/AINIC):
+
+Follow these steps to select and configure the correct environment script for your cluster hardware.
 
 1. **For AINIC clusters:** Ensure AMD ANP is installed and available on all target nodes, then edit ``input/config_file/rccl/ainic_env_script.sh`` and set ``ANP_HOME_DIR`` to your ANP install path.
 
@@ -348,6 +354,8 @@ Verified on a 2-node bnxt_re/Helios cluster (4 GPUs/node, 8 ranks total): with
 
 Validation and artifacts
 ========================
+
+After a run, CVS produces the following outputs that can be used for pass/fail assessment and further analysis.
 
 - Test-level pass/fail is based on command execution plus enabled validations (``results``, bandwidth checks, dip checks).
 - Performance reports are generated under ``/tmp/rccl_perf_report_*.html``.

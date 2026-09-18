@@ -1,10 +1,10 @@
 .. meta::
-  :description: CVS command-line reference
-  :keywords: CVS, CLI, cvs run, cvs exec, cvs scp
+  :description: Complete reference for the CVS command-line interface, covering cvs run, cvs exec, cvs scp, cvs list, cvs monitor, and cvs generate commands.
+  :keywords: CVS, CLI, cvs run, cvs exec, cvs scp, cvs list, cvs monitor, cvs generate, ROCm, cluster, JSON
 
-**************
-CLI reference
-**************
+**********************************************************
+Cluster Validation Suite (CVS) command-line interface (CLI) reference
+**********************************************************
 
 Top-level commands
 ==================
@@ -187,7 +187,7 @@ Optional options:
 
 All other pytest flags pass through. Run ``pytest --help`` for the full list.
 
-See :doc:`/how-to/run-tests/index`.
+See :doc:`/how-to/test-suites/index`.
 
 ``cvs list``
 ============
@@ -209,7 +209,7 @@ Optional options:
 
 With no arguments, lists all suites (same catalog as ``cvs run`` with no arguments). With a suite name, lists test functions in that suite.
 
-See :doc:`/how-to/run-tests/index`.
+See :doc:`/how-to/test-suites/index`.
 
 ``cvs monitor``
 ===============

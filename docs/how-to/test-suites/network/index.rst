@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run network and collective communication CVS test suites
-  :keywords: CVS, IB Perf, RCCL, MORI, network
+  :description: Run CVS network and collective communication test suites to validate InfiniBand, RCCL, and RDMA interconnect before distributed workloads on AMD Instinct clusters.
+  :keywords: CVS, network, InfiniBand, RCCL, MORI, RDMA, AMD Instinct, ROCm, AMD, GPU, IB, collective communication
 
-**************
-Network tests
-**************
+****************************************************************************
+Run Cluster Validation Suite (CVS) network and collective communication suites
+****************************************************************************
 
 InfiniBand performance, RCCL collectives, and MORI RDMA benchmarks validate cluster interconnect before distributed workloads.
 
@@ -25,4 +25,4 @@ InfiniBand performance, RCCL collectives, and MORI RDMA benchmarks validate clus
      - :doc:`/how-to/test-suites/network/mori`
      - :doc:`/reference/configuration-files/network/mori`
 
-See also :doc:`/how-to/run-tests/index` for common ``cvs run`` flags and workflow.
+See also :doc:`/how-to/test-suites/index` for common ``cvs run`` flags and workflow.

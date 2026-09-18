@@ -1,12 +1,14 @@
 .. meta::
-  :description: Enable passwordless SSH for CVS cluster nodes
-  :keywords: SSH, cluster, passwordless, authorized_keys
+  :description: How to configure passwordless SSH key-based authentication between the head node and CVS cluster worker nodes for automated test execution.
+  :keywords: SSH, passwordless, authorized_keys, CVS, cluster, ROCm, key-based authentication, head node, GPU, AMD
 
-*******************
-Passwordless SSH
-*******************
+***************************************************************************
+Set up passwordless SSH for Cluster Validation Suite (CVS) cluster nodes
+***************************************************************************
 
 CVS requires SSH key-based access from the head node to every cluster worker. Passwordless login must work for the user named in ``cluster.json`` (``username`` and ``priv_key_file``).
+
+Follow these steps to configure passwordless SSH between the head node and each worker node.
 
 .. tip::
 
