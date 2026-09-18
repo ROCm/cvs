@@ -40,6 +40,7 @@
   "_training_comment": "training{} defines the workload. `workload` is the scorecard row id (W1 ResNet-50, W3 ViT-B/16) and is cross-checked against the result artifact. `distributed` must match the suite you invoke and the cluster node count. `run_mode` selects the profile (smoke|perf|train_5k|train_to_accuracy) and determines which rows are gated. `optimizer` is sgd or adamw; transformer backbones need adamw.",
   "_sweeps_comment": "training.sweeps[] are full training runs. Each `name` is also its threshold cell key, so encode every material dimension (topology, precision, microbatch, GA, data mode, rocAL device, augmentation) to stop a result being compared against the wrong gate. `label` is the compact id used in pytest rows and log directory names. training.enabled_sweep_list selects which names execute.",
   "training": {
+    "workload": "W1",
     "distributed": false,
     "enabled": true,
     "phase": "accuracy",
