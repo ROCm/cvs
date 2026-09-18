@@ -8,6 +8,7 @@ Profile-driven card renderers for Run Deck static HTML.
 from __future__ import annotations
 
 import html
+from collections import Counter
 from typing import Any
 
 from cvs.lib.report.formatting import fmt_num, link_or_text_html
@@ -157,6 +158,39 @@ class DeckCardRenderer:
         )
 
     @staticmethod
+    def render_drift_matrix(_payload, _card, data):
+        matrix = data if isinstance(data, dict) else {}
+        rows = matrix.get("rows") or []
+        if not rows:
+            return "<p class='muted'>No configuration facts recorded.</p>"
+
+        headers = matrix.get("headers") or []
+        header_html = "".join(f"<th>{html.escape(str(header))}</th>" for header in headers)
+        body = []
+        for row in rows:
+            mismatch = bool(row.get("mismatch"))
+            values_list = list(row.get("values", []))
+            counts = Counter(str(value) for value in values_list)
+            modal = counts.most_common(1)[0][0] if counts else ""
+            cells = []
+            for value in values_list:
+                outlier = mismatch and str(value) != modal
+                value_class = "drift-cell-mismatch" if outlier else "drift-cell-match"
+                cells.append(f"<td class='{value_class}'>{html.escape(str(value))}</td>")
+            values = "".join(cells)
+            status = "Mismatch" if mismatch else "Consistent"
+            status_class = "drift-status-mismatch" if mismatch else "drift-status-match"
+            body.append(
+                "<tr>"
+                f"<td>{html.escape(str(row.get('label', row.get('key', ''))))}</td>"
+                f"{values}<td class='{status_class}'>{status}</td></tr>"
+            )
+
+        mismatch_count = matrix.get("mismatch_count", 0)
+        summary = f"<p class='drift-summary'>{mismatch_count} configuration row(s) differ across nodes.</p>"
+        return f"{summary}<table class='results-table drift-matrix'><tr>{header_html}</tr>{''.join(body)}</table>"
+
+    @staticmethod
     def render_launch(_payload: dict, _card: dict, data: Any) -> str:
         return render_launch_panel_html(data or {})
 
@@ -211,6 +245,7 @@ class DeckCardRenderer:
             "gate_heatmap": self.render_gate_heatmap,
             "sweep_cell_cards": self.render_cell_cards,
             "table": self.render_table,
+            "drift_matrix": self.render_drift_matrix,
             "launch_panel": self.render_launch,
             "line_chart": self.render_line_chart,
             "heatmap": self.render_heatmap,
@@ -247,8 +282,8 @@ class DeckCardRenderer:
         if card_type == "gate_matrix":
             wrapped += f"<div class='matrix-wrap'>{html_body}"
             return section_id, wrapped, True
-        if card_type in ("table", "sweep_cell_cards"):
-            wrap_class = "results-wrap" if card_type == "table" else ""
+        if card_type in ("table", "drift_matrix", "sweep_cell_cards"):
+            wrap_class = "results-wrap" if card_type in ("table", "drift_matrix") else ""
             inner = f"<div class='{wrap_class}'>{html_body}</div>" if wrap_class else html_body
             return section_id, f"{wrapped}{inner}</section>", True
         if card_type == "lifecycle_timeline":
