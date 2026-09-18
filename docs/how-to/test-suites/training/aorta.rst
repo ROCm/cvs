@@ -1,10 +1,12 @@
 .. meta::
-  :description: Run the Aorta distributed training benchmark
-  :keywords: CVS, aorta
+  :description: Run the Aorta distributed training benchmark with CVS to validate iteration time, compute ratio, and rank balance on AMD Instinct GPU clusters with ROCm.
+  :keywords: CVS, Aorta, training, benchmark, AMD Instinct, ROCm, AMD, GPU, RCCL, distributed, PyTorch, Docker
 
-***************
-Aorta benchmark
-***************
+**********************************************
+Run the Aorta distributed training benchmark
+**********************************************
+
+Aorta validates RCCL collective communication performance and training throughput across multi-node clusters by running an Aorta-based workload in a Docker container and gating the result on iteration time, compute ratio, overlap ratio, and rank balance thresholds.
 
 .. _aorta-set-up-config:
 
@@ -23,15 +25,15 @@ Set up config
    - ``docker.image`` and RCCL build settings as needed
    - Any ``<changeme>`` placeholders
 
-Full parameter list: :doc:`/reference/configuration-files/training/aorta`.
+For the complete field reference, see :doc:`/reference/configuration-files/training/aorta`.
 
 .. _aorta-run-tests:
 
 Run tests
 =========
 
-Aorta benchmark
----------------
+Run the Aorta benchmark suite
+-----------------------------
 
 The Aorta benchmark runs an Aorta-based workload in a Docker container with RCCL, collects PyTorch profiler traces, and validates iteration time, compute ratio, overlap ratio, and rank balance against configurable thresholds in ``aorta_benchmark.yaml``.
 
@@ -52,9 +54,18 @@ List tests in this suite:
     - test_validate_thresholds
     - test_generate_report
 
-Run from the CVS package directory (the directory that contains ``input/``), for example:
+.. note::
+
+   Run from the CVS package directory (the directory that contains ``input/``):
+
+   .. code:: bash
+
+     cd /path/to/your/cvs-checkout/cvs
 
 .. code:: bash
 
-  cd /path/to/your/cvs-checkout/cvs
-  cvs run test_aorta --cluster_file input/cluster_file/cluster.json --config_file input/config_file/aorta/aorta_benchmark.yaml --html=/var/www/html/cvs/aorta.html --capture=tee-sys --self-contained-html --log-file=/tmp/aorta.log -vvv -s
+  cvs run test_aorta \
+    --cluster_file input/cluster_file/cluster.json \
+    --config_file input/config_file/aorta/aorta_benchmark.yaml \
+    --html=/var/www/html/cvs/aorta.html --capture=tee-sys --self-contained-html \
+    --log-file=/tmp/aorta.log -vvv -s

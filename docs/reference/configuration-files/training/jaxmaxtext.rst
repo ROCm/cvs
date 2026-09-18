@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure the variables in the JAX MaxText training configuration files
-  :keywords: training, ROCm, cvs, JAX, MaxText
+  :description: Reference for CVS JAX MaxText training configuration files, covering container setup, sweep keys, threshold files, and distributed training parameters for AMD GPUs.
+  :keywords: CVS, JAX, MaxText, training, ROCm, GPU, AMD, distributed, JSON, configuration, benchmark, RCCL, InfiniBand
 
-****************************************
-JAX MaxText training configuration files
-****************************************
+*************************************************************************
+JAX MaxText training configuration files for Cluster Validation Suite (CVS)
+*************************************************************************
 
 The JAX MaxText suites (``jaxmaxtext_single`` / ``jaxmaxtext_distributed``) run
 `MaxText <https://github.com/AI-Hypercomputer/maxtext>`_ pre-training inside a
@@ -230,6 +230,8 @@ A representative distributed config
 
 Top-level (CVS) fields
 ======================
+
+The following fields sit at the root of the configuration object and control suite-level behavior.
 
 .. list-table::
    :widths: 3 3 5
@@ -488,6 +490,8 @@ and the all-gather / reduce-scatter combine thresholds.
 Tests blocks
 ============
 
+This section describes the optional test blocks that extend the base training run with additional validation passes.
+
 ``scaling_baseline`` (distributed)
 ----------------------------------
 
@@ -702,6 +706,8 @@ report ``N/A`` (not a failure).
 Threshold kinds
 ---------------
 
+Each threshold entry specifies how the measured value is compared against the expected value.
+
 .. list-table::
    :widths: 2 3 5
    :header-rows: 1
@@ -735,6 +741,8 @@ Tracked metrics
 ---------------
 
 All metrics use the ``training.`` namespace.
+
+The suite records the following metrics; each can be referenced in threshold entries by its full dotted name.
 
 .. list-table::
    :widths: 3 1 1 5

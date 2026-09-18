@@ -1,22 +1,25 @@
 .. meta::
-  :description: Choose the CVS test suite config file for your workload
-  :keywords: CVS, configure, config_file, test suite
+  :description: Choose the right CVS test suite config template for your workload type on AMD Instinct GPU clusters: training, inference, health, or RCCL.
+  :keywords: CVS, ROCm, configure, config_file, test suite, AMD Instinct, GPU, AMD, RCCL, training, inference, JSON
 
-*************************
-Choose config template
-*************************
+***************************************************************************
+Choose the right Cluster Validation Suite (CVS) config template for your workload
+***************************************************************************
 
-See :doc:`/reference/configuration-files/index` for field-level schemas.
+For the complete field-by-field schema for each test suite's config file, see :doc:`/reference/configuration-files/index`.
 Use ``cvs config copy <path> --output <dest>`` to copy a template, or ``cvs config list <path>`` to browse templates in a directory.
 
 Platform, health, RCCL, and other diagnostic/network configs use **fixed filenames** (see **Burn-in / Diag** and **Network** below). **Training** and **inference** workloads use the naming patterns in their respective sections.
 
-**Threshold pairs**
+Threshold pairs
+===============
 
 Some training and inference suites ship a matching threshold file for each config: the same basename with ``_threshold`` inserted before ``.json`` (for example ``…_single_threshold.json``). Copy both files and keep them in the same directory. The config references its threshold file via a ``threshold_json`` field.
 
 Burn-in / Diag
 ==============
+
+The following suites are available for burn-in and diagnostic workloads.
 
 .. list-table::
    :header-rows: 1
@@ -44,6 +47,8 @@ Burn-in / Diag
 
 Network
 =======
+
+The following suites are available for network testing.
 
 .. list-table::
    :header-rows: 1
@@ -86,7 +91,8 @@ Training workload templates use:
    * - ``{mode}``
      - Topology — ``single`` (one node) or ``distributed`` (multi-node).
 
-**Example**
+Example filenames
+-----------------
 
 .. code:: text
 
@@ -96,7 +102,8 @@ Training workload templates use:
 
 ``mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json`` → ``mi3xx`` · ``jaxmaxtext`` · ``llama-3.3-70b`` · ``distributed``.
 
-**Suites**
+Available suites
+----------------
 
 .. list-table::
    :header-rows: 1
@@ -127,7 +134,7 @@ Training workload templates use:
 Inference
 =========
 
-Inference templates use **one of two** filename patterns:
+Inference templates use one of two filename patterns:
 
 .. code:: text
 
@@ -153,7 +160,8 @@ Use the second form when precision (``fp8``, ``mxfp4``, ``bf16``, and similar) i
    * - ``{mode}``
      - Topology or workload shape — ``single``, ``distributed``, or ``disaggregated`` (SGLang).
 
-**Examples**
+Example filenames
+-----------------
 
 Without ``{precision}``:
 
@@ -175,7 +183,8 @@ With ``{precision}``:
 
 ``mi3xx_vllm_llama33-70b_fp8_single.json`` → ``mi3xx`` · ``vllm`` · ``llama33-70b`` · ``fp8`` · ``single``.
 
-**Suites**
+Available suites
+----------------
 
 .. list-table::
    :header-rows: 1

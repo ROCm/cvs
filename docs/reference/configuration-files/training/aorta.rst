@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure the Aorta benchmark configuration file variables
-  :keywords: Aorta, ROCm, RCCL, benchmark, CVS
+  :description: Reference for the Aorta benchmark test configuration file in CVS, covering distributed training, RCCL build options, PyTorch profiler traces, and expected results.
+  :keywords: CVS, Aorta, ROCm, RCCL, benchmark, distributed training, GPU, AMD, JSON, configuration, profiler, multi-node
 
-********************************************
-Aorta benchmark test configuration file
-********************************************
+************************************************************************
+Aorta benchmark test configuration file for Cluster Validation Suite (CVS)
+************************************************************************
 
 The Aorta benchmark runs distributed training with RCCL in a container, collects PyTorch profiler traces, and validates iteration time and compute/communication overlap. Metrics are derived from host-side trace parsing (raw traces or TraceLens reports when available).
 
@@ -234,8 +234,8 @@ The **dropdown above** is the full **shipped** ``aorta_benchmark.yaml``. Where t
      - optional
      - Maximum iteration time variance across ranks (e.g. std/mean).
 
-How to run
-==========
+Run Aorta benchmark commands
+============================
 
 Use the **CVS package directory** as the working directory: the directory that contains the ``input`` tree (in a typical clone, the inner ``cvs`` directory next to ``tests`` and ``lib``). Example:
 
