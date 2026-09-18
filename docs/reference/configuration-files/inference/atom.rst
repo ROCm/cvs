@@ -1,10 +1,10 @@
 ﻿.. meta::
-  :description: Configure the ATOM inference benchmark suite in CVS
-  :keywords: inference, ROCm, cvs, ATOM, LLM, benchmark, multinode, thresholds
+  :description: Reference for the ATOM inference benchmark configuration in CVS, covering drivers, sweep cells, threshold files, and multi-node pipeline parallelism for AMD GPUs.
+  :keywords: CVS, ATOM, inference, ROCm, LLM, benchmark, AMD Instinct, GPU, threshold, vLLM, SGLang, JSON, multinode
 
-**********************************
-ATOM inference configuration file
-**********************************
+****************************************************************************
+ATOM inference benchmark configuration file for Cluster Validation Suite (CVS)
+****************************************************************************
 
 The ATOM suite validates LLM serving on AMD Instinct GPUs. Single-node variants
 use ``params.driver: atom`` (native ``openai_server``). Shipped multinode
@@ -151,6 +151,8 @@ record-only (MI355X stems often ship record-only until lab calibration).
 
 Fields you must customize
 -------------------------
+
+Replace the following fields with values specific to your lab and cluster before running the suite.
 
 .. list-table::
    :widths: 3 4
@@ -393,8 +395,8 @@ on pytest gates):
      - ``panels.framework_parity``
      - Framework parity ratios
 
-See also
-========
+Related resources
+=================
 
 - :doc:`/how-to/test-suites/inference/atom` — step-by-step first run
 - :doc:`/reference/configuration-files/cluster-file` — cluster file schema

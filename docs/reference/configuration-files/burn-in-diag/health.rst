@@ -1,25 +1,25 @@
 .. meta::
-  :description: Configure the Health configuration file variables
-  :keywords: health, ROCm, install, cvs
+  :description: Reference for the CVS health test configuration file, covering AGFHC, TransferBench, and RVS burn-in parameters for AMD GPU cluster validation.
+  :keywords: CVS, health, AGFHC, TransferBench, RVS, ROCm, GPU, burn-in, AMD Instinct, configuration, JSON, benchmark
 
-******************************
-Health test configuration file
-******************************
+***************************************************************************
+Health test configuration file reference for Cluster Validation Suite (CVS)
+***************************************************************************
 
-The burn-in health tests are single-node diagnostic tests that validate the hardware and firmware versions' functionality and performance.
+The health configuration file controls AGFHC, TransferBench, and RVS burn-in parameters. Use these tests to validate GPU hardware, memory bandwidth, and compute throughput on each cluster node before production workloads.
 
-Here's a code snippet of the ``mi300_health_config.json`` file for reference:
+How to run these tests: :doc:`/how-to/test-suites/burn-in-diag/health`.
 
 .. note::
 
-  In this configuration file, ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username. 
+  In this configuration file, ``{user-id}`` resolves to the current username at runtime. You can also manually change this value to your username.
 
 .. dropdown:: ``mi300_health_config.json``
 
   .. code:: json
-    
+
     {
-    
+
         "agfhc":
         {
             "path": "/opt/amd/agfhc",
@@ -51,7 +51,7 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
               "32_cu_rem_read": "48.0",
               "32_cu_rem_write": "48.0",
               "32_cu_rem_copy": "48.0"
-    
+
           }
         },
         "rvs":
@@ -61,7 +61,7 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
             "git_url": "https://github.com/ROCm/ROCmValidationSuite.git",
             "nfs_install": "True",
             "_comment_rocm_path": "ROCm installation path.Set to placeholder changeme auto-detect from /opt/rocm or /opt/rocm/core-*",
-            "rocm_path": "<changeme>",            
+            "rocm_path": "<changeme>",
             "config_path_mi300x": "/opt/rocm/share/rocm-validation-suite/conf/MI300X",
             "config_path_default": "/opt/rocm/share/rocm-validation-suite/conf",
             "_comment_rvs_test_level": "RVS test level configuration (0-5). 0: Run individual tests (skip level test), 1-5: Run LEVEL config test if RVS >= 1.3.0, else run individual tests. Default is 4.",
@@ -134,7 +134,7 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
                 }
             ]
         }
-    
+
     }
 
 
@@ -142,7 +142,7 @@ Here's a code snippet of the ``mi300_health_config.json`` file for reference:
 Parameters
 ==========
 
-Here's an exhaustive list of the available parameters in the Health configuration file.
+The following parameters are available in the health configuration file.
 
 AGFHC
 -----
@@ -162,11 +162,8 @@ AGFHC
      - Path where AGFHC is installed
    * - ``package_tar_ball``
      - ``/home/{user-id}/`` |br| ``PACKAGES/agfhc-mi300x`` |br| ``_1.22.0_ub2204.tar.bz2``
-     - Path where the tar ball is downloaded   
+     - Path where the tar ball is downloaded
    * - ``install_dir``
-     - ``/home/{user-id}/INSTALL/agfhc/``
-     - Path where AGFHC runs
-   * - ``_comments_log_dir``
      - ``/home/{user-id}/INSTALL/agfhc/``
      - Path where AGFHC runs
    * - ``log_dir``
@@ -200,13 +197,13 @@ TransferBench
      - Git tag to checkout after cloning TransferBench
    * - ``rocm_path``
      - ``<changeme>``
-     - Set the path of rocm       
+     - Set the path of rocm
    * - ``bytes_to_transfer``
      - 268435456
      - Amount of data to transfer in bytes (256 MB); this is the payload size for bandwidth tests
    * - ``gpu_to_gpu_a2a_rtotal``
      - 320.0
-     - All-to-all communication total bandwidth in GB/s across all GPUs 
+     - All-to-all communication total bandwidth in GB/s across all GPUs
    * - ``avg_gpu_to_gpu_p2p_unidir_bw``
      - 33.9
      - Average peer-to-peer unidirectional bandwidth (GB/s) between GPU pairs
@@ -259,16 +256,13 @@ ROCm Validation Suite (RVS)
      - Set the flag to install nfs
    * - ``rocm_path``
      - ``<changeme>``
-     - Set the path of rocm       
+     - Set the path of rocm
    * - ``config_path_mi300x``
      - ``/opt/rocm/share/`` |br| ``rocm-validation-suite`` |br| ``/conf/MI300X``
-     - Path for Instinct MI300X configuration 
+     - Path for Instinct MI300X configuration
    * - ``config_path_default``
      - ``/opt/rocm/share/`` |br| ``rocm-validation`` |br| ``-suite/conf``
      -  Default path for RVS
-   * - ``_comment_rvs_test_level``
-     - "RVS test level configuration (0-5). 0: Run individual tests (skip level test), 1-5: Run LEVEL config test if RVS >= 1.3.0, else run individual tests. Default is 4."
-     -  RVS test comments
    * - ``rvs_test_level``
      - 4
      - Test level
@@ -386,16 +380,3 @@ ROCm Validation Suite (RVS)
    * - ``fail_regex_pattern``
      - ``\\[ERROR\\s*\\]|RVS-ERROR``
      - Failure expression
-
-
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-   

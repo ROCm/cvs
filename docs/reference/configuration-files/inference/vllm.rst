@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure the vLLM inference benchmark suite in CVS
-  :keywords: inference, ROCm, cvs, vLLM, LLM, benchmark, multinode, thresholds, metrics, accuracy
+  :description: Reference for the vLLM inference benchmark configuration in CVS, covering container setup, sweep cells, threshold files, accuracy tests, and multi-node execution.
+  :keywords: CVS, vLLM, inference, ROCm, LLM, benchmark, GPU, AMD, threshold, multinode, accuracy, JSON, configuration
 
-**********************************
-vLLM inference configuration file
-**********************************
+****************************************************************************
+vLLM inference benchmark configuration file for Cluster Validation Suite (CVS)
+****************************************************************************
 
 The vLLM suites benchmark LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file, with one-host fallback when only a single host is present. Packaged distributed recipes and thresholds are calibrated for two hosts; retune them before treating other sizes as pass/fail.
 
@@ -288,6 +288,8 @@ The container block controls image selection, lifetime, and the ``docker run`` f
 Container block keys
 --------------------
 
+The following keys are accepted inside the ``container`` block.
+
 .. list-table::
    :widths: 3 2 5
    :header-rows: 1
@@ -391,6 +393,8 @@ The container is a long-lived sidecar; every workload command runs through ``doc
 
 Container lifetime
 ------------------
+
+The ``lifetime`` key controls when the container is started and stopped relative to the test lifecycle.
 
 .. list-table::
    :widths: 2 4 4
@@ -1075,10 +1079,10 @@ Troubleshooting
    * - Extra-key validation error
      - A misspelled key. Every block except ``container`` forbids unknown keys
 
-See also
-========
+Related resources
+=================
 
 - :doc:`/how-to/test-suites/inference/vllm` — step-by-step first run
 - :doc:`/reference/cluster/cluster-file` — cluster file and orchestrator backends
 - :doc:`/how-to/run-with-containers` — container backend walkthrough
-- :doc:`/how-to/run-tests/index` — running other CVS suites
+- :doc:`/how-to/test-suites/index` — running other CVS suites

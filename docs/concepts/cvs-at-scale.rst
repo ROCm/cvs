@@ -1,4 +1,8 @@
-Scalability and Performance
+.. meta::
+  :description: How CVS scales from small lab setups to large enterprise deployments, with parallel SSH execution and environment variable tuning.
+  :keywords: CVS, scalability, performance, parallel SSH, sharding, gevent, CVS_HOSTS_PER_SHARD, CVS_WORKERS_PER_CPU
+
+Scalability and performance
 ===========================
 
 CVS automatically scales to handle clusters from small lab setups to large enterprise deployments with thousands of nodes.
@@ -6,7 +10,7 @@ CVS automatically scales to handle clusters from small lab setups to large enter
 Parallel execution
 ------------------
 
-CVS always runs cluster-wide SSH concurrently—it does not connect to hosts one at a time.
+CVS runs cluster-wide SSH concurrently—it does not connect to hosts one at a time.
 
 - **Default (up to 32 hosts)**: A single process uses gevent-based concurrent SSH (``ParallelSSHClient``) across all hosts.
 - **Large host lists (more than 32 hosts, or ``CVS_HOSTS_PER_SHARD``)**: CVS additionally splits hosts into shards and runs each shard in a separate worker process. Each worker still uses gevent concurrency inside the process.
@@ -20,27 +24,29 @@ CVS always runs cluster-wide SSH concurrently—it does not connect to hosts one
 
 **Example:** with 8 hosts, CVS runs one gevent-based ``ParallelSSHClient`` over all hosts—no process sharding.
 
-Environment Variables
+Environment variables
 ---------------------
 
 Configure CVS parallel SSH operations and optimize performance for your cluster size:
 
 **CVS_HOSTS_PER_SHARD** (default: 32)
   When the host count exceeds this value, CVS splits work across multiple worker processes. Each process still uses gevent-based concurrent SSH. Lower the value to enable process sharding on smaller clusters; set ``0`` to disable process sharding (always one gevent client in the parent process).
-  
+
   .. code:: bash
-  
+
     export CVS_HOSTS_PER_SHARD=64  # Process 64 hosts per shard instead of default 32
 
 **CVS_WORKERS_PER_CPU** (default: 4)
   Sets the number of worker processes per CPU core for parallel operations. The total number of workers is calculated as ``CPU_COUNT * CVS_WORKERS_PER_CPU``.
-  
+
   .. code:: bash
-  
+
     export CVS_WORKERS_PER_CPU=8  # Use 8 workers per CPU core instead of default 4
 
-Performance Tuning Examples
+Performance tuning examples
 ---------------------------
+
+The following examples show recommended settings for common cluster sizes.
 
 **For large clusters (1000+ nodes):**
 
