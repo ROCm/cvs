@@ -306,6 +306,22 @@ def config_dict(config_file, cluster_dict):
 
 
 @pytest.fixture(scope="module")
+def preflight_run_deck_results():
+    return preflight_results
+
+
+@pytest.fixture(scope="module")
+def preflight_run_deck_context(cluster_dict):
+    cluster_nodes = sorted(cluster_dict.get('node_dict', {}).keys())
+    return {
+        'cluster_nodes': cluster_nodes,
+        'cluster_size': len(cluster_nodes),
+        'enabled_checks': [],
+        'detailed_report_path': '',
+    }
+
+
+@pytest.fixture(scope="module")
 def phdl(cluster_dict, config_dict):
     """
     Build and return a MultiProcessParallelHandle for all cluster nodes.
@@ -1369,7 +1385,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     preflight_update_test_result()
 
 
-def test_generate_preflight_report(phdl, config_dict, request):
+def test_generate_preflight_report(phdl, config_dict, preflight_run_deck_context, request):
     """
     Generate comprehensive preflight check report.
 
@@ -1406,6 +1422,11 @@ def test_generate_preflight_report(phdl, config_dict, request):
     summary = report_results['summary']
 
     preflight_results['summary'] = summary
+    preflight_run_deck_context['enabled_checks'] = [
+        preflight_check_display_name(check_name)
+        for check_name, check_summary in summary['checks'].items()
+        if check_summary['status'] != 'SKIPPED'
+    ]
 
     # Log summary to console
     log.info("=== PREFLIGHT CHECK SUMMARY ===")
@@ -1424,6 +1445,7 @@ def test_generate_preflight_report(phdl, config_dict, request):
 
     # Generate HTML report
     html_report_path = None
+    copied_path = None
     try:
         if _config_flag_enabled(get_nested_config(config_dict, 'reporting', 'generate_html_report', 'true')):
             # HTML report is generated as part of the report generator run() above
@@ -1436,6 +1458,7 @@ def test_generate_preflight_report(phdl, config_dict, request):
             log.info("HTML report generation disabled in configuration")
     except Exception as e:
         log.warning(f"Failed to generate HTML report: {e}")
+    preflight_run_deck_context['detailed_report_path'] = html_report_path or ''
 
     # Add HTML report to main test report bundle
     if html_report_path and hasattr(request.config, '_html_report_manager'):
@@ -1456,6 +1479,7 @@ def test_generate_preflight_report(phdl, config_dict, request):
                     log.warning(f"Failed to add RDMA CSV to report bundle: {e}")
 
             if copied_path:
+                preflight_run_deck_context['detailed_report_path'] = copied_path
                 log.info(f'Preflight report saved and added to report bundle: {copied_path}')
             else:
                 log.info(
