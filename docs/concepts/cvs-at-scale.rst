@@ -1,9 +1,9 @@
 .. meta::
-  :description: How CVS scales from small lab setups to large enterprise deployments, with parallel SSH execution and environment variable tuning.
-  :keywords: CVS, scalability, performance, parallel SSH, sharding, gevent, CVS_HOSTS_PER_SHARD, CVS_WORKERS_PER_CPU
+  :description: Learn how CVS scales parallel SSH execution from small labs to thousands of nodes using gevent sharding, and how to tune performance with environment variables.
+  :keywords: CVS, ROCm, AMD, AMD Instinct, scalability, performance, parallel SSH, sharding, gevent, cluster, CVS_HOSTS_PER_SHARD, CVS_WORKERS_PER_CPU
 
-Scalability and performance
-===========================
+Cluster Validation Suite (CVS) scalability and parallel SSH performance
+=======================================================================
 
 CVS automatically scales to handle clusters from small lab setups to large enterprise deployments with thousands of nodes.
 
@@ -48,23 +48,24 @@ Performance tuning examples
 
 The following examples show recommended settings for common cluster sizes.
 
-**For large clusters (1000+ nodes):**
+For large clusters (1,000 or more nodes):
 
 .. code:: bash
 
   export CVS_HOSTS_PER_SHARD=64
   export CVS_WORKERS_PER_CPU=6
 
-**For smaller clusters or resource-constrained environments:**
+For smaller clusters or resource-constrained environments:
 
 .. code:: bash
 
   export CVS_HOSTS_PER_SHARD=16
   export CVS_WORKERS_PER_CPU=2
 
-**Recommended Settings by Cluster Size:**
+Recommended settings by cluster size
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- **Large clusters (1000+ nodes)**: ``CVS_HOSTS_PER_SHARD=64``, ``CVS_WORKERS_PER_CPU=6-8``
-- **Medium clusters (<1000 nodes)**: Default values (32 hosts per shard, 4 workers per CPU) usually work well
-- **Small clusters (< 32 nodes)**: Defaults use single-process gevent concurrency; tune ``CVS_HOSTS_PER_SHARD`` only if you want process sharding at smaller host counts
+- **Large clusters (1,000+ nodes)**: ``CVS_HOSTS_PER_SHARD=64``, ``CVS_WORKERS_PER_CPU=6-8``
+- **Medium clusters (fewer than 1,000 nodes)**: Default values (32 hosts per shard, 4 workers per CPU) work well for most cases
+- **Small clusters (fewer than 32 nodes)**: Defaults use single-process gevent concurrency; tune ``CVS_HOSTS_PER_SHARD`` only if you want process sharding at smaller host counts
 - **Resource-constrained systems**: Lower both values to reduce memory and CPU usage
