@@ -8,7 +8,7 @@ Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite support both Megatron-LM and P
 
 `container.env` NIC fields ship with example values plus `<changeme>`. Do not set `NNODES` in JSON. On `*_distributed.json`, `paths.data_cache_dir` must be a shared filesystem.
 
-Sweep combination keys (and matching `sweep.runs` entries and threshold cells) are `MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>`. Pytest parametrizes `sweep_name` from those keys. Packaged combination bodies set `"training_iterations": "20"`; other `train_params` overlays are optional. Omitting `sweep` runs one implicit `default` cell from `train_params`; the threshold file then needs a `"default"` cell when `enforce_thresholds` is true (optional when it is false).
+Sweep combination keys (and matching `sweep.runs` entries and threshold cells) are `MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>`. Pytest parametrizes `sweep_name` from `sweep.runs`. Packaged combination bodies set `"training_iterations": "20"`; other `train_params` overlays (`tensor_parallelism`, `pipeline_parallelism`) are optional. An empty `sweep.runs` list with declared combinations fails at load. Omitting `sweep` runs one implicit `default` cell from `train_params`, which must then set `micro_batch_size`, `global_batch_size`, and `precision`; the threshold file then needs a `"default"` cell when `enforce_thresholds` is true (optional when it is false).
 
 - Schema: [docs/reference/configuration-files/training/megatron.rst](../../../../../docs/reference/configuration-files/training/megatron.rst)
 - How to run: [docs/how-to/test-suites/training/megatron.rst](../../../../../docs/how-to/test-suites/training/megatron.rst)

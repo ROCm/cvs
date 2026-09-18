@@ -230,15 +230,15 @@ On a training failure, lingering GPU processes are killed (``stop_training_proce
 Sweeps
 ======
 
-A sweep combo is one full training run declared in ``sweep.combinations``. Each combination key must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``; the suite parses those values from the key, so they are not repeated in the combination body. Packaged templates use this body (other ``train_params`` overlays are optional)::
+A sweep combo is one full training run declared in ``sweep.combinations``. Each combination key must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``; the suite parses those values from the key, so they are not repeated in the combination body. Packaged templates use this body (other ``train_params`` overlays such as ``tensor_parallelism`` and ``pipeline_parallelism`` are optional)::
 
     "MBS=4,GBS=128,PRECISION=BF16": {
       "training_iterations": "20"
     }
 
-``sweep.runs`` is the ordered list of combination keys to execute; set it to a subset to run only selected combos without editing ``combinations``.
+``sweep.runs`` is the ordered list of combination keys to execute; set it to a subset to run only selected combos without editing ``combinations``. An empty ``runs`` list with a non-empty ``combinations`` dict fails at load.
 
-Omitting ``sweep`` (or leaving ``combinations`` empty) runs one implicit cell named ``default`` using ``train_params`` (MBS/GBS/precision fall back to 2 / 128 / BF16, matching the job defaults). The threshold file must then have a top-level ``default`` cell when ``enforce_thresholds`` is ``true``. When ``enforce_thresholds`` is ``false``, that cell is optional (load warns; metrics are record-only). Packaged configs already declare a ``sweep`` and keep ``MBS=…`` threshold keys; they do not use ``default``.
+Omitting ``sweep`` (or leaving ``combinations`` empty) runs one implicit cell named ``default``. ``train_params`` must then set ``micro_batch_size``, ``global_batch_size``, and ``precision`` (load fails if any are missing). The threshold file must then have a top-level ``default`` cell when ``enforce_thresholds`` is ``true``. When ``enforce_thresholds`` is ``false``, that cell is optional (load warns; metrics are record-only). Packaged configs already declare a ``sweep`` and keep ``MBS=…`` threshold keys; they do not use ``default``.
 
 Pytest parametrizes ``sweep_name`` (one row per ``sweep.runs`` entry, or ``default`` when there is no sweep) for ``test_training``, ``test_metric``, and ``test_loss_curve``. The combo ID (for example ``MBS=4,GBS=128,PRECISION=FP8``) is that pytest ID and the threshold cell key.
 
