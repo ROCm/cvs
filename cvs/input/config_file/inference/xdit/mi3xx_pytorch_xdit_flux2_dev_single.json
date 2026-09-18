@@ -37,7 +37,7 @@
     "backend": "xdit",
     "nnodes": "1",
     "log_level": "info",
-    "model": "black-forest-labs/FLUX.2-dev"
+    "model": "<changeme>"
   },
   "benchmark_params": {
     "model_type": "flux2",
