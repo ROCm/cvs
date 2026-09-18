@@ -6,7 +6,7 @@
 ROCm Cluster Validation Suite (CVS) documentation
 ********************************************
 
-CVS is a collection of test suites that validate AMD ROCm clusters end to end, from single-node burn-in health tests to cluster-wide distributed training and inferencing.
+CVS is a collection of test suites that validate AMD ROCm clusters end to end, from single-node burn-in health tests to cluster-wide distributed training and inference.
 CVS requires only SSH connectivity to the cluster nodes — no Slurm, no Kubernetes, no scheduler needed.
 
 The component public repository is located at `https://github.com/ROCm/cvs <https://github.com/ROCm/cvs>`_.
@@ -22,7 +22,7 @@ The component public repository is located at `https://github.com/ROCm/cvs <http
 
   .. grid-item-card:: Concepts
 
-    * :doc:`Scalability and performance <concepts/cvs-at-scale>`
+    * :doc:`Scalability and parallel SSH performance <concepts/cvs-at-scale>`
 
   .. grid-item-card:: How to
 
