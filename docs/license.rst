@@ -1,10 +1,10 @@
 .. meta::
-  :description: The standard MIT license for CVS
-  :keywords: CVS, ROCm, license
+  :description: MIT license terms for CVS (Cluster Validation Suite), AMD's open-source ROCm GPU cluster qualification and test automation tool.
+  :keywords: CVS, license, MIT, open source, AMD, ROCm, cluster validation, terms
 
-*******
-License
-*******
+********************************************
+CVS (Cluster Validation Suite) license terms
+********************************************
 
 MIT License
 

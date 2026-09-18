@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure PyTorch xDiT FLUX and WAN 2.2 inference benchmarks
-  :keywords: inference, ROCm, cvs, xDiT, FLUX, WAN, text-to-image, image-to-video
+  :description: Reference for CVS xDiT inference benchmark configuration, covering FLUX.1, FLUX.2 text-to-image, and WAN 2.2 image-to-video suites on AMD GPU clusters.
+  :keywords: CVS, xDiT, inference, ROCm, FLUX, WAN, text-to-image, image-to-video, GPU, AMD, distributed, JSON, benchmark
 
-**********************************
-xDiT inference configuration
-**********************************
+************************************************************************
+xDiT inference benchmark configuration for Cluster Validation Suite (CVS)
+************************************************************************
 
 CVS ships five xDiT suites under ``cvs/tests/inference/xdit/``. Each suite reads a JSON
 file from ``cvs/input/config_file/inference/xdit/``. There is no separate threshold file;
@@ -26,6 +26,8 @@ How to run: :doc:`/how-to/test-suites/inference/xdit`.
 
 Configuration files
 ===================
+
+Each xDiT suite maps to one or more JSON templates; select the file that matches your model and execution mode.
 
 .. list-table::
    :widths: 3 2
@@ -117,6 +119,8 @@ Example: FLUX.1-dev single-node
 
 General ``config`` parameters
 =============================
+
+The following parameters appear in the ``config`` block and are common across all xDiT templates.
 
 .. list-table::
    :widths: 3 3 5
@@ -229,6 +233,8 @@ Used by all four FLUX templates. FLUX.2 sets ``model_type: flux2``.
 
 ``benchmark_params.wan22_i2v_a14b``
 ===================================
+
+This block configures the WAN 2.2 image-to-video benchmark and supports both native WAN and Diffusers execution paths.
 
 Native WAN (``mi3xx_pytorch_xdit_wan22_14b_single.json``)
 --------------------------------------------------------

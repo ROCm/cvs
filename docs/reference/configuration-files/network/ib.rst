@@ -1,18 +1,18 @@
 .. meta::
-  :description: Configure the InfiniBand configuration file variables
-  :keywords: InfiniBand, ROCm, install, cvs
+  :description: Reference for the CVS InfiniBand IB Perf test configuration file, covering bandwidth and latency benchmarks, queue pairs, message sizes, and expected results.
+  :keywords: CVS, InfiniBand, IB, RDMA, ROCm, bandwidth, latency, benchmark, GPU, AMD, JSON, configuration, network
 
-********************************************
-InfiniBand (IB Perf) test configuration file
-********************************************
+*******************************************************************************
+InfiniBand (IB Perf) test configuration file for Cluster Validation Suite (CVS)
+*******************************************************************************
 
 IB Perf and latency tests measure network performance. Perf tests measure throughput (bandwidth), and latency tests measure delay. 
 
-Here's a code snippet of the ``ibperf_config.json`` file for reference:
+The following sample shows the ``ibperf_config.json`` structure:
 
 .. note::
 
-  In this configuration file, ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username. 
+  In this configuration file, ``{user-id}`` resolves to the current username at runtime. You can also manually change this value to your username. 
 
 .. dropdown:: ``ibperf_config.json``
 

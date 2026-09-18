@@ -1,14 +1,16 @@
 .. meta::
-  :description: Configure the Platform configuration file variables
-  :keywords: platform, ROCm, install, cvs
+  :description: Reference for the CVS platform test configuration file, covering OS version, kernel, ROCm version, BIOS, PCIe, and firmware validation parameters.
+  :keywords: CVS, platform, ROCm, OS version, kernel, BIOS, PCIe, firmware, GPU, AMD, configuration, JSON, host check
 
-********************************
-Platform test configuration file
-********************************
+*******************************************************************************
+Platform test configuration file reference for Cluster Validation Suite (CVS)
+*******************************************************************************
 
-The platform host check scripts can validate various host-side configurations, such as model load balancing enablement, PCIe checks, kernel version, and ROCm version.
+Run host check scripts to validate host-side configurations, such as model load balancing enablement, PCIe checks, kernel version, and ROCm version.
 
-Here's a code snippet of the ``host_config.json`` file for reference:
+The following sample shows the ``host_config.json`` structure. Replace the values with your cluster's actual versions before running:
+
+How to run these tests: :doc:`/how-to/test-suites/burn-in-diag/platform`.
 
 .. dropdown:: ``host_config.json``
      
@@ -49,7 +51,7 @@ Here's a code snippet of the ``host_config.json`` file for reference:
 Parameters
 ==========
 
-Here's an exhaustive list of the available parameters in the Platform configuration file.
+The following parameters are available in the platform configuration file. Set each to the expected value for your cluster — the test compares the actual system state against these values.
 
 .. list-table::
    :widths: 3 3 5
@@ -65,8 +67,8 @@ Here's an exhaustive list of the available parameters in the Platform configurat
      - ``6.8.0-60-generic``
      - Version of kernel
    * - ``rocm_version``
-     - 7.0.2
-     - ROCm version   
+     - ``<cluster-specific>``
+     - ROCm version installed on the cluster nodes
    * - ``bios_version``
      - ``20171212``
      - BIOS version

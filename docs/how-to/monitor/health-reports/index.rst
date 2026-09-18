@@ -1,10 +1,10 @@
 .. meta::
-  :description: Generate cluster health reports with CVS
-  :keywords: CVS, monitor, check_cluster_health, health report
+  :description: Generate point-in-time HTML health reports for AMD Instinct GPU clusters using CVS check_cluster_health over SSH without installing agents.
+  :keywords: CVS, ROCm, monitor, check_cluster_health, health report, AMD Instinct, GPU, AMD, SSH, RDMA, HTML, Linux
 
-***************
-Health reports
-***************
+*************************************************************************************
+Generate AMD Instinct GPU cluster health reports with Cluster Validation Suite (CVS)
+*************************************************************************************
 
 Health reports run ``cvs monitor check_cluster_health`` from the head node. CVS SSHs to each compute node, collects GPU/NIC counters and logs, and writes a self-contained HTML report. No agents or exporters are installed on the cluster.
 
@@ -13,7 +13,7 @@ The monitor identifies hardware degradation (RAS, PCIe/XGMI, RDMA counters via A
 Generate a health report
 ========================
 
-1. Complete :doc:`Install </getting-started/install>` and :doc:`Set up cluster file </how-to/configure/cluster-config>`.
+1. Complete :doc:`Install CVS </install/install>` and :doc:`Set up cluster file </how-to/configure/cluster-config>`.
 2. List available monitors:
 
    .. code:: bash

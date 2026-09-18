@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure the details of each CVS configuration test file
-  :keywords: configure, ROCm, test, health, RCCL, platform
+  :description: Reference index for all CVS test configuration files, covering burn-in, network, training, and inference JSON schemas used with cvs run.
+  :keywords: CVS, configuration files, JSON, ROCm, test suite, health, RCCL, platform, training, inference, preflight, ANC
 
-************************
-Test configuration files
-************************
+**********************************************************
+Cluster Validation Suite (CVS) test configuration files reference
+**********************************************************
 
 Each CVS test has a corresponding JSON configuration file. You must configure the JSON file for each test you want to run in CVS.
 
@@ -18,6 +18,8 @@ Cluster file
 ============
 
 In addition to a per-test ``--config_file``, every ``cvs run`` invocation needs a ``--cluster_file`` that declares the SSH credentials, the node list, and the **execution backend** (baremetal or container). See :doc:`/reference/cluster/cluster-file` for the full schema, the container block reference, and which suites consume the orchestrator today.
+
+The cluster file is shared across all test suites and must be configured once per cluster before running any CVS tests.
 
 Test configuration files
 ========================

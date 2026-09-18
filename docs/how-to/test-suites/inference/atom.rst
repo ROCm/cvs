@@ -1,15 +1,15 @@
 ﻿.. meta::
-  :description: Run ATOM inference benchmarks with CVS, single-node and multinode
-  :keywords: CVS, ATOM, inference, benchmark, multinode, LLM, ROCm
+  :description: Run ATOM LLM inference benchmarks with CVS on AMD Instinct GPUs for single-node and multinode pipeline-parallel deployments using ROCm.
+  :keywords: CVS, ATOM, inference, benchmark, AMD Instinct, ROCm, AMD, GPU, LLM, multinode, pipeline parallel, DeepSeek
 
-******************************
-Run ATOM inference benchmarks
-******************************
+******************************************
+Run ATOM LLM inference benchmarks with CVS
+******************************************
 
 The ATOM suite benchmarks LLM serving on AMD Instinct GPUs using the ATOM stack
 (``atom.entrypoints.openai_server`` + ``atom.benchmarks.benchmark_serving`` on
 single-node variants, or a PP coordinator with ``params.driver: vllm_atom`` /
-``sglang`` on multinode stems). One suite name ΓÇö ``atom`` ΓÇö covers single-node
+``sglang`` on multinode stems). One suite name — ``atom`` — covers single-node
 and multinode pipeline-parallel runs; topology comes from the config and cluster
 file.
 
@@ -18,6 +18,8 @@ and parameter reference, see :doc:`/reference/configuration-files/inference/atom
 
 Prerequisites
 =============
+
+The following prerequisites are required.
 
 On every **GPU node**:
 
@@ -28,7 +30,7 @@ On every **GPU node**:
 
 On the **launcher** (where you run ``cvs run``):
 
-- CVS installed (see :doc:`/getting-started/install`).
+- CVS installed (see :doc:`/install/install`).
 - SSH key access to cluster nodes (``priv_key_file`` in the cluster file).
 - Hugging Face token file at ``paths.hf_token_file`` when required.
 
@@ -192,28 +194,28 @@ true``:
    * - Tier
      - Example metrics (bare names in thresholds)
    * - ``throughput``
-     - ``output_throughput``, ``per_gpu_throughput``, ΓÇª
+     - ``output_throughput``, ``per_gpu_throughput``, …
    * - ``ttft`` / ``tpot``
-     - ``mean_ttft_ms``, ``p99_ttft_ms``, ΓÇª
+     - ``mean_ttft_ms``, ``p99_ttft_ms``, …
    * - ``health``
      - ``success_rate``, ``failed``
    * - ``scaling``
      - ``scaling.efficiency_pct`` (multinode)
    * - ``record``
-     - Remaining metrics ΓÇö logged, not gated
+     - Remaining metrics — logged, not gated
 
 Benchmark artifacts still expose ``client.*`` keys internally; threshold JSON
 uses bare metric names. ATOM may omit tail percentiles even when
-``metric_percentiles`` requests them ΓÇö only present metrics are gated.
+``metric_percentiles`` requests them — only present metrics are gated.
 
 Reports and logs
 ================
 
-- **pytest HTML** ΓÇö one row per lifecycle stage and per metric tier.
-- **Console tables** ΓÇö ``test_print_results_table`` prints per-cell throughput and latency.
-- **Run Deck** ΓÇö when ``--html`` is set, ``atom_run_deck.html`` / ``.json`` /
+- **pytest HTML** — one row per lifecycle stage and per metric tier.
+- **Console tables** — ``test_print_results_table`` prints per-cell throughput and latency.
+- **Run Deck** — when ``--html`` is set, ``atom_run_deck.html`` / ``.json`` /
   ``_viewer.html`` are bundled into the pytest zip (render-only; does not affect gates).
-- **Per-cell logs** ΓÇö under ``paths.log_dir`` on cluster nodes (server + client logs).
+- **Per-cell logs** — under ``paths.log_dir`` on cluster nodes (server + client logs).
 
 Launcher vs GPU node
 ====================
@@ -241,10 +243,10 @@ Launcher vs GPU node
      - No
      - Yes
 
-See also
-========
+Related resources
+=================
 
 - :doc:`/reference/configuration-files/inference/atom` — configuration schema and thresholds
-- :doc:`/reference/configuration-files/cluster-file` ΓÇö cluster file format
-- :doc:`/how-to/run-with-containers` ΓÇö container backend
-- :doc:`/how-to/run-cvs-tests` ΓÇö other CVS suites
+- :doc:`/reference/cluster/cluster-file` — cluster file format
+- :doc:`/how-to/run-with-containers` — container backend
+- :doc:`/how-to/test-suites/index` — other CVS suites

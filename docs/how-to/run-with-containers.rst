@@ -1,12 +1,12 @@
 .. meta::
-  :description: Run CVS test suites against a per-host container backend
-  :keywords: CVS, container, docker, rvs, orchestrator, run
+  :description: Run CVS test suites against a per-host Docker container backend on AMD Instinct GPU clusters to validate production images with minimal host footprint.
+  :keywords: CVS, ROCm, container, Docker, RVS, orchestrator, AMD Instinct, GPU, AMD, SSH, Linux, RDMA, InfiniBand
 
-****************************************
-Run with containers
-****************************************
+**********************************************************************************
+Run Cluster Validation Suite (CVS) test suites with a per-host Docker container backend
+**********************************************************************************
 
-CVS can route workload commands through a long-lived per-host container instead of running them directly on the host filesystem. This is useful when you want to validate the same image you ship to production, keep the host footprint minimal (Docker, GPU driver, and SSH only), or pin the test environment byte-for-byte.
+CVS can route workload commands through a long-lived per-host container instead of running them directly on the host filesystem. Use the container backend when you want to validate the same image you ship to production, keep the host footprint minimal (Docker, GPU driver, and SSH only), or pin the test environment byte-for-byte.
 
 .. include:: /_includes/orchestrator-scope.rst
 
@@ -22,7 +22,7 @@ On every cluster node:
 
 On the head node where you launch ``cvs run``:
 
-- CVS installed (see :doc:`/getting-started/install`).
+- CVS installed (see :doc:`/install/install`).
 - SSH key-based access to every cluster node as the SSH user.
 
 Step 1: Copy the cluster template
@@ -32,7 +32,7 @@ CVS ships a ``cluster_container.json`` template alongside the baremetal ``cluste
 
 .. code:: bash
 
-  cvs config copy cluster_container.json --output /tmp/cvs/input/cluster_file/cluster_container.json
+  cvs config copy cluster_container.json --output ~/cvs_workspace/cluster_container.json
 
 You can browse every available template directory with:
 
@@ -43,7 +43,7 @@ You can browse every available template directory with:
 Step 2: Edit the placeholders
 =============================
 
-Open the copied file and edit:
+Replace every ``<changeme>`` placeholder in the copied file — CVS exits with an error if any placeholder remains unresolved. Key fields to set:
 
 - ``{user-id}``: your SSH user (or leave it for runtime resolution).
 - ``priv_key_file``: absolute path to your SSH private key.
@@ -62,8 +62,8 @@ Run ``rvs_cvs`` the same way you run any CVS test suite, but with the container 
 .. code:: bash
 
   cvs run rvs_cvs \
-      --cluster_file /tmp/cvs/input/cluster_file/cluster_container.json \
-      --config_file cvs/input/config_file/health/mi300_health_config.json \
+      --cluster_file ~/cvs_workspace/cluster_container.json \
+      --config_file ~/cvs_workspace/health/mi300_health_config.json \
       --html=/var/www/html/cvs/rvs.html \
       --self-contained-html \
       --capture=tee-sys \
@@ -78,8 +78,8 @@ What happens during the run:
 - With ``lifetime: no_launch``, CVS verifies that a container with the configured name is already running on every host and reuses it.
 - All ``rvs`` invocations are routed through the container via ``docker exec`` and the in-container ``sshd``.
 
-Step 4: Verify the run actually used the container
-==================================================
+Step 4: Verify container execution
+===================================
 
 Confirm that the workload ran inside the container, not on the host. From any node in the cluster, list running containers with the configured name:
 
@@ -91,7 +91,7 @@ You should see one running container per node with the configured name and image
 
 .. code:: bash
 
-  cvs exec --cluster_file /tmp/cvs/input/cluster_file/cluster_container.json \
+  cvs exec --cluster_file ~/cvs_workspace/cluster_container.json \
       --cmd "sudo docker ps --filter name=^cvs_container$ --format '{{.Names}} {{.Image}}'"
 
 .. note::
@@ -104,7 +104,11 @@ Lifecycle and teardown
 The ``container.lifetime`` policy controls who owns the container lifecycle:
 
 - ``per_run`` (default) - CVS starts a fresh container at setup and force-removes it at teardown. Anything written to the container overlay is lost when the run ends.
-- ``persistent`` - CVS attaches to the container if it is already running on every host, or starts it fresh if it is running on no host. Teardown is a no-op, so the container (and its overlay) survives across runs. This unblocks install-then-run workflows: ``cvs run install_rvs`` followed by ``cvs run rvs_cvs`` in separate invocations. If the container is running on some hosts but not all, CVS fails rather than rebuilding (which would destroy the overlay on the still-running hosts) -- remove it on all hosts and rerun, or restart it on the missing hosts. Pin ``container.name`` so a tag bump does not silently abandon the overlay.
+- ``persistent`` - CVS attaches to the container if it is already running on every host, or starts it fresh if it is running on no host. Teardown is a no-op, so the container and its overlay survive across runs. Notes:
+
+  - Enables install-then-run workflows: run ``cvs run install_rvs`` followed by ``cvs run rvs_cvs`` in separate invocations.
+  - If the container is running on some hosts but not all, CVS fails rather than rebuilding — rebuilding would destroy the overlay on the still-running hosts. Remove it on all hosts and rerun, or restart it on the missing hosts.
+  - Pin ``container.name`` so a tag bump does not silently abandon the overlay.
 - ``no_launch`` - CVS does not start anything. It verifies that a container with the configured name is already running on every host and reuses it. Teardown is a no-op.
 
 See the ``lifetime`` truth table in :doc:`/reference/cluster/cluster-file` for the full state matrix.
@@ -113,7 +117,7 @@ To stop and remove a container that CVS left running (``persistent`` or ``no_lau
 
 .. code:: bash
 
-  cvs exec --cluster_file /tmp/cvs/input/cluster_file/cluster_container.json \
+  cvs exec --cluster_file ~/cvs_workspace/cluster_container.json \
       --cmd "sudo docker rm -f cvs_container"
 
 Replace ``cvs_container`` with the actual ``container.name`` from your cluster file.
@@ -121,16 +125,18 @@ Replace ``cvs_container`` with the actual ``container.name`` from your cluster f
 Common pitfalls
 ===============
 
+Keep the following in mind when operating this feature.
+
 - **Image without ``openssh-server``.** ``setup_sshd`` cannot start ``sshd`` on port ``2224`` and ``orch.exec`` fails to connect. Make sure the image installs ``openssh-server`` and exposes the binary at ``/usr/sbin/sshd``.
 - **Image without the workload binary.** ``cvs run rvs_cvs`` invokes ``rvs`` inside the container; if the image lacks ``/opt/rocm/bin/rvs`` the test fails with a "command not found" style error.
 - **``lifetime: persistent`` without a pinned ``name``.** The default container name is ``<user>_<sanitized_image>``, which shifts when you bump the image tag. A tag bump silently abandons the previous container's overlay (installs, clones) and starts fresh. Pin ``container.name`` when using ``persistent``.
 - **Port ``2224`` already bound on the host.** With ``network: host`` the in-container ``sshd`` binds to ``2224`` in the host's network namespace. If something else on the host already listens on ``2224`` the bind fails. Stop the conflicting service.
 - **Picked the wrong cluster template.** Use ``cluster_container.json`` (with ``orchestrator: container``) for container mode. Using ``cluster.json`` runs the suite on the host even when the image you wanted to test is sitting on every node.
 
-See also
-========
+Related resources
+=================
 
-- :doc:`/reference/cluster/cluster-file` - cluster file schema, container block reference, and ``runtime.args`` table.
-- `cvs/input/cluster_file/README.md <https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/README.md>`_ - in-tree reference next to the templates.
-- :doc:`/how-to/run-tests/index` - general test running guide.
-- :doc:`/how-to/execute-cluster-commands` - ``cvs exec`` documentation.
+- :doc:`/reference/cluster/cluster-file` — cluster file schema, container block reference, and ``runtime.args`` table.
+- `cvs/input/cluster_file/README.md <https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/README.md>`_ — in-tree reference next to the templates.
+- :doc:`/how-to/test-suites/index` — general test running guide.
+- :doc:`/how-to/execute-cluster-commands` — ``cvs exec`` documentation.

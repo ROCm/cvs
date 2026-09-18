@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure the variables in the Megatron training configuration files
-  :keywords: training, ROCm, install, cvs, Megatron,
+  :description: Reference for CVS Megatron training configuration files, covering Llama and DeepSeek single-node and distributed training on AMD GPU clusters with ROCm.
+  :keywords: CVS, Megatron, training, ROCm, GPU, AMD, distributed, JSON, configuration, Llama, DeepSeek, InfiniBand, benchmark
 
-*************************************
-Megatron training configuration files
-*************************************
+**********************************************************************
+Megatron training configuration files for Cluster Validation Suite (CVS)
+**********************************************************************
 
 JSON configs and sibling ``*_threshold.json`` files for ``megatron_single`` and ``megatron_distributed``. MI300X and MI325X share one config per model and mode (``mi3xx_megatron_{model}_{single|distributed}.json``); set ``gpu_name`` and ``threshold_json`` to the SKU. MI355X ships Llama 3.1 8B and Llama 3.3 70B single-node configs only (``mi355x_megatron_llama-3.1-8b_single.json``, ``mi355x_megatron_llama-3.3-70b_single.json``). Use a ``*_single.json`` file with ``megatron_single`` and a ``*_distributed.json`` file with ``megatron_distributed``. ``threshold_json`` is resolved relative to the config file.
 
@@ -41,6 +41,8 @@ Available configurations
 
 MI300X and MI325X share ``mi3xx_megatron_<model>_<mode>.json``. MI355X ships ``mi355x_megatron_llama-3.1-8b_single.json`` and ``mi355x_megatron_llama-3.3-70b_single.json``. Thresholds stay SKU-specific (``mi300x_*_threshold.json``, ``mi325x_*_threshold.json``, ``mi355x_*_threshold.json``) and are selected with ``threshold_json``.
 
+The table below maps each supported model to its configuration file and available execution modes.
+
 .. list-table::
    :widths: 4 3 3 2
    :header-rows: 1
@@ -74,6 +76,8 @@ Required edits
 ==============
 
 Set these before a run (full field tables are under `Common parameters`_):
+
+The following fields must be customized to match your cluster and hardware before invoking any Megatron suite.
 
 * ``gpu_name`` / ``threshold_json`` — on ``mi3xx_`` templates, set ``MI300X`` or ``MI325X`` and the matching SKU threshold filename. ``gpu_name`` must be exactly ``MI300X``, ``MI325X``, or ``MI355X`` after uppercase.
 * ``container.image`` — Megatron-LM or Primus ROCm image on all nodes.
