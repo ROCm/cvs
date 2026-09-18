@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "profile_id": "test_aorta_rundeck",
+  "suite_id": "aorta",
+  "metric_contract": {"id": "aorta-tracelens", "version": 1},
+  "report_basename": "aorta_run_deck",
+  "title": "Aorta Run Deck",
+  "subtitle": "Aorta distributed training trace and communication summary",
+  "footer": "CVS Aorta · render-only · does not affect qualification gates",
+  "link_name": "Aorta Run Deck",
+  "dataset_builder": "series",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "variant_config"
+  },
+  "hooks": {
+    "run_card_display": "cvs.lib.report.profiles.hooks.aorta:aorta_run_card_display"
+  },
+  "series": {
+    "x_field": "rank",
+    "y_fields": [
+      "total_time_ms",
+      "compute_time_ms",
+      "communication_time_ms",
+      "compute_ratio_pct",
+      "communication_ratio_pct",
+      "overlap_ratio_pct"
+    ],
+    "table_columns": [
+      {"label": "Trace series", "field": "$series"},
+      {"label": "Rank", "field": "$x"},
+      {"label": "Node", "field": "node"},
+      {"label": "Local rank", "field": "local_rank"},
+      {"label": "Parser", "field": "parser"},
+      {"label": "Total time (ms)", "field": "total_time_ms"},
+      {"label": "Compute time (ms)", "field": "compute_time_ms"},
+      {"label": "Exposed communication (ms)", "field": "communication_time_ms"},
+      {"label": "Memory operation time (ms)", "field": "memory_time_ms"},
+      {"label": "Idle time (ms)", "field": "idle_time_ms"},
+      {"label": "Compute ratio (%)", "field": "compute_ratio_pct"},
+      {"label": "Communication ratio (%)", "field": "communication_ratio_pct"},
+      {"label": "Overlap ratio (%)", "field": "overlap_ratio_pct"},
+      {"label": "Peak memory (GB)", "field": "peak_memory_gb"},
+      {"label": "Allocated memory (GB)", "field": "allocated_memory_gb"},
+      {"label": "Compute kernels", "field": "compute_kernel_count"},
+      {"label": "Communication kernels", "field": "communication_kernel_count"}
+    ]
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {
+      "type": "line_chart",
+      "id": "iteration-time",
+      "title": "Iteration time by rank",
+      "bind": "datasets.series",
+      "series": {"y_field": "total_time_ms", "unit": "ms"}
+    },
+    {
+      "type": "line_chart",
+      "id": "compute-time",
+      "title": "Compute time by rank",
+      "bind": "datasets.series",
+      "series": {"y_field": "compute_time_ms", "unit": "ms"}
+    },
+    {
+      "type": "line_chart",
+      "id": "communication-time",
+      "title": "Exposed communication time by rank",
+      "bind": "datasets.series",
+      "series": {"y_field": "communication_time_ms", "unit": "ms"}
+    },
+    {
+      "type": "line_chart",
+      "id": "compute-ratio",
+      "title": "Compute ratio by rank",
+      "bind": "datasets.series",
+      "series": {"y_field": "compute_ratio_pct", "unit": "%"}
+    },
+    {
+      "type": "line_chart",
+      "id": "communication-ratio",
+      "title": "Exposed communication ratio by rank",
+      "bind": "datasets.series",
+      "series": {"y_field": "communication_ratio_pct", "unit": "%"}
+    },
+    {
+      "type": "line_chart",
+      "id": "overlap-ratio",
+      "title": "Compute/communication overlap by rank",
+      "bind": "datasets.series",
+      "series": {"y_field": "overlap_ratio_pct", "unit": "%"}
+    },
+    {"type": "table", "id": "results", "title": "Full per-rank trace results", "bind": "results_table"}
+  ]
+}
