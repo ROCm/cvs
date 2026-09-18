@@ -1,17 +1,17 @@
 .. meta::
-  :description: Configure the CVS cluster file (cluster.json)
-  :keywords: CVS, configure, cluster, cluster.json, cvs config
+  :description: Configure the CVS cluster file (cluster.json) to define SSH credentials, node topology, and backends for AMD Instinct GPU clusters.
+  :keywords: CVS, ROCm, configure, cluster, cluster.json, AMD Instinct, GPU, AMD, SSH, JSON, Linux, bare metal
 
-*********************
-Set up cluster file
-*********************
+**********************************************************************
+Configure the Cluster Validation Suite (CVS) cluster file (cluster.json)
+**********************************************************************
 
 The cluster file (``--cluster_file``) tells CVS how to reach your cluster nodes: SSH credentials, which hosts to use, and whether to run on bare metal or in containers. You pass it to ``cvs run``, ``cvs exec``, and ``cvs scp``.
 
-Field-level schema: :doc:`/reference/cluster/cluster-file`.
+For the complete field reference — every parameter, its type, default value, the container block schema, and the ``lifetime`` state matrix — see :doc:`/reference/cluster/cluster-file`.
 
-Two ways to create a cluster file
-=================================
+Create a cluster file
+=====================
 
 You can create ``cluster.json`` in either of these ways:
 
@@ -29,7 +29,7 @@ CVS ships cluster templates under ``cvs/input/``. Copy them with ``cvs config co
   cvs config copy cluster.json --output ~/cvs_workspace/cluster.json
   cvs config copy cluster_container.json --output ~/cvs_workspace/cluster_container.json
 
-Edit ``cluster.json`` for your environment: SSH user, private key path, head node, and worker node addresses.
+Edit ``cluster.json`` and replace every ``<changeme>`` placeholder with your SSH user, private key path, head node address, and worker node addresses. CVS exits with an error if any placeholder remains unresolved.
 
 Generate a cluster JSON file
 ============================
@@ -66,7 +66,8 @@ Container backend
 
 For container-based suites, use ``cluster_container.json`` and see :doc:`/how-to/run-with-containers`.
 
-Next step
-=========
+Next steps
+==========
 
-Copy and edit a test suite config, then run tests: :doc:`/how-to/configure/test-suite-config/index`.
+- :doc:`/how-to/configure/test-suite-config/index` — copy and edit a test suite config file. Every test suite requires its own config with cluster-specific values before you can run it.
+- :doc:`/how-to/test-suites/index` — run a test suite against the cluster.

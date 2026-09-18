@@ -1,10 +1,12 @@
 .. meta::
-  :description: Run AGFHC, TransferBench, and RVS burn-in tests
-  :keywords: CVS, health
+  :description: Run AGFHC, TransferBench, and RVS health burn-in tests to validate GPU hardware, firmware, and memory bandwidth on AMD Instinct clusters with CVS.
+  :keywords: CVS, health, burn-in, AGFHC, RVS, TransferBench, AMD Instinct, ROCm, AMD, GPU, HBM, PCIe
 
-**********************
-Health (burn-in) tests
-**********************
+*******************************************************
+Run AGFHC, TransferBench, and RVS health burn-in tests
+*******************************************************
+
+Health burn-in tests run AMD GPU Field Health Check (AGFHC), TransferBench, and ROCm Validation Suite (RVS) on every node in the cluster. Use these tests to validate GPU hardware, memory bandwidth, and compute throughput before production workloads.
 
 .. _health-set-up-config:
 
@@ -23,15 +25,15 @@ Set up config
    - Under ``transferbench``: ``git_install_path``, ``rocm_path`` (or leave ``<changeme>`` to auto-detect)
    - Under ``rvs``: ``git_install_path``, ``path``, ``rocm_path``
 
-Full parameter list: :doc:`/reference/configuration-files/burn-in-diag/health`.
+For the complete field reference including install paths and threshold values, see :doc:`/reference/configuration-files/burn-in-diag/health`.
 
 .. _health-run-tests:
 
 Run tests
 =========
 
-The burn-in health tests are single node diagnostic tests that validate the hardware and firmware versions' functionality and performance. 
-For the performance validation, they use the reference bandwidth or latency numbers provided as part of the input ``config_file`` for the relevant test. 
+Use these tests to validate single-node diagnostics for GPU cluster health.
+For the performance validation, use the reference bandwidth or latency numbers provided as part of the input ``config_file`` for the relevant test.
 
 Use these scripts to run each health test. These CVS test scripts have two parts: installing the functionality and running the tests.
 
@@ -62,25 +64,37 @@ You can list all available AGFHC test cases using the CLI:
     - test_agfhc_all_perf
     - test_agfhc_all_lvl5
 
-Use these scripts to start the test:
+Run the AGFHC test:
 
-1. Run the installation: 
+1. Run the installation:
 
-   .. code:: bash 
+   .. code:: bash
 
-     cvs run install_agfhc --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+     cvs run install_agfhc \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html \
+       --log-file=/tmp/agfhc.log -vvv -s
 
 2. Run the AGFHC test:
 
    .. code:: bash
-    
-     cvs run agfhc_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+
+     cvs run agfhc_cvs \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html \
+       --log-file=/tmp/agfhc.log -vvv -s
 
 3. Run the CSP qualification test:
 
    .. code:: bash
-    
-     cvs run csp_qual_agfhc --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+
+     cvs run csp_qual_agfhc \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html \
+       --log-file=/tmp/agfhc.log -vvv -s
 
 TransferBench
 ~~~~~~~~~~~~~
@@ -103,19 +117,27 @@ You can list all available TransferBench test cases using the CLI:
     - test_transfer_bench_scaling
     - test_transfer_bench_schmoo
 
-Use these scripts to start the test:
+Run the TransferBench test:
 
-1. Run the installation: 
+1. Run the installation:
 
    .. code:: bash
 
-     cvs run install_transferbench --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+     cvs run install_transferbench \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html \
+       --log-file=/tmp/transferbench.log -vvv -s
 
 2. Start the TransferBench test:
 
    .. code:: bash
-    
-     cvs run transferbench_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+
+     cvs run transferbench_cvs \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html \
+       --log-file=/tmp/transferbench.log -vvv -s
 
 RVS
 ~~~
@@ -144,19 +166,27 @@ You can list all available RVS test cases using the CLI:
     - test_rvs_tst_single
     - test_rvs_babel_stream
 
-Use these scripts to start the test:
+Run the RVS test:
 
-1. Run the installation: 
+1. Run the installation:
+
+   .. code:: bash
+
+     cvs run install_rvs \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html \
+       --log-file=/tmp/rvs.log -vvv -s
+
+2. Start the RVS test:
 
    .. code:: bash
 
-     cvs run install_rvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
-
-2. Start the RVS test: 
-
-   .. code:: bash
-    
-     cvs run rvs_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+     cvs run rvs_cvs \
+       --cluster_file ~/cvs_workspace/cluster.json \
+       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html \
+       --log-file=/tmp/rvs.log -vvv -s
 
 .. note::
 

@@ -1,6 +1,6 @@
 .. meta::
-  :description: CVS documentation
-  :keywords: CVS, ROCm, documentation, test suites, validation
+  :description: CVS (Cluster Validation Suite) is a collection of test suites that validate AMD ROCm clusters, from single-node burn-in to distributed training and inference.
+  :keywords: CVS, ROCm, AMD, cluster validation, GPU, AMD Instinct, test suites, burn-in, inference, training, RCCL, InfiniBand
 
 ********************************************
 ROCm Cluster Validation Suite (CVS) documentation
@@ -14,22 +14,21 @@ The component public repository is located at `https://github.com/ROCm/cvs <http
 .. grid:: 2
   :gutter: 3
 
+  .. grid-item-card:: Install
+
+    * :doc:`Quickstart </install/quickstart>`
+    * :doc:`Install CVS </install/install>`
+    * :doc:`Upgrade CVS </install/upgrade>`
+
   .. grid-item-card:: Concepts
 
-    * :doc:`What is CVS <concepts/what-is-cvs>`
     * :doc:`Scalability and performance <concepts/cvs-at-scale>`
-
-  .. grid-item-card:: Getting started
-
-    * :doc:`Quickstart </getting-started/quickstart>`
-    * :doc:`Install </getting-started/install>`
-    * :doc:`Upgrade </getting-started/upgrade>`
 
   .. grid-item-card:: How to
 
     * :doc:`Set up cluster file <how-to/configure/cluster-config>`
     * :doc:`Set up test configs <how-to/configure/test-suite-config/index>`
-    * :doc:`Run tests <how-to/run-tests/index>`
+    * :doc:`Run tests <how-to/test-suites/index>`
     * :doc:`Run cluster commands <how-to/execute-cluster-commands>`
     * :doc:`Copy to cluster <how-to/copy-to-cluster>`
     * :doc:`Monitor cluster health <how-to/monitor/index>`
@@ -45,4 +44,4 @@ The component public repository is located at `https://github.com/ROCm/cvs <http
 To contribute to the documentation, refer to
 `Contributing to ROCm <https://rocm.docs.amd.com/en/latest/contribute/contributing.html>`_.
 
-You can find licensing information on the :doc:`Licensing page <license>`.
+You can find licensing information on the :doc:`License <license>` page.

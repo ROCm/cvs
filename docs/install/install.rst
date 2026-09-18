@@ -1,10 +1,12 @@
 .. meta::
-  :description: Component install 
-  :keywords: Component, ROCm, install
+  :description: Install Cluster Validation Suite (CVS) on ROCm-based AMD Instinct GPU clusters using pip, Makefile, or Docker on Linux.
+  :keywords: CVS, ROCm, install, AMD Instinct, GPU, pip, Makefile, Docker, Linux, AMD, cluster, setup
 
-*******
-Install
-*******
+************************************************
+Install Cluster Validation Suite (CVS) on ROCm
+************************************************
+
+This page covers all installation options for CVS: Makefile, pip, and Docker. If you want to install and run your first cluster-wide command in about 15 minutes, see the :doc:`quickstart </install/quickstart>` instead.
 
 System requirements
 ===================
@@ -40,10 +42,10 @@ Install CVS
 ===========
 
 Run CVS from a head node — an Ubuntu VM or bare-metal machine, with or without a GPU.
-It is recommended to use a head node that is **not** part of the test cluster, so a reboot or failure on a worker does not take out your control plane.
+Use a head node that is *not* part of the test cluster, so a reboot or failure on a worker does not take out your control plane.
 
-Two installation options
-------------------------
+Choose an installation method
+-----------------------------
 
 You can install and run the CVS CLI in either of these ways:
 
@@ -59,7 +61,7 @@ Install in a Python virtual environment
 Prerequisites
 ~~~~~~~~~~~~~
 
-- Python 3.9 or later
+- Python 3.10 or later
 - Git
 
 Debian/Ubuntu Systems
@@ -71,8 +73,8 @@ On Debian and Ubuntu distributions, the ``venv`` module is not included in the b
 
   sudo apt install python3-venv
 
-Two installation methods
-~~~~~~~~~~~~~~~~~~~~~~~~
+Choose a virtual environment install method
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Within a Python virtual environment, you can install CVS in either of these ways:
 
@@ -178,8 +180,8 @@ From the repository root, build the image and verify the installed CLI:
   docker run --rm cvs:local --version
   docker run --rm cvs:local config list-dirs
 
-Two ways to run the container
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Choose a container run mode
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The image sets ``ENTRYPOINT`` to ``cvs``. You can use it in either of these ways:
 
@@ -228,7 +230,7 @@ The following example runs a test suite. Replace ``<testSuiteName>`` with a name
 from ``cvs list``. Prepare a cluster file (``--cluster_file``) and test suite
 config (``--config_file``) first—see :doc:`Set up cluster file
 </how-to/configure/cluster-config>`, :doc:`Set up test configs
-</how-to/configure/test-suite-config/index>`, and :doc:`Run tests </how-to/run-tests/index>`.
+</how-to/configure/test-suite-config/index>`, and :doc:`Run tests </how-to/test-suites/index>`.
 Create a host workspace, mount it at ``/workspace`` (read-write) so configs and
 run artifacts land on the host, and mount the SSH private key read-only; set
 ``--config_file`` to the matching JSON under ``/workspace/``:
@@ -261,4 +263,4 @@ Next steps
 
 - :doc:`/how-to/configure/cluster-config` — configure the cluster file
 - :doc:`/how-to/configure/test-suite-config/index` — copy and edit test suite configs
-- :doc:`/how-to/run-tests/index` — run tests
+- :doc:`/how-to/test-suites/index` — run tests

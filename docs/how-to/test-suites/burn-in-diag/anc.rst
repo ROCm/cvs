@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run AMD Node Check (ANC) CPU and GPU diagnostic suites
-  :keywords: CVS, ANC, AMD Node Check, burn-in, diag
+  :description: Run AMD Node Check (ANC) CPU and GPU diagnostic tests across every node in a CVS-managed AMD Instinct GPU cluster to verify hardware health.
+  :keywords: CVS, ANC, AMD Node Check, AMD, GPU, AMD Instinct, ROCm, diagnostic, burn-in, CPU, HBM
 
-*********
-ANC tests
-*********
+*****************************************************
+Run AMD Node Check (ANC) CPU and GPU diagnostic tests
+*****************************************************
 
 AMD Node Check (ANC) runs CPU and GPU diagnostic groups on every node in the cluster. CVS installs ANC when needed, invokes each group as ``sudo ./anc.py -g <group>``, and collects logs and HTML reports.
 
@@ -29,7 +29,7 @@ Set up config
 
 3. Optionally set ``ANC_INSTALL_PATH`` for relocatable **tar** installs. Deb and rpm packages ignore this key and always install under ``/opt/amdtools``.
 
-Full parameter list: :doc:`/reference/configuration-files/burn-in-diag/anc`.
+For the complete field reference including release URL, install path, and log collection options, see :doc:`/reference/configuration-files/burn-in-diag/anc`.
 
 .. _anc-run-tests:
 

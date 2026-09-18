@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure TorchTitan training configuration files
-  :keywords: training, ROCm, CVS, TorchTitan
+  :description: Reference for CVS TorchTitan training configuration files, covering Llama, DeepSeek, and Qwen3 single-node and distributed training on AMD GPU clusters.
+  :keywords: CVS, TorchTitan, training, ROCm, GPU, AMD, distributed, JSON, configuration, Llama, DeepSeek, InfiniBand, benchmark
 
-****************************************
-TorchTitan training configuration files
-****************************************
+************************************************************************
+TorchTitan training configuration files for Cluster Validation Suite (CVS)
+************************************************************************
 
 TorchTitan configs live under ``cvs/input/config_file/training/torchtitan/``. Each config has a sibling ``*_threshold.json`` referenced by ``threshold_json``. One config file can hold multiple precision sweeps (BF16, FP8, MXFP8, MXFP4) for the same model.
 
@@ -19,6 +19,8 @@ Use ``cvs config list training/torchtitan`` to list templates, or ``cvs config c
 
 Available configurations
 ========================
+
+Templates are organized by GPU SKU; select the section that matches your hardware.
 
 MI355X
 ------

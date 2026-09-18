@@ -1,10 +1,10 @@
 .. meta::
-  :description: Live cluster dashboards with the CVS Cluster Monitor (SSH, agentless)
-  :keywords: CVS, cluster-mon, dashboard, SSH, agentless
+  :description: Run live AMD Instinct GPU cluster dashboards using the CVS Cluster Monitor over SSH without installing exporters or agents on GPU nodes.
+  :keywords: CVS, ROCm, cluster-mon, dashboard, SSH, agentless, AMD Instinct, GPU, AMD, RDMA, Docker, InfiniBand, monitoring
 
-*****************
-Agentless (SSH)
-*****************
+***********************************************************************************
+Agentless SSH live dashboards with the Cluster Validation Suite (CVS) Cluster Monitor
+***********************************************************************************
 
 The **CVS Cluster Monitor** (``cvs/monitors/cluster-mon/``) is a live dashboard that polls the cluster over SSH. It does not install exporters on GPU nodes — collectors run ``amd-smi``, RDMA, and log queries remotely on a configurable interval.
 
@@ -12,6 +12,8 @@ Use this when you want real-time GPU/NIC views, heatmaps, topology, and logs wit
 
 Features
 ========
+
+This approach provides the following features.
 
 - Real-time GPU metrics: utilization, temperature, power, memory, PCIe, ECC, XGMI
 - Network: RDMA statistics, LLDP topology, NIC firmware and driver info
@@ -21,6 +23,8 @@ Features
 
 Prerequisites
 =============
+
+The following prerequisites are required.
 
 - Docker and Docker Compose v2 on the monitoring host
 - SSH access to cluster nodes (direct or via jump host)
@@ -72,6 +76,8 @@ The health endpoint reports collection status (for example ``ssh_manager``, ``co
 
 Operational notes
 =================
+
+Keep the following in mind when operating this feature.
 
 - Default metrics interval: 60 seconds (``polling.interval`` in ``cluster.yaml`` or ``POLLING__INTERVAL`` env var). For large fleets (50+ nodes), consider 120 seconds.
 - Host reachability is re-probed every 5 minutes; SSH clients refresh when nodes come back online
