@@ -6,6 +6,7 @@ import base64
 import gzip
 import json
 import math
+import os
 import re
 import shlex
 import time
@@ -66,8 +67,6 @@ class _BoundedHostHandle:
 class PyTorchVisionJob:
     """Stage, launch, and collect one vision-training sweep cell."""
 
-    BENCHMARK_PATH = "/tmp/cvs_pytorch_vision_w1.py"
-
     def __init__(self, orch, variant, sweep_name):
         self.orch = orch
         self.variant = variant
@@ -77,6 +76,9 @@ class PyTorchVisionJob:
         self.output_dir = f"{variant.paths.log_dir}/pytorch_vision/{self.sweep.label}/{run_id}"
         self.result_path = f"{self.output_dir}/results.json"
         self.loss_series = []
+        # Workload-scoped so two workloads staging onto the same host cannot
+        # overwrite each other's script or kill each other's ranks.
+        self.benchmark_path = f"/tmp/cvs_pytorch_vision_{variant.training.workload.lower()}.py"
         self.log_path = f"{self.output_dir}/training.log"
         self.checkpoint_path = f"{self.output_dir}/checkpoint.pt"
         self.training_start_time = None
@@ -88,14 +90,18 @@ class PyTorchVisionJob:
         encoded = base64.b64encode(gzip.compress(source, compresslevel=9)).decode("ascii")
         command = (
             f"mkdir -p {shlex.quote(self.output_dir)} && "
-            f"printf %s {shlex.quote(encoded)} | base64 -d | gzip -d > {shlex.quote(self.BENCHMARK_PATH)}"
+            f"printf %s {shlex.quote(encoded)} | base64 -d | gzip -d > {shlex.quote(self.benchmark_path)}"
         )
         result = self.orch.exec(command, timeout=30, detailed=True, print_console=False)
         self._require_success(result, "stage PyTorch Vision benchmark")
 
     def verify_environment(self):
-        if len(self.orch.hosts) != 1:
-            raise RuntimeError(f"W1 requires exactly one node, received {len(self.orch.hosts)}")
+        hosts = self.orch.hosts
+        if self.variant.training.distributed:
+            if len(hosts) < 2:
+                raise RuntimeError(f"{self.workload} distributed requires 2+ nodes, received {len(hosts)}")
+        elif len(hosts) != 1:
+            raise RuntimeError(f"{self.workload} single-node requires exactly one node, received {len(hosts)}")
 
         probe = "python3 -c " + shlex.quote(
             "import json, torch, torchvision; "
@@ -126,18 +132,23 @@ class PyTorchVisionJob:
                 raise RuntimeError(f"ROCm GPU support is unavailable in the container on {host}")
             expected = self.variant.training.gpus_per_node
             if int(info["gpus"]) != expected:
-                raise RuntimeError(f"W1 requires {expected} visible GPUs on {host}, found {info['gpus']}")
+                raise RuntimeError(f"{self.workload} requires {expected} visible GPUs on {host}, found {info['gpus']}")
             expected_arch = _normalized_hardware_name(self.variant.gpu_arch)
             mismatches = [name for name in info["devices"] if expected_arch not in _normalized_hardware_name(name)]
             if mismatches:
                 raise RuntimeError(
-                    f"W1 config requires {self.variant.gpu_arch} on {host}, found devices {info['devices']}"
+                    f"{self.workload} config requires {self.variant.gpu_arch} on {host}, found devices {info['devices']}"
                 )
             summaries.append(
                 f"{host}: torch={info['torch']} torchvision={info['torchvision']} "
                 f"hip={info['hip']} gpus={info['gpus']} arch={info['architectures'][0]}"
             )
         return "; ".join(summaries)
+
+    @property
+    def workload(self):
+        """Scorecard workload id (W1, W3, ...) from the config."""
+        return self.variant.training.workload
 
     @property
     def num_nodes(self):
@@ -168,7 +179,9 @@ class PyTorchVisionJob:
             "torchrun",
             *self._rendezvous_args(node_rank),
             f"--nproc-per-node={training.gpus_per_node}",
-            self.BENCHMARK_PATH,
+            self.benchmark_path,
+            "--workload",
+            self.workload,
             "--model",
             sweep.model,
             "--backend",
@@ -197,6 +210,8 @@ class PyTorchVisionJob:
             ",".join(str(step) for step in training.milestone_steps),
             "--learning-rate",
             str(training.learning_rate),
+            "--optimizer",
+            training.optimizer,
             "--momentum",
             str(training.momentum),
             "--weight-decay",
@@ -398,7 +413,7 @@ class PyTorchVisionJob:
             except json.JSONDecodeError as exc:
                 raise RuntimeError(f"invalid result artifact on {host}: {self.result_path}") from exc
             expected_metadata = {
-                "workload": "W1",
+                "workload": self.workload,
                 "model": self.sweep.model,
                 "backend": self.sweep.backend,
                 "precision": self.sweep.precision,
@@ -428,7 +443,7 @@ class PyTorchVisionJob:
                 if raw.get(key) != expected
             }
             if mismatches:
-                raise RuntimeError(f"unexpected W1 result metadata on {host}: {mismatches}")
+                raise RuntimeError(f"unexpected {self.workload} result metadata on {host}: {mismatches}")
             metrics = to_training_metrics(raw)
             expected_epochs = self.variant.training.max_epochs
             completed_epochs_raw = raw.get("completed_epochs")
@@ -436,12 +451,12 @@ class PyTorchVisionJob:
                 if self.variant.training.run_mode == "train_to_accuracy":
                     if not isinstance(completed_epochs_raw, int) or not 0 < completed_epochs_raw <= expected_epochs:
                         raise RuntimeError(
-                            f"invalid target-accuracy W1 run length on {host}: "
+                            f"invalid target-accuracy {self.workload} run length on {host}: "
                             f"cap {expected_epochs} epochs, completed {completed_epochs_raw}"
                         )
                 elif completed_epochs_raw != expected_epochs:
                     raise RuntimeError(
-                        f"incomplete epoch-based W1 run on {host}: "
+                        f"incomplete epoch-based {self.workload} run on {host}: "
                         f"expected {expected_epochs} epochs, completed {completed_epochs_raw}"
                     )
             if expected_epochs is not None:
@@ -452,7 +467,7 @@ class PyTorchVisionJob:
                 expected_steps = math.ceil(expected_batches / self.sweep.gradient_accumulation_steps)
                 if samples_per_rank <= 0 or batches_per_epoch != expected_batches or steps_per_epoch != expected_steps:
                     raise RuntimeError(
-                        f"invalid W1 epoch accounting on {host}: samples_per_rank={samples_per_rank}, "
+                        f"invalid {self.workload} epoch accounting on {host}: samples_per_rank={samples_per_rank}, "
                         f"batches={batches_per_epoch}/{expected_batches}, "
                         f"steps={steps_per_epoch}/{expected_steps}"
                     )
@@ -461,7 +476,7 @@ class PyTorchVisionJob:
             if schedule.warmup_epochs:
                 steps_per_epoch = int(raw.get("steps_per_epoch") or 0)
                 if steps_per_epoch <= 0:
-                    raise RuntimeError(f"scheduled W1 artifact has no valid steps_per_epoch on {host}")
+                    raise RuntimeError(f"scheduled {self.workload} artifact has no valid steps_per_epoch on {host}")
                 expected_initial_lr /= schedule.warmup_epochs * steps_per_epoch
             completed_epochs = int(raw.get("completed_epochs") or 0)
             expected_final_lr = self.variant.training.learning_rate * schedule.gamma ** sum(
@@ -474,7 +489,7 @@ class PyTorchVisionJob:
                 actual_lr = metrics.get(metric_name)
                 if actual_lr is None or not math.isclose(actual_lr, expected_lr, rel_tol=1e-9, abs_tol=1e-12):
                     raise RuntimeError(
-                        f"unexpected W1 learning-rate trajectory on {host}: "
+                        f"unexpected {self.workload} learning-rate trajectory on {host}: "
                         f"{metric_name} expected {expected_lr}, got {actual_lr}"
                     )
             if self.variant.training.codecarbon.enabled:
@@ -490,7 +505,7 @@ class PyTorchVisionJob:
             if energy_kwh is not None and energy_kwh > 0 and completed_steps > 0:
                 total_images = int(raw.get("processed_images") or 0)
                 if total_images <= 0:
-                    raise RuntimeError(f"W1 artifact has no positive processed_images count on {host}")
+                    raise RuntimeError(f"{self.workload} artifact has no positive processed_images count on {host}")
                 metrics["training.images_per_kwh"] = total_images / energy_kwh
             baseline = self.variant.training.scaling_baseline
             efficiency = compute_scaling_efficiency(
@@ -512,7 +527,9 @@ class PyTorchVisionJob:
         return parsed
 
     def stop_training_processes(self):
-        pattern = "[c]vs_pytorch_vision_w1.py"
+        # Bracket the first character so pgrep/pkill cannot match themselves.
+        name = os.path.basename(self.benchmark_path)
+        pattern = f"[{name[0]}]{name[1:]}"
         command = (
             f"pkill -TERM -f {shlex.quote(pattern)} 2>/dev/null || true; "
             "sleep 2; "

@@ -1,0 +1,54 @@
+{
+  "_comment": "Record-only W3 (ViT-B/16) thresholds. Calibrate before enforcing.",
+  "W1-SMOKE-ROCAL-GPU-STANDARD": {
+    "training.images_per_sec": {
+      "kind": "info"
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p95": {
+      "kind": "info"
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info"
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    },
+    "training.eval_completed": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.eval_sample_count": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    }
+  }
+}

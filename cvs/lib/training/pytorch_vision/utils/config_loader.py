@@ -155,6 +155,10 @@ def validate_sweep_selector(sweep_names, enabled_names, sweep_labels=None) -> No
 
 
 class VisionTrainingConfig(_Forbid):
+    # Scorecard workload id (W1 = ResNet-50, W3 = ViT-B/16, ...). Recorded in
+    # the result artifact and cross-checked on parse so a result cannot be
+    # attributed to the wrong workload row.
+    workload: str = Field(default="W1", pattern=r"^W\d+$")
     distributed: bool = False
     master_port: int = Field(default=29500, gt=1024, lt=65536)
     enabled: bool = True
@@ -179,6 +183,7 @@ class VisionTrainingConfig(_Forbid):
     num_classes: int = Field(default=1000, gt=1)
     channels_last: bool = True
     learning_rate: float = Field(default=0.1, gt=0)
+    optimizer: Literal["sgd", "adamw"] = "sgd"
     momentum: float = Field(default=0.9, ge=0)
     weight_decay: float = Field(default=0.0001, ge=0)
     lr_schedule: LearningRateScheduleConfig = Field(default_factory=LearningRateScheduleConfig)

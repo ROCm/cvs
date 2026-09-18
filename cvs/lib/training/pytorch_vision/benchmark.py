@@ -43,6 +43,8 @@ def _parse_args():
     parser.add_argument("--milestone-steps", default="100,500,1000,5000")
     parser.add_argument("--channels-last", action="store_true")
     parser.add_argument("--learning-rate", type=float, default=0.1)
+    parser.add_argument("--workload", default="W1", help="scorecard workload id recorded in the artifact")
+    parser.add_argument("--optimizer", choices=["sgd", "adamw"], default="sgd")
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight-decay", type=float, default=0.0001)
     parser.add_argument("--lr-schedule", choices=["constant", "multistep"], default="constant")
@@ -140,6 +142,14 @@ def _build_model(args, device):
 
 
 def _build_optimizer(model, args):
+    if args.optimizer == "adamw":
+        # Transformer backbones (ViT and friends) do not train usefully under
+        # SGD at these learning rates; momentum is unused in this branch.
+        return torch.optim.AdamW(
+            model.parameters(),
+            lr=args.learning_rate,
+            weight_decay=args.weight_decay,
+        )
     return torch.optim.SGD(
         model.parameters(),
         lr=args.learning_rate,
@@ -577,7 +587,7 @@ def _checkpoint_roundtrip(model, optimizer, scheduler, loss_fn, image_batches, l
         "checkpoint_resume_optimizer_max_abs_delta": 0.0,
     }
     if not args.checkpoint_path:
-        raise ValueError("--checkpoint-path is required for W1 checkpoint validation")
+        raise ValueError("--checkpoint-path is required for checkpoint validation")
 
     dist.barrier()
     error = ""
@@ -984,7 +994,7 @@ def main():
                 codecarbon_metrics = {"codecarbon_tracking_active": 1.0}
             artifact = {
                 "schema_version": 1,
-                "workload": "W1",
+                "workload": args.workload,
                 "model": args.model,
                 "backend": args.backend,
                 "precision": args.precision,
@@ -1061,7 +1071,7 @@ def main():
             output_path = Path(args.output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(json.dumps(artifact, indent=2))
-            print("PYTORCH_VISION_W1_OK " + json.dumps(artifact["metrics"]), flush=True)
+            print("PYTORCH_VISION_OK " + json.dumps(artifact["metrics"]), flush=True)
         except Exception as exc:
             artifact_error = f"{type(exc).__name__}: {exc}"
 

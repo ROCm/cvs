@@ -40,6 +40,7 @@ def _variant():
     )
     training = SimpleNamespace(
         enabled=True,
+        workload="W1",
         distributed=False,
         master_port=29500,
         phase="performance",
@@ -57,6 +58,7 @@ def _variant():
         num_classes=1000,
         channels_last=True,
         learning_rate=0.1,
+        optimizer="sgd",
         momentum=0.9,
         weight_decay=0.0001,
         lr_schedule=SimpleNamespace(
@@ -139,7 +141,7 @@ class TestPyTorchVisionJob(unittest.TestCase):
         job.stage_benchmark()
         command = orch.commands[-1][0]
         self.assertIn("base64 -d", command)
-        self.assertIn(PyTorchVisionJob.BENCHMARK_PATH, command)
+        self.assertIn("/tmp/cvs_pytorch_vision_w1.py", command)
 
     def test_verifies_exact_gpu_count(self):
         info = {
@@ -430,3 +432,30 @@ class TestPyTorchVisionJob(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWorkloadIsolation(unittest.TestCase):
+    """Two workloads sharing a host must not collide."""
+
+    def test_staged_script_path_follows_the_workload(self):
+        w1 = _variant()
+        w3 = _variant()
+        w3.training.workload = "W3"
+
+        job1 = PyTorchVisionJob(FakeOrchestrator(), w1, "w1")
+        job3 = PyTorchVisionJob(FakeOrchestrator(), w3, "w1")
+
+        self.assertEqual(job1.benchmark_path, "/tmp/cvs_pytorch_vision_w1.py")
+        self.assertEqual(job3.benchmark_path, "/tmp/cvs_pytorch_vision_w3.py")
+
+    def test_workload_id_is_passed_to_the_launcher(self):
+        variant = _variant()
+        variant.training.workload = "W3"
+        command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
+        self.assertIn("--workload W3", command)
+
+    def test_optimizer_choice_is_passed_to_the_launcher(self):
+        variant = _variant()
+        variant.training.optimizer = "adamw"
+        command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
+        self.assertIn("--optimizer adamw", command)

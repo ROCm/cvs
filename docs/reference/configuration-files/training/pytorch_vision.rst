@@ -34,6 +34,12 @@ Files live in ``cvs/input/config_file/training/pytorch_vision/`` and are named
      - Synthetic on-GPU input; measures model, optimizer, and DDP without storage
    * - ``mi325x_pytorch_vision_resnet50_distributed_perf_config.json``
      - Multi-node scaling pair for the single-node MBS=128 GPU-standard cell
+   * - ``mi325x_pytorch_vision_vit-b-16_single_smoke_config.json``
+     - W3 ViT-B/16 smoke check
+   * - ``mi325x_pytorch_vision_vit-b-16_single_perf_config.json``
+     - W3 ViT-B/16 50-step performance sweeps
+   * - ``mi325x_pytorch_vision_vit-b-16_single_train5k_config.json``
+     - W3 ViT-B/16 5,000-step loss-curve and accuracy profile
 
 Top-level fields
 ================
@@ -50,6 +56,13 @@ Top-level fields
 Training block
 ==============
 
+- ``workload``: scorecard workload id (``W1`` ResNet-50, ``W3`` ViT-B/16, ...).
+  Recorded in the result artifact and cross-checked on parse, so a result
+  cannot be attributed to the wrong scorecard row. It also scopes the staged
+  script path, letting two workloads share a host without colliding.
+- ``optimizer``: ``sgd`` (default) or ``adamw``. Transformer backbones do not
+  train usefully under SGD at these learning rates; ``momentum`` is ignored
+  when ``adamw`` is selected.
 - ``distributed``: ``false`` for ``pytorch_vision_single``, ``true`` for
   ``pytorch_vision_distributed``. Must match the suite and the cluster node
   count.
@@ -117,7 +130,9 @@ Sweep fields
 - ``gradient_accumulation_steps``: microbatches per optimizer step.
 - ``training_flops_per_image``: forward+backward FLOPs used for TFLOPS/s/GPU.
   ResNet-50 uses 4.1 GMAC forward x two FLOPs per multiply-add x three for
-  training = 24.6 GFLOP/image.
+  training = 24.6 GFLOP/image; ViT-B/16 uses 16.85 GMAC = 101.1 GFLOP/image.
+  Both were measured in-container with ``torch.utils.flop_counter``, so the
+  convention is consistent across workloads.
 - ``data_mode``: ``synthetic`` or ``rocal``.
 - ``dataset_path``: container-visible ImageNet root for rocAL.
 - ``rocal_device``: ``cpu`` or ``gpu``.

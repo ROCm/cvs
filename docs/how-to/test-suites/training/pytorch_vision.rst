@@ -13,10 +13,14 @@ run on performance and correctness metrics with a PASS/FAIL HTML report.
 Overview
 ========
 
-The suites drive a ResNet-50 training job inside a container on one or more
+The suites drive a torchvision training job (ResNet-50 for W1, ViT-B/16 for
+W3) inside a container on one or more
 cluster nodes, then parse the rank-zero result artifact to produce metrics and
 verdicts. They provide:
 
+#. **Config-selected workload** — the model, FLOPs/image, optimizer, and
+   scorecard workload id all come from the config, so the same suite code
+   serves W1, W3, and future vision rows without modification.
 #. **Two suites** — ``pytorch_vision_single`` (one node) and
    ``pytorch_vision_distributed`` (two or more nodes, one ``torchrun`` rank
    group per node).
