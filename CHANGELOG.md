@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Aorta / benchmark training microbenchmarks with schema, configs, and runner.
 - Preflight suite: MI4XX node-health and IFoE checks, nodesmoke tiers (including Primus CLI tier 1 and tier 3), ROCm version consistency.
 - AMD Node Check (ANC) suite: CPU/GPU group suites, multi-format install, HTML reports, fail-fast install/ldconfig, inactivity timeouts.
-- Inference: ATOM (DeepSeek-R1 FP8 and Qwen3.5-397B FP8 workloads, GPU metrics, lm-eval accuracy, MTP-3 speculative decode, vLLM and SGLang parity stems), unified topology-parametrized vLLM (single + distributed; MI300X workloads, GPU/Prometheus metrics, lm-eval accuracy, OpenAI-compatible smoke), SGLang (Llama 70B and DeepSeek-R1 distributed), pytorch_xdit Flux.1 text-to-image and WAN 2.2 image-to-video (including disaggregated multinode).
+- Inference: unified topology-parametrized vLLM (single + distributed; MI300X workloads, GPU/Prometheus metrics, lm-eval accuracy, OpenAI-compatible smoke), SGLang (Llama 70B and DeepSeek-R1 distributed), pytorch_xdit Flux.1 text-to-image and WAN 2.2 image-to-video (including disaggregated multinode).
 - MORI RDMA performance tests.
 - Pairwise RCCL tests.
 - Container backend: `container.lifetime` schema, `setup_script` provisioning, persistent mode, CVS container image.
