@@ -9,10 +9,12 @@ import math
 import os
 import re
 import shlex
+import sys
 import time
 import uuid
 from pathlib import Path
 
+from cvs.lib import globals
 from cvs.lib.training.pytorch_vision.utils.metrics import (
     compute_scaling_efficiency,
     parse_codecarbon_metrics,
@@ -20,6 +22,8 @@ from cvs.lib.training.pytorch_vision.utils.metrics import (
 )
 from cvs.lib.utils.gpu import agg_readings, start_gpu_poller, stop_and_collect_gpu_poller
 
+
+log = globals.log
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -337,18 +341,27 @@ class PyTorchVisionJob:
             timeout = self.variant.training.timeout_s + 60
             if self.variant.training.distributed:
                 # cmd_list[i] runs on hosts[i], which is the only way each node
-                # can receive its own --node-rank.
+                # can receive its own --node-rank. This path has no `detailed`
+                # option, so per-host exit codes are unavailable; a failed rank
+                # is caught by the training-log scan and by parse_results,
+                # which rejects a missing or malformed artifact.
                 result = self.orch.exec_cmd_list(
                     [self.build_command(node_rank=i) for i in range(self.num_nodes)],
                     timeout=timeout,
-                    detailed=True,
                 )
             else:
                 result = self.orch.exec(self.build_command(), timeout=timeout, detailed=True)
         finally:
             self.run_elapsed_seconds = time.monotonic() - started
             readings = stop_and_collect_gpu_poller(self.orch, poller)
-            self._set_monitor_metrics(readings)
+            try:
+                self._set_monitor_metrics(readings)
+            except Exception:
+                # Never let a telemetry failure mask the training error that
+                # very likely caused it.
+                if sys.exc_info()[0] is None:
+                    raise
+                log.warning("AMD-SMI telemetry unusable for %s; preserving the primary error", self.sweep_name)
         self._require_success(result, f"run PyTorch Vision sweep {self.sweep_name}")
 
     def _set_monitor_metrics(self, readings):
@@ -420,10 +433,15 @@ class PyTorchVisionJob:
                 "image_size": self.sweep.image_size,
                 "batch_size_per_gpu": self.sweep.batch_size,
                 "gradient_accumulation_steps": self.sweep.gradient_accumulation_steps,
+                # Both scale with the cluster: one config must be able to run
+                # on any node count, so these are derived rather than declared.
                 "effective_global_batch_size": (
-                    self.sweep.batch_size * self.sweep.gradient_accumulation_steps * self.variant.training.gpus_per_node
+                    self.sweep.batch_size
+                    * self.sweep.gradient_accumulation_steps
+                    * self.variant.training.gpus_per_node
+                    * self.num_nodes
                 ),
-                "world_size": self.variant.training.gpus_per_node,
+                "world_size": self.variant.training.gpus_per_node * self.num_nodes,
                 "phase": self.variant.training.phase,
                 "run_mode": self.variant.training.run_mode,
                 "synthetic_data": self.sweep.data_mode == "synthetic",
@@ -506,7 +524,11 @@ class PyTorchVisionJob:
                 total_images = int(raw.get("processed_images") or 0)
                 if total_images <= 0:
                     raise RuntimeError(f"{self.workload} artifact has no positive processed_images count on {host}")
-                metrics["training.images_per_kwh"] = total_images / energy_kwh
+                # CodeCarbon measures rank 0's node only, while processed_images
+                # counts every rank. Scale to that node's share so images/kWh
+                # stays a per-node figure and does not read num_nodes times too
+                # efficient on a multi-node run.
+                metrics["training.images_per_kwh"] = total_images / self.num_nodes / energy_kwh
             baseline = self.variant.training.scaling_baseline
             efficiency = compute_scaling_efficiency(
                 metrics.get("training.images_per_sec"),

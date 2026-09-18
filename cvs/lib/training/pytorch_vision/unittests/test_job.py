@@ -100,7 +100,7 @@ def _variant():
     )
 
 
-def _artifact():
+def _artifact(num_nodes=1):
     artifact = {
         "workload": "W1",
         "model": "resnet50",
@@ -109,8 +109,8 @@ def _artifact():
         "image_size": 224,
         "batch_size_per_gpu": 128,
         "gradient_accumulation_steps": 1,
-        "effective_global_batch_size": 1024,
-        "world_size": 8,
+        "effective_global_batch_size": 1024 * num_nodes,
+        "world_size": 8 * num_nodes,
         "phase": "performance",
         "run_mode": "perf",
         "synthetic_data": True,
@@ -297,7 +297,7 @@ class TestPyTorchVisionJob(unittest.TestCase):
         # Artifact reports 1.0 images/sec; a 0.5 single-node reference over two
         # nodes gives an ideal of 1.0, so efficiency is 100%.
         variant.training.scaling_baseline = SimpleNamespace(images_per_sec_total=0.5, num_nodes=1)
-        response = {"node0": {"exit_code": 0, "output": json.dumps(_artifact())}}
+        response = {"node0": {"exit_code": 0, "output": json.dumps(_artifact(num_nodes=2))}}
         orch = FakeOrchestrator(response)
         orch.hosts = ["node0", "node1"]
 
@@ -459,3 +459,31 @@ class TestWorkloadIsolation(unittest.TestCase):
         variant.training.optimizer = "adamw"
         command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
         self.assertIn("--optimizer adamw", command)
+
+
+class TestDynamicTopology(unittest.TestCase):
+    """One config must run on any node count: world size and global batch are
+    derived from the cluster, never declared in the config."""
+
+    def _parse_with_nodes(self, num_nodes):
+        variant = _variant()
+        variant.training.distributed = num_nodes > 1
+        orch = FakeOrchestrator({"node0": {"exit_code": 0, "output": json.dumps(_artifact(num_nodes=num_nodes))}})
+        orch.hosts = [f"node{i}" for i in range(num_nodes)]
+        return PyTorchVisionJob(orch, variant, "w1").parse_results()
+
+    def test_same_sweep_parses_at_1n_2n_and_4n(self):
+        for nodes in (1, 2, 4):
+            with self.subTest(nodes=nodes):
+                results = self._parse_with_nodes(nodes)
+                self.assertIn("training.images_per_sec", results["node0"])
+
+    def test_mismatched_world_size_is_rejected(self):
+        """A 4-node cluster running a 2-node artifact must fail loudly rather
+        than silently reporting a scaled result."""
+        variant = _variant()
+        variant.training.distributed = True
+        orch = FakeOrchestrator({"node0": {"exit_code": 0, "output": json.dumps(_artifact(num_nodes=2))}})
+        orch.hosts = ["node0", "node1", "node2", "node3"]
+        with self.assertRaisesRegex(RuntimeError, "world_size"):
+            PyTorchVisionJob(orch, variant, "w1").parse_results()

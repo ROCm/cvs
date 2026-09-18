@@ -80,8 +80,8 @@
     },
     "sweeps": [
       {
-        "name": "NNODES=2,STEPS=50,MODEL=resnet50,DATA=rocAL-GPU-STANDARD,PRECISION=BF16,MBS=128,GA=1,GBS=2048,RES=224",
-        "label": "W2-ROCAL-GPU-STANDARD-BF16-R224-MBS128-2N",
+        "name": "STEPS=50,MODEL=resnet50,DATA=rocAL-GPU-STANDARD,PRECISION=BF16,MBS=128,GA=1,RES=224",
+        "label": "W2-ROCAL-GPU-STANDARD-BF16-R224-MBS128",
         "model": "resnet50",
         "backend": "torchvision",
         "precision": "BF16",
@@ -99,12 +99,14 @@
       }
     ],
     "enabled_sweep_list": [
-      "NNODES=2,STEPS=50,MODEL=resnet50,DATA=rocAL-GPU-STANDARD,PRECISION=BF16,MBS=128,GA=1,GBS=2048,RES=224"
+      "STEPS=50,MODEL=resnet50,DATA=rocAL-GPU-STANDARD,PRECISION=BF16,MBS=128,GA=1,RES=224"
     ],
     "master_port": 29500,
     "scaling_baseline": {
       "images_per_sec_total": 0.0,
       "num_nodes": 1
-    }
-  }
+    },
+    "workload": "W2"
+  },
+  "_topology_comment": "Node count comes from the cluster file, not this config: the sweep name encodes only per-device dimensions so the same file runs on 2N, 4N, or any larger topology. world_size and the effective global batch are derived as gpus_per_node x nodes at run time. training.scaling_baseline.images_per_sec_total should hold the matching single-node result."
 }

@@ -507,7 +507,7 @@ def _evaluate(model, loader, loss_fn, args, device):
     }
 
 
-def _start_codecarbon(args, rank, world_size):
+def _start_codecarbon(args, rank, local_gpu_count):
     payload = {
         "version": None,
         "tracker": "amdsmi",
@@ -526,12 +526,12 @@ def _start_codecarbon(args, rank, world_size):
 
             amdsmi.amdsmi_init()
             handles = amdsmi.amdsmi_get_processor_handles()
-            if len(handles) < world_size:
-                raise RuntimeError(f"AMDSMI found {len(handles)} GPUs, expected {world_size}")
+            if len(handles) < local_gpu_count:
+                raise RuntimeError(f"AMDSMI found {len(handles)} GPUs, expected {local_gpu_count}")
             kwargs = {
                 "measure_power_secs": args.codecarbon_measure_power_secs,
                 "tracking_mode": "machine",
-                "gpu_ids": list(range(world_size)),
+                "gpu_ids": list(range(local_gpu_count)),
                 "log_level": "error",
                 "save_to_file": False,
             }
@@ -838,7 +838,9 @@ def main():
     all_finite = True
     # Energy is scoped to the measured window only. Warmup, the loader benchmark, and
     # checkpoint validation are excluded so images/kWh divides the same work it measures.
-    tracker, codecarbon = _start_codecarbon(args, rank, world_size)
+    # Energy is measured on rank 0's node only; on multi-node runs it is a
+    # per-node figure, not a cluster total.
+    tracker, codecarbon = _start_codecarbon(args, rank, torch.cuda.device_count())
     window_start = time.perf_counter()
     milestones = {int(value) for value in args.milestone_steps.split(",") if value.strip()}
     target_steps = args.measure_steps

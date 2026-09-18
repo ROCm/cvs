@@ -1,6 +1,6 @@
 {
-  "_comment": "Record-only multi-node thresholds. Calibrate on the target fabric before enforcing.",
-  "NNODES=2,STEPS=50,MODEL=resnet50,DATA=rocAL-GPU-STANDARD,PRECISION=BF16,MBS=128,GA=1,GBS=2048,RES=224": {
+  "_comment": "Record-only multi-node thresholds, topology-agnostic cell key. Calibrate per node count before enforcing.",
+  "STEPS=50,MODEL=resnet50,DATA=rocAL-GPU-STANDARD,PRECISION=BF16,MBS=128,GA=1,RES=224": {
     "training.images_per_sec": {
       "kind": "info"
     },

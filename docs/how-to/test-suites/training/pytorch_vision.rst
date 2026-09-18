@@ -164,6 +164,22 @@ collapse a multi-node launch to one rank.
 The dataset path must resolve identically on every node, and rank zero owns the
 result artifact.
 
+The node count is never declared in the config. Sweep names encode only
+per-device dimensions, so one distributed config runs unchanged on 2, 4, or
+more nodes; ``world_size`` and the effective global batch are derived as
+``gpus_per_node x nodes`` at run time and cross-checked against the artifact.
+This mirrors jaxmaxtext, whose sweep keys likewise omit topology.
+
+Energy is measured by CodeCarbon on rank zero's node only, so on a multi-node
+run ``energy_kwh`` and ``images/kWh`` are per-node figures; images are scaled
+to that node's share so the ratio stays comparable across topologies.
+
+Known limitation: unlike jaxmaxtext there is no RDMA setup stage, so the suite
+relies on whatever transport RCCL negotiates. A 4-node run spanning two
+subnets (10.32.80.x plus 10.32.81.x) hit a collective timeout, while the same
+config on four same-subnet nodes passed. Keep multi-node sets on one fabric
+until an RDMA stage is added.
+
 Scaling efficiency needs a calibrated reference. Set
 ``training.scaling_baseline.images_per_sec_total`` from a prior single-node
 run's ``results.json``, and ``num_nodes`` to that run's node count, before the
