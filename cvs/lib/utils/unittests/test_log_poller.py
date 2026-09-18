@@ -54,7 +54,7 @@ class _LocalTailOrch:
         self.hosts = ["h0"]
         self.path = path
 
-    def exec_cmd_list(self, cmd_list, print_console=False):
+    def exec_cmd_list(self, cmd_list, timeout=None, print_console=False):
         # Keep \r as \r so this matches GNU tail's on-disk records (text=True would
         # turn \r into \n and reintroduce the cursor skew these tests catch).
         out = subprocess.check_output(["bash", "-c", cmd_list[0]])
@@ -196,6 +196,25 @@ class SilentPollTests(unittest.TestCase):
         self.assertIs(o.exec_cmd_list.call_args.kwargs.get("print_console"), True)
         p.is_complete()
         self.assertIs(o.exec_cmd_list.call_args.kwargs.get("print_console"), True)
+
+
+class CmdTimeoutTests(unittest.TestCase):
+    def test_default_bound_passed_to_drain_and_complete(self):
+        o = _orch(["h0"])
+        o.exec_cmd_list.return_value = {"h0": "1"}
+        p = LogPoller(o, ["/l0"], complete_pattern="done")
+        p.drain()
+        self.assertEqual(o.exec_cmd_list.call_args.kwargs.get("timeout"), 60)  # default
+        p.is_complete()
+        self.assertEqual(o.exec_cmd_list.call_args.kwargs.get("timeout"), 60)
+
+    def test_custom_bound_and_none_disables(self):
+        o = _orch(["h0"])
+        o.exec_cmd_list.return_value = {"h0": "1"}
+        LogPoller(o, ["/l0"], complete_pattern="done", cmd_timeout_s=5).drain()
+        self.assertEqual(o.exec_cmd_list.call_args.kwargs.get("timeout"), 5)
+        LogPoller(o, ["/l0"], complete_pattern="done", cmd_timeout_s=None).drain()
+        self.assertIsNone(o.exec_cmd_list.call_args.kwargs.get("timeout"))
 
 
 class PollTests(unittest.TestCase):
