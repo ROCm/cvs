@@ -13,6 +13,7 @@ html_theme = "rocm_docs_theme"
 html_theme_options = {
     "flavor": "instinct",
     "link_main_doc": True,
+    "version_list_link": "https://rocm.docs.amd.com/projects/cvs/en/latest/release.html",
     # Add any additional theme options here
 }
 
