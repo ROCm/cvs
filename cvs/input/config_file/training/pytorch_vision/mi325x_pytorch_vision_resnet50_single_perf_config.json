@@ -1,7 +1,9 @@
 {
+  "_format_note": "PyTorch Vision training config. The cluster file owns node access; this file owns the container and the training workload; the sibling *_threshold.json owns per-sweep metric gates. Run with: cvs run pytorch_vision_single|pytorch_vision_distributed --cluster_file <cluster>.json --config_file <this>.json --html <out>.html --self-contained-html",
   "schema_version": 1,
   "framework": "pytorch_vision_training",
-  "gpu_arch": "MI325X",
+  "gpu_name": "MI325X",
+  "_thresholds_comment": "Gating is threshold-driven and requires enforce_thresholds=true. A threshold entry with kind=info always passes and records the value. Calibrate on the target filesystem and fabric before enforcing numeric limits.",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_pytorch_vision_resnet50_single_perf_threshold.json",
   "paths": {
@@ -35,6 +37,8 @@
       }
     }
   },
+  "_training_comment": "training{} defines the workload. `workload` is the scorecard row id (W1 ResNet-50, W3 ViT-B/16) and is cross-checked against the result artifact. `distributed` must match the suite you invoke and the cluster node count. `run_mode` selects the profile (smoke|perf|train_5k|train_to_accuracy) and determines which rows are gated. `optimizer` is sgd or adamw; transformer backbones need adamw.",
+  "_sweeps_comment": "training.sweeps[] are full training runs. Each `name` is also its threshold cell key, so encode every material dimension (topology, precision, microbatch, GA, data mode, rocAL device, augmentation) to stop a result being compared against the wrong gate. `label` is the compact id used in pytest rows and log directory names. training.enabled_sweep_list selects which names execute.",
   "training": {
     "distributed": false,
     "enabled": true,

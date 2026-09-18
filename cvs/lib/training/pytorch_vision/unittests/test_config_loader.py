@@ -15,7 +15,7 @@ def _config():
     return {
         "schema_version": 1,
         "framework": "pytorch_vision_training",
-        "gpu_arch": "MI325X",
+        "gpu_name": "MI325X",
         "enforce_thresholds": True,
         "threshold_json": "w1_threshold.json",
         "paths": {
@@ -113,6 +113,30 @@ class TestVisionConfigLoader(unittest.TestCase):
         (root / "w1_config.json").write_text(json.dumps(config or _config()))
         (root / "w1_threshold.json").write_text(json.dumps(thresholds or _thresholds()))
         return load_vision_variant(root / "w1_config.json", {"username": "tester"})
+
+    def test_gpu_name_is_uppercased_and_exposed_as_gpu_arch(self):
+        """gpu_name matches Megatron/TorchTitan; gpu_arch stays an alias for the
+        shared report layer."""
+        config = _config()
+        config["gpu_name"] = "mi325x"
+        variant = self._load(config)
+        self.assertEqual(variant.gpu_name, "MI325X")
+        self.assertEqual(variant.gpu_arch, "MI325X")
+
+    def test_unknown_gpu_name_is_rejected(self):
+        config = _config()
+        config["gpu_name"] = "MI999X"
+        with self.assertRaisesRegex(ValueError, "gpu_name must be one of"):
+            self._load(config)
+
+    def test_inline_documentation_keys_are_accepted(self):
+        """The shipped configs carry _*_comment keys like the other training
+        suites; they must not trip schema validation."""
+        config = _config()
+        config["_format_note"] = "doc"
+        config["_sweeps_comment"] = "doc"
+        variant = self._load(config)
+        self.assertEqual(variant.training.workload, "W1")
 
     def test_loads_and_resolves_paths(self):
         variant = self._load()

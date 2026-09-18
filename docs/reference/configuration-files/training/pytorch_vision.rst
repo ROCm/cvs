@@ -45,7 +45,9 @@ Top-level fields
 ================
 
 - ``framework``: must be ``pytorch_vision_training``.
-- ``gpu_arch``: exact device family expected inside the container.
+- ``gpu_name``: device family expected inside the container, one of ``MI300X``,
+  ``MI325X``, ``MI355X`` (uppercased on load). Exposed internally as
+  ``gpu_arch`` for the shared report layer, matching Megatron and TorchTitan.
 - ``enforce_thresholds``: gates every configured metric when ``true``.
 - ``threshold_json``: sibling threshold filename.
 - ``paths``: shared model, log, and token locations.

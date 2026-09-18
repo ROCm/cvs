@@ -7,12 +7,14 @@ import warnings
 from collections import Counter
 from typing import Any, Dict, List, Optional
 
-from pydantic import Field, model_validator
+from pydantic import field_validator, Field, model_validator
 from typing_extensions import Literal
 
 from cvs.lib.training.pytorch_vision.utils.metrics import GATED_METRICS
 from cvs.lib.utils.config_loader import BaseVariantConfig, _Forbid, substitute_config
 
+
+_ALLOWED_GPU_NAMES = ("MI300X", "MI325X", "MI355X")
 
 RUN_MODES = (
     "smoke",
@@ -302,8 +304,21 @@ class VisionTrainingConfig(_Forbid):
 class VisionVariantConfig(BaseVariantConfig):
     schema_version: Literal[1]
     framework: Literal["pytorch_vision_training"]
-    gpu_arch: str
+    gpu_name: str
     training: VisionTrainingConfig
+
+    @field_validator("gpu_name")
+    @classmethod
+    def _uppercase_gpu_name(cls, value: str) -> str:
+        name = value.strip().upper()
+        if name not in _ALLOWED_GPU_NAMES:
+            raise ValueError(f"gpu_name must be one of {list(_ALLOWED_GPU_NAMES)}, got {value!r}")
+        return name
+
+    @property
+    def gpu_arch(self) -> str:
+        """Alias kept for the shared report and orchestration layers."""
+        return self.gpu_name
 
     def sweep(self, sweep_ref: str) -> VisionSweep:
         for sweep in self.training.sweeps:
