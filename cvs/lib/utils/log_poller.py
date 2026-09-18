@@ -63,6 +63,7 @@ class LogPoller:
         # timing
         timeout_s=None,
         drain_interval_s=10,
+        cmd_timeout_s=60,
         silent_poll=True,
         tick_s=0.330,
         heartbeat_s=60,
@@ -92,6 +93,9 @@ class LogPoller:
         self._label = label
         self._timeout_s = timeout_s
         self._drain_interval_s = drain_interval_s
+        # Per-command read cap passed to exec_cmd_list so a hung SSH/tail cannot
+        # block past the overall timeout_s; None disables the bound.
+        self._cmd_timeout_s = cmd_timeout_s
         # silent_poll=True (default) keeps the tail/grep node commands off the
         # console; pass silent_poll=False to print them (debugging the polling).
         self._print_console = not silent_poll
@@ -113,7 +117,7 @@ class LogPoller:
             f"tail -n +{self._cursor[i] + 1} {shlex.quote(self._log_paths[i])} 2>/dev/null || true"
             for i in range(self.num_nodes)
         ]
-        out = self.orch.exec_cmd_list(cmd_list, print_console=self._print_console)
+        out = self.orch.exec_cmd_list(cmd_list, timeout=self._cmd_timeout_s, print_console=self._print_console)
         node_of = {h: i for i, h in enumerate(self.hosts)}
         new_by_node = {}
         for host, result in (out or {}).items():
@@ -143,7 +147,7 @@ class LogPoller:
             f"grep -cE {shlex.quote(self._complete_pattern)} {shlex.quote(self._log_paths[i])} 2>/dev/null || true"
             for i in range(self.num_nodes)
         ]
-        out = self.orch.exec_cmd_list(cmd_list, print_console=self._print_console)
+        out = self.orch.exec_cmd_list(cmd_list, timeout=self._cmd_timeout_s, print_console=self._print_console)
         if not out:
             return False
         node_of = {h: i for i, h in enumerate(self.hosts)}

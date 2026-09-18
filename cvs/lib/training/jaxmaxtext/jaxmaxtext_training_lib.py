@@ -591,6 +591,7 @@ class MaxTextTrainingJob:
             label="Training In Progress",
             timeout_s=timeout_s,
             drain_interval_s=self._drain_interval_s,
+            cmd_timeout_s=60,
             log=log,
         ).poll()
 

@@ -703,6 +703,7 @@ class PollForCompletionTests(unittest.TestCase):
         # Defaults are passed explicitly so adopters see the knobs.
         self.assertIsNone(kwargs["ignore_error_patterns"])
         self.assertTrue(kwargs["silent_poll"])
+        self.assertEqual(kwargs["cmd_timeout_s"], 60)
         self.assertEqual(kwargs["timeout_s"], 1234)
         mock_poller_cls.return_value.poll.assert_called_once()
 
