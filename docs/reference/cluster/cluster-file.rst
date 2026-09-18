@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure the CVS cluster file and select the execution backend
-  :keywords: cluster, cluster_file, baremetal, container, docker, orchestrator, cvs
+  :description: Reference for the CVS cluster file JSON format, including SSH credentials, node topology, baremetal and container backend selection, and Docker runtime options.
+  :keywords: CVS, cluster file, JSON, baremetal, container, Docker, orchestrator, SSH, ROCm, RDMA, node topology
 
-***********************
-Cluster file
-***********************
+***************************************************************************
+Cluster Validation Suite (CVS) cluster file: configuration and backend selection
+***************************************************************************
 
 Each ``cvs run`` invocation is pointed at a cluster file via ``--cluster_file <path>``. The cluster file declares the SSH credentials, the node list, and the **execution backend** that runs the workload. CVS ships two starter templates:
 
@@ -96,6 +96,8 @@ Both templates share the same top-level shape. The ``container`` block and the `
 Top-level parameters
 --------------------
 
+The following table describes every key accepted at the top level of the cluster file.
+
 .. list-table::
    :widths: 3 3 5
    :header-rows: 1
@@ -132,6 +134,8 @@ Container block
 
 The ``container`` block configures the container backend. It is consumed by the ``ContainerOrchestrator`` defined in `cvs/core/orchestrators/container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/container.py>`_.
 
+The following table describes each key in the ``container`` block.
+
 .. list-table::
    :widths: 3 3 5
    :header-rows: 1
@@ -163,6 +167,8 @@ When ``runtime.name`` is ``docker``, the keys below configure the underlying ``d
 - List arguments (``volumes``, ``devices``, ``cap_add``, ``security_opt``, ``group_add``, ``ulimit``) **append to** the baked-in defaults.
 - Scalar arguments (``network``, ``ipc``, ``privileged``) **override** the default when set, otherwise inherit it.
 - An empty ``args: {}`` already yields a working RDMA-ready container. The keys below are only needed to extend or override.
+
+The following table lists the supported ``runtime.args`` keys and their defaults.
 
 .. list-table::
    :widths: 3 3 5
@@ -204,6 +210,8 @@ When ``runtime.name`` is ``docker``, the keys below configure the underlying ``d
 
 ``setup_containers`` and ``teardown_containers`` branch on ``container.lifetime``. The behavior below is pinned by the per-lifetime unit tests in `cvs/core/orchestrators/unittests/test_container.py <https://github.com/ROCm/cvs/blob/main/cvs/core/orchestrators/unittests/test_container.py>`_.
 
+The following table shows what each ``lifetime`` value does during setup and teardown.
+
 .. list-table::
    :widths: 2 4 4
    :header-rows: 1
@@ -228,6 +236,8 @@ When ``runtime.name`` is ``docker``, the keys below configure the underlying ``d
 Prerequisites on each cluster node
 ==================================
 
+The following prerequisites must be satisfied on every cluster node before using the container backend.
+
 To use the container backend, every cluster node must have:
 
 - **Docker installed**. The SSH user needs either passwordless ``sudo docker`` or direct Docker access (for example membership in the ``docker`` group) -- CVS probes once per run (``sudo -n true``) and caches which applies, prefixing every subsequent Docker command accordingly.
@@ -235,8 +245,8 @@ To use the container backend, every cluster node must have:
 - **SSH user home directory accessible**. The orchestrator mounts ``~/.ssh`` as ``/host_ssh`` and copies keys into ``/root/.ssh`` inside the container so that the in-container ``sshd`` on port ``2224`` can authenticate.
 - **Container image** either pre-loaded on every node (``docker load``) or pullable from a reachable registry. The image must contain ``openssh-server`` (for the in-container ``sshd``) and the workload binaries the suite invokes (for example ``/opt/rocm/bin/rvs``).
 
-See also
-========
+Related resources
+=================
 
 - :doc:`/how-to/run-with-containers` - task-oriented walkthrough for running ``rvs_cvs`` in container mode.
 - `cvs/input/cluster_file/README.md <https://github.com/ROCm/cvs/blob/main/cvs/input/cluster_file/README.md>`_ - in-tree reference next to the templates.

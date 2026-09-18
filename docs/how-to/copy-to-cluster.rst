@@ -1,12 +1,12 @@
 .. meta::
-  :description: Copy files and directories to cluster nodes using CVS
-  :keywords: CVS, cluster, copy, scp, files, directories, parallel
+  :description: Copy files and directories to all AMD Instinct GPU cluster nodes simultaneously using the CVS parallel SCP command and cluster config.
+  :keywords: CVS, ROCm, cluster, copy, scp, files, directories, parallel, AMD Instinct, GPU, AMD, SSH, Linux
 
-****************
-Copy to cluster
-****************
+**********************************************************************************
+Copy files to all cluster nodes using Cluster Validation Suite (CVS) parallel SCP
+**********************************************************************************
 
-CVS provides an ``scp`` command to copy files and directories to all nodes in the cluster simultaneously using parallel SCP operations. This is useful for distributing configuration files, scripts, data files, or software packages across all cluster nodes at once.
+CVS provides an ``scp`` command to copy files and directories to all nodes in the cluster simultaneously using parallel SCP operations. Use it to distribute configuration files, scripts, data files, or software packages to all cluster nodes before a test run.
 
 The ``scp`` command uses the same cluster configuration files as other CVS commands and supports both command-line arguments and environment variables for configuration.
 
@@ -65,6 +65,8 @@ The ``--parallel`` option controls how many SCP operations run simultaneously:
 File paths and permissions
 ==========================
 
+By default, files land at the same absolute path on every remote node. Use ``--dest`` to specify a different destination path.
+
 Destination paths
 -----------------
 
@@ -100,6 +102,8 @@ Files are copied with the permissions of the remote user specified in the cluste
 Working with directories
 ========================
 
+Pass ``--recurse`` to copy a directory and preserve its full structure on each remote node.
+
 Directory structure
 -------------------
 
@@ -117,8 +121,8 @@ To copy only the contents of a directory, adjust your source path:
   # Copy contents of ./config/ to /etc/myapp/
   cvs scp --file ./config/ --dest /etc/myapp/ --recurse --cluster_file ~/cvs_workspace/cluster.json
 
-Large directories
------------------
+Copy large directories
+----------------------
 
 For very large directories, consider:
 
@@ -139,6 +143,8 @@ For very large directories, consider:
 
 Common use cases
 ================
+
+The following examples show common scenarios for copying files to a cluster.
 
 RCCL testing without shared storage
 ------------------------------------
@@ -164,3 +170,10 @@ When cluster nodes don't have shared mount/storage, you need to copy MPI, RCCL-t
 
   # Clean up temporary archives
   cvs exec --cmd "rm /tmp/*.tar.gz" --cluster_file ~/cvs_workspace/cluster.json
+
+Next steps
+==========
+
+- :doc:`/how-to/execute-cluster-commands` — run ad-hoc commands across all cluster nodes using ``cvs exec``.
+- :doc:`/how-to/test-suites/index` — run a test suite against the cluster.
+- :doc:`/reference/cluster/cluster-file` — full cluster file schema including SSH credentials and node topology.

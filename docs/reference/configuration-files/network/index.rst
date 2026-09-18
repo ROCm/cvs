@@ -1,10 +1,10 @@
 .. meta::
-  :description: Network test configuration schemas
-  :keywords: CVS, IB Perf, RCCL, MORI, config schema
+  :description: Index of CVS network test configuration schemas, covering InfiniBand IB Perf, RCCL collective communication, and MORI RDMA benchmark suites.
+  :keywords: CVS, network, InfiniBand, IB, RCCL, MORI, RDMA, ROCm, GPU, AMD, benchmark, JSON, configuration
 
-*******
-Network
-*******
+**********************************************************
+Cluster Validation Suite (CVS) network test configuration schemas
+**********************************************************
 
 JSON configuration schemas for interconnect and collective communication suites under ``cvs/input/config_file/``.
 
