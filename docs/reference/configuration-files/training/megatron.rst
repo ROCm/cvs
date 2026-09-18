@@ -33,8 +33,8 @@ Llama 3.1 8B, Llama 3.3 70B, and DeepSeek V2 Lite run on **both** Megatron-LM an
   - Parameters with the ``<changeme>`` value must have that value modified to your specifications. Unresolved placeholders cause a hard exit at load time.
   - ``{user-id}`` will be resolved to the cluster username (or the local OS user as fallback). You can also set this value yourself.
   - Keys prefixed with ``_`` (for example ``_checkpoint_comment``) are inline comments and are ignored by the loader.
-  - ``sweep.runs`` is required when ``sweep.combinations`` is non-empty. It must be a subset of (or equal to) those keys. Omitting ``sweep`` entirely (or using empty ``combinations``) runs one implicit ``default`` cell from ``train_params``.
-  - Each key in ``sweep.combinations`` must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``. The suite parses those three values from the key; do not repeat them in the combination body.
+  - ``sweep.runs`` is required when ``sweep.combinations`` is non-empty. It must be a non-empty subset of (or equal to) those keys; an empty ``runs`` list is a load error. Omitting ``sweep`` entirely (or using empty ``combinations``) runs one implicit ``default`` cell; ``train_params.micro_batch_size``, ``global_batch_size``, and ``precision`` are then required.
+  - Each key in ``sweep.combinations`` must be ``MBS=<micro_batch_size>,GBS=<global_batch_size>,PRECISION=<precision>``. The suite parses those three values from the key; do not repeat them in the combination body. The body may overlay extras such as ``training_iterations``, ``tensor_parallelism``, and ``pipeline_parallelism``.
 
 Available configurations
 ========================
@@ -78,9 +78,10 @@ Set these before a run (full field tables are under `Common parameters`_):
 * ``gpu_name`` / ``threshold_json`` — on ``mi3xx_`` templates, set ``MI300X`` or ``MI325X`` and the matching SKU threshold filename. ``gpu_name`` must be exactly ``MI300X``, ``MI325X``, or ``MI355X`` after uppercase.
 * ``container.image`` — Megatron-LM or Primus ROCm image on all nodes.
 * ``train_params.training_iterations`` — default training steps (for example ``"30"``). Each ``sweep.combinations`` body sets ``training_iterations`` (packaged value ``"20"``); that overlay wins for that cell.
+* ``train_params.micro_batch_size`` / ``global_batch_size`` / ``precision`` — required when ``sweep`` is omitted. Packaged files already set them; with a declared sweep the combination key supplies those values for each cell.
 * ``paths.hf_token_file`` — Hugging Face token path on the nodes.
 * ``container.env.NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` / ``NCCL_IB_GID_INDEX`` / ``NCCL_DEBUG`` — templates include example values plus ``<changeme>`` (for example ``enp193s0f1np1 <changeme>``, ``3 <changeme>``, ``ERROR <changeme>``). Remove ``<changeme>`` and keep or edit the example. Required on single-node and distributed.
-* ``sweep.runs`` — combination keys to execute (same ``MBS=…,GBS=…,PRECISION=…`` strings as in ``sweep.combinations``).
+* ``sweep.runs`` — combination keys to execute (same ``MBS=…,GBS=…,PRECISION=…`` strings as in ``sweep.combinations``). Must be non-empty when ``combinations`` is present.
 * Do not set ``NNODES`` in JSON.
 * **Distributed only:** ``container.env.MASTER_ADDR``, ``container.env.NCCL_IB_HCA`` (example HCA list plus ``<changeme>``). ``paths.data_cache_dir`` must be a shared filesystem. When ``checkpoint.enforce`` is ``true``, also set ``checkpoint.checkpoint_dir`` and replace the last ``<changeme>:<changeme>`` volume with that shared path.
 
@@ -107,7 +108,7 @@ These fields appear at the root of every config file.
      - Image, runtime mounts, and ``container.env``. Packaged files keep this block immediately after ``paths``.
    * - ``train_params``
      - see per-model tables
-     - Model knobs plus ``training_iterations``. With a ``sweep``, MBS/GBS/precision live on the combination key. With no ``sweep``, optional ``micro_batch_size``, ``global_batch_size``, and ``precision`` here feed the implicit ``default`` cell.
+     - Model knobs plus ``training_iterations``. Packaged files also set ``micro_batch_size``, ``global_batch_size``, and ``precision`` (used when ``sweep`` is omitted). With a declared ``sweep``, those three values for each cell come from the combination key. With no ``sweep``, those three ``train_params`` keys are required for the implicit ``default`` cell.
    * - ``verify_network_errors``
      - omitted (single) / ``True`` (distributed)
      - Compare RDMA and ethtool error counters before and after training. Single-node templates omit it (schema/lib default ``False``).
@@ -145,6 +146,9 @@ Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/M
         "fsdp": "0",
         "tensor_parallelism": "1",
         "pipeline_parallelism": "1",
+        "micro_batch_size": "4",
+        "global_batch_size": "128",
+        "precision": "BF16",
         "training_iterations": "<changeme>"
       },
       "sweep": {
@@ -199,6 +203,15 @@ Available as ``mi3xx_megatron_llama-3.1-8b_{single,distributed}.json`` (MI300X/M
    * - ``pipeline_parallelism``
      - ``1``
      - Single pipeline stage.
+   * - ``micro_batch_size``
+     - ``4``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``global_batch_size``
+     - ``128``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``precision``
+     - ``BF16``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
    * - ``training_iterations``
      - ``<changeme>``
      - Training steps (same field on every model).
@@ -226,6 +239,9 @@ Available as ``mi3xx_megatron_llama-3.3-70b_{single,distributed}.json`` (MI300X/
         "fsdp": "0",
         "tensor_parallelism": "8",
         "pipeline_parallelism": "1",
+        "micro_batch_size": "3",
+        "global_batch_size": "96",
+        "precision": "BF16",
         "training_iterations": "<changeme>"
       },
       "sweep": {
@@ -272,6 +288,15 @@ Available as ``mi3xx_megatron_llama-3.3-70b_{single,distributed}.json`` (MI300X/
    * - ``pipeline_parallelism``
      - ``1``
      - Single pipeline stage.
+   * - ``micro_batch_size``
+     - ``3``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``global_batch_size``
+     - ``96``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``precision``
+     - ``BF16``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
    * - ``training_iterations``
      - ``<changeme>``
      - Training steps (same field on every model).
@@ -299,6 +324,9 @@ Available as ``mi3xx_megatron_deepseek-v2-lite_{single,distributed}.json`` (MI30
         "fsdp": "0",
         "tensor_parallelism": "1",
         "pipeline_parallelism": "1",
+        "micro_batch_size": "4",
+        "global_batch_size": "128",
+        "precision": "BF16",
         "training_iterations": "<changeme>"
       },
       "sweep": {
@@ -345,6 +373,15 @@ Available as ``mi3xx_megatron_deepseek-v2-lite_{single,distributed}.json`` (MI30
    * - ``pipeline_parallelism``
      - ``1``
      - Single pipeline stage.
+   * - ``micro_batch_size``
+     - ``4``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``global_batch_size``
+     - ``128``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``precision``
+     - ``BF16``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
    * - ``training_iterations``
      - ``<changeme>``
      - Training steps (same field on every model).
@@ -372,6 +409,9 @@ Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; 
         "fsdp": "0",
         "tensor_parallelism": "8",
         "pipeline_parallelism": "4",
+        "micro_batch_size": "1",
+        "global_batch_size": "64",
+        "precision": "BF16",
         "training_iterations": "<changeme>"
       },
       "sweep": {
@@ -418,6 +458,15 @@ Available as ``mi3xx_megatron_llama-3.1-405b_distributed.json`` (MI300X/MI325X; 
    * - ``pipeline_parallelism``
      - ``4``
      - Splits the model across 4 pipeline stages (requires at least 4 nodes).
+   * - ``micro_batch_size``
+     - ``1``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``global_batch_size``
+     - ``64``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
+   * - ``precision``
+     - ``BF16``
+     - Required when ``sweep`` is omitted. With a declared sweep, the combination key supplies this for each cell.
    * - ``training_iterations``
      - ``<changeme>``
      - Training steps.
@@ -665,14 +714,14 @@ Controls ``test_smoke``: a small fixed cell (not a ``sweep.runs`` entry) that lo
      - Per-cell step count. Overrides ``train_params.training_iterations`` for that run. Other ``train_params`` keys may also appear in the body.
    * - ``runs``
      - N/A
-     - Ordered list of combination keys to execute. Required when ``combinations`` is non-empty. Omit ``sweep`` (or leave ``combinations`` empty) to run the implicit ``default`` cell.
+     - Ordered list of combination keys to execute. Required and non-empty when ``combinations`` is non-empty. Omit ``sweep`` (or leave ``combinations`` empty) to run the implicit ``default`` cell.
 
-Pytest parametrizes ``sweep_name`` from ``sweep.runs``. The suite parses ``micro_batch_size``, ``global_batch_size``, and ``precision`` from each combination key. Additional fields in the combination body override the corresponding ``train_params`` values for that run, including ``training_iterations``. If ``sweep`` is omitted or ``combinations`` is empty, one cell named ``default`` trains with base ``train_params`` (MBS ``2``, GBS ``128``, precision ``BF16`` unless those keys are set in ``train_params``). The matching threshold cell is ``default`` and is required when ``enforce_thresholds`` is ``true``.
+Pytest parametrizes ``sweep_name`` from ``sweep.runs``. The suite parses ``micro_batch_size``, ``global_batch_size``, and ``precision`` from each combination key. Additional fields in the combination body override the corresponding ``train_params`` values for that run, including ``training_iterations``, ``tensor_parallelism``, and ``pipeline_parallelism``. If ``sweep`` is omitted or ``combinations`` is empty, one cell named ``default`` trains with ``train_params``; ``micro_batch_size``, ``global_batch_size``, and ``precision`` must be set there. The matching threshold cell is ``default`` and is required when ``enforce_thresholds`` is ``true``.
 
 Threshold files
 ---------------
 
-Each suite JSON names a sibling file in ``threshold_json``. With a declared ``sweep``, top-level cell keys must be the same ``MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>`` strings as ``sweep.combinations``. With no ``sweep`` (generic / implicit ``default`` run), the threshold cell is the literal key ``default`` — not an ``MBS=…`` string built from ``train_params``. A missing or extra cell fails load when ``enforce_thresholds`` is ``true``. When it is ``false``, the ``default`` cell may be omitted: the loader warns and ``test_metric`` is record-only.
+Each suite JSON names a sibling file in ``threshold_json``. With a declared ``sweep``, top-level cell keys must be the same ``MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>`` strings as ``sweep.runs`` (unused ``combinations`` keys are not required). With no ``sweep`` (generic / implicit ``default`` run), the threshold cell is the literal key ``default`` — not an ``MBS=…`` string built from ``train_params``. A missing or extra cell fails load when ``enforce_thresholds`` is ``true``. When it is ``false``, the ``default`` cell may be omitted: the loader warns and ``test_metric`` is record-only.
 
 A metric is gated only when ``enforce_thresholds`` is ``true`` and the cell has a numeric spec:
 

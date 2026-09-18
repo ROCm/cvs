@@ -48,6 +48,9 @@
     "fsdp": "0",
     "tensor_parallelism": "1",
     "pipeline_parallelism": "1",
+    "micro_batch_size": "4",
+    "global_batch_size": "128",
+    "precision": "BF16",
     "training_iterations": "<changeme>"
   },
   "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",
@@ -78,7 +81,7 @@
     "resume_iters": 25,
     "loss_rtol": 0.05
   },
-  "_sweep_comment": "combination key is MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>. Body overlays train_params; packaged cells set training_iterations (for example 20).",
+  "_sweep_comment": "combination key is MBS=<mbs>,GBS=<gbs>,PRECISION=<precision> for that cell (body may overlay extras such as training_iterations). Omit sweep to run one default cell from train_params.",
   "sweep": {
     "combinations": {
       "MBS=4,GBS=128,PRECISION=BF16": {
