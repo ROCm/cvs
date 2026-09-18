@@ -312,10 +312,9 @@ def _exec_cmd_list_on_nodes(
 
 
 def resolve_server_nodes(cluster_dict: Mapping[str, Any], inference_dict: Mapping[str, Any]) -> List[str]:
-    explicit = inference_dict.get("server_node_list")
-    if explicit:
-        return as_node_list(explicit)
-    return list(cluster_dict["node_dict"].keys())
+    del inference_dict
+    node_dict = cluster_dict.get("node_dict") or {}
+    return [host for host in node_dict if host]
 
 
 def resolve_nnodes(inference_dict: Mapping[str, Any], server_nodes: Sequence[str]) -> int:
@@ -332,22 +331,18 @@ def resolve_master_addr(
     *,
     s_phdl=None,
 ) -> str:
-    """
-    Resolve torchrun rendezvous address.
-
-    Prefer explicit config. Otherwise use rank-0 IP when possible, then hostname.
-    """
-    addr = (inference_dict.get("master_addr") or "").strip()
-    if addr:
-        return addr
-
+    """Resolve torchrun rendezvous from rank-0 (first cluster node)."""
+    del inference_dict
     if s_phdl is not None:
-        ip_cmd = "hostname -I | awk '{print $1}'"
-        ip_out = _exec_on_single_node(s_phdl, rank0_node, ip_cmd, print_console=False).strip()
-        first_ip = (ip_out.split() or [""])[0].strip()
-        if first_ip:
-            log.info("Resolved master_addr from rank-0 node %s: %s", rank0_node, first_ip)
-            return first_ip
+        try:
+            ip_cmd = "hostname -I | awk '{print $1}'"
+            ip_out = _exec_on_single_node(s_phdl, rank0_node, ip_cmd, print_console=False).strip()
+            first_ip = (ip_out.split() or [""])[0].strip()
+            if first_ip:
+                log.info("Resolved master_addr from rank-0 node %s: %s", rank0_node, first_ip)
+                return first_ip
+        except Exception as exc:
+            log.info("Could not probe rank-0 IP on %s (%s); using hostname", rank0_node, exc)
 
     hostname = node_to_hostname.get(rank0_node, rank0_node)
     log.info("Using hostname for master_addr on rank-0 node %s: %s", rank0_node, hostname)

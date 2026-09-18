@@ -728,6 +728,17 @@ class TestFluxBenchmarkJob(unittest.TestCase):
         self.assertIn("/home/user/cvs_flux_output/flux_host-0_outputs", plan.primary_output_dir)
         self.assertEqual(plan.world_size, 8)
 
+    def test_distributed_uses_first_nnodes_from_cluster(self):
+        cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}, "10.0.0.3": {}}}
+        job, _ = _make_flux_job(
+            hosts=["10.0.0.1", "10.0.0.2", "10.0.0.3"],
+            distributed=True,
+            cluster_dict=cluster_dict,
+            inference_overrides={"nnodes": 2, "server_node_list": ["10.0.0.3", "10.0.0.2"]},
+            benchmark_overrides={"ring_degree": 2},
+        )
+        self.assertEqual(job.server_nodes, ["10.0.0.1", "10.0.0.2"])
+
     def test_build_launch_plan_distributed(self):
         cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
         job, _ = _make_flux_job(

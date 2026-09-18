@@ -204,6 +204,24 @@ class TestPytorchXditUnifiedSchemas(unittest.TestCase):
                     validated.server_params.benchmark_serv_node,
                     msg=f"{path.name} runs on every node and must not pin benchmark_serv_node",
                 )
+            if path.name.endswith("_distributed.json"):
+                self.assertFalse(
+                    validated.server_params.server_node_list,
+                    msg=f"{path.name} must take hosts from the cluster, not server_node_list",
+                )
+                self.assertFalse(
+                    validated.server_params.master_addr,
+                    msg=f"{path.name} must resolve master_addr from the first cluster node",
+                )
+                self.assertFalse(
+                    validated.server_params.benchmark_serv_node,
+                    msg=f"{path.name} must use the first cluster node as the benchmark host",
+                )
+                self.assertNotIn(
+                    "master_port",
+                    json.loads(path.read_text(encoding="utf-8")).get("server_params") or {},
+                    msg=f"{path.name} must use the default torchrun master_port",
+                )
             threshold_path = config_dir / validated.threshold_json
             self.assertTrue(threshold_path.is_file(), msg=f"missing threshold for {path.name}")
             PytorchXditThresholdFile.model_validate(json.loads(threshold_path.read_text(encoding="utf-8")))

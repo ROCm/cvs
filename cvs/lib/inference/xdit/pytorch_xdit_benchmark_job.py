@@ -71,7 +71,7 @@ class PytorchXditBenchmarkJob(ABC):
             if nnodes < 2:
                 raise ValueError(f"Distributed mode requires nnodes >= 2, got {nnodes}")
             if len(nodes) < nnodes:
-                raise ValueError(f"Cluster/server_node_list has {len(nodes)} node(s) but nnodes={nnodes}")
+                raise ValueError(f"Cluster has {len(nodes)} node(s) but nnodes={nnodes}")
             return nodes[:nnodes]
         if self.uses_container_orchestrator:
             return list(self.orch.hosts)

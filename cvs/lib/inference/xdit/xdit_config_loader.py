@@ -315,12 +315,9 @@ def _unified_runtime_views(raw):
 
     topology = str(raw.get("topology") or "")
     if topology == "distributed":
-        inference.setdefault("nnodes", len(raw.get("server_node_list") or []) or 2)
+        inference.setdefault("nnodes", int(raw.get("nnodes") or 2))
     for key in (
-        "benchmark_serv_node",
-        "server_node_list",
         "nnodes",
-        "master_addr",
         "master_port",
         "nccl_ib_hca",
         "nccl_ib_gid_index",

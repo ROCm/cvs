@@ -99,11 +99,10 @@ Unified templates use the same top-level layout as SGLang and vLLM inference con
      - ``flux1_dev_t2i`` (FLUX.1 and FLUX.2) or ``wan22_i2v_a14b`` (WAN native and Diffusers).
    * - ``inference``
      - Optional runtime fields such as ``model_rev`` for pinned HF snapshots.
-   * - ``benchmark_serv_node``
-     - Unused by single-node suites, which run on every cluster ``node_dict`` entry.
-   * - ``nnodes``, ``master_addr``, ``master_port``
-     - Distributed torchrun rendezvous. NCCL/IB env lives under
-       ``container.runtime.args.env``.
+   * - ``nnodes``
+     - Distributed torchrun node count. Rank-0 / benchmark host and rendezvous
+       address come from the first cluster node; rendezvous port defaults to
+       ``29500``. NCCL/IB env lives under ``container.runtime.args.env``.
 
 Legacy ``config`` + ``benchmark_params`` files with embedded ``expected_results`` still
 validate through ``PytorchXditWanConfigFile`` / ``PytorchXditFluxConfigFile`` for backward
@@ -241,9 +240,9 @@ Present on ``topology: distributed`` templates:
    * - ``topology``
      - Must be ``distributed``.
    * - ``nnodes``
-     - Participating node count (must be ``>= 2``). Optional ``server_node_list`` can subset the cluster.
-   * - ``master_addr``, ``master_port``
-     - torchrun rendezvous (port default ``29500``). ``master_addr`` is ``<changeme>``.
+     - Participating node count (must be ``>= 2``). Uses the first ``nnodes`` hosts
+       from the cluster ``node_dict``. torchrun rendezvous uses the first cluster
+       node on port ``29500``.
    * - ``container.runtime.args.env.NCCL_IB_HCA``
      - InfiniBand/RoCE devices. Templates include an example list plus ``<changeme>``.
    * - ``container.runtime.args.env.NCCL_SOCKET_IFNAME`` / ``GLOO_SOCKET_IFNAME`` / ``GLOO_TCP_IFNAME``
@@ -408,10 +407,10 @@ GPU type is detected from ``rocm-smi``. Lookup order: exact key → ``auto``.
 - **WAN native** — average ``total_time`` vs ``max_avg_total_time_s``; ``rank0_step*.json`` and ``video.mp4``.
 - **WAN Diffusers** — average pipe/epoch time vs ``max_avg_pipe_time_s``; ``results/timing.json`` and ``results/video_i2v.mp4``.
 
-The xDiT Run Deck run card lists **Server nodes** (``server_node_list`` or the
-execution hosts), **nnodes**, and **Benchmark node**, plus Ulysses and Ring.
+The xDiT Run Deck run card lists **Server nodes** (the first ``nnodes`` cluster
+hosts), **nnodes**, and **Benchmark node**, plus Ulysses and Ring.
 Single runs list every execution host as Benchmark node (independent full-model
-jobs). Distributed runs use the rank-0 host (or ``benchmark_serv_node`` when set).
+jobs). Distributed runs use the first cluster node as rank-0 / Benchmark node.
 
 Shipped numbers are starting points; tune the sibling threshold JSON for your stack before production gating.
 

@@ -1296,13 +1296,16 @@ class PytorchXditServerParams(BaseModel):
     model: str = Field(description="Hugging Face repo id or absolute on-disk model path")
     benchmark_serv_node: Optional[str] = Field(
         default=None,
-        description="Single execution node selected from cluster node_dict",
+        description="Unused. Single jobs run on every cluster node; distributed uses the first cluster node.",
     )
     server_node_list: Optional[List[str]] = Field(
         default=None,
-        description="Ordered server nodes for distributed jobs",
+        description="Unused. Distributed jobs take the first nnodes hosts from the cluster.",
     )
-    master_addr: str = Field(default="", description="torchrun rendezvous address")
+    master_addr: str = Field(
+        default="",
+        description="Unused. torchrun rendezvous is the first cluster node at runtime.",
+    )
     master_port: Any = Field(default="29500", description="torchrun rendezvous port")
     model_rev: str = Field(default="", description="Pinned Hugging Face snapshot when model is a repo id")
 

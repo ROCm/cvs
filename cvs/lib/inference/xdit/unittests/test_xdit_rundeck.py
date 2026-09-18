@@ -76,7 +76,7 @@ class TestXditRundeck(unittest.TestCase):
             gpu_arch="mi325",
             topology="distributed",
             model=SimpleNamespace(id="Wan-AI/Wan2.2-I2V-A14B"),
-            inference={"nnodes": 2, "benchmark_serv_node": "n1", "_execution_hosts": ["n1", "n2"]},
+        inference={"nnodes": 2, "_execution_hosts": ["n1", "n2"]},
             benchmark_params={
                 "wan22_i2v_a14b": {
                     "torchrun_nproc": 8,

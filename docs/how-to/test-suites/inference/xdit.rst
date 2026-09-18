@@ -12,8 +12,9 @@ separate pytest module; pick the one that matches your topology and launcher, th
 
 - **Single-node** suites run one independent torchrun job inside the orchestrated
   container on every node in the cluster ``node_dict``, and report per-host results.
-- **Distributed** suites run one coordinated torchrun job across ``nnodes`` (``nnodes >= 2``),
-  using ``server_node_list`` when set.
+- **Distributed** suites run one coordinated torchrun job across the first
+  ``nnodes`` hosts in the cluster ``node_dict`` (``nnodes >= 2``). Rank-0 is always
+  the first cluster node (benchmark / rendezvous).
 
 FLUX.1-dev and FLUX.2-dev share the ``pytorch_xdit_flux_dev_*`` suites; choose the matching
 ``flux1`` or ``flux2`` JSON. ``server_params.model`` may be a Hugging Face repo id
@@ -80,8 +81,8 @@ Set up config
    in the same directory.
 
 5. Edit the config — set ``container.image``, ``model.id`` / ``paths.models_dir``,
-   ``nnodes`` for distributed runs, and replace every ``<changeme>``. Resolve
-   ``{user-id}`` / ``{home}`` or leave them for CVS to expand.
+   ``nnodes`` for distributed runs (first N cluster hosts), and replace every
+   ``<changeme>``. Resolve ``{user-id}`` / ``{home}`` or leave them for CVS to expand.
 
 Shipped config templates:
 
@@ -294,7 +295,7 @@ Key stages to watch:
 - **Parse / print** — ``test_parse_thresholds`` compares average latency to the
   sibling threshold JSON. ``test_print_results`` prints Host, Model, topology,
   Ulysses, and Ring. The xDiT Run Deck run card shows **Server nodes**, **nnodes**,
-  **Benchmark node** (all execution hosts on single; rank-0 on distributed),
+  **Benchmark node** (all execution hosts on single; first cluster node on distributed),
   Ulysses, and Ring.
 
 .. list-table::

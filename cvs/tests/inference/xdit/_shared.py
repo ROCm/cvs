@@ -112,7 +112,7 @@ def resolve_execution_hosts(cluster_dict, inference, distributed):
         if nnodes < 2:
             raise ValueError(f"distributed xDiT suite requires nnodes >= 2, got {nnodes}")
         if len(nodes) < nnodes:
-            raise ValueError(f"xDiT config requests {nnodes} nodes but only {len(nodes)} are available")
+            raise ValueError(f"xDiT config requests {nnodes} nodes but the cluster only has {len(nodes)}")
         hosts = nodes[:nnodes]
     else:
         hosts = list(node_dict)

@@ -38,14 +38,11 @@ def _execution_hosts(inference):
 
 def _benchmark_node(variant, inference):
     hosts = _execution_hosts(inference)
+    if not hosts:
+        return "\u2014"
     if variant.topology != "distributed":
         return _format_nodes(hosts)
-    bench = inference.get("benchmark_serv_node")
-    if bench:
-        return _format_nodes(bench)
-    if hosts:
-        return str(hosts[0])
-    return "\u2014"
+    return str(hosts[0])
 
 
 def _ulysses_ring(params):

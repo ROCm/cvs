@@ -48,11 +48,7 @@
     "backend": "xdit",
     "nnodes": "2",
     "log_level": "info",
-    "model": "<changeme>",
-    "server_node_list": ["<changeme>", "<changeme>"],
-    "master_addr": "<changeme>",
-    "master_port": "29500",
-    "benchmark_serv_node": "<changeme>"
+    "model": "<changeme>"
   },
   "benchmark_params": {
     "model_format": "diffusers",

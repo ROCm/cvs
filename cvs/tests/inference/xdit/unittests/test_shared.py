@@ -254,6 +254,19 @@ class TestHostScoping(unittest.TestCase):
         self.assertEqual(scoped["head_node_dict"], {"mgmt_ip": "node-a"})
         self.assertEqual(scoped["username"], "tester")
 
+    def test_distributed_takes_first_nnodes_from_cluster(self):
+        hosts = resolve_execution_hosts(
+            self.cluster,
+            {"nnodes": 2, "server_node_list": ["unused", "node-b"], "benchmark_serv_node": "node-b"},
+            distributed=True,
+        )
+
+        self.assertEqual(hosts, ["node-a", "node-b"])
+
+    def test_distributed_rejects_nnodes_larger_than_cluster(self):
+        with self.assertRaisesRegex(ValueError, "requests 4 nodes"):
+            resolve_execution_hosts(self.cluster, {"nnodes": 4}, distributed=True)
+
     def test_empty_cluster_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "could not resolve an execution host"):
             resolve_execution_hosts({"node_dict": {}}, {}, distributed=False)
