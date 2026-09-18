@@ -5,7 +5,7 @@
   "gpu_name": "MI325X",
   "_thresholds_comment": "Gating is threshold-driven and requires enforce_thresholds=true. A threshold entry with kind=info always passes and records the value. Calibrate on the target filesystem and fabric before enforcing numeric limits.",
   "enforce_thresholds": false,
-  "threshold_json": "mi325x_pytorch_vision_resnet50_single_train5k_threshold.json",
+  "threshold_json": "mi325x_pytorch_vision_resnet50_distributed_train5k_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "<changeme-imagenet-host-path>",
@@ -18,7 +18,7 @@
   },
   "container": {
     "lifetime": "per_run",
-    "name": "cvs_pytorch_vision_w1_5k",
+    "name": "cvs_pytorch_vision_resnet50_dist_5k",
     "image": "cvs/pytorch-rocal:rocm7.2.4-py3.12-torch2.10-rocal2.5.0",
     "runtime": {
       "name": "docker",
@@ -40,8 +40,8 @@
   "_training_comment": "training{} defines the workload. `workload` is the scorecard row id (W1 ResNet-50, W3 ViT-B/16) and is cross-checked against the result artifact. `distributed` must match the suite you invoke and the cluster node count. `run_mode` selects the profile (smoke|perf|train_5k|train_to_accuracy) and determines which rows are gated. `optimizer` is sgd or adamw; transformer backbones need adamw.",
   "_sweeps_comment": "training.sweeps[] are full training runs. Each `name` is also its threshold cell key, so encode every material dimension (topology, precision, microbatch, GA, data mode, rocAL device, augmentation) to stop a result being compared against the wrong gate. `label` is the compact id used in pytest rows and log directory names. training.enabled_sweep_list selects which names execute.",
   "training": {
-    "workload": "W1",
-    "distributed": false,
+    "workload": "W2",
+    "distributed": true,
     "enabled": true,
     "phase": "accuracy",
     "run_mode": "train_5k",
@@ -86,8 +86,6 @@
       "measure_power_secs": 5
     },
     "env_vars": {
-      "NNODES": "1",
-      "NODE_RANK": "0",
       "NCCL_DEBUG": "WARN",
       "RCCL_USE_AMD_SMI_LIB": "1"
     },
@@ -100,8 +98,8 @@
     },
     "sweeps": [
       {
-        "name": "W1-5K-ROCAL-GPU-STANDARD",
-        "label": "5k-rocAL-GPU-standard",
+        "name": "W2-5K-ROCAL-GPU-STANDARD",
+        "label": "W2-5k-rocAL-GPU-standard",
         "model": "resnet50",
         "precision": "BF16",
         "batch_size": 128,
@@ -118,7 +116,12 @@
       }
     ],
     "enabled_sweep_list": [
-      "W1-5K-ROCAL-GPU-STANDARD"
-    ]
+      "W2-5K-ROCAL-GPU-STANDARD"
+    ],
+    "master_port": 29500,
+    "scaling_baseline": {
+      "images_per_sec_total": 0.0,
+      "num_nodes": 1
+    }
   }
 }

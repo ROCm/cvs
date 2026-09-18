@@ -100,8 +100,15 @@ Training block
   ``checkpoint_loss_tolerance``: save/load and resume-parity validation.
 - ``loss_curve``: sampling cadence, minimum points, and decreasing-slope check.
 - ``accuracy``: explicit final Top-1 and Top-5 qualification targets.
-- ``convergence``: optional Top-1 and evaluation-loss targets, and
-  ``stop_when_reached``.
+- ``convergence``: targets for time-to-convergence, following the same
+  definition as ``cvs.lib.training.jaxmaxtext``'s ``compute_convergence`` -
+  every configured target must hold, an unset target is not a criterion, and a
+  target never reached reports nothing rather than a partial result.
+  ``target_train_loss`` is checked at every sampled training step, so
+  convergence is measurable in a short run and with evaluation disabled;
+  ``target_top1_pct`` and ``target_eval_loss`` are checked at eval cadence.
+  With both kinds set, convergence is the later point. ``stop_when_reached``
+  ends the run at that point.
 - ``scaling_baseline``: reference throughput for scaling efficiency %.
   ``images_per_sec_total`` is the TOTAL images/sec from a prior run on
   ``num_nodes`` nodes, taken from that run's ``results.json``. Efficiency % =

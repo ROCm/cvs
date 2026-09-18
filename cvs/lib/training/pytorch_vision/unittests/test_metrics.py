@@ -147,3 +147,43 @@ class TestScalingEfficiency(unittest.TestCase):
     def test_missing_node_counts_are_record_only(self):
         self.assertIsNone(compute_scaling_efficiency(20000.0, 0, 10000.0, 1))
         self.assertIsNone(compute_scaling_efficiency(20000.0, 2, 10000.0, 0))
+
+
+class TestConvergenceSemantics(unittest.TestCase):
+    """Matches cvs.lib.training.jaxmaxtext's compute_convergence definition."""
+
+    EVALS = [
+        {"step": 1252, "top1_accuracy_pct": 2.1, "eval_loss": 9.9, "time_seconds": 160.0},
+        {"step": 2504, "top1_accuracy_pct": 4.2, "eval_loss": 9.4, "time_seconds": 317.0},
+        {"step": 5000, "top1_accuracy_pct": 6.5, "eval_loss": 9.0, "time_seconds": 615.0},
+    ]
+    SERIES = [
+        {"step": 100, "loss": 6.9, "time_seconds": 12.0},
+        {"step": 1000, "loss": 4.9, "time_seconds": 120.0},
+        {"step": 5000, "loss": 2.5, "time_seconds": 610.0},
+    ]
+
+    def test_no_target_is_not_a_criterion(self):
+        self.assertIsNone(convergence_point(self.EVALS))
+
+    def test_train_loss_target_needs_no_evaluations(self):
+        """The point of adopting the jax train-loss target: convergence becomes
+        measurable in a short run with eval disabled entirely."""
+        self.assertEqual(convergence_point([], loss_series=self.SERIES, target_train_loss=5.0), (1000, 120.0))
+
+    def test_eval_loss_target_uses_eval_cadence(self):
+        self.assertEqual(convergence_point(self.EVALS, target_eval_loss=9.5), (2504, 317.0))
+
+    def test_top1_target_uses_eval_cadence(self):
+        self.assertEqual(convergence_point(self.EVALS, target_top1_pct=4.0), (2504, 317.0))
+
+    def test_all_configured_targets_must_hold_so_the_later_point_wins(self):
+        point = convergence_point(self.EVALS, target_eval_loss=9.5, loss_series=self.SERIES, target_train_loss=2.6)
+        self.assertEqual(point, (5000, 610.0))
+
+    def test_unreached_target_yields_nothing_rather_than_a_partial_result(self):
+        self.assertIsNone(convergence_point(self.EVALS, target_top1_pct=75.5))
+        self.assertIsNone(convergence_point([], loss_series=self.SERIES, target_train_loss=0.1))
+        self.assertIsNone(
+            convergence_point(self.EVALS, target_eval_loss=9.5, loss_series=self.SERIES, target_train_loss=0.1)
+        )

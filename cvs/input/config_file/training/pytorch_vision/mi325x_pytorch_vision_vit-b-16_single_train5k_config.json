@@ -73,7 +73,9 @@
       "require_decrease": true
     },
     "convergence": {
-      "enabled": false
+      "enabled": true,
+      "stop_when_reached": false,
+      "target_train_loss": 4.0
     },
     "codecarbon": {
       "enabled": true,

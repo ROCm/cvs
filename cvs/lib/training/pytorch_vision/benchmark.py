@@ -68,6 +68,7 @@ def _parse_args():
     parser.add_argument("--loss-curve-minimum-points", type=int, default=2)
     parser.add_argument("--convergence-top1", type=float)
     parser.add_argument("--convergence-eval-loss", type=float)
+    parser.add_argument("--convergence-train-loss", type=float)
     parser.add_argument("--target-top5", type=float)
     parser.add_argument("--stop-on-convergence", action="store_true")
     parser.add_argument("--codecarbon-enabled", action="store_true")
@@ -983,12 +984,28 @@ def main():
                 if slope_denominator
                 else 0.0
             )
+            # Convergence follows the jaxmaxtext definition: every configured
+            # target must hold, and when both an eval-cadence target and a
+            # per-step training-loss target are set, the later point wins.
             convergence = None
+            eval_point = None
             if args.convergence_top1 is not None or args.convergence_eval_loss is not None:
-                convergence = next(
+                eval_point = next(
                     (item for item in evaluations if _evaluation_meets_stop_target(item, args)),
                     None,
                 )
+            train_point = None
+            if args.convergence_train_loss is not None:
+                train_point = next(
+                    (p for p in loss_time_series if p["loss"] <= args.convergence_train_loss),
+                    None,
+                )
+            wanted_eval = args.convergence_top1 is not None or args.convergence_eval_loss is not None
+            wanted_train = args.convergence_train_loss is not None
+            if (not wanted_eval or eval_point is not None) and (not wanted_train or train_point is not None):
+                reached = [p for p in (eval_point, train_point) if p is not None]
+                if reached:
+                    convergence = max(reached, key=lambda p: p["step"])
             final_evaluation = evaluations[-1] if evaluations else {}
             milestone_metrics = _scorecard_milestone_metrics(milestone_losses)
             codecarbon_metrics = {}

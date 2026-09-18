@@ -270,14 +270,51 @@ def convergence_point(
     evaluations: Iterable[Dict[str, float]],
     target_top1_pct: Optional[float] = None,
     target_eval_loss: Optional[float] = None,
+    loss_series: Optional[Iterable[Dict[str, float]]] = None,
+    target_train_loss: Optional[float] = None,
 ) -> Optional[Tuple[int, float]]:
-    """Return the first (step, elapsed seconds) satisfying every configured target."""
-    for item in evaluations:
-        top1_ok = target_top1_pct is None or item.get("top1_accuracy_pct", -math.inf) >= target_top1_pct
-        loss_ok = target_eval_loss is None or item.get("eval_loss", math.inf) <= target_eval_loss
-        if top1_ok and loss_ok:
-            return int(item["step"]), float(item["time_seconds"])
-    return None
+    """First (step, elapsed seconds) at which every configured target holds.
+
+    Follows the same definition as
+    ``cvs.lib.training.jaxmaxtext``'s ``compute_convergence``: a target is a
+    threshold the run must cross, an unset target is simply not a criterion, and
+    a target that is never reached yields ``None`` rather than a partial
+    result - so an uncalibrated target can neither gate nor mislead.
+
+    Two granularities are supported, mirroring their ``target_metric`` choice:
+
+    - ``target_train_loss`` is checked against every sampled training step, so
+      convergence is measurable in a short run and without evaluation at all.
+    - ``target_top1_pct`` and ``target_eval_loss`` are checked against
+      evaluation records, which only exist at eval cadence.
+
+    When targets of both kinds are configured, convergence is the later of the
+    two points, because every configured criterion has to hold simultaneously.
+    """
+    eval_point = None
+    if target_top1_pct is not None or target_eval_loss is not None:
+        for item in evaluations or []:
+            top1_ok = target_top1_pct is None or item.get("top1_accuracy_pct", -math.inf) >= target_top1_pct
+            loss_ok = target_eval_loss is None or item.get("eval_loss", math.inf) <= target_eval_loss
+            if top1_ok and loss_ok:
+                eval_point = (int(item["step"]), float(item["time_seconds"]))
+                break
+        if eval_point is None:
+            return None
+
+    train_point = None
+    if target_train_loss is not None:
+        for item in loss_series or []:
+            if item.get("loss", math.inf) <= target_train_loss:
+                train_point = (int(item["step"]), float(item["time_seconds"]))
+                break
+        if train_point is None:
+            return None
+
+    candidates = [p for p in (eval_point, train_point) if p is not None]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p[0])
 
 
 def codecarbon_tracking_active(payload: Dict[str, Any], expected_gpus: int) -> bool:

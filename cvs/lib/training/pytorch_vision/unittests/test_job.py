@@ -80,6 +80,7 @@ def _variant():
         convergence=SimpleNamespace(
             target_top1_pct=None,
             target_eval_loss=None,
+            target_train_loss=None,
             stop_when_reached=False,
         ),
         codecarbon=SimpleNamespace(
@@ -267,6 +268,7 @@ class TestPyTorchVisionJob(unittest.TestCase):
         variant.training.convergence = SimpleNamespace(
             target_top1_pct=75.5,
             target_eval_loss=None,
+            target_train_loss=None,
             stop_when_reached=True,
         )
         command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()

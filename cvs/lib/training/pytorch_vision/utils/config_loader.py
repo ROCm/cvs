@@ -37,10 +37,15 @@ class ConvergenceConfig(_Forbid):
     stop_when_reached: bool = False
     target_top1_pct: Optional[float] = Field(default=None, ge=0, le=100)
     target_eval_loss: Optional[float] = Field(default=None, gt=0)
+    # Checked at every sampled training step rather than at eval cadence, so
+    # convergence is measurable in a short run and without evaluation.
+    target_train_loss: Optional[float] = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _validate_target(self):
-        if self.enabled and self.target_top1_pct is None and self.target_eval_loss is None:
+        if self.enabled and all(
+            t is None for t in (self.target_top1_pct, self.target_eval_loss, self.target_train_loss)
+        ):
             raise ValueError("enabled convergence tracking requires a target")
         return self
 

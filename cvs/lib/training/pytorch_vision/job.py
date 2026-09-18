@@ -265,6 +265,8 @@ class PyTorchVisionJob:
             args.extend(["--eval-steps", str(training.eval_steps)])
         if training.convergence.target_top1_pct is not None:
             args.extend(["--convergence-top1", str(training.convergence.target_top1_pct)])
+        if training.convergence.target_train_loss is not None:
+            args.extend(["--convergence-train-loss", str(training.convergence.target_train_loss)])
         if training.convergence.target_eval_loss is not None:
             args.extend(["--convergence-eval-loss", str(training.convergence.target_eval_loss)])
         if training.accuracy.target_top5_pct is not None:
