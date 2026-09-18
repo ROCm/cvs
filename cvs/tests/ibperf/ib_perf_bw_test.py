@@ -113,6 +113,17 @@ def config_dict(config_file, cluster_dict):
 
 
 @pytest.fixture(scope="module")
+def cvs_results_dict():
+    ib_bw_dict.clear()
+    return ib_bw_dict
+
+
+@pytest.fixture(scope="module")
+def ibperf_variant_config(config_dict):
+    return config_dict
+
+
+@pytest.fixture(scope="module")
 def phdl(cluster_dict):
     """
     Build and return a parallel SSH handle (Pssh) for all cluster nodes.
