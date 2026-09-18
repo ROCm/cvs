@@ -7,6 +7,7 @@ try:
     from cvs.lib.training.pytorch_vision.benchmark import (
         _build_lr_scheduler,
         _evaluation_meets_convergence_target,
+        _exact_eval_batch_size,
         _evaluation_meets_stop_target,
         _next_rocal_batches,
         _rocal_batches_per_epoch,
@@ -20,6 +21,7 @@ except ModuleNotFoundError:
     _next_rocal_batches = None
     _rocal_batches_per_epoch = None
     _scorecard_milestone_metrics = None
+    _exact_eval_batch_size = None
 
 
 @unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
@@ -205,3 +207,31 @@ class TestEvalLabelContract(unittest.TestCase):
         observed = sum(1 for c in hist if c > 0)
         self.assertEqual(sum(hist), 50000)  # sample count alone still passes
         self.assertNotEqual(observed, 1000)  # class coverage catches it
+
+
+@unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
+class TestExactEvalBatchSize(unittest.TestCase):
+    """Evaluation must leave no partial batch for rocAL to pad with repeats."""
+
+    def test_divides_the_shard_exactly_for_real_topologies(self):
+        # 50,000-image validation set over 8 and 16 ranks, train batch 128.
+        for shard, preferred in ((6250, 128), (3125, 128), (6250, 64), (6250, 256)):
+            with self.subTest(shard=shard, preferred=preferred):
+                size = _exact_eval_batch_size(shard, preferred)
+                self.assertEqual(shard % size, 0)
+                self.assertLessEqual(size, preferred)
+
+    def test_picks_the_largest_valid_divisor(self):
+        self.assertEqual(_exact_eval_batch_size(6250, 128), 125)
+        self.assertEqual(_exact_eval_batch_size(6250, 64), 50)
+        self.assertEqual(_exact_eval_batch_size(3125, 128), 125)
+
+    def test_uses_the_training_batch_when_it_already_divides(self):
+        self.assertEqual(_exact_eval_batch_size(6250, 125), 125)
+        self.assertEqual(_exact_eval_batch_size(6400, 128), 128)
+
+    def test_prime_shard_falls_back_to_one_rather_than_padding(self):
+        self.assertEqual(_exact_eval_batch_size(6247, 128), 1)
+
+    def test_degenerate_input_never_returns_zero(self):
+        self.assertGreaterEqual(_exact_eval_batch_size(0, 128), 1)

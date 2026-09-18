@@ -1,24 +1,100 @@
 {
   "_comment": "Protected target-accuracy qualification. Stops when Top-1 reaches 75.5% and Top-5 reaches 92.5%; 90 epochs is only a safety cap.",
   "W1-ACCURACY-TARGET-ROCAL-GPU-STANDARD": {
-    "training.images_per_sec": {"kind": "info"}, "training.images_per_sec_per_gpu": {"kind": "info"},
-    "training.tflops_per_sec_per_gpu": {"kind": "info"}, "training.mfu_pct": {"kind": "info"},
-    "training.step_time_ms_p95": {"kind": "info"}, "training.peak_memory_allocated_mb": {"kind": "info"},
-    "training.peak_memory_reserved_mb": {"kind": "info"}, "training.peak_memory_used_mb": {"kind": "info"},
-    "training.checkpoint_state_match": {"kind": "min", "value": 1}, "training.checkpoint_loss_delta": {"kind": "max", "value": 0.00001},
-    "training.checkpoint_resume_model_max_abs_delta": {"kind": "info"}, "training.checkpoint_resume_optimizer_max_abs_delta": {"kind": "info"},
-    "training.gradient_accumulation_overhead_pct": {"kind": "max", "value": 0},
-    "training.data_loader_images_per_sec": {"kind": "info"},
-    "training.learning_rate_initial": {"kind": "info"}, "training.learning_rate_final": {"kind": "info"},
-    "training.top1_accuracy_pct": {"kind": "min", "value": 75.5},
-    "training.top5_accuracy_pct": {"kind": "min", "value": 92.5},
-    "training.eval_loss": {"kind": "info"},
-    "training.eval_completed": {"kind": "min", "value": 1},
-    "training.eval_sample_count": {"kind": "min", "value": 50000},
-    "training.loss_curve_decreased": {"kind": "min", "value": 1},
-    "training.convergence_step": {"kind": "max", "value": 60000},
-    "training.convergence_time_seconds": {"kind": "info"},
-    "training.codecarbon_tracking_active": {"kind": "min", "value": 1},
-    "training.energy_kwh": {"kind": "info"}, "training.images_per_kwh": {"kind": "info"}
+    "training.images_per_sec": {
+      "kind": "info"
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "info"
+    },
+    "training.tflops_per_sec_per_gpu": {
+      "kind": "info"
+    },
+    "training.mfu_pct": {
+      "kind": "info"
+    },
+    "training.step_time_ms_p95": {
+      "kind": "info"
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "info"
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info"
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "max",
+      "value": 1e-05
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info"
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "max",
+      "value": 0
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info"
+    },
+    "training.learning_rate_initial": {
+      "kind": "info"
+    },
+    "training.learning_rate_final": {
+      "kind": "info"
+    },
+    "training.top1_accuracy_pct": {
+      "kind": "min",
+      "value": 75.5
+    },
+    "training.top5_accuracy_pct": {
+      "kind": "min",
+      "value": 92.5
+    },
+    "training.eval_loss": {
+      "kind": "info"
+    },
+    "training.eval_completed": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.eval_sample_count": {
+      "kind": "min",
+      "value": 50000
+    },
+    "training.loss_curve_decreased": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.convergence_step": {
+      "kind": "max",
+      "value": 60000
+    },
+    "training.convergence_time_seconds": {
+      "kind": "info"
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.energy_kwh": {
+      "kind": "info"
+    },
+    "training.images_per_kwh": {
+      "kind": "info"
+    },
+    "training.eval_label_classes_observed": {
+      "kind": "min",
+      "value": 1000
+    }
   }
 }

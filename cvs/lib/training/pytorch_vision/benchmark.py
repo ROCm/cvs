@@ -220,7 +220,23 @@ def _to_cpu(value):
     return value
 
 
-def _build_rocal_loader(args, rank, world_size, split="train"):
+def _exact_eval_batch_size(shard_samples, preferred):
+    """Largest divisor of ``shard_samples`` that is <= ``preferred``.
+
+    With no partial batch there is nothing for rocAL's LAST_BATCH_FILL to pad,
+    so evaluation consumes each image exactly once regardless of how the
+    training batch size happens to divide the shard. Evaluation throughput is
+    not a reported metric, so trading batch size for exactness costs nothing.
+    """
+    if shard_samples <= 0:
+        return max(1, preferred)
+    for size in range(min(preferred, shard_samples), 0, -1):
+        if shard_samples % size == 0:
+            return size
+    return 1
+
+
+def _build_rocal_loader(args, rank, world_size, split="train", batch_size=None):
     import amd.rocal.fn as fn
     import amd.rocal.types as types
     from amd.rocal.pipeline import Pipeline
@@ -228,8 +244,9 @@ def _build_rocal_loader(args, rank, world_size, split="train"):
 
     data_path = str(Path(args.dataset_path) / split)
     cpu = args.rocal_device == "cpu"
+    batch_size = batch_size or args.batch_size
     pipe = Pipeline(
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         num_threads=args.rocal_num_threads,
         device_id=int(os.environ["LOCAL_RANK"]),
         seed=2026 + rank,
@@ -264,6 +281,22 @@ def _build_rocal_loader(args, rank, world_size, split="train"):
                 interpolation_type=types.TRIANGULAR_INTERPOLATION,
             )
         else:
+            # Evaluation must consume each image exactly once.
+            #
+            # Measured on the 50,000-image validation set over 8 shards at
+            # batch 128 (ideal 6,250/shard, 50 per class):
+            #   FILL    50,176 total, 1000 classes, 50..72 per class
+            #   PARTIAL 48,976 total,  984 classes,  0..50 per class
+            #   DROP    48,128 total,  968 classes,  0..50 per class
+            #
+            # Only FILL omits nothing; its surplus is padding appended to each
+            # shard's final batch, which the caller's local-target cap trims off.
+            # PARTIAL and DROP silently lose whole classes, which accuracy alone
+            # would never reveal.
+            #
+            # stick_to_shard must be explicit: without it a shard bleeds into
+            # its neighbour, which both duplicates and omits images and is what
+            # produced a 32..72 per-class spread before this was pinned down.
             decoded = fn.decoders.image(
                 jpegs,
                 output_type=types.RGB,
@@ -271,6 +304,9 @@ def _build_rocal_loader(args, rank, world_size, split="train"):
                 shard_id=rank,
                 num_shards=world_size,
                 random_shuffle=False,
+                stick_to_shard=True,
+                pad_last_batch=True,
+                last_batch_policy=types.LAST_BATCH_FILL,
             )
             resized = fn.resize(
                 decoded,
@@ -777,7 +813,17 @@ def main():
     if args.data_mode == "rocal":
         rocal_loader = _build_rocal_loader(args, rank, world_size, split="train")
         if args.eval_enabled:
-            validation_loader = _build_rocal_loader(args, rank, world_size, split="val")
+            # Size the eval batch so the per-rank shard divides exactly; see
+            # _exact_eval_batch_size. Without this the final partial batch is
+            # padded with repeats that corrupt the per-class distribution.
+            shard = args.eval_sample_count // world_size if args.eval_sample_count else 0
+            eval_bs = _exact_eval_batch_size(shard, args.batch_size)
+            if rank == 0 and eval_bs != args.batch_size:
+                print(
+                    f"PYTORCH_VISION_EVAL_BATCH shard={shard} train_bs={args.batch_size} eval_bs={eval_bs}",
+                    flush=True,
+                )
+            validation_loader = _build_rocal_loader(args, rank, world_size, split="val", batch_size=eval_bs)
         measured_loader_metrics = _measure_rocal_loader(rocal_loader, args, device, rank, world_size)
         if measured_loader_metrics is not None:
             data_loader_metrics = measured_loader_metrics

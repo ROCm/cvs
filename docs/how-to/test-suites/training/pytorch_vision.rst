@@ -199,15 +199,19 @@ truncated or scrambled label space still totals the right number of images.
 On a full ImageNet-1k validation set a correct pass reports 1000 classes with
 min == max == 50.
 
-**Known issue.** That invariant only holds when the per-rank shard divides
-evenly by the sweep ``batch_size``. Measured on one 8-GPU node against the
-50,000-image validation set (6,250 per rank): ``batch_size=50`` gives exactly
-50 images per class, while ``batch_size=64`` gives a 32-72 spread. The total is
-50,000 either way, so accuracy looks plausible, but the final partial batch
-means some images are counted more than once and others not at all. Until this
-is fixed, choose an evaluation batch size that divides
-``eval_sample_count / (gpus_per_node x nodes)`` exactly, and treat accuracy from
-other batch sizes as approximate.
+The evaluation batch size is chosen automatically as the largest divisor of
+the per-rank shard that does not exceed the training batch size, so evaluation
+never leaves a partial batch. This matters because rocAL's default
+``LAST_BATCH_FILL`` pads a partial final batch by repeating samples, and those
+repeats land in the accuracy numbers. Measured over 8 shards at batch 128
+(6,250 per shard): ``FILL`` yielded 50,176 samples with 50-72 images per class,
+``LAST_BATCH_PARTIAL`` 48,976 with 16 classes missing entirely, and
+``LAST_BATCH_DROP`` 48,128 with 32 missing. Sizing the batch to divide exactly
+yields 50,000 with a uniform 50 per class. Evaluation throughput is not a
+reported metric, so the batch size costs nothing.
+
+Threshold files gate ``eval_label_classes_observed`` at 1000 so a regression in
+this path fails the run rather than quietly skewing accuracy.
 
 Metrics and PASS/FAIL
 =====================

@@ -60,6 +60,10 @@
     "training.codecarbon_tracking_active": {
       "kind": "min",
       "value": 1
+    },
+    "training.eval_label_classes_observed": {
+      "kind": "min",
+      "value": 1000
     }
   }
 }
