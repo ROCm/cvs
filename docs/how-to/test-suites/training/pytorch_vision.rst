@@ -210,8 +210,11 @@ repeats land in the accuracy numbers. Measured over 8 shards at batch 128
 yields 50,000 with a uniform 50 per class. Evaluation throughput is not a
 reported metric, so the batch size costs nothing.
 
-Threshold files gate ``eval_label_classes_observed`` at 1000 so a regression in
-this path fails the run rather than quietly skewing accuracy.
+Threshold files for the full-evaluation profiles gate
+``eval_label_classes_observed`` at 1000 so a regression in this path fails the
+run rather than quietly skewing accuracy. Smoke profiles cap evaluation with
+``eval_steps`` and therefore cannot observe every class, so they record the
+value without gating it.
 
 Metrics and PASS/FAIL
 =====================
