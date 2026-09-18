@@ -450,6 +450,11 @@ def _evaluate(model, loader, loss_fn, args, device):
     model.eval()
     loader.reset()
     totals = torch.zeros(4, dtype=torch.float64, device=device)
+    # Per-class label histogram. A correct label mapping over a full ImageNet
+    # validation set covers every class; a scrambled or truncated label space
+    # shows up here as missing classes or a lopsided distribution, neither of
+    # which accuracy alone would reveal.
+    label_hist = torch.zeros(args.num_classes, dtype=torch.int64, device=device)
     steps = 0
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
@@ -483,6 +488,13 @@ def _evaluate(model, loader, loss_fn, args, device):
                 output = model(images[0])
                 loss = loss_fn(output, labels[0])
             count = labels[0].numel()
+            flat = labels[0].reshape(-1)
+            if count and (int(flat.min().item()) < 0 or int(flat.max().item()) >= args.num_classes):
+                raise RuntimeError(
+                    f"evaluation labels outside [0, {args.num_classes}): "
+                    f"min={int(flat.min().item())} max={int(flat.max().item())}"
+                )
+            label_hist += torch.bincount(flat, minlength=args.num_classes)
             predictions = output.topk(min(5, output.shape[1]), dim=1).indices
             correct = predictions.eq(labels[0].view(-1, 1))
             totals[0] += correct[:, :1].any(dim=1).sum()
@@ -495,16 +507,22 @@ def _evaluate(model, loader, loss_fn, args, device):
         loader.reset()
         model.train()
     dist.all_reduce(totals, op=dist.ReduceOp.SUM)
+    dist.all_reduce(label_hist, op=dist.ReduceOp.SUM)
     samples = int(totals[3].item())
     if args.eval_steps is None and samples != args.eval_sample_count:
         raise RuntimeError(f"evaluation consumed {samples} samples, expected exactly {args.eval_sample_count}")
     top1, top5 = _accuracy_from_totals(int(totals[0].item()), int(totals[1].item()), samples)
+    observed = int((label_hist > 0).sum().item())
+    present = label_hist[label_hist > 0]
     return {
         "top1_accuracy_pct": top1,
         "top5_accuracy_pct": top5,
         "eval_loss": totals[2].item() / samples,
         "eval_sample_count": samples,
         "eval_completed": 1.0,
+        "eval_label_classes_observed": float(observed),
+        "eval_label_min_per_class": float(present.min().item()) if observed else 0.0,
+        "eval_label_max_per_class": float(present.max().item()) if observed else 0.0,
     }
 
 

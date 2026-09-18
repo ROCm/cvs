@@ -187,6 +187,28 @@ metric appears. Left at ``0.0`` it is omitted rather than reported as a
 misleading zero, so a distributed run never claims an efficiency it cannot
 substantiate.
 
+Evaluation label correctness
+============================
+
+Every evaluation records a per-class label histogram as
+``eval_label_classes_observed`` plus ``eval_label_min_per_class`` and
+``eval_label_max_per_class``, and fails outright on any label outside
+``[0, num_classes)``. Sample count alone cannot detect a bad label mapping: a
+truncated or scrambled label space still totals the right number of images.
+
+On a full ImageNet-1k validation set a correct pass reports 1000 classes with
+min == max == 50.
+
+**Known issue.** That invariant only holds when the per-rank shard divides
+evenly by the sweep ``batch_size``. Measured on one 8-GPU node against the
+50,000-image validation set (6,250 per rank): ``batch_size=50`` gives exactly
+50 images per class, while ``batch_size=64`` gives a 32-72 spread. The total is
+50,000 either way, so accuracy looks plausible, but the final partial batch
+means some images are counted more than once and others not at all. Until this
+is fixed, choose an evaluation batch size that divides
+``eval_sample_count / (gpus_per_node x nodes)`` exactly, and treat accuracy from
+other batch sizes as approximate.
+
 Metrics and PASS/FAIL
 =====================
 

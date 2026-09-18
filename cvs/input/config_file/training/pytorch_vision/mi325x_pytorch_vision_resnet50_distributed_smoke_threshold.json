@@ -1,0 +1,65 @@
+{
+  "_comment": "Record-only distributed smoke thresholds.",
+  "W2-SMOKE-ROCAL-GPU-STANDARD": {
+    "training.images_per_sec": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.images_per_sec_per_gpu": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.step_time_ms_p95": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.peak_memory_allocated_mb": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.peak_memory_reserved_mb": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.peak_memory_used_mb": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.checkpoint_state_match": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.checkpoint_loss_delta": {
+      "kind": "max",
+      "value": 1e-05
+    },
+    "training.checkpoint_resume_model_max_abs_delta": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.checkpoint_resume_optimizer_max_abs_delta": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.gradient_accumulation_overhead_pct": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.data_loader_images_per_sec": {
+      "kind": "info",
+      "value": 0
+    },
+    "training.eval_completed": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.eval_sample_count": {
+      "kind": "min",
+      "value": 1
+    },
+    "training.codecarbon_tracking_active": {
+      "kind": "min",
+      "value": 1
+    }
+  }
+}

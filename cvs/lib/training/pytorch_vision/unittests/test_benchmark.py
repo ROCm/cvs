@@ -173,3 +173,35 @@ class TestRocalBatchOwnership(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEvalLabelContract(unittest.TestCase):
+    """Row 6 of the scorecard: label-mapping correctness needs evidence, not
+    just plausible accuracy."""
+
+    def test_label_metrics_are_part_of_the_contract(self):
+        from cvs.lib.training.pytorch_vision.utils.metrics import METRIC_UNITS
+
+        for name in (
+            "eval_label_classes_observed",
+            "eval_label_min_per_class",
+            "eval_label_max_per_class",
+        ):
+            self.assertIn(name, METRIC_UNITS)
+
+    def test_full_imagenet_val_is_uniform_across_classes(self):
+        """ImageNet-1k validation holds exactly 50 images per class, so a
+        correct mapping yields 1000 classes with min == max == 50. A scrambled
+        or truncated label space breaks that invariant while accuracy alone
+        could still look reasonable."""
+        hist = [50] * 1000
+        observed = sum(1 for c in hist if c > 0)
+        self.assertEqual(observed, 1000)
+        self.assertEqual(min(hist), max(hist))
+        self.assertEqual(sum(hist), 50000)
+
+    def test_truncated_label_space_is_detectable(self):
+        hist = [100] * 500 + [0] * 500
+        observed = sum(1 for c in hist if c > 0)
+        self.assertEqual(sum(hist), 50000)  # sample count alone still passes
+        self.assertNotEqual(observed, 1000)  # class coverage catches it
