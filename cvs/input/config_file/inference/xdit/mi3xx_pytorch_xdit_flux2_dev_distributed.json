@@ -6,7 +6,7 @@
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/home/{user-id}/.cache/huggingface",
-    "log_dir": "/home/{user-id}/cvs_flux_output",
+    "log_dir": "{home}/cvs_flux2_output",
     "hf_token_file": "/home/{user-id}/.hf_token"
   },
   "container": {

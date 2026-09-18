@@ -6,7 +6,7 @@
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/home/{user-id}",
-    "log_dir": "/home/{user-id}/cvs_outputs_wan",
+    "log_dir": "/home/cvs_outputs_wan_diff",
     "hf_token_file": "/home/{user-id}/.hf_token"
   },
   "container": {
