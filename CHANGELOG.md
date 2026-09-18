@@ -5,17 +5,16 @@ All notable changes to ROCm Cluster Validation Suite (CVS) are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-09-23
 
 ### Added
 
 - Installable Python package layout: tests, lib, and input live under `cvs/`; `cvs` CLI; Makefile install/test targets.
-- JAX MaxText training suite: smoke test, checkpoint save/resume I/O timing metrics, additional model configs and threshold files.
-- TorchTitan single-node and distributed training suites.
+- Training: JAX MaxText, TorchTitan, Megatron (single & multi-node).
 - Aorta / benchmark training microbenchmarks with schema, configs, and runner.
 - Preflight suite: MI4XX node-health and IFoE checks, nodesmoke tiers (including Primus CLI tier 1 and tier 3), ROCm version consistency.
 - AMD Node Check (ANC) suite: CPU/GPU group suites, multi-format install, HTML reports, fail-fast install/ldconfig, inactivity timeouts.
-- Inference: ATOM (including multinode), unified topology-parametrized vLLM (single + distributed; MI300X workloads, GPU/Prometheus metrics, lm-eval accuracy, OpenAI-compatible smoke), SGLang (Llama 70B and DeepSeek-R1 distributed), pytorch_xdit Flux.1 text-to-image and WAN 2.2 image-to-video (including disaggregated multinode).
+- Inference: vLLM (single & distributed), SGLang (single, distributed and disaggregated), xDiT (single & distributed and ATOM (single)
 - MORI RDMA performance tests.
 - Pairwise RCCL tests.
 - Container backend: `container.lifetime` schema, `setup_script` provisioning, persistent mode, CVS container image.
