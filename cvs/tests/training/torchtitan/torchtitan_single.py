@@ -27,6 +27,7 @@ import time
 import pytest
 
 from cvs.lib import globals
+from cvs.lib.report.profiles.hooks.torchtitan import update_torchtitan_rundeck_results
 from cvs.lib.training.torchtitan.torchtitan_lib import TorchTitanTrainingJob
 from cvs.lib.training.torchtitan.primus_lib import PrimusTorchTitanTrainingJob
 from cvs.lib.training.torchtitan.utils.checkpoint_io import log_checkpoint_io_times, parse_checkpoint_io_seconds
@@ -404,7 +405,17 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
         log.info("checkpoint dir retained for debugging: %s", ckpt_dir)
 
 
-def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, lifecycle, request):
+def test_training(
+    orch,
+    variant_config,
+    hf_token,
+    sweep_name,
+    train_res_dict,
+    torchtitan_rundeck_results,
+    torchtitan_rundeck_variant,
+    lifecycle,
+    request,
+):
     """Stage 3 (parametrized): run one sweep combo inside the shared container.
 
     stop_training_processes() runs in a finally block after every combo so GPU
@@ -489,6 +500,11 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
     except Exception:
         pass
 
+    update_torchtitan_rundeck_results(
+        torchtitan_rundeck_results,
+        {sweep_name: train_res_dict[sweep_name]},
+        torchtitan_rundeck_variant,
+    )
     update_test_result()
 
 

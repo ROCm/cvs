@@ -65,7 +65,7 @@ class SweepChartRenderer:
         *,
         accent: str = "accent",
     ) -> str:
-        if len(points) < 2:
+        if len(points) < 2 and all(isinstance(point[0], (int, float)) for point in points):
             return ""
         values = [p[1] for p in points]
         max_val = max(values) or 1.0
@@ -84,13 +84,14 @@ class SweepChartRenderer:
         x_labels = []
         for conc, val in points:
             h = self._bar_height_pct(val, min_val, max_val)
-            tip = html.escape(f"C={conc}: {fmt_num(val)} {unit}".strip())
+            axis_label = f"C={conc}" if isinstance(conc, (int, float)) else str(conc)
+            tip = html.escape(f"{axis_label}: {fmt_num(val)} {unit}".strip())
             bars.append(
                 f"<div class='chart-col'>"
                 f"<div class='chart-bar chart-bar-{accent} chart-has-tip' style='height:{h:.1f}%' "
                 f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div></div>"
             )
-            x_labels.append(f"<span class='chart-xlbl'>C={conc}</span>")
+            x_labels.append(f"<span class='chart-xlbl'>{html.escape(axis_label)}</span>")
         return (
             f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
             f"<div class='chart-viz'>"
