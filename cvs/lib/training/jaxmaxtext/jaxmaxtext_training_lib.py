@@ -24,6 +24,7 @@ import shlex
 import time
 
 from cvs.lib import globals
+from cvs.lib.utils.log_poller import LogPoller
 from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     parse_training_log,
     extract_step_metrics,
@@ -185,15 +186,13 @@ class MaxTextTrainingJob:
         self._poll_wait_s = 60
         self._poll_count = int(self.steps * 10)
         self._initial_wait_s = 60
+        # How often to fetch new training-log lines. Decoupled from the timeout
+        # budget (_poll_count * _poll_wait_s) so output surfaces quickly while the
+        # console shows a lightweight spinner between drains.
+        self._drain_interval_s = 10
 
         self._scratch_dir = None  # resolved lazily from paths.temp_dir
         self._train_script = None  # resolved lazily to the first existing candidate
-
-        # Per-node cursor (lines already surfaced) so polling STREAMS only the
-        # new training-log lines to the console once, instead of re-dumping a
-        # `tail -N` window every iteration (which bloated --log-file with
-        # repeated content).
-        self._log_line_cursor = [0] * self.num_nodes
 
     def _get_scratch_dir(self):
         """Host-user scratch base from ``paths.temp_dir`` (cached).
@@ -550,144 +549,51 @@ class MaxTextTrainingJob:
 
         self.orch.exec_cmd_list(launch_cmds)
 
-        # Fresh run -> stream the log from the top.
-        self._log_line_cursor = [0] * self.num_nodes
-
         time.sleep(self._initial_wait_s)
 
     # ---------- polling ----------
 
-    def is_complete(self):
-        """Check if training has completed on all nodes.
-
-        Greps each node's own training.log in a single parallel
-        ``orch.exec_cmd_list`` call (``cmd_list[i]`` runs on ``hosts[i]``). Uses
-        ``|| true`` rather than ``|| echo 0`` so a no-match yields a clean "0":
-        ``grep -c`` already prints "0" and exits 1 on no match, so ``|| echo 0``
-        would emit "0\\n0" and defeat the equality check below.
-        """
-        final_step = self.steps - 1
-        pattern = f"completed step:\\s*{final_step},"
-        cmd_list = [
-            f"grep -cE {shlex.quote(pattern)} {shlex.quote(self._node_log(i))} 2>/dev/null || true"
-            for i in range(self.num_nodes)
-        ]
-        out = self.orch.exec_cmd_list(cmd_list, print_console=False)
-        if not out or len(out) < self.num_nodes:
-            return False
-        for _host, result in out.items():
-            text = result if isinstance(result, str) else (result or {}).get("output", "")
-            text = (text or "").strip()
-            if not text or text == "0":
-                return False
-        return True
-
-    def _scan_chunk_for_errors(self, host, i, text):
-        """Raise on the first known error signature (or NaN/Inf) in `text`.
-
-        Before raising, log the FULL offending chunk so the failure cause (e.g. a
-        compile traceback) is always visible in the console/--log-file -- the
-        exception message alone is truncated (text[-500:]) and can miss the root
-        line, and the chunk is otherwise not streamed for non-node-0 nodes.
-        """
-        if not text:
-            return
-        hit = None
-        if _NAN_INF_RE.search(text):
-            hit = "NaN/Inf in training metrics"
-        else:
-            # Always-on fatal signatures first (scanned even when a config
-            # overrides error_patterns), then the config/default patterns.
-            for err_name, err_pattern in list(_ALWAYS_ON_ERR_PATTERNS.items()) + list(self.error_patterns.items()):
-                if err_pattern and re.search(err_pattern, text, re.I):
-                    hit = f"error '{err_name}'"
-                    break
-        if hit:
-            log.error("[train node%s] FAILURE chunk (node %s / %s):\n%s", i, i, host, text.rstrip())
-            raise RuntimeError(f"Training {hit} on {host} (node {i}): {text[-500:]}")
-
-    def _drain_new_log_lines(self):
-        """Fetch training-log lines written since the last poll, on every node,
-        in one parallel call, and advance each node's cursor.
-
-        Returns ``{node_index: new_text}``. ``print_console=False`` so the
-        orchestrator does NOT re-echo the bulk output -- the caller decides what
-        to surface (we stream node 0 and scan every node for errors). This is
-        what makes the console/--log-file carry each log line ONCE instead of a
-        repeated ``tail`` window per poll.
-        """
-        cmd_list = [
-            f"tail -n +{self._log_line_cursor[i] + 1} {shlex.quote(self._node_log(i))} 2>/dev/null || true"
-            for i in range(self.num_nodes)
-        ]
-        out = self.orch.exec_cmd_list(cmd_list, print_console=False)
-        node_of = {h: i for i, h in enumerate(self.orch.hosts)}
-        new_by_node = {}
-        for host, result in (out or {}).items():
-            text = result if isinstance(result, str) else (result or {}).get("output", "")
-            text = text or ""
-            i = node_of.get(host)
-            if i is None or not text:
-                continue
-            # Advance the cursor by the number of newly read lines so the next
-            # poll starts right after them.
-            self._log_line_cursor[i] += len(text.splitlines())
-            new_by_node[i] = text
-        return new_by_node
-
     def poll_for_completion(self, timeout_s=None):
-        """Poll until training finishes or times out.
+        """Poll each node's training.log until the run completes or times out.
 
-        Each iteration streams only the NEW training-log lines (node 0 to the
-        console; all nodes scanned for error signatures), then checks for the
-        completion marker. A concise ``[poll]`` heartbeat makes the internal
-        polling visible without re-dumping the log.
+        Delegates to the reusable ``LogPoller`` (cvs/lib/utils/log_poller.py): it
+        drains new lines every ``_drain_interval_s``, streams node 0 to the log,
+        scans every node's new chunk for the always-on fatal signatures + the
+        config ``error_patterns`` (+ NaN/Inf), and detects completion when every
+        node logs ``completed step: <steps-1>``. A console spinner runs between
+        drains. Total budget stays ``_poll_count * _poll_wait_s``.
         """
         if timeout_s is None:
             timeout_s = self._poll_count * self._poll_wait_s
-
-        start = time.monotonic()
-        for it in range(self._poll_count):
-            elapsed = time.monotonic() - start
-            if elapsed >= timeout_s:
-                raise RuntimeError(f"training did not complete within {timeout_s}s (polled {it} times)")
-
-            new_by_node = self._drain_new_log_lines()
-
-            # Stream node 0's (coordinator) new lines to the console FIRST, so the
-            # chunk reaches the log even when the scan below raises on this same
-            # chunk (e.g. a compile traceback in the final drained lines).
-            node0_new = (new_by_node.get(0) or "").rstrip()
-            if node0_new:
-                log.info("[train node0]\n%s", node0_new)
-
-            # Then scan every node's new chunk for errors (raises on the first
-            # match; the scanner logs the offending chunk before raising).
-            for i, text in new_by_node.items():
-                self._scan_chunk_for_errors(self.orch.hosts[i], i, text)
-
-            if self.is_complete():
-                # Flush the tail lines written between the drain above and this
-                # completion check -- the final "completed step" marker, and
-                # anything after it (a shutdown traceback or a last-step NaN),
-                # land here. Stream node 0 FIRST, then scan EVERY node's final
-                # chunk (dropping non-0 nodes would hide a worker-only failure in
-                # this window; the scanner logs the offending chunk before raising).
-                tail = self._drain_new_log_lines()
-                node0_tail = (tail.get(0) or "").rstrip()
-                if node0_tail:
-                    log.info("[train node0]\n%s", node0_tail)
-                for i, text in tail.items():
-                    self._scan_chunk_for_errors(self.orch.hosts[i], i, text)
-                log.info("training complete (poll iter=%d, %.0fs elapsed)", it, elapsed)
-                return
-
-            log.info(
-                "[poll] iter=%d elapsed=%.0fs (streaming node0 log; scanning %d node(s))", it, elapsed, self.num_nodes
-            )
-            time.sleep(self._poll_wait_s)
-
-        raise RuntimeError(f"training did not complete after {self._poll_count} poll iterations")
+        # Scanned in order (first match wins): NaN/Inf, then the always-on fatal
+        # signatures, then the config / default error_patterns. The built-in
+        # fast-fail signatures MUST win on a key collision -- a config's
+        # error_patterns extends them but must never silently replace fast-fail
+        # detection -- so setdefault keeps the built-in when a config reuses a name.
+        error_patterns = {
+            "NaN/Inf in training metrics": _NAN_INF_RE.pattern,
+            **_ALWAYS_ON_ERR_PATTERNS,
+        }
+        for name, pattern in self.error_patterns.items():
+            error_patterns.setdefault(name, pattern)
+        LogPoller(
+            self.orch,
+            [self._node_log(i) for i in range(self.num_nodes)],
+            complete_pattern=f"completed step:\\s*{self.steps - 1},",
+            complete_policy="all",
+            error_patterns=error_patterns,
+            # Defaults spelled out so adopters see the knobs: no benign-error
+            # allowlist, and the tail/grep node commands stay off the console.
+            ignore_error_patterns=None,
+            silent_poll=True,
+            stream_node=0,
+            error_label="Training",
+            label="Training In Progress",
+            timeout_s=timeout_s,
+            drain_interval_s=self._drain_interval_s,
+            cmd_timeout_s=60,
+            log=log,
+        ).poll()
 
     # ---------- results ----------
 

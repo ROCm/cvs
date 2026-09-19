@@ -143,6 +143,32 @@ class TestMultiProcessParallelHandleExec(unittest.TestCase):
         # Verify result is merged from shards
         self.assertEqual(result, {"host1": "up1", "host2": "up2"})
 
+    def _sharded_handle(self):
+        config = ParallelConfig(hosts_per_shard=1, max_workers_per_cpu=1)
+        self.mock_execute_sharded.return_value = [
+            {'result': {"host1": "up1"}, 'reachable_hosts': ["host1"], 'unreachable_hosts': []},
+            {'result': {"host2": "up2"}, 'reachable_hosts': ["host2"], 'unreachable_hosts': []},
+        ]
+        mph = MultiProcessParallelHandle(self.mock_log, self.host_list, user="test", config=config)
+        mph.log = self.mock_log  # the handle wires self.log to a global logger; observe our mock
+        return mph
+
+    @staticmethod
+    def _cmd_echoes(mock_method):
+        return [c.args[0] for c in mock_method.call_args_list if c.args and str(c.args[0]).startswith("cmd = ")]
+
+    def test_exec_silent_command_echo_when_print_console_false(self):
+        """print_console=False must not echo the command at info (debug instead)."""
+        mph = self._sharded_handle()
+        mph.exec("uptime", print_console=False)
+        self.assertEqual(self._cmd_echoes(self.mock_log.info), [])
+        self.assertTrue(self._cmd_echoes(self.mock_log.debug))
+
+    def test_exec_echoes_command_at_info_when_print_console_true(self):
+        mph = self._sharded_handle()
+        mph.exec("uptime", print_console=True)
+        self.assertTrue(self._cmd_echoes(self.mock_log.info))
+
     def test_exec_cmd_list_with_sharding(self):
         """Test exec_cmd_list with sharding uses sharder."""
         config = ParallelConfig(hosts_per_shard=1, max_workers_per_cpu=1)
