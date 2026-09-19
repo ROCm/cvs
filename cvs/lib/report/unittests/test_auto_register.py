@@ -29,6 +29,11 @@ class TestAutoRegister(unittest.TestCase):
         self.assertTrue(try_auto_register_suite_report(config))
         self.assertEqual(config._suite_report_config["suite_id"], "sglang")
 
+    def test_auto_register_loads_jaxmaxtext_alias(self):
+        config = SimpleNamespace(_suite_name="jaxmaxtext_single", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["suite_id"], "jaxmaxtext")
+
     def test_auto_register_loads_vllm_json_profile(self):
         config = SimpleNamespace(_suite_name="vllm", _suite_report_config=None)
         self.assertTrue(try_auto_register_suite_report(config))
