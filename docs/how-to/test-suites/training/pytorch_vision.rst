@@ -283,6 +283,33 @@ workflow, and
 :doc:`/reference/configuration-files/training/pytorch_vision` for the
 variable-by-variable config reference.
 
+Sweep ordering and page-cache warming
+=====================================
+
+Sweeps in a profile run back to back against the same ImageNet shards on the
+shared filesystem, so later sweeps read data the earlier ones have already
+pulled into the page cache. For workloads whose step time is bounded by input
+throughput this dominates the measurement: running W2's five sweeps in reverse
+moved the same ``MBS=128`` rocAL-GPU sweep from 18,096 to 34,351 images/s, and
+the ``MBS=256`` sweep from 21,997 to 47,266, purely by position. The
+rocAL-CPU-decode sweep was unaffected (13,746 against 13,437) because its
+bottleneck is decode rather than I/O, which is what identifies the cause.
+
+The consequence is that cross-sweep comparisons within a loader-bound profile
+are not trustworthy as measured: W2's accumulation, augmentation, and CPU-decode
+overhead rows came out negative, implying the more expensive configuration was
+faster. Treat them as unreliable rather than as results.
+
+Compute-bound profiles are far less exposed. W3's five sweeps spread about 19%
+against W2's 190%, and its overhead rows are plausible (1.65% accumulation,
+9.64% CPU decode, 3.39% heavy augmentation).
+
+This is not yet fixed. The options are to warm the cache identically before each
+sweep, to repeat sweeps and report medians, or to take throughput for
+loader-bound models from the synthetic-data profile, which removes the input
+pipeline from the measurement entirely.
+
+
 The ``hf_trainer`` harness (W6)
 ===============================
 
