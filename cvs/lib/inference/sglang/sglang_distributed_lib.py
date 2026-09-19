@@ -4,10 +4,10 @@ All rights reserved.
 
 Multi-node unified SGLang inference controller (TP/PP across server nodes, no PD disagg).
 
-Each host in ``server_node_list`` (or the union of ``prefill_node_list`` +
-``decode_node_list``) runs ``sglang.launch_server`` with ``--nnodes`` /
-``--node-rank`` / ``--dist-init-addr``. Benchmark/smoke/lm-eval run on
-``benchmark_serv_node`` and target rank-0 HTTP (``127.0.0.1`` when bench is rank 0).
+Each host among the first ``nnodes`` entries in ``cluster.json`` runs
+``sglang.launch_server`` with ``--nnodes`` / ``--node-rank`` / ``--dist-init-addr``.
+Rank-0 is the master and the benchmark node. Smoke/bench/lm-eval target rank-0 HTTP
+(``127.0.0.1`` on that node). HTTP defaults to port 8000; dist-init defaults to 40001.
 '''
 
 from __future__ import annotations
@@ -24,13 +24,14 @@ from cvs.lib.inference.sglang.sglang_common import (
     add_export_env_block,
     as_node_list,
     collect_sglang_gpu_topology,
+    DEFAULT_SGLANG_DIST_INIT_PORT,
+    DEFAULT_SGLANG_SERVE_PORT,
     first_output,
     format_sglang_gpu_topology_lines,
     parse_inference_bench_results,
     perf_enforce_thresholds,
     poll_for_inference_completion as poll_for_inference_completion_common,
     resolve_distributed_client_host,
-    resolve_server_node_list,
     run_lm_eval_benchmark_test as run_lm_eval_benchmark_test_common,
     verify_inference_results as verify_inference_results_common,
     verify_inference_results_subtests as verify_inference_results_subtests_common,
@@ -76,7 +77,7 @@ class SglangDistributed:
         self._apply_inf_defaults()
         self._apply_bp_defaults()
 
-        self.server_node_list = resolve_server_node_list(self.inf_dict)
+        self.server_node_list = self._resolve_server_nodes()
         self.nnodes = int(self.inf_dict.get('nnodes') or len(self.server_node_list))
         if self.nnodes != len(self.server_node_list):
             raise ValueError(
@@ -85,7 +86,9 @@ class SglangDistributed:
             )
         self.rank0_node = self.server_node_list[0]
         self.dist_init_addr = self._resolve_dist_init_addr()
-        self.benchmark_serv_node = self._resolve_benchmark_serv_node()
+        self.benchmark_serv_node = self.rank0_node
+        self.inf_dict['server_node_list'] = list(self.server_node_list)
+        self.inf_dict['benchmark_serv_node'] = self.benchmark_serv_node
 
         self.container_name = self.inf_dict['container_name']
         self.hca_id_prefix = str(self.inf_dict['hca_id_prefix']).strip()
@@ -109,19 +112,23 @@ class SglangDistributed:
             self.dist_init_addr,
         )
 
-    def _resolve_dist_init_addr(self) -> str:
-        addr = self.inf_dict.get('dist_init_addr') or self.rank0_node
-        port = self.inf_dict.get('dist_init_port') or '40001'
-        return f"{addr}:{port}"
+    def _resolve_server_nodes(self):
+        hosts = list(self.inf_dict.get('_execution_hosts') or self.orch.hosts or [])
+        if not hosts:
+            raise ValueError("sglang_distributed requires orchestrator hosts from cluster.json")
+        nnodes = int(self.inf_dict.get('nnodes') or 0)
+        if nnodes < 2:
+            raise ValueError(f"sglang_distributed requires nnodes >= 2, got {nnodes}")
+        if nnodes > len(hosts):
+            raise ValueError(
+                f"sglang_distributed requests {nnodes} nodes but the cluster only has {len(hosts)}"
+            )
+        return hosts[:nnodes]
 
-    def _resolve_benchmark_serv_node(self) -> str:
-        raw = self.inf_dict.get('benchmark_serv_node')
-        if not raw:
-            return self.rank0_node
-        hosts = as_node_list(raw)
-        if len(hosts) != 1:
-            raise ValueError(f"SglangDistributed requires exactly one benchmark_serv_node, got {hosts!r}")
-        return hosts[0]
+    def _resolve_dist_init_addr(self):
+        addr = self.inf_dict.get('dist_init_addr') or self.rank0_node
+        port = self.inf_dict.get('dist_init_port') or DEFAULT_SGLANG_DIST_INIT_PORT
+        return f"{addr}:{port}"
 
     @property
     def _head_host(self) -> str:
@@ -132,7 +139,7 @@ class SglangDistributed:
 
     @property
     def router_serv_port(self) -> str:
-        return str(self.inf_dict['proxy_router_serv_port'])
+        return str(self.inf_dict.get('proxy_router_serv_port') or DEFAULT_SGLANG_SERVE_PORT)
 
     @property
     def client_host(self) -> str:
@@ -207,7 +214,8 @@ class SglangDistributed:
         self.inf_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.inf_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
         self.inf_dict.setdefault('log_level', 'info')
-        self.inf_dict.setdefault('proxy_router_serv_port', '8000')
+        self.inf_dict.setdefault('proxy_router_serv_port', DEFAULT_SGLANG_SERVE_PORT)
+        self.inf_dict.setdefault('dist_init_port', DEFAULT_SGLANG_DIST_INIT_PORT)
 
     def _apply_bp_defaults(self) -> None:
         self.bp_dict.setdefault('backend', 'sglang')

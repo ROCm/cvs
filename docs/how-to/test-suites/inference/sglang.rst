@@ -25,13 +25,13 @@ Test suites
      - What it runs
    * - ``sglang_single``
      - ``sglang_single.py``
-     - One unified ``sglang.launch_server`` on a single ``benchmark_serv_node`` (local TP).
+     - Independent full-model ``sglang.launch_server`` on every ``cluster.json`` host (local TP).
    * - ``sglang_distributed``
      - ``sglang_distributed.py``
-     - One unified multi-node server (TP/PP across ``server_node_list``).
+     - One unified multi-node server (TP/PP across the first ``nnodes`` hosts in ``cluster.json``).
    * - ``sglang_disagg_distributed``
      - ``sglang_disagg_distributed.py``
-     - Disaggregated prefill/decode with a proxy router.
+     - Disaggregated prefill/decode (even ``nnodes`` from ``cluster.json``; rank-0 is proxy/benchmark).
 
 .. _sglang-set-up-config:
 
@@ -62,6 +62,13 @@ Set up config
 
 4. Edit the config — set ``container.image``, replace every ``<changeme>`` with
    cluster-specific values, and ensure ``threshold_json`` resolves to your threshold JSON.
+   ``sglang_single`` uses every host in ``cluster.json`` (full model on each node) and
+   defaults the HTTP port to ``8000``; do not set ``benchmark_serv_node`` or
+   ``proxy_router_serv_port``. ``sglang_distributed`` takes the first ``nnodes`` hosts
+   from ``cluster.json``; rank-0 is master and benchmark. Dist-init defaults to ``40001``.
+   ``sglang_disagg_distributed`` requires even ``nnodes`` (>= 2); rank-0 is prefill
+   coordinator, proxy, and benchmark, rank-1 is decode coordinator, and remaining hosts
+   split equally (1P/1D, 2P/2D, 3P/3D). Ports default; do not pin node lists or PD ports.
 
 Shipped config templates:
 

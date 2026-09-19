@@ -50,7 +50,7 @@ SGLANG_TEST_ORDER = {
     "test_teardown": 15,
 }
 
-# Stable test order for sglang_single (one unified server, no PD).
+# Stable test order for sglang_single (independent full-model server per cluster host).
 SGLANG_SINGLE_TEST_ORDER = {
     "test_launch_container": 0,
     "test_rms_norm": 1,

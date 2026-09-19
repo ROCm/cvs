@@ -2,8 +2,9 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Single-node SGLang benchmark: one unified server on ``benchmark_serv_node``
-(``proxy_router_serv_port``). No PD disaggregation, no router.
+Single-node SGLang benchmark: one unified ``sglang.launch_server`` on every host
+in ``cluster.json``. Each node loads the full model (local TP) independently.
+HTTP defaults to port 8000.
 
 Run:
   pytest cvs/tests/inference/sglang/sglang_single.py \\
@@ -11,9 +12,8 @@ Run:
     --config_file <sglang_config.json> \\
     --html=~/cvs_results/sglang_single.html
 
-Set ``benchmark_serv_node`` in the inference config to the target host (must also
-appear in the cluster file ``node_dict``). Only that node gets a container and
-loads the model; other cluster nodes are ignored for this suite.
+Do not set ``benchmark_serv_node``; the suite uses every ``node_dict`` host.
+The run card Benchmark node field lists those hosts.
 
 With ``--html``, session end also writes ``sglang_run_deck.html`` (plus JSON
 and interactive viewer) via ``cvs/lib/report/profiles/sglang.json`` (all SGLang stems).

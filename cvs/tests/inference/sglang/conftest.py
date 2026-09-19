@@ -8,11 +8,12 @@ and ``sglang_disagg_distributed``).
 Both suites use ``ContainerOrchestrator`` (vLLM-style) via ``cluster_container.json`` and
 ``load_variant()`` from ``sglang_config_loader``.
 
-``sglang_single.py`` — ``SglangSingle`` (unified server on ``benchmark_serv_node`` only).
-``sglang_distributed.py`` — ``SglangDistributed`` (unified multi-node TP/PP; all server
-nodes from ``server_node_list`` or prefill+decode union).
-``sglang_disagg_distributed.py`` — ``SglangDisaggPD`` (PD roles from inference config;
-containers only on the union of prefill/decode/router/bench hosts).
+``sglang_single.py`` — ``SglangSingle`` (independent full-model server on every
+cluster.json host).
+``sglang_distributed.py`` — ``SglangDistributed`` (unified multi-node TP/PP; first
+``nnodes`` hosts from cluster.json, rank-0 is master and benchmark).
+``sglang_disagg_distributed.py`` — ``SglangDisaggPD`` (equal prefill/decode groups
+from the first even ``nnodes`` hosts in cluster.json; rank-0 is proxy/benchmark).
 
 Each workload sets ``threshold_json`` to a JSON file beside the config; that
 file supplies pass/fail thresholds for performance and lm-eval benchmarks.
@@ -41,7 +42,13 @@ except ImportError:
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.inference.sglang.sglang_common import as_node_list, cleanup_sglang_log_dir, resolve_server_node_list
+from cvs.lib.inference.sglang.sglang_common import (
+    cleanup_sglang_log_dir,
+    resolve_disagg_execution_roles,
+    resolve_distributed_execution_hosts,
+    resolve_single_execution_hosts,
+    stamp_disagg_roles,
+)
 from cvs.lib.inference.sglang.sglang_config_loader import (
     SglangSingleVariantConfig,
     flat_expected_from_specs,
@@ -84,14 +91,18 @@ SGLANG_PERF_BENCHMARK_TEST = 'test_run_performance_benchmark_test'
 __all__ = ["flat_expected_from_specs"]
 
 
-def _use_sglang_single(request) -> bool:
+def _sglang_suite_stem(module_name):
+    return (module_name or "").rsplit(".", 1)[-1]
+
+
+def _use_sglang_single(request):
     """``sglang_single.py`` uses unified single-node ``SglangSingle``."""
-    return getattr(request.module, "__name__", "").endswith("sglang_single")
+    return _sglang_suite_stem(getattr(request.module, "__name__", "")) == "sglang_single"
 
 
-def _use_sglang_distributed(request) -> bool:
+def _use_sglang_distributed(request):
     """``sglang_distributed.py`` uses unified multi-node ``SglangDistributed``."""
-    return getattr(request.module, "__name__", "").endswith("sglang_distributed")
+    return _sglang_suite_stem(getattr(request.module, "__name__", "")) == "sglang_distributed"
 
 
 def _deep_merge(base, override):
@@ -102,71 +113,6 @@ def _deep_merge(base, override):
     for k, v in override.items():
         out[k] = _deep_merge(base[k], v) if k in base else v
     return out
-
-
-def _benchmark_serv_host(inference: Mapping[str, Any]) -> str:
-    """Single-node suite target host from inference ``benchmark_serv_node``."""
-    raw = inference.get("benchmark_serv_node")
-    if not raw:
-        raise ValueError(
-            "sglang_single requires 'benchmark_serv_node' in the inference config "
-            "(config.json / variant inference dict)"
-        )
-    hosts = as_node_list(raw)
-    if len(hosts) != 1:
-        raise ValueError(f"sglang_single requires exactly one benchmark_serv_node, got {hosts!r}")
-    return hosts[0]
-
-
-def _cluster_dict_for_single_benchmark(
-    cluster_dict: Mapping[str, Any],
-    bench_host: str,
-) -> dict[str, Any]:
-    """Restrict orchestrator SSH/container scope to ``benchmark_serv_node`` only."""
-    node_dict = cluster_dict.get("node_dict") or {}
-    if bench_host not in node_dict:
-        raise ValueError(
-            f"benchmark_serv_node {bench_host!r} is not listed in cluster node_dict (keys: {sorted(node_dict)!r})"
-        )
-    scoped = dict(cluster_dict)
-    scoped["node_dict"] = {bench_host: node_dict[bench_host]}
-    scoped["head_node_dict"] = {"mgmt_ip": bench_host}
-    return scoped
-
-
-def _disagg_role_hosts(inference: Mapping[str, Any]) -> list[str]:
-    """Unique hosts referenced by PD role fields in the inference config."""
-    seen: list[str] = []
-    for key in (
-        "prefill_node_list",
-        "decode_node_list",
-        "proxy_router_node",
-        "benchmark_serv_node",
-    ):
-        raw = inference.get(key)
-        if raw is None:
-            continue
-        for host in as_node_list(raw):
-            if host not in seen:
-                seen.append(host)
-    if not seen:
-        raise ValueError(
-            "sglang_disagg requires at least one of prefill_node_list, decode_node_list, "
-            "proxy_router_node, or benchmark_serv_node in the inference config"
-        )
-    return seen
-
-
-def _disagg_head_host(inference: Mapping[str, Any], role_hosts: list[str]) -> str:
-    """Orchestrator head: proxy, then benchmark, then first prefill node."""
-    for key in ("proxy_router_node", "benchmark_serv_node", "prefill_node_list"):
-        raw = inference.get(key)
-        if raw is None:
-            continue
-        hosts = as_node_list(raw)
-        if hosts:
-            return hosts[0]
-    return role_hosts[0]
 
 
 def _cluster_dict_for_disagg_roles(
@@ -183,25 +129,6 @@ def _cluster_dict_for_disagg_roles(
     scoped["node_dict"] = {h: node_dict[h] for h in role_hosts}
     scoped["head_node_dict"] = {"mgmt_ip": head_host}
     return scoped
-
-
-def _distributed_orch_hosts(inference: Mapping[str, Any]) -> list[str]:
-    """Server ranks plus benchmark node (when bench is not already a server rank)."""
-    hosts = list(resolve_server_node_list(inference))
-    bench_raw = inference.get("benchmark_serv_node")
-    if bench_raw:
-        bench = as_node_list(bench_raw)[0]
-        if bench not in hosts:
-            hosts.append(bench)
-    return hosts
-
-
-def _distributed_head_host(inference: Mapping[str, Any], role_hosts: list[str]) -> str:
-    """Orchestrator head: benchmark node when set, else rank-0 server node."""
-    bench_raw = inference.get("benchmark_serv_node")
-    if bench_raw:
-        return as_node_list(bench_raw)[0]
-    return role_hosts[0]
 
 
 def _create_container_orchestrator(cluster_dict: Mapping[str, Any], variant_config: SglangSingleVariantConfig):
@@ -397,26 +324,41 @@ def orch(request, cluster_dict, variant_config, lifecycle):
     """``ContainerOrchestrator`` for single-node, distributed, and disagg SGLang suites."""
     cluster = cluster_dict
     if _use_sglang_single(request):
-        bench_host = _benchmark_serv_host(variant_config.inference)
-        cluster = _cluster_dict_for_single_benchmark(cluster_dict, bench_host)
-        log.info("sglang_single: orchestrator scoped to benchmark_serv_node=%s", bench_host)
+        hosts = resolve_single_execution_hosts(cluster_dict)
+        variant_config.inference["_execution_hosts"] = list(hosts)
+        variant_config.inference["benchmark_serv_node"] = list(hosts)
+        cluster = _cluster_dict_for_disagg_roles(cluster_dict, hosts, hosts[0])
+        log.info("sglang_single: independent full-model servers on hosts=%s", hosts)
     elif _use_sglang_distributed(request):
-        role_hosts = _distributed_orch_hosts(variant_config.inference)
-        head_host = _distributed_head_host(variant_config.inference, role_hosts)
-        cluster = _cluster_dict_for_disagg_roles(cluster_dict, role_hosts, head_host)
+        try:
+            hosts = resolve_distributed_execution_hosts(cluster_dict, variant_config.inference)
+        except ValueError as exc:
+            pytest.fail(str(exc))
+        variant_config.inference["_execution_hosts"] = list(hosts)
+        variant_config.inference["server_node_list"] = list(hosts)
+        variant_config.inference["benchmark_serv_node"] = hosts[0]
+        cluster = _cluster_dict_for_disagg_roles(cluster_dict, hosts, hosts[0])
         log.info(
-            "sglang_distributed: orchestrator scoped to server+bench hosts=%s head=%s",
-            role_hosts,
-            head_host,
+            "sglang_distributed: first nnodes=%s hosts=%s master/benchmark=%s",
+            variant_config.inference.get("nnodes"),
+            hosts,
+            hosts[0],
         )
     else:
-        role_hosts = _disagg_role_hosts(variant_config.inference)
-        head_host = _disagg_head_host(variant_config.inference, role_hosts)
-        cluster = _cluster_dict_for_disagg_roles(cluster_dict, role_hosts, head_host)
+        try:
+            roles = resolve_disagg_execution_roles(cluster_dict, variant_config.inference)
+        except ValueError as exc:
+            pytest.fail(str(exc))
+        stamp_disagg_roles(variant_config.inference, roles)
+        hosts = roles["hosts"]
+        cluster = _cluster_dict_for_disagg_roles(cluster_dict, hosts, hosts[0])
         log.info(
-            "sglang_disagg: orchestrator scoped to role hosts=%s head=%s",
-            role_hosts,
-            head_host,
+            "sglang_disagg: nnodes=%s prefill=%s decode=%s proxy/benchmark=%s decode_coord=%s",
+            variant_config.inference.get("nnodes"),
+            roles["prefill_node_list"],
+            roles["decode_node_list"],
+            hosts[0],
+            hosts[1],
         )
     o = _create_container_orchestrator(cluster, variant_config)
 
@@ -434,11 +376,10 @@ def orch(request, cluster_dict, variant_config, lifecycle):
 @pytest.fixture(scope="module")
 def gpu_type(request, orch, variant_config):
     if _use_sglang_single(request):
-        bench_host = _benchmark_serv_host(variant_config.inference)
         smi_out_dict = orch.all.exec("rocm-smi -a | head -30")
-        smi_out = smi_out_dict.get(bench_host) or next(iter(smi_out_dict.values()))
+        smi_out = next(iter(smi_out_dict.values()))
     elif _use_sglang_distributed(request):
-        probe_node = resolve_server_node_list(variant_config.inference)[0]
+        probe_node = (variant_config.inference.get("_execution_hosts") or orch.hosts)[0]
         smi_out_dict = orch.all.exec("rocm-smi -a | head -30")
         smi_out = smi_out_dict.get(probe_node) or next(iter(smi_out_dict.values()))
     else:
@@ -498,10 +439,10 @@ def im_obj(
 
 def pytest_collection_modifyitems(items):
     def rank_for(item):
-        mod = getattr(item.module, "__name__", "")
-        if mod.endswith("sglang_single"):
+        stem = _sglang_suite_stem(getattr(item.module, "__name__", ""))
+        if stem == "sglang_single":
             order = SGLANG_SINGLE_TEST_ORDER
-        elif mod.endswith("sglang_distributed"):
+        elif stem == "sglang_distributed":
             order = SGLANG_DISTRIBUTED_TEST_ORDER
         else:
             order = SGLANG_TEST_ORDER

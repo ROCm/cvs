@@ -19,13 +19,14 @@ threshold file referenced by top-level ``threshold_json``.
      - Topology
    * - ``sglang_single``
      - ``cvs/tests/inference/sglang/sglang_single.py``
-     - One unified ``sglang.launch_server`` on a single ``benchmark_serv_node`` (TP across local GPUs).
+     - Independent full-model ``sglang.launch_server`` on every ``cluster.json`` host (TP across local GPUs).
    * - ``sglang_distributed``
      - ``cvs/tests/inference/sglang/sglang_distributed.py``
-     - One unified multi-node server (TP/PP + ``nnodes``); all ``server_node_list`` ranks participate.
+     - One unified multi-node server (TP/PP across the first ``nnodes`` hosts in ``cluster.json``).
    * - ``sglang_disagg_distributed``
      - ``cvs/tests/inference/sglang/sglang_disagg_distributed.py``
-     - Disaggregated prefill/decode with a proxy router; separate prefill and decode node groups.
+     - Disaggregated prefill/decode: even ``nnodes`` from ``cluster.json``; rank-0 is
+       prefill coordinator, proxy, and benchmark; rank-1 is decode coordinator.
 
 How to run: :doc:`/how-to/test-suites/inference/sglang`.
 
@@ -196,8 +197,6 @@ Example: single-node template
             "model": "meta-llama/Llama-3.1-70B-Instruct",
             "tensor_parallelism": "8",
             "pipeline_parallelism": "1",
-            "benchmark_serv_node": "<changeme>",
-            "proxy_router_serv_port": "8000",
             "add_flags": [ "--attention-backend aiter" ]
         },
         "benchmark_params": {
@@ -233,8 +232,10 @@ General ``config`` parameters
      - Container instance name on each participating node.
    * - ``server_params.nnodes``
      - ``1``, ``2``, ``4``, …
-     - Server rank count. For ``sglang_distributed``, must match ``server_node_list`` length.
-       Disaggregated launch uses the lengths of ``prefill_node_list`` and ``decode_node_list``.
+     - Server rank count. For ``sglang_distributed`` and ``sglang_disagg_distributed``,
+       the first this many hosts from ``cluster.json`` participate. Must be at least 2
+       and must not exceed the cluster size. Disaggregated also requires an even
+       ``nnodes`` so prefill and decode groups stay equal (1P/1D, 2P/2D, …).
    * - ``paths.hf_token_file``
      - ``/home/{user-id}/.hf_token``
      - HuggingFace token file for model download.
@@ -251,11 +252,13 @@ General ``config`` parameters
      - ``ERROR``
      - NCCL log level (multi-node).
    * - ``server_params.benchmark_serv_node``
-     - node hostname/IP
-     - Node that runs smoke tests, lm-eval, and ``bench_serving`` (required for all suites).
+     - unused in packaged configs
+     - ``sglang_single`` uses every cluster host. ``sglang_distributed`` and
+       ``sglang_disagg_distributed`` use the first selected cluster host.
    * - ``server_params.proxy_router_serv_port``
      - ``8000``
-     - HTTP port for the unified server (single/distributed) or proxy router client port (disaggregated).
+     - HTTP port for the unified server or proxy router. Optional; defaults to
+       ``8000``. Omit from packaged SGLang configs.
    * - ``container.runtime.args.devices``
      - ``[ "/dev/dri", "/dev/kfd" ]`` (single)
      - GPU devices passed into the container. Multi-node configs also include ``/dev/infiniband/rdma_cm``.
@@ -272,10 +275,13 @@ Single-node only (``sglang_single``)
 
    * - Parameter
      - Description
-   * - ``server_params.benchmark_serv_node``
-     - Exactly one host; only this node receives a container. Other cluster nodes are ignored.
+   * - Cluster hosts
+     - Every ``node_dict`` entry in ``cluster.json`` gets a container and a full-model
+       server. ``server_params.benchmark_serv_node`` is unused.
    * - ``server_params.nnodes``
-     - Must be ``1``.
+     - Must be ``1`` (local TP only; nodes do not form one multi-rank server).
+   * - HTTP port
+     - Defaults to ``8000``. Do not set ``proxy_router_serv_port``.
 
 Unified multi-node (``sglang_distributed``)
 -------------------------------------------
@@ -288,10 +294,14 @@ Additional ``server_params`` / ``container`` env fields beyond the single-node s
 
    * - Parameter
      - Description
-   * - ``server_params.server_node_list``
-     - All ranks of the unified ``sglang.launch_server`` (length must equal ``nnodes``).
-   * - ``server_params.dist_init_port``
-     - Distributed init port on rank-0 (default ``40001``).
+   * - ``server_params.nnodes``
+     - How many ``cluster.json`` hosts to use (``node_dict`` order). Rank-0 is master
+       and the benchmark node. The suite fails immediately if this is larger than
+       the cluster or less than 2.
+   * - HTTP / dist-init ports
+     - HTTP defaults to ``8000``. Dist-init defaults to ``40001``. Do not set
+       ``server_node_list``, ``benchmark_serv_node``, ``dist_init_port``, or
+       ``proxy_router_serv_port``.
    * - ``NCCL_IB_HCA``, ``NCCL_IB_GID_INDEX``
      - NCCL InfiniBand/RoCE device list and GID index (``container.runtime.args.env``).
    * - ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, ``GLOO_TCP_IFNAME``
@@ -312,16 +322,15 @@ Uses the multi-node network env fields above, plus:
 
    * - Parameter
      - Description
-   * - ``server_params.prefill_node_list``, ``decode_node_list``
-     - Node groups for prefill and decode servers. ``--nnodes`` / ``--node-rank`` follow these list lengths.
-   * - ``server_params.proxy_router_node``
-     - Host running the PD proxy router.
-   * - ``prefill_serv_port``, ``decode_serv_port``, ``proxy_router_port``
-     - Internal service ports (defaults ``30001``, ``30002``, ``8000``).
-   * - ``prefill_coordinator_addr``, ``decode_coordinator_addr``
-     - Rank-0 addresses for each role group.
-   * - ``prefill_coordinator_port``, ``decode_coordinator_port``
-     - Coordinator ports (defaults ``40001``, ``40002``).
+   * - ``server_params.nnodes``
+     - Even count of ``cluster.json`` hosts (``node_dict`` order). Rank-0 is prefill
+       coordinator, proxy router, and benchmark. Rank-1 is decode coordinator.
+       Remaining hosts split equally into prefill and decode. Fails if ``nnodes``
+       is odd, less than 2, or larger than the cluster.
+   * - Ports
+     - Prefill serve ``30001``, decode serve ``30002``, HTTP/proxy ``8000``,
+       prefill coordinator ``40001``, decode coordinator ``40002``. Do not set
+       node lists, coordinator addresses, or those port fields.
 
 ``benchmark_params`` / model settings
 =====================================

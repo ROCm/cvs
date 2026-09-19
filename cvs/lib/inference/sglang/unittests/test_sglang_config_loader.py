@@ -403,10 +403,48 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                     variant.benchmark_params['inference_tests']['bench_serv_random']['num_prompts'],
                     raw['benchmark_params']['num_prompts'],
                 )
-                self.assertEqual(
-                    variant.inference['benchmark_serv_node'],
-                    raw['server_params']['benchmark_serv_node'],
-                )
+                if variant.topology == 'single':
+                    self.assertNotIn('benchmark_serv_node', raw['server_params'])
+                    self.assertNotIn('proxy_router_serv_port', raw['server_params'])
+                    self.assertEqual(variant.inference['proxy_router_serv_port'], '8000')
+                    self.assertNotIn('benchmark_serv_node', variant.inference)
+                elif variant.topology == 'distributed':
+                    self.assertNotIn('server_node_list', raw['server_params'])
+                    self.assertNotIn('benchmark_serv_node', raw['server_params'])
+                    self.assertNotIn('dist_init_port', raw['server_params'])
+                    self.assertNotIn('proxy_router_serv_port', raw['server_params'])
+                    self.assertEqual(variant.inference['proxy_router_serv_port'], '8000')
+                    self.assertEqual(variant.inference['dist_init_port'], '40001')
+                    self.assertEqual(str(variant.inference['nnodes']), '2')
+                    self.assertNotIn('benchmark_serv_node', variant.inference)
+                    self.assertNotIn('server_node_list', variant.inference)
+                elif variant.topology == 'disaggregated':
+                    for key in (
+                        'prefill_node_list',
+                        'decode_node_list',
+                        'proxy_router_node',
+                        'benchmark_serv_node',
+                        'prefill_serv_port',
+                        'decode_serv_port',
+                        'proxy_router_port',
+                        'prefill_coordinator_addr',
+                        'decode_coordinator_addr',
+                        'prefill_coordinator_port',
+                        'decode_coordinator_port',
+                        'proxy_router_serv_port',
+                    ):
+                        self.assertNotIn(key, raw['server_params'])
+                    self.assertEqual(str(variant.inference['nnodes']), '2')
+                    self.assertEqual(variant.inference['proxy_router_serv_port'], '8000')
+                    self.assertEqual(variant.inference['proxy_router_port'], '8000')
+                    self.assertEqual(variant.inference['prefill_serv_port'], '30001')
+                    self.assertEqual(variant.inference['decode_serv_port'], '30002')
+                    self.assertEqual(variant.inference['prefill_coordinator_port'], '40001')
+                    self.assertEqual(variant.inference['decode_coordinator_port'], '40002')
+                    self.assertNotIn('prefill_node_list', variant.inference)
+                    self.assertNotIn('benchmark_serv_node', variant.inference)
+                else:
+                    self.fail(f'unexpected topology {variant.topology!r}')
                 self.assertEqual(
                     variant.inference['nccl_debug'],
                     raw['container']['runtime']['args']['env']['NCCL_DEBUG'],
@@ -445,10 +483,92 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
         config_path = config_dir / 'mi3xx_sglang_llama_70b_distributed.json'
         raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
         raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
-        del raw['server_params']['server_node_list']
+        raw['topology'] = 'distributed'
+        del raw['server_params']['nnodes']
 
         with tempfile.TemporaryDirectory() as tmp:
             temp_config = Path(tmp) / config_path.name
             temp_config.write_text(json.dumps(raw), encoding='utf-8')
-            with self.assertRaisesRegex(ValueError, 'server_node_list'):
+            with self.assertRaisesRegex(ValueError, 'nnodes'):
+                loader.load_variant(str(temp_config), {'username': 'test'})
+
+    def test_distributed_selects_first_nnodes_from_cluster(self):
+        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
+        config_path = config_dir / 'mi3xx_sglang_llama_70b_distributed.json'
+        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
+        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
+        cluster = {
+            'username': 'test',
+            'node_dict': {
+                'node-a': {'mgmt_ip': 'node-a'},
+                'node-b': {'mgmt_ip': 'node-b'},
+                'node-c': {'mgmt_ip': 'node-c'},
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_config = Path(tmp) / config_path.name
+            temp_config.write_text(json.dumps(raw), encoding='utf-8')
+            variant = loader.load_variant(str(temp_config), cluster)
+
+        self.assertEqual(variant.inference['_execution_hosts'], ['node-a', 'node-b'])
+        self.assertEqual(variant.inference['benchmark_serv_node'], 'node-a')
+        self.assertEqual(variant.inference['server_node_list'], ['node-a', 'node-b'])
+
+    def test_distributed_fails_when_cluster_is_smaller_than_nnodes(self):
+        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
+        config_path = config_dir / 'mi3xx_sglang_llama_70b_distributed.json'
+        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
+        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
+        cluster = {
+            'username': 'test',
+            'node_dict': {'node-a': {'mgmt_ip': 'node-a'}},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_config = Path(tmp) / config_path.name
+            temp_config.write_text(json.dumps(raw), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'requests 2 nodes'):
+                loader.load_variant(str(temp_config), cluster)
+
+    def test_disagg_assigns_equal_prefill_decode_from_cluster(self):
+        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
+        config_path = config_dir / 'mi3xx_sglang_llama_70b_disaggregated.json'
+        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
+        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
+        raw['server_params']['nnodes'] = '4'
+        cluster = {
+            'username': 'test',
+            'node_dict': {
+                'n0': {'mgmt_ip': 'n0'},
+                'n1': {'mgmt_ip': 'n1'},
+                'n2': {'mgmt_ip': 'n2'},
+                'n3': {'mgmt_ip': 'n3'},
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_config = Path(tmp) / config_path.name
+            temp_config.write_text(json.dumps(raw), encoding='utf-8')
+            variant = loader.load_variant(str(temp_config), cluster)
+
+        self.assertEqual(variant.topology, 'disaggregated')
+        self.assertEqual(variant.inference['prefill_node_list'], ['n0', 'n2'])
+        self.assertEqual(variant.inference['decode_node_list'], ['n1', 'n3'])
+        self.assertEqual(variant.inference['proxy_router_node'], 'n0')
+        self.assertEqual(variant.inference['benchmark_serv_node'], 'n0')
+        self.assertEqual(variant.inference['prefill_coordinator_addr'], 'n0')
+        self.assertEqual(variant.inference['decode_coordinator_addr'], 'n1')
+
+    def test_disagg_odd_nnodes_fails_during_load(self):
+        config_dir = Path(__file__).resolve().parents[4] / 'input' / 'config_file' / 'inference' / 'sglang'
+        config_path = config_dir / 'mi3xx_sglang_llama_70b_disaggregated.json'
+        raw = self._replace_changeme(json.loads(config_path.read_text(encoding='utf-8')))
+        raw['threshold_json'] = str((config_dir / raw['threshold_json']).resolve())
+        raw['server_params']['nnodes'] = '3'
+
+        with tempfile.TemporaryDirectory() as tmp:
+            temp_config = Path(tmp) / config_path.name
+            temp_config.write_text(json.dumps(raw), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'even nnodes'):
                 loader.load_variant(str(temp_config), {'username': 'test'})

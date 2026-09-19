@@ -61,6 +61,81 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertEqual(sglang_common.normalize_hosts(None), [])
         self.assertEqual(sglang_common.normalize_hosts('host1'), ['host1'])
 
+    def test_resolve_single_execution_hosts_uses_every_cluster_node(self):
+        hosts = sglang_common.resolve_single_execution_hosts(
+            {
+                'node_dict': {
+                    'node-a': {'mgmt_ip': 'node-a'},
+                    'node-b': {'mgmt_ip': 'node-b'},
+                }
+            }
+        )
+        self.assertEqual(hosts, ['node-a', 'node-b'])
+
+    def test_resolve_single_execution_hosts_rejects_empty_cluster(self):
+        with self.assertRaisesRegex(ValueError, 'at least one host'):
+            sglang_common.resolve_single_execution_hosts({'node_dict': {}})
+
+    def test_resolve_distributed_execution_hosts_takes_first_nnodes(self):
+        cluster = {
+            'node_dict': {
+                'node-a': {'mgmt_ip': 'node-a'},
+                'node-b': {'mgmt_ip': 'node-b'},
+                'node-c': {'mgmt_ip': 'node-c'},
+            }
+        }
+        hosts = sglang_common.resolve_distributed_execution_hosts(cluster, {'nnodes': 2})
+        self.assertEqual(hosts, ['node-a', 'node-b'])
+
+    def test_resolve_distributed_execution_hosts_ignores_pinned_server_list(self):
+        cluster = {
+            'node_dict': {
+                'node-a': {'mgmt_ip': 'node-a'},
+                'node-b': {'mgmt_ip': 'node-b'},
+            }
+        }
+        hosts = sglang_common.resolve_distributed_execution_hosts(
+            cluster,
+            {
+                'nnodes': 2,
+                'server_node_list': ['node-b', 'node-a'],
+                'benchmark_serv_node': 'node-b',
+            },
+        )
+        self.assertEqual(hosts, ['node-a', 'node-b'])
+
+    def test_resolve_distributed_execution_hosts_rejects_nnodes_larger_than_cluster(self):
+        with self.assertRaisesRegex(ValueError, 'requests 4 nodes'):
+            sglang_common.resolve_distributed_execution_hosts(
+                {'node_dict': {'node-a': {}, 'node-b': {}}},
+                {'nnodes': 4},
+            )
+
+    def test_assign_disagg_pd_roles_two_nodes(self):
+        roles = sglang_common.assign_disagg_pd_roles(['n0', 'n1', 'n2'], 2)
+        self.assertEqual(roles['prefill_node_list'], ['n0'])
+        self.assertEqual(roles['decode_node_list'], ['n1'])
+        self.assertEqual(roles['proxy_router_node'], 'n0')
+        self.assertEqual(roles['benchmark_serv_node'], 'n0')
+        self.assertEqual(roles['prefill_coordinator_addr'], 'n0')
+        self.assertEqual(roles['decode_coordinator_addr'], 'n1')
+
+    def test_assign_disagg_pd_roles_four_and_six_nodes(self):
+        four = sglang_common.assign_disagg_pd_roles(['n0', 'n1', 'n2', 'n3'], 4)
+        self.assertEqual(four['prefill_node_list'], ['n0', 'n2'])
+        self.assertEqual(four['decode_node_list'], ['n1', 'n3'])
+        six = sglang_common.assign_disagg_pd_roles(['n0', 'n1', 'n2', 'n3', 'n4', 'n5'], 6)
+        self.assertEqual(six['prefill_node_list'], ['n0', 'n2', 'n3'])
+        self.assertEqual(six['decode_node_list'], ['n1', 'n4', 'n5'])
+
+    def test_assign_disagg_pd_roles_rejects_odd_and_too_small(self):
+        with self.assertRaisesRegex(ValueError, 'even nnodes'):
+            sglang_common.assign_disagg_pd_roles(['n0', 'n1', 'n2'], 3)
+        with self.assertRaisesRegex(ValueError, 'nnodes >= 2'):
+            sglang_common.assign_disagg_pd_roles(['n0', 'n1'], 1)
+        with self.assertRaisesRegex(ValueError, 'requests 4 nodes'):
+            sglang_common.assign_disagg_pd_roles(['n0', 'n1'], 4)
+
     def test_add_cli_flags_block_includes_activated_long_context_flags(self):
         block = sglang_common.add_cli_flags_block(
             {

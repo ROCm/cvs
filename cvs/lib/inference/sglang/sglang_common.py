@@ -17,7 +17,22 @@ from cvs.lib.utils.verdict import ThresholdViolation, _check_one, evaluate_all
 log = globals.log
 
 DEFAULT_GPU_MEM_THRESHOLD_MB = 5000
+DEFAULT_SGLANG_SERVE_PORT = "8000"
+DEFAULT_SGLANG_DIST_INIT_PORT = "40001"
+DEFAULT_SGLANG_PREFILL_SERV_PORT = "30001"
+DEFAULT_SGLANG_DECODE_SERV_PORT = "30002"
+DEFAULT_SGLANG_PREFILL_COORD_PORT = "40001"
+DEFAULT_SGLANG_DECODE_COORD_PORT = "40002"
 AMD_SMI_METRIC_CMD = "sudo amd-smi metric --json"
+
+_DISAGG_PINNED_ROLE_KEYS = (
+    "prefill_node_list",
+    "decode_node_list",
+    "proxy_router_node",
+    "benchmark_serv_node",
+    "prefill_coordinator_addr",
+    "decode_coordinator_addr",
+)
 
 _SERVER_READY_RE = re.compile(
     r"server is fired up and ready to roll",
@@ -34,6 +49,77 @@ def as_node_list(value) -> list:
     if isinstance(value, str):
         return [value]
     return list(value)
+
+
+def resolve_single_execution_hosts(cluster_dict):
+    """Every ``cluster.json`` node; ``sglang_single`` ignores ``benchmark_serv_node``."""
+    hosts = [host for host in (cluster_dict.get("node_dict") or {}) if host]
+    if not hosts:
+        raise ValueError("sglang_single requires at least one host in cluster node_dict")
+    return hosts
+
+
+def resolve_distributed_execution_hosts(cluster_dict, inference):
+    """First ``nnodes`` hosts from ``cluster.json``; rank-0 is master and benchmark.
+
+    Ignores ``server_node_list`` and ``benchmark_serv_node``. Fails if ``nnodes``
+    is larger than the cluster.
+    """
+    hosts = [host for host in (cluster_dict.get("node_dict") or {}) if host]
+    nnodes = int(inference.get("nnodes") or 0)
+    if nnodes < 2:
+        raise ValueError(f"sglang_distributed requires nnodes >= 2, got {nnodes}")
+    if len(hosts) < nnodes:
+        raise ValueError(
+            f"sglang_distributed requests {nnodes} nodes but cluster.json only has {len(hosts)}"
+        )
+    return hosts[:nnodes]
+
+
+def assign_disagg_pd_roles(hosts, nnodes):
+    """Split hosts into equal prefill/decode groups.
+
+    Rank-0 is prefill coordinator, proxy router, and benchmark. Rank-1 is decode
+    coordinator. Remaining hosts are split in half (prefill first, then decode).
+    """
+    nnodes = int(nnodes or 0)
+    if nnodes < 2:
+        raise ValueError(f"sglang_disagg requires nnodes >= 2, got {nnodes}")
+    if nnodes % 2:
+        raise ValueError(
+            f"sglang_disagg requires an even nnodes so prefill and decode counts match, got {nnodes}"
+        )
+    selected = [host for host in hosts if host]
+    if len(selected) < nnodes:
+        raise ValueError(
+            f"sglang_disagg requests {nnodes} nodes but the cluster only has {len(selected)}"
+        )
+    selected = selected[:nnodes]
+    remaining = selected[2:]
+    extra = len(remaining) // 2
+    prefill = [selected[0]] + remaining[:extra]
+    decode = [selected[1]] + remaining[extra:]
+    return {
+        "hosts": selected,
+        "prefill_node_list": prefill,
+        "decode_node_list": decode,
+        "proxy_router_node": selected[0],
+        "benchmark_serv_node": selected[0],
+        "prefill_coordinator_addr": selected[0],
+        "decode_coordinator_addr": selected[1],
+    }
+
+
+def resolve_disagg_execution_roles(cluster_dict, inference):
+    """PD roles from the first ``nnodes`` hosts in ``cluster.json``."""
+    hosts = [host for host in (cluster_dict.get("node_dict") or {}) if host]
+    return assign_disagg_pd_roles(hosts, inference.get("nnodes"))
+
+
+def stamp_disagg_roles(inference, roles):
+    inference["_execution_hosts"] = list(roles["hosts"])
+    for key in _DISAGG_PINNED_ROLE_KEYS:
+        inference[key] = roles[key]
 
 
 def resolve_server_node_list(inf_dict: Mapping[str, Any]) -> list[str]:

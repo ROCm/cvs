@@ -11,10 +11,10 @@ Run:
     --config_file <sglang_config.json> \\
     --html=~/cvs_results/sglang_distributed.html
 
-Set ``server_node_list`` (or ``prefill_node_list`` + ``decode_node_list`` whose union
-is every server rank) and matching ``nnodes`` in the inference config. All listed
-nodes get a container and participate in the unified server. ``benchmark_serv_node``
-runs smoke/bench/lm-eval (defaults to rank-0 when omitted).
+Set ``nnodes`` in the inference config. The suite takes that many hosts from
+``cluster.json`` (in ``node_dict`` order). The first host is rank-0, the dist-init
+master, and the benchmark node. If ``nnodes`` is larger than the cluster, the suite
+fails immediately. HTTP defaults to port 8000; dist-init defaults to 40001.
 
 With ``--html``, session end also writes ``sglang_run_deck.html`` (plus JSON
 and interactive viewer) via ``cvs/lib/report/profiles/sglang.json`` (all SGLang stems).

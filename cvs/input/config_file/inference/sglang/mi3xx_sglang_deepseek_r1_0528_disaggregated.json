@@ -63,19 +63,7 @@
     "context_length": "163840",
     "chunked_prefill_size": "8192",
     "max_prefill_tokens": "8192",
-    "add_flags": ["--attention-backend aiter"],
-    "prefill_node_list": ["<changeme>", "<changeme>"],
-    "decode_node_list": ["<changeme>", "<changeme>"],
-    "proxy_router_node": "<changeme>",
-    "benchmark_serv_node": "<changeme>",
-    "prefill_serv_port": "30001",
-    "decode_serv_port": "30002",
-    "proxy_router_port": "8000",
-    "prefill_coordinator_addr": "<changeme>",
-    "decode_coordinator_addr": "<changeme>",
-    "prefill_coordinator_port": "40001",
-    "decode_coordinator_port": "40002",
-    "proxy_router_serv_port": "8000"
+    "add_flags": ["--attention-backend aiter"]
   },
   "benchmark_params": {
     "backend": "sglang",

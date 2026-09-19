@@ -4,10 +4,9 @@ All rights reserved.
 
 Single-node SGLang inference controller (no PD disaggregation).
 
-One container on ``benchmark_serv_node`` (via ``ContainerOrchestrator``) runs a unified
-``sglang.launch_server`` on ``proxy_router_serv_port``. Benchmark/smoke/lm-eval
-traffic hits that port via ``client_host`` (default ``127.0.0.1`` inside the
-container).
+Every host in ``cluster.json`` gets its own container and a full-model unified
+``sglang.launch_server`` (local TP). HTTP defaults to port 8000. Benchmark, smoke,
+and lm-eval traffic hits ``127.0.0.1`` inside each container.
 '''
 
 from __future__ import annotations
@@ -18,12 +17,11 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.lib.inference.sglang.sglang_common import (
+    DEFAULT_SGLANG_SERVE_PORT,
     add_cli_flags_block,
     add_export_env_block,
     as_node_list,
-    first_output,
     parse_inference_bench_results,
     perf_enforce_thresholds,
     poll_for_inference_completion as poll_for_inference_completion_common,
@@ -40,7 +38,7 @@ log = globals.log
 
 
 class SglangSingle:
-    """Unified single-node SGLang serve + benchmark via ``ContainerOrchestrator``."""
+    """Independent full-model SGLang serve + benchmark on every cluster host."""
 
     def __init__(
         self,
@@ -76,7 +74,8 @@ class SglangSingle:
         self.container_name = self.inf_dict['container_name']
         self.log_dir = self.inf_dict['log_dir']
         self.inference_poll_iterations = self.bp_dict['inference_poll_iterations']
-        self.benchmark_serv_node = self._resolve_benchmark_serv_node()
+        self.execution_hosts = self._resolve_execution_hosts()
+        self.inf_dict['benchmark_serv_node'] = list(self.execution_hosts)
 
         self.inference_start_time = self._host_exec('date +"%a %b %e %H:%M"')
         self.inference_end_time = None
@@ -84,64 +83,67 @@ class SglangSingle:
         log.info('single-node inference_dict = %s', self.inf_dict)
         log.info('single-node benchmark_params_dict = %s', self.bp_dict)
         log.info(
-            'single-node client_host=%s router_serv_port=%s benchmark_serv_node=%s',
+            'single-node client_host=%s router_serv_port=%s execution_hosts=%s',
             self.client_host,
             self.router_serv_port,
-            self.benchmark_serv_node,
+            self.execution_hosts,
         )
 
-    def _resolve_benchmark_serv_node(self) -> str:
-        raw = self.inf_dict.get('benchmark_serv_node')
-        if not raw:
-            raise ValueError("SglangSingle requires benchmark_serv_node in the inference config")
-        hosts = as_node_list(raw)
-        if len(hosts) != 1:
-            raise ValueError(f"SglangSingle requires exactly one benchmark_serv_node, got {hosts!r}")
-        return hosts[0]
+    def _resolve_execution_hosts(self):
+        hosts = list(self.orch.hosts or [])
+        if not hosts:
+            raise ValueError("SglangSingle requires at least one orchestrator host from cluster.json")
+        return hosts
+
+    def _node_log_dir(self, host):
+        return f"{self.log_dir}/{host}"
+
+    def _server_log_path(self, host):
+        return f"{self._node_log_dir(host)}/server.log"
+
+    def _bench_log_path(self, host):
+        return f"{self._node_log_dir(host)}/benchmark_results.log"
 
     @property
-    def _head_host(self) -> str:
-        return self.benchmark_serv_node
-
-    @property
-    def server_log_path(self) -> str:
-        return f"{self.log_dir}/server_node/server.log"
-
-    @property
-    def router_serv_port(self) -> str:
-        """Unified server listen/client port (``proxy_router_serv_port``)."""
-        return str(self.inf_dict['proxy_router_serv_port'])
+    def router_serv_port(self):
+        """Unified server listen/client port (defaults to 8000)."""
+        return str(self.inf_dict.get('proxy_router_serv_port') or DEFAULT_SGLANG_SERVE_PORT)
 
     @property
     def client_host(self) -> str:
         """HTTP client target when smoke/bench/lm-eval run inside the same container."""
         return resolve_client_host(self.inf_dict, unified_server=True)
 
-    def _container_exec(self, cmd: str, *, timeout: int | None = None) -> dict:
-        """Run ``cmd`` inside the container."""
-        return self.orch.exec(cmd, timeout=timeout)
+    def _container_exec(self, cmd, *, timeout=None, hosts=None):
+        """Run ``cmd`` inside the container (default: every execution host)."""
+        kwargs = {}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        if hosts is not None:
+            kwargs["hosts"] = as_node_list(hosts)
+        return self.orch.exec(cmd, **kwargs)
 
-    def _container_exec_text(self, cmd: str, *, timeout: int | None = None) -> str:
-        return first_output(self._container_exec(cmd, timeout=timeout))
+    def _container_exec_per_host(self, cmd_for_host, *, timeout=None):
+        cmds = [cmd_for_host(host) for host in self.execution_hosts]
+        kwargs = {}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        return self.orch.exec_cmd_list(cmds, **kwargs)
 
-    def _host_exec(self, cmd: str, *, timeout: int | None = None) -> dict:
-        """Run ``cmd`` on ``benchmark_serv_node`` (baremetal), e.g. amd-smi / dmesg."""
-        host = self.benchmark_serv_node
-        if host == self.orch.head_node and len(self.orch.hosts) == 1:
+    def _host_exec(self, cmd, *, timeout=None):
+        """Run ``cmd`` on every execution host (baremetal), e.g. amd-smi / dmesg."""
+        if len(self.execution_hosts) == 1 and self.execution_hosts[0] == self.orch.head_node:
             return self.orch.head.exec(cmd, timeout=timeout)
-        return BaremetalOrchestrator.exec(self.orch, cmd, hosts=[host], timeout=timeout)
+        return self.orch.all.exec(cmd, timeout=timeout)
 
-    def _host_exec_text(self, cmd: str, *, timeout: int | None = None) -> str:
-        return first_output(self._host_exec(cmd, timeout=timeout))
-
-    def _apply_inf_defaults(self) -> None:
+    def _apply_inf_defaults(self):
         self.inf_dict.setdefault('container_image', 'lmsysorg/sglang:dev')
         self.inf_dict.setdefault('container_name', 'sglang_container')
         self.inf_dict.setdefault('nccl_debug', 'ERROR')
         self.inf_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.inf_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
         self.inf_dict.setdefault('log_level', 'info')
-        self.inf_dict.setdefault('proxy_router_serv_port', '8000')
+        self.inf_dict.setdefault('proxy_router_serv_port', DEFAULT_SGLANG_SERVE_PORT)
 
     def _apply_bp_defaults(self) -> None:
         self.bp_dict.setdefault('backend', 'sglang')
@@ -170,9 +172,13 @@ class SglangSingle:
         self._container_exec(write_cmd)
         time.sleep(5)
 
-    def launch_server(self, dtype='auto', kv_cache_dtype='auto') -> None:
-        """Launch one unified SGLang server (no PD disaggregation)."""
-        log.info('Launch unified SGLang server on 0.0.0.0:%s', self.router_serv_port)
+    def launch_server(self, dtype='auto', kv_cache_dtype='auto'):
+        """Launch one unified SGLang server on every cluster host (full local TP)."""
+        log.info(
+            'Launch unified SGLang server on 0.0.0.0:%s hosts=%s',
+            self.router_serv_port,
+            self.execution_hosts,
+        )
         flags_block = add_cli_flags_block(self.bp_dict, indent='    ')
         launch_body = (
             f"python3 -m sglang.launch_server --model {self.bp_dict['model']} \\\n"
@@ -187,28 +193,44 @@ class SglangSingle:
             f"{flags_block}\n"
             f"    --log-level {self.inf_dict['log_level']}\n"
         )
-        start_cmd = "bash -c " + shlex.quote(
-            f"cat > /tmp/server_launch_script.sh <<'EOF'\n{launch_body}EOF\n"
-            f"chmod 755 /tmp/server_launch_script.sh\n"
-            f"mkdir -p {self.log_dir}/server_node\n"
-            f"source /tmp/server_env_script.sh\n"
-            f"nohup /tmp/server_launch_script.sh > {self.server_log_path} 2>&1 &"
-        )
-        self._container_exec(start_cmd)
+
+        def start_cmd(host):
+            log_path = self._server_log_path(host)
+            return "bash -c " + shlex.quote(
+                f"cat > /tmp/server_launch_script.sh <<'EOF'\n{launch_body}EOF\n"
+                f"chmod 755 /tmp/server_launch_script.sh\n"
+                f"mkdir -p {shlex.quote(self._node_log_dir(host))}\n"
+                f"source /tmp/server_env_script.sh\n"
+                f"nohup /tmp/server_launch_script.sh > {shlex.quote(log_path)} 2>&1 &"
+            )
+
+        self._container_exec_per_host(start_cmd)
         time.sleep(5)
 
-    def poll_for_server_ready(self, no_of_iterations=16) -> None:
+    def poll_for_server_ready(self, no_of_iterations=16):
+        pending = set(self.execution_hosts)
         for iteration in range(1, no_of_iterations):
-            log.info('Starting server readiness poll iteration %d', iteration)
-            grep_cmd = f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} {shlex.quote(self.server_log_path)} || true"
-            text = self._container_exec_text(grep_cmd)
-            if _SERVER_READY_RE.search(text):
+            log.info('Starting server readiness poll iteration %d remaining=%s', iteration, sorted(pending))
+
+            def grep_cmd(host):
+                return (
+                    f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} "
+                    f"{shlex.quote(self._server_log_path(host))} || true"
+                )
+
+            out_dict = self._container_exec_per_host(grep_cmd)
+            ready = [host for host in list(pending) if _SERVER_READY_RE.search(out_dict.get(host) or '')]
+            pending.difference_update(ready)
+            if not pending:
                 log.info('Wait 60 secs before serving traffic')
                 time.sleep(60)
                 return
-            log.info('Wait 120 secs and continue polling')
+            log.info('Wait 120 secs and continue polling; not ready: %s', sorted(pending))
             time.sleep(120)
-        fail_test(f'Single-node server on {self._head_host} did not reach ready state in {no_of_iterations} iterations')
+        fail_test(
+            f'Single-node servers did not reach ready state in {no_of_iterations} iterations '
+            f'on hosts {sorted(pending)}'
+        )
 
     def poll_and_check_server_ready(self) -> None:
         log.info('Waiting 120 secs after launching server')
@@ -237,35 +259,47 @@ class SglangSingle:
             if re.search('fail', out or '', re.I):
                 fail_test(f'Some failures observed in test rmsnorm on node {node}')
 
-    def verify_openai_compatible_endpoints(self) -> list[str]:
-        return verify_openai_compatible_endpoints_common(
-            port=int(self.router_serv_port),
-            model_name=self.bp_dict['model'],
-            client_host=self.client_host,
-            log_dir=self.log_dir,
-            exec_probe=lambda cmd, timeout: self._container_exec(cmd, timeout=timeout),
-            probe_host_key=self._head_host,
-        )
+    def verify_openai_compatible_endpoints(self):
+        summaries = []
+        for host in self.execution_hosts:
+            summaries.extend(
+                verify_openai_compatible_endpoints_common(
+                    port=int(self.router_serv_port),
+                    model_name=self.bp_dict['model'],
+                    client_host=self.client_host,
+                    log_dir=self._node_log_dir(host),
+                    exec_probe=lambda cmd, timeout, h=host: self._container_exec(
+                        cmd, hosts=[h], timeout=timeout
+                    ),
+                    probe_host_key=host,
+                )
+            )
+        return summaries
 
-    def benchserv_test_random(self, d_type='auto', *, verify=True) -> None:
+    def benchserv_test_random(self, d_type='auto', *, verify=True):
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
         self._bench_num_prompts = int(i_dict['num_prompts'])
-        inner = (
-            f"mkdir -p {self.log_dir}/benchmark_node\n"
-            f"source /tmp/server_env_script.sh\n"
-            f"export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}\n"
-            f"python3 -m sglang.bench_serving \\\n"
-            f"  --backend {i_dict['backend']} \\\n"
-            f"  --dataset-name random \\\n"
-            f"  --num-prompts {i_dict['num_prompts']} \\\n"
-            f"  --max-concurrency {self.bp_dict['max_concurrency']} \\\n"
-            f"  --random-input {i_dict['input_length']} \\\n"
-            f"  --random-output {i_dict['output_length']} \\\n"
-            f"  --random-range-ratio {i_dict['random_range_ratio']} \\\n"
-            f"  --host {self.client_host} --port {self.router_serv_port} \\\n"
-            f"  > {self.log_dir}/benchmark_node/benchmark_results.log 2>&1"
-        )
-        self._container_exec("bash -c " + shlex.quote(inner), timeout=1000)
+
+        def inner(host):
+            log_dir = self._node_log_dir(host)
+            log_path = self._bench_log_path(host)
+            return "bash -c " + shlex.quote(
+                f"mkdir -p {shlex.quote(log_dir)}\n"
+                f"source /tmp/server_env_script.sh\n"
+                f"export PYTHONPATH=/sgl-workspace/sglang/python:${{PYTHONPATH:-}}\n"
+                f"python3 -m sglang.bench_serving \\\n"
+                f"  --backend {i_dict['backend']} \\\n"
+                f"  --dataset-name random \\\n"
+                f"  --num-prompts {i_dict['num_prompts']} \\\n"
+                f"  --max-concurrency {self.bp_dict['max_concurrency']} \\\n"
+                f"  --random-input {i_dict['input_length']} \\\n"
+                f"  --random-output {i_dict['output_length']} \\\n"
+                f"  --random-range-ratio {i_dict['random_range_ratio']} \\\n"
+                f"  --host {self.client_host} --port {self.router_serv_port} \\\n"
+                f"  > {shlex.quote(log_path)} 2>&1"
+            )
+
+        self._container_exec_per_host(inner, timeout=1000)
         time.sleep(5)
         self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
 
@@ -295,10 +329,10 @@ class SglangSingle:
     def poll_for_inference_completion(
         self, iterations=10, waittime_between_iters=60, total_timeout=3600, require_all_nodes=True
     ):
-        log_path = f"{self.log_dir}/benchmark_node/benchmark_results.log"
-
         def fetch_log_tail():
-            return self._container_exec(f"tail -1000 {shlex.quote(log_path)}")
+            return self._container_exec_per_host(
+                lambda host: f"tail -1000 {shlex.quote(self._bench_log_path(host))}"
+            )
 
         result = poll_for_inference_completion_common(
             fetch_log_tail,

@@ -2,9 +2,10 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Disaggregated (PD) SGLang benchmark: prefill, decode, proxy router, and benchmark
-client roles from the inference config. Containers are launched only on the union
-of role hosts (not every host in cluster.json unless all are assigned roles).
+Disaggregated (PD) SGLang benchmark: first even ``nnodes`` hosts from
+``cluster.json``. Rank-0 is prefill coordinator, proxy router, and benchmark.
+Rank-1 is decode coordinator. Remaining hosts split equally into prefill and
+decode (1P/1D, 2P/2D, 3P/3D, ...). Odd ``nnodes`` fails immediately.
 
 Run:
   pytest cvs/tests/inference/sglang/sglang_disagg_distributed.py \\
@@ -12,8 +13,8 @@ Run:
     --config_file cvs/input/config_file/inference/sglang/mi3xx_sglang_llama_70b_disaggregated.json \\
     --html=~/cvs_results/sglang_disagg.html
 
-``cluster_container.json`` ``node_dict`` must include all prefill/decode/router/bench hosts.
-Workload, runtime, and accuracy settings come from the unified SGLang config.
+HTTP defaults to port 8000; prefill/decode serve ports default to 30001/30002;
+coordinator ports default to 40001/40002.
 
 With ``--html``, session end also writes ``sglang_run_deck.html`` (plus JSON
 and interactive viewer) via ``cvs/lib/report/profiles/sglang.json`` (all SGLang stems).

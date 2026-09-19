@@ -57,11 +57,7 @@
     "tokenizer_mode": "auto",
     "inference_poll_iterations": "16",
     "context_length": "205000",
-    "add_flags": ["--attention-backend aiter"],
-    "server_node_list": ["<changeme>", "<changeme>"],
-    "dist_init_port": "40001",
-    "benchmark_serv_node": "<changeme>",
-    "proxy_router_serv_port": "8000"
+    "add_flags": ["--attention-backend aiter"]
   },
   "benchmark_params": {
         "backend": "sglang",

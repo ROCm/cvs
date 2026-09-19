@@ -25,7 +25,13 @@ from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.lib.inference.sglang.sglang_common import (
     add_cli_flags_block,
     add_export_env_block,
+    assign_disagg_pd_roles,
     collect_sglang_gpu_topology,
+    DEFAULT_SGLANG_DECODE_COORD_PORT,
+    DEFAULT_SGLANG_DECODE_SERV_PORT,
+    DEFAULT_SGLANG_PREFILL_COORD_PORT,
+    DEFAULT_SGLANG_PREFILL_SERV_PORT,
+    DEFAULT_SGLANG_SERVE_PORT,
     first_output,
     format_sglang_gpu_topology_lines,
     normalize_hosts,
@@ -34,6 +40,7 @@ from cvs.lib.inference.sglang.sglang_common import (
     poll_for_inference_completion as poll_for_inference_completion_common,
     resolve_client_host,
     run_lm_eval_benchmark_test as run_lm_eval_benchmark_test_common,
+    stamp_disagg_roles,
     verify_inference_results as verify_inference_results_common,
     verify_inference_results_subtests as verify_inference_results_subtests_common,
     verify_openai_compatible_endpoints as verify_openai_compatible_endpoints_common,
@@ -104,14 +111,6 @@ class SglangDisaggPD:
         self.inf_dict = inference_config_dict
         self.bp_dict = benchmark_params_dict
 
-        self.prefill_node_list = normalize_hosts(self.inf_dict['prefill_node_list'])
-        self.decode_node_list = normalize_hosts(self.inf_dict['decode_node_list'])
-        self.prefill_nnodes = len(self.prefill_node_list)
-        self.decode_nnodes = len(self.decode_node_list)
-
-        self.proxy_node = normalize_hosts(self.inf_dict['proxy_router_node'])
-        self.benchmark_serv_node = normalize_hosts(self.inf_dict['benchmark_serv_node'])
-
         self.job_cmd = ''
         self.job_cmd_list = []
         self.inference_results_dict = {}
@@ -123,6 +122,7 @@ class SglangDisaggPD:
         self.home_dir = os.path.expanduser("~")
         self._apply_inf_defaults()
         self._apply_bp_defaults()
+        self._bind_roles()
 
         self.container_name = self.inf_dict['container_name']
         self.nccl_ib_hca = self.inf_dict['nccl_ib_hca']
@@ -154,7 +154,7 @@ class SglangDisaggPD:
     @property
     def router_serv_port(self) -> str:
         """Client-facing proxy router port (bench/smoke/lm-eval)."""
-        return str(self.inf_dict['proxy_router_serv_port'])
+        return str(self.inf_dict.get('proxy_router_serv_port') or DEFAULT_SGLANG_SERVE_PORT)
 
     @property
     def client_host(self) -> str:
@@ -220,10 +220,12 @@ class SglangDisaggPD:
         self.inf_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.inf_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
         self.inf_dict.setdefault('log_level', 'info')
-        self.inf_dict.setdefault('prefill_serv_port', '30001')
-        self.inf_dict.setdefault('decode_serv_port', '30002')
-        self.inf_dict.setdefault('proxy_router_port', '8000')
-        self.inf_dict.setdefault('proxy_router_serv_port', '8000')
+        self.inf_dict.setdefault('prefill_serv_port', DEFAULT_SGLANG_PREFILL_SERV_PORT)
+        self.inf_dict.setdefault('decode_serv_port', DEFAULT_SGLANG_DECODE_SERV_PORT)
+        self.inf_dict.setdefault('proxy_router_port', DEFAULT_SGLANG_SERVE_PORT)
+        self.inf_dict.setdefault('proxy_router_serv_port', DEFAULT_SGLANG_SERVE_PORT)
+        self.inf_dict.setdefault('prefill_coordinator_port', DEFAULT_SGLANG_PREFILL_COORD_PORT)
+        self.inf_dict.setdefault('decode_coordinator_port', DEFAULT_SGLANG_DECODE_COORD_PORT)
         self.inf_dict.setdefault('max_concurrent_requests', '-1')
         self.inf_dict.setdefault('queue_size', '100')
         self.inf_dict.setdefault('queue_timeout_secs', '60')
@@ -250,6 +252,17 @@ class SglangDisaggPD:
         self.bp_dict.setdefault('metric_percentiles', '99')
         self.bp_dict.setdefault('inference_poll_iterations', '16')
         self.bp_dict.setdefault('memory_fraction', '0.85')
+
+    def _bind_roles(self):
+        if not (self.inf_dict.get('prefill_node_list') and self.inf_dict.get('decode_node_list')):
+            hosts = list(self.inf_dict.get('_execution_hosts') or self.orch.hosts or [])
+            stamp_disagg_roles(self.inf_dict, assign_disagg_pd_roles(hosts, self.inf_dict.get('nnodes')))
+        self.prefill_node_list = normalize_hosts(self.inf_dict['prefill_node_list'])
+        self.decode_node_list = normalize_hosts(self.inf_dict['decode_node_list'])
+        self.prefill_nnodes = len(self.prefill_node_list)
+        self.decode_nnodes = len(self.decode_node_list)
+        self.proxy_node = normalize_hosts(self.inf_dict['proxy_router_node'])
+        self.benchmark_serv_node = normalize_hosts(self.inf_dict['benchmark_serv_node'])
 
     def install_container_packages(
         self,
