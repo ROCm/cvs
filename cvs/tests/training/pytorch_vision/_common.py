@@ -7,6 +7,10 @@ module is a helper, not a runnable suite.
 """
 
 import html as _html
+from collections import defaultdict
+
+import random
+import statistics
 import time
 import uuid as _uuid
 from pathlib import Path as _Path
@@ -144,6 +148,78 @@ def verify_environment(orch, variant_config, lifecycle, request):
     log.info("PyTorch Vision environment: %s", summary)
 
 
+def _run_sweep_once(orch, variant_config, sweep_name):
+    """Run one sweep end to end and return its per-host metrics."""
+    job = PyTorchVisionJob(orch, variant_config, sweep_name)
+    globals.error_list = []
+    try:
+        try:
+            job.stage_benchmark()
+            job.run_benchmark()
+            job.verify_training_log()
+            host_results = job.parse_results()
+        finally:
+            try:
+                if job.training_start_time:
+                    job.scan_dmesg_for_errors()
+            finally:
+                job.stop_training_processes()
+        if globals.error_list:
+            pytest.fail("dmesg verification found errors: " + "; ".join(globals.error_list))
+    except Exception:
+        raise
+    return job, host_results
+
+
+def _median_across_repeats(repeats):
+    """Median each metric per host across repeats of the same sweep.
+
+    Sweeps read the same shards back to back, so a sweep's position in the run
+    decides how much of its input is already in the page cache. Repeating the
+    sweeps in a reshuffled order each round and taking the median keeps that
+    from being attributed to the configuration under test.
+    """
+    hosts = set()
+    for run in repeats:
+        hosts.update(run)
+    merged = {}
+    for host in hosts:
+        values = defaultdict(list)
+        for run in repeats:
+            for metric, value in (run.get(host) or {}).items():
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    values[metric].append(value)
+                else:
+                    values[metric].append(float(value))
+        host_metrics = {}
+        for metric, collected in values.items():
+            numeric = [v for v in collected if isinstance(v, float)]
+            host_metrics[metric] = statistics.median(numeric) if numeric else collected[-1]
+        merged[host] = host_metrics
+    return merged
+
+
+def _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_series):
+    """Run every enabled sweep ``sweep_repeats`` times, reshuffling each round."""
+    training = variant_config.training
+    names = [sweep.name for sweep in training.enabled_sweeps()]
+    rng = random.Random(training.sweep_order_seed)
+    collected = {name: [] for name in names}
+    last_loss = {}
+    for _round in range(training.sweep_repeats):
+        order = list(names)
+        rng.shuffle(order)
+        for name in order:
+            job, host_results = _run_sweep_once(orch, variant_config, name)
+            collected[name].append(host_results)
+            last_loss[name] = job.loss_series
+    for name in names:
+        training_results[name] = _median_across_repeats(collected[name])
+        loss_series[name] = last_loss[name]
+    _refresh_ga_overhead(variant_config, training_results)
+    _refresh_pipeline_overheads(variant_config, training_results)
+
+
 def _execute_sweep(  # noqa: PLR0913
     orch, variant_config, sweep_name, training_results, loss_series
 ):
@@ -198,7 +274,12 @@ def training(  # noqa: PLR0913
         pytest.skip("a prior lifecycle stage failed")
     start = time.monotonic()
     if sweep_name not in training_results:
-        _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series)
+        if variant_config.training.sweep_repeats > 1:
+            # Repeats are scheduled across all sweeps rather than per sweep, so
+            # every sweep takes a turn in each cache state.
+            _execute_sweeps_with_repeats(orch, variant_config, training_results, loss_series)
+        else:
+            _execute_sweep(orch, variant_config, sweep_name, training_results, loss_series)
     lifecycle.record(request.node.nodeid, "training", time.monotonic() - start)
 
 

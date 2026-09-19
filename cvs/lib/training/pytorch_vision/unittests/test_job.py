@@ -62,6 +62,7 @@ def _variant():
         learning_rate=0.1,
         optimizer="sgd",
         harness="native",
+        fsdp_strategy="full_shard",
         momentum=0.9,
         weight_decay=0.0001,
         lr_schedule=SimpleNamespace(
@@ -505,6 +506,13 @@ class TestHFTrainerHarness(unittest.TestCase):
         command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
         self.assertIn("--harness hf_trainer", command)
         self.assertIn("--model-id google/vit-base-patch16-224", command)
+
+    def test_fsdp_strategy_reaches_the_launcher(self):
+        variant = _variant()
+        variant.training.harness = "hf_trainer"
+        variant.training.fsdp_strategy = "hybrid_shard"
+        command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
+        self.assertIn("--fsdp-strategy hybrid_shard", command)
 
     def test_pretrained_flag_is_opt_in(self):
         variant = _variant()

@@ -1,0 +1,135 @@
+{
+  "_format_note": "PyTorch Vision training config. The cluster file owns node access; this file owns the container and the training workload; the sibling *_threshold.json owns per-sweep metric gates. Run with: cvs run pytorch_vision_single|pytorch_vision_distributed --cluster_file <cluster>.json --config_file <this>.json --html <out>.html --self-contained-html",
+  "schema_version": 1,
+  "framework": "pytorch_vision_training",
+  "gpu_name": "MI325X",
+  "_thresholds_comment": "Gating is threshold-driven and requires enforce_thresholds=true. A threshold entry with kind=info always passes and records the value. Calibrate on the target filesystem and fabric before enforcing numeric limits.",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_pytorch_vision_vit-base-hf_distributed_hybrid_shard_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "<changeme-imagenet-host-path>",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "google/vit-base-patch16-224",
+    "remote": 0
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "cvs_pytorch_vision_w6_hybrid_shard",
+    "image": "cvs/pytorch-vision-hf:rocm7.2.4-py3.12-torch2.10-hf",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-imagenet-host-path>:/datasets/imagenet-1k:ro"
+        ],
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri"
+        ]
+      }
+    }
+  },
+  "_training_comment": "training{} defines the workload. `workload` is the scorecard row id (W1 ResNet-50, W3 ViT-B/16) and is cross-checked against the result artifact. `distributed` must match the suite you invoke and the cluster node count. `run_mode` selects the profile (smoke|perf|train_5k|train_to_accuracy) and determines which rows are gated. `optimizer` is sgd or adamw; transformer backbones need adamw.",
+  "_sweeps_comment": "training.sweeps[] are full training runs. Each `name` is also its threshold cell key, so encode every material dimension (topology, precision, microbatch, GA, data mode, rocAL device, augmentation) to stop a result being compared against the wrong gate. `label` is the compact id used in pytest rows and log directory names. training.enabled_sweep_list selects which names execute.",
+  "training": {
+    "distributed": true,
+    "enabled": true,
+    "phase": "performance",
+    "run_mode": "perf",
+    "gpus_per_node": 8,
+    "steps": 50,
+    "warmup_steps": 5,
+    "eval_enabled": false,
+    "eval_steps": 2,
+    "milestone_steps": [
+      100,
+      500,
+      1000,
+      5000
+    ],
+    "num_classes": 1000,
+    "channels_last": true,
+    "learning_rate": 0.0001,
+    "momentum": 0.9,
+    "weight_decay": 0.05,
+    "timeout_s": 900,
+    "omp_num_threads": 1,
+    "verify_dmesg": true,
+    "peak_tflops_per_gpu": 1307.4,
+    "checkpoint_enabled": true,
+    "checkpoint_keep_file": false,
+    "checkpoint_loss_tolerance": 1e-05,
+    "loss_curve": {
+      "enabled": false,
+      "sample_every_steps": 1,
+      "minimum_points": 2,
+      "require_decrease": false
+    },
+    "convergence": {
+      "enabled": false
+    },
+    "codecarbon": {
+      "enabled": true,
+      "required": true,
+      "version": "3.2.4",
+      "tracker": "amdsmi",
+      "measure_power_secs": 5
+    },
+    "env_vars": {
+      "NCCL_DEBUG": "WARN",
+      "RCCL_USE_AMD_SMI_LIB": "1",
+      "HF_HOME": "/it-share-prj2-1/models/hub",
+      "HF_HUB_DISABLE_TELEMETRY": "1"
+    },
+    "error_patterns": {
+      "NCCL ERROR": "NCCL ERROR|NCCL timeout|local work queue catastrophic error",
+      "GPU HW ERROR": "HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset",
+      "Python error": "Traceback \\(most recent call last\\)|ModuleNotFoundError|Fatal Python error",
+      "Resource exhaustion": "Out of memory|RESOURCE_EXHAUSTED|std::bad_alloc",
+      "Process crash": "Segmentation fault|SIGSEGV|core dumped"
+    },
+    "sweeps": [
+      {
+        "name": "STEPS=50,MODEL=vit-base-hf,HARNESS=hf_trainer,FSDP=HYBRID_SHARD,PRECISION=BF16,MBS=64,GA=1,RES=224",
+        "label": "W6-HYBRID_SHARD-BF16-R224-MBS64",
+        "model": "vit_b_16",
+        "precision": "BF16",
+        "batch_size": 64,
+        "image_size": 224,
+        "gradient_accumulation_steps": 1,
+        "training_flops_per_image": 101100000000,
+        "data_mode": "rocal",
+        "dataset_path": "/datasets/imagenet-1k",
+        "rocal_device": "gpu",
+        "augmentation": "standard",
+        "rocal_num_threads": 8,
+        "loader_warmup_steps": 2,
+        "loader_benchmark_steps": 5,
+        "model_id": "google/vit-base-patch16-224",
+        "pretrained": false
+      }
+    ],
+    "enabled_sweep_list": [
+      "STEPS=50,MODEL=vit-base-hf,HARNESS=hf_trainer,FSDP=HYBRID_SHARD,PRECISION=BF16,MBS=64,GA=1,RES=224"
+    ],
+    "workload": "W6",
+    "optimizer": "adamw",
+    "harness": "hf_trainer",
+    "master_port": 29500,
+    "scaling_baseline": {
+      "images_per_sec_total": 8901.577,
+      "num_nodes": 1
+    },
+    "fsdp_strategy": "hybrid_shard",
+    "sweep_repeats": 3
+  },
+  "_topology_comment": "W6 uses the HuggingFace Trainer with FSDP. The node count comes from the cluster file; the sweep name carries only per-device dimensions so one config runs on any topology. Requires the HF image, which carries transformers/accelerate."
+}

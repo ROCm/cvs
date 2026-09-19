@@ -46,6 +46,12 @@ def _parse_args():
     parser.add_argument("--harness", choices=["native", "hf_trainer"], default="native")
     parser.add_argument("--model-id", default="", help="HuggingFace model id for the hf_trainer harness")
     parser.add_argument(
+        "--fsdp-strategy",
+        choices=["full_shard", "hybrid_shard"],
+        default="full_shard",
+        help="FSDP sharding strategy for the hf_trainer harness",
+    )
+    parser.add_argument(
         "--pretrained",
         action="store_true",
         help="load pretrained weights; omit to train the same architecture from scratch",
@@ -1103,8 +1109,11 @@ def _run_hf_trainer(args, rank, world_size, device, local_rank):
         remove_unused_columns=False,
         ddp_find_unused_parameters=False,
         # FSDP is the point of W6: shard parameters across every rank rather
-        # than replicating them the way W1/W3's DDP path does.
-        fsdp="full_shard auto_wrap",
+        # than replicating them the way W1/W3's DDP path does. full_shard
+        # spreads an 86M-parameter model over every rank, so on more than one
+        # node the cross-node all-gathers can cost more than the added compute;
+        # hybrid_shard shards within a node and replicates across nodes.
+        fsdp=f"{args.fsdp_strategy} auto_wrap",
         fsdp_config={"transformer_layer_cls_to_wrap": ["ViTLayer"]},
         seed=2026,
     )
@@ -1191,6 +1200,7 @@ def _run_hf_trainer(args, rank, world_size, device, local_rank):
         "dataset_path": args.dataset_path,
         "harness": "hf_trainer",
         "pretrained": bool(args.pretrained),
+        "fsdp_strategy": args.fsdp_strategy,
         # Recorded for provenance: HF Trainer's own scheduler, not our
         # training.lr_schedule block.
         "hf_lr_scheduler_type": str(training_args.lr_scheduler_type),

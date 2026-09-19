@@ -182,7 +182,8 @@
       "images_per_sec_total": 0.0,
       "num_nodes": 1
     },
-    "workload": "W2"
+    "workload": "W2",
+    "sweep_repeats": 3
   },
   "_topology_comment": "Node count comes from the cluster file, not this config: the sweep name encodes only per-device dimensions so the same file runs on 2N, 4N, or any larger topology. world_size and the effective global batch are derived as gpus_per_node x nodes at run time. training.scaling_baseline.images_per_sec_total should hold the matching single-node result."
 }

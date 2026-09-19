@@ -188,6 +188,8 @@ class PyTorchVisionJob:
             self.workload,
             "--harness",
             training.harness,
+            "--fsdp-strategy",
+            training.fsdp_strategy,
             "--model-id",
             sweep.model_id,
             *(["--pretrained"] if sweep.pretrained else []),

@@ -199,6 +199,16 @@ class VisionTrainingConfig(_Forbid):
     # HuggingFace Trainer with FSDP and reconstructs the same metric contract
     # from callbacks. hf_trainer requires an image carrying transformers.
     harness: Literal["native", "hf_trainer"] = "native"
+    # Sweeps read the same shards back to back, so a sweep's position decides
+    # how warm the page cache is when it runs. Repeating every sweep in a
+    # reshuffled order and reporting medians keeps that out of the comparison.
+    # 1 keeps the single-pass behaviour.
+    # full_shard spreads parameters over every rank; hybrid_shard shards within
+    # a node and replicates across nodes, which suits models small enough that
+    # cross-node all-gather dominates.
+    fsdp_strategy: Literal["full_shard", "hybrid_shard"] = "full_shard"
+    sweep_repeats: int = 1
+    sweep_order_seed: int = 2026
     momentum: float = Field(default=0.9, ge=0)
     weight_decay: float = Field(default=0.0001, ge=0)
     lr_schedule: LearningRateScheduleConfig = Field(default_factory=LearningRateScheduleConfig)
@@ -284,6 +294,8 @@ class VisionTrainingConfig(_Forbid):
             raise ValueError("train_to_accuracy convergence Top-1 target must match the final Top-1 target")
         if self.run_mode == "train_to_accuracy" and not self.convergence.stop_when_reached:
             raise ValueError("train_to_accuracy requires convergence.stop_when_reached=true")
+        if self.sweep_repeats < 1:
+            raise ValueError(f"sweep_repeats must be >= 1, got {self.sweep_repeats}")
         if self.harness == "hf_trainer":
             missing = [s.name for s in self.enabled_sweeps() if not s.model_id]
             if missing:

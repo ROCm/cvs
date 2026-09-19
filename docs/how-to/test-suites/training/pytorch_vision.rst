@@ -283,6 +283,20 @@ workflow, and
 :doc:`/reference/configuration-files/training/pytorch_vision` for the
 variable-by-variable config reference.
 
+FSDP sharding strategy
+======================
+
+``training.fsdp_strategy`` selects ``full_shard`` (the default, parameters
+spread over every rank) or ``hybrid_shard`` (shard within a node, replicate
+across nodes). For a model as small as ViT-base the choice dominates multi-node
+throughput: on four nodes W6 measured 11,616 images/s with ``full_shard``
+against 24,059 with ``hybrid_shard``, or 31.7% against 68.5% scaling efficiency.
+``full_shard`` spends more on cross-node all-gathers than it recovers in
+parallelism, to the point that two nodes are slower in absolute terms than one.
+Prefer ``hybrid_shard`` for multi-node runs unless the model does not fit in a
+single node's memory.
+
+
 Sweep ordering and page-cache warming
 =====================================
 
@@ -304,10 +318,18 @@ Compute-bound profiles are far less exposed. W3's five sweeps spread about 19%
 against W2's 190%, and its overhead rows are plausible (1.65% accumulation,
 9.64% CPU decode, 3.39% heavy augmentation).
 
-This is not yet fixed. The options are to warm the cache identically before each
-sweep, to repeat sweeps and report medians, or to take throughput for
-loader-bound models from the synthetic-data profile, which removes the input
-pipeline from the measurement entirely.
+``training.sweep_repeats`` addresses this. With a value above 1 the suite runs
+every enabled sweep once per round, reshuffling the order each round with
+``training.sweep_order_seed``, and reports the median per metric. Every sweep
+therefore takes a turn in each cache state instead of one sweep always reading
+cold. Repeating a sweep consecutively would not work, because it would leave
+that sweep in the same cache state for all of its repeats.
+
+W1 and W2's perf profiles use three repeats. On W2 this moved the CPU-decode
+overhead from -24.4% to 23.1% and the accumulation overhead from -3.6% to 41.3%,
+both of which are now the right sign and the right order of magnitude. The
+augmentation row remains slightly negative at -5.7%, so it is closer to noise
+than to a measurement; more repeats would tighten it further.
 
 
 The ``hf_trainer`` harness (W6)
