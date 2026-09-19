@@ -117,6 +117,8 @@ class CodeCarbonConfig(_Forbid):
 class VisionSweep(_Forbid):
     # HuggingFace model id, required by the hf_trainer harness.
     model_id: str = ""
+    # Load pretrained weights, or train the same architecture from scratch.
+    pretrained: bool = False
     name: str
     label: str
     model: str

@@ -113,7 +113,8 @@
         "rocal_num_threads": 8,
         "loader_warmup_steps": 2,
         "loader_benchmark_steps": 5,
-        "model_id": "google/vit-base-patch16-224"
+        "model_id": "google/vit-base-patch16-224",
+        "pretrained": true
       }
     ],
     "enabled_sweep_list": [
@@ -124,7 +125,7 @@
     "harness": "hf_trainer",
     "master_port": 29500,
     "scaling_baseline": {
-      "images_per_sec_total": 2324.757,
+      "images_per_sec_total": 8901.577,
       "num_nodes": 1
     }
   },

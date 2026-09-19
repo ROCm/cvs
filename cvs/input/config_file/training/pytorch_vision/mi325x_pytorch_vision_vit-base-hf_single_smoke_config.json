@@ -113,7 +113,8 @@
         "rocal_num_threads": 8,
         "loader_warmup_steps": 2,
         "loader_benchmark_steps": 5,
-        "model_id": "google/vit-base-patch16-224"
+        "model_id": "google/vit-base-patch16-224",
+        "pretrained": true
       }
     ],
     "enabled_sweep_list": [

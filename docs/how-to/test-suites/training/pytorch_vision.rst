@@ -300,10 +300,19 @@ rather than our own DDP loop. It differs from W3 in more than node count:
   replacing the parameter replication DDP performs in W1-W3.
 * **Checkpoints** — FSDP shards parameters, so save/resume parity is verified
   against a gathered ``FULL_STATE_DICT`` rather than each rank's local shard.
-* **Weights** — ``google/vit-base-patch16-224`` is a pretrained checkpoint, so
-  W6 is a fine-tune. Eval reports real accuracy from the first step, but the
-  training loss curve is nearly flat and convergence-to-a-loss-target is not
-  meaningful the way it is for W3's from-scratch run.
+* **Weights** — ``sweep.pretrained`` selects the initialization. The smoke
+  profile loads ``google/vit-base-patch16-224`` and reports real accuracy from
+  the first step; the perf and ``train_5k`` profiles train the same
+  architecture from scratch so the loss curve, loss milestones, and convergence
+  rows carry information and stay comparable with W3. Fine-tuning a converged
+  checkpoint makes those rows meaningless, which is why they are split across
+  profiles rather than taken from a single run.
+
+Scaling on this cluster is poor: ``full_shard`` spreads an 86M-parameter model
+across every rank, so the cross-node all-gather traffic outweighs the added
+compute and two nodes reach roughly half the ideal throughput. ``HYBRID_SHARD``
+(shard within a node, replicate across nodes) is the usual remedy for a model
+this size and is not yet evaluated here.
 
 Because ``Trainer`` owns the loop, it also owns the optimizer and LR schedule.
 The ``training.lr_schedule`` block and the learning-rate trajectory assertion

@@ -22,6 +22,7 @@ class FakeOrchestrator:
 def _variant():
     sweep = SimpleNamespace(
         model_id="",
+        pretrained=False,
         name="cell-w1",
         label="W1-BF16-R224-B128",
         model="resnet50",
@@ -504,6 +505,12 @@ class TestHFTrainerHarness(unittest.TestCase):
         command = PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command()
         self.assertIn("--harness hf_trainer", command)
         self.assertIn("--model-id google/vit-base-patch16-224", command)
+
+    def test_pretrained_flag_is_opt_in(self):
+        variant = _variant()
+        self.assertNotIn("--pretrained", PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command())
+        variant.sweep("cell-w1").pretrained = True
+        self.assertIn("--pretrained", PyTorchVisionJob(FakeOrchestrator(), variant, "w1").build_command())
 
     def test_native_harness_is_the_default(self):
         command = PyTorchVisionJob(FakeOrchestrator(), _variant(), "w1").build_command()

@@ -45,6 +45,11 @@ def _parse_args():
     parser.add_argument("--learning-rate", type=float, default=0.1)
     parser.add_argument("--harness", choices=["native", "hf_trainer"], default="native")
     parser.add_argument("--model-id", default="", help="HuggingFace model id for the hf_trainer harness")
+    parser.add_argument(
+        "--pretrained",
+        action="store_true",
+        help="load pretrained weights; omit to train the same architecture from scratch",
+    )
     parser.add_argument("--workload", default="W1", help="scorecard workload id recorded in the artifact")
     parser.add_argument("--optimizer", choices=["sgd", "adamw"], default="sgd")
     parser.add_argument("--momentum", type=float, default=0.9)
@@ -817,13 +822,22 @@ class _HFStepTimer:
     def __init__(self, warmup_steps, sample_every, milestones):
         self.warmup_steps = warmup_steps
         self.sample_every = max(1, sample_every)
-        self.milestones = set(milestones or [])
+        # milestone_steps arrives as the raw CLI string; iterating it directly
+        # would yield characters, so no step would ever match a milestone.
+        if isinstance(milestones, str):
+            milestones = [part for part in milestones.split(",") if part.strip()]
+        self.milestones = {int(value) for value in (milestones or [])}
         self.step_times_ms = []
         self.loss_series = []
         self.milestone_losses = {}
         self.learning_rates = []
         self._last = None
+        # The measured window is bounded by the first and last post-warmup step
+        # so it covers the same work as step_times_ms. Timing the whole
+        # trainer.train() call instead would fold Trainer startup and the warmup
+        # steps into the denominator while the numerator counted neither.
         self._window_start = None
+        self._window_end = None
 
     def on_step_begin(self):
         self._last = time.perf_counter()
@@ -831,10 +845,12 @@ class _HFStepTimer:
     def on_step_end(self, step):
         if self._last is None:
             return
-        elapsed_ms = (time.perf_counter() - self._last) * 1000.0
+        now = time.perf_counter()
+        elapsed_ms = (now - self._last) * 1000.0
         if step > self.warmup_steps:
             if self._window_start is None:
-                self._window_start = time.perf_counter() - elapsed_ms / 1000.0
+                self._window_start = self._last
+            self._window_end = now
             self.step_times_ms.append(elapsed_ms)
 
     def on_log(self, step, loss, learning_rate=None):
@@ -849,6 +865,11 @@ class _HFStepTimer:
 
     def elapsed(self):
         return 0.0 if self._window_start is None else time.perf_counter() - self._window_start
+
+    def measured_window_s(self):
+        if self._window_start is None or self._window_end is None:
+            return 0.0
+        return self._window_end - self._window_start
 
 
 def _hf_evaluate(model, dataset, args, device, rank, world_size):
@@ -1009,15 +1030,28 @@ def _run_hf_trainer(args, rank, world_size, device, local_rank):
     than introducing a second, differently-defined set of numbers.
     """
     from torchvision.datasets import ImageFolder
-    from transformers import Trainer, TrainerCallback, TrainingArguments, ViTForImageClassification
+    from transformers import (
+        Trainer,
+        TrainerCallback,
+        TrainingArguments,
+        ViTConfig,
+        ViTForImageClassification,
+    )
 
     torch.cuda.reset_peak_memory_stats(device)
 
-    model = ViTForImageClassification.from_pretrained(
-        args.model_id,
-        num_labels=args.num_classes,
-        ignore_mismatched_sizes=True,
-    )
+    # Pretrained weights give a real accuracy reading from the first step, but
+    # they also mean the loss curve starts converged, so the loss-milestone and
+    # convergence rows only carry information on a from-scratch run.
+    if args.pretrained:
+        model = ViTForImageClassification.from_pretrained(
+            args.model_id,
+            num_labels=args.num_classes,
+            ignore_mismatched_sizes=True,
+        )
+    else:
+        config = ViTConfig.from_pretrained(args.model_id, num_labels=args.num_classes)
+        model = ViTForImageClassification(config)
     model.to(device)
 
     train_dataset = ImageFolder(
@@ -1060,6 +1094,10 @@ def _run_hf_trainer(args, rank, world_size, device, local_rank):
         save_strategy="no",
         eval_strategy="no",
         report_to=[],
+        # tqdm renders progress bars with carriage returns and non-UTF8 bytes
+        # that the log transport cannot decode; the loss curve comes from the
+        # callback, so the bars carry no information we need.
+        disable_tqdm=True,
         dataloader_num_workers=8,
         dataloader_pin_memory=True,
         remove_unused_columns=False,
@@ -1087,9 +1125,8 @@ def _run_hf_trainer(args, rank, world_size, device, local_rank):
     metrics_loader = _measure_hf_loader(trainer, args, device, world_size)
 
     tracker, codecarbon = _start_codecarbon(args, rank, torch.cuda.device_count())
-    window_start = time.perf_counter()
     trainer.train()
-    measured_window_s = _reduce_max(time.perf_counter() - window_start, device)
+    measured_window_s = _reduce_max(timer.measured_window_s(), device)
     codecarbon = _stop_codecarbon(tracker, codecarbon, rank)
 
     step_times = sorted(timer.step_times_ms)
@@ -1153,6 +1190,7 @@ def _run_hf_trainer(args, rank, world_size, device, local_rank):
         "augmentation": args.augmentation,
         "dataset_path": args.dataset_path,
         "harness": "hf_trainer",
+        "pretrained": bool(args.pretrained),
         # Recorded for provenance: HF Trainer's own scheduler, not our
         # training.lr_schedule block.
         "hf_lr_scheduler_type": str(training_args.lr_scheduler_type),

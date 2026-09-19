@@ -190,6 +190,7 @@ class PyTorchVisionJob:
             training.harness,
             "--model-id",
             sweep.model_id,
+            *(["--pretrained"] if sweep.pretrained else []),
             "--model",
             sweep.model,
             "--backend",

@@ -1,3 +1,4 @@
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -5,6 +6,7 @@ try:
     import torch
 
     from cvs.lib.training.pytorch_vision.benchmark import (
+        _HFStepTimer,
         _build_lr_scheduler,
         _evaluation_meets_convergence_target,
         _exact_eval_batch_size,
@@ -22,6 +24,7 @@ except ModuleNotFoundError:
     _rocal_batches_per_epoch = None
     _scorecard_milestone_metrics = None
     _exact_eval_batch_size = None
+    _HFStepTimer = None
 
 
 @unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
@@ -235,3 +238,66 @@ class TestExactEvalBatchSize(unittest.TestCase):
 
     def test_degenerate_input_never_returns_zero(self):
         self.assertGreaterEqual(_exact_eval_batch_size(0, 128), 1)
+
+
+@unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
+class TestHFStepTimerWindow(unittest.TestCase):
+    """The measured window must cover the same steps as step_times_ms.
+
+    Timing the whole trainer.train() call instead folds Trainer startup and the
+    warmup steps into the denominator while the numerator counts neither, which
+    understates throughput and hides real differences between sweeps.
+    """
+
+    def _run(self, warmup, total, step_seconds=0.01, startup_seconds=0.05):
+        timer = _HFStepTimer(warmup_steps=warmup, sample_every=1, milestones=[])
+        time.sleep(startup_seconds)  # stands in for Trainer/dataloader startup
+        for step in range(1, total + 1):
+            timer.on_step_begin()
+            time.sleep(step_seconds)
+            timer.on_step_end(step)
+        return timer
+
+    def test_window_excludes_startup_and_warmup(self):
+        warmup, total, step_seconds = 3, 8, 0.01
+        timer = self._run(warmup, total, step_seconds=step_seconds)
+        measured = total - warmup
+
+        self.assertEqual(len(timer.step_times_ms), measured)
+        # The window tracks the measured steps, not startup plus every step.
+        self.assertAlmostEqual(timer.measured_window_s(), measured * step_seconds, delta=0.05)
+
+    def test_window_is_consistent_with_the_step_times_it_reports(self):
+        timer = self._run(warmup=2, total=7)
+        self.assertGreaterEqual(timer.measured_window_s() * 1000.0, sum(timer.step_times_ms) * 0.9)
+
+    def test_window_is_zero_when_every_step_is_warmup(self):
+        timer = self._run(warmup=5, total=5)
+        self.assertEqual(timer.step_times_ms, [])
+        self.assertEqual(timer.measured_window_s(), 0.0)
+
+
+@unittest.skipIf(torch is None, "PyTorch is only installed in the benchmark container")
+class TestHFStepTimerMilestones(unittest.TestCase):
+    """milestone_steps reaches the harness as the raw CLI string, so the timer
+    has to parse it; iterating the string yields characters and silently
+    records no milestones at all."""
+
+    def test_milestones_parse_from_the_cli_string(self):
+        timer = _HFStepTimer(warmup_steps=0, sample_every=1, milestones="100,500,1000")
+        self.assertEqual(timer.milestones, {100, 500, 1000})
+
+    def test_milestones_accept_an_integer_sequence(self):
+        timer = _HFStepTimer(warmup_steps=0, sample_every=1, milestones=[100, 500])
+        self.assertEqual(timer.milestones, {100, 500})
+
+    def test_milestone_losses_are_recorded_at_the_milestone_step(self):
+        timer = _HFStepTimer(warmup_steps=0, sample_every=1, milestones="2,4")
+        for step, loss in ((1, 9.0), (2, 8.0), (3, 7.0), (4, 6.0)):
+            timer.on_log(step, loss)
+        self.assertEqual(timer.milestone_losses, {"2": 8.0, "4": 6.0})
+
+    def test_no_milestones_configured_records_nothing(self):
+        timer = _HFStepTimer(warmup_steps=0, sample_every=1, milestones="")
+        timer.on_log(1, 9.0)
+        self.assertEqual(timer.milestone_losses, {})
