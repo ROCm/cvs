@@ -101,7 +101,7 @@ Run suites in the order shown: validate single-node health before exercising the
 Scalability
 ===========
 
-For clusters with 32 or more nodes, CVS automatically shards work across parallel worker processes. See :doc:`/concepts/cvs-at-scale` for tuning ``CVS_HOSTS_PER_SHARD`` and ``CVS_WORKERS_PER_CPU``.
+For clusters with 32 or more nodes, CVS automatically shards work across parallel worker processes. See :doc:`/reference/cvs-at-scale` for tuning ``CVS_HOSTS_PER_SHARD`` and ``CVS_WORKERS_PER_CPU``.
 
 Test results
 ============

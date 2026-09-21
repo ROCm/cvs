@@ -97,13 +97,10 @@ subtrees:
           - file: how-to/monitor/live-dashboards/exporters
             title: Exporters
 
-- caption: Concepts
-  entries:
-  - file: concepts/cvs-at-scale
-    title: Scalability and performance
-
 - caption: Reference
   entries:
+  - file: reference/cvs-at-scale
+    title: Scalability and performance
   - file: reference/cluster/passwordless-ssh
     title: Passwordless SSH
   - file: reference/cluster/cluster-file
