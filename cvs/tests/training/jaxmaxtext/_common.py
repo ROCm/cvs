@@ -350,12 +350,14 @@ def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, 
             pass
         pytest.fail(f"training run failed for sweep '{sweep_name}': {e}")
 
-    # wall_time is this sweep's measured wall-clock; logged for diagnostics only.
-    # Convergence is surfaced/asserted via the registered steps_to_target /
-    # time_to_target_seconds metrics below -- the old ad-hoc
-    # training.wall_time_seconds / convergence_* keys were never in
-    # TRAINING_METRICS, so nothing displayed or gated them.
+    # wall_time is this sweep's measured wall-clock. Convergence is surfaced via
+    # the registered steps_to_target / time_to_target_seconds metrics below -- the
+    # old ad-hoc training.wall_time_seconds / convergence_* keys were never in
+    # TRAINING_METRICS, so nothing displayed or gated them. Record it on the
+    # lifecycle so the training stage shows in the Run Deck lifecycle timeline
+    # (aggregated as the longest sweep across the session).
     log.info("[training] sweep '%s' wall-clock: %.1fs", sweep_name, wall_time)
+    lifecycle.record(request.node.nodeid, "training_run", wall_time)
 
     baseline = variant_config.training.scaling_baseline
     results["training.scaling_efficiency_pct"] = compute_scaling_efficiency(
