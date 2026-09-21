@@ -64,20 +64,32 @@ class DeckCardRenderer:
             )
         return "".join(parts) or "<p class='muted'>No lifecycle timings recorded.</p>"
 
+    @staticmethod
+    def _summary_card_html(summary):
+        if summary.get("label"):
+            title = str(summary["label"])
+            meta = str(summary.get("meta") or "")
+            unit = str(summary.get("headline_unit") or "tok/s")
+        else:
+            title = f"ISL={summary.get('isl', '')} \u00b7 OSL={summary.get('osl', '')}"
+            sat = " \u00b7 saturated at max C" if summary.get("saturated") else ""
+            meta = (
+                f"Peak at C={summary.get('conc_at_max_tput')}"
+                f" \u00b7 TTFT {fmt_num(summary.get('ttft_at_max_tput'))} ms{sat}"
+            )
+            unit = "tok/s"
+        return (
+            f"<article class='summary-card'><h3>{html.escape(title)}</h3>"
+            f"<div class='summary-stat'>{fmt_num(summary['max_output_throughput'])} "
+            f"<span class='headline-unit'>{html.escape(unit)}</span></div>"
+            f"<div class='summary-meta'>{html.escape(meta)}</div></article>"
+        )
+
     def render_sweep_analytics(self, payload: dict, _card: dict, data: Any) -> str:
         sweep = data if isinstance(data, dict) else {}
         summaries = sweep.get("sweep_summaries") or payload.get("sweep_summaries") or []
         summary_html = (
-            "".join(
-                f"<article class='summary-card'><h3>ISL={html.escape(str(s['isl']))} "
-                f"\u00b7 OSL={html.escape(str(s['osl']))}</h3>"
-                f"<div class='summary-stat'>{fmt_num(s['max_output_throughput'])} "
-                f"<span class='headline-unit'>tok/s</span></div>"
-                f"<div class='summary-meta'>Peak at C={s['conc_at_max_tput']}"
-                f" &middot; TTFT {fmt_num(s.get('ttft_at_max_tput'))} ms"
-                f"{' &middot; saturated at max C' if s.get('saturated') else ''}</div></article>"
-                for s in summaries
-            )
+            "".join(self._summary_card_html(s) for s in summaries)
             or "<p class='muted'>No sweep summary (no throughput data).</p>"
         )
 

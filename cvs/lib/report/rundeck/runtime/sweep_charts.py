@@ -64,6 +64,7 @@ class SweepChartRenderer:
         unit: str,
         *,
         accent: str = "accent",
+        x_labels=None,
     ) -> str:
         if len(points) < 2:
             return ""
@@ -81,16 +82,17 @@ class SweepChartRenderer:
             for t in ticks
         )
         bars = []
-        x_labels = []
-        for conc, val in points:
+        x_ticks = []
+        for i, (conc, val) in enumerate(points):
             h = self._bar_height_pct(val, min_val, max_val)
-            tip = html.escape(f"C={conc}: {fmt_num(val)} {unit}".strip())
+            tick = x_labels[i] if x_labels and i < len(x_labels) else f"C={conc}"
+            tip = html.escape(f"{tick}: {fmt_num(val)} {unit}".strip())
             bars.append(
                 f"<div class='chart-col'>"
                 f"<div class='chart-bar chart-bar-{accent} chart-has-tip' style='height:{h:.1f}%' "
                 f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div></div>"
             )
-            x_labels.append(f"<span class='chart-xlbl'>C={conc}</span>")
+            x_ticks.append(f"<span class='chart-xlbl'>{html.escape(str(tick))}</span>")
         return (
             f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
             f"<div class='chart-viz'>"
@@ -98,7 +100,7 @@ class SweepChartRenderer:
             f"<div class='chart-main'>"
             f"<div class='chart-plotbox'><div class='chart-hgrid' aria-hidden='true'>{grid}</div>"
             f"<div class='chart-bars'>{''.join(bars)}</div></div>"
-            f"<div class='chart-xrow'>{''.join(x_labels)}</div></div></div>"
+            f"<div class='chart-xrow'>{''.join(x_ticks)}</div></div></div>"
             f"<div class='chart-unit'>{html.escape(unit)}</div></div>"
         )
 
@@ -123,6 +125,7 @@ class SweepChartRenderer:
                     entry["points"],
                     chart["unit"],
                     accent=self._ACCENTS[idx % 3],
+                    x_labels=entry.get("x_labels"),
                 )
                 if part:
                     chart_parts.append(part)

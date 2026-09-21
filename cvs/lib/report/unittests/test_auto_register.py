@@ -29,6 +29,13 @@ class TestAutoRegister(unittest.TestCase):
         self.assertTrue(try_auto_register_suite_report(config))
         self.assertEqual(config._suite_report_config["suite_id"], "sglang")
 
+    def test_auto_register_loads_megatron_alias(self):
+        for stem in ("megatron_single", "megatron_distributed"):
+            config = SimpleNamespace(_suite_name=stem, _suite_report_config=None)
+            self.assertTrue(try_auto_register_suite_report(config), stem)
+            self.assertEqual(config._suite_report_config["suite_id"], "megatron")
+            self.assertEqual(config._suite_report_config["dataset_builder"], "training_sweep")
+
     def test_auto_register_loads_vllm_json_profile(self):
         config = SimpleNamespace(_suite_name="vllm", _suite_report_config=None)
         self.assertTrue(try_auto_register_suite_report(config))

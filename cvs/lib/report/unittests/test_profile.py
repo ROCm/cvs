@@ -27,6 +27,19 @@ class TestProfile(unittest.TestCase):
                 "cvs.lib.report.profiles.hooks.sglang_run_card:sglang_run_card_display",
             )
 
+    def test_megatron_stems_share_one_profile(self):
+        for stem in ("megatron", "megatron_single", "megatron_distributed"):
+            profile = load_json_profile(stem)
+            self.assertIsNotNone(profile, stem)
+            self.assertEqual(profile["suite_id"], "megatron")
+            self.assertEqual(profile["dataset_builder"], "training_sweep")
+            self.assertEqual(profile["sources"]["results"], "train_res_dict")
+            self.assertIn("smoke", profile["lifecycle"]["session_labels"])
+            self.assertEqual(
+                profile["hooks"]["run_card_display"],
+                "cvs.lib.report.profiles.hooks.megatron_run_card:megatron_run_card_display",
+            )
+
     def test_vllm_hooks_point_at_canonical_metric_contract(self):
         profile = load_json_profile("vllm")
         self.assertEqual(

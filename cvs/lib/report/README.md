@@ -9,7 +9,7 @@ Suite owners enable Run Deck by adding `profiles/<stem>.json` (matching the
 
 ## How it works
 
-1. Tests fill **session fixtures** (`cvs_results_dict`, `variant_config`, `lifecycle`, …).
+1. Tests fill **session fixtures** (`cvs_results_dict` / `train_res_dict`, `variant_config`, `lifecycle`, …).
 2. Pytest auto-loads **`profiles/<stem>.json`** when present (matches `cvs run` stem).
 3. At session finish, **`rundeck/generate_rundeck.py`** builds datasets, renders HTML/JSON,
    and optionally an interactive viewer for sweep suites.
@@ -28,18 +28,20 @@ flowchart LR
 | Session store | `registry.py` |
 | Profile schema | `profiles/schema.json` |
 | Config resolution | `rundeck/config_adapter.py` |
-| Dataset builders | `rundeck/dataset_builders/` — `sweep`, `series`, `matrix` |
+| Dataset builders | `rundeck/dataset_builders/` — `sweep`, `series`, `matrix`, `training_sweep` |
 | Card runtime | `rundeck/runtime/` |
 | Publish entry | `rundeck/generate_rundeck.py` |
 
 ## Session contract
 
-| Role | Standard key | Legacy alias |
-| ---- | ------------ | -------------- |
-| Results | `cvs_results_dict` | `inf_res_dict` |
+| Role | Standard key | Other fixture names |
+| ---- | ------------ | ------------------- |
+| Results | `cvs_results_dict` | `inf_res_dict` (inference), `train_res_dict` (Megatron) |
 | Config / thresholds | `variant_config` | — |
 | Stage timings | `lifecycle` | — |
 | Golden reference | `golden_results` | `reference_results` |
+
+Profile `sources.results` names the fixture. After module teardown, `pytest_hooks.py` copies it into the session store as `cvs_results_dict` so `generate_rundeck.py` always reads one key.
 
 Root `cvs/conftest.py` binds fixtures from profile `sources` via `pytest_hooks.py`.
 
@@ -52,6 +54,7 @@ Root `cvs/conftest.py` binds fixtures from profile `sources` via `pytest_hooks.p
 | `sweep` | Cell-keyed dict → metric fields (ISL/OSL/concurrency sweeps) |
 | `series` | Nested dict: collective → message size → metrics |
 | `matrix` | Current results + golden reference for compare rows |
+| `training_sweep` | String combo keys `MBS=…,GBS=…,PRECISION=…` → metric lists (`train_res_dict`) |
 
 Use `testing/fixtures.generic_sweep_profile()` as a template when authoring a
 sweep profile. Schema: `profiles/schema.json`.
@@ -90,10 +93,9 @@ Optional `hooks` under `profiles/hooks/` customize run-card rows and launch
 provenance when the default run card is not enough. Metric tiers and units should
 reference the suite parsing module directly in profile JSON.
 
-Shared sweep config across related stems can use profile stem aliases in
-``profile.py`` (``PROFILE_STEM_ALIASES``) when the deck layout is identical — see
-``sglang.json`` shared by ``sglang_single``, ``sglang_distributed``, and
-``sglang_disagg_distributed``.
+Shared layout across related stems uses ``PROFILE_STEM_ALIASES`` in
+``profile.py`` when the deck is identical — ``sglang.json`` for SGLang suites,
+``megatron.json`` for ``megatron_single`` / ``megatron_distributed``.
 
 ### 3. Wire suite fixtures
 
@@ -130,7 +132,7 @@ in the profile JSON; open the viewer sidecar from the nav link or sweep banner.
 | **D** | New panel type | New card in `rundeck/runtime/` |
 
 Tier A is the default. Open a core PR only when data does not fit `sweep`, `series`,
-or `matrix`, or you need a card type that does not exist.
+`matrix`, or `training_sweep`, or you need a card type that does not exist.
 
 ## Code layout
 
@@ -143,7 +145,7 @@ cvs/lib/report/
     render.py                # static HTML
     config_adapter.py        # JSON profile → RunDeckConfig
     viewer_config.py         # interactive viewer config
-    dataset_builders/        # sweep, series, matrix
+    dataset_builders/        # sweep, series, matrix, training_sweep
     runtime/                 # card components + theme
   profiles/schema.json
   pytest_hooks.py            # session fixture binding
@@ -160,7 +162,7 @@ Library unit tests use `unittest` and live beside the module under test (see
 | Location | Covers |
 | -------- | ------ |
 | `report/unittests/` | registry, profile, cell_build, inference, provenance, … |
-| `report/rundeck/unittests/` | payload, viewer_config, config_builder, parity |
+| `report/rundeck/unittests/` | payload, viewer_config, config_builder, parity, training_sweep |
 | `report/render/unittests/` | cell card renderer |
 | `report/viewer/unittests/` | interactive viewer scaffold |
 | `report/panels/unittests/` | prev-run comparison panel |

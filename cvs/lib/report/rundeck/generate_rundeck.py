@@ -51,7 +51,7 @@ class RundeckPublisher:
 
         variant_config = store.get("variant_config")
         builder_id = profile.get("dataset_builder") if isinstance(profile, dict) else "sweep"
-        if variant_config is None and builder_id == "sweep":
+        if variant_config is None and builder_id in ("sweep", "training_sweep"):
             log.warning("Skipping Run Deck generation: variant_config not in session store")
             return None
 

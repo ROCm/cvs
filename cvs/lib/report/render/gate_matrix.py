@@ -22,6 +22,8 @@ class GateMatrixRenderer:
 
     @staticmethod
     def cell_label(cell: Mapping[str, object]) -> str:
+        if cell.get("label"):
+            return str(cell["label"])
         base = f"{cell['policy']} \u00b7 C={cell['concurrency']}"
         if cell.get("show_host_in_label"):
             return f"{base} \u00b7 {cell['host']}"
