@@ -6,9 +6,9 @@
 Health test configuration file reference for Cluster Validation Suite (CVS)
 ***************************************************************************
 
-The health configuration file controls AGFHC, TransferBench, and RVS burn-in parameters. Use these tests to validate GPU hardware, memory bandwidth, and compute throughput on each cluster node before production workloads.
+The health configuration file controls AGFHC, `TransferBench <https://rocm.docs.amd.com/projects/TransferBench/en/latest/index.html>`_, and `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/index.html>`_ burn-in parameters. Use these tests to validate GPU hardware, memory bandwidth, and compute throughput on each cluster node before production workloads.
 
-How to run these tests: :doc:`/how-to/test-suites/burn-in-diag/health`.
+See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on running these tests.
 
 .. note::
 
