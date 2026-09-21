@@ -19,7 +19,7 @@ Some training and inference suites ship a matching threshold file for each confi
 Burn-in / Diag
 ==============
 
-The following suites are available for burn-in and diagnostic workloads.
+The following suites are available for burn-in and diagnostic workloads:
 
 .. list-table::
    :header-rows: 1
@@ -48,7 +48,7 @@ The following suites are available for burn-in and diagnostic workloads.
 Network
 =======
 
-The following suites are available for network testing.
+The following suites are available for network testing:
 
 .. list-table::
    :header-rows: 1

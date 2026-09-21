@@ -5,7 +5,8 @@ root: index
 
 subtrees:
 
-- file: what-is-cvs
+- entries:
+  - file: what-is-cvs
   title: What is CVS?
 
 - caption: Install

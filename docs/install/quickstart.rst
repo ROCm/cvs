@@ -11,11 +11,11 @@ This guide gets you from zero to your first cluster-wide ``cvs exec`` in about 1
 Prerequisites
 =============
 
-The following prerequisites are required before you begin.
+The following prerequisites are required before you begin:
 
-- Ubuntu-based Linux on the head node (see :doc:`/install/install` for supported versions)
-- :doc:`Passwordless SSH </reference/cluster/passwordless-ssh>` from the head node to every worker
-- Python 3.10+ and ``python3-venv``
+- Ubuntu-based Linux on the head node (see :doc:`/install/install` for supported versions).
+- :doc:`Passwordless SSH </reference/cluster/passwordless-ssh>` from the head node to every worker.
+- Python 3.10+ and ``python3-venv``.
 
 Step 1: Install CVS
 ===================
@@ -61,9 +61,9 @@ If ``cvs exec`` returned a hostname from every node in your cluster file, CVS is
 
 If any node is missing from the output, check:
 
-- Passwordless SSH works from the head node to that node: ``ssh <user>@<host> hostname``
-- The node's hostname or IP in ``cluster.json`` is correct and reachable
-- The SSH key path and user in ``cluster.json`` match what works in the manual SSH check above
+- Passwordless SSH works from the head node to that node: ``ssh <user>@<host> hostname``.
+- The node's hostname or IP in ``cluster.json`` is correct and reachable.
+- The SSH key path and user in ``cluster.json`` match what works in the manual SSH check above.
 
 Run the GPU visibility check to confirm AMD GPUs are visible on all nodes before running any test suite:
 
