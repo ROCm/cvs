@@ -13,4 +13,4 @@ JSON configuration schemas for distributed training benchmarks under ``cvs/input
 - :doc:`TorchTitan </reference/configuration-files/training/torchtitan>` — TorchTitan pre-training (single-node and distributed)
 - :doc:`Aorta (Distributed Training) </reference/configuration-files/training/aorta>` — Aorta RCCL/training throughput benchmark
 
-How to run these suites: :doc:`/how-to/test-suites/training/index`.
+See :doc:`/how-to/test-suites/training/index` for more information on running these tests.

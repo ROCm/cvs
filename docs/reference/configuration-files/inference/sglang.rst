@@ -27,7 +27,7 @@ threshold file referenced by top-level ``threshold_json``.
      - ``cvs/tests/inference/sglang/sglang_disagg_distributed.py``
      - Disaggregated prefill/decode with a proxy router; separate prefill and decode node groups.
 
-How to run: :doc:`/how-to/test-suites/inference/sglang`.
+See :doc:`/how-to/test-suites/inference/sglang`  for more information on running these tests.
 
 Run any suite with:
 
