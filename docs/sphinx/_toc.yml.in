@@ -6,6 +6,8 @@ root: index
 subtrees:
 
 - entries:
+  - file: release-notes
+    title: Release notes
   - file: what-is-cvs
   title: What is CVS?
 
