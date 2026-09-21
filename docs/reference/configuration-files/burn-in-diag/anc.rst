@@ -91,7 +91,7 @@ The following table describes each key in the ``anc`` configuration block.
    * - ``ADD_ANC_LOGS_TO_HTML_REPORTS``
      - ``True`` always bundles each node's ANC log tarball into the pytest-html report. ``False`` (default) bundles tarballs only when the test fails.
    * - ``COLLECT_HTML_REPORTS``
-     - ``True`` (default) auto-generates a pytest-html report under ``log_folder_path`` even without ``--html``. An explicit ``--html`` always overrides that path.
+     - ``True`` (default) auto-generates a pytest-html report under ``log_folder_path`` when pytest is launched without ``--html`` (direct ``pytest``, or ``cvs run --no-html``). ``cvs run`` otherwise writes the report under ``<run_dir>`` by default; an explicit ``--html`` always wins.
 
 Install location
 ================

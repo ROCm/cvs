@@ -54,8 +54,7 @@ Every CPU and GPU group run installs ANC as a session-cached pre-task, so a sepa
   cvs run anc_installation \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/anc/anc_config.json \
-    --html=/var/www/html/cvs/anc.html --capture=tee-sys --self-contained-html \
-    --log-file=/tmp/anc.log -vvv -s
+    --capture=tee-sys -vvv -s
 
 CPU groups
 ~~~~~~~~~~
@@ -87,8 +86,7 @@ Run every CPU group (install + ldconfig once, then each group as its own test):
   cvs run anc_test_cpu \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/anc/anc_config.json \
-    --html=/var/www/html/cvs/anc_cpu.html --capture=tee-sys --self-contained-html \
-    --log-file=/tmp/anc_cpu.log -vvv -s
+    --capture=tee-sys -vvv -s
 
 Run a single group by function name:
 
@@ -121,8 +119,7 @@ Run every GPU group:
   cvs run anc_test_gpu \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/anc/anc_config.json \
-    --html=/var/www/html/cvs/anc_gpu.html --capture=tee-sys --self-contained-html \
-    --log-file=/tmp/anc_gpu.log -vvv -s
+    --capture=tee-sys -vvv -s
 
 Run a single GPU group:
 
@@ -137,4 +134,8 @@ Pass and fail
 
 A node passes only when ANC started (a ``Log directory`` line is present), ``console.log`` was collected, and the **final** return-code line in ``console.log`` is ``ANC_SUCCESS [0]``. Failures on multiple nodes are aggregated into a single test failure.
 
-Logs land under ``<log_folder_path>/anc_logs/<ip>_<hostname>/<test_name>/<timestamp>/``. When ``COLLECT_HTML_REPORTS`` is ``True`` (the default), CVS also writes a pytest-html report under ``log_folder_path`` even if you omit ``--html``. An explicit ``--html`` on the command line always wins.
+Logs land under ``<log_folder_path>/anc_logs/<ip>_<hostname>/<test_name>/<timestamp>/``.
+``cvs run`` writes the pytest HTML report under ``<run_dir>`` by default (see
+:doc:`/reference/cli/cvs-run`). ``COLLECT_HTML_REPORTS`` (default ``True``) only
+auto-collects under ``log_folder_path`` when pytest has no ``--html`` (a direct
+``pytest`` invocation, or ``cvs run --no-html``). An explicit ``--html`` always wins.

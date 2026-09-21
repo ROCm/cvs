@@ -73,5 +73,4 @@ Run the MORI benchmark suite:
   cvs run mori_benchmark_test \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/mori/mi35x_mori_config.json \
-    --html=/var/www/html/cvs/mori.html --capture=tee-sys --self-contained-html \
-    --log-file=/tmp/mori.log -vvv -s
+    --capture=tee-sys -vvv -s

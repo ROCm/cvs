@@ -66,5 +66,4 @@ Run the platform host check suite:
   cvs run host_configs_cvs \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/platform/host_config.json \
-    --html=/var/www/html/cvs/host.html --capture=tee-sys --self-contained-html \
-    --log-file=/tmp/host.log -vvv -s
+    --capture=tee-sys -vvv -s

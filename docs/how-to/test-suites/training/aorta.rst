@@ -67,5 +67,4 @@ List tests in this suite:
   cvs run test_aorta \
     --cluster_file input/cluster_file/cluster.json \
     --config_file input/config_file/aorta/aorta_benchmark.yaml \
-    --html=/var/www/html/cvs/aorta.html --capture=tee-sys --self-contained-html \
-    --log-file=/tmp/aorta.log -vvv -s
+    --capture=tee-sys -vvv -s

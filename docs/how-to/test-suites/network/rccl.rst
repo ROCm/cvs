@@ -91,8 +91,7 @@ Use ``cvs scp`` to copy the environment script to all nodes. See :doc:`/how-to/c
   cvs run rccl_perf \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/rccl/rccl_config.json \
-    --html=/var/www/html/cvs/rccl_perf.html --capture=tee-sys --self-contained-html \
-    --log-file=/tmp/rccl_perf.log -vvv -s
+    --capture=tee-sys -vvv -s
 
 2. Run RCCL regression suite:
 
@@ -101,8 +100,7 @@ Use ``cvs scp`` to copy the environment script to all nodes. See :doc:`/how-to/c
   cvs run rccl_regression \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/rccl/rccl_regression.json \
-    --html=/var/www/html/cvs/rccl_regression.html --capture=tee-sys --self-contained-html \
-    --log-file=/tmp/rccl_regression.log -vvv -s
+    --capture=tee-sys -vvv -s
 
 3. Generate RCCL performance heatmap:
 

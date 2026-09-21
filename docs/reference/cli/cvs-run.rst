@@ -160,7 +160,7 @@ Required options:
    * - Option
      - Description
    * - ``--cluster_file PATH``
-     - Cluster JSON (nodes, SSH credentials, backend).
+     - Cluster JSON (nodes, SSH credentials, backend). Required outside a scheduler-managed (Slurm/spur) run.
    * - ``--config_file PATH``
      - Suite-specific test configuration JSON.
 
@@ -173,17 +173,23 @@ Optional options:
    * - Option
      - Description
    * - ``--workspace PATH``
-     - Shared-filesystem root; run dir is ``<workspace>/cvs_runs/<run_id>``. Falls back to ``$CVS_WORKSPACE``, then the venv parent directory.
+     - Shared-filesystem root; run dir is ``<workspace>/cvs_runs/<run_id>``. Falls back to ``$CVS_WORKSPACE``, then the venv parent directory. Scheduler-managed runs in a container must set this explicitly. HTML and log reports default to this run directory.
    * - ``--html PATH``
-     - Pytest HTML report output path.
+     - Pytest HTML report path. Defaults to ``<run_dir>/<test-file-stem>.html`` (self-contained). Parent directories are created automatically.
+   * - ``--no-html``
+     - Do not pass ``--html`` to pytest (overrides auto-derive).
    * - ``--self-contained-html``
-     - Embed CSS and images in the HTML report.
+     - Embed CSS and images in the HTML report. Implied when the HTML path is auto-derived.
    * - ``--log-file PATH``
-     - Text log file (parent directories created automatically).
+     - Text log file. Defaults to ``<run_dir>/<test-file-stem>.log``. Parent directories are created automatically. Console logging is unaffected.
+   * - ``--no-log-file``
+     - Do not write a pytest log file.
    * - ``--log-level LEVEL``
      - ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR``, ``CRITICAL``.
    * - ``--capture MODE``
      - ``no``, ``tee-sys``, ``tee-merged``, ``fd``, ``sys``.
+
+Omit ``--html`` and ``--log-file`` to use the run-directory defaults. Pass either flag with a path to override. ``--no-html`` and ``--no-log-file`` suppress generation.
 
 All other pytest flags pass through. Run ``pytest --help`` for the full list.
 

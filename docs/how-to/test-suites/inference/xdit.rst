@@ -148,8 +148,7 @@ Example run (FLUX.1-dev; use the flux2 JSON for FLUX.2-dev):
   cvs run pytorch_xdit_flux_dev_single \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_flux1_dev_single.json \
-    --html ~/cvs_results/pytorch_xdit_flux1_single.html --self-contained-html \
-    --log-file /tmp/pytorch_xdit_flux1_single.log -vvv
+    -vvv
 
 ``pytorch_xdit_flux_dev_distributed`` stages
 --------------------------------------------
@@ -173,8 +172,7 @@ Example run:
   cvs run pytorch_xdit_flux_dev_distributed \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_flux1_dev_distributed.json \
-    --html ~/cvs_results/pytorch_xdit_flux1_distributed.html --self-contained-html \
-    --log-file /tmp/pytorch_xdit_flux1_distributed.log -vvv
+    -vvv
 
 ``pytorch_xdit_wan22_14b_single`` stages
 ----------------------------------------
@@ -194,8 +192,7 @@ Example run:
   cvs run pytorch_xdit_wan22_14b_single \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_wan22_14b_single.json \
-    --html ~/cvs_results/pytorch_xdit_wan22.html --self-contained-html \
-    --log-file /tmp/pytorch_xdit_wan22.log -vvv
+    -vvv
 
 ``pytorch_xdit_wan22_14b_diffusers_single`` stages
 --------------------------------------------------
@@ -215,8 +212,7 @@ Example run:
   cvs run pytorch_xdit_wan22_14b_diffusers_single \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_wan22_14b_diffusers_single.json \
-    --html ~/cvs_results/pytorch_xdit_wan22_diffusers_single.html --self-contained-html \
-    --log-file /tmp/pytorch_xdit_wan22_diffusers_single.log -vvv
+    -vvv
 
 ``pytorch_xdit_wan22_14b_diffusers_distributed`` stages
 -------------------------------------------------------
@@ -239,8 +235,7 @@ Example run:
   cvs run pytorch_xdit_wan22_14b_diffusers_distributed \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_wan22_14b_diffusers_distributed.json \
-    --html ~/cvs_results/pytorch_xdit_wan22_diffusers_distributed.html --self-contained-html \
-    --log-file /tmp/pytorch_xdit_wan22_diffusers_distributed.log -vvv
+    -vvv
 
 Direct pytest invocation
 ------------------------
@@ -257,7 +252,7 @@ Each module can also be run with pytest:
 Read the results
 ================
 
-With ``--html``, CVS writes a pytest HTML report. Benchmark pass/fail uses the docker
+``cvs run`` writes a pytest HTML report under the run directory by default. Benchmark pass/fail uses the docker
 exit code plus parsed artifacts and GPU-specific thresholds (``mi300x``, ``mi350``,
 ``mi355``, or ``auto``).
 

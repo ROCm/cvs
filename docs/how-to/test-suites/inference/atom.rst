@@ -101,7 +101,7 @@ Single-node W1 (``driver=atom``):
   cvs run atom \
     --cluster_file ~/input/cluster_file/atom_cluster.json \
     --config_file "$SINGLE_DIR/mi3xx_atom_deepseek-r1_fp8_single.json" \
-    --html ~/cvs_results/atom-w1-single.html --self-contained-html -vvv
+    -vvv
 
 Multinode PP (``driver=vllm_atom``):
 
@@ -110,7 +110,7 @@ Multinode PP (``driver=vllm_atom``):
   cvs run atom \
     --cluster_file ~/input/cluster_file/atom_cluster.json \
     --config_file ~/input/config_file/inference/atom/distributed/mi3xx_atom_deepseek-r1_fp8_distributed.json \
-    --html ~/cvs_results/atom-w1-distributed.html --self-contained-html -vvv
+    -vvv
 
 MTP-3 speculative decode (``schema_version: 2`` profile on the native single-node
 stem):
@@ -121,7 +121,7 @@ stem):
     --cluster_file ~/input/cluster_file/atom_cluster.json \
     --config_file "$SINGLE_DIR/mi3xx_atom_deepseek-r1_fp8_single.json" \
     --config_profile mtp3 \
-    --html ~/cvs_results/atom-w1-mtp3.html --self-contained-html -vvv
+    -vvv
 
 vLLM / SGLang parity use the unified serving schema in ``inference/atom/``
 (for example ``mi3xx_atom_vllm_deepseek-r1_fp8_single.json``) — still run with
@@ -213,8 +213,9 @@ Reports and logs
 
 - **pytest HTML** — one row per lifecycle stage and per metric tier.
 - **Console tables** — ``test_print_results_table`` prints per-cell throughput and latency.
-- **Run Deck** — when ``--html`` is set, ``atom_run_deck.html`` / ``.json`` /
-  ``_viewer.html`` are bundled into the pytest zip (render-only; does not affect gates).
+- **Run Deck** — ``atom_run_deck.html`` / ``.json`` / ``_viewer.html`` are bundled
+  into the pytest zip when an HTML report is generated (``cvs run`` does this by
+  default; direct ``pytest`` needs ``--html``). Render-only; does not affect gates.
 - **Per-cell logs** — under ``paths.log_dir`` on cluster nodes (server + client logs).
 
 Launcher vs GPU node
