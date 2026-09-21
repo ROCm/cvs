@@ -13,7 +13,7 @@ The monitor identifies hardware degradation (RAS, PCIe/XGMI, RDMA counters via A
 Generate a health report
 ========================
 
-1. Complete :doc:`Install CVS </install/install>` and :doc:`Set up cluster file </how-to/configure/cluster-config>`.
+1. Complete :doc:`Install CVS </install/install>` and :doc:`Set up a cluster file </how-to/configure/cluster-config>`.
 2. List available monitors:
 
    .. code:: bash
