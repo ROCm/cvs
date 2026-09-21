@@ -9,7 +9,7 @@ subtrees:
   - file: release-notes
     title: Release notes
   - file: what-is-cvs
-  title: What is CVS?
+    title: What is CVS?
 
 - caption: Install
   entries:
