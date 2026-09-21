@@ -94,13 +94,13 @@ Single-node:
 
 .. code:: bash
 
-  cvs run jaxmaxtext_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi3xx_jaxmaxtext_llama-3.3-70b_single.json --html=/var/www/html/cvs/jaxmaxtext_single.html --capture=tee-sys --self-contained-html --log-file=/tmp/jaxmaxtext_single.log -vvv -s
+  cvs run jaxmaxtext_single --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi3xx_jaxmaxtext_llama-3.3-70b_single.json --capture=tee-sys -vvv -s
 
 Distributed:
 
 .. code:: bash
 
-  cvs run jaxmaxtext_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json --html=/var/www/html/cvs/jaxmaxtext_distributed.html --capture=tee-sys --self-contained-html --log-file=/tmp/jaxmaxtext_distributed.log -vvv -s
+  cvs run jaxmaxtext_distributed --cluster_file input/cluster_file/cluster.json --config_file input/config_file/training/jaxmaxtext/mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json --capture=tee-sys -vvv -s
 
 The mode is inferred from the config: distributed configs carry the NCCL RDMA
 device-selection vars in ``container.env`` (and add the ``test_setup_rdma``

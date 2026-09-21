@@ -73,8 +73,7 @@ Run the AGFHC test:
      cvs run install_agfhc \
        --cluster_file ~/cvs_workspace/cluster.json \
        --config_file ~/cvs_workspace/health/health_config.json \
-       --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html \
-       --log-file=/tmp/agfhc.log -vvv -s
+       --capture=tee-sys -vvv -s
 
 2. Run the AGFHC test:
 
@@ -83,8 +82,7 @@ Run the AGFHC test:
      cvs run agfhc_cvs \
        --cluster_file ~/cvs_workspace/cluster.json \
        --config_file ~/cvs_workspace/health/health_config.json \
-       --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html \
-       --log-file=/tmp/agfhc.log -vvv -s
+       --capture=tee-sys -vvv -s
 
 3. Run the CSP qualification test:
 
@@ -93,8 +91,7 @@ Run the AGFHC test:
      cvs run csp_qual_agfhc \
        --cluster_file ~/cvs_workspace/cluster.json \
        --config_file ~/cvs_workspace/health/health_config.json \
-       --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html \
-       --log-file=/tmp/agfhc.log -vvv -s
+       --capture=tee-sys -vvv -s
 
 TransferBench
 ~~~~~~~~~~~~~
@@ -126,8 +123,7 @@ Run the TransferBench test:
      cvs run install_transferbench \
        --cluster_file ~/cvs_workspace/cluster.json \
        --config_file ~/cvs_workspace/health/health_config.json \
-       --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html \
-       --log-file=/tmp/transferbench.log -vvv -s
+       --capture=tee-sys -vvv -s
 
 2. Start the TransferBench test:
 
@@ -136,8 +132,7 @@ Run the TransferBench test:
      cvs run transferbench_cvs \
        --cluster_file ~/cvs_workspace/cluster.json \
        --config_file ~/cvs_workspace/health/health_config.json \
-       --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html \
-       --log-file=/tmp/transferbench.log -vvv -s
+       --capture=tee-sys -vvv -s
 
 RVS
 ~~~
@@ -175,8 +170,7 @@ Run the RVS test:
      cvs run install_rvs \
        --cluster_file ~/cvs_workspace/cluster.json \
        --config_file ~/cvs_workspace/health/health_config.json \
-       --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html \
-       --log-file=/tmp/rvs.log -vvv -s
+       --capture=tee-sys -vvv -s
 
 2. Start the RVS test:
 
@@ -185,8 +179,7 @@ Run the RVS test:
      cvs run rvs_cvs \
        --cluster_file ~/cvs_workspace/cluster.json \
        --config_file ~/cvs_workspace/health/health_config.json \
-       --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html \
-       --log-file=/tmp/rvs.log -vvv -s
+       --capture=tee-sys -vvv -s
 
 .. note::
 

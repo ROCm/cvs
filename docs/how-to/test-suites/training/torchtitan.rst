@@ -89,7 +89,7 @@ Single-node example
   cvs run torchtitan_single \
     --cluster_file input/cluster_file/cluster.json \
     --config_file input/config_file/training/torchtitan/mi355x_torchtitan_llama-3.1-8b_single.json \
-    --html ./logs/torchtitan_single.html --self-contained-html -vvv -s
+    -vvv -s
 
 Distributed example
 -------------------
@@ -99,7 +99,7 @@ Distributed example
   cvs run torchtitan_distributed \
     --cluster_file input/cluster_file/cluster.json \
     --config_file input/config_file/training/torchtitan/mi355x_torchtitan_llama-3.3-70b_distributed.json \
-    --html ./logs/torchtitan_distributed.html --self-contained-html -vvv -s
+    -vvv -s
 
 Run a single stage
 ------------------

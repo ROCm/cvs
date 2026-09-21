@@ -131,8 +131,7 @@ Example run:
   cvs run sglang_single \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/mi3xx_sglang_llama_70b_single.json \
-    --html ~/cvs_results/sglang_single.html --self-contained-html \
-    --log-file /tmp/sglang.log -vvv
+    -vvv
 
 ``sglang_distributed`` stages
 -----------------------------
@@ -161,8 +160,7 @@ Example run:
   cvs run sglang_distributed \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/mi3xx_sglang_llama_70b_distributed.json \
-    --html ~/cvs_results/sglang_distributed.html --self-contained-html \
-    --log-file /tmp/sglang.log -vvv
+    -vvv
 
 ``sglang_disagg_distributed`` stages
 ------------------------------------
@@ -193,8 +191,7 @@ Example run:
   cvs run sglang_disagg_distributed \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/mi3xx_sglang_llama_70b_disaggregated.json \
-    --html ~/cvs_results/sglang_disagg.html --self-contained-html \
-    --log-file /tmp/sglang.log -vvv
+    -vvv
 
 Direct pytest invocation
 ------------------------
@@ -211,8 +208,9 @@ Each module can also be run with pytest:
 Read the results
 ================
 
-With ``--html``, CVS writes an HTML report plus ``sglang_run_deck.html`` (interactive viewer)
-using the shared ``sglang`` report profile.
+``cvs run`` writes a pytest HTML report under the run directory by default, plus
+``sglang_run_deck.html`` (interactive viewer) using the shared ``sglang`` report
+profile. Direct ``pytest`` still needs ``--html`` for that bundle.
 
 Key lifecycle stages to watch:
 

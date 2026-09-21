@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RCCL result files default to the run directory. Every run verifies shared result-path access via a sentinel round-trip through `download_from_head` before launching, and result-save failures fail the test. Container runs require the result directory mounted at the same host/container path.
 - `Orchestrator` now declares `exec_on_host`, `upload_to_head`, and `download_from_head` as required methods. RCCL uses these interfaces for host diagnostics and result transfers instead of reaching through internal handles. Custom orchestrator subclasses must implement all three methods.
 - Node Smoke Tier 1, Tier 2, and Tier 3 now run by default. Set `node_smoke_tier1.connectivity_mode` or `node_smoke_tier3.connectivity_mode` to `"skip"` to disable a tier, or set `node_smoke_tier1.tier2_perf` to `false` to disable Tier 2 only. Previously all three were opt-in (`connectivity_mode` defaulted to `"skip"` and `tier2_perf` defaulted to `false`).
+- `cvs run` writes a self-contained pytest HTML report and a text log under `<workspace>/cvs_runs/<run_id>/` by default. `--html` and `--log-file` override those paths; `--no-html` and `--no-log-file` suppress them.
 
 ### Fixed
 

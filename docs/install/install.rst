@@ -229,7 +229,9 @@ config (``--config_file``) first—see :doc:`Set up a cluster file
 </how-to/configure/test-suite-config/index>`, and :doc:`Run tests </how-to/test-suites/index>`.
 Create a host workspace, mount it at ``/workspace`` (read-write) so configs and
 run artifacts land on the host, and mount the SSH private key read-only; set
-``--config_file`` to the matching JSON under ``/workspace/``:
+``--config_file`` to the matching JSON under ``/workspace/``. Pass
+``--workspace /workspace`` so the pytest HTML report and text log land on that
+bind mount under ``/workspace/cvs_runs/`` (the image venv is not on the mount):
 
 .. code:: bash
 
@@ -241,9 +243,7 @@ run artifacts land on the host, and mount the SSH private key read-only; set
     cvs:local run <testSuiteName> \
       --cluster_file /workspace/cluster.json \
       --config_file /workspace/<path-to-config.json> \
-      --html /workspace/results/<testSuiteName>.html \
-      --self-contained-html \
-      --log-file /workspace/results/<testSuiteName>.log \
+      --workspace /workspace \
       --capture=tee-sys -vvv -s
 
 ``--network host`` gives CVS the same network reachability as the Docker host
