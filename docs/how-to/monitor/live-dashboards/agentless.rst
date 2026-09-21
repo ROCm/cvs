@@ -48,13 +48,13 @@ Quick start (Docker)
 
      ./full-rebuild.sh
 
-   The script builds the image, runs ``docker compose up -d``, seeds config from the examples if missing, and triggers a config reload so monitoring starts automatically.
+   The script builds the image, runs ``docker-compose up -d``, seeds config from the examples if missing, and triggers a config reload so monitoring starts automatically.
 
    Alternatively, after editing ``config/`` manually:
 
    .. code:: bash
 
-     docker compose up -d --build
+     docker-compose up -d --build
 
 4. Open the dashboard at ``http://<monitor-host>:8005`` (host port **8005** maps to the app inside the container on port 8001).
 
@@ -65,7 +65,7 @@ Verify deployment
 
 .. code:: bash
 
-  docker compose logs -f
+  docker-compose logs -f
   curl http://<monitor-host>:8005/health
 
 The health endpoint reports collection status (for example ``ssh_manager``, ``collecting``, connected clients).
@@ -75,12 +75,12 @@ Operational notes
 
 - Default metrics interval: 60 seconds (``polling.interval`` in ``cluster.yaml`` or ``POLLING__INTERVAL`` env var). For large fleets (50+ nodes), consider 120 seconds.
 - Host reachability is re-probed every 5 minutes; SSH clients refresh when nodes come back online
-- Stop or restart: ``docker compose down`` / ``docker compose restart``
+- Stop or restart: ``docker-compose down`` / ``docker-compose restart``
 - LLDP packages can be installed cluster-wide from the **Configuration** tab
 
 Other deployment options
 ========================
 
-``cvs/monitors/cluster-mon/DEPLOYMENT.md`` covers bare-metal (Python backend + React frontend), Nginx reverse proxy, systemd, resource limits, upgrades, and troubleshooting. Note: prefer ``docker compose`` and port **8005** on the host — some older examples in that file reference port 8001 on the host.
+``cvs/monitors/cluster-mon/DEPLOYMENT.md`` covers bare-metal (Python backend + React frontend), Nginx reverse proxy, systemd, resource limits, upgrades, and troubleshooting. Note: prefer ``docker-compose`` and port **8005** on the host — some older examples in that file reference port 8001 on the host.
 
 For Prometheus/Grafana-based monitoring with exporters installed on nodes, see :doc:`/how-to/monitor/live-dashboards/exporters`.
