@@ -39,6 +39,14 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     extract_checkpoint_timings,
 )
 from cvs.lib.training.jaxmaxtext.utils.loss_curve import render_loss_curve_png
+from cvs.lib.training.jaxmaxtext.utils.gpu_peak_tflops import peak_tflops
+from cvs.lib.training.jaxmaxtext.utils.training_charts import (
+    render_grad_param_norm_png,
+    render_lr_schedule_png,
+    render_mfu_png,
+    render_multi_loss_png,
+    render_step_time_png,
+)
 from cvs.lib.utils.verdict import evaluate_all, ThresholdViolation
 from cvs.lib.utils_lib import fail_test, update_test_result
 
@@ -377,11 +385,21 @@ def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, 
     results["training.steps_to_target"] = steps_to_target
     results["training.time_to_target_seconds"] = time_to_target
 
+    # Pull the coordinator's TensorBoard scalars (grad/param norms, LR, per-loss
+    # components, step time, tflops rate) for the Run Deck training charts.
+    # Best-effort: never fail the sweep if collection hiccups.
+    try:
+        tb_scalars = job.collect_tb_scalars()
+    except Exception as e:  # noqa: BLE001 - charting data is non-essential
+        log.warning("tb scalars collection failed for sweep '%s': %s", sweep_name, e)
+        tb_scalars = {}
+
     training_res_dict.setdefault("sweeps", {})[sweep_name] = {
         "results": results,
         "step_metrics": job.step_metrics,
         "eval_metrics": job.eval_metrics,
         "num_nodes": job.num_nodes,
+        "tb_scalars": tb_scalars,
     }
 
 
@@ -726,8 +744,54 @@ def metric(sweep_name, metric, training_res_dict, variant_config, lifecycle, req
         _record("PASS")
 
 
+_PRECISION_RE = re.compile(r"\b(BF16|FP16|FP8)\b", re.I)
+
+
+def _sweep_precision(sweep_name):
+    """Best-effort precision (BF16/FP16/FP8) parsed from the sweep name, for MFU."""
+    m = _PRECISION_RE.search(sweep_name or "")
+    return m.group(1).upper() if m else None
+
+
+def _attach_png(mgr, lifecycle, request, png_path, name):
+    """Register a rendered chart PNG as a report artifact (best-effort)."""
+    if not png_path or mgr is None or not getattr(mgr, "is_enabled", False):
+        return
+    try:
+        rel_path = str(_Path(png_path).relative_to(mgr.htmlpath.parent))
+        lifecycle.add_artifact(request.node.nodeid, name, rel_path, str(png_path))
+    except Exception as e:  # noqa: BLE001 - a link failure must not break the run
+        log.warning("training charts: could not register link for %s (%s)", name, e)
+
+
+def _render_training_charts(out_dir, tb_scalars, step_metrics, variant_config, sweep_name, mode, label):
+    """Render the TensorBoard-derived charts; returns ``[(png_or_none, name)]``."""
+    prec = _sweep_precision(sweep_name)
+    peak = peak_tflops(variant_config.gpu_arch, prec, getattr(variant_config.training, "peak_tflops", None))
+    base = f"{variant_config.model.id}_{mode}_{label}_{str(_uuid.uuid4()).split('-')[-1]}"
+
+    def _out(name):
+        return _Path(out_dir) / f"{name}_{base}.png"
+
+    return [
+        (render_multi_loss_png(tb_scalars, _out("loss_components")), f"Loss components [{mode}/{label}]"),
+        (render_grad_param_norm_png(tb_scalars, _out("grad_norm")), f"Grad/param norms [{mode}/{label}]"),
+        (render_lr_schedule_png(tb_scalars, _out("lr")), f"LR schedule [{mode}/{label}]"),
+        (
+            render_step_time_png(tb_scalars, _out("step_time"), step_metrics=step_metrics),
+            f"Step-time dist [{mode}/{label}]",
+        ),
+        (render_mfu_png(tb_scalars, _out("mfu"), peak), f"MFU [{mode}/{label}]"),
+    ]
+
+
 def loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request):
-    """Row 32 (per sweep): sample the training loss, render a PNG, gate on trend."""
+    """Row 32 (per sweep): sample the training loss, render a PNG, gate on trend.
+
+    Also renders the TensorBoard-derived training charts (loss components, grad/
+    param norms, LR schedule, step-time distribution, MFU) and attaches them to
+    this test's report row when TB scalars were collected.
+    """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
@@ -757,12 +821,18 @@ def loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request
     except Exception as e:  # noqa: BLE001 - plotting must never break the verdict
         log.warning("loss curve: could not prepare PNG output (%s)", e)
 
-    if png_path and mgr is not None and getattr(mgr, "is_enabled", False):
+    _attach_png(mgr, lifecycle, request, png_path, f"Loss Curve [{mode}/{label}]")
+
+    # TensorBoard-derived charts (best-effort; absent tags render nothing).
+    tb_scalars = (rec.get("tb_scalars") if rec else None) or {}
+    if (tb_scalars or step_metrics) and mgr is not None and getattr(mgr, "is_enabled", False):
         try:
-            rel_path = str(_Path(png_path).relative_to(mgr.htmlpath.parent))
-            lifecycle.add_artifact(request.node.nodeid, f"Loss Curve [{mode}/{label}]", rel_path, str(png_path))
-        except Exception as e:  # noqa: BLE001
-            log.warning("loss curve: could not register report link (%s)", e)
+            for chart_png, chart_name in _render_training_charts(
+                out_dir, tb_scalars, step_metrics, variant_config, sweep_name, mode, label
+            ):
+                _attach_png(mgr, lifecycle, request, chart_png, chart_name)
+        except Exception as e:  # noqa: BLE001 - charts must never break the verdict
+            log.warning("training charts: rendering failed (%s)", e)
 
     if verdict is not None:
         _decreasing, _slope, detail = verdict

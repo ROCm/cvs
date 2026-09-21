@@ -19,8 +19,11 @@ Both single-node and distributed training use this same class; the config's
 
 from __future__ import annotations
 
+import base64
+import io
 import re
 import shlex
+import tarfile
 import time
 
 from cvs.lib import globals
@@ -30,6 +33,7 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     extract_step_metrics,
     extract_eval_metrics,
 )
+from cvs.lib.training.jaxmaxtext.utils.tb_events import read_scalars_from_bytes
 
 log = globals.log
 
@@ -269,14 +273,64 @@ class MaxTextTrainingJob:
         """Per-node output dir (holds this rank's training/dmesg/redirect logs)."""
         return f"{self.out_dir}/out-node{i}"
 
+    def _run_name(self):
+        """MaxText run_name: model id, plus the per-sweep tag when sweeping."""
+        run_name = f"jaxmaxtext_{self.variant.model.id}"
+        return f"{run_name}_{self.sweep_tag}" if self.sweep_tag else run_name
+
+    def _tb_events_dir(self):
+        """Coordinator TensorBoard events dir (MaxText writes under run_name)."""
+        run_name = self._run_name()
+        return f"{self.out_dir}/{run_name}/tensorboard/{run_name}"
+
+    def collect_tb_scalars(self):
+        """Read the coordinator's TensorBoard scalars into ``{tag: [(step, val)]}``.
+
+        Pulls node 0's event files over ``orch.exec`` (tar | base64, one round
+        trip) and parses them with the dependency-free tb_events reader. This is a
+        report-time convenience: any failure (no TB dir, tar/base64 missing) logs
+        and returns ``{}`` so charting is skipped rather than failing the run.
+        """
+        node0 = self.orch.hosts[0]
+        tb_dir = self._tb_events_dir()
+        cmd = (
+            f"cd {shlex.quote(tb_dir)} 2>/dev/null && tar -cf - events.out.tfevents.* 2>/dev/null | base64 -w0 || true"
+        )
+        try:
+            out = self.orch.exec(cmd, hosts=[node0], print_console=False)
+        except Exception as e:  # noqa: BLE001 - collection must never break the run
+            log.warning("tb collect: exec failed (%s)", e)
+            return {}
+
+        raw = (out or {}).get(node0, "")
+        b64 = raw if isinstance(raw, str) else (raw or {}).get("output", "")
+        b64 = "".join((b64 or "").split())  # drop any wrapping/whitespace
+        if not b64:
+            log.info("tb collect: no TensorBoard events under %s", tb_dir)
+            return {}
+
+        try:
+            tar_bytes = base64.b64decode(b64)
+            blobs = []
+            with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as tar:
+                for member in tar.getmembers():
+                    if member.isfile():
+                        fh = tar.extractfile(member)
+                        if fh is not None:
+                            blobs.append(fh.read())
+        except (ValueError, tarfile.TarError, OSError) as e:
+            log.warning("tb collect: decode/untar failed (%s)", e)
+            return {}
+
+        scalars = read_scalars_from_bytes(blobs)
+        log.info("tb collect: %d scalar tags from %d event file(s)", len(scalars), len(blobs))
+        return scalars
+
     def _write_maxtext_yaml(self):
         """Write the MaxText YAML config into the container."""
         mc = dict(self.maxtext_config)
 
-        run_name = f"jaxmaxtext_{self.variant.model.id}"
-        if self.sweep_tag:
-            run_name = f"{run_name}_{self.sweep_tag}"
-        mc["run_name"] = run_name
+        mc["run_name"] = self._run_name()
         mc["steps"] = self.steps
         mc["enable_checkpointing"] = self.training.enable_checkpointing
         mc["base_output_directory"] = self.out_dir
