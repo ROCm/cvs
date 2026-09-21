@@ -84,12 +84,18 @@ class CellCardRenderer:
         return "cell-card cell-card-compact" if self.config.compact else "cell-card"
 
     def _render_header(self) -> str:
-        if str(self._cell["policy"]).startswith("SIZE="):
-            subtitle = f"NNODES={self._cell['concurrency']}"
+        if self._cell.get("subtitle"):
+            subtitle = html.escape(str(self._cell["subtitle"]))
+        elif str(self._cell.get("policy") or "").startswith("SIZE="):
+            subtitle = f"NNODES={html.escape(str(self._cell.get('concurrency')))}"
         else:
-            subtitle = f"ISL={self._cell['isl']} OSL={self._cell['osl']} &middot; C={self._cell['concurrency']}"
+            subtitle = (
+                f"ISL={html.escape(str(self._cell.get('isl')))} "
+                f"OSL={html.escape(str(self._cell.get('osl')))} "
+                f"&middot; C={html.escape(str(self._cell.get('concurrency')))}"
+            )
         return (
-            f"<header><div class='cell-title'>{html.escape(str(self._cell['policy']))}</div>"
+            f"<header><div class='cell-title'>{html.escape(str(self._cell.get('policy') or self._cell.get('cell_id')))}</div>"
             f"<div class='cell-sub'>{subtitle}</div></header>"
         )
 
@@ -126,8 +132,10 @@ class CellCardRenderer:
             hm_cls = "headline-margin-fail" if headline.get("status") == "fail" else "headline-margin"
             headline_margin_html = f"<div class='{hm_cls}'>{html.escape(headline['margin'])}</div>"
 
+        unit = (headline or {}).get("unit") or "tok/s"
         return (
-            f"<div class='headline'>{headline_val}<span class='headline-unit'>tok/s</span></div>{headline_margin_html}"
+            f"<div class='headline'>{headline_val}<span class='headline-unit'>{html.escape(str(unit))}</span></div>"
+            f"{headline_margin_html}"
         )
 
     def _render_tiers(self) -> str:

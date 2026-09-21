@@ -20,6 +20,7 @@ from cvs.lib.report.profile import DeckProfile
 from cvs.lib.report.rundeck.config_adapter import resolve_report_config
 from cvs.lib.report.rundeck.dataset_builders.registry import build_datasets
 from cvs.lib.report.rundeck.dataset_builders.sweep import select_inline_cells
+from cvs.lib.report.rundeck.dataset_builders import training_sweep as _training_sweep  # noqa: F401
 from cvs.lib.report.types import InferenceReportConfig
 
 
@@ -64,10 +65,10 @@ class RundeckPayloadBuilder:
         # overall_status; everything else it renders is bound from its own
         # datasets.<builder> node (see the profile cards). The sweep builder
         # leaves overall_status here and keeps its existing fields below, so
-        # sweep behaviour is unchanged.
+        # sweep behaviour is unchanged. training_sweep reuses those sweep fields.
         active_data = datasets.get(self.builder_id) or {}
 
-        sweep_data = datasets.get("sweep") or {}
+        sweep_data = datasets.get("sweep") or datasets.get("training_sweep") or {}
         cells = sweep_data.get("all_cells") or sweep_data.get("cells") or []
         panels = ComparisonPanelBuilder(
             self.config,
@@ -89,7 +90,8 @@ class RundeckPayloadBuilder:
             "suite_id": self.config.suite_id,
             "generated_at": generated_at,
             "cvs_version": self.ctx.cvs_version,
-            "overall_status": active_data.get("overall_status") or ("record" if self.builder_id != "sweep" else "na"),
+            "overall_status": active_data.get("overall_status")
+            or ("record" if self.builder_id not in ("sweep", "training_sweep") else "na"),
             "report": {
                 "title": self.config.title,
                 "subtitle": self.config.subtitle,
