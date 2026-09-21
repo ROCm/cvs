@@ -35,8 +35,8 @@ Quick start
 
      cp .env.example .env
      # Edit passwords and retention settings
-     docker compose build --no-cache
-     docker compose up -d
+     docker-compose build --no-cache
+     docker-compose up -d
 
 2. Open **Fleet Monitor** at ``http://<server>:30080``.
 
