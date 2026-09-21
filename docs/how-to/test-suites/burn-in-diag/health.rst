@@ -6,7 +6,7 @@
 Run AGFHC, TransferBench, and RVS health burn-in tests
 *******************************************************
 
-Health burn-in tests run AMD GPU Field Health Check (AGFHC), TransferBench, and ROCm Validation Suite (RVS) on every node in the cluster. Use these tests to validate GPU hardware, memory bandwidth, and compute throughput before production workloads.
+Health burn-in tests run AMD GPU Field Health Check (AGFHC), `TransferBench <https://rocm.docs.amd.com/projects/TransferBench/en/latest/index.html>`_, and `ROCm Validation Suite (RVS) <https://rocm.docs.amd.com/projects/ROCmValidationSuite/en/latest/index.html>`_ on every node in the cluster. Use these tests to validate GPU hardware, memory bandwidth, and compute throughput before production workloads.
 
 .. _health-set-up-config:
 
