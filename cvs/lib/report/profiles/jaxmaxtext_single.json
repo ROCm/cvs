@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "extends": "jaxmaxtext_base",
+  "profile_id": "jaxmaxtext_single_rundeck",
+  "subtitle": "JAX MaxText \u00b7 single-node training summary"
+}

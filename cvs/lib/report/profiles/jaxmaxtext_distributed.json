@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "extends": "jaxmaxtext_base",
+  "profile_id": "jaxmaxtext_distributed_rundeck",
+  "subtitle": "JAX MaxText \u00b7 distributed training summary"
+}

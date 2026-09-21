@@ -60,7 +60,9 @@ class RundeckPayloadBuilder:
             prov,
         )
 
-        sweep_data = datasets.get("sweep") or {}
+        # Read the active builder's dataset (sweep, training_sweep, ...), falling
+        # back to "sweep" so existing inference decks are unaffected.
+        sweep_data = datasets.get(self.builder_id) or datasets.get("sweep") or {}
         cells = sweep_data.get("all_cells") or sweep_data.get("cells") or []
         panels = ComparisonPanelBuilder(
             self.config,
