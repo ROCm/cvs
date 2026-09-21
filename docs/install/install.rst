@@ -228,7 +228,7 @@ Run to completion
 
 The following example runs a test suite. Replace ``<testSuiteName>`` with a name
 from ``cvs list``. Prepare a cluster file (``--cluster_file``) and test suite
-config (``--config_file``) first—see :doc:`Set up cluster file
+config (``--config_file``) first—see :doc:`Set up a cluster file
 </how-to/configure/cluster-config>`, :doc:`Set up test configs
 </how-to/configure/test-suite-config/index>`, and :doc:`Run tests </how-to/test-suites/index>`.
 Create a host workspace, mount it at ``/workspace`` (read-write) so configs and
