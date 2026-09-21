@@ -10,7 +10,7 @@ Run host check scripts to validate host-side configurations, such as model load 
 
 The following sample shows the ``host_config.json`` structure. Replace the values with your cluster's actual versions before running:
 
-How to run these tests: :doc:`/how-to/test-suites/burn-in-diag/platform`.
+See :doc:`/how-to/test-suites/burn-in-diag/platform` for more information on running these tests.
 
 .. dropdown:: ``host_config.json``
      

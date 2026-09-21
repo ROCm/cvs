@@ -8,7 +8,7 @@ Megatron training configuration files for Cluster Validation Suite (CVS)
 
 JSON configs and sibling ``*_threshold.json`` files for ``megatron_single`` and ``megatron_distributed``. MI300X and MI325X share one config per model and mode (``mi3xx_megatron_{model}_{single|distributed}.json``); set ``gpu_name`` and ``threshold_json`` to the SKU. MI355X ships Llama 3.1 8B and Llama 3.3 70B single-node configs only (``mi355x_megatron_llama-3.1-8b_single.json``, ``mi355x_megatron_llama-3.3-70b_single.json``). Use a ``*_single.json`` file with ``megatron_single`` and a ``*_distributed.json`` file with ``megatron_distributed``. ``threshold_json`` is resolved relative to the config file.
 
-How to run the suites: :doc:`/how-to/test-suites/training/megatron`.
+See :doc:`/how-to/test-suites/training/megatron` for more information on running these tests.
 
 Use ``cvs config list training/megatron`` to list available templates, or
 ``cvs config copy training/megatron/<name>`` to copy one to your working
