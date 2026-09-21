@@ -16,19 +16,19 @@ Top-level commands
    * - Command
      - Description
    * - ``cvs generate``
-     - Generate configuration files or templates
+     - Generate configuration files or templates.
    * - ``cvs config``
-     - Browse and copy bundled configuration templates
+     - Browse and copy bundled configuration templates.
    * - ``cvs run``
-     - Run a test suite (wrapper over pytest)
+     - Run a test suite (wrapper over pytest).
    * - ``cvs list``
-     - List available tests
+     - List available tests.
    * - ``cvs monitor``
-     - Cluster health monitoring
+     - Cluster health monitoring.
    * - ``cvs exec``
-     - Execute a command on all cluster nodes
+     - Execute a command on all cluster nodes.
    * - ``cvs scp``
-     - Copy files to cluster nodes in parallel
+     - Copy files to cluster nodes in parallel.
 
 ``cvs generate``
 ================
@@ -51,13 +51,13 @@ Required options (one host source plus credentials):
    * - Option
      - Description
    * - ``--input_hosts_file PATH`` **or** ``--hosts HOSTS``
-     - Host list: file with one IP/hostname per line, or comma-separated list. Supports ranges such as ``192.168.1.10-20`` and ``hostname[1-10]``
+     - Host list: file with one IP/hostname per line, or comma-separated list. Supports ranges such as ``192.168.1.10-20`` and ``hostname[1-10]``.
    * - ``--output_json_file PATH``
-     - Output cluster JSON path
+     - Output cluster JSON path.
    * - ``--username USER``
-     - SSH username for cluster nodes
+     - SSH username for cluster nodes.
    * - ``--key_file PATH``
-     - SSH private key file
+     - SSH private key file.
 
 Optional:
 
@@ -86,9 +86,9 @@ Required options:
    * - Option
      - Description
    * - ``-a PATH``, ``--actual PATH``
-     - Actual results JSON (RCCL graph format)
+     - Actual results JSON (RCCL graph format).
    * - ``-r PATH``, ``--reference PATH``
-     - Golden reference JSON
+     - Golden reference JSON.
 
 Optional options:
 
@@ -99,13 +99,13 @@ Optional options:
    * - Option
      - Description
    * - ``-o PATH``, ``--output PATH``
-     - Output HTML path (default: ``/tmp/rccl_heatmap_<timestamp>.html``)
+     - Output HTML path (default: ``/tmp/rccl_heatmap_<timestamp>.html``).
    * - ``-t TITLE``, ``--title TITLE``
-     - Chart title (default: ``RCCL Performance Heatmap``)
+     - Chart title (default: ``RCCL Performance Heatmap``).
    * - ``--metadata``
-     - Include metadata table (actual JSON must have a ``metadata`` key)
+     - Include metadata table (actual JSON must have a ``metadata`` key).
    * - ``--no-data-table``
-     - Omit the data table from the HTML report
+     - Omit the data table from the HTML report.
 
 See :doc:`/how-to/test-suites/network/rccl`.
 
@@ -136,11 +136,11 @@ Copy bundled templates into your workspace.
    * - Option
      - Description
    * - ``--output PATH``
-     - Destination file or directory (**required**)
+     - Destination file or directory (**required**).
    * - ``--all``
-     - Copy all templates, preserving directory structure
+     - Copy all templates, preserving directory structure.
    * - ``--force``
-     - Overwrite existing destination files
+     - Overwrite existing destination files.
 
 Positional ``path`` is optional: omit for bulk operations with ``--all``; specify a template path for a single-file copy (for example ``platform/host_config.json``).
 
@@ -160,9 +160,9 @@ Required options:
    * - Option
      - Description
    * - ``--cluster_file PATH``
-     - Cluster JSON (nodes, SSH credentials, backend)
+     - Cluster JSON (nodes, SSH credentials, backend).
    * - ``--config_file PATH``
-     - Suite-specific test configuration JSON
+     - Suite-specific test configuration JSON.
 
 Optional options:
 
@@ -173,17 +173,17 @@ Optional options:
    * - Option
      - Description
    * - ``--workspace PATH``
-     - Shared-filesystem root; run dir is ``<workspace>/cvs_runs/<run_id>``. Falls back to ``$CVS_WORKSPACE``, then the venv parent directory
+     - Shared-filesystem root; run dir is ``<workspace>/cvs_runs/<run_id>``. Falls back to ``$CVS_WORKSPACE``, then the venv parent directory.
    * - ``--html PATH``
-     - Pytest HTML report output path
+     - Pytest HTML report output path.
    * - ``--self-contained-html``
-     - Embed CSS and images in the HTML report
+     - Embed CSS and images in the HTML report.
    * - ``--log-file PATH``
-     - Text log file (parent directories created automatically)
+     - Text log file (parent directories created automatically).
    * - ``--log-level LEVEL``
-     - ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR``, ``CRITICAL``
+     - ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR``, ``CRITICAL``.
    * - ``--capture MODE``
-     - ``no``, ``tee-sys``, ``tee-merged``, ``fd``, ``sys``
+     - ``no``, ``tee-sys``, ``tee-merged``, ``fd``, ``sys``.
 
 All other pytest flags pass through. Run ``pytest --help`` for the full list.
 
@@ -203,9 +203,9 @@ Optional options:
    * - Option
      - Description
    * - ``--cluster_file PATH``
-     - Cluster file for parameterized test collection
+     - Cluster file for parameterized test collection.
    * - ``--config_file PATH``
-     - Config file for parameterized test collection
+     - Config file for parameterized test collection.
 
 With no arguments, lists all suites (same catalog as ``cvs run`` with no arguments). With a suite name, lists test functions in that suite.
 
@@ -225,13 +225,13 @@ Subcommand: ``check_cluster_health``
    * - Option
      - Description
    * - ``--cluster_file PATH``
-     - Cluster JSON (recommended; takes precedence over ``CLUSTER_FILE``)
+     - Cluster JSON (recommended; takes precedence over ``CLUSTER_FILE``).
    * - ``--iterations N``
-     - Number of check iterations
+     - Number of check iterations.
    * - ``--time_between_iters SECONDS``
-     - Sleep between iterations
+     - Sleep between iterations.
    * - ``--report_file PATH``
-     - Output HTML report path (default: ``cluster_report.html`` in the current directory)
+     - Output HTML report path (default: ``cluster_report.html`` in the current directory).
 
 Deprecated (use ``--cluster_file`` instead): ``--hosts_file``, ``--username``, ``--password``, ``--key_file``.
 
@@ -249,7 +249,7 @@ Required options:
    * - Option
      - Description
    * - ``--cmd COMMAND``
-     - Shell command to run on selected nodes
+     - Shell command to run on selected nodes.
 
 Optional options:
 
@@ -260,17 +260,17 @@ Optional options:
    * - Option
      - Description
    * - ``--cluster_file PATH``
-     - Cluster JSON (or set ``CLUSTER_FILE``)
+     - Cluster JSON (or set ``CLUSTER_FILE``).
    * - ``--target {computes,switches,all}``
-     - ``computes`` (default), ``switches``, or both
+     - ``computes`` (default), ``switches``, or both.
    * - ``--timeout SECONDS``
-     - Per-node command output timeout (default: ``30``)
+     - Per-node command output timeout (default: ``30``).
    * - ``--connect-timeout SECONDS``
-     - Per-node SSH connect timeout (default: ``15``)
+     - Per-node SSH connect timeout (default: ``15``).
    * - ``--json``
-     - Emit structured JSON on stdout
+     - Emit structured JSON on stdout.
    * - ``--verbose``, ``-v``
-     - Show SSH connection diagnostics
+     - Show SSH connection diagnostics.
 
 See :doc:`/how-to/execute-cluster-commands`.
 
@@ -286,7 +286,7 @@ Required options:
    * - Option
      - Description
    * - ``--file PATH``
-     - Local file or directory to copy
+     - Local file or directory to copy.
 
 Optional options:
 
@@ -297,12 +297,12 @@ Optional options:
    * - Option
      - Description
    * - ``--dest PATH``
-     - Remote destination (defaults to the same path as the source)
+     - Remote destination (defaults to the same path as the source).
    * - ``--recurse``
-     - Copy directories recursively
+     - Copy directories recursively.
    * - ``--cluster_file PATH``
-     - Cluster JSON (or set ``CLUSTER_FILE``)
+     - Cluster JSON (or set ``CLUSTER_FILE``).
    * - ``--parallel N``
-     - Parallel SCP operations (default: ``20``)
+     - Parallel SCP operations (default: ``20``).
 
-See :doc:`/how-to/copy-to-cluster`.
+See :doc:`/how-to/copy-to-cluster` for more information.

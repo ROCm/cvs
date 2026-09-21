@@ -35,34 +35,34 @@ Each stage of the run is an independent test, so every stage becomes its own tim
      - Purpose
    * - 0
      - ``test_launch_container``
-     - Pull/load the image and start the container on every node
+     - Pull/load the image and start the container on every node.
    * - 1
      - ``test_setup_sshd``
-     - Always skipped for vLLM (see note below)
+     - Always skipped for vLLM (see note below).
    * - 2
      - ``test_discover_topology``
-     - Resolve IB HCA devices; no-op for effective single-node execution
+     - Resolve IB HCA devices; no-op for effective single-node execution.
    * - 3
      - ``test_model_fetch``
-     - Stage model weights
+     - Stage model weights.
    * - 4
      - ``test_openai_compatible_smoke``
-     - Short-lived server; verifies the OpenAI-compatible API answers
+     - Short-lived server; verifies the OpenAI-compatible API answers.
    * - 5
      - ``test_vllm_inference``
-     - Run one benchmark cell (parametrized per sweep run)
+     - Run one benchmark cell (parametrized per sweep run).
    * - 6
      - ``test_verify_cell_metrics``
-     - One verification parent per cell; configured threshold gates are listed as subtests
+     - One verification parent per cell; configured threshold gates are listed as subtests.
    * - 7
      - ``test_accuracy_eval``
-     - lm-eval accuracy tasks, if any are configured
+     - lm-eval accuracy tasks, if any are configured.
    * - 8
      - ``test_print_results_table``
-     - Console + report summary table
+     - Console + report summary table.
    * - 9
      - ``test_teardown``
-     - Stop the server and tear down the container
+     - Stop the server and tear down the container.
 
 .. note::
 
@@ -90,34 +90,34 @@ A vLLM configuration file has these top-level keys:
      - Description
    * - ``enforce_thresholds``
      - no (default ``true``)
-     - When ``false``, metrics record without requiring calibrated threshold cells
+     - When ``false``, metrics record without requiring calibrated threshold cells.
    * - ``threshold_json``
      - yes
-     - Explicit path to the threshold file. See :ref:`vllm-threshold-discovery`
+     - Explicit path to the threshold file. See :ref:`vllm-threshold-discovery`.
    * - ``container``
      - yes
-     - Container/Docker settings. See :ref:`vllm-container`
+     - Container/Docker settings. See :ref:`vllm-container`.
    * - ``paths``
      - yes
-     - Filesystem locations. See :ref:`vllm-paths`
+     - Filesystem locations. See :ref:`vllm-paths`.
    * - ``server_params``
      - yes
-     - Harness-owned server fields plus snake-case ``vllm serve`` options
+     - Harness-owned server fields plus snake-case ``vllm serve`` options.
    * - ``benchmark_params``
      - no
-     - Benchmark defaults plus snake-case ``vllm bench serve`` options
+     - Benchmark defaults plus snake-case ``vllm bench serve`` options.
    * - ``sweeps``
      - yes
-     - Canonical run-cell keys mapped to benchmark overrides
+     - Canonical run-cell keys mapped to benchmark overrides.
    * - ``runs``
      - yes
-     - Nonempty ordered list of the sweep cells to execute
+     - Nonempty ordered list of the sweep cells to execute.
    * - ``thresholds``
      - no
-     - Per-cell pass/fail specs. See :ref:`vllm-thresholds`
+     - Per-cell pass/fail specs. See :ref:`vllm-thresholds`.
    * - ``accuracy``
      - no
-     - lm-eval task selection. See :ref:`vllm-accuracy`
+     - lm-eval task selection. See :ref:`vllm-accuracy`.
 
 .. important::
 
@@ -171,16 +171,16 @@ Four different things in this stack are called a "backend". They are unrelated, 
      - What it selects
    * - ``benchmark_params.backend``
      - ``"vllm"`` (default)
-     - The **client** backend passed to ``vllm bench serve --backend``. Nothing to do with distribution
+     - The **client** backend passed to ``vllm bench serve --backend``. Nothing to do with distribution.
    * - ``server_params.distributed_executor_backend``
      - ``"mp"`` (default), ``"ray"``
-     - How vLLM distributes the model across nodes. This is the multinode setting
+     - How vLLM distributes the model across nodes. This is the multinode setting.
    * - ``container.runtime.name``
      - ``"docker"``
-     - The container runtime
+     - The container runtime.
    * - Cluster file ``orchestrator``
      - ``"baremetal"``, ``"container"``
-     - Whether CVS runs commands on the host or inside a container. See :doc:`/reference/cluster/cluster-file`
+     - Whether CVS runs commands on the host or inside a container. See :doc:`/reference/cluster/cluster-file`.
 
 .. warning::
 
@@ -299,25 +299,25 @@ The following keys are accepted inside the ``container`` block.
      - Description
    * - ``image``
      - none
-     - Container image. **Required** — launch fails with ``Container image not specified in config``
+     - Container image. **Required** — launch fails with ``Container image not specified in config``.
    * - ``name``
      - ``<user>_<sanitized-image>``
-     - Container name
+     - Container name.
    * - ``lifetime``
      - ``"per_run"``
-     - One of ``no_launch``, ``per_run``, ``persistent``
+     - One of ``no_launch``, ``per_run``, ``persistent``.
    * - ``runtime.name``
      - ``"docker"``
-     - Container runtime
+     - Container runtime.
    * - ``runtime.args``
      - ``{}``
-     - Docker flags; see the table below
+     - Docker flags; see the table below.
    * - ``env``
      - ``{}``
-     - Container-level environment variables. **Top level, not under** ``runtime.args``
+     - Container-level environment variables. **Top level, not under** ``runtime.args``.
    * - ``image_tar``
      - absent
-     - Path on each host to a saved image tar to ``docker load`` instead of pulling. **Top level**
+     - Path on each host to a saved image tar to ``docker load`` instead of pulling. **Top level**.
 
 .. warning::
 
@@ -404,13 +404,13 @@ The ``lifetime`` key controls when the container is started and stopped relative
      - Setup behavior
      - Teardown behavior
    * - ``no_launch``
-     - Verifies a container of that name is already running; never starts one
+     - Verifies a container of that name is already running; never starts one.
      - No-op
    * - ``per_run``
-     - Force-removes any stale container of the same name, then launches
+     - Force-removes any stale container of the same name, then launches.
      - ``docker rm -f``
    * - ``persistent``
-     - Attaches if running on all hosts; cold-starts if absent on all hosts; **refuses** on partial or failed probe
+     - Attaches if running on all hosts; cold-starts if absent on all hosts; **refuses** on partial or failed probe.
      - No-op
 
 .. tip::
@@ -468,13 +468,13 @@ All four keys are required.
    * - Key
      - Description
    * - ``shared_fs``
-     - Root of the shared filesystem, typically the anchor other paths reference
+     - Root of the shared filesystem, typically the anchor other paths reference.
    * - ``models_dir``
-     - Model weight cache; exported into the server as ``HF_HUB_CACHE``
+     - Model weight cache; exported into the server as ``HF_HUB_CACHE``.
    * - ``log_dir``
-     - Root for run artifacts
+     - Root for run artifacts.
    * - ``hf_token_file``
-     - Path to a file containing the Hugging Face token
+     - Path to a file containing the Hugging Face token.
 
 If ``hf_token_file`` does not exist, the run continues with an empty token. vLLM
 configs always serve a pre-staged model mounted under ``paths.models_dir``.
@@ -521,16 +521,16 @@ Every other snake-case key is passed through to ``vllm serve``.
      - Description
    * - ``model``
      - none
-     - Local model path supplied as the positional ``vllm serve`` argument
+     - Local model path supplied as the positional ``vllm serve`` argument.
    * - ``tensor_parallel_size``
      - none
-     - Tensor-parallel degree
+     - Tensor-parallel degree.
    * - ``pipeline_parallel_size``
      - ``1``
-     - Pipeline-parallel degree
+     - Pipeline-parallel degree.
    * - ``port``
      - ``8888``
-     - OpenAI-compatible server port
+     - OpenAI-compatible server port.
 
 How server_params are flattened
 -------------------------------
@@ -550,9 +550,9 @@ How server_params are flattened
      - ``"enforce_eager": true`` → ``--enforce-eager``
    * - ``false``
      - rejected
-     - Omit the setting or use vLLM's explicit negative option
+     - Omit the setting or use vLLM's explicit negative option.
    * - List
-     - one flag followed by its values
+     - One flag followed by its values.
      - ``"x": ["a","b"]`` → ``--x a b``
 
 When ``server_params.max_model_len`` is absent, CVS derives one for each
@@ -581,16 +581,16 @@ These are separate and are frequently confused.
      - generated per-command environment
    * - Applied by
      - ``docker run -e``
-     - A sourced shell script inside the container after HCA discovery
+     - A sourced shell script inside the container after HCA discovery.
    * - Scope
-     - Every command in the container, for its whole lifetime
-     - Hugging Face path/token variables and legacy network fallbacks
+     - Every command in the container, for its whole lifetime.
+     - Hugging Face path/token variables and legacy network fallbacks.
    * - Changing it
-     - Requires recreating the container
-     - Takes effect on the next command
+     - Requires recreating the container.
+     - Takes effect on the next command.
    * - Defaults
      - ``GPUS=8``, ``MULTINODE=true``
-     - No network overrides unless a legacy top-level field is set
+     - No network overrides unless a legacy top-level field is set.
 
 The generated per-command environment always exports:
 
@@ -642,40 +642,40 @@ percentile reporting.
      - Description
    * - ``backend``
      - ``"vllm"``
-     - Client backend for ``vllm bench serve``
+     - Client backend for ``vllm bench serve``.
    * - ``base_url``
      - ``"http://0.0.0.0"``
-     - Server base URL
+     - Server base URL.
    * - ``num_prompts``
      - ``3200``
-     - Total prompts per cell
+     - Total prompts per cell.
    * - ``dataset_name``
      - ``"random"``
-     - Dataset for the load generator
+     - Dataset for the load generator.
    * - ``num_prompts``
      - ``"3200"``
-     - Total prompts per cell
+     - Total prompts per cell.
    * - ``burstiness``
      - ``"1.0"``
-     - 1.0 is a uniform arrival process; lower is burstier
+     - 1.0 is a uniform arrival process; lower is burstier.
    * - ``seed``
      - ``"0"``
-     - Random seed
+     - Random seed.
    * - ``request_rate``
      - ``"inf"``
-     - Arrival rate; ``inf`` sends as fast as concurrency allows
+     - Arrival rate; ``inf`` sends as fast as concurrency allows.
    * - ``random_range_ratio``
      - ``"0.0"``
-     - Length jitter around ISL/OSL; also feeds the derived max-model-len
+     - Length jitter around ISL/OSL; also feeds the derived max-model-len.
    * - ``random_prefix_len``
      - ``"0"``
-     - Shared prefix length
+     - Shared prefix length.
    * - ``tokenizer_mode``
      - ``"auto"``
-     - Tokenizer mode
+     - Tokenizer mode.
    * - ``client_poll_iterations``
      - ``20``
-     - Client completion polls before giving up
+     - Client completion polls before giving up.
 
 .. tip::
 
@@ -712,9 +712,9 @@ The sweep is an explicit list of canonical cells, not a cartesian product.
    * - Key
      - Description
    * - ``sweeps.<cell>``
-     - Per-cell benchmark override object
+     - Per-cell benchmark override object.
    * - ``runs[]``
-     - Canonical key declared in ``sweeps``
+     - Canonical key declared in ``sweeps``.
 
 An undeclared, malformed, duplicated, or TP/PP-inconsistent cell key is a
 load-time error.
@@ -960,31 +960,31 @@ Accuracy evaluation runs `lm-evaluation-harness <https://github.com/EleutherAI/l
      - Description
    * - ``id``
      - none
-     - Unique label for this entry; duplicates are rejected
+     - Unique label for this entry; duplicates are rejected.
    * - ``tasks`` (or legacy ``task``)
      - none
-     - lm-eval task name or task list
+     - lm-eval task name or task list.
    * - ``lm_eval_model``
      - endpoint-derived
      - ``local-completions`` or ``local-chat-completions``
    * - ``num_fewshot``
      - lm-eval default
-     - Few-shot example count, if explicitly set
+     - Few-shot example count, if explicitly set.
    * - ``num_concurrent``
      - ``8``
-     - Concurrent requests
+     - Concurrent requests.
    * - ``apply_chat_template``
      - ``false``
-     - Enables or names the chat template
+     - Enables or names the chat template.
    * - ``metadata``
      - ``{}``
-     - Passed through to lm-eval
+     - Passed through to lm-eval.
    * - ``include_path``
      - ``""``
-     - Directory of custom task definitions
+     - Directory of custom task definitions.
    * - ``gen_kwargs``
      - ``{}``
-     - Generation arguments
+     - Generation arguments.
 
 ``lm_eval_model`` selects the API surface. If omitted, CVS derives it from
 ``apply_chat_template``:
@@ -1047,37 +1047,37 @@ Troubleshooting
    * - Message
      - Cause and fix
    * - Distributed execution requires ``pipeline_parallel_size > 1``
-     - Multi-host ``vllm_distributed`` on the mp backend needs pipeline parallelism. Either raise ``pipeline_parallel_size``, or set ``distributed-executor-backend`` to ``"ray"``
+     - Multi-host ``vllm_distributed`` on the mp backend needs pipeline parallelism. Either raise ``pipeline_parallel_size``, or set ``distributed-executor-backend`` to ``"ray"``.
    * - ``vllm_single requires pipeline_parallel_size=1``
-     - Use ``vllm_distributed`` when the config requires pipeline parallelism
+     - Use ``vllm_distributed`` when the config requires pipeline parallelism.
    * - ``vllm_distributed requires container.env.NCCL_SOCKET_IFNAME``
-     - Set all three socket-interface variables under ``container.env``
+     - Set all three socket-interface variables under ``container.env``.
    * - ``Container image not specified in config``
-     - ``container.image`` is empty. Note that a variant ``container`` block with no ``image`` overwrites the cluster file's value
+     - ``container.image`` is empty. Note that a variant ``container`` block with no ``image`` overwrites the cluster file's value.
    * - ``runs must be a nonempty explicit list``
-     - ``runs`` is missing or empty. List at least one canonical cell key from ``sweeps``
+     - ``runs`` is missing or empty. List at least one canonical cell key from ``sweeps``.
    * - ``runs contains duplicate cells``
-     - The same cell key appears twice in ``runs``
+     - The same cell key appears twice in ``runs``.
    * - ``runs reference unknown sweeps``
-     - A ``runs`` entry is not a key in ``sweeps``
+     - A ``runs`` entry is not a key in ``sweeps``.
    * - ``run cell must be canonical ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``
-     - A sweep or run key is malformed
+     - A sweep or run key is malformed.
    * - ``conflicts with server_params tensor/pipeline parallel size``
-     - The TP or PP in a cell key does not match ``server_params``
+     - The TP or PP in a cell key does not match ``server_params``.
    * - ``duplicate task id(s)``
-     - Two ``accuracy.tasks`` entries share an ``id``
+     - Two ``accuracy.tasks`` entries share an ``id``.
    * - ``unknown vLLM threshold metric '<metric>'``
-     - The cell key does not begin with ``_`` and does not name one of the 56 registry metrics
+     - The cell key does not begin with ``_`` and does not name one of the 56 registry metrics.
    * - ``<metric> threshold kind must be '<direction>', got '<kind>'``
-     - ``kind`` does not match the registry direction. Use the required ``min`` or ``max`` value shown in the message
+     - ``kind`` does not match the registry direction. Use the required ``min`` or ``max`` value shown in the message.
    * - ``<metric>: actual must be a finite built-in int or float, got <value>``
-     - The gated datasource did not produce a valid value. Inspect the benchmark artifact, GPU telemetry, or server metrics for that cell; percentile collection is harness-owned
+     - The gated datasource did not produce a valid value. Inspect the benchmark artifact, GPU telemetry, or server metrics for that cell; percentile collection is harness-owned.
    * - ``NotImplementedError: model.remote=1``
-     - Remote model download is unimplemented. Pre-stage weights and set ``remote: 0``
+     - Remote model download is unimplemented. Pre-stage weights and set ``remote: 0``.
    * - ``ValueError: too many values to unpack``
-     - ``env`` was placed under ``runtime.args``. Move it to the ``container`` top level
+     - ``env`` was placed under ``runtime.args``. Move it to the ``container`` top level.
    * - Extra-key validation error
-     - A misspelled key. Every block except ``container`` forbids unknown keys
+     - A misspelled key. Every block except ``container`` forbids unknown keys.
 
 Related resources
 =================
