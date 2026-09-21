@@ -14,10 +14,10 @@ System requirements
 CVS supports these GPUs:
 
 - AMD Instinct™ MI325X
-- AMD Instinct™ MI300X	
-- AMD Instinct™ MI350X
-- AMD Instinct™ MI355X
-- AMD Instinct™ MI455X
+- AMD Instinct MI300X	
+- AMD Instinct MI350X
+- AMD Instinct MI355X
+- AMD Instinct MI455X
 
 CVS supports these Linux distributions:
 
@@ -119,7 +119,7 @@ If ``cvs --version`` prints a version and ``cvs list`` shows available test suit
 Install with pip
 ~~~~~~~~~~~~~~~~
 
-For users who want to install CVS in a custom virtual environment:
+Use this method to install CVS in a custom virtual environment; this gives you more control over the virtual environment name and location:
 
 1. Clone the repository:
 
@@ -148,8 +148,6 @@ For users who want to install CVS in a custom virtual environment:
 
      cvs --version
      cvs list
-
-This method gives you more control over the virtual environment name and location.
 
 If ``cvs --version`` prints a version and ``cvs list`` shows available test suites, CVS is installed correctly.
 

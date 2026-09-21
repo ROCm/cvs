@@ -12,4 +12,4 @@ JSON configuration schemas for interconnect and collective communication suites 
 - :doc:`RCCL </reference/configuration-files/network/rccl>` — multi-node collective communication performance
 - :doc:`MORI (RDMA Performance) </reference/configuration-files/network/mori>` — RDMA read/write bandwidth and latency
 
-How to run these suites: :doc:`/how-to/test-suites/network/index`.
+See :doc:`/how-to/test-suites/network/index` for more information on running these tests.
