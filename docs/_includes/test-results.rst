@@ -18,7 +18,7 @@ Test output examples
 
 .. image:: /images/stop.png
 
-Sample Training Test Results
+Sample training test results
 ----------------------------
 
 Sample output snapshots from a JAX MaxText training run.
@@ -28,7 +28,7 @@ Sample output snapshots from a JAX MaxText training run.
 .. image:: /images/jaxmaxtext_Training_html_report_sample.png
    :alt: Sample JAX MaxText training HTML test report
 
-Sample Inference Test Results
+Sample inference test results
 -----------------------------
 
 Sample output snapshot from an SGLang inference run.
