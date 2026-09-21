@@ -14,6 +14,10 @@ html_theme_options = {
     "flavor": "instinct",
     "link_main_doc": True,
     "version_list_link": "https://rocm.docs.amd.com/projects/cvs/en/latest/release.html",
+    "use_download_button": True,
+    "repository_url": "https://github.com/ROCm/cvs",
+    "use_repository_button": True,
+    "use_issues_button": True,
     # Add any additional theme options here
 }
 

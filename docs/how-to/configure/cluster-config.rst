@@ -59,12 +59,12 @@ The hosts file supports one IP or hostname per line, ranges like ``192.168.1.11-
 Passwordless SSH
 ================
 
-Passwordless SSH from the head node to every worker is required. See :doc:`/reference/cluster/passwordless-ssh`.
+Passwordless SSH from the head node to every worker is required. See :doc:`/reference/cluster/passwordless-ssh` for more information.
 
 Container backend
 =================
 
-For container-based suites, use ``cluster_container.json`` and see :doc:`/how-to/run-with-containers`.
+For container-based suites, use ``cluster_container.json`` and see :doc:`/how-to/run-with-containers` for more information.
 
 Next steps
 ==========

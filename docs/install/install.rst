@@ -6,7 +6,7 @@
 Install Cluster Validation Suite (CVS) on ROCm
 ************************************************
 
-This page covers all installation options for CVS: Makefile, pip, and Docker. If you want to install and run your first cluster-wide command in about 15 minutes, see the :doc:`quickstart </install/quickstart>` instead.
+This page covers all installation options for CVS: Makefile, pip, and Docker. If you want to install and run your first cluster-wide command in about 15 minutes, see :doc:`quickstart </install/quickstart>` instead.
 
 System requirements
 ===================
@@ -97,9 +97,9 @@ This is the quickest way to install CVS from source.
 
    This will automatically:
 
-   - Build the source distribution
-   - Create a virtual environment in ``.cvs_venv/``
-   - Install CVS in the virtual environment
+   - Build the source distribution.
+   - Create a virtual environment in ``.cvs_venv/``.
+   - Install CVS in the virtual environment.
 
 2. Activate the virtual environment:
 
@@ -259,6 +259,6 @@ users need Docker access as documented in :doc:`/how-to/run-with-containers`.
 Next steps
 ==========
 
-- :doc:`/how-to/configure/cluster-config` — configure the cluster file
-- :doc:`/how-to/configure/test-suite-config/index` — copy and edit test suite configs
-- :doc:`/how-to/test-suites/index` — run tests
+- :doc:`/how-to/configure/cluster-config` — configure the cluster file.
+- :doc:`/how-to/configure/test-suite-config/index` — copy and edit test suite configs.
+- :doc:`/how-to/test-suites/index` — run tests.
