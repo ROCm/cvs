@@ -15,7 +15,7 @@ file from ``cvs/input/config_file/inference/xdit/``. There is no separate thresh
 - **Distributed** templates run one coordinated torchrun job (``nnodes >= 2``). Replace
   every ``<changeme>`` (NCCL/network fields) before running.
 
-How to run: :doc:`/how-to/test-suites/inference/xdit`.
+See :doc:`/how-to/test-suites/inference/xdit` for more information on running these tests.
 
 .. note::
 
