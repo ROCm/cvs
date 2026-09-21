@@ -19,12 +19,12 @@ metrics with a PASS/FAIL HTML report.
 
 The JAX MaxText tests check:
 
-- **Container orchestration**: Docker setup with ROCm/RDMA
-- **Model load + smoke**: the model loads and trains a few steps with no error/NaN signature
-- **Per-sweep training**: one full run per enabled sweep (e.g. BF16, FP8)
-- **Performance targets**: TFLOP/s, tokens/s, step time, and multi-node scaling efficiency
-- **Convergence**: final loss / loss-decreasing trend, optional time-to-target
-- **Checkpoint save/resume** (opt-in): resume correctness + checkpoint I/O timing
+- **Container orchestration**: Docker setup with ROCm/RDMA.
+- **Model load + smoke**: The model loads and trains a few steps with no error/NaN signature.
+- **Per-sweep training**: One full run per enabled sweep (e.g., BF16, FP8).
+- **Performance targets**: TFLOP/s, tokens/s, step time, and multi-node scaling efficiency.
+- **Convergence**: Final loss / loss-decreasing trend, optional time-to-target.
+- **Checkpoint save/resume** (opt-in): resume correctness + checkpoint I/O timing.
 
 Use ``cvs config list training/jaxmaxtext`` to list available templates, or
 ``cvs config copy training/jaxmaxtext/<name>`` to copy one to your working directory.
