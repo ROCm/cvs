@@ -59,6 +59,58 @@ GATED_METRICS = {
     "loss_decreased",
 }
 
+# Metric prefix used in results/threshold dicts: results are keyed "training.<short>"
+# and thresholds by the SAME full key under the sweep-name cell (see the metric()
+# gate in cvs/tests/training/jaxmaxtext/_common.py).
+METRIC_PREFIX = "training."
+
+# Run Deck metric tiers (throughput / convergence / stability), consumed by the
+# training dataset_builder + deck profile. Ordering within a tier is display order.
+METRIC_TIERS = {
+    "throughput": (
+        "tflops_per_sec_per_gpu",
+        "tokens_per_sec_per_gpu",
+        "tokens_per_sec_total",
+        "scaling_efficiency_pct",
+    ),
+    "convergence": (
+        "final_loss",
+        "loss_decreased",
+        "eval_loss",
+        "steps_to_target",
+        "time_to_target_seconds",
+    ),
+    "stability": (
+        "step_time_seconds",
+        "step_time_mean_ms",
+        "step_time_p50_ms",
+        "step_time_p95_ms",
+    ),
+}
+# "record" is the catch-all tier for any TRAINING_METRIC not placed above.
+METRIC_TIER_ORDER = tuple(METRIC_TIERS) + ("record",)
+_TIERED = {short for names in METRIC_TIERS.values() for short in names}
+RECORD_METRICS = tuple(short for short, _unit in TRAINING_METRICS if short not in _TIERED)
+
+
+def tier_metric_specs(thresholds_cell, tier):
+    """Threshold specs for one deck tier within a sweep's threshold cell.
+
+    Mirrors the inference ``tier_metric_specs`` hook contract. Returns
+    ``{full_key: spec}`` keyed by the full ``training.<short>`` metric so the key
+    indexes both the results/actuals dict and the thresholds cell. Metrics with no
+    spec in this cell are omitted (record-only).
+    """
+    names = RECORD_METRICS if tier == "record" else METRIC_TIERS.get(tier, ())
+    specs = {}
+    for short in names:
+        full = METRIC_PREFIX + short
+        spec = (thresholds_cell or {}).get(full)
+        if spec is not None:
+            specs[full] = spec
+    return specs
+
+
 # Regex for a completed training step line.
 # Example: "completed step: 50, seconds: 1.234, TFLOP/s/device: 185.4, Tokens/s/device: 3456.7, ..., loss: 6.543"
 _STEP_RE = re.compile(r"completed step:\s*(\d+)")

@@ -10,12 +10,17 @@ step/eval extraction, aggregate metrics, convergence (row 33), validation loss
 import unittest
 
 from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
+    METRIC_TIER_ORDER,
+    METRIC_TIERS,
+    RECORD_METRICS,
+    TRAINING_METRICS,
     compute_convergence,
     evaluate_loss_decreasing,
     extract_checkpoint_timings,
     extract_eval_metrics,
     parse_training_log,
     sample_loss_curve,
+    tier_metric_specs,
 )
 
 
@@ -237,6 +242,36 @@ class EvaluateLossDecreasingTests(unittest.TestCase):
         decreasing, slope, _detail = evaluate_loss_decreasing(pts, max_slope=0.0)
         self.assertTrue(decreasing)
         self.assertLess(slope, 0.0)
+
+
+class TierMetricSpecsTests(unittest.TestCase):
+    def test_tier_order_ends_with_record(self):
+        self.assertEqual(METRIC_TIER_ORDER[-1], "record")
+        self.assertEqual(set(METRIC_TIER_ORDER[:-1]), set(METRIC_TIERS))
+
+    def test_every_training_metric_is_tiered_or_record(self):
+        # No TRAINING_METRIC should silently vanish from the deck.
+        placed = {m for names in METRIC_TIERS.values() for m in names} | set(RECORD_METRICS)
+        self.assertEqual(placed, {short for short, _unit in TRAINING_METRICS})
+
+    def test_specs_keyed_by_full_metric_and_filter_missing(self):
+        cell = {
+            "training.final_loss": {"kind": "max", "value": 3.0},
+            "training.loss_decreased": {"kind": "min", "value": 1},
+            # eval_loss intentionally absent -> omitted from the tier
+        }
+        specs = tier_metric_specs(cell, "convergence")
+        self.assertEqual(
+            specs,
+            {
+                "training.final_loss": {"kind": "max", "value": 3.0},
+                "training.loss_decreased": {"kind": "min", "value": 1},
+            },
+        )
+
+    def test_unknown_tier_and_empty_cell_are_safe(self):
+        self.assertEqual(tier_metric_specs({}, "throughput"), {})
+        self.assertEqual(tier_metric_specs(None, "nonsense"), {})
 
 
 if __name__ == "__main__":

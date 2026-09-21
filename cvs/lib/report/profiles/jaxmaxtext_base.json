@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "profile_id": "jaxmaxtext_rundeck",
+  "suite_id": "jaxmaxtext",
+  "report_basename": "jaxmaxtext_run_deck",
+  "title": "JAX MaxText Training Run Deck",
+  "subtitle": "JAX MaxText \u00b7 training performance & convergence summary",
+  "footer": "CVS jaxmaxtext \u00b7 render-only \u00b7 does not affect gates",
+  "link_name": "JAX MaxText Run Deck",
+  "dataset_builder": "training_sweep",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "training_res_dict",
+    "variant": "variant_config",
+    "lifecycle": "lifecycle"
+  },
+  "hooks": {
+    "tier_metric_specs": "cvs.lib.training.jaxmaxtext.utils.maxtext_parsing:tier_metric_specs",
+    "metric_units": "cvs.lib.training.jaxmaxtext.utils.maxtext_parsing:TRAINING_METRIC_UNITS",
+    "run_card_display": "cvs.lib.report.profiles.hooks.jaxmaxtext_run_card:jaxmaxtext_run_card_display"
+  },
+  "sweep": {
+    "metric_prefix": "training.",
+    "tier_order": ["throughput", "convergence", "stability", "record"],
+    "headline_metric": "training.tokens_per_sec_per_gpu",
+    "results_table_columns": [
+      ["Sweep", null],
+      ["Model", null],
+      ["Nodes", null],
+      ["TFLOP/s/GPU", "training.tflops_per_sec_per_gpu"],
+      ["tok/s/GPU", "training.tokens_per_sec_per_gpu"],
+      ["tok/s total", "training.tokens_per_sec_total"],
+      ["Scaling %", "training.scaling_efficiency_pct"],
+      ["step p50 (ms)", "training.step_time_p50_ms"],
+      ["Final loss", "training.final_loss"],
+      ["Loss decreased", "training.loss_decreased"]
+    ],
+    "cell_highlights": [
+      ["tokens_per_sec_per_gpu", "tok/s/GPU"],
+      ["final_loss", "Final loss"],
+      ["loss_decreased", "Loss decreased"]
+    ],
+    "chart_series": []
+  },
+  "lifecycle": {
+    "session_labels": [
+      "container_launch",
+      "rdma_setup",
+      "tokenizer_setup",
+      "smoke",
+      "training_run",
+      "checkpoint_resume",
+      "teardown"
+    ],
+    "cell_labels": []
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {"type": "lifecycle_timeline", "id": "lifecycle", "title": "Lifecycle timeline", "bind": "lifecycle"},
+    {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
+    {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}

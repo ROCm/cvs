@@ -60,14 +60,15 @@ class RundeckPayloadBuilder:
             prov,
         )
 
-        # A non-sweep builder reports its own top-line verdict via
-        # overall_status; everything else it renders is bound from its own
-        # datasets.<builder> node (see the profile cards). The sweep builder
-        # leaves overall_status here and keeps its existing fields below, so
-        # sweep behaviour is unchanged.
+        # A non-sweep builder reports its own top-line verdict via overall_status.
         active_data = datasets.get(self.builder_id) or {}
 
-        sweep_data = datasets.get("sweep") or {}
+        # Shared render fields (cells, gate_matrix, results_table, chart_series)
+        # come from the active builder, falling back to "sweep" so inference decks
+        # are unchanged. Non-sweep builders that render entirely via their own
+        # datasets.<builder>.* bindings (e.g. status_matrix) simply omit these keys,
+        # so they resolve to empty here.
+        sweep_data = active_data or datasets.get("sweep") or {}
         cells = sweep_data.get("all_cells") or sweep_data.get("cells") or []
         panels = ComparisonPanelBuilder(
             self.config,
