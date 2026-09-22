@@ -551,6 +551,27 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertNotIn("--quantization", variant.roles.server.atom_args)
         self.assertEqual(variant.threshold_json, "mi325x_atom_deepseek-v4-flash_single_threshold.json")
 
+    def test_load_kimi_mi355x_atom_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi355x_atom_kimi-k27-code_mxfp4_single.json")
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertEqual(variant.model.id, "moonshotai/Kimi-K2.7-Code")
+        self.assertEqual(variant.params.tensor_parallelism, "4")
+        self.assertEqual(variant.roles.server.atom_args[:2], ["-tp", "4"])
+        self.assertNotIn("ATOM_USE_TRITON_MOE", variant.roles.server.env)
+        self.assertEqual(
+            variant.threshold_json,
+            "mi355x_atom_kimi-k27-code_mxfp4_single_threshold.json",
+        )
+
+    def test_load_v4_pro_mi355x_atom_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi355x_atom_deepseek-v4-pro_single.json")
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Pro")
+        self.assertEqual(variant.params.tensor_parallelism, "8")
+        self.assertEqual(variant.threshold_json, "mi355x_atom_deepseek-v4-pro_single_threshold.json")
+
     def test_atom_threshold_files_use_aligned_keys_and_bare_metrics(self):
         root = Path(__file__).resolve().parents[3]
         atom_dir = root / "input/config_file/inference/atom"
