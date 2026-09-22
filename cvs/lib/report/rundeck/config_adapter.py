@@ -147,6 +147,8 @@ class ProfileConfigResolver:
             kwargs["session_lifecycle_labels"] = tuple(lifecycle["session_labels"])
         if lifecycle.get("cell_labels"):
             kwargs["cell_lifecycle_labels"] = tuple(lifecycle["cell_labels"])
+        if lifecycle.get("expand_labels"):
+            kwargs["expand_lifecycle_labels"] = tuple(lifecycle["expand_labels"])
 
         behavior = profile.get("behavior") or {}
         return make_inference_report_config(

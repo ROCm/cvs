@@ -26,6 +26,8 @@ SESSION_FALLBACK = DEFAULT_SESSION_LIFECYCLE_LABELS
 class DeckCardRenderer:
     """Profile-driven card renderers for Run Deck static HTML sections."""
 
+    _TONES = ("tone1", "tone2", "tone3", "tone4", "tone5", "tone6")
+
     def __init__(
         self,
         *,
@@ -47,21 +49,70 @@ class DeckCardRenderer:
         notes_html = f"<p class='notes'>{html.escape(notes)}</p>" if notes else ""
         return f"<div class='meta-grid'>{hero_html}</div>{notes_html}"
 
+    @staticmethod
+    def _cell_stage_times(payload, label):
+        times = []
+        for cell in payload.get("cells") or []:
+            sec = (cell.get("cell_lifecycle") or {}).get(label)
+            try:
+                sec = float(sec)
+            except (TypeError, ValueError):
+                continue
+            if sec <= 0:
+                continue
+            name = cell.get("subtitle") or cell.get("label") or cell.get("cell_id") or cell.get("policy") or label
+            times.append((str(name), sec))
+        return times
+
+    @staticmethod
+    def _stage_html(label, sec, pct, tone, per_cell):
+        head = (
+            f"<span class='tl-lbl'>{html.escape(label.replace('_', ' '))}</span>"
+            f"<span class='tl-val'>{sec:.1f}s</span>"
+        )
+        if not per_cell:
+            return f"<div class='tl-seg tl-{tone}' style='flex-grow:{pct:.2f}'>{head}</div>"
+        cells = "".join(
+            f"<div class='tl-cell tl-{cell_tone}' "
+            f"style='flex-grow:{100.0 * cell_sec / sec:.2f}' title='{html.escape(f'{name}: {cell_sec:.1f}s')}'>"
+            f"<span class='tl-lbl'>{html.escape(name)}</span>"
+            f"<span class='tl-val'>{cell_sec:.1f}s</span></div>"
+            for name, cell_sec, cell_tone in per_cell
+        )
+        return (
+            f"<div class='tl-group tl-{tone}' style='flex-grow:{pct:.2f}'>"
+            f"<div class='tl-group-head'>{head}</div>"
+            f"<div class='tl-group-body'>{cells}</div></div>"
+        )
+
     def render_lifecycle(self, payload: dict, _card: dict, data: Any) -> str:
         lifecycle = data if isinstance(data, dict) else payload.get("lifecycle") or {}
         report = payload.get("report") or {}
-        timeline_total = sum(lifecycle.values()) or 1.0
+        expand = tuple(report.get("expand_lifecycle_labels") or ())
+        labels = report.get("session_lifecycle_labels", ()) or SESSION_FALLBACK
+        # Expanded stages total their per-cell times: sweep cells run back to back, so the
+        # session spends the sum, not the longest cell.
+        per_cell = {lbl: self._cell_stage_times(payload, lbl) for lbl in expand}
+        totals = {
+            lbl: (sum(sec for _, sec in per_cell[lbl]) if per_cell.get(lbl) else lifecycle.get(lbl, 0.0))
+            for lbl in labels
+        }
+        timeline_total = sum(totals.values()) or 1.0
         parts = []
-        for lbl in report.get("session_lifecycle_labels", ()) or SESSION_FALLBACK:
-            sec = lifecycle.get(lbl, 0.0)
+        # Stages and sweep cells share one palette cursor so a cell never repeats the colour
+        # of a stage sitting next to it.
+        tone = 0
+        for lbl in labels:
+            sec = totals[lbl]
             if sec <= 0:
                 continue
-            pct = 100.0 * sec / timeline_total
-            parts.append(
-                f"<div class='tl-seg' style='flex-grow:{pct:.2f}'>"
-                f"<span class='tl-lbl'>{html.escape(lbl.replace('_', ' '))}</span>"
-                f"<span class='tl-val'>{sec:.1f}s</span></div>"
-            )
+            stage_tone = self._TONES[tone % len(self._TONES)]
+            tone += 1
+            cells = []
+            for name, cell_sec in per_cell.get(lbl) or []:
+                cells.append((name, cell_sec, self._TONES[tone % len(self._TONES)]))
+                tone += 1
+            parts.append(self._stage_html(lbl, sec, 100.0 * sec / timeline_total, stage_tone, cells))
         return "".join(parts) or "<p class='muted'>No lifecycle timings recorded.</p>"
 
     @staticmethod

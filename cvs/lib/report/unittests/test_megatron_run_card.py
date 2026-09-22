@@ -7,7 +7,7 @@ from cvs.lib.report.profiles.hooks.megatron_run_card import megatron_run_card_di
 
 
 class TestMegatronRunCard(unittest.TestCase):
-    def test_primus_image_and_nnodes(self):
+    def test_primus_image_and_rows(self):
         variant = SimpleNamespace(
             gpu_arch="MI300X",
             enforce_thresholds=True,
@@ -22,7 +22,7 @@ class TestMegatronRunCard(unittest.TestCase):
         by_label = {label: (value, is_link) for label, value, is_link in rows}
         self.assertEqual(by_label["Model"][0], "meta-llama/Llama-3.1-8B")
         self.assertEqual(by_label["Framework"][0], "Primus")
-        self.assertEqual(by_label["nnodes"][0], "2")
+        self.assertNotIn("nnodes", by_label)
         self.assertEqual(by_label["Thresholds"][0], "enforced")
         self.assertTrue(by_label["Pytest report"][1])
 
@@ -38,7 +38,6 @@ class TestMegatronRunCard(unittest.TestCase):
         self.assertEqual(by_label["Model"], "llama-70b")
         self.assertEqual(by_label["GPU"], "MI325X")
         self.assertEqual(by_label["Framework"], "Megatron-LM")
-        self.assertEqual(by_label["nnodes"], "—")
         self.assertEqual(by_label["TP"], "8")
         self.assertEqual(by_label["PP"], "1")
         self.assertEqual(by_label["Thresholds"], "record-only")

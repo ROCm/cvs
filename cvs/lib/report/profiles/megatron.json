@@ -58,12 +58,12 @@
   "lifecycle": {
     "session_labels": [
       "container_launch",
-      "tokenizer_download",
-      "smoke",
       "training",
+      "metrics",
       "teardown"
     ],
-    "cell_labels": ["training"]
+    "cell_labels": ["training"],
+    "expand_labels": ["training"]
   },
   "behavior": {
     "inference_test_substring": "test_training",

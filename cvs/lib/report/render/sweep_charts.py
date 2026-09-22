@@ -6,6 +6,9 @@ from __future__ import annotations
 def chart_tooltip_css() -> str:
     return """
 .chart-has-tip { position: relative; cursor: pointer; }
+/* Chart panels are grid items, which paint atomically in document order: without lifting the
+   hovered one, a tooltip overflowing its panel is covered by the next panel. */
+.chart-panel:hover, .chart-panel:focus-within { position: relative; z-index: 30; }
 .chart-has-tip::before {
   content: attr(data-tip);
   position: absolute;
@@ -18,8 +21,13 @@ def chart_tooltip_css() -> str:
   border-radius: 6px;
   font-size: 0.72rem;
   font-weight: 600;
+  line-height: 1.35;
+  text-align: center;
   color: var(--text);
-  white-space: nowrap;
+  white-space: normal;
+  width: max-content;
+  max-width: 180px;
+  overflow-wrap: anywhere;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -27,6 +35,8 @@ def chart_tooltip_css() -> str:
   box-shadow: 0 4px 12px rgba(0,0,0,0.4);
   transition: opacity 0.12s ease, visibility 0.12s ease;
 }
+.chart-col:first-child .chart-has-tip::before { left: 0; transform: none; }
+.chart-col:last-child .chart-has-tip::before { left: auto; right: 0; transform: none; }
 .chart-has-tip:hover::before,
 .chart-has-tip:focus-visible::before {
   opacity: 1;

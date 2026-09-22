@@ -1,5 +1,6 @@
 '''Unit tests for Megatron training-sweep Run Deck builder.'''
 
+import re
 import unittest
 from types import SimpleNamespace
 
@@ -8,7 +9,9 @@ from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_pr
 from cvs.lib.report.rundeck.dataset_builders.registry import build_datasets
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.render import render_rundeck_html
-from cvs.lib.report.training_cells import flatten_training_combo_actuals
+from cvs.lib.report.rundeck.runtime.cards import DeckCardRenderer
+from cvs.lib.report.rundeck.runtime.sweep_charts import SweepChartRenderer
+from cvs.lib.report.training_cells import chart_x_labels, flatten_training_combo_actuals
 from cvs.lib.training.megatron.utils.megatron_metrics import tier_metric_specs
 
 
@@ -168,6 +171,110 @@ class TestTrainingSweepBuilder(unittest.TestCase):
         self.assertEqual(cells[0]["gbs"], "128")
         self.assertEqual(cells[0]["precision"], "BF16")
         self.assertEqual(cells[0]["subtitle"], "MBS=4 GBS=128 · BF16")
+
+
+class TestTrainingChartLabels(unittest.TestCase):
+    _CELLS = [
+        {"mbs": "2", "gbs": "128", "precision": "MXFP8", "cell_id": "MBS=2,GBS=128,PRECISION=MXFP8"},
+        {"mbs": "4", "gbs": "128", "precision": "MXFP8", "cell_id": "MBS=4,GBS=128,PRECISION=MXFP8"},
+        {"mbs": "4", "gbs": "32", "precision": "BF16", "cell_id": "MBS=4,GBS=32,PRECISION=BF16"},
+    ]
+
+    def test_labels_keep_only_varying_dimensions(self):
+        cells = [dict(c, mbs="4", gbs="128") for c in self._CELLS]
+        self.assertEqual(chart_x_labels(cells), ["MXFP8", "MXFP8", "BF16"])
+
+    def test_labels_drop_commas_when_all_dimensions_vary(self):
+        self.assertEqual(
+            chart_x_labels(self._CELLS),
+            ["MBS=2 GBS=128 MXFP8", "MBS=4 GBS=128 MXFP8", "MBS=4 GBS=32 BF16"],
+        )
+
+    def test_bar_chart_ticks_are_short_and_tooltip_keeps_full_key(self):
+        chart_html = SweepChartRenderer().render_bar_chart(
+            "TFLOP/s/GPU",
+            [(0, 1270.5), (1, 1456.8)],
+            "TFLOP/s/GPU",
+            x_labels=["MBS=2 GBS=128 MXFP8", "MBS=4 GBS=128 MXFP8"],
+            x_tips=["MBS=2,GBS=128,PRECISION=MXFP8", "MBS=4,GBS=128,PRECISION=MXFP8"],
+        )
+        self.assertIn(
+            "<span class='chart-xlbl'>"
+            "<span class='chart-xlbl-line'>MBS=2</span>"
+            "<span class='chart-xlbl-line'>GBS=128</span>"
+            "<span class='chart-xlbl-line'>MXFP8</span></span>",
+            chart_html,
+        )
+        self.assertNotIn("MBS=2,GBS=128,PRECISION=MXFP8</span>", chart_html)
+        self.assertIn("MBS=4,GBS=128,PRECISION=MXFP8: 1,456.8 TFLOP/s/GPU", chart_html)
+
+    def test_bar_chart_falls_back_to_concurrency_ticks(self):
+        chart_html = SweepChartRenderer().render_bar_chart("TTFT", [(1, 10.0), (8, 20.0)], "ms")
+        self.assertIn("<span class='chart-xlbl-line'>C=1</span>", chart_html)
+        self.assertIn("C=8: 20.0 ms", chart_html)
+
+    def test_series_carries_labels_and_tips(self):
+        datasets = build_datasets(
+            "training_sweep",
+            {"results": _train_res(), "variant": _variant(), "lifecycle_report": {}},
+            _profile(),
+        )
+        entry = datasets["chart_series"]["throughput_per_gpu"][0]
+        self.assertEqual(entry["x_labels"], ["BF16", "FP8"])
+        self.assertEqual(
+            entry["x_tips"],
+            ["MBS=4,GBS=128,PRECISION=BF16", "MBS=4,GBS=128,PRECISION=FP8"],
+        )
+
+
+class TestLifecycleTimeline(unittest.TestCase):
+    @staticmethod
+    def _payload(expand):
+        return {
+            "report": {
+                "session_lifecycle_labels": ("container_launch", "training", "teardown"),
+                "expand_lifecycle_labels": expand,
+            },
+            "lifecycle": {"container_launch": 30.0, "training": 400.0, "teardown": 10.0},
+            "cells": [
+                {"subtitle": "MBS=4 GBS=128 FP8", "cell_lifecycle": {"training": 400.0}},
+                {"subtitle": "MBS=4 GBS=128 BF16", "cell_lifecycle": {"training": 373.6}},
+            ],
+        }
+
+    def test_expanded_stage_totals_cells_and_tones_each(self):
+        markup = DeckCardRenderer().render_lifecycle(self._payload(("training",)), {}, None)
+        self.assertIn("773.6s", markup)
+        self.assertIn("MBS=4 GBS=128 FP8", markup)
+        self.assertIn("MBS=4 GBS=128 BF16", markup)
+
+    def test_no_tone_repeats_between_stages_and_cells(self):
+        markup = DeckCardRenderer().render_lifecycle(self._payload(("training",)), {}, None)
+        tones = re.findall(r"tl-(tone\d)", markup)
+        self.assertEqual(tones, ["tone1", "tone2", "tone3", "tone4", "tone5"])
+
+    def test_blocks_are_filled_with_white_text(self):
+        from cvs.lib.report.rundeck.runtime.theme import report_css
+
+        # The cell-card CSS ships its own .tl-val and is appended after the deck rules.
+        css = report_css()
+        self.assertIn(".tl-seg, .tl-cell, .tl-group-head { background: var(--tl-c", css)
+        self.assertIn(".tl-val { font-size: 0.8rem; font-weight: 700; color: #fff; }", css)
+        self.assertIn(".cell-mini-seg .tl-val", css)
+
+    def test_unexpanded_stage_stays_one_segment(self):
+        markup = DeckCardRenderer().render_lifecycle(self._payload(()), {}, None)
+        self.assertIn("400.0s", markup)
+        self.assertNotIn("tl-group", markup)
+        self.assertNotIn("BF16", markup)
+
+    def test_profile_expands_training_stage(self):
+        config = build_inference_config_from_profile(_profile())
+        self.assertEqual(config.expand_lifecycle_labels, ("training",))
+        self.assertEqual(
+            config.session_lifecycle_labels,
+            ("container_launch", "training", "metrics", "teardown"),
+        )
 
 
 if __name__ == "__main__":

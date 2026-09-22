@@ -236,8 +236,8 @@ class CellCardRenderer:
 .cell-mini-tl {{ display: flex; gap: 4px; min-height: 36px; border-radius: 6px; overflow: hidden; font-size: 0.65rem; }}
 .cell-mini-seg {{ display: flex; flex-direction: column; justify-content: center; align-items: center;
   padding: 0.25rem; background: rgba(255,255,255,0.05); min-width: 40px; }}
-.tl-lbl {{ font-size: 0.65rem; color: {t['muted']}; text-align: center; }}
-.tl-val {{ font-size: 0.8rem; font-weight: 600; color: {t['accent']}; }}
+.cell-mini-seg .tl-lbl {{ font-size: 0.65rem; color: {t['muted']}; text-align: center; }}
+.cell-mini-seg .tl-val {{ font-size: 0.8rem; font-weight: 600; color: {t['accent']}; }}
 .chip {{ font-size: 0.7rem; font-weight: 600; text-transform: uppercase; padding: 0.2rem 0.5rem;
   border-radius: 999px; display: inline-block;{chip_margin} }}
 .chip-pass {{ background: rgba(61,214,140,0.15); color: {t['pass']}; }}

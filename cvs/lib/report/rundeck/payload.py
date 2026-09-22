@@ -94,6 +94,7 @@ class RundeckPayloadBuilder:
                 "sweep_ttft_metric": self.config.sweep_ttft_metric,
                 "session_lifecycle_labels": self.config.session_lifecycle_labels,
                 "cell_lifecycle_labels": self.config.cell_lifecycle_labels,
+                "expand_lifecycle_labels": self.config.expand_lifecycle_labels,
             },
             "run_card_display": run_card_display,
             "run_card_notes": run_card_notes,

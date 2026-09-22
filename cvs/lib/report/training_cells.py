@@ -241,9 +241,29 @@ def build_training_results_table(config, cells):
     return {"headers": headers, "rows": rows}
 
 
+_CHART_X_DIMENSIONS = (("mbs", "MBS="), ("gbs", "GBS="), ("precision", ""))
+
+
+def chart_x_labels(cells):
+    """Tick labels holding only the sweep dimensions that vary; full key stays in the tooltip."""
+    varying = [
+        (field, prefix)
+        for field, prefix in _CHART_X_DIMENSIONS
+        if len({str(cell.get(field) or "") for cell in cells}) > 1
+    ]
+    if not varying:
+        varying = [(field, prefix) for field, prefix in _CHART_X_DIMENSIONS if any(c.get(field) for c in cells)]
+    labels = []
+    for index, cell in enumerate(cells):
+        parts = [f"{prefix}{cell.get(field)}" for field, prefix in varying if cell.get(field)]
+        labels.append(" ".join(parts) or str(cell.get("cell_id") or index))
+    return labels
+
+
 def build_training_chart_series(config, cells):
     series = {}
-    x_labels = [cell.get("cell_id") or cell.get("precision") or str(i) for i, cell in enumerate(cells)]
+    x_labels = chart_x_labels(cells)
+    x_tips = [cell.get("cell_id") or x_labels[i] for i, cell in enumerate(cells)]
     for chart in config.chart_series:
         full = config.full_metric(chart.metric_suffix)
         points = []
@@ -264,6 +284,7 @@ def build_training_chart_series(config, cells):
                 "label": "Megatron sweep",
                 "points": points,
                 "x_labels": [x_labels[i] for i, _val in points],
+                "x_tips": [x_tips[i] for i, _val in points],
             }
         ]
     return series

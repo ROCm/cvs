@@ -107,6 +107,7 @@ def make_inference_report_config(
     workload = inference_test_substring or f"test_{suite_id}"
     session_labels = kwargs.pop("session_lifecycle_labels", DEFAULT_SESSION_LIFECYCLE_LABELS)
     cell_labels = kwargs.pop("cell_lifecycle_labels", DEFAULT_CELL_LIFECYCLE_LABELS)
+    expand_labels = kwargs.pop("expand_lifecycle_labels", ())
     row_card_extras = kwargs.pop("row_card_extras", True)
     interactive_viewer = kwargs.pop("interactive_viewer", True)
     viewer_cell_threshold = kwargs.pop("viewer_cell_threshold", 24)
@@ -129,6 +130,7 @@ def make_inference_report_config(
         inference_test_substring=workload,
         session_lifecycle_labels=session_labels,
         cell_lifecycle_labels=cell_labels,
+        expand_lifecycle_labels=expand_labels,
         row_card_extras=row_card_extras,
         row_card_test_names=row_card_test_names,
         interactive_viewer=interactive_viewer,
