@@ -1,0 +1,71 @@
+{
+  "_comment": "FLUX.2-dev distributed xDiT workload. Replace every <changeme> NCCL/network field before running.",
+  "gpu_name" : "<changeme> mi325",
+  "enforce_thresholds": true,
+  "threshold_json": "mi325_xdit_flux2_dev_distributed_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/home/{user-id}/.cache/huggingface",
+    "log_dir": "{home}/cvs_flux2_output",
+    "hf_token_file": "/home/{user-id}/.hf_token"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "flux2-benchmark_distributed",
+    "_image_example": "rocm/ufb-private:xdit-gfx942-py3.12-prereleases-rocm10.0.0rc3-2805c93",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "{paths.models_dir}:/hf_home",
+          "{paths.log_dir}:/outputs",
+          "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/flux2_example.py:/benchmark/flux2_example.py",
+          "/dev/infiniband:/dev/infiniband",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+          "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro",
+          "/lib/libibverbs.d:/lib/libibverbs.d"
+        ],
+        "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm"],
+        "env": {
+          "NCCL_PROTO": "Simple",
+          "NCCL_IB_HCA": "<changeme> rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+          "NCCL_SOCKET_IFNAME": "<changeme> eno0",
+          "GLOO_SOCKET_IFNAME": "<changeme> eno0",
+          "GLOO_TCP_IFNAME": "<changeme> eno0",
+          "NCCL_IB_GID_INDEX": "3",
+          "NCCL_DEBUG": "ERROR"
+        }
+      }
+    }
+  },
+  "server_params": {
+    "backend": "xdit",
+    "nnodes": "2",
+    "log_level": "info",
+    "model": "<changeme>"
+  },
+  "benchmark_params": {
+    "model_type": "flux2",
+    "guidance_scale": 4.0,
+    "prompt": "A small cat",
+    "seed": 42,
+    "num_inference_steps": 50,
+    "max_sequence_length": 512,
+    "no_use_resolution_binning": true,
+    "warmup_steps": 1,
+    "warmup_calls": 5,
+    "num_repetitions": 25,
+    "height": 1024,
+    "width": 1024,
+    "ulysses_degree": 8,
+    "ring_degree": 2,
+    "use_torch_compile": true,
+    "torchrun_nproc": 8
+  }
+}

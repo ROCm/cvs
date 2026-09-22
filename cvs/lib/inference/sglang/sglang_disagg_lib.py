@@ -8,7 +8,7 @@ Disaggregated Prefill/Decode (PD) SGLang inference controller.
 
 Prefill, decode, proxy-router, and benchmark workloads run inside containers
 on their respective cluster nodes via ``ContainerOrchestrator`` (``orch=``).
-Bare-metal SSH (``orch.head`` / ``orch.all``) is used for ``amd-smi`` and
+Bare-metal SSH (``orch.exec_on_host``) is used for ``amd-smi`` and
 ``dmesg`` verification.
 '''
 
@@ -21,19 +21,27 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.lib.inference.sglang.sglang_common import (
     add_cli_flags_block,
     add_export_env_block,
     collect_sglang_gpu_topology,
+    DEFAULT_SGLANG_DECODE_COORD_PORT,
+    DEFAULT_SGLANG_DECODE_SERV_PORT,
+    DEFAULT_SGLANG_PREFILL_COORD_PORT,
+    DEFAULT_SGLANG_PREFILL_SERV_PORT,
+    DEFAULT_SGLANG_SERVE_PORT,
     first_output,
     format_sglang_gpu_topology_lines,
     normalize_hosts,
     parse_inference_bench_results,
     perf_enforce_thresholds,
     poll_for_inference_completion as poll_for_inference_completion_common,
+    log_sglang_log_matches,
     resolve_client_host,
     run_lm_eval_benchmark_test as run_lm_eval_benchmark_test_common,
+    scan_sglang_error_logs,
+    SGLANG_KV_TRANSFER_PATTERNS,
+    stage_and_start_launch_script,
     verify_inference_results as verify_inference_results_common,
     verify_inference_results_subtests as verify_inference_results_subtests_common,
     verify_openai_compatible_endpoints as verify_openai_compatible_endpoints_common,
@@ -43,16 +51,6 @@ from cvs.lib.utils.model_query_lib import LongContextNiahBenchmark
 from cvs.lib.utils_lib import fail_test
 
 log = globals.log
-
-inference_err_dict = {
-    'NCCL ERROR': 'NCCL ERROR|NCCL timeout|local work queue catastrophic error',
-    'GPU HW ERROR': 'HW Exception by GPU|GPU Hang|Uncorrectable error|GPU Reset',
-    'AssertionError': 'AssertionError|ValueError:|During handling of the above exception|triggered the following exception|RuntimeError|Python error: Aborted',
-    'rocm Err': 'FAILED_PRECONDITION: No visible GPU devices|failed call to hipInit: HIP_ERROR_NoDevice|librocm reported version is: NOT_FOUND',
-    'python err': 'ModuleNotFoundError: No module named|Fatal Python error:',
-    'resource': 'RESOURCE_EXHAUSTED: Out of memory|failed: RESOURCE_EXHAUSTED|urllib.error.URLError|ConnectionRefusedError,HSA_STATUS_ERROR_OUT_OF_RESOURCES',
-    'app_err': 'Service Unavailable|No decode workers available|No prefill workers available|Please check if decode servers are configured and healthy|Please check if prefill servers are configured and healthy|Cannot access gated repo|You must have access to it and be authenticated',
-}
 
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
 
@@ -104,14 +102,6 @@ class SglangDisaggPD:
         self.inf_dict = inference_config_dict
         self.bp_dict = benchmark_params_dict
 
-        self.prefill_node_list = normalize_hosts(self.inf_dict['prefill_node_list'])
-        self.decode_node_list = normalize_hosts(self.inf_dict['decode_node_list'])
-        self.prefill_nnodes = len(self.prefill_node_list)
-        self.decode_nnodes = len(self.decode_node_list)
-
-        self.proxy_node = normalize_hosts(self.inf_dict['proxy_router_node'])
-        self.benchmark_serv_node = normalize_hosts(self.inf_dict['benchmark_serv_node'])
-
         self.job_cmd = ''
         self.job_cmd_list = []
         self.inference_results_dict = {}
@@ -123,6 +113,7 @@ class SglangDisaggPD:
         self.home_dir = os.path.expanduser("~")
         self._apply_inf_defaults()
         self._apply_bp_defaults()
+        self._bind_roles()
 
         self.container_name = self.inf_dict['container_name']
         self.nccl_ib_hca = self.inf_dict['nccl_ib_hca']
@@ -132,7 +123,6 @@ class SglangDisaggPD:
         self.nccl_debug = self.inf_dict['nccl_debug']
         self.data_cache_dir = self.inf_dict['data_cache_dir']
         self.log_dir = self.inf_dict['log_dir']
-        self.hca_id_prefix = str(self.inf_dict['hca_id_prefix']).strip()
         self.inference_poll_iterations = self.bp_dict['inference_poll_iterations']
 
         self.inference_start_time = self._host_exec('date +"%a %b %e %H:%M"')
@@ -154,7 +144,7 @@ class SglangDisaggPD:
     @property
     def router_serv_port(self) -> str:
         """Client-facing proxy router port (bench/smoke/lm-eval)."""
-        return str(self.inf_dict['proxy_router_serv_port'])
+        return str(self.inf_dict.get('proxy_router_serv_port') or DEFAULT_SGLANG_SERVE_PORT)
 
     @property
     def client_host(self) -> str:
@@ -180,24 +170,12 @@ class SglangDisaggPD:
     ) -> str:
         return first_output(self._container_exec(cmd, hosts=hosts, timeout=timeout))
 
-    def _host_exec(
-        self,
-        cmd: str,
-        *,
-        hosts=None,
-        timeout: int | None = None,
-    ) -> dict:
-        """Run ``cmd`` on baremetal (``orch.head`` / ``orch.all``), e.g. amd-smi / dmesg."""
-        if hosts is None:
-            return self.orch.head.exec(cmd, timeout=timeout)
-        normalized = normalize_hosts(hosts)
-        if not normalized:
+    def _host_exec(self, cmd, *, hosts=None, timeout=None):
+        """Run ``cmd`` on the host OS (not inside the container), e.g. amd-smi / dmesg."""
+        target = [self._head_host] if hosts is None else normalize_hosts(hosts)
+        if not target:
             return {}
-        if len(normalized) == 1 and normalized[0] == self._head_host:
-            return self.orch.head.exec(cmd, timeout=timeout)
-        if set(normalized) == set(self.orch.hosts):
-            return self.orch.all.exec(cmd, timeout=timeout)
-        return BaremetalOrchestrator.exec(self.orch, cmd, hosts=normalized, timeout=timeout)
+        return self.orch.exec_on_host(cmd, hosts=target, timeout=timeout)
 
     def _host_exec_text(
         self,
@@ -212,7 +190,6 @@ class SglangDisaggPD:
         self.inf_dict.setdefault('container_image', 'lmsysorg/sglang:dev')
         self.inf_dict.setdefault('container_name', 'sglang_container')
         self.inf_dict.setdefault('nccl_ib_hca', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
-        self.inf_dict.setdefault('hca_id_prefix', 'bnxt_')
         self.inf_dict.setdefault('nccl_socket_ifname', 'eno0')
         self.inf_dict.setdefault('gloo_socket_ifname', 'eno0')
         self.inf_dict.setdefault('nccl_ib_gid_index', '1')
@@ -220,10 +197,12 @@ class SglangDisaggPD:
         self.inf_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.inf_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
         self.inf_dict.setdefault('log_level', 'info')
-        self.inf_dict.setdefault('prefill_serv_port', '30001')
-        self.inf_dict.setdefault('decode_serv_port', '30002')
-        self.inf_dict.setdefault('proxy_router_port', '8000')
-        self.inf_dict.setdefault('proxy_router_serv_port', '8000')
+        self.inf_dict.setdefault('prefill_serv_port', DEFAULT_SGLANG_PREFILL_SERV_PORT)
+        self.inf_dict.setdefault('decode_serv_port', DEFAULT_SGLANG_DECODE_SERV_PORT)
+        self.inf_dict.setdefault('proxy_router_port', DEFAULT_SGLANG_SERVE_PORT)
+        self.inf_dict.setdefault('proxy_router_serv_port', DEFAULT_SGLANG_SERVE_PORT)
+        self.inf_dict.setdefault('prefill_coordinator_port', DEFAULT_SGLANG_PREFILL_COORD_PORT)
+        self.inf_dict.setdefault('decode_coordinator_port', DEFAULT_SGLANG_DECODE_COORD_PORT)
         self.inf_dict.setdefault('max_concurrent_requests', '-1')
         self.inf_dict.setdefault('queue_size', '100')
         self.inf_dict.setdefault('queue_timeout_secs', '60')
@@ -251,6 +230,26 @@ class SglangDisaggPD:
         self.bp_dict.setdefault('inference_poll_iterations', '16')
         self.bp_dict.setdefault('memory_fraction', '0.85')
 
+    def _bind_roles(self):
+        missing = [
+            key
+            for key in (
+                'prefill_node_list',
+                'decode_node_list',
+                'proxy_router_node',
+                'benchmark_serv_node',
+            )
+            if not self.inf_dict.get(key)
+        ]
+        if missing:
+            raise ValueError(f"SglangDisaggPD requires load_variant() to stamp PD roles; missing {missing}")
+        self.prefill_node_list = normalize_hosts(self.inf_dict['prefill_node_list'])
+        self.decode_node_list = normalize_hosts(self.inf_dict['decode_node_list'])
+        self.prefill_nnodes = len(self.prefill_node_list)
+        self.decode_nnodes = len(self.decode_node_list)
+        self.proxy_node = normalize_hosts(self.inf_dict['proxy_router_node'])
+        self.benchmark_serv_node = normalize_hosts(self.inf_dict['benchmark_serv_node'])
+
     def install_container_packages(
         self,
     ):
@@ -276,45 +275,6 @@ class SglangDisaggPD:
         cmd = "bash -c " + shlex.quote("sudo apt -y update && sudo apt install -y iputils-ping iproute2 net-tools")
         for hosts in (self.prefill_node_list, self.decode_node_list, self.proxy_node):
             self._container_exec(cmd, hosts=hosts)
-
-    def exec_nic_setup_scripts(
-        self,
-    ):
-        hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
-        for hosts in (self.prefill_node_list, self.decode_node_list):
-            out_dict = self._container_exec("ibv_devinfo", hosts=hosts)
-            for node, out in out_dict.items():
-                if not re.search(hca_id_regex, out or '', re.I):
-                    log.info("%s", out)
-                    fail_test(f'HCA not visible on node {node}')
-
-    def check_ibv_devices(
-        self,
-    ):
-        """
-        Verify that InfiniBand / RDMA devices are visible inside the container
-        on all relevant nodes.
-
-        Purpose:
-        --------
-        This method ensures that RDMA-capable devices (e.g., InfiniBand HCAs)
-        are correctly exposed inside the container environment. This is a
-        critical prerequisite for:
-        - NCCL / RCCL over RDMA
-        - High-performance distributed inference
-        - Low-latency, high-bandwidth GPU communication
-
-        The check is performed on:
-        - Prefill nodes
-        - Decode nodes
-
-        Proxy and benchmark nodes typically do not require RDMA access.
-        """
-        for hosts in (self.prefill_node_list, self.decode_node_list):
-            out_dict = self._container_exec("ibv_devinfo", hosts=hosts)
-            for node, out in out_dict.items():
-                if re.search('No IB devices found', out or '', re.I):
-                    fail_test(f'IB devices not seen inside the container for node {node}')
 
     def setup_prefill_container_env(
         self,
@@ -513,22 +473,14 @@ class SglangDisaggPD:
                 f"{flags_block}\n"
                 f"    --log-level {self.inf_dict['log_level']}\n"
             )
-            write_cmd = "bash -c " + shlex.quote(f"cat > /tmp/prefill_launch_script.sh <<'EOF'\n{launch_body}EOF")
-            self._container_exec(write_cmd, hosts=[node])
-
-        log.info('#================ * * * =========================#')
-        log.info('Launching Prefill servers on Prefill nodes')
-        log.info('#================ * * * =========================#')
-        for i in range(0, int(self.prefill_nnodes)):
-            node = prefill_node_list[i]
-            start_cmd = "bash -c " + shlex.quote(
-                f"chmod 755 /tmp/prefill_launch_script.sh\n"
-                f"mkdir -p {self.log_dir}/prefill_node{i}\n"
-                f"source /tmp/prefill_env_script.sh\n"
-                f"nohup /tmp/prefill_launch_script.sh > "
-                f"{self.log_dir}/prefill_node{i}/prefill_server.log 2>&1 &"
+            stage_and_start_launch_script(
+                self._container_exec,
+                node,
+                '/tmp/prefill_launch_script.sh',
+                launch_body,
+                '/tmp/prefill_env_script.sh',
+                f"{self.log_dir}/prefill_node{i}/prefill_server.log",
             )
-            self._container_exec(start_cmd, hosts=[node])
         time.sleep(5)
 
     def launch_decode_servers(self, dtype='auto', kv_cache_dtype='auto'):
@@ -560,7 +512,7 @@ class SglangDisaggPD:
         decode_node_list = self.decode_node_list
         log.info('%%%% self.decode_nnodes {}'.format(self.decode_nnodes))
         dist_init_addr = f"{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_coordinator_port']}"
-        flags_block = add_cli_flags_block(self.bp_dict, indent='    ')
+        flags_block = add_cli_flags_block(self.bp_dict, indent='    ', include_chunked_prefill=False)
 
         for i in range(0, int(self.decode_nnodes)):
             node = decode_node_list[i]
@@ -585,22 +537,14 @@ class SglangDisaggPD:
                 f"{flags_block}\n"
                 f"    --log-level {self.inf_dict['log_level']}\n"
             )
-            write_cmd = "bash -c " + shlex.quote(f"cat > /tmp/decode_launch_script.sh <<'EOF'\n{launch_body}EOF")
-            self._container_exec(write_cmd, hosts=[node])
-
-        log.info('#================ * * * =========================#')
-        log.info('Launching Decode servers on Decode nodes')
-        log.info('#================ * * * =========================#')
-        for i in range(0, int(self.decode_nnodes)):
-            node = decode_node_list[i]
-            start_cmd = "bash -c " + shlex.quote(
-                f"chmod 755 /tmp/decode_launch_script.sh\n"
-                f"mkdir -p {self.log_dir}/decode_node{i}\n"
-                f"source /tmp/decode_env_script.sh\n"
-                f"nohup bash /tmp/decode_launch_script.sh > "
-                f"{self.log_dir}/decode_node{i}/decode_server.log 2>&1 &"
+            stage_and_start_launch_script(
+                self._container_exec,
+                node,
+                '/tmp/decode_launch_script.sh',
+                launch_body,
+                '/tmp/decode_env_script.sh',
+                f"{self.log_dir}/decode_node{i}/decode_server.log",
             )
-            self._container_exec(start_cmd, hosts=[node])
 
     def poll_and_check_server_ready(
         self,
@@ -667,20 +611,14 @@ class SglangDisaggPD:
             f"    --port {self.router_serv_port} \\\n"
             f"    --log-dir {self.inf_dict['log_dir']}\n"
         )
-        write_cmd = "bash -c " + shlex.quote(f"cat > /tmp/proxy_router_launch_script.sh <<'EOF'\n{launch_body}EOF")
-        self._container_exec(write_cmd, hosts=self.proxy_node)
-
-        log.info('#================ * * * =========================#')
-        log.info('Launch Proxy Router script on Proxy Router nodes')
-        log.info('#================ * * * =========================#')
-        start_cmd = "bash -c " + shlex.quote(
-            f"chmod 755 /tmp/proxy_router_launch_script.sh\n"
-            f"mkdir -p {self.log_dir}/proxy_router_node\n"
-            f"source /tmp/router_env_script.sh\n"
-            f"nohup bash /tmp/proxy_router_launch_script.sh > "
-            f"{self.log_dir}/proxy_router_node/proxy_router.log 2>&1 &"
+        stage_and_start_launch_script(
+            self._container_exec,
+            self.proxy_node,
+            '/tmp/proxy_router_launch_script.sh',
+            launch_body,
+            '/tmp/router_env_script.sh',
+            f"{self.log_dir}/proxy_router_node/proxy_router.log",
         )
-        self._container_exec(start_cmd, hosts=self.proxy_node)
         log.info('Waiting 120 secs after launching proxy router script')
         time.sleep(120)
 
@@ -730,7 +668,7 @@ class SglangDisaggPD:
             timeout=1000,
         )
         time.sleep(5)
-        self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
+        self.poll_for_inference_completion(iterations=40, waittime_between_iters=60, total_timeout=7200)
 
         peak_tflops = float(i_dict.get("peak_gpu_tflops", 1300))
         num_params = float(i_dict.get("model_num_params", 70e9))
@@ -825,56 +763,49 @@ class SglangDisaggPD:
         log.info("%s", self.inference_results_dict)
         return self.inference_results_dict
 
-    def scan_for_inference_errors(
-        self,
-    ):
-        """
-        Scan Prefill and Decode server logs for known inference error patterns
-        and fail the test if any are detected.
-
-        Purpose:
-        --------
-        This method performs a post-inference health check by scanning
-        server logs for known error signatures that indicate:
-        - Runtime failures
-        - Communication errors (RDMA/NCCL)
-        - Out-of-memory conditions
-        - Kernel or backend crashes
-        - Fatal exceptions during inference
-
-        The method ensures that even if benchmarks complete, silent or
-        non-fatal errors do not go unnoticed.
-        """
-        log.info('Scan for inference errors')
-        inference_pass = True
-
-        for j in range(0, int(self.prefill_nnodes)):
-            node = self.prefill_node_list[j]
-            out_dict = self._container_exec(
-                f"tail -100 {shlex.quote(f'{self.log_dir}/prefill_node{j}/prefill_server.log')}",
-                hosts=[node],
+    def _pd_server_log_targets(self, include_router=False):
+        targets = [
+            (
+                host,
+                f"{self.log_dir}/prefill_node{node_idx}/prefill_server.log",
+                f'prefill node {node_idx}',
             )
-            out = out_dict.get(node, '')
-            for err_key in inference_err_dict:
-                if re.search(f'{inference_err_dict[err_key]}', out):
-                    fail_test(f'ERROR {inference_err_dict[err_key]} seen in inference logs ..')
-                    log.error('Aborting inference log polling')
-                    inference_pass = False
-
-        for j in range(0, int(self.decode_nnodes)):
-            node = self.decode_node_list[j]
-            out_dict = self._container_exec(
-                f"tail -500 {shlex.quote(f'{self.log_dir}/decode_node{j}/decode_server.log')}",
-                hosts=[node],
+            for node_idx, host in enumerate(self.prefill_node_list)
+        ]
+        targets.extend(
+            (
+                host,
+                f"{self.log_dir}/decode_node{node_idx}/decode_server.log",
+                f'decode node {node_idx}',
             )
-            out = out_dict.get(node, '')
-            for err_key in inference_err_dict:
-                if re.search(f'{inference_err_dict[err_key]}', out):
-                    fail_test(f'ERROR {inference_err_dict[err_key]} seen in inference logs ..')
-                    log.error('Aborting inference log polling')
-                    inference_pass = False
+            for node_idx, host in enumerate(self.decode_node_list)
+        )
+        if include_router:
+            targets.extend(
+                (
+                    host,
+                    f"{self.log_dir}/proxy_router_node/proxy_router.log",
+                    'proxy router',
+                )
+                for host in self.proxy_node
+            )
+        return targets
 
-        return inference_pass
+    def scan_for_inference_errors(self):
+        """Scan prefill and decode server logs once after server-ready polling fails."""
+        return scan_sglang_error_logs(
+            self._pd_server_log_targets(),
+            lambda host, cmd: self._container_exec(cmd, hosts=[host], timeout=60),
+        )
+
+    def log_kv_transfer_logs(self):
+        """Copy KV/PD transfer lines from prefill, decode, and router logs into this test."""
+        log_sglang_log_matches(
+            self._pd_server_log_targets(include_router=True),
+            lambda host, cmd: self._container_exec(cmd, hosts=[host], timeout=60),
+            SGLANG_KV_TRANSFER_PATTERNS,
+            heading='KV / PD transfer log matches',
+        )
 
     def poll_for_inference_completion(
         self, iterations=10, waittime_between_iters=60, total_timeout=3600, require_all_nodes=True
@@ -974,7 +905,7 @@ class SglangDisaggPD:
         Smoke-test OpenAI-compatible HTTP API on the proxy router (inside the
         benchmark container).
         """
-        return verify_openai_compatible_endpoints_common(
+        summaries, self.openai_completions_5xx_or_hang = verify_openai_compatible_endpoints_common(
             port=int(self.router_serv_port),
             model_name=self.bp_dict["model"],
             client_host=self.client_host,
@@ -983,6 +914,8 @@ class SglangDisaggPD:
             probe_host_key=self.benchmark_serv_node[0],
             log_label='OpenAI endpoint probe inside benchmark container, same pattern as GSM8K/benchserv',
         )
+        self.log_kv_transfer_logs()
+        return summaries
 
     def run_lm_eval_hellaswag_benchmark_test(self, _d_type="auto"):
         return self.run_lm_eval_benchmark_test("lm_eval_hellaswag", _d_type=_d_type)

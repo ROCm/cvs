@@ -2,8 +2,8 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Single-node SGLang benchmark: one unified server on ``benchmark_serv_node``
-(``proxy_router_serv_port``). No PD disaggregation, no router.
+Single-node SGLang benchmark: one unified ``sglang.launch_server`` on the first
+host in ``cluster.json``. Extra hosts are ignored. HTTP defaults to port 8000.
 
 Run:
   pytest cvs/tests/inference/sglang/sglang_single.py \\
@@ -11,9 +11,7 @@ Run:
     --config_file <sglang_config.json> \\
     --html=~/cvs_results/sglang_single.html
 
-Set ``benchmark_serv_node`` in the inference config to the target host (must also
-appear in the cluster file ``node_dict``). Only that node gets a container and
-loads the model; other cluster nodes are ignored for this suite.
+Do not set ``benchmark_serv_node``; the suite uses the first ``node_dict`` host.
 
 With ``--html``, session end also writes ``sglang_run_deck.html`` (plus JSON
 and interactive viewer) via ``cvs/lib/report/profiles/sglang.json`` (all SGLang stems).
@@ -24,6 +22,7 @@ import time
 from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
 from cvs.lib import globals
 from cvs.lib.verify_lib import verify_dmesg_for_errors
+from cvs.tests.inference.sglang._shared import run_scan_inference_logs_after_workload
 
 
 log = globals.log
@@ -71,7 +70,17 @@ def test_poll_for_server_ready(im_obj, lifecycle, request):
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.poll_and_check_server_ready()
+    lifecycle.server_ready_failed = bool(globals.error_list)
     lifecycle.complete_stage(request, "server_ready", t0)
+
+
+def test_scan_inference_logs_for_failure(im_obj, lifecycle, request):
+    globals.error_list = []
+    if not lifecycle.server_ready_failed:
+        pytest.skip("server-ready poll succeeded; skip server log scan")
+    t0 = time.monotonic()
+    im_obj.scan_for_inference_errors()
+    lifecycle.complete_stage(request, "scan_inference_logs", t0)
 
 
 def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, request):
@@ -79,6 +88,7 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
     t0 = time.monotonic()
     results = im_obj.verify_openai_compatible_endpoints()
     lifecycle.smoke_results = results
+    lifecycle.openai_completions_5xx_or_hang = bool(getattr(im_obj, "openai_completions_5xx_or_hang", False))
     lifecycle.complete_stage(request, "smoke_endpoints", t0)
 
 
@@ -152,6 +162,10 @@ def test_verify_dmesg_after_benchmark(im_obj, lifecycle, request):
     time.sleep(2)
     verify_dmesg_for_errors(im_obj.orch.all, im_obj.inference_start_time, im_obj.inference_end_time)
     lifecycle.complete_stage(request, "verify_dmesg", t0)
+
+
+def test_scan_inference_logs_after_workload(im_obj, lifecycle, request):
+    run_scan_inference_logs_after_workload(im_obj, lifecycle, request)
 
 
 def test_print_results_table(inf_res_dict, lifecycle, variant_config):

@@ -32,7 +32,6 @@
         "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm"],
         "env": {
           "NCCL_IB_HCA": "<changeme> rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
-          "HCA_ID_PREFIX": "<changeme>",
           "NCCL_SOCKET_IFNAME": "<changeme> eno0",
           "GLOO_SOCKET_IFNAME": "<changeme> eno0",
           "GLOO_TCP_IFNAME": "<changeme> eno0",
@@ -59,20 +58,11 @@
     "memory_fraction": "0.7",
     "tokenizer_mode": "auto",
     "inference_poll_iterations": "16",
-    "context_length": "205000",
-    "add_flags": ["--attention-backend aiter"],
-    "prefill_node_list": ["<changeme>", "<changeme>"],
-    "decode_node_list": ["<changeme>", "<changeme>"],
-    "proxy_router_node": "<changeme>",
-    "benchmark_serv_node": "<changeme>",
-    "prefill_serv_port": "30001",
-    "decode_serv_port": "30002",
-    "proxy_router_port": "8000",
-    "prefill_coordinator_addr": "<changeme>",
-    "decode_coordinator_addr": "<changeme>",
-    "prefill_coordinator_port": "40001",
-    "decode_coordinator_port": "40002",
-    "proxy_router_serv_port": "8000"
+    "lng_ctx_activate": false,
+    "context_length": "163840",
+    "chunked_prefill_size": "8192",
+    "max_prefill_tokens": "8192",
+    "add_flags": ["--attention-backend aiter"]
   },
   "benchmark_params": {
     "backend": "sglang",
@@ -81,6 +71,13 @@
     "random_range_ratio": "0.5",
     "model_num_params": "671000000000",
     "peak_gpu_tflops": "2615"
+  },
+  "long_ctx_niah": {
+    "num_prompts": "6",
+    "seed": "42",
+    "request_timeout_sec": "7200",
+    "exec_timeout_sec": "21600",
+    "tolerance_frac": "0.05"
   },
   "accuracy": {
     "tasks": [
