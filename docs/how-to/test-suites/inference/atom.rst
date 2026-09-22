@@ -32,6 +32,16 @@ On the **launcher** (where you run ``cvs run``):
 - SSH key access to cluster nodes (``priv_key_file`` in the cluster file).
 - Hugging Face token file at ``paths.hf_token_file`` when required.
 
+On **Spur / managed compute** (for example MI355X on Chrisa):
+
+- Launch CVS inside a Spur **job step** (one task per node, for example
+  ``spur run --mpi=none``), not a bare allocation.
+- Use the managed cluster file produced from ``SPUR_NODES`` / HTTP agents.
+  ATOM still uses the ``orch`` fixture and the config ``container`` block;
+  do not add nested ``spur run`` inside ``AtomJob``.
+- Prove an existing single-node stem first, then run the ``mi355x_atom_*``
+  stems (Kimi TP4, V4-Pro TP8). V4-Flash-Base stays on gfx942.
+
 For **multinode PP** (``params.nnodes: 2``, ``pipeline_parallel_size: 2``):
 
 - Two hosts in ``node_dict`` matching ``params.nnodes``.
@@ -62,8 +72,8 @@ sits beside the config you pass to ``--config_file``:
     --output "$SINGLE_DIR/mi325x_atom_deepseek-r1_fp8_single_threshold.json"
   cvs config copy cluster_file/atom_cluster.json --output ~/input/cluster_file/atom_cluster.json
 
-Config stems use ``mi3xx_*`` (MI300-family). Threshold files use ``mi325x_*``
-on MI325X (gfx942) — match the platform you calibrated on.
+Config stems use ``mi3xx_*`` (gfx942) or ``mi355x_*`` (gfx950). Threshold
+files use ``mi325x_*`` or ``mi355x_*`` — match the platform you calibrated on.
 
 Step 2: Edit placeholders
 =========================
