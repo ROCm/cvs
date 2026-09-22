@@ -47,12 +47,30 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 .cmd-block h3 { margin: 0 0 0.5rem; font-size: 0.75rem; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--muted); }
 .notes { font-size: 0.85rem; color: var(--muted); margin-top: 0.75rem; }
-.tl-row { display: flex; gap: 3px; min-height: 52px; border-radius: 8px; overflow: hidden; }
-.tl-seg { background: linear-gradient(180deg, #2d3548 0%, #232836 100%);
-  display: flex; flex-direction: column; justify-content: center; align-items: center;
-  padding: 0.35rem; min-width: 48px; border-right: 1px solid var(--border); }
-.tl-lbl { font-size: 0.65rem; color: var(--muted); text-align: center; }
-.tl-val { font-size: 0.8rem; font-weight: 600; color: var(--accent); }
+.tl-row { display: flex; gap: 6px; min-height: 56px; align-items: stretch; }
+/* Fills are deep enough to carry white text; the bright accent hues used elsewhere in the
+   deck drop below readable contrast once text sits on them. */
+.tl-tone1 { --tl-c: #c2410c; }
+.tl-tone2 { --tl-c: #1d4ed8; }
+.tl-tone3 { --tl-c: #7e22ce; }
+.tl-tone4 { --tl-c: #15803d; }
+.tl-tone5 { --tl-c: #a16207; }
+.tl-tone6 { --tl-c: #be185d; }
+.tl-seg, .tl-cell, .tl-group-head { background: var(--tl-c, var(--panel)); color: #fff; }
+.tl-seg, .tl-cell { display: flex; flex-direction: column; justify-content: center;
+  align-items: center; padding: 0.35rem; overflow: hidden; border-radius: 6px; }
+.tl-seg { min-width: 56px; }
+.tl-cell { min-width: 64px; }
+.tl-seg:hover, .tl-cell:hover { filter: brightness(1.15); }
+.tl-group { display: flex; flex-direction: column; min-width: 150px; border-radius: 6px;
+  overflow: hidden; background-color: var(--panel); border: 1px solid var(--border); }
+.tl-group-head { display: flex; justify-content: center; align-items: baseline; gap: 0.4rem;
+  padding: 0.4rem 0.35rem; }
+.tl-group-body { display: flex; flex: 1; gap: 6px; padding: 6px; }
+.tl-lbl { font-size: 0.68rem; color: rgba(255, 255, 255, 0.85); text-align: center;
+  overflow-wrap: anywhere; }
+.tl-group-head .tl-lbl { text-transform: uppercase; letter-spacing: 0.05em; }
+.tl-val { font-size: 0.8rem; font-weight: 700; color: #fff; }
 .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
 .summary-card { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; }
 .summary-card h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
@@ -75,7 +93,7 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
   border-top: 1px solid rgba(42, 47, 61, 0.95); }
 .chart-bars { position: absolute; inset: 0; z-index: 1; display: flex; align-items: flex-end;
   justify-content: space-around; padding: 0 0.35rem; gap: 0.35rem; }
-.chart-col { flex: 1 1 0; max-width: 52px; height: 100%; display: flex; align-items: flex-end;
+.chart-col { flex: 1 1 0; min-width: 0; max-width: 52px; height: 100%; display: flex; align-items: flex-end;
   justify-content: center; border-left: 1px solid rgba(42, 47, 61, 0.55); }
 .chart-col:first-child { border-left: none; }
 .chart-bar { width: 100%; max-width: 40px; min-height: 3px; border-radius: 4px 4px 0 0; }
@@ -83,7 +101,9 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 .chart-bar-accent2 { background: linear-gradient(180deg, var(--accent2) 0%, #3d5a99 100%); }
 .chart-bar-accent3 { background: linear-gradient(180deg, var(--accent3) 0%, #7a3db8 100%); }
 .chart-xrow { display: flex; justify-content: space-around; gap: 0.35rem; padding: 0.4rem 0.35rem 0; }
-.chart-xlbl { flex: 1 1 0; max-width: 52px; text-align: center; font-size: 0.72rem; color: var(--muted); }
+.chart-xlbl { flex: 1 1 0; min-width: 0; max-width: 52px; text-align: center; font-size: 0.68rem;
+  color: var(--muted); line-height: 1.2; }
+.chart-xlbl-line { display: block; overflow-wrap: anywhere; }
 .chart-unit { text-align: center; font-size: 0.7rem; color: var(--muted); margin-top: 0.45rem; }
 .chart-sweep-hint { margin: 0 0 0.75rem; font-size: 0.75rem; color: var(--muted); }
 .chart-group { margin-bottom: 1.25rem; }

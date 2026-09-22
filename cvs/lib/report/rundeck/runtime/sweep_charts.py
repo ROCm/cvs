@@ -67,6 +67,7 @@ class SweepChartRenderer:
         x_label="C={x}",
         min_points=2,
         x_labels=None,
+        x_tips=None,
     ) -> str:
         if len(points) < min_points:
             return ""
@@ -94,13 +95,17 @@ class SweepChartRenderer:
                     tick = x_label.format(x=conc)
                 except (KeyError, IndexError, ValueError):
                     tick = str(conc)
-            tip = html.escape(f"{tick}: {fmt_num(val)} {unit}".strip())
+            tip_label = x_tips[i] if x_tips and i < len(x_tips) else tick
+            tip = html.escape(f"{tip_label}: {fmt_num(val)} {unit}".strip())
             bars.append(
                 f"<div class='chart-col'>"
                 f"<div class='chart-bar chart-bar-{accent} chart-has-tip' style='height:{h:.1f}%' "
                 f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div></div>"
             )
-            x_ticks.append(f"<span class='chart-xlbl'>{html.escape(str(tick))}</span>")
+            lines = "".join(
+                f"<span class='chart-xlbl-line'>{html.escape(part)}</span>" for part in str(tick).split()
+            )
+            x_ticks.append(f"<span class='chart-xlbl'>{lines}</span>")
         return (
             f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
             f"<div class='chart-viz'>"
@@ -134,6 +139,7 @@ class SweepChartRenderer:
                     chart["unit"],
                     accent=self._ACCENTS[idx % 3],
                     x_labels=entry.get("x_labels"),
+                    x_tips=entry.get("x_tips"),
                 )
                 if part:
                     chart_parts.append(part)

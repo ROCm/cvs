@@ -34,23 +34,12 @@ def _train_param(variant, key, default="—"):
     return str(value)
 
 
-def _nnodes(variant):
-    container = getattr(variant, "container", None)
-    env = getattr(container, "env", None) if container is not None else None
-    if isinstance(container, dict):
-        env = container.get("env")
-    if isinstance(env, dict) and env.get("NNODES"):
-        return str(env["NNODES"])
-    return "—"
-
-
 def megatron_run_card_display(variant, provenance):
     rows = [
         ("Model", _train_param(variant, "tokenizer_model", _train_param(variant, "model_name")), False),
         ("GPU", str(getattr(variant, "gpu_arch", None) or getattr(variant, "gpu_name", None) or "—"), False),
         ("Framework", _framework_label(variant), False),
         ("Image", _image_name(variant), False),
-        ("nnodes", _nnodes(variant), False),
         ("TP", _train_param(variant, "tensor_parallelism", "1"), False),
         ("PP", _train_param(variant, "pipeline_parallelism", "1"), False),
         thresholds_run_card_row(variant),
