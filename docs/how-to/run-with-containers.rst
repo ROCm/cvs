@@ -47,7 +47,7 @@ Replace every ``<changeme>`` placeholder in the copied file — CVS exits with a
 
 - ``{user-id}``: your SSH user (or leave it for runtime resolution).
 - ``priv_key_file``: absolute path to your SSH private key.
-- ``head_node_dict.mgmt_ip`` and the keys of ``node_dict``: real IPs or hostnames of your cluster nodes. ``mgmt_ip`` must equal one of the keys in ``node_dict``.
+- ``head_node_dict.mgmt_ip`` and the keys of ``node_dict``: real IPs or hostnames. ``mgmt_ip`` can be one of the ``node_dict`` keys (usually the first node) or a completely separate host.
 - ``container.image``: an image present on every node or pullable from a reachable registry. The image must include ``openssh-server`` and the workload binary (for example ``rvs``).
 - ``container.name``: container name on each host. For parallel runs make this per-iteration unique (for example ``cvs_iter_<run_id>``). Pin it explicitly when using ``lifetime: persistent``.
 - ``container.lifetime``: ``no_launch``, ``per_run``, or ``persistent``. See the lifecycle note below.
