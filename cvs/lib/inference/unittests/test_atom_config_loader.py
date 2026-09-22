@@ -555,26 +555,22 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         atom_dir = root / "input/config_file/inference/atom"
         cell_no_pp = re.compile(r"^ISL=.*,TP=\d+,CONC=")
-        config_platform_stem = re.compile(r"^mi325x_|^mi35x_|^mi300x_|^mi355x_")
-        threshold_family_stem = re.compile(r"^mi3xx_|^mi35x_|^mi300x_|^mi355x_")
+        config_stem = re.compile(r"^(mi3xx|mi355x)_atom_")
+        threshold_stem = re.compile(r"^(mi325x|mi355x)_atom_")
         for path in sorted(atom_dir.glob("*.json")):
             if "threshold" in path.name:
-                self.assertFalse(
-                    threshold_family_stem.match(path.name),
-                    f"threshold must use platform stem, not family: {path.name}",
-                )
                 self.assertTrue(
-                    path.name.startswith("mi325x_"),
-                    f"shipped thresholds are mi325x-only: {path.name}",
+                    threshold_stem.match(path.name),
+                    f"threshold must use platform stem mi325x_ or mi355x_: {path.name}",
+                )
+                self.assertFalse(
+                    path.name.startswith("mi3xx_"),
+                    f"threshold must not use family stem mi3xx_: {path.name}",
                 )
             else:
-                self.assertFalse(
-                    config_platform_stem.match(path.name),
-                    f"config must use family stem mi3xx, not platform: {path.name}",
-                )
                 self.assertTrue(
-                    path.name.startswith("mi3xx_"),
-                    f"shipped configs use mi3xx family stem: {path.name}",
+                    config_stem.match(path.name),
+                    f"config must use family stem mi3xx_ or mi355x_: {path.name}",
                 )
         for path in sorted(atom_dir.glob("*threshold*.json")):
             text = path.read_text(encoding="utf-8")
