@@ -116,7 +116,7 @@ The following table describes every key accepted at the top level of the cluster
      - Absolute path to the SSH private key used for every host.
    * - ``head_node_dict.mgmt_ip``
      - (required)
-     - Head node management IP or hostname. **Must equal one of the keys in ``node_dict``.**
+     - Head node management IP or hostname (the host where you run the CVS CLI). This can be one of the keys in ``node_dict`` (usually the first node) or a completely separate host that is not in ``node_dict``. See :doc:`/install/install`.
    * - ``env_vars``
      - ``{}``
      - Custom environment variables exported on every host before each command. Honored by the legacy parallel-SSH path; ``cvs exec`` does not export this block.
