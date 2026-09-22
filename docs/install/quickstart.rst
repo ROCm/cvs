@@ -8,6 +8,8 @@ Cluster Validation Suite (CVS) quickstart: install and run your first cluster co
 
 This guide gets you from zero to your first cluster-wide ``cvs exec`` in about 15 minutes.
 
+.. include:: /_includes/head-node.rst
+
 Prerequisites
 =============
 
@@ -52,6 +54,20 @@ Use ``cvs exec`` to run a shell command on every node in parallel:
 
   cvs exec --cmd "hostname" --cluster_file ~/cvs_workspace/cluster.json
 
+Successful output looks like this — one block per node:
+
+.. code:: text
+
+  [compute] Host: 10.0.0.2
+  node01
+  ---
+  [compute] Host: 10.0.0.3
+  node02
+  ---
+
+.. image:: /images/cvs-exec-hostname.png
+   :alt: Terminal output of cvs exec hostname, with one hostname per compute node
+
 You should see one hostname per node in your cluster. You can also set ``CLUSTER_FILE`` once and omit ``--cluster_file`` on later commands. See :doc:`/how-to/execute-cluster-commands` for ``--target``, ``--json``, and timeouts.
 
 Validate success
@@ -72,6 +88,29 @@ Run the GPU visibility check to confirm AMD GPUs are visible on all nodes before
   cvs exec --cmd "amd-smi list" \
     --cluster_file ~/cvs_workspace/cluster.json
 
+Successful output from each node looks like this:
+
+.. code:: text
+
+  [compute] Host: 10.0.0.2
+  GPU: 0
+      BDF: 0000:03:00.0
+      UUID: c30074a5-0000-1000-81ab-4f2e7c6d90b1
+      KFD_ID: 42109
+      NODE_ID: 2
+      PARTITION_ID: 0
+  <<truncated>>
+  ---
+  [compute] Host: 10.0.0.3
+  GPU: 0
+      BDF: 0000:23:00.0
+      UUID: a10074a5-0000-1000-8042-6e1c8a9b52d0
+      KFD_ID: 31758
+      NODE_ID: 4
+      PARTITION_ID: 0
+  <<truncated>>
+  ---
+
 Every node should report its GPU devices. A node that returns no GPUs or an error indicates a driver or device access issue to resolve before testing.
 
 What to do next
@@ -82,3 +121,4 @@ CVS is installed and your cluster is connected. The next step is to run a test s
 - :doc:`/how-to/test-suites/index` — choose a test suite and run it against the cluster. Start with :doc:`Preflight </how-to/test-suites/burn-in-diag/preflight>` to smoke-test all nodes, or jump straight to the suite that matches your validation goal.
 - :doc:`/how-to/configure/test-suite-config/index` — every test suite requires a config file with cluster-specific values such as interface names, model paths, and thresholds. Copy a template, fill in your values, and pass it with ``--config_file``.
 - :doc:`/how-to/configure/cluster-config` — if your cluster topology changes (new nodes, rack layout, container backend), update the cluster file here.
+- :doc:`/install/uninstall` — uninstall or downgrade CVS on the head node.

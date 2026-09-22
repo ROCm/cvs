@@ -19,6 +19,8 @@ subtrees:
     title: Install CVS
   - file: install/upgrade
     title: Upgrade CVS
+  - file: install/uninstall
+    title: Uninstall or downgrade CVS
 
 - caption: How to
   entries:
@@ -103,6 +105,8 @@ subtrees:
   entries:
   - file: reference/cvs-at-scale
     title: Scalability and performance
+  - file: reference/which-install-method
+    title: Identify the install method
   - file: reference/cluster/passwordless-ssh
     title: Passwordless SSH
   - file: reference/cluster/cluster-file

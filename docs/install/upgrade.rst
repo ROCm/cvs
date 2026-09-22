@@ -6,7 +6,9 @@
 Upgrade Cluster Validation Suite (CVS) to the latest version
 **********************************************************
 
-Upgrade CVS after pulling the latest source from the repository. Follow the method that matches how you originally installed CVS. See :doc:`/install/install` if you are not sure which method you used.
+Upgrade CVS after pulling the latest source from the repository. Follow the
+method that matches how you originally installed CVS. To identify the method,
+see :doc:`/reference/which-install-method`.
 
 If installed with ``make install``
 ==================================
@@ -59,3 +61,5 @@ Next steps
 
 - :doc:`/how-to/test-suites/index` — run tests against the cluster
 - :doc:`/install/install` — full installation reference for all methods
+- :doc:`/reference/which-install-method` — identify the install method
+- :doc:`/install/uninstall` — uninstall or downgrade CVS
