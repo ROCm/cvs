@@ -234,6 +234,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         orch = FakeOrch()
         variant = _fake_variant(driver="atom")
         variant.model.precision = "mxfp4"
+        variant.gpu_arch = "mi3xx"
         job = AtomJob(
             orch=orch,
             variant=variant,
@@ -247,6 +248,25 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         env_cmd = orch.commands[0][0]
         self.assertIn("ATOM_USE_TRITON_MOE=1", env_cmd)
         self.assertIn("ATOM_USE_TRITON_GEMM=1", env_cmd)
+
+    def test_build_server_cmd_skips_mxfp4_triton_env_on_mi355x(self):
+        orch = FakeOrch()
+        variant = _fake_variant(driver="atom")
+        variant.model.precision = "mxfp4"
+        variant.gpu_arch = "mi355x"
+        job = AtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.build_server_cmd()
+        env_cmd = orch.commands[0][0]
+        self.assertNotIn("ATOM_USE_TRITON_MOE", env_cmd)
+        self.assertNotIn("ATOM_USE_TRITON_GEMM", env_cmd)
 
     def test_client_log_failures_traceback(self):
         job = AtomJob(
