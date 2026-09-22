@@ -537,6 +537,20 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertNotIn("ATOM_USE_TRITON_MOE", gfx950)
         self.assertNotIn("ATOM_USE_TRITON_GEMM", gfx950)
 
+    def test_load_v4_flash_mi3xx_atom_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_deepseek-v4-flash_single.json")
+        self.assertEqual(variant.gpu_arch, "mi3xx")
+        self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Flash-Base")
+        self.assertEqual(variant.params.driver, "atom")
+        self.assertEqual(variant.params.tensor_parallelism, "8")
+        self.assertEqual(
+            variant.roles.server.atom_args[:4],
+            ["-tp", "8", "--kv_cache_dtype", "fp8"],
+        )
+        self.assertNotIn("--quantization", variant.roles.server.atom_args)
+        self.assertEqual(variant.threshold_json, "mi325x_atom_deepseek-v4-flash_single_threshold.json")
+
     def test_atom_threshold_files_use_aligned_keys_and_bare_metrics(self):
         root = Path(__file__).resolve().parents[3]
         atom_dir = root / "input/config_file/inference/atom"
