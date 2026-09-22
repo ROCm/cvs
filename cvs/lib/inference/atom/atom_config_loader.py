@@ -41,21 +41,27 @@ ATOM_DRIVERS = ("atom", "vllm", "vllm_atom", "sglang")
 ATOM_PP_DRIVERS = ("vllm", "vllm_atom", "sglang")
 # MI300X MXFP4 MoE + A4W4 GEMM require Triton; aiter A4W4 is unsupported on gfx942.
 # atom.utils.envs treats only "1" as true — "true" is ignored.
+# gfx950 (MI355X) has native MXFP4; do not force the Triton fallback there.
 _MXFP4_TRITON_ENV = {
     "ATOM_USE_TRITON_MOE": "1",
     "ATOM_USE_TRITON_GEMM": "1",
 }
+_GFX942_ARCHES = frozenset({"mi3xx", "mi300x", "mi325x"})
 
 
-def merge_mxfp4_triton_env(precision: str, env: dict[str, str]) -> dict[str, str]:
-    """Return server env with MXFP4 Triton defaults applied when unset."""
+def merge_mxfp4_triton_env(precision, env, gpu_arch=""):
+    """Return server env with MXFP4 Triton defaults on gfx942 when unset."""
     merged = dict(env or {})
-    if (precision or "").lower() == "mxfp4":
-        for key, value in _MXFP4_TRITON_ENV.items():
-            merged.setdefault(key, value)
-        for key in _MXFP4_TRITON_ENV:
-            if str(merged.get(key, "")).lower() == "true":
-                merged[key] = "1"
+    if (precision or "").lower() != "mxfp4":
+        return merged
+    arch = (gpu_arch or "").strip().lower()
+    if arch and arch not in _GFX942_ARCHES:
+        return merged
+    for key, value in _MXFP4_TRITON_ENV.items():
+        merged.setdefault(key, value)
+    for key in _MXFP4_TRITON_ENV:
+        if str(merged.get(key, "")).lower() == "true":
+            merged[key] = "1"
     return merged
 
 
@@ -210,7 +216,9 @@ class AtomVariantConfig(BaseVariantConfig):
 
     @model_validator(mode="after")
     def _apply_mxfp4_triton_env_defaults(self):
-        self.roles.server.env = merge_mxfp4_triton_env(self.model.precision, self.roles.server.env)
+        self.roles.server.env = merge_mxfp4_triton_env(
+            self.model.precision, self.roles.server.env, gpu_arch=self.gpu_arch
+        )
         return self
 
     @model_validator(mode="after")
