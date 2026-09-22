@@ -77,9 +77,12 @@ Replace cluster node IPs and trim ``node_dict`` to one host for single-node runs
 - ``paths.shared_fs``, ``paths.log_dir``, ``paths.hf_token_file``.
 - ``model.id`` — model under test.
 
-``paths.models_dir`` is ``/models``, the in-container mount point exported as
-``HF_HUB_CACHE``. Keep it as shipped; only customize the host side of the models
-volume mount.
+``paths.models_dir`` is ``/models``, the in-container weights mount (usually
+read-only). Keep it as shipped; only customize the host side of the models
+volume. ATOM still defaults ``HF_HUB_CACHE`` to that path for Hub weight
+lookups. SGLang ``bench_serving`` with ``dataset_name=random`` also downloads
+ShareGPT into ``HF_HUB_CACHE``, so Qwen SGLang samples override
+``HF_HUB_CACHE`` / ``HF_HOME`` to ``{paths.shared_fs}/.cache/huggingface``.
 
 For multinode PP, also set ``params.master_addr`` and verify
 ``roles.server.ib_netdev`` (``"auto"`` is the default on shipped distributed stems).
@@ -107,11 +110,11 @@ Multinode PP (``driver=vllm_atom``):
 
   cvs run atom \
     --cluster_file ~/input/cluster_file/atom_cluster.json \
-    --config_file ~/input/config_file/inference/atom/distributed/mi3xx_atom_deepseek-r1_fp8_distributed.json \
+    --config_file ~/input/config_file/inference/atom/distributed/mi3xx_atom_vllm_deepseek-r1_fp8_distributed.json \
     --html ~/cvs_results/atom-w1-distributed.html --self-contained-html -vvv
 
-MTP-3 speculative decode (``schema_version: 2`` profile on the native single-node
-stem):
+MTP-3 speculative decode (``schema_version: 2`` profile on a native single-node
+stem — DeepSeek R1 or Qwen FP8):
 
 .. code:: bash
 
