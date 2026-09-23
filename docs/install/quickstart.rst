@@ -65,9 +65,6 @@ Successful output looks like this — one block per node:
   node02
   ---
 
-.. image:: /images/cvs-exec-hostname.png
-   :alt: Terminal output of cvs exec hostname, with one hostname per compute node
-
 You should see one hostname per node in your cluster. You can also set ``CLUSTER_FILE`` once and omit ``--cluster_file`` on later commands. See :doc:`/how-to/execute-cluster-commands` for ``--target``, ``--json``, and timeouts.
 
 Validate success
