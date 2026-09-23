@@ -45,7 +45,9 @@
         "--trust-remote-code"
       ],
       "env": {
-        "ATOM_DISABLE_MMAP": "true"
+        "ATOM_DISABLE_MMAP": "true",
+        "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
+        "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
       }
     }
   },
