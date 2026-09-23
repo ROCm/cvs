@@ -75,10 +75,12 @@ still runs with ``cvs run atom``.
      - Native ATOM perf + MTP-3; lab pending for ``mtp3``
    * - ``mi355x_atom_kimi-k27-code_mxfp4``
      - ``_single``
-     - Native ATOM MI355X, TP4 MXFP4; bring-up thresholds
+     - Native ATOM MI355X, TP4 MXFP4; same Spur/Slurm job-step as V4-Pro;
+       writable ``HF_HUB_CACHE``; bring-up thresholds
    * - ``mi355x_atom_deepseek-v4-pro``
      - ``_single``
-     - Native ATOM MI355X Pro TP8; bring-up thresholds
+     - Native ATOM MI355X Pro TP8; Spur 355 job-step proven; writable
+       ``HF_HUB_CACHE``; bring-up thresholds
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - vLLM parity (serving schema); distributed uses PP=2
