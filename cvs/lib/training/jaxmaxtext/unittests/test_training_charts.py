@@ -38,17 +38,19 @@ class ChartRenderTests(unittest.TestCase):
     def _p(self, name):
         return os.path.join(self.d, name)
 
-    def test_multi_loss(self):
-        out = tc.render_multi_loss_png(_scalars(), self._p("loss.png"))
-        self.assertTrue(out and os.path.isfile(out))
+    def test_scalar_charts_one_per_tag(self):
+        out = tc.render_scalar_charts(_scalars(), self.d)
+        # one (tag, path) per non-empty tag; files exist; sorted by tag
+        tags = [t for t, _p in out]
+        self.assertEqual(tags, sorted(tags))
+        self.assertIn("learning/loss", tags)
+        self.assertIn("perf/step_time_seconds", tags)
+        self.assertEqual(len(out), len(_scalars()))
+        for _tag, path in out:
+            self.assertTrue(os.path.isfile(path))
 
-    def test_grad_param_norm(self):
-        out = tc.render_grad_param_norm_png(_scalars(), self._p("grad.png"))
-        self.assertTrue(out and os.path.isfile(out))
-
-    def test_lr_schedule(self):
-        out = tc.render_lr_schedule_png(_scalars(), self._p("lr.png"))
-        self.assertTrue(out and os.path.isfile(out))
+    def test_scalar_charts_empty_returns_empty_list(self):
+        self.assertEqual(tc.render_scalar_charts({}, self.d), [])
 
     def test_step_time(self):
         out = tc.render_step_time_png(_scalars(), self._p("st.png"))
@@ -67,10 +69,8 @@ class ChartRenderTests(unittest.TestCase):
         self.assertIsNone(tc.render_mfu_png(_scalars(), self._p("mfu2.png"), None))
 
     def test_empty_scalars_return_none(self):
-        self.assertIsNone(tc.render_multi_loss_png({}, self._p("x.png")))
-        self.assertIsNone(tc.render_grad_param_norm_png({}, self._p("x.png")))
-        self.assertIsNone(tc.render_lr_schedule_png({}, self._p("x.png")))
         self.assertIsNone(tc.render_step_time_png({}, self._p("x.png")))
+        self.assertIsNone(tc.render_mfu_png({}, self._p("x.png"), 1307.4))
 
     def test_cross_sweep_loss_needs_two_sweeps(self):
         one = {"BF16": [(0, 12.0), (1, 11.0)]}

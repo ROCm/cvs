@@ -13,21 +13,13 @@ a missing dependency or absent tag degrades to ``None`` and never raises.
 
 from __future__ import annotations
 
+import re
+
 from cvs.lib import globals
 from cvs.lib.training.jaxmaxtext.utils.gpu_peak_tflops import compute_mfu
 
 log = globals.log
 
-# Loss components MaxText emits (DeepSeek-v4: MoE load-balance + MTP + indexer).
-_LOSS_TAGS = [
-    ("learning/loss", "total"),
-    ("learning/lm_loss", "lm"),
-    ("learning/moe_lb_loss", "moe_lb"),
-    ("learning/mtp_loss", "mtp"),
-    ("learning/indexer_loss", "indexer"),
-    ("learning/z_loss", "z"),
-]
-_LR_TAG = "learning/current_learning_rate"
 _STEP_TIME_TAG = "perf/step_time_seconds"
 _TFLOPS_RATE_TAG = "perf/per_device_tflops_per_sec"
 # Leading steps are compile/rampup outliers, excluded from steady-state stats.
@@ -65,73 +57,38 @@ def _series(scalars, tag):
     return [(s, v) for s, v in (scalars.get(tag) or []) if v is not None]
 
 
-def render_multi_loss_png(scalars, out_path, title=None):
-    """Overlay total/lm/moe_lb/mtp/indexer/z losses vs step (present tags only)."""
-    present = [(tag, label) for tag, label in _LOSS_TAGS if _series(scalars, tag)]
-    if not present:
-        return None
+def _safe_tag_name(tag):
+    """Filesystem-safe token from a scalar tag (``learning/grad_norm`` -> ``learning_grad_norm``)."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", tag).strip("_") or "tag"
+
+
+def render_scalar_charts(scalars, out_dir, filename_stem="tb"):
+    """Render ONE line chart per scalar tag (TensorBoard-style: step vs value).
+
+    Auto-discovers every tag present in ``scalars`` (``learning/*``, ``perf/*``,
+    ...), so new metrics are charted with no code change. Returns
+    ``[(tag, path), ...]`` sorted by tag (groups ``learning/*`` before ``perf/*``);
+    empty series are skipped. Never raises.
+    """
+    tags = [t for t in sorted(scalars or {}) if _series(scalars, t)]
+    if not tags:
+        return []
     plt = _matplotlib()
     if plt is None:
-        return None
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    for tag, label in present:
+        return []
+    rendered = []
+    for tag in tags:
         pts = _series(scalars, tag)
-        ax.plot([s for s, _ in pts], [v for _, v in pts], linewidth=1.4, label=label)
-    ax.set_xlabel("step")
-    ax.set_ylabel("loss")
-    ax.set_title(title or "Training Losses")
-    ax.grid(True, linestyle="--", alpha=0.4)
-    ax.legend(fontsize=8, ncol=2)
-    return _save(fig, plt, out_path, f"{len(present)} loss series")
-
-
-def render_grad_param_norm_png(scalars, out_path, title=None):
-    """grad_norm / raw_grad_norm on the primary axis; param_norm on a twin axis."""
-    grad = _series(scalars, "learning/grad_norm")
-    raw = _series(scalars, "learning/raw_grad_norm")
-    param = _series(scalars, "learning/param_norm")
-    if not (grad or raw or param):
-        return None
-    plt = _matplotlib()
-    if plt is None:
-        return None
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    if grad:
-        ax.plot([s for s, _ in grad], [v for _, v in grad], color="#1f77b4", linewidth=1.4, label="grad_norm")
-    if raw:
-        ax.plot(
-            [s for s, _ in raw], [v for _, v in raw], color="#ff7f0e", linewidth=1.0, alpha=0.8, label="raw_grad_norm"
-        )
-    ax.set_xlabel("step")
-    ax.set_ylabel("gradient norm")
-    ax.grid(True, linestyle="--", alpha=0.4)
-    lines, labels = ax.get_legend_handles_labels()
-    if param:
-        ax2 = ax.twinx()
-        pl = ax2.plot([s for s, _ in param], [v for _, v in param], color="#2ca02c", linewidth=1.2, label="param_norm")
-        ax2.set_ylabel("param norm")
-        lines += pl
-        labels.append("param_norm")
-    ax.set_title(title or "Gradient / Parameter Norms")
-    ax.legend(lines, labels, fontsize=8)
-    return _save(fig, plt, out_path, "grad/param norms")
-
-
-def render_lr_schedule_png(scalars, out_path, title=None):
-    """Learning-rate schedule vs step."""
-    lr = _series(scalars, _LR_TAG)
-    if not lr:
-        return None
-    plt = _matplotlib()
-    if plt is None:
-        return None
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.plot([s for s, _ in lr], [v for _, v in lr], color="#9467bd", linewidth=1.5)
-    ax.set_xlabel("step")
-    ax.set_ylabel("learning rate")
-    ax.set_title(title or "Learning-Rate Schedule")
-    ax.grid(True, linestyle="--", alpha=0.4)
-    return _save(fig, plt, out_path, "lr schedule")
+        fig, ax = plt.subplots(figsize=(4.2, 3.0))
+        ax.plot([s for s, _ in pts], [v for _, v in pts], color="#ff7f0e", linewidth=1.3)
+        ax.set_title(tag, fontsize=9)
+        ax.set_xlabel("step", fontsize=8)
+        ax.grid(True, linestyle="--", alpha=0.4)
+        ax.tick_params(labelsize=7)
+        path = _save(fig, plt, f"{out_dir}/{filename_stem}_{_safe_tag_name(tag)}.png", tag)
+        if path:
+            rendered.append((tag, path))
+    return rendered
 
 
 def _step_time_series(scalars, step_metrics):
