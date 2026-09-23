@@ -166,9 +166,6 @@ Each result is prefixed with the target type (``compute`` or ``switch``) and the
   Linux node02 5.15.0-91-generic #101-Ubuntu SMP Tue Nov 14 13:30:08 UTC 2023 x86_64 x86_64 x86_64 GNU/Linux
   ---
 
-.. image:: /images/cvs-exec-hostname.png
-   :alt: Example cvs exec output showing per-node results
-
 When ``--target all`` is used, switch tray output follows the compute output with a ``[switch]`` prefix:
 
 .. code:: text
