@@ -1,6 +1,6 @@
 .. note::
 
-  **Head node.** The Linux host where you install and run the CVS CLI. It can be
+  **Head node:** The Linux host where you install and run the CVS CLI. It can be
   a VM or bare metal and does not need a GPU. It must be able to SSH to every
   worker.
 
