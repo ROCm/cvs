@@ -6,13 +6,16 @@
 Uninstall or downgrade Cluster Validation Suite (CVS) on ROCm
 *****************************************************************
 
-These steps remove or roll back the CVS **CLI on the head node**. They do not
-uninstall ROCm, drivers, or packages on cluster workers. To identify whether
-you installed with Makefile, pip, or Docker, see
-:doc:`/reference/which-install-method`.
+These steps remove or roll back the CVS *CLI on the head node*. They don't
+uninstall ROCm, drivers, or packages on cluster workers. 
 
-Uninstall
-=========
+Identify how CVS was installed
+==============================
+
+.. include:: /_includes/identify.rst
+
+Uninstall CVS
+=============
 
 If installed with ``make install``
 ----------------------------------
@@ -78,12 +81,11 @@ Expected output:
   $ docker images cvs
   REPOSITORY   TAG   IMAGE ID   CREATED   SIZE
 
-Downgrade
-=========
+Downgrade CVS
+=============
 
 CVS is installed from source. To move to an older release, check out that
-version and reinstall with the **same** method you originally used. See
-:doc:`/reference/which-install-method` and :doc:`/release-notes`.
+version and reinstall with the *same* method you originally used. 
 
 Example using ``make install``:
 
@@ -115,5 +117,4 @@ Next steps
 
 - :doc:`/install/install` — reinstall CVS
 - :doc:`/install/upgrade` — upgrade to the latest source
-- :doc:`/reference/which-install-method` — identify the install method
 - :doc:`/install/quickstart` — install and run the first cluster command

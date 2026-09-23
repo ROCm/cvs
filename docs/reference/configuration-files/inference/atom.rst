@@ -399,6 +399,6 @@ Related resources
 =================
 
 - :doc:`/how-to/test-suites/inference/atom` — step-by-step first run
-- :doc:`/reference/configuration-files/cluster-file` — cluster file schema
+- :doc:`/reference/cluster/cluster-file` — cluster file schema
 - :mod:`cvs.lib.inference.atom.atom_config_loader` — loader and ``cell_key``
 - :mod:`cvs.lib.inference.atom.atom_parsing` — metric tiers and parsing
