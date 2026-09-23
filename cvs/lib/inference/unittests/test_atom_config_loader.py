@@ -559,6 +559,9 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.params.tensor_parallelism, "4")
         self.assertEqual(variant.roles.server.atom_args[:2], ["-tp", "4"])
         self.assertNotIn("ATOM_USE_TRITON_MOE", variant.roles.server.env)
+        self.assertTrue(
+            str(variant.roles.server.env.get("HF_HUB_CACHE", "")).endswith(".cache/huggingface")
+        )
         self.assertEqual(
             variant.threshold_json,
             "mi355x_atom_kimi-k27-code_mxfp4_single_threshold.json",
@@ -570,6 +573,9 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(variant.gpu_arch, "mi355x")
         self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Pro")
         self.assertEqual(variant.params.tensor_parallelism, "8")
+        self.assertTrue(
+            str(variant.roles.server.env.get("HF_HUB_CACHE", "")).endswith(".cache/huggingface")
+        )
         self.assertEqual(variant.threshold_json, "mi355x_atom_deepseek-v4-pro_single_threshold.json")
 
     def test_atom_threshold_files_use_aligned_keys_and_bare_metrics(self):
