@@ -4,7 +4,7 @@ active venv):
 
 .. list-table::
    :header-rows: 1
-   :widths: 5 3
+   :widths: 3 5
 
    * - Command
      - Installation via
@@ -25,7 +25,7 @@ If a venv is already active, you can also run:
 Typical ``which cvs`` paths when a venv is active:
 
 * ``.../cvs/.cvs_venv/bin/cvs`` — Makefile
-* another ``.../bin/cvs`` path — custom pip venv
+* Another ``.../bin/cvs`` path — custom pip venv
 
 .. note::
 

@@ -13,10 +13,10 @@ System requirements
 
 CVS supports these GPUs:
 
-- AMD Instinct™ MI325X
-- AMD Instinct MI300X	
+- AMD Instinct™ MI355X
 - AMD Instinct MI350X
-- AMD Instinct MI355X
+- AMD Instinct MI325X
+- AMD Instinct MI300X	
 
 CVS supports these Linux distributions:
 
