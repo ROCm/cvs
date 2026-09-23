@@ -208,10 +208,9 @@ def test_install_transferbench(orch, config_dict):
         update_test_result()
         return
 
-    out_dict = orch.exec(f'ls -ld {git_install_path}')
-    for node in out_dict.keys():
-        if re.search('No such file', out_dict[node]):
-            orch.exec(f'mkdir -p {git_install_path}')
+    out_dict = orch.exec(f'test -d {git_install_path}', detailed=True)
+    if any(info.get('exit_code') != 0 for info in out_dict.values()):
+        orch.exec(f'mkdir -p {git_install_path}')
 
     out_dict = orch.exec(f'rm -rf {git_install_path}/TransferBench')
     # Clone with explicit destination, no cwd dependency.
@@ -256,7 +255,7 @@ def test_install_transferbench(orch, config_dict):
 
     # Verify installation happened fine on all nodes
     out_dict = orch.exec(f'ls -l {git_install_path}/TransferBench')
-    for node in out_dict.keys():
-        if not re.search('TransferBench', out_dict[node]):
+    for node, output in out_dict.items():
+        if not re.search('TransferBench', output):
             fail_test(f'Transfer bench installation failed on node {node}')
     update_test_result()

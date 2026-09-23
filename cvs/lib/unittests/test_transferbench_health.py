@@ -57,11 +57,33 @@ class TestTransferBenchEnvAndCommand(unittest.TestCase):
             '/opt/rocm',
             'p2p',
             {'NUM_CPU_DEVICES': '2'},
+            sudo_prefix='sudo -n ',
         )
-        self.assertTrue(cmd.startswith('sudo bash -c '))
+        self.assertTrue(cmd.startswith('sudo -n bash -c '))
         self.assertIn('NUM_CPU_DEVICES', cmd)
         self.assertIn('TransferBench p2p', cmd)
         self.assertIn('LD_LIBRARY_PATH', cmd)
+
+    def test_command_omits_sudo_when_prefix_empty(self):
+        cmd = tb.build_transferbench_command(
+            '/opt/amdtools/transferbench',
+            '/opt/rocm',
+            'p2p',
+            {'NUM_CPU_DEVICES': '2'},
+        )
+        self.assertTrue(cmd.startswith('bash -c '))
+        self.assertNotIn('sudo', cmd.split('bash', 1)[0])
+
+    def test_run_transferbench_passes_orch_sudo_prefix(self):
+        orch = MagicMock()
+        orch.sudo_prefix.return_value = 'sudo -n '
+        orch.exec.return_value = {'nodeA': 'ok'}
+        with patch.object(tb, 'detect_rocm_path', return_value='/opt/rocm'):
+            tb.run_transferbench(
+                orch, {'path': '/tb', 'rocm_path': '/opt/rocm', 'num_cpu_devices': 2}, 'p2p', timeout=30
+            )
+        cmd = orch.exec.call_args.args[0]
+        self.assertTrue(cmd.startswith('sudo -n bash -c '))
 
     def test_detect_command_counts_populated_cpulists(self):
         self.assertIn('for f in /sys/devices/system/node/node*/cpulist', tb._DETECT_NUM_CPU_DEVICES_CMD)
