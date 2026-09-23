@@ -117,6 +117,25 @@ Use these scripts to start the test:
     
      cvs run transferbench_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
 
+On **Spur or Slurm managed compute**, launch CVS inside a **job step** (one task per node), for example ``spur run --mpi=none`` or ``srun --mpi=none``. A bare allocation or a ``spur submit`` / ``sbatch`` script that never starts a step is not managed CVS (``SLURM_STEP_ID`` stays unset). ``--cluster_file`` is optional; CVS builds the live cluster file from scheduler hosts and starts one HTTP agent per task.
+
+Set ``transferbench.git_install_path`` and ``transferbench.path`` to a **shared, user-writable** tree. ``transferbench_cvs`` uses ``orch.sudo_prefix()`` around TransferBench; if passwordless sudo is unavailable the binary runs as the job user.
+
+Spur example:
+
+.. code:: bash
+
+  spur run -A <account> -p <partition> \
+    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    bash -lc 'source ~/.cvs_venv/bin/activate &&
+      cvs run install_transferbench --config_file <health-config.json> --html <report.html>'
+
+  spur run -A <account> -p <partition> \
+    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    bash -lc 'source ~/.cvs_venv/bin/activate &&
+      cvs run transferbench_cvs --config_file <health-config.json> --html <report.html>'
+
+
 RVS
 ~~~
 
