@@ -24,8 +24,6 @@ from cvs.lib.preflight.tier3_info import NodeSmokeTier3Check
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
 from cvs.lib.preflight.report import PreflightReportGenerator, preflight_check_display_name
-from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
-from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.parsers.schemas import (
@@ -305,81 +303,7 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
-@pytest.fixture(scope="module")
-def phdl(cluster_dict, config_dict):
-    """
-    Build and return a MultiProcessParallelHandle for all cluster nodes.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture containing:
-        - node_dict: dict of node_name -> node_details
-        - username: SSH username
-        - priv_key_file: path to SSH private key
-
-    Returns:
-      MultiProcessParallelHandle: Handle configured for all nodes (for broadcast/parallel operations).
-    """
-    node_list = list(cluster_dict['node_dict'].keys())
-    env_vars = cluster_dict.get("env_vars")
-    log.info(f"Creating parallel SSH handle for {len(node_list)} nodes")
-
-    # Create config with RDMA full-mesh partition group size
-    # (fallbacks: legacy rdma.parallel_group_size, then preflight.parallelism.parallel_group_size).
-    hosts_per_shard = get_nested_config(
-        config_dict,
-        'connectivity_check.rdma',
-        'nodes_per_full_mesh_group',
-        get_nested_config(
-            config_dict,
-            'connectivity_check.rdma',
-            'parallel_group_size',
-            get_nested_config(config_dict, 'parallelism', 'parallel_group_size', 32),
-        ),
-    )
-    config = ParallelConfig(hosts_per_shard=hosts_per_shard)
-
-    phdl = MultiProcessParallelHandle(
-        log,
-        node_list,
-        user=cluster_dict['username'],
-        pkey=cluster_dict['priv_key_file'],
-        env_vars=env_vars,
-        stop_on_errors=False,
-        config=config,
-        timeout=60,
-        num_retries=2,
-        retry_delay=2,
-    )
-    return phdl
-
-
-@pytest.fixture(scope="module")
-def shdl(cluster_dict):
-    """
-    Build and return a MultiProcessParallelHandle for the head node only.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-
-    Returns:
-      MultiProcessParallelHandle: Handle configured for head node only (for single-node operations).
-    """
-    head_node = cluster_dict['head_node_dict']['mgmt_ip']
-    env_vars = cluster_dict.get("env_vars")
-    log.info(f"Creating single SSH handle for head node: {head_node}")
-
-    shdl = MultiProcessParallelHandle(
-        log,
-        [head_node],
-        user=cluster_dict['username'],
-        pkey=cluster_dict['priv_key_file'],
-        env_vars=env_vars,
-        stop_on_errors=False,
-    )
-    return shdl
-
-
-def test_node_reachability(phdl):
+def test_node_reachability(orch):
     """
     Test basic SSH connectivity to all cluster nodes.
 
@@ -393,7 +317,7 @@ def test_node_reachability(phdl):
 
     # Simple connectivity test
     cmd = "echo 'SSH_OK'"
-    out_dict = phdl.exec(cmd, timeout=60)  # Generous timeout for multiprocessing coordination
+    out_dict = orch.exec(cmd, timeout=60)  # Generous timeout for multiprocessing coordination
 
     failed_nodes = []
     reachable_nodes = []
@@ -423,13 +347,13 @@ def test_node_reachability(phdl):
         'status': 'PASS' if len(failed_nodes) == 0 else 'WARNING',
     }
 
-    # Drop all nodes that did not return SSH_OK from phdl (explicit prune; not only SSH client exceptions)
-    _prune_nodes_from_phdl(phdl, failed_nodes, "Reachability:")
+    # Drop all nodes that did not return SSH_OK (explicit prune; not only SSH client exceptions)
+    _prune_nodes_from_phdl(orch.all, failed_nodes, "Reachability:")
 
     preflight_update_test_result()
 
 
-def test_node_health(phdl, config_dict, cluster_dict):
+def test_node_health(orch, config_dict, cluster_dict):
     """Perform mandatory GPU health and optional MI4XX fabric admission.
 
     The gate is intentionally read-only.  It records diagnostics and lets the
@@ -458,10 +382,10 @@ def test_node_health(phdl, config_dict, cluster_dict):
         "Running mandatory node-health admission (gpus_per_node=%d, fabric_checks=%s) on %d reachable host(s)",
         gpus_per_node,
         fabric_checks,
-        len(phdl.reachable_hosts),
+        len(orch.all.reachable_hosts),
     )
     checker = NodeHealthCheck(
-        phdl,
+        orch,
         expected_gpus_per_node=gpus_per_node,
         fabric_checks=fabric_checks,
         config_dict=config_dict,
@@ -502,7 +426,7 @@ def test_node_health(phdl, config_dict, cluster_dict):
     preflight_update_test_result()
 
 
-def test_rocm_version_consistency(phdl, config_dict):
+def test_rocm_version_consistency(orch, config_dict):
     """
     Test ROCm version consistency across all cluster nodes.
 
@@ -526,7 +450,7 @@ def test_rocm_version_consistency(phdl, config_dict):
     expected_version = get_nested_config(config_dict, 'node_check', 'expected_rocm_version', '6.2.0')
     log.info(f"Testing ROCm version consistency (expected: {expected_version})")
 
-    version_checker = RocmVersionCheck(phdl, expected_version, config_dict)
+    version_checker = RocmVersionCheck(orch, expected_version, config_dict)
     results = version_checker.run()
     preflight_results['rocm_versions'] = results
 
@@ -558,27 +482,27 @@ def test_rocm_version_consistency(phdl, config_dict):
     preflight_update_test_result()
 
 
-def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
+def test_ifoe_l2_connectivity(orch, config_dict, cluster_dict):
     """Run IFoE L2 before RDMA-specific interface and GID pruning.
 
     IFoE uses AFM/vPOD topology rather than conventional RDMA interfaces.
     Keeping this test ahead of the legacy RDMA eligibility filters ensures an
     absent or separately configured RDMA NIC cannot suppress IFoE validation.
     """
-    _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict)
+    _run_ifoe_l2_connectivity(orch.all, config_dict, cluster_dict)
 
 
-def test_ifoe_transferbench_smoke(phdl, config_dict):
+def test_ifoe_transferbench_smoke(orch, config_dict):
     """Run TransferBench after IFoE L2 and before RDMA eligibility pruning.
 
     TransferBench validates the IFoE data path and must see the same
     node-health-admitted host set as L2 ping. Conventional RDMA interface or
     GID failures must not suppress this independent scale-up validation.
     """
-    _run_ifoe_transferbench_smoke(phdl, config_dict)
+    _run_ifoe_transferbench_smoke(orch.all, config_dict)
 
 
-def test_interface_name_consistency(phdl, config_dict):
+def test_interface_name_consistency(orch, config_dict):
     """
     Test RDMA interface presence and consistency across all cluster nodes.
 
@@ -603,7 +527,7 @@ def test_interface_name_consistency(phdl, config_dict):
     )
     log.info(f"Testing interface presence (expected: {expected_interfaces})")
 
-    interface_checker = InterfaceConsistencyCheck(phdl, expected_interfaces, config_dict)
+    interface_checker = InterfaceConsistencyCheck(orch, expected_interfaces, config_dict)
     results = interface_checker.run()
     preflight_results['interface_names'] = results
 
@@ -632,11 +556,11 @@ def test_interface_name_consistency(phdl, config_dict):
         f"Interface presence results: {compliant_interfaces}/{total_interfaces} interfaces are expected interfaces"
     )
 
-    _prune_nodes_from_phdl(phdl, failed_nodes, "Interface consistency:")
+    _prune_nodes_from_phdl(orch.all, failed_nodes, "Interface consistency:")
     preflight_update_test_result()
 
 
-def test_gid_consistency(phdl, config_dict):
+def test_gid_consistency(orch, config_dict):
     """
     Test GID consistency across specified RDMA interfaces in the cluster.
 
@@ -662,7 +586,7 @@ def test_gid_consistency(phdl, config_dict):
     )
     log.info(f"Testing GID consistency for index {gid_index} on interfaces: {expected_interfaces}")
 
-    gid_checker = GidConsistencyCheck(phdl, gid_index, expected_interfaces, config_dict)
+    gid_checker = GidConsistencyCheck(orch, gid_index, expected_interfaces, config_dict)
     results = gid_checker.run()
     preflight_results['gid_consistency'] = results
 
@@ -689,11 +613,11 @@ def test_gid_consistency(phdl, config_dict):
 
     log.info(f"GID consistency results: {ok_interfaces}/{total_interfaces} interfaces have valid GID index {gid_index}")
 
-    _prune_nodes_from_phdl(phdl, failed_nodes, "GID consistency:")
+    _prune_nodes_from_phdl(orch.all, failed_nodes, "GID consistency:")
     preflight_update_test_result()
 
 
-def test_node_smoke_tier1(phdl, config_dict):
+def test_node_smoke_tier1(orch, config_dict):
     """
     Run Node Smoke Tier 1 (Primus ``node_smoke``) on each reachable node via primus-cli.
 
@@ -709,7 +633,7 @@ def test_node_smoke_tier1(phdl, config_dict):
     """
     global preflight_results
 
-    if not phdl.reachable_hosts:
+    if not orch.all.reachable_hosts:
         log.warning("%s skipped: no reachable hosts remain after earlier preflight pruning", NODE_SMOKE_TIER1_LABEL)
         skipped = {
             'mode': 'skip',
@@ -722,10 +646,10 @@ def test_node_smoke_tier1(phdl, config_dict):
         preflight_update_test_result()
         return
 
-    node_list = list(phdl.reachable_hosts)
+    node_list = list(orch.all.reachable_hosts)
     log.info("Running %s on %d reachable host(s)", NODE_SMOKE_TIER1_LABEL, len(node_list))
 
-    checker = NodeSmokeCheck(phdl, node_list, config_dict)
+    checker = NodeSmokeCheck(orch, node_list, config_dict)
     results = checker.run()
     preflight_results['node_smoke_tier1'] = results
     preflight_results['node_smoke'] = results
@@ -754,7 +678,7 @@ def test_node_smoke_tier1(phdl, config_dict):
     preflight_update_test_result()
 
 
-def test_node_smoke_tier3(phdl, config_dict):
+def test_node_smoke_tier3(orch, config_dict):
     """
     Run Node Smoke Tier 3 (Primus ``preflight --host --gpu --network``) across the cluster.
 
@@ -765,7 +689,7 @@ def test_node_smoke_tier3(phdl, config_dict):
     """
     global preflight_results
 
-    if not phdl.reachable_hosts:
+    if not orch.all.reachable_hosts:
         log.warning("%s skipped: no reachable hosts remain after earlier preflight pruning", NODE_SMOKE_TIER3_LABEL)
         skipped = {
             'mode': 'skip',
@@ -778,10 +702,10 @@ def test_node_smoke_tier3(phdl, config_dict):
         preflight_update_test_result()
         return
 
-    node_list = list(phdl.reachable_hosts)
+    node_list = list(orch.all.reachable_hosts)
     log.info("Running %s on %d reachable host(s)", NODE_SMOKE_TIER3_LABEL, len(node_list))
 
-    checker = NodeSmokeTier3Check(phdl, node_list, config_dict)
+    checker = NodeSmokeTier3Check(orch, node_list, config_dict)
     results = checker.run()
     preflight_results['node_smoke_tier3'] = results
     preflight_results['tier3_info'] = results
@@ -1215,7 +1139,7 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
         pytest.fail("TransferBench preflight gate failed; see preflight report")
 
 
-def test_rdma_connectivity(phdl, cluster_dict, config_dict):
+def test_rdma_connectivity(orch, cluster_dict, config_dict):
     """
     Test RDMA connectivity between cluster nodes using ibv_rc_pingpong.
 
@@ -1267,7 +1191,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
         return
 
     # Host list matches prior-step pruning (reachability, interface, GID); not full cluster_dict.
-    node_list = list(phdl.reachable_hosts)
+    node_list = list(orch.all.reachable_hosts)
 
     iface_results = preflight_results.get('interface_names') or {}
     excluded_nodes_interface_check = sorted(
@@ -1278,7 +1202,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     excluded_nodes_gid = sorted(n for n, r in gid_results.items() if isinstance(r, dict) and r.get('status') == 'FAIL')
 
     log.info(
-        f"RDMA connectivity: {len(node_list)} host(s) on phdl after reachability / interface / GID pruning "
+        f"RDMA connectivity: {len(node_list)} host(s) after reachability / interface / GID pruning "
         f"(ROCm mismatches are not pruned)."
     )
 
@@ -1307,7 +1231,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
         f"Testing RDMA connectivity using parallel algorithm (mode: {mode}, group_size: {parallel_group_size}, timeout: {timeout}s, interfaces: {expected_interfaces}, GID: {gid_index})"
     )
 
-    if len(phdl.reachable_hosts) < 2:
+    if len(orch.all.reachable_hosts) < 2:
         log.warning(
             'RDMA connectivity skipped: fewer than 2 hosts remain after reachability / interface / GID pruning.'
         )
@@ -1331,7 +1255,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     from cvs.lib.preflight.rdma_connectivity import RdmaConnectivityCheck
 
     rdma_checker = RdmaConnectivityCheck(
-        phdl, node_list, mode, port_range, timeout, expected_interfaces, gid_index, parallel_group_size, config_dict
+        orch, node_list, mode, port_range, timeout, expected_interfaces, gid_index, parallel_group_size, config_dict
     )
     results = rdma_checker.run()
     if excluded_nodes_interface_check:
@@ -1369,7 +1293,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     preflight_update_test_result()
 
 
-def test_generate_preflight_report(phdl, config_dict, request):
+def test_generate_preflight_report(orch, config_dict, request):
     """
     Generate comprehensive preflight check report.
 
@@ -1401,7 +1325,7 @@ def test_generate_preflight_report(phdl, config_dict, request):
             preflight_results[check] = {'status': 'SKIPPED', 'message': 'Check was skipped due to earlier failures'}
 
     # Generate comprehensive summary using new report generator
-    report_generator = PreflightReportGenerator(phdl, preflight_results, config_dict)
+    report_generator = PreflightReportGenerator(orch, preflight_results, config_dict)
     report_results = report_generator.run()
     summary = report_results['summary']
 

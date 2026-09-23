@@ -54,16 +54,16 @@ def _config_flag_enabled(value, default=True):
 class PreflightReportGenerator(PreflightCheck):
     """Generate preflight test reports."""
 
-    def __init__(self, phdl, results, config_dict=None):
+    def __init__(self, orch, results, config_dict=None):
         """
         Initialize report generator.
 
         Args:
-            phdl: Parallel SSH handle for cluster nodes
+            orch: Orchestrator or parallel handle for cluster nodes
             results: Preflight test results to generate reports from
             config_dict: Optional configuration dictionary
         """
-        super().__init__(phdl, config_dict)
+        super().__init__(orch, config_dict)
         self.results = results
 
     def run(self):
