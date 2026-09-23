@@ -3,7 +3,7 @@
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
@@ -18,6 +18,12 @@ from cvs.lib.preflight.node_smoke import (
     resolve_rdma_gid_index,
     resolve_rdma_interfaces,
 )
+
+
+def _make_orch(phdl):
+    orch = MagicMock()
+    orch.all = phdl
+    return orch
 
 
 class TestBuildNodeSmokeFlags(unittest.TestCase):
@@ -169,7 +175,7 @@ class TestNodeSmokeCheckRun(unittest.TestCase):
             "node2": "wrote /tmp/smoke/c.json status=PASS\n",
         }
 
-        checker = NodeSmokeCheck(phdl, ["node0", "node2"], self._config())
+        checker = NodeSmokeCheck(_make_orch(phdl), ["node0", "node2"], self._config())
         results = checker.run()
 
         cmd_list = phdl.exec_cmd_list.call_args[0][0]
@@ -191,7 +197,7 @@ class TestNodeSmokeCheckRun(unittest.TestCase):
         cfg = self._config()
         cfg["node_smoke"]["tier2_perf"] = True
         cfg["node_smoke"]["ssh_timeout"] = 300
-        checker = NodeSmokeCheck(phdl, ["node0"], cfg)
+        checker = NodeSmokeCheck(_make_orch(phdl), ["node0"], cfg)
         checker.run()
 
         timeout = phdl.exec_cmd_list.call_args.kwargs.get("timeout") or phdl.exec_cmd_list.call_args[1].get("timeout")
@@ -201,6 +207,23 @@ class TestNodeSmokeCheckRun(unittest.TestCase):
         self.assertIn("--gemm-tflops-min 600", cmd)
         self.assertIn("--hbm-gbs-min 2000", cmd)
         self.assertIn("--rccl-gbs-min 100", cmd)
+
+    def test_auto_setup_passes_orchestrator_not_handle(self):
+        phdl = MagicMock()
+        phdl.reachable_hosts = ["node0"]
+        orch = _make_orch(phdl)
+        cfg = self._config()
+        cfg["node_smoke"]["auto_setup"] = True
+
+        with patch("cvs.lib.preflight.primus_setup.PrimusSetup") as setup_cls:
+            setup_cls.return_value.run.return_value = {
+                "status": "FAIL",
+                "message": "setup failed",
+                "node_results": {},
+            }
+            NodeSmokeCheck(orch, ["node0"], cfg).run()
+
+        self.assertIs(setup_cls.call_args.args[0], orch)
 
 
 class TestPreflightNodeSmokeReporting(unittest.TestCase):
