@@ -41,7 +41,7 @@ Container
 
 Container mode routes workload commands through a container runtime on each node. CVS uses host SSH to the node, then ``docker exec`` into a long-lived per-host container. Inside the container, an SSH daemon listens on port ``2224`` so that MPI-style workloads can fan out using the in-container SSH transport.
 
-The container backend is currently consumed by ``rvs_cvs`` and ``install_rvs``. The container lifecycle (start, verify, sshd setup, teardown) runs from the test fixture in `cvs/tests/health/rvs_cvs.py <https://github.com/ROCm/cvs/blob/main/cvs/tests/health/rvs_cvs.py>`_.
+The container backend is currently consumed by ``rvs_cvs`` and ``install_rvs``. The container lifecycle (start, verify, sshd setup, teardown) runs from the shared ``orch`` fixture in `cvs/tests/conftest.py <https://github.com/ROCm/cvs/blob/main/cvs/tests/conftest.py>`_.
 
 Cluster file shape
 ==================
