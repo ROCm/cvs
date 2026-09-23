@@ -33,7 +33,6 @@ The component public repository is located at `https://github.com/ROCm/cvs <http
   .. grid-item-card:: Reference
 
     * :doc:`Scalability and parallel SSH performance <reference/cvs-at-scale>`
-    * :doc:`Identify the install method <reference/which-install-method>`
     * :doc:`Cluster file <reference/cluster/cluster-file>`
     * :doc:`Run with containers <how-to/run-with-containers>`
     * :doc:`Passwordless SSH <reference/cluster/passwordless-ssh>`

@@ -17,7 +17,6 @@ CVS supports these GPUs:
 - AMD Instinct MI300X	
 - AMD Instinct MI350X
 - AMD Instinct MI355X
-- AMD Instinct MI455X
 
 CVS supports these Linux distributions:
 
@@ -29,19 +28,17 @@ CVS supports these Linux distributions:
      - Kernel
      - ROCm version (tested on)
      - Python version (tested on)
-   * - Ubuntu 24.04.3
+   * - Ubuntu 24.04.4
      - 6.8 [GA], 6.14 [HWE]
-     - 10.1
+     - 10.0.0
      - 3.12
    * - Ubuntu 22.04.5
      - 5.15 [GA], 6.8 [HWE]
-     - 10.1
+     - 10.0.0
      - 3.10
 
 Install CVS
 ===========
-
-.. include:: /_includes/head-node.rst
 
 Choose an installation method
 -----------------------------
@@ -53,6 +50,8 @@ You can install and run the CVS CLI in either of these ways:
 #. **Docker container** — build the CVS image and run ``cvs`` inside a container on the head node. The container connects to cluster nodes over SSH; it does not include ROCm or the workloads CVS launches on workers. See `Install and run in a Docker container`_.
 
 In both cases CVS orchestrates tests on remote cluster nodes over SSH. The install location only affects where the **CLI** runs.
+
+.. include:: /_includes/head-node.rst
 
 Install in a Python virtual environment
 ---------------------------------------
