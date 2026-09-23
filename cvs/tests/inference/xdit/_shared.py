@@ -401,7 +401,7 @@ def run_benchmark_stage(orch, variant, cluster_dict, spec, lifecycle, request):
 
     for error in errors or []:
         fail_test(error)
-    _complete(lifecycle, request, "benchmark", started)
+    _complete(lifecycle, request, "generate_and_benchmark", started)
 
 
 def _workload_params(variant, spec):
@@ -456,14 +456,19 @@ def _report_dimensions(variant, params, spec):
     if spec["family"] == "flux":
         shape = f"{params.get('height', '-')}x{params.get('width', '-')}"
         steps = params.get("num_inference_steps", "-")
+        benchmark_steps = params.get("num_repetitions", "-")
         backend = "diffusers"
+        cell_id = f"SIZE={shape},STEPS={steps},BENCH={benchmark_steps}"
     else:
         shape = params.get("size", "-")
-        steps = params.get("frame_num", "-")
+        frames = params.get("frame_num", "-")
+        steps = params.get("num_inference_steps")
+        if steps is None:
+            steps = 40 if spec["diffusers"] else "-"
+        benchmark_steps = params.get("num_benchmark_steps", "-")
         backend = "diffusers" if spec["diffusers"] else "native"
-    workers = _world_size(variant, params, spec)
+        cell_id = f"SIZE={shape},FRAMES={frames},STEPS={steps},BENCH={benchmark_steps}"
     nnodes = _nnodes_count(variant, spec)
-    cell_id = f"ISL={shape},OSL={steps},C={workers}"
     return str(model_id), shape, steps, backend, nnodes, cell_id
 
 
@@ -476,18 +481,6 @@ def _nnodes_count(variant, spec):
         return int(nnodes)
     hosts = inference.get("_execution_hosts") or inference.get("server_node_list") or []
     return max(len(hosts), 1)
-
-
-def _world_size(variant, params, spec):
-    nproc = int(params.get("torchrun_nproc", 1))
-    if not spec["distributed"]:
-        return nproc
-    inference = inference_from_variant(variant)
-    nnodes = inference.get("nnodes")
-    if nnodes is not None and str(nnodes).strip() != "":
-        return nproc * int(nnodes)
-    hosts = inference.get("_execution_hosts") or inference.get("server_node_list") or []
-    return nproc * max(len(hosts), 1)
 
 
 def _report_threshold(thresholds, gpu_type, metric):

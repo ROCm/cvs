@@ -3,12 +3,13 @@ from types import SimpleNamespace
 
 from cvs.lib.report.inference import build_inference_report_payload
 from cvs.lib.report.profile import load_json_profile
+from cvs.lib.report.render.gate_matrix import GateMatrixRenderer
 from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
 
 
 class TestXditRundeck(unittest.TestCase):
     def test_payload_contains_timing_gate_and_results_row(self):
-        cell_id = "ISL=1024x1024,OSL=25,C=8"
+        cell_id = "SIZE=1024x1024,STEPS=50,BENCH=25"
         variant = SimpleNamespace(
             enforce_thresholds=True,
             thresholds={cell_id: {"avg_pipe_time_s": {"kind": "max", "value": 3.0}}},
@@ -18,7 +19,7 @@ class TestXditRundeck(unittest.TestCase):
             inference={"benchmark_serv_node": "node-a"},
             benchmark_params={"flux1_dev_t2i": {"torchrun_nproc": 8}},
         )
-        key = ("FLUX.1-dev", "mi300x", "1024x1024", 25, cell_id, "1")
+        key = ("FLUX.1-dev", "mi300x", "1024x1024", 50, cell_id, "1")
         results = {
             key: {
                 "node-a": {
@@ -48,6 +49,10 @@ class TestXditRundeck(unittest.TestCase):
         self.assertNotIn("Workers", payload["results_table"]["headers"])
         self.assertNotIn("Topology", payload["results_table"]["headers"])
         self.assertEqual(payload["results_table"]["rows"][0][9], 2.5)
+        self.assertEqual(
+            GateMatrixRenderer.cell_label(payload["cells"][0]),
+            "SIZE=1024x1024,STEPS=50,BENCH=25 \u00b7 NNODES=1",
+        )
 
     def test_run_card_shows_nnodes_and_benchmark_node(self):
         from cvs.lib.report.profiles.hooks.xdit_run_card import xdit_run_card_display

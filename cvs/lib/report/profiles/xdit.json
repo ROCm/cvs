@@ -30,7 +30,7 @@
       ["Model", null],
       ["GPU", null],
       ["Shape", null],
-      ["Steps/frames", null],
+      ["Steps", null],
       ["Cell", null],
       ["nnodes", null],
       ["Host", null],
@@ -60,11 +60,11 @@
       "prerequisites",
       "model_verify",
       "parallelism",
-      "benchmark",
+      "generate_and_benchmark",
       "parse_thresholds",
       "teardown"
     ],
-    "cell_labels": ["benchmark", "parse_thresholds"]
+    "cell_labels": ["generate_and_benchmark", "parse_thresholds"]
   },
   "behavior": {
     "inference_test_substring": "test_run_benchmark",

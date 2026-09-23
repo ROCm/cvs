@@ -83,12 +83,18 @@ class TestReportResults(unittest.TestCase):
 
         values = _report_dimensions(
             variant,
-            {"height": 1024, "width": 768, "num_inference_steps": 25, "torchrun_nproc": 8},
+            {
+                "height": 1024,
+                "width": 768,
+                "num_inference_steps": 25,
+                "num_repetitions": 25,
+                "torchrun_nproc": 8,
+            },
             {"family": "flux", "distributed": True, "diffusers": False},
         )
 
         self.assertEqual(values[:5], ("black-forest-labs/FLUX.1-dev", "1024x768", 25, "diffusers", 2))
-        self.assertEqual(values[5], "ISL=1024x768,OSL=25,C=16")
+        self.assertEqual(values[5], "SIZE=1024x768,STEPS=25,BENCH=25")
 
     def test_distributed_nnodes_use_execution_hosts_when_nnodes_missing(self):
         variant = SimpleNamespace(
@@ -98,12 +104,38 @@ class TestReportResults(unittest.TestCase):
 
         values = _report_dimensions(
             variant,
-            {"height": 1024, "width": 1024, "num_inference_steps": 25, "torchrun_nproc": 8},
+            {
+                "height": 1024,
+                "width": 1024,
+                "num_inference_steps": 50,
+                "num_repetitions": 25,
+                "torchrun_nproc": 8,
+            },
             {"family": "flux", "distributed": True, "diffusers": False},
         )
 
         self.assertEqual(values[4], 2)
-        self.assertEqual(values[5], "ISL=1024x1024,OSL=25,C=16")
+        self.assertEqual(values[5], "SIZE=1024x1024,STEPS=50,BENCH=25")
+
+    def test_wan_dimensions_use_size_frames_inference_and_benchmark_steps(self):
+        variant = SimpleNamespace(
+            model=SimpleNamespace(id="Wan-AI/Wan2.2-I2V-A14B-Diffusers"),
+            inference={"nnodes": 1},
+        )
+
+        values = _report_dimensions(
+            variant,
+            {
+                "size": "720*1280",
+                "frame_num": 81,
+                "num_inference_steps": 40,
+                "num_benchmark_steps": 1,
+            },
+            {"family": "wan", "distributed": False, "diffusers": True},
+        )
+
+        self.assertEqual(values[:5], ("Wan-AI/Wan2.2-I2V-A14B-Diffusers", "720*1280", 40, "diffusers", 1))
+        self.assertEqual(values[5], "SIZE=720*1280,FRAMES=81,STEPS=40,BENCH=1")
 
     def test_report_threshold_uses_gpu_then_auto_fallback(self):
         thresholds = {

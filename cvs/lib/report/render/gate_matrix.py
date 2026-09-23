@@ -22,7 +22,8 @@ class GateMatrixRenderer:
 
     @staticmethod
     def cell_label(cell: Mapping[str, object]) -> str:
-        base = f"{cell['policy']} \u00b7 C={cell['concurrency']}"
+        suffix = "NNODES" if str(cell["policy"]).startswith("SIZE=") else "C"
+        base = f"{cell['policy']} \u00b7 {suffix}={cell['concurrency']}"
         if cell.get("show_host_in_label"):
             return f"{base} \u00b7 {cell['host']}"
         return base
