@@ -43,10 +43,8 @@ from cvs.lib.training.jaxmaxtext.utils.gpu_peak_tflops import peak_tflops
 from cvs.lib.training.jaxmaxtext.utils.training_charts import (
     render_cross_sweep_bar_png,
     render_cross_sweep_loss_png,
-    render_grad_param_norm_png,
-    render_lr_schedule_png,
     render_mfu_png,
-    render_multi_loss_png,
+    render_scalar_charts,
     render_step_time_png,
 )
 from cvs.lib.utils.verdict import evaluate_all, ThresholdViolation
@@ -764,16 +762,15 @@ def _render_training_charts(out_dir, tb_scalars, step_metrics, variant_config, s
     def _out(name):
         return _Path(out_dir) / f"{name}_{base}.png"
 
-    return [
-        (render_multi_loss_png(tb_scalars, _out("loss_components")), f"Loss components [{mode}/{label}]"),
-        (render_grad_param_norm_png(tb_scalars, _out("grad_norm")), f"Grad/param norms [{mode}/{label}]"),
-        (render_lr_schedule_png(tb_scalars, _out("lr")), f"LR schedule [{mode}/{label}]"),
-        (
-            render_step_time_png(tb_scalars, _out("step_time"), step_metrics=step_metrics),
-            f"Step-time dist [{mode}/{label}]",
-        ),
-        (render_mfu_png(tb_scalars, _out("mfu"), peak), f"MFU [{mode}/{label}]"),
-    ]
+    # One chart per TensorBoard scalar tag (learning/*, perf/*, ...), like the
+    # TensorBoard UI -- auto-discovered so new tags chart without code changes.
+    charts = [(path, tag) for tag, path in render_scalar_charts(tb_scalars, out_dir, filename_stem=f"tb_{base}")]
+    # Derived / statistical views TensorBoard does not provide directly.
+    charts.append(
+        (render_step_time_png(tb_scalars, _out("step_time"), step_metrics=step_metrics), "Step-time distribution")
+    )
+    charts.append((render_mfu_png(tb_scalars, _out("mfu"), peak), "MFU %"))
+    return charts
 
 
 def _render_cross_sweep_charts(training_res_dict, out_dir):
