@@ -7,11 +7,18 @@ Upgrade Cluster Validation Suite (CVS) to the latest version
 **********************************************************
 
 Upgrade CVS after pulling the latest source from the repository. Follow the
-method that matches how you originally installed CVS. To identify the method,
-see :doc:`/reference/which-install-method`.
+method that matches how you originally installed CVS. 
+
+Identify how CVS was installed
+==============================
+
+.. include:: /_includes/identify.rst
+
+CVS upgrade paths
+=================
 
 If installed with ``make install``
-==================================
+----------------------------------
 
 .. code:: bash
 
@@ -21,7 +28,7 @@ If installed with ``make install``
   source .cvs_venv/bin/activate
 
 If installed manually in a custom venv
-======================================
+--------------------------------------
 
 .. code:: bash
 
@@ -31,7 +38,7 @@ If installed manually in a custom venv
   pip install --upgrade dist/cvs*.tar.gz
 
 If installed as a Docker image
-===============================
+------------------------------
 
 Rebuild the image from the updated source:
 
@@ -61,5 +68,4 @@ Next steps
 
 - :doc:`/how-to/test-suites/index` — run tests against the cluster
 - :doc:`/install/install` — full installation reference for all methods
-- :doc:`/reference/which-install-method` — identify the install method
 - :doc:`/install/uninstall` — uninstall or downgrade CVS

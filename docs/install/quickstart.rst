@@ -8,8 +8,6 @@ Cluster Validation Suite (CVS) quickstart: install and run your first cluster co
 
 This guide gets you from zero to your first cluster-wide ``cvs exec`` in about 15 minutes.
 
-.. include:: /_includes/head-node.rst
-
 Prerequisites
 =============
 
@@ -18,6 +16,8 @@ The following prerequisites are required before you begin:
 - Ubuntu-based Linux on the head node (see :doc:`/install/install` for supported versions).
 - :doc:`Passwordless SSH </reference/cluster/passwordless-ssh>` from the head node to every worker.
 - Python 3.10+ and ``python3-venv``.
+
+.. include:: /_includes/head-node.rst
 
 Step 1: Install CVS
 ===================
