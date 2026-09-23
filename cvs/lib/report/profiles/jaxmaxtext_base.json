@@ -31,9 +31,15 @@
       ["tok/s/GPU", "training.tokens_per_sec_per_gpu"],
       ["tok/s total", "training.tokens_per_sec_total"],
       ["Scaling %", "training.scaling_efficiency_pct"],
+      ["step (s)", "training.step_time_seconds"],
+      ["step mean (ms)", "training.step_time_mean_ms"],
       ["step p50 (ms)", "training.step_time_p50_ms"],
+      ["step p95 (ms)", "training.step_time_p95_ms"],
       ["Final loss", "training.final_loss"],
-      ["Loss decreased", "training.loss_decreased"]
+      ["Loss decreased", "training.loss_decreased"],
+      ["Eval loss", "training.eval_loss"],
+      ["Steps to target", "training.steps_to_target"],
+      ["Time to target (s)", "training.time_to_target_seconds"]
     ],
     "cell_highlights": [
       ["tokens_per_sec_per_gpu", "tok/s/GPU"],
@@ -60,6 +66,7 @@
     {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
     {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
     {"type": "sweep_charts", "id": "charts", "title": "Training charts", "bind": "cells"},
+    {"type": "image_gallery", "id": "cross-charts", "title": "Cross-sweep comparison", "bind": "datasets.training_sweep.cross_sweep_charts", "when_empty": "hide"},
     {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
   ]
 }

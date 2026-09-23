@@ -73,15 +73,14 @@ def _cell_metrics(config, actuals, thresholds_cell):
     return metrics
 
 
-def _embed_charts(rec):
-    """Base64-embed a sweep's recorded chart PNGs as ``[{title, src}]`` data URIs.
+def _embed_chart_entries(entries):
+    """Base64-embed ``[(title, abs_path), ...]`` PNGs as ``[{title, src}]`` data URIs.
 
-    The suite records ``rec["charts"] = [(title, abs_path), ...]``; embedding keeps
-    the deck self-contained (no fragile relative links between the deck and the
-    per-test log dir). Unreadable paths are skipped.
+    Embedding keeps the deck self-contained (no fragile relative links between the
+    deck and the per-test log dir). Unreadable paths are skipped.
     """
     embedded = []
-    for entry in rec.get("charts") or []:
+    for entry in entries or []:
         try:
             title, path = entry
             with open(path, "rb") as fh:
@@ -173,7 +172,7 @@ def build_training_datasets(sources: dict[str, Any], profile: DeckProfile) -> di
                 "tiers": tiers,
                 "actuals": dict(results),
                 "cell_lifecycle": {},
-                "charts": _embed_charts(rec),
+                "charts": _embed_chart_entries(rec.get("charts")),
             }
         )
         gate_matrix.append(
@@ -193,6 +192,7 @@ def build_training_datasets(sources: dict[str, Any], profile: DeckProfile) -> di
         "sweep_summaries": [],
         "gate_matrix": gate_matrix,
         "results_table": _results_table(config, sweeps, variant_config),
+        "cross_sweep_charts": _embed_chart_entries(res.get("cross_sweep_charts")),
         "multi_shape_comparison": False,
         "overall_status": _overall_status(config, cells, enforce),
         "metric_tier_order": tier_order,

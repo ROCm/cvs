@@ -72,6 +72,18 @@ class ChartRenderTests(unittest.TestCase):
         self.assertIsNone(tc.render_lr_schedule_png({}, self._p("x.png")))
         self.assertIsNone(tc.render_step_time_png({}, self._p("x.png")))
 
+    def test_cross_sweep_loss_needs_two_sweeps(self):
+        one = {"BF16": [(0, 12.0), (1, 11.0)]}
+        two = {"BF16": [(0, 12.0), (1, 11.0)], "FP8": [(0, 12.1), (1, 11.2)]}
+        self.assertIsNone(tc.render_cross_sweep_loss_png(one, self._p("c1.png")))
+        out = tc.render_cross_sweep_loss_png(two, self._p("c2.png"))
+        self.assertTrue(out and os.path.isfile(out))
+
+    def test_cross_sweep_bar_needs_two_sweeps(self):
+        self.assertIsNone(tc.render_cross_sweep_bar_png({"BF16": 200.0}, self._p("b1.png"), "tok/s/GPU"))
+        out = tc.render_cross_sweep_bar_png({"BF16": 200.0, "FP8": 260.0}, self._p("b2.png"), "tok/s/GPU")
+        self.assertTrue(out and os.path.isfile(out))
+
 
 if __name__ == "__main__":
     unittest.main()
