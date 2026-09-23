@@ -753,17 +753,6 @@ def _sweep_precision(sweep_name):
     return m.group(1).upper() if m else None
 
 
-def _attach_png(mgr, lifecycle, request, png_path, name):
-    """Register a rendered chart PNG as a report artifact (best-effort)."""
-    if not png_path or mgr is None or not getattr(mgr, "is_enabled", False):
-        return
-    try:
-        rel_path = str(_Path(png_path).relative_to(mgr.htmlpath.parent))
-        lifecycle.add_artifact(request.node.nodeid, name, rel_path, str(png_path))
-    except Exception as e:  # noqa: BLE001 - a link failure must not break the run
-        log.warning("training charts: could not register link for %s (%s)", name, e)
-
-
 def _render_training_charts(out_dir, tb_scalars, step_metrics, variant_config, sweep_name, mode, label):
     """Render the TensorBoard-derived charts; returns ``[(png_or_none, name)]``."""
     prec = _sweep_precision(sweep_name)
@@ -789,8 +778,10 @@ def loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request
     """Row 32 (per sweep): sample the training loss, render a PNG, gate on trend.
 
     Also renders the TensorBoard-derived training charts (loss components, grad/
-    param norms, LR schedule, step-time distribution, MFU) and attaches them to
-    this test's report row when TB scalars were collected.
+    param norms, LR schedule, step-time distribution, MFU). The rendered PNGs are
+    recorded on this sweep's result record for the Run Deck body (the deck builder
+    embeds them); they are intentionally NOT attached to the pytest row, so the
+    pytest report stays a clean list of tests + log links.
     """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -821,18 +812,26 @@ def loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request
     except Exception as e:  # noqa: BLE001 - plotting must never break the verdict
         log.warning("loss curve: could not prepare PNG output (%s)", e)
 
-    _attach_png(mgr, lifecycle, request, png_path, f"Loss Curve [{mode}/{label}]")
+    # Collect chart artifacts for the Run Deck body. Recorded by absolute path on
+    # this sweep's record; the deck builder base64-embeds them. Not attached to the
+    # pytest row on purpose (see docstring).
+    charts = []
+    if png_path:
+        charts.append((f"Loss Curve [{mode}/{label}]", str(png_path)))
 
-    # TensorBoard-derived charts (best-effort; absent tags render nothing).
     tb_scalars = (rec.get("tb_scalars") if rec else None) or {}
-    if (tb_scalars or step_metrics) and mgr is not None and getattr(mgr, "is_enabled", False):
+    if tb_scalars or step_metrics:
         try:
             for chart_png, chart_name in _render_training_charts(
                 out_dir, tb_scalars, step_metrics, variant_config, sweep_name, mode, label
             ):
-                _attach_png(mgr, lifecycle, request, chart_png, chart_name)
+                if chart_png:
+                    charts.append((chart_name, str(chart_png)))
         except Exception as e:  # noqa: BLE001 - charts must never break the verdict
             log.warning("training charts: rendering failed (%s)", e)
+
+    if rec is not None and charts:
+        rec["charts"] = charts
 
     if verdict is not None:
         _decreasing, _slope, detail = verdict

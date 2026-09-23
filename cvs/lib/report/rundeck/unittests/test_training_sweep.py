@@ -7,6 +7,9 @@ the training_res_dict shape must flow through resolve/build into cells,
 gate_matrix, and results_table without the inference 6-tuple cell key.
 '''
 
+import base64
+import os
+import tempfile
 import unittest
 from types import SimpleNamespace
 
@@ -14,6 +17,7 @@ from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.profiles.hooks.jaxmaxtext_run_card import jaxmaxtext_run_card_display
 from cvs.lib.report.rundeck.dataset_builders.training_sweep import build_training_datasets
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
+from cvs.lib.report.rundeck.runtime.cards import render_card
 
 _SWEEP = "NN4_BF16_B1_SL2048"
 
@@ -114,6 +118,45 @@ class BuildTrainingDatasetsTests(unittest.TestCase):
         ds = build_training_datasets({"results": {}, "variant": _variant()}, _profile())
         self.assertEqual(ds["gate_matrix"], [])
         self.assertEqual(ds["overall_status"], "na")
+
+    def test_charts_embedded_as_data_uris(self):
+        raw = b"\x89PNG\r\n\x1a\nFAKE-PNG-BYTES"
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "loss.png")
+            with open(path, "wb") as fh:
+                fh.write(raw)
+            res = _training_res_dict()
+            res["sweeps"][_SWEEP]["charts"] = [("Loss Curve", path)]
+            ds = build_training_datasets({"results": res, "variant": _variant()}, _profile())
+            charts = ds["cells"][0]["charts"]
+            self.assertEqual(charts[0]["title"], "Loss Curve")
+            self.assertTrue(charts[0]["src"].startswith("data:image/png;base64,"))
+            self.assertIn(base64.b64encode(raw).decode("ascii"), charts[0]["src"])
+
+    def test_unreadable_chart_paths_are_skipped(self):
+        res = _training_res_dict()
+        res["sweeps"][_SWEEP]["charts"] = [("Missing", "/no/such/file.png")]
+        ds = build_training_datasets({"results": res, "variant": _variant()}, _profile())
+        self.assertEqual(ds["cells"][0]["charts"], [])
+
+
+class SweepChartsCardTests(unittest.TestCase):
+    def test_renders_images_per_sweep(self):
+        payload = {
+            "cells": [{"cell_id": "NN4_BF16", "charts": [{"title": "Loss", "src": "data:image/png;base64,AAAA"}]}]
+        }
+        card = {"type": "sweep_charts", "id": "charts", "title": "Training charts", "bind": "cells"}
+        _sid, html_body, _nav = render_card(payload, card)
+        self.assertIn("<img", html_body)
+        self.assertIn("data:image/png;base64,AAAA", html_body)
+        self.assertIn("NN4_BF16", html_body)
+
+    def test_hidden_when_no_charts(self):
+        payload = {"cells": [{"cell_id": "NN4_BF16", "charts": []}]}
+        card = {"type": "sweep_charts", "bind": "cells"}
+        _sid, html_body, in_nav = render_card(payload, card)
+        self.assertEqual(html_body, "")
+        self.assertFalse(in_nav)
 
 
 class PayloadEndToEndTests(unittest.TestCase):
