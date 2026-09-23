@@ -23,6 +23,7 @@ Thresholds are keyed by the sweep name; metric keys are ``training.<short>``.
 
 from __future__ import annotations
 
+import base64
 from typing import Any, Mapping
 
 from cvs.lib.report.cell_build import metric_pass
@@ -70,6 +71,25 @@ def _cell_metrics(config, actuals, thresholds_cell):
             }
         )
     return metrics
+
+
+def _embed_charts(rec):
+    """Base64-embed a sweep's recorded chart PNGs as ``[{title, src}]`` data URIs.
+
+    The suite records ``rec["charts"] = [(title, abs_path), ...]``; embedding keeps
+    the deck self-contained (no fragile relative links between the deck and the
+    per-test log dir). Unreadable paths are skipped.
+    """
+    embedded = []
+    for entry in rec.get("charts") or []:
+        try:
+            title, path = entry
+            with open(path, "rb") as fh:
+                b64 = base64.b64encode(fh.read()).decode("ascii")
+        except (OSError, ValueError, TypeError):
+            continue
+        embedded.append({"title": title, "src": f"data:image/png;base64,{b64}"})
+    return embedded
 
 
 def _overall_status(config, cells, enforce):
@@ -153,6 +173,7 @@ def build_training_datasets(sources: dict[str, Any], profile: DeckProfile) -> di
                 "tiers": tiers,
                 "actuals": dict(results),
                 "cell_lifecycle": {},
+                "charts": _embed_charts(rec),
             }
         )
         gate_matrix.append(

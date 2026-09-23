@@ -59,6 +59,7 @@
     {"type": "lifecycle_timeline", "id": "lifecycle", "title": "Lifecycle timeline", "bind": "lifecycle"},
     {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
     {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
+    {"type": "sweep_charts", "id": "charts", "title": "Training charts", "bind": "cells"},
     {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
   ]
 }
