@@ -54,12 +54,41 @@ The new image replaces the old one locally. If you use a named container (``cvs-
 Verify
 ======
 
-Run the following commands to verify the upgrade:
+Run the following commands to verify the upgrade. Activate the venv first if
+you installed with Makefile or pip. For a Docker install, use
+``docker run --rm cvs:local --version`` and ``docker run --rm cvs:local list``.
 
 .. code:: bash
 
   cvs --version
   cvs list
+
+Expected output (suite names and totals vary by version):
+
+.. code:: text
+
+  (.cvs_venv) user@head-node:~/cvs$ cvs --version
+  cvs: 0.2.0
+
+  (.cvs_venv) user@head-node:~/cvs$ cvs list
+
+  Available Tests
+  ================================================================================
+
+  Package: cvs
+  --------------------------------------------------------------------------------
+
+    cvs.tests.anc (1 test suite)
+      • anc_installation
+
+    cvs.tests.anc.cpu (1 test suite)
+      • anc_test_cpu
+
+    cvs.tests.anc.gpu (1 test suite)
+      • anc_test_gpu
+  <<truncated>>
+  ================================================================================
+  Total: 48 test suites across 1 package(s)
 
 If ``cvs --version`` prints the updated version number and ``cvs list`` shows available test suites, the upgrade was successful.
 
