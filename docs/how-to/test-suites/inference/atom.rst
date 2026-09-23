@@ -32,6 +32,104 @@ On the **launcher** (where you run ``cvs run``):
 - SSH key access to cluster nodes (``priv_key_file`` in the cluster file).
 - Hugging Face token file at ``paths.hf_token_file`` when required.
 
+On **Spur or Slurm managed compute**:
+
+- Launch CVS inside a **job step** (one task per node), for example
+  ``spur run --mpi=none`` or ``srun --mpi=none``. A bare allocation or a
+  ``spur submit`` / ``sbatch`` script that never starts a step is not
+  managed CVS (``SLURM_STEP_ID`` stays unset).
+- Use the managed cluster file produced from ``SPUR_NODES`` / HTTP agents.
+  ATOM still uses the ``orch`` fixture and the config ``container`` block;
+  do not add nested ``spur run`` inside ``AtomJob``.
+- Prove an existing single-node stem first, then run the ``mi355x_atom_*``
+  stems (Kimi TP4, V4-Pro TP8). V4-Flash-Base stays on gfx942.
+
+Spur example:
+
+.. code:: bash
+
+  spur run -A <account> -p <partition> \
+    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    bash -lc 'source ~/.cvs_venv/bin/activate &&
+      cvs run atom --config_file <atom-config.json> --html <report.html>'
+
+Slurm example:
+
+.. code:: bash
+
+  srun -A <account> -p <partition> \
+    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    bash -lc 'source ~/.cvs_venv/bin/activate &&
+      cvs run atom --config_file <atom-config.json> --html <report.html>'
+
+In managed mode, ``cvs run`` is the **job step on the GPU node**.
+``--cluster_file`` is optional. CVS builds the live cluster file from
+scheduler hosts and starts one HTTP agent per scheduler task.
+
+``make install`` needs ``python3-venv`` (``ensurepip``). Scheduler **login**
+nodes often lack it; do not ``apt install`` packages there. Pull the tree
+on the shared home from login, then create ``.cvs_venv`` **inside** the job
+step on the GPU node. Deactivate any existing venv first so Make does not
+bind ``PYTHON`` to ``.cvs_venv/bin/python3`` and then delete that path.
+
+.. code:: bash
+
+  # on login: git pull only. deactivate before make install.
+  spur run -A <account> -p <partition> \
+    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    bash -lc 'export PATH=/usr/bin:/bin:$PATH
+      cd ~/cvs && make install &&
+      source ~/.cvs_venv/bin/activate &&
+      cvs run atom --config_file <atom-config.json> --html <report.html>'
+
+MI355X Spur stems (same job-step pattern)
+-----------------------------------------
+
+On gfx950, copy **Kimi TP4** then **V4-Pro TP8** into **separate** directories
+so each ``--config_file`` sees only its matching ``*threshold.json``. Both
+stems use ``driver=atom``, ``lifetime: per_run``, and a writable
+``HF_HUB_CACHE`` / ``HF_HOME`` under ``paths.shared_fs`` (not the read-only
+``/models`` mount). Do not run Flash-Base here.
+
+.. code:: bash
+
+  KIMI_DIR=~/input/config_file/inference/atom/kimi355
+  PRO_DIR=~/input/config_file/inference/atom/pro355
+  mkdir -p "$KIMI_DIR" "$PRO_DIR"
+
+  cvs config copy inference/atom/mi355x_atom_kimi-k27-code_mxfp4_single.json \
+    --output "$KIMI_DIR/mi355x_atom_kimi-k27-code_mxfp4_single.json"
+  cvs config copy inference/atom/mi355x_atom_kimi-k27-code_mxfp4_single_threshold.json \
+    --output "$KIMI_DIR/mi355x_atom_kimi-k27-code_mxfp4_single_threshold.json"
+
+  cvs config copy inference/atom/mi355x_atom_deepseek-v4-pro_single.json \
+    --output "$PRO_DIR/mi355x_atom_deepseek-v4-pro_single.json"
+  cvs config copy inference/atom/mi355x_atom_deepseek-v4-pro_single_threshold.json \
+    --output "$PRO_DIR/mi355x_atom_deepseek-v4-pro_single_threshold.json"
+
+In each copy set ``container.image``, the host side of the models volume,
+``paths.shared_fs``, and ``model.id`` to the in-container weights path when
+``model.remote`` is ``0`` (for example ``/models/<local-folder>``). Keep
+``tensor_parallelism`` / ``-tp`` at **4** for Kimi and **8** for V4-Pro.
+
+Launch Kimi first, then Pro, with the same ``spur run --mpi=none`` wrapper
+(one exclusive 8-GPU node). Run the **full** suite: accuracy eval needs the
+server started by earlier lifecycle tests; ``-k test_accuracy_eval`` alone
+fails with ``docker exec None``.
+
+.. code:: bash
+
+  spur run -A <account> -p <partition> \
+    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    bash -lc 'source ~/.cvs_venv/bin/activate &&
+      cvs run atom \
+        --config_file ~/input/config_file/inference/atom/kimi355/mi355x_atom_kimi-k27-code_mxfp4_single.json \
+        --html ~/cvs_reports/atom_kimi.html --self-contained-html'
+
+Then the same command with
+``~/input/config_file/inference/atom/pro355/mi355x_atom_deepseek-v4-pro_single.json``
+and ``atom_v4pro.html``.
+
 For **multinode PP** (``params.nnodes: 2``, ``pipeline_parallel_size: 2``):
 
 - Two hosts in ``node_dict`` matching ``params.nnodes``.
@@ -62,8 +160,8 @@ sits beside the config you pass to ``--config_file``:
     --output "$SINGLE_DIR/mi325x_atom_deepseek-r1_fp8_single_threshold.json"
   cvs config copy cluster_file/atom_cluster.json --output ~/input/cluster_file/atom_cluster.json
 
-Config stems use ``mi3xx_*`` (MI300-family). Threshold files use ``mi325x_*``
-on MI325X (gfx942) — match the platform you calibrated on.
+Config stems use ``mi3xx_*`` (gfx942) or ``mi355x_*`` (gfx950). Threshold
+files use ``mi325x_*`` or ``mi355x_*`` — match the platform you calibrated on.
 
 Step 2: Edit placeholders
 =========================
@@ -131,6 +229,8 @@ vLLM / SGLang parity use the unified serving schema in ``inference/atom/``
 Smoke one cell with pytest ``-k``, for example ``-k "w1_1k_1k-conc128"``.
 
 After ``git pull``, run ``make install`` before ``source .cvs_venv/bin/activate``.
+On Spur or Slurm, do that on the GPU node inside the job step if login cannot
+create a venv (see the managed-compute notes above).
 
 Test lifecycle
 ==============
@@ -221,27 +321,45 @@ Reports and logs
 Launcher vs GPU node
 ====================
 
+SSH / jumphost labs: ``cvs run`` and the venv live on the **launcher**. Spur or
+Slurm managed labs: ``cvs run`` and ``make install`` run **inside the job step**
+on the GPU node (shared home for ``~/input/`` and reports).
+
 .. list-table::
-   :widths: 4 2 2
+   :widths: 4 2 2 3
    :header-rows: 1
 
    * - Item
-     - Launcher
-     - GPU node
-   * - ``cvs run``, venv, ``~/input/``, reports
+     - SSH launcher
+     - GPU node (SSH lab)
+     - GPU node (Spur / Slurm step)
+   * - ``cvs run``, venv, reports
      - Yes
      - No
-   * - ``priv_key_file``, HF token file
+     - Yes
+   * - ``~/input/`` (shared home)
+     - Yes
+     - If NFS-mounted
+     - If NFS-mounted
+   * - ``priv_key_file`` (unmanaged SSH)
      - Yes
      - No
+     - No (HTTP agents)
+   * - HF token file
+     - Yes
+     - If NFS-mounted
+     - If NFS-mounted
    * - Models host mount (``<changeme-models-mount>`` → ``/models`` in container)
      - No
+     - Yes
      - Yes
    * - Container image, ``sudo docker``
      - No
      - Yes
+     - Yes
    * - ``~/LOGS/`` (volume mount)
      - No
+     - Yes
      - Yes
 
 See also

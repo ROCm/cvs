@@ -18,6 +18,7 @@ from cvs.lib.inference.atom.atom_config_loader import (
     expand_sweep_parametrize,
     gpu_arch_from_config_path,
     load_variant,
+    merge_mxfp4_triton_env,
     orchestrator_container_from_variant,
     placeholder_gated_threshold_cell,
     resolve_atom_profile,
@@ -528,30 +529,75 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertIn(cell, variant.expected_cells())
         self.assertIn("scaling.efficiency_pct", variant.thresholds[cell])
 
+    def test_merge_mxfp4_triton_env_skips_mi355x(self):
+        gfx942 = merge_mxfp4_triton_env("mxfp4", {}, gpu_arch="mi3xx")
+        self.assertEqual(gfx942["ATOM_USE_TRITON_MOE"], "1")
+        self.assertEqual(gfx942["ATOM_USE_TRITON_GEMM"], "1")
+        gfx950 = merge_mxfp4_triton_env("mxfp4", {}, gpu_arch="mi355x")
+        self.assertNotIn("ATOM_USE_TRITON_MOE", gfx950)
+        self.assertNotIn("ATOM_USE_TRITON_GEMM", gfx950)
+
+    def test_load_v4_flash_mi3xx_atom_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_deepseek-v4-flash_single.json")
+        self.assertEqual(variant.gpu_arch, "mi3xx")
+        self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Flash-Base")
+        self.assertEqual(variant.params.driver, "atom")
+        self.assertEqual(variant.params.tensor_parallelism, "8")
+        self.assertEqual(
+            variant.roles.server.atom_args[:4],
+            ["-tp", "8", "--kv_cache_dtype", "fp8"],
+        )
+        self.assertNotIn("--quantization", variant.roles.server.atom_args)
+        self.assertEqual(variant.threshold_json, "mi325x_atom_deepseek-v4-flash_single_threshold.json")
+
+    def test_load_kimi_mi355x_atom_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi355x_atom_kimi-k27-code_mxfp4_single.json")
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertEqual(variant.model.id, "moonshotai/Kimi-K2.7-Code")
+        self.assertEqual(variant.params.tensor_parallelism, "4")
+        self.assertEqual(variant.roles.server.atom_args[:2], ["-tp", "4"])
+        self.assertNotIn("ATOM_USE_TRITON_MOE", variant.roles.server.env)
+        self.assertTrue(
+            str(variant.roles.server.env.get("HF_HUB_CACHE", "")).endswith(".cache/huggingface")
+        )
+        self.assertEqual(
+            variant.threshold_json,
+            "mi355x_atom_kimi-k27-code_mxfp4_single_threshold.json",
+        )
+
+    def test_load_v4_pro_mi355x_atom_variant(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi355x_atom_deepseek-v4-pro_single.json")
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertEqual(variant.model.id, "deepseek-ai/DeepSeek-V4-Pro")
+        self.assertEqual(variant.params.tensor_parallelism, "8")
+        self.assertTrue(
+            str(variant.roles.server.env.get("HF_HUB_CACHE", "")).endswith(".cache/huggingface")
+        )
+        self.assertEqual(variant.threshold_json, "mi355x_atom_deepseek-v4-pro_single_threshold.json")
+
     def test_atom_threshold_files_use_aligned_keys_and_bare_metrics(self):
         root = Path(__file__).resolve().parents[3]
         atom_dir = root / "input/config_file/inference/atom"
         cell_no_pp = re.compile(r"^ISL=.*,TP=\d+,CONC=")
-        config_platform_stem = re.compile(r"^mi325x_|^mi35x_|^mi300x_|^mi355x_")
-        threshold_family_stem = re.compile(r"^mi3xx_|^mi35x_|^mi300x_|^mi355x_")
+        config_stem = re.compile(r"^(mi3xx|mi355x)_atom_")
+        threshold_stem = re.compile(r"^(mi325x|mi355x)_atom_")
         for path in sorted(atom_dir.glob("*.json")):
             if "threshold" in path.name:
-                self.assertFalse(
-                    threshold_family_stem.match(path.name),
-                    f"threshold must use platform stem, not family: {path.name}",
-                )
                 self.assertTrue(
-                    path.name.startswith("mi325x_"),
-                    f"shipped thresholds are mi325x-only: {path.name}",
+                    threshold_stem.match(path.name),
+                    f"threshold must use platform stem mi325x_ or mi355x_: {path.name}",
+                )
+                self.assertFalse(
+                    path.name.startswith("mi3xx_"),
+                    f"threshold must not use family stem mi3xx_: {path.name}",
                 )
             else:
-                self.assertFalse(
-                    config_platform_stem.match(path.name),
-                    f"config must use family stem mi3xx, not platform: {path.name}",
-                )
                 self.assertTrue(
-                    path.name.startswith("mi3xx_"),
-                    f"shipped configs use mi3xx family stem: {path.name}",
+                    config_stem.match(path.name),
+                    f"config must use family stem mi3xx_ or mi355x_: {path.name}",
                 )
         for path in sorted(atom_dir.glob("*threshold*.json")):
             text = path.read_text(encoding="utf-8")

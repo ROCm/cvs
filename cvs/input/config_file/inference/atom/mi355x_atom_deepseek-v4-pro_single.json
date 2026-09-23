@@ -1,0 +1,86 @@
+{
+  "_comment": "DeepSeek-V4-Pro on MI355X/gfx950, TP8. Official Pro SKU (native FP4). Not the MI325X V4 gate (use Flash-Base there). Bring-up stem — confirm atom_args against the image recipe after first start.",
+  "threshold_json": "mi355x_atom_deepseek-v4-pro_single_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "deepseek-ai/DeepSeek-V4-Pro",
+    "remote": 0,
+    "precision": "fp4"
+  },
+  "enforce_thresholds": false,
+  "container": {
+    "lifetime": "per_run",
+    "name": "atom_mi355x",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-models-mount>:/models:ro"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "atom_args": [
+        "-tp",
+        "8",
+        "--trust-remote-code"
+      ],
+      "env": {
+        "ATOM_DISABLE_MMAP": "true",
+        "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
+        "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
+      }
+    }
+  },
+  "params": {
+    "driver": "atom",
+    "port_no": "8000",
+    "tensor_parallelism": "8",
+    "random_range_ratio": "0.8",
+    "num_prompts": "1000",
+    "max_model_length": "4096",
+    "metric_percentiles": "95,99",
+    "reuse_server_across_sweep": "true",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60"
+  },
+  "sweeps": {
+    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128": {},
+    "ISL=128,OSL=32,TP=8,PP=1,CONC=1": {}
+  },
+  "runs": [],
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      }
+    ]
+  }
+}
