@@ -184,6 +184,48 @@ def render_step_time_png(scalars, out_path, step_metrics=None, title=None):
     return _save(fig, plt, out_path, "step-time distribution")
 
 
+def render_cross_sweep_loss_png(loss_by_label, out_path, title=None):
+    """Overlay training loss vs step for multiple sweeps (one line per sweep).
+
+    ``loss_by_label``: ``{sweep_label: [(step, loss), ...]}``. Returns ``None``
+    unless at least two sweeps have points (the per-sweep curve already covers one).
+    """
+    series = {lbl: pts for lbl, pts in (loss_by_label or {}).items() if pts}
+    if len(series) < 2:
+        return None
+    plt = _matplotlib()
+    if plt is None:
+        return None
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    for label, pts in sorted(series.items()):
+        ax.plot([s for s, _ in pts], [v for _, v in pts], linewidth=1.4, label=label)
+    ax.set_xlabel("step")
+    ax.set_ylabel("training loss")
+    ax.set_title(title or "Loss vs Step (all sweeps)")
+    ax.grid(True, linestyle="--", alpha=0.4)
+    ax.legend(fontsize=8, ncol=2)
+    return _save(fig, plt, out_path, f"{len(series)} sweep loss curves")
+
+
+def render_cross_sweep_bar_png(value_by_label, out_path, ylabel, title=None):
+    """Bar chart of one metric across sweeps (``{sweep_label: value}``)."""
+    values = {lbl: v for lbl, v in (value_by_label or {}).items() if v is not None}
+    if len(values) < 2:
+        return None
+    plt = _matplotlib()
+    if plt is None:
+        return None
+    labels = sorted(values)
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    ax.bar(range(len(labels)), [values[k] for k in labels], color="#1f77b4", alpha=0.85)
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title or ylabel)
+    ax.grid(True, axis="y", linestyle="--", alpha=0.4)
+    return _save(fig, plt, out_path, f"{len(labels)}-sweep bar ({ylabel})")
+
+
 def render_mfu_png(scalars, out_path, peak_tflops_per_gpu, title=None):
     """MFU% vs step from per_device_tflops_per_sec and the configured peak."""
     rate = _series(scalars, _TFLOPS_RATE_TAG)

@@ -139,6 +139,63 @@ class BuildTrainingDatasetsTests(unittest.TestCase):
         ds = build_training_datasets({"results": res, "variant": _variant()}, _profile())
         self.assertEqual(ds["cells"][0]["charts"], [])
 
+    def test_cross_sweep_charts_embedded(self):
+        raw = b"\x89PNG\r\n\x1a\nCROSS"
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "cross.png")
+            with open(path, "wb") as fh:
+                fh.write(raw)
+            res = _training_res_dict()
+            res["cross_sweep_charts"] = [("Loss vs step (all sweeps)", path)]
+            ds = build_training_datasets({"results": res, "variant": _variant()}, _profile())
+            self.assertEqual(ds["cross_sweep_charts"][0]["title"], "Loss vs step (all sweeps)")
+            self.assertTrue(ds["cross_sweep_charts"][0]["src"].startswith("data:image/png;base64,"))
+
+    def test_cross_sweep_charts_default_empty(self):
+        ds = build_training_datasets({"results": _training_res_dict(), "variant": _variant()}, _profile())
+        self.assertEqual(ds["cross_sweep_charts"], [])
+
+    def test_info_specs_do_not_gate_tiers(self):
+        # kind:"info" is record-only: it must not gate. eval_loss(info, None value)
+        # must NOT force convergence to na; an all-info tier (stability) is na.
+        variant = SimpleNamespace(
+            model=SimpleNamespace(id="m"),
+            gpu_arch="MI325X",
+            framework="jaxmaxtext",
+            enforce_thresholds=True,
+            training=SimpleNamespace(distributed=True, steps=30),
+            thresholds={
+                _SWEEP: {
+                    "training.tflops_per_sec_per_gpu": {"kind": "min", "value": 100.0},
+                    "training.final_loss": {"kind": "max", "value": 15.0},
+                    "training.loss_decreased": {"kind": "min", "value": 1},
+                    "training.eval_loss": {"kind": "info", "value": 100.0},
+                    "training.step_time_p50_ms": {"kind": "info", "value": 3600000.0},
+                }
+            },
+            enabled_sweeps=lambda: [SimpleNamespace(name=_SWEEP)],
+        )
+        res = {
+            "mode": "distributed",
+            "sweeps": {
+                _SWEEP: {
+                    "results": {
+                        "training.tflops_per_sec_per_gpu": 200.0,
+                        "training.final_loss": 6.5,
+                        "training.loss_decreased": 1.0,
+                        "training.eval_loss": None,
+                        "training.step_time_p50_ms": 9800.0,
+                    },
+                    "num_nodes": 4,
+                }
+            },
+        }
+        tiers = build_training_datasets({"results": res, "variant": variant}, _profile())["gate_matrix"][0]["tiers"]
+        self.assertEqual(tiers["throughput"], "pass")
+        self.assertEqual(tiers["convergence"], "pass")  # eval_loss(info/None) excluded
+        self.assertEqual(tiers["stability"], "na")  # all-info -> no gating specs
+        self.assertEqual(tiers["record"], "record")
+
 
 class SweepChartsCardTests(unittest.TestCase):
     def test_renders_images_per_sweep(self):
@@ -155,6 +212,21 @@ class SweepChartsCardTests(unittest.TestCase):
         payload = {"cells": [{"cell_id": "NN4_BF16", "charts": []}]}
         card = {"type": "sweep_charts", "bind": "cells"}
         _sid, html_body, in_nav = render_card(payload, card)
+        self.assertEqual(html_body, "")
+        self.assertFalse(in_nav)
+
+
+class ImageGalleryCardTests(unittest.TestCase):
+    def test_flat_gallery_renders(self):
+        payload = {"gallery": [{"title": "Loss vs step", "src": "data:image/png;base64,BBBB"}]}
+        card = {"type": "image_gallery", "id": "cross-charts", "title": "Cross-sweep comparison", "bind": "gallery"}
+        _sid, html_body, _nav = render_card(payload, card)
+        self.assertIn("<img", html_body)
+        self.assertIn("data:image/png;base64,BBBB", html_body)
+
+    def test_hidden_when_empty(self):
+        card = {"type": "image_gallery", "bind": "gallery", "when_empty": "hide"}
+        _sid, html_body, in_nav = render_card({"gallery": []}, card)
         self.assertEqual(html_body, "")
         self.assertFalse(in_nav)
 

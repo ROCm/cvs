@@ -94,20 +94,28 @@ RECORD_METRICS = tuple(short for short, _unit in TRAINING_METRICS if short not i
 
 
 def tier_metric_specs(thresholds_cell, tier):
-    """Threshold specs for one deck tier within a sweep's threshold cell.
+    """Gating threshold specs for one deck tier within a sweep's threshold cell.
 
     Mirrors the inference ``tier_metric_specs`` hook contract. Returns
     ``{full_key: spec}`` keyed by the full ``training.<short>`` metric so the key
-    indexes both the results/actuals dict and the thresholds cell. Metrics with no
-    spec in this cell are omitted (record-only).
+    indexes both the results/actuals dict and the thresholds cell.
+
+    ``kind: "info"`` specs are record-only (never gate -- see cvs/lib/utils/verdict)
+    so they are EXCLUDED here: they must not drive a tier's pass/fail/na. This keeps
+    the gate matrix consistent with the per-metric results and prevents a
+    record-only, often-unset metric (e.g. eval_loss) from forcing a tier to ``na``.
+    Metrics with no spec in this cell are likewise omitted.
     """
     names = RECORD_METRICS if tier == "record" else METRIC_TIERS.get(tier, ())
     specs = {}
     for short in names:
         full = METRIC_PREFIX + short
         spec = (thresholds_cell or {}).get(full)
-        if spec is not None:
-            specs[full] = spec
+        if spec is None:
+            continue
+        if isinstance(spec, dict) and spec.get("kind") == "info":
+            continue  # record-only, non-gating
+        specs[full] = spec
     return specs
 
 

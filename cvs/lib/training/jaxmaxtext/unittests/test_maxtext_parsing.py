@@ -273,6 +273,30 @@ class TierMetricSpecsTests(unittest.TestCase):
         self.assertEqual(tier_metric_specs({}, "throughput"), {})
         self.assertEqual(tier_metric_specs(None, "nonsense"), {})
 
+    def test_info_specs_are_excluded_as_record_only(self):
+        # kind:"info" is record-only and must NOT gate a tier: eval_loss/target
+        # metrics (info) are dropped so convergence gates on final_loss/loss_decreased.
+        cell = {
+            "training.final_loss": {"kind": "max", "value": 15.0},
+            "training.loss_decreased": {"kind": "min", "value": 1},
+            "training.eval_loss": {"kind": "info", "value": 100.0},
+            "training.steps_to_target": {"kind": "info", "value": 1000000},
+            "training.time_to_target_seconds": {"kind": "info", "value": 1000000.0},
+        }
+        self.assertEqual(
+            tier_metric_specs(cell, "convergence"),
+            {
+                "training.final_loss": {"kind": "max", "value": 15.0},
+                "training.loss_decreased": {"kind": "min", "value": 1},
+            },
+        )
+
+    def test_all_info_tier_has_no_gating_specs(self):
+        # A tier whose specs are all info (e.g. stability with info-only step times)
+        # yields no gating specs -> the tier renders na, not a misleading pass/fail.
+        cell = {short: {"kind": "info", "value": 1.0} for short in ("training." + m for m in METRIC_TIERS["stability"])}
+        self.assertEqual(tier_metric_specs(cell, "stability"), {})
+
 
 if __name__ == "__main__":
     unittest.main()

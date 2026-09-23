@@ -147,30 +147,35 @@ class DeckCardRenderer:
         empty_cells = "<p class='muted'>No cells.</p>"
         return f"{banner}<div class='cells'>{''.join(cards) or empty_cells}</div>"
 
+    @staticmethod
+    def _figure_grid(charts: Any) -> str:
+        """Flex grid of ``<figure><img data-uri></figure>`` from ``[{title, src}]``."""
+        figs = "".join(
+            "<figure style='margin:0;flex:0 0 auto'>"
+            f"<figcaption class='muted' style='font-size:0.75rem;margin-bottom:2px'>{html.escape(str(c.get('title', '')))}</figcaption>"
+            f"<img loading='lazy' alt='{html.escape(str(c.get('title', '')))}' src='{c.get('src', '')}' "
+            "style='max-width:480px;width:100%;height:auto;border:1px solid var(--border);border-radius:6px'/>"
+            "</figure>"
+            for c in (charts or [])
+            if isinstance(c, dict) and c.get("src")
+        )
+        return f"<div style='display:flex;flex-wrap:wrap;gap:12px'>{figs}</div>" if figs else ""
+
     def render_sweep_charts(self, payload: dict, _card: dict, data: Any) -> str:
         """Per-sweep chart gallery from base64-embedded cell ``charts`` (or "")."""
         cells = data if isinstance(data, list) else payload.get("cells") or []
         blocks = []
         for cell in cells:
-            charts = cell.get("charts") or []
-            if not charts:
+            grid = self._figure_grid(cell.get("charts"))
+            if not grid:
                 continue
             label = cell.get("cell_id") or cell.get("policy") or ""
-            figs = "".join(
-                "<figure style='margin:0;flex:0 0 auto'>"
-                f"<figcaption class='muted' style='font-size:0.75rem;margin-bottom:2px'>{html.escape(str(c.get('title', '')))}</figcaption>"
-                f"<img loading='lazy' alt='{html.escape(str(c.get('title', '')))}' src='{c.get('src', '')}' "
-                "style='max-width:480px;width:100%;height:auto;border:1px solid var(--border);border-radius:6px'/>"
-                "</figure>"
-                for c in charts
-                if c.get("src")
-            )
-            if figs:
-                blocks.append(
-                    f"<div style='margin-bottom:1rem'><h3>{html.escape(str(label))}</h3>"
-                    f"<div style='display:flex;flex-wrap:wrap;gap:12px'>{figs}</div></div>"
-                )
+            blocks.append(f"<div style='margin-bottom:1rem'><h3>{html.escape(str(label))}</h3>{grid}</div>")
         return "".join(blocks)  # empty -> card is hidden by render_card
+
+    def render_image_gallery(self, _payload: dict, _card: dict, data: Any) -> str:
+        """Flat gallery from a bound ``[{title, src}]`` list (or "" to hide)."""
+        return self._figure_grid(data if isinstance(data, list) else [])
 
     @staticmethod
     def render_table(_payload: dict, _card: dict, data: Any) -> str:
@@ -236,6 +241,7 @@ class DeckCardRenderer:
             "gate_heatmap": self.render_gate_heatmap,
             "sweep_cell_cards": self.render_cell_cards,
             "sweep_charts": self.render_sweep_charts,
+            "image_gallery": self.render_image_gallery,
             "table": self.render_table,
             "launch_panel": self.render_launch,
             "line_chart": self.render_line_chart,

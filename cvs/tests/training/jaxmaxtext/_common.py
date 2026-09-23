@@ -41,6 +41,8 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
 from cvs.lib.training.jaxmaxtext.utils.loss_curve import render_loss_curve_png
 from cvs.lib.training.jaxmaxtext.utils.gpu_peak_tflops import peak_tflops
 from cvs.lib.training.jaxmaxtext.utils.training_charts import (
+    render_cross_sweep_bar_png,
+    render_cross_sweep_loss_png,
     render_grad_param_norm_png,
     render_lr_schedule_png,
     render_mfu_png,
@@ -774,6 +776,38 @@ def _render_training_charts(out_dir, tb_scalars, step_metrics, variant_config, s
     ]
 
 
+def _render_cross_sweep_charts(training_res_dict, out_dir):
+    """Render cross-sweep overlays (loss vs step, throughput bar); ``[(title, path)]``."""
+    sweeps = training_res_dict.get("sweeps") or {}
+    loss_by_label = {}
+    tput_by_label = {}
+    for name, rec in sweeps.items():
+        label = _sweep_label(name)
+        pts = [
+            (s.get("step"), s.get("loss"))
+            for s in (rec.get("step_metrics") or [])
+            if s.get("step") is not None and s.get("loss") is not None
+        ]
+        if pts:
+            loss_by_label[label] = pts
+        tput = (rec.get("results") or {}).get("training.tokens_per_sec_per_gpu")
+        if tput is not None:
+            tput_by_label[label] = tput
+
+    _Path(out_dir).mkdir(parents=True, exist_ok=True)
+    uid = str(_uuid.uuid4()).split("-")[-1]
+    charts = []
+    loss_png = render_cross_sweep_loss_png(loss_by_label, _Path(out_dir) / f"cross_loss_{uid}.png")
+    if loss_png:
+        charts.append(("Loss vs step (all sweeps)", str(loss_png)))
+    tput_png = render_cross_sweep_bar_png(
+        tput_by_label, _Path(out_dir) / f"cross_tput_{uid}.png", "tok/s/GPU", "Throughput by sweep"
+    )
+    if tput_png:
+        charts.append(("Throughput by sweep", str(tput_png)))
+    return charts
+
+
 def loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request):
     """Row 32 (per sweep): sample the training loss, render a PNG, gate on trend.
 
@@ -957,6 +991,17 @@ def print_results_table(training_res_dict, request):
     _print_sweep_tables(training_res_dict)
     _print_checkpoint_io(training_res_dict)
     _write_metric_results_html(training_res_dict, request)
+
+    # Cross-sweep comparison charts for the Run Deck body (only when >=2 sweeps
+    # have data; the deck builder embeds them). Best-effort.
+    mgr = getattr(request.config, "_html_report_manager", None)
+    if mgr is not None and getattr(mgr, "is_enabled", False):
+        try:
+            charts = _render_cross_sweep_charts(training_res_dict, mgr.log_dir)
+            if charts:
+                training_res_dict["cross_sweep_charts"] = charts
+        except Exception as e:  # noqa: BLE001 - charts must never break the summary
+            log.warning("cross-sweep charts: rendering failed (%s)", e)
 
     failures = training_res_dict.get("metric_failures", [])
     globals.error_list = []
