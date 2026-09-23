@@ -110,7 +110,7 @@ class GidConsistencyCheck(PreflightCheck):
         """
         cmd = self._build_gid_check_command()
         self.results = {}
-        out_dict = self.phdl.exec(cmd)
+        out_dict = self.orch.all.exec(cmd)
         for node, output in out_dict.items():
             self.results[node] = self._parse_gid_output_for_node(node, output)
         return self.results

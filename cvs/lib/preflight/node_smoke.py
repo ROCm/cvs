@@ -424,7 +424,7 @@ class NodeSmokeCheck(PreflightCheck):
                 "node_results": {},
             }
 
-        hosts = [h for h in self.node_list if h in self.phdl.reachable_hosts]
+        hosts = [h for h in self.node_list if h in self.orch.all.reachable_hosts]
         if not hosts:
             return {
                 "mode": self.mode,
@@ -438,7 +438,7 @@ class NodeSmokeCheck(PreflightCheck):
             from cvs.lib.preflight.primus_setup import PrimusSetup
 
             setup = PrimusSetup(
-                self.phdl,
+                self.orch,
                 hosts,
                 self.config_dict,
                 config_section=NODE_SMOKE_TIER1_SECTION,
@@ -473,7 +473,7 @@ class NodeSmokeCheck(PreflightCheck):
         )
 
         commands: List[str] = []
-        for h in self.phdl.reachable_hosts:
+        for h in self.orch.all.reachable_hosts:
             if h not in hosts_set:
                 commands.append("true")
             else:
@@ -495,7 +495,7 @@ class NodeSmokeCheck(PreflightCheck):
                     )
                 )
 
-        out_dict = self.phdl.exec_cmd_list(commands, timeout=self._effective_ssh_timeout())
+        out_dict = self.orch.all.exec_cmd_list(commands, timeout=self._effective_ssh_timeout())
 
         node_results: Dict[str, Any] = {}
         for host, output in out_dict.items():

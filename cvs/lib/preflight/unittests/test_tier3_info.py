@@ -3,7 +3,7 @@
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
@@ -19,6 +19,12 @@ from cvs.lib.preflight.tier3_info import (
     parse_preflight_info_output,
     resolve_tier3_setting,
 )
+
+
+def _make_orch(phdl):
+    orch = MagicMock()
+    orch.all = phdl
+    return orch
 
 
 class TestBuildPreflightInfoFlags(unittest.TestCase):
@@ -116,7 +122,7 @@ class TestResolveTier3Setting(unittest.TestCase):
             "node_smoke": dict(primus_paths, connectivity_mode="skip"),
             "tier3_info": {"auto_setup": False},
         }
-        self.assertFalse(Tier3InfoCheck(phdl, ["node0"], cfg).run().get("skipped"))
+        self.assertFalse(Tier3InfoCheck(_make_orch(phdl), ["node0"], cfg).run().get("skipped"))
 
         # Only Tier 3's own switch turns Tier 3 off.
         phdl = MagicMock()
@@ -125,7 +131,7 @@ class TestResolveTier3Setting(unittest.TestCase):
             "node_smoke": dict(primus_paths, connectivity_mode="run"),
             "tier3_info": {"connectivity_mode": "skip"},
         }
-        results = Tier3InfoCheck(phdl, ["node0"], cfg).run()
+        results = Tier3InfoCheck(_make_orch(phdl), ["node0"], cfg).run()
         self.assertTrue(results.get("skipped"))
         self.assertEqual(results.get("mode"), "skip")
         phdl.exec_cmd_list.assert_not_called()
@@ -141,7 +147,7 @@ class TestResolveTier3Setting(unittest.TestCase):
                 "rdma": {"interfaces": ["rdma0", "rdma1"], "gid_index": "3"},
             },
         }
-        check = Tier3InfoCheck(MagicMock(), ["node0"], cfg)
+        check = Tier3InfoCheck(_make_orch(MagicMock()), ["node0"], cfg)
         self.assertEqual(check.nccl_ib_hca, "rdma0,rdma1")
         self.assertEqual(check.nccl_ib_gid_index, 3)
 
@@ -164,11 +170,28 @@ class TestTier3InfoCheckRun(unittest.TestCase):
             "node1": "[Primus:Preflight] checks=host,gpu,network host=node1 status=PASS\n",
         }
 
-        results = Tier3InfoCheck(phdl, ["node0", "node1"], self._config()).run()
+        results = Tier3InfoCheck(_make_orch(phdl), ["node0", "node1"], self._config()).run()
         self.assertEqual(results["status"], "PASS")
         cmd_list = phdl.exec_cmd_list.call_args[0][0]
         self.assertIn("export NODE_RANK=0", cmd_list[0])
         self.assertIn("export NODE_RANK=1", cmd_list[1])
+
+    def test_auto_setup_passes_orchestrator_not_handle(self):
+        phdl = MagicMock()
+        phdl.reachable_hosts = ["node0"]
+        orch = _make_orch(phdl)
+        cfg = self._config()
+        cfg["tier3_info"]["auto_setup"] = True
+
+        with patch("cvs.lib.preflight.primus_setup.PrimusSetup") as setup_cls:
+            setup_cls.return_value.run.return_value = {
+                "status": "FAIL",
+                "message": "setup failed",
+                "node_results": {},
+            }
+            Tier3InfoCheck(orch, ["node0"], cfg).run()
+
+        self.assertIs(setup_cls.call_args.args[0], orch)
 
 
 if __name__ == "__main__":

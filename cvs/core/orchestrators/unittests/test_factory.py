@@ -102,6 +102,29 @@ class TestOrchestratorConfig(unittest.TestCase):
         cfg = OrchestratorConfig.from_configs(cluster, testsuite)
         self.assertEqual(cfg.username, "testsuite_user")
 
+    def test_from_configs_overrides_win_over_testsuite(self):
+        cluster = {
+            "node_dict": {"1.1.1.1": {}},
+            "username": "cluster_user",
+            "priv_key_file": "/dev/null",
+            "parallel_handle": {"config": {"hosts_per_shard": 4}},
+        }
+        testsuite = {"parallel_handle": {"config": {"hosts_per_shard": 8}}}
+        overrides = {
+            "parallel_handle": {
+                "config": {"hosts_per_shard": 16},
+                "transport_kwargs": {"num_retries": 2},
+            }
+        }
+        cfg = OrchestratorConfig.from_configs(cluster, testsuite, overrides)
+        self.assertEqual(cfg.parallel_handle["config"]["hosts_per_shard"], 16)
+        self.assertEqual(cfg.parallel_handle["transport_kwargs"]["num_retries"], 2)
+
+    def test_from_configs_rejects_non_dict_overrides(self):
+        cluster = {"node_dict": {"1.1.1.1": {}}, "username": "u", "priv_key_file": "/dev/null"}
+        with self.assertRaises(ValueError):
+            OrchestratorConfig.from_configs(cluster, None, ["not-a-dict"])
+
     def test_from_configs_preserves_agent_token_file(self):
         cluster = {
             "node_dict": {"node01": {"agent_port": 9000}},

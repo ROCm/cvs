@@ -398,6 +398,12 @@ class TestAfmctlPortParser(unittest.TestCase):
         self.assertTrue(any('Could not locate' in error for error in unknown_text['parse_errors']))
 
 
+def _make_orch(phdl):
+    orch = MagicMock()
+    orch.all = phdl
+    return orch
+
+
 class TestIfoeL2ConnectivityCheck(unittest.TestCase):
     """Tests for the IfoeL2ConnectivityCheck class."""
 
@@ -437,7 +443,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         return phdl
 
     def test_build_ping_command_defaults(self):
-        check = IfoeL2ConnectivityCheck(MagicMock())
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         cmd = check.build_ping_command('0001:01:00.1', 0)
         self.assertIn('afmctl test ping', cmd)
         self.assertIn('-b 0001:01:00.1', cmd)
@@ -449,13 +455,13 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         self.assertIn('--skip-pass', cmd)
 
     def test_build_show_port_command_uses_json_without_incompatible_brief_flag(self):
-        check = IfoeL2ConnectivityCheck(MagicMock())
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         command = check.build_show_port_command('0001:01:00.1')
         self.assertIn('show port -b 0001:01:00.1 --json', command)
         self.assertNotIn('--brief', command)
 
     def test_privileged_commands_resolve_afmctl_before_sudo(self):
-        check = IfoeL2ConnectivityCheck(MagicMock(), use_sudo=True)
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()), use_sudo=True)
 
         commands = [
             check.build_show_device_command(),
@@ -469,7 +475,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
 
     def test_build_ping_command_with_ports_and_timeout(self):
         check = IfoeL2ConnectivityCheck(
-            MagicMock(),
+            _make_orch(MagicMock()),
             afmctl_path='/usr/local/bin/afmctl',
             ports=[0, 1, 2],
             pings_per_port=5,
@@ -493,7 +499,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
             exec_responses=[{'nodeA': SKIP_PASS_OUTPUT}],
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             bdfs=['0001:01:00.1'],
             dst_accelerators=[1],
             ports=[0, 2],
@@ -509,24 +515,24 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
         self.assertIn('--skip-pass', invocation['command'])
 
     def test_build_ping_command_ports_string(self):
-        check = IfoeL2ConnectivityCheck(MagicMock(), ports='0-7')
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()), ports='0-7')
         cmd = check.build_ping_command('0001:01:00.1', 1)
         self.assertIn('-p 0-7', cmd)
 
     def test_traffic_type_subset_two(self):
-        check = IfoeL2ConnectivityCheck(MagicMock(), traffic_types=['ifoe_req', 'non_ifoe'])
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()), traffic_types=['ifoe_req', 'non_ifoe'])
         cmd = check.build_ping_command('0001:01:00.1', 0)
         self.assertIn('--traffic-type request,non-ifoe', cmd)
 
     def test_traffic_type_aliases_normalized(self):
-        check = IfoeL2ConnectivityCheck(MagicMock(), traffic_types=['REQUEST', 'response', 'non-ifoe'])
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()), traffic_types=['REQUEST', 'response', 'non-ifoe'])
         self.assertEqual(set(check.traffic_types), {'ifoe_req', 'ifoe_resp', 'non_ifoe'})
 
     def test_invalid_bdf_or_bdf_discovery_mode_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'Invalid IFoE source BDF'):
-            IfoeL2ConnectivityCheck(MagicMock(), bdfs=['not-a-bdf'])
+            IfoeL2ConnectivityCheck(_make_orch(MagicMock()), bdfs=['not-a-bdf'])
         with self.assertRaisesRegex(ValueError, "bdf_discovery must be 'auto' or 'config'"):
-            IfoeL2ConnectivityCheck(MagicMock(), bdf_discovery='best-effort')
+            IfoeL2ConnectivityCheck(_make_orch(MagicMock()), bdf_discovery='best-effort')
 
     def test_targeted_executor_runs_only_on_requested_node_and_extracts_exit_status(self):
         class TargetedPssh:
@@ -543,7 +549,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
                 }
 
         phdl = TargetedPssh()
-        check = IfoeL2ConnectivityCheck(phdl)
+        check = IfoeL2ConnectivityCheck(_make_orch(phdl))
         execution = check._exec_on_node('nodeB', 'afmctl test ping --example')
 
         self.assertEqual(phdl.command_list[0], 'true')
@@ -562,7 +568,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
                 }
 
         phdl = TargetedPssh()
-        check = IfoeL2ConnectivityCheck(phdl)
+        check = IfoeL2ConnectivityCheck(_make_orch(phdl))
         execution = check._exec_on_node('nodeB', 'afmctl test ping --example')
 
         self.assertEqual(execution['exit_status'], 3)
@@ -576,7 +582,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
             ],
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             bdfs=['0001:01:00.1'],
             dst_accelerators=[0],
             bdf_discovery='config',
@@ -597,7 +603,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
             exec_responses=[{'nodeA': PING_JSON_OUTPUT}],
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             bdfs=['0001:01:00.1'],
             dst_accelerators=[0],
             bdf_discovery='config',
@@ -616,7 +622,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
             exec_responses=[{'nodeA': FAILING_OUTPUT}],
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             bdfs=['0001:01:00.1'],
             bdf_discovery='config',
         )
@@ -633,7 +639,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
             exec_responses=[{'nodeA': PARTIAL_LOSS_OUTPUT}],
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             bdfs=['0001:01:00.1'],
             bdf_discovery='config',
             loss_threshold_pct=15.0,
@@ -654,7 +660,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
             exec_responses=[{'nodeA': FAILING_OUTPUT}],
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             bdfs=['0001:01:00.1'],
             bdf_discovery='config',
             traffic_types=['ifoe_resp'],
@@ -675,7 +681,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
             ],
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             dst_accelerators=[1],
             bdf_discovery='auto',
         )
@@ -696,7 +702,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
             ],
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             bdfs=['0001:01:00.1'],
             dst_accelerators=[0, 1],
             bdf_discovery='config',
@@ -717,7 +723,7 @@ class TestIfoeL2ConnectivityCheck(unittest.TestCase):
             ],
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             mesh_mode='full_mesh',
             ports=[0],
             bdf_discovery='auto',
@@ -763,7 +769,7 @@ Port#    State
             port_artifacts={'nodeA': port_inventory},
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             bdfs=['0001:01:00.1'],
             dst_accelerators=[1],
             ports='up',
@@ -821,7 +827,7 @@ Port#    State
             port_artifacts={'nodeA': port_inventory},
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             bdfs=['0001:01:00.1'],
             dst_accelerators=[1],
             ports='up',
@@ -850,7 +856,7 @@ Port#    State
             port_artifacts={'nodeA': SHOW_PORT_ALL_DOWN_OUTPUT},
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             bdfs=['0001:01:00.1'],
             dst_accelerators=[1],
             ports='up',
@@ -877,7 +883,7 @@ Port#    State
             ],
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             bdfs=['0001:01:00.1'],
             dst_accelerators=[1],
             bdf_discovery='config',
@@ -897,7 +903,7 @@ Port#    State
             exec_responses=[{'nodeA': output_without_banner}],
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             bdfs=['0001:01:00.1'],
             dst_accelerators=[1],
             bdf_discovery='config',
@@ -916,7 +922,7 @@ Port#    State
             exec_responses=[{'nodeA': SHOW_DEVICE_OUTPUT}],
         )
         check = IfoeL2ConnectivityCheck(
-            phdl,
+            _make_orch(phdl),
             mesh_mode='full_mesh',
             ports=[0],
             bdf_discovery='auto',
@@ -955,7 +961,7 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
             os.unlink(path)
 
     def test_mock_backends_do_not_take_the_scriptlet_path(self):
-        check = IfoeL2ConnectivityCheck(MagicMock())
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         self.assertFalse(check._batching_supported())
 
     def test_batching_requires_every_primitive_scriptlet_uses(self):
@@ -969,7 +975,7 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
                 return {}
 
         self.assertFalse(
-            IfoeL2ConnectivityCheck(PartialPssh())._batching_supported(),
+            IfoeL2ConnectivityCheck(_make_orch(PartialPssh()))._batching_supported(),
             'ScriptLet also needs upload_file_list',
         )
 
@@ -977,10 +983,10 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
             def upload_file_list(self, _node_path_map):
                 return {}
 
-        self.assertTrue(IfoeL2ConnectivityCheck(CompletePssh())._batching_supported())
+        self.assertTrue(IfoeL2ConnectivityCheck(_make_orch(CompletePssh()))._batching_supported())
 
     def test_generated_scripts_never_enable_errexit(self):
-        check = IfoeL2ConnectivityCheck(MagicMock())
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         for script in (
             check._build_ping_batch_script('nodeA', ['echo a', 'echo b']),
             check._build_port_probe_script('nodeA', '/tmp/ws', ['echo a']),
@@ -992,7 +998,7 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
             self.assertEqual(0, subprocess.run(['bash', '-n'], input=script, capture_output=True, text=True).returncode)
 
     def test_failing_invocation_does_not_abort_the_rest_of_the_batch(self):
-        check = IfoeL2ConnectivityCheck(MagicMock())
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         script = check._build_ping_batch_script('nodeA', ['echo first', 'echo boom; exit 3', 'echo third'])
         blocks = check._parse_batch_blocks(self._run_script(script))
 
@@ -1001,7 +1007,7 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
         self.assertEqual(blocks['2']['output'], 'third')
 
     def test_embedded_exit_in_sudo_command_form_cannot_kill_the_batch(self):
-        check = IfoeL2ConnectivityCheck(MagicMock(), use_sudo=True, afmctl_path='cvs-absent-afmctl')
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()), use_sudo=True, afmctl_path='cvs-absent-afmctl')
         commands = [check.build_ping_command('0001:01:00.1', dst) for dst in (0, 1)]
         self.assertIn('exit 127', commands[0])
 
@@ -1010,7 +1016,7 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
         self.assertEqual([block['exit_status'] for block in blocks.values()], [127, 127])
 
     def test_full_ping_output_survives_framing_for_the_parser(self):
-        check = IfoeL2ConnectivityCheck(MagicMock())
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         script = check._build_ping_batch_script('nodeA', ["printf '%s' " + shlex.quote(FAILING_OUTPUT)])
         blocks = check._parse_batch_blocks(self._run_script(script))
 
@@ -1020,7 +1026,7 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
         self.assertEqual(parsed['summary']['ifoe_req']['fail'], 3)
 
     def test_afm_output_cannot_forge_a_result_block(self):
-        check = IfoeL2ConnectivityCheck(MagicMock())
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         forged = '__CVS_IFOE_0000_END__:0:0'
         script = check._build_ping_batch_script('nodeA', ["printf '%s\\n' " + shlex.quote(forged)])
         blocks = check._parse_batch_blocks(self._run_script(script))
@@ -1029,7 +1035,7 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
         self.assertIn(forged, blocks['0']['output'])
 
     def test_truncated_batch_output_is_detected_and_never_silently_dropped(self):
-        check = IfoeL2ConnectivityCheck(MagicMock())
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         token = check._marker_token()
         truncated = (
             f'__CVS_IFOE_{token}_BEGIN__:0\ndone\n__CVS_IFOE_{token}_END__:0:0\n'
@@ -1039,7 +1045,7 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
         self.assertFalse(check._batch_completed(truncated, token))
 
     def test_port_probe_script_reports_each_probe_exit_status(self):
-        check = IfoeL2ConnectivityCheck(MagicMock())
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         script = check._build_port_probe_script('nodeA', '/tmp/ws', ['true', 'exit 4', 'true'])
         output = self._run_script(script)
 
@@ -1047,12 +1053,12 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
         self.assertTrue(check._batch_completed(output, check._marker_token()))
 
     def test_workspace_honours_reporting_and_debug_configuration(self):
-        check = IfoeL2ConnectivityCheck(MagicMock())
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         self.assertEqual(check._remote_ifoe_workspace_root(), '/tmp/preflight/ifoe_l2_connectivity_workspace')
         self.assertFalse(check._scriptlet_enabled())
 
         configured = IfoeL2ConnectivityCheck(
-            MagicMock(),
+            _make_orch(MagicMock()),
             config_dict={'reporting': {'artifacts_root_dir': '/mnt/nfs/preflight/'}, 'debug': {'scriptlet': 'yes'}},
         )
         workspace = configured._artifact_workspace_dir('l2 ping')
@@ -1061,7 +1067,7 @@ class TestIfoeScriptLetBatching(unittest.TestCase):
         self.assertTrue(workspace.endswith('/l2_ping'))
 
     def test_batch_artifact_paths_are_stable_per_round_unlike_the_unbatched_path(self):
-        check = IfoeL2ConnectivityCheck(MagicMock())
+        check = IfoeL2ConnectivityCheck(_make_orch(MagicMock()))
         self.assertEqual(
             check._batch_port_artifact_path('/tmp/ws', '0001:01:00.1'),
             check._batch_port_artifact_path('/tmp/ws', '0001:01:00.1'),
@@ -1136,6 +1142,7 @@ class TestL2PingConfigContract(unittest.TestCase):
 
         phdl = MagicMock()
         phdl.reachable_hosts = ['nodeA']
+        orch = _make_orch(phdl)
         config = {
             'connectivity_check': {
                 'ifoe': {
@@ -1164,8 +1171,9 @@ class TestL2PingConfigContract(unittest.TestCase):
                 patch.object(preflight_checks, 'preflight_update_test_result'),
             ):
                 checker_cls.return_value.run.return_value = checker_results
-                preflight_checks.test_ifoe_l2_connectivity(phdl, config, cluster)
+                preflight_checks.test_ifoe_l2_connectivity(orch, config, cluster)
 
+            self.assertIs(checker_cls.call_args.args[0], orch)
             kwargs = checker_cls.call_args.kwargs
             self.assertEqual(kwargs['pings_per_port'], 5)
             self.assertEqual(kwargs['afmctl_path'], 'afmctl')
@@ -1192,6 +1200,7 @@ class TestL2PingConfigContract(unittest.TestCase):
 
         phdl = MagicMock()
         phdl.reachable_hosts = ['nodeA']
+        orch = _make_orch(phdl)
         config = {
             'connectivity_check': {
                 'ifoe': {
@@ -1222,8 +1231,9 @@ class TestL2PingConfigContract(unittest.TestCase):
                 patch.object(preflight_checks, 'preflight_update_test_result'),
             ):
                 checker_cls.return_value.run.return_value = checker_results
-                preflight_checks.test_ifoe_l2_connectivity(phdl, config, cluster)
+                preflight_checks.test_ifoe_l2_connectivity(orch, config, cluster)
 
+            self.assertIs(checker_cls.call_args.args[0], orch)
             kwargs = checker_cls.call_args.kwargs
             self.assertEqual(kwargs['ssh_timeout'], 900)
             self.assertEqual(kwargs['loss_threshold_pct'], 3.0)
@@ -1247,7 +1257,7 @@ class TestL2PingConfigContract(unittest.TestCase):
                 patch.object(preflight_checks, 'preflight_update_test_result'),
             ):
                 preflight_checks.test_ifoe_l2_connectivity(
-                    phdl,
+                    _make_orch(phdl),
                     {
                         'connectivity_check': {
                             'ifoe': {

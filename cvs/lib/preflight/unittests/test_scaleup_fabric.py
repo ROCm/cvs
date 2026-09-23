@@ -63,6 +63,12 @@ def _port_inventory(bdfs, down_ports=()):
     }
 
 
+def _make_orch(phdl):
+    orch = MagicMock()
+    orch.all = phdl
+    return orch
+
+
 class FakePssh:
     """Small command-aware PSSH substitute; no host actions are performed."""
 
@@ -180,7 +186,7 @@ class TestMi4xxParsers(unittest.TestCase):
 class TestMi4xxNodeHealthCheck(unittest.TestCase):
     def _check(self, phdl, **kwargs):
         return Mi4xxNodeHealthCheck(
-            phdl,
+            _make_orch(phdl),
             use_sudo=False,
             readiness_timeout_seconds=0,
             poll_interval_seconds=1,
@@ -346,7 +352,7 @@ class TestMi4xxNodeHealthCheck(unittest.TestCase):
                 return results
 
         phdl = BatchedPortPssh()
-        check = Mi4xxNodeHealthCheck(phdl, use_sudo=False, readiness_timeout_seconds=0)
+        check = Mi4xxNodeHealthCheck(_make_orch(phdl), use_sudo=False, readiness_timeout_seconds=0)
         masks = {f'0000:{index + 1:02x}:00.0': 'f' * 18 for index in range(4)}
         check.results = {
             host: {

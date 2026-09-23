@@ -9,6 +9,10 @@ import json
 import os
 import re
 
+import pytest
+
+from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
+from cvs.lib import globals
 from cvs.lib.preflight.node_smoke_counts import DEFAULT_GPUS_PER_NODE
 from cvs.lib.preflight.node_smoke_rows import (
     tier1_check_catalog,
@@ -177,3 +181,89 @@ def pytest_sessionfinish(session):
     )
     for name, bucket in report_data.outcomes.items():
         bucket['value'] = counts.get(name, bucket['value'])
+
+
+log = globals.log
+
+_SSH_CONNECT_TIMEOUT = 60
+_SSH_NUM_RETRIES = 2
+_SSH_RETRY_DELAY = 2
+_DEFAULT_HOSTS_PER_SHARD = 32
+
+
+def _nested(config, section, key, default):
+    current = config
+    for part in section.split('.'):
+        if not isinstance(current, dict) or part not in current:
+            return default
+        current = current[part]
+    if isinstance(current, dict) and key in current:
+        return current[key]
+    return default
+
+
+def preflight_hosts_per_shard(config_file):
+    """Shard size previously applied by the preflight phdl fixture."""
+    with open(config_file) as handle:
+        raw = json.load(handle)
+    preflight = raw.get('preflight') if isinstance(raw, dict) else None
+    if not isinstance(preflight, dict):
+        return _DEFAULT_HOSTS_PER_SHARD
+    return _nested(
+        preflight,
+        'connectivity_check.rdma',
+        'nodes_per_full_mesh_group',
+        _nested(
+            preflight,
+            'connectivity_check.rdma',
+            'parallel_group_size',
+            _nested(preflight, 'parallelism', 'parallel_group_size', _DEFAULT_HOSTS_PER_SHARD),
+        ),
+    )
+
+
+def preflight_parallel_handle_overrides(config_file):
+    return {
+        'parallel_handle': {
+            'config': {
+                'hosts_per_shard': preflight_hosts_per_shard(config_file),
+            },
+            'transport_kwargs': {
+                'timeout': _SSH_CONNECT_TIMEOUT,
+                'num_retries': _SSH_NUM_RETRIES,
+                'retry_delay': _SSH_RETRY_DELAY,
+            },
+        }
+    }
+
+
+@pytest.fixture(scope="module")
+def orch(pytestconfig):
+    cluster_file = pytestconfig.getoption("cluster_file")
+    config_file = pytestconfig.getoption("config_file")
+    if not cluster_file or not config_file:
+        pytest.fail("orch fixture requires --cluster_file and --config_file")
+
+    cfg = OrchestratorConfig.from_configs(
+        cluster_file,
+        config_file,
+        preflight_parallel_handle_overrides(config_file),
+    )
+    orch = OrchestratorFactory.create_orchestrator(log, cfg)
+
+    if cfg.orchestrator == "container":
+        if not orch.setup_containers():
+            pytest.fail(
+                f"Failed to launch container : "
+                f"{orch.get_container_name(orch.container_config, orch.container_config['image'])}"
+            )
+        if not orch.setup_sshd():
+            pytest.fail("Failed to setup sshd in container")
+
+    yield orch
+
+    try:
+        if cfg.orchestrator == "container":
+            orch.teardown_containers()
+    finally:
+        orch.close()
