@@ -161,3 +161,21 @@ Use these scripts to start the test:
 .. note::
 
   Both ``cvs run install_rvs`` and ``cvs run rvs_cvs`` support running inside a per-host container instead of on the host filesystem. Pass a ``cluster_container.json`` cluster file with ``orchestrator: container`` to route invocations through the container backend. See :doc:`/how-to/run-with-containers`.
+
+On **Spur or Slurm managed compute**, launch CVS inside a **job step** (one task per node), for example ``spur run --mpi=none`` or ``srun --mpi=none``. A bare allocation or a ``spur submit`` / ``sbatch`` script that never starts a step is not managed CVS (``SLURM_STEP_ID`` stays unset). ``--cluster_file`` is optional; CVS builds the live cluster file from scheduler hosts and starts one HTTP agent per task.
+
+Set ``rvs.git_install_path``, ``rvs.path``, and ``rvs.config_path_*`` in the health config to a **shared, user-writable** tree. ``install_rvs`` skips ``apt`` on a managed step. Without passwordless sudo it extracts the RVS tarball under ``git_install_path`` instead of ``/opt/rocm/extras-7``. Path rewrites inside ``install_rvs`` are in-memory only: ``rvs_cvs`` is a separate process and must read the same writable paths from the JSON. ``rvs_cvs`` uses ``orch.sudo_prefix()`` for ``amd-smi``, ``peqt_single``, and the LEVEL run; if sudo is unavailable those commands run as the job user.
+
+Spur example:
+
+.. code:: bash
+
+  spur run -A <account> -p <partition> \
+    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    bash -lc 'source ~/.cvs_venv/bin/activate &&
+      cvs run install_rvs --config_file <health-config.json> --html <report.html>'
+
+  spur run -A <account> -p <partition> \
+    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    bash -lc 'source ~/.cvs_venv/bin/activate &&
+      cvs run rvs_cvs --config_file <health-config.json> --html <report.html>'
