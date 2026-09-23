@@ -32,15 +32,38 @@ On the **launcher** (where you run ``cvs run``):
 - SSH key access to cluster nodes (``priv_key_file`` in the cluster file).
 - Hugging Face token file at ``paths.hf_token_file`` when required.
 
-On **Spur / managed compute** (for example MI355X on Chrisa):
+On **Spur or Slurm managed compute**:
 
-- Launch CVS inside a Spur **job step** (one task per node, for example
-  ``spur run --mpi=none``), not a bare allocation.
+- Launch CVS inside a **job step** (one task per node), for example
+  ``spur run --mpi=none`` or ``srun --mpi=none``. A bare allocation or a
+  ``spur submit`` / ``sbatch`` script that never starts a step is not
+  managed CVS (``SLURM_STEP_ID`` stays unset).
 - Use the managed cluster file produced from ``SPUR_NODES`` / HTTP agents.
   ATOM still uses the ``orch`` fixture and the config ``container`` block;
   do not add nested ``spur run`` inside ``AtomJob``.
 - Prove an existing single-node stem first, then run the ``mi355x_atom_*``
   stems (Kimi TP4, V4-Pro TP8). V4-Flash-Base stays on gfx942.
+
+Spur example:
+
+.. code:: bash
+
+  spur run -A <account> -p <partition> \
+    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    bash -lc 'source ~/.cvs_venv/bin/activate &&
+      cvs run atom --config_file <atom-config.json> --html <report.html>'
+
+Slurm example:
+
+.. code:: bash
+
+  srun -A <account> -p <partition> \
+    -N 1 --gpus-per-node 8 --exclusive -t 04:00:00 --mpi=none \
+    bash -lc 'source ~/.cvs_venv/bin/activate &&
+      cvs run atom --config_file <atom-config.json> --html <report.html>'
+
+In managed mode, ``--cluster_file`` is optional. CVS builds the live cluster
+file from scheduler hosts and starts one HTTP agent per scheduler task.
 
 For **multinode PP** (``params.nnodes: 2``, ``pipeline_parallel_size: 2``):
 
