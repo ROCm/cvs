@@ -98,6 +98,7 @@ h1 { margin: 0 0 0.25rem; font-size: 1.6rem; font-weight: 600; letter-spacing: -
 .chart-wrap { position: relative; height: 240px; }
 .chart-wrap-tall { height: 300px; }
 .chart-wrap-interactivity { height: min(520px, 70vh); min-height: 380px; }
+.chart-wrap-loss { height: min(420px, 55vh); min-height: 280px; }
 .chart-card-wide { max-width: 100%; }
 .panel-interactivity { margin-bottom: 1.25rem; }
 .interactivity-head { margin-bottom: 0.75rem; }
@@ -180,8 +181,12 @@ tr.changed td { background: rgba(255,107,53,0.1); }
 <nav class="viewer-nav" id="viewer-nav">
   <a href="#filters">Filters</a>
   <a href="#overview">Overview</a>
-  <a href="#interactivity-panel">Interactivity</a>
-  <a href="#charts">Charts</a>
+  <a href="#interactivity-panel" id="nav-interactivity">Interactivity</a>
+  <a href="#loss-panel" id="nav-loss-curves" style="display:none">Loss curves</a>
+  <a href="#grad-norm-panel" id="nav-grad-norm-curves" style="display:none">Grad norm</a>
+  <a href="#tflops-panel" id="nav-tflops-curves" style="display:none">TFLOP/s/GPU</a>
+  <a href="#tokens-panel" id="nav-tokens-curves" style="display:none">Tokens/s/GPU</a>
+  <a href="#charts" id="nav-charts">Charts</a>
   <a href="#heatmap">Heatmap</a>
   <a href="#gates">Gates</a>
   <a href="#cells">Cells</a>
@@ -229,6 +234,38 @@ tr.changed td { background: rgba(255,107,53,0.1); }
       <div class="interactivity-tooltip" id="interactivity-tooltip" role="tooltip" aria-hidden="true"></div>
     </article>
   </div>
+</section>
+
+<section class="panel" id="loss-panel" style="display:none">
+  <h2>Loss curves</h2>
+  <p class="subsection-hint">Sampled lm_loss vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>
+  <article class="chart-card chart-card-wide">
+    <div class="chart-wrap chart-wrap-loss" id="loss-chart-wrap"></div>
+  </article>
+</section>
+
+<section class="panel" id="grad-norm-panel" style="display:none">
+  <h2>Grad norm</h2>
+  <p class="subsection-hint">Sampled grad_norm vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>
+  <article class="chart-card chart-card-wide">
+    <div class="chart-wrap chart-wrap-loss" id="grad-norm-chart-wrap"></div>
+  </article>
+</section>
+
+<section class="panel" id="tflops-panel" style="display:none">
+  <h2>TFLOP/s/GPU</h2>
+  <p class="subsection-hint">Sampled throughput per GPU vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>
+  <article class="chart-card chart-card-wide">
+    <div class="chart-wrap chart-wrap-loss" id="tflops-chart-wrap"></div>
+  </article>
+</section>
+
+<section class="panel" id="tokens-panel" style="display:none">
+  <h2>Tokens/s/GPU</h2>
+  <p class="subsection-hint">Sampled tokens/s/GPU vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>
+  <article class="chart-card chart-card-wide">
+    <div class="chart-wrap chart-wrap-loss" id="tokens-chart-wrap"></div>
+  </article>
 </section>
 
 <section class="panel" id="charts" style="display:none">
@@ -293,6 +330,13 @@ let comparisonChartMode = 'bar';
 let interactivityLogScale = true;
 let interactivityShowLabels = true;
 let interactivityChart = null;
+let lossChart = null;
+const STEP_CHARTS = [
+  { panel: 'loss-panel', wrap: 'loss-chart-wrap', nav: 'nav-loss-curves', field: 'loss_curve', yTitle: 'lm_loss' },
+  { panel: 'grad-norm-panel', wrap: 'grad-norm-chart-wrap', nav: 'nav-grad-norm-curves', field: 'grad_norm_curve', yTitle: 'grad_norm' },
+  { panel: 'tflops-panel', wrap: 'tflops-chart-wrap', nav: 'nav-tflops-curves', field: 'throughput_curve', yTitle: 'TFLOP/s/GPU' },
+  { panel: 'tokens-panel', wrap: 'tokens-chart-wrap', nav: 'nav-tokens-curves', field: 'tokens_curve', yTitle: 'tokens/s/GPU' },
+];
 let interactivityTooltipPinned = false;
 let interactivityTooltipOver = false;
 let interactivityTooltipHideTimer = null;
@@ -346,6 +390,7 @@ const FALLBACK_VIEWER_CONFIG = {
   ],
   heatmap_row_fields: ['isl', 'osl', 'policy'],
   comparison_hint: 'Compare ISL/OSL shapes at each concurrency · hover for values · dashed lines stay visible when trends overlap',
+  sweep_charts: { enabled: true },
   interactivity: {
     enabled: true,
     tpot_metric: 'client.mean_tpot_ms',
@@ -402,6 +447,13 @@ function shapeLabelFromSummary(s) {
   return shapeLabelFromParts(groupByFields().map(f => s[f]));
 }
 
+function sweepChartsEnabled() {
+  const vc = viewerConfig();
+  const cfg = vc.sweep_charts || {};
+  if (Object.prototype.hasOwnProperty.call(cfg, 'enabled')) return !!cfg.enabled;
+  return (vc.interactivity || {}).enabled !== false;
+}
+
 function interactivityTpotMetric() {
   return (viewerConfig().interactivity || {}).tpot_metric || 'client.mean_tpot_ms';
 }
@@ -431,6 +483,13 @@ function initViewerUi() {
   const inter = vc.interactivity || {};
   if (interTitle && inter.title) interTitle.textContent = inter.title;
   if (interHint && inter.hint) interHint.textContent = inter.hint;
+  const navInter = $('nav-interactivity');
+  if (navInter) navInter.style.display = inter.enabled ? '' : 'none';
+  const navCharts = $('nav-charts');
+  const chartsPanel = $('charts');
+  const sweepOn = sweepChartsEnabled();
+  if (navCharts) navCharts.style.display = sweepOn ? '' : 'none';
+  if (chartsPanel && !sweepOn) chartsPanel.style.display = 'none';
 
   const heatmapSel = $('heatmap-metric');
   if (heatmapSel) {
@@ -626,15 +685,43 @@ function cellBarPct(cell, metricKey) {
   return Number(entry.bar_pct);
 }
 
+function concurrencyField() {
+  return viewerConfig().concurrency_field || 'concurrency';
+}
+
+function cellConcurrency(cell) {
+  const v = cell[concurrencyField()];
+  return v == null || v === '' ? null : v;
+}
+
+function concurrencyTickLabel(value) {
+  return concurrencyField() === 'concurrency' ? 'C=' + value : String(value);
+}
+
+function sortedConcurrencyKeys(values) {
+  const uniq = [];
+  const seen = new Set();
+  values.forEach(v => {
+    if (v == null || v === '') return;
+    const key = String(v);
+    if (seen.has(key)) return;
+    seen.add(key);
+    uniq.push(v);
+  });
+  const allNumeric = uniq.every(v => Number.isFinite(Number(v)));
+  if (allNumeric) return uniq.map(Number).sort((a, b) => a - b);
+  return uniq.map(String).sort();
+}
+
 function pointsByConcurrency(rows, valueFn) {
   const byConc = new Map();
   rows.forEach(c => {
-    const conc = Number(c.concurrency);
+    const conc = cellConcurrency(c);
     const val = valueFn(c);
-    if (val == null || Number.isNaN(conc)) return;
-    byConc.set(conc, val);
+    if (conc == null || val == null) return;
+    byConc.set(String(conc), val);
   });
-  return [...byConc.entries()].sort((a, b) => a[0] - b[0]);
+  return sortedConcurrencyKeys([...byConc.keys()]).map(k => [k, byConc.get(String(k))]);
 }
 
 function filteredCells() {
@@ -718,6 +805,14 @@ function destroyCharts() {
   clearEl('margin-grid');
   const interactivityWrap = $('interactivity-chart-wrap');
   if (interactivityWrap) interactivityWrap.innerHTML = '';
+  STEP_CHARTS.forEach(spec => {
+    const wrap = $(spec.wrap);
+    if (wrap) wrap.innerHTML = '';
+    const panel = $(spec.panel);
+    if (panel) panel.style.display = 'none';
+    const nav = $(spec.nav);
+    if (nav) nav.style.display = 'none';
+  });
   ['comparison-block', 'margin-block'].forEach(id => {
     const el = $(id);
     if (el) el.style.display = 'none';
@@ -725,6 +820,7 @@ function destroyCharts() {
   const interPanel = $('interactivity-panel');
   if (interPanel) interPanel.style.display = 'none';
   interactivityChart = null;
+  lossChart = null;
   interactivityTooltipPinned = false;
   interactivityTooltipOver = false;
   clearTimeout(interactivityTooltipHideTimer);
@@ -742,17 +838,25 @@ function updateComparisonToggleUI() {
   linesBtn.setAttribute('aria-pressed', String(!isBar));
 }
 
+function summaryCardHtml(s) {
+  const title = s.label ? escapeHtmlText(s.label) : shapeLabelFromSummary(s);
+  const unit = escapeHtmlText(s.headline_unit || 'tok/s');
+  const meta = s.meta != null
+    ? escapeHtmlText(s.meta)
+    : 'Peak at C=' + escapeHtmlText(s.conc_at_max_tput)
+      + ' · TTFT ' + (s.ttft_at_max_tput != null ? Number(s.ttft_at_max_tput).toFixed(1) : '—') + ' ms'
+      + (s.saturated ? ' · saturated' : '');
+  return '<article class="summary-card"><h3>' + title + '</h3>'
+    + '<div class="summary-stat">' + metricVal({ actuals: { headline: s.max_output_throughput } }, 'headline')
+    + ' <span style="font-size:0.75rem;font-weight:500;color:var(--muted)">' + unit + '</span></div>'
+    + '<div class="summary-meta">' + meta + '</div></article>';
+}
+
 function buildOverview() {
   const grid = $('summary-grid');
   const summaries = reportData.sweep_summaries || [];
-  grid.innerHTML = summaries.map(s => (
-    '<article class="summary-card"><h3>' + shapeLabelFromSummary(s) + '</h3>'
-    + '<div class="summary-stat">' + metricVal({ actuals: { 'client.output_throughput': s.max_output_throughput } }, 'client.output_throughput')
-    + ' <span style="font-size:0.75rem;font-weight:500;color:var(--muted)">tok/s</span></div>'
-    + '<div class="summary-meta">Peak at C=' + s.conc_at_max_tput
-    + ' · TTFT ' + (s.ttft_at_max_tput != null ? Number(s.ttft_at_max_tput).toFixed(1) : '—') + ' ms'
-    + (s.saturated ? ' · saturated' : '') + '</div></article>'
-  )).join('') || '<p class="subsection-hint">No sweep summary data.</p>';
+  grid.innerHTML = summaries.map(summaryCardHtml).join('')
+    || '<p class="subsection-hint">No sweep summary data.</p>';
 
   const status = reportData.overall_status || 'record';
   const badge = $('hero-status');
@@ -805,23 +909,23 @@ function buildChartComparisonFromRows(rows) {
       shapeRows.forEach(c => {
         const val = metricNum(c, spec.metric);
         if (val == null) return;
-        const conc = Number(c.concurrency);
-        if (Number.isNaN(conc)) return;
-        byConc.set(conc, val);
-        allConcs.add(conc);
+        const conc = cellConcurrency(c);
+        if (conc == null) return;
+        byConc.set(String(conc), val);
+        allConcs.add(String(conc));
       });
       if (byConc.size) {
         shapeSeries.push({ label: shapeLabelFromParts(parts), byConc });
       }
     });
     if (shapeSeries.length < 2) return;
-    const concurrencies = [...allConcs].sort((a, b) => a - b);
+    const concurrencies = sortedConcurrencyKeys([...allConcs]);
     if (concurrencies.length < 2) return;
     out[spec.suffix] = {
       concurrencies,
       series: shapeSeries.map(s => ({
         label: s.label,
-        values: concurrencies.map(c => s.byConc.get(c) ?? null),
+        values: concurrencies.map(c => s.byConc.get(String(c)) ?? null),
       })),
       title: spec.title,
       unit: spec.unit,
@@ -1348,6 +1452,145 @@ function buildInteractivityChart(rows) {
   return true;
 }
 
+function parseCurvePoints(curve) {
+  if (!Array.isArray(curve)) return [];
+  return curve
+    .map(pt => {
+      if (!Array.isArray(pt) || pt.length < 2) return null;
+      const x = Number(pt[0]);
+      const y = Number(pt[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      return { x, y };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.x - b.x);
+}
+
+function parseLossPoints(curve) {
+  return parseCurvePoints(curve);
+}
+
+function makeStepChart(canvas, datasets, yTitle) {
+  const ch = new Chart(canvas, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      parsing: false,
+      interaction: { mode: 'nearest', intersect: false },
+      plugins: {
+        legend: { labels: { color: '#e8eaef', boxWidth: 12, font: { size: 11 } } },
+        tooltip: { callbacks: { label: ctx => {
+          const y = ctx.parsed && ctx.parsed.y;
+          const x = ctx.parsed && ctx.parsed.x;
+          return (ctx.dataset.label || '') + ': step ' + x + '  ' + yTitle + ' ' + y;
+        } } },
+        zoom: {
+          limits: {
+            x: { min: 'original', max: 'original' },
+            y: { min: 'original', max: 'original' },
+          },
+          pan: {
+            enabled: true,
+            mode: 'xy',
+            modifierKey: 'shift',
+            threshold: 8,
+          },
+          zoom: {
+            wheel: { enabled: true, speed: 0.09, modifierKey: null },
+            pinch: { enabled: true },
+            drag: {
+              enabled: true,
+              modifierKey: null,
+              backgroundColor: 'rgba(107,159,255,0.14)',
+              borderColor: 'rgba(107,159,255,0.55)',
+              borderWidth: 1,
+            },
+            mode: 'xy',
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Step', color: '#9aa3b5', font: { size: 11 } },
+          ticks: { color: '#9aa3b5' },
+          grid: { color: '#2a2f3d' },
+        },
+        y: {
+          type: 'linear',
+          title: { display: true, text: yTitle, color: '#9aa3b5', font: { size: 11 } },
+          ticks: { color: '#9aa3b5' },
+          grid: { color: '#2a2f3d' },
+        },
+      },
+    },
+  });
+  chartInstances.push(ch);
+  return ch;
+}
+
+function makeLossChart(canvas, datasets) {
+  lossChart = makeStepChart(canvas, datasets, 'lm_loss');
+  return lossChart;
+}
+
+function buildStepChart(rows, spec) {
+  const panel = $(spec.panel);
+  const wrap = $(spec.wrap);
+  const nav = $(spec.nav);
+  if (!panel || !wrap) return false;
+
+  wrap.innerHTML = '';
+  panel.style.display = 'none';
+  if (nav) nav.style.display = 'none';
+
+  const datasets = [];
+  rows.forEach((c, index) => {
+    const pts = parseCurvePoints(c[spec.field]);
+    if (!pts.length) return;
+    const color = CHART_COLORS[index % CHART_COLORS.length];
+    const dashed = LINE_DASHES[index % LINE_DASHES.length];
+    datasets.push({
+      label: c.subtitle || c.cell_id || ('combo ' + index),
+      data: pts,
+      borderColor: color,
+      backgroundColor: color,
+      borderWidth: 2,
+      borderDash: dashed,
+      tension: 0.15,
+      fill: false,
+      pointRadius: pts.length > 40 ? 0 : 3,
+      pointHoverRadius: 5,
+      pointStyle: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
+      pointBackgroundColor: color,
+      pointBorderColor: '#1a1d27',
+      pointBorderWidth: 1,
+      spanGaps: true,
+      order: dashed.length ? index : index + 10,
+    });
+  });
+
+  if (!datasets.length) return false;
+
+  const canvas = document.createElement('canvas');
+  wrap.appendChild(canvas);
+  const ch = makeStepChart(canvas, datasets, spec.yTitle);
+  if (spec.field === 'loss_curve') lossChart = ch;
+  panel.style.display = 'block';
+  if (nav) nav.style.display = '';
+  return true;
+}
+
+function buildLossChart(rows) {
+  return buildStepChart(rows, STEP_CHARTS[0]);
+}
+
+function buildStepCharts(rows) {
+  STEP_CHARTS.forEach(spec => buildStepChart(rows, spec));
+}
+
 function buildMarginCharts(rows) {
   const block = $('margin-block');
   const grid = $('margin-grid');
@@ -1371,14 +1614,14 @@ function buildMarginCharts(rows) {
   });
 
   if (!shapeSeries.length) return;
-  const concurrencies = [...allConcs].sort((a, b) => a - b);
+  const concurrencies = sortedConcurrencyKeys([...allConcs]);
   if (concurrencies.length < 2) return;
 
-  const labels = concurrencies.map(c => 'C=' + c);
+  const labels = concurrencies.map(concurrencyTickLabel);
   const datasets = shapeSeries.map((s, i) => buildLineDataset({
     label: s.label,
     data: concurrencies.map(c => {
-      const hit = s.points.find(p => p[0] === c);
+      const hit = s.points.find(p => String(p[0]) === String(c));
       return hit ? hit[1] : null;
     }),
   }, i, CHART_COLORS[i % CHART_COLORS.length]));
@@ -1415,7 +1658,7 @@ function buildComparisonCharts(rows) {
 
   Object.keys(comparison).sort().forEach(suffix => {
     const entry = comparison[suffix];
-    const labels = entry.concurrencies.map(c => 'C=' + c);
+    const labels = entry.concurrencies.map(concurrencyTickLabel);
     const datasets = entry.series.map((s, i) => {
       const color = CHART_COLORS[i % CHART_COLORS.length];
       if (chartType === 'bar') {
@@ -1457,11 +1700,16 @@ function buildCharts(rows) {
   const chartsPanel = $('charts');
 
   buildInteractivityChart(rows);
-  buildComparisonCharts(rows);
-  buildMarginCharts(rows);
+  buildStepCharts(rows);
+  if (sweepChartsEnabled()) {
+    buildComparisonCharts(rows);
+    buildMarginCharts(rows);
+  }
 
-  const hasSweepCharts = ($('comparison-grid') && $('comparison-grid').children.length)
-    || ($('margin-grid') && $('margin-grid').children.length);
+  const hasSweepCharts = sweepChartsEnabled() && (
+    ($('comparison-grid') && $('comparison-grid').children.length)
+    || ($('margin-grid') && $('margin-grid').children.length)
+  );
   chartsPanel.style.display = hasSweepCharts ? 'block' : 'none';
 }
 
@@ -1491,8 +1739,8 @@ function buildHeatmap(rows) {
     panel.style.display = 'none';
     return;
   }
-  const concField = viewerConfig().concurrency_field || 'concurrency';
-  const allConcs = [...new Set(rows.map(c => Number(c[concField])))].sort((a, b) => a - b);
+  const concField = concurrencyField();
+  const allConcs = sortedConcurrencyKeys(rows.map(c => cellConcurrency(c)));
   const values = [];
   groups.forEach(cells => cells.forEach(c => {
     const v = metricNum(c, metricKey);
@@ -1505,18 +1753,18 @@ function buildHeatmap(rows) {
   const minV = Math.min(...values);
   const maxV = Math.max(...values);
   if (hint) {
-    hint.textContent = meta.label + ' · concurrency columns · greener is '
+    hint.textContent = meta.label + ' · ' + fieldLabel(concField) + ' columns · greener is '
       + (meta.higherBetter ? 'higher' : 'lower') + ' · filtered cells';
   }
   const rowHeader = rowFields.map(f => fieldLabel(f)).join(' / ');
   let html = '<table class="data heat"><thead><tr><th>' + rowHeader + '</th>';
-  allConcs.forEach(c => { html += '<th>C=' + c + '</th>'; });
+  allConcs.forEach(c => { html += '<th>' + escapeHtmlText(concurrencyTickLabel(c)) + '</th>'; });
   html += '</tr></thead><tbody>';
   [...groups.entries()].sort().forEach(([key, cells]) => {
     const parts = key.split('|');
     html += '<tr><td>' + rowFields.map((f, i) => fieldLabel(f) + '=' + (parts[i] || '—')).join(' · ') + '</td>';
     allConcs.forEach(conc => {
-      const cell = cells.find(c => Number(c[concField]) === conc);
+      const cell = cells.find(c => String(cellConcurrency(c)) === String(conc));
       const v = cell ? metricNum(cell, metricKey) : null;
       if (v == null) {
         html += '<td class="matrix-na">—</td>';

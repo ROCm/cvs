@@ -18,6 +18,11 @@ LABEL_TO_FIELD: dict[str, str] = {
     "GPU": "gpu",
     "ISL": "isl",
     "OSL": "osl",
+    "MBS": "mbs",
+    "GBS": "gbs",
+    "Precision": "precision",
+    "TP": "tp",
+    "PP": "pp",
     "Policy": "policy",
     "Conc": "concurrency",
     "Host": "host",
@@ -30,6 +35,11 @@ FIELD_LABELS: dict[str, str] = {
     "gpu": "GPU",
     "isl": "ISL",
     "osl": "OSL",
+    "mbs": "MBS",
+    "gbs": "GBS",
+    "precision": "Precision",
+    "tp": "TP",
+    "pp": "PP",
     "policy": "Policy",
     "concurrency": "C",
     "host": "Host",
@@ -78,6 +88,7 @@ class ViewerConfigBuilder:
             "table_columns": table_columns,
             "heatmap_row_fields": list(self.viewer.get("heatmap_row_fields") or group_by + ["policy"]),
             "comparison_hint": comparison_hint,
+            "sweep_charts": self._sweep_charts(),
             "interactivity": interactivity,
         }
         metric_contract = self.config.metric_contract
@@ -132,6 +143,15 @@ class ViewerConfigBuilder:
             parsed.append({"computed": "status", "label": "Status"})
             return parsed
         return self._table_columns_from_config()
+
+    def _sweep_charts(self):
+        raw = self.viewer.get("sweep_charts") if isinstance(self.viewer.get("sweep_charts"), dict) else {}
+        if "enabled" in raw:
+            enabled = bool(raw["enabled"])
+        else:
+            inter = self.viewer.get("interactivity") if isinstance(self.viewer.get("interactivity"), dict) else {}
+            enabled = bool(inter.get("enabled", True))
+        return {"enabled": enabled}
 
     def _interactivity(self) -> dict[str, Any]:
         interactivity_raw = (
@@ -190,7 +210,11 @@ class ViewerConfigBuilder:
                 field = LABEL_TO_FIELD.get(str(label))
                 if field and field != "cell_id":
                     columns.append({"field": field, "label": str(label)})
-            elif str(key).startswith("client.") or str(key) in self.config.metric_units:
+            elif (
+                str(key).startswith("client.")
+                or str(key).startswith("training.")
+                or str(key) in self.config.metric_units
+            ):
                 columns.append({"metric": str(key), "label": str(label)})
         if len(columns) <= 1:
             columns.extend(

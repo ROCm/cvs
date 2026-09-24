@@ -32,11 +32,13 @@ from cvs.lib.training.megatron.utils.convergence import (
     compute_convergence,
     parse_step_metrics,
 )
-from cvs.lib.training.megatron.utils.loss_curve import (
-    parse_all_loss_points,
+from cvs.lib.training.megatron.utils.iteration_metrics import (
+    dialect_from_image,
+    parse_iteration_metrics,
     sample_loss_curve,
-    evaluate_loss_decreasing,
+    sample_training_curves,
 )
+from cvs.lib.training.megatron.utils.loss_curve import evaluate_loss_decreasing
 from cvs.lib.training.megatron.utils.loss_curve_plot import render_loss_curve_png
 from cvs.lib.training.megatron.utils.scaling import compute_scaling_efficiency
 from cvs.lib.utils.verdict import _check_one, ThresholdViolation
@@ -540,8 +542,14 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
     log_text = list(out_dict.values())[-1] or ""
 
     lc = variant_config.loss_curve
-    step_metrics = parse_all_loss_points(log_text)
+    dialect = dialect_from_image(orch.container_config.get("image", ""))
+    tp = getattr(variant_config, "train_params", None) or {}
+    seq = tp.get("sequence_length") if isinstance(tp, dict) else getattr(tp, "sequence_length", None)
+    nnodes = len(getattr(orch, "hosts", None) or [])
+    world_size = nnodes * 8 if nnodes else None
+    step_metrics = parse_iteration_metrics(log_text, dialect, seq_length=seq, world_size=world_size)
     points = sample_loss_curve(step_metrics, lc.sample_every, lc.milestone_steps)
+    train_res_dict[sweep_name].update(sample_training_curves(step_metrics, lc.sample_every, lc.milestone_steps))
 
     log.info("--- Loss curve check for combo '%s' (%d points sampled) ---", sweep_name, len(points))
 
