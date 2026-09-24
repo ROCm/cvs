@@ -55,7 +55,7 @@ with open('../CMakeLists.txt', encoding='utf-8') as f:
 # for PDF output on Read the Docs
 project = "Cluster Validation Suite"
 author = "Advanced Micro Devices, Inc."
-copyright = "Copyright (c) 2025 Advanced Micro Devices, Inc. All rights reserved."
+copyright = "Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved."
 version = version_number
 release = version_number
 
