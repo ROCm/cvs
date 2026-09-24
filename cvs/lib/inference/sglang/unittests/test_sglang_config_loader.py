@@ -368,7 +368,20 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
         config_paths = sorted(config_dir.glob('mi3xx_sglang_*_single.json'))
         config_paths += sorted(config_dir.glob('mi3xx_sglang_*_distributed.json'))
         config_paths += sorted(config_dir.glob('mi3xx_sglang_*_disaggregated.json'))
-        self.assertEqual(len(config_paths), 6)
+        self.assertEqual(
+            {path.name for path in config_paths},
+            {
+                'mi3xx_sglang_deepseek_r1_0528_disaggregated.json',
+                'mi3xx_sglang_deepseek_r1_0528_distributed.json',
+                'mi3xx_sglang_deepseek_r1_0528_single.json',
+                'mi3xx_sglang_llama_70b_disaggregated.json',
+                'mi3xx_sglang_llama_70b_distributed.json',
+                'mi3xx_sglang_llama_70b_single.json',
+                'mi3xx_sglang_qwen35_397b_disaggregated.json',
+                'mi3xx_sglang_qwen35_397b_distributed.json',
+                'mi3xx_sglang_qwen35_397b_single.json',
+            },
+        )
 
         for config_path in config_paths:
             with self.subTest(config=config_path.name):
