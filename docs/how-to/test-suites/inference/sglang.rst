@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run SGLang inference benchmarks with CVS on MI30X clusters
-  :keywords: CVS, SGLang, inference, benchmark, distributed, disaggregated, LLM, ROCm
+  :description: Run SGLang LLM inference benchmarks with CVS on AMD Instinct GPU clusters, covering single-node, distributed, and disaggregated prefill/decode topologies.
+  :keywords: CVS, SGLang, inference, benchmark, AMD Instinct, ROCm, AMD, GPU, LLM, disaggregated, distributed, Llama
 
-*************************
-Run SGLang inference tests
-*************************
+**********************************************
+Run SGLang LLM inference benchmarks with CVS
+**********************************************
 
 CVS provides three SGLang suites under ``cvs/tests/inference/sglang/``. Each suite is a
 separate pytest module; pick the one that matches your topology, then point ``--config_file``
@@ -25,13 +25,13 @@ Test suites
      - What it runs
    * - ``sglang_single``
      - ``sglang_single.py``
-     - Full-model ``sglang.launch_server`` on the first ``cluster.json`` host (local TP). Extra hosts are ignored.
+     - One unified ``sglang.launch_server`` on a single ``benchmark_serv_node`` (local TP).
    * - ``sglang_distributed``
      - ``sglang_distributed.py``
-     - One unified multi-node server (TP/PP across the first ``nnodes`` hosts in ``cluster.json``).
+     - One unified multi-node server (TP/PP across ``server_node_list``).
    * - ``sglang_disagg_distributed``
      - ``sglang_disagg_distributed.py``
-     - Disaggregated prefill/decode (even ``nnodes`` from ``cluster.json``; rank-0 is proxy/benchmark).
+     - Disaggregated prefill/decode with a proxy router.
 
 .. _sglang-set-up-config:
 
@@ -42,7 +42,7 @@ Set up config
 
    .. code:: bash
 
-     cvs config list inference/sglang
+     cvs config copy --list | grep inference/sglang
 
 2. Copy the configuration (and threshold file, if you edit thresholds locally):
 
@@ -62,13 +62,6 @@ Set up config
 
 4. Edit the config — set ``container.image``, replace every ``<changeme>`` with
    cluster-specific values, and ensure ``threshold_json`` resolves to your threshold JSON.
-   ``sglang_single`` uses the first host in ``cluster.json`` (full model, local TP) and
-   defaults the HTTP port to ``8000``; do not set ``benchmark_serv_node`` or
-   ``proxy_router_serv_port``. Extra cluster hosts are ignored. ``sglang_distributed`` takes the first ``nnodes`` hosts
-   from ``cluster.json``; rank-0 is master and benchmark. Dist-init defaults to ``40001``.
-   ``sglang_disagg_distributed`` requires even ``nnodes`` (>= 2); rank-0 is prefill
-   coordinator, proxy, and benchmark, rank-1 is decode coordinator, and remaining hosts
-   split equally (1P/1D, 2P/2D, 3P/3D). Ports default; do not pin node lists or PD ports.
 
 Shipped config templates:
 
@@ -118,7 +111,6 @@ List stages in a suite:
     - test_rms_norm
     - test_launch_server
     - test_poll_for_server_ready
-    - test_scan_inference_logs_for_failure
     - test_openai_compatible_http_endpoints
     - test_run_lm_eval_hellaswag_benchmark_test
     - test_run_lm_eval_gsm8k_benchmark_test
@@ -149,10 +141,10 @@ Example run:
 
   Available tests in sglang_distributed:
     - test_launch_container
+    - test_setup_ibv_devices
     - test_rms_norm
     - test_launch_server
     - test_poll_for_server_ready
-    - test_scan_inference_logs_for_failure
     - test_openai_compatible_http_endpoints
     - test_run_lm_eval_hellaswag_benchmark_test
     - test_run_lm_eval_gsm8k_benchmark_test
@@ -179,14 +171,13 @@ Example run:
 
   Available tests in sglang_disagg_distributed:
     - test_launch_container
+    - test_setup_ibv_devices
     - test_rms_norm
     - test_launch_prefill_servers
     - test_launch_decode_servers
     - test_poll_for_server_ready
-    - test_scan_inference_logs_for_failure
     - test_launch_proxy_router
     - test_openai_compatible_http_endpoints
-    - test_run_long_context_accuracy
     - test_run_lm_eval_hellaswag_benchmark_test
     - test_run_lm_eval_gsm8k_benchmark_test
     - test_run_performance_benchmark_test
@@ -194,10 +185,6 @@ Example run:
     - test_disagg_gpu_topology
     - test_print_results_table
     - test_teardown
-
-``test_run_long_context_accuracy`` is parametrized from ``ACC_ISL=…,OSL=…`` cells in the
-threshold JSON. It runs only when ``server_params.lng_ctx_activate`` is ``true``
-(DeepSeek disaggregated template). Llama disaggregated skips this stage.
 
 Example run:
 
@@ -230,28 +217,15 @@ using the shared ``sglang`` report profile.
 Key lifecycle stages to watch:
 
 - **Container launch** — ``test_launch_container`` must pass before any server work runs.
-- **Server ready** — ``test_poll_for_server_ready`` waits for the SGLang server log to show
-  ready. If that poll fails, ``test_scan_inference_logs_for_failure`` greps the serving logs
-  (single: ``server.log``; distributed: every rank; disagg: every prefill and decode log)
-  and later stages are skipped except ``test_teardown``. If the poll succeeds, the scan
-  stage is skipped. Disagg scans **before** launching the proxy router.
+- **IB setup** — ``test_setup_ibv_devices`` (distributed and disaggregated only) validates RDMA
+  inside the container.
+- **Server ready** — ``test_poll_for_server_ready`` waits for the SGLang server log to show ready.
 - **Smoke** — ``test_openai_compatible_http_endpoints`` probes the OpenAI-compatible API.
-  After the probe it copies matching lines from serving logs into this test's log (single and
-  distributed: server logs; disagg: prefill, decode, and proxy-router logs, including
-  Mooncake / KV-transfer signatures). If ``POST /v1/completions`` returns HTTP 5xx or the
-  probe hangs, later stages are skipped except ``test_teardown``. A 5xx on
-  ``/v1/chat/completions`` with a 200 on ``/v1/completions`` does not skip the rest of the
-  suite.
 - **Performance** — ``test_run_performance_benchmark_test`` runs ``sglang.bench_serving`` for each
   selected sweep cell. Set top-level ``enforce_thresholds: false`` to record metrics
   without failing on uncalibrated gates.
 - **Accuracy** — ``test_run_lm_eval_hellaswag_benchmark_test`` and
   ``test_run_lm_eval_gsm8k_benchmark_test`` run lm-eval tasks configured in ``accuracy.tasks``.
-  Disaggregated runs also include ``test_run_long_context_accuracy`` (needle-in-a-haystack)
-  when ``lng_ctx_activate`` is ``true``; cells come from ``ACC_ISL=…`` keys in the
-  threshold file.
-- **Kernel logs** — ``test_verify_dmesg_after_benchmark`` scans host ``dmesg`` for the
-  inference window. It is separate from the serving-log scan above.
 - **Summary** — ``test_print_results_table`` prints throughput/latency/accuracy in the console and
   report.
 - **Teardown** — ``test_teardown`` stops containers even when a prior stage failed.
