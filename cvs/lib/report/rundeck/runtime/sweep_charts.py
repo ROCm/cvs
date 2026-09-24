@@ -64,8 +64,10 @@ class SweepChartRenderer:
         unit: str,
         *,
         accent: str = "accent",
+        x_label="C={x}",
+        min_points=2,
     ) -> str:
-        if len(points) < 2:
+        if len(points) < min_points:
             return ""
         values = [p[1] for p in points]
         max_val = max(values) or 1.0
@@ -84,13 +86,17 @@ class SweepChartRenderer:
         x_labels = []
         for conc, val in points:
             h = self._bar_height_pct(val, min_val, max_val)
-            tip = html.escape(f"C={conc}: {fmt_num(val)} {unit}".strip())
+            try:
+                xlabel = x_label.format(x=conc)
+            except (KeyError, IndexError, ValueError):
+                xlabel = str(conc)
+            tip = html.escape(f"{xlabel}: {fmt_num(val)} {unit}".strip())
             bars.append(
                 f"<div class='chart-col'>"
                 f"<div class='chart-bar chart-bar-{accent} chart-has-tip' style='height:{h:.1f}%' "
                 f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div></div>"
             )
-            x_labels.append(f"<span class='chart-xlbl'>C={conc}</span>")
+            x_labels.append(f"<span class='chart-xlbl'>{html.escape(str(xlabel))}</span>")
         return (
             f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
             f"<div class='chart-viz'>"
@@ -138,12 +144,51 @@ class SweepChartRenderer:
             else "<p class='muted'>Concurrency charts need two or more points per sweep shape.</p>"
         )
 
-    def render_series_chart(self, title: str, points: list, unit: str) -> str:
+    def render_series_chart(self, title, points, unit, x_label="{x}"):
         normalized = []
         for p in points:
             if isinstance(p, (list, tuple)) and len(p) >= 2:
                 normalized.append((p[0], p[1]))
-        return self.render_bar_chart(title, normalized, unit, accent="accent2")
+        if not normalized:
+            return ""
+        values = [value for _, value in normalized]
+        domain_min, domain_max, ticks = self._display_scale(min(values), max(values))
+        grid = []
+        for tick in ticks:
+            y = 180 - 160 * self._value_pct(tick, domain_min, domain_max) / 100
+            grid.append(
+                f"<line x1='70' x2='570' y1='{y:.2f}' y2='{y:.2f}' stroke='var(--border)'/>"
+                f"<text x='62' y='{y:.2f}' text-anchor='end' dominant-baseline='middle'>"
+                f"{html.escape(fmt_num(tick))}</text>"
+            )
+        coordinates = []
+        markers = []
+        labels = []
+        label_step = max(1, (len(normalized) + 7) // 8)
+        for index, (size, value) in enumerate(normalized):
+            x = 70 + 500 * index / max(1, len(normalized) - 1)
+            y = 180 - 160 * self._value_pct(value, domain_min, domain_max) / 100
+            try:
+                xlabel = x_label.format(x=size)
+            except (KeyError, IndexError, ValueError):
+                xlabel = str(size)
+            tip = html.escape(f"{xlabel}: {fmt_num(value)} {unit}".strip())
+            coordinates.append(f"{x:.2f},{y:.2f}")
+            markers.append(
+                f"<circle cx='{x:.2f}' cy='{y:.2f}' r='3' fill='var(--accent2)' "
+                f"tabindex='0' role='img' aria-label='{tip}'><title>{tip}</title></circle>"
+            )
+            if index % label_step == 0 or index == len(normalized) - 1:
+                labels.append(f"<text x='{x:.2f}' y='202' text-anchor='middle'>{html.escape(xlabel)}</text>")
+        return (
+            f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
+            f"<svg viewBox='0 0 600 220' role='img' aria-label='{html.escape(title)}' "
+            f"style='width:100%;fill:currentColor;font-size:11px'>"
+            f"{''.join(grid)}<polyline points='{' '.join(coordinates)}' "
+            f"fill='none' stroke='var(--accent2)' stroke-width='2'/>"
+            f"{''.join(markers)}{''.join(labels)}</svg>"
+            f"<div class='chart-unit'>{html.escape(unit)}</div></div>"
+        )
 
 
 _DEFAULT_RENDERER = SweepChartRenderer()

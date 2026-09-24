@@ -26,6 +26,8 @@ SESSION_FALLBACK = DEFAULT_SESSION_LIFECYCLE_LABELS
 class DeckCardRenderer:
     """Profile-driven card renderers for Run Deck static HTML sections."""
 
+    DEFAULT_MAX_LINE_CHART_SERIES = 40
+
     def __init__(
         self,
         *,
@@ -176,6 +178,12 @@ class DeckCardRenderer:
             entries = raw
         if not entries:
             return "<p class='muted'>No series data.</p>"
+        entries = sorted(entries, key=lambda e: str(e.get("label", "")) if isinstance(e, dict) else "")
+        total = len(entries)
+        max_series = series_cfg.get("max_series", self.DEFAULT_MAX_LINE_CHART_SERIES)
+        truncated = bool(max_series) and total > max_series
+        if truncated:
+            entries = entries[:max_series]
         parts = []
         title = card.get("title") or y_field
         for entry in entries:
@@ -183,10 +191,23 @@ class DeckCardRenderer:
                 continue
             points = entry.get("points") or []
             label = entry.get("label") or title
-            part = self._charts.render_series_chart(str(label), points, series_cfg.get("unit") or "GB/s")
+            part = self._charts.render_series_chart(
+                str(label),
+                points,
+                series_cfg.get("unit") or "GB/s",
+                x_label=series_cfg.get("x_label") or "{x}",
+            )
             if part:
                 parts.append(part)
-        return f"<div class='chart-grid'>{''.join(parts)}</div>" if parts else "<p class='muted'>No series data.</p>"
+        if not parts:
+            return "<p class='muted'>No series data.</p>"
+        banner = (
+            f"<p class='muted'>Showing {len(parts)} of {total} series charts. "
+            "Full results remain in the results table and JSON export.</p>"
+            if truncated
+            else ""
+        )
+        return f"{banner}<div class='chart-grid'>{''.join(parts)}</div>"
 
     @staticmethod
     def render_heatmap(_payload: dict, card: dict, data: Any) -> str:

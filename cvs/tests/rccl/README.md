@@ -7,7 +7,7 @@
 RCCL tests in CVS are split into a small set of focused workflows:
 
 1. `rccl_perf`  
-   User-facing performance suite. It runs the configured collectives and stages one or more env scripts to every node before launch.
+   User-facing performance suite. It runs nine fixed collectives and stages one or more env scripts to every node before launch.
 
 2. `rccl_regression`  
    Regression suite with Cartesian product sweep. Uses `regression` object in JSON for NCCL/RCCL env variable combinations, or internal defaults.
@@ -18,6 +18,37 @@ RCCL tests in CVS are split into a small set of focused workflows:
    Standalone result-comparison suite. It generates a heatmap from two result JSON files and is reusable beyond RCCL-only flows.
 
 All RCCL execution suites still collect host/network info and validate firewall state before performance runs.
+
+## Run Deck reports
+
+With `--html`, `rccl_perf`, `rccl_regression`, and `rccl_pairwise` generate
+`rccl_run_deck.html` and `rccl_run_deck.json` in the `<suite>_html` directory
+beside the pytest report. Both artifacts are linked from the pytest report
+and included in its zip bundle. Perf and regression also retain their
+existing amCharts reports.
+
+The deck includes bus bandwidth, algorithm bandwidth, and time curves by
+message size, a results table, and a run card. Collectives and message sizes
+come from collected results, including when only part of a suite runs.
+Pairwise series retain their Phase 0/1/2 labels, and its run card lists the
+node and MPI rank counts used across those runs.
+
+Reporting does not change qualification checks. The deck uses the existing
+graph conversion: when several rows share a series and message size, the
+last row wins across in-place/out-of-place, data type, and cycle dimensions.
+The Thresholds row reflects the configured `verify_*` switches; it does not
+confirm that a bus-bandwidth threshold was found or applied. Existing
+threshold configuration mismatches still require separate correction.
+`rccl_perf` still uses its fixed collective parametrization, while regression
+uses top-level `rccl.rccl_collective` or defaults to `all_reduce_perf`.
+
+Chart x-axis labels are humanized (`1K`, `1M`, `1G`); the results table and
+`rccl_run_deck.json` keep the raw byte size so external tooling can still
+sort or filter on it numerically. On large clusters, `rccl_pairwise` can
+produce one series per node pair — each chart card renders at most 40 series
+(configurable per card via the profile's `max_series`) and shows a "Showing N
+of M" banner when truncated; the full set always remains in the results
+table and JSON export.
 
 ## Prerequisites
 

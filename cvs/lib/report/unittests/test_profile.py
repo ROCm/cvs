@@ -1,12 +1,20 @@
 '''Unit tests for deck profile source resolution and inheritance.'''
 
+import json
 import unittest
 
-from cvs.lib.report.profile import DEFAULT_SOURCES, load_json_profile, sources_for_profile
+from jsonschema import Draft202012Validator
+
+from cvs.lib.report.profile import DEFAULT_SOURCES, load_json_profile, profile_json_path, sources_for_profile
 from cvs.lib.report.rundeck.config_builder import make_inference_report_config
 
 
 class TestProfile(unittest.TestCase):
+    def test_rccl_profile_validates_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+        Draft202012Validator(schema).validate(load_json_profile("rccl"))
+
     def test_default_sources_for_legacy_preset(self):
         cfg = make_inference_report_config(
             suite_id="demo",
@@ -15,6 +23,17 @@ class TestProfile(unittest.TestCase):
             tier_metric_specs=lambda _c, _t: {},
         )
         self.assertEqual(sources_for_profile(cfg), DEFAULT_SOURCES)
+
+    def test_rccl_stems_share_one_profile(self):
+        for stem in ("rccl", "rccl_perf", "rccl_regression", "rccl_pairwise"):
+            profile = load_json_profile(stem)
+            self.assertIsNotNone(profile, stem)
+            self.assertEqual(profile["suite_id"], "rccl")
+            self.assertEqual(profile["dataset_builder"], "series")
+            self.assertEqual(
+                profile["hooks"]["run_card_display"],
+                "cvs.lib.report.profiles.hooks.rccl_run_card:rccl_run_card_display",
+            )
 
     def test_sglang_stems_share_one_profile(self):
         for stem in ("sglang_single", "sglang_distributed", "sglang_disagg_distributed"):
