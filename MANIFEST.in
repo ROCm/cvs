@@ -2,6 +2,7 @@ include README.md
 include LICENSE
 include pytest.ini
 include requirements.txt
+include requirements-test.txt
 include version.txt
 recursive-include cvs *
 global-exclude __pycache__

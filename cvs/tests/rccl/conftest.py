@@ -50,8 +50,18 @@ def cvs_results_dict():
 
 
 @pytest.fixture(scope="module")
-def variant_config(config_dict, cluster_dict):
-    return variant_from_config(config_dict, cluster_dict)
+def variant_config(request):
+    try:
+        return variant_from_config(
+            request.getfixturevalue("config_dict"),
+            request.getfixturevalue("cluster_dict"),
+            suite_name=request.module.__name__.rsplit(".", 1)[-1],
+            raw_results=getattr(request.module, "rccl_res_dict", None),
+            run_nodes=getattr(request.module, "rccl_run_nodes", None),
+        )
+    except Exception:
+        log.warning("RCCL Run Deck variant metadata unavailable", exc_info=True)
+        return None
 
 
 @pytest.fixture(scope="module")

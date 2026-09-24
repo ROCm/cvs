@@ -33,6 +33,10 @@ sudo apt install python3-venv
    make installtest
    ```
 
+   This installs `requirements-test.txt` alongside CVS. Its `jsonschema`
+   dependency validates the RCCL Run Deck JSON profile against its schema in
+   unit tests; it is not required by end-user installs.
+
 ## Running Tests
 
 Before submitting changes, ensure all tests pass:

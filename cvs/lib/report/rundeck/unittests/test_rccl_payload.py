@@ -3,6 +3,7 @@
 import unittest
 from types import SimpleNamespace
 
+from cvs.lib.rccl_lib import convert_to_graph_dict
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.dataset_builders import series  # noqa: F401
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
@@ -10,15 +11,17 @@ from cvs.lib.report.rundeck.render import render_rundeck_html
 
 
 def _graph():
-    return {
-        "all_reduce_perf": {
-            1024: {"bus_bw": 12.5, "alg_bw": 11.0, "time": 100.0},
-            2048: {"bus_bw": 40.0, "alg_bw": 36.0, "time": 180.0},
-        },
-        "all_gather_perf": {
-            1024: {"bus_bw": 10.0, "alg_bw": 9.0, "time": 120.0},
-        },
-    }
+    return convert_to_graph_dict(
+        {
+            "all_reduce_perf": [
+                {"name": "all_reduce_perf", "size": 1024, "inPlace": 1, "busBw": 12.5, "algBw": 11.0, "time": 100.0},
+                {"name": "all_reduce_perf", "size": 1048576, "inPlace": 1, "busBw": 40.0, "algBw": 36.0, "time": 180.0},
+            ],
+            "all_gather_perf": [
+                {"name": "all_gather_perf", "size": 1024, "inPlace": 1, "busBw": 10.0, "algBw": 9.0, "time": 120.0},
+            ],
+        }
+    )
 
 
 class TestRcclRundeckPayload(unittest.TestCase):
@@ -42,8 +45,20 @@ class TestRcclRundeckPayload(unittest.TestCase):
         }
         payload = build_rundeck_payload(profile=profile, store=store, cvs_version="1.0.0")
         series_ds = payload["datasets"]["series"]
-        self.assertIn("bus_bw", series_ds["charts"])
-        self.assertTrue(series_ds["results_table"]["rows"])
+        for metric, expected in (
+            ("bus_bw", [("1K", 12.5), ("1M", 40.0)]),
+            ("alg_bw", [("1K", 11.0), ("1M", 36.0)]),
+            ("time", [("1K", 100.0), ("1M", 180.0)]),
+        ):
+            self.assertEqual(series_ds["charts"][metric]["all_reduce_perf"][0]["points"], expected)
+        self.assertEqual(
+            series_ds["results_table"]["rows"],
+            [
+                ["all_gather_perf", 1024, 10.0, 9.0, 120.0],
+                ["all_reduce_perf", 1024, 12.5, 11.0, 100.0],
+                ["all_reduce_perf", 1048576, 40.0, 36.0, 180.0],
+            ],
+        )
         self.assertEqual(payload["results_table"]["headers"][0], "Collective")
         labels = [row[0] for row in payload["run_card_display"]]
         self.assertIn("MPI nodes", labels)
@@ -57,6 +72,8 @@ class TestRcclRundeckPayload(unittest.TestCase):
         self.assertIn("all_reduce_perf", doc)
         self.assertIn("Full results", doc)
         self.assertIn("1K", doc)
+        self.assertIn("1M", doc)
+        self.assertEqual(doc.count("<polyline "), 6)
         self.assertNotIn("C=1024", doc)
         self.assertIn("<title>RCCL Run Deck &mdash; rccl</title>", doc)
 

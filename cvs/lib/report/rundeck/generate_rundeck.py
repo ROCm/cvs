@@ -164,4 +164,9 @@ class RundeckPublisher:
 
 def generate_rundeck(session, report_manager) -> Optional[dict[str, Any]]:
     """Build and publish Run Deck artifacts at pytest session finish."""
-    return RundeckPublisher(session, report_manager).publish()
+    try:
+        return RundeckPublisher(session, report_manager).publish()
+    except Exception:
+        # Optional artifacts must not replace the suite's qualification outcome.
+        log.warning("Run Deck generation failed; preserving the suite result", exc_info=True)
+        return None

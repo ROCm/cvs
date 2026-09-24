@@ -17,6 +17,7 @@ SPUR_SUBSET_SKIP = (
 )
 
 rccl_res_dict = {}
+rccl_run_nodes = {}
 
 
 def _skip_if_spur_cannot_select_nodes():
@@ -79,6 +80,7 @@ def run_pairwise_rccl(phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, ph
         log.info('Pairwise result for %s: %s', phase_label, result_dict)
         if result_dict:
             rccl_res_dict[phase_label] = result_dict
+            rccl_run_nodes[phase_label] = list(node_pair_mgmt)
     except Exception as exc:
         log.error('Pairwise RCCL failed for %s: %s', phase_label, exc)
         return None, False
@@ -406,7 +408,12 @@ def test_rccl_incremental(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
 
 
 def test_gen_graph(cvs_results_dict):
+    globals.error_list = []
     log.info('Final pairwise result dict')
     log.info("%s", rccl_res_dict)
-    graph = publish_graph(rccl_res_dict, cvs_results_dict)
-    log.info("%s", graph)
+    try:
+        graph = publish_graph(rccl_res_dict, cvs_results_dict)
+        log.info("%s", graph)
+    except Exception:
+        log.warning("RCCL pairwise Run Deck results unavailable", exc_info=True)
+    update_test_result()

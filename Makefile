@@ -85,7 +85,7 @@ install: cvs-venv sdist
 
 installtest: test-venv build
 	@echo "Installing from built distribution..."
-	$(PIP) install dist/*.tar.gz
+	$(PIP) install dist/*.tar.gz -r requirements-test.txt
 
 ut: installtest
 	@echo "Unit Testing cvs..."

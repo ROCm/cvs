@@ -38,6 +38,9 @@ def _graph_to_series(graph_dict: dict, *, y_field: str = "bus_bw") -> dict[str, 
             if y_val is None:
                 continue
             try:
+                # Chart x-labels are humanized for the axis; the results table
+                # and JSON export keep the raw size so tooling can sort/filter
+                # on it numerically — see _graph_to_series vs. table_rows below.
                 points.append((_format_msg_size(size_key), float(y_val)))
             except (TypeError, ValueError):
                 continue
