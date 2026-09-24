@@ -154,7 +154,11 @@ class RcclTestsMultinodeRaw(RcclTests):
 
     @model_validator(mode='after')
     def validate_ranks_relationship(self):
-        """Ensure ranks = nodes * ranksPerNode."""
+        """Ensure ranks = nodes * ranksPerNode.
+
+        This identity cannot detect a global/local rank label swap. Requested
+        topology is compared with producer metadata separately in rccl_lib.
+        """
         expected_ranks = self.nodes * self.ranksPerNode
         if self.ranks != expected_ranks:
             raise ValueError(

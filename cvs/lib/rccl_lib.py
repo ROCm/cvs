@@ -26,6 +26,22 @@ from cvs.lib.verify_lib import *
 
 log = globals.log
 
+TOPOLOGY_FIELDS = ('nodes', 'ranks', 'ranksPerNode', 'gpusPerRank')
+
+
+def compare_topology(expected, observed):
+    """Return requested-vs-reported mismatches without modifying either mapping."""
+    return [
+        f'{field}: requested {expected[field]}, reported {observed.get(field, "<missing>")}'
+        for field in TOPOLOGY_FIELDS
+        if field in expected and (field not in observed or expected[field] != observed[field])
+    ]
+
+
+def _result_model(row):
+    """Allow rccl-tests output that omits the multinode topology block."""
+    return RcclTestsMultinodeRaw if all(field in row for field in TOPOLOGY_FIELDS) else RcclTests
+
 
 rccl_err_dict = {
     'orte': 'ORTE does not know how to route|ORTE was unable to reliably start',
@@ -292,10 +308,15 @@ class MpiRun:
         self.global_ranks = global_ranks
         self.hosts_file_path = ''
 
+    def topology(self):
+        """Return the topology requested by -np and the uniform hostfile slots."""
+        nodes = len(self.cluster_nodes)
+        return {'nodes': nodes, 'ranks': self.global_ranks, 'ranksPerNode': self.global_ranks // nodes}
+
     def prepare(self):
         if self.hosts_file_path:
             return self
-        slots = int(self.global_ranks / len(self.cluster_nodes))
+        slots = self.topology()['ranksPerNode']
         host_file = ''.join(f'{node} slots={slots}\n' for node in self.vpc_nodes)
         self.hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
         self.shdl.exec(f'rm -f {self.hosts_file_path}')
@@ -339,6 +360,10 @@ class Srun:
         self.local_ranks = local_ranks
         self.global_ranks = global_ranks
         self.session_dir = ''
+
+    def topology(self):
+        """Return the topology requested by -N, -n and --ntasks-per-node."""
+        return {'nodes': self.no_of_nodes, 'ranks': self.global_ranks, 'ranksPerNode': self.local_ranks}
 
     def prepare(self):
         """Create the ORTE session directory once per node.
@@ -505,6 +530,11 @@ class RcclJob:
             )
         self.output_flag = ''
         self.prepared = False
+        self.topology_checks = []
+        self.topology_check_mode = str(cvs_params.get('topology_check', 'warn')).strip().lower()
+        if self.topology_check_mode not in ('off', 'warn', 'strict'):
+            log.warning('Unrecognised topology_check mode %r; falling back to warn', self.topology_check_mode)
+            self.topology_check_mode = 'warn'
 
     @classmethod
     def from_config(
@@ -657,7 +687,7 @@ class RcclJob:
             with open(local_path, 'r', encoding='utf-8') as f:
                 raw_output = f.read()
             try:
-                return json.loads(raw_output)
+                results = json.loads(raw_output)
             except json.JSONDecodeError:
                 msg = (
                     f'Unable to parse RCCL JSON result file {result_file} on {self.head_node}. '
@@ -666,6 +696,13 @@ class RcclJob:
                 log.error(msg)
                 fail_test(msg)
                 return []
+            if not isinstance(results, list) or any(not isinstance(row, dict) for row in results):
+                fail_test(
+                    f'Invalid RCCL JSON result structure in {result_file} on {self.head_node}: '
+                    'expected an array of result objects'
+                )
+                return []
+            return results
 
     def save_results(self, result_file, payload, label):
         tmp_path = None
@@ -707,27 +744,116 @@ class RcclJob:
         smi_out_dict = self.shdl.exec('rocm-smi -a | head -30')
         get_model_from_rocm_smi_output(smi_out_dict[self.head_node])
 
+    def expected_topology(self, gpus_per_rank):
+        """Combine launcher rank placement with rccl-tests' total GPUs per rank (-t times -g)."""
+        return {**self.launcher.topology(), 'gpusPerRank': gpus_per_rank}
+
+    def _check_reported_topology(self, observed_rows, label, gpus_per_rank):
+        """Record topology discrepancies and apply the configured warning/failure policy."""
+        mode = self.topology_check_mode
+        if mode == 'off':
+            log.debug('Topology check disabled for %s', label)
+            return
+
+        requested = self.expected_topology(gpus_per_rank)
+        record = {
+            'label': label,
+            'requested': requested,
+            'reported': {},
+            'mismatches': [],
+            'mode': mode,
+            'verdict': 'skipped',
+        }
+        self.topology_checks.append(record)
+        if not isinstance(observed_rows, list) or any(not isinstance(row, dict) for row in observed_rows):
+            record['reason'] = 'Invalid result structure: expected an array of result objects'
+            return
+        if not observed_rows:
+            record['reason'] = 'No result rows available'
+            return
+        reported_rows = [{field: row[field] for field in TOPOLOGY_FIELDS if field in row} for row in observed_rows]
+        reported = reported_rows[0]
+        record['reported'] = reported
+        if not any(reported_rows):
+            record['reason'] = 'Producer did not report topology fields'
+            return
+        if isinstance(self.launcher, MpiRun) and requested['ranks'] % requested['nodes']:
+            record['reason'] = (
+                'MPI ranks are not evenly divisible by the number of cluster nodes; only uniform launches are supported'
+            )
+            log.warning('Topology check skipped for %s: %s', label, record['reason'])
+            return
+
+        mismatches = compare_topology(requested, reported)
+        for index, row_topology in enumerate(reported_rows[1:], start=1):
+            if row_topology != reported:
+                mismatches.append(f'row {index}: topology differs from row 0 (reported {row_topology})')
+        record['mismatches'] = mismatches
+        record['verdict'] = 'mismatch' if mismatches else 'pass'
+        if not mismatches:
+            return
+
+        details = '\n'.join(mismatches)
+        message = (
+            '\n==================== RCCL TOPOLOGY MISMATCH ====================\n'
+            f'{label}\n{details}\n'
+            'Check the rccl-tests output and the requested launcher/binary flags.\n'
+        )
+        if (
+            requested['nodes'] > 1
+            and reported.get('nodes') == 1
+            and reported.get('ranks') == requested['ranks']
+            and reported.get('ranksPerNode') == requested['ranks']
+        ):
+            message += (
+                'rccl-tests may report the global MPI size as ranksPerNode in common.cu, '
+                'which also produces an incorrect node count. The upstream fix must pass localSize.\n'
+                'See AIMVT-334: https://amd-hub.atlassian.net/browse/AIMVT-334\n'
+            )
+        message += (
+            'Producer topology is preserved in the result files.\n'
+            '===============================================================\n'
+        )
+        if mode == 'strict':
+            fail_test(message)
+        else:
+            log.warning('%s', message)
+
+    def _save_topology_checks(self, result_file):
+        """Persist the audit beside the producer results, including checks before an aborted run."""
+        base_path = Path(result_file)
+        path = str(base_path.with_name(f'{base_path.stem}_topology_check.json'))
+        payload = {'mode': self.topology_check_mode, 'checks': self.topology_checks}
+        if not self.save_results(path, payload, 'rccl_topology_check'):
+            log.error('Failed to save topology checks to %s on head node %s', path, self.head_node)
+
     def run_regression(self):
         self.prepare()
+        self.topology_checks = []
         params = self.rccl_test_params
+        threads = int(params.get('threads_per_gpu', 1))
         result_file = self.cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
         binary_cmd = (
             f'{self.rccl_tests_dir}/{self.test_name} '
             f'-b {params.get("start_msg_size", "1024")} '
             f'-e {params.get("end_msg_size", "16g")} '
             f'-f {params.get("step_function", 2)} '
-            f'-t {params.get("threads_per_gpu", 1)} '
+            f'-t {threads} '
             f'-w {params.get("warmup_iterations", 10)} '
             f'-n {params.get("no_of_iterations", 20)} '
             f'-N {params.get("no_of_cycles", 1)} '
             f'-c {params.get("check_iteration_count", 1)}{self.test_flags()} '
             f'-Z json {self.output_flag} {result_file}'
         )
-        launched = self.execute(binary_cmd, f'exception in rccl_regression: {self.test_name}')
-        if launched is None:
+        result_out = []
+        try:
+            if self.execute(binary_cmd, f'exception in rccl_regression: {self.test_name}') is not None:
+                result_out = self.read_results(result_file)
+            self._check_reported_topology(result_out, self.test_name, gpus_per_rank=threads)
+        finally:
+            self._save_topology_checks(result_file)
+        if not result_out:
             return []
-
-        result_out = self.read_results(result_file)
         self.collect_gpu_info()
         expected = self.cvs_params.get('results', {})
         test_expected = expected.get(self.test_name) if expected else None
@@ -736,6 +862,7 @@ class RcclJob:
 
     def run_perf(self):
         self.prepare()
+        self.topology_checks = []
         params = self.rccl_test_params
         data_types = params.get('data_types', ['float'])
         result_file = self.cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
@@ -743,19 +870,24 @@ class RcclJob:
         raw_results = []
         validated_results = []
 
-        for dtype in data_types:
-            dtype_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
-            results, validated = self._run_perf_dtype(dtype, dtype_file)
-            if results is None:
-                return raw_results
-            raw_results.extend(results)
-            validated_results.extend(validated)
+        try:
+            for dtype in data_types:
+                dtype_file = f'{base_path.parent}/{base_path.stem}_{dtype}.json'
+                results, validated = self._run_perf_dtype(dtype, dtype_file)
+                if results is None:
+                    return raw_results
+                raw_results.extend(results)
+                validated_results.extend(validated)
 
-        if self.save_results(result_file, raw_results, 'combined_rccl_results'):
-            log.info(f'Saved combined results from all data types to {result_file}')
-        else:
-            log.error('Failed to save combined results to %s on head node %s', result_file, self.head_node)
+            if self.save_results(result_file, raw_results, 'combined_rccl_results'):
+                log.info(f'Saved combined results from all data types to {result_file}')
+            else:
+                log.error('Failed to save combined results to %s on head node %s', result_file, self.head_node)
+        finally:
+            self._save_topology_checks(result_file)
 
+        if not raw_results:
+            return []
         aggregated = self._aggregate_perf_results(validated_results, base_path)
         self.collect_gpu_info()
         verification_results = self._verification_results(aggregated, raw_results)
@@ -765,13 +897,15 @@ class RcclJob:
 
     def _run_perf_dtype(self, dtype, result_file):
         params = self.rccl_test_params
+        gpus_per_rank = int(params.get('threads_per_gpu', 1))
+        label = f'{self.test_name}_{dtype}'
         log.info(f'Running {self.test_name} with dtype={dtype}')
         binary_cmd = (
             f'{self.rccl_tests_dir}/{self.test_name} '
             f'-b {params.get("start_msg_size", "1024")} '
             f'-e {params.get("end_msg_size", "16g")} '
             f'-f {params.get("step_function", 2)} '
-            f'-g {params.get("threads_per_gpu", 1)} '
+            f'-g {gpus_per_rank} '
             f'-c {params.get("check_iteration_count", 1)} '
             f'-w {params.get("warmup_iterations", 10)} '
             f'-d {dtype} '
@@ -780,12 +914,14 @@ class RcclJob:
             f'-Z json {self.output_flag} {result_file}'
         )
         if self.execute(binary_cmd, f'exception in rccl_perf ({dtype})') is None:
+            self._check_reported_topology([], label, gpus_per_rank)
             return None, None
 
-        results = self.read_results(result_file, f'{self.test_name}_{dtype}')
+        results = self.read_results(result_file, label)
         try:
-            validated = [RcclTestsMultinodeRaw.model_validate(result) for result in results]
+            validated = [_result_model(result).model_validate(result) for result in results]
             log.info(f'{dtype}: {len(validated)} rccl-tests row(s) passed schema validation')
+            self._check_reported_topology(results, label, gpus_per_rank)
             return results, validated
         except ValidationError as error:
             if RcclVerifier.is_severe_wrong_corruption_error(error):
@@ -875,8 +1011,13 @@ class RcclJob:
         if not validated_results:
             raise ValueError("validated_results list cannot be empty")
 
+        multinode = isinstance(validated_results[0], RcclTestsMultinodeRaw)
+        for i, result in enumerate(validated_results):
+            if isinstance(result, RcclTestsMultinodeRaw) != multinode:
+                raise ValueError(f"Mixed single-node and multi-node results at index {i}")
+
         multinode_config = None
-        if isinstance(validated_results[0], RcclTestsMultinodeRaw):
+        if multinode:
             first = validated_results[0]
             multinode_config = {
                 'nodes': first.nodes,
@@ -885,8 +1026,6 @@ class RcclJob:
                 'gpusPerRank': first.gpusPerRank,
             }
             for i, result in enumerate(validated_results):
-                if not isinstance(result, RcclTestsMultinodeRaw):
-                    raise ValueError(f"Mixed single-node and multi-node results at index {i}")
                 if (
                     result.nodes != multinode_config['nodes']
                     or result.ranks != multinode_config['ranks']

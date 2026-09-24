@@ -1,6 +1,9 @@
 # cvs/lib/unittests/test_rccl_lib.py
 import os
+import json
 import unittest
+from copy import deepcopy
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 import cvs.lib.rccl_lib as rccl_lib
 
@@ -364,6 +367,7 @@ class TestRcclLib(unittest.TestCase):
         self.assertEqual(job.no_of_global_ranks, 8)
         self.assertEqual(job.openmpi.oob_port, 'ens3')
         self.assertEqual(job.cvs_exec_timeout, 600)
+        self.assertEqual(job.topology_check_mode, 'warn')
         self.assertIsInstance(job.openmpi, rccl_lib.OpenMPI)
         self.assertIsInstance(job.launcher, rccl_lib.Srun)
 
@@ -599,6 +603,479 @@ class TestRcclLib(unittest.TestCase):
         self.assertNotRegex(joined, r'(^|[^a-z])srun([^a-z]|$)')
         self.assertNotIn('spur', joined)
         self.assertIn('all_reduce_perf', joined)
+
+
+class TestRcclTopology(unittest.TestCase):
+    def setUp(self):
+        self.requested = {'nodes': 2, 'ranks': 2, 'ranksPerNode': 1, 'gpusPerRank': 8}
+        self.row = {
+            'numCycle': 0,
+            'name': 'AllReduce',
+            'nodes': 1,
+            'ranks': 2,
+            'ranksPerNode': 2,
+            'gpusPerRank': 8,
+            'size': 8,
+            'type': 'float',
+            'redop': 'sum',
+            'inPlace': 0,
+            'time': 65.3309,
+            'algBw': 0.000122,
+            'busBw': 0.00023,
+            'wrong': '0',
+        }
+        self.job = self._job()
+
+    def _job(self, cvs_params=None, mpi_params=None, nodes=None, managed=True):
+        with patch('cvs.lib.rccl_lib.is_managed_compute', return_value=managed):
+            return rccl_lib.RcclJob(
+                MagicMock(),
+                MagicMock(),
+                'all_reduce_perf',
+                '/dev/null',
+                mpi_params or {'no_of_nodes': '2', 'no_of_local_ranks': '1'},
+                {'threads_per_gpu': '8'},
+                cvs_params or {},
+                nodes or ['n1', 'n2'],
+                nodes or ['n1', 'n2'],
+            )
+
+    def _mock_run(self, rows):
+        saved = {}
+
+        def upload(local_path, remote_path):
+            saved[remote_path] = json.loads(Path(local_path).read_text())
+
+        for patcher in (
+            patch.object(self.job, 'prepare'),
+            patch.object(self.job, 'execute', return_value='completed'),
+            patch.object(self.job, 'read_results', return_value=rows),
+            patch.object(self.job, 'collect_gpu_info'),
+            patch.object(self.job, '_verify_results'),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.job.shdl.upload_file.side_effect = upload
+        self.job.cvs_params['rccl_result_file'] = '/results/rccl.json'
+        return saved
+
+    def _mock_download(self, payload):
+        def download(remote_path, local_path):
+            Path(local_path).write_text(json.dumps(payload))
+            return {self.job.head_node: local_path}
+
+        self.job.shdl.download_file.side_effect = download
+
+    def test_compare_exact_match(self):
+        self.assertEqual(rccl_lib.compare_topology(self.requested, self.requested), [])
+
+    def test_compare_captured_mislabeled_topology(self):
+        """Values captured from a real multi-node run exhibiting the AIMVT-334 label swap."""
+        original = deepcopy(self.row)
+        self.assertEqual(
+            rccl_lib.compare_topology(self.requested, self.row),
+            ['nodes: requested 2, reported 1', 'ranksPerNode: requested 1, reported 2'],
+        )
+        self.assertEqual(self.row, original)
+
+    def test_compare_default_config_mislabeled_topology(self):
+        requested = {**self.requested, 'ranks': 16, 'ranksPerNode': 8, 'gpusPerRank': 1}
+        reported = {**requested, 'nodes': 1, 'ranksPerNode': 16}
+        self.assertEqual(
+            rccl_lib.compare_topology(requested, reported),
+            ['nodes: requested 2, reported 1', 'ranksPerNode: requested 8, reported 16'],
+        )
+
+    def test_compare_missing_fields(self):
+        for field in rccl_lib.TOPOLOGY_FIELDS:
+            with self.subTest(field=field):
+                observed = {key: value for key, value in self.requested.items() if key != field}
+                self.assertEqual(
+                    rccl_lib.compare_topology(self.requested, observed),
+                    [f'{field}: requested {self.requested[field]}, reported <missing>'],
+                )
+
+    def test_compare_omits_fields_not_requested(self):
+        expected = {key: value for key, value in self.requested.items() if key != 'gpusPerRank'}
+        self.assertEqual(rccl_lib.compare_topology(expected, {**self.requested, 'gpusPerRank': 1}), [])
+
+    def test_srun_topology_uses_launch_flags(self):
+        job = self._job(mpi_params={'no_of_nodes': 2, 'no_of_local_ranks': 8}, nodes=['n1', 'n2', 'n3'])
+        self.assertEqual(job.launcher.topology(), {'nodes': 2, 'ranks': 16, 'ranksPerNode': 8})
+
+    def test_mpirun_topology_uses_cluster_nodes_and_hostfile_slots(self):
+        job = self._job(
+            mpi_params={'no_of_nodes': 2, 'no_of_local_ranks': 16},
+            nodes=['n1', 'n2', 'n3', 'n4'],
+            managed=False,
+        )
+        self.assertEqual(job.launcher.topology(), {'nodes': 4, 'ranks': 32, 'ranksPerNode': 8})
+        job.launcher.prepare()
+        self.assertIn('n4 slots=8', job.shdl.exec.call_args.args[0])
+        self.assertEqual(job.shdl.exec.call_args.args[0].count('slots=8'), 4)
+
+    def test_expected_topology_merges_binary_gpu_count(self):
+        for gpus in (1, 8):
+            with self.subTest(gpus=gpus):
+                self.assertEqual(self.job.expected_topology(gpus), {**self.requested, 'gpusPerRank': gpus})
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_warn_mismatch_records_without_failing(self, fail):
+        with patch.object(rccl_lib.log, 'warning') as warning:
+            self.job._check_reported_topology([self.row], 'float', 8)
+        fail.assert_not_called()
+        warning.assert_called_once()
+        self.assertIn('common.cu', warning.call_args.args[1])
+        self.assertEqual(len(self.job.topology_checks), 1)
+        record = self.job.topology_checks[0]
+        self.assertEqual(record['mode'], 'warn')
+        self.assertEqual(record['verdict'], 'mismatch')
+        self.assertEqual(record['requested'], self.requested)
+        self.assertEqual(len(record['mismatches']), 2)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_strict_mismatch_fails_once(self, fail):
+        job = self._job(cvs_params={'topology_check': 'STRICT'})
+        job._check_reported_topology([self.row], 'float', 8)
+        fail.assert_called_once()
+        self.assertIn('nodes: requested 2, reported 1', fail.call_args.args[0])
+        self.assertIn('ranksPerNode: requested 1, reported 2', fail.call_args.args[0])
+        self.assertEqual(job.topology_checks[0]['mode'], 'strict')
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_strict_clean_topology_passes(self, fail):
+        for nodes, local_ranks, gpus in ((1, 1, 8), (1, 8, 1), (2, 1, 8), (2, 8, 1)):
+            with self.subTest(nodes=nodes, local_ranks=local_ranks, gpus=gpus):
+                job = self._job(
+                    cvs_params={'topology_check': 'strict'},
+                    mpi_params={'no_of_nodes': nodes, 'no_of_local_ranks': local_ranks},
+                    nodes=[f'n{i}' for i in range(nodes)],
+                )
+                reported = {
+                    'nodes': nodes,
+                    'ranks': nodes * local_ranks,
+                    'ranksPerNode': local_ranks,
+                    'gpusPerRank': gpus,
+                }
+                job._check_reported_topology([reported], 'float', gpus)
+                self.assertEqual(job.topology_checks[0]['verdict'], 'pass')
+        fail.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.compare_topology')
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_off_disables_comparison(self, fail, compare):
+        job = self._job(cvs_params={'topology_check': 'off'})
+        job._check_reported_topology([self.row], 'float', 8)
+        fail.assert_not_called()
+        compare.assert_not_called()
+        self.assertEqual(job.topology_checks, [])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_invalid_mode_warns_and_defaults_to_warn(self, fail):
+        with patch.object(rccl_lib.log, 'warning') as warning:
+            job = self._job(cvs_params={'topology_check': 'typo'})
+            self.assertIn('falling back to warn', warning.call_args.args[0])
+            job._check_reported_topology([self.row], 'float', 8)
+        fail.assert_not_called()
+        self.assertEqual(job.topology_checks[0]['mode'], 'warn')
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_empty_rows_are_skipped(self, fail):
+        self.job._check_reported_topology([], 'float', 8)
+        fail.assert_not_called()
+        self.assertEqual(self.job.topology_checks[0]['verdict'], 'skipped')
+        self.assertIn('No result rows', self.job.topology_checks[0]['reason'])
+
+    @patch('cvs.lib.rccl_lib.compare_topology')
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_absent_topology_is_skipped_in_all_rows(self, fail, compare):
+        job = self._job(cvs_params={'topology_check': 'strict'})
+        with patch.object(rccl_lib.log, 'warning') as warning:
+            job._check_reported_topology([{'size': 8}, {'size': 16}], 'float', 8)
+        record = job.topology_checks[0]
+        self.assertEqual(record['verdict'], 'skipped')
+        self.assertEqual(record['reason'], 'Producer did not report topology fields')
+        self.assertEqual(record['reported'], {})
+        self.assertEqual(record['mismatches'], [])
+        fail.assert_not_called()
+        compare.assert_not_called()
+        warning.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_partial_topology_still_reports_missing_fields(self, fail):
+        job = self._job(cvs_params={'topology_check': 'strict'})
+        job._check_reported_topology([{'gpusPerRank': 8}], 'float', 8)
+        self.assertEqual(
+            job.topology_checks[0]['mismatches'],
+            [
+                'nodes: requested 2, reported <missing>',
+                'ranks: requested 2, reported <missing>',
+                'ranksPerNode: requested 1, reported <missing>',
+            ],
+        )
+        fail.assert_called_once()
+        self.assertNotIn('common.cu', fail.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_absent_topology_in_only_some_rows_is_not_skipped(self, fail):
+        for rows in ([{}, self.requested], [self.requested, {}], [{}, {'gpusPerRank': 8}]):
+            with self.subTest(rows=rows):
+                job = self._job(cvs_params={'topology_check': 'strict'})
+                job._check_reported_topology(rows, 'regression', 8)
+                self.assertEqual(job.topology_checks[0]['verdict'], 'mismatch')
+                self.assertIn('row 1', job.topology_checks[0]['mismatches'][-1])
+        self.assertEqual(fail.call_count, 3)
+
+    @patch('cvs.lib.rccl_lib.compare_topology')
+    def test_topology_check_skips_invalid_result_shapes(self, compare):
+        for rows in ({'nodes': 1}, {}, None, 1, 'invalid', [None], [self.row, 1]):
+            with self.subTest(rows=rows):
+                self.job._check_reported_topology(rows, 'regression', 8)
+                record = self.job.topology_checks[-1]
+                self.assertEqual(record['verdict'], 'skipped')
+                self.assertIn('expected an array of result objects', record['reason'])
+        compare.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_read_results_rejects_malformed_shapes(self, fail):
+        for payload in ({'nodes': 1}, {}, None, 1, 'invalid', [None], [self.row, 1]):
+            with self.subTest(payload=payload):
+                fail.reset_mock()
+                self._mock_download(payload)
+                self.assertEqual(self.job.read_results('/results/rccl.json'), [])
+                fail.assert_called_once()
+                self.assertIn('/results/rccl.json', fail.call_args.args[0])
+                self.assertIn('expected an array of result objects', fail.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_read_results_preserves_result_objects(self, fail):
+        for payload in ([], [self.row], [{'gpusPerRank': 8}], [{'size': 8}]):
+            with self.subTest(payload=payload):
+                self._mock_download(payload)
+                self.assertEqual(self.job.read_results('/results/rccl.json'), payload)
+        fail.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.compare_topology')
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_nonuniform_mpirun_is_skipped(self, fail, compare):
+        job = self._job(cvs_params={'topology_check': 'strict'}, nodes=['n1', 'n2', 'n3'], managed=False)
+        job._check_reported_topology([self.row], 'float', 8)
+        fail.assert_not_called()
+        compare.assert_not_called()
+        self.assertEqual(job.topology_checks[0]['verdict'], 'skipped')
+        self.assertIn('not evenly divisible', job.topology_checks[0]['reason'])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_later_inconsistent_row_is_detected(self, fail):
+        job = self._job(cvs_params={'topology_check': 'strict'})
+        job._check_reported_topology([self.requested, self.row], 'regression', 8)
+        fail.assert_called_once()
+        self.assertIn('row 1', fail.call_args.args[0])
+        self.assertIn("'nodes': 1", job.topology_checks[0]['mismatches'][0])
+
+    def test_result_model_accepts_single_node_and_multinode(self):
+        single = {key: value for key, value in self.row.items() if key not in rccl_lib.TOPOLOGY_FIELDS}
+        self.assertIs(rccl_lib._result_model(single), rccl_lib.RcclTests)
+        self.assertIs(rccl_lib._result_model(self.row), rccl_lib.RcclTestsMultinodeRaw)
+        self.assertEqual(rccl_lib._result_model(single).model_validate(single).wrong, 0)
+
+    def test_mixed_result_shapes_fail_in_either_order(self):
+        single = rccl_lib.RcclTests.model_validate(self.row)
+        multi = rccl_lib.RcclTestsMultinodeRaw.model_validate(self.row)
+        for rows in ([single, multi], [multi, single]):
+            with self.subTest(first=type(rows[0]).__name__):
+                with self.assertRaisesRegex(ValueError, 'Mixed single-node and multi-node results'):
+                    rccl_lib.RcclJob.aggregate_results(rows)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_perf_saves_all_dtype_checks_and_preserves_producer_metadata(self, fail):
+        rows = [deepcopy(self.row)]
+        saved = self._mock_run(rows)
+        self.job.rccl_test_params['data_types'] = ['float', 'half']
+        self.job.read_results.side_effect = [rows, [{**self.row, 'type': 'half'}]]
+        result = self.job.run_perf()
+        self.assertEqual(rows, [self.row])
+        self.assertEqual(saved['/results/rccl.json'], result)
+        artifact = saved['/results/rccl_topology_check.json']
+        self.assertEqual(artifact['mode'], 'warn')
+        self.assertEqual(
+            [check['label'] for check in artifact['checks']], ['all_reduce_perf_float', 'all_reduce_perf_half']
+        )
+        for check in artifact['checks']:
+            self.assertEqual(check['requested'], self.requested)
+            self.assertEqual(check['verdict'], 'mismatch')
+        for row in result + saved['/results/rccl_aggregated.json']:
+            self.assertEqual({key: row[key] for key in rccl_lib.TOPOLOGY_FIELDS}, artifact['checks'][0]['reported'])
+        self.assertEqual(
+            set(saved), {'/results/rccl.json', '/results/rccl_aggregated.json', '/results/rccl_topology_check.json'}
+        )
+        self.assertIn('-g 8', self.job.execute.call_args.args[0])
+        fail.assert_not_called()
+
+    def test_perf_strict_records_failure_and_still_saves_results(self):
+        saved = self._mock_run([self.row])
+        self.job.topology_check_mode = 'strict'
+        with patch.object(rccl_lib.globals, 'error_list', []):
+            self.assertEqual(self.job.run_perf(), [self.row])
+            self.assertEqual(len(rccl_lib.globals.error_list), 1)
+        self.assertEqual(saved['/results/rccl_topology_check.json']['checks'][0]['verdict'], 'mismatch')
+        self.assertIn('/results/rccl_aggregated.json', saved)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_perf_single_node_without_topology_is_skipped_in_strict_mode(self, fail):
+        self.job = self._job(
+            cvs_params={'topology_check': 'strict'},
+            mpi_params={'no_of_nodes': 1, 'no_of_local_ranks': 8},
+            nodes=['n1'],
+        )
+        self.job.rccl_test_params['threads_per_gpu'] = '1'
+        row = {key: value for key, value in self.row.items() if key not in rccl_lib.TOPOLOGY_FIELDS}
+        saved = self._mock_run([row])
+        self.assertEqual(self.job.run_perf(), [row])
+        check = saved['/results/rccl_topology_check.json']['checks'][0]
+        self.assertEqual(check['verdict'], 'skipped')
+        self.assertEqual(check['reason'], 'Producer did not report topology fields')
+        self.assertEqual(check['mismatches'], [])
+        self.assertIsNone(saved['/results/rccl_aggregated.json'][0]['nodes'])
+        fail.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_regression_without_topology_is_skipped_in_strict_mode(self, fail):
+        self.job.topology_check_mode = 'strict'
+        row = {key: value for key, value in self.row.items() if key not in rccl_lib.TOPOLOGY_FIELDS}
+        saved = self._mock_run([row])
+        self.assertEqual(self.job.run_regression(), [row])
+        self.assertEqual(saved['/results/rccl_topology_check.json']['checks'][0]['verdict'], 'skipped')
+        fail.assert_not_called()
+
+    def test_perf_preserves_checks_when_a_later_launch_fails(self):
+        saved = self._mock_run([self.row])
+        self.job.rccl_test_params['data_types'] = ['float', 'half']
+        self.job.execute.side_effect = ['completed', None]
+        self.assertEqual(self.job.run_perf(), [self.row])
+        checks = saved['/results/rccl_topology_check.json']['checks']
+        self.assertEqual([check['verdict'] for check in checks], ['mismatch', 'skipped'])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_off_mode_saves_disabled_audit(self, fail):
+        saved = self._mock_run([self.row])
+        self.job.topology_check_mode = 'off'
+        self.job.run_perf()
+        self.assertEqual(saved['/results/rccl_topology_check.json'], {'mode': 'off', 'checks': []})
+        fail.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_off_mode_still_rejects_inconsistent_topology_during_aggregation(self, fail):
+        saved = self._mock_run([self.row, {**self.row, **self.requested}])
+        self.job.topology_check_mode = 'off'
+        self.job.run_perf()
+        fail.assert_called_once()
+        self.assertIn('Inconsistent cluster config', fail.call_args.args[0])
+        self.assertEqual(saved['/results/rccl_topology_check.json'], {'mode': 'off', 'checks': []})
+        self.assertNotIn('/results/rccl_aggregated.json', saved)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_schema_failure_still_aborts_and_saves_prior_checks(self, fail):
+        saved = self._mock_run([self.row])
+        self.job.rccl_test_params['data_types'] = ['float', 'half']
+        self.job.read_results.side_effect = [[self.row], [{**self.row, 'wrong': '1'}]]
+        with self.assertRaisesRegex(RuntimeError, 'schema validation failed'):
+            self.job.run_perf()
+        self.assertIn('SEVERE DATA CORRUPTION', fail.call_args.args[0])
+        self.assertEqual(len(saved['/results/rccl_topology_check.json']['checks']), 1)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_regression_counts_gpus_across_threads_and_checks_all_raw_rows(self, fail):
+        self.job.topology_check_mode = 'strict'
+        rows = [self.requested, {'nodes': 1, 'ranks': 2, 'ranksPerNode': 2}]
+        original = deepcopy(rows)
+        saved = self._mock_run(rows)
+        self.assertEqual(self.job.run_regression(), original)
+        self.assertEqual(rows, original)
+        self.assertIn('-t 8', self.job.execute.call_args.args[0])
+        self.assertNotIn('-g ', self.job.execute.call_args.args[0])
+        check = saved['/results/rccl_topology_check.json']['checks'][0]
+        self.assertEqual(check['requested']['gpusPerRank'], 8)
+        self.assertEqual(check['verdict'], 'mismatch')
+        fail.assert_called_once()
+        self.assertEqual(set(saved), {'/results/rccl_topology_check.json'})
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_regression_gpu_count_matches_thread_flag(self, fail):
+        for threads in (None, '1', '8'):
+            with self.subTest(threads=threads):
+                self.job = self._job(cvs_params={'topology_check': 'strict'})
+                if threads is None:
+                    del self.job.rccl_test_params['threads_per_gpu']
+                else:
+                    self.job.rccl_test_params['threads_per_gpu'] = threads
+                gpus = int(threads or 1)
+                row = {**self.row, **self.requested, 'gpusPerRank': gpus}
+                saved = self._mock_run([row])
+                self.assertEqual(self.job.run_regression(), [row])
+                self.assertIn(f'-t {gpus}', self.job.execute.call_args.args[0])
+                check = saved['/results/rccl_topology_check.json']['checks'][0]
+                self.assertEqual(check['requested']['gpusPerRank'], gpus)
+                self.assertEqual(check['verdict'], 'pass')
+        fail.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_malformed_results_fail_loading_without_crashing_runs(self, fail):
+        for method in ('run_perf', 'run_regression'):
+            for mode in ('warn', 'strict', 'off'):
+                with self.subTest(method=method, mode=mode):
+                    fail.reset_mock()
+                    self.job = self._job(cvs_params={'topology_check': mode})
+                    saved = self._mock_run(None)
+                    self._mock_download({'nodes': 1})
+                    self.job.read_results.side_effect = lambda *args: rccl_lib.RcclJob.read_results(self.job, *args)
+                    self.assertEqual(getattr(self.job, method)(), [])
+                    fail.assert_called_once()
+                    self.assertIn('expected an array of result objects', fail.call_args.args[0])
+                    self.job._verify_results.assert_not_called()
+                    checks = saved['/results/rccl_topology_check.json']['checks']
+                    if mode == 'off':
+                        self.assertEqual(checks, [])
+                    else:
+                        self.assertEqual(checks[0]['verdict'], 'skipped')
+
+    def test_empty_result_set_returns_without_verifying(self):
+        """An empty result array used to reach check_bw_dip and raise IndexError."""
+        for method in ('run_perf', 'run_regression'):
+            with self.subTest(method=method):
+                self.job = self._job()
+                saved = self._mock_run([])
+                self.assertEqual(getattr(self.job, method)(), [])
+                self.job._verify_results.assert_not_called()
+                check = saved['/results/rccl_topology_check.json']['checks'][0]
+                self.assertEqual(check['verdict'], 'skipped')
+                self.assertIn('No result rows', check['reason'])
+
+    def test_regression_saves_audit_when_execute_raises(self):
+        saved = self._mock_run([])
+        self.job.execute.side_effect = RuntimeError('launcher unavailable')
+        with self.assertRaisesRegex(RuntimeError, 'launcher unavailable'):
+            self.job.run_regression()
+        self.assertEqual(saved['/results/rccl_topology_check.json'], {'mode': 'warn', 'checks': []})
+
+    def test_regression_failed_launch_saves_skipped_check(self):
+        saved = self._mock_run([])
+        self.job.execute.return_value = None
+        self.assertEqual(self.job.run_regression(), [])
+        self.job.read_results.assert_not_called()
+        self.assertEqual(saved['/results/rccl_topology_check.json']['checks'][0]['verdict'], 'skipped')
+
+    def test_reused_job_resets_checks_for_each_run(self):
+        saved = self._mock_run([self.row])
+        for run in (self.job.run_perf, self.job.run_perf, self.job.run_regression, self.job.run_regression):
+            run()
+            self.assertEqual(len(saved['/results/rccl_topology_check.json']['checks']), 1)
+
+    def test_save_topology_checks_reports_upload_failure(self):
+        self.job.shdl.upload_file.side_effect = IOError('unreachable head node')
+        with patch.object(rccl_lib.log, 'error') as error:
+            self.job._save_topology_checks('/results/rccl.json')
+        self.assertIn('Failed to save topology checks', error.call_args.args[0])
 
 
 if __name__ == '__main__':
