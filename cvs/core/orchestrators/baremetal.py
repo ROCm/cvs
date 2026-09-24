@@ -188,6 +188,10 @@ class BaremetalOrchestrator(Orchestrator):
         """Download a file from the head node's host filesystem."""
         return self.head.download_file(remote_file, local_file)
 
+    def download_file(self, remote_file, local_file, hosts=None):
+        """Download a file through the orchestrator's host transport."""
+        return self.all.download_file(remote_file, local_file, hosts=hosts)
+
     def setup_env(self, hosts, env_script=None):
         """Set up environment on hosts."""
         if not env_script:

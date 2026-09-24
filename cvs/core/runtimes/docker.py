@@ -326,6 +326,10 @@ class DockerRuntime:
         if network:
             args.extend(['--network', network])
 
+        user = runtime_args_config.get('user')
+        if user:
+            args.extend(['--user', shlex.quote(str(user))])
+
         # IPC
         ipc = runtime_args_config.get('ipc')
         if ipc:

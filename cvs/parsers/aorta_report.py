@@ -19,7 +19,6 @@ from cvs.parsers.schemas import (
     ParseResult,
     ParseStatus,
 )
-from cvs.runners._base_runner import RunResult
 
 log = logging.getLogger(__name__)
 
@@ -66,12 +65,12 @@ class AortaReportParser:
         if not PANDAS_AVAILABLE:
             raise ImportError("pandas is required for AortaReportParser. Install with: pip install pandas openpyxl")
 
-    def parse(self, run_result: RunResult) -> ParseResult[AortaTraceMetrics]:
+    def parse(self, run_result) -> ParseResult[AortaTraceMetrics]:
         """
         Parse benchmark results from Aorta's analysis reports.
 
         Args:
-            run_result: Result from AortaRunner (must include tracelens_analysis artifact)
+            run_result: Benchmark result exposing succeeded, error_message, and get_artifact
 
         Returns:
             ParseResult containing validated AortaTraceMetrics for each rank
@@ -79,7 +78,7 @@ class AortaReportParser:
         run_warnings = []
         if not run_result.succeeded:
             # A failed/timed-out node no longer discards traces collected from
-            # surviving nodes (see AortaRunner.run()), so a partial run can
+            # surviving nodes, so a partial run can
             # still have real reports to parse. Only bail out below if there
             # is nothing on disk to parse.
             run_warnings.append(f"Run did not succeed: {run_result.error_message}")

@@ -692,6 +692,10 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             print_console=print_console,
         )
 
+    def exec_cmd_list_on_host(self, cmd_list, timeout=None, print_console=True):
+        """Execute one host-OS command per cluster node in parallel."""
+        return self.all.exec_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
+
     def exec_on_head(self, cmd, timeout=None, detailed=False, print_console=True):
         """
         Execute command directly on head node (baremetal).
