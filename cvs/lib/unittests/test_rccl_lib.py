@@ -1,11 +1,38 @@
 # cvs/lib/unittests/test_rccl_lib.py
 import os
+import json
+import shlex
+import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import MagicMock, patch
 import cvs.lib.rccl_lib as rccl_lib
+from cvs.core.run_layout import RunLayout
+
+
+class _FakeOrch:
+    def __init__(self, ssh_port=22):
+        self.exec = MagicMock()
+        self.exec_host = MagicMock()
+        self.exec_on_head = MagicMock()
+        self.upload_to_head = MagicMock()
+        self.download_from_head = MagicMock()
+        self.all = MagicMock()
+        self.head = MagicMock()
+        self.ssh_port = ssh_port
 
 
 class TestRcclLib(unittest.TestCase):
+    def setUp(self):
+        env = patch.dict(os.environ, {'USER': 'cvsuser'}, clear=True)
+        env.start()
+        self.addCleanup(env.stop)
+        RunLayout._reset()
+        self.addCleanup(RunLayout._reset)
+        errors = patch.object(rccl_lib.globals, 'error_list', [])
+        errors.start()
+        self.addCleanup(errors.stop)
+
     def test_convert_to_graph_dict(self):
         # Test with sample data
         result_dict = {
@@ -251,16 +278,29 @@ class TestRcclLib(unittest.TestCase):
         rccl_lib.RcclVerifier(test_name, output, None).check_lat_dip()
         mock_fail_test.assert_not_called()
 
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_verifier_records_empty_results_without_running_checks(self, mock_fail_test):
+        verifier = rccl_lib.RcclVerifier(
+            'all_reduce_perf',
+            [],
+            {'1024': {'bus_bw': 100}},
+            {'verify_bus_bw': 'True', 'verify_bw_dip': 'True', 'verify_lat_dip': 'True'},
+        )
+
+        verifier.check()
+
+        mock_fail_test.assert_called_once_with('RCCL test all_reduce_perf produced no result rows')
+
     def _openmpi(self):
         openmpi = rccl_lib.OpenMPI({'mpi_dir': '/opt/ompi', 'mpi_oob_port': 'eth0'})
         openmpi.pml = 'ob1'
         openmpi.prepared = True
         return openmpi
 
-    def _srun(self, nodes, no_of_nodes, local_ranks, global_ranks, openmpi=None, phdl=None):
+    def _srun(self, nodes, no_of_nodes, local_ranks, global_ranks, openmpi=None, orch=None):
         return rccl_lib.Srun(
             openmpi or self._openmpi(),
-            phdl or MagicMock(),
+            orch or _FakeOrch(),
             nodes,
             no_of_nodes,
             local_ranks,
@@ -268,7 +308,7 @@ class TestRcclLib(unittest.TestCase):
         )
 
     def test_mpirun_command(self):
-        launcher = rccl_lib.MpiRun(self._openmpi(), MagicMock(), ['n1', 'n2'], ['v1', 'v2'], 16)
+        launcher = rccl_lib.MpiRun(self._openmpi(), _FakeOrch(), ['n1', 'n2'], ['v1', 'v2'], 16)
         cmd = launcher.command('all_reduce_perf')
         self.assertIn('mpirun', cmd)
         self.assertIn('--hostfile /tmp/rccl_hosts_file_', cmd)
@@ -277,13 +317,13 @@ class TestRcclLib(unittest.TestCase):
         self.assertNotIn('spur run', cmd)
 
     def test_mpirun_command_env_overrides_win_over_env_file(self):
-        launcher = rccl_lib.MpiRun(self._openmpi(), MagicMock(), ['n1', 'n2'], ['v1', 'v2'], 16)
+        launcher = rccl_lib.MpiRun(self._openmpi(), _FakeOrch(), ['n1', 'n2'], ['v1', 'v2'], 16)
         cmd = launcher.command('all_reduce_perf', '/home/user/env.sh', {'NCCL_ALGO': 'Ring'})
         self.assertIn('source /home/user/env.sh && export NCCL_ALGO=Ring && all_reduce_perf', cmd)
         self.assertNotIn('-x NCCL_ALGO', cmd)
 
     def test_mpirun_command_wraps_binary_without_env_file(self):
-        launcher = rccl_lib.MpiRun(self._openmpi(), MagicMock(), ['n1', 'n2'], ['v1', 'v2'], 16)
+        launcher = rccl_lib.MpiRun(self._openmpi(), _FakeOrch(), ['n1', 'n2'], ['v1', 'v2'], 16)
         self.assertIn("bash -c all_reduce_perf", launcher.command('all_reduce_perf'))
 
     @patch('cvs.lib.rccl_lib.scheduler_hosts', return_value=['n1', 'n2'])
@@ -356,9 +396,7 @@ class TestRcclLib(unittest.TestCase):
             'rccl_test_params': {'rccl_tests_dir': '/opt/rccl-tests/build'},
             'cvs_params': {'cvs_exec_timeout': '600'},
         }
-        job = rccl_lib.RcclJob.from_config(
-            MagicMock(), MagicMock(), 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2']
-        )
+        job = rccl_lib.RcclJob.from_config(_FakeOrch(), 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2'])
         self.assertEqual(job.env_file, '/tmp/ainic.sh')
         self.assertEqual(job.head_node, 'n1')
         self.assertEqual(job.no_of_global_ranks, 8)
@@ -367,15 +405,25 @@ class TestRcclLib(unittest.TestCase):
         self.assertIsInstance(job.openmpi, rccl_lib.OpenMPI)
         self.assertIsInstance(job.launcher, rccl_lib.Srun)
 
+    def test_rccl_job_rejects_head_node_mismatch(self):
+        orch = _FakeOrch()
+        orch.head_node = 'n2'
+        config = {'mpi_params': {}, 'rccl_test_params': {}, 'cvs_params': {}}
+
+        with self.assertRaisesRegex(ValueError, "must start with orchestrator head 'n2'"):
+            rccl_lib.RcclJob.from_config(orch, 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2'])
+
+    @patch.object(rccl_lib.RcclJob, '_prepare_result_directory')
     @patch.object(rccl_lib.RcclJob, '_detect_output_flag', return_value='-X')
     @patch('cvs.lib.rccl_lib.Srun.prepare', autospec=True)
     @patch('cvs.lib.rccl_lib.OpenMPI.prepare', autospec=True)
     @patch.object(rccl_lib.RcclJob, '_require_spur_job_step')
     @patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True)
-    def test_rccl_job_prepare_is_idempotent(self, _managed, require_step, prepare_openmpi, prepare_srun, detect_output):
+    def test_rccl_job_prepare_is_idempotent(
+        self, _managed, require_step, prepare_openmpi, prepare_srun, detect_output, prepare_directory
+    ):
         job = rccl_lib.RcclJob(
-            MagicMock(),
-            MagicMock(),
+            _FakeOrch(),
             'all_reduce_perf',
             '/dev/null',
             {'mpi_pml': 'ob1'},
@@ -386,6 +434,7 @@ class TestRcclLib(unittest.TestCase):
         )
         self.assertIs(job.prepare(), job)
         self.assertIs(job.prepare(), job)
+        prepare_directory.assert_called_once()
         require_step.assert_called_once()
         prepare_openmpi.assert_called_once()
         prepare_srun.assert_called_once()
@@ -408,13 +457,13 @@ class TestRcclLib(unittest.TestCase):
 
     @patch.dict(os.environ, {'USER': 'cvsuser', 'SLURM_JOB_ID': '4242'}, clear=False)
     def test_srun_prepare_creates_session_dir_once_per_node(self):
-        phdl = MagicMock()
-        launcher = self._srun(['n1', 'n2'], 2, 8, 16, phdl=phdl)
+        orch = _FakeOrch()
+        launcher = self._srun(['n1', 'n2'], 2, 8, 16, orch=orch)
         self.assertIs(launcher.prepare(), launcher)
         launcher.prepare()
         self.assertEqual(launcher.session_dir, '/tmp/cvsuser/ompi-4242')
-        phdl.exec.assert_called_once()
-        mkdir_cmd = phdl.exec.call_args[0][0]
+        orch.exec.assert_called_once()
+        mkdir_cmd = orch.exec.call_args[0][0]
         self.assertIn('mkdir -p -m 700 /tmp/cvsuser', mkdir_cmd)
         self.assertIn('/tmp/cvsuser/ompi-4242', mkdir_cmd)
 
@@ -429,11 +478,11 @@ class TestRcclLib(unittest.TestCase):
         self.assertNotIn('$$', joined)
 
     def test_srun_cleanup_removes_session_dir(self):
-        phdl = MagicMock()
-        launcher = self._srun(['n1'], 1, 8, 8, phdl=phdl).prepare()
+        orch = _FakeOrch()
+        launcher = self._srun(['n1'], 1, 8, 8, orch=orch).prepare()
         session_dir = launcher.session_dir
         launcher.cleanup()
-        self.assertIn(f'rm -rf {session_dir}', phdl.exec.call_args[0][0])
+        self.assertIn(f'rm -rf {session_dir}', orch.exec.call_args[0][0])
         self.assertEqual(launcher.session_dir, '')
 
     def test_wrap_rccl_test_cmd_mpi_setup_before_env_script(self):
@@ -455,7 +504,7 @@ class TestRcclLib(unittest.TestCase):
     def test_mpirun_normalizes_mpi_dir_bin(self):
         launcher = rccl_lib.MpiRun(
             rccl_lib.OpenMPI({'mpi_dir': '/opt/openmpi/bin'}),
-            MagicMock(),
+            _FakeOrch(),
             ['n1'],
             ['v1'],
             8,
@@ -480,28 +529,26 @@ class TestRcclLib(unittest.TestCase):
             with self.subTest(env=env), patch.dict('os.environ', env, clear=True):
                 rccl_lib.RcclJob._require_spur_job_step()
 
-    def _job(self, phdl, shdl, head='head'):
+    def _job(self, orch, head='head'):
         with patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True):
             return rccl_lib.RcclJob(
-                phdl,
-                shdl,
+                orch,
                 'all_reduce_perf',
                 '/dev/null',
                 {'mpi_pml': 'ob1'},
                 {},
-                {'cvs_exec_timeout': 60},
+                {'cvs_exec_timeout': 60, 'rccl_result_file': '/shared/rccl.json'},
                 [head],
                 [head],
             )
 
     def test_exec_rccl_launch_nonzero_exit_does_not_scan(self):
         rccl_lib.globals.error_list = []
-        shdl = MagicMock()
-        shdl.exec.return_value = {
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {
             'head': {'output': '# Avg bus bandwidth    : 1.8\n', 'exit_code': 3},
         }
-        phdl = MagicMock()
-        job = self._job(phdl, shdl)
+        job = self._job(orch)
         with (
             patch.object(job, 'launch_command', return_value='spur run --overlap --mpi=pmix -- all_reduce_perf'),
             patch('cvs.lib.rccl_lib.RcclVerifier.scan_logs') as mock_scan,
@@ -509,19 +556,18 @@ class TestRcclLib(unittest.TestCase):
             result = job.execute('all_reduce_perf', 'unit')
         self.assertIsNone(result)
         mock_scan.assert_not_called()
-        phdl.exec.assert_called()
-        shdl.exec.assert_called_once()
-        self.assertTrue(shdl.exec.call_args.kwargs.get('detailed'))
+        orch.exec.assert_called()
+        orch.exec_on_head.assert_called_once()
+        self.assertTrue(orch.exec_on_head.call_args.kwargs.get('detailed'))
         self.assertTrue(any('exit code 3' in msg for msg in rccl_lib.globals.error_list))
 
     def test_exec_rccl_launch_timeout_with_bandwidth_is_failure(self):
         rccl_lib.globals.error_list = []
-        shdl = MagicMock()
-        shdl.exec.return_value = {
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {
             'head': {'output': '# Avg bus bandwidth    : 1.8\nABORT: Timeout\n', 'exit_code': -1},
         }
-        phdl = MagicMock()
-        job = self._job(phdl, shdl)
+        job = self._job(orch)
         with patch.object(job, 'launch_command', return_value='spur run --overlap --'):
             result = job.execute('all_reduce_perf', 'unit')
         self.assertIsNone(result)
@@ -529,17 +575,16 @@ class TestRcclLib(unittest.TestCase):
 
     def test_exec_rccl_launch_success_scans_logs(self):
         rccl_lib.globals.error_list = []
-        shdl = MagicMock()
-        shdl.exec.return_value = {
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {
             'head': {'output': '# Avg bus bandwidth    : 1.8\n', 'exit_code': 0},
         }
-        phdl = MagicMock()
-        job = self._job(phdl, shdl)
+        job = self._job(orch)
         with patch.object(job, 'launch_command', return_value='spur run --overlap --'):
             result = job.execute('all_reduce_perf', 'unit')
         self.assertIn('Avg bus bandwidth', result)
         self.assertEqual(rccl_lib.globals.error_list, [])
-        phdl.exec.assert_not_called()
+        orch.exec.assert_not_called()
 
     def test_rccl_regression_failed_launch_preserves_graph_generation(self):
         env = {
@@ -549,9 +594,8 @@ class TestRcclLib(unittest.TestCase):
             'SLURM_PROCID': '0',
             'SPUR_NODES': 'n1,n2',
         }
-        phdl = MagicMock()
-        shdl = MagicMock()
-        shdl.exec.side_effect = [
+        orch = _FakeOrch()
+        orch.exec_on_head.side_effect = [
             {'n1': 'NEW'},
             {'n1': {'output': '# Avg bus bandwidth : 1.8\n', 'exit_code': 3}},
         ]
@@ -559,22 +603,22 @@ class TestRcclLib(unittest.TestCase):
             patch.dict('os.environ', env, clear=True),
             patch.object(rccl_lib.globals, 'error_list', []),
             patch.object(rccl_lib.RcclJob, 'read_results') as read_results,
+            patch.object(rccl_lib.RcclJob, '_prepare_result_directory'),
         ):
             failed_results = rccl_lib.RcclJob(
-                phdl,
-                shdl,
+                orch,
                 'all_reduce_perf',
                 '/dev/null',
                 {'no_of_nodes': 2, 'no_of_local_ranks': 1, 'mpi_pml': 'ob1', 'mpi_dir': '/opt/openmpi'},
                 {},
-                {},
+                {'rccl_result_file': '/shared/rccl.json'},
                 ['n1', 'n2'],
                 ['n1', 'n2'],
             ).run_regression()
             self.assertEqual(failed_results, [])
             read_results.assert_not_called()
             self.assertTrue(any('exit code 3' in msg for msg in rccl_lib.globals.error_list))
-            phdl.exec.assert_called()
+            orch.exec.assert_called()
 
         successful_results = [
             {'size': 1024, 'name': 'all_reduce_perf', 'inPlace': 1, 'busBw': 100.0, 'algBw': 90.0, 'time': 1.0}
@@ -592,13 +636,223 @@ class TestRcclLib(unittest.TestCase):
             self.assertEqual(rccl_lib.Srun._cpus_per_nested_task(8), 16)
 
     def test_cleanup_does_not_pkill_scheduler(self):
-        phdl = MagicMock()
-        self._job(phdl, MagicMock())._cleanup_stale_processes('unit-test')
-        commands = [call.args[0] for call in phdl.exec.call_args_list]
+        orch = _FakeOrch()
+        self._job(orch)._cleanup_stale_processes('unit-test')
+        commands = [call.args[0] for call in orch.exec.call_args_list]
         joined = ' '.join(commands)
         self.assertNotRegex(joined, r'(^|[^a-z])srun([^a-z]|$)')
         self.assertNotIn('spur', joined)
         self.assertIn('all_reduce_perf', joined)
+        self.assertEqual(orch.exec.call_count, 3)
+        orch.all.exec.assert_not_called()
+        orch.head.exec.assert_not_called()
+
+    def test_mpirun_uses_container_ssh_port_and_head_environment(self):
+        orch = _FakeOrch(ssh_port=2224)
+        launcher = rccl_lib.MpiRun(self._openmpi(), orch, ['n1', 'n2'], ['v1', 'v2'], 16)
+        cmd = launcher.command('all_reduce_perf')
+        args = shlex.split(cmd)
+        self.assertEqual(
+            args[args.index('plm_rsh_args') + 1],
+            '-p 2224 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null',
+        )
+        self.assertEqual(orch.exec_on_head.call_count, 2)
+        self.assertIn('v1 slots=8\nv2 slots=8', orch.exec_on_head.call_args.args[0])
+        orch.head.exec.assert_not_called()
+        orch.all.exec.assert_not_called()
+
+    def test_openmpi_discovers_ucx_in_orchestrator_environment(self):
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {'head': '1'}
+        openmpi = rccl_lib.OpenMPI({'mpi_pml': 'auto'})
+        with patch.object(rccl_lib.linux_utils, 'get_ucx_net_devices', return_value='rdma0:1') as devices:
+            openmpi.prepare(orch, 'head')
+        devices.assert_called_once_with(orch)
+        self.assertEqual(openmpi.pml, 'ucx')
+        self.assertEqual(openmpi.ucx_env['UCX_NET_DEVICES'], 'rdma0:1')
+        orch.exec_on_head.assert_called_once()
+        orch.head.exec.assert_not_called()
+
+    def test_managed_prepare_rejects_result_directory_invisible_to_cvs(self):
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+        job = self._job(orch)
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(job.openmpi, 'prepare') as prepare_mpi:
+            job.cvs_params['rccl_result_file'] = f'{tmpdir}/results.json'
+            with self.assertRaisesRegex(RuntimeError, '--workspace or CVS_WORKSPACE'):
+                job.prepare()
+            prepare_mpi.assert_not_called()
+            self.assertFalse(job.prepared)
+            self.assertEqual(list(Path(tmpdir).iterdir()), [])
+
+    def test_managed_prepare_checks_remote_result_directory_failures(self):
+        for result in ({}, {'head': {'output': 'permission denied', 'exit_code': 1}}, {'head': 'no exit code'}):
+            with self.subTest(result=result):
+                orch = _FakeOrch()
+                orch.exec_on_head.return_value = result
+                job = self._job(orch)
+                with self.assertRaisesRegex(RuntimeError, 'Cannot use RCCL result directory /shared'):
+                    job.prepare()
+                self.assertFalse(job.prepared)
+
+    def test_managed_prepare_reports_head_connectivity_failure(self):
+        orch = _FakeOrch()
+        orch.exec_on_head.side_effect = OSError('head unreachable')
+        with self.assertRaisesRegex(RuntimeError, 'head unreachable.*--workspace or CVS_WORKSPACE'):
+            self._job(orch).prepare()
+
+    def test_managed_result_directory_accepts_shared_writable_path_and_cleans_probe(self):
+        orch = _FakeOrch()
+        job = self._job(orch)
+        with tempfile.TemporaryDirectory(prefix='rccl shared ') as tmpdir:
+            job.cvs_params['rccl_result_file'] = f'{tmpdir}/results.json'
+            sentinel = Path(tmpdir) / '.cvs-rccl-probe'
+
+            def write_probe(cmd, **kwargs):
+                if kwargs.get('detailed'):
+                    sentinel.write_text('probe', encoding='utf-8')
+                return {'head': {'output': '', 'exit_code': 0}}
+
+            orch.exec_on_head.side_effect = write_probe
+            with patch.object(rccl_lib.uuid, 'uuid4', return_value=MagicMock(hex='probe')):
+                job._prepare_result_directory()
+            self.assertFalse(sentinel.exists())
+            command = orch.exec_on_head.call_args_list[0].args[0]
+            self.assertIn(shlex.quote(tmpdir), command)
+            self.assertIn(shlex.quote(str(sentinel)), command)
+            orch.all.exec.assert_not_called()
+            orch.head.exec.assert_not_called()
+
+    def test_managed_result_directory_rejects_mismatched_sentinel(self):
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+        job = self._job(orch)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job.cvs_params['rccl_result_file'] = f'{tmpdir}/results.json'
+            sentinel = Path(tmpdir) / '.cvs-rccl-probe'
+            sentinel.write_text('different filesystem', encoding='utf-8')
+            with patch.object(rccl_lib.uuid, 'uuid4', return_value=MagicMock(hex='probe')):
+                with self.assertRaisesRegex(RuntimeError, 'sentinel is not visible'):
+                    job._prepare_result_directory()
+            self.assertFalse(sentinel.exists())
+
+    def test_baremetal_result_directory_does_not_require_local_shared_path(self):
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+        job = self._job(orch)
+        job.managed = False
+        job._prepare_result_directory()
+        self.assertEqual(orch.exec_on_head.call_args.args[0], 'mkdir -p -- /shared')
+        orch.exec_on_head.assert_called_once()
+
+    def test_default_result_file_uses_run_layout(self):
+        job = self._job(_FakeOrch())
+        job.cvs_params.pop('rccl_result_file')
+        with patch('cvs.core.run_layout.RunLayout.get') as layout:
+            layout.return_value.run_dir = Path('/shared/cvs_runs/1234')
+            self.assertEqual(job.result_file, '/shared/cvs_runs/1234/rccl_result_file.json')
+
+    def test_result_transfers_use_head_host_handle(self):
+        orch = _FakeOrch()
+        job = self._job(orch)
+        payload = [{'size': 1024, 'busBw': 123}]
+        uploads = []
+
+        def upload(local_path, remote_path):
+            uploads.append((json.loads(Path(local_path).read_text()), remote_path))
+
+        orch.upload_to_head.side_effect = upload
+        self.assertTrue(job.save_results('/shared/rccl.json', payload, 'unit'))
+        self.assertEqual(uploads, [(payload, '/shared/rccl.json')])
+        self.assertFalse(Path(orch.upload_to_head.call_args.args[0]).exists())
+
+        def download(remote_path, local_path):
+            Path(local_path).write_text(json.dumps(payload), encoding='utf-8')
+            return {'head': local_path}
+
+        orch.download_from_head.side_effect = download
+        self.assertEqual(job.read_results('/shared/rccl.json'), payload)
+        orch.download_from_head.assert_called_once()
+        orch.head.upload_file.assert_not_called()
+        orch.head.download_file.assert_not_called()
+        orch.exec.assert_not_called()
+        orch.exec_on_head.assert_not_called()
+
+    def test_result_save_failure_records_test_failure(self):
+        orch = _FakeOrch()
+        orch.upload_to_head.side_effect = OSError('shared storage unavailable')
+        self.assertFalse(self._job(orch).save_results('/shared/rccl.json', [], 'unit'))
+        self.assertTrue(any('shared storage unavailable' in msg for msg in rccl_lib.globals.error_list))
+        self.assertFalse(Path(orch.upload_to_head.call_args.args[0]).exists())
+
+    def test_configured_collectives_uses_sample_config_and_supports_legacy(self):
+        config_path = Path(rccl_lib.__file__).parents[1] / 'input/config_file/rccl/rccl_config.json'
+        config = json.loads(config_path.read_text())['rccl']
+        collectives = rccl_lib.configured_collectives(config)
+        self.assertIn('all_gather_perf', collectives)
+        self.assertGreater(len(collectives), 1)
+        config['rccl_collective'] = ['reduce_perf']
+        self.assertEqual(rccl_lib.configured_collectives(config), collectives)
+        del config['rccl_test_params']['rccl_collective']
+        self.assertEqual(rccl_lib.configured_collectives(config), ['reduce_perf'])
+        self.assertEqual(rccl_lib.configured_collectives({}), ['all_reduce_perf'])
+
+    def test_thresholds_fail_perf_and_regression_for_both_config_shapes(self):
+        references = [
+            {'all_reduce_perf': {'bus_bw': {'1024': '100'}}},
+            {'thor': {'all_reduce_perf-float-16': {'1024': {'bus_bw': '100'}}}},
+        ]
+        for reference in references:
+            for method in ('run_perf', 'run_regression'):
+                with self.subTest(reference=reference, method=method):
+                    rccl_lib.globals.error_list = []
+                    config = {
+                        'mpi_params': {'no_of_nodes': 2, 'no_of_local_ranks': 8},
+                        'rccl_test_params': {'data_types': ['float']},
+                        'cvs_params': {
+                            'nic_model': 'thor',
+                            'verify_bus_bw': 'True',
+                            'verify_bw_dip': 'False',
+                            'verify_lat_dip': 'False',
+                            'rccl_result_file': '/shared/rccl.json',
+                        },
+                        'results': reference,
+                    }
+                    job = rccl_lib.RcclJob.from_config(
+                        _FakeOrch(), 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2']
+                    )
+                    rows = [{'size': 1024, 'inPlace': 1, 'busBw': 50}]
+                    with (
+                        patch.object(job, 'prepare'),
+                        patch.object(job, 'execute', return_value='# Avg bus bandwidth : 50'),
+                        patch.object(job, 'read_results', return_value=rows),
+                        patch.object(job, '_run_perf_dtype', return_value=(rows, [])),
+                        patch.object(job, 'save_results', return_value=True),
+                        patch.object(job, 'collect_gpu_info'),
+                    ):
+                        self.assertEqual(getattr(job, method)(), rows)
+                    self.assertTrue(any('lower than expected bus BW' in msg for msg in rccl_lib.globals.error_list))
+
+    def test_threshold_config_location_precedence_and_legacy_fallback(self):
+        legacy = {'all_reduce_perf': {'bus_bw': {'1024': '100'}}}
+        current = {'all_reduce_perf': {'bus_bw': {'1024': '200'}}}
+        config = {'mpi_params': {}, 'rccl_test_params': {}, 'cvs_params': {'results': legacy}}
+        for top_level, expected in ((None, '100'), (current, '200'), ({}, None)):
+            with self.subTest(top_level=top_level):
+                if top_level is not None:
+                    config['results'] = top_level
+                job = rccl_lib.RcclJob.from_config(_FakeOrch(), 'all_reduce_perf', config, ['n1'], ['v1'])
+                resolved = job._expected_results(['float'])
+                self.assertEqual(resolved, {'1024': {'bus_bw': expected}} if expected else None)
+
+    def test_nic_thresholds_are_specific_to_rank_count_and_data_types(self):
+        job = self._job(_FakeOrch())
+        job.cvs_params['nic_model'] = 'Broadcom'
+        job.expected_results = {'thor': {'all_reduce_perf-float_half-16': {'1024': {'bus_bw': '100'}}}}
+        self.assertEqual(job._expected_results(['float', 'half']), {'1024': {'bus_bw': '100'}})
+        self.assertIsNone(job._expected_results(['float']))
+        job.no_of_global_ranks = 8
+        self.assertIsNone(job._expected_results(['float', 'half']))
 
 
 if __name__ == '__main__':

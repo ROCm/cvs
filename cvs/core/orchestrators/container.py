@@ -656,6 +656,16 @@ class ContainerOrchestrator(BaremetalOrchestrator):
 
         return self.runtime.exec(self.container_id, cmd, hosts, timeout, detailed=detailed, print_console=print_console)
 
+    def exec_host(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+        """Execute directly on the host OS instead of inside the container."""
+        return super().exec(
+            cmd,
+            hosts=hosts,
+            timeout=timeout,
+            detailed=detailed,
+            print_console=print_console,
+        )
+
     def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
         """
         Execute different commands on different hosts inside the container.
