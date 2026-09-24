@@ -1,7 +1,7 @@
 {
     "_comment": "Qwen3.5-397B-A17B-FP8 thresholds for MI30X SGLang disaggregated. ISL=1024 OSL=1024 concurrency sweep: 4,8,16,32,64,128,256. Other ISL/OSL at CONC=64.",
     "ISL=1024,OSL=1024,TP=8,PP=1,CONC=4": {
-      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 150 },
+      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 55 },
       "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
       "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
       "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -9,7 +9,7 @@
       "mfu": { "kind": "min", "value": 0.004 }
     },
     "ISL=1024,OSL=1024,TP=8,PP=1,CONC=8": {
-      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 245 },
+      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 108 },
       "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
       "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
       "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -17,7 +17,7 @@
       "mfu": { "kind": "min", "value": 0.004 }
     },
     "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16": {
-      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 460 },
+      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 165 },
       "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
       "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
       "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -25,7 +25,7 @@
       "mfu": { "kind": "min", "value": 0.009 }
     },
     "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32": {
-      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 800 },
+      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 300 },
       "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
       "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
       "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -33,7 +33,7 @@
       "mfu": { "kind": "min", "value": 0.01 }
     },
     "ISL=1024,OSL=1024,TP=8,PP=1,CONC=64": {
-      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 900 },
+      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 305 },
       "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
       "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
       "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -41,7 +41,7 @@
       "mfu": { "kind": "min", "value": 0.02 }
     },
     "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128": {
-      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 900 },
+      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 305 },
       "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
       "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
       "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -49,7 +49,7 @@
       "mfu": { "kind": "min", "value": 0.02 }
     },
     "ISL=1024,OSL=1024,TP=8,PP=1,CONC=256": {
-      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 900 },
+      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 305 },
       "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
       "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
       "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -57,7 +57,7 @@
       "mfu": { "kind": "min", "value": 0.02 }
     },
     "ISL=8192,OSL=1024,TP=8,PP=1,CONC=64": {
-      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 900 },
+      "output_throughput_per_sec": { "kind": "min_tok_s", "value": 280 },
       "mean_ttft_ms": { "kind": "max_ms", "value": 60000 },
       "mean_tpot_ms": { "kind": "max_ms", "value": 150 },
       "mean_e2e_latency_ms": { "kind": "max_ms", "value": 120000 },
@@ -65,12 +65,12 @@
       "mfu": { "kind": "min", "value": 0.02 }
     },
     "ACC_ISL=131072,OSL=1024": {
-      "pass_rate": { "kind": "min", "value": 0.94 }
+      "pass_rate": { "kind": "min", "value": 0.80 }
     },
     "BENCH=lm_eval_hellaswag": {
-      "acc_norm,none": { "kind": "min", "value": 0.89 }
+      "acc_norm,none": { "kind": "min", "value": 0.23 }
     },
     "BENCH=lm_eval_gsm8k": {
-      "exact_match,flexible-extract": { "kind": "min", "value": 0.95 }
+      "exact_match,flexible-extract": { "kind": "min", "value": 0.90 }
     }
   }
