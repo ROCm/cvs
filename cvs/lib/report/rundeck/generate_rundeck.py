@@ -133,7 +133,10 @@ class RundeckPublisher:
     ) -> Optional[Path]:
         if not config.interactive_viewer or not isinstance(profile, (dict, InferenceReportConfig)):
             return None
-        if isinstance(profile, dict) and profile.get("dataset_builder", "sweep") != "sweep":
+        if isinstance(profile, dict) and profile.get("dataset_builder", "sweep") not in (
+            "sweep",
+            "training_sweep",
+        ):
             return None
         viewer_name = viewer_basename_for(config.report_basename)
         viewer_path = out_dir / viewer_name

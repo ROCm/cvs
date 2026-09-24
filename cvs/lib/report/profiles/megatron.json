@@ -8,7 +8,7 @@
   "footer": "CVS megatron · render-only · does not affect gates",
   "link_name": "Megatron Run Deck",
   "dataset_builder": "training_sweep",
-  "interactive_viewer": false,
+  "interactive_viewer": true,
   "sources": {
     "results": "train_res_dict",
     "variant": "variant_config",
@@ -58,6 +58,7 @@
   "lifecycle": {
     "session_labels": [
       "container_launch",
+      "smoke",
       "training",
       "metrics",
       "teardown"
@@ -71,9 +72,13 @@
     "row_card_test_names": ["test_metric"]
   },
   "viewer": {
-    "interactivity": {
-      "enabled": false
-    }
+    "group_by": ["mbs", "gbs"],
+    "filters": ["mbs", "gbs", "precision", "tp", "pp"],
+    "concurrency_field": "precision",
+    "heatmap_row_fields": ["mbs", "gbs", "tp", "pp"],
+    "comparison_hint": "Compare MBS/GBS at each precision",
+    "sweep_charts": { "enabled": false },
+    "interactivity": { "enabled": false }
   },
   "cards": [
     {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},

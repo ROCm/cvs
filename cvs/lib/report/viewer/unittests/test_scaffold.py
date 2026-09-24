@@ -45,13 +45,58 @@ class TestViewerScaffold(unittest.TestCase):
             self.assertIn("interactivity-panel", text)
             self.assertIn("interactivity-chart-wrap", text)
             self.assertIn("buildInteractivityChart", text)
+            self.assertIn("buildLossChart", text)
+            self.assertIn("buildStepCharts", text)
+            self.assertIn("loss-panel", text)
+            self.assertIn("loss-chart-wrap", text)
+            self.assertIn("grad-norm-panel", text)
+            self.assertIn("tflops-panel", text)
+            self.assertIn("tokens-panel", text)
+            self.assertIn("summaryCardHtml", text)
+            self.assertIn("concurrencyTickLabel", text)
             self.assertIn("viewerConfig", text)
             self.assertIn("initViewerUi", text)
+            self.assertIn("sweepChartsEnabled", text)
+            self.assertIn("nav-charts", text)
             self.assertIn("interactivityExternalTooltip", text)
             self.assertNotIn("tradeoff-block", text)
             self.assertNotIn("per-shape-block", text)
             self.assertNotIn("percentile-block", text)
             self.assertIn('id="overview"', text)
+
+    def test_extra_curve_keys_embed_without_throwing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "suite_viewer.html"
+            write_interactive_viewer(
+                out,
+                json_basename="suite_report.json",
+                title="Suite viewer",
+                tier_order=("throughput", "record"),
+                embed_payload={
+                    "schema_version": 1,
+                    "cells": [
+                        {
+                            "cell_id": "c1",
+                            "host": "h1",
+                            "loss_curve": [[0, 5.0], [10, 4.0]],
+                            "grad_norm_curve": [[0, 3.0], [10, 2.0]],
+                            "throughput_curve": [[0, 100.0], [10, 140.0]],
+                            "tokens_curve": [[0, 20000.0], [10, 24000.0]],
+                        },
+                        {
+                            "cell_id": "c2",
+                            "host": "h1",
+                            "loss_curve": [[0, 6.0], [10, 5.0]],
+                        },
+                    ],
+                },
+            )
+            text = out.read_text(encoding="utf-8")
+            self.assertIn("loss-panel", text)
+            self.assertIn("grad-norm-panel", text)
+            self.assertIn('"grad_norm_curve"', text)
+            self.assertIn('"tokens_curve"', text)
+            self.assertIn("buildStepCharts", text)
 
     def test_viewer_written_when_interactive_enabled(self):
         with tempfile.TemporaryDirectory() as tmp:

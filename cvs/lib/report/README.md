@@ -12,7 +12,7 @@ Suite owners enable Run Deck by adding `profiles/<stem>.json` (matching the
 1. Tests fill **session fixtures** (`cvs_results_dict` / `train_res_dict`, `variant_config`, `lifecycle`, …).
 2. Pytest auto-loads **`profiles/<stem>.json`** when present (matches `cvs run` stem).
 3. At session finish, **`rundeck/generate_rundeck.py`** builds datasets, renders HTML/JSON,
-   and optionally an interactive viewer for sweep suites.
+   and optionally an interactive viewer for `sweep` and `training_sweep` suites.
 
 ```mermaid
 flowchart LR
@@ -115,12 +115,18 @@ Artifacts next to the pytest HTML report:
 | File | When |
 | ---- | ---- |
 | `{report_basename}.html` + `.json` | Profile registered and results present |
-| `{report_basename}_viewer.html` | Sweep + `interactive_viewer: true` |
+| `{report_basename}_viewer.html` | `sweep` or `training_sweep` + `interactive_viewer: true` |
 | `{report_basename}_summary.html` | CI one-pager |
 
 The interactive viewer includes a **Token Throughput per GPU vs. Interactivity**
-chart (InferenceX-style). Configure axis metrics under `viewer.interactivity`
-in the profile JSON; open the viewer sidecar from the nav link or sweep banner.
+chart (InferenceX-style) for inference sweeps. Configure axis metrics under
+`viewer.interactivity` in the profile JSON; open the viewer sidecar from the nav
+link or sweep banner. **Megatron** (`training_sweep`) uses the same explorer
+(MBS/GBS filters, heatmap, gates) with Interactivity and cross-shape Sweep charts
+disabled (combo bars stay on the static deck); when cells include sampled
+``loss_curve`` / ``grad_norm_curve`` / ``throughput_curve`` / ``tokens_curve``
+points it also draws Chart.js overlays for **lm_loss**, **grad_norm**,
+**TFLOP/s/GPU**, and **tokens/s/GPU** vs step.
 
 ## Author tiers
 

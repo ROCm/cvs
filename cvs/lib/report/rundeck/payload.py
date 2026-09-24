@@ -118,7 +118,7 @@ class RundeckPayloadBuilder:
         if isinstance(self.profile, dict) and self.profile.get("cards"):
             payload["deck_profile"] = self.profile
 
-        if self.builder_id == "sweep":
+        if self.builder_id in ("sweep", "training_sweep"):
             from cvs.lib.report.rundeck.viewer_config import ViewerConfigBuilder
 
             profile_for_viewer = self.profile_dict if isinstance(self.profile, dict) else {}

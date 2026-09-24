@@ -190,29 +190,37 @@ def build_training_cells(config, variant_config, train_res_dict, lifecycle_repor
             for tier in config.metric_tier_order
         }
         subtitle = f"MBS={mbs} GBS={gbs} · {precision}" if precision else f"MBS={mbs} GBS={gbs}"
-        cells.append(
-            {
-                "model": model,
-                "gpu": gpu,
-                "mbs": mbs,
-                "gbs": gbs,
-                "precision": precision,
-                "tp": tensor,
-                "pp": pipeline,
-                "policy": cell_id,
-                "concurrency": precision or "1",
-                "host": _HOST,
-                "show_host_in_label": False,
-                "cell_id": cell_id,
-                "label": cell_id,
-                "subtitle": subtitle,
-                "metrics": metrics,
-                "tiers": tiers,
-                "actuals": dict(actuals),
-                "cell_lifecycle": _lifecycle_for_cell(config, lifecycle_report, cell_id),
-                **_pytest_nodeids(config, lifecycle_report, cell_id),
-            }
-        )
+        cell = {
+            "model": model,
+            "gpu": gpu,
+            "mbs": mbs,
+            "gbs": gbs,
+            "precision": precision,
+            "tp": tensor,
+            "pp": pipeline,
+            "policy": cell_id,
+            "concurrency": precision or "1",
+            "host": _HOST,
+            "show_host_in_label": False,
+            "cell_id": cell_id,
+            "label": cell_id,
+            "subtitle": subtitle,
+            "metrics": metrics,
+            "tiers": tiers,
+            "actuals": dict(actuals),
+            "cell_lifecycle": _lifecycle_for_cell(config, lifecycle_report, cell_id),
+            **_pytest_nodeids(config, lifecycle_report, cell_id),
+        }
+        for src, dst in (
+            ("_loss_curve", "loss_curve"),
+            ("_grad_norm_curve", "grad_norm_curve"),
+            ("_throughput_curve", "throughput_curve"),
+            ("_tokens_curve", "tokens_curve"),
+        ):
+            curve = raw.get(src)
+            if isinstance(curve, list) and curve:
+                cell[dst] = curve
+        cells.append(cell)
     return cells
 
 

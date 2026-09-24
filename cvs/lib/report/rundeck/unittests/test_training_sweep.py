@@ -1,17 +1,21 @@
 '''Unit tests for Megatron training-sweep Run Deck builder.'''
 
 import re
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from cvs.lib.report.profile import load_json_profile
 from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
 from cvs.lib.report.rundeck.dataset_builders.registry import build_datasets
+from cvs.lib.report.rundeck.generate_rundeck import RundeckPublisher
 from cvs.lib.report.rundeck.payload import build_rundeck_payload
 from cvs.lib.report.rundeck.render import render_rundeck_html
 from cvs.lib.report.rundeck.runtime.cards import DeckCardRenderer
 from cvs.lib.report.rundeck.runtime.sweep_charts import SweepChartRenderer
 from cvs.lib.report.training_cells import chart_x_labels, flatten_training_combo_actuals
+from cvs.lib.report.viewer.scaffold import viewer_basename_for
 from cvs.lib.training.megatron.utils.megatron_metrics import tier_metric_specs
 
 
@@ -45,6 +49,10 @@ def _train_res():
             "elapsed_time_per_iteration": ["1.5"],
             "tokens_per_gpu": ["3000"],
             "_log_tail": "ignored",
+            "_loss_curve": [[0, 2.5], [10, 2.1], [20, 1.8]],
+            "_grad_norm_curve": [[0, 3.0], [10, 2.0]],
+            "_throughput_curve": [[0, 100.0], [10, 140.0]],
+            "_tokens_curve": [[0, 20000.0], [10, 24000.0]],
         },
         "MBS=4,GBS=128,PRECISION=BF16": {
             "throughput_per_gpu": ["150"],
@@ -70,11 +78,13 @@ class TestFlattenTrainingComboActuals(unittest.TestCase):
             {
                 "throughput_per_gpu": ["1", "2.5"],
                 "_log_tail": "nope",
+                "_loss_curve": [[1, 2.0]],
                 "empty": [],
             }
         )
         self.assertEqual(actuals["training.throughput_per_gpu"], 2.5)
         self.assertNotIn("training._log_tail", actuals)
+        self.assertNotIn("training._loss_curve", actuals)
         self.assertNotIn("training.empty", actuals)
 
 
@@ -101,13 +111,24 @@ class TestTrainingSweepBuilder(unittest.TestCase):
         self.assertEqual(fp8["gbs"], "128")
         self.assertEqual(fp8["cell_id"], "MBS=4,GBS=128,PRECISION=FP8")
         self.assertEqual(fp8["actuals"]["training.throughput_per_gpu"], 200.0)
+        self.assertNotIn("training._loss_curve", fp8["actuals"])
+        self.assertEqual(fp8["loss_curve"], [[0, 2.5], [10, 2.1], [20, 1.8]])
+        self.assertEqual(fp8["grad_norm_curve"], [[0, 3.0], [10, 2.0]])
+        self.assertEqual(fp8["throughput_curve"], [[0, 100.0], [10, 140.0]])
+        self.assertEqual(fp8["tokens_curve"], [[0, 20000.0], [10, 24000.0]])
         self.assertEqual(fp8["tiers"]["throughput"], "pass")
         self.assertEqual(fp8["cell_lifecycle"].get("training"), 12.0)
         self.assertNotIn("isl", fp8)
+        bf16 = next(c for c in cells if c["precision"] == "BF16")
+        self.assertNotIn("loss_curve", bf16)
         headers = datasets["results_table"]["headers"]
         self.assertIn("MBS", headers)
         self.assertNotIn("ISL", headers)
         self.assertIn("throughput_per_gpu", datasets["chart_series"])
+        summary = datasets["sweep_summaries"][0]
+        self.assertEqual(summary["headline_unit"], "TFLOP/s/GPU")
+        self.assertEqual(summary["meta"], "Peak at MBS=4,GBS=128,PRECISION=FP8")
+        self.assertNotIn("ttft_at_max_tput", summary)
         self.assertEqual(datasets["gate_matrix"][0]["label"], "MBS=4,GBS=128,PRECISION=BF16")
 
     def test_payload_and_html(self):
@@ -123,7 +144,12 @@ class TestTrainingSweepBuilder(unittest.TestCase):
         )
         self.assertEqual(payload["suite_id"], "megatron")
         self.assertEqual(len(payload["cells"]), 2)
-        self.assertNotIn("viewer_config", payload)
+        vc = payload["viewer_config"]
+        self.assertEqual(vc["group_by"], ["mbs", "gbs"])
+        self.assertFalse(vc["interactivity"]["enabled"])
+        self.assertFalse(vc["sweep_charts"]["enabled"])
+        fp8 = next(c for c in payload["cells"] if c["precision"] == "FP8")
+        self.assertEqual(fp8["loss_curve"][0], [0, 2.5])
         html = render_rundeck_html(payload)
         self.assertIn("Megatron Run Deck", html)
         self.assertIn("MBS=4,GBS=128,PRECISION=FP8", html)
@@ -144,7 +170,7 @@ class TestTrainingSweepBuilder(unittest.TestCase):
         self.assertEqual(config.metric_prefix, "training.")
         self.assertEqual(config.full_metric("throughput_per_gpu"), "training.throughput_per_gpu")
         self.assertEqual(config.headline_metric, "training.throughput_per_gpu")
-        self.assertFalse(config.interactive_viewer)
+        self.assertTrue(config.interactive_viewer)
 
     def test_default_sweep_reads_train_params(self):
         from cvs.lib.report.training_cells import build_training_cells
@@ -171,6 +197,33 @@ class TestTrainingSweepBuilder(unittest.TestCase):
         self.assertEqual(cells[0]["gbs"], "128")
         self.assertEqual(cells[0]["precision"], "BF16")
         self.assertEqual(cells[0]["subtitle"], "MBS=4 GBS=128 · BF16")
+
+    def test_publisher_writes_training_sweep_viewer(self):
+        profile = _profile()
+        config = build_inference_config_from_profile(profile)
+        payload = build_rundeck_payload(
+            profile=profile,
+            store={
+                "cvs_results_dict": _train_res(),
+                "variant_config": _variant(),
+                "lifecycle_report": {},
+            },
+            cvs_version="0.2.0",
+        )
+        self.assertEqual(viewer_basename_for(config.report_basename), "megatron_run_deck_viewer.html")
+        publisher = RundeckPublisher(SimpleNamespace(config=SimpleNamespace()), None)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = publisher._write_viewer(profile, config, Path(tmp), payload)
+            self.assertIsNotNone(path)
+            self.assertEqual(path.name, "megatron_run_deck_viewer.html")
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("loss-panel", text)
+            self.assertIn("grad-norm-panel", text)
+            self.assertIn("tflops-panel", text)
+            self.assertIn("tokens-panel", text)
+            self.assertIn("buildLossChart", text)
+            self.assertIn("buildStepCharts", text)
+            self.assertIn("loss_curve", text)
 
 
 class TestTrainingChartLabels(unittest.TestCase):
@@ -273,7 +326,7 @@ class TestLifecycleTimeline(unittest.TestCase):
         self.assertEqual(config.expand_lifecycle_labels, ("training",))
         self.assertEqual(
             config.session_lifecycle_labels,
-            ("container_launch", "training", "metrics", "teardown"),
+            ("container_launch", "smoke", "training", "metrics", "teardown"),
         )
 
 
