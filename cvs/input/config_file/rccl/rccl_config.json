@@ -40,9 +40,10 @@
             "cluster_snapshot_debug": "False",
             "_comment_nic_model": "Set nic_model for validations (eg., 'thor' , 'ainic', 'connectx')",
             "nic_model": "thor",
+            "_comment_verification": "Setting any verify_* flag to True enables that check and can fail the test; set results thresholds for this cluster first.",
             "verify_bus_bw": "False",
-            "verify_bw_dip": "True",
-            "verify_lat_dip": "True",
+            "verify_bw_dip": "False",
+            "verify_lat_dip": "False",
             "_comment_cvs_exec_timeout": "Optional. CVS-side outer cap on the SSH-exec call wrapping mpirun (seconds, default 2400).",
             "cvs_exec_timeout": "2400",
             "rccl_result_file": "/home/{user-id}/rccl_result_file.json",
@@ -62,7 +63,7 @@
             "NCCL_MAX_NCHANNELS": [ "8", "16" ]
         },
 
-        "_comments_results": "expected results below are for 2 node cluster, will vary based on cluster size",
+        "_comments_results": "Expected bus bandwidth values below assume the default 2-node, 8-rank-per-node setup. Re-baseline them for each cluster before enabling verification.",
         "results": {
             "all_reduce_perf": {
                 "bus_bw": {
