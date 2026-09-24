@@ -1,11 +1,182 @@
 # cvs/lib/unittests/test_rccl_lib.py
 import os
+import json
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 import cvs.lib.rccl_lib as rccl_lib
 
 
 class TestRcclLib(unittest.TestCase):
+    @staticmethod
+    def _shipped_config():
+        config_file = Path(__file__).resolve().parents[2] / 'input/config_file/rccl/rccl_config.json'
+        with config_file.open(encoding='utf-8') as stream:
+            return json.load(stream)['rccl']
+
+    @staticmethod
+    def _configured_job(config):
+        with patch('cvs.lib.rccl_lib.is_managed_compute', return_value=True):
+            return rccl_lib.RcclJob.from_config(MagicMock(), MagicMock(), 'all_reduce_perf', config, ['n1'], ['n1'])
+
+    @staticmethod
+    def _taper_results():
+        return [
+            {'size': 8589934592, 'inPlace': 1, 'busBw': 340.0, 'time': 20.0},
+            {'size': 17179869184, 'inPlace': 1, 'busBw': 300.0, 'time': 10.0},
+        ]
+
+    def test_expected_for_test_transposes_shipped_shape(self):
+        config = self._shipped_config()
+        job = self._configured_job(config)
+        self.assertEqual(
+            job._expected_for_test(),
+            {'8589934592': {'bus_bw': 330.0}, '17179869184': {'bus_bw': 350.0}},
+        )
+
+    def test_expected_for_test_accepts_transposed_shape(self):
+        config = self._shipped_config()
+        config['results'] = {'all_reduce_perf': {'1024': {'bus_bw': '80.0'}}}
+        self.assertEqual(self._configured_job(config)._expected_for_test(), {'1024': {'bus_bw': 80.0}})
+
+    def test_expected_for_test_unknown_collective(self):
+        job = self._configured_job(self._shipped_config())
+        job.test_name = 'unknown_perf'
+        self.assertIsNone(job._expected_for_test())
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_expected_for_test_invalid_bandwidth(self, mock_fail_test):
+        config = self._shipped_config()
+        config['results'] = {'all_reduce_perf': {'bus_bw': {'1024': 'invalid'}}}
+        self.assertIsNone(self._configured_job(config)._expected_for_test())
+        self.assertIn('rccl.results.all_reduce_perf.1024', mock_fail_test.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_invalid_bandwidth_does_not_suppress_valid_thresholds(self, mock_fail_test):
+        config = self._shipped_config()
+        config['results'] = {'all_reduce_perf': {'bus_bw': {'1024': 'invalid', '2048': '80.0'}}}
+        job = self._configured_job(config)
+        job.cvs_params['verify_bus_bw'] = 'True'
+        job._verify_results([{'size': 2048, 'inPlace': 1, 'busBw': 10.0}], job._expected_for_test())
+        self.assertEqual(mock_fail_test.call_count, 2)
+        self.assertIn('rccl.results.all_reduce_perf.1024', mock_fail_test.call_args_list[0].args[0])
+        self.assertIn('expected bus BW 80.0', mock_fail_test.call_args_list[1].args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_expected_for_test_rejects_malformed_shape(self, mock_fail_test):
+        config = self._shipped_config()
+        for results, path in (
+            ('invalid', 'rccl.results'),
+            ({'all_reduce_perf': '330.0'}, 'rccl.results.all_reduce_perf'),
+            ({'all_reduce_perf': {'bus_bw': '330.0'}}, 'rccl.results.all_reduce_perf.bus_bw'),
+        ):
+            with self.subTest(results=results):
+                mock_fail_test.reset_mock()
+                config['results'] = results
+                self.assertIsNone(self._configured_job(config)._expected_for_test())
+                self.assertIn(path, mock_fail_test.call_args.args[0])
+
+    def test_legacy_results_fallback_warns(self):
+        config = self._shipped_config()
+        config['cvs_params']['results'] = config.pop('results')
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            self.assertTrue(self._configured_job(config)._expected_for_test())
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn('rccl.results', captured.output[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_requested_bus_bw_without_thresholds_fails(self, mock_fail_test):
+        verifier = rccl_lib.RcclVerifier('unknown_perf', [], None, {'verify_bus_bw': 'True'})
+        verifier.check()
+        mock_fail_test.assert_called_once_with(
+            'No bus bandwidth thresholds for unknown_perf in rccl.results.unknown_perf'
+        )
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_disabled_bus_bw_does_not_fail(self, mock_fail_test):
+        verifier = rccl_lib.RcclVerifier(
+            'all_reduce_perf',
+            self._taper_results(),
+            {'8589934592': {'bus_bw': 330.0}},
+            {'verify_bus_bw': 'False', 'verify_bw_dip': 'False', 'verify_lat_dip': 'False'},
+        )
+        verifier.check()
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_omitted_dip_flags_are_disabled(self, mock_fail_test):
+        job = self._configured_job(self._shipped_config())
+        rccl_lib.RcclVerifier(job.test_name, self._taper_results(), job._expected_for_test()).check()
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_enabled_bus_bw_uses_shipped_thresholds(self, mock_fail_test):
+        job = self._configured_job(self._shipped_config())
+        job.cvs_params['verify_bus_bw'] = 'True'
+        results = [
+            {'size': 8589934592, 'inPlace': 1, 'busBw': 10.0, 'time': 20.0},
+        ]
+        job._verify_results(results, job._expected_for_test())
+        mock_fail_test.assert_called_once()
+        self.assertIn('expected bus BW 330.0', mock_fail_test.call_args.args[0])
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_flags_enable_their_checks(self, mock_fail_test):
+        job = self._configured_job(self._shipped_config())
+        expected = job._expected_for_test()
+        for flag, failure in (
+            ('verify_bw_dip', 'BusBW'),
+            ('verify_lat_dip', 'latency'),
+        ):
+            with self.subTest(flag=flag):
+                mock_fail_test.reset_mock()
+                params = {'verify_bus_bw': 'False', 'verify_bw_dip': 'False', 'verify_lat_dip': 'False'}
+                params[flag] = 'True'
+                rccl_lib.RcclVerifier(job.test_name, self._taper_results(), expected, params).check()
+                self.assertEqual(mock_fail_test.call_count, 1)
+                self.assertIn(failure, mock_fail_test.call_args.args[0])
+        mock_fail_test.reset_mock()
+        rccl_lib.RcclVerifier(
+            job.test_name,
+            self._taper_results(),
+            expected,
+            {'verify_bus_bw': 'False', 'verify_bw_dip': 'False', 'verify_lat_dip': 'False'},
+        ).check()
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_dip_checks_normalize_string_measurements(self, mock_fail_test):
+        expected = {'1024': {'bus_bw': 80.0}, '2048': {'bus_bw': 85.0}}
+        results = [
+            {'size': 1024, 'inPlace': 1, 'busBw': '100.0', 'time': '20.0'},
+            {'size': 2048, 'inPlace': 1, 'busBw': '90.0', 'time': '10.0'},
+        ]
+        rccl_lib.RcclVerifier(
+            'all_reduce_perf', results, expected, {'verify_bw_dip': 'True', 'verify_lat_dip': 'True'}
+        ).check()
+        self.assertEqual(mock_fail_test.call_count, 2)
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_shipped_verification_is_disabled(self, mock_fail_test):
+        job = self._configured_job(self._shipped_config())
+        for flag in ('verify_bus_bw', 'verify_bw_dip', 'verify_lat_dip'):
+            self.assertEqual(job.cvs_params[flag], 'False')
+        rccl_lib.RcclVerifier(job.test_name, self._taper_results(), job._expected_for_test(), job.cvs_params).check()
+        mock_fail_test.assert_not_called()
+
+    def test_shipped_collectives_have_numeric_thresholds(self):
+        config = self._shipped_config()
+        job = self._configured_job(config)
+        for collective in config['rccl_test_params']['rccl_collective']:
+            with self.subTest(collective=collective):
+                job.test_name = collective
+                expected = job._expected_for_test()
+                self.assertIsNotNone(expected)
+                self.assertTrue(expected)
+                for size, values in expected.items():
+                    self.assertTrue(size.isdigit())
+                    self.assertIsInstance(values['bus_bw'], float)
+
     def test_convert_to_graph_dict(self):
         # Test with sample data
         result_dict = {

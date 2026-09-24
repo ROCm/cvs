@@ -122,31 +122,47 @@ The RCCL config keeps benchmark intent and validation settings, while RCCL/NCCL/
 ```json
 {
   "rccl": {
-    "env_files": ["/root/ainic_env_script.sh", "/root/thor2_env_script.sh"],
-    "rccl_collective": ["all_reduce_perf", "all_gather_perf"],
-    "rccl_result_file": "/tmp/rccl_perf_result.json",
-    "start_msg_size": "1024",
-    "end_msg_size": "16g",
-    "results": { }
+    "env_source_script": "/path/to/rccl_env_script.sh",
+    "mpi_params": {"no_of_nodes": "2", "no_of_local_ranks": "8"},
+    "rccl_test_params": {
+      "rccl_collective": ["all_reduce_perf"],
+      "start_msg_size": "1024",
+      "end_msg_size": "16g"
+    },
+    "cvs_params": {
+      "verify_bus_bw": "True",
+      "verify_bw_dip": "False",
+      "verify_lat_dip": "False",
+      "rccl_result_file": "/tmp/rccl_perf_result.json"
+    },
+    "results": {
+      "all_reduce_perf": {
+        "bus_bw": {"8589934592": "330.00", "17179869184": "350.00"}
+      }
+    }
   }
 }
 ```
+
+`results` belongs beside `cvs_params` under `rccl`. The example thresholds assume two nodes with eight ranks each; measure and replace them for your cluster. With `verify_bus_bw` enabled, bandwidth below 95% of a configured threshold fails, and missing thresholds for a requested collective also fail. Enable either dip flag to check the configured message sizes for a bandwidth or latency dip.
 
 ### Regression config
 
 ```json
 {
   "rccl": {
-    "env_source_script": "/root/thor2_env_script.sh", 
-    "rccl_collective": ["all_reduce_perf"],
+    "env_source_script": "/path/to/rccl_env_script.sh",
+    "mpi_params": {"no_of_nodes": "2", "no_of_local_ranks": "8"},
+    "rccl_test_params": {"rccl_collective": ["all_reduce_perf"]},
     "regression": {
       "NCCL_ALGO": ["ring", "tree"],
       "NCCL_PROTO": ["Simple"],
       "NCCL_IB_QPS_PER_CONNECTION": ["1", "2"]
     },
-    "start_msg_size": "1024",
-    "end_msg_size": "16g",
-    "results": { }
+    "cvs_params": {"verify_bus_bw": "False", "verify_bw_dip": "False", "verify_lat_dip": "False"},
+    "results": {
+      "all_reduce_perf": {"bus_bw": {"8589934592": "330.00"}}
+    }
   }
 }
 ```
