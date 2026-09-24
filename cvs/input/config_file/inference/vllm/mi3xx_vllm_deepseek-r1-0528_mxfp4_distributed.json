@@ -1,7 +1,7 @@
 {
   "_comment": "MI325X distributed serving workload, TP8/PP2 on two eight-GPU nodes. Set the image, model, network environment and mounts before running. Threshold enforcement remains disabled until calibrated.",
   "enforce_thresholds": false,
-  "threshold_json": "mi325x_vllm_minimax-m3_bf16_distributed_threshold.json",
+  "threshold_json": "mi325x_vllm_deepseek-r1-0528_mxfp4_distributed_threshold.json",
   "paths": {
     "_comment": "Host and container paths for model access, artifacts, and Hugging Face authentication.",
     "shared_fs": "/home/{user-id}",
@@ -12,7 +12,7 @@
   "container": {
     "_comment": "Container definition and static environment inherited by server, benchmark, and accuracy commands.",
     "lifetime": "per_run",
-    "name": "vllm_minimax-m3_bf16_distributed_mi325x",
+    "name": "vllm_deepseek-r1-0528_mxfp4_distributed_mi325x",
     "image": "<changeme>",
     "_comment_socket_interfaces": "NCCL_SOCKET_IFNAME should be the Linux netdev associated with the selected RNICs; GLOO_SOCKET_IFNAME and TP_SOCKET_IFNAME generally use the frontend or control-plane NIC.",
     "_comment_gid_index": "Set NCCL_IB_GID_INDEX to the RoCE/IB GID index available on every selected HCA and node; inspect show_gids or ibv_devinfo -v inside the container and choose the matching fabric entry.",
@@ -25,7 +25,8 @@
       "NCCL_DEBUG": "ERROR",
       "HF_HUB_OFFLINE": "1",
       "TRANSFORMERS_OFFLINE": "1",
-      "VLLM_USE_BREAKABLE_CUDAGRAPH": "0"
+      "VLLM_ROCM_USE_AITER_FP4BMM": "0",
+      "QUARK_MXFP4_IMPL": "hip"
     },
     "runtime": {
       "name": "docker",
@@ -48,7 +49,8 @@
       "_comment_rdma": "If the image lacks the host RNIC provider, replace both host/container library placeholders with an ABI-compatible libibverbs and provider pair. Remove those two library mounts when the image already includes compatible RDMA userspace. CVS exposes /dev/infiniband when launching the container."
     },
     "_comment_image": "Use a compatible ROCm vLLM image with support for this checkpoint and the selected backends; options and checkpoint support are version dependent.",
-    "_comment_gpu_arch": "These backend settings were exercised on MI325X (gfx942); revalidate them before using another GPU architecture."
+    "_comment_gpu_arch": "These backend settings were exercised on MI325X (gfx942); revalidate them before using another GPU architecture.",
+    "_comment_runtime_requirement": "The successful gfx942 emulation run required a Quark HIP MXFP4 QDQ fix that makes the input contiguous before the HIP call. Use an image containing that fix or an equivalent upstream fix; flags alone are insufficient with the affected Quark 0.12.post1 runtime."
   },
   "server_params": {
     "_comment": "Harness fields plus snake-case vllm serve options.",
@@ -67,8 +69,7 @@
     "max_num_seqs": 64,
     "gpu_memory_utilization": 0.85,
     "enforce_eager": true,
-    "block_size": 128,
-    "attention_backend": "TRITON_ATTN",
+    "moe_backend": "emulation",
     "_comment_context": "max_model_len covers the fixed ISL plus OSL with eight tokens of padding; update it when changing the sweep lengths.",
     "_comment_startup": "The readiness polling budget allows slow checkpoint loading; it does not resolve tokenizer, backend or runtime compatibility failures."
   },

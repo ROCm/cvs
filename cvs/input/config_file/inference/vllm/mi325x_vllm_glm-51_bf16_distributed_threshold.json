@@ -1,7 +1,7 @@
 {
   "_comment": "Uncalibrated zero placeholders for the packaged 32-metric assertion subset. The paired config keeps enforce_thresholds false, so all finite metrics record without gating. Add or remove registered metrics as needed, and replace every retained placeholder with a measured value before enabling enforcement.",
   "_comment_accuracy": "The optional top-level accuracy block is task-qualified and exempt from vLLM sweep metric validation. Its shape remains: \"accuracy\": {\"<task-id>\": {\"<lm-eval-metric>\": {\"kind\": \"min\", \"value\": 0}}}.",
-  "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": {
+  "ISL=1024,OSL=8192,TP=8,PP=2,CONC=16": {
     "failed": {
       "kind": "max",
       "value": 0
@@ -131,7 +131,7 @@
       "value": 0
     }
   },
-  "ISL=1024,OSL=1024,TP=8,PP=2,CONC=32": {
+  "ISL=1024,OSL=8192,TP=8,PP=2,CONC=32": {
     "failed": {
       "kind": "max",
       "value": 0
@@ -261,7 +261,7 @@
       "value": 0
     }
   },
-  "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64": {
+  "ISL=1024,OSL=8192,TP=8,PP=2,CONC=64": {
     "failed": {
       "kind": "max",
       "value": 0
