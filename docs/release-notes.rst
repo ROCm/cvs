@@ -12,7 +12,9 @@ Release highlights
 ==================
 
 This release focuses on expanding CVS into a full-featured cluster qualification platform, adding distributed training suites (JAX MaxText, TorchTitan, and Megatron), inference suites (vLLM, SGLang, xDiT, and ATOM), and a container execution backend alongside the existing bare-metal path.
+
 New cluster-wide observability is provided by the Cluster Health Monitor, with support for control-plane monitoring, RCCL Reliability, Availability, and Serviceability (RAS) and Inspector plugins, and an nginx Transport Layer Security (TLS) overlay.
+
 Further, rack-aware execution with switch-tray support, pairwise RCCL tests, and MORI RDMA performance tests extend validation coverage to large-scale cluster topologies.
 
 Added
