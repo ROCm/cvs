@@ -41,17 +41,14 @@
         "privileged": true,
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
-          "<changeme-models-mount>:/models:ro",
-          "<changeme-host-libibverbs-path>:<changeme-container-libibverbs-path>:ro",
-          "<changeme-host-rdma-provider-path>:<changeme-container-rdma-provider-path>:ro"
+          "<changeme-models-mount>:/models:ro"
         ],
         "devices": [
           "/dev/dri",
           "/dev/kfd"
         ]
       },
-      "_comment": "Docker runtime and launch arguments applied on every participating node.",
-      "_comment_rdma": "If the image lacks the host RNIC provider, replace both host/container library placeholders with an ABI-compatible libibverbs and provider pair. Remove those two library mounts when the image already includes compatible RDMA userspace. CVS exposes /dev/infiniband when launching the container."
+      "_comment": "Docker runtime and launch arguments applied on every participating node."
     },
     "_comment_image": "Use a compatible ROCm vLLM image with support for this checkpoint and the selected backends; options and checkpoint support are version dependent.",
     "_comment_gpu_arch": "These backend settings were exercised on MI325X (gfx942); revalidate them before using another GPU architecture.",
