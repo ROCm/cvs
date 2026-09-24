@@ -1,284 +1,145 @@
 .. meta::
-  :description: Configure the Aorta benchmark configuration file variables
+  :description: Configure Aorta benchmark JSON variants and performance thresholds
   :keywords: Aorta, ROCm, RCCL, benchmark, CVS
 
-********************************************
-Aorta benchmark test configuration file
-********************************************
+Aorta benchmark configuration
+=============================
 
-The Aorta benchmark runs distributed training with RCCL in a container, collects PyTorch profiler traces, and validates iteration time and compute/communication overlap. Metrics are derived from host-side trace parsing (raw traces or TraceLens reports when available).
+Aorta uses JSON variants in ``cvs/input/config_file/benchmark/aorta/``:
 
-``aorta_benchmark.yaml``
-========================
+* ``mi3xx_aorta_profile_overlap_2gpu_single.json``
+* ``mi3xx_aorta_profile_overlap_2gpu_distributed.json``
+* ``mi3xx_aorta_profile_overlap_2gpu_threshold.json``
 
-The shipped sample is ``cvs/input/config_file/aorta/aorta_benchmark.yaml`` (path relative to the CVS package directory; see *How to run* below).
+The variants preserve the short profiling workload from the previous sample: the base file
+is ``config/profile_overlap_2gpu.yaml``, with ``training.max_steps=15`` and
+``profiling.active=6``. Set the GPU count explicitly and adapt the base YAML for the intended
+node count. All ``<changeme>`` values must be replaced before launch.
 
-Path placeholders
------------------
+Paths and containers
+--------------------
 
-When you run ``test_aorta``, the suite loads the cluster file, resolves cluster placeholders (e.g. ``{user-id}`` in ``username``), then resolves **Aorta YAML** placeholders with the same helper used by other CVS test configs: ``{user-id}``, ``{user}``, ``{home}``, ``{home-mount-dir}``, ``{node-dir-name}``. Replacement values come from the validated cluster model (username and optional ``home_mount_dir_name`` / ``node_dir_name``). Manual ``<changeme>`` markers are rejected.
+The shared loader resolves ``{user-id}`` from the cluster username, references within
+``paths`` such as ``{shared_fs}``, and cross-block references such as ``{paths.shared_fs}``.
+Unresolved placeholders fail configuration loading. The previous ``{home}``, ``{user}``,
+``{home-mount-dir}`` and ``{node-dir-name}`` Aorta placeholders should be replaced by explicit
+paths or the shared loader's supported references.
 
-You may instead use fully absolute paths with no placeholders. Other entry points that validate YAML directly (without ``test_aorta``) do not perform this step unless they call the resolver explicitly.
-
-.. note::
-
-  ``aorta_path`` must exist on the host unless ``aorta_auto_clone`` is true and ``aorta_clone_url`` is set; the runner can then clone into ``aorta_path`` during setup.
-
-.. dropdown:: Example ``aorta_benchmark.yaml`` (aligned with the shipped sample)
-
-  .. code:: yaml
-
-    aorta_path: /home/{user-id}/aorta
-    aorta_auto_clone: false
-    aorta_clone_url: null
-
-    container_mount_path: /mnt
-    base_config: config/profile_overlap_2gpu.yaml
-
-    docker:
-      image: jeffdaily/pytorch:torchrec-dlrm-complete
-      container_name: aorta-benchmark
-      shm_size: 17G
-      network_mode: host
-      privileged: true
-
-    rccl:
-      clone_url: https://github.com/ROCmSoftwarePlatform/rccl.git
-      branch: develop
-      build_path: /mnt/rccl
-
-    environment:
-      NCCL_MAX_NCHANNELS: 112
-      NCCL_MAX_P2P_NCHANNELS: 112
-      NCCL_DEBUG: VERSION
-      TORCH_NCCL_HIGH_PRIORITY: 1
-      OMP_NUM_THREADS: 1
-      RCCL_MSCCL_ENABLE: 0
-
-    training_overrides:
-      training.max_steps: 15
-      profiling.active: 6
-
-    build_script: scripts/launch_rocm.sh
-    experiment_script: scripts/launch_rocm.sh
-    gpus_per_node: 8
-    timeout_seconds: 3600
-    skip_rccl_build: true
-
-    analysis:
-      enable_tracelens: false
-      enable_gemm_analysis: false
-      tracelens_script: scripts/tracelens_single_config/run_tracelens_single_config.sh
-      gemm_script: scripts/gemm_analysis/run_tracelens_analysis.sh
-      skip_if_exists: false
-
-    multi_node:
-      master_launch_mode: auto
-      train_script: train.py
-      extra_torchrun_args: []
-      extra_train_args: []
-      extra_env: {}
-      collect_traces: true
-
-    expected_results:
-      max_avg_iteration_ms: 12000
-      min_compute_ratio: 0.01
-      min_overlap_ratio: 0.0
-      max_time_variance_ratio: 0.5
-
-Parameters
-==========
-
-The **middle column** is the **schema default**: the value Pydantic applies when you **omit** that key from your YAML. It is not a promise about the checked-in sample file.
-
-The **dropdown above** is the full **shipped** ``aorta_benchmark.yaml``. Where the sample lists a key, that value wins for that file; compare the sample to the middle column to see explicit overrides.
-
-.. note::
-
-  The shipped sample commonly overrides schema defaults for ``base_config``, ``build_script``, ``experiment_script``, ``timeout_seconds``, ``skip_rccl_build``, ``training_overrides``, ``analysis.enable_tracelens``, and ``expected_results``.
-
-.. list-table::
-   :widths: 3 3 5
+.. list-table:: Main fields
    :header-rows: 1
+   :widths: 30 70
 
-   * - Configuration parameters
-     - Schema default if omitted
-     - Description
+   * - Field
+     - Meaning
    * - ``aorta_path``
-     - (required)
-     - Absolute path to Aorta on the host; bind-mounted into the container. Placeholders resolved in ``test_aorta`` as described above.
-   * - ``aorta_auto_clone``
-     - ``false``
-     - If true and ``aorta_path`` is missing, clone from ``aorta_clone_url`` during runner setup.
-   * - ``aorta_clone_url``
-     - ``null``
-     - Git URL for Aorta when using auto-clone.
+     - Absolute repository directory on each cluster host. It need not exist on the CVS machine.
    * - ``container_mount_path``
-     - ``/mnt``
-     - Mount point inside the container for ``aorta_path``.
+     - Repository path inside the container; default ``/mnt``. Declare the corresponding writable host/container volume explicitly.
+   * - ``aorta_auto_clone``, ``aorta_clone_url``
+     - Clone a missing repository on every host before container launch when enabled. A URL and host ``git`` installation are required.
+   * - ``container``
+     - Shared container schema: ``name``, ``image``, ``lifetime``, ``runtime: {name, args}``, and string-valued ``env``.
+   * - ``container.runtime.args``
+     - Devices, volumes, network, IPC, privileges, capabilities, groups, security options and ulimits. The sample uses ``network: host`` and ``ipc: host``.
+   * - ``container.lifetime``
+     - ``per_run`` launches/removes containers; ``persistent`` keeps them; ``no_launch`` attaches to containers already running.
+   * - ``paths`` and ``model``
+     - Shared schema fields. Aorta does not use ``models_dir`` or ``hf_token_file`` to download models; ``model.remote`` must be zero.
+   * - ``output_dir``
+     - Local CVS output root; default ``aorta_results``. Each invocation gets a unique run subdirectory.
+
+Use storage writable by the container user. Root-squashed NFS may prevent root containers
+from writing output. The suite restores repository ownership to each host's login user
+before delegating container teardown to the orchestrator.
+At launch, CVS also resolves each host's numeric ``render`` group ID and adds the
+discovered IDs to the containers so GPU device access does not depend on the image's
+group-name mapping.
+
+Workload and launch
+-------------------
+
+.. list-table:: Aorta execution fields
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Field
+     - Meaning
    * - ``base_config``
-     - ``config/distributed.yaml``
-     - Aorta config file path relative to ``aorta_path``.
-   * - ``docker.image``
-     - ``jeffdaily/pytorch:torchrec-dlrm-complete``
-     - Docker image for the benchmark container.
-   * - ``docker.container_name``
-     - ``aorta-benchmark``
-     - Container name.
-   * - ``docker.shm_size``
-     - ``17G``
-     - Shared memory size for the container.
-   * - ``docker.network_mode``
-     - ``host``
-     - Docker network mode.
-   * - ``docker.privileged``
-     - true
-     - Run the container in privileged mode.
-   * - ``rccl.clone_url``
-     - ``https://github.com/ROCmSoftwarePlatform/rccl.git``
-     - RCCL Git URL (used when building RCCL in the container).
-   * - ``rccl.branch``
-     - ``develop``
-     - RCCL branch to build.
-   * - ``rccl.build_path``
-     - ``/mnt/rccl``
-     - Path inside the container for the RCCL build.
-   * - ``environment.NCCL_MAX_NCHANNELS``
-     - 112
-     - Maximum NCCL channels.
-   * - ``environment.NCCL_MAX_P2P_NCHANNELS``
-     - 112
-     - Maximum NCCL P2P channels.
-   * - ``environment.NCCL_DEBUG``
-     - ``VERSION``
-     - NCCL debug level.
-   * - ``environment.TORCH_NCCL_HIGH_PRIORITY``
-     - 1
-     - High-priority NCCL streams.
-   * - ``environment.OMP_NUM_THREADS``
-     - 1
-     - OpenMP thread count.
-   * - ``environment.RCCL_MSCCL_ENABLE``
-     - 0
-     - MSCCL enable flag.
-   * - ``training_overrides``
-     - ``{}``
-     - Overrides passed to Aorta via ``--override`` (e.g. ``training.max_steps``, ``profiling.active``).
-   * - ``build_script``
-     - ``scripts/build_rccl.sh``
-     - RCCL build script path relative to the container mount (skipped when ``skip_rccl_build`` is true).
+     - Aorta YAML path relative to the repository.
    * - ``experiment_script``
-     - ``scripts/rccl_exp.sh``
-     - Experiment/launch script path relative to the container mount.
+     - Script-mode launcher. Receives the base config followed by one ``--override`` group.
+   * - ``build_script``, ``skip_rccl_build``
+     - Optional RCCL build script and skip gate. The sample skips the build and uses container-native RCCL.
+   * - ``rccl``
+     - ``clone_url``, ``branch``, ``build_path``. Exposed to scripts through ``RCCL_CLONE_URL``, ``RCCL_BRANCH``, and ``rccl_path``; the build script must consume its checkout/build settings.
+   * - ``training_overrides``
+     - Key/value settings forwarded together after one ``--override`` argument.
    * - ``gpus_per_node``
-     - 8
-     - GPUs per node.
+     - Required positive GPU count used per node. Match it to the workload and configured hardware.
    * - ``timeout_seconds``
-     - 10800
-     - Benchmark timeout in seconds.
-   * - ``skip_rccl_build``
-     - ``false``
-     - If true, skip building RCCL (use an existing build / container setup).
-   * - ``analysis.enable_tracelens``
-     - ``true``
-     - Run TraceLens in the container when available (shipped sample sets ``false``).
-   * - ``analysis.enable_gemm_analysis``
-     - ``false``
-     - Run GEMM analysis (sweep workflows).
-   * - ``analysis.tracelens_script``
-     - ``scripts/tracelens_single_config/run_tracelens_single_config.sh``
-     - TraceLens script relative to ``aorta_path``.
-   * - ``analysis.gemm_script``
-     - ``scripts/gemm_analysis/run_tracelens_analysis.sh``
-     - GEMM analysis script relative to ``aorta_path``.
-   * - ``analysis.skip_if_exists``
-     - ``false``
-     - Skip analysis if ``tracelens_analysis`` already exists.
+     - Positive bound for each build, benchmark or analysis phase; default 3600 seconds.
    * - ``multi_node.master_launch_mode``
-     - ``auto``
-     - ``auto`` picks ``script`` for single-node clusters and ``torchrun`` for multi-node clusters. Set to ``script`` to force the single-node ``experiment_script`` path (errors out on >1 node), or ``torchrun`` to always build a disaggregated ``torchrun`` command.
+     - ``auto`` selects script mode for one node and torchrun for multiple nodes. Explicit ``script`` requires one node; explicit ``torchrun`` also works with one node.
    * - ``multi_node.nproc_per_node``
-     - ``null`` (defaults to ``gpus_per_node``)
-     - Processes/GPUs per node passed as ``torchrun --nproc_per_node``.
-   * - ``multi_node.master_port``
-     - ``null`` (free ephemeral port)
-     - Port for the ``torchrun`` rendezvous (``--master_port``). Pin this when you need a deterministic port (e.g., firewalled environments).
+     - Torchrun processes per node. Omit or use zero to select ``gpus_per_node``.
    * - ``multi_node.master_addr``
-     - ``null`` (head node's ``node_vpc_ips`` entry, else its plain identifier)
-     - Override the rendezvous address (``--master_addr``). Do not pin this to the SSH/management address on a fabric-separated cluster -- other nodes rendezvous over the RDMA fabric, and ``node_vpc_ips`` exists precisely to prefer that address.
+     - Optional rendezvous override. Default: first node's ``vpc_ip``, then its node identifier.
+   * - ``multi_node.master_port``
+     - Rendezvous port in 1024..65535. Omit or use zero to select an available port on the first node.
    * - ``multi_node.train_script``
-     - ``train.py``
-     - Aorta training entry script relative to ``aorta_path``. Used in ``torchrun`` mode.
-   * - ``multi_node.extra_torchrun_args``
-     - ``[]``
-     - Additional ``torchrun`` flags appended before the training script.
-   * - ``multi_node.extra_train_args``
-     - ``[]``
-     - Additional ``train.py`` flags appended after ``--config``.
+     - Training entry point relative to the repository; default ``train.py``.
+   * - ``multi_node.extra_torchrun_args``, ``extra_train_args``
+     - Additional shell argument fragments, preserving the previous launcher convention.
    * - ``multi_node.extra_env``
-     - ``{}``
-     - Extra environment variables exported inside each container before ``torchrun``. Use for transport tuning (``NCCL_SOCKET_IFNAME``, ``NCCL_IB_HCA``, ``NCCL_IB_GID_INDEX``, ...).
+     - Environment overrides, including cluster-specific ``NCCL_SOCKET_IFNAME`` and ``NCCL_IB_HCA``.
    * - ``multi_node.collect_traces``
-     - ``true``
-     - When true, the runner pulls each node's ``torch_profiler/`` trees back to ``<aorta_path>/combined_traces/node_<rank>/`` on the head node so host parsers see one unified trace tree.
-   * - ``expected_results.max_avg_iteration_ms``
-     - optional
-     - Maximum acceptable average iteration time (ms).
-   * - ``expected_results.min_compute_ratio``
-     - optional
-     - Minimum compute ratio (compute time / iteration time).
-   * - ``expected_results.min_overlap_ratio``
-     - optional
-     - Minimum compute–communication overlap ratio.
-   * - ``expected_results.max_time_variance_ratio``
-     - optional
-     - Maximum iteration time variance across ranks (e.g. std/mean).
+     - Default true: gather all node traces in torchrun mode. False: collect only the head's newest tree; use true for complete distributed metrics.
 
-How to run
-==========
+Environment values move from the old ``environment`` block to ``container.env``.
+``TENSILE_STREAMK_MAX_CUS`` defaults to 256 minus ``NCCL_MAX_NCHANNELS``. The launch environment
+prepends the RCCL build and ROCm library paths unless ``LD_LIBRARY_PATH`` is explicitly set.
+The benchmark requires passwordless ``sudo -n journalctl -k`` access for bounded kernel-error
+scanning on every node.
 
-Use the **CVS package directory** as the working directory: the directory that contains the ``input`` tree (in a typical clone, the inner ``cvs`` directory next to ``tests`` and ``lib``). Example:
+Analysis and thresholds
+-----------------------
 
-.. code-block:: bash
+``analysis.enable_tracelens`` enables the configured ``tracelens_script``;
+``analysis.enable_gemm_analysis`` enables ``gemm_script``. Both scripts run in the head
+container against its original output tree. ``analysis.skip_if_exists`` permits reuse of an
+existing ``tracelens_analysis`` directory. Analysis failures are warnings; raw traces remain
+available. Multi-node metrics always come from raw traces from the collected nodes.
 
-  cd /path/to/your/cvs-checkout/cvs
-  cvs run test_aorta \
-      --cluster_file input/cluster_file/cluster.json \
-      --config_file input/config_file/aorta/aorta_benchmark.yaml \
-      -v --log-cli-level=INFO
+``threshold_json`` points to a sibling JSON file with an ``expected_results`` block:
 
-Provide a valid ``cluster_file``. Ensure ``aorta_path`` exists after placeholder resolution, or enable auto-clone with a valid URL. With ``skip_rccl_build: false``, the runner builds RCCL from ``rccl.clone_url`` unless skipped; with ``skip_rccl_build: true``, the experiment script runs without that build step. The runner collects ``torch_traces`` (PyTorch profiler output) and optionally runs TraceLens inside the container. Parsing and threshold checks run on the host.
+.. code-block:: json
 
-Alternate mirrors for ``rccl.clone_url`` may work if they track the same upstream; the canonical default string in schema, runner, and sample is ``https://github.com/ROCmSoftwarePlatform/rccl.git``.
+   {
+     "expected_results": {
+       "max_avg_iteration_ms": 12000,
+       "min_compute_ratio": 0.01,
+       "min_overlap_ratio": 0.0,
+       "max_time_variance_ratio": 0.5
+     }
+   }
 
-Multi-node disaggregated launch
-===============================
+These starting thresholds come from the previous gfx942 sample. Calibrate them for the
+selected hardware and workload. Ratios are in 0..1; time and variance limits are non-negative.
+With ``enforce_thresholds: true`` at least one non-null threshold is required. False records
+metrics without threshold assertions. Unknown threshold names are rejected.
 
-By default, when the cluster file contains more than one node, ``test_aorta`` runs a disaggregated launch: a single Aorta container is started on every node, then the runner kicks off ``torchrun`` in parallel on each container with ``--nnodes``, ``--node_rank``, ``--master_addr``, and ``--master_port`` set so the ranks rendezvous on the head node. This mirrors Aorta's own ``scripts/multi_node/local_launch.sh`` pattern and brings the benchmark in line with the other multi-node CVS suites (sglang, pytorch-xdit), which only require **one** ``cluster.json`` for a multi-node run.
+Migration and backend support
+-----------------------------
 
-The multi-node behavior is controlled by the ``multi_node`` block in ``aorta_benchmark.yaml``:
+Replace the former YAML runner configuration with a JSON variant plus threshold file. Move
+Docker settings under ``container``, environment values under ``container.env``, and
+``expected_results`` into the threshold file. Drop ``shm_size`` and use ``ipc: host``.
+Run ``cvs run aorta_single`` or ``cvs run aorta_distributed`` with the matching node count.
 
-.. code:: yaml
+Artifacts now live under the local ``output_dir/<run-id>/``. The distributed parser layout
+remains ``combined_traces/node_<rank>/<original-output>/torch_profiler/``. The suite excludes
+stale profiler files using each node's benchmark-start timestamp and preserves surviving
+artifacts after execution failures.
 
-  multi_node:
-    master_launch_mode: auto      # auto | script | torchrun
-    nproc_per_node: 8             # defaults to gpus_per_node
-    master_port: 29500            # default: free ephemeral port
-    master_addr: 10.0.0.1         # default: head node's node_vpc_ips entry, else its identifier
-    train_script: train.py
-    extra_torchrun_args: []
-    extra_train_args: []
-    extra_env:
-      NCCL_SOCKET_IFNAME: bond0
-      NCCL_IB_HCA: rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7
-      NCCL_IB_GID_INDEX: "3"
-    collect_traces: true
-
-Single-node clusters keep using the configured ``experiment_script`` (``master_launch_mode: auto`` resolves to ``script``). Force the disaggregated path with ``master_launch_mode: torchrun`` if you want it for a single-node cluster too.
-
-When ``collect_traces`` is true, every node's ``torch_profiler/`` directories are rsynced back to ``<aorta_path>/combined_traces/node_<rank>/`` on the head node and exposed as the ``torch_traces`` artifact, so the existing host parsers and threshold checks see one unified tree without further configuration.
-
-Expected results and artifacts
-==============================
-
-Validation uses ``expected_results`` when fields are set. Artifact layout depends on the Aorta run; the test report (e.g. ``aorta_benchmark_report.json`` under the runner output directory) summarizes metrics. Prefer scratch or local disk for ``aorta_path`` when NFS ``root_squash`` prevents the container from writing ``artifacts/`` under your tree.
+Runtime and transport support comes from the shared orchestrator. The Enroot runtime in
+this checkout is not implemented; this migration does not add that backend.

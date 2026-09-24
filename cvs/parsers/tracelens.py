@@ -20,9 +20,6 @@ from cvs.parsers.schemas import (
     ParseStatus,
 )
 
-# Import runners for type hints only
-from cvs.runners._base_runner import RunResult
-
 log = logging.getLogger(__name__)
 
 # Try to import TraceLens - it's optional for basic parsing
@@ -54,12 +51,12 @@ class TraceLensParser:
         if use_tracelens and not TRACELENS_AVAILABLE:
             log.warning("TraceLens not available, falling back to basic parsing")
 
-    def parse(self, run_result: RunResult) -> ParseResult[AortaTraceMetrics]:
+    def parse(self, run_result) -> ParseResult[AortaTraceMetrics]:
         """
         Parse benchmark results into validated metrics.
 
         Args:
-            run_result: Result from AortaRunner
+            run_result: Benchmark result exposing succeeded, error_message, and get_artifact
 
         Returns:
             ParseResult containing validated AortaTraceMetrics
@@ -67,7 +64,7 @@ class TraceLensParser:
         run_warnings = []
         if not run_result.succeeded:
             # A failed/timed-out node no longer discards traces collected from
-            # surviving nodes (see AortaRunner.run()), so a partial run can
+            # surviving nodes, so a partial run can
             # still have real data to parse. Only bail out below if there is
             # nothing on disk to parse.
             run_warnings.append(f"Run did not succeed: {run_result.error_message}")

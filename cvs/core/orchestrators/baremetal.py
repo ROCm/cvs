@@ -128,6 +128,10 @@ class BaremetalOrchestrator(Orchestrator):
             finally:
                 phandle.destroy_clients()
 
+    def download_file(self, remote_file, local_file, hosts=None):
+        """Download a file through the orchestrator's host transport."""
+        return self.all.download_file(remote_file, local_file, hosts=hosts)
+
     def sudo_prefix(self):
         """
         Return the command prefix needed for privileged commands, probing

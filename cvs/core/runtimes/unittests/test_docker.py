@@ -109,6 +109,25 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
             f"User volume '/foo:/bar' must appear exactly once in:\n{cmd}",
         )
 
+    def test_user_runtime_arg_sets_docker_user_flag(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"user": "root"}),
+            container_name="cvs_iter_test",
+        )
+        self.assertEqual(shlex.split(captured[0]).count("--user"), 1)
+        self.assertIn("--user root", captured[0])
+
+    def test_user_runtime_arg_is_opt_in(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={}),
+            container_name="cvs_iter_test",
+        )
+        self.assertNotIn("--user", shlex.split(captured[0]))
+
     def test_cmd_never_contains_gpus_all(self):
         # CVS is AMD-only. The rendered docker run cmd must never contain
         # '--gpus all', regardless of any container_config knob a future caller

@@ -70,6 +70,21 @@ class Orchestrator(ABC):
         pass
 
     @abstractmethod
+    def download_file(self, remote_file, local_file, hosts=None):
+        """
+        Download a file from selected cluster hosts.
+
+        Args:
+            remote_file: Path on each remote host
+            local_file: Local destination prefix
+            hosts: Target hosts (if None, uses all hosts)
+
+        Returns:
+            Dictionary mapping hosts to downloaded local paths
+        """
+        pass
+
+    @abstractmethod
     def setup_env(self, hosts, env_script=None):
         """
         Set up execution environment on target hosts.

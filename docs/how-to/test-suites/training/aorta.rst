@@ -1,60 +1,70 @@
 .. meta::
-  :description: Run the Aorta distributed training benchmark
-  :keywords: CVS, aorta
-
-***************
-Aorta benchmark
-***************
-
-.. _aorta-set-up-config:
-
-Set up config
-=============
-
-1. Copy the Aorta benchmark configuration file:
-
-   .. code:: bash
-
-     cvs config copy aorta/aorta_benchmark.yaml --output ~/cvs_workspace/aorta/aorta_benchmark.yaml
-
-2. Edit the file for your environment:
-
-   - ``aorta_path`` — prefer local or scratch storage (avoid NFS root-squash paths)
-   - ``docker.image`` and RCCL build settings as needed
-   - Any ``<changeme>`` placeholders
-
-Full parameter list: :doc:`/reference/configuration-files/training/aorta`.
-
-.. _aorta-run-tests:
-
-Run tests
-=========
+  :description: Run Aorta single-node and distributed benchmarks through CVS
+  :keywords: Aorta, ROCm, RCCL, benchmark, CVS
 
 Aorta benchmark
+===============
+
+Aorta runs an RCCL/training workload in containers, collects PyTorch profiler traces, and
+validates iteration time, compute ratio, overlap ratio and rank balance.
+
+Prepare a configuration
+-----------------------
+
+Copy a JSON variant and its sibling threshold file:
+
+.. code-block:: bash
+
+   cvs config copy benchmark/aorta/mi3xx_aorta_profile_overlap_2gpu_single.json --output ./aorta_single.json
+   cvs config copy benchmark/aorta/mi3xx_aorta_profile_overlap_2gpu_distributed.json --output ./aorta_distributed.json
+   cvs config copy benchmark/aorta/mi3xx_aorta_profile_overlap_2gpu_threshold.json --output ./mi3xx_aorta_profile_overlap_2gpu_threshold.json
+
+Replace every ``<changeme>`` in the selected variant. Set the repository storage path, GPU
+count, and distributed fabric interfaces for your cluster. Place Aorta at ``aorta_path`` on
+each node, or enable ``aorta_auto_clone`` and provide ``aorta_clone_url``. Keep the configured
+GPU count consistent with the selected Aorta YAML and profiling workload. Prefer writable
+local/scratch storage when root-squashed NFS prevents the container from writing artifacts.
+
+See :doc:`the configuration reference </reference/configuration-files/training/aorta>` for
+field descriptions and migration details.
+
+Run the suite
+-------------
+
+Use one node with ``aorta_single`` or two or more with ``aorta_distributed``:
+
+.. code-block:: bash
+
+   cvs list aorta_single
+   cvs list aorta_distributed
+   cvs run aorta_single --cluster_file cluster-single.json --config_file aorta_single.json
+   cvs run aorta_distributed --cluster_file cluster-distributed.json --config_file aorta_distributed.json
+
+Both suites run these stages in order:
+
+#. Launch and verify containers.
+#. Clone or verify Aorta on every node.
+#. Verify torchrun and configured RDMA devices (distributed only).
+#. Build RCCL unless ``skip_rccl_build`` is true.
+#. Launch the workload, poll every node's exit status, and scan the bounded kernel journal.
+#. Collect fresh profiler traces and execution logs.
+#. Run optional TraceLens/GEMM analysis.
+#. Parse results and validate thresholds.
+#. Generate the JSON report and tear down.
+
+A failed stage gates dependent stages. Trace collection, parsing of surviving artifacts,
+report generation and teardown remain possible after a distributed execution failure.
+Optional analysis failures fall back to raw traces. Multi-node metrics always use the
+collected raw traces, since head-node Excel reports cover only that node.
+
+Inspect outputs
 ---------------
 
-The Aorta benchmark runs an Aorta-based workload in a Docker container with RCCL, collects PyTorch profiler traces, and validates iteration time, compute ratio, overlap ratio, and rank balance against configurable thresholds in ``aorta_benchmark.yaml``.
+CVS downloads artifacts to ``output_dir/<run-id>/`` on the machine running CVS. Distributed
+traces use ``combined_traces/node_<rank>/<original-output>/torch_profiler/``. The JSON report,
+``aorta_benchmark_report.json``, records cluster configuration, aggregate performance,
+per-rank summaries, execution status, validation status and collection errors. Benchmark and
+RCCL logs are also downloaded. No shared filesystem with the CVS machine is required.
 
-**Where to put Aorta (``aorta_path``):** Prefer local or scratch storage (for example under ``/scratch/``). If ``aorta_path`` is on NFS (such as home directories under ``/home``), the container can hit *Permission denied* when creating ``artifacts/`` because many NFS exports use *root_squash*. Use a non-root-squashed path or adjust exports; set ``aorta_path`` accordingly in ``aorta_benchmark.yaml``.
-
-List tests in this suite:
-
-.. code:: bash
-
-  cvs list test_aorta
-
-.. code:: text
-
-  Available tests in test_aorta:
-    - test_validate_runner_config
-    - test_run_benchmark
-    - test_parse_results
-    - test_validate_thresholds
-    - test_generate_report
-
-Run from the CVS package directory (the directory that contains ``input/``), for example:
-
-.. code:: bash
-
-  cd /path/to/your/cvs-checkout/cvs
-  cvs run test_aorta --cluster_file input/cluster_file/cluster.json --config_file input/config_file/aorta/aorta_benchmark.yaml --html=/var/www/html/cvs/aorta.html --capture=tee-sys --self-contained-html --log-file=/tmp/aorta.log -vvv -s
+Calibrate the sample thresholds for your hardware, node count and workload. Set
+``enforce_thresholds: false`` to record metrics without threshold assertions.

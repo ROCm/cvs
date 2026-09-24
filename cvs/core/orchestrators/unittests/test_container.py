@@ -378,6 +378,12 @@ class TestContainerOrchestratorExecForwarding(unittest.TestCase):
         self.orch.exec_on_head("hostname", detailed=True)
         self.assertIs(self._kwarg(self.runtime.exec_on_head.call_args, "detailed", 3), True)
 
+    def test_exec_cmd_list_on_host_bypasses_container_runtime(self):
+        commands = ["date", "journalctl -k"]
+        self.orch.exec_cmd_list_on_host(commands, timeout=120, print_console=False)
+        self.orch.all.exec_cmd_list.assert_called_once_with(commands, timeout=120, print_console=False)
+        self.runtime.exec_cmd_list.assert_not_called()
+
 
 class TestResolveContainerLifetime(unittest.TestCase):
     """One assertion per row of the lifetime resolution table."""
