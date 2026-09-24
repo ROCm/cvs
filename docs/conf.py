@@ -18,7 +18,6 @@ html_theme_options = {
     "version_list_link": "https://rocm.docs.amd.com/projects/cvs/en/latest/release.html",
     "nav_secondary_items": {
         "GitHub": "https://github.com/ROCm/cvs",
-        "Community": "https://github.com/ROCm/cvs/discussions",
         "Blogs": "https://rocm.blogs.amd.com/",
         "ROCm Developer Hub": "https://www.amd.com/en/developer/resources/rocm-hub.html",
         "ROCm™ Docs": "https://rocm.docs.amd.com/",
