@@ -57,6 +57,11 @@ class Orchestrator(ABC):
         pass
 
     @abstractmethod
+    def exec_host(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+        """Execute a command on the host OS, bypassing runtime environments."""
+        pass
+
+    @abstractmethod
     def exec_on_head(self, cmd, timeout=None, detailed=False):
         """
         Execute command on head node only.
@@ -67,6 +72,16 @@ class Orchestrator(ABC):
             detailed: If True, return detailed execution info including exit_code
 
         """
+        pass
+
+    @abstractmethod
+    def upload_to_head(self, local_file, remote_file):
+        """Upload a local file to the head node's host filesystem."""
+        pass
+
+    @abstractmethod
+    def download_from_head(self, remote_file, local_file):
+        """Download a file from the head node's host filesystem."""
         pass
 
     @abstractmethod

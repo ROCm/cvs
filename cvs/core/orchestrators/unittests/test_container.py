@@ -364,6 +364,22 @@ class TestContainerOrchestratorExecForwarding(unittest.TestCase):
         self.orch.exec("ls", detailed=True)
         self.assertIs(self._kwarg(self.runtime.exec.call_args, "detailed", 4), True)
 
+    @patch("cvs.core.orchestrators.baremetal.BaremetalOrchestrator.exec")
+    def test_exec_host_bypasses_container_runtime(self, host_exec):
+        host_exec.return_value = {"10.0.0.2": "ok"}
+
+        result = self.orch.exec_host("date", hosts=["10.0.0.2"], timeout=5)
+
+        host_exec.assert_called_once_with(
+            "date",
+            hosts=["10.0.0.2"],
+            timeout=5,
+            detailed=False,
+            print_console=True,
+        )
+        self.runtime.exec.assert_not_called()
+        self.assertEqual(result, {"10.0.0.2": "ok"})
+
     def test_exec_on_head_forwards_print_console_false_to_runtime(self):
         self.orch.exec_on_head("cat /tmp/huge", print_console=False)
         self.assertIs(self._kwarg(self.runtime.exec_on_head.call_args, "print_console", 4), False)

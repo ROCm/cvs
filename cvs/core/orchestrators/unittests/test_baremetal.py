@@ -76,6 +76,36 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         self.assertEqual(result, {"10.0.0.1": "ok"})
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_exec_host_targets_requested_host_subset(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        with patch.object(orch, "exec", return_value={"10.0.0.2": "ok"}) as exec_mock:
+            result = orch.exec_host("date", hosts=["10.0.0.2"], timeout=5)
+
+        exec_mock.assert_called_once_with(
+            "date",
+            hosts=["10.0.0.2"],
+            timeout=5,
+            detailed=False,
+            print_console=True,
+        )
+        self.assertEqual(result, {"10.0.0.2": "ok"})
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_head_file_transfers_delegate_to_head_handle(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        orch.head.upload_file.return_value = {"10.0.0.1": "/remote/result.json"}
+        orch.head.download_file.return_value = {"10.0.0.1": "/local/result.json"}
+
+        uploaded = orch.upload_to_head("/local/result.json", "/remote/result.json")
+        downloaded = orch.download_from_head("/remote/result.json", "/local/result.json")
+
+        orch.head.upload_file.assert_called_once_with("/local/result.json", "/remote/result.json")
+        orch.head.download_file.assert_called_once_with("/remote/result.json", "/local/result.json")
+        self.assertEqual(uploaded, {"10.0.0.1": "/remote/result.json"})
+        self.assertEqual(downloaded, {"10.0.0.1": "/local/result.json"})
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_forwards_print_console_false_to_all(self, _mock_pssh):
         """print_console=False must reach the pssh handle, not be swallowed here.
 

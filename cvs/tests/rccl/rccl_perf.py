@@ -5,8 +5,6 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import pytest
-
 import re
 import os
 import time
@@ -27,10 +25,26 @@ log = globals.log
 rccl_res_dict = {}
 
 
+def pytest_generate_tests(metafunc):
+    """Parametrize RCCL collectives from the configured test list."""
+    if "rccl_collective" not in metafunc.fixturenames:
+        return
+
+    config_file = metafunc.config.getoption("config_file")
+    if not config_file or not os.path.exists(config_file):
+        log.warning(f'Warning: Missing or invalid config file {config_file}')
+        return
+
+    with open(config_file) as fp:
+        config = json.load(fp)
+    collectives = rccl_lib.configured_collectives(config.get("rccl", {}))
+    metafunc.parametrize("rccl_collective", collectives)
+
+
 # Start of test cases.
 
 
-def test_collect_hostinfo(phdl):
+def test_collect_hostinfo(orch):
     """
     Collect basic ROCm/host info from all nodes.
 
@@ -43,13 +57,13 @@ def test_collect_hostinfo(phdl):
     """
 
     globals.error_list = []
-    phdl.exec('cat /opt/rocm/.info/version')
-    phdl.exec('hipconfig')
-    phdl.exec('rocm_agent_enumerator')
+    orch.all.exec('cat /opt/rocm/.info/version')
+    orch.all.exec('hipconfig')
+    orch.all.exec('rocm_agent_enumerator')
     update_test_result()
 
 
-def test_collect_networkinfo(phdl):
+def test_collect_networkinfo(orch):
     """
     Collect basic RDMA/verbs info from all nodes.
 
@@ -59,14 +73,14 @@ def test_collect_networkinfo(phdl):
     """
 
     globals.error_list = []
-    phdl.exec('rdma link')
-    phdl.exec('ibv_devinfo')
+    orch.all.exec('rdma link')
+    orch.all.exec('ibv_devinfo')
     update_test_result()
 
 
-def test_disable_firewall(phdl):
+def test_disable_firewall(orch):
     globals.error_list = []
-    sudo_status = get_passwordless_sudo_status(phdl)
+    sudo_status = get_passwordless_sudo_status(orch.all)
     no_sudo_nodes = [node for node, ok in sudo_status.items() if not ok]
     if no_sudo_nodes:
         log.warning(
@@ -74,49 +88,34 @@ def test_disable_firewall(phdl):
         )
         update_test_result()
         return
-    phdl.exec('sudo service ufw stop')
+    orch.all.exec('sudo service ufw stop')
     time.sleep(2)
-    out_dict = phdl.exec('sudo service ufw status')
+    out_dict = orch.all.exec('sudo service ufw status')
     for node in out_dict.keys():
         if not re.search('inactive|dead|stopped|disabled|not be found|unrecognized service', out_dict[node], re.I):
             fail_test(f'Service ufw not disabled properly on node {node}')
     update_test_result()
 
 
-def test_print_env_once(phdl, shdl, config_dict):
+def test_print_env_once(orch, config_dict):
     """Single test to print environment script - don't dump env in every test."""
     globals.error_list = []
     env_script = config_dict.get('env_source_script', '/dev/null')
     if env_script and str(env_script).lower() != 'none':
         # Cat the env script file to show its contents
         cmd = f'echo === Environment Script: {env_script} === && cat {env_script}'
-        shdl.exec(cmd)
+        orch.exec_on_head(cmd)
     update_test_result()
 
 
-# Change this to choose what collectives to run ..
-@pytest.mark.parametrize(
-    "rccl_collective",
-    [
-        "all_reduce_perf",
-        "all_gather_perf",
-        "scatter_perf",
-        "gather_perf",
-        "reduce_scatter_perf",
-        "sendrecv_perf",
-        "alltoall_perf",
-        "alltoallv_perf",
-        "broadcast_perf",
-    ],
-)
-def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
+def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective):
     """
     Execute RCCL performance test across the cluster with given parameters.
 
     Parameters (from fixtures and config):
-      - phdl: parallel execution handle for nodes (expects exec/exec_cmd_list).
-      - shdl: switch or auxiliary handle used by rccl_lib (implementation-specific).
-      - cluster_dict: cluster topology and credentials (expects node_dict, username, etc.).
+      - orch: orchestrator for RCCL execution and host diagnostics.
+      - node_list: cluster management hostnames.
+      - vpc_node_list: cluster addresses used by MPI.
       - config_dict: test configuration with RCCL/MPI paths, env, and thresholds.
       - rccl_collective: which RCCL collective test to run (e.g., "all_reduce_perf").
 
@@ -134,7 +133,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
     """
 
     globals.error_list = []
-    sudo_status = get_passwordless_sudo_status(phdl)
+    sudo_status = get_passwordless_sudo_status(orch.all)
     can_use_sudo = all(sudo_status.values())
     if not can_use_sudo:
         no_sudo_nodes = [node for node, ok in sudo_status.items() if not ok]
@@ -145,54 +144,40 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective):
         )
 
     if can_use_sudo:
-        phdl.exec(f'sudo echo "Starting Test {rccl_collective}" | sudo tee /dev/kmsg')
+        orch.all.exec(f'sudo echo "Starting Test {rccl_collective}" | sudo tee /dev/kmsg')
 
-    # start_time = phdl.exec('date')
-    # Seconds precision matters: verify_dmesg_for_errors' node-scraper path
-    # treats analysis_range_end as an exclusive cutoff, so a minute-truncated
-    # end time silently drops the final minute of this test's dmesg window.
-    start_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
-
-    # Build list of nodes and their VPC IPs (used by the RCCL test)
-    # make sure the VPC IPs are reachable from all nodes for passwordless ssh
-    # otherwise use the regular mgmt-ip if that is reachable.
-    node_list = list(cluster_dict['node_dict'].keys())
-    vpc_node_list = []
-    for node in node_list:
-        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
+    # Minute precision can drop kernel events from the end of the test window.
+    start_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
 
     # Get cluster snapshot ..
     if can_use_sudo and re.search(
         'True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I
     ):
-        cluster_dict_before = create_cluster_metrics_snapshot(phdl)
+        cluster_dict_before = create_cluster_metrics_snapshot(orch.all)
 
-    result_dict = rccl_lib.RcclJob.from_config(
-        phdl, shdl, rccl_collective, config_dict, node_list, vpc_node_list
-    ).run_perf()
+    result_dict = rccl_lib.RcclJob.from_config(orch, rccl_collective, config_dict, node_list, vpc_node_list).run_perf()
 
     log.info("%s", result_dict)
     key_name = f'{rccl_collective}'
     rccl_res_dict[key_name] = result_dict
 
     # Scan dmesg between start and end times cluster wide ..
-    # end_time = phdl.exec('date')
     if can_use_sudo:
-        phdl.exec(f'sudo echo "End of Test {rccl_collective}" | sudo tee /dev/kmsg')
+        orch.all.exec(f'sudo echo "End of Test {rccl_collective}" | sudo tee /dev/kmsg')
 
-    end_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
+    end_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
     if can_use_sudo:
         # Bound dmesg scan to this test's own start..end window (per-test).
         # till_end_flag=True scans from start_time to the end of the dmesg
         # buffer, which causes earlier-test kernel events (e.g. a scatter_perf
         # segfault) to repeatedly fail every subsequent parametrized test.
-        verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=False)
+        verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=False)
 
     # Get new cluster snapshot and compare ..
     if can_use_sudo and re.search(
         'True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I
     ):
-        cluster_dict_after = create_cluster_metrics_snapshot(phdl)
+        cluster_dict_after = create_cluster_metrics_snapshot(orch.all)
         compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
 
     # Update test results based on any failures ..

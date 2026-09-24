@@ -5,6 +5,19 @@ All notable changes to ROCm Cluster Validation Suite (CVS) are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.
+- RCCL result files default to the run directory. Managed runs verify shared result-path access before launching, and result-save failures fail the test. Container runs require the result directory mounted at the same host/container path.
+- `Orchestrator` now declares `exec_host`, `upload_to_head`, and `download_from_head` as required methods. RCCL uses these interfaces for host diagnostics and result transfers instead of reaching through internal handles. Custom orchestrator subclasses must implement all three methods.
+
+### Fixed
+
+- RCCL regression reads configured collectives from `rccl_test_params`, with a fallback for older configurations. Both perf and regression consult top-level `results`, accepting NIC/data-type/rank references and legacy flat bandwidth thresholds.
+- RCCL `mpirun` uses the orchestrator's non-default SSH port for container launches.
+
 ## [0.2.0] - 2026-09-23
 
 ### Added
