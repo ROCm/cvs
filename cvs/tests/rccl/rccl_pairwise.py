@@ -16,12 +16,23 @@ SPUR_SUBSET_SKIP = (
 )
 
 
+class _HostSubset:
+    """Expose host-level command results only for one pairwise node subset."""
+
+    def __init__(self, orch, hosts):
+        self.orch = orch
+        self.hosts = list(hosts)
+
+    def exec(self, cmd, **kwargs):
+        return self.orch.exec_host(cmd, hosts=self.hosts, **kwargs)
+
+
 def _skip_if_spur_cannot_select_nodes():
     if is_managed_compute() and detect_scheduler() == Scheduler.SPUR:
         pytest.skip(SPUR_SUBSET_SKIP)
 
 
-def run_pairwise_rccl(phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, phase_label):
+def run_pairwise_rccl(orch, node_pair_vpc, node_pair_mgmt, config_dict, phase_label):
     """
     Run all_reduce_perf across exactly len(node_pair_mgmt) nodes and report
     whether the run was clean (no new entries in globals.error_list).
@@ -39,8 +50,7 @@ def run_pairwise_rccl(phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, ph
     tool's.
 
     Args:
-        phdl:             Parallel SSH handle (all cluster nodes).
-        shdl:             SSH handle to head node.
+        orch:             Orchestrator for RCCL execution.
         node_pair_vpc:    List of VPC IPs to pass to mpirun.
         node_pair_mgmt:   List of mgmt hostnames (used as cluster_node_list).
         config_dict:      RCCL config dict (mpi_params, rccl_test_params, cvs_params).
@@ -56,18 +66,28 @@ def run_pairwise_rccl(phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, ph
     log.info('Running pairwise RCCL: %s', phase_label)
     log.info('Nodes (VPC): %s', node_pair_vpc)
 
-    # Override no_of_nodes to match this call's node count without mutating
-    # the original dict — create a shallow copy of mpi_params only.
     mpi_params_pair = dict(config_dict['mpi_params'])
     mpi_params_pair['no_of_nodes'] = str(len(node_pair_mgmt))
 
     error_count_before = len(globals.error_list)
+    diagnostic_hosts = _HostSubset(orch, node_pair_mgmt)
+    sudo_status = get_passwordless_sudo_status(diagnostic_hosts)
+    can_scan_dmesg = set(sudo_status) == set(node_pair_mgmt) and all(sudo_status.values())
+    if can_scan_dmesg:
+        diagnostic_hosts.exec('sudo echo "Starting RCCL pairwise phase" | sudo tee /dev/kmsg')
+    else:
+        no_sudo_nodes = [node for node in node_pair_mgmt if not sudo_status.get(node, False)]
+        log.warning(
+            "Skipping pairwise dmesg markers/verification because passwordless sudo is unavailable on nodes: %s",
+            no_sudo_nodes,
+        )
+    start_time = diagnostic_hosts.exec('date +"%a %b %e %H:%M:%S"')
+
     try:
         pair_config = dict(config_dict)
         pair_config['mpi_params'] = mpi_params_pair
         result_dict = rccl_lib.RcclJob.from_config(
-            phdl,
-            shdl,
+            orch,
             'all_reduce_perf',
             pair_config,
             node_pair_mgmt,
@@ -77,6 +97,12 @@ def run_pairwise_rccl(phdl, shdl, node_pair_vpc, node_pair_mgmt, config_dict, ph
     except Exception as exc:
         log.error('Pairwise RCCL failed for %s: %s', phase_label, exc)
         return None, False
+    finally:
+        if can_scan_dmesg:
+            diagnostic_hosts.exec('sudo echo "End of RCCL pairwise phase" | sudo tee /dev/kmsg')
+        end_time = diagnostic_hosts.exec('date +"%a %b %e %H:%M:%S"')
+        if can_scan_dmesg:
+            verify_dmesg_for_errors(diagnostic_hosts, start_time, end_time, till_end_flag=False)
 
     clean_run = len(globals.error_list) == error_count_before
     if not clean_run:
@@ -180,24 +206,24 @@ _phase1_survivors = None
 # ─────────────────────────────────────────────
 
 
-def test_collect_hostinfo(phdl):
+def test_collect_hostinfo(orch):
     """Collect basic ROCm / host info from all nodes."""
     globals.error_list = []
-    phdl.exec('cat /opt/rocm/.info/version')
-    phdl.exec('hipconfig')
-    phdl.exec('rocm_agent_enumerator')
+    orch.all.exec('cat /opt/rocm/.info/version')
+    orch.all.exec('hipconfig')
+    orch.all.exec('rocm_agent_enumerator')
     update_test_result()
 
 
-def test_collect_networkinfo(phdl):
+def test_collect_networkinfo(orch):
     """Collect basic RDMA / verbs info from all nodes."""
     globals.error_list = []
-    phdl.exec('rdma link')
-    phdl.exec('ibv_devinfo')
+    orch.all.exec('rdma link')
+    orch.all.exec('ibv_devinfo')
     update_test_result()
 
 
-def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
+def test_rccl_pairwise(orch, node_list, config_dict, vpc_node_list):
     """
     Phase 0 + Phase 1: reference-node sanity check then pairwise validation.
 
@@ -218,7 +244,6 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     _skip_if_spur_cannot_select_nodes()
     globals.error_list = []
 
-    node_list = list(cluster_dict['node_dict'].keys())  # mgmt hostnames
     min_bw = float(config_dict.get('cvs_params', {}).get('pairwise_min_bw', 0))
 
     if len(node_list) < 1:
@@ -235,8 +260,7 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     log.info('=' * 60)
 
     sanity_result, sanity_clean = run_pairwise_rccl(
-        phdl,
-        shdl,
+        orch,
         node_pair_vpc=[ref_vpc],
         node_pair_mgmt=[ref_mgmt],
         config_dict=config_dict,
@@ -267,8 +291,7 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
         label = f'Phase1 {ref_mgmt} <-> {cand_mgmt}'
 
         result, clean_run = run_pairwise_rccl(
-            phdl,
-            shdl,
+            orch,
             node_pair_vpc=[ref_vpc, cand_vpc],
             node_pair_mgmt=[ref_mgmt, cand_mgmt],
             config_dict=config_dict,
@@ -303,7 +326,7 @@ def test_rccl_pairwise(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     update_test_result()
 
 
-def test_rccl_incremental(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
+def test_rccl_incremental(orch, node_list, config_dict, vpc_node_list):
     """
     Phase 2: incremental cluster build.
 
@@ -320,7 +343,6 @@ def test_rccl_incremental(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
     _skip_if_spur_cannot_select_nodes()
     globals.error_list = []
 
-    node_list = list(cluster_dict['node_dict'].keys())
     min_bw = float(config_dict.get('cvs_params', {}).get('pairwise_min_bw', 0))
 
     if len(node_list) < 2:
@@ -365,8 +387,7 @@ def test_rccl_incremental(phdl, shdl, cluster_dict, config_dict, vpc_node_list):
         log.info('Attempting to add node: %s  (cluster size would be %d)', cand_mgmt, len(trial_mgmt))
 
         result, clean_run = run_pairwise_rccl(
-            phdl,
-            shdl,
+            orch,
             node_pair_vpc=trial_vpc,
             node_pair_mgmt=trial_mgmt,
             config_dict=config_dict,

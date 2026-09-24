@@ -44,15 +44,8 @@ def config_dict(config_file, cluster_dict):
 
 
 @pytest.fixture(scope="module")
-def phdl(orch):
-    """All-node handle. HTTP in a managed SPUR/Slurm step, SSH on bare metal."""
-    return orch.all
-
-
-@pytest.fixture(scope="module")
-def shdl(orch):
-    """Head-node handle. Rank 0 launches nested spur/srun --mpi=pmix from here."""
-    return orch.head
+def node_list(cluster_dict):
+    return list(cluster_dict['node_dict'])
 
 
 @pytest.fixture(scope="module")
