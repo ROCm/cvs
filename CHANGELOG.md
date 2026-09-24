@@ -5,6 +5,14 @@ All notable changes to ROCm Cluster Validation Suite (CVS) are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- RCCL: compare reported topology with launcher settings in performance and regression runs, with configurable `warn` (default), `strict`, and `off` modes and a separate JSON audit that preserves producer metadata. Count GPUs across all threads in regression launches, and skip topology checks when every row omits topology.
+- RCCL: accept single-node results without a topology block, reject mixed result shapes regardless of row order, and report malformed JSON result structures without crashing row processing.
+- RCCL: return cleanly when a run produces no result rows instead of raising `IndexError` from the bandwidth-dip check. Log scanning still fails these runs for missing bandwidth numbers.
+
 ## [0.2.0] - 2026-09-23
 
 ### Added

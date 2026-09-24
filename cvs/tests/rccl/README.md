@@ -93,6 +93,77 @@ Full design notes and a **from `main` rebuild** checklist: [RCCL_HANDOFF_FROM_MA
 
 Single-node RCCL testing is achieved by using either `rccl_perf` or `rccl_regression` with a cluster configuration that contains only one node. The tests automatically adapt to single-node execution.
 
+### Reported vs requested topology
+
+CVS compares the `nodes`, `ranks`, `ranksPerNode`, and `gpusPerRank` in rccl-tests
+JSON with the topology requested by the launch command. This check runs for every
+performance data type and every regression case, including pairwise performance
+runs. It also detects topology changes between rows in the same result file.
+
+Set `rccl.cvs_params.topology_check` in your config:
+
+| Mode | Behaviour |
+| --- | --- |
+| `warn` (default) | Log a mismatch banner and record the differences; topology mismatches alone do not fail the test. |
+| `strict` | Record the differences and fail the test through the normal CVS result checks. Result collection continues, and pairwise runs are marked unclean. |
+| `off` | Disable the requested-vs-reported comparison. Result parsing and schema validation remain active, and aggregation still rejects rows whose topology disagrees. The audit file contains the mode and an empty check list. |
+
+Older configs that omit the setting use `warn`. Mode names are case insensitive;
+unrecognised values produce a warning and fall back to `warn`.
+
+For Slurm/Spur, requested topology comes from `-N`, `-n`, and `--ntasks-per-node`.
+For bare-metal `mpirun`, it comes from `-np`, the cluster node list, and hostfile
+slots. If the MPI ranks cannot be divided evenly across those nodes, the check is
+recorded as `skipped` with a reason because this comparison supports uniform
+launches. An empty result set, or a result set in which every row omits all topology
+fields, is also recorded as `skipped`, including in `strict` mode. Partial topology
+blocks and topology that appears or disappears between rows still produce
+mismatches. Malformed JSON result structures fail result loading independently of
+the topology-check mode; CVS expects an array of result objects.
+
+The existing `rccl_test_params.threads_per_gpu` key has two meanings:
+
+- Performance runs pass it as `-g`, the number of GPUs per thread, with the default
+  of one thread per MPI rank.
+- Regression runs pass it as `-t`, the number of threads per MPI rank, with the
+  default of one GPU per thread because they omit `-g`.
+
+The rccl-tests reporter sets `gpusPerRank` to `nThreads * nGpus`, as shown in
+[`common.cu`](https://github.com/ROCm/rocm-systems/blob/3ae53f79fc26ba4d79c3dfa16ab71065760608e8/projects/rccl-tests/src/common.cu#L1348).
+The expected total is therefore `threads_per_gpu` on both paths. For example,
+`threads_per_gpu: "8"` means `gpusPerRank=8` for both `-g 8` and `-t 8`.
+
+CVS writes `<result_file_stem>_topology_check.json` beside the result files on the
+head node. For example, `/results/rccl.json` produces
+`/results/rccl_topology_check.json`. Performance runs write one audit file containing
+one check entry per data type. Each `run_regression()` invocation writes one audit
+file beside the configured result file. The regression suite currently reuses
+`rccl_result_file` across cases, so later cases overwrite the earlier result and
+audit files. Callers using `RcclJob` directly can set a distinct `rccl_result_file`
+per case to retain every audit. Each check entry contains
+`label`, `requested`, `reported` (the first row's topology), `mismatches`, `mode`,
+and `verdict` (`pass`, `mismatch`, or `skipped`). Skipped entries include a `reason`;
+differences in later rows appear in `mismatches` with their zero-based row index.
+Checks collected before an aborted run are still saved.
+
+For a launch requesting 2 nodes, 1 rank per node, and 8 GPUs per rank, affected
+rccl-tests builds report `nodes=1`, `ranks=2`, `ranksPerNode=2`, `gpusPerRank=8`.
+The audit records `nodes: requested 2, reported 1` and
+`ranksPerNode: requested 1, reported 2`. CVS preserves the producer's topology
+values in the raw, combined, and aggregated results; the audit carries the
+requested values separately. Single-node output without the topology block is
+accepted by the result schema, and the topology comparison is recorded as
+`skipped` when the block is absent from every row.
+
+The probable producer cause is in rccl-tests `src/common.cu`: the reporter receives
+the global MPI communicator size (`args->nProcs`) as `ranksPerNode`, then derives
+`nodes` from that value. The identity `ranks == nodes * ranksPerNode` still holds,
+so schema validation alone cannot catch it. The upstream fix must pass the
+separately computed `localSize`. This is tracked separately from the CVS change;
+see [AIMVT-334](https://amd-hub.atlassian.net/browse/AIMVT-334). Use `strict` once
+your installed rccl-tests build reports per-node rank counts correctly. Changing
+the CVS default and documenting a minimum fixed version are follow-up work.
+
 ### Heatmap
 
 ```bash
@@ -154,6 +225,6 @@ The RCCL config keeps benchmark intent and validation settings, while RCCL/NCCL/
 ## Implementation details
 
 - **Env staging**: `run_rccl` stages env scripts to `/tmp/cvs_rccl_env/` on all nodes with optional per-case overrides
-- **Regression cases**: Each combination in the Cartesian product gets its own result file suffix
+- **Regression cases**: Each combination in the Cartesian product runs separately and reuses the configured result-file path
 - **Single env dump**: Only `test_print_env_once` prints the environment; other tests focus on performance
 - **Tree filter**: Algorithm restrictions apply to maintain compatibility

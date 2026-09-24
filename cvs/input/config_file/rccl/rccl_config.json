@@ -43,6 +43,8 @@
             "verify_bus_bw": "False",
             "verify_bw_dip": "True",
             "verify_lat_dip": "True",
+            "_comment_topology_check": "How CVS reacts when rccl-tests' reported nodes/ranks/ranksPerNode/gpusPerRank disagree with the topology CVS launched. 'warn' (default) logs and records the mismatch; 'strict' fails the test; 'off' disables only the requested-vs-reported comparison. Checks are skipped when all rows omit topology. Use 'strict' once your rccl-tests build reports per-node rank counts correctly (see AIMVT-334).",
+            "topology_check": "warn",
             "_comment_cvs_exec_timeout": "Optional. CVS-side outer cap on the SSH-exec call wrapping mpirun (seconds, default 2400).",
             "cvs_exec_timeout": "2400",
             "rccl_result_file": "/home/{user-id}/rccl_result_file.json",
