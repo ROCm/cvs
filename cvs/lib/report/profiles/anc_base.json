@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "profile_id": "anc_base",
+  "suite_id": "anc",
+  "report_basename": "anc_run_deck",
+  "title": "ANC Run Deck",
+  "subtitle": "AMD Node Check · group results across the cluster",
+  "footer": "CVS ANC · render-only · per-node verdict from the collected ANC run (pass / fail / n-a when the group is not on the node)",
+  "link_name": "ANC Run Deck",
+  "dataset_builder": "status_matrix",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "anc_res_dict"
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "datasets.status_matrix.run_card_display"},
+    {"type": "status_matrix", "id": "results", "title": "Full results", "bind": "datasets.status_matrix"}
+  ]
+}
