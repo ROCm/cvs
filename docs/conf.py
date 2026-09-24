@@ -12,7 +12,7 @@ import shutil
 html_theme = "rocm_docs_theme"
 html_theme_options = {
     "flavor": "generic",
-    "header_title": "Cluster Validation Suite 0.2.0",
+    "header_title": "Cluster Validation Suite 0.1.0",
     "header_link": False,
     "link_main_doc": True,
     "version_list_link": "https://rocm.docs.amd.com/projects/cvs/en/latest/release.html",
