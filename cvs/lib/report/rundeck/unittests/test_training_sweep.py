@@ -7,9 +7,6 @@ the training_res_dict shape must flow through resolve/build into cells,
 gate_matrix, and results_table without the inference 6-tuple cell key.
 '''
 
-import base64
-import os
-import tempfile
 import unittest
 from types import SimpleNamespace
 
@@ -58,6 +55,10 @@ def _training_res_dict(final_loss=6.5):
                 "num_nodes": 4,
                 "step_metrics": [{"step": 0, "loss": 12.0}, {"step": 29, "loss": final_loss}],
                 "eval_metrics": [],
+                "tb_scalars": {
+                    "learning/loss": [(0, 12.0), (1, 11.0)],
+                    "perf/step_time_seconds": [(0, 110.0), (1, 9.8)],
+                },
             }
         },
     }
@@ -119,41 +120,23 @@ class BuildTrainingDatasetsTests(unittest.TestCase):
         self.assertEqual(ds["gate_matrix"], [])
         self.assertEqual(ds["overall_status"], "na")
 
-    def test_charts_embedded_as_data_uris(self):
-        raw = b"\x89PNG\r\n\x1a\nFAKE-PNG-BYTES"
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "loss.png")
-            with open(path, "wb") as fh:
-                fh.write(raw)
-            res = _training_res_dict()
-            res["sweeps"][_SWEEP]["charts"] = [("Loss Curve", path)]
-            ds = build_training_datasets({"results": res, "variant": _variant()}, _profile())
-            charts = ds["cells"][0]["charts"]
-            self.assertEqual(charts[0]["title"], "Loss Curve")
-            self.assertTrue(charts[0]["src"].startswith("data:image/png;base64,"))
-            self.assertIn(base64.b64encode(raw).decode("ascii"), charts[0]["src"])
+    def test_training_series_is_json_safe(self):
+        ds = self._build()
+        series = ds["training_series"][_SWEEP]
+        self.assertIn("learning/loss", series)
+        # JSON arrays of [step, value] (not tuples), so Chart.js can plot directly
+        self.assertEqual(series["learning/loss"], [[0, 12.0], [1, 11.0]])
 
-    def test_unreadable_chart_paths_are_skipped(self):
-        res = _training_res_dict()
-        res["sweeps"][_SWEEP]["charts"] = [("Missing", "/no/such/file.png")]
-        ds = build_training_datasets({"results": res, "variant": _variant()}, _profile())
-        self.assertEqual(ds["cells"][0]["charts"], [])
+    def test_metric_bars_across_sweeps(self):
+        by_metric = {b["metric"]: b for b in self._build()["metric_bars"]}
+        self.assertIn("training.tokens_per_sec_per_gpu", by_metric)
+        self.assertEqual(by_metric["training.tokens_per_sec_per_gpu"]["values"][_SWEEP], 200.0)
+        self.assertNotIn("training.loss_decreased", by_metric)  # bool flag excluded
 
-    def test_cross_sweep_charts_embedded(self):
-        raw = b"\x89PNG\r\n\x1a\nCROSS"
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "cross.png")
-            with open(path, "wb") as fh:
-                fh.write(raw)
-            res = _training_res_dict()
-            res["cross_sweep_charts"] = [("Loss vs step (all sweeps)", path)]
-            ds = build_training_datasets({"results": res, "variant": _variant()}, _profile())
-            self.assertEqual(ds["cross_sweep_charts"][0]["title"], "Loss vs step (all sweeps)")
-            self.assertTrue(ds["cross_sweep_charts"][0]["src"].startswith("data:image/png;base64,"))
-
-    def test_cross_sweep_charts_default_empty(self):
-        ds = build_training_datasets({"results": _training_res_dict(), "variant": _variant()}, _profile())
-        self.assertEqual(ds["cross_sweep_charts"], [])
+    def test_series_and_bars_empty_when_no_data(self):
+        ds = build_training_datasets({"results": {}, "variant": _variant()}, _profile())
+        self.assertEqual(ds["training_series"], {})
+        self.assertEqual(ds["metric_bars"], [])
 
     def test_info_specs_do_not_gate_tiers(self):
         # kind:"info" is record-only: it must not gate. eval_loss(info, None value)
@@ -197,36 +180,33 @@ class BuildTrainingDatasetsTests(unittest.TestCase):
         self.assertEqual(tiers["record"], "record")
 
 
-class SweepChartsCardTests(unittest.TestCase):
-    def test_renders_images_per_sweep(self):
+class MetricBarsCardTests(unittest.TestCase):
+    _BIND = "datasets.training_sweep.metric_bars"
+
+    def test_renders_canvases_and_chartjs(self):
         payload = {
-            "cells": [{"cell_id": "NN4_BF16", "charts": [{"title": "Loss", "src": "data:image/png;base64,AAAA"}]}]
+            "datasets": {
+                "training_sweep": {
+                    "metric_bars": [
+                        {
+                            "metric": "training.tokens_per_sec_per_gpu",
+                            "label": "tokens_per_sec_per_gpu",
+                            "unit": "tok/s/GPU",
+                            "values": {"BF16": 200.0, "FP8": 260.0},
+                        }
+                    ]
+                }
+            }
         }
-        card = {"type": "sweep_charts", "id": "charts", "title": "Training charts", "bind": "cells"}
+        card = {"type": "metric_bars", "id": "metric-bars", "title": "Results metrics by sweep", "bind": self._BIND}
         _sid, html_body, _nav = render_card(payload, card)
-        self.assertIn("<img", html_body)
-        self.assertIn("data:image/png;base64,AAAA", html_body)
-        self.assertIn("NN4_BF16", html_body)
-
-    def test_hidden_when_no_charts(self):
-        payload = {"cells": [{"cell_id": "NN4_BF16", "charts": []}]}
-        card = {"type": "sweep_charts", "bind": "cells"}
-        _sid, html_body, in_nav = render_card(payload, card)
-        self.assertEqual(html_body, "")
-        self.assertFalse(in_nav)
-
-
-class ImageGalleryCardTests(unittest.TestCase):
-    def test_flat_gallery_renders(self):
-        payload = {"gallery": [{"title": "Loss vs step", "src": "data:image/png;base64,BBBB"}]}
-        card = {"type": "image_gallery", "id": "cross-charts", "title": "Cross-sweep comparison", "bind": "gallery"}
-        _sid, html_body, _nav = render_card(payload, card)
-        self.assertIn("<img", html_body)
-        self.assertIn("data:image/png;base64,BBBB", html_body)
+        self.assertIn("<canvas", html_body)
+        self.assertIn("chart.js", html_body)
+        self.assertIn("tokens_per_sec_per_gpu", html_body)
 
     def test_hidden_when_empty(self):
-        card = {"type": "image_gallery", "bind": "gallery", "when_empty": "hide"}
-        _sid, html_body, in_nav = render_card({"gallery": []}, card)
+        card = {"type": "metric_bars", "bind": self._BIND, "when_empty": "hide"}
+        _sid, html_body, in_nav = render_card({"datasets": {"training_sweep": {"metric_bars": []}}}, card)
         self.assertEqual(html_body, "")
         self.assertFalse(in_nav)
 
@@ -239,6 +219,10 @@ class PayloadEndToEndTests(unittest.TestCase):
         self.assertEqual(payload["overall_status"], "pass")
         self.assertEqual(len(payload["gate_matrix"]), 1)
         self.assertEqual(payload["results_table"]["rows"][0][0], _SWEEP)
+        # dynamic-chart data flows into the payload for the viewer + bars card
+        ts = payload["datasets"]["training_sweep"]
+        self.assertIn(_SWEEP, ts["training_series"])
+        self.assertTrue(ts["metric_bars"])
         labels = {label for label, _v, _link in payload["run_card_display"]}
         self.assertIn("Model", labels)
         self.assertIn("GPU", labels)

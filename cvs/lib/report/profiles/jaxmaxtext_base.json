@@ -8,7 +8,7 @@
   "footer": "CVS jaxmaxtext \u00b7 render-only \u00b7 does not affect gates",
   "link_name": "JAX MaxText Run Deck",
   "dataset_builder": "training_sweep",
-  "interactive_viewer": false,
+  "interactive_viewer": true,
   "sources": {
     "results": "training_res_dict",
     "variant": "variant_config",
@@ -63,10 +63,9 @@
   "cards": [
     {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
     {"type": "lifecycle_timeline", "id": "lifecycle", "title": "Lifecycle timeline", "bind": "lifecycle"},
+    {"type": "metric_bars", "id": "metric-bars", "title": "Results metrics by sweep", "bind": "datasets.training_sweep.metric_bars", "when_empty": "hide"},
     {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
     {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
-    {"type": "sweep_charts", "id": "charts", "title": "Training charts", "bind": "cells"},
-    {"type": "image_gallery", "id": "cross-charts", "title": "Cross-sweep comparison", "bind": "datasets.training_sweep.cross_sweep_charts", "when_empty": "hide"},
     {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
   ]
 }

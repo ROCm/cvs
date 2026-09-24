@@ -20,8 +20,6 @@ import json
 import re
 import shlex
 import time
-import uuid as _uuid
-from pathlib import Path as _Path
 from types import SimpleNamespace
 
 import pytest
@@ -38,15 +36,7 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     evaluate_loss_decreasing,
     extract_checkpoint_timings,
 )
-from cvs.lib.training.jaxmaxtext.utils.loss_curve import render_loss_curve_png
-from cvs.lib.training.jaxmaxtext.utils.gpu_peak_tflops import peak_tflops
-from cvs.lib.training.jaxmaxtext.utils.training_charts import (
-    render_cross_sweep_bar_png,
-    render_cross_sweep_loss_png,
-    render_mfu_png,
-    render_scalar_charts,
-    render_step_time_png,
-)
+from cvs.lib.training.jaxmaxtext.utils.gpu_peak_tflops import compute_mfu, peak_tflops
 from cvs.lib.utils.verdict import evaluate_all, ThresholdViolation
 from cvs.lib.utils_lib import fail_test, update_test_result
 
@@ -393,6 +383,17 @@ def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, 
     except Exception as e:  # noqa: BLE001 - charting data is non-essential
         log.warning("tb scalars collection failed for sweep '%s': %s", sweep_name, e)
         tb_scalars = {}
+
+    # Derive an MFU% series (perf/mfu_pct) from the tflops rate + configured peak,
+    # so the viewer charts it like any other perf/* tag. Requires a known peak.
+    peak = peak_tflops(
+        variant_config.gpu_arch, _sweep_precision(sweep_name), getattr(variant_config.training, "peak_tflops", None)
+    )
+    rate = tb_scalars.get("perf/per_device_tflops_per_sec")
+    if peak and rate:
+        mfu = [(s, compute_mfu(v, peak)) for s, v in rate if v is not None]
+        if mfu:
+            tb_scalars["perf/mfu_pct"] = mfu
 
     training_res_dict.setdefault("sweeps", {})[sweep_name] = {
         "results": results,
@@ -753,72 +754,18 @@ def _sweep_precision(sweep_name):
     return m.group(1).upper() if m else None
 
 
-def _render_training_charts(out_dir, tb_scalars, step_metrics, variant_config, sweep_name, mode, label):
-    """Render the TensorBoard-derived charts; returns ``[(png_or_none, name)]``."""
-    prec = _sweep_precision(sweep_name)
-    peak = peak_tflops(variant_config.gpu_arch, prec, getattr(variant_config.training, "peak_tflops", None))
-    base = f"{variant_config.model.id}_{mode}_{label}_{str(_uuid.uuid4()).split('-')[-1]}"
-
-    def _out(name):
-        return _Path(out_dir) / f"{name}_{base}.png"
-
-    # One chart per TensorBoard scalar tag (learning/*, perf/*, ...), like the
-    # TensorBoard UI -- auto-discovered so new tags chart without code changes.
-    charts = [(path, tag) for tag, path in render_scalar_charts(tb_scalars, out_dir, filename_stem=f"tb_{base}")]
-    # Derived / statistical views TensorBoard does not provide directly.
-    charts.append(
-        (render_step_time_png(tb_scalars, _out("step_time"), step_metrics=step_metrics), "Step-time distribution")
-    )
-    charts.append((render_mfu_png(tb_scalars, _out("mfu"), peak), "MFU %"))
-    return charts
-
-
-def _render_cross_sweep_charts(training_res_dict, out_dir):
-    """Render cross-sweep overlays (loss vs step, throughput bar); ``[(title, path)]``."""
-    sweeps = training_res_dict.get("sweeps") or {}
-    loss_by_label = {}
-    tput_by_label = {}
-    for name, rec in sweeps.items():
-        label = _sweep_label(name)
-        pts = [
-            (s.get("step"), s.get("loss"))
-            for s in (rec.get("step_metrics") or [])
-            if s.get("step") is not None and s.get("loss") is not None
-        ]
-        if pts:
-            loss_by_label[label] = pts
-        tput = (rec.get("results") or {}).get("training.tokens_per_sec_per_gpu")
-        if tput is not None:
-            tput_by_label[label] = tput
-
-    _Path(out_dir).mkdir(parents=True, exist_ok=True)
-    uid = str(_uuid.uuid4()).split("-")[-1]
-    charts = []
-    loss_png = render_cross_sweep_loss_png(loss_by_label, _Path(out_dir) / f"cross_loss_{uid}.png")
-    if loss_png:
-        charts.append(("Loss vs step (all sweeps)", str(loss_png)))
-    tput_png = render_cross_sweep_bar_png(
-        tput_by_label, _Path(out_dir) / f"cross_tput_{uid}.png", "tok/s/GPU", "Throughput by sweep"
-    )
-    if tput_png:
-        charts.append(("Throughput by sweep", str(tput_png)))
-    return charts
-
-
 def loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request):
-    """Row 32 (per sweep): sample the training loss, render a PNG, gate on trend.
+    """Row 32 (per sweep): sample the training loss and gate on the decreasing trend.
 
-    Also renders the TensorBoard-derived training charts (loss components, grad/
-    param norms, LR schedule, step-time distribution, MFU). The rendered PNGs are
-    recorded on this sweep's result record for the Run Deck body (the deck builder
-    embeds them); they are intentionally NOT attached to the pytest row, so the
-    pytest report stays a clean list of tests + log links.
+    Charts (loss + every TensorBoard scalar) are NOT rendered here anymore: the
+    Run Deck plots them dynamically (Chart.js) from the collected ``tb_scalars``
+    in the interactive viewer, and the metric bars on the deck page. This test now
+    only computes and enforces the loss-decreasing verdict.
     """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
     label = _sweep_label(sweep_name)
-    mode = _mode(variant_config)
     rec = training_res_dict.get("sweeps", {}).get(sweep_name)
     step_metrics = rec.get("step_metrics") if rec else None
     if not step_metrics:
@@ -828,45 +775,9 @@ def loss_curve(sweep_name, training_res_dict, variant_config, lifecycle, request
     points = sample_loss_curve(step_metrics, cfg.sample_every, cfg.milestone_steps)
     verdict = evaluate_loss_decreasing(points, cfg.max_slope)
 
-    mgr = getattr(request.config, "_html_report_manager", None)
-    if mgr is not None and getattr(mgr, "is_enabled", False):
-        out_dir = mgr.log_dir
-    else:
-        out_dir = _Path(variant_config.paths.log_dir)
-    png_path = None
-    try:
-        _Path(out_dir).mkdir(parents=True, exist_ok=True)
-        fname = f"loss_curve_{variant_config.model.id}_{mode}_{label}_{str(_uuid.uuid4()).split('-')[-1]}.png"
-        abs_path = _Path(out_dir) / fname
-        title = f"Training Loss Curve — {variant_config.model.id} [{mode}/{label}]"
-        png_path = render_loss_curve_png(points, abs_path, title=title)
-    except Exception as e:  # noqa: BLE001 - plotting must never break the verdict
-        log.warning("loss curve: could not prepare PNG output (%s)", e)
-
-    # Collect chart artifacts for the Run Deck body. Recorded by absolute path on
-    # this sweep's record; the deck builder base64-embeds them. Not attached to the
-    # pytest row on purpose (see docstring).
-    charts = []
-    if png_path:
-        charts.append((f"Loss Curve [{mode}/{label}]", str(png_path)))
-
-    tb_scalars = (rec.get("tb_scalars") if rec else None) or {}
-    if tb_scalars or step_metrics:
-        try:
-            for chart_png, chart_name in _render_training_charts(
-                out_dir, tb_scalars, step_metrics, variant_config, sweep_name, mode, label
-            ):
-                if chart_png:
-                    charts.append((chart_name, str(chart_png)))
-        except Exception as e:  # noqa: BLE001 - charts must never break the verdict
-            log.warning("training charts: rendering failed (%s)", e)
-
-    if rec is not None and charts:
-        rec["charts"] = charts
-
     if verdict is not None:
         _decreasing, _slope, detail = verdict
-        log.info("loss curve: %s", detail)
+        log.info("loss curve [%s]: %s", label, detail)
 
     if verdict is None:
         pytest.skip(f"loss curve needs >= 2 sampled points (got {len(points)})")
@@ -988,17 +899,6 @@ def print_results_table(training_res_dict, request):
     _print_sweep_tables(training_res_dict)
     _print_checkpoint_io(training_res_dict)
     _write_metric_results_html(training_res_dict, request)
-
-    # Cross-sweep comparison charts for the Run Deck body (only when >=2 sweeps
-    # have data; the deck builder embeds them). Best-effort.
-    mgr = getattr(request.config, "_html_report_manager", None)
-    if mgr is not None and getattr(mgr, "is_enabled", False):
-        try:
-            charts = _render_cross_sweep_charts(training_res_dict, mgr.log_dir)
-            if charts:
-                training_res_dict["cross_sweep_charts"] = charts
-        except Exception as e:  # noqa: BLE001 - charts must never break the summary
-            log.warning("cross-sweep charts: rendering failed (%s)", e)
 
     failures = training_res_dict.get("metric_failures", [])
     globals.error_list = []

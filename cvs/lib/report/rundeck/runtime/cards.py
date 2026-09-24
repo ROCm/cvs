@@ -8,6 +8,7 @@ Profile-driven card renderers for Run Deck static HTML.
 from __future__ import annotations
 
 import html
+import json
 from typing import Any
 
 from cvs.lib.report.formatting import fmt_num, link_or_text_html
@@ -148,34 +149,34 @@ class DeckCardRenderer:
         return f"{banner}<div class='cells'>{''.join(cards) or empty_cells}</div>"
 
     @staticmethod
-    def _figure_grid(charts: Any) -> str:
-        """Flex grid of ``<figure><img data-uri></figure>`` from ``[{title, src}]``."""
-        figs = "".join(
-            "<figure style='margin:0;flex:0 0 auto'>"
-            f"<figcaption class='muted' style='font-size:0.75rem;margin-bottom:2px'>{html.escape(str(c.get('title', '')))}</figcaption>"
-            f"<img loading='lazy' alt='{html.escape(str(c.get('title', '')))}' src='{c.get('src', '')}' "
-            "style='max-width:480px;width:100%;height:auto;border:1px solid var(--border);border-radius:6px'/>"
-            "</figure>"
-            for c in (charts or [])
-            if isinstance(c, dict) and c.get("src")
+    def render_metric_bars(_payload: dict, _card: dict, data: Any) -> str:
+        """Dynamic (Chart.js) bar chart per metric across sweeps, from JSON.
+
+        ``data`` binds to ``datasets.training_sweep.metric_bars`` --
+        ``[{metric, label, unit, values: {sweep_id: number}}]``. Self-contained:
+        pulls Chart.js from CDN and draws one bar chart per metric. Empty -> "".
+        """
+        bars = [b for b in (data if isinstance(data, list) else []) if isinstance(b, dict) and b.get("values")]
+        if not bars:
+            return ""
+        payload_json = json.dumps(bars, separators=(",", ":")).replace("<", "\\u003c")
+        canvases = "".join(
+            f"<div style='flex:0 0 auto'><canvas id='mbar-{i}' width='360' height='240'></canvas></div>"
+            for i in range(len(bars))
         )
-        return f"<div style='display:flex;flex-wrap:wrap;gap:12px'>{figs}</div>" if figs else ""
-
-    def render_sweep_charts(self, payload: dict, _card: dict, data: Any) -> str:
-        """Per-sweep chart gallery from base64-embedded cell ``charts`` (or "")."""
-        cells = data if isinstance(data, list) else payload.get("cells") or []
-        blocks = []
-        for cell in cells:
-            grid = self._figure_grid(cell.get("charts"))
-            if not grid:
-                continue
-            label = cell.get("cell_id") or cell.get("policy") or ""
-            blocks.append(f"<div style='margin-bottom:1rem'><h3>{html.escape(str(label))}</h3>{grid}</div>")
-        return "".join(blocks)  # empty -> card is hidden by render_card
-
-    def render_image_gallery(self, _payload: dict, _card: dict, data: Any) -> str:
-        """Flat gallery from a bound ``[{title, src}]`` list (or "" to hide)."""
-        return self._figure_grid(data if isinstance(data, list) else [])
+        script = (
+            "<script src='https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js'></script>"
+            "<script>(function(){var BARS=" + payload_json + ";"
+            "function draw(){if(!window.Chart){return setTimeout(draw,60);}"
+            "BARS.forEach(function(b,i){var el=document.getElementById('mbar-'+i);if(!el)return;"
+            "var labels=Object.keys(b.values);var title=b.label+(b.unit?(' ('+b.unit+')'):'');"
+            "new Chart(el,{type:'bar',data:{labels:labels,datasets:[{label:title,"
+            "data:labels.map(function(k){return b.values[k];}),backgroundColor:'#1f77b4'}]},"
+            "options:{responsive:false,plugins:{legend:{display:false},title:{display:true,text:title}},"
+            "scales:{x:{ticks:{font:{size:9},maxRotation:40,minRotation:0}},y:{ticks:{font:{size:9}}}}}});});}"
+            "draw();})();</script>"
+        )
+        return f"<div style='display:flex;flex-wrap:wrap;gap:16px'>{canvases}</div>{script}"
 
     @staticmethod
     def render_table(_payload: dict, _card: dict, data: Any) -> str:
@@ -240,8 +241,7 @@ class DeckCardRenderer:
             "gate_matrix": self.render_gate_matrix,
             "gate_heatmap": self.render_gate_heatmap,
             "sweep_cell_cards": self.render_cell_cards,
-            "sweep_charts": self.render_sweep_charts,
-            "image_gallery": self.render_image_gallery,
+            "metric_bars": self.render_metric_bars,
             "table": self.render_table,
             "launch_panel": self.render_launch,
             "line_chart": self.render_line_chart,

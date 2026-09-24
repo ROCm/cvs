@@ -23,7 +23,6 @@ Thresholds are keyed by the sweep name; metric keys are ``training.<short>``.
 
 from __future__ import annotations
 
-import base64
 from typing import Any, Mapping
 
 from cvs.lib.report.cell_build import metric_pass
@@ -73,22 +72,38 @@ def _cell_metrics(config, actuals, thresholds_cell):
     return metrics
 
 
-def _embed_chart_entries(entries):
-    """Base64-embed ``[(title, abs_path), ...]`` PNGs as ``[{title, src}]`` data URIs.
+def _series_for_sweep(rec):
+    """JSON-safe ``{tag: [[step, value], ...]}`` from a sweep's collected tb_scalars.
 
-    Embedding keeps the deck self-contained (no fragile relative links between the
-    deck and the per-test log dir). Unreadable paths are skipped.
+    Feeds the viewer's dynamic (Chart.js) per-tag line charts -- no PNGs.
     """
-    embedded = []
-    for entry in entries or []:
-        try:
-            title, path = entry
-            with open(path, "rb") as fh:
-                b64 = base64.b64encode(fh.read()).decode("ascii")
-        except (OSError, ValueError, TypeError):
-            continue
-        embedded.append({"title": title, "src": f"data:image/png;base64,{b64}"})
-    return embedded
+    out = {}
+    for tag, points in (rec.get("tb_scalars") or {}).items():
+        pts = [[s, v] for s, v in (points or []) if v is not None]
+        if pts:
+            out[tag] = pts
+    return out
+
+
+def _metric_bars(config, cells):
+    """Per-metric bar data across sweeps for the deck's dynamic bar charts.
+
+    Returns ``[{metric, label, unit, values: {sweep_id: number}}]`` in metric-units
+    order; a metric appears only if at least one sweep produced a numeric value.
+    """
+    bars = []
+    for short, unit in (config.metric_units or {}).items():
+        if unit == "bool":
+            continue  # 0/1 flags (e.g. loss_decreased) are not meaningful as bars
+        full = config.full_metric(short)
+        values = {}
+        for cell in cells:
+            value = cell["actuals"].get(full)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                values[cell["cell_id"]] = value
+        if values:
+            bars.append({"metric": full, "label": short, "unit": unit, "values": values})
+    return bars
 
 
 def _overall_status(config, cells, enforce):
@@ -151,12 +166,16 @@ def build_training_datasets(sources: dict[str, Any], profile: DeckProfile) -> di
 
     cells = []
     gate_matrix = []
+    training_series = {}
     for sweep_name in sorted(sweeps):
         rec = sweeps[sweep_name] or {}
         results = rec.get("results") or {}
         thresholds_cell = thresholds.get(sweep_name) or {}
         nodes = rec.get("num_nodes")
         tiers = {tier: _tier_status(config, results, thresholds_cell, tier, enforce) for tier in tier_order}
+        series = _series_for_sweep(rec)
+        if series:
+            training_series[sweep_name] = series
         cells.append(
             {
                 "model": model,
@@ -172,7 +191,6 @@ def build_training_datasets(sources: dict[str, Any], profile: DeckProfile) -> di
                 "tiers": tiers,
                 "actuals": dict(results),
                 "cell_lifecycle": {},
-                "charts": _embed_chart_entries(rec.get("charts")),
             }
         )
         gate_matrix.append(
@@ -192,7 +210,8 @@ def build_training_datasets(sources: dict[str, Any], profile: DeckProfile) -> di
         "sweep_summaries": [],
         "gate_matrix": gate_matrix,
         "results_table": _results_table(config, sweeps, variant_config),
-        "cross_sweep_charts": _embed_chart_entries(res.get("cross_sweep_charts")),
+        "training_series": training_series,
+        "metric_bars": _metric_bars(config, cells),
         "multi_shape_comparison": False,
         "overall_status": _overall_status(config, cells, enforce),
         "metric_tier_order": tier_order,

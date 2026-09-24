@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>__TITLE__ — viewer</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root { --bg:#0f1117; --panel:#161a24; --border:#232838; --text:#e6e9f0; --muted:#8b93a7; --accent:#6b9fff; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg); color: var(--text); padding: 1.25rem; line-height: 1.45; }
+h1 { margin: 0 0 0.25rem; font-size: 1.4rem; }
+.subtitle { color: var(--muted); margin: 0 0 1rem; font-size: 0.9rem; }
+nav a { color: var(--accent); text-decoration: none; margin-right: 1rem; font-size: 0.85rem; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.15rem; margin-bottom: 1.25rem; }
+.panel h2 { margin: 0 0 0.85rem; font-size: 1.05rem; }
+.panel h3 { margin: 1rem 0 0.5rem; font-size: 0.9rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.grid { display: flex; flex-wrap: wrap; gap: 16px; }
+.chart-box { background: #0c0f16; border: 1px solid var(--border); border-radius: 8px; padding: 8px; width: 420px; height: 300px; }
+.muted { color: var(--muted); }
+</style></head>
+<body>
+<h1>__TITLE__</h1>
+<p class="subtitle">__SUBTITLE__</p>
+<nav><a href="__DECK_HREF__">← Run deck</a><a href="#bars">Metric bars</a><a href="#series">Per-metric charts</a></nav>
+
+<section class="panel" id="bars"><h2>Results metrics by sweep</h2><div class="grid" id="bars-grid"></div>
+  <p class="muted" id="bars-empty" style="display:none">No metric bar data.</p></section>
+
+<section class="panel" id="series"><h2>Per-metric charts (all sweeps overlaid)</h2><div id="series-groups"></div>
+  <p class="muted" id="series-empty" style="display:none">No TensorBoard scalar series were collected.</p></section>
+
+__EMBEDDED_JSON__
+<script>
+(function () {
+  var PALETTE = ["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#17becf","#bcbd22","#7f7f7f"];
+  function payload() {
+    var el = document.getElementById("embedded-report-json");
+    try { return el ? JSON.parse(el.textContent) : {}; } catch (e) { return {}; }
+  }
+  function ready(fn) { if (window.Chart) { fn(); } else { setTimeout(function () { ready(fn); }, 60); } }
+
+  var ds = ((payload().datasets || {}).training_sweep) || {};
+  var series = ds.training_series || {};      // {sweep: {tag: [[step, val], ...]}}
+  var bars = ds.metric_bars || [];            // [{metric, label, unit, values}]
+  var sweeps = Object.keys(series).sort();
+
+  function color(i) { return PALETTE[i % PALETTE.length]; }
+
+  function drawBars() {
+    var grid = document.getElementById("bars-grid");
+    if (!bars.length) { document.getElementById("bars-empty").style.display = ""; return; }
+    bars.forEach(function (b, i) {
+      var box = document.createElement("div"); box.className = "chart-box";
+      var cv = document.createElement("canvas"); box.appendChild(cv); grid.appendChild(box);
+      var labels = Object.keys(b.values);
+      var title = b.label + (b.unit ? (" (" + b.unit + ")") : "");
+      new Chart(cv, {
+        type: "bar",
+        data: { labels: labels, datasets: [{ label: title, data: labels.map(function (k) { return b.values[k]; }), backgroundColor: color(i) }] },
+        options: { plugins: { legend: { display: false }, title: { display: true, text: title } },
+          scales: { x: { ticks: { font: { size: 9 }, maxRotation: 40 } }, y: { ticks: { font: { size: 9 } } } } }
+      });
+    });
+  }
+
+  function allTags() {
+    var set = {};
+    sweeps.forEach(function (s) { Object.keys(series[s]).forEach(function (t) { set[t] = 1; }); });
+    return Object.keys(set).sort();
+  }
+
+  function drawSeries() {
+    var tags = allTags();
+    var host = document.getElementById("series-groups");
+    if (!tags.length) { document.getElementById("series-empty").style.display = ""; return; }
+    var lastNs = null, grid = null;
+    tags.forEach(function (tag) {
+      var ns = tag.indexOf("/") >= 0 ? tag.split("/")[0] : "other";
+      if (ns !== lastNs) {
+        var h = document.createElement("h3"); h.textContent = ns; host.appendChild(h);
+        grid = document.createElement("div"); grid.className = "grid"; host.appendChild(grid);
+        lastNs = ns;
+      }
+      var box = document.createElement("div"); box.className = "chart-box";
+      var cv = document.createElement("canvas"); box.appendChild(cv); grid.appendChild(box);
+      var datasets = [];
+      sweeps.forEach(function (s, i) {
+        var pts = series[s][tag];
+        if (!pts) { return; }
+        datasets.push({ label: s, data: pts.map(function (p) { return { x: p[0], y: p[1] }; }),
+          borderColor: color(i), backgroundColor: color(i), borderWidth: 1.3, pointRadius: 0, tension: 0.15 });
+      });
+      new Chart(cv, {
+        type: "line", data: { datasets: datasets },
+        options: { plugins: { legend: { display: datasets.length > 1, labels: { font: { size: 9 } } }, title: { display: true, text: tag } },
+          scales: { x: { type: "linear", title: { display: true, text: "step" }, ticks: { font: { size: 9 } } },
+            y: { ticks: { font: { size: 9 } } } } }
+      });
+    });
+  }
+
+  ready(function () { drawBars(); drawSeries(); });
+})();
+</script>
+</body></html>

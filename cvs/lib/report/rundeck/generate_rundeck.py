@@ -133,7 +133,24 @@ class RundeckPublisher:
     ) -> Optional[Path]:
         if not config.interactive_viewer or not isinstance(profile, (dict, InferenceReportConfig)):
             return None
-        if isinstance(profile, dict) and profile.get("dataset_builder", "sweep") != "sweep":
+        builder_id = profile.get("dataset_builder", "sweep") if isinstance(profile, dict) else "sweep"
+
+        # Training uses its own dynamic viewer (per-tag line charts + metric bars
+        # from the embedded JSON), not the inference concurrency viewer.
+        if builder_id == "training_sweep":
+            from cvs.lib.report.viewer.training_viewer import training_viewer_basename_for, write_training_viewer
+
+            viewer_path = out_dir / training_viewer_basename_for(config.report_basename)
+            write_training_viewer(
+                viewer_path,
+                title=config.title,
+                subtitle=config.subtitle,
+                deck_basename=config.report_basename,
+                embed_payload=payload,
+            )
+            return viewer_path
+
+        if builder_id != "sweep":
             return None
         viewer_name = viewer_basename_for(config.report_basename)
         viewer_path = out_dir / viewer_name
