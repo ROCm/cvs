@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure SGLang inference benchmarks on AMD MI30X clusters
-  :keywords: inference, ROCm, cvs, SGLang, LLM, MI30X, distributed, disaggregated, prefill, decode
+  :description: Reference for CVS SGLang inference benchmark configuration, covering single-node, distributed, and disaggregated prefill-decode topology and threshold files.
+  :keywords: CVS, SGLang, inference, ROCm, LLM, GPU, AMD, distributed, disaggregated, prefill, decode, JSON, benchmark
 
-**********************************
-SGLang inference configuration
-**********************************
+*************************************************************************
+SGLang inference benchmark configuration for Cluster Validation Suite (CVS)
+*************************************************************************
 
 CVS ships three SGLang inference suites for AMD MI30X clusters. Each suite reads a JSON
 configuration file from ``cvs/input/config_file/inference/sglang/`` and a matching
@@ -19,16 +19,15 @@ threshold file referenced by top-level ``threshold_json``.
      - Topology
    * - ``sglang_single``
      - ``cvs/tests/inference/sglang/sglang_single.py``
-     - Full-model ``sglang.launch_server`` on the first ``cluster.json`` host (TP across local GPUs). Extra hosts are ignored.
+     - One unified ``sglang.launch_server`` on a single ``benchmark_serv_node`` (TP across local GPUs).
    * - ``sglang_distributed``
      - ``cvs/tests/inference/sglang/sglang_distributed.py``
-     - One unified multi-node server (TP/PP across the first ``nnodes`` hosts in ``cluster.json``).
+     - One unified multi-node server (TP/PP + ``nnodes``); all ``server_node_list`` ranks participate.
    * - ``sglang_disagg_distributed``
      - ``cvs/tests/inference/sglang/sglang_disagg_distributed.py``
-     - Disaggregated prefill/decode: even ``nnodes`` from ``cluster.json``; rank-0 is
-       prefill coordinator, proxy, and benchmark; rank-1 is decode coordinator.
+     - Disaggregated prefill/decode with a proxy router; separate prefill and decode node groups.
 
-How to run: :doc:`/how-to/test-suites/inference/sglang`.
+See :doc:`/how-to/test-suites/inference/sglang`  for more information on running these tests.
 
 Run any suite with:
 
@@ -108,16 +107,14 @@ threshold file via top-level ``threshold_json`` (a filename beside the config).
 Threshold keys use the form ``ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>``. Each value is a
 metric map (for example ``output_throughput_per_sec``, ``mean_ttft_ms``, ``mean_tpot_ms``,
 ``goodput``, ``mfu``) with ``kind`` and ``value`` fields. Accuracy cells use
-``BENCH=lm_eval_hellaswag`` and ``BENCH=lm_eval_gsm8k``. Long-context NIAH cells use
-``ACC_ISL=<n>,OSL=<n>`` (shipped files currently have ``ACC_ISL=131072,OSL=1024`` with
-``pass_rate``). Those cells parametrize ``test_run_long_context_accuracy`` on
-``sglang_disagg_distributed``; the stage still skips unless ``lng_ctx_activate`` is
-``true``.
+``BENCH=lm_eval_hellaswag`` and ``BENCH=lm_eval_gsm8k``.
 
 File structure
 ==============
 
 Shipped templates use these top-level keys:
+
+The following table describes each top-level key in a SGLang configuration file.
 
 .. list-table::
    :widths: 2 6
@@ -127,8 +124,7 @@ Shipped templates use these top-level keys:
      - Description
    * - ``enforce_thresholds``
      - When ``false``, performance metrics are recorded but do not fail the run. When ``true``,
-       results are compared against the threshold file. Does not gate lm-eval or NIAH
-       accuracy (those always use their threshold cells when the stage runs).
+       results are compared against the threshold file. Does not gate lm-eval accuracy.
    * - ``threshold_json``
      - Filename of the threshold JSON in the same directory.
    * - ``paths``
@@ -141,9 +137,6 @@ Shipped templates use these top-level keys:
      - ``bench_serving`` workload (``num_prompts``, ``data_set_name``, MFU inputs).
    * - ``accuracy``
      - ``tasks`` list (``lm_eval_hellaswag``, ``lm_eval_gsm8k``).
-   * - ``long_ctx_niah``
-     - Optional NIAH workload for ``test_run_long_context_accuracy`` (DeepSeek disaggregated
-       template). Loaded into ``inference_tests.long_ctx_niah``.
    * - ``sweeps``
      - Optional per-combo overrides (for example ``num_prompts``).
    * - ``sweep``
@@ -197,6 +190,8 @@ Example: single-node template
             "model": "meta-llama/Llama-3.1-70B-Instruct",
             "tensor_parallelism": "8",
             "pipeline_parallelism": "1",
+            "benchmark_serv_node": "<changeme>",
+            "proxy_router_serv_port": "8000",
             "add_flags": [ "--attention-backend aiter" ]
         },
         "benchmark_params": {
@@ -232,10 +227,8 @@ General ``config`` parameters
      - Container instance name on each participating node.
    * - ``server_params.nnodes``
      - ``1``, ``2``, ``4``, …
-     - Server rank count. For ``sglang_distributed`` and ``sglang_disagg_distributed``,
-       the first this many hosts from ``cluster.json`` participate. Must be at least 2
-       and must not exceed the cluster size. Disaggregated also requires an even
-       ``nnodes`` so prefill and decode groups stay equal (1P/1D, 2P/2D, …).
+     - Server rank count. For ``sglang_distributed``, must match ``server_node_list`` length.
+       Disaggregated launch uses the lengths of ``prefill_node_list`` and ``decode_node_list``.
    * - ``paths.hf_token_file``
      - ``/home/{user-id}/.hf_token``
      - HuggingFace token file for model download.
@@ -252,13 +245,11 @@ General ``config`` parameters
      - ``ERROR``
      - NCCL log level (multi-node).
    * - ``server_params.benchmark_serv_node``
-     - unused in packaged configs
-     - ``sglang_single`` uses the first cluster host. ``sglang_distributed`` and
-       ``sglang_disagg_distributed`` also derive hosts from ``cluster.json`` order.
+     - node hostname/IP
+     - Node that runs smoke tests, lm-eval, and ``bench_serving`` (required for all suites).
    * - ``server_params.proxy_router_serv_port``
      - ``8000``
-     - HTTP port for the unified server or proxy router. Optional; defaults to
-       ``8000``. Omit from packaged SGLang configs.
+     - HTTP port for the unified server (single/distributed) or proxy router client port (disaggregated).
    * - ``container.runtime.args.devices``
      - ``[ "/dev/dri", "/dev/kfd" ]`` (single)
      - GPU devices passed into the container. Multi-node configs also include ``/dev/infiniband/rdma_cm``.
@@ -275,14 +266,10 @@ Single-node only (``sglang_single``)
 
    * - Parameter
      - Description
-   * - Cluster hosts
-     - Only the first ``node_dict`` entry in ``cluster.json`` gets a container and a
-       full-model server. Extra hosts are ignored. ``server_params.benchmark_serv_node``
-       is unused.
+   * - ``server_params.benchmark_serv_node``
+     - Exactly one host; only this node receives a container. Other cluster nodes are ignored.
    * - ``server_params.nnodes``
-     - Must be ``1`` (local TP only; nodes do not form one multi-rank server).
-   * - HTTP port
-     - Defaults to ``8000``. Do not set ``proxy_router_serv_port``.
+     - Must be ``1``.
 
 Unified multi-node (``sglang_distributed``)
 -------------------------------------------
@@ -295,18 +282,18 @@ Additional ``server_params`` / ``container`` env fields beyond the single-node s
 
    * - Parameter
      - Description
-   * - ``server_params.nnodes``
-     - How many ``cluster.json`` hosts to use (``node_dict`` order). Rank-0 is master
-       and the benchmark node. The suite fails immediately if this is larger than
-       the cluster or less than 2.
-   * - HTTP / dist-init ports
-     - HTTP defaults to ``8000``. Dist-init defaults to ``40001``. Do not set
-       ``server_node_list``, ``benchmark_serv_node``, ``dist_init_port``, or
-       ``proxy_router_serv_port``.
+   * - ``server_params.server_node_list``
+     - All ranks of the unified ``sglang.launch_server`` (length must equal ``nnodes``).
+   * - ``server_params.dist_init_port``
+     - Distributed init port on rank-0 (default ``40001``).
    * - ``NCCL_IB_HCA``, ``NCCL_IB_GID_INDEX``
      - NCCL InfiniBand/RoCE device list and GID index (``container.runtime.args.env``).
    * - ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, ``GLOO_TCP_IFNAME``
      - Ethernet interfaces for socket/Gloo fallback.
+   * - ``HCA_ID_PREFIX``
+     - Single ``ibv_devinfo`` ``hca_id`` prefix used by ``test_setup_ibv_devices``.
+       Replace ``<changeme>`` with ``rdma``, ``bnxt_``, or ``mlx5_``. Keep ``rdma0,...``
+       on ``NCCL_IB_HCA`` only.
 
 Disaggregated prefill-decode (``sglang_disagg_distributed``)
 ------------------------------------------------------------
@@ -319,15 +306,16 @@ Uses the multi-node network env fields above, plus:
 
    * - Parameter
      - Description
-   * - ``server_params.nnodes``
-     - Even count of ``cluster.json`` hosts (``node_dict`` order). Rank-0 is prefill
-       coordinator, proxy router, and benchmark. Rank-1 is decode coordinator.
-       Remaining hosts split equally into prefill and decode. Fails if ``nnodes``
-       is odd, less than 2, or larger than the cluster.
-   * - Ports
-     - Prefill serve ``30001``, decode serve ``30002``, HTTP/proxy ``8000``,
-       prefill coordinator ``40001``, decode coordinator ``40002``. Do not set
-       node lists, coordinator addresses, or those port fields.
+   * - ``server_params.prefill_node_list``, ``decode_node_list``
+     - Node groups for prefill and decode servers. ``--nnodes`` / ``--node-rank`` follow these list lengths.
+   * - ``server_params.proxy_router_node``
+     - Host running the PD proxy router.
+   * - ``prefill_serv_port``, ``decode_serv_port``, ``proxy_router_port``
+     - Internal service ports (defaults ``30001``, ``30002``, ``8000``).
+   * - ``prefill_coordinator_addr``, ``decode_coordinator_addr``
+     - Rank-0 addresses for each role group.
+   * - ``prefill_coordinator_port``, ``decode_coordinator_port``
+     - Coordinator ports (defaults ``40001``, ``40002``).
 
 ``benchmark_params`` / model settings
 =====================================
@@ -364,25 +352,8 @@ Uses the multi-node network env fields above, plus:
    * - ``container.runtime.args.env``, ``server_params.add_flags``
      - ROCm/SGLang tuning as scalar env (for example ``SGLANG_USE_AITER``, ``AMDGCN_USE_BUFFER_OPS``, ``ROCM_QUICK_REDUCE_QUANTIZATION``) plus ``--attention-backend aiter``. DeepSeek templates also set ``GPU_ARCHS=gfx942``.
    * - ``server_params.context_length``
-     - ``205000`` (Llama / unified DeepSeek) or ``163840`` (DeepSeek disaggregated)
-     - KV-cache context cap passed to ``launch_server`` as ``--context-length``. On
-       disaggregated runs this flag is applied to both prefill and decode. Required when
-       ``lng_ctx_activate`` is ``true``.
-   * - ``server_params.lng_ctx_activate``
-     - ``true`` (DeepSeek disaggregated only)
-     - Enables ``test_run_long_context_accuracy`` and injects long-context CLI flags.
-       Omit or set to anything other than ``true`` to skip NIAH (Llama disaggregated).
-   * - ``server_params.chunked_prefill_size``
-     - ``8192``
-     - Required when ``lng_ctx_activate`` is ``true``. Passed as ``--chunked-prefill-size``
-       on prefill (and unified) servers only — not on decode.
-   * - ``server_params.max_prefill_tokens``
-     - ``8192``
-     - Optional with ``lng_ctx_activate``. Passed as ``--max-prefill-tokens`` on prefill
-       (and unified) servers only.
-   * - ``long_ctx_niah.num_prompts``, ``seed``, ``request_timeout_sec``, ``exec_timeout_sec``, ``tolerance_frac``
-     - ``6``, ``42``, ``7200``, ``21600``, ``0.05``
-     - NIAH client settings. ISL/OSL come from the ``ACC_ISL=…`` threshold cell, not this block.
+     - ``205000``
+     - Long-context cap (distributed / disaggregated Llama and DeepSeek templates).
    * - ``server_params.prefill_policy``, ``decode_policy``
      - ``cache_aware``
      - Disaggregated templates only; PD routing policy.
@@ -409,12 +380,6 @@ Inference tests
   Accuracy tasks via lm-eval. Thresholds for accuracy metrics are always enforced when configured
   in the threshold file.
 
-``long_ctx_niah`` (``sglang_disagg_distributed``)
-  Needle-in-a-haystack long-context accuracy. Collection parametrizes one pytest case per
-  ``ACC_ISL=<n>,OSL=<n>`` threshold cell. The test skips unless ``server_params.lng_ctx_activate``
-  is ``true``. When it runs, ``pass_rate`` from that cell is always enforced.
-  ``mi3xx_sglang_deepseek_r1_0528_disaggregated.json`` ships with this enabled.
-
 .. _sglang-volume-mounts:
 
 Volume mounts
@@ -435,6 +400,9 @@ Volume mounts
         ]
     }
 
+``test_setup_ibv_devices`` (distributed and disaggregated suites only) validates IB visibility inside
+the container after these mounts are applied.
+
 Disaggregated architecture overview
 ====================================
 
@@ -446,10 +414,6 @@ SGLang disaggregated prefill-decode separates inference into:
 
 Use ``sglang_disagg_distributed`` with ``mi3xx_sglang_*_disaggregated.json`` templates. Unified
 multi-node serving (no PD split) uses ``sglang_distributed`` instead.
-
-When ``lng_ctx_activate`` is ``true``, prefill launch includes ``--context-length``,
-``--chunked-prefill-size``, and optional ``--max-prefill-tokens``. Decode launch includes
-``--context-length`` only so it can hold the transferred KV cache.
 
 Performance metrics
 ===================
@@ -472,19 +436,13 @@ Troubleshooting
   keys (``SGLANG_USE_AITER``, ``GPU_ARCHS``, ...), not as an ``ADD_EXPORT_ENV`` list.
 
 **Multi-node networking**
-  Confirm RDMA devices with ``ibv_devinfo`` inside the container.
+  Confirm RDMA devices with ``ibv_devinfo`` inside the container after ``test_setup_ibv_devices``.
   Match ``NCCL_IB_HCA`` to your cluster. For Thor NICs, ensure ``libbnxt_re-rdmav34.so`` mounts
   are present.
 
 **Sweep collection**
   Each listed ``sweep.runs`` combo must match a threshold cell exactly or uniquely by
   ``ISL,OSL,CONC``. Empty ``runs`` selects every performance cell in the threshold JSON.
-
-**Long-context NIAH**
-  ``sglang_disagg_distributed`` requires at least one ``ACC_ISL=…,OSL=…`` cell in the
-  threshold file (collection fails without it). The stage then skips unless
-  ``lng_ctx_activate`` is ``true``. If the server OOMs at 131k ISL, confirm
-  ``context_length`` / ``chunked_prefill_size`` on the DeepSeek disaggregated template.
 
 **Model access**
   Set ``paths.hf_token_file`` for HuggingFace models or mount local weights under ``/root/models`` via

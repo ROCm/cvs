@@ -1,31 +1,30 @@
 .. meta::
-  :description: Run Flux.1, Flux.2, and WAN 2.2 xDiT inference tests
-  :keywords: CVS, flux1_t2i, flux2, wan22, xdit
+  :description: Run xDiT diffusion inference tests for FLUX.1, FLUX.2, and WAN 2.2 workloads on AMD Instinct GPU clusters with CVS and ROCm.
+  :keywords: CVS, xDiT, inference, AMD Instinct, ROCm, AMD, GPU, FLUX, WAN, diffusion, distributed, PyTorch
 
-*************************
-Run xDiT inference tests
-*************************
+**************************************************
+Run xDiT diffusion inference tests with CVS
+**************************************************
 
 CVS provides five xDiT suites under ``cvs/tests/inference/xdit/``. Each suite is a
 separate pytest module; pick the one that matches your topology and launcher, then point
 ``--config_file`` at a template from ``cvs/input/config_file/inference/xdit/``.
 
-- **Single-node** suites run one independent torchrun job inside the orchestrated
-  container on every node in the cluster ``node_dict``, and report per-host results.
-- **Distributed** suites run one coordinated torchrun job across the first
-  ``nnodes`` hosts in the cluster ``node_dict`` (``nnodes >= 2``). Rank-0 is always
-  the first cluster node (benchmark / rendezvous). Startup fails if ``nnodes`` is
-  less than 2 or larger than the cluster.
+- **Single-node** suites run one independent docker+torchrun job on **every** node in
+  the cluster file (full model on each node).
+- **Distributed** suites run one coordinated torchrun job across ``nnodes`` (``nnodes >= 2``),
+  using ``server_node_list`` when set.
 
-FLUX.1-dev and FLUX.2-dev share the ``xdit_flux_dev_*`` suites; choose the matching
-``flux1`` or ``flux2`` JSON. ``server_params.model`` may be a Hugging Face repo id
-(downloaded into ``paths.models_dir`` / ``HF_HOME`` during ``test_verify_model``) or an
-absolute host path (bind-mounted at ``/model``). Gated repos need ``paths.hf_token_file``.
+FLUX.1-dev and FLUX.2-dev share the ``pytorch_xdit_flux_dev_*`` suites; choose the matching
+``flux1`` or ``flux2`` JSON. Models must already be staged on every participating node
+(no runtime Hugging Face downloads).
 
 Config reference: :doc:`/reference/configuration-files/inference/xdit`.
 
 Test suites
 ===========
+
+The following suites are available.
 
 .. list-table::
    :widths: 3 3 5
@@ -34,26 +33,28 @@ Test suites
    * - CVS suite name
      - Source module
      - What it runs
-   * - ``xdit_flux_dev_single``
-     - ``xdit_flux_dev_single.py``
+   * - ``pytorch_xdit_flux_dev_single``
+     - ``pytorch_xdit_flux_dev_single.py``
      - FLUX.1 (``run_usp.py``) or FLUX.2 (``flux2_example.py``); one job per cluster node.
-   * - ``xdit_flux_dev_distributed``
-     - ``xdit_flux_dev_distributed.py``
+   * - ``pytorch_xdit_flux_dev_distributed``
+     - ``pytorch_xdit_flux_dev_distributed.py``
      - Unified FLUX.1 / FLUX.2 torchrun across ``nnodes``.
-   * - ``xdit_wan22_14b_single``
-     - ``xdit_wan22_14b_single.py``
+   * - ``pytorch_xdit_wan22_14b_single``
+     - ``pytorch_xdit_wan22_14b_single.py``
      - WAN 2.2 I2V native (``/app/Wan2.2/run.py``); one job per cluster node.
-   * - ``xdit_wan22_14b_diffusers_single``
-     - ``xdit_wan22_14b_diffusers_single.py``
+   * - ``pytorch_xdit_wan22_14b_diffusers_single``
+     - ``pytorch_xdit_wan22_14b_diffusers_single.py``
      - WAN Diffusers xFuser (``wan_i2v_example.py``); one job per cluster node.
-   * - ``xdit_wan22_14b_diffusers_distributed``
-     - ``xdit_wan22_14b_diffusers_distributed.py``
+   * - ``pytorch_xdit_wan22_14b_diffusers_distributed``
+     - ``pytorch_xdit_wan22_14b_diffusers_distributed.py``
      - Unified WAN Diffusers xFuser torchrun across ``nnodes``.
 
 .. _xdit-set-up-config:
 
 Set up config
 =============
+
+Follow these steps to set up the xDiT configuration.
 
 1. List available xDiT templates:
 
@@ -66,11 +67,11 @@ Set up config
 
    .. code:: bash
 
-     cvs config copy inference/xdit/mi3xx_xdit_flux1_dev_single.json \
-       --output ~/cvs_workspace/inference/xdit/mi3xx_xdit_flux1_dev_single.json
+     cvs config copy inference/xdit/mi3xx_pytorch_xdit_flux1_dev_single.json \
+       --output ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_flux1_dev_single.json
 
-     cvs config copy inference/xdit/mi3xx_xdit_wan22_14b_single.json \
-       --output ~/cvs_workspace/inference/xdit/mi3xx_xdit_wan22_14b_single.json
+     cvs config copy inference/xdit/mi3xx_pytorch_xdit_wan22_14b_single.json \
+       --output ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_wan22_14b_single.json
 
 3. Copy a cluster file (GPU compute nodes only):
 
@@ -78,12 +79,9 @@ Set up config
 
      cvs config copy cluster_container.json --output ~/cvs_workspace/cluster.json
 
-4. Copy the sibling ``*_threshold.json`` beside each workload config and keep both files
-   in the same directory.
-
-5. Edit the config — set ``container.image``, ``model.id`` / ``paths.models_dir``,
-   ``nnodes`` for distributed runs (first N cluster hosts), and replace every
-   ``<changeme>``. Resolve ``{user-id}`` / ``{home}`` or leave them for CVS to expand.
+4. Edit the config — set ``container_image``, ``model_repo`` / ``hf_home``, ``nnodes``
+   for distributed runs, and replace every ``<changeme>``. Resolve ``{user-id}`` /
+   ``{home}`` or leave them for CVS to expand.
 
 Shipped config templates:
 
@@ -93,28 +91,27 @@ Shipped config templates:
 
    * - Config file
      - Use with suite
-   * - ``mi3xx_xdit_flux1_dev_single.json``
-     - ``xdit_flux_dev_single``
-   * - ``mi3xx_xdit_flux1_dev_distributed.json``
-     - ``xdit_flux_dev_distributed``
-   * - ``mi3xx_xdit_flux2_dev_single.json``
-     - ``xdit_flux_dev_single``
-   * - ``mi3xx_xdit_flux2_dev_distributed.json``
-     - ``xdit_flux_dev_distributed``
-   * - ``mi3xx_xdit_wan22_14b_single.json``
-     - ``xdit_wan22_14b_single``
-   * - ``mi3xx_xdit_wan22_14b_diffusers_single.json``
-     - ``xdit_wan22_14b_diffusers_single``
-   * - ``mi3xx_xdit_wan22_14b_diffusers_distributed.json``
-     - ``xdit_wan22_14b_diffusers_distributed``
+   * - ``mi3xx_pytorch_xdit_flux1_dev_single.json``
+     - ``pytorch_xdit_flux_dev_single``
+   * - ``mi3xx_pytorch_xdit_flux1_dev_distributed.json``
+     - ``pytorch_xdit_flux_dev_distributed``
+   * - ``mi3xx_pytorch_xdit_flux2_dev_single.json``
+     - ``pytorch_xdit_flux_dev_single``
+   * - ``mi3xx_pytorch_xdit_flux2_dev_distributed.json``
+     - ``pytorch_xdit_flux_dev_distributed``
+   * - ``mi3xx_pytorch_xdit_wan22_14b_single.json``
+     - ``pytorch_xdit_wan22_14b_single``
+   * - ``mi3xx_pytorch_xdit_wan22_14b_diffusers_single.json``
+     - ``pytorch_xdit_wan22_14b_diffusers_single``
+   * - ``mi3xx_pytorch_xdit_wan22_14b_diffusers_distributed.json``
+     - ``pytorch_xdit_wan22_14b_diffusers_distributed``
 
 .. note::
 
   FLUX.2 configs bind-mount ``cvs/lib/inference/xdit/scripts/flux2_example.py`` when the
   image does not ship ``/app/external/xdit/examples/flux2_example.py``. WAN Diffusers
-  mounts ``cvs/lib/inference/xdit/scripts/wan_i2v_example.py`` from the CVS checkout on
-  the cluster (not a copy baked into the image). Keep that file current on every
-  execution node; current xFuser images require the in-tree launcher.
+  suites require ``model_repo`` as an absolute host path on every node and typically
+  mount ``cvs/lib/inference/xdit/scripts/wan_i2v_example.py``.
 
   On shared clusters, skip aggressive docker prune during cleanup:
 
@@ -131,137 +128,119 @@ List stages in a suite:
 
 .. code:: bash
 
-  cvs list xdit_flux_dev_single
+  cvs list pytorch_xdit_flux_dev_single
 
-``xdit_flux_dev_single`` stages
+``pytorch_xdit_flux_dev_single`` stages
 ---------------------------------------
 
 .. code:: text
 
-  Available tests in xdit_flux_dev_single:
-    - test_launch_container
-    - test_verify_prerequisites
-    - test_verify_model
-    - test_verify_parallelism
-    - test_run_benchmark
-    - test_parse_thresholds
-    - test_print_results
-    - test_teardown
+  Available tests in pytorch_xdit_flux_dev_single:
+    - test_cleanup_stale_containers
+    - test_verify_hf_cache_or_download
+    - test_run_flux1_benchmark
+    - test_parse_and_validate_results
 
 Example run (FLUX.1-dev; use the flux2 JSON for FLUX.2-dev):
 
 .. code:: bash
 
-  cvs run xdit_flux_dev_single \
+  cvs run pytorch_xdit_flux_dev_single \
     --cluster_file ~/cvs_workspace/cluster.json \
-    --config_file ~/cvs_workspace/inference/xdit/mi3xx_xdit_flux1_dev_single.json \
-    --html ~/cvs_results/xdit_flux1_single.html --self-contained-html \
-    --log-file /tmp/xdit_flux1_single.log -vvv
+    --config_file ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_flux1_dev_single.json \
+    --html ~/cvs_results/pytorch_xdit_flux1_single.html --self-contained-html \
+    --log-file /tmp/pytorch_xdit_flux1_single.log -vvv
 
-``xdit_flux_dev_distributed`` stages
+``pytorch_xdit_flux_dev_distributed`` stages
 --------------------------------------------
 
 .. code:: text
 
-  Available tests in xdit_flux_dev_distributed:
-    - test_launch_container
-    - test_verify_prerequisites
-    - test_verify_model
-    - test_verify_parallelism
-    - test_run_benchmark
-    - test_parse_thresholds
-    - test_print_results
-    - test_teardown
+  Available tests in pytorch_xdit_flux_dev_distributed:
+    - test_cleanup_stale_containers
+    - test_verify_hf_cache_or_download
+    - test_verify_parallelism_config
+    - test_run_flux1_benchmark
+    - test_parse_and_validate_results
 
-``test_verify_parallelism`` checks that
+``test_verify_parallelism_config`` checks that
 ``ulysses × ring × pipefusion × tp × dp == nnodes × torchrun_nproc``.
 
 Example run:
 
 .. code:: bash
 
-  cvs run xdit_flux_dev_distributed \
+  cvs run pytorch_xdit_flux_dev_distributed \
     --cluster_file ~/cvs_workspace/cluster.json \
-    --config_file ~/cvs_workspace/inference/xdit/mi3xx_xdit_flux1_dev_distributed.json \
-    --html ~/cvs_results/xdit_flux1_distributed.html --self-contained-html \
-    --log-file /tmp/xdit_flux1_distributed.log -vvv
+    --config_file ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_flux1_dev_distributed.json \
+    --html ~/cvs_results/pytorch_xdit_flux1_distributed.html --self-contained-html \
+    --log-file /tmp/pytorch_xdit_flux1_distributed.log -vvv
 
-``xdit_wan22_14b_single`` stages
+``pytorch_xdit_wan22_14b_single`` stages
 ----------------------------------------
 
 .. code:: text
 
-  Available tests in xdit_wan22_14b_single:
-    - test_launch_container
-    - test_verify_prerequisites
-    - test_verify_model
-    - test_verify_parallelism
-    - test_run_benchmark
-    - test_parse_thresholds
-    - test_print_results
-    - test_teardown
+  Available tests in pytorch_xdit_wan22_14b_single:
+    - test_cleanup_stale_containers
+    - test_verify_hf_cache_or_download
+    - test_run_wan22_benchmark
+    - test_parse_and_validate_results
 
 Example run:
 
 .. code:: bash
 
-  cvs run xdit_wan22_14b_single \
+  cvs run pytorch_xdit_wan22_14b_single \
     --cluster_file ~/cvs_workspace/cluster.json \
-    --config_file ~/cvs_workspace/inference/xdit/mi3xx_xdit_wan22_14b_single.json \
-    --html ~/cvs_results/xdit_wan22.html --self-contained-html \
-    --log-file /tmp/xdit_wan22.log -vvv
+    --config_file ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_wan22_14b_single.json \
+    --html ~/cvs_results/pytorch_xdit_wan22.html --self-contained-html \
+    --log-file /tmp/pytorch_xdit_wan22.log -vvv
 
-``xdit_wan22_14b_diffusers_single`` stages
+``pytorch_xdit_wan22_14b_diffusers_single`` stages
 --------------------------------------------------
 
 .. code:: text
 
-  Available tests in xdit_wan22_14b_diffusers_single:
-    - test_launch_container
-    - test_verify_prerequisites
-    - test_verify_model
-    - test_verify_parallelism
-    - test_run_benchmark
-    - test_parse_thresholds
-    - test_print_results
-    - test_teardown
+  Available tests in pytorch_xdit_wan22_14b_diffusers_single:
+    - test_cleanup_stale_containers
+    - test_verify_model_on_nodes
+    - test_run_wan22_diffusers_benchmark
+    - test_parse_and_validate_results
 
 Example run:
 
 .. code:: bash
 
-  cvs run xdit_wan22_14b_diffusers_single \
+  cvs run pytorch_xdit_wan22_14b_diffusers_single \
     --cluster_file ~/cvs_workspace/cluster.json \
-    --config_file ~/cvs_workspace/inference/xdit/mi3xx_xdit_wan22_14b_diffusers_single.json \
-    --html ~/cvs_results/xdit_wan22_diffusers_single.html --self-contained-html \
-    --log-file /tmp/xdit_wan22_diffusers_single.log -vvv
+    --config_file ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_wan22_14b_diffusers_single.json \
+    --html ~/cvs_results/pytorch_xdit_wan22_diffusers_single.html --self-contained-html \
+    --log-file /tmp/pytorch_xdit_wan22_diffusers_single.log -vvv
 
-``xdit_wan22_14b_diffusers_distributed`` stages
+``pytorch_xdit_wan22_14b_diffusers_distributed`` stages
 -------------------------------------------------------
 
 .. code:: text
 
-  Available tests in xdit_wan22_14b_diffusers_distributed:
-    - test_launch_container
-    - test_verify_prerequisites
-    - test_verify_model
-    - test_verify_parallelism
-    - test_run_benchmark
-    - test_parse_thresholds
-    - test_print_results
-    - test_teardown
+  Available tests in pytorch_xdit_wan22_14b_diffusers_distributed:
+    - test_cleanup_stale_containers
+    - test_verify_model_on_nodes
+    - test_verify_parallelism_config
+    - test_run_wan22_diffusers_benchmark
+    - test_parse_and_validate_results
 
-``test_verify_parallelism`` checks that ``ulysses_size × ring_size == nnodes × torchrun_nproc``.
+``test_verify_parallelism_config`` checks that ``ulysses_size × ring_size == nnodes × torchrun_nproc``.
 
 Example run:
 
 .. code:: bash
 
-  cvs run xdit_wan22_14b_diffusers_distributed \
+  cvs run pytorch_xdit_wan22_14b_diffusers_distributed \
     --cluster_file ~/cvs_workspace/cluster.json \
-    --config_file ~/cvs_workspace/inference/xdit/mi3xx_xdit_wan22_14b_diffusers_distributed.json \
-    --html ~/cvs_results/xdit_wan22_diffusers_distributed.html --self-contained-html \
-    --log-file /tmp/xdit_wan22_diffusers_distributed.log -vvv
+    --config_file ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_wan22_14b_diffusers_distributed.json \
+    --html ~/cvs_results/pytorch_xdit_wan22_diffusers_distributed.html --self-contained-html \
+    --log-file /tmp/pytorch_xdit_wan22_diffusers_distributed.log -vvv
 
 Direct pytest invocation
 ------------------------
@@ -270,10 +249,10 @@ Each module can also be run with pytest:
 
 .. code:: bash
 
-  pytest cvs/tests/inference/xdit/xdit_flux_dev_single.py \
+  pytest cvs/tests/inference/xdit/pytorch_xdit_flux_dev_single.py \
     --cluster_file ~/cvs_workspace/cluster.json \
-    --config_file ~/cvs_workspace/inference/xdit/mi3xx_xdit_flux1_dev_single.json \
-    --html ~/cvs_results/xdit_flux1_single.html
+    --config_file ~/cvs_workspace/inference/xdit/mi3xx_pytorch_xdit_flux1_dev_single.json \
+    --html ~/cvs_results/pytorch_xdit_flux1_single.html
 
 Read the results
 ================
@@ -284,20 +263,17 @@ exit code plus parsed artifacts and GPU-specific thresholds (``mi300x``, ``mi350
 
 Key stages to watch:
 
-- **Container lifecycle** — ``test_launch_container`` starts the scoped containers;
-  ``test_teardown`` removes only the suite-owned per-run containers.
-- **Model preflight** — ``test_verify_model`` downloads a Hugging Face repo id into
-  ``HF_HOME`` when needed, or checks an absolute local model path on every
+- **Cleanup** — ``test_cleanup_stale_containers`` stops the named container (and
+  ``{container_name}-rankN`` on distributed suites). It also runs
+  ``docker system prune`` unless ``CVS_PYTORCH_XDIT_SKIP_DOCKER_SYSTEM_PRUNE=1``.
+- **Model preflight** — ``test_verify_hf_cache_or_download`` (FLUX and WAN native) or
+  ``test_verify_model_on_nodes`` (WAN Diffusers). Fails if the model is missing on any
   participating node.
-- **Parallelism** — ``test_verify_parallelism`` validates the configured topology.
-- **Benchmark** — ``test_run_benchmark`` deletes previous
-  ``${paths.log_dir}/flux_*_outputs`` or ``wan_22_*_outputs`` trees, then runs
-  torchrun inside the containers.
-- **Parse / print** — ``test_parse_thresholds`` compares average latency to the
-  sibling threshold JSON. ``test_print_results`` prints Host, Model, topology,
-  Ulysses, and Ring. The xDiT Run Deck run card shows **Server nodes**, **nnodes**,
-  **Benchmark node** (all execution hosts on single; first cluster node on distributed),
-  Ulysses, and Ring.
+- **Parallelism** — ``test_verify_parallelism_config`` (distributed suites only).
+- **Benchmark** — ``test_run_flux1_benchmark``, ``test_run_wan22_benchmark``, or
+  ``test_run_wan22_diffusers_benchmark``.
+- **Parse** — ``test_parse_and_validate_results`` compares average latency to
+  ``expected_results``.
 
 .. list-table::
    :widths: 2 3 3 3
@@ -317,9 +293,9 @@ Key stages to watch:
      - step JSONs, ``video.mp4``
    * - WAN Diffusers
      - average epoch / pipe time from ``results/timing.json``
-     - ``max_avg_pipe_time_s``
+     - ``max_avg_total_time_s``
      - ``results/timing.json``, ``results/video_i2v.mp4``
 
 Single-node output dirs use the cluster SSH target, for example
-``${paths.log_dir}/flux_<target>_outputs`` or ``wan_22_<target>_outputs``.
+``${output_base_dir}/flux_<target>_outputs`` or ``wan_22_<target>_outputs``.
 Distributed runs write to the rank-0 target directory.
