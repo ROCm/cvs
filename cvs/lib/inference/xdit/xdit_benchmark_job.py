@@ -17,6 +17,16 @@ from cvs.lib import globals
 log = globals.log
 
 CONTAINER_OUTPUT_MOUNT = "/outputs"
+CONTAINER_HF_TOKEN_PATH = "/run/secrets/hf_token"
+
+
+def _hf_home_token_install_cmd(hf_home="/hf_home", token_path=CONTAINER_HF_TOKEN_PATH):
+    token_q = shlex.quote(token_path)
+    dest_dir_q = shlex.quote(str(hf_home).rstrip("/"))
+    home_q = shlex.quote(str(hf_home).rstrip("/") + "/token")
+    return (
+        f"if [ -f {token_q} ]; then (umask 077; mkdir -p {dest_dir_q}; cp {token_q} {home_q}; chmod 600 {home_q}); fi"
+    )
 
 
 @dataclass
@@ -103,14 +113,21 @@ class PytorchXditBenchmarkJob(ABC):
         volume_dict = dict(self.inference_dict["container_config"].get("volume_dict") or {})
         volume_dict[host_output_dir] = CONTAINER_OUTPUT_MOUNT
         volume_dict[self.inference_dict["hf_home"]] = "/hf_home"
+        token_file = str(self.inference_dict.get("hf_token_file") or "").strip()
+        if token_file:
+            volume_dict[token_file] = CONTAINER_HF_TOKEN_PATH
         mount_host = self.inference_dict.get("_resolved_model_mount_host")
         if mount_host:
             volume_dict[mount_host] = "/model"
         return " ".join(f"--mount type=bind,source={src},target={dst}" for src, dst in volume_dict.items())
 
     @abstractmethod
-    def _build_env_args(self) -> str:
-        """Return docker ``-e KEY=VALUE`` arguments for the benchmark container."""
+    def _build_env_dict(self):
+        """Return environment values needed by the benchmark command."""
+
+    def _build_env_args(self):
+        env_dict = self._build_env_dict()
+        return " ".join(f"-e {key}={value}" for key, value in env_dict.items())
 
     @abstractmethod
     def _build_torchrun_cmd(
@@ -148,12 +165,14 @@ class PytorchXditBenchmarkJob(ABC):
             master_addr=master_addr,
             master_port=master_port,
         )
+        token_setup = _hf_home_token_install_cmd(self.inference_dict.get("hf_home_container", "/hf_home"))
+        inner_cmd = f"{token_setup}; {torchrun_cmd}"
 
         if self.uses_container_orchestrator:
             exports = " ".join(
                 f"export {key}={shlex.quote(str(value))};" for key, value in self._build_env_dict().items()
             )
-            return f"bash -c {shlex.quote(f'{exports} {torchrun_cmd}')}"
+            return f"bash -c {shlex.quote(f'{exports} {inner_cmd}')}"
 
         container_name = self.inference_dict["container_name"]
         if self.distributed:
@@ -173,19 +192,8 @@ class PytorchXditBenchmarkJob(ABC):
             f"{volume_args} "
             f"{env_args} "
             f"{self.inference_dict['container_image']} "
-            f"{torchrun_cmd}"
+            f"bash -c {shlex.quote(inner_cmd)}"
         )
-
-    def _build_env_dict(self):
-        """Return environment values needed by the in-container benchmark command."""
-        env = {}
-        for token in self._build_env_args().split("-e "):
-            token = token.strip()
-            if not token or "=" not in token:
-                continue
-            key, value = token.split("=", 1)
-            env[key.strip()] = value.strip()
-        return env
 
     def build_launch_plan(self) -> BenchmarkLaunchPlan:
         from cvs.lib.inference.xdit.xdit_flux_job import (

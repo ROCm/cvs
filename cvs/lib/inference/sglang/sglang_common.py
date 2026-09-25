@@ -655,14 +655,14 @@ def poll_for_inference_completion(
     """Poll benchmark logs until completion or timeout."""
     time.sleep(60)
     start_time = time.time()
-    poll_cap = inference_poll_iterations if inference_poll_iterations is not None else iterations
+    poll_cap = int(inference_poll_iterations if inference_poll_iterations is not None else iterations)
 
     def timed_out() -> bool:
         return total_timeout is not None and (time.time() - start_time) >= float(total_timeout)
 
     completed_pattern = re.compile('Serving Benchmark Result', re.I)
 
-    for itr in range(1, iterations + 1):
+    for itr in range(1, poll_cap + 1):
         if log_progress:
             log.info('Starting iteration %d', itr)
 
@@ -709,6 +709,7 @@ def openai_completions_5xx_or_hang(results, probe_err=None):
     if probe_err:
         return True
     if not results or _OPENAI_COMPLETIONS_STEP not in results:
+        fail_test(f"OpenAI probe did not report {_OPENAI_COMPLETIONS_STEP!r}: {results!r}")
         return True
     code, _body = results[_OPENAI_COMPLETIONS_STEP]
     try:

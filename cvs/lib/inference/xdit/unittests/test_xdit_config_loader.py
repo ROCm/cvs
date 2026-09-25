@@ -55,6 +55,7 @@ class TestXditConfigLoader(unittest.TestCase):
         self.assertEqual(variant.inference["output_base_dir_container"], "/outputs")
         container = orchestrator_container_from_variant(variant)
         self.assertIn("/results:/outputs", container["runtime"]["args"]["volumes"])
+        self.assertEqual(variant.inference["hf_token_file_container"], "/run/secrets/hf_token")
         self.assertEqual(container["env"]["CUSTOM"], "1")
 
     def test_loads_unified_wan_config(self):
@@ -109,11 +110,51 @@ class TestXditConfigLoader(unittest.TestCase):
         self.assertEqual(variant.inference["hf_home_container"], "/models")
         self.assertEqual(variant.inference["_resolved_ckpt_dir_container"], "/models/wan")
         self.assertEqual(variant.inference["nnodes"], 2)
+        self.assertEqual(variant.model.remote, 0)
+        self.assertEqual(variant.inference["model_remote"], 0)
         self.assertEqual(variant.params.wan22_i2v_a14b["ring_size"], 2)
         self.assertEqual(
             variant.benchmark_params["wan22_i2v_a14b"]["expected_results"],
             {"auto": {"max_avg_pipe_time_s": 300.0}},
         )
+
+    def test_unified_config_allows_model_remote_download(self):
+        path = self._write_config(
+            {
+                "schema_version": 1,
+                "framework": "xdit",
+                "gpu_arch": "mi300x",
+                "topology": "single",
+                "threshold_json": "threshold.json",
+                "paths": {
+                    "shared_fs": "/shared",
+                    "models_dir": "/shared/models",
+                    "log_dir": "/shared/results",
+                    "hf_token_file": "/shared/token",
+                },
+                "model": {"id": "org/wan", "remote": 1},
+                "container": {
+                    "lifetime": "per_run",
+                    "name": "wan-job",
+                    "image": "xdit:test",
+                    "runtime": {
+                        "name": "docker",
+                        "args": {
+                            "volumes": ["/shared/models:/hf_home", "/shared/results:/outputs"],
+                            "devices": ["/dev/kfd"],
+                        },
+                    },
+                },
+                "params": {"wan22_i2v_a14b": {"torchrun_nproc": 8, "ulysses_size": 8, "ring_size": 1}},
+            },
+            {"auto": {"max_avg_pipe_time_s": 300.0}},
+        )
+
+        variant = load_variant(path, {})
+
+        self.assertEqual(variant.model.remote, 1)
+        self.assertEqual(variant.inference["model_remote"], 1)
+        self.assertEqual(variant.inference["model_repo"], "org/wan")
 
     def test_runtime_args_env_flattens_into_orchestrator_and_inference(self):
         path = self._write_config(

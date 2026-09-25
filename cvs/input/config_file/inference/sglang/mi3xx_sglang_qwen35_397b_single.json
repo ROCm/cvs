@@ -45,7 +45,8 @@
       "pipeline_parallelism": "1",
       "memory_fraction": "0.85",
       "tokenizer_mode": "auto",
-      "inference_poll_iterations": "16",
+      "inference_poll_iterations": "40",
+      "inference_poll_total_timeout_sec": "7200",
       "add_flags": ["--attention-backend aiter"]
     },
     "benchmark_params": {

@@ -57,7 +57,8 @@
       "pipeline_parallelism": "1",
       "memory_fraction": "0.7",
       "tokenizer_mode": "auto",
-      "inference_poll_iterations": "16",
+      "inference_poll_iterations": "40",
+      "inference_poll_total_timeout_sec": "7200",
       "lng_ctx_activate": false,
       "context_length": "163840",
       "chunked_prefill_size": "8192",
@@ -77,7 +78,8 @@
       "seed": "42",
       "request_timeout_sec": "7200",
       "exec_timeout_sec": "21600",
-      "tolerance_frac": "0.05"
+      "tolerance_frac": "0.05",
+      "enable_thinking": false
     },
     "accuracy": {
       "tasks": [

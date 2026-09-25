@@ -479,6 +479,25 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertEqual(result['status'], 'success')
         self.assertIn('bench', result['results'])
 
+    def test_poll_for_inference_completion_uses_config_iteration_cap(self):
+        calls = {'n': 0}
+
+        def fetch_log_tail():
+            calls['n'] += 1
+            return {'bench': 'still running'}
+
+        with mock.patch.object(sglang_common.time, 'sleep'):
+            result = sglang_common.poll_for_inference_completion(
+                fetch_log_tail,
+                sglang_common.parse_inference_bench_results,
+                iterations=50,
+                waittime_between_iters=0,
+                total_timeout=None,
+                inference_poll_iterations='2',
+            )
+        self.assertEqual(calls['n'], 2)
+        self.assertEqual(result['status'], 'stuck_in_progress')
+
     def test_scan_sglang_error_logs_clean(self):
         commands = []
 
@@ -667,7 +686,14 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertFalse(sglang_common.openai_completions_5xx_or_hang(completions_4xx))
 
         self.assertTrue(sglang_common.openai_completions_5xx_or_hang({}, probe_err='timeout'))
-        self.assertTrue(sglang_common.openai_completions_5xx_or_hang({'chat_completion_endpoint': (200, {})}))
+
+    def test_openai_completions_missing_probe_key_fails_test(self):
+        missing = {'chat_completion_endpoint': (200, {})}
+        with mock.patch.object(sglang_common, 'fail_test') as fail:
+            hung = sglang_common.openai_completions_5xx_or_hang(missing)
+        self.assertTrue(hung)
+        fail.assert_called_once()
+        self.assertIn('completion_endpoint', fail.call_args.args[0])
 
 
 if __name__ == '__main__':

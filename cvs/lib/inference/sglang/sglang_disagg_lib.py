@@ -123,7 +123,8 @@ class SglangDisaggPD:
         self.nccl_debug = self.inf_dict['nccl_debug']
         self.data_cache_dir = self.inf_dict['data_cache_dir']
         self.log_dir = self.inf_dict['log_dir']
-        self.inference_poll_iterations = self.bp_dict['inference_poll_iterations']
+        self.inference_poll_iterations = int(self.bp_dict['inference_poll_iterations'])
+        self.inference_poll_total_timeout_sec = int(self.bp_dict['inference_poll_total_timeout_sec'])
 
         self.inference_start_time = self._host_exec('date +"%a %b %e %H:%M"')
         self.inference_end_time = None
@@ -228,6 +229,7 @@ class SglangDisaggPD:
         self.bp_dict.setdefault('percentile_metrics', 'ttft,tpot,itl,e2el')
         self.bp_dict.setdefault('metric_percentiles', '99')
         self.bp_dict.setdefault('inference_poll_iterations', '16')
+        self.bp_dict.setdefault('inference_poll_total_timeout_sec', '3600')
         self.bp_dict.setdefault('memory_fraction', '0.85')
 
     def _bind_roles(self):
@@ -668,7 +670,7 @@ class SglangDisaggPD:
             timeout=1000,
         )
         time.sleep(5)
-        self.poll_for_inference_completion(iterations=40, waittime_between_iters=60, total_timeout=7200)
+        self.poll_for_inference_completion()
 
         peak_tflops = float(i_dict.get("peak_gpu_tflops", 1300))
         num_params = float(i_dict.get("model_num_params", 70e9))
@@ -808,9 +810,14 @@ class SglangDisaggPD:
         )
 
     def poll_for_inference_completion(
-        self, iterations=10, waittime_between_iters=60, total_timeout=3600, require_all_nodes=True
+        self, iterations=None, waittime_between_iters=60, total_timeout=None, require_all_nodes=True
     ):
         """Poll benchmark logs to detect inference completion and extract results."""
+        if iterations is None:
+            iterations = int(self.inference_poll_iterations)
+        if total_timeout is None:
+            total_timeout = int(self.inference_poll_total_timeout_sec)
+
         log_path = f"{self.log_dir}/benchmark_node/benchmark_results.log"
 
         def fetch_log_tail():

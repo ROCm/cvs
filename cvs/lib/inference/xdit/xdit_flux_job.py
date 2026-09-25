@@ -1157,11 +1157,11 @@ class FluxBenchmarkJob(PytorchXditBenchmarkJob):
         if self.distributed:
             env_dict.update(build_nccl_env(self.inference_dict))
         env_dict.update(user_env)
+        env_dict.pop("HF_TOKEN", None)
+        env_dict.pop("HUGGING_FACE_HUB_TOKEN", None)
         env_dict["OMP_NUM_THREADS"] = "16"
         env_dict["HF_HOME"] = self.inference_dict.get("hf_home_container", "/hf_home")
         env_dict["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(self.nproc_per_node))
-        if self.hf_token:
-            env_dict["HF_TOKEN"] = _secret_str(self.hf_token)
         model_type = resolve_flux_model_type_for_job(
             self.flux_params,
             model_repo=self._resolved_model_repo(),
@@ -1176,10 +1176,6 @@ class FluxBenchmarkJob(PytorchXditBenchmarkJob):
                 self.inference_dict.get("_resolved_flux_hf_repo_id"),
             )
         return env_dict
-
-    def _build_env_args(self) -> str:
-        env_dict = self._build_env_dict()
-        return " ".join(f"-e {key}={value}" for key, value in env_dict.items())
 
     def _build_torchrun_cmd(
         self,

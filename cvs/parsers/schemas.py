@@ -1232,7 +1232,12 @@ class PytorchXditUnifiedModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(description="Hugging Face repo id or absolute on-disk model path")
-    remote: int = Field(default=0, ge=0, le=1, description="0 = offline/local only; 1 = remote download (unsupported)")
+    remote: int = Field(
+        default=0,
+        ge=0,
+        le=1,
+        description="0 = offline/local cache only; 1 = allow runtime Hugging Face snapshot download",
+    )
 
 
 class PytorchXditUnifiedRuntime(BaseModel):

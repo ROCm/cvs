@@ -106,6 +106,17 @@ def _flatten_orchestrator_container(container):
 
 
 _LOCAL_MODEL_MOUNT = "/model"
+_CONTAINER_HF_TOKEN_PATH = "/run/secrets/hf_token"
+
+
+def _bind_hf_token_file(inference, volume_dict, raw=None):
+    host_path = str(inference.get("hf_token_file") or "").strip()
+    if not host_path:
+        return
+    volume_dict[host_path] = _CONTAINER_HF_TOKEN_PATH
+    inference["hf_token_file_container"] = _CONTAINER_HF_TOKEN_PATH
+    if raw is not None:
+        _append_container_volume(raw, f"{host_path}:{_CONTAINER_HF_TOKEN_PATH}")
 
 
 def _append_container_volume(raw, mount):
@@ -168,6 +179,7 @@ def _legacy_runtime_views(config, benchmark_params):
         inference["_resolved_model_path_container"] = "/model"
         inference["_resolved_ckpt_dir_container"] = "/model"
 
+    _bind_hf_token_file(inference, volume_dict)
     container_config["volume_dict"] = volume_dict
     inference["container_config"] = container_config
     inference["output_base_dir_container"] = _mounted_path(volume_dict, output_base, "/outputs")
@@ -277,6 +289,8 @@ def _unified_runtime_views(raw):
     )
     env_dict = _merged_container_env(container)
     env_dict.setdefault("HF_HOME", inference["hf_home_container"])
+    env_dict.pop("HF_TOKEN", None)
+    env_dict.pop("HUGGING_FACE_HUB_TOKEN", None)
     runtime = dict(container.get("runtime") or {})
     args = dict(runtime.get("args") or {})
     args["env"] = env_dict
@@ -290,7 +304,10 @@ def _unified_runtime_views(raw):
     )
     inference.setdefault("model_repo", model.get("id"))
     inference.setdefault("model_rev", "")
+    inference.setdefault("model_remote", int(model.get("remote") or 0))
     env_dict = _merged_container_env(container)
+    env_dict.pop("HF_TOKEN", None)
+    env_dict.pop("HUGGING_FACE_HUB_TOKEN", None)
     inference["container_config"] = {
         "device_list": list(runtime_args.get("devices") or []),
         "volume_dict": volume_dict,
@@ -312,6 +329,9 @@ def _unified_runtime_views(raw):
         inference.setdefault("_resolved_model_mount_host", model_id)
         inference.setdefault("_resolved_model_path_container", mounted_model)
         inference.setdefault("_resolved_ckpt_dir_container", mounted_model)
+
+    _bind_hf_token_file(inference, volume_dict, raw)
+    inference["container_config"]["volume_dict"] = volume_dict
 
     topology = str(raw.get("topology") or "")
     if topology == "distributed":

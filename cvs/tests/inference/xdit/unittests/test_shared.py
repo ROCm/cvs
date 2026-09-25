@@ -4,21 +4,25 @@ import os
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from cvs.tests.inference.xdit import conftest
 from cvs.tests.inference.xdit._shared import (
     Lifecycle,
+    _SecretValue,
+    _attach_benchmark_artifacts,
     _output_dirs_by_host,
     _report_dimensions,
     _report_threshold,
     benchmark_params_from_variant,
+    hf_remote_download_enabled,
     hf_token_from_variant,
     inference_from_variant,
     log_topology,
     resolve_execution_hosts,
     scoped_cluster_dict,
     suite_spec,
+    verify_model_stage,
 )
 
 
@@ -50,7 +54,11 @@ class TestVariantHelpers(unittest.TestCase):
                 paths=SimpleNamespace(hf_token_file=token_path),
                 inference={"hf_token_file": token_path},
             )
-            self.assertEqual(hf_token_from_variant(variant), "hf_from_config")
+            token = hf_token_from_variant(variant)
+            self.assertEqual(token, "hf_from_config")
+            self.assertIsInstance(token, _SecretValue)
+            self.assertEqual(repr(token), "<redacted>")
+            self.assertNotIn("hf_from_config", repr(token))
 
     def test_missing_hf_token_file_returns_empty(self):
         variant = SimpleNamespace(
@@ -145,6 +153,54 @@ class TestReportResults(unittest.TestCase):
 
         self.assertEqual(_report_threshold(thresholds, "mi300x", "avg_pipe_time_s"), {"kind": "max", "value": 3.0})
         self.assertEqual(_report_threshold(thresholds, "other", "avg_pipe_time_s"), {"kind": "max", "value": 10.0})
+
+
+class _RecordingReportManager:
+    def __init__(self):
+        self.is_enabled = True
+        self.added = []
+
+    def add_html_to_report(self, html_file, link_name=None, request=None, dest_name=None, **kwargs):
+        self.added.append((html_file, link_name, dest_name, kwargs.get("track_in_reports", True)))
+        return dest_name
+
+
+class TestAttachBenchmarkArtifacts(unittest.TestCase):
+    def test_copies_flux_and_wan_artifacts_per_host(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            flux = os.path.join(tmp, "flux_node_outputs", "results")
+            wan = os.path.join(tmp, "wan_node_outputs", "outputs")
+            os.makedirs(flux)
+            os.makedirs(wan)
+            flux_timing = os.path.join(flux, "timing.json")
+            flux_png = os.path.join(flux, "flux_result.png")
+            wan_video = os.path.join(wan, "video.mp4")
+            wan_rank = os.path.join(wan, "rank0_step0.json")
+            ignored = os.path.join(flux, "debug.log")
+            for path in (flux_timing, flux_png, wan_video, wan_rank, ignored):
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write("x")
+
+            request = SimpleNamespace(config=SimpleNamespace(_html_report_manager=_RecordingReportManager()))
+            flux_copied = _attach_benchmark_artifacts(request, "10.0.0.1", os.path.join(tmp, "flux_node_outputs"))
+            wan_copied = _attach_benchmark_artifacts(request, "10.0.0.2", os.path.join(tmp, "wan_node_outputs"))
+
+        self.assertEqual(
+            flux_copied,
+            ["10.0.0.1_results_flux_result.png", "10.0.0.1_results_timing.json"],
+        )
+        self.assertEqual(
+            wan_copied,
+            ["10.0.0.2_outputs_rank0_step0.json", "10.0.0.2_outputs_video.mp4"],
+        )
+        self.assertTrue(all("debug.log" not in name for name in flux_copied))
+        for _path, link_name, _dest, tracked in request.config._html_report_manager.added:
+            self.assertIsNone(link_name)
+            self.assertFalse(tracked)
+
+    def test_skips_when_html_reporting_is_disabled(self):
+        request = SimpleNamespace(config=SimpleNamespace())
+        self.assertEqual(_attach_benchmark_artifacts(request, "10.0.0.1", "/missing"), [])
 
 
 class TestOutputDirsByHost(unittest.TestCase):
@@ -318,6 +374,57 @@ class TestConftestHelpers(unittest.TestCase):
         self.assertEqual(merged["runtime"]["name"], "docker")
         self.assertEqual(merged["runtime"]["args"], {"network": "host", "ipc": "host"})
         self.assertEqual(merged["image"], "xdit:latest")
+
+
+class TestVerifyModelStage(unittest.TestCase):
+    def test_hf_remote_download_reads_model_remote(self):
+        self.assertFalse(hf_remote_download_enabled(SimpleNamespace(model=SimpleNamespace(remote=0))))
+        self.assertTrue(hf_remote_download_enabled(SimpleNamespace(model=SimpleNamespace(remote=1))))
+        self.assertTrue(hf_remote_download_enabled(SimpleNamespace(inference={"model_remote": 1})))
+
+    def test_repo_id_does_not_download_when_remote_is_zero(self):
+        orch = MagicMock()
+        orch.hosts = ["n1"]
+        orch.all.exec.return_value = {"n1": ""}
+        variant = SimpleNamespace(
+            model=SimpleNamespace(id="org/wan", remote=0),
+            inference={"model_repo": "org/wan", "hf_home": "/cache/hf"},
+        )
+        with (
+            patch("cvs.tests.inference.xdit._shared.download_hf_snapshot") as download,
+            patch("cvs.tests.inference.xdit._shared.fail_test") as fail,
+        ):
+            verify_model_stage(orch, variant, {"family": "wan", "diffusers": False}, MagicMock(), MagicMock())
+        download.assert_not_called()
+        fail.assert_called()
+        self.assertIn("no downloads are performed by this test", fail.call_args.args[0])
+
+    def test_repo_id_downloads_when_remote_is_one(self):
+        orch = MagicMock()
+        orch.hosts = ["n1"]
+        orch.all.exec.return_value = {"n1": "MODEL_OK"}
+        variant = SimpleNamespace(
+            model=SimpleNamespace(id="org/wan", remote=1),
+            inference={
+                "model_repo": "org/wan",
+                "hf_home": "/cache/hf",
+                "hf_home_container": "/hf_home",
+            },
+        )
+        with (
+            patch(
+                "cvs.tests.inference.xdit._shared.download_hf_snapshot",
+                return_value=({"/hf_home/hub/snap": "/hf_home/hub/snap"}, []),
+            ) as download,
+            patch("cvs.tests.inference.xdit._shared.fail_test") as fail,
+            patch(
+                "cvs.tests.inference.xdit._shared.verify_required_checks_on_nodes",
+                return_value=None,
+            ),
+        ):
+            verify_model_stage(orch, variant, {"family": "wan", "diffusers": False}, MagicMock(), MagicMock())
+        download.assert_called_once()
+        fail.assert_not_called()
 
 
 if __name__ == "__main__":

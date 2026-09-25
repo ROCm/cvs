@@ -673,7 +673,7 @@ class TestFluxBenchmarkJob(unittest.TestCase):
         job, _ = _make_flux_job()
         env_args = job._build_env_args()
         self.assertIn("-e CUSTOM=1", env_args)
-        self.assertIn("-e HF_TOKEN=hf_test_token", env_args)
+        self.assertNotIn("HF_TOKEN=", env_args)
         self.assertIn("-e CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7", env_args)
         self.assertNotIn("NCCL_PROTO", env_args)
 
@@ -715,6 +715,7 @@ class TestFluxBenchmarkJob(unittest.TestCase):
         self.assertIn("docker run", cmd)
         self.assertIn(RUN_USP_PATH, cmd)
         self.assertIn("--name flux-benchmark", cmd)
+        self.assertNotIn("hf_test_token", cmd)
 
     def test_build_docker_cmd_distributed_uses_ranked_container_name(self):
         cluster_dict = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}

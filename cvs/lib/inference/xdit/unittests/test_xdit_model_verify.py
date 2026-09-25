@@ -75,13 +75,15 @@ class TestHfSnapshotDownload(unittest.TestCase):
             "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
             revision="main",
             hf_home="/hf_home",
-            token="hf_secret",
+            token_file="/run/secrets/hf_token",
         )
         self.assertIn("snapshot_download", cmd)
         self.assertIn("XDIT_HF_REPO=Wan-AI/Wan2.2-I2V-A14B-Diffusers", cmd)
         self.assertIn("XDIT_HF_REVISION=main", cmd)
         self.assertIn("HF_HOME=/hf_home", cmd)
-        self.assertIn("HF_TOKEN=hf_secret", cmd)
+        self.assertIn("XDIT_HF_TOKEN_FILE=/run/secrets/hf_token", cmd)
+        self.assertNotIn("HF_TOKEN=hf_secret", cmd)
+        self.assertNotIn("hf_secret", cmd)
 
     def test_download_cmd_omits_token_when_empty(self):
         cmd = build_hf_snapshot_download_cmd("org/model")
@@ -113,13 +115,17 @@ class TestHfSnapshotDownload(unittest.TestCase):
         orch = FakeOrch()
         snapshots, errors = download_hf_snapshot(
             orch,
-            {"model_repo": "org/model", "hf_home_container": "/hf_home"},
-            token="tok",
+            {
+                "model_repo": "org/model",
+                "hf_home_container": "/hf_home",
+                "hf_token_file_container": "/run/secrets/hf_token",
+            },
         )
         self.assertEqual(errors, [])
         self.assertEqual(snapshots, {"n1": "/hf_home/hub/snap"})
         self.assertIn("XDIT_HF_REPO=org/model", orch.cmd)
-        self.assertIn("HF_TOKEN=tok", orch.cmd)
+        self.assertIn("XDIT_HF_TOKEN_FILE=/run/secrets/hf_token", orch.cmd)
+        self.assertNotIn("HF_TOKEN=", orch.cmd)
 
 
 if __name__ == "__main__":

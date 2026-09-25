@@ -11,8 +11,8 @@ class _StubBenchmarkJob(PytorchXditBenchmarkJob):
     def validate_parallelism(self):
         return None
 
-    def _build_env_args(self) -> str:
-        return "-e STUB=1"
+    def _build_env_dict(self):
+        return {"STUB": "1"}
 
     def _build_torchrun_cmd(self, *, node_rank, host_output_dir, master_addr, master_port) -> str:
         return f"torchrun --node_rank={node_rank} --master_addr={master_addr}"
@@ -54,7 +54,7 @@ def _wire_phdl(phdl, hosts, hostnames=None):
     phdl.exec_cmd_list = MagicMock(return_value={host: "" for host in hosts})
 
 
-def _make_job(hosts=None, *, distributed=False, cluster_dict=None, nnodes=None):
+def _make_job(hosts=None, *, distributed=False, cluster_dict=None, nnodes=None, job_cls=_StubBenchmarkJob):
     hosts = hosts or ["10.0.0.1"]
     phdl = MagicMock()
     phdl.host_list = list(hosts)
@@ -73,7 +73,7 @@ def _make_job(hosts=None, *, distributed=False, cluster_dict=None, nnodes=None):
     }
     if nnodes is not None:
         inference_dict["nnodes"] = nnodes
-    return _StubBenchmarkJob(
+    return job_cls(
         phdl,
         inference_dict,
         nproc_per_node=8,
@@ -118,7 +118,17 @@ class TestBenchmarkLaunchPlan(unittest.TestCase):
         self.assertEqual(plan.world_size, 0)
 
 
+class _SpacedEnvJob(_StubBenchmarkJob):
+    def _build_env_dict(self):
+        return {"PROMPT": "a photo of a cat"}
+
+
 class TestPytorchXditBenchmarkJob(unittest.TestCase):
+    def test_build_env_dict_keeps_spaced_values(self):
+        job = _make_job(["10.0.0.1"], job_cls=_SpacedEnvJob)
+        job._build_env_args()
+        self.assertEqual(job._build_env_dict()["PROMPT"], "a photo of a cat")
+
     def test_distributed_rejects_nnodes_less_than_2(self):
         cluster = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
         with self.assertRaisesRegex(ValueError, "nnodes >= 2"):
@@ -140,6 +150,16 @@ class TestPytorchXditBenchmarkJob(unittest.TestCase):
         self.assertIn("stub_host-0_outputs", plan.output_dirs_by_node["10.0.0.1"])
         self.assertIn("docker run", plan.docker_cmds[0])
         self.assertIn("torchrun", plan.docker_cmds[0])
+
+    def test_token_umask_stays_inside_subshell(self):
+        job = _make_job(["10.0.0.1"])
+        job.inference_dict["hf_token_file"] = "/home/user/.hf_token"
+        cmd = job.build_launch_plan().docker_cmds[0]
+        umask_at = cmd.index("(umask 077;")
+        subshell_end = cmd.index(");", umask_at)
+        torchrun_at = cmd.index("torchrun")
+        self.assertLess(subshell_end, torchrun_at)
+        self.assertIn("chmod 600", cmd[umask_at:subshell_end])
 
     def test_store_output_dir_hint_single_node(self):
         job = _make_job(["10.0.0.1"])

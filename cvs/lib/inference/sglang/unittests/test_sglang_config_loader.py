@@ -487,6 +487,7 @@ class TestUnifiedPackagedConfigs(unittest.TestCase):
                     self.assertIn('GPU_ARCHS=gfx942', variant.params.add_export_env)
                 if raw.get('long_ctx_niah'):
                     self.assertEqual(variant.params.inference_tests['long_ctx_niah']['num_prompts'], '6')
+                    self.assertIs(variant.params.inference_tests['long_ctx_niah']['enable_thinking'], False)
                 if variant.topology == 'disaggregated':
                     self.assertEqual(variant.params.prefill_policy, 'cache_aware')
                     self.assertEqual(variant.params.decode_policy, 'cache_aware')

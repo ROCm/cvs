@@ -77,7 +77,8 @@
     "seed": "42",
     "request_timeout_sec": "7200",
     "exec_timeout_sec": "21600",
-    "tolerance_frac": "0.05"
+    "tolerance_frac": "0.05",
+    "enable_thinking": false
   },
   "accuracy": {
     "tasks": [

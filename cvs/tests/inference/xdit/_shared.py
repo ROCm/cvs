@@ -9,6 +9,7 @@ import inspect
 import os
 import shlex
 import time
+from pathlib import Path
 
 import pytest
 from tabulate import tabulate
@@ -84,6 +85,15 @@ def inference_from_variant(variant):
         if value is not None:
             return value
     raise ValueError("xDiT variant must expose inference/config")
+
+
+def hf_remote_download_enabled(variant):
+    model = value_from_variant(variant, "model")
+    if model is not None:
+        remote = model.get("remote") if isinstance(model, dict) else getattr(model, "remote", None)
+        if remote is not None:
+            return int(remote) == 1
+    return int(inference_from_variant(variant).get("model_remote") or 0) == 1
 
 
 def benchmark_params_from_variant(variant):
@@ -182,6 +192,11 @@ def _model_host_path(orch, inference):
     return None
 
 
+class _SecretValue(str):
+    def __repr__(self):
+        return "<redacted>"
+
+
 def hf_token_from_variant(variant):
     path = ""
     paths = value_from_variant(variant, "paths")
@@ -197,7 +212,10 @@ def hf_token_from_variant(variant):
         log.warning("HF token file missing: %s", path)
         return ""
     with open(path, encoding="utf-8") as fp:
-        return fp.read().strip()
+        token = fp.read().strip()
+    if not token:
+        return ""
+    return _SecretValue(token)
 
 
 def verify_model_stage(orch, variant, spec, lifecycle, request):
@@ -209,15 +227,24 @@ def verify_model_stage(orch, variant, spec, lifecycle, request):
     if is_local_model_path(model_id):
         model_path = model_id
     elif inference.get("model_repo"):
-        snapshots, errors = download_hf_snapshot(orch, inference, token=hf_token_from_variant(variant))
-        if errors:
-            fail_test("; ".join(errors))
-            _complete(lifecycle, request, "model_verify", started)
-            return
-        container_snapshot = next(iter(snapshots.values()), "")
-        inference["_resolved_model_path_container"] = container_snapshot
-        inference["_resolved_ckpt_dir_container"] = container_snapshot
-        model_path = container_snapshot_to_host(container_snapshot, inference) or _model_host_path(orch, inference)
+        if hf_remote_download_enabled(variant):
+            snapshots, errors = download_hf_snapshot(orch, inference)
+            if errors:
+                fail_test("; ".join(errors))
+                _complete(lifecycle, request, "model_verify", started)
+                return
+            container_snapshot = next(iter(snapshots.values()), "")
+            inference["_resolved_model_path_container"] = container_snapshot
+            inference["_resolved_ckpt_dir_container"] = container_snapshot
+            model_path = container_snapshot_to_host(container_snapshot, inference) or _model_host_path(orch, inference)
+        else:
+            model_path = _model_host_path(orch, inference)
+            if not model_path:
+                fail_test(
+                    f"Pre-populate HF cache under {inference.get('hf_home')} (no downloads are performed by this test)."
+                )
+                _complete(lifecycle, request, "model_verify", started)
+                return
     else:
         model_path = None
     if not model_path:
@@ -228,7 +255,12 @@ def verify_model_stage(orch, variant, spec, lifecycle, request):
     exists = orch.all.exec(f"test -d {shlex.quote(model_path)} && echo MODEL_OK || echo MODEL_MISSING")
     missing = [host for host, output in exists.items() if "MODEL_OK" not in str(output)]
     if missing:
-        fail_test(f"xDiT model path {model_path!r} is missing on: {', '.join(missing)}")
+        if not hf_remote_download_enabled(variant) and not is_local_model_path(model_id):
+            fail_test(
+                f"Pre-populate HF cache under {inference.get('hf_home')} (no downloads are performed by this test)."
+            )
+        else:
+            fail_test(f"xDiT model path {model_path!r} is missing on: {', '.join(missing)}")
         _complete(lifecycle, request, "model_verify", started)
         return
 
@@ -430,6 +462,52 @@ def _output_parser(spec, params, output_dir):
     return WanOutputParser(output_dir, expected_artifact=artifact)
 
 
+def _is_report_artifact(name):
+    if name == "timing.json" or name.endswith((".png", ".mp4")):
+        return True
+    return name.startswith("rank0") and name.endswith(".json")
+
+
+def _iter_report_artifacts(output_dir):
+    root = Path(output_dir)
+    found = []
+
+    def _onerror(exc):
+        log.warning("Cannot read xDiT output path %s: %s", getattr(exc, "filename", output_dir), exc)
+
+    for dirpath, _dirnames, filenames in os.walk(root, onerror=_onerror):
+        for name in filenames:
+            if _is_report_artifact(name):
+                found.append(Path(dirpath) / name)
+    return sorted(found)
+
+
+def _attach_benchmark_artifacts(request, host, output_dir):
+    config = getattr(request, "config", None)
+    mgr = getattr(config, "_html_report_manager", None)
+    if mgr is None or not getattr(mgr, "is_enabled", False):
+        return []
+    copied = []
+    safe_host = str(host).replace("/", "_").replace(" ", "_")
+    root = Path(output_dir)
+    for path in _iter_report_artifacts(output_dir):
+        try:
+            rel = path.relative_to(root)
+        except ValueError:
+            rel = Path(path.name)
+        dest_name = f"{safe_host}_{str(rel).replace(os.sep, '_')}"
+        rel_path = mgr.add_html_to_report(
+            str(path),
+            dest_name=dest_name,
+            track_in_reports=False,
+        )
+        if rel_path:
+            copied.append(rel_path)
+    if copied:
+        log.info("Added %d xDiT artifact(s) from %s to the HTML report", len(copied), output_dir)
+    return copied
+
+
 def _output_dirs_by_host(inference, lifecycle):
     by_host = inference.get("_test_output_dirs_by_node") or {}
     if by_host:
@@ -516,6 +594,7 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
 
     failures = []
     for host, output_dir in outputs.items():
+        _attach_benchmark_artifacts(request, host, output_dir)
         parser = _output_parser(spec, params, output_dir)
         result, errors = parser.parse()
         if result is None:

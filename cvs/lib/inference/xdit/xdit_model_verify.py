@@ -19,6 +19,7 @@ from cvs.lib.utils_lib import wan_hf_snapshot_offline_check_commands
 HF_SNAPSHOT_MARKER = "HF_SNAPSHOT="
 HF_DOWNLOAD_ERROR_MARKER = "HF_DOWNLOAD_ERROR="
 HF_SNAPSHOT_DOWNLOAD_TIMEOUT_S = 14400
+CONTAINER_HF_TOKEN_PATH = "/run/secrets/hf_token"
 _HF_DOWNLOAD_SCRIPT = """
 import os
 import sys
@@ -29,7 +30,17 @@ except ImportError as exc:
     print("HF_DOWNLOAD_ERROR=huggingface_hub is required in the container: %s" % exc)
     raise SystemExit(1)
 
-kwargs = {"repo_id": os.environ["XDIT_HF_REPO"]}
+token = None
+token_file = os.environ.get("XDIT_HF_TOKEN_FILE") or ""
+if token_file:
+    try:
+        with open(token_file, encoding="utf-8") as handle:
+            token = handle.read().strip() or None
+    except OSError as exc:
+        print("HF_DOWNLOAD_ERROR=unable to read token file: %s" % exc)
+        raise SystemExit(1)
+
+kwargs = {"repo_id": os.environ["XDIT_HF_REPO"], "token": token}
 revision = os.environ.get("XDIT_HF_REVISION") or ""
 if revision:
     kwargs["revision"] = revision
@@ -58,16 +69,16 @@ def _secret_str(value):
     return str(value)
 
 
-def build_hf_snapshot_download_cmd(repo, revision="", hf_home="/hf_home", token=""):
+def build_hf_snapshot_download_cmd(repo, revision="", hf_home="/hf_home", token="", token_file=""):
     parts = [
         f"HF_HOME={shlex.quote(hf_home)}",
         f"XDIT_HF_REPO={shlex.quote(repo)}",
     ]
     if revision:
         parts.append(f"XDIT_HF_REVISION={shlex.quote(revision)}")
-    token = _secret_str(token)
-    if token:
-        parts.append(f"HF_TOKEN={shlex.quote(token)}")
+    token_file = str(token_file or "").strip()
+    if token_file:
+        parts.append(f"XDIT_HF_TOKEN_FILE={shlex.quote(token_file)}")
     parts.append("python -c")
     parts.append(shlex.quote(_HF_DOWNLOAD_SCRIPT.strip()))
     return " ".join(parts)
@@ -101,7 +112,10 @@ def download_hf_snapshot(orch, inference, token="", timeout=HF_SNAPSHOT_DOWNLOAD
     repo = str(inference.get("model_repo") or "")
     revision = str(inference.get("model_rev") or "")
     hf_home = str(inference.get("hf_home_container") or "/hf_home")
-    cmd = build_hf_snapshot_download_cmd(repo, revision=revision, hf_home=hf_home, token=token)
+    token_file = str(inference.get("hf_token_file_container") or "").strip()
+    if not token_file and str(inference.get("hf_token_file") or "").strip():
+        token_file = CONTAINER_HF_TOKEN_PATH
+    cmd = build_hf_snapshot_download_cmd(repo, revision=revision, hf_home=hf_home, token_file=token_file)
     results = orch.exec(cmd, timeout=timeout)
     snapshots = {}
     errors = []

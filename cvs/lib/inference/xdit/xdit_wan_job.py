@@ -869,19 +869,15 @@ class WanBenchmarkJob(PytorchXditBenchmarkJob):
         if self.distributed:
             env_dict.update(build_nccl_env(self.inference_dict))
         env_dict.update(user_env)
+        env_dict.pop("HF_TOKEN", None)
+        env_dict.pop("HUGGING_FACE_HUB_TOKEN", None)
         pypackages = resolve_wan_xfuser_pypackages_env(user_env)
         if pypackages:
             env_dict[WAN_XFUSER_PYPACKAGES_ENV] = pypackages
         env_dict["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(self.nproc_per_node))
         env_dict["OMP_NUM_THREADS"] = "16"
         env_dict["HF_HOME"] = self.inference_dict.get("hf_home_container", "/hf_home")
-        if self.hf_token:
-            env_dict["HF_TOKEN"] = _secret_str(self.hf_token)
         return env_dict
-
-    def _build_env_args(self) -> str:
-        env_dict = self._build_env_dict()
-        return " ".join(f"-e {key}={value}" for key, value in env_dict.items())
 
     def _build_torchrun_cmd(
         self,

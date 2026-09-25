@@ -77,7 +77,8 @@ class SglangSingle:
 
         self.container_name = self.inf_dict['container_name']
         self.log_dir = self.inf_dict['log_dir']
-        self.inference_poll_iterations = self.bp_dict['inference_poll_iterations']
+        self.inference_poll_iterations = int(self.bp_dict['inference_poll_iterations'])
+        self.inference_poll_total_timeout_sec = int(self.bp_dict['inference_poll_total_timeout_sec'])
         self.execution_hosts = self._resolve_execution_hosts()
         self.inf_dict['benchmark_serv_node'] = self.execution_hosts[0]
 
@@ -154,6 +155,7 @@ class SglangSingle:
         self.bp_dict.setdefault('tensor_parallelism', '8')
         self.bp_dict.setdefault('memory_fraction', '0.85')
         self.bp_dict.setdefault('inference_poll_iterations', '16')
+        self.bp_dict.setdefault('inference_poll_total_timeout_sec', '3600')
 
     def setup_server_container_env(self) -> None:
         """Write and source ``/tmp/server_env_script.sh`` inside the container."""
@@ -300,7 +302,7 @@ class SglangSingle:
 
         self._container_exec_per_host(inner, timeout=1000)
         time.sleep(5)
-        self.poll_for_inference_completion(iterations=40, waittime_between_iters=60, total_timeout=7200)
+        self.poll_for_inference_completion()
 
         tp = int(self.bp_dict.get('tensor_parallelism', 1))
         num_gpus = tp
@@ -326,8 +328,13 @@ class SglangSingle:
         return self.inference_results_dict
 
     def poll_for_inference_completion(
-        self, iterations=10, waittime_between_iters=60, total_timeout=3600, require_all_nodes=True
+        self, iterations=None, waittime_between_iters=60, total_timeout=None, require_all_nodes=True
     ):
+        if iterations is None:
+            iterations = int(self.inference_poll_iterations)
+        if total_timeout is None:
+            total_timeout = int(self.inference_poll_total_timeout_sec)
+
         def fetch_log_tail():
             return self._container_exec_per_host(lambda host: f"tail -1000 {shlex.quote(self._bench_log_path(host))}")
 
