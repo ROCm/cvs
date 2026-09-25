@@ -69,7 +69,7 @@
       "data_set_name": "random",
       "num_prompts": "25",
       "random_range_ratio": "0.5",
-      "model_num_params": "671000000000",
+      "model_num_params": "17000000000",
       "peak_gpu_tflops": "2615"
     },
     "long_ctx_niah": {
