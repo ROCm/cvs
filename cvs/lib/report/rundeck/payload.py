@@ -121,8 +121,21 @@ class RundeckPayloadBuilder:
         if self.builder_id in ("sweep", "training_sweep"):
             from cvs.lib.report.rundeck.viewer_config import ViewerConfigBuilder
 
+            viewer_config = self.config
+            if self.builder_id == "training_sweep":
+                from cvs.lib.report.training_cells import (
+                    hide_training_scaling_efficiency,
+                    without_scaling_efficiency,
+                )
+
+                if hide_training_scaling_efficiency(
+                    variant_config,
+                    lifecycle_report,
+                    self.sources.get("suite_stem") or self.sources.get("suite_name"),
+                ):
+                    viewer_config = without_scaling_efficiency(self.config)
             profile_for_viewer = self.profile_dict if isinstance(self.profile, dict) else {}
-            payload["viewer_config"] = ViewerConfigBuilder(profile_for_viewer, self.config).build()
+            payload["viewer_config"] = ViewerConfigBuilder(profile_for_viewer, viewer_config).build()
 
         return payload
 
@@ -151,6 +164,7 @@ class RundeckPayloadBuilder:
             "inf_res_dict": store.get("inf_res_dict") or store.get("cvs_results_dict") or {},
             "variant": store.get("variant_config"),
             "variant_config": store.get("variant_config"),
+            "suite_stem": store.get("suite_stem") or store.get("suite_name"),
             "lifecycle_report": lifecycle,
             "lifecycle": lifecycle,
             "reference": store.get("reference_results") or store.get("golden_results"),

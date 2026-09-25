@@ -47,9 +47,13 @@ def _train_res():
         "MBS=4,GBS=128,PRECISION=FP8": {
             "throughput_per_gpu": ["90", "200"],
             "elapsed_time_per_iteration": ["1.5"],
+            "step_time_p50_ms": ["671.2"],
+            "step_time_p95_ms": ["708.0"],
             "tokens_per_gpu": ["3000"],
             "_log_tail": "ignored",
             "_loss_curve": [[0, 2.5], [10, 2.1], [20, 1.8]],
+            "_perplexity_curve": [[0, 12.182], [10, 8.166], [20, 6.05]],
+            "_learning_rate_curve": [[0, 1e-4], [10, 9e-5]],
             "_grad_norm_curve": [[0, 3.0], [10, 2.0]],
             "_throughput_curve": [[0, 100.0], [10, 140.0]],
             "_tokens_curve": [[0, 20000.0], [10, 24000.0]],
@@ -57,6 +61,8 @@ def _train_res():
         "MBS=4,GBS=128,PRECISION=BF16": {
             "throughput_per_gpu": ["150"],
             "elapsed_time_per_iteration": ["2.0"],
+            "step_time_p50_ms": ["1532.9"],
+            "step_time_p95_ms": ["1554.2"],
             "tokens_per_gpu": ["2500"],
         },
         "MBS=4,GBS=128,PRECISION=MXFP4": None,
@@ -97,7 +103,7 @@ class TestTrainingSweepBuilder(unittest.TestCase):
                 "results": _train_res(),
                 "variant": _variant(),
                 "lifecycle_report": {
-                    "tests/training/megatron/megatron_single.py::test_training[MBS=4,GBS=128,PRECISION=FP8]": [
+                    "tests/training/megatron/megatron_distributed.py::test_training[MBS=4,GBS=128,PRECISION=FP8]": [
                         ("training", 12.0, "s"),
                     ],
                 },
@@ -113,6 +119,8 @@ class TestTrainingSweepBuilder(unittest.TestCase):
         self.assertEqual(fp8["actuals"]["training.throughput_per_gpu"], 200.0)
         self.assertNotIn("training._loss_curve", fp8["actuals"])
         self.assertEqual(fp8["loss_curve"], [[0, 2.5], [10, 2.1], [20, 1.8]])
+        self.assertEqual(fp8["perplexity_curve"], [[0, 12.182], [10, 8.166], [20, 6.05]])
+        self.assertEqual(fp8["learning_rate_curve"], [[0, 1e-4], [10, 9e-5]])
         self.assertEqual(fp8["grad_norm_curve"], [[0, 3.0], [10, 2.0]])
         self.assertEqual(fp8["throughput_curve"], [[0, 100.0], [10, 140.0]])
         self.assertEqual(fp8["tokens_curve"], [[0, 20000.0], [10, 24000.0]])
@@ -124,12 +132,54 @@ class TestTrainingSweepBuilder(unittest.TestCase):
         headers = datasets["results_table"]["headers"]
         self.assertIn("MBS", headers)
         self.assertNotIn("ISL", headers)
+        self.assertNotIn("Mean step (ms)", headers)
+        self.assertIn("P50 step (ms)", headers)
+        self.assertIn("P95 step (ms)", headers)
         self.assertIn("throughput_per_gpu", datasets["chart_series"])
+        self.assertIn("step_time_p50_ms", datasets["chart_series"])
+        self.assertIn("step_time_p95_ms", datasets["chart_series"])
         summary = datasets["sweep_summaries"][0]
         self.assertEqual(summary["headline_unit"], "TFLOP/s/GPU")
         self.assertEqual(summary["meta"], "Peak at MBS=4,GBS=128,PRECISION=FP8")
         self.assertNotIn("ttft_at_max_tput", summary)
         self.assertEqual(datasets["gate_matrix"][0]["label"], "MBS=4,GBS=128,PRECISION=BF16")
+        self.assertIn("Scaling eff. (%)", headers)
+
+    def test_single_node_omits_scaling_efficiency(self):
+        profile = _profile()
+        variant = _variant()
+        variant.container.env["NNODES"] = "1"
+        datasets = build_datasets(
+            "training_sweep",
+            {
+                "results": _train_res(),
+                "variant": variant,
+                "suite_stem": "megatron_single",
+                "lifecycle_report": {},
+            },
+            profile,
+        )
+        headers = datasets["results_table"]["headers"]
+        self.assertNotIn("Scaling eff. (%)", headers)
+        self.assertNotIn("scaling_efficiency_pct", datasets["chart_series"])
+        fp8 = next(c for c in datasets["cells"] if c["precision"] == "FP8")
+        self.assertFalse(any(m.get("metric") == "training.scaling_efficiency_pct" for m in fp8["metrics"]))
+
+        payload = build_rundeck_payload(
+            profile=load_json_profile("megatron"),
+            store={
+                "cvs_results_dict": _train_res(),
+                "variant_config": variant,
+                "suite_stem": "megatron_single",
+                "lifecycle_report": {},
+            },
+            cvs_version="0.2.0",
+        )
+        viewer_cols = payload["viewer_config"]["table_columns"]
+        self.assertFalse(any(c.get("metric") == "training.scaling_efficiency_pct" for c in viewer_cols))
+        self.assertNotIn("training.scaling_efficiency_pct", payload["viewer_config"]["metrics"])
+        html = render_rundeck_html(payload)
+        self.assertNotIn("Scaling eff", html)
 
     def test_payload_and_html(self):
         profile = load_json_profile("megatron")
@@ -152,6 +202,8 @@ class TestTrainingSweepBuilder(unittest.TestCase):
         self.assertEqual(fp8["loss_curve"][0], [0, 2.5])
         html = render_rundeck_html(payload)
         self.assertIn("Megatron Run Deck", html)
+        self.assertIn("P50 step time", html)
+        self.assertIn("P95 step time", html)
         self.assertIn("MBS=4,GBS=128,PRECISION=FP8", html)
         self.assertIn("training.throughput_per_gpu", str(payload["cells"][0]["metrics"]))
         self.assertNotIn("ISL=4", html)
@@ -218,6 +270,7 @@ class TestTrainingSweepBuilder(unittest.TestCase):
             self.assertEqual(path.name, "megatron_run_deck_viewer.html")
             text = path.read_text(encoding="utf-8")
             self.assertIn("loss-panel", text)
+            self.assertIn("lr-panel", text)
             self.assertIn("grad-norm-panel", text)
             self.assertIn("tflops-panel", text)
             self.assertIn("tokens-panel", text)

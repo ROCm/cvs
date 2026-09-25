@@ -33,6 +33,7 @@ from cvs.lib.training.megatron.utils.convergence import (
     parse_step_metrics,
 )
 from cvs.lib.training.megatron.utils.iteration_metrics import (
+    derive_step_time_stats,
     dialect_from_image,
     parse_iteration_metrics,
     sample_loss_curve,
@@ -557,6 +558,7 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
     step_metrics = parse_iteration_metrics(log_text, dialect, seq_length=seq, world_size=world_size)
     points = sample_loss_curve(step_metrics, lc.sample_every, lc.milestone_steps)
     train_res_dict[sweep_name].update(sample_training_curves(step_metrics, lc.sample_every, lc.milestone_steps))
+    train_res_dict[sweep_name].update(derive_step_time_stats(step_metrics))
 
     log.info("--- Loss curve check for combo '%s' (%d points sampled) ---", sweep_name, len(points))
 

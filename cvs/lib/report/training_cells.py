@@ -5,6 +5,8 @@ All rights reserved.
 Normalize Megatron ``train_res_dict`` into Run Deck cell records.
 '''
 
+from dataclasses import replace
+
 from cvs.lib.report.cell_build import CellRecordBuilder, metric_pass, bar_pct, margin_text
 from cvs.lib.training.megatron.utils.training_config_loader import (
     DEFAULT_SWEEP_NAME,
@@ -12,6 +14,67 @@ from cvs.lib.training.megatron.utils.training_config_loader import (
 )
 
 _HOST = "cluster"
+_SCALING_SUFFIX = "scaling_efficiency_pct"
+
+
+def _training_nnodes(variant_config):
+    if variant_config is None:
+        return None
+    for attr in ("nnodes", "num_nodes"):
+        raw = getattr(variant_config, attr, None)
+        if raw not in (None, ""):
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                pass
+    container = getattr(variant_config, "container", None)
+    env = None
+    if isinstance(container, dict):
+        env = container.get("env")
+    elif container is not None:
+        env = getattr(container, "env", None)
+    if isinstance(env, dict):
+        raw = env.get("NNODES") or env.get("nnodes")
+        if raw not in (None, ""):
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def hide_training_scaling_efficiency(variant_config, lifecycle_report=None, suite_stem=None):
+    """True for single-node Megatron / Primus (no scale-out to report)."""
+    stem = str(suite_stem or "")
+    if "megatron_single" in stem:
+        return True
+    if "megatron_distributed" in stem:
+        return False
+    nodeids = " ".join(str(k) for k in (lifecycle_report or {}))
+    if "megatron_single.py" in nodeids:
+        return True
+    if "megatron_distributed.py" in nodeids:
+        return False
+    nnodes = _training_nnodes(variant_config)
+    return nnodes is not None and nnodes <= 1
+
+
+def without_scaling_efficiency(config):
+    """Drop scaling-efficiency columns / highlights / charts from a training deck config."""
+
+    def _is_scaling_key(key):
+        if not key:
+            return False
+        return str(key) == config.full_metric(_SCALING_SUFFIX) or str(key).endswith(_SCALING_SUFFIX)
+
+    return replace(
+        config,
+        results_columns=tuple((label, key) for label, key in config.results_columns if not _is_scaling_key(key)),
+        cell_highlights=tuple(
+            pair for pair in (config.cell_highlights or ()) if pair and pair[0] != _SCALING_SUFFIX
+        ),
+        chart_series=tuple(ch for ch in (config.chart_series or ()) if ch.metric_suffix != _SCALING_SUFFIX),
+    )
 
 
 def flatten_training_combo_actuals(raw):
@@ -213,6 +276,8 @@ def build_training_cells(config, variant_config, train_res_dict, lifecycle_repor
         }
         for src, dst in (
             ("_loss_curve", "loss_curve"),
+            ("_perplexity_curve", "perplexity_curve"),
+            ("_learning_rate_curve", "learning_rate_curve"),
             ("_grad_norm_curve", "grad_norm_curve"),
             ("_throughput_curve", "throughput_curve"),
             ("_tokens_curve", "tokens_curve"),

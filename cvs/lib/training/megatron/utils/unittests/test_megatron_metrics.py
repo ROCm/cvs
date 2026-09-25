@@ -11,6 +11,7 @@ class TestMegatronMetrics(unittest.TestCase):
 
     def test_units_include_throughput(self):
         self.assertEqual(METRIC_UNITS["throughput_per_gpu"], "TFLOP/s/GPU")
+        self.assertEqual(METRIC_UNITS["step_time_p95_ms"], "ms")
 
 
 if __name__ == "__main__":

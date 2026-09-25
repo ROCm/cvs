@@ -36,6 +36,8 @@
       ["Tok/s/GPU", "training.tokens_per_gpu"],
       ["TFLOP/s/GPU", "training.throughput_per_gpu"],
       ["Iter time (s)", "training.elapsed_time_per_iteration"],
+      ["P50 step (ms)", "training.step_time_p50_ms"],
+      ["P95 step (ms)", "training.step_time_p95_ms"],
       ["Mem usage", "training.mem_usage"],
       ["Scaling eff. (%)", "training.scaling_efficiency_pct"]
     ],
@@ -49,6 +51,8 @@
     "chart_series": [
       {"metric_suffix": "throughput_per_gpu", "title": "TFLOP/s/GPU", "unit": "TFLOP/s/GPU", "invert": false},
       {"metric_suffix": "elapsed_time_per_iteration", "title": "Iteration time", "unit": "s", "invert": true},
+      {"metric_suffix": "step_time_p50_ms", "title": "P50 step time", "unit": "ms", "invert": true},
+      {"metric_suffix": "step_time_p95_ms", "title": "P95 step time", "unit": "ms", "invert": true},
       {"metric_suffix": "tokens_per_gpu", "title": "Tokens/s/GPU", "unit": "tok/s/GPU", "invert": false},
       {"metric_suffix": "scaling_efficiency_pct", "title": "Scaling efficiency", "unit": "%", "invert": false},
       {"metric_suffix": "steps_to_target", "title": "Steps to target", "unit": "steps", "invert": true},

@@ -43,7 +43,8 @@ class RundeckPublisher:
             )
             return None
 
-        store = get_session_results()
+        store = dict(get_session_results())
+        store.setdefault("suite_stem", getattr(self.config, "_suite_name", None))
         results = store.get("cvs_results_dict") or store.get("inf_res_dict")
         if not results:
             log.info("Skipping Run Deck generation: no results in session store")
