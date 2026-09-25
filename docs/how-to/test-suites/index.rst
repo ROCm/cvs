@@ -87,7 +87,7 @@ Run suites in the order shown: validate single-node health before exercising the
      - Suites
    * - :doc:`Burn-in / Diag </how-to/test-suites/burn-in-diag/index>`
      - Single-node GPU and host health: OS config, BIOS/firmware, driver load, GPU burn-in, and device access. Run before any cluster-wide workload.
-     - Platform, Health, Preflight, ANC
+     - Platform, Health, Preflight
    * - :doc:`Network </how-to/test-suites/network/index>`
      - Interconnect bandwidth, latency, and GPU collective communication across all nodes. Run after burn-in passes and before distributed workloads.
      - IB Perf, RCCL, MORI
