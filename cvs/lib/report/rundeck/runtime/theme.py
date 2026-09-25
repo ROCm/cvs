@@ -114,6 +114,34 @@ footer.page-foot { text-align: center; color: var(--muted); font-size: 0.75rem; 
 .viewer-banner { margin-bottom: 1rem; padding: 0.75rem 1rem; border-radius: 8px;
   background: rgba(107,159,255,0.08); border: 1px solid var(--border); font-size: 0.9rem; }
 .viewer-banner a { color: var(--accent2); }
+.status-matrix { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.status-matrix th, .status-matrix td { border: 1px solid var(--border); text-align: center; vertical-align: top; padding: 0; }
+.status-matrix th { background: rgba(255,255,255,0.04); color: var(--muted); font-size: 0.7rem;
+  text-transform: uppercase; padding: 0.5rem 0.65rem; }
+.status-matrix td.sm-node, .status-matrix th.sm-node { text-align: left; font-weight: 500;
+  padding: 0.6rem 0.7rem; white-space: nowrap; }
+.status-matrix td.sm-pass { background: rgba(61,214,140,0.08); }
+.status-matrix td.sm-fail { background: rgba(255,92,106,0.10); }
+.status-matrix td.sm-na { color: var(--na); padding: 0.6rem; }
+.sm-details > summary { list-style: none; cursor: pointer; padding: 0.55rem 0.5rem;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.sm-details > summary::-webkit-details-marker { display: none; }
+.sm-details > summary:hover { background: rgba(255,255,255,0.03); }
+.sm-count { font-size: 0.68rem; color: var(--muted); }
+.sm-caret::after { content: "\\25bc items"; font-size: 0.6rem; color: var(--muted); }
+.sm-details[open] > summary .sm-caret::after { content: "\\25b2 hide"; }
+.sm-body { padding: 0.5rem 0.6rem 0.7rem; border-top: 1px dashed var(--border);
+  background: rgba(0,0,0,0.2); text-align: left; }
+.sm-summary { font-size: 0.72rem; margin-bottom: 0.4rem; }
+.sm-item { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;
+  font-size: 0.75rem; padding: 0.2rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.sm-item:last-of-type { border-bottom: none; }
+.sm-iname { font-family: Consolas, "Cascadia Mono", monospace; }
+.sm-imsg { color: var(--muted); font-size: 0.7rem; }
+.sm-links { margin-top: 0.5rem; display: flex; gap: 0.75rem; }
+.sm-links a { color: var(--accent2); text-decoration: none; font-size: 0.72rem; }
+.sm-links a:hover { text-decoration: underline; }
+.sm-hint { font-size: 0.78rem; margin-top: 0.75rem; }
 @media (max-width: 640px) {
   body { padding: 1rem; }
   .hero-head { flex-direction: column; }

@@ -60,6 +60,13 @@ class RundeckPayloadBuilder:
             prov,
         )
 
+        # A non-sweep builder reports its own top-line verdict via
+        # overall_status; everything else it renders is bound from its own
+        # datasets.<builder> node (see the profile cards). The sweep builder
+        # leaves overall_status here and keeps its existing fields below, so
+        # sweep behaviour is unchanged.
+        active_data = datasets.get(self.builder_id) or {}
+
         sweep_data = datasets.get("sweep") or {}
         cells = sweep_data.get("all_cells") or sweep_data.get("cells") or []
         panels = ComparisonPanelBuilder(
@@ -82,7 +89,7 @@ class RundeckPayloadBuilder:
             "suite_id": self.config.suite_id,
             "generated_at": generated_at,
             "cvs_version": self.ctx.cvs_version,
-            "overall_status": sweep_data.get("overall_status") or ("record" if self.builder_id != "sweep" else "na"),
+            "overall_status": active_data.get("overall_status") or ("record" if self.builder_id != "sweep" else "na"),
             "report": {
                 "title": self.config.title,
                 "subtitle": self.config.subtitle,

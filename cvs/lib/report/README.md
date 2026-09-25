@@ -28,7 +28,7 @@ flowchart LR
 | Session store | `registry.py` |
 | Profile schema | `profiles/schema.json` |
 | Config resolution | `rundeck/config_adapter.py` |
-| Dataset builders | `rundeck/dataset_builders/` — `sweep`, `series`, `matrix` |
+| Dataset builders | `rundeck/dataset_builders/` — `sweep`, `series`, `matrix`, `status_matrix` |
 | Card runtime | `rundeck/runtime/` |
 | Publish entry | `rundeck/generate_rundeck.py` |
 
@@ -52,6 +52,7 @@ Root `cvs/conftest.py` binds fixtures from profile `sources` via `pytest_hooks.p
 | `sweep` | Cell-keyed dict → metric fields (ISL/OSL/concurrency sweeps) |
 | `series` | Nested dict: collective → message size → metrics |
 | `matrix` | Current results + golden reference for compare rows |
+| `status_matrix` | Categorical node × group pass/fail/na with per-item drill-down (ANC node checks) — see `profiles/anc_base.json` |
 
 Use `testing/fixtures.generic_sweep_profile()` as a template when authoring a
 sweep profile. Schema: `profiles/schema.json`.
