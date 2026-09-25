@@ -1,7 +1,7 @@
 {
   "_comment": "MI325X distributed serving workload, TP8/PP2 on two eight-GPU nodes. Set the image, model, network environment and mounts before running. Threshold enforcement remains disabled until calibrated.",
   "enforce_thresholds": false,
-  "threshold_json": "mi325x_vllm_kimi-k25_w4a8_distributed_threshold.json",
+  "threshold_json": "mi325x_vllm_qwen35-397b-a17b_mxfp4_distributed_threshold.json",
   "paths": {
     "_comment": "Host and container paths for model access, artifacts, and Hugging Face authentication.",
     "shared_fs": "/home/{user-id}",
@@ -12,7 +12,7 @@
   "container": {
     "_comment": "Container definition and static environment inherited by server, benchmark, and accuracy commands.",
     "lifetime": "per_run",
-    "name": "vllm_kimi-k25_w4a8_distributed_mi325x",
+    "name": "vllm_qwen35-397b-a17b_mxfp4_distributed_mi325x",
     "image": "<changeme>",
     "_comment_socket_interfaces": "NCCL_SOCKET_IFNAME should be the Linux netdev associated with the selected RNICs; GLOO_SOCKET_IFNAME and TP_SOCKET_IFNAME generally use the frontend or control-plane NIC.",
     "_comment_gid_index": "Set NCCL_IB_GID_INDEX to the RoCE/IB GID index available on every selected HCA and node; inspect show_gids or ibv_devinfo -v inside the container and choose the matching fabric entry.",
@@ -25,12 +25,7 @@
       "NCCL_DEBUG": "ERROR",
       "HF_HUB_OFFLINE": "1",
       "TRANSFORMERS_OFFLINE": "1",
-      "VLLM_ROCM_USE_AITER": "1",
-      "VLLM_ROCM_USE_AITER_MHA": "0",
-      "VLLM_ROCM_USE_AITER_FP4BMM": "0",
-      "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS": "0",
-      "VLLM_ROCM_USE_AITER_MLA": "0",
-      "GPU_ARCHS": "gfx942"
+      "VLLM_ROCM_USE_AITER_FP4BMM": "0"
     },
     "runtime": {
       "name": "docker",
@@ -60,7 +55,7 @@
     "pipeline_parallel_size": 2,
     "port": "8888",
     "dist_init_port": "29501",
-    "server_poll_iterations": 540,
+    "server_poll_iterations": 360,
     "server_poll_wait_s": 10,
     "server_warmup_wait_s": 30,
     "distributed_executor_backend": "mp",
@@ -69,11 +64,8 @@
     "max_num_seqs": 64,
     "gpu_memory_utilization": 0.85,
     "enforce_eager": true,
-    "limit_mm_per_prompt": {
-      "image": 0,
-      "video": 0
-    },
     "language_model_only": true,
+    "moe_backend": "emulation",
     "_comment_context": "max_model_len covers the fixed ISL plus OSL with eight tokens of padding; update it when changing the sweep lengths.",
     "_comment_startup": "The readiness polling budget allows slow checkpoint loading; it does not resolve tokenizer, backend or runtime compatibility failures."
   },
@@ -81,14 +73,14 @@
     "_comment": "Default vllm bench serve settings; per-cell values in sweeps override these defaults.",
     "backend": "vllm",
     "dataset_name": "random",
-    "num_prompts": 320,
+    "num_prompts": 256,
     "request_rate": "inf",
     "burstiness": "1.0",
     "tokenizer_mode": "auto",
     "seed": "0",
     "random_range_ratio": "0.0",
     "random_prefix_len": "0",
-    "client_poll_iterations": 720,
+    "client_poll_iterations": 540,
     "client_poll_wait_s": 10,
     "client_initial_wait_s": 10,
     "trust_remote_code": true,

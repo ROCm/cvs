@@ -1,5 +1,5 @@
 {
-  "_comment": "vLLM distributed workload. Set container.image, server_params.model, the socket-interface environment, and the models mount before running.",
+  "_comment": "MI325X distributed serving workload, TP8/PP2 on two eight-GPU nodes. Set the image, model, network environment and mounts before running. Threshold enforcement remains disabled until calibrated.",
   "enforce_thresholds": false,
   "threshold_json": "mi325x_vllm_llama33-70b_fp8_distributed_threshold.json",
   "paths": {
@@ -42,47 +42,55 @@
         ]
       },
       "_comment": "Docker runtime and launch arguments applied on every participating node."
-    }
+    },
+    "_comment_image": "Use a compatible ROCm vLLM image with support for this checkpoint and the selected backends; options and checkpoint support are version dependent.",
+    "_comment_gpu_arch": "These backend settings were exercised on MI325X (gfx942); revalidate them before using another GPU architecture."
   },
   "server_params": {
     "_comment": "Harness fields plus snake-case vllm serve options.",
     "backend": "vllm",
     "model": "<changeme>",
-    "tensor_parallel_size": "8",
-    "pipeline_parallel_size": "2",
+    "tensor_parallel_size": 8,
+    "pipeline_parallel_size": 2,
     "port": "8888",
     "dist_init_port": "29501",
-    "server_poll_iterations": "60",
-    "server_poll_wait_s": "60",
-    "server_warmup_wait_s": "330",
+    "server_poll_iterations": 360,
+    "server_poll_wait_s": 10,
+    "server_warmup_wait_s": 30,
     "distributed_executor_backend": "mp",
-    "kv_cache_dtype": "fp8"
+    "kv_cache_dtype": "fp8",
+    "max_model_len": 2056,
+    "max_num_seqs": 16,
+    "gpu_memory_utilization": 0.5,
+    "enforce_eager": true,
+    "_comment_context": "max_model_len covers the fixed ISL plus OSL with eight tokens of padding; update it when changing the sweep lengths.",
+    "_comment_startup": "The readiness polling budget allows slow checkpoint loading; it does not resolve tokenizer, backend or runtime compatibility failures."
   },
   "benchmark_params": {
     "_comment": "Default vllm bench serve settings; per-cell values in sweeps override these defaults.",
     "backend": "vllm",
     "dataset_name": "random",
-    "num_prompts": "320",
+    "num_prompts": 64,
     "request_rate": "inf",
     "burstiness": "1.0",
     "tokenizer_mode": "auto",
     "seed": "0",
     "random_range_ratio": "0.0",
     "random_prefix_len": "0",
-    "client_poll_iterations": "90",
-    "client_poll_wait_s": "60",
-    "client_initial_wait_s": "120",
+    "client_poll_iterations": 540,
+    "client_poll_wait_s": 10,
+    "client_initial_wait_s": 10,
     "trust_remote_code": false,
-    "ignore_eos": true
+    "ignore_eos": true,
+    "temperature": 0.0
   },
   "_comment_sweeps": "Canonical run cells; entries override benchmark_params for that cell.",
   "sweeps": {
-    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": {},
-    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=32": {}
+    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16": {}
   },
   "_comment_runs": "Explicit ordered run cells to execute.",
   "runs": [
-    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16",
-    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=32"
-  ]
+    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
+  ],
+  "_comment_validation": "Serving completion was exercised with vLLM 0.29.1.dev0+g98dff2a81.d20260911.rocm101 on gfx942. These settings do not establish model accuracy or calibrated performance thresholds. Llama evidence is a bounded 64-request c16 diagnostic only."
 }

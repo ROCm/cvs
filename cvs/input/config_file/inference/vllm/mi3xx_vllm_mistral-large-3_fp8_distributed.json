@@ -1,7 +1,7 @@
 {
   "_comment": "MI325X distributed serving workload, TP8/PP2 on two eight-GPU nodes. Set the image, model, network environment and mounts before running. Threshold enforcement remains disabled until calibrated.",
   "enforce_thresholds": false,
-  "threshold_json": "mi325x_vllm_kimi-k25_w4a8_distributed_threshold.json",
+  "threshold_json": "mi325x_vllm_mistral-large-3_fp8_distributed_threshold.json",
   "paths": {
     "_comment": "Host and container paths for model access, artifacts, and Hugging Face authentication.",
     "shared_fs": "/home/{user-id}",
@@ -12,7 +12,7 @@
   "container": {
     "_comment": "Container definition and static environment inherited by server, benchmark, and accuracy commands.",
     "lifetime": "per_run",
-    "name": "vllm_kimi-k25_w4a8_distributed_mi325x",
+    "name": "vllm_mistral-large-3_fp8_distributed_mi325x",
     "image": "<changeme>",
     "_comment_socket_interfaces": "NCCL_SOCKET_IFNAME should be the Linux netdev associated with the selected RNICs; GLOO_SOCKET_IFNAME and TP_SOCKET_IFNAME generally use the frontend or control-plane NIC.",
     "_comment_gid_index": "Set NCCL_IB_GID_INDEX to the RoCE/IB GID index available on every selected HCA and node; inspect show_gids or ibv_devinfo -v inside the container and choose the matching fabric entry.",
@@ -27,9 +27,6 @@
       "TRANSFORMERS_OFFLINE": "1",
       "VLLM_ROCM_USE_AITER": "1",
       "VLLM_ROCM_USE_AITER_MHA": "0",
-      "VLLM_ROCM_USE_AITER_FP4BMM": "0",
-      "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS": "0",
-      "VLLM_ROCM_USE_AITER_MLA": "0",
       "GPU_ARCHS": "gfx942"
     },
     "runtime": {
@@ -50,7 +47,8 @@
       "_comment": "Docker runtime and launch arguments applied on every participating node."
     },
     "_comment_image": "Use a compatible ROCm vLLM image with support for this checkpoint and the selected backends; options and checkpoint support are version dependent.",
-    "_comment_gpu_arch": "These backend settings were exercised on MI325X (gfx942); revalidate them before using another GPU architecture."
+    "_comment_gpu_arch": "These backend settings were exercised on MI325X (gfx942); revalidate them before using another GPU architecture.",
+    "_comment_runtime_requirement": "The successful run used Transformers 5.10.4 and Tokenizers 0.22.2 with the ROCm amdsmi module still importable. Use an image with compatible Mistral tokenizer support."
   },
   "server_params": {
     "_comment": "Harness fields plus snake-case vllm serve options.",
@@ -64,16 +62,17 @@
     "server_poll_wait_s": 10,
     "server_warmup_wait_s": 30,
     "distributed_executor_backend": "mp",
+    "tokenizer_mode": "mistral",
+    "config_format": "mistral",
+    "load_format": "mistral",
     "trust_remote_code": true,
     "max_model_len": 2056,
     "max_num_seqs": 64,
     "gpu_memory_utilization": 0.85,
     "enforce_eager": true,
     "limit_mm_per_prompt": {
-      "image": 0,
-      "video": 0
+      "image": 0
     },
-    "language_model_only": true,
     "_comment_context": "max_model_len covers the fixed ISL plus OSL with eight tokens of padding; update it when changing the sweep lengths.",
     "_comment_startup": "The readiness polling budget allows slow checkpoint loading; it does not resolve tokenizer, backend or runtime compatibility failures."
   },
@@ -81,10 +80,10 @@
     "_comment": "Default vllm bench serve settings; per-cell values in sweeps override these defaults.",
     "backend": "vllm",
     "dataset_name": "random",
-    "num_prompts": 320,
+    "num_prompts": 256,
     "request_rate": "inf",
     "burstiness": "1.0",
-    "tokenizer_mode": "auto",
+    "tokenizer_mode": "mistral",
     "seed": "0",
     "random_range_ratio": "0.0",
     "random_prefix_len": "0",
@@ -106,5 +105,6 @@
     "ISL=1024,OSL=1024,TP=8,PP=2,CONC=32",
     "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64"
   ],
-  "_comment_validation": "Serving completion was exercised with vLLM 0.29.1.dev0+g98dff2a81.d20260911.rocm101 on gfx942. These settings do not establish model accuracy or calibrated performance thresholds."
+  "_comment_validation": "Serving completion was exercised with vLLM 0.29.1.dev0+g98dff2a81.d20260911.rocm101 on gfx942. These settings do not establish model accuracy or calibrated performance thresholds.",
+  "_comment_checkpoint": "This profile targets the compressed-tensors FP8_BLOCK checkpoint with BF16 compute. A directory label containing BF16 does not establish BF16 weight precision."
 }
