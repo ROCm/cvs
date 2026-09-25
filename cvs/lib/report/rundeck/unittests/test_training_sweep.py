@@ -7,9 +7,6 @@ the training_res_dict shape must flow through resolve/build into cells,
 gate_matrix, and results_table without the inference 6-tuple cell key.
 '''
 
-import base64
-import os
-import tempfile
 import unittest
 from types import SimpleNamespace
 
@@ -58,6 +55,11 @@ def _training_res_dict(final_loss=6.5):
                 "num_nodes": 4,
                 "step_metrics": [{"step": 0, "loss": 12.0}, {"step": 29, "loss": final_loss}],
                 "eval_metrics": [],
+                "tb_scalars": {
+                    "learning/loss": [[0, 12.0], [1, 11.0], [5, 10.0], [6, 9.5]],
+                    "learning/grad_norm": [[0, 1.5], [5, 1.2]],
+                    "perf/per_device_tflops_per_sec": [[0, 180.0], [5, 185.0]],
+                },
             }
         },
     }
@@ -74,7 +76,14 @@ class ProfileLoadTests(unittest.TestCase):
         self.assertEqual(prof["sources"]["results"], "training_res_dict")
         self.assertEqual(prof["sweep"]["metric_prefix"], "training.")
         self.assertIn("single-node", prof["subtitle"])  # child override wins
-        self.assertTrue(any(c["type"] == "gate_matrix" for c in prof["cards"]))  # from base
+        self.assertTrue(prof["interactive_viewer"])
+        card_types = [c["type"] for c in prof["cards"]]
+        self.assertIn("gate_matrix", card_types)  # from base
+        self.assertIn("metric_bars", card_types)  # req 1: bars after lifecycle
+        # metric_bars comes right after the lifecycle timeline
+        self.assertEqual(card_types[card_types.index("lifecycle_timeline") + 1], "metric_bars")
+        self.assertNotIn("sweep_charts", card_types)  # req 2: removed from deck page
+        self.assertNotIn("image_gallery", card_types)
 
 
 class BuildTrainingDatasetsTests(unittest.TestCase):
@@ -119,41 +128,27 @@ class BuildTrainingDatasetsTests(unittest.TestCase):
         self.assertEqual(ds["gate_matrix"], [])
         self.assertEqual(ds["overall_status"], "na")
 
-    def test_charts_embedded_as_data_uris(self):
-        raw = b"\x89PNG\r\n\x1a\nFAKE-PNG-BYTES"
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "loss.png")
-            with open(path, "wb") as fh:
-                fh.write(raw)
-            res = _training_res_dict()
-            res["sweeps"][_SWEEP]["charts"] = [("Loss Curve", path)]
-            ds = build_training_datasets({"results": res, "variant": _variant()}, _profile())
-            charts = ds["cells"][0]["charts"]
-            self.assertEqual(charts[0]["title"], "Loss Curve")
-            self.assertTrue(charts[0]["src"].startswith("data:image/png;base64,"))
-            self.assertIn(base64.b64encode(raw).decode("ascii"), charts[0]["src"])
+    def test_training_series_is_json_safe_and_present(self):
+        ds = self._build()
+        series = ds["training_series"][_SWEEP]
+        # tags preserved; points are [step, value] lists (JSON-safe), not tuples
+        self.assertIn("learning/loss", series)
+        self.assertIn("perf/per_device_tflops_per_sec", series)
+        self.assertEqual(series["learning/loss"][0], [0, 12.0])
+        self.assertNotIn("charts", ds["cells"][0])  # no PNG embedding anymore
 
-    def test_unreadable_chart_paths_are_skipped(self):
-        res = _training_res_dict()
-        res["sweeps"][_SWEEP]["charts"] = [("Missing", "/no/such/file.png")]
-        ds = build_training_datasets({"results": res, "variant": _variant()}, _profile())
-        self.assertEqual(ds["cells"][0]["charts"], [])
+    def test_metric_bars_across_sweeps_excludes_bools(self):
+        bars = {b["metric"]: b for b in self._build()["metric_bars"]}
+        self.assertIn("training.tokens_per_sec_per_gpu", bars)
+        self.assertEqual(bars["training.tokens_per_sec_per_gpu"]["values"][_SWEEP], 200.0)
+        # loss_decreased is a bool metric -> not charted as a bar
+        self.assertNotIn("training.loss_decreased", bars)
 
-    def test_cross_sweep_charts_embedded(self):
-        raw = b"\x89PNG\r\n\x1a\nCROSS"
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "cross.png")
-            with open(path, "wb") as fh:
-                fh.write(raw)
-            res = _training_res_dict()
-            res["cross_sweep_charts"] = [("Loss vs step (all sweeps)", path)]
-            ds = build_training_datasets({"results": res, "variant": _variant()}, _profile())
-            self.assertEqual(ds["cross_sweep_charts"][0]["title"], "Loss vs step (all sweeps)")
-            self.assertTrue(ds["cross_sweep_charts"][0]["src"].startswith("data:image/png;base64,"))
-
-    def test_cross_sweep_charts_default_empty(self):
-        ds = build_training_datasets({"results": _training_res_dict(), "variant": _variant()}, _profile())
-        self.assertEqual(ds["cross_sweep_charts"], [])
+    def test_viewer_settings_from_profile(self):
+        vs = self._build()["viewer_settings"]
+        self.assertEqual(vs["skip_initial_steps"], 5)
+        self.assertIn("learning/loss", vs["default_series"])
+        self.assertIn("perf/per_device_tokens_per_sec", vs["default_series"])
 
     def test_info_specs_do_not_gate_tiers(self):
         # kind:"info" is record-only: it must not gate. eval_loss(info, None value)
@@ -197,36 +192,36 @@ class BuildTrainingDatasetsTests(unittest.TestCase):
         self.assertEqual(tiers["record"], "record")
 
 
-class SweepChartsCardTests(unittest.TestCase):
-    def test_renders_images_per_sweep(self):
+class MetricBarsCardTests(unittest.TestCase):
+    def test_renders_dynamic_bar_charts(self):
         payload = {
-            "cells": [{"cell_id": "NN4_BF16", "charts": [{"title": "Loss", "src": "data:image/png;base64,AAAA"}]}]
+            "datasets": {
+                "training_sweep": {
+                    "metric_bars": [
+                        {
+                            "metric": "training.tokens_per_sec_per_gpu",
+                            "label": "tok/s/GPU",
+                            "unit": "tok/s",
+                            "values": {"NN4_BF16": 200.0, "NN4_FP8": 260.0},
+                        }
+                    ]
+                }
+            }
         }
-        card = {"type": "sweep_charts", "id": "charts", "title": "Training charts", "bind": "cells"}
+        card = {
+            "type": "metric_bars",
+            "id": "metric-bars",
+            "title": "Results metrics",
+            "bind": "datasets.training_sweep.metric_bars",
+        }
         _sid, html_body, _nav = render_card(payload, card)
-        self.assertIn("<img", html_body)
-        self.assertIn("data:image/png;base64,AAAA", html_body)
-        self.assertIn("NN4_BF16", html_body)
+        self.assertIn("<canvas", html_body)
+        self.assertIn("chart.js", html_body)  # self-contained Chart.js
+        self.assertIn("tok/s/GPU", html_body)
 
-    def test_hidden_when_no_charts(self):
-        payload = {"cells": [{"cell_id": "NN4_BF16", "charts": []}]}
-        card = {"type": "sweep_charts", "bind": "cells"}
-        _sid, html_body, in_nav = render_card(payload, card)
-        self.assertEqual(html_body, "")
-        self.assertFalse(in_nav)
-
-
-class ImageGalleryCardTests(unittest.TestCase):
-    def test_flat_gallery_renders(self):
-        payload = {"gallery": [{"title": "Loss vs step", "src": "data:image/png;base64,BBBB"}]}
-        card = {"type": "image_gallery", "id": "cross-charts", "title": "Cross-sweep comparison", "bind": "gallery"}
-        _sid, html_body, _nav = render_card(payload, card)
-        self.assertIn("<img", html_body)
-        self.assertIn("data:image/png;base64,BBBB", html_body)
-
-    def test_hidden_when_empty(self):
-        card = {"type": "image_gallery", "bind": "gallery", "when_empty": "hide"}
-        _sid, html_body, in_nav = render_card({"gallery": []}, card)
+    def test_hidden_when_no_bars(self):
+        card = {"type": "metric_bars", "bind": "datasets.training_sweep.metric_bars", "when_empty": "hide"}
+        _sid, html_body, in_nav = render_card({"datasets": {"training_sweep": {"metric_bars": []}}}, card)
         self.assertEqual(html_body, "")
         self.assertFalse(in_nav)
 
