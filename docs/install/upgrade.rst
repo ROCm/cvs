@@ -64,33 +64,33 @@ you installed with Makefile or pip. For a Docker install, use
   cvs list
 
 Expected output (suite names and totals vary by version):
+..
+  .. code:: text
+    ..
+    (.cvs_venv) user@head-node:~/cvs$ cvs --version
+    cvs: 0.2.0
 
-.. code:: text
+    (.cvs_venv) user@head-node:~/cvs$ cvs list
 
-  (.cvs_venv) user@head-node:~/cvs$ cvs --version
-  cvs: 0.2.0
+    Available Tests
+    ================================================================================
 
-  (.cvs_venv) user@head-node:~/cvs$ cvs list
+    Package: cvs
+    --------------------------------------------------------------------------------
 
-  Available Tests
-  ================================================================================
+      cvs.tests.anc (1 test suite)
+        • anc_installation
 
-  Package: cvs
-  --------------------------------------------------------------------------------
+      cvs.tests.anc.cpu (1 test suite)
+        • anc_test_cpu
 
-    cvs.tests.anc (1 test suite)
-      • anc_installation
+      cvs.tests.anc.gpu (1 test suite)
+        • anc_test_gpu
+    <<truncated>>
+    ================================================================================
+    Total: 48 test suites across 1 package(s)
 
-    cvs.tests.anc.cpu (1 test suite)
-      • anc_test_cpu
-
-    cvs.tests.anc.gpu (1 test suite)
-      • anc_test_gpu
-  <<truncated>>
-  ================================================================================
-  Total: 48 test suites across 1 package(s)
-
-If ``cvs --version`` prints the updated version number and ``cvs list`` shows available test suites, the upgrade was successful.
+  If ``cvs --version`` prints the updated version number and ``cvs list`` shows available test suites, the upgrade was successful.
 
 Next steps
 ==========
