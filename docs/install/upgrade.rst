@@ -64,41 +64,41 @@ you installed with Makefile or pip. For a Docker install, use
   cvs list
 
 Expected output (suite names and totals vary by version):
-..
-  .. code:: text
-    ..
-    (.cvs_venv) user@head-node:~/cvs$ cvs --version
-    cvs: 0.2.0
 
-    (.cvs_venv) user@head-node:~/cvs$ cvs list
+.. code:: text
+  
+  (.cvs_venv) user@head-node:~/cvs$ cvs --version
+  cvs: 0.2.0
 
-    Available Tests
-    ================================================================================
+  (.cvs_venv) user@head-node:~/cvs$ cvs list
 
-    Package: cvs
-    --------------------------------------------------------------------------------
+  Available Tests
+  ================================================================================
 
-      cvs.tests.health (4 test suites)
-        • agfhc_cvs
-        • csp_qual_agfhc
-        • rvs_cvs
-        • transferbench_cvs
+  Package: cvs
+  --------------------------------------------------------------------------------
 
-      cvs.tests.health.install (5 test suites)
-        • install_agfhc
-        • install_babelstream
-        • install_rocblas
-        • install_rvs
-        • install_transferbench
+    cvs.tests.health (4 test suites)
+      • agfhc_cvs
+      • csp_qual_agfhc
+      • rvs_cvs
+      • transferbench_cvs
 
-      cvs.tests.ibperf (2 test suites)
-        • ib_perf_bw_test
-        • install_ibperf_tools
-    <<truncated>>
-    ================================================================================
-    Total: 48 test suites across 1 package(s)
+    cvs.tests.health.install (5 test suites)
+      • install_agfhc
+      • install_babelstream
+      • install_rocblas
+      • install_rvs
+      • install_transferbench
 
-  If ``cvs --version`` prints the updated version number and ``cvs list`` shows available test suites, the upgrade was successful.
+    cvs.tests.ibperf (2 test suites)
+      • ib_perf_bw_test
+      • install_ibperf_tools
+  <<truncated>>
+  ================================================================================
+  Total: 48 test suites across 1 package(s)
+
+If ``cvs --version`` prints the updated version number and ``cvs list`` shows available test suites, the upgrade was successful.
 
 Next steps
 ==========
