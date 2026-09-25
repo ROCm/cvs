@@ -1,10 +1,10 @@
 .. meta::
   :description: Reference index for all CVS test configuration files, covering burn-in, network, training, and inference JSON schemas used with cvs run.
-  :keywords: CVS, configuration files, JSON, ROCm, test suite, health, RCCL, platform, training, inference, preflight, ANC
+  :keywords: CVS, configuration files, JSON, ROCm, test suite, health, RCCL, platform, training, inference, preflight
 
-**********************************************************
+*****************************************************************
 Cluster Validation Suite (CVS) test configuration files reference
-**********************************************************
+*****************************************************************
 
 Each CVS test has a corresponding JSON configuration file. You must configure the JSON file for each test you want to run in CVS.
 
@@ -37,7 +37,6 @@ Burn-in / Diag
 - :doc:`Platform </reference/configuration-files/burn-in-diag/platform>` — host OS, BIOS, firmware, and PCIe checks
 - :doc:`Health </reference/configuration-files/burn-in-diag/health>` — AGFHC, TransferBench, and RVS burn-in configs
 - :doc:`Preflight </reference/configuration-files/burn-in-diag/preflight>` — node smoke and cluster preflight checks
-- :doc:`ANC </reference/configuration-files/burn-in-diag/anc>` — AMD Node Check CPU and GPU diagnostic groups
 
 Network
 -------

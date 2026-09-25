@@ -39,11 +39,6 @@ The following suites are available for burn-in and diagnostic workloads:
      - ``cvs config list preflight``
 
        `README_preflight_config.md <https://github.com/ROCm/cvs/blob/main/cvs/input/config_file/preflight/README_preflight_config.md>`_
-   * - ANC
-     - ``input/config_file/anc/anc_config.json``
-     - ``cvs config list anc``
-
-       `cvs/tests/anc/README.md <https://github.com/ROCm/cvs/blob/main/cvs/tests/anc/README.md>`_
 
 Network
 =======

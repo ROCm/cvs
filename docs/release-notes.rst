@@ -24,7 +24,6 @@ Added
 - Training: JAX MaxText, TorchTitan, Megatron (single and multi-node).
 - Aorta and benchmark training microbenchmarks with schema, configs, and runner.
 - Preflight suite: MI4XX node-health and InfiniBand over Ethernet (IFoE) checks, nodesmoke tiers (including Primus CLI tier 1 and tier 3), ROCm version consistency.
-- AMD Node Check (ANC) suite: CPU/GPU group suites, multi-format install, HTML reports, fail-fast install/ldconfig, inactivity timeouts.
 - Inference: vLLM (single and distributed), SGLang (single, distributed, and disaggregated), xDiT (single and distributed), and ATOM (single).
 - MORI RDMA performance tests.
 - Pairwise RCCL tests.
