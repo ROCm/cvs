@@ -87,6 +87,47 @@ def _series_for_sweep(rec):
     return out
 
 
+_STEP_TIME_TAG = "perf/step_time_seconds"
+_RAMPUP_STEPS = 2  # leading compile/rampup steps excluded from the steady-state distribution
+
+
+def _percentile(sorted_vals, pct):
+    if not sorted_vals:
+        return None
+    k = min(len(sorted_vals) - 1, int(round(pct / 100.0 * (len(sorted_vals) - 1))))
+    return sorted_vals[k]
+
+
+def _step_time_dist(training_series):
+    """Per-sweep steady-state step-time histogram for the deck's dynamic charts.
+
+    Returns ``[{sweep, labels, counts, p50, p95}]`` (bin centers + counts, plus
+    percentiles) computed from the ``perf/step_time_seconds`` series, dropping the
+    first couple of compile/rampup outliers. Empty when the series is unavailable
+    (framework-agnostic -- skipped for frameworks that don't log step time).
+    """
+    dists = []
+    for sweep in sorted(training_series or {}):
+        pts = (training_series[sweep] or {}).get(_STEP_TIME_TAG) or []
+        seq = [v for _s, v in pts if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        steady = seq[_RAMPUP_STEPS:] if len(seq) > _RAMPUP_STEPS else seq
+        if len(steady) < 2:
+            continue
+        lo, hi = min(steady), max(steady)
+        nbins = min(20, max(5, int(len(steady) ** 0.5) + 1))
+        width = (hi - lo) / nbins if hi > lo else 1.0
+        counts = [0] * nbins
+        for v in steady:
+            idx = min(nbins - 1, int((v - lo) / width)) if hi > lo else 0
+            counts[idx] += 1
+        labels = [round(lo + width * (i + 0.5), 3) for i in range(nbins)]
+        sv = sorted(steady)
+        dists.append(
+            {"sweep": sweep, "labels": labels, "counts": counts, "p50": _percentile(sv, 50), "p95": _percentile(sv, 95)}
+        )
+    return dists
+
+
 def _metric_bars(config, cells):
     """Per-metric bar data across sweeps for the deck's dynamic bar charts.
 
@@ -224,6 +265,7 @@ def build_training_datasets(sources: dict[str, Any], profile: DeckProfile) -> di
         "gate_matrix": gate_matrix,
         "results_table": _results_table(config, sweeps, variant_config),
         "metric_bars": _metric_bars(config, cells),
+        "step_time_dist": _step_time_dist(training_series),
         "training_series": training_series,
         "viewer_settings": _viewer_settings(profile),
         "multi_shape_comparison": False,

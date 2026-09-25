@@ -150,33 +150,59 @@ class DeckCardRenderer:
 
     @staticmethod
     def render_metric_bars(_payload: dict, _card: dict, data: Any) -> str:
-        """Dynamic (Chart.js) bar chart per metric across sweeps, plotted from JSON.
+        """Dynamic (Chart.js) charts for the deck, plotted from JSON. Self-contained.
 
-        ``data`` binds to ``datasets.training_sweep.metric_bars`` --
-        ``[{metric, label, unit, values: {sweep_id: number}}]``. Self-contained: it
-        inlines the Chart.js CDN and the data, and draws one white-background bar
-        chart per metric. Empty -> "" (card hidden). Framework-agnostic.
+        ``data`` binds to ``datasets.training_sweep`` and provides:
+          * ``metric_bars`` -- ``[{metric, label, unit, values: {sweep: number}}]``:
+            one white-background bar chart per metric across sweeps.
+          * ``step_time_dist`` -- ``[{sweep, labels, counts, p50, p95}]``: one
+            steady-state step-time histogram per sweep (x = step time (s)).
+        Empty -> "" (card hidden). Framework-agnostic.
         """
-        bars = [b for b in (data if isinstance(data, list) else []) if isinstance(b, dict) and b.get("values")]
-        if not bars:
+        ds = data if isinstance(data, dict) else {}
+        specs = []
+        for b in ds.get("metric_bars") or []:
+            if not (isinstance(b, dict) and b.get("values")):
+                continue
+            labels = list(b["values"].keys())
+            title = b.get("label", "") + (f" ({b['unit']})" if b.get("unit") else "")
+            specs.append({"title": title, "labels": labels, "data": [b["values"][k] for k in labels], "xtitle": ""})
+        for d in ds.get("step_time_dist") or []:
+            if not (isinstance(d, dict) and d.get("counts")):
+                continue
+            note = []
+            if d.get("p50") is not None:
+                note.append(f"p50={d['p50']:.2f}s")
+            if d.get("p95") is not None:
+                note.append(f"p95={d['p95']:.2f}s")
+            title = f"step-time dist · {d.get('sweep', '')}" + (f" ({', '.join(note)})" if note else "")
+            specs.append(
+                {
+                    "title": title,
+                    "labels": d.get("labels") or [],
+                    "data": d.get("counts") or [],
+                    "xtitle": "step time (s)",
+                }
+            )
+        if not specs:
             return ""
-        payload_json = json.dumps(bars, separators=(",", ":")).replace("<", "\\u003c")
+        specs_json = json.dumps(specs, separators=(",", ":")).replace("<", "\\u003c")
         canvases = "".join(
             "<div style='flex:0 0 auto;background:#fff;border:1px solid var(--border);border-radius:6px;padding:6px'>"
             f"<canvas id='mbar-{i}' width='360' height='240'></canvas></div>"
-            for i in range(len(bars))
+            for i in range(len(specs))
         )
         script = (
             "<script src='https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js'></script>"
-            "<script>(function(){var BARS=" + payload_json + ";"
+            "<script>(function(){var C=" + specs_json + ";"
             "function draw(){if(!window.Chart){return setTimeout(draw,60);}"
-            "BARS.forEach(function(b,i){var el=document.getElementById('mbar-'+i);if(!el)return;"
-            "var labels=Object.keys(b.values);var title=b.label+(b.unit?(' ('+b.unit+')'):'');"
-            "new Chart(el,{type:'bar',data:{labels:labels,datasets:[{label:title,"
-            "data:labels.map(function(k){return b.values[k];}),backgroundColor:'#1f77b4'}]},"
+            "C.forEach(function(c,i){var el=document.getElementById('mbar-'+i);if(!el)return;"
+            "new Chart(el,{type:'bar',data:{labels:c.labels,datasets:[{label:c.title,"
+            "data:c.data,backgroundColor:'#1f77b4'}]},"
             "options:{responsive:false,plugins:{legend:{display:false},"
-            "title:{display:true,text:title,color:'#111'}},"
-            "scales:{x:{ticks:{color:'#333',font:{size:9},maxRotation:40}},"
+            "title:{display:true,text:c.title,color:'#111'}},"
+            "scales:{x:{title:{display:!!c.xtitle,text:c.xtitle,color:'#333'},"
+            "ticks:{color:'#333',font:{size:9},maxRotation:40}},"
             "y:{ticks:{color:'#333',font:{size:9}}}}}});});}"
             "draw();})();</script>"
         )
