@@ -74,7 +74,7 @@
   "cards": [
     {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
     {"type": "lifecycle_timeline", "id": "lifecycle", "title": "Lifecycle timeline", "bind": "lifecycle"},
-    {"type": "metric_bars", "id": "metric-bars", "title": "Results metrics by sweep", "bind": "datasets.training_sweep.metric_bars"},
+    {"type": "metric_bars", "id": "metric-bars", "title": "Results metrics by sweep", "bind": "datasets.training_sweep"},
     {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
     {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
     {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}

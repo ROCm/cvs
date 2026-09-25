@@ -59,6 +59,7 @@ def _training_res_dict(final_loss=6.5):
                     "learning/loss": [[0, 12.0], [1, 11.0], [5, 10.0], [6, 9.5]],
                     "learning/grad_norm": [[0, 1.5], [5, 1.2]],
                     "perf/per_device_tflops_per_sec": [[0, 180.0], [5, 185.0]],
+                    "perf/step_time_seconds": [[0, 110.0], [1, 90.0], [2, 10.0], [3, 9.8], [4, 10.1], [5, 9.9]],
                 },
             }
         },
@@ -150,6 +151,21 @@ class BuildTrainingDatasetsTests(unittest.TestCase):
         self.assertIn("learning/loss", vs["default_series"])
         self.assertIn("perf/per_device_tokens_per_sec", vs["default_series"])
 
+    def test_step_time_dist_computed_from_series(self):
+        dist = self._build()["step_time_dist"]
+        self.assertEqual(len(dist), 1)
+        d = dist[0]
+        self.assertEqual(d["sweep"], _SWEEP)
+        self.assertEqual(sum(d["counts"]), 4)  # 6 pts minus 2 rampup outliers
+        self.assertLess(d["p50"], 11.0)  # steady-state ~10s, rampup (110/90s) excluded
+        self.assertTrue(d["labels"])
+
+    def test_step_time_dist_absent_without_series(self):
+        res = _training_res_dict()
+        del res["sweeps"][_SWEEP]["tb_scalars"]["perf/step_time_seconds"]
+        ds = build_training_datasets({"results": res, "variant": _variant()}, _profile())
+        self.assertEqual(ds["step_time_dist"], [])
+
     def test_info_specs_do_not_gate_tiers(self):
         # kind:"info" is record-only: it must not gate. eval_loss(info, None value)
         # must NOT force convergence to na; an all-info tier (stability) is na.
@@ -193,7 +209,7 @@ class BuildTrainingDatasetsTests(unittest.TestCase):
 
 
 class MetricBarsCardTests(unittest.TestCase):
-    def test_renders_dynamic_bar_charts(self):
+    def test_renders_bars_and_step_time_dist(self):
         payload = {
             "datasets": {
                 "training_sweep": {
@@ -204,7 +220,10 @@ class MetricBarsCardTests(unittest.TestCase):
                             "unit": "tok/s",
                             "values": {"NN4_BF16": 200.0, "NN4_FP8": 260.0},
                         }
-                    ]
+                    ],
+                    "step_time_dist": [
+                        {"sweep": "NN4_BF16", "labels": [9.8, 10.1], "counts": [3, 1], "p50": 9.9, "p95": 10.1}
+                    ],
                 }
             }
         }
@@ -212,16 +231,18 @@ class MetricBarsCardTests(unittest.TestCase):
             "type": "metric_bars",
             "id": "metric-bars",
             "title": "Results metrics",
-            "bind": "datasets.training_sweep.metric_bars",
+            "bind": "datasets.training_sweep",
         }
         _sid, html_body, _nav = render_card(payload, card)
         self.assertIn("<canvas", html_body)
         self.assertIn("chart.js", html_body)  # self-contained Chart.js
         self.assertIn("tok/s/GPU", html_body)
+        self.assertIn("step-time dist", html_body)  # step-time distribution included
 
-    def test_hidden_when_no_bars(self):
-        card = {"type": "metric_bars", "bind": "datasets.training_sweep.metric_bars", "when_empty": "hide"}
-        _sid, html_body, in_nav = render_card({"datasets": {"training_sweep": {"metric_bars": []}}}, card)
+    def test_hidden_when_no_data(self):
+        card = {"type": "metric_bars", "bind": "datasets.training_sweep", "when_empty": "hide"}
+        payload = {"datasets": {"training_sweep": {"metric_bars": [], "step_time_dist": []}}}
+        _sid, html_body, in_nav = render_card(payload, card)
         self.assertEqual(html_body, "")
         self.assertFalse(in_nav)
 
