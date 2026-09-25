@@ -8,11 +8,15 @@ parse_iteration_metrics — dialect-specific fields from each ``iteration N/`` l
 sample_metric_curve     — downsample a field the same way as the loss sampler
 '''
 
+import math
 import re
 
 _NUM = r'([0-9.eE+\-]+)'
 _ANSI = re.compile(r'\x1b\[[0-9;]*m')
-_ITER = re.compile(r'iteration\s+(\d+)\s*/\s*\d+', re.I)
+_ITER = re.compile(r'iteration\s+(\d+)\s*/\s*(\d+)', re.I)
+
+# Early iterations are noisy (compiler/cache warmup); curves start after this fraction.
+WARMUP_FRAC = 0.1
 
 # Megatron-LM: single values on the iteration line (no tokens/s/GPU).
 MEGATRON_FIELDS = {
@@ -45,6 +49,8 @@ _DIALECTS = {
 
 CURVE_STORE_KEYS = (
     ('loss', '_loss_curve'),
+    ('perplexity', '_perplexity_curve'),
+    ('learning_rate', '_learning_rate_curve'),
     ('grad_norm', '_grad_norm_curve'),
     ('throughput_per_gpu', '_throughput_curve'),
     ('tokens_per_gpu', '_tokens_curve'),
@@ -71,6 +77,17 @@ def _first_float(line, patterns):
         except (TypeError, ValueError, IndexError):
             continue
     return None
+
+
+def _perplexity_from_nll(loss):
+    """Token perplexity from mean NLL in nats (PyTorch / Megatron CE)."""
+    try:
+        ppl = math.exp(float(loss))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(ppl):
+        return None
+    return ppl
 
 
 def _tokens_per_gpu_from_elapsed(gbs, seq_length, elapsed_ms, world_size):
@@ -105,11 +122,15 @@ def parse_iteration_metrics(log_text, dialect='megatron', seq_length=None, world
         step = int(m.group(1))
         line_end = text.find('\n', m.start())
         line = text[m.start() : line_end if line_end >= 0 else None]
-        row = {'step': step}
+        row = {'step': step, 'total': int(m.group(2))}
         for key, patterns in fields.items():
             val = _first_float(line, patterns)
             if val is not None:
                 row[key] = val
+        if 'loss' in row and 'perplexity' not in row:
+            ppl = _perplexity_from_nll(row['loss'])
+            if ppl is not None:
+                row['perplexity'] = ppl
         if dialect == 'megatron' and 'tokens_per_gpu' not in row:
             tgs = _tokens_per_gpu_from_elapsed(
                 row.get('global_batch_size'),
@@ -123,14 +144,31 @@ def parse_iteration_metrics(log_text, dialect='megatron', seq_length=None, world
     return [by_step[s] for s in sorted(by_step)]
 
 
-def sample_metric_curve(rows, value_key, sample_every=10, milestone_steps=None):
-    """Downsample ``value_key`` with the same stride / first / last rules as loss."""
+def _warmup_cutoff(rows, warmup_frac=None):
+    """First ``warmup_frac`` of planned (or observed) steps are dropped from curves."""
+    frac = WARMUP_FRAC if warmup_frac is None else warmup_frac
+    if not frac or frac <= 0:
+        return 0
+    planned = [int(s['total']) for s in (rows or []) if s.get('total')]
+    observed = [int(s['step']) for s in (rows or []) if s.get('step') is not None]
+    last = max(planned) if planned else (max(observed) if observed else 0)
+    return int(last * frac)
+
+
+def sample_metric_curve(rows, value_key, sample_every=10, milestone_steps=None, warmup_frac=None):
+    """Downsample ``value_key`` with the same stride / first / last rules as loss.
+
+    Drops the first 10% of iterations (warmup) before sampling.
+    """
+    cutoff = _warmup_cutoff(rows, warmup_frac)
     milestones = set(milestone_steps or [])
     every = sample_every if sample_every and sample_every > 0 else 1
     keyed = [
         s
         for s in (rows or [])
-        if s.get('step') is not None and isinstance(s.get(value_key), (int, float))
+        if s.get('step') is not None
+        and s['step'] > cutoff
+        and isinstance(s.get(value_key), (int, float))
     ]
     if not keyed:
         return []
@@ -154,10 +192,47 @@ def sample_loss_curve(step_metrics, sample_every=10, milestone_steps=None):
 
 
 def sample_training_curves(rows, sample_every=10, milestone_steps=None):
-    """Sample loss / grad_norm / TFLOPS / tokens into ``_``-prefixed store lists."""
+    """Sample loss / PPL / lr / grad_norm / TFLOPS / tokens into ``_``-prefixed store lists."""
     out = {}
     for value_key, store_key in CURVE_STORE_KEYS:
         points = sample_metric_curve(rows, value_key, sample_every, milestone_steps)
         if points:
             out[store_key] = [[step, val] for step, val in points]
     return out
+
+
+def _percentile(values, q):
+    """Linear-interpolated percentile (q in [0, 100]); same rule as JAX MaxText."""
+    if not values:
+        return None
+    xs = sorted(values)
+    if len(xs) == 1:
+        return xs[0]
+    rank = (q / 100.0) * (len(xs) - 1)
+    lo = int(rank)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = rank - lo
+    return xs[lo] + (xs[hi] - xs[lo]) * frac
+
+
+def derive_step_time_stats(rows, warmup_frac=None):
+    """P50 / p95 of per-step elapsed ms after warmup (not a curve).
+
+    Uses instantaneous elapsed_ms (Primus X, not running Y). Empty when no samples.
+    Mean is omitted — it duplicates ``elapsed_time_per_iteration``.
+    """
+    cutoff = _warmup_cutoff(rows, warmup_frac)
+    samples = [
+        float(s['elapsed_ms'])
+        for s in (rows or [])
+        if s.get('step') is not None
+        and s['step'] > cutoff
+        and isinstance(s.get('elapsed_ms'), (int, float))
+        and s['elapsed_ms'] > 0
+    ]
+    if not samples:
+        return {}
+    return {
+        'step_time_p50_ms': [str(_percentile(samples, 50))],
+        'step_time_p95_ms': [str(_percentile(samples, 95))],
+    }

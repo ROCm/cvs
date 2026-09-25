@@ -49,6 +49,8 @@ class TestViewerScaffold(unittest.TestCase):
             self.assertIn("buildStepCharts", text)
             self.assertIn("loss-panel", text)
             self.assertIn("loss-chart-wrap", text)
+            self.assertIn("ppl-panel", text)
+            self.assertIn("lr-panel", text)
             self.assertIn("grad-norm-panel", text)
             self.assertIn("tflops-panel", text)
             self.assertIn("tokens-panel", text)
@@ -79,6 +81,8 @@ class TestViewerScaffold(unittest.TestCase):
                             "cell_id": "c1",
                             "host": "h1",
                             "loss_curve": [[0, 5.0], [10, 4.0]],
+                            "perplexity_curve": [[0, 148.41], [10, 54.6]],
+                            "learning_rate_curve": [[0, 1e-4], [10, 9e-5]],
                             "grad_norm_curve": [[0, 3.0], [10, 2.0]],
                             "throughput_curve": [[0, 100.0], [10, 140.0]],
                             "tokens_curve": [[0, 20000.0], [10, 24000.0]],
@@ -93,7 +97,11 @@ class TestViewerScaffold(unittest.TestCase):
             )
             text = out.read_text(encoding="utf-8")
             self.assertIn("loss-panel", text)
+            self.assertIn("ppl-panel", text)
+            self.assertIn("lr-panel", text)
             self.assertIn("grad-norm-panel", text)
+            self.assertIn('"perplexity_curve"', text)
+            self.assertIn('"learning_rate_curve"', text)
             self.assertIn('"grad_norm_curve"', text)
             self.assertIn('"tokens_curve"', text)
             self.assertIn("buildStepCharts", text)

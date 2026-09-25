@@ -14,6 +14,8 @@ from cvs.lib.report.training_cells import (
     build_training_chart_series,
     build_training_results_table,
     build_training_summaries,
+    hide_training_scaling_efficiency,
+    without_scaling_efficiency,
 )
 
 
@@ -34,6 +36,13 @@ def build_training_sweep_datasets(sources, profile):
     lifecycle_report = sources.get("lifecycle_report") or {}
     if hasattr(sources.get("lifecycle"), "report"):
         lifecycle_report = sources["lifecycle"].report
+
+    if hide_training_scaling_efficiency(
+        variant_config,
+        lifecycle_report,
+        sources.get("suite_stem") or sources.get("suite_name"),
+    ):
+        config = without_scaling_efficiency(config)
 
     train_res_dict = _results_dict(sources)
     enforce = bool(getattr(variant_config, "enforce_thresholds", False))

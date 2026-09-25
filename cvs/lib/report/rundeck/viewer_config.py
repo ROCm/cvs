@@ -136,10 +136,11 @@ class ViewerConfigBuilder:
         table_columns = self.viewer.get("table_columns")
         if table_columns:
             parsed = self._parse_profile_columns(table_columns) if isinstance(table_columns, list) else []
+            parsed = self._keep_configured_metric_columns(parsed)
             return parsed or self._table_columns_from_config()
         raw_cols = self.sweep.get("results_table_columns") or self.profile.get("results_columns")
         if raw_cols:
-            parsed = self._parse_profile_columns(raw_cols)
+            parsed = self._keep_configured_metric_columns(self._parse_profile_columns(raw_cols))
             parsed.append({"computed": "status", "label": "Status"})
             return parsed
         return self._table_columns_from_config()
@@ -202,6 +203,12 @@ class ViewerConfigBuilder:
             if key_str not in metrics:
                 metrics[key_str] = self._metric_meta(key_str, str(label))
         return metrics
+
+    def _keep_configured_metric_columns(self, columns):
+        allowed = {str(key) for _label, key in self.config.results_columns if key}
+        if not allowed:
+            return columns
+        return [col for col in columns if not col.get("metric") or str(col.get("metric")) in allowed]
 
     def _table_columns_from_config(self) -> list[dict[str, Any]]:
         columns: list[dict[str, Any]] = [{"field": "cell_id", "label": "Cell"}]

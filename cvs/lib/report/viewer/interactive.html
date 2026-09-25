@@ -183,6 +183,8 @@ tr.changed td { background: rgba(255,107,53,0.1); }
   <a href="#overview">Overview</a>
   <a href="#interactivity-panel" id="nav-interactivity">Interactivity</a>
   <a href="#loss-panel" id="nav-loss-curves" style="display:none">Loss curves</a>
+  <a href="#ppl-panel" id="nav-ppl-curves" style="display:none">Perplexity</a>
+  <a href="#lr-panel" id="nav-lr-curves" style="display:none">Learning rate</a>
   <a href="#grad-norm-panel" id="nav-grad-norm-curves" style="display:none">Grad norm</a>
   <a href="#tflops-panel" id="nav-tflops-curves" style="display:none">TFLOP/s/GPU</a>
   <a href="#tokens-panel" id="nav-tokens-curves" style="display:none">Tokens/s/GPU</a>
@@ -241,6 +243,22 @@ tr.changed td { background: rgba(255,107,53,0.1); }
   <p class="subsection-hint">Sampled lm_loss vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>
   <article class="chart-card chart-card-wide">
     <div class="chart-wrap chart-wrap-loss" id="loss-chart-wrap"></div>
+  </article>
+</section>
+
+<section class="panel" id="ppl-panel" style="display:none">
+  <h2>Perplexity</h2>
+  <p class="subsection-hint">exp(lm_loss) vs step · train-token PPL (nats) · one series per filtered combo · scroll to zoom · shift+drag to pan</p>
+  <article class="chart-card chart-card-wide">
+    <div class="chart-wrap chart-wrap-loss" id="ppl-chart-wrap"></div>
+  </article>
+</section>
+
+<section class="panel" id="lr-panel" style="display:none">
+  <h2>Learning rate</h2>
+  <p class="subsection-hint">Sampled learning_rate vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>
+  <article class="chart-card chart-card-wide">
+    <div class="chart-wrap chart-wrap-loss" id="lr-chart-wrap"></div>
   </article>
 </section>
 
@@ -333,6 +351,8 @@ let interactivityChart = null;
 let lossChart = null;
 const STEP_CHARTS = [
   { panel: 'loss-panel', wrap: 'loss-chart-wrap', nav: 'nav-loss-curves', field: 'loss_curve', yTitle: 'lm_loss' },
+  { panel: 'ppl-panel', wrap: 'ppl-chart-wrap', nav: 'nav-ppl-curves', field: 'perplexity_curve', yTitle: 'perplexity' },
+  { panel: 'lr-panel', wrap: 'lr-chart-wrap', nav: 'nav-lr-curves', field: 'learning_rate_curve', yTitle: 'learning_rate' },
   { panel: 'grad-norm-panel', wrap: 'grad-norm-chart-wrap', nav: 'nav-grad-norm-curves', field: 'grad_norm_curve', yTitle: 'grad_norm' },
   { panel: 'tflops-panel', wrap: 'tflops-chart-wrap', nav: 'nav-tflops-curves', field: 'throughput_curve', yTitle: 'TFLOP/s/GPU' },
   { panel: 'tokens-panel', wrap: 'tokens-chart-wrap', nav: 'nav-tokens-curves', field: 'tokens_curve', yTitle: 'tokens/s/GPU' },
