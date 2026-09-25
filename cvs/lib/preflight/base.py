@@ -3,6 +3,7 @@ Base classes and utilities for preflight testing modules.
 """
 
 from abc import ABC, abstractmethod
+from cvs.core.orchestrators.base import Orchestrator
 from cvs.lib import globals
 
 log = globals.log
@@ -16,15 +17,17 @@ class PreflightCheck(ABC):
     This provides a consistent interface for all preflight operations.
     """
 
-    def __init__(self, phdl, config_dict=None):
+    def __init__(self, orch, config_dict=None):
         """
         Initialize the preflight check.
 
         Args:
-            phdl: Parallel SSH handle for cluster nodes
+            orch: Orchestrator for cluster nodes; orch.all is used as the
+                  parallel handle. Raw parallel handles (e.g. unit-test mocks)
+                  are accepted directly when not an Orchestrator instance.
             config_dict: Optional configuration dictionary
         """
-        self.phdl = phdl
+        self.phdl = orch.all if isinstance(orch, Orchestrator) else orch
         self.config_dict = config_dict or {}
         self.results = {}
 

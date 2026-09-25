@@ -127,6 +127,8 @@ class TestPreflightRdmaConfigContract(unittest.TestCase):
 
         phdl = MagicMock()
         phdl.reachable_hosts = ['nodeA', 'nodeB']
+        orch = MagicMock()
+        orch.all = phdl
         previous_results = dict(preflight_checks.preflight_results)
         preflight_checks.preflight_results.clear()
         try:
@@ -151,16 +153,16 @@ class TestPreflightRdmaConfigContract(unittest.TestCase):
                     'pair_results': {},
                     'node_status': {},
                 }
-                preflight_checks.test_interface_name_consistency(phdl, config)
-                preflight_checks.test_gid_consistency(phdl, config)
+                preflight_checks.test_interface_name_consistency(orch, config)
+                preflight_checks.test_gid_consistency(orch, config)
                 preflight_checks.test_rdma_connectivity(
-                    phdl,
+                    orch,
                     {'node_dict': {'nodeA': {}, 'nodeB': {}}},
                     config,
                 )
 
-            interface_checker.assert_called_once_with(phdl, ['enp4s0np0'], config)
-            gid_checker.assert_called_once_with(phdl, '7', ['enp4s0np0'], config)
+            interface_checker.assert_called_once_with(orch, ['enp4s0np0'], config)
+            gid_checker.assert_called_once_with(orch, '7', ['enp4s0np0'], config)
             rdma_args = rdma_checker.call_args.args
             self.assertEqual(rdma_args[5], ['enp4s0np0'])
             self.assertEqual(rdma_args[6], '7')
