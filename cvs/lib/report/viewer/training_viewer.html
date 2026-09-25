@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>__TITLE__ — Viewer</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<style>
+:root { --bg:#0f1117; --panel:#161923; --border:#2a2f3a; --text:#e6e9f0; --muted:#98a1b3; --accent:#6b9fff; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg);
+  color: var(--text); padding: 1.1rem; line-height: 1.45; }
+h1 { margin:0 0 0.15rem; font-size: 1.4rem; }
+.subtitle { color: var(--muted); margin:0 0 0.75rem; font-size: 0.9rem; }
+nav a { color: var(--accent); text-decoration:none; margin-right: 1rem; font-size: 0.85rem; }
+nav a:hover { text-decoration: underline; }
+.toolbar { display:flex; flex-wrap:wrap; align-items:center; gap: 1rem; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem 1rem; margin: 0.85rem 0; }
+.toolbar label { font-size: 0.82rem; color: var(--muted); display:inline-flex; align-items:center; gap: 0.4rem; }
+.toolbar select, .toolbar button { background:#0e1017; color: var(--text); border:1px solid var(--border);
+  border-radius: 6px; padding: 0.3rem 0.5rem; font-size: 0.82rem; }
+.toolbar button:hover { border-color: var(--accent); cursor: pointer; }
+details.series-pick { position: relative; }
+details.series-pick > summary { cursor:pointer; list-style:none; background:#0e1017; border:1px solid var(--border);
+  border-radius:6px; padding:0.3rem 0.6rem; font-size:0.82rem; color: var(--text); }
+.series-menu { position:absolute; z-index:20; margin-top:4px; max-height: 320px; overflow:auto; background: var(--panel);
+  border:1px solid var(--border); border-radius:8px; padding:0.5rem 0.75rem; min-width: 320px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5); }
+.series-menu .cb { display:flex; align-items:center; gap:0.45rem; font-size:0.8rem; color: var(--text);
+  padding: 0.12rem 0; white-space: nowrap; }
+.grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; }
+.chart-card { background:#ffffff; border:1px solid var(--border); border-radius:10px; padding:8px; height: 320px; }
+.muted { color: var(--muted); }
+.hint { font-size: 0.78rem; color: var(--muted); margin: 0.3rem 0 0; }
+</style>
+</head>
+<body>
+<h1>__TITLE__</h1>
+<p class="subtitle">__SUBTITLE__ · interactive viewer</p>
+<nav><a href="__DECK_HREF__">← Run deck</a><a href="#charts">Per-metric charts</a></nav>
+
+<div class="toolbar">
+  <label>Skip initial steps
+    <select id="skip"></select>
+  </label>
+  <details class="series-pick">
+    <summary id="series-summary">Select metrics ▾</summary>
+    <div class="series-menu" id="series-list"></div>
+  </details>
+  <button type="button" id="select-defaults">Defaults</button>
+  <button type="button" id="select-all">All</button>
+  <button type="button" id="select-none">None</button>
+  <button type="button" id="reset-zoom">Reset zoom</button>
+  <span class="muted" id="meta"></span>
+</div>
+<p class="hint">Each chart overlays every sweep for one metric (cross-sweep comparison). Scroll/drag to zoom &amp; pan; double-click "Reset zoom".</p>
+
+<section id="charts" class="grid"></section>
+<p id="empty" class="muted" hidden>No TensorBoard series were collected for this run.</p>
+
+__EMBEDDED_JSON__
+<script>
+(function () {
+  var COLORS = ["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#17becf","#bcbd22","#7f7f7f"];
+
+  function payload() {
+    var el = document.getElementById("embedded-report-json");
+    try { return el ? JSON.parse(el.textContent) : {}; } catch (e) { return {}; }
+  }
+  function ready(fn) { if (window.Chart) { fn(); } else { setTimeout(function () { ready(fn); }, 60); } }
+
+  var P = payload();
+  var DS = (P.datasets && P.datasets.training_sweep) || {};
+  var SERIES = DS.training_series || {};              // {sweep: {tag: [[step, val], ...]}}
+  var VS = DS.viewer_settings || {};
+  var DEFAULTS = VS.default_series || [];
+  var SKIP = (typeof VS.skip_initial_steps === "number") ? VS.skip_initial_steps : 5;
+
+  var SWEEPS = Object.keys(SERIES).sort();
+  var tagSet = {};
+  SWEEPS.forEach(function (s) { Object.keys(SERIES[s] || {}).forEach(function (t) { tagSet[t] = true; }); });
+  var ALL_TAGS = Object.keys(tagSet).sort();
+
+  var selected = {};
+  DEFAULTS.forEach(function (t) { if (tagSet[t]) selected[t] = true; });
+  if (!Object.keys(selected).length) { ALL_TAGS.slice(0, 6).forEach(function (t) { selected[t] = true; }); }
+
+  var charts = [];
+  var whiteBg = { id: "whiteBg", beforeDraw: function (c) {
+    var x = c.ctx; x.save(); x.globalCompositeOperation = "destination-over";
+    x.fillStyle = "#ffffff"; x.fillRect(0, 0, c.width, c.height); x.restore();
+  }};
+
+  function pts(arr) {
+    var out = [];
+    (arr || []).forEach(function (p) { if (p[0] >= SKIP) out.push({ x: p[0], y: p[1] }); });
+    return out;
+  }
+
+  function draw() {
+    var host = document.getElementById("charts");
+    charts.forEach(function (c) { c.destroy(); });
+    charts = [];
+    host.innerHTML = "";
+    var tags = ALL_TAGS.filter(function (t) { return selected[t]; });
+    document.getElementById("empty").hidden = tags.length > 0;
+    document.getElementById("meta").textContent =
+      SWEEPS.length + " sweep(s) · " + tags.length + "/" + ALL_TAGS.length + " metrics · skip " + SKIP;
+    tags.forEach(function (tag) {
+      var card = document.createElement("div"); card.className = "chart-card";
+      var cv = document.createElement("canvas"); card.appendChild(cv); host.appendChild(card);
+      var datasets = SWEEPS.map(function (s, j) {
+        return { label: s, data: pts((SERIES[s] || {})[tag]), borderColor: COLORS[j % COLORS.length],
+          backgroundColor: COLORS[j % COLORS.length], borderWidth: 1.4, pointRadius: 0, tension: 0.1 };
+      });
+      charts.push(new Chart(cv, {
+        type: "line", data: { datasets: datasets }, plugins: [whiteBg],
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+          interaction: { mode: "nearest", intersect: false },
+          plugins: {
+            title: { display: true, text: tag, color: "#111" },
+            legend: { labels: { color: "#333", boxWidth: 10, font: { size: 10 } } },
+            zoom: { zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "xy" },
+              pan: { enabled: true, mode: "xy" } }
+          },
+          scales: {
+            x: { type: "linear", title: { display: true, text: "step", color: "#333" },
+              ticks: { color: "#333", font: { size: 9 } }, grid: { color: "#eee" } },
+            y: { ticks: { color: "#333", font: { size: 9 } }, grid: { color: "#eee" } }
+          }
+        }
+      }));
+      cv.addEventListener("dblclick", function () { charts.forEach(function (c) { if (c.resetZoom) c.resetZoom(); }); });
+    });
+  }
+
+  function buildControls() {
+    var sk = document.getElementById("skip");
+    [0, 1, 2, 5, 10, 20, 50].forEach(function (n) {
+      var o = document.createElement("option"); o.value = n; o.textContent = n;
+      if (n === SKIP) o.selected = true; sk.appendChild(o);
+    });
+    sk.addEventListener("change", function () { SKIP = parseInt(sk.value, 10) || 0; draw(); });
+
+    var box = document.getElementById("series-list");
+    ALL_TAGS.forEach(function (t) {
+      var lab = document.createElement("label"); lab.className = "cb";
+      var cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!selected[t];
+      cb.addEventListener("change", function () { if (cb.checked) selected[t] = true; else delete selected[t]; draw(); });
+      lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + t)); box.appendChild(lab);
+    });
+    function setAll(on, onlyDefaults) {
+      selected = {};
+      ALL_TAGS.forEach(function (t) {
+        var pick = onlyDefaults ? (DEFAULTS.indexOf(t) >= 0) : on;
+        if (pick) selected[t] = true;
+      });
+      box.querySelectorAll("input[type=checkbox]").forEach(function (cb, i) { cb.checked = !!selected[ALL_TAGS[i]]; });
+      draw();
+    }
+    document.getElementById("select-all").addEventListener("click", function () { setAll(true, false); });
+    document.getElementById("select-none").addEventListener("click", function () { setAll(false, false); });
+    document.getElementById("select-defaults").addEventListener("click", function () { setAll(false, true); });
+    document.getElementById("reset-zoom").addEventListener("click", function () {
+      charts.forEach(function (c) { if (c.resetZoom) c.resetZoom(); });
+    });
+  }
+
+  ready(function () {
+    if (!SWEEPS.length) { document.getElementById("empty").hidden = false; return; }
+    buildControls();
+    draw();
+  });
+})();
+</script>
+</body>
+</html>
