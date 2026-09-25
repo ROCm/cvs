@@ -78,14 +78,22 @@ Expected output (suite names and totals vary by version):
     Package: cvs
     --------------------------------------------------------------------------------
 
-      cvs.tests.anc (1 test suite)
-        • anc_installation
+      cvs.tests.health (4 test suites)
+        • agfhc_cvs
+        • csp_qual_agfhc
+        • rvs_cvs
+        • transferbench_cvs
 
-      cvs.tests.anc.cpu (1 test suite)
-        • anc_test_cpu
+      cvs.tests.health.install (5 test suites)
+        • install_agfhc
+        • install_babelstream
+        • install_rocblas
+        • install_rvs
+        • install_transferbench
 
-      cvs.tests.anc.gpu (1 test suite)
-        • anc_test_gpu
+      cvs.tests.ibperf (2 test suites)
+        • ib_perf_bw_test
+        • install_ibperf_tools
     <<truncated>>
     ================================================================================
     Total: 48 test suites across 1 package(s)
