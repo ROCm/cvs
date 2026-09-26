@@ -24,7 +24,20 @@ from pydantic import Field, model_validator
 from typing_extensions import Literal
 
 from cvs.lib import globals
-from cvs.lib.inference.sglang.sglang_common import perf_enforce_thresholds
+from cvs.lib.inference.sglang.sglang_common import (
+    DEFAULT_SGLANG_DECODE_COORD_PORT,
+    DEFAULT_SGLANG_DECODE_SERV_PORT,
+    DEFAULT_SGLANG_DIST_INIT_PORT,
+    DEFAULT_SGLANG_PREFILL_COORD_PORT,
+    DEFAULT_SGLANG_PREFILL_SERV_PORT,
+    DEFAULT_SGLANG_SERVE_PORT,
+    _DISAGG_PINNED_ROLE_KEYS,
+    perf_enforce_thresholds,
+    resolve_disagg_execution_roles,
+    resolve_distributed_execution_hosts,
+    resolve_single_execution_hosts,
+    stamp_disagg_roles,
+)
 from cvs.lib.utils.config_loader import (
     BaseVariantConfig,
     _Allow,
@@ -465,27 +478,26 @@ class SglangSingleVariantConfig(BaseVariantConfig):
     @model_validator(mode="after")
     def _validate_topology_fields(self):
         required = {
-            "single": ("benchmark_serv_node",),
-            "distributed": ("server_node_list", "benchmark_serv_node", "dist_init_port"),
-            "disaggregated": (
-                "prefill_node_list",
-                "decode_node_list",
-                "proxy_router_node",
-                "benchmark_serv_node",
-                "prefill_coordinator_addr",
-                "decode_coordinator_addr",
-            ),
+            "single": (),
+            "distributed": ("nnodes",),
+            "disaggregated": ("nnodes",),
         }[self.topology]
         missing = [key for key in required if not self.inference.get(key)]
         if missing:
             raise ValueError(f"{self.topology} SGLang config missing required role fields: {missing}")
 
         if self.topology == "distributed":
-            nodes = self.inference["server_node_list"]
-            node_count = len(nodes) if isinstance(nodes, list) else 1
-            nnodes = int(self.inference.get("nnodes") or node_count)
-            if nnodes != node_count:
-                raise ValueError(f"distributed SGLang nnodes={nnodes} must match server_node_list length {node_count}")
+            nnodes = int(self.inference.get("nnodes") or 0)
+            if nnodes < 2:
+                raise ValueError(f"distributed SGLang requires nnodes >= 2, got {nnodes}")
+        if self.topology == "disaggregated":
+            nnodes = int(self.inference.get("nnodes") or 0)
+            if nnodes < 2:
+                raise ValueError(f"disaggregated SGLang requires nnodes >= 2, got {nnodes}")
+            if nnodes % 2:
+                raise ValueError(
+                    f"disaggregated SGLang requires an even nnodes so prefill and decode counts match, got {nnodes}"
+                )
         return self
 
 
@@ -536,7 +548,6 @@ def _accuracy_tasks_to_inference_tests(accuracy: Mapping[str, Any]) -> dict[str,
 
 _RUNTIME_ENV_TO_INFERENCE = {
     "NCCL_IB_HCA": "nccl_ib_hca",
-    "HCA_ID_PREFIX": "hca_id_prefix",
     "NCCL_SOCKET_IFNAME": "nccl_socket_ifname",
     "GLOO_SOCKET_IFNAME": "gloo_socket_ifname",
     "GLOO_TCP_IFNAME": "gloo_tcp_ifname",
@@ -597,6 +608,11 @@ def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]
         inference_tests = {"bench_serv_random": benchmark}
     else:
         inference_tests = dict(params.get("inference_tests") or {})
+    long_ctx_niah = raw.get("long_ctx_niah")
+    if long_ctx_niah is not None:
+        if not isinstance(long_ctx_niah, Mapping):
+            raise TypeError("long_ctx_niah must be an object")
+        inference_tests["long_ctx_niah"] = dict(long_ctx_niah)
     inference_tests.update(_accuracy_tasks_to_inference_tests(raw.get("accuracy") or {}))
     params["inference_tests"] = inference_tests
     params["model"] = str(server.get("model") or "") if new_layout else str((raw.get("model") or {}).get("id") or "")
@@ -627,8 +643,21 @@ def _unified_runtime_views(raw: Mapping[str, Any], thresholds: Mapping[str, Any]
     for env_key, inference_key in _RUNTIME_ENV_TO_INFERENCE.items():
         if env_key in runtime_env:
             inference[inference_key] = runtime_env[env_key]
-    if server.get("serve_port") and "proxy_router_serv_port" not in inference:
-        inference["proxy_router_serv_port"] = server["serve_port"]
+    inference["proxy_router_serv_port"] = str(
+        inference.get("proxy_router_serv_port") or server.get("serve_port") or DEFAULT_SGLANG_SERVE_PORT
+    )
+    inference["dist_init_port"] = str(inference.get("dist_init_port") or DEFAULT_SGLANG_DIST_INIT_PORT)
+    inference["proxy_router_port"] = str(
+        inference.get("proxy_router_port") or inference.get("proxy_router_serv_port") or DEFAULT_SGLANG_SERVE_PORT
+    )
+    inference["prefill_serv_port"] = str(inference.get("prefill_serv_port") or DEFAULT_SGLANG_PREFILL_SERV_PORT)
+    inference["decode_serv_port"] = str(inference.get("decode_serv_port") or DEFAULT_SGLANG_DECODE_SERV_PORT)
+    inference["prefill_coordinator_port"] = str(
+        inference.get("prefill_coordinator_port") or DEFAULT_SGLANG_PREFILL_COORD_PORT
+    )
+    inference["decode_coordinator_port"] = str(
+        inference.get("decode_coordinator_port") or DEFAULT_SGLANG_DECODE_COORD_PORT
+    )
 
     _inject_thresholds_into_bp_dict(params, thresholds, inject_current_perf=False)
     server["env"] = {
@@ -712,7 +741,13 @@ def _load_unified_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> 
 
     server_params = dict(raw.get("server_params") or {})
     if server_params:
-        if server_params.get("prefill_node_list") or server_params.get("decode_node_list"):
+        if (
+            raw.get("topology") == "disaggregated"
+            or server_params.get("prefill_policy")
+            or server_params.get("decode_policy")
+            or server_params.get("prefill_node_list")
+            or server_params.get("decode_node_list")
+        ):
             topology = "disaggregated"
         elif server_params.get("server_node_list") or int(server_params.get("nnodes") or 1) > 1:
             topology = "distributed"
@@ -736,6 +771,25 @@ def _load_unified_variant(config_path: str, cluster_dict: Mapping[str, Any]) -> 
     raw["variant_key"] = raw.get("variant_key") or "default"
 
     inference, benchmark_params, server = _unified_runtime_views(raw, thresholds)
+    if raw.get("topology") == "single":
+        inference.pop("benchmark_serv_node", None)
+        if cluster_dict.get("node_dict"):
+            hosts = resolve_single_execution_hosts(cluster_dict)
+            inference["_execution_hosts"] = list(hosts)
+            inference["benchmark_serv_node"] = hosts[0]
+    elif raw.get("topology") == "distributed":
+        inference.pop("server_node_list", None)
+        inference.pop("benchmark_serv_node", None)
+        if cluster_dict.get("node_dict"):
+            hosts = resolve_distributed_execution_hosts(cluster_dict, inference)
+            inference["_execution_hosts"] = list(hosts)
+            inference["server_node_list"] = list(hosts)
+            inference["benchmark_serv_node"] = hosts[0]
+    elif raw.get("topology") == "disaggregated":
+        for key in _DISAGG_PINNED_ROLE_KEYS:
+            inference.pop(key, None)
+        if cluster_dict.get("node_dict"):
+            stamp_disagg_roles(inference, resolve_disagg_execution_roles(cluster_dict, inference))
     raw["inference"] = inference
     raw["benchmark_params"] = benchmark_params
     raw["params"] = benchmark_params

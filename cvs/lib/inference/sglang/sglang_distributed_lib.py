@@ -4,10 +4,10 @@ All rights reserved.
 
 Multi-node unified SGLang inference controller (TP/PP across server nodes, no PD disagg).
 
-Each host in ``server_node_list`` (or the union of ``prefill_node_list`` +
-``decode_node_list``) runs ``sglang.launch_server`` with ``--nnodes`` /
-``--node-rank`` / ``--dist-init-addr``. Benchmark/smoke/lm-eval run on
-``benchmark_serv_node`` and target rank-0 HTTP (``127.0.0.1`` when bench is rank 0).
+Each host among the first ``nnodes`` entries in ``cluster.json`` runs
+``sglang.launch_server`` with ``--nnodes`` / ``--node-rank`` / ``--dist-init-addr``.
+Rank-0 is the master and the benchmark node. Smoke/bench/lm-eval target rank-0 HTTP
+(``127.0.0.1`` on that node). HTTP defaults to port 8000; dist-init defaults to 40001.
 '''
 
 from __future__ import annotations
@@ -18,20 +18,24 @@ import shlex
 import time
 
 from cvs.lib import globals
-from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
 from cvs.lib.inference.sglang.sglang_common import (
     add_cli_flags_block,
     add_export_env_block,
     as_node_list,
     collect_sglang_gpu_topology,
+    DEFAULT_SGLANG_DIST_INIT_PORT,
+    DEFAULT_SGLANG_SERVE_PORT,
     first_output,
     format_sglang_gpu_topology_lines,
+    log_sglang_log_matches,
     parse_inference_bench_results,
     perf_enforce_thresholds,
     poll_for_inference_completion as poll_for_inference_completion_common,
     resolve_distributed_client_host,
-    resolve_server_node_list,
     run_lm_eval_benchmark_test as run_lm_eval_benchmark_test_common,
+    scan_sglang_error_logs,
+    SGLANG_ERROR_PATTERNS,
+    stage_and_start_launch_script,
     verify_inference_results as verify_inference_results_common,
     verify_inference_results_subtests as verify_inference_results_subtests_common,
     verify_openai_compatible_endpoints as verify_openai_compatible_endpoints_common,
@@ -76,7 +80,7 @@ class SglangDistributed:
         self._apply_inf_defaults()
         self._apply_bp_defaults()
 
-        self.server_node_list = resolve_server_node_list(self.inf_dict)
+        self.server_node_list = self._resolve_server_nodes()
         self.nnodes = int(self.inf_dict.get('nnodes') or len(self.server_node_list))
         if self.nnodes != len(self.server_node_list):
             raise ValueError(
@@ -85,12 +89,14 @@ class SglangDistributed:
             )
         self.rank0_node = self.server_node_list[0]
         self.dist_init_addr = self._resolve_dist_init_addr()
-        self.benchmark_serv_node = self._resolve_benchmark_serv_node()
+        self.benchmark_serv_node = self.rank0_node
+        self.inf_dict['server_node_list'] = list(self.server_node_list)
+        self.inf_dict['benchmark_serv_node'] = self.benchmark_serv_node
 
         self.container_name = self.inf_dict['container_name']
-        self.hca_id_prefix = str(self.inf_dict['hca_id_prefix']).strip()
         self.log_dir = self.inf_dict['log_dir']
-        self.inference_poll_iterations = self.bp_dict['inference_poll_iterations']
+        self.inference_poll_iterations = int(self.bp_dict['inference_poll_iterations'])
+        self.inference_poll_total_timeout_sec = int(self.bp_dict['inference_poll_total_timeout_sec'])
 
         self.inference_start_time = self._host_exec('date +"%a %b %e %H:%M"')
         self.inference_end_time = None
@@ -109,19 +115,21 @@ class SglangDistributed:
             self.dist_init_addr,
         )
 
-    def _resolve_dist_init_addr(self) -> str:
-        addr = self.inf_dict.get('dist_init_addr') or self.rank0_node
-        port = self.inf_dict.get('dist_init_port') or '40001'
-        return f"{addr}:{port}"
+    def _resolve_server_nodes(self):
+        hosts = list(self.inf_dict.get('_execution_hosts') or self.orch.hosts or [])
+        if not hosts:
+            raise ValueError("sglang_distributed requires orchestrator hosts from cluster.json")
+        nnodes = int(self.inf_dict.get('nnodes') or 0)
+        if nnodes < 2:
+            raise ValueError(f"sglang_distributed requires nnodes >= 2, got {nnodes}")
+        if nnodes > len(hosts):
+            raise ValueError(f"sglang_distributed requests {nnodes} nodes but the cluster only has {len(hosts)}")
+        return hosts[:nnodes]
 
-    def _resolve_benchmark_serv_node(self) -> str:
-        raw = self.inf_dict.get('benchmark_serv_node')
-        if not raw:
-            return self.rank0_node
-        hosts = as_node_list(raw)
-        if len(hosts) != 1:
-            raise ValueError(f"SglangDistributed requires exactly one benchmark_serv_node, got {hosts!r}")
-        return hosts[0]
+    def _resolve_dist_init_addr(self):
+        addr = self.inf_dict.get('dist_init_addr') or self.rank0_node
+        port = self.inf_dict.get('dist_init_port') or DEFAULT_SGLANG_DIST_INIT_PORT
+        return f"{addr}:{port}"
 
     @property
     def _head_host(self) -> str:
@@ -132,7 +140,7 @@ class SglangDistributed:
 
     @property
     def router_serv_port(self) -> str:
-        return str(self.inf_dict['proxy_router_serv_port'])
+        return str(self.inf_dict.get('proxy_router_serv_port') or DEFAULT_SGLANG_SERVE_PORT)
 
     @property
     def client_host(self) -> str:
@@ -164,27 +172,12 @@ class SglangDistributed:
     ) -> str:
         return first_output(self._container_exec(cmd, hosts=hosts, timeout=timeout))
 
-    def _host_exec(
-        self,
-        cmd: str,
-        *,
-        hosts=None,
-        timeout: int | None = None,
-    ) -> dict:
-        """Run ``cmd`` on baremetal (``orch.head`` / ``orch.all``), e.g. amd-smi / dmesg."""
-        if hosts is None:
-            host = self.benchmark_serv_node
-            if host == self.orch.head_node and len(self.orch.hosts) == 1:
-                return self.orch.head.exec(cmd, timeout=timeout)
-            return BaremetalOrchestrator.exec(self.orch, cmd, hosts=[host], timeout=timeout)
-        normalized = as_node_list(hosts)
-        if not normalized:
+    def _host_exec(self, cmd, *, hosts=None, timeout=None):
+        """Run ``cmd`` on the host OS (not inside the container), e.g. amd-smi / dmesg."""
+        target = [self.benchmark_serv_node] if hosts is None else as_node_list(hosts)
+        if not target:
             return {}
-        if len(normalized) == 1 and normalized[0] == self._head_host:
-            return self.orch.head.exec(cmd, timeout=timeout)
-        if set(normalized) == set(self.orch.hosts):
-            return self.orch.all.exec(cmd, timeout=timeout)
-        return BaremetalOrchestrator.exec(self.orch, cmd, hosts=normalized, timeout=timeout)
+        return self.orch.exec_on_host(cmd, hosts=target, timeout=timeout)
 
     def _host_exec_text(
         self,
@@ -199,7 +192,6 @@ class SglangDistributed:
         self.inf_dict.setdefault('container_image', 'lmsysorg/sglang:dev')
         self.inf_dict.setdefault('container_name', 'sglang_container')
         self.inf_dict.setdefault('nccl_ib_hca', 'rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7')
-        self.inf_dict.setdefault('hca_id_prefix', 'bnxt_')
         self.inf_dict.setdefault('nccl_socket_ifname', 'eno0')
         self.inf_dict.setdefault('gloo_socket_ifname', 'eno0')
         self.inf_dict.setdefault('nccl_ib_gid_index', '1')
@@ -207,7 +199,8 @@ class SglangDistributed:
         self.inf_dict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
         self.inf_dict.setdefault('log_dir', f'{self.home_dir}/LOG_DIR')
         self.inf_dict.setdefault('log_level', 'info')
-        self.inf_dict.setdefault('proxy_router_serv_port', '8000')
+        self.inf_dict.setdefault('proxy_router_serv_port', DEFAULT_SGLANG_SERVE_PORT)
+        self.inf_dict.setdefault('dist_init_port', DEFAULT_SGLANG_DIST_INIT_PORT)
 
     def _apply_bp_defaults(self) -> None:
         self.bp_dict.setdefault('backend', 'sglang')
@@ -217,6 +210,7 @@ class SglangDistributed:
         self.bp_dict.setdefault('pipeline_parallelism', '1')
         self.bp_dict.setdefault('memory_fraction', '0.85')
         self.bp_dict.setdefault('inference_poll_iterations', '16')
+        self.bp_dict.setdefault('inference_poll_total_timeout_sec', '3600')
 
     def _server_env_body(self) -> str:
         return (
@@ -286,17 +280,14 @@ class SglangDistributed:
                 f"{flags_block}\n"
                 f"    --log-level {self.inf_dict['log_level']}\n"
             )
-            write_cmd = "bash -c " + shlex.quote(f"cat > /tmp/server_launch_script.sh <<'EOF'\n{launch_body}EOF")
-            self._container_exec(write_cmd, hosts=[node])
-
-        for i, node in enumerate(self.server_node_list):
-            start_cmd = "bash -c " + shlex.quote(
-                f"chmod 755 /tmp/server_launch_script.sh\n"
-                f"mkdir -p {self.log_dir}/server_node{i}\n"
-                f"source /tmp/server_env_script.sh\n"
-                f"nohup /tmp/server_launch_script.sh > {self.server_log_path(i)} 2>&1 &"
+            stage_and_start_launch_script(
+                self._container_exec,
+                node,
+                '/tmp/server_launch_script.sh',
+                launch_body,
+                '/tmp/server_env_script.sh',
+                self.server_log_path(i),
             )
-            self._container_exec(start_cmd, hosts=[node])
         time.sleep(5)
 
     def poll_for_server_ready(self, no_of_iterations=16) -> None:
@@ -325,19 +316,6 @@ class SglangDistributed:
             "bash -c " + shlex.quote("sudo apt -y update && sudo apt install -y iputils-ping iproute2 net-tools")
         )
 
-    def exec_nic_setup_scripts(self) -> None:
-        out_dict = self._container_exec("ibv_devinfo")
-        hca_id_regex = rf'hca_id:\s+{re.escape(self.hca_id_prefix)}'
-        for node, out in out_dict.items():
-            if not re.search(hca_id_regex, out or '', re.I):
-                fail_test(f'HCA not visible on node {node}')
-
-    def check_ibv_devices(self) -> None:
-        out_dict = self._container_exec("ibv_devinfo")
-        for node, out in out_dict.items():
-            if re.search('No IB devices found', out or '', re.I):
-                fail_test(f'IB devices not seen inside the container for node {node}')
-
     def run_test_rmsnorm(self, max_jobs=192) -> None:
         self._container_exec(
             "bash -c "
@@ -353,7 +331,7 @@ class SglangDistributed:
                 fail_test(f'Some failures observed in test rmsnorm on node {node}')
 
     def verify_openai_compatible_endpoints(self) -> list[str]:
-        return verify_openai_compatible_endpoints_common(
+        summaries, self.openai_completions_5xx_or_hang = verify_openai_compatible_endpoints_common(
             port=int(self.router_serv_port),
             model_name=self.bp_dict['model'],
             client_host=self.client_host,
@@ -362,6 +340,8 @@ class SglangDistributed:
             probe_host_key=self.benchmark_serv_node,
             log_label='OpenAI endpoint probe inside bench container',
         )
+        self.log_server_error_logs()
+        return summaries
 
     def benchserv_test_random(self, d_type='auto', *, verify=True) -> None:
         i_dict = self.bp_dict['inference_tests']['bench_serv_random']
@@ -383,7 +363,7 @@ class SglangDistributed:
         )
         self._bench_exec("bash -c " + shlex.quote(inner), timeout=1000)
         time.sleep(5)
-        self.poll_for_inference_completion(iterations=10, waittime_between_iters=60)
+        self.poll_for_inference_completion()
 
         tp = int(self.bp_dict.get('tensor_parallelism', 1))
         int(self.bp_dict.get('pipeline_parallelism', 1))
@@ -410,8 +390,13 @@ class SglangDistributed:
         return self.inference_results_dict
 
     def poll_for_inference_completion(
-        self, iterations=10, waittime_between_iters=60, total_timeout=3600, require_all_nodes=True
+        self, iterations=None, waittime_between_iters=60, total_timeout=None, require_all_nodes=True
     ):
+        if iterations is None:
+            iterations = int(self.inference_poll_iterations)
+        if total_timeout is None:
+            total_timeout = int(self.inference_poll_total_timeout_sec)
+
         log_path = f"{self.log_dir}/benchmark_node/benchmark_results.log"
 
         def fetch_log_tail():
@@ -429,6 +414,27 @@ class SglangDistributed:
         if result.get('status') == 'success':
             self.inference_results_dict = result['results']
         return result
+
+    def _server_log_targets(self):
+        return [
+            (host, self.server_log_path(rank), f'server rank {rank}') for rank, host in enumerate(self.server_node_list)
+        ]
+
+    def scan_for_inference_errors(self):
+        """Scan every rank's server log once after server-ready polling fails."""
+        return scan_sglang_error_logs(
+            self._server_log_targets(),
+            lambda host, cmd: self._container_exec(cmd, hosts=[host], timeout=60),
+        )
+
+    def log_server_error_logs(self):
+        """Copy error-signature lines from every rank's server log into the current test."""
+        log_sglang_log_matches(
+            self._server_log_targets(),
+            lambda host, cmd: self._container_exec(cmd, hosts=[host], timeout=60),
+            SGLANG_ERROR_PATTERNS,
+            heading='Server log matches',
+        )
 
     def verify_inference_results(self, test_name, expected_result_dict):
         self.inference_end_time = verify_inference_results_common(

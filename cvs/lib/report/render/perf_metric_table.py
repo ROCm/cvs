@@ -66,11 +66,7 @@ def render_benchmark_metrics_html(
             'skip': ('Skipped', 'skipped'),
             'record': ('Recorded', 'record'),
         }.get(status, ('Failed', 'failed'))
-        label = str(row.get('label') or metric_display_label(str(row.get('metric') or ''), columns))
-        node = row.get('node') or row.get('host')
-        if node:
-            label = f'{node}: {label}'
-        label = html.escape(label)
+        label = html.escape(str(row.get('label') or metric_display_label(str(row.get('metric') or ''), columns)))
         actual = html.escape(_display_value(row.get('actual'), row.get('unit')))
         gate = html.escape(_display_gate(row.get('spec'), enforced=bool(row.get('enforced', status != 'record'))))
         reason = html.escape(str(row.get('reason') or ''))

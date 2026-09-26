@@ -1,0 +1,120 @@
+{
+  "_comment": "SGLang distributed Qwen3.5-397B-A17B-FP8 workload, TP=16 and PP=1 across two nodes.",
+  "enforce_thresholds": false,
+  "gpu_name" : "<changeme> mi325",
+  "threshold_json": "mi325_sglang_qwen35_397b_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/root/models",
+    "log_dir": "{shared_fs}/LOGS/sglang",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "sglang_container",
+    "_image_example": "rocm/sgl-dev:v0.5.14-rocm720-mi30x-20260629",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "/mnt/dtni/models:/root/models",
+          "/dev/infiniband:/dev/infiniband",
+          "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro",
+          "/usr/lib/x86_64-linux-gnu/libibverbs.so.1:/usr/lib/x86_64-linux-gnu/libibverbs.so.1:ro",
+          "/lib/libibverbs.d:/lib/libibverbs.d"
+        ],
+        "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband/rdma_cm"],
+        "env": {
+          "NCCL_IB_HCA": "<changeme> rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+          "NCCL_SOCKET_IFNAME": "<changeme> eno0",
+          "GLOO_SOCKET_IFNAME": "<changeme> eno0",
+          "NCCL_IB_GID_INDEX": "3",
+          "NCCL_DEBUG": "ERROR",
+          "SGLANG_USE_AITER": "1",
+          "AMDGCN_USE_BUFFER_OPS": "1",
+          "ROCM_QUICK_REDUCE_QUANTIZATION": "INT8",
+          "GPU_ARCHS": "gfx942"
+        }
+      }
+    }
+  },
+  "server_params": {
+    "backend": "sglang",
+    "nnodes": "2",
+    "log_level": "info",
+    "model": "/root/models/Qwen3.5-397B-A17B-FP8",
+    "max_concurrency": "256",
+    "tensor_parallelism": "16",
+    "pipeline_parallelism": "1",
+    "memory_fraction": "0.7",
+    "tokenizer_mode": "auto",
+    "inference_poll_iterations": "40",
+    "inference_poll_total_timeout_sec": "7200",
+    "context_length": "205000",
+    "add_flags": ["--attention-backend aiter"]
+  },
+  "benchmark_params": {
+        "backend": "sglang",
+        "data_set_name": "random",
+        "num_prompts": "25",
+        "random_range_ratio": "0.5",
+        "model_num_params": "17000000000",
+        "peak_gpu_tflops": "2615"
+  },
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "lm_eval_hellaswag",
+        "backend": "sglang",
+        "lm_eval_model": "local-completions",
+        "tasks": "hellaswag",
+        "num_fewshot": "0",
+        "batch_size": "auto",
+        "limit": "100",
+        "num_concurrent": "1",
+        "exec_timeout_sec": "7200",
+        "extra_model_args": "tokenizer_backend=huggingface"
+      },
+      {
+        "id": "lm_eval_gsm8k",
+        "backend": "sglang",
+        "lm_eval_model": "local-completions",
+        "tasks": "gsm8k",
+        "num_fewshot": "5",
+        "batch_size": "auto",
+        "limit": "100",
+        "num_concurrent": "4",
+        "exec_timeout_sec": "7200",
+        "extra_model_args": "tokenizer_backend=huggingface"
+      }
+    ]
+  },
+"sweeps": {
+    "ISL=1024,OSL=1024,TP=16,PP=1,CONC=4": {},
+    "ISL=1024,OSL=1024,TP=16,PP=1,CONC=8": {},
+    "ISL=1024,OSL=1024,TP=16,PP=1,CONC=16": {},
+    "ISL=1024,OSL=1024,TP=16,PP=1,CONC=32": {},
+    "ISL=1024,OSL=1024,TP=16,PP=1,CONC=64": {},
+    "ISL=1024,OSL=1024,TP=16,PP=1,CONC=128": {},
+    "ISL=1024,OSL=1024,TP=16,PP=1,CONC=256": {},
+    "ISL=8192,OSL=1024,TP=16,PP=1,CONC=64": {}
+},
+"sweep": {
+    "_comment": "Combo-key runs of ISL, OSL, TP, PP, and CONC, comma-separated. Each listed run must exist in the threshold JSON. If this field is empty, every run in the threshold JSON is used.",
+    "runs": [
+      {
+        "combo": "ISL=1024,OSL=1024,TP=16,PP=1,CONC=64"
+      },
+      {
+        "combo": "ISL=1024,OSL=1024,TP=16,PP=1,CONC=128"
+      }
+    ]
+}
+
+}

@@ -154,7 +154,7 @@ class CellRecordBuilder:
         multi_host: bool,
     ) -> dict:
         model, gpu, isl, osl, policy, conc = key
-        is_canonical_key = isinstance(policy, str) and policy.startswith("ISL=")
+        is_canonical_key = isinstance(policy, str) and policy.startswith(("ISL=", "SIZE="))
         cell_id = policy if is_canonical_key else variant_config.cell_key(isl, osl, conc)
         thresholds_map = getattr(variant_config, "thresholds", {}) or {}
         thresholds_cell = thresholds_map.get(cell_id) or {}

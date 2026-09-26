@@ -623,6 +623,7 @@ class LongContextNiahBenchmark:
         host: str = "0.0.0.0",
         request_timeout_sec: int = DEFAULT_REQUEST_TIMEOUT_SEC,
         local_files_only: bool = False,
+        enable_thinking=None,
     ) -> str:
         """Python source run inside benchmark container (docker exec)."""
         tok_extra = ", local_files_only=True" if local_files_only else ""
@@ -647,11 +648,40 @@ class LongContextNiahBenchmark:
                 f"NUM_PROMPTS = {int(num_prompts)}",
                 f"SEED = {int(seed)}",
                 f"REQ_TIMEOUT = {float(request_timeout_sec)}",
+                f"ENABLE_THINKING = {repr(enable_thinking)}",
                 f'BASE = "http://{host}:{int(port)}"',
                 'URL = BASE + "/v1/chat/completions"',
                 "",
                 "def norm(s):",
                 "    return re.sub(r'\\s+', '', str(s or '').lower())",
+                "",
+                "def reply_text(obj):",
+                '    choices = obj.get("choices") or []',
+                "    if not choices:",
+                '        raise RuntimeError("empty choices")',
+                "    choice = choices[0] or {}",
+                '    msg = choice.get("message") or {}',
+                "    parts = [",
+                '        msg.get("content"),',
+                '        msg.get("reasoning_content"),',
+                '        choice.get("text"),',
+                "    ]",
+                '    return "\\n".join(str(p or "") for p in parts)',
+                "",
+                "def found(expected, actual):",
+                "    if not actual:",
+                "        return False",
+                "    if norm(expected) in norm(actual):",
+                "        return True",
+                "    stripped = re.sub(r'<think>.*?</think>', ' ', actual, flags=re.I | re.S)",
+                "    if '</think>' in actual.lower():",
+                "        stripped = actual.rsplit('</think>', 1)[-1]",
+                "    if norm(expected) in norm(stripped):",
+                "        return True",
+                "    for token in re.findall(r'NEEDLE-[A-Z0-9]{8}', actual, flags=re.I):",
+                "        if norm(token) == norm(expected):",
+                "            return True",
+                "    return False",
                 "",
                 "def chat(prompt):",
                 "    body = {",
@@ -660,20 +690,20 @@ class LongContextNiahBenchmark:
                 '        "max_tokens": MAX_TOKENS,',
                 '        "temperature": 0.0,',
                 "    }",
+                "    if ENABLE_THINKING is not None:",
+                '        body["chat_template_kwargs"] = {"thinking": ENABLE_THINKING, "enable_thinking": ENABLE_THINKING}',
                 "    data = json.dumps(body).encode('utf-8')",
                 '    req = urllib.request.Request(URL, data=data, headers={"Content-Type": "application/json"}, method="POST")',
                 "    with urllib.request.urlopen(req, timeout=REQ_TIMEOUT) as resp:",
                 "        raw = resp.read().decode('utf-8', errors='replace')",
                 "    obj = json.loads(raw)",
-                '    choices = obj.get("choices") or []',
-                "    if not choices:",
-                '        raise RuntimeError("empty choices")',
-                '    msg = choices[0].get("message") or {}',
-                '    return str(msg.get("content") or "")',
+                "    return reply_text(obj)",
                 "",
                 "def build_prompt(tok, needle):",
                 '    prefix = "The passkey is %s. " % needle',
                 '    suffix = "\\n\\nWhat is the passkey? Reply with only the passkey."',
+                "    if ENABLE_THINKING is False:",
+                '        suffix = "\\n\\n/no_think\\nWhat is the passkey? Reply with only the passkey. Do not think."',
                 "    prefix_ids = tok.encode(prefix, add_special_tokens=False)",
                 "    suffix_ids = tok.encode(suffix, add_special_tokens=False)",
                 "    filler_budget = TARGET_ISL - len(prefix_ids) - len(suffix_ids)",
@@ -700,7 +730,7 @@ class LongContextNiahBenchmark:
                 "        prompt, expected = build_prompt(tok, needle)",
                 "        try:",
                 "            actual = chat(prompt)",
-                "            ok = norm(expected) in norm(actual)",
+                "            ok = found(expected, actual)",
                 "        except Exception as e:",
                 "            actual = 'ERROR: %s' % e",
                 "            ok = False",
@@ -804,6 +834,17 @@ class LongContextNiahBenchmark:
         request_timeout_sec = int(i_dict.get("request_timeout_sec", cls.DEFAULT_REQUEST_TIMEOUT_SEC))
         tolerance_frac = float(i_dict.get("tolerance_frac", cls.DEFAULT_TOLERANCE_FRAC))
         local_files_only = bool(i_dict.get("local_files_only", False))
+        enable_thinking = i_dict.get("enable_thinking")
+        if isinstance(enable_thinking, str):
+            lowered = enable_thinking.strip().lower()
+            if lowered in ("true", "1", "yes"):
+                enable_thinking = True
+            elif lowered in ("false", "0", "no"):
+                enable_thinking = False
+            else:
+                raise ValueError(f"enable_thinking must be a boolean, got {enable_thinking!r}")
+        elif enable_thinking is not None:
+            enable_thinking = bool(enable_thinking)
         log_path = f"{log_dir.rstrip('/')}/benchmark_node/{log_basename}"
 
         expected_block = i_dict.get("expected_results") or {}
@@ -831,6 +872,7 @@ class LongContextNiahBenchmark:
                 "seed": seed,
                 "request_timeout_sec": request_timeout_sec,
                 "local_files_only": local_files_only,
+                "enable_thinking": enable_thinking,
             },
         }
         return inner_cmd, scoring

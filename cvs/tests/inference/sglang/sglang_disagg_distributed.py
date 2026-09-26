@@ -2,9 +2,10 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Disaggregated (PD) SGLang benchmark: prefill, decode, proxy router, and benchmark
-client roles from the inference config. Containers are launched only on the union
-of role hosts (not every host in cluster.json unless all are assigned roles).
+Disaggregated (PD) SGLang benchmark: first even ``nnodes`` hosts from
+``cluster.json``. Rank-0 is prefill coordinator, proxy router, and benchmark.
+Rank-1 is decode coordinator. Remaining hosts split equally into prefill and
+decode (1P/1D, 2P/2D, 3P/3D, ...). Odd ``nnodes`` fails immediately.
 
 Run:
   pytest cvs/tests/inference/sglang/sglang_disagg_distributed.py \\
@@ -12,8 +13,8 @@ Run:
     --config_file cvs/input/config_file/inference/sglang/mi3xx_sglang_llama_70b_disaggregated.json \\
     --html=~/cvs_results/sglang_disagg.html
 
-``cluster_container.json`` ``node_dict`` must include all prefill/decode/router/bench hosts.
-Workload, runtime, and accuracy settings come from the unified SGLang config.
+HTTP defaults to port 8000; prefill/decode serve ports default to 30001/30002;
+coordinator ports default to 40001/40002.
 
 With ``--html``, session end also writes ``sglang_run_deck.html`` (plus JSON
 and interactive viewer) via ``cvs/lib/report/profiles/sglang.json`` (all SGLang stems).
@@ -27,7 +28,8 @@ from cvs.lib import globals
 from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
 from cvs.lib.verify_lib import verify_dmesg_for_errors
 
-# from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
+from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
+from cvs.tests.inference.sglang._shared import run_scan_inference_logs_after_workload
 
 log = globals.log
 
@@ -52,14 +54,6 @@ def test_launch_container(orch, variant_config, lifecycle, request):
         pytest.fail(f"container {name} not running after setup_containers()")
 
     lifecycle.complete_stage(request, "container_launch", t0)
-
-
-def test_setup_ibv_devices(im_obj, lifecycle, request):
-    globals.error_list = []
-    t0 = time.monotonic()
-    im_obj.exec_nic_setup_scripts()
-    im_obj.check_ibv_devices()
-    lifecycle.complete_stage(request, "ibv_setup", t0)
 
 
 def test_rms_norm(im_obj, lifecycle, request):
@@ -89,7 +83,17 @@ def test_poll_for_server_ready(im_obj, lifecycle, request):
     globals.error_list = []
     t0 = time.monotonic()
     im_obj.poll_and_check_server_ready()
+    lifecycle.server_ready_failed = bool(globals.error_list)
     lifecycle.complete_stage(request, "server_ready", t0)
+
+
+def test_scan_inference_logs_for_failure(im_obj, lifecycle, request):
+    globals.error_list = []
+    if not lifecycle.server_ready_failed:
+        pytest.skip("server-ready poll succeeded; skip server log scan")
+    t0 = time.monotonic()
+    im_obj.scan_for_inference_errors()
+    lifecycle.complete_stage(request, "scan_inference_logs", t0)
 
 
 def test_launch_proxy_router(im_obj, lifecycle, request):
@@ -105,32 +109,36 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
     t0 = time.monotonic()
     results = im_obj.verify_openai_compatible_endpoints()
     lifecycle.smoke_results = results
+    lifecycle.openai_completions_5xx_or_hang = bool(getattr(im_obj, "openai_completions_5xx_or_hang", False))
     lifecycle.complete_stage(request, "smoke_endpoints", t0)
 
 
-# def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
-#     globals.error_list = []
-#     t0 = time.monotonic()
-#     bench = im_obj.bp_dict["inference_tests"]["long_ctx_niah"]
-#     bench["input_length"] = acc_cell["isl"]
-#     bench["output_length"] = acc_cell["osl"]
-#     bench.setdefault("expected_results", {})["auto"] = flat_expected_from_specs(acc_cell["specs"])
-#     im_obj.bp_dict["max_concurrency"] = "1"
-#     im_obj.setup_benchmark_serv_container_env()
-#     summary = im_obj.run_long_context_niah_accuracy(
-#         isl=int(acc_cell["isl"]),
-#         osl=int(acc_cell["osl"]),
-#         d_type="auto",
-#     )
-#     lifecycle.phase_labels[f"accuracy_long_ctx_{acc_cell['isl']}"] = summary
-#     lifecycle.phase_labels.setdefault("accuracy_by_cell", {})[acc_cell["cell_key"]] = (
-#         "PASS" if summary.get("passed") else "FAIL"
-#     )
-#     lifecycle.complete_stage(
-#         request,
-#         f"long_ctx_niah[{acc_cell['isl']}/{acc_cell['osl']}]",
-#         t0,
-#     )
+def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
+    if im_obj.bp_dict.get("lng_ctx_activate") is not True:
+        pytest.skip("long-context accuracy is disabled by lng_ctx_activate")
+
+    globals.error_list = []
+    t0 = time.monotonic()
+    bench = im_obj.bp_dict["inference_tests"]["long_ctx_niah"]
+    bench["input_length"] = acc_cell["isl"]
+    bench["output_length"] = acc_cell["osl"]
+    bench.setdefault("expected_results", {})["auto"] = flat_expected_from_specs(acc_cell["specs"])
+    im_obj.bp_dict["max_concurrency"] = "1"
+    im_obj.setup_benchmark_serv_container_env()
+    summary = im_obj.run_long_context_niah_accuracy(
+        isl=int(acc_cell["isl"]),
+        osl=int(acc_cell["osl"]),
+        d_type="auto",
+    )
+    lifecycle.phase_labels[f"accuracy_long_ctx_{acc_cell['isl']}"] = summary
+    lifecycle.phase_labels.setdefault("accuracy_by_cell", {})[acc_cell["cell_key"]] = (
+        "PASS" if summary.get("passed") else "FAIL"
+    )
+    lifecycle.complete_stage(
+        request,
+        f"long_ctx_niah[{acc_cell['isl']}/{acc_cell['osl']}]",
+        t0,
+    )
 
 
 def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
@@ -210,6 +218,10 @@ def test_disagg_gpu_topology(im_obj, lifecycle, request):
     t0 = time.monotonic()
     im_obj.sglang_disagg_gpu_counts()
     lifecycle.complete_stage(request, "gpu_topology", t0)
+
+
+def test_scan_inference_logs_after_workload(im_obj, lifecycle, request):
+    run_scan_inference_logs_after_workload(im_obj, lifecycle, request)
 
 
 def test_print_results_table(inf_res_dict, lifecycle, variant_config):

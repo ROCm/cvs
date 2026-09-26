@@ -1,0 +1,8 @@
+{
+  "auto": {
+    "max_avg_pipe_time_s": 300.0
+  },
+  "mi325": {
+    "max_avg_pipe_time_s": 300.0
+  }
+}

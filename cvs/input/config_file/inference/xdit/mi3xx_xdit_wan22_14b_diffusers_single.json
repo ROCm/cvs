@@ -1,0 +1,60 @@
+{
+  "_comment": "WAN 2.2 Diffusers xFuser single-node workload. server_params.model is a Hugging Face repo id or an absolute host path.",
+  "gpu_name" : "<changeme> mi325",
+  "enforce_thresholds": true,
+  "threshold_json": "mi325_xdit_wan22_14b_diffusers_single_threshold.json",
+  "paths": {
+    "shared_fs": "{home}",
+    "models_dir": "{home}",
+    "log_dir": "{home}/cvs_outputs_wan_diff",
+    "hf_token_file": "{home}/.hf_token"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "wan22-benchmark_diffusers_single",
+    "_image_example": "rocm/ufb-private:xdit-gfx942-py3.12-prereleases-rocm10.0.0rc3-2805c93",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "{paths.models_dir}:/hf_home",
+          "{paths.log_dir}:/outputs",
+          "{home}/cvs/cvs/lib/inference/xdit/scripts/wan_i2v_example.py:/benchmark/wan_i2v_example.py"
+        ],
+        "devices": ["/dev/dri", "/dev/kfd"],
+        "env": {
+          "NCCL_DEBUG": "ERROR"
+        }
+      }
+    }
+  },
+  "server_params": {
+    "backend": "xdit",
+    "nnodes": "1",
+    "log_level": "info",
+    "model": "<changeme>"
+  },
+  "benchmark_params": {
+    "model_format": "diffusers",
+    "wan_diffusers_launcher": "xfuser_example",
+    "wan_xfuser_auto_input_image": true,
+    "wan_xfuser_install_video_deps": true,
+    "wan_xfuser_output_type": "pil",
+    "require_video_artifact": true,
+    "prompt": "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
+    "size": "720*1280",
+    "frame_num": 81,
+    "num_benchmark_steps": 1,
+    "num_inference_steps": 40,
+    "warmup_steps": 1,
+    "compile": false,
+    "torchrun_nproc": 8,
+    "ulysses_size": 8,
+    "ring_size": 1
+  }
+}
