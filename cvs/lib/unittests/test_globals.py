@@ -7,8 +7,10 @@ import time.
 
 import logging
 import unittest
+from unittest import mock
 
-import cvs.lib.globals  # noqa: F401  -- imported for its host_logger suppression side effect
+import cvs.lib.globals
+from cvs.lib.globals import get_verbosity, set_verbosity, verbose_log
 
 HOST_LOGGER = 'pssh.host_logger'
 
@@ -88,6 +90,60 @@ class TestHostLoggerSuppression(unittest.TestCase):
         installed = logging.getLogger(HOST_LOGGER).filters
         names = [getattr(f, '__name__', '') for f in installed]
         self.assertIn('_suppress_pssh_host_logger', names, f"no named suppression filter among {installed}")
+
+
+class TestVerboseLog(unittest.TestCase):
+    def setUp(self):
+        self._saved = cvs.lib.globals.verbosity
+        set_verbosity(0)
+
+    def tearDown(self):
+        set_verbosity(self._saved)
+
+    def test_silent_when_verbosity_is_zero(self):
+        agent = logging.getLogger('cvs.agent')
+        with mock.patch.object(agent, 'debug') as debug:
+            verbose_log(logging.getLogger('cvs.test.verbose_log'), "hidden", 1)
+
+        debug.assert_not_called()
+
+    def test_logs_when_current_verbosity_meets_level(self):
+        set_verbosity(1)
+        agent = logging.getLogger('cvs.agent')
+        with mock.patch.object(agent, 'debug') as debug:
+            verbose_log(logging.getLogger('cvs.test.verbose_log'), "shown", 1)
+
+        debug.assert_called_once_with("shown", stacklevel=2)
+
+    def test_logs_requested_levels_up_to_current_count(self):
+        set_verbosity(3)
+        agent = logging.getLogger('cvs.agent')
+        with mock.patch.object(agent, 'debug') as debug:
+            verbose_log(logging.getLogger('cvs.test.verbose_log'), "v1", 1)
+            verbose_log(logging.getLogger('cvs.test.verbose_log'), "v2", 2)
+            verbose_log(logging.getLogger('cvs.test.verbose_log'), "v3", 3)
+            verbose_log(logging.getLogger('cvs.test.verbose_log'), "v4", 4)
+
+        self.assertEqual([call.args[0] for call in debug.call_args_list], ["v1", "v2", "v3"])
+
+    def test_set_verbosity_floors_negative_to_zero(self):
+        set_verbosity(-2)
+        self.assertEqual(get_verbosity(), 0)
+
+    def test_httpx_request_logs_hidden_until_vvv(self):
+        handler = _CollectingHandler()
+        httpx_log = logging.getLogger("httpx")
+        httpx_log.addHandler(handler)
+        try:
+            set_verbosity(0)
+            httpx_log.info('HTTP Request: POST http://h:1/v1/exec "HTTP/1.1 200 OK"')
+            self.assertEqual(handler.records, [])
+
+            set_verbosity(3)
+            httpx_log.info('HTTP Request: POST http://h:1/v1/exec "HTTP/1.1 200 OK"')
+            self.assertEqual(len(handler.records), 1)
+        finally:
+            httpx_log.removeHandler(handler)
 
 
 if __name__ == '__main__':

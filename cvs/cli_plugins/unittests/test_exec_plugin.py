@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch, mock_open
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from cvs.cli_plugins.exec_plugin import ExecPlugin, _collect_switch_hosts
+from cvs.lib.globals import set_verbosity
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +141,7 @@ class TestCollectSwitchHosts(unittest.TestCase):
 class TestExecPluginRunErrors(unittest.TestCase):
     def setUp(self):
         self.plugin = ExecPlugin()
+        set_verbosity(0)
 
     def _make_args(self, **kwargs):
         args = MagicMock()
@@ -217,6 +219,7 @@ class TestExecPluginRunErrors(unittest.TestCase):
 class TestExecPluginRunTargets(unittest.TestCase):
     def setUp(self):
         self.plugin = ExecPlugin()
+        set_verbosity(0)
 
     def _make_args(
         self, target="computes", timeout=30, connect_timeout=15, cmd="hostname", json_output=False, verbose=False
@@ -511,30 +514,6 @@ class TestExecPluginMetadata(unittest.TestCase):
         self.assertEqual(args.timeout, 30)
         self.assertEqual(args.connect_timeout, 15)
         self.assertFalse(args.json_output)
-        self.assertFalse(args.verbose)
-
-    def test_verbose_flag_default_is_false(self):
-        """--verbose defaults to False (SSH diagnostics are suppressed by default)."""
-        main_parser = argparse.ArgumentParser()
-        subparsers = main_parser.add_subparsers()
-        self.plugin.get_parser(subparsers)
-        args = main_parser.parse_args(["exec", "--cmd", "hostname"])
-        self.assertFalse(args.verbose)
-
-    def test_verbose_flag_short_form(self):
-        """-v is the short form for --verbose."""
-        main_parser = argparse.ArgumentParser()
-        subparsers = main_parser.add_subparsers()
-        self.plugin.get_parser(subparsers)
-        args = main_parser.parse_args(["exec", "--cmd", "hostname", "-v"])
-        self.assertTrue(args.verbose)
-
-    def test_verbose_flag_long_form(self):
-        main_parser = argparse.ArgumentParser()
-        subparsers = main_parser.add_subparsers()
-        self.plugin.get_parser(subparsers)
-        args = main_parser.parse_args(["exec", "--cmd", "hostname", "--verbose"])
-        self.assertTrue(args.verbose)
 
     def test_parser_rejects_invalid_target(self):
         main_parser = argparse.ArgumentParser()
@@ -552,6 +531,7 @@ class TestExecPluginMetadata(unittest.TestCase):
 class TestJsonOutput(unittest.TestCase):
     def setUp(self):
         self.plugin = ExecPlugin()
+        set_verbosity(0)
 
     def _make_args(
         self, target="computes", timeout=30, connect_timeout=15, cmd="hostname", json_output=False, verbose=False

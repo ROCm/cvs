@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import asyncio
 import hmac
+import logging
 import os
 import signal
 from contextlib import asynccontextmanager
@@ -15,7 +16,11 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
+from cvs.lib.globals import verbose_log
+
 from . import messages
+
+log = logging.getLogger(__name__)
 
 FILE_MODE_PREVIEW_LINES = 20
 
@@ -62,7 +67,13 @@ class AgentRegistry:
         async with self._lock:
             # last write wins: a re-registering rank (e.g. restarted with a new port) replaces its old entry
             self._agents[rank] = AgentInfo(hostname, port)
+            verbose_log(
+                log,
+                f"registry: rank {rank} -> {hostname}:{port} ({len(self._agents)}/{self._world_size})",
+                2,
+            )
             if len(self._agents) == self._world_size:
+                verbose_log(log, f"registry: all {self._world_size} ranks registered", 1)
                 self._all_registered.set()
 
     def snapshot(self) -> dict[int, AgentInfo]:
@@ -84,23 +95,28 @@ class ProcessRegistry:
     async def register(self, cmd_id: str, process: asyncio.subprocess.Process) -> None:
         async with self._lock:
             self._processes[cmd_id] = process
+            verbose_log(log, f"process registry: add cmd_id={cmd_id} pid={process.pid}", 3)
 
     async def unregister(self, cmd_id: str) -> None:
         async with self._lock:
             self._processes.pop(cmd_id, None)
+            verbose_log(log, f"process registry: drop cmd_id={cmd_id}", 3)
 
     def snapshot(self) -> dict[str, asyncio.subprocess.Process]:
         return dict(self._processes)
 
 
 async def _terminate_process_group(process: asyncio.subprocess.Process, grace_period: float) -> None:
+    verbose_log(log, f"SIGTERM process group pid={process.pid} grace={grace_period}s", 2)
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
+        verbose_log(log, f"process group pid={process.pid} already gone", 3)
         return  # already exited (e.g. its own /v1/exec call completed concurrently)
     try:
         await asyncio.wait_for(process.wait(), timeout=grace_period)
     except asyncio.TimeoutError:
+        verbose_log(log, f"SIGKILL process group pid={process.pid} after grace period", 2)
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -165,6 +181,12 @@ async def _spawn_process(
 ) -> asyncio.subprocess.Process:
     # start_new_session detaches the child into its own process group so a future kill can target
     # the whole group (via os.killpg) without also signaling this agent process itself.
+    verbose_log(
+        log,
+        f"spawn cmd_id={request.cmd_id} cwd={request.cwd} mode={request.output_mode.value}",
+        2,
+    )
+    verbose_log(log, f"spawn cmd_id={request.cmd_id} cmd={request.cmd}", 3)
     process = await asyncio.create_subprocess_shell(
         request.cmd,
         stdout=stdout,
@@ -178,6 +200,12 @@ async def _spawn_process(
 
 
 async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> messages.ExecResponse:
+    verbose_log(
+        log,
+        f"exec start cmd_id={request.cmd_id} mode={request.output_mode.value} "
+        f"timeout={request.timeout} inactivity={request.inactivity_timeout}",
+        2,
+    )
     if request.output_mode == messages.ExecOutputMode.EXIT_CODE_ONLY:
         process = await _spawn_process(
             request, registry, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
@@ -191,6 +219,11 @@ async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> 
                 timed_out = True
         finally:
             await registry.unregister(request.cmd_id)
+        verbose_log(
+            log,
+            f"exec done cmd_id={request.cmd_id} exit={process.returncode} timed_out={timed_out}",
+            2,
+        )
         return messages.ExecResponse(
             exit_code=process.returncode,
             stdout=None,
@@ -213,6 +246,12 @@ async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> 
             await registry.unregister(request.cmd_id)
         stdout_bytes, stdout_truncated = _truncate_tail(stdout_bytes, messages.MAX_INLINE_RESPONSE_BYTES)
         stderr_bytes, stderr_truncated = _truncate_tail(stderr_bytes, messages.MAX_INLINE_RESPONSE_BYTES)
+        verbose_log(
+            log,
+            f"exec done cmd_id={request.cmd_id} exit={process.returncode} "
+            f"timed_out={timed_out} truncated={stdout_truncated or stderr_truncated}",
+            2,
+        )
         return messages.ExecResponse(
             exit_code=process.returncode,
             stdout=stdout_bytes.decode(errors="replace").splitlines(),
@@ -242,6 +281,12 @@ async def _run_cmd(request: messages.ExecRequest, registry: ProcessRegistry) -> 
             stderr_path = request.out_path / f"{request.cmd_id}.stderr"
             await _write_text(stdout_path, stdout_text)
             await _write_text(stderr_path, stderr_text)
+            verbose_log(log, f"exec wrote {stdout_path} and {stderr_path}", 3)
+        verbose_log(
+            log,
+            f"exec done cmd_id={request.cmd_id} exit={process.returncode} timed_out={timed_out}",
+            2,
+        )
         return messages.ExecResponse(
             exit_code=process.returncode,
             stdout=_tail_lines(stdout_text, FILE_MODE_PREVIEW_LINES),
@@ -265,6 +310,7 @@ def _extract_bearer_token(header_value: str | None) -> str | None:
 async def verify_auth(request: Request) -> None:
     provided = _extract_bearer_token(request.headers.get(messages.AUTH_HEADER))
     if provided is None or not hmac.compare_digest(provided, request.app.state.auth_token):
+        verbose_log(log, f"auth failed path={request.url.path} client={request.client}", 2)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="invalid or missing bearer token")
 
 
@@ -281,10 +327,12 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        verbose_log(log, f"agent app start rank={world_rank}/{world_size} agent_dir={agent_dir}", 2)
         app.state.auth_token = _read_secret(agent_dir / messages.AUTH_TOKEN_FILENAME)
         if world_rank == 0:
             await app.state.registry.register(world_rank, own_hostname, own_port)
         yield
+        verbose_log(log, f"agent app stop rank={world_rank}", 2)
 
     app = FastAPI(lifespan=lifespan, dependencies=[Depends(verify_auth)])
     app.state.world_rank = world_rank
@@ -296,6 +344,7 @@ def create_app(
     async def register_agent(request: messages.RegisterRequest, http_request: Request) -> messages.RegisterResponse:
         '''Record that a worker rank has started and is reachable at hostname:port'''
         if http_request.app.state.world_rank != 0:
+            verbose_log(log, f"reject register on non-rank0 from rank={request.rank}", 2)
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="only rank 0 accepts registrations")
         await http_request.app.state.registry.register(request.rank, request.hostname, request.port)
         return messages.RegisterResponse(ok=True)
@@ -311,6 +360,7 @@ def create_app(
         # Checked and set with no `await` in between: the event loop can't switch to another
         # request's coroutine mid-way, so this is race-free without needing an explicit lock.
         if http_request.app.state.exec_busy:
+            verbose_log(log, f"exec busy conflict cmd_id={request.cmd_id}", 1)
             raise HTTPException(status.HTTP_409_CONFLICT, detail="an exec is already in progress on this agent")
         http_request.app.state.exec_busy = True
         try:
@@ -323,6 +373,7 @@ def create_app(
         '''Terminate every process this agent has spawned, then exit the agent itself'''
         registry: ProcessRegistry = http_request.app.state.process_registry
         processes = registry.snapshot()
+        verbose_log(log, f"shutdown requested; terminating {len(processes)} process(es)", 1)
         await asyncio.gather(
             *(
                 _terminate_process_group(process, messages.TERMINATE_GRACE_PERIOD_SECONDS)
