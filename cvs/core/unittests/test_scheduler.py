@@ -23,6 +23,7 @@ from cvs.core.scheduler import (
     scheduler_hosts,
     scheduler_rank,
 )
+from cvs.lib.globals import set_verbosity
 
 JOB_STEP_ENV = {"SLURM_JOB_ID": "123", "SLURM_STEP_ID": "0", "SLURM_PROCID": "0"}
 
@@ -139,6 +140,26 @@ class TestDetectScheduler(unittest.TestCase):
     def test_env_override_takes_precedence_over_job_id(self, _mock_which, mock_run):
         self.assertEqual(detect_scheduler(), Scheduler.SLURM)
         mock_run.assert_not_called()
+
+    @patch.dict(os.environ, {"CVS_SCHEDULER": "slurm"})
+    @patch("cvs.core.scheduler.rank_log_enabled", return_value=False)
+    def test_trace_prints_to_stdout_before_rank_log(self, _enabled):
+        set_verbosity(2)
+        self.addCleanup(set_verbosity, 0)
+        with patch("builtins.print") as mock_print:
+            self.assertEqual(detect_scheduler(), Scheduler.SLURM)
+        mock_print.assert_called_once_with("detect_scheduler=slurm (CVS_SCHEDULER)")
+
+    @patch.dict(os.environ, {"CVS_SCHEDULER": "slurm"})
+    @patch("cvs.core.scheduler.verbose_log")
+    @patch("cvs.core.scheduler.rank_log_enabled", return_value=True)
+    def test_trace_uses_rank_log_once_enabled(self, _enabled, mock_verbose):
+        set_verbosity(2)
+        self.addCleanup(set_verbosity, 0)
+        with patch("builtins.print") as mock_print:
+            self.assertEqual(detect_scheduler(), Scheduler.SLURM)
+        mock_print.assert_not_called()
+        mock_verbose.assert_called_once()
 
 
 class TestRunningInJobStep(unittest.TestCase):

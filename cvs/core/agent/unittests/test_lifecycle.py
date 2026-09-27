@@ -10,12 +10,18 @@ from unittest.mock import MagicMock, patch
 import httpx
 
 from cvs.core.agent import lifecycle, messages
+from cvs.core.agent.logger import disable_rank_log, rank_log_enabled
+from cvs.lib.globals import get_verbosity, set_verbosity
 
 
 class TestLifecycle(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.agent_dir = Path(self.temp_dir.name)
+        saved_verbosity = get_verbosity()
+        set_verbosity(0)
+        self.addCleanup(set_verbosity, saved_verbosity)
+        self.addCleanup(disable_rank_log)
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -175,6 +181,45 @@ class TestLifecycle(unittest.TestCase):
         managed.create.assert_called_once_with(http_agent.wait_for_registrations.return_value)
         self.assertEqual(path, "/run/cluster_agents.json")
         http_agent.stop.assert_called_once()
+
+    @patch("cvs.core.agent.lifecycle.HttpAgentServer")
+    @patch("cvs.core.agent.lifecycle.scheduler_rank", return_value=(0, 1))
+    @patch("cvs.core.agent.lifecycle.scheduler_hosts", return_value=["node01"])
+    def test_rank0_rank_log_opens_on_start_and_closes_on_stop(self, _hosts, _rank, mock_http_agent):
+        set_verbosity(1)
+        http_agent = mock_http_agent.return_value
+        http_agent.host = "node01"
+        http_agent.wait_until_ready.return_value = 9000
+        layout = MagicMock(agent_dir=self.agent_dir)
+        runner = lifecycle.AgentRunner(layout)
+        runner.start()
+        rank_log = self.agent_dir / "rank0.log"
+        self.assertTrue(rank_log.is_file())
+        self.assertTrue(rank_log_enabled())
+        self.assertIn("rank 0 start", rank_log.read_text(encoding="utf-8"))
+        runner.stop()
+        self.assertFalse(rank_log_enabled())
+        self.assertIn("rank 0 stop", rank_log.read_text(encoding="utf-8"))
+
+    @patch("cvs.core.agent.lifecycle.WorkerRunner._watch", return_value=0)
+    @patch("cvs.core.agent.lifecycle.WorkerRunner._register")
+    @patch("cvs.core.agent.lifecycle.WorkerRunner._rendezvous", return_value=("rank0", 9000, 10, "token"))
+    @patch("cvs.core.agent.lifecycle.HttpAgentServer")
+    @patch("cvs.core.agent.lifecycle.scheduler_rank", return_value=(1, 2))
+    @patch("cvs.core.agent.lifecycle.scheduler_hosts", return_value=["node01", "node02"])
+    def test_worker_rank_log_closes_when_start_returns(
+        self, _hosts, _rank, mock_http_agent, _rendezvous, _register, _watch
+    ):
+        set_verbosity(1)
+        http_agent = mock_http_agent.return_value
+        http_agent.host = "node02"
+        http_agent.wait_until_ready.return_value = 9001
+        runner = lifecycle.AgentRunner(MagicMock(agent_dir=self.agent_dir))
+        status = runner.start()
+        rank_log = self.agent_dir / "rank1.log"
+        self.assertEqual(status, 0)
+        self.assertFalse(rank_log_enabled())
+        self.assertIn("worker rank 1/2", rank_log.read_text(encoding="utf-8"))
 
 
 class TestClusterFile(unittest.TestCase):

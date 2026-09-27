@@ -18,12 +18,16 @@ pulls in cvs/core/__init__.py, whose orchestrator factory reaches
 cvs/core/orchestrators/baremetal.py, which imports utils_lib back.
 '''
 
+import logging
 import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from cvs.core.scheduler import is_managed_compute
+from cvs.lib.globals import verbose_log
+
+log = logging.getLogger(__name__)
 
 
 def _default_workspace():
@@ -90,6 +94,12 @@ class RunLayout:
             return cls._instance
 
         layout = cls(_resolve_workspace(workspace), _resolve_run_id())
+        verbose_log(
+            log,
+            f"run layout workspace={layout.workspace} run_id={layout.run_id} "
+            f"run_dir={layout.run_dir} agent_dir={layout.agent_dir}",
+            1,
+        )
         try:
             # parents=True also creates run_dir; exist_ok because every rank in a
             # job step races to create the same shared-FS directories.
