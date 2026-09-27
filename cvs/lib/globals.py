@@ -36,6 +36,77 @@ logging.getLogger('pssh.host_logger').addFilter(_suppress_pssh_host_logger)
 error_list = []
 
 
+def _sanitize_log_content(content):
+    """Return log-safe single-line text to prevent log injection via CR/LF."""
+    return str(content).replace('\r', '').replace('\n', '')
+
+
+# CLI -v count: 0 default, 1 = -v, 2 = -vv, 3 = -vvv, ...
+# verbose_log() emits only when this value is at least the caller's requested level.
+verbosity = 0
+
+
+def _apply_httpx_log_level():
+    # httpx logs every request at INFO:
+    #   HTTP Request: POST http://host:port/v1/exec "HTTP/1.1 200 OK"
+    # That is one line per host per command and floods managed-compute pytest
+    # logs. Agent verbose_log() already covers that path; keep httpx (and
+    # httpcore) at WARNING unless the operator asked for -vvv.
+    level = logging.INFO if verbosity >= 3 else logging.WARNING
+    logging.getLogger("httpx").setLevel(level)
+    logging.getLogger("httpcore").setLevel(level)
+
+
+def set_verbosity(level):
+    """
+    Set the current CLI verbosity count.
+
+    0 is the default (no -v). Each additional -v increments the count
+    (1 = -v, 2 = -vv, 3 = -vvv, ...). verbose_log() emits only when
+    this value is at least the caller's requested level.
+
+    Args:
+        level: Non-negative integer verbosity count.
+    """
+    global verbosity
+    verbosity = max(0, int(level))
+    _apply_httpx_log_level()
+
+
+def get_verbosity():
+    """Return the current CLI verbosity count."""
+    return verbosity
+
+
+def verbose_log(logger, content, verbosity_level):
+    """
+    Log content at DEBUG when the current CLI verbosity is at least verbosity_level.
+
+    Records go to the cvs.agent logger (cvs.core.agent.logger). On a managed run
+    with -v / -vv / -vvv they are written to {run_dir}/agent/rankN.log, including
+    startup and worker traces. The same records propagate to the root logger, so
+    pytest shows them when it is run with --log-level=DEBUG. The logger argument
+    is kept for call sites; emission does not use that logger.
+
+    Args:
+        logger: Call-site logger. Retained so existing callers stay unchanged.
+        content: Message to log.
+        verbosity_level: Minimum -v count required to emit (1, 2, 3, ...).
+
+    Example:
+        from cvs.lib.globals import verbose_log
+
+        verbose_log(log, "connecting to node", 1)   # shown at -v or higher
+        verbose_log(log, "SSH handshake details", 2)  # shown at -vv or higher
+        verbose_log(log, "full packet dump", 3)     # shown at -vvv or higher
+    """
+    if verbosity >= int(verbosity_level):
+        # Imported here so lib.globals does not load cvs.core at import time.
+        from cvs.core.agent.logger import agent_logger
+
+        agent_logger().debug(_sanitize_log_content(content), stacklevel=2)
+
+
 def set_log_level(level):
     """
     Set the global CVS log level.

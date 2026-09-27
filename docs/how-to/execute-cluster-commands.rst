@@ -36,7 +36,7 @@ The ``exec`` command supports these options:
 - ``--timeout``: Per-node command output timeout in seconds (default: ``30``). Controls how long to wait for each host's stdout after the SSH connection is established.
 - ``--connect-timeout``: Per-node SSH connection timeout in seconds (default: ``15``). Unreachable hosts fail fast after this many seconds regardless of ``--timeout``.
 - ``--json``: Emit results as a single JSON object instead of human-readable text. Useful for scripting and piping to ``jq``.
-- ``--verbose`` / ``-v``: Show internal SSH diagnostics (``SocketDisconnectError``, ``AuthenticationError``, pruning messages). Suppressed by default to keep output clean.
+- ``-v`` / ``--verbose``: Global CVS verbosity. Level 1+ shows internal SSH diagnostics (``SocketDisconnectError``, ``AuthenticationError``, pruning messages). Suppressed by default to keep output clean.
 
 Target scope
 ============
@@ -280,12 +280,12 @@ If SSH connections hang or time out:
 
 If the output contains unexpected SSH diagnostic messages:
 
-- These are suppressed by default; they appear only when ``--verbose`` / ``-v`` is passed
+- These are suppressed by default; they appear only when global ``-v`` / ``--verbose`` is passed
 - If they still appear, check that the root logger level has not been overridden elsewhere
 
 .. tip::
 
-  Use ``--json | jq '.output'`` to get a clean, machine-readable summary. Combine with ``--verbose`` only when debugging connection issues.
+  Use ``--json | jq '.output'`` to get a clean, machine-readable summary. Combine with ``-v`` only when debugging connection issues.
 
 Next steps
 ==========

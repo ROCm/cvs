@@ -8,6 +8,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 import atexit
 import asyncio
 import json
+import logging
 import os
 import secrets
 import socket
@@ -18,10 +19,14 @@ import time
 import httpx
 import uvicorn
 
+from cvs.core.agent.logger import disable_rank_log, enable_rank_log
 from cvs.core.scheduler import scheduler_hosts, scheduler_rank
+from cvs.lib.globals import get_verbosity, verbose_log
 
 from . import messages
 from .http_agent import create_app
+
+log = logging.getLogger(__name__)
 
 RANK0_HOST_FILENAME = "rank0.host"
 RANK0_PORT_FILENAME = "rank0.port"
@@ -113,6 +118,12 @@ class ClusterFile:
         }
         output["agent_token_file"] = str(self.layout.agent_dir / messages.AUTH_TOKEN_FILENAME)
         destination = self.layout.run_dir / "cluster_agents.json"
+        verbose_log(log, f"writing cluster_agents.json for {len(self.hosts)} hosts to {destination}", 1)
+        verbose_log(
+            log,
+            "agent ports: " + ", ".join(f"{host}={output['node_dict'][host]['agent_port']}" for host in self.hosts),
+            2,
+        )
         fd, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
@@ -142,11 +153,13 @@ class Heartbeat:
 
     def start(self):
         """Write the first pulse, then keep pulsing on a background thread."""
+        verbose_log(log, f"heartbeat start interval={self._interval}s dir={self._agent_dir}", 2)
         self.alive()
         self._thread.start()
 
     def stop(self):
         """Stop the background thread and wait for it to exit."""
+        verbose_log(log, "heartbeat stop", 2)
         self._stop_event.set()
         self._thread.join(timeout=self._interval + 1)
 
@@ -183,6 +196,7 @@ class HttpAgentServer:
         self._server = uvicorn.Server(uvicorn.Config(self._app, log_level="warning"))
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._event_loop = None
+        verbose_log(log, f"HTTP agent bound rank={rank} host={self.host} port={self.port} world_size={world_size}", 2)
 
     def _run(self):
         """Thread entry: run the asyncio uvicorn server."""
@@ -195,6 +209,7 @@ class HttpAgentServer:
 
     def start(self):
         """Start uvicorn on a background thread."""
+        verbose_log(log, f"HTTP agent start host={self.host} port={self.port}", 2)
         self._thread.start()
 
     def wait_until_ready(self, timeout):
@@ -202,6 +217,7 @@ class HttpAgentServer:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self._server.started and self._event_loop is not None:
+                verbose_log(log, f"HTTP agent ready host={self.host} port={self.port}", 2)
                 return self.port
             if not self._thread.is_alive():
                 raise RuntimeError("HTTP agent stopped before becoming ready")
@@ -219,6 +235,7 @@ class HttpAgentServer:
 
     def stop(self):
         """Ask uvicorn to exit and join the server thread."""
+        verbose_log(log, f"HTTP agent stop host={self.host} port={self.port}", 2)
         self._server.should_exit = True
         if self._thread.is_alive():
             self._thread.join(timeout=5)
@@ -243,6 +260,7 @@ class Rank0Runner:
     def start(self):
         """Clear leftover markers, mint the token, serve HTTP, and publish rendezvous."""
         agent_dir = self._layout.agent_dir
+        verbose_log(log, f"rank 0 start host={self._host} world_size={self._world_size} agent_dir={agent_dir}", 1)
         self.clear()
         self.create_auth_token()
         self._http_agent = HttpAgentServer(agent_dir, 0, self._world_size, host=self._host)
@@ -253,17 +271,27 @@ class Rank0Runner:
             self._heartbeat = Heartbeat(agent_dir, HEARTBEAT_INTERVAL_SECONDS)
             self._heartbeat.start()
             atexit.register(self.stop)
+            verbose_log(log, f"rank 0 listening on {self._http_agent.host}:{port}", 1)
         except Exception:
+            verbose_log(log, "rank 0 start failed; marking done and stopping HTTP agent", 1)
             self._mark_done()
             self._http_agent.stop()
             raise
 
     def wait(self):
         """Wait for worker registrations and write cluster_agents.json; return its path."""
+        verbose_log(log, f"rank 0 waiting for {self._world_size} registrations ({REGISTRATION_TIMEOUT_SECONDS}s)", 1)
         try:
             registered = self._http_agent.wait_for_registrations(REGISTRATION_TIMEOUT_SECONDS)
         except (TimeoutError, asyncio.TimeoutError):
             registered = self._http_agent.registered_agents()
+            verbose_log(
+                log,
+                f"registration wait timed out; have {len(registered)}/{self._world_size} agents",
+                1,
+            )
+        else:
+            verbose_log(log, f"all {len(registered)} agents registered", 1)
         cluster_file = ClusterFile(self._hosts, self._layout, self._cluster_input)
         return cluster_file.create(registered)
 
@@ -271,6 +299,7 @@ class Rank0Runner:
         """Stop the heartbeat, write rank0.done, and stop the HTTP server."""
         if self._stopped:
             return
+        verbose_log(log, "rank 0 stop", 1)
         self._stopped = True
         if self._heartbeat is not None:
             self._heartbeat.stop()
@@ -293,15 +322,18 @@ class Rank0Runner:
 
     def create_auth_token(self):
         """Write a new bearer token for workers and the orchestrator."""
-        _write_file(
-            self._layout.agent_dir / messages.AUTH_TOKEN_FILENAME,
-            f"{secrets.token_hex(32)}\n",
-            mode=0o600,
-        )
+        path = self._layout.agent_dir / messages.AUTH_TOKEN_FILENAME
+        _write_file(path, f"{secrets.token_hex(32)}\n", mode=0o600)
+        verbose_log(log, f"wrote agent auth token file {path} (mode 0600)", 2)
 
     def publish(self, host, port, heartbeat_interval):
         """Write rank0.host, rank0.port, and the heartbeat interval for workers."""
         agent_dir = self._layout.agent_dir
+        verbose_log(
+            log,
+            f"publish rendezvous host={host} port={port} heartbeat={heartbeat_interval}s dir={agent_dir}",
+            2,
+        )
         _write_file(agent_dir / RANK0_HOST_FILENAME, f"{host}\n")
         _write_file(agent_dir / RANK0_HEARTBEAT_INTERVAL_FILENAME, f"{heartbeat_interval}\n")
         _write_file(agent_dir / RANK0_PORT_FILENAME, f"{port}\n")
@@ -328,6 +360,7 @@ class WorkerRunner:
         Returns 0 if rank 0 finished, 1 if the heartbeat went stale.
         """
         agent_dir = self._layout.agent_dir
+        verbose_log(log, f"worker rank {self._rank}/{self._world_size} start host={self._host}", 1)
         rank0_host, rank0_port, heartbeat_interval, token = self._rendezvous(BOOTSTRAP_TIMEOUT_SECONDS)
         self._http_agent = HttpAgentServer(
             agent_dir,
@@ -354,12 +387,19 @@ class WorkerRunner:
     def _rendezvous(self, timeout):
         """Poll until rank 0's host, port, interval, and token files exist."""
         agent_dir = self._layout.agent_dir
+        verbose_log(log, f"rank {self._rank} waiting for rank-0 rendezvous in {agent_dir} ({timeout}s)", 2)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
                 host, port, heartbeat_interval = self._read_rendezvous()
+                verbose_log(
+                    log,
+                    f"rank {self._rank} found rendezvous host={host} port={port} heartbeat={heartbeat_interval}s",
+                    2,
+                )
                 return host, port, heartbeat_interval, _read_file(agent_dir / messages.AUTH_TOKEN_FILENAME)
-            except (OSError, ValueError):
+            except (OSError, ValueError) as exc:
+                verbose_log(log, f"rank {self._rank} rendezvous not ready: {exc}", 3)
                 time.sleep(POLL_INTERVAL_SECONDS)
         raise TimeoutError("rank-0 rendezvous did not appear")
 
@@ -378,31 +418,41 @@ class WorkerRunner:
         request = messages.RegisterRequest(rank=self._rank, hostname=self._http_agent.host, port=port)
         deadline = time.monotonic() + REGISTRATION_TIMEOUT_SECONDS
         headers = {messages.AUTH_HEADER: f"{messages.AUTH_SCHEME} {token}"}
+        url = f"{endpoint}{messages.REGISTER_PATH}"
+        verbose_log(log, f"rank {self._rank} registering {request.hostname}:{port} at {url}", 2)
         with httpx.Client(headers=headers) as client:
             while (remaining := deadline - time.monotonic()) > 0:
                 try:
                     response = client.post(
-                        f"{endpoint}{messages.REGISTER_PATH}",
+                        url,
                         json=request.model_dump(),
                         timeout=min(STARTUP_TIMEOUT_SECONDS, remaining),
                     )
                     response.raise_for_status()
+                    verbose_log(log, f"rank {self._rank} registered with rank 0", 1)
                     return
                 except httpx.HTTPStatusError as exc:
+                    verbose_log(
+                        log,
+                        f"rank {self._rank} register HTTP {exc.response.status_code}: {exc}",
+                        2 if exc.response.status_code < 500 else 3,
+                    )
                     if exc.response.status_code < 500:
                         raise
-                except httpx.TransportError:
-                    pass
+                except httpx.TransportError as exc:
+                    verbose_log(log, f"rank {self._rank} register transport error: {exc}", 3)
                 time.sleep(min(POLL_INTERVAL_SECONDS, max(0, deadline - time.monotonic())))
         raise TimeoutError("could not register with rank-0 HTTP agent")
 
     def _watch(self, heartbeat_interval):
         """Block until rank0.done appears or rank0.alive stops updating."""
         agent_dir = self._layout.agent_dir
+        verbose_log(log, f"rank {self._rank} watching rank 0 heartbeat interval={heartbeat_interval}s", 2)
         last_progress = time.monotonic()
         last_mtime_ns = None
         while True:
             if (agent_dir / RANK0_DONE_FILENAME).exists():
+                verbose_log(log, f"rank {self._rank} saw rank0.done", 1)
                 return 0
             try:
                 mtime_ns = (agent_dir / RANK0_ALIVE_FILENAME).stat().st_mtime_ns
@@ -412,6 +462,7 @@ class WorkerRunner:
                 last_mtime_ns = mtime_ns
                 last_progress = time.monotonic()
             if time.monotonic() - last_progress >= 3 * heartbeat_interval:
+                verbose_log(log, f"rank {self._rank} rank-0 heartbeat stale", 1)
                 return 1
             time.sleep(POLL_INTERVAL_SECONDS)
 
@@ -421,6 +472,7 @@ class AgentRunner:
 
     def __init__(self, layout, cluster_file=None):
         """Read scheduler rank/hosts and construct Rank0Runner or WorkerRunner."""
+        self._layout = layout
         self._rank, world_size = scheduler_rank()
         hosts = scheduler_hosts()
         if len(hosts) != world_size:
@@ -429,6 +481,9 @@ class AgentRunner:
                 f"but SLURM_NTASKS is {world_size}"
             )
         host = hosts[self._rank]
+        role = "rank0" if self._rank == 0 else "worker"
+        verbose_log(log, f"agent runner {role} rank={self._rank}/{world_size} host={host}", 1)
+        verbose_log(log, f"scheduler hosts: {hosts}", 2)
         if self._rank == 0:
             self._role = Rank0Runner(layout, host, hosts, self._load_cluster_file(cluster_file))
         else:
@@ -437,7 +492,9 @@ class AgentRunner:
     def _load_cluster_file(self, cluster_file):
         """Load optional --cluster_file JSON; empty object when the path is omitted."""
         if not cluster_file:
+            verbose_log(log, "no operator cluster file; starting from empty metadata", 2)
             return {}
+        verbose_log(log, f"loading operator cluster file {cluster_file}", 2)
         try:
             with open(cluster_file, "r", encoding="utf-8") as stream:
                 return json.load(stream)
@@ -451,12 +508,33 @@ class AgentRunner:
 
     def start(self):
         """Start this rank's role (HTTP + rendezvous, or worker register/watch)."""
-        return self._role.start()
+        self._open_rank_log()
+        try:
+            return self._role.start()
+        except Exception:
+            # run_plugin calls stop() only after start() returns. A failed rank-0
+            # start never gets there, so close the file on the way out.
+            if self.is_rank0:
+                disable_rank_log()
+            raise
+        finally:
+            # A worker's whole life is start(); nothing calls stop() afterwards.
+            if not self.is_rank0:
+                disable_rank_log()
 
     def wait(self):
         """Rank 0: wait for registrations and return the cluster file path."""
         return self._role.wait()
 
     def stop(self):
-        """Rank 0: stop heartbeat and HTTP; worker: no-op."""
-        return self._role.stop()
+        """Rank 0: stop heartbeat and HTTP, then close the rank log."""
+        try:
+            return self._role.stop()
+        finally:
+            disable_rank_log()
+
+    def _open_rank_log(self):
+        """Write this rank's verbose_log lines to {agent_dir}/rankN.log when -v is set."""
+        if get_verbosity() < 1:
+            return
+        enable_rank_log(self._layout.agent_dir / f"rank{self._rank}.log")

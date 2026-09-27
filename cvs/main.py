@@ -7,6 +7,7 @@ import pkgutil
 import importlib.metadata as metadata
 from cvs.cli_plugins.base import SubcommandPlugin
 from cvs.extension import ExtensionConfig
+from cvs.lib.globals import set_verbosity
 
 PLUGIN_DIR = os.path.join(os.path.dirname(__file__), "cli_plugins")
 
@@ -114,10 +115,44 @@ def build_arg_parser(plugins):
         epilog=epilog,
     )
     parser.add_argument("--version", action="version", version=get_version())
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        dest="cli_verbose",
+        help="Increase CVS verbosity (-v, -vv, -vvv).",
+    )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
     for plugin in plugins:
         plugin.get_parser(subparsers)
     return parser
+
+
+def _count_v_flags(args):
+    """Return the -v count in this slice of argv."""
+    total = 0
+    for arg in args:
+        if arg == "--verbose":
+            total += 1
+        elif arg.startswith("-") and not arg.startswith("--") and set(arg[1:]) == {"v"}:
+            total += len(arg) - 1
+    return total
+
+
+def _cli_verbosity(argv=None):
+    """Count -v / -vv / -vvv / --verbose for this CVS command.
+
+    ``cvs -v exec -v`` is 1, not 2.
+    Repeated flags on one side still add (``-v -v`` and ``-vv`` are both 2).
+    """
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    for index, arg in enumerate(tokens):
+        if arg == "--":
+            return _count_v_flags(tokens[:index])
+        if not arg.startswith("-"):
+            return max(_count_v_flags(tokens[:index]), _count_v_flags(tokens[index + 1 :]))
+    return _count_v_flags(tokens)
 
 
 def main(plugins=None):
@@ -126,6 +161,7 @@ def main(plugins=None):
     parser = build_arg_parser(plugins)
     args, extra_pytest_args = parser.parse_known_args()
     args.extra_pytest_args = extra_pytest_args
+    set_verbosity(_cli_verbosity())
 
     # Dispatch to plugin
     if hasattr(args, "_plugin"):

@@ -6,7 +6,7 @@ import warnings
 
 from .base import SubcommandPlugin
 from cvs.lib.parallel_ssh_lib import Pssh
-from cvs.lib.globals import set_log_level
+from cvs.lib.globals import get_verbosity, set_log_level
 
 
 def _collect_switch_hosts(cluster):
@@ -78,16 +78,6 @@ class ExecPlugin(SubcommandPlugin):
                 "Schema: {command, read_timeout, connect_timeout, output: {host: str}}."
             ),
         )
-        parser.add_argument(
-            "--verbose",
-            "-v",
-            action="store_true",
-            default=False,
-            help=(
-                "Show internal SSH connection diagnostics (SocketDisconnectError, "
-                "AuthenticationError, Timeout, pruning messages). Suppressed by default."
-            ),
-        )
         parser.set_defaults(_plugin=self)
         return parser
 
@@ -99,7 +89,7 @@ Exec Commands:
   cvs exec --cmd "date" --cluster_file cluster.json --target all     Execute on computes + switches
   cvs exec --cmd "long_job" --timeout 300 --connect-timeout 10       Long command, fast fail on unreachable hosts
   cvs exec --cmd "hostname" --json | jq '.output'                    JSON output, pipe to jq
-  cvs exec --cmd "hostname" --verbose                                Show SSH diagnostics (suppressed by default)
+  cvs exec --cmd "hostname" -v                                       Show SSH diagnostics (suppressed by default)
   CLUSTER_FILE=cluster.json cvs exec --cmd "hostname"                Use env var for cluster file"""
 
     def _run_on_hosts(
@@ -173,12 +163,10 @@ Exec Commands:
 
     def run(self, args):
         json_mode = getattr(args, 'json_output', False)
-        verbose = getattr(args, 'verbose', False)
 
         # Suppress WARNING-level SSH/pssh diagnostic noise by default.
-        # With --verbose, leave the root logger at its configured level so all
-        # messages (SocketDisconnectError, AuthenticationError, pruning, etc.) show.
-        if not verbose:
+        # Level 1+ leaves the root logger at its configured level so SSH diagnostics show.
+        if get_verbosity() < 1:
             set_log_level(logging.ERROR)
 
         # CLI flag wins; env var is the fallback.
