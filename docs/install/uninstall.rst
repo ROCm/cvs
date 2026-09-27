@@ -51,9 +51,9 @@ Expected output:
 
 .. code:: text
 
-  Found existing installation: cvs 0.2.0
-  Uninstalling cvs-0.2.0:
-    Successfully uninstalled cvs-0.2.0
+  Found existing installation: cvs 0.3.0
+  Uninstalling cvs-0.3.0:
+    Successfully uninstalled cvs-0.3.0
 
   $ which cvs
   $
@@ -104,10 +104,10 @@ Expected output:
 .. code:: text
 
   $ cvs --version
-  0.2.0
+  0.3.0
   ...
   $ cvs --version
-  0.1.0
+  0.2.0
 
 Use ``pip install dist/cvs*.tar.gz`` or ``docker build --tag cvs:local .``
 instead if that is how you originally installed CVS.
