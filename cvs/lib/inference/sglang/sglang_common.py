@@ -83,26 +83,56 @@ def _sglang_exec_text(result, host):
     return value if isinstance(value, str) else (value or {}).get('output', '') or ''
 
 
+_LOG_SCANNED_MARKER = '__CVS_LOG_SCANNED__'
+_LOG_MISSING_PREFIX = '__CVS_MISSING_LOG__:'
+
+
 def grep_sglang_log(host, path, patterns, exec_log_command):
-    """Return ``grep -niE -C 2`` output for ``path`` on ``host`` (or a missing-file marker)."""
+    """Return ``grep -niE -C 2`` output for ``path`` on ``host``.
+
+    A completed read ends with ``__CVS_LOG_SCANNED__``. grep exits 1 when the
+    file has no hits; only that and exit 0 count as a read. A missing file
+    prints ``__CVS_MISSING_LOG__`` instead.
+    """
     combined = '|'.join(f'({pattern})' for pattern in patterns.values() if pattern)
     quoted_path = shlex.quote(path)
+    scanned = shlex.quote(_LOG_SCANNED_MARKER)
+    missing = shlex.quote(f'{_LOG_MISSING_PREFIX}{path}')
     command = (
         f"if test -f {quoted_path}; then "
-        f"grep -niE -C 2 -- {shlex.quote(combined)} {quoted_path} || true; "
-        f"else echo {shlex.quote(f'__CVS_MISSING_LOG__:{path}')}; fi"
+        f"grep -niE -C 2 -- {shlex.quote(combined)} {quoted_path} || rc=$?; "
+        f"if [ \"${{rc:-0}}\" -le 1 ]; then echo {scanned}; fi; "
+        f"else echo {missing}; fi"
     )
     return _sglang_exec_text(exec_log_command(host, command), host)
+
+
+def _log_scan_result(text):
+    lines = (text or '').splitlines()
+    missing = next((line for line in lines if line.startswith(_LOG_MISSING_PREFIX)), '')
+    scanned = any(line.strip() == _LOG_SCANNED_MARKER for line in lines)
+    body = '\n'.join(line for line in lines if line.strip() != _LOG_SCANNED_MARKER)
+    return missing, scanned, body
+
+
+def _unread_log_excerpt(text):
+    excerpt = (text or '').strip().replace('\n', ' ')
+    if len(excerpt) > 300:
+        excerpt = excerpt[:300] + '...'
+    return excerpt or 'empty output'
 
 
 def log_sglang_log_matches(targets, exec_log_command, patterns, heading="SGLang log matches"):
     """Grep ``targets`` and write hits into the current test log (no fail_test)."""
     for host, path, role in targets:
-        text = grep_sglang_log(host, path, patterns, exec_log_command)
-        if text.startswith('__CVS_MISSING_LOG__:'):
+        missing, scanned, body = _log_scan_result(grep_sglang_log(host, path, patterns, exec_log_command))
+        if missing:
             log.warning("SGLang %s log is missing on %s: %s", role, host, path)
             continue
-        stripped = text.strip()
+        if not scanned:
+            log.warning("SGLang %s log on %s was not read: %s", role, host, path)
+            continue
+        stripped = body.strip()
         if stripped:
             log.info("%s (%s / %s / %s):\n%s", heading, role, host, path, stripped)
         else:
@@ -122,14 +152,19 @@ def scan_sglang_error_logs(
 
     for host, path, role in targets:
         text = grep_sglang_log(host, path, patterns, exec_log_command)
+        missing, scanned, body = _log_scan_result(text)
 
-        if text.startswith('__CVS_MISSING_LOG__:'):
+        if missing:
             fail_test(f"SGLang {role} log is missing on {host}: {path}")
+            all_clean = False
+            continue
+        if not scanned:
+            fail_test(f"SGLang {role} log on {host} was not read ({path}): {_unread_log_excerpt(text)}")
             all_clean = False
             continue
 
         hits = []
-        for line in text.splitlines():
+        for line in body.splitlines():
             if ignore_res and any(ignore_re.search(line) for ignore_re in ignore_res):
                 continue
             for name, pattern in patterns.items():
@@ -144,7 +179,7 @@ def scan_sglang_error_logs(
                 role,
                 host,
                 path,
-                text.rstrip(),
+                body.rstrip(),
             )
             fail_test(f"SGLang {role} log on {host} contains error signatures: {', '.join(hits)} ({path})")
             all_clean = False

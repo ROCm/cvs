@@ -515,7 +515,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
 
         def execute(host, command):
             commands.append((host, command))
-            return {host: ''}
+            return {host: '__CVS_LOG_SCANNED__\n'}
 
         with mock.patch.object(sglang_common, 'fail_test') as fail:
             clean = sglang_common.scan_sglang_error_logs(
@@ -527,10 +527,12 @@ class TestSglangCommonHelpers(unittest.TestCase):
         fail.assert_not_called()
         self.assertIn('grep -niE -C 2', commands[0][1])
         self.assertIn('/logs/server.log', commands[0][1])
+        self.assertIn('__CVS_LOG_SCANNED__', commands[0][1])
+        self.assertNotIn('|| true', commands[0][1])
 
     def test_scan_sglang_error_logs_reports_error_and_missing_log(self):
         outputs = {
-            'node1': '42-RuntimeError: worker failed\n',
+            'node1': '42-RuntimeError: worker failed\n__CVS_LOG_SCANNED__\n',
             'node2': '__CVS_MISSING_LOG__:/logs/benchmark.log\n',
         }
 
@@ -552,8 +554,25 @@ class TestSglangCommonHelpers(unittest.TestCase):
         self.assertIn('application exception', messages)
         self.assertIn('is missing', messages)
 
+    def test_scan_sglang_error_logs_fails_when_log_was_not_read(self):
+        unread = [
+            '',
+            'ABORT: Host Unreachable',
+            'grep: /logs/server.log: Permission denied',
+        ]
+        for output in unread:
+            with self.subTest(output=output or 'empty'):
+                with mock.patch.object(sglang_common, 'fail_test') as fail:
+                    clean = sglang_common.scan_sglang_error_logs(
+                        [('node1', '/logs/server.log', 'server')],
+                        lambda host, _command: {host: output},
+                    )
+                self.assertFalse(clean)
+                fail.assert_called_once()
+                self.assertIn('was not read', fail.call_args.args[0])
+
     def test_scan_sglang_error_logs_ignores_only_matching_line(self):
-        output = '10:RuntimeError: expected shutdown noise\n11:RuntimeError: real worker failure\n'
+        output = '10:RuntimeError: expected shutdown noise\n11:RuntimeError: real worker failure\n__CVS_LOG_SCANNED__\n'
 
         with mock.patch.object(sglang_common, 'fail_test') as fail:
             clean = sglang_common.scan_sglang_error_logs(
@@ -567,7 +586,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
         fail.assert_called_once()
 
     def test_log_sglang_log_matches_writes_hits_without_fail_test(self):
-        output = '88:Mooncake TransferEngine: QP failed\n'
+        output = '88:Mooncake TransferEngine: QP failed\n__CVS_LOG_SCANNED__\n'
 
         with mock.patch.object(sglang_common, 'fail_test') as fail:
             with mock.patch.object(sglang_common.log, 'info') as info:
@@ -589,7 +608,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
         obj = SglangSingle.__new__(SglangSingle)
         obj.execution_hosts = ['node1']
         obj.log_dir = '/logs'
-        obj._container_exec = mock.Mock(return_value={'node1': ''})
+        obj._container_exec = mock.Mock(return_value={'node1': '__CVS_LOG_SCANNED__\n'})
 
         self.assertTrue(obj.scan_for_inference_errors())
         commands = [call.args[0] for call in obj._container_exec.call_args_list]
@@ -602,7 +621,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
         obj = SglangSingle.__new__(SglangSingle)
         obj.execution_hosts = ['node1']
         obj.log_dir = '/logs'
-        obj._container_exec = mock.Mock(return_value={'node1': '42:RuntimeError: worker failed\n'})
+        obj._container_exec = mock.Mock(return_value={'node1': '42:RuntimeError: worker failed\n__CVS_LOG_SCANNED__\n'})
 
         with mock.patch.object(sglang_common.log, 'info'):
             obj.log_server_error_logs()
@@ -617,7 +636,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
         obj = SglangDistributed.__new__(SglangDistributed)
         obj.server_node_list = ['node1', 'node2']
         obj.log_dir = '/logs'
-        obj._container_exec = mock.Mock(side_effect=lambda _cmd, hosts, timeout: {hosts[0]: ''})
+        obj._container_exec = mock.Mock(side_effect=lambda _cmd, hosts, timeout: {hosts[0]: '__CVS_LOG_SCANNED__\n'})
 
         self.assertTrue(obj.scan_for_inference_errors())
         commands = [call.args[0] for call in obj._container_exec.call_args_list]
@@ -631,7 +650,9 @@ class TestSglangCommonHelpers(unittest.TestCase):
         obj = SglangDistributed.__new__(SglangDistributed)
         obj.server_node_list = ['node1', 'node2']
         obj.log_dir = '/logs'
-        obj._container_exec = mock.Mock(side_effect=lambda _cmd, hosts, timeout: {hosts[0]: '42:NCCL ERROR: boom\n'})
+        obj._container_exec = mock.Mock(
+            side_effect=lambda _cmd, hosts, timeout: {hosts[0]: '42:NCCL ERROR: boom\n__CVS_LOG_SCANNED__\n'}
+        )
 
         with mock.patch.object(sglang_common.log, 'info'):
             obj.log_server_error_logs()
@@ -648,7 +669,7 @@ class TestSglangCommonHelpers(unittest.TestCase):
         obj.prefill_node_list = ['prefill']
         obj.decode_node_list = ['decode']
         obj.log_dir = '/logs'
-        obj._container_exec = mock.Mock(side_effect=lambda _cmd, hosts, timeout: {hosts[0]: ''})
+        obj._container_exec = mock.Mock(side_effect=lambda _cmd, hosts, timeout: {hosts[0]: '__CVS_LOG_SCANNED__\n'})
 
         self.assertTrue(obj.scan_for_inference_errors())
         commands = [call.args[0] for call in obj._container_exec.call_args_list]
@@ -665,7 +686,9 @@ class TestSglangCommonHelpers(unittest.TestCase):
         obj.decode_node_list = ['decode']
         obj.proxy_node = ['router']
         obj.log_dir = '/logs'
-        obj._container_exec = mock.Mock(side_effect=lambda _cmd, hosts, timeout: {hosts[0]: '10:kv_transfer timeout\n'})
+        obj._container_exec = mock.Mock(
+            side_effect=lambda _cmd, hosts, timeout: {hosts[0]: '10:kv_transfer timeout\n__CVS_LOG_SCANNED__\n'}
+        )
 
         with mock.patch.object(sglang_common.log, 'info'):
             obj.log_kv_transfer_logs()
