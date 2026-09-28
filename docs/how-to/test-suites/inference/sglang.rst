@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run SGLang inference benchmarks with CVS on MI30X clusters
-  :keywords: CVS, SGLang, inference, benchmark, distributed, disaggregated, LLM, ROCm
+  :description: Run SGLang LLM inference benchmarks with CVS on AMD Instinct GPU clusters, covering single-node, distributed, and disaggregated prefill/decode topologies.
+  :keywords: CVS, SGLang, inference, benchmark, AMD Instinct, ROCm, AMD, GPU, LLM, disaggregated, distributed, Llama
 
-*************************
-Run SGLang inference tests
-*************************
+**********************************************
+Run SGLang LLM inference benchmarks with CVS
+**********************************************
 
 CVS provides three SGLang suites under ``cvs/tests/inference/sglang/``. Each suite is a
 separate pytest module; pick the one that matches your topology, then point ``--config_file``
@@ -42,23 +42,23 @@ Set up config
 
    .. code:: bash
 
-     cvs copy-config --list | grep inference/sglang
+     cvs config copy --list | grep inference/sglang
 
 2. Copy the configuration (and threshold file, if you edit thresholds locally):
 
    .. code:: bash
 
-     cvs copy-config inference/sglang/mi3xx_sglang_llama_70b_single.json \
+     cvs config copy inference/sglang/mi3xx_sglang_llama_70b_single.json \
        --output ~/cvs_workspace/mi3xx_sglang_llama_70b_single.json
 
-     cvs copy-config inference/sglang/mi325_sglang_llama_70b_threshold.json \
+     cvs config copy inference/sglang/mi325_sglang_llama_70b_threshold.json \
        --output ~/cvs_workspace/mi325_sglang_llama_70b_threshold.json
 
 3. Copy a cluster file (container backend recommended):
 
    .. code:: bash
 
-     cvs copy-config cluster_container.json --output ~/cvs_workspace/cluster.json
+     cvs config copy cluster_container.json --output ~/cvs_workspace/cluster.json
 
 4. Edit the config — set ``container.image``, replace every ``<changeme>`` with
    cluster-specific values, and ensure ``threshold_json`` resolves to your threshold JSON.

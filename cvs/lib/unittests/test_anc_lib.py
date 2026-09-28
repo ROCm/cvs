@@ -452,6 +452,92 @@ class TestRunAncGroupsUsesCachedPath(unittest.TestCase):
         self.assertIn("cd '/home/u/anc/anc' && sudo ./anc.py -g cpu_sanity", captured["cmd"])
 
 
+class TestConsoleLogUnder(unittest.TestCase):
+    '''_console_log_under locates the collected console.log under a node dir.'''
+
+    def test_finds_nested_console_log(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            nested = os.path.join(root, "anc_run", "deep")
+            os.makedirs(nested)
+            target = os.path.join(nested, anc_lib.CONSOLE_LOG)
+            open(target, "w").close()
+            self.assertEqual(anc_lib._console_log_under(root), target)
+
+    def test_none_dest_dir(self):
+        self.assertIsNone(anc_lib._console_log_under(None))
+
+    def test_missing_dir(self):
+        self.assertIsNone(anc_lib._console_log_under("/no/such/dir/xyz"))
+
+    def test_empty_dir_has_no_console_log(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as empty:
+            self.assertIsNone(anc_lib._console_log_under(empty))
+
+
+class TestNodeStatusMapping(unittest.TestCase):
+    '''_node_status maps a NodeResult reason to a deck status.'''
+
+    def _result(self, reason):
+        return anc_lib.NodeResult(reason=reason, dest_dir=None, label="n1", errors_json=None)
+
+    def test_none_reason_is_pass(self):
+        self.assertEqual(anc_lib._node_status(self._result(None)), "pass")
+
+    def test_not_available_reason_is_na(self):
+        reason = "This test is not available on the remote system [10.0.0.1_n1]"
+        self.assertEqual(anc_lib._node_status(self._result(reason)), "na")
+
+    def test_other_reason_is_fail(self):
+        self.assertEqual(anc_lib._node_status(self._result("ANC returned ANC_PROG_FAIL_IN_ITEM [19]")), "fail")
+
+
+class TestCaptureRundeckResultsWithoutFixture(unittest.TestCase):
+    '''_capture_rundeck_results is a no-op when the suite has no anc_res_dict fixture.'''
+
+    def test_missing_fixture_is_noop(self):
+        import pytest
+
+        class FakeRequest:
+            config = type("C", (), {"_suite_name": "anc_installation"})()
+
+            def getfixturevalue(self, name):
+                # Match what pytest raises for an undefined fixture; construct via
+                # __new__ to avoid the real ctor needing a live request stack.
+                raise pytest.FixtureLookupError.__new__(pytest.FixtureLookupError)
+
+        # Must not raise; simply returns without touching any store.
+        anc_lib._capture_rundeck_results(FakeRequest(), {}, {}, ["cpu_sanity"], "test_cpu_sanity", "ts", [], {}, {})
+
+
+class TestAttachErrorsJsonReturnsRenamedHref(unittest.TestCase):
+    '''_attach_node_errors_json returns the RENAMED file's basename per node.
+
+    Regression guard: the Run Deck must link the copy actually placed next to the
+    report (``<label>_<test>_<ts>_errors.json``), not the source ``errors.json``.
+    '''
+
+    def test_href_is_renamed_copy_not_source_basename(self):
+        result = anc_lib.NodeResult(
+            reason=None, dest_dir="/x", label="10.0.0.1_n1", errors_json="/some/src/errors.json"
+        )
+
+        class FakeMgr:
+            def add_html_to_report(self, src, request=None, dest_name=None, track_in_reports=True):  # noqa: ARG002
+                # add_html_to_report returns the RELATIVE path of the copied,
+                # renamed file (mirrors the real manager).
+                return f"anc_test_gpu_html/{dest_name}"
+
+        with patch.object(anc_lib.os.path, "isfile", return_value=True), patch.object(anc_lib, "_stash_report_link"):
+            hrefs = anc_lib._attach_node_errors_json(None, FakeMgr(), "test_hbm_lvl1", "20260101-000000", [result])
+
+        self.assertEqual(hrefs["10.0.0.1_n1"], "10.0.0.1_n1_test_hbm_lvl1_20260101-000000_errors.json")
+        self.assertNotEqual(hrefs["10.0.0.1_n1"], "errors.json")
+
+
 class TestAssertShellSafe(unittest.TestCase):
     '''_assert_shell_safe rejects every shell-metacharacter that can subvert the
     remote command, not just a single quote.'''

@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure the AMD Node Check (ANC) configuration file
-  :keywords: ANC, AMD Node Check, ROCm, cluster, validation, burn-in
+  :description: Reference for the ANC (AMD Node Check) configuration file in CVS, covering install options, CPU and GPU diagnostic groups, timeouts, and log collection.
+  :keywords: ANC, AMD Node Check, CVS, ROCm, burn-in, GPU, CPU, diagnostic, cluster, validation, JSON, AMD
 
-***************************
-ANC configuration file
-***************************
+*************************************************
+ANC (AMD Node Check) configuration file reference
+*************************************************
 
 AMD Node Check (ANC) suites install the ANC tool on every node, then run CPU or GPU diagnostic groups. Shared logic lives in ``cvs/lib/anc_lib.py``; group names come from ``CPU_GROUPS`` and ``GPU_GROUPS``.
 
@@ -16,6 +16,8 @@ in the repository.
 
 Run ANC
 =======
+
+Run the three ANC suites in order: install first, then CPU and GPU diagnostics.
 
 .. code:: bash
 
@@ -64,6 +66,8 @@ Keys prefixed with ``_comment`` are documentation only and ignored at runtime.
 Key parameters
 ==============
 
+The following table describes each key in the ``anc`` configuration block.
+
 .. list-table::
    :header-rows: 1
    :widths: 28 72
@@ -92,13 +96,15 @@ Key parameters
 Install location
 ================
 
+The following list shows where ANC is installed depending on the package format.
+
 - **deb / rpm** — always ``/opt/amdtools/anc``
 - **tar** — ``ANC_INSTALL_PATH`` (default ``/opt/amdtools``), giving ``<prefix>/anc/anc.py``
 
 The download is staged in a private temp directory on each node and removed after install (success or failure).
 
-Further reading
-===============
+Related resources
+=================
 
 - :doc:`/how-to/test-suites/burn-in-diag/anc` — ``cvs run`` examples and group lists
 - :doc:`/reference/cluster/cluster-file` — Cluster topology and SSH

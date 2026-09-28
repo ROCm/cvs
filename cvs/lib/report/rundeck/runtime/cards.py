@@ -35,13 +35,16 @@ class DeckCardRenderer:
         self._gate = gate_renderer or GateMatrixRenderer()
         self._charts = chart_renderer or SweepChartRenderer()
 
-    def render_run_card(self, payload: dict, _card: dict, _data: Any) -> str:
+    def render_run_card(self, payload: dict, _card: dict, data: Any) -> str:
+        # A card may bind its own run-card rows (e.g. datasets.status_matrix.
+        # run_card_display); fall back to the payload-level rows otherwise.
+        rows = data if isinstance(data, list) else payload.get("run_card_display", [])
         hero_html = "".join(
             f"<div class='meta-item'><span class='meta-k'>{html.escape(label)}</span>"
             f"<span class='meta-v'>"
             f"{link_or_text_html(value, label) if is_link else html.escape(str(value))}"
             f"</span></div>"
-            for label, value, is_link in payload.get("run_card_display", [])
+            for label, value, is_link in rows
         )
         notes = payload.get("run_card_notes") or ""
         notes_html = f"<p class='notes'>{html.escape(notes)}</p>" if notes else ""
@@ -157,6 +160,89 @@ class DeckCardRenderer:
         )
 
     @staticmethod
+    def render_status_matrix(payload: dict, _card: dict, data: Any) -> str:
+        dataset = data if isinstance(data, dict) else {}
+        nodes = dataset.get("nodes") or []
+        groups = dataset.get("groups") or []
+        grid = dataset.get("grid") or {}
+        if not nodes or not groups:
+            return "<p class='muted'>No node results recorded.</p>"
+
+        header = (
+            "<tr><th class='sm-node'>Node</th>" + "".join(f"<th>{html.escape(str(g))}</th>" for g in groups) + "</tr>"
+        )
+
+        body_rows = []
+        for node in nodes:
+            cells = [f"<td class='sm-node'>{html.escape(str(node))}</td>"]
+            for group in groups:
+                cell = (grid.get(node) or {}).get(group) or {}
+                cells.append(DeckCardRenderer._status_cell_html(cell))
+            body_rows.append(f"<tr>{''.join(cells)}</tr>")
+
+        return (
+            "<div class='results-wrap'><table class='status-matrix'>"
+            f"{header}{''.join(body_rows)}</table></div>"
+            "<p class='muted sm-hint'>Click a cell's <strong>items</strong> to expand that "
+            "node × group's ANC item breakdown and artifact links.</p>"
+        )
+
+    @staticmethod
+    def _status_item_html(item: dict) -> str:
+        status = html.escape(str(item.get("status", "na")))
+        name = html.escape(str(item.get("name", "")))
+        msg = item.get("message")
+        msg_html = (
+            f"<span class='sm-imsg'>{html.escape(str(msg))}</span> "
+            if str(item.get("status")) == "fail" and msg
+            else ""
+        )
+        return (
+            f"<div class='sm-item'><span class='sm-iname'>{name}</span>"
+            f"<span class='sm-iright'>{msg_html}<span class='chip chip-{status}'>{status}</span></span></div>"
+        )
+
+    @staticmethod
+    def _status_cell_html(cell: dict) -> str:
+        status = str(cell.get("status") or "na")
+        summary = cell.get("items_summary") or ""
+        items = cell.get("items") or []
+
+        if status == "na":
+            return (
+                "<td class='sm-cell sm-na'><span class='chip chip-na'>n/a</span>"
+                "<div class='sm-count'>group not on node</div></td>"
+            )
+
+        # ``items`` holds only the real failures (build_node_record), so the cell
+        # count comes from ANC's own roll-up line (items_summary); len(items)
+        # would read as "0 / <#failures>" and hide the passed items.
+        count_txt = summary or (f"{len(items)} failed" if items else status)
+
+        item_rows = (
+            "".join(DeckCardRenderer._status_item_html(it) for it in items)
+            or "<p class='muted'>No per-item detail captured.</p>"
+        )
+
+        links = []
+        if cell.get("errors_json_href"):
+            links.append(f"<a href='{html.escape(str(cell['errors_json_href']))}'>errors.json</a>")
+        if cell.get("log_tarball_href"):
+            links.append(f"<a href='{html.escape(str(cell['log_tarball_href']))}'>logs.tar.gz</a>")
+        links_html = f"<div class='sm-links'>{''.join(links)}</div>" if links else ""
+
+        summary_line = f"<div class='sm-summary muted'>{html.escape(str(summary))}</div>" if summary else ""
+
+        return (
+            f"<td class='sm-cell sm-{status}'><details class='sm-details'>"
+            f"<summary><span class='chip chip-{status}'>{status}</span>"
+            f"<span class='sm-count'>{html.escape(count_txt)}</span>"
+            f"<span class='sm-caret'></span></summary>"
+            f"<div class='sm-body'>{summary_line}{item_rows}{links_html}</div>"
+            f"</details></td>"
+        )
+
+    @staticmethod
     def render_launch(_payload: dict, _card: dict, data: Any) -> str:
         return render_launch_panel_html(data or {})
 
@@ -211,6 +297,7 @@ class DeckCardRenderer:
             "gate_heatmap": self.render_gate_heatmap,
             "sweep_cell_cards": self.render_cell_cards,
             "table": self.render_table,
+            "status_matrix": self.render_status_matrix,
             "launch_panel": self.render_launch,
             "line_chart": self.render_line_chart,
             "heatmap": self.render_heatmap,
@@ -251,6 +338,8 @@ class DeckCardRenderer:
             wrap_class = "results-wrap" if card_type == "table" else ""
             inner = f"<div class='{wrap_class}'>{html_body}</div>" if wrap_class else html_body
             return section_id, f"{wrapped}{inner}</section>", True
+        if card_type == "status_matrix":
+            return section_id, f"{wrapped}{html_body}</section>", True
         if card_type == "lifecycle_timeline":
             return section_id, f"{wrapped}<div class='tl-row'>{html_body}</div></section>", True
         if card_type == "run_card":

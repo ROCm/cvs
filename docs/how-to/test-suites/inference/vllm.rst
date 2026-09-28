@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run vLLM inference tests with CVS, single-node and multinode
-  :keywords: CVS, vLLM, inference, benchmark, multinode, ray, LLM, ROCm
+  :description: Run vLLM LLM inference tests with CVS on AMD Instinct GPUs, covering single-node and multinode distributed serving with ROCm and InfiniBand.
+  :keywords: CVS, vLLM, inference, benchmark, AMD Instinct, ROCm, AMD, GPU, LLM, multinode, InfiniBand, RDMA
 
-**************************
-Run vLLM Inference Tests
-**************************
+***************************************
+Run vLLM LLM inference tests with CVS
+***************************************
 
 The vLLM suites measure LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file, with one-host fallback when only a single host is present. Packaged distributed recipes and thresholds are calibrated for two hosts; retune them before treating other sizes as pass/fail.
 
@@ -27,7 +27,7 @@ On every cluster node:
 
 On the head node where you launch ``cvs run``:
 
-- CVS installed (see :doc:`/getting-started/install`).
+- CVS installed (see :doc:`/install/install`).
 - SSH key-based access to every cluster node.
 
 For a multinode run, additionally have on hand:
@@ -240,4 +240,4 @@ See also
 - :doc:`/reference/configuration-files/inference/vllm` — full configuration schema, metrics, and thresholds
 - :doc:`/reference/cluster/cluster-file` — cluster file schema
 - :doc:`/how-to/run-with-containers` — container backend in depth
-- :doc:`/how-to/run-tests/index` — running other CVS suites
+- :doc:`/how-to/test-suites/index` — running other CVS suites

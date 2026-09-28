@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run Flux.1, Flux.2, and WAN 2.2 xDiT inference tests
-  :keywords: CVS, flux1_t2i, flux2, wan22, xdit
+  :description: Run xDiT diffusion inference tests for FLUX.1, FLUX.2, and WAN 2.2 workloads on AMD Instinct GPU clusters with CVS and ROCm.
+  :keywords: CVS, xDiT, inference, AMD Instinct, ROCm, AMD, GPU, FLUX, WAN, diffusion, distributed, PyTorch
 
-*************************
-Run xDiT inference tests
-*************************
+**************************************************
+Run xDiT diffusion inference tests with CVS
+**************************************************
 
 CVS provides five xDiT suites under ``cvs/tests/inference/xdit/``. Each suite is a
 separate pytest module; pick the one that matches your topology and launcher, then point
@@ -23,6 +23,8 @@ Config reference: :doc:`/reference/configuration-files/inference/xdit`.
 
 Test suites
 ===========
+
+The following suites are available.
 
 .. list-table::
    :widths: 3 3 5
@@ -51,6 +53,8 @@ Test suites
 
 Set up config
 =============
+
+Follow these steps to set up the xDiT configuration.
 
 1. List available xDiT templates:
 

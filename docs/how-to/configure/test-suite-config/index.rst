@@ -1,30 +1,30 @@
 .. meta::
-  :description: Configure CVS test suite configuration files
-  :keywords: CVS, configure, config_file, cvs config, test suite
+  :description: Configure CVS test suite config files for AMD Instinct GPU clusters: browse templates, set placeholders, and pass configs to cvs run.
+  :keywords: CVS, ROCm, configure, config_file, test suite, AMD Instinct, GPU, AMD, JSON, CLI, Linux, templates
 
-********************
-Set up test configs
-********************
+*************************************************************************
+Configure Cluster Validation Suite (CVS) test suite configuration files
+*************************************************************************
 
 The test suite config (``--config_file``) holds suite-specific settings: what to run, paths, thresholds, container images, and similar options. Pass it to ``cvs run``.
 
 Configure each test suite config file with settings specific to your cluster. Shipped templates keep required input to a minimum: fields you must set are marked with the ``<changeme>`` placeholder.
 
-Replace every ``<changeme>`` value before running. Field-level schemas: :doc:`/reference/configuration-files/index`.
+Replace every ``<changeme>`` value before running — CVS exits with an error if any placeholder remains unresolved. For the complete field-by-field reference for each test suite's config schema, see :doc:`/reference/configuration-files/index`.
 
 Browse and copy templates
 =========================
 
 CVS ships templates under ``cvs/input/config_file/``. Use ``cvs config`` to discover what is available and copy files into your workspace before editing them.
 
-**list-dirs** — browse directories grouped by category (start here when you are not sure what exists):
+``list-dirs`` — browse directories grouped by category (start here when you are not sure what exists):
 
 .. code:: bash
 
   cvs config list-dirs
   cvs config list-dirs training
 
-**list** — list template files grouped by parent directory:
+``list`` — list template files grouped by parent directory:
 
 .. code:: bash
 
@@ -32,7 +32,7 @@ CVS ships templates under ``cvs/input/config_file/``. Use ``cvs config`` to disc
   cvs config list platform
   cvs config list rccl
 
-**copy** — copy one file or every bundled template (``--output`` is required; use ``--force`` to overwrite existing files):
+``copy`` — copy one file or every bundled template (``--output`` is required; use ``--force`` to overwrite existing files):
 
 .. code:: bash
 
@@ -48,12 +48,8 @@ For cluster file templates (``--cluster_file``), use the same ``cvs config copy`
 
 For a suite-by-suite index of example config paths, see :doc:`/how-to/configure/test-suite-config/pick-config-file`.
 
-Per-suite field guides
-======================
+Next steps
+==========
 
-The :doc:`/how-to/run-tests/index` hub links to **Set up config** steps for each suite (copy command and fields to edit).
-
-Next step
-=========
-
-Run tests with your cluster file and test suite config: :doc:`/how-to/run-tests/index`.
+- :doc:`/how-to/test-suites/index` — run a test suite. Each suite's page includes a **Set up config** section with the copy command and the fields you must edit.
+- :doc:`/reference/configuration-files/index` — full field-by-field schema for every test suite config file.

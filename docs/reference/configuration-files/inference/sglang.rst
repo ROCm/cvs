@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure SGLang inference benchmarks on AMD MI30X clusters
-  :keywords: inference, ROCm, cvs, SGLang, LLM, MI30X, distributed, disaggregated, prefill, decode
+  :description: Reference for CVS SGLang inference benchmark configuration, covering single-node, distributed, and disaggregated prefill-decode topology and threshold files.
+  :keywords: CVS, SGLang, inference, ROCm, LLM, GPU, AMD, distributed, disaggregated, prefill, decode, JSON, benchmark
 
-**********************************
-SGLang inference configuration
-**********************************
+*************************************************************************
+SGLang inference benchmark configuration for Cluster Validation Suite (CVS)
+*************************************************************************
 
 CVS ships three SGLang inference suites for AMD MI30X clusters. Each suite reads a JSON
 configuration file from ``cvs/input/config_file/inference/sglang/`` and a matching
@@ -27,7 +27,7 @@ threshold file referenced by top-level ``threshold_json``.
      - ``cvs/tests/inference/sglang/sglang_disagg_distributed.py``
      - Disaggregated prefill/decode with a proxy router; separate prefill and decode node groups.
 
-How to run: :doc:`/how-to/test-suites/inference/sglang`.
+See :doc:`/how-to/test-suites/inference/sglang`  for more information on running these tests.
 
 Run any suite with:
 
@@ -113,6 +113,8 @@ File structure
 ==============
 
 Shipped templates use these top-level keys:
+
+The following table describes each top-level key in a SGLang configuration file.
 
 .. list-table::
    :widths: 2 6

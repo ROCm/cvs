@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run CVS preflight and node smoke checks
-  :keywords: CVS, preflight, node smoke
+  :description: Run CVS preflight and node smoke check tests to validate cluster health, RDMA inventory, and GPU node readiness before performance or training workloads.
+  :keywords: CVS, preflight, node smoke, AMD Instinct, ROCm, AMD, GPU, RDMA, InfiniBand, TransferBench, health
 
-****************
-Preflight tests
-****************
+********************************************
+Run CVS preflight and node smoke check tests
+********************************************
 
 Preflight checks validate cluster health and configuration consistency before performance, RCCL, training, or inference workloads. Checks include GPU node health, optional MI4XX fabric admission, IFoE and TransferBench gates, RDMA inventory, and optional Node Smoke tiers.
 
@@ -12,6 +12,8 @@ Preflight checks validate cluster health and configuration consistency before pe
 
 Set up config
 =============
+
+Follow these steps to set up the preflight configuration.
 
 1. Copy the preflight configuration file:
 
@@ -21,14 +23,14 @@ Set up config
 
 2. Edit paths, thresholds, and optional Node Smoke settings. Replace every ``<changeme>`` placeholder.
 
-Full parameter list: :doc:`/reference/configuration-files/burn-in-diag/preflight`.
+For the complete field reference including Node Smoke tier options and RDMA inventory settings, see :doc:`/reference/configuration-files/burn-in-diag/preflight`.
 
 .. _preflight-run-tests:
 
 Run tests
 =========
 
-List available checks:
+Run the following command to list available checks:
 
 .. code:: bash
 
