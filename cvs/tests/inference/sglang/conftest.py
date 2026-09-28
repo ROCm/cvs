@@ -263,6 +263,10 @@ def variant_config(pytestconfig, cluster_dict) -> SglangSingleVariantConfig:
     return load_variant(config_file, cluster_dict)
 
 
+# After a failed ready-poll or a completions hang the benchmark never starts.
+# Keep the server-log scans and teardown. Leave dmesg, the results table, and
+# GPU topology out: those belong to a completed benchmark, and the dmesg test
+# has no window until inference_end_time is set.
 _SGLANG_RUN_AFTER_SKIP_FAILURES = {
     "test_scan_inference_logs_for_failure",
     "test_scan_inference_logs_after_workload",
@@ -272,7 +276,7 @@ _SGLANG_RUN_AFTER_SKIP_FAILURES = {
 
 @pytest.fixture(autouse=True)
 def _skip_after_sglang_fatal_stage_failure(request, lifecycle):
-    """Skip later stages after a failed ready-poll or a /v1/completions 5xx/hang."""
+    """Skip benchmark stages after a failed ready-poll or a /v1/completions 5xx/hang."""
     name = request.node.originalname or request.node.name.split("[")[0]
     if name in _SGLANG_RUN_AFTER_SKIP_FAILURES:
         return
