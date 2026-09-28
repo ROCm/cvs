@@ -53,7 +53,7 @@ class TestGenerateRundeck(unittest.TestCase):
                 store = {"cvs_results_dict": _graph(), "variant_config": variant_from_config({}, {}, suite)}
                 with patch("cvs.lib.report.rundeck.generate_rundeck.get_session_results", return_value=store):
                     artifacts = generate_rundeck(session, manager)
-                self.assertIsNone(artifacts["summary"])
+                self.assertNotIn("summary", artifacts)
                 self.assertNotIn("viewer", artifacts)
                 self.assertEqual(artifacts["html"], manager.log_dir / "rccl_run_deck.html")
                 payload = json.loads(artifacts["json"].read_text(encoding="utf-8"))

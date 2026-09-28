@@ -81,7 +81,7 @@ class ProfileConfigResolver:
     def from_profile_dict(cls, profile: dict[str, Any]) -> InferenceReportConfig:
         """Materialize ``InferenceReportConfig`` from a JSON deck profile."""
         builder = profile.get("dataset_builder", "sweep")
-        if builder in ("series", "matrix"):
+        if builder in ("series", "matrix", "status_matrix"):
             hooks = profile.get("hooks") or {}
             extra = {}
             if hooks.get("run_card_display"):
