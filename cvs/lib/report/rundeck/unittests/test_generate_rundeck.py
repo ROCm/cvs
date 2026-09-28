@@ -60,8 +60,8 @@ class TestGenerateRundeck(unittest.TestCase):
                 self.assertEqual(len(payload["results_table"]["rows"]), 3)
                 manager.create_zip_bundle(session)
                 document = manager.htmlpath.read_text(encoding="utf-8")
-                for suffix in ("html", "json"):
-                    self.assertIn(f'{suite}_html/rccl_run_deck.{suffix}', document)
+                self.assertIn(f'{suite}_html/rccl_run_deck.html', document)
+                self.assertNotIn(f'{suite}_html/rccl_run_deck.json', document)
                 with zipfile.ZipFile(next(self.root.glob(f"{suite}_*.zip"))) as bundle:
                     self.assertIn(f"{suite}_html/rccl_run_deck.html", bundle.namelist())
                     self.assertIn(f"{suite}_html/rccl_run_deck.json", bundle.namelist())
@@ -71,7 +71,7 @@ class TestGenerateRundeck(unittest.TestCase):
             with self.subTest(suite=suite):
                 session, manager = self.make_session(suite)
                 variant = generic_variant()
-                store = {"inf_res_dict": two_cell_inf_res(), "variant_config": variant}
+                store = {"cvs_results_dict": two_cell_inf_res(), "variant_config": variant}
                 with patch("cvs.lib.report.rundeck.generate_rundeck.get_session_results", return_value=store):
                     artifacts = generate_rundeck(session, manager)
                 self.assertTrue(artifacts["summary"].is_file())
@@ -80,7 +80,10 @@ class TestGenerateRundeck(unittest.TestCase):
                 self.assertIn(
                     f"<title>{title} &mdash; org/example-model</title>", artifacts["html"].read_text(encoding="utf-8")
                 )
-                self.assertIn(f"{suite}_run_deck_summary.html", manager.generate_reports_section())
+                reports = manager.generate_reports_section()
+                self.assertIn(f"{suite}_run_deck.html", reports)
+                for suffix in (".json", "_summary.html", "_viewer.html"):
+                    self.assertNotIn(f"{suite}_run_deck{suffix}", reports)
 
     def test_no_html_or_no_results_skips_publication(self):
         session, manager = self.make_session("rccl_perf")

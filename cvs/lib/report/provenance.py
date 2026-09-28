@@ -10,7 +10,7 @@ RunCardRow = Tuple[str, str, bool]
 
 
 class GitMetadata:
-    """Read git commit, branch, and dirty state for report provenance."""
+    """Read git commit and branch for report provenance."""
 
     @staticmethod
     def _run(args: list[str]) -> str:
@@ -96,14 +96,11 @@ class ProvenanceCollector:
         }
         commit = GitMetadata.commit_short()
         branch = GitMetadata.branch_name()
-        dirty = GitMetadata.worktree_dirty()
         if commit:
             provenance["git_commit"] = commit
         if branch:
             provenance["git_branch"] = branch
-        if dirty:
-            provenance["git_dirty"] = "true"
-        git_ref = GitMetadata.format_ref(commit=commit, branch=branch, dirty=dirty)
+        git_ref = GitMetadata.format_ref(commit=commit, branch=branch)
         if git_ref:
             provenance["git_ref"] = git_ref
         if self.pytest_html_path or self.pytest_html_href:

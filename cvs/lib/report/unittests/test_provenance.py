@@ -2,6 +2,7 @@
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from cvs.lib.image_display import format_image_display
 from cvs.lib.report.inference import build_inference_report_payload
@@ -43,6 +44,19 @@ class TestProvenance(unittest.TestCase):
         self.assertEqual(prov["config_file"], "/variant.json")
         self.assertEqual(prov["pytest_html_path"], "/out/report.html")
         self.assertEqual(prov["log_file_path"], "/out/run.log")
+
+    def test_collect_omits_worktree_diff(self):
+        config = SimpleNamespace(
+            option=SimpleNamespace(
+                cluster_file="/cluster.json",
+                config_file="/variant.json",
+            )
+        )
+        with patch("cvs.lib.report.provenance.GitMetadata.worktree_dirty", return_value=True) as dirty:
+            prov = build_inference_report_provenance(config, cvs_version="9.9.9")
+        dirty.assert_not_called()
+        self.assertNotIn("git_dirty", prov)
+        self.assertNotIn("(dirty)", prov.get("git_ref", ""))
 
     def test_provenance_run_card_rows_includes_standard_fields(self):
         rows = provenance_run_card_rows(

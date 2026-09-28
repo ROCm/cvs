@@ -159,16 +159,14 @@ class RundeckPublisher:
         return viewer_path
 
     def _register_artifacts(self, artifacts: dict[str, Any], config: InferenceReportConfig) -> None:
+        """Link only the Run Deck HTML from results.html.
+
+        JSON, CI summary, and the interactive viewer are written beside that HTML
+        and ride along in the zip, but they are not extra links in the pytest report.
+        """
         if not self.report_manager or not self.report_manager.is_enabled:
             return
         self.report_manager.add_html_to_report(artifacts["html"], link_name=config.link_name)
-        self.report_manager.add_html_to_report(artifacts["json"], link_name=f"{config.link_name} JSON")
-        summary = artifacts.get("summary")
-        if summary is not None:
-            self.report_manager.add_html_to_report(summary, link_name=f"{config.link_name} summary")
-        viewer = artifacts.get("viewer")
-        if viewer is not None:
-            self.report_manager.add_html_to_report(viewer, link_name=f"{config.link_name} viewer")
 
 
 def generate_rundeck(session, report_manager) -> Optional[dict[str, Any]]:

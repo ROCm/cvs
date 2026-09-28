@@ -971,7 +971,7 @@ function populateFilters() {
     allOpt.value = '';
     allOpt.textContent = 'All';
     sel.appendChild(allOpt);
-    const uniq = [...new Set(allCells.map(c => String(c[field] ?? '')))].filter(Boolean).sort();
+    const uniq = [...new Set(allCells.map(c => String(c[field] ?? '')))].filter(Boolean).sort(compareSequential);
     uniq.forEach(v => {
       const o = document.createElement('option');
       o.value = v;
@@ -2039,7 +2039,7 @@ function buildHeatmap(rows) {
   let html = '<table class="data heat"><thead><tr><th>' + rowHeader + '</th>';
   allConcs.forEach(c => { html += '<th>' + escapeHtmlText(concurrencyTickLabel(c)) + '</th>'; });
   html += '</tr></thead><tbody>';
-  [...groups.entries()].sort().forEach(([key, cells]) => {
+  [...groups.entries()].sort((a, b) => compareSequential(a[0], b[0])).forEach(([key, cells]) => {
     const parts = key.split('|');
     html += '<tr><td>' + rowFields.map((f, i) => fieldLabel(f) + '=' + (parts[i] || '—')).join(' · ') + '</td>';
     allConcs.forEach(conc => {
@@ -2262,6 +2262,35 @@ if (baselineInput) {
   });
 }
 
+function compareSequential(a, b) {
+  const as = a == null ? '' : String(a);
+  const bs = b == null ? '' : String(b);
+  const an = Number(as);
+  const bn = Number(bs);
+  const aNum = as.trim() !== '' && Number.isFinite(an);
+  const bNum = bs.trim() !== '' && Number.isFinite(bn);
+  if (aNum && bNum) return an - bn;
+  if (aNum) return -1;
+  if (bNum) return 1;
+  return as.localeCompare(bs, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function compareSweepCells(a, b) {
+  const fields = ['isl', 'osl', 'policy', 'concurrency', 'model', 'gpu', 'host', 'cell_id'];
+  for (let i = 0; i < fields.length; i++) {
+    const cmp = compareSequential(a[fields[i]], b[fields[i]]);
+    if (cmp) return cmp;
+  }
+  return 0;
+}
+
+function cellsForViewer(data) {
+  const sweep = data && data.datasets && data.datasets.sweep;
+  const full = sweep && Array.isArray(sweep.all_cells) && sweep.all_cells.length ? sweep.all_cells : null;
+  const cells = full || (data && data.cells) || [];
+  return cells.slice().sort(compareSweepCells);
+}
+
 function loadReportData() {
   const embedded = $('embedded-report-json');
   if (embedded && embedded.textContent.trim()) {
@@ -2275,7 +2304,7 @@ function loadReportData() {
 
 loadReportData().then(data => {
   reportData = data;
-  allCells = data.cells || [];
+  allCells = cellsForViewer(data);
   if (data.panels && data.panels.prev_run) {
     applyPrevRunPanel(data.panels.prev_run);
   }
