@@ -122,9 +122,7 @@ class LossChartRenderer:
         lines = []
         legend = []
         for entry in series:
-            coords = " ".join(
-                f"{self._x(x, x_lo, x_hi):.1f},{self._y(y, y_lo, y_hi):.1f}" for x, y in entry["points"]
-            )
+            coords = " ".join(f"{self._x(x, x_lo, x_hi):.1f},{self._y(y, y_lo, y_hi):.1f}" for x, y in entry["points"])
             lines.append(f"<polyline class='loss-line' stroke='{entry['color']}' points='{coords}'/>")
             legend.append(
                 f"<span class='loss-key'><span class='loss-swatch' style='background:{entry['color']}'></span>"

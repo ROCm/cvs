@@ -92,10 +92,7 @@ class CellCardRenderer:
             subtitle = f"NNODES={html.escape(str(self._cell.get('concurrency')))}"
         else:
             title = html.escape(str(self._cell["policy"]))
-            subtitle = (
-                f"ISL={self._cell['isl']} OSL={self._cell['osl']} "
-                f"&middot; C={self._cell['concurrency']}"
-            )
+            subtitle = f"ISL={self._cell['isl']} OSL={self._cell['osl']} &middot; C={self._cell['concurrency']}"
         return f"<header><div class='cell-title'>{title}</div><div class='cell-sub'>{subtitle}</div></header>"
 
     def _render_timeline(self) -> str:
@@ -136,8 +133,7 @@ class CellCardRenderer:
         else:
             unit = "tok/s"
         return (
-            f"<div class='headline'>{headline_val}<span class='headline-unit'>{unit}</span></div>"
-            f"{headline_margin_html}"
+            f"<div class='headline'>{headline_val}<span class='headline-unit'>{unit}</span></div>{headline_margin_html}"
         )
 
     def _render_tiers(self) -> str:

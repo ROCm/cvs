@@ -166,9 +166,7 @@ def sample_metric_curve(rows, value_key, sample_every=10, milestone_steps=None, 
     keyed = [
         s
         for s in (rows or [])
-        if s.get('step') is not None
-        and s['step'] > cutoff
-        and isinstance(s.get(value_key), (int, float))
+        if s.get('step') is not None and s['step'] > cutoff and isinstance(s.get(value_key), (int, float))
     ]
     if not keyed:
         return []

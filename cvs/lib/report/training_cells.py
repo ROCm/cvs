@@ -70,9 +70,7 @@ def without_scaling_efficiency(config):
     return replace(
         config,
         results_columns=tuple((label, key) for label, key in config.results_columns if not _is_scaling_key(key)),
-        cell_highlights=tuple(
-            pair for pair in (config.cell_highlights or ()) if pair and pair[0] != _SCALING_SUFFIX
-        ),
+        cell_highlights=tuple(pair for pair in (config.cell_highlights or ()) if pair and pair[0] != _SCALING_SUFFIX),
         chart_series=tuple(ch for ch in (config.chart_series or ()) if ch.metric_suffix != _SCALING_SUFFIX),
     )
 
@@ -240,17 +238,12 @@ def build_training_cells(config, variant_config, train_res_dict, lifecycle_repor
                         if enforce and spec
                         else "record"
                     ),
-                    "bar_pct": (
-                        bar_pct(float(actual), spec)
-                        if spec is not None and actual is not None
-                        else None
-                    ),
+                    "bar_pct": (bar_pct(float(actual), spec) if spec is not None and actual is not None else None),
                     "margin": margin_text(actual, spec) if spec else None,
                 }
             )
         tiers = {
-            tier: builder.tier_status(actuals, thresholds_cell, tier, enforce)
-            for tier in config.metric_tier_order
+            tier: builder.tier_status(actuals, thresholds_cell, tier, enforce) for tier in config.metric_tier_order
         }
         subtitle = f"MBS={mbs} GBS={gbs} · {precision}" if precision else f"MBS={mbs} GBS={gbs}"
         cell = {

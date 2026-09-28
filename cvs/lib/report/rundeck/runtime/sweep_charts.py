@@ -102,9 +102,7 @@ class SweepChartRenderer:
                 f"<div class='chart-bar chart-bar-{accent} chart-has-tip' style='height:{h:.1f}%' "
                 f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div></div>"
             )
-            lines = "".join(
-                f"<span class='chart-xlbl-line'>{html.escape(part)}</span>" for part in str(tick).split()
-            )
+            lines = "".join(f"<span class='chart-xlbl-line'>{html.escape(part)}</span>" for part in str(tick).split())
             x_ticks.append(f"<span class='chart-xlbl'>{lines}</span>")
         return (
             f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"

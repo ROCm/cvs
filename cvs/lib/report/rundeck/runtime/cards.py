@@ -71,8 +71,7 @@ class DeckCardRenderer:
     @staticmethod
     def _stage_html(label, sec, pct, tone, per_cell):
         head = (
-            f"<span class='tl-lbl'>{html.escape(label.replace('_', ' '))}</span>"
-            f"<span class='tl-val'>{sec:.1f}s</span>"
+            f"<span class='tl-lbl'>{html.escape(label.replace('_', ' '))}</span><span class='tl-val'>{sec:.1f}s</span>"
         )
         if not per_cell:
             return f"<div class='tl-seg tl-{tone}' style='flex-grow:{pct:.2f}'>{head}</div>"
