@@ -330,8 +330,10 @@ class WanOutputParser:
         avg_total_time_s = sum(step_times) / len(step_times)
         log.info(f"Average total_time: {avg_total_time_s:.2f}s (from {len(step_times)} steps)")
 
-        # Find artifact
-        artifact_path = self.find_artifact()
+        artifact_path = self.find_artifact() if self.expected_artifact else None
+        if self.expected_artifact and artifact_path is None:
+            all_errors.append(f"Artifact '{self.expected_artifact}' not found under {self.output_dir}")
+            return None, all_errors
 
         result = WanBenchmarkResult(
             avg_total_time_s=avg_total_time_s,

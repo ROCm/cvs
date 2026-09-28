@@ -108,12 +108,36 @@ class TestWanOutputParserParse(unittest.TestCase):
             nested = Path(tmpdir) / "outputs" / "outputs" / "outputs"
             nested.mkdir(parents=True)
             _write_rank0_json(nested, "rank0_step0.json", 50.0)
+            (nested / "video.mp4").write_bytes(b"fake-video")
 
             parser = WanOutputParser(tmpdir)
             result, errors = parser.parse()
 
             self.assertEqual(errors, [])
             self.assertIsNotNone(result)
+            self.assertAlmostEqual(result.avg_total_time_s, 50.0)
+            self.assertTrue(result.artifact_path.endswith("video.mp4"))
+
+    def test_parse_missing_video_fails_when_artifact_required(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_rank0_json(Path(tmpdir), "rank0_step0.json", 50.0)
+
+            parser = WanOutputParser(tmpdir)
+            result, errors = parser.parse()
+
+            self.assertIsNone(result)
+            self.assertTrue(any("Artifact 'video.mp4' not found" in err for err in errors))
+
+    def test_parse_allows_missing_video_when_artifact_not_required(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_rank0_json(Path(tmpdir), "rank0_step0.json", 50.0)
+
+            parser = WanOutputParser(tmpdir, expected_artifact="")
+            result, errors = parser.parse()
+
+            self.assertEqual(errors, [])
+            self.assertIsNotNone(result)
+            self.assertIsNone(result.artifact_path)
             self.assertAlmostEqual(result.avg_total_time_s, 50.0)
 
     def test_parse_missing_json_files(self):
