@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run Megatron Llama and DeepSeek training benchmarks
-  :keywords: CVS, megatron
+  :description: Run Megatron Llama and DeepSeek training benchmarks with CVS to validate pre-training throughput and correctness on AMD Instinct GPU clusters with ROCm.
+  :keywords: CVS, Megatron, training, benchmark, AMD Instinct, ROCm, AMD, GPU, Llama, DeepSeek, distributed, RDMA
 
-***********************
-Megatron training tests
-***********************
+*****************************************************
+Run Megatron Llama and DeepSeek training benchmarks
+*****************************************************
 
 Cluster validation that runs Megatron-LM or Primus pre-training on AMD Instinct GPUs (single-node or multi-node) and gates the run on performance and correctness metrics with a PASS/FAIL HTML report.
 
@@ -22,6 +22,8 @@ The mode is which suite you invoke (``megatron_single`` vs ``megatron_distribute
 Prerequisites
 =============
 
+The following prerequisites are required.
+
 - Passwordless SSH from the control host to each cluster node (key in the cluster file) and Docker available on the nodes.
 - A container image for ROCm (``container.image`` in the config). A Megatron-LM image must provide Megatron-LM at ``/workspace/Megatron-LM``. A Primus image (name contains ``primus``) uses in-image YAML under ``examples/megatron/configs/{gpu_arch}/`` instead.
 - A Hugging Face token file at ``paths.hf_token_file`` (used to fetch the tokenizer). Tokenizer download requires network access on the nodes. For gated models (LLaMA, DeepSeek), model access must be granted on huggingface.co.
@@ -31,6 +33,8 @@ Prerequisites
 
 Set up config
 =============
+
+Follow these steps to set up the training configuration.
 
 1. List available training configuration files:
 

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "profile_id": "rccl_rundeck",
+  "suite_id": "rccl",
+  "report_basename": "rccl_run_deck",
+  "title": "RCCL Run Deck",
+  "subtitle": "RCCL · bus/algorithm bandwidth and latency vs message size",
+  "footer": "CVS rccl · render-only · does not affect gates",
+  "link_name": "RCCL Run Deck",
+  "dataset_builder": "series",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "cvs_results_dict",
+    "variant": "variant_config"
+  },
+  "hooks": {
+    "run_card_display": "cvs.lib.report.profiles.hooks.rccl_run_card:rccl_run_card_display"
+  },
+  "series": {
+    "x_field": "size",
+    "y_fields": ["bus_bw", "alg_bw", "time"]
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {
+      "type": "line_chart",
+      "id": "bus-bw",
+      "title": "Bus bandwidth vs message size",
+      "bind": "datasets.series",
+      "series": {"y_field": "bus_bw", "unit": "GB/s"}
+    },
+    {
+      "type": "line_chart",
+      "id": "alg-bw",
+      "title": "Algorithm bandwidth vs message size",
+      "bind": "datasets.series",
+      "series": {"y_field": "alg_bw", "unit": "GB/s"}
+    },
+    {
+      "type": "line_chart",
+      "id": "time",
+      "title": "Time vs message size",
+      "bind": "datasets.series",
+      "series": {"y_field": "time", "unit": "us"}
+    },
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}

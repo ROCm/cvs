@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "extends": "anc_base",
+  "profile_id": "anc_test_cpu_rundeck",
+  "suite_id": "anc_test_cpu",
+  "report_basename": "anc_test_cpu_run_deck",
+  "title": "ANC Run Deck · CPU",
+  "subtitle": "AMD Node Check · test_cpu group results across the cluster",
+  "link_name": "ANC CPU Run Deck"
+}
