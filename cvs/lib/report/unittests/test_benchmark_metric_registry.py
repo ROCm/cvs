@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import cvs.lib.report.benchmark_metric_registry as registry
+from cvs.lib.report.render.perf_metric_table import is_benchmark_metrics_extra
 
 
 class _FakeStash(dict):
@@ -123,6 +124,50 @@ class TestBenchmarkMetricRegistry(unittest.TestCase):
             self.assertIn('Mean TTFT (ms)', updated)
             self.assertIn('cvs-subtests-count', updated)
 
+    def test_patch_replaces_partial_metric_table(self):
+        nodeid = 'cvs/tests/inference/sglang/sglang_disagg_distributed.py::test_run_performance_benchmark_test[c128]'
+        columns = (('Goodput', 'goodput'), ('MFU (estimated)', 'mfu'))
+        registry._ROWS_BY_NODEID[nodeid] = [
+            {'node': 'n1', 'metric': 'goodput', 'status': 'pass'},
+            {'node': 'n1', 'metric': 'mfu', 'status': 'fail'},
+        ]
+        registry._COLUMNS_BY_NODEID[nodeid] = columns
+
+        # Rendered while subtests were still running, so it stops before ``mfu``.
+        partial = registry.benchmark_metrics_extra(
+            [{'node': 'n1', 'metric': 'goodput', 'status': 'pass'}],
+            columns=columns,
+        )
+        payload = {
+            'tests': {
+                nodeid: [
+                    {
+                        'resultsTableRow': [
+                            '<td class="col-result">Failed</td>',
+                            f'<td class="col-testId">{html.escape(nodeid)}</td>',
+                        ],
+                        'extras': [partial],
+                        'log': 'raw log',
+                    }
+                ]
+            }
+        }
+        blob = html.escape(json.dumps(payload), quote=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            html_path = Path(tmp) / 'report.html'
+            html_path.write_text(
+                '<html><body><div class="filters"></div><div class="collapse"></div>'
+                f'<div data-jsonblob="{blob}"></div></body></html>',
+                encoding='utf-8',
+            )
+            self.assertTrue(registry.patch_benchmark_metrics_into_html(html_path))
+
+            match = re.search(r'data-jsonblob="([^"]*)"', html_path.read_text(encoding='utf-8'))
+            entry = json.loads(html.unescape(match.group(1)))['tests'][nodeid][0]
+            tables = [extra for extra in entry['extras'] if is_benchmark_metrics_extra(extra)]
+            self.assertEqual(len(tables), 1)
+            self.assertIn('MFU (estimated)', tables[0]['content'])
+
     def test_patch_accepts_vllm_verification_parent(self):
         nodeid = 'cvs/tests/inference/vllm/vllm_single.py::test_verify_cell_metrics[1k1k-conc16]'
         registry._ROWS_BY_NODEID[nodeid] = [
@@ -186,7 +231,7 @@ class TestBenchmarkMetricRegistry(unittest.TestCase):
                 1,
             )
             self.assertEqual(
-                sum(registry.is_benchmark_metrics_extra(extra) for extra in entry['extras']),
+                sum(is_benchmark_metrics_extra(extra) for extra in entry['extras']),
                 1,
             )
 

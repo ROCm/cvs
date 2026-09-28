@@ -29,6 +29,11 @@ PROFILE_STEM_ALIASES: dict[str, str] = {
     "rccl_perf": "rccl",
     "rccl_regression": "rccl",
     "rccl_pairwise": "rccl",
+    "xdit_flux_dev_single": "xdit",
+    "xdit_flux_dev_distributed": "xdit",
+    "xdit_wan22_14b_single": "xdit",
+    "xdit_wan22_14b_diffusers_single": "xdit",
+    "xdit_wan22_14b_diffusers_distributed": "xdit",
 }
 
 DEFAULT_SOURCES: dict[str, str] = {

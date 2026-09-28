@@ -25,9 +25,9 @@ factory consumes (the vllm conftest does exactly this before building the
 orchestrator). The loaded variant also carries a `thresholds` field with the
 parsed threshold contents.
 
-`model.remote=1` raises NotImplementedError -- schema is present, but the
-download/resolve logic lives in cvs-dtni-v1's `resource_resolver.py` and is
-out of scope for this PoC.
+`model.remote=1` raises NotImplementedError for suites other than xDiT.
+xDiT uses it as an opt-in for runtime Hugging Face snapshot download.
+
 '''
 
 from __future__ import annotations
@@ -119,7 +119,7 @@ class BaseVariantConfig(_Forbid):
     # which is meaningless for a config we are going to reject anyway.
     @model_validator(mode="after")
     def _check_remote_not_implemented(self):
-        if self.model.remote == 1:
+        if self.model.remote == 1 and getattr(self, "framework", None) != "xdit":
             raise NotImplementedError(
                 "model.remote=1 (remote model download) is not implemented in the PoC. "
                 "Port from cvs-dtni-v1/resource_resolver.py before enabling."
