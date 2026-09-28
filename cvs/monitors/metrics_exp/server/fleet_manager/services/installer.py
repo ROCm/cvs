@@ -274,9 +274,7 @@ class NodeInstaller:
         # exporter cannot bind the port, so prefer the incumbent: Prometheus only needs
         # node metrics answering on the expected port.
         if await self._node_metrics_served(port):
-            await self.ssh.execute(
-                "sudo systemctl disable --now node_exporter 2>/dev/null || true"
-            )
+            await self.ssh.execute("sudo systemctl disable --now node_exporter 2>/dev/null || true")
             self._log("node_exporter", f"Port {port} already serves node metrics; using the existing exporter")
             return True
 
@@ -1540,4 +1538,3 @@ WantedBy=multi-user.target
         }
 
         return health
-

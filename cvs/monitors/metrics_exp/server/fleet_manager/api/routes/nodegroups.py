@@ -1044,4 +1044,3 @@ async def run_gpu_info_refresh(job_id: str, node_group_id: int, node_ids: List[i
         logger.exception(f"GPU info refresh job {job_id} failed: {e}")
     finally:
         db.close()
-
