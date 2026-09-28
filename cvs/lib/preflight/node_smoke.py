@@ -306,7 +306,7 @@ class NodeSmokeCheck(PreflightCheck):
 
         tier1 = NODE_SMOKE_TIER1_SECTION
         legacy = LEGACY_NODE_SMOKE_SECTION
-        self.mode = _normalize_mode(get_preflight_nested(cfg, tier1, legacy, "connectivity_mode", "skip"))
+        self.mode = _normalize_mode(get_preflight_nested(cfg, tier1, legacy, "connectivity_mode", "run"))
         self.primus_dir = get_preflight_nested(cfg, tier1, legacy, "primus_dir", "")
         self.venv_activate = get_preflight_nested(cfg, tier1, legacy, "venv_activate", "")
         self.gpus_per_node = int(get_preflight_nested(cfg, tier1, legacy, "gpus_per_node", 8))
@@ -361,7 +361,9 @@ class NodeSmokeCheck(PreflightCheck):
             get_preflight_nested(cfg, tier1, legacy, "auto_setup", True), default=True
         )
 
-        self.tier2_perf = _config_flag_enabled(get_preflight_nested(cfg, tier1, legacy, "tier2_perf", False))
+        self.tier2_perf = _config_flag_enabled(
+            get_preflight_nested(cfg, tier1, legacy, "tier2_perf", True), default=True
+        )
         self.gemm_tflops_min = float(get_preflight_nested(cfg, tier1, legacy, "gemm_tflops_min", 600.0))
         self.hbm_gbs_min = float(get_preflight_nested(cfg, tier1, legacy, "hbm_gbs_min", 2000.0))
         self.rccl_gbs_min = float(get_preflight_nested(cfg, tier1, legacy, "rccl_gbs_min", 100.0))

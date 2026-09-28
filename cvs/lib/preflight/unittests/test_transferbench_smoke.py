@@ -842,14 +842,15 @@ class TestTransferBenchSmokeCheck(unittest.TestCase):
         try:
             with (
                 patch.object(preflight_checks, 'TransferBenchSmokeCheck') as checker_cls,
-                patch.object(preflight_checks, 'preflight_update_test_result'),
-                patch.object(preflight_checks.pytest, 'fail') as fail,
+                patch.object(preflight_checks, 'preflight_update_test_result') as update_result,
             ):
                 checker_cls.return_value.run.return_value = checker_results
                 preflight_checks.test_ifoe_transferbench_smoke(phdl, config)
 
-            fail.assert_called_once_with('TransferBench preflight gate failed; see preflight report')
-            self.assertEqual(preflight_checks.preflight_results['transferbench_smoke']['status'], 'FAIL')
+            recorded = preflight_checks.preflight_results['transferbench_smoke']
+            self.assertEqual(recorded['status'], 'FAIL')
+            self.assertEqual(recorded['message'], 'TransferBench preflight gate failed; see preflight report')
+            update_result.assert_called_once_with(recorded)
         finally:
             preflight_checks.preflight_results.clear()
             preflight_checks.preflight_results.update(previous_results)

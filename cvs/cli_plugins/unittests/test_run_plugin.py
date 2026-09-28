@@ -407,7 +407,15 @@ class TestResolveTestFunctionNames(unittest.TestCase):
         names = resolve_test_function_names(
             ["test_node_smoke", "test_node_smoke_tier1", "test_tier3_info", "test_node_smoke_tier3"]
         )
-        self.assertEqual(names, ["test_node_smoke_tier1", "test_node_smoke_tier3"])
+        self.assertEqual(
+            names,
+            [
+                "test_node_smoke_tier1",
+                "test_node_smoke_tier1_check",
+                "test_node_smoke_tier3",
+                "test_node_smoke_tier3_check",
+            ],
+        )
 
     @patch("cvs.cli_plugins.run_plugin.pytest.main")
     @patch("cvs.cli_plugins.run_plugin.sys.exit")

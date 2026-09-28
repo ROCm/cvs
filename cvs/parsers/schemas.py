@@ -1858,8 +1858,8 @@ class PreflightNodeSmokeConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     connectivity_mode: str = Field(
-        default="skip",
-        description="Primus node_smoke mode: 'run' (host/GPU/RDMA roll-call) or 'skip' (default)",
+        default="run",
+        description="Primus node_smoke mode: 'run' (default; host/GPU/RDMA roll-call) or 'skip'",
     )
     auto_setup: bool = Field(
         default=True,
@@ -1947,7 +1947,7 @@ class PreflightNodeSmokeConfig(BaseModel):
     )
     ssh_timeout: int = Field(default=300, ge=30, description="SSH timeout in seconds for each node_smoke run")
     tier2_perf: bool = Field(
-        default=False,
+        default=True,
         description=(
             "Enable Primus node_smoke Tier 2 perf sanity (--tier2-perf): "
             "8192³ GEMM TFLOPS floor, HBM D2D bandwidth, local multi-GPU RCCL all-reduce"

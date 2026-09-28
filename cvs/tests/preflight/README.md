@@ -15,9 +15,9 @@ The preflight checks system validates essential cluster health and configuration
    preset to validate the IFoE scale-up data path (using MI4XX AFM admission or,
    for generic profiles, an `amd-smi fabric --json` single-vPod precondition)
    *(AIMVT-181; opt-in)*
-7. **Node Smoke Tier 1 (opt-in)** - Per-node GPU/RDMA operational roll-call via Primus `node_smoke`
+7. **Node Smoke Tier 1** - Per-node GPU/RDMA operational roll-call via Primus `node_smoke`
 8. **Node Smoke Tier 2 (optional)** - Per-node perf sanity when `tier2_perf` is enabled (GEMM, HBM, local RCCL)
-9. **Node Smoke Tier 3 (opt-in)** - Cluster-wide Host/GPU/Network inventory via Primus `preflight --host --gpu --network`
+9. **Node Smoke Tier 3** - Cluster-wide Host/GPU/Network inventory via Primus `preflight --host --gpu --network`
 10. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
 ## Quick Start
@@ -243,7 +243,7 @@ allow TCP port `31337` between every selected node.
 
 ## Node Smoke tiers (Primus)
 
-Node Smoke checks are **opt-in** and configured under `node_smoke_tier1` and
+Node Smoke checks run by default and are configured under `node_smoke_tier1` and
 `node_smoke_tier3` in the preflight config. Legacy keys `node_smoke` and
 `tier3_info` are still accepted.
 
@@ -277,11 +277,43 @@ cvs run preflight_checks test_node_smoke_tier1 \
   --cluster_file cluster.json \
   --config_file preflight_config.json
 
+# Tier 2 rows (requires a prior Tier 1 run in the same session with tier2_perf=true)
+cvs run preflight_checks test_node_smoke_tier1 test_node_smoke_tier2 \
+  --cluster_file cluster.json \
+  --config_file preflight_config.json
+
 # Tier 3 only
 cvs run preflight_checks test_node_smoke_tier3 \
   --cluster_file cluster.json \
   --config_file preflight_config.json
 ```
+
+### Per-check report rows
+
+Each Node Smoke tier contributes one pytest row per catalog check, so the HTML report
+lists every check individually with its own result, duration, and **Full Log** link:
+
+```
+Passed  preflight_checks.py::test_node_smoke_tier1_check[10_0_0_11-gpu0-gpu_subprocess_1]
+Failed  preflight_checks.py::test_node_smoke_tier1_check[10_0_0_12-gpu_processes]
+Passed  preflight_checks.py::test_node_smoke_tier2_check[10_0_0_11-gpu0-large_gemm]
+Passed  preflight_checks.py::test_node_smoke_tier3_check[host-cpu-1]
+```
+
+The catalogs are built at collection time from the cluster file's node list and
+`gpus_per_node`, so the rows appear even when a tier is skipped — they report as
+`Skipped` rather than disappearing. The row counts are 39 per node for Tier 1, 17 per
+node for Tier 2, and 27 cluster-wide for Tier 3.
+
+`cvs run preflight_checks test_node_smoke_tier1` selects the tier's check rows along
+with the tier itself. The tier test still runs Primus, but its own report row is
+omitted whenever its check rows are present, since those already carry the detail.
+
+Unlike the other preflight tests, which are reporting-only, the Node Smoke tests report
+real verdicts: a failing check fails its own row, and the tier test fails when any node
+did not pass. Results are stored before the failure, so the generated report is still
+complete. The bundled **Preflight Checks Report** also lists the same checks in
+sortable tables.
 
 ## Output and Reporting
 
@@ -351,7 +383,7 @@ cvs run pytorch_xdit_wan \
 5. Run IFoE checks before RDMA-specific eligibility pruning:
    - L2 connectivity using `afmctl test ping` (opt-in)
    - TransferBench scale-up data-path smoketest (opt-in)
-6. Run Node Smoke Tier 1 (and Tier 2 when tier2_perf is enabled) per node (opt-in)
+6. Run Node Smoke Tier 1 (and Tier 2 while tier2_perf is enabled) per node
 7. Run Node Smoke Tier 3 cluster inventory (opt-in)
 8. Run RDMA checks:
    - Interface naming and presence

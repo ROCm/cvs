@@ -10,9 +10,9 @@ The preflight checks system validates essential cluster health before running pe
 2. **MI4XX Scale-up Fabric Admission** - Optionally validates AIFM/AFM/vPOD membership, station masks, and IFoE port state
 3. **IFoE L2 Connectivity (AIMVT-180; opt-in)** - Optionally runs strict `afmctl test ping` coverage before TransferBench and RDMA
 4. **TransferBench** - Optionally validates the IFoE data path per node or with a multi-rank cluster run
-5. **Node Smoke Tier 1 (opt-in)** - Per-node host / GPU / RDMA roll-call via `primus-cli direct -- node_smoke`
-6. **Node Smoke Tier 2 (optional)** - Per-node perf sanity when `node_smoke_tier1.tier2_perf` is enabled (GEMM TFLOPS, HBM bandwidth, local RCCL)
-7. **Node Smoke Tier 3 (opt-in)** - Cluster-wide Host / GPU / Network inventory via `primus-cli direct -- preflight --host --gpu --network`
+5. **Node Smoke Tier 1** - Per-node host / GPU / RDMA roll-call via `primus-cli direct -- node_smoke`
+6. **Node Smoke Tier 2** - Per-node perf sanity while `node_smoke_tier1.tier2_perf` is enabled (GEMM TFLOPS, HBM bandwidth, local RCCL)
+7. **Node Smoke Tier 3** - Cluster-wide Host / GPU / Network inventory via `primus-cli direct -- preflight --host --gpu --network`
 8. **GID and Interface Consistency** - Ensures configured RDMA interfaces and GID entries are present and consistent
 9. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
@@ -55,15 +55,15 @@ The preflight configuration file follows this structure:
       }
     },
     "node_smoke_tier1": {
-      "connectivity_mode": "skip",
+      "connectivity_mode": "run",
       "auto_setup": true,
       "primus_dir": "/home/{user-id}/INSTALL/Primus",
       "venv_activate": "/home/{user-id}/envs/preflight/.venv/bin/activate",
       "gpus_per_node": 8,
-      "tier2_perf": false
+      "tier2_perf": true
     },
     "node_smoke_tier3": {
-      "connectivity_mode": "skip"
+      "connectivity_mode": "run"
     },
     "reporting": {
       "generate_html_report": true,
@@ -91,8 +91,8 @@ preflight/
 │   └── ifoe/                  # MI4XX scale-up fabric checks
 │       ├── l2ping/            # Strict IFoE L2 connectivity gate
 │       └── transferbench/     # IFoE data-path validation
-├── node_smoke_tier1/          # Node Smoke Tier 1/2 per-node JSON artifacts (opt-in)
-├── node_smoke_tier3/          # Node Smoke Tier 3 cluster markdown report (opt-in)
+├── node_smoke_tier1/          # Node Smoke Tier 1/2 per-node JSON artifacts
+├── node_smoke_tier3/          # Node Smoke Tier 3 cluster markdown report
 ├── reporting/                 # Output and report generation
 └── debug/                     # Debug and troubleshooting options
 ```
@@ -332,7 +332,7 @@ port and validates per-port and aggregate summary accounting.
 - **`warmup_iterations`** (default: `0`)
   - Warmup iterations performed before validation
 
-#### Node Smoke Tier 1 (`node_smoke_tier1`) — opt-in
+#### Node Smoke Tier 1 (`node_smoke_tier1`)
 
 Runs Node Smoke Tier 1 (Primus `node_smoke`) on each reachable node via `primus-cli direct --single -- node_smoke`
 over parallel SSH (no Slurm required). Reference: Primus `docs/02-user-guide/node-smoke-test-instruction.md`
@@ -340,7 +340,7 @@ on branch `dev/preflight-direct-test`.
 
 Legacy config key `node_smoke` is accepted as an alias for `node_smoke_tier1`.
 
-- **`connectivity_mode`** (default: `"skip"`)
+- **`connectivity_mode`** (default: `"run"`)
   - `"run"` — execute Node Smoke Tier 1 on every reachable node
   - `"skip"` — preflight records a SKIPPED result and does not invoke Primus
 - **`auto_setup`** (default: `true`)
@@ -380,7 +380,7 @@ Legacy config key `node_smoke` is accepted as an alias for `node_smoke_tier1`.
 - **`ssh_timeout`** (default: `300`)
 - **`extra_args`** (default: `[]`) — additional flags forwarded to primus-cli
 
-#### Node Smoke Tier 2 perf sanity (`node_smoke_tier1.tier2_perf`) — optional
+#### Node Smoke Tier 2 perf sanity (`node_smoke_tier1.tier2_perf`)
 
 When `tier2_perf` is `true`, preflight forwards `--tier2-perf` to Primus `node_smoke`, enabling all three Tier 2 checks on each node (same as `launch_nodesmoke_ssh.sh -- --tier2-perf`):
 
@@ -390,7 +390,7 @@ When `tier2_perf` is `true`, preflight forwards `--tier2-perf` to Primus `node_s
 
 Set `NCCL_IB_HCA`, `NCCL_SOCKET_IFNAME`, and `NCCL_IB_GID_INDEX` (via `node_smoke_tier1` config or cluster `env_vars`) before enabling Node Smoke Tier 2 — RCCL init enumerates every transport even though the all-reduce is local-only.
 
-- **`tier2_perf`** (default: `false`) — master switch; maps to `--tier2-perf`
+- **`tier2_perf`** (default: `true`) — master switch; maps to `--tier2-perf`
 - **`gemm_tflops_min`** (default: `600`) — `--gemm-tflops-min`
 - **`hbm_gbs_min`** (default: `2000`) — `--hbm-gbs-min`
 - **`rccl_gbs_min`** (default: `100`) — `--rccl-gbs-min`
@@ -399,11 +399,11 @@ Set `NCCL_IB_HCA`, `NCCL_SOCKET_IFNAME`, and `NCCL_IB_GID_INDEX` (via `node_smok
 
 Tier 2 runs need a longer SSH budget; when `tier2_perf` is enabled the effective timeout is at least 600 seconds even if `ssh_timeout` is lower.
 
-#### Node Smoke Tier 3 (`node_smoke_tier3`) — opt-in
+#### Node Smoke Tier 3 (`node_smoke_tier3`)
 
-Runs Node Smoke Tier 3 (`primus-cli direct -- preflight --host --gpu --network`) across the cluster with a distributed rendezvous. Independent of Tier 1 — enabling `node_smoke_tier1` does not enable Tier 3.
+Runs Node Smoke Tier 3 (`primus-cli direct -- preflight --host --gpu --network`) across the cluster with a distributed rendezvous. Independent of Tier 1 — disabling `node_smoke_tier1` does not disable Tier 3.
 
-- **`connectivity_mode`** (default: `"skip"`) — `"run"` or `"skip"`
+- **`connectivity_mode`** (default: `"run"`) — `"run"` or `"skip"`
 - **`auto_setup`** (default: `true`) — clone/update Primus and create venv before Tier 3 (falls back to Tier 1 paths)
 - **`primus_dir`** / **`venv_activate`** — optional; empty inherits from `node_smoke_tier1`
 - **`gpus_per_node`** (default: `8`) — GPUs per node for torchrun
@@ -679,7 +679,7 @@ cvs run preflight_checks \
    - Reduce to `scope: "node"` to isolate a failing host before retrying cluster scope
 
 8. **Node Smoke Failures**
-   - Set `node_smoke_tier1.connectivity_mode` to `"run"` (default is `"skip"`)
+   - Node Smoke runs by default; set `node_smoke_tier1.connectivity_mode` to `"skip"` to disable it
    - Verify `primus_dir` and `venv_activate`, or enable `auto_setup: true`
    - On shared NFS home, use `shared_install: true` to avoid parallel clone races
    - Match `torch_pip_index_url` to your ROCm version

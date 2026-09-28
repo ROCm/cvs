@@ -273,6 +273,33 @@ class TestPreflightNodeSmokeReporting(unittest.TestCase):
             tier3_summary["summary"],
         )
 
+        report_generator = PreflightReportGenerator(
+            None,
+            {
+                "summary": {
+                    "overall_status": "PASS",
+                    "checks": {
+                        "node_smoke_tier1": tier1_summary,
+                        "node_smoke_tier2": tier2_summary,
+                        "node_smoke_tier3": tier3_summary,
+                    },
+                    "recommendations": [],
+                },
+                "node_smoke_tier1": tier1_results,
+                "node_smoke_tier3": tier3_results,
+            },
+            config_dict={},
+        )
+        html_out = report_generator._generate_html_content()
+        self.assertIn("cvs-node-smoke-results", html_out)
+        self.assertIn("?sort=result", html_out)
+        self.assertIn("Node Smoke Tier 1", html_out)
+        self.assertIn("Node Smoke Tier 2", html_out)
+        self.assertIn("Node Smoke Tier 3", html_out)
+        self.assertIn("GPU processes", html_out)
+        self.assertIn("Large GEMM TFLOPS", html_out)
+        self.assertIn("host: CPU", html_out)
+
 
 class TestLegacyNodeSmokeConfigNormalization(unittest.TestCase):
     def test_legacy_node_smoke_copied_to_tier1(self):

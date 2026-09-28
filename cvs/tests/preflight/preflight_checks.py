@@ -17,10 +17,16 @@ from cvs.lib.preflight.scaleup_fabric import NodeHealthCheck
 from cvs.lib.preflight.transferbench_smoke import TransferBenchSmokeCheck
 from cvs.lib.preflight.node_smoke import (
     NODE_SMOKE_TIER1_LABEL,
+    NODE_SMOKE_TIER2_LABEL,
     NODE_SMOKE_TIER3_LABEL,
     NodeSmokeCheck,
 )
 from cvs.lib.preflight.tier3_info import NodeSmokeTier3Check
+from cvs.lib.preflight.node_smoke_rows import (
+    build_tier1_metric_rows,
+    build_tier2_metric_rows,
+    build_tier3_metric_rows,
+)
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
 from cvs.lib.preflight.report import PreflightReportGenerator, preflight_check_display_name
@@ -202,17 +208,69 @@ def _prune_nodes_from_phdl(phdl, failed_nodes, reason):
     log.info(f"{reason} Pruned {len(pruned)} node(s) from further preflight tests: {', '.join(sorted(pruned))}")
 
 
-# Override update_test_result for preflight tests to be reporting-only
-def preflight_update_test_result():
+# Recorded statuses meaning the check never executed.
+_PREFLIGHT_NOT_RUN_STATUSES = ('SKIPPED', 'BLOCKED')
+
+
+def _recorded_statuses(result):
+    """Status strings held by a recorded result.
+
+    Checks record either a single status dict or a per-node mapping of them.
     """
-    Preflight-specific test result handler that reports issues but doesn't fail tests.
-    This allows preflight to be a comprehensive reporting tool rather than a pass/fail test.
+    if not isinstance(result, dict):
+        return []
+    if result.get('status'):
+        return [str(result['status']).upper()]
+    return [
+        str(node_result['status']).upper()
+        for node_result in result.values()
+        if isinstance(node_result, dict) and node_result.get('status')
+    ]
+
+
+def _recorded_failed_nodes(result):
+    return sorted(
+        node
+        for node, node_result in result.items()
+        if isinstance(node_result, dict) and str(node_result.get('status') or '').upper() == 'FAIL'
+    )
+
+
+def _recorded_outcome_message(result, default):
+    if result.get('message'):
+        return str(result['message'])
+    failed = _recorded_failed_nodes(result)
+    if failed:
+        return f"{default} on {len(failed)} node(s): {', '.join(failed)}"
+    return default
+
+
+def preflight_update_test_result(result=None):
+    """Clear accumulated errors and mirror a recorded result onto this pytest row.
+
+    Preflight stays diagnostic: a failure here never stops the checks that follow.
+    But the row has to show what was recorded, so a check that was skipped by
+    configuration or that failed must not report as passed. Pass the result only
+    after storing it in ``preflight_results``, so the generated report keeps the
+    detail even though this row ends early.
     """
     if len(globals.error_list) > 0:
         log.info(f"Preflight detected {len(globals.error_list)} issues (see detailed logs above)")
-        # Clear the error list to prevent test failure
+        # Clear the error list so the generic handler cannot fail the test for us.
         globals.error_list.clear()
-    # Always pass - preflight is for reporting, not failing
+
+    if not isinstance(result, dict):
+        return
+
+    statuses = _recorded_statuses(result)
+    if 'FAIL' in statuses:
+        pytest.fail(_recorded_outcome_message(result, 'Preflight check failed'))
+    if (
+        result.get('skipped')
+        or result.get('blocked')
+        or (statuses and all(status in _PREFLIGHT_NOT_RUN_STATUSES for status in statuses))
+    ):
+        pytest.skip(_recorded_outcome_message(result, 'Preflight check did not run'))
 
 
 @pytest.fixture(scope="module")
@@ -426,16 +484,16 @@ def test_node_reachability(phdl):
     # Drop all nodes that did not return SSH_OK from phdl (explicit prune; not only SSH client exceptions)
     _prune_nodes_from_phdl(phdl, failed_nodes, "Reachability:")
 
-    preflight_update_test_result()
+    preflight_update_test_result(preflight_results['node_reachability'])
 
 
 def test_node_health(phdl, config_dict, cluster_dict):
     """Perform mandatory GPU health and optional MI4XX fabric admission.
 
     The gate is intentionally read-only.  It records diagnostics and lets the
-    report test run, but downstream scale-up checks are marked BLOCKED when
-    admission fails.  The final report test returns the pytest failure after
-    writing the report artifact.
+    remaining checks run, but downstream scale-up checks are marked BLOCKED when
+    admission fails.  Results are stored before this row reports its verdict, so
+    the report test still writes a complete artifact.
     """
     global preflight_results
 
@@ -448,7 +506,7 @@ def test_node_health(phdl, config_dict, cluster_dict):
             'node_results': {},
             'vpod_membership': {'status': 'SKIPPED', 'errors': []},
         }
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['node_health'])
         return
 
     health_config = _node_check_config(config_dict)
@@ -499,7 +557,7 @@ def test_node_health(phdl, config_dict, cluster_dict):
         log.info("Mandatory node-health and MI4XX fabric admission PASS; AFM vPOD accelerators=%s", vpod)
     else:
         log.info("Mandatory generic GPU node-health admission PASS")
-    preflight_update_test_result()
+    preflight_update_test_result(results)
 
 
 def test_rocm_version_consistency(phdl, config_dict):
@@ -520,7 +578,7 @@ def test_rocm_version_consistency(phdl, config_dict):
             'skipped': True,
             'message': 'ROCm validation skipped because preflight.node_check is disabled',
         }
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['rocm_versions'])
         return
 
     expected_version = get_nested_config(config_dict, 'node_check', 'expected_rocm_version', '6.2.0')
@@ -555,7 +613,7 @@ def test_rocm_version_consistency(phdl, config_dict):
         f"ROCm version results: {len(results) - len(failed_nodes)}/{len(results)} nodes have expected version {expected_version}"
     )
     # Intentionally do not prune ROCm failures from phdl (see docstring).
-    preflight_update_test_result()
+    preflight_update_test_result(results)
 
 
 def test_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
@@ -595,7 +653,7 @@ def test_interface_name_consistency(phdl, config_dict):
             'skipped': True,
             'message': 'RDMA interface validation skipped because RDMA connectivity mode is skip',
         }
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['interface_names'])
         return
 
     expected_interfaces = get_nested_config(
@@ -633,7 +691,7 @@ def test_interface_name_consistency(phdl, config_dict):
     )
 
     _prune_nodes_from_phdl(phdl, failed_nodes, "Interface consistency:")
-    preflight_update_test_result()
+    preflight_update_test_result(results)
 
 
 def test_gid_consistency(phdl, config_dict):
@@ -653,7 +711,7 @@ def test_gid_consistency(phdl, config_dict):
             'skipped': True,
             'message': 'RDMA GID validation skipped because RDMA connectivity mode is skip',
         }
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['gid_consistency'])
         return
 
     gid_index = get_nested_config(config_dict, 'connectivity_check.rdma', 'gid_index', '3')
@@ -690,17 +748,97 @@ def test_gid_consistency(phdl, config_dict):
     log.info(f"GID consistency results: {ok_interfaces}/{total_interfaces} interfaces have valid GID index {gid_index}")
 
     _prune_nodes_from_phdl(phdl, failed_nodes, "GID consistency:")
+    preflight_update_test_result(results)
+
+
+# Each tier publishes one pytest row per catalog check. The runner test above the checks
+# executes Primus once; the check rows only read the payload it stored.
+_NODE_SMOKE_TIERS = {
+    'tier1': (NODE_SMOKE_TIER1_LABEL, build_tier1_metric_rows, ('node_smoke_tier1', 'node_smoke')),
+    'tier2': (NODE_SMOKE_TIER2_LABEL, build_tier2_metric_rows, ('node_smoke_tier1', 'node_smoke')),
+    'tier3': (NODE_SMOKE_TIER3_LABEL, build_tier3_metric_rows, ('node_smoke_tier3', 'tier3_info')),
+}
+_node_smoke_rows_by_metric = {}
+
+
+def _node_smoke_rows(tier):
+    """Resolve a tier's per-check rows once and index them by catalog metric key."""
+    if tier not in _node_smoke_rows_by_metric:
+        _, build_rows, result_keys = _NODE_SMOKE_TIERS[tier]
+        results = next((preflight_results.get(key) for key in result_keys if preflight_results.get(key)), {})
+        _node_smoke_rows_by_metric[tier] = {row['metric']: row for row in build_rows(results)}
+    return _node_smoke_rows_by_metric[tier]
+
+
+def _format_measurement(row):
+    actual = row.get('actual')
+    if actual is None:
+        return ''
+    unit = row.get('unit') or ''
+    text = f"{actual} {unit}".strip()
+    spec = row.get('spec') or {}
+    if spec.get('value') is not None:
+        text += f" (gate {spec.get('kind', '')} {spec['value']})".replace('  ', ' ')
+    return text
+
+
+def _report_node_smoke_check(tier, check):
+    """Turn one catalog check into this pytest row's verdict."""
+    label = _NODE_SMOKE_TIERS[tier][0]
+    metric = check.get('metric')
+    if not metric:
+        pytest.skip(f"{label}: no nodes resolved from the cluster file at collection time")
+
+    row = _node_smoke_rows(tier).get(metric)
+    if row is None:
+        pytest.skip(f"{label} did not run, so '{check['label']}' has no result")
+
+    measurement = _format_measurement(row)
+    reason = row.get('reason') or ''
+    log.info(
+        "%s | %s | %s%s%s",
+        label,
+        check['label'],
+        row['status'].upper(),
+        f" | {measurement}" if measurement else '',
+        f" | {reason}" if reason else '',
+    )
+    if row['status'] == 'skip':
+        pytest.skip(f"{label}: '{check['label']}' was not executed")
+    if row['status'] not in ('pass', 'record'):
+        pytest.fail(f"{label}: '{check['label']}' failed. {reason or measurement or 'No detail reported'}")
+
+
+def _report_tier_node_verdict(label, results):
+    """Log the tier's node roll-up and fail the row when any node did not pass.
+
+    Called only after the results are stored, so later checks and the generated report
+    still see them even though this row fails.
+    """
+    failed_nodes = results.get('failed_nodes') or []
+    unknown_nodes = results.get('unknown_nodes') or []
+    total = results.get('total_nodes', 0)
+    not_passing = failed_nodes + unknown_nodes
+
+    if not_passing:
+        log.warning("%s FAIL on %d/%d node(s): %s", label, len(not_passing), total, ", ".join(not_passing))
+    else:
+        log.info("%s PASS on %d/%d nodes", label, len(results.get('passing_nodes') or []), total)
+
     preflight_update_test_result()
+
+    if not_passing:
+        pytest.fail(f"{label} failed on {len(not_passing)}/{total} node(s): {', '.join(not_passing)}")
 
 
 def test_node_smoke_tier1(phdl, config_dict):
     """
     Run Node Smoke Tier 1 (Primus ``node_smoke``) on each reachable node via primus-cli.
 
-    Opt-in via ``node_smoke_tier1.connectivity_mode`` (legacy: ``node_smoke``) in the
-    preflight config (default ``skip``).  Uses parallel SSH — no Slurm required.
+    Runs by default; disable via ``node_smoke_tier1.connectivity_mode`` (legacy:
+    ``node_smoke``) in the preflight config.  Uses parallel SSH — no Slurm required.
 
-    Optional Node Smoke Tier 2 perf sanity (``node_smoke_tier1.tier2_perf``) enables
+    Node Smoke Tier 2 perf sanity (``node_smoke_tier1.tier2_perf``, default on) enables
     ``--tier2-perf``: large GEMM TFLOPS floor, HBM D2D bandwidth, and local
     multi-GPU RCCL all-reduce thresholds (``gemm_tflops_min``, ``hbm_gbs_min``,
     ``rccl_gbs_min``, etc.).
@@ -719,7 +857,7 @@ def test_node_smoke_tier1(phdl, config_dict):
         }
         preflight_results['node_smoke_tier1'] = skipped
         preflight_results['node_smoke'] = skipped
-        preflight_update_test_result()
+        preflight_update_test_result(skipped)
         return
 
     node_list = list(phdl.reachable_hosts)
@@ -732,34 +870,61 @@ def test_node_smoke_tier1(phdl, config_dict):
 
     if results.get('skipped'):
         log.info("%s: %s", NODE_SMOKE_TIER1_LABEL, results.get('message', 'skipped'))
-        preflight_update_test_result()
+        preflight_update_test_result(results)
         return
 
-    failed_nodes = results.get('failed_nodes') or []
-    unknown_nodes = results.get('unknown_nodes') or []
-    total = results.get('total_nodes', 0)
-    passing = len(results.get('passing_nodes') or [])
+    _report_tier_node_verdict(NODE_SMOKE_TIER1_LABEL, results)
 
-    if failed_nodes or unknown_nodes:
-        log.warning(
-            "%s FAIL on %d/%d node(s): %s",
-            NODE_SMOKE_TIER1_LABEL,
-            len(failed_nodes) + len(unknown_nodes),
-            total,
-            ", ".join(failed_nodes + unknown_nodes),
+
+def test_node_smoke_tier1_check(tier1_check):
+    """One row per Node Smoke Tier 1 catalog check (4 per GPU + 7 node collectors)."""
+    _report_node_smoke_check('tier1', tier1_check)
+
+
+def test_node_smoke_tier2(phdl, config_dict):
+    """Summarize Node Smoke Tier 2 perf sanity, which rides along with the Tier 1 run.
+
+    Does not re-run Primus. Disable with ``node_smoke_tier1.tier2_perf=false``.
+    """
+    global preflight_results
+
+    results = preflight_results.get('node_smoke_tier1') or preflight_results.get('node_smoke') or {}
+    if not results:
+        preflight_update_test_result({'skipped': True, 'message': f'{NODE_SMOKE_TIER1_LABEL} has not run'})
+        return
+    if results.get('skipped'):
+        preflight_update_test_result({'skipped': True, 'message': f'{NODE_SMOKE_TIER1_LABEL} was skipped'})
+        return
+    if not results.get('tier2_perf'):
+        preflight_update_test_result(
+            {'skipped': True, 'message': 'Tier 2 perf sanity is off (node_smoke_tier1.tier2_perf=false)'}
         )
+        return
+
+    rows = build_tier2_metric_rows(results)
+    failed = [row for row in rows if str(row.get('status') or '').lower() not in ('pass', 'skip', 'record')]
+    if failed:
+        log.warning("%s FAIL on %d/%d check(s)", NODE_SMOKE_TIER2_LABEL, len(failed), len(rows))
     else:
-        log.info("%s PASS on %d/%d nodes", NODE_SMOKE_TIER1_LABEL, passing, total)
+        log.info("%s PASS on %d check(s)", NODE_SMOKE_TIER2_LABEL, len(rows))
 
     preflight_update_test_result()
+
+    if failed:
+        pytest.fail(f"{NODE_SMOKE_TIER2_LABEL} failed on {len(failed)}/{len(rows)} check(s)")
+
+
+def test_node_smoke_tier2_check(tier2_check):
+    """One row per Node Smoke Tier 2 catalog check (2 per GPU + 1 local RCCL)."""
+    _report_node_smoke_check('tier2', tier2_check)
 
 
 def test_node_smoke_tier3(phdl, config_dict):
     """
     Run Node Smoke Tier 3 (Primus ``preflight --host --gpu --network``) across the cluster.
 
-    Opt-in via ``node_smoke_tier3.connectivity_mode`` (legacy: ``tier3_info``) in the
-    preflight config (default ``skip``).  Uses parallel SSH with torchrun — no Slurm required.
+    Runs by default; disable via ``node_smoke_tier3.connectivity_mode`` (legacy:
+    ``tier3_info``).  Uses parallel SSH with torchrun — no Slurm required.
 
     Nodes that fail are reported but are **not** pruned from ``phdl``.
     """
@@ -775,7 +940,7 @@ def test_node_smoke_tier3(phdl, config_dict):
         }
         preflight_results['node_smoke_tier3'] = skipped
         preflight_results['tier3_info'] = skipped
-        preflight_update_test_result()
+        preflight_update_test_result(skipped)
         return
 
     node_list = list(phdl.reachable_hosts)
@@ -788,26 +953,15 @@ def test_node_smoke_tier3(phdl, config_dict):
 
     if results.get('skipped'):
         log.info("%s: %s", NODE_SMOKE_TIER3_LABEL, results.get('message', 'skipped'))
-        preflight_update_test_result()
+        preflight_update_test_result(results)
         return
 
-    failed_nodes = results.get('failed_nodes') or []
-    unknown_nodes = results.get('unknown_nodes') or []
-    total = results.get('total_nodes', 0)
-    passing = len(results.get('passing_nodes') or [])
+    _report_tier_node_verdict(NODE_SMOKE_TIER3_LABEL, results)
 
-    if failed_nodes or unknown_nodes:
-        log.warning(
-            "%s FAIL on %d/%d node(s): %s",
-            NODE_SMOKE_TIER3_LABEL,
-            len(failed_nodes) + len(unknown_nodes),
-            total,
-            ", ".join(failed_nodes + unknown_nodes),
-        )
-    else:
-        log.info("%s PASS on %d/%d nodes", NODE_SMOKE_TIER3_LABEL, passing, total)
 
-    preflight_update_test_result()
+def test_node_smoke_tier3_check(tier3_check):
+    """One row per Node Smoke Tier 3 cluster-wide collector check."""
+    _report_node_smoke_check('tier3', tier3_check)
 
 
 def _l2ping_config(config_dict):
@@ -852,7 +1006,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
         blocked.update({'mode': 'blocked', 'node_results': {}, 'failure_mode': 'gate'})
         preflight_results['ifoe_l2_connectivity'] = blocked
         log.warning(blocked['message'])
-        preflight_update_test_result()
+        preflight_update_test_result(blocked)
         return
 
     l2ping_config = _l2ping_config(config_dict)
@@ -864,7 +1018,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
             'message': 'IFoE L2 connectivity test skipped by configuration',
             'node_results': {},
         }
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['ifoe_l2_connectivity'])
         return
 
     declared_nodes = sorted(cluster_dict.get('node_dict', {}).keys())
@@ -885,8 +1039,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
                 'complete': False,
             },
         }
-        preflight_update_test_result()
-        pytest.fail(message)
+        preflight_update_test_result(preflight_results['ifoe_l2_connectivity'])
         return
 
     pings_per_port = int(l2ping_config.get('pings_per_port', 3))
@@ -980,6 +1133,11 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
     }
 
     if summary_status == 'FAIL':
+        preflight_results['ifoe_l2_connectivity']['message'] = (
+            "IFoE L2 preflight gate failed "
+            f"({len(failed_nodes)} failed node(s), {len(missing_nodes)} missing node(s), "
+            f"{len(incomplete_nodes)} incomplete node(s)); see preflight report"
+        )
         log.warning(
             "IFoE L2 connectivity FAIL on %d/%d tested node(s): %s",
             len(failed_nodes),
@@ -1007,13 +1165,7 @@ def _run_ifoe_l2_connectivity(phdl, config_dict, cluster_dict):
             total_invocations,
         )
 
-    preflight_update_test_result()
-    if summary_status == 'FAIL':
-        pytest.fail(
-            "IFoE L2 preflight gate failed "
-            f"({len(failed_nodes)} failed node(s), {len(missing_nodes)} missing node(s), "
-            f"{len(incomplete_nodes)} incomplete node(s)); see preflight report"
-        )
+    preflight_update_test_result(preflight_results['ifoe_l2_connectivity'])
 
 
 def _transferbench_config(config_dict):
@@ -1069,7 +1221,7 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
         blocked.update({'mode': 'blocked', 'nodes': {}, 'totals': {}, 'pod_membership': {}})
         preflight_results['transferbench_smoke'] = blocked
         log.warning(blocked['message'])
-        preflight_update_test_result()
+        preflight_update_test_result(blocked)
         return
 
     transferbench_config = _transferbench_config(config_dict)
@@ -1081,7 +1233,7 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
             'message': 'IFoE TransferBench smoketest skipped by configuration',
             'nodes': {},
         }
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['transferbench_smoke'])
         return
 
     if not phdl.reachable_hosts:
@@ -1094,8 +1246,7 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
             'message': message,
             'nodes': {},
         }
-        preflight_update_test_result()
-        pytest.fail(message)
+        preflight_update_test_result(preflight_results['transferbench_smoke'])
         return
 
     scope = str(transferbench_config.get('scope', 'node')).strip().lower()
@@ -1183,6 +1334,9 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
 
     totals = results.get('totals') or {}
     if results.get('status') == 'FAIL':
+        preflight_results['transferbench_smoke']['message'] = (
+            'TransferBench preflight gate failed; see preflight report'
+        )
         log.warning(
             "IFoE TransferBench smoketest FAIL: %d/%d node(s) failed, %d warning(s); cluster errors: %s",
             totals.get('nodes_fail', 0),
@@ -1210,9 +1364,7 @@ def _run_ifoe_transferbench_smoke(phdl, config_dict):
             totals.get('tests_skip', 0),
         )
 
-    preflight_update_test_result()
-    if results.get('status') == 'FAIL':
-        pytest.fail("TransferBench preflight gate failed; see preflight report")
+    preflight_update_test_result(preflight_results['transferbench_smoke'])
 
 
 def test_rdma_connectivity(phdl, cluster_dict, config_dict):
@@ -1246,7 +1398,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
             'node_status': {},
         }
         log.info("RDMA interface, GID, and connectivity validation skipped by configuration")
-        preflight_update_test_result()
+        preflight_update_test_result(preflight_results['rdma_connectivity'])
         return
 
     if _node_health_admission_failed(config_dict):
@@ -1263,7 +1415,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
         )
         preflight_results['rdma_connectivity'] = blocked
         log.warning(blocked['message'])
-        preflight_update_test_result()
+        preflight_update_test_result(blocked)
         return
 
     # Host list matches prior-step pruning (reachability, interface, GID); not full cluster_dict.
@@ -1324,7 +1476,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
             'excluded_nodes_gid': excluded_nodes_gid,
         }
         preflight_results['rdma_connectivity'] = skip_results
-        preflight_update_test_result()
+        preflight_update_test_result(skip_results)
         return
 
     # Use the new modular RDMA connectivity check (supports all modes)
@@ -1343,7 +1495,7 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     # Handle skipped test
     if results.get('skipped', False):
         log.info("RDMA connectivity test skipped by configuration")
-        preflight_update_test_result()
+        preflight_update_test_result(results)
         return
 
     # Analyze results and report failures
@@ -1366,7 +1518,12 @@ def test_rdma_connectivity(phdl, cluster_dict, config_dict):
     log.info(
         f"RDMA connectivity results: {results['successful_pairs']}/{results['total_pairs']} pairs connected successfully"
     )
-    preflight_update_test_result()
+    if results['failed_pairs']:
+        results['status'] = 'FAIL'
+        results.setdefault(
+            'message', f"RDMA connectivity failed on {results['failed_pairs']}/{results['total_pairs']} pair(s)"
+        )
+    preflight_update_test_result(results)
 
 
 def test_generate_preflight_report(phdl, config_dict, request):

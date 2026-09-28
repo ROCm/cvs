@@ -22,6 +22,12 @@ from cvs.lib.preflight.node_smoke_counts import (
     aggregate_tier3_test_counts,
     format_tests_run_suffix,
 )
+from cvs.lib.preflight.node_smoke_rows import (
+    build_tier1_metric_rows,
+    build_tier2_metric_rows,
+    build_tier3_metric_rows,
+)
+from cvs.lib.report.render.perf_metric_table import render_benchmark_metrics_html
 from cvs.lib import globals
 
 log = globals.log
@@ -796,6 +802,7 @@ class PreflightReportGenerator(PreflightCheck):
             {self._generate_node_health_html(results.get('node_health', {}))}
             {self._generate_gid_consistency_html(results.get('gid_consistency', {}))}
             {self._generate_node_smoke_tier1_html(results.get('node_smoke_tier1') or results.get('node_smoke', {}))}
+            {self._generate_node_smoke_tier2_html(results.get('node_smoke_tier1') or results.get('node_smoke', {}))}
             {self._generate_node_smoke_tier3_html(results.get('node_smoke_tier3') or results.get('tier3_info', {}))}
             {self._generate_ifoe_l2_html(results.get('ifoe_l2_connectivity', {}))}
             {self._generate_transferbench_smoke_html(results.get('transferbench_smoke', {}))}
@@ -806,6 +813,7 @@ class PreflightReportGenerator(PreflightCheck):
             {self._generate_configuration_html(config_dict)}
             {self._generate_recommendations_html(summary.get('recommendations', []))}
         </div>
+        {self._node_smoke_sort_script()}
     </body>
     </html>
     """
@@ -1095,6 +1103,34 @@ class PreflightReportGenerator(PreflightCheck):
             details table {
                 margin-top: 0;
             }
+            .cvs-node-smoke-results {
+                font-size: 13px;
+            }
+            .cvs-node-smoke-results th[data-sort] {
+                cursor: pointer;
+            }
+            .cvs-node-smoke-results th[data-sort]:hover {
+                color: #007acc;
+            }
+            .cvs-benchmark-metrics-table .passed,
+            .cvs-node-smoke-results .passed {
+                color: #155724;
+                font-weight: 600;
+            }
+            .cvs-benchmark-metrics-table .failed,
+            .cvs-node-smoke-results .failed {
+                color: #721c24;
+                font-weight: 600;
+            }
+            .cvs-benchmark-metrics-table .skipped,
+            .cvs-node-smoke-results .skipped {
+                color: #856404;
+                font-weight: 600;
+            }
+            .cvs-node-smoke-filter {
+                margin: 8px 0 0;
+                color: #495057;
+            }
         """
 
     def _generate_executive_summary_html(self, summary):
@@ -1339,164 +1375,156 @@ class PreflightReportGenerator(PreflightCheck):
         </section>
         """
 
+    def _node_smoke_sort_script(self):
+        return """
+        <script>
+        (function () {
+            const ORDER = {Failed: 0, Error: 1, Skipped: 2, Recorded: 3, Passed: 4};
+            function sortTable(table, key) {
+                const tbody = table.tBodies[0];
+                if (!tbody) {
+                    return;
+                }
+                const rows = Array.from(tbody.querySelectorAll('tr'));
+                rows.sort(function (left, right) {
+                    const leftText = (left.querySelector('.col-result') || left.cells[0] || {}).textContent || '';
+                    const rightText = (right.querySelector('.col-result') || right.cells[0] || {}).textContent || '';
+                    if (key === 'result') {
+                        const leftRank = ORDER[leftText.trim()] != null ? ORDER[leftText.trim()] : 9;
+                        const rightRank = ORDER[rightText.trim()] != null ? ORDER[rightText.trim()] : 9;
+                        if (leftRank !== rightRank) {
+                            return leftRank - rightRank;
+                        }
+                    }
+                    const leftName = (left.querySelector('.col-testId') || left.cells[1] || {}).textContent || '';
+                    const rightName = (right.querySelector('.col-testId') || right.cells[1] || {}).textContent || '';
+                    return leftName.localeCompare(rightName);
+                });
+                rows.forEach(function (row) { tbody.appendChild(row); });
+            }
+            function applyQuerySort() {
+                const params = new URLSearchParams(window.location.search);
+                const sort = params.get('sort') || 'result';
+                document.querySelectorAll('table.cvs-node-smoke-results').forEach(function (table) {
+                    sortTable(table, sort);
+                });
+            }
+            document.addEventListener('DOMContentLoaded', applyQuerySort);
+            document.addEventListener('click', function (event) {
+                const header = event.target.closest('th[data-sort]');
+                if (!header) {
+                    return;
+                }
+                const table = header.closest('table');
+                sortTable(table, header.getAttribute('data-sort'));
+            });
+        })();
+        </script>
+        """
+
+    def _metric_row_counts(self, rows):
+        passed = failed = skipped = 0
+        for row in rows:
+            status = str(row.get('status') or '').lower()
+            if status == 'pass':
+                passed += 1
+            elif status == 'skip':
+                skipped += 1
+            else:
+                failed += 1
+        return passed, failed, skipped
+
+    def _render_node_smoke_metric_section(self, title, rows, skipped_message=None, extra_html=""):
+        if skipped_message:
+            return f"""
+        <section>
+            <h2>{html.escape(title)}</h2>
+            <p><em>{html.escape(skipped_message)}</em></p>
+        </section>
+        """
+        if not rows:
+            return ""
+        passed, failed, skipped = self._metric_row_counts(rows)
+        table = render_benchmark_metrics_html(rows).replace(
+            "cvs-benchmark-metrics-table",
+            "cvs-benchmark-metrics-table cvs-node-smoke-results",
+            1,
+        )
+        table = table.replace("<th>Result</th>", '<th data-sort="result">Result</th>', 1)
+        table = table.replace("<th>Metric</th>", '<th data-sort="name">Check</th>', 1)
+        summary = f"{failed} Failed, {passed} Passed, {skipped} Skipped"
+        return f"""
+        <section>
+            <h2>{html.escape(title)}</h2>
+            {extra_html}
+            <p class="cvs-node-smoke-filter">{html.escape(str(len(rows)))} checks. {html.escape(summary)}. Sort with <code>?sort=result</code>.</p>
+            {table}
+        </section>
+        """
+
     def _generate_node_smoke_tier1_html(self, node_smoke_results):
-        """Generate Node Smoke Tier 1 section — failed nodes and fail reasons."""
+        """Generate Node Smoke Tier 1 section with per-check rows."""
         if not node_smoke_results:
             return ""
-
         if node_smoke_results.get('skipped'):
             msg = node_smoke_results.get('message', f'{NODE_SMOKE_TIER1_LABEL} check skipped')
-            return f"""
-        <section>
-            <h2>{html.escape(NODE_SMOKE_TIER1_LABEL)}</h2>
-            <p><em>{html.escape(msg)}</em></p>
-        </section>
-        """
-
-        node_results = node_smoke_results.get('node_results') or {}
-        if not node_results:
-            return ""
-
-        failed_nodes = {n: r for n, r in node_results.items() if r.get('status') in ('FAIL', 'UNKNOWN')}
+            return self._render_node_smoke_metric_section(NODE_SMOKE_TIER1_LABEL, [], skipped_message=msg)
+        rows = build_tier1_metric_rows(node_smoke_results)
+        extra = ""
         dump_path = node_smoke_results.get('dump_path', '')
-
-        if not failed_nodes:
-            passing = len([n for n, r in node_results.items() if r.get('status') == 'PASS'])
-            tier2_html = ""
-            if node_smoke_results.get('tier2_perf'):
-                thresholds = node_smoke_results.get('tier2_thresholds') or {}
-                tier2_html = f"""
-            <p>{html.escape(NODE_SMOKE_TIER2_LABEL)} also enabled: GEMM &ge; {html.escape(str(thresholds.get('gemm_tflops_min', '?')))} TFLOPS,
-            HBM &ge; {html.escape(str(thresholds.get('hbm_gbs_min', '?')))} GB/s,
-            local RCCL &ge; {html.escape(str(thresholds.get('rccl_gbs_min', '?')))} GB/s.</p>"""
-            return f"""
-        <section>
-            <h2>{html.escape(NODE_SMOKE_TIER1_LABEL)}</h2>
-            <p>All <code>{passing}</code> node(s) passed {html.escape(NODE_SMOKE_TIER1_LABEL)}.</p>{tier2_html}
-        </section>
-        """
-
-        html_out = f"""
-        <section>
-            <h2>{html.escape(NODE_SMOKE_TIER1_LABEL)} — Failures</h2>
-            <p class="error-summary">The following nodes failed {html.escape(NODE_SMOKE_TIER1_LABEL)} checks:</p>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Node</th>
-                        <th>Status</th>
-                        <th>Fail Reasons</th>
-                    </tr>
-                </thead>
-                <tbody>
-        """
-
-        for node, result in sorted(failed_nodes.items()):
-            reasons = result.get('fail_reasons') or []
-            if not reasons and result.get('node_payload'):
-                reasons = list(result['node_payload'].get('fail_reasons') or [])
-            reasons_str = html.escape('; '.join(str(r) for r in reasons) if reasons else 'See node logs')
-            status = html.escape(str(result.get('status', 'FAIL')))
-            html_out += f"""
-                <tr>
-                    <td>{html.escape(node)}</td>
-                    <td>{status}</td>
-                    <td>{reasons_str}</td>
-                </tr>
-            """
-
-        html_out += """
-                </tbody>
-            </table>
-        """
         if dump_path:
-            html_out += (
+            extra = (
                 f"<p>Per-node JSON written under <code>{html.escape(str(dump_path))}/smoke/</code> on each node.</p>"
             )
-        html_out += """
-        </section>
+        return self._render_node_smoke_metric_section(NODE_SMOKE_TIER1_LABEL, rows, extra_html=extra)
+
+    def _generate_node_smoke_tier2_html(self, node_smoke_results):
+        """Generate Node Smoke Tier 2 section with per-check rows."""
+        if not node_smoke_results:
+            return ""
+        if node_smoke_results.get('skipped'):
+            return ""
+        if not node_smoke_results.get('tier2_perf'):
+            return self._render_node_smoke_metric_section(
+                NODE_SMOKE_TIER2_LABEL,
+                [],
+                skipped_message=f'{NODE_SMOKE_TIER2_LABEL} not enabled (set node_smoke_tier1.tier2_perf=true)',
+            )
+        rows = build_tier2_metric_rows(node_smoke_results)
+        thresholds = node_smoke_results.get('tier2_thresholds') or {}
+        extra = f"""
+            <p>Thresholds: GEMM &ge; {html.escape(str(thresholds.get('gemm_tflops_min', '?')))} TFLOPS,
+            HBM &ge; {html.escape(str(thresholds.get('hbm_gbs_min', '?')))} GB/s,
+            local RCCL &ge; {html.escape(str(thresholds.get('rccl_gbs_min', '?')))} GB/s.</p>
         """
-        return html_out
+        return self._render_node_smoke_metric_section(NODE_SMOKE_TIER2_LABEL, rows, extra_html=extra)
 
     def _generate_node_smoke_tier3_html(self, tier3_results):
-        """Generate Node Smoke Tier 3 section."""
+        """Generate Node Smoke Tier 3 section with per-check rows."""
         if not tier3_results:
             return ""
-
         if tier3_results.get('skipped'):
             msg = tier3_results.get('message', f'{NODE_SMOKE_TIER3_LABEL} check skipped')
-            return f"""
-        <section>
-            <h2>{html.escape(NODE_SMOKE_TIER3_LABEL)}</h2>
-            <p><em>{html.escape(msg)}</em></p>
-        </section>
-        """
-
-        node_results = tier3_results.get('node_results') or {}
-        if not node_results:
-            return ""
-
-        failed_nodes = {n: r for n, r in node_results.items() if r.get('status') in ('FAIL', 'UNKNOWN')}
+            return self._render_node_smoke_metric_section(NODE_SMOKE_TIER3_LABEL, [], skipped_message=msg)
+        rows = build_tier3_metric_rows(tier3_results)
+        extra_parts = []
         dump_path = tier3_results.get('dump_path', '')
         report_name = tier3_results.get('report_file_name', 'node_smoke_tier3')
-        report_md = tier3_results.get('report_markdown')
-
-        if not failed_nodes:
-            passing = len([n for n, r in node_results.items() if r.get('status') == 'PASS'])
-            html_out = f"""
-        <section>
-            <h2>{html.escape(NODE_SMOKE_TIER3_LABEL)}</h2>
-            <p>All <code>{passing}</code> launcher node(s) passed <code>preflight --host --gpu --network</code>.</p>
-        """
-            if dump_path:
-                html_out += f"<p>Markdown report: <code>{html.escape(str(dump_path))}/{html.escape(str(report_name))}.md</code></p>"
-            if report_md:
-                preview = report_md[:4000]
-                if len(report_md) > 4000:
-                    preview += "\n\n... (truncated)"
-                html_out += f"<pre>{html.escape(preview)}</pre>"
-            html_out += """
-        </section>
-        """
-            return html_out
-
-        html_out = f"""
-        <section>
-            <h2>{html.escape(NODE_SMOKE_TIER3_LABEL)} — Failures</h2>
-            <p class="error-summary">The following nodes failed {html.escape(NODE_SMOKE_TIER3_LABEL)} checks:</p>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Node</th>
-                        <th>Status</th>
-                        <th>Fail Reasons</th>
-                    </tr>
-                </thead>
-                <tbody>
-        """
-
-        for node, result in sorted(failed_nodes.items()):
-            reasons = result.get('fail_reasons') or []
-            reasons_str = html.escape('; '.join(str(r) for r in reasons) if reasons else 'See node logs')
-            status = html.escape(str(result.get('status', 'FAIL')))
-            html_out += f"""
-                <tr>
-                    <td>{html.escape(node)}</td>
-                    <td>{status}</td>
-                    <td>{reasons_str}</td>
-                </tr>
-            """
-
-        html_out += """
-                </tbody>
-            </table>
-        """
         if dump_path:
-            html_out += f"<p>Report directory: <code>{html.escape(str(dump_path))}/{html.escape(str(report_name))}.md</code></p>"
-        html_out += """
-        </section>
-        """
-        return html_out
+            extra_parts.append(
+                f"<p>Markdown report: <code>{html.escape(str(dump_path))}/{html.escape(str(report_name))}.md</code></p>"
+            )
+        report_md = tier3_results.get('report_markdown')
+        if report_md:
+            preview = report_md[:4000]
+            if len(report_md) > 4000:
+                preview += "\n\n... (truncated)"
+            extra_parts.append(f"<pre>{html.escape(preview)}</pre>")
+        return self._render_node_smoke_metric_section(
+            NODE_SMOKE_TIER3_LABEL,
+            rows,
+            extra_html=''.join(extra_parts),
+        )
 
     _generate_node_smoke_html = _generate_node_smoke_tier1_html
     _generate_tier3_info_html = _generate_node_smoke_tier3_html

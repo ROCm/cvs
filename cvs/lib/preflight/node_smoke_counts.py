@@ -21,7 +21,17 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-TIER1_CHECKS_PER_GPU = 4
+# Catalogs are built at pytest collection time, before any node is contacted, so an
+# unspecified GPU count still yields the documented 8-GPU check list.
+DEFAULT_GPUS_PER_NODE = 8
+
+TIER1_PER_GPU_CHECKS = (
+    "gpu_subprocess_1",
+    "gpu_subprocess_2",
+    "gpu_subprocess_3",
+    "gpu_subprocess_4",
+)
+TIER1_CHECKS_PER_GPU = len(TIER1_PER_GPU_CHECKS)
 TIER1_NODE_OPERATIONAL_COLLECTORS = (
     "gpu_processes",
     "nics",
@@ -31,9 +41,28 @@ TIER1_NODE_OPERATIONAL_COLLECTORS = (
     "tooling",
     "gpu_visibility",
 )
+TIER1_COLLECTOR_LABELS = {
+    "gpu_processes": "GPU processes",
+    "nics": "RDMA NICs",
+    "host_limits": "Host limits",
+    "gpu_low_level": "GPU low-level",
+    "xgmi": "xGMI",
+    "tooling": "Tooling",
+    "gpu_visibility": "GPU visibility",
+}
 
-TIER2_CHECKS_PER_GPU = 2
+TIER2_PER_GPU_CHECKS = (
+    "large_gemm",
+    "hbm_d2d",
+)
+TIER2_CHECKS_PER_GPU = len(TIER2_PER_GPU_CHECKS)
 TIER2_RCCL_CHECK = 1
+TIER2_RCCL_METRIC = "local_rccl"
+TIER2_CHECK_LABELS = {
+    "large_gemm": "Large GEMM TFLOPS",
+    "hbm_d2d": "HBM D2D bandwidth",
+    "local_rccl": "Local RCCL all-reduce",
+}
 
 TIER3_TOP_LEVEL_GROUPS = ("host", "gpu", "network")
 

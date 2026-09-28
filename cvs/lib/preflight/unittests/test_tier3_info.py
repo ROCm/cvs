@@ -100,15 +100,30 @@ class TestResolveTier3Setting(unittest.TestCase):
         }
         self.assertEqual(resolve_tier3_setting(cfg, "connectivity_mode", "skip"), "skip")
 
-    def test_tier3_skipped_when_only_node_smoke_enabled(self):
+    def test_tier3_mode_is_independent_of_node_smoke(self):
+        primus_paths = {
+            "primus_dir": "/home/user/Primus",
+            "venv_activate": "/home/user/.venv/bin/activate",
+        }
+
+        # Tier 3 runs on its own default even with Tier 1 switched off.
+        phdl = MagicMock()
+        phdl.reachable_hosts = ["node0"]
+        phdl.exec_cmd_list.return_value = {
+            "node0": "[Primus:Preflight] checks=host,gpu,network host=node0 status=PASS\n"
+        }
+        cfg = {
+            "node_smoke": dict(primus_paths, connectivity_mode="skip"),
+            "tier3_info": {"auto_setup": False},
+        }
+        self.assertFalse(Tier3InfoCheck(phdl, ["node0"], cfg).run().get("skipped"))
+
+        # Only Tier 3's own switch turns Tier 3 off.
         phdl = MagicMock()
         phdl.reachable_hosts = ["node0"]
         cfg = {
-            "node_smoke": {
-                "connectivity_mode": "run",
-                "primus_dir": "/home/user/Primus",
-                "venv_activate": "/home/user/.venv/bin/activate",
-            },
+            "node_smoke": dict(primus_paths, connectivity_mode="run"),
+            "tier3_info": {"connectivity_mode": "skip"},
         }
         results = Tier3InfoCheck(phdl, ["node0"], cfg).run()
         self.assertTrue(results.get("skipped"))

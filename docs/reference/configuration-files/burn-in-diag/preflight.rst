@@ -150,10 +150,10 @@ RDMA connectivity (``connectivity_check.rdma``)
 Node Smoke Tier 1 (``node_smoke_tier1``)
 ----------------------------------------
 
-- ``connectivity_mode`` — ``"run"`` or ``"skip"`` (default ``"skip"``)
+- ``connectivity_mode`` — ``"run"`` or ``"skip"`` (default ``"run"``)
 - ``auto_setup`` — Clone Primus and create venv before running
 - ``primus_dir`` / ``venv_activate`` — Required when ``connectivity_mode`` is ``"run"``
-- ``tier2_perf`` — Enable Node Smoke Tier 2 perf sanity checks
+- ``tier2_perf`` — Node Smoke Tier 2 perf sanity checks (default ``true``)
 - ``gemm_tflops_min`` / ``hbm_gbs_min`` / ``rccl_gbs_min`` — Tier 2 thresholds
 
 Node Smoke Tier 3 (``node_smoke_tier3``)

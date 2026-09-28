@@ -120,7 +120,7 @@
     },
 
     "node_smoke": {
-      "_comment": "Primus node_smoke checks via primus-cli direct (opt-in; default skip). See Primus docs/node-smoke-test-instruction.md",
+      "_comment": "Primus node_smoke checks via primus-cli direct (runs by default; set connectivity_mode to 'skip' to disable). See Primus docs/node-smoke-test-instruction.md",
 
       "_setup_comment": "Primus clone/venv setup runs automatically when auto_setup is true (default). Manual equivalent:",
       "_setup_step_1": "git clone --recurse-submodules https://github.com/AMD-AIG-AIMA/Primus.git /home/{user-id}/INSTALL/Primus",
@@ -162,7 +162,7 @@
       "_comment_venv_activate": "Path to the Python virtualenv activate script used by primus-cli direct. Required when connectivity_mode is 'run'.",
 
       "connectivity_mode": "run",
-      "_comment_connectivity_mode": "Options: 'run' (host/GPU/RDMA roll-call via node_smoke) or 'skip' (default).",
+      "_comment_connectivity_mode": "Options: 'run' (default; host/GPU/RDMA roll-call via node_smoke) or 'skip'.",
 
       "gpus_per_node": 8,
       "_comment_gpus_per_node": "Expected GPU count per node (exported as GPUS_PER_NODE and passed to node_smoke --expected-gpus).",
@@ -235,7 +235,7 @@
       "_comment": "Primus Tier 3 Host/GPU/Network info via primus-cli direct -- preflight --host --gpu --network (opt-in; default skip). No Slurm.",
 
       "connectivity_mode": "run",
-      "_comment_connectivity_mode": "Options: 'run' or 'skip' (default). Independent of node_smoke.connectivity_mode — enabling node_smoke does not enable Tier 3.",
+      "_comment_connectivity_mode": "Options: 'run' (default) or 'skip'. Independent of node_smoke.connectivity_mode — disabling node_smoke does not disable Tier 3.",
 
       "auto_setup": true,
       "_comment_auto_setup": "When true, clone/update Primus and create venv before Tier 3 (falls back to node_smoke paths).",

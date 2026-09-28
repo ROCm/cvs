@@ -246,7 +246,7 @@ class Tier3InfoCheck(PreflightCheck):
         cfg = self.config_dict or {}
 
         self.mode = _normalize_mode(
-            get_preflight_nested(cfg, NODE_SMOKE_TIER3_SECTION, LEGACY_TIER3_INFO_SECTION, "connectivity_mode", "skip")
+            get_preflight_nested(cfg, NODE_SMOKE_TIER3_SECTION, LEGACY_TIER3_INFO_SECTION, "connectivity_mode", "run")
         )
         self.primus_dir = str(resolve_tier3_setting(cfg, "primus_dir", "") or "")
         self.venv_activate = str(resolve_tier3_setting(cfg, "venv_activate", "") or "")
