@@ -21,10 +21,10 @@ These are Pytest scripts and can be run in the following fashion (for the detail
 
 ```
 
-In the config file, cvs/input/config_file/health/mi300_health_config.json, change the value of parameters(/root/cache/):         "package_tar_ball": "/root/cache/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
+In the config file, cvs/input/config_file/health/health_config.json, change the value of parameters(/root/cache/):         "package_tar_ball": "/root/cache/PACKAGES/agfhc-mi300x_1.22.0_ub2204.tar.bz2",
 "install_dir": "/root/cache/INSTALL/agfhc/", to the desired location.
 
-pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_agfhc.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html
+pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_agfhc.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html
 
 pytest -vvv -log-file=/tmp/agfhc_test.log -s ./tests/health/agfhc_cvs.py --cluster_file ./input/cluster.json --config_file ./input/health/mi300_config.json --html=/var/www/html/cvs/agfhc_health_report.html --capture=tee-sys --self-contained-html
 ```
@@ -32,11 +32,11 @@ pytest -vvv -log-file=/tmp/agfhc_test.log -s ./tests/health/agfhc_cvs.py --clust
 ## Example: Running Transferbench Tests
 
 ```
-In the config file, cvs/input/config_file/health/mi300_health_config.json, change the value of parameters(/tmp/cvs):
+In the config file, cvs/input/config_file/health/health_config.json, change the value of parameters(/tmp/cvs):
 "path": "/tmp/cvs/INSTALL/TransferBench",
 "git_install_path": "/tmp/cvs/INSTALL/", to desired location.
 
-pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_agfhc.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html
+pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_agfhc.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/health_config.json --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html
 
 pytest -vvv -log-file=/tmp/agfhc_test.log -s ./tests/health/agfhc_cvs.py --cluster_file ./input/cluster.json --config_file ./input/health/mi300_config.json --html=/var/www/html/cvs/agfhc_health_report.html --capture=tee-sys --self-contained-html
 ```
@@ -46,12 +46,12 @@ pytest -vvv -log-file=/tmp/agfhc_test.log -s ./tests/health/agfhc_cvs.py --clust
 
 ```bash
 
-In the config file, cvs/input/config_file/health/mi300_health_config.json, change the value of parameters(/tmp/rvs):
+In the config file, cvs/input/config_file/health/health_config.json, change the value of parameters(/tmp/rvs):
 "git_install_path": "/tmp/rvs/INSTALL", to desired location.
 
-pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_rvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html
+pytest -vvv --log-file=/tmp/test.log -s ./tests/health/install/install_rvs.py --cluster_file input/cluster_file/cluster.json  --config_file input/config_file/health/health_config.json --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html
 
-pytest -vvv --log-file=/tmp/test.log -s ./tests/health/rvs_cvs.py --cluster_file ./input/cluster_file/cluster.json --config_file ./input/config_file/health/mi300_health_config.json --html=/var/www/html/cvs/rvs_health_report.html --capture=tee-sys --self-contained-html
+pytest -vvv --log-file=/tmp/test.log -s ./tests/health/rvs_cvs.py --cluster_file ./input/cluster_file/cluster.json --config_file ./input/config_file/health/health_config.json --html=/var/www/html/cvs/rvs_health_report.html --capture=tee-sys --self-contained-html
 ```
 
 ### RVS (ROCmValidationSuite) Test Suite

@@ -17,7 +17,7 @@ Set up config
 
    .. code:: bash
 
-     cvs config copy health/mi300_health_config.json --output ~/cvs_workspace/health/mi300_health_config.json
+     cvs config copy health/health_config.json --output ~/cvs_workspace/health/health_config.json
 
 2. Edit paths and any remaining ``<changeme>`` placeholders:
 
@@ -72,7 +72,7 @@ Run the AGFHC test:
 
      cvs run install_agfhc \
        --cluster_file ~/cvs_workspace/cluster.json \
-       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
        --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html \
        --log-file=/tmp/agfhc.log -vvv -s
 
@@ -82,7 +82,7 @@ Run the AGFHC test:
 
      cvs run agfhc_cvs \
        --cluster_file ~/cvs_workspace/cluster.json \
-       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
        --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html \
        --log-file=/tmp/agfhc.log -vvv -s
 
@@ -92,7 +92,7 @@ Run the AGFHC test:
 
      cvs run csp_qual_agfhc \
        --cluster_file ~/cvs_workspace/cluster.json \
-       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
        --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html \
        --log-file=/tmp/agfhc.log -vvv -s
 
@@ -125,7 +125,7 @@ Run the TransferBench test:
 
      cvs run install_transferbench \
        --cluster_file ~/cvs_workspace/cluster.json \
-       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
        --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html \
        --log-file=/tmp/transferbench.log -vvv -s
 
@@ -135,7 +135,7 @@ Run the TransferBench test:
 
      cvs run transferbench_cvs \
        --cluster_file ~/cvs_workspace/cluster.json \
-       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
        --html=/var/www/html/cvs/transferbench.html --capture=tee-sys --self-contained-html \
        --log-file=/tmp/transferbench.log -vvv -s
 
@@ -174,7 +174,7 @@ Run the RVS test:
 
      cvs run install_rvs \
        --cluster_file ~/cvs_workspace/cluster.json \
-       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
        --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html \
        --log-file=/tmp/rvs.log -vvv -s
 
@@ -184,7 +184,7 @@ Run the RVS test:
 
      cvs run rvs_cvs \
        --cluster_file ~/cvs_workspace/cluster.json \
-       --config_file ~/cvs_workspace/health/mi300_health_config.json \
+       --config_file ~/cvs_workspace/health/health_config.json \
        --html=/var/www/html/cvs/rvs.html --capture=tee-sys --self-contained-html \
        --log-file=/tmp/rvs.log -vvv -s
 
