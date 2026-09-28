@@ -1,12 +1,16 @@
-Scalability and Performance
-===========================
+.. meta::
+  :description: Learn how CVS scales parallel SSH execution from small labs to thousands of nodes using gevent sharding, and how to tune performance with environment variables.
+  :keywords: CVS, ROCm, AMD, AMD Instinct, scalability, performance, parallel SSH, sharding, gevent, cluster, CVS_HOSTS_PER_SHARD, CVS_WORKERS_PER_CPU
+
+Cluster Validation Suite (CVS) scalability and parallel SSH performance
+=======================================================================
 
 CVS automatically scales to handle clusters from small lab setups to large enterprise deployments with thousands of nodes.
 
 Parallel execution
 ------------------
 
-CVS always runs cluster-wide SSH concurrently—it does not connect to hosts one at a time.
+CVS runs cluster-wide SSH concurrently—it does not connect to hosts one at a time.
 
 - **Default (up to 32 hosts)**: A single process uses gevent-based concurrent SSH (``ParallelSSHClient``) across all hosts.
 - **Large host lists (more than 32 hosts, or ``CVS_HOSTS_PER_SHARD``)**: CVS additionally splits hosts into shards and runs each shard in a separate worker process. Each worker still uses gevent concurrency inside the process.
@@ -20,45 +24,48 @@ CVS always runs cluster-wide SSH concurrently—it does not connect to hosts one
 
 **Example:** with 8 hosts, CVS runs one gevent-based ``ParallelSSHClient`` over all hosts—no process sharding.
 
-Environment Variables
+Environment variables
 ---------------------
 
 Configure CVS parallel SSH operations and optimize performance for your cluster size:
 
 **CVS_HOSTS_PER_SHARD** (default: 32)
   When the host count exceeds this value, CVS splits work across multiple worker processes. Each process still uses gevent-based concurrent SSH. Lower the value to enable process sharding on smaller clusters; set ``0`` to disable process sharding (always one gevent client in the parent process).
-  
+
   .. code:: bash
-  
+
     export CVS_HOSTS_PER_SHARD=64  # Process 64 hosts per shard instead of default 32
 
 **CVS_WORKERS_PER_CPU** (default: 4)
   Sets the number of worker processes per CPU core for parallel operations. The total number of workers is calculated as ``CPU_COUNT * CVS_WORKERS_PER_CPU``.
-  
+
   .. code:: bash
-  
+
     export CVS_WORKERS_PER_CPU=8  # Use 8 workers per CPU core instead of default 4
 
-Performance Tuning Examples
+Performance tuning examples
 ---------------------------
 
-**For large clusters (1000+ nodes):**
+The following examples show recommended settings for common cluster sizes.
+
+For large clusters (1,000 or more nodes):
 
 .. code:: bash
 
   export CVS_HOSTS_PER_SHARD=64
   export CVS_WORKERS_PER_CPU=6
 
-**For smaller clusters or resource-constrained environments:**
+For smaller clusters or resource-constrained environments:
 
 .. code:: bash
 
   export CVS_HOSTS_PER_SHARD=16
   export CVS_WORKERS_PER_CPU=2
 
-**Recommended Settings by Cluster Size:**
+Recommended settings by cluster size
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- **Large clusters (1000+ nodes)**: ``CVS_HOSTS_PER_SHARD=64``, ``CVS_WORKERS_PER_CPU=6-8``
-- **Medium clusters (<1000 nodes)**: Default values (32 hosts per shard, 4 workers per CPU) usually work well
-- **Small clusters (< 32 nodes)**: Defaults use single-process gevent concurrency; tune ``CVS_HOSTS_PER_SHARD`` only if you want process sharding at smaller host counts
+- **Large clusters (1,000+ nodes)**: ``CVS_HOSTS_PER_SHARD=64``, ``CVS_WORKERS_PER_CPU=6-8``
+- **Medium clusters (fewer than 1,000 nodes)**: Default values (32 hosts per shard, 4 workers per CPU) work well for most cases
+- **Small clusters (fewer than 32 nodes)**: Defaults use single-process gevent concurrency; tune ``CVS_HOSTS_PER_SHARD`` only if you want process sharding at smaller host counts
 - **Resource-constrained systems**: Lower both values to reduce memory and CPU usage

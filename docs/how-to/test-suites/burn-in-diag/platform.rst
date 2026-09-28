@@ -1,10 +1,12 @@
 .. meta::
-  :description: Run platform host configuration checks
-  :keywords: CVS, platform
+  :description: Run CVS platform host configuration check tests to verify OS, kernel, ROCm, BIOS, PCIe, and GPU firmware versions across AMD Instinct cluster nodes.
+  :keywords: CVS, platform, AMD Instinct, ROCm, AMD, GPU, Linux, Ubuntu, BIOS, PCIe, kernel, host configuration
 
-**************
-Platform tests
-**************
+***********************************************
+Run CVS platform host configuration check tests
+***********************************************
+
+Platform tests validate host OS configuration, BIOS version, firmware, driver, PCIe settings, and GPU health on each cluster node. Run platform tests before burn-in to catch configuration mismatches early.
 
 .. _platform-set-up-config:
 
@@ -17,21 +19,21 @@ Set up config
 
      cvs config copy platform/host_config.json --output ~/cvs_workspace/platform/host_config.json
 
-2. Edit the file and set expected values for your cluster:
+2. Edit the file and replace the values with your cluster's actual versions — leave no ``<changeme>`` placeholders:
 
    - ``os_version``
    - ``kernel_version``
    - ``rocm_version``
    - ``bios_version``
 
-Full parameter list: :doc:`/reference/configuration-files/burn-in-diag/platform`.
+For the complete field reference and expected-value format, see :doc:`/reference/configuration-files/burn-in-diag/platform`.
 
 .. _platform-run-tests:
 
 Run tests
 =========
 
-The host check scripts can validate various host-side configurations, such as model load balancing enablement, PCIe checks, kernel version, and ROCm version.
+Run host check scripts to validate host-side configurations, such as model load balancing enablement, PCIe checks, kernel version, and ROCm version.
 
 You can list all available host check test cases using the CLI:
 
@@ -57,8 +59,12 @@ You can list all available host check test cases using the CLI:
     - test_check_pci_acs
     - test_check_dmesg_driver_errors
 
-Here's the test script:
+Run the platform host check suite:
 
 .. code:: bash
 
-  cvs run host_configs_cvs --cluster_file input/cluster_file/cluster.json --config_file input/config_file/platform/host_config.json --html=/var/www/html/cvs/host.html --capture=tee-sys --self-contained-html --log-file=/tmp/test.log -vvv -s
+  cvs run host_configs_cvs \
+    --cluster_file ~/cvs_workspace/cluster.json \
+    --config_file ~/cvs_workspace/platform/host_config.json \
+    --html=/var/www/html/cvs/host.html --capture=tee-sys --self-contained-html \
+    --log-file=/tmp/host.log -vvv -s

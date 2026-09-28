@@ -1,10 +1,12 @@
 .. meta::
-  :description: Run MORI RDMA benchmark tests
-  :keywords: CVS, mori
+  :description: Run CVS MORI RDMA benchmark tests to measure put, write, and I/O throughput over InfiniBand fabric on AMD Instinct GPU cluster nodes.
+  :keywords: CVS, MORI, RDMA, InfiniBand, AMD Instinct, ROCm, AMD, GPU, benchmark, network, IB, throughput
 
-**********
-MORI tests
-**********
+***********************************************
+Run CVS MORI RDMA benchmark tests
+***********************************************
+
+MORI tests measure RDMA put, write, and I/O throughput over the InfiniBand fabric using AMD Pensando AINIC and other RDMA-capable devices. Run MORI to validate raw RDMA performance before training or inference workloads.
 
 .. _mori-set-up-config:
 
@@ -22,17 +24,17 @@ Set up config
    - ``no_of_nodes`` — number of nodes in the cluster
    - Every field still set to ``<changeme>`` — replace with cluster-specific values before running
 
-Full parameter list: :doc:`/reference/configuration-files/network/mori`.
+For the complete field reference, see :doc:`/reference/configuration-files/network/mori`.
 
 .. _mori-run-tests:
 
 Run tests
 =========
 
-Mori test scripts
-------------------------------
+MORI test scripts
+-----------------
 
-You can list all available Mori test cases using the CLI:
+You can list all available MORI test cases using the CLI:
 
 .. code:: bash
 
@@ -64,8 +66,12 @@ You can list all available Mori test cases using the CLI:
     - test_setup_ibv_devices
     - test_shmem_api
 
-Use these scripts to run the Mori tests.
+Run the MORI benchmark suite:
 
 .. code:: bash
 
-  cvs run mori_benchmark_test --cluster_file input/cluster_file/cluster.json --config_file input/config_file/mori/mi35x_mori_config.json --html=/var/www/html/cvs/mori.html --capture=tee-sys --self-contained-html --log-file=/tmp/mori.log -vvv -s
+  cvs run mori_benchmark_test \
+    --cluster_file ~/cvs_workspace/cluster.json \
+    --config_file ~/cvs_workspace/mori/mi35x_mori_config.json \
+    --html=/var/www/html/cvs/mori.html --capture=tee-sys --self-contained-html \
+    --log-file=/tmp/mori.log -vvv -s

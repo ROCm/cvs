@@ -121,3 +121,18 @@ def phdl(cluster_dict):
         user=cluster_dict["username"],
         pkey=cluster_dict["priv_key_file"],
     )
+
+
+@pytest.fixture(scope="module")
+def anc_res_dict():
+    '''
+    Module-scoped structured ANC results for the Run Deck ``status_matrix`` deck.
+
+    Each ``test_<group>`` run has anc_lib.run_anc_groups merge its per-node
+    records into this dict (keyed by group, then node label). The Run Deck
+    profiles (anc_test_cpu.json / anc_test_gpu.json) name this fixture in
+    ``sources.results``, so the session binding captures it at module teardown
+    and the deck is generated at session finish. Starts empty; the install-only
+    suite never touches it (no deck profile registered for that stem).
+    '''
+    return {}

@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure the preflight checks configuration file
-  :keywords: preflight, ROCm, cluster, validation, node smoke
+  :description: Reference for the CVS preflight checks configuration file, covering GPU node health, RDMA connectivity, InfiniBand, and Node Smoke tier parameters.
+  :keywords: CVS, preflight, ROCm, cluster, validation, node smoke, RDMA, InfiniBand, GPU, AMD, JSON, IB, SSH
 
-**********************************
-Preflight configuration file
-**********************************
+********************************************************************************
+Preflight checks configuration file reference for Cluster Validation Suite (CVS)
+********************************************************************************
 
 The preflight checks validate cluster health and configuration consistency before
 running performance tests, RCCL training, or inference workloads. Checks include
@@ -20,6 +20,8 @@ in the repository.
 
 Run preflight checks
 ====================
+
+Use the following commands to run the full preflight suite or individual Node Smoke tiers.
 
 .. code:: bash
 
@@ -162,8 +164,8 @@ Node Smoke Tier 3 (``node_smoke_tier3``)
 - ``dist_timeout_sec`` — ``torch.distributed`` init timeout
 - ``report_file_name`` — Base name for Primus markdown report (default ``node_smoke_tier3``)
 
-Further reading
-===============
+Related resources
+=================
 
 - :doc:`/reference/cluster/cluster-file` — Cluster topology and SSH
 - `cvs/tests/preflight/README.md <https://github.com/ROCm/cvs/blob/main/cvs/tests/preflight/README.md>`_ — Test suite overview and architecture

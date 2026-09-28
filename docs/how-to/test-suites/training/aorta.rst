@@ -1,15 +1,18 @@
 .. meta::
-  :description: Run Aorta single-node and distributed benchmarks through CVS
-  :keywords: Aorta, ROCm, RCCL, benchmark, CVS
+  :description: Run the Aorta training benchmark with CVS to validate iteration time, compute ratio, and rank balance on AMD Instinct GPU clusters with ROCm.
+  :keywords: CVS, Aorta, training, benchmark, AMD Instinct, ROCm, AMD, GPU, RCCL, distributed, PyTorch, Docker
 
-Aorta benchmark
-===============
+**********************************************
+Run the Aorta training benchmark
+**********************************************
 
 Aorta runs an RCCL/training workload in containers, collects PyTorch profiler traces, and
 validates iteration time, compute ratio, overlap ratio and rank balance.
 
-Prepare a configuration
------------------------
+.. _aorta-set-up-config:
+
+Set up config
+=============
 
 Copy a JSON variant and its sibling threshold file:
 
@@ -25,11 +28,12 @@ each node, or enable ``aorta_auto_clone`` and provide ``aorta_clone_url``. Keep 
 GPU count consistent with the selected Aorta YAML and profiling workload. Prefer writable
 local/scratch storage when root-squashed NFS prevents the container from writing artifacts.
 
-See :doc:`the configuration reference </reference/configuration-files/training/aorta>` for
-field descriptions and migration details.
+Full parameter list: :doc:`/reference/configuration-files/training/aorta`.
 
-Run the suite
--------------
+.. _aorta-run-tests:
+
+Run tests
+=========
 
 Use one node with ``aorta_single`` or two or more with ``aorta_distributed``:
 

@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run ad-hoc commands across all nodes and switches in a CVS cluster
-  :keywords: CVS, cluster, commands, exec, SSH, ad-hoc, cluster-wide
+  :description: Run ad-hoc shell commands across all AMD Instinct GPU cluster nodes and switches simultaneously using the CVS parallel SSH exec command.
+  :keywords: CVS, ROCm, cluster, commands, exec, SSH, ad-hoc, AMD Instinct, GPU, AMD, parallel, Linux, diagnostics
 
-************************
-Run cluster commands
-************************
+**********************************************************************************
+Run ad-hoc commands across all Cluster Validation Suite (CVS) cluster nodes via SSH
+**********************************************************************************
 
 CVS provides an ``exec`` command to execute arbitrary shell commands on all nodes in the cluster simultaneously using parallel SSH. This is useful for gathering system information, running diagnostics, or performing administrative tasks across all cluster nodes at once.
 
@@ -58,7 +58,7 @@ By default ``cvs exec`` runs on every host in ``node_dict`` (compute nodes). Use
 
 .. code:: bash
 
-  # Compute nodes only (default — identical to old behaviour)
+  # Compute nodes only (default — identical to old behavior)
   cvs exec --cmd "hostname" --cluster_file ~/cvs_workspace/cluster.json
 
   # Switch trays only
@@ -74,10 +74,10 @@ Rack-aware cluster file
 
 If ``--target switches`` is used with a plain cluster file (no ``racks`` block), CVS prints a warning and exits without executing any command.
 
-Examples
-========
+Exec command examples
+=====================
 
-Here are some useful examples of commands you can execute across your cluster:
+The following examples show common diagnostic and information-gathering commands.
 
 System information
 ------------------
@@ -216,8 +216,8 @@ Pipe directly to ``jq`` for filtering:
   # List only hosts that succeeded (no error strings)
   cvs exec --cmd "hostname" --json | jq '[.output | to_entries[] | select(.value | test("ABORT|Error") | not) | .key]'
 
-Timeout behaviour
-=================
+Timeout behavior
+================
 
 ``--timeout`` and ``--connect-timeout`` control two distinct phases of the per-node SSH operation:
 
@@ -249,7 +249,7 @@ For long-running operations (benchmarks, firmware updates), keep ``--connect-tim
 
 .. note::
 
-  When TCP packets to target hosts are silently dropped (e.g. no VPN/sshuttle tunnel), the effective per-host timeout is governed by ``--timeout`` (the socket-level IO timeout), not ``--connect-timeout``. Set ``--timeout`` equal to ``--connect-timeout`` for the fastest failure in that scenario.
+  When TCP packets to target hosts are silently dropped (for example, no VPN/sshuttle tunnel), the effective per-host timeout is governed by ``--timeout`` (the socket-level IO timeout), not ``--connect-timeout``. Set ``--timeout`` equal to ``--connect-timeout`` for the fastest failure in that scenario.
 
 Troubleshooting
 ===============
@@ -276,7 +276,7 @@ If SSH connections hang or time out:
 
 - Reduce ``--connect-timeout`` (default ``15`` s) to fail unreachable hosts faster
 - Reduce ``--timeout`` (default ``30`` s) if commands should complete quickly
-- Confirm network reachability to all target hosts before running (e.g. via sshuttle or VPN)
+- Confirm network reachability to all target hosts before running (for example, via sshuttle or VPN)
 
 If the output contains unexpected SSH diagnostic messages:
 
@@ -286,3 +286,10 @@ If the output contains unexpected SSH diagnostic messages:
 .. tip::
 
   Use ``--json | jq '.output'`` to get a clean, machine-readable summary. Combine with ``--verbose`` only when debugging connection issues.
+
+Next steps
+==========
+
+- :doc:`/how-to/copy-to-cluster` — copy files or directories to all cluster nodes in parallel using ``cvs scp``.
+- :doc:`/how-to/test-suites/index` — run a test suite against the cluster.
+- :doc:`/reference/cluster/cluster-file` — full cluster file schema including the ``racks`` block required for ``--target switches``.

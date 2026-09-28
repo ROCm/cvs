@@ -1,9 +1,10 @@
 .. meta::
-  :description: Configure Aorta benchmark JSON variants and performance thresholds
-  :keywords: Aorta, ROCm, RCCL, benchmark, CVS
+  :description: Reference for the Aorta benchmark test configuration file in CVS, covering distributed training, RCCL build options, PyTorch profiler traces, and expected results.
+  :keywords: CVS, Aorta, ROCm, RCCL, benchmark, distributed training, GPU, AMD, JSON, configuration, profiler, multi-node
 
-Aorta benchmark configuration
-=============================
+************************************************************************
+Aorta benchmark test configuration file for Cluster Validation Suite (CVS)
+************************************************************************
 
 Aorta uses JSON variants in ``cvs/input/config_file/benchmark/aorta/``:
 
