@@ -99,10 +99,10 @@ class TestGenerateRundeck(unittest.TestCase):
         with (
             patch("cvs.lib.report.rundeck.generate_rundeck.get_session_results", return_value=store),
             patch("cvs.lib.report.rundeck.generate_rundeck.render_rundeck_html", side_effect=ValueError("bad chart")),
-            patch("cvs.lib.report.rundeck.generate_rundeck.log.warning") as warning,
+            patch("cvs.lib.report.rundeck.generate_rundeck.log.error") as error,
         ):
             self.assertIsNone(generate_rundeck(session, manager))
-        warning.assert_called_once()
+        error.assert_called_once()
         manager.create_zip_bundle(session)
         self.assertEqual(len(list(self.root.glob("rccl_perf_*.zip"))), 1)
 

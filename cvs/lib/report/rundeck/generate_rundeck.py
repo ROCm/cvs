@@ -168,5 +168,5 @@ def generate_rundeck(session, report_manager) -> Optional[dict[str, Any]]:
         return RundeckPublisher(session, report_manager).publish()
     except Exception:
         # Optional artifacts must not replace the suite's qualification outcome.
-        log.warning("Run Deck generation failed; preserving the suite result", exc_info=True)
+        log.error("Run Deck generation failed; preserving the suite result", exc_info=True)
         return None
