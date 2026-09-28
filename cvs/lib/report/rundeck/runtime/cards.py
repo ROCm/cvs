@@ -89,11 +89,30 @@ class DeckCardRenderer:
             f"<div class='tl-group-body'>{cells}</div></div>"
         )
 
+    @staticmethod
+    def _plain_timeline(lifecycle, labels):
+        """One untoned segment per stage. Inference decks use this path."""
+        timeline_total = sum(lifecycle.values()) or 1.0
+        parts = []
+        for lbl in labels:
+            sec = lifecycle.get(lbl, 0.0)
+            if sec <= 0:
+                continue
+            pct = 100.0 * sec / timeline_total
+            parts.append(
+                f"<div class='tl-seg' style='flex-grow:{pct:.2f}'>"
+                f"<span class='tl-lbl'>{html.escape(lbl.replace('_', ' '))}</span>"
+                f"<span class='tl-val'>{sec:.1f}s</span></div>"
+            )
+        return "".join(parts) or "<p class='muted'>No lifecycle timings recorded.</p>"
+
     def render_lifecycle(self, payload: dict, _card: dict, data: Any) -> str:
         lifecycle = data if isinstance(data, dict) else payload.get("lifecycle") or {}
         report = payload.get("report") or {}
         expand = tuple(report.get("expand_lifecycle_labels") or ())
         labels = report.get("session_lifecycle_labels", ()) or SESSION_FALLBACK
+        if not expand:
+            return self._plain_timeline(lifecycle, labels)
         # Expanded stages total their per-cell times: sweep cells run back to back, so the
         # session spends the sum, not the longest cell.
         per_cell = {lbl: self._cell_stage_times(payload, lbl) for lbl in expand}

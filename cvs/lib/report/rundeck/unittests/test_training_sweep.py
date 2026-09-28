@@ -57,6 +57,7 @@ def _train_res():
             "_grad_norm_curve": [[0, 3.0], [10, 2.0]],
             "_throughput_curve": [[0, 100.0], [10, 140.0]],
             "_tokens_curve": [[0, 20000.0], [10, 24000.0]],
+            "_planned_steps": 20,
         },
         "MBS=4,GBS=128,PRECISION=BF16": {
             "throughput_per_gpu": ["150"],
@@ -119,6 +120,7 @@ class TestTrainingSweepBuilder(unittest.TestCase):
         self.assertEqual(fp8["actuals"]["training.throughput_per_gpu"], 200.0)
         self.assertNotIn("training._loss_curve", fp8["actuals"])
         self.assertEqual(fp8["loss_curve"], [[0, 2.5], [10, 2.1], [20, 1.8]])
+        self.assertEqual(fp8["planned_steps"], 20)
         self.assertEqual(fp8["perplexity_curve"], [[0, 12.182], [10, 8.166], [20, 6.05]])
         self.assertEqual(fp8["learning_rate_curve"], [[0, 1e-4], [10, 9e-5]])
         self.assertEqual(fp8["grad_norm_curve"], [[0, 3.0], [10, 2.0]])
@@ -371,8 +373,20 @@ class TestLifecycleTimeline(unittest.TestCase):
     def test_unexpanded_stage_stays_one_segment(self):
         markup = DeckCardRenderer().render_lifecycle(self._payload(()), {}, None)
         self.assertIn("400.0s", markup)
+        self.assertIn("class='tl-seg'", markup)
+        self.assertNotIn("tl-tone", markup)
         self.assertNotIn("tl-group", markup)
         self.assertNotIn("BF16", markup)
+
+    def test_inference_timeline_uses_the_full_lifecycle_sum(self):
+        payload = {
+            "report": {"session_lifecycle_labels": ("server_ready", "client_complete")},
+            "lifecycle": {"server_ready": 10.0, "client_complete": 30.0, "other": 60.0},
+        }
+        markup = DeckCardRenderer().render_lifecycle(payload, {}, None)
+        self.assertIn("flex-grow:10.00", markup)
+        self.assertIn("flex-grow:30.00", markup)
+        self.assertNotIn("tl-tone", markup)
 
     def test_profile_expands_training_stage(self):
         config = build_inference_config_from_profile(_profile())

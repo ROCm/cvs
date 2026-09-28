@@ -191,13 +191,29 @@ def sample_loss_curve(step_metrics, sample_every=10, milestone_steps=None):
     return sample_metric_curve(step_metrics, 'loss', sample_every, milestone_steps)
 
 
+def planned_step_count(rows):
+    """Planned iteration count, else the last observed step."""
+    planned = [int(s['total']) for s in (rows or []) if s.get('total')]
+    if planned:
+        return max(planned)
+    observed = [int(s['step']) for s in (rows or []) if s.get('step') is not None]
+    return max(observed) if observed else 0
+
+
 def sample_training_curves(rows, sample_every=10, milestone_steps=None):
-    """Sample loss / PPL / lr / grad_norm / TFLOPS / tokens into ``_``-prefixed store lists."""
+    """Sample loss / PPL / lr / grad_norm / TFLOPS / tokens into ``_``-prefixed store lists.
+
+    Keeps every sampled iteration, including warmup, so the viewer can drop a
+    percentage of the run. ``_planned_steps`` is the denominator for that skip.
+    """
     out = {}
     for value_key, store_key in CURVE_STORE_KEYS:
-        points = sample_metric_curve(rows, value_key, sample_every, milestone_steps)
+        points = sample_metric_curve(rows, value_key, sample_every, milestone_steps, warmup_frac=0)
         if points:
             out[store_key] = [[step, val] for step, val in points]
+    planned = planned_step_count(rows)
+    if planned:
+        out['_planned_steps'] = planned
     return out
 
 

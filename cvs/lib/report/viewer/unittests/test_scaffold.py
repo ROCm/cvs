@@ -105,6 +105,11 @@ class TestViewerScaffold(unittest.TestCase):
             self.assertIn('"grad_norm_curve"', text)
             self.assertIn('"tokens_curve"', text)
             self.assertIn("buildStepCharts", text)
+            self.assertIn('id="f-warmup"', text)
+            self.assertIn("populateWarmupSteps", text)
+            self.assertIn("WARMUP_PERCENTS", text)
+            self.assertIn("% (step ", text)
+            self.assertIn("warmupPercent", text)
 
     def test_viewer_written_when_interactive_enabled(self):
         with tempfile.TemporaryDirectory() as tmp:

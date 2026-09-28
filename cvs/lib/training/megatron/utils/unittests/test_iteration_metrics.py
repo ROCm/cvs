@@ -8,6 +8,7 @@ from cvs.lib.training.megatron.utils.iteration_metrics import (
     dialect_from_image,
     parse_iteration_metrics,
     sample_metric_curve,
+    planned_step_count,
     sample_training_curves,
 )
 
@@ -155,6 +156,14 @@ class TestSampleMetricCurve(unittest.TestCase):
         self.assertEqual(stored['_loss_curve'][0][0], 4)
         self.assertAlmostEqual(stored['_perplexity_curve'][0][1], math.exp(11.01008))
         self.assertAlmostEqual(stored['_learning_rate_curve'][0][1], 9.698463e-6)
+
+    def test_stored_curves_keep_warmup_steps_for_the_viewer(self):
+        rows = [{'step': i, 'total': 20, 'loss': float(i)} for i in range(1, 21)]
+        stored = sample_training_curves(rows, sample_every=1)
+        self.assertEqual(stored['_planned_steps'], 20)
+        self.assertEqual(stored['_loss_curve'][0], [1, 1.0])
+        self.assertEqual(planned_step_count(rows), 20)
+        self.assertEqual(planned_step_count([]), 0)
 
 
 class TestDeriveStepTimeStats(unittest.TestCase):

@@ -7,6 +7,7 @@ import html
 from cvs.lib.report.formatting import status_badge_css
 from cvs.lib.report.render.cell_card import CellCardConfig, CellCardRenderer
 from cvs.lib.report.render.gate_matrix import gate_heatmap_css, gate_matrix_table_css
+from cvs.lib.report.render.loss_chart import loss_chart_css
 from cvs.lib.report.render.sweep_charts import chart_tooltip_css
 
 
@@ -111,6 +112,7 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 .chart-group-title { margin: 0 0 0.75rem; font-size: 0.95rem; font-weight: 600; color: var(--text); }
 """
         + chart_tooltip_css()
+        + loss_chart_css()
         + gate_matrix_table_css()
         + CellCardRenderer(CellCardConfig(theme="report")).get_css()
         + """

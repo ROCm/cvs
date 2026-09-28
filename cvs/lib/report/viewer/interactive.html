@@ -199,6 +199,7 @@ tr.changed td { background: rgba(255,107,53,0.1); }
   <h2>Filters</h2>
   <div class="toolbar">
     <div id="dimension-filters" class="toolbar-dims"></div>
+    <label class="filter-field" id="warmup-field" style="display:none"><span class="filter-label">Warmup</span><select id="f-warmup" aria-label="Skip initial steps by percent"></select></label>
     <label class="filter-field"><span class="filter-label">Tier fail</span><select id="f-tier"><option value="">Any</option></select></label>
     <label class="filter-field filter-search"><span class="filter-label">Search</span><input id="f-search" type="search" placeholder="cell id, host…"/></label>
     <label class="filter-field filter-baseline"><span class="filter-label">Baseline JSON</span><input id="f-baseline" type="file" accept=".json,application/json"/></label>
@@ -1472,18 +1473,75 @@ function buildInteractivityChart(rows) {
   return true;
 }
 
-function parseCurvePoints(curve) {
+const WARMUP_PERCENTS = [0, 5, 7, 10, 15, 20, 30];
+
+function plannedStepsFor(cell) {
+  const planned = Number(cell && cell.planned_steps);
+  if (Number.isFinite(planned) && planned > 0) return planned;
+  let last = 0;
+  STEP_CHARTS.forEach(spec => {
+    (cell && cell[spec.field] || []).forEach(pt => {
+      const step = Number(pt && pt[0]);
+      if (Number.isFinite(step) && step > last) last = step;
+    });
+  });
+  return last;
+}
+
+function warmupStepFor(total, pct) {
+  const steps = Number(total);
+  const percent = Number(pct);
+  if (!Number.isFinite(steps) || steps <= 0 || !Number.isFinite(percent) || percent <= 0) return 0;
+  return Math.floor(steps * percent / 100);
+}
+
+function warmupPercent() {
+  const field = $('warmup-field');
+  const sel = $('f-warmup');
+  if (!field || !sel || field.style.display === 'none') return 0;
+  const n = Number(sel.value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function parseCurvePoints(curve, skip) {
   if (!Array.isArray(curve)) return [];
+  const cutoff = Number(skip) || 0;
   return curve
     .map(pt => {
       if (!Array.isArray(pt) || pt.length < 2) return null;
       const x = Number(pt[0]);
       const y = Number(pt[1]);
       if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      if (cutoff && x <= cutoff) return null;
       return { x, y };
     })
     .filter(Boolean)
     .sort((a, b) => a.x - b.x);
+}
+
+function populateWarmupSteps() {
+  const sel = $('f-warmup');
+  const field = $('warmup-field');
+  if (!sel || !field) return;
+  const totals = [];
+  allCells.forEach(c => {
+    const total = plannedStepsFor(c);
+    if (total > 0) totals.push(total);
+  });
+  if (!totals.length) {
+    field.style.display = 'none';
+    return;
+  }
+  const lo = Math.min.apply(null, totals);
+  const hi = Math.max.apply(null, totals);
+  field.style.display = '';
+  sel.innerHTML = WARMUP_PERCENTS.map(pct => {
+    const stepLo = warmupStepFor(lo, pct);
+    const stepHi = warmupStepFor(hi, pct);
+    const stepLabel = stepLo === stepHi ? String(stepLo) : (stepLo + '–' + stepHi);
+    return '<option value="' + pct + '">' + pct + '% (step ' + stepLabel + ')</option>';
+  }).join('');
+  sel.value = '10';
 }
 
 function parseLossPoints(curve) {
@@ -1568,7 +1626,7 @@ function buildStepChart(rows, spec) {
 
   const datasets = [];
   rows.forEach((c, index) => {
-    const pts = parseCurvePoints(c[spec.field]);
+    const pts = parseCurvePoints(c[spec.field], warmupStepFor(plannedStepsFor(c), warmupPercent()));
     if (!pts.length) return;
     const color = CHART_COLORS[index % CHART_COLORS.length];
     const dashed = LINE_DASHES[index % LINE_DASHES.length];
@@ -2028,7 +2086,8 @@ loadReportData().then(data => {
   initViewerUi();
   buildOverview();
   populateFilters();
-  ['f-tier', 'f-search'].forEach(id => {
+  populateWarmupSteps();
+  ['f-tier', 'f-search', 'f-warmup'].forEach(id => {
     const el = $(id);
     if (el) {
       el.addEventListener('input', render);

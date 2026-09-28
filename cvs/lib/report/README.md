@@ -129,8 +129,9 @@ disabled (combo bars stay on the static deck, including p50 / p95 step time); wh
 ``loss_curve`` / ``perplexity_curve`` / ``learning_rate_curve`` / ``grad_norm_curve`` /
 ``throughput_curve`` / ``tokens_curve`` points it also draws Chart.js overlays for
 **lm_loss**, **perplexity** (``exp(lm_loss)``), **learning_rate**, **grad_norm**,
-**TFLOP/s/GPU**, and **tokens/s/GPU** vs step. The first 10% of iterations are treated
-as warmup and omitted from those overlays. After the same warmup skip, Megatron also
+**TFLOP/s/GPU**, and **tokens/s/GPU** vs step. The viewer **Warmup** dropdown skips 0%, 5%, 7%, 10%, 15%, 20%, or 30% of
+planned steps (each option shows the step that percent maps to; default is 10%)
+and redraws those overlays when the skip changes. After that same default skip, Megatron also
 derives scalar **p50 / p95 step time** (ms) from per-iteration elapsed time
 (Primus instantaneous X, not running Y) for the Full results table — not extra charts.
 Single-node (`megatron_single`, Megatron-LM or Primus) omits scaling efficiency from

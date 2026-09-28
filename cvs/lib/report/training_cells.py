@@ -285,6 +285,9 @@ def build_training_cells(config, variant_config, train_res_dict, lifecycle_repor
             curve = raw.get(src)
             if isinstance(curve, list) and curve:
                 cell[dst] = curve
+        planned_steps = raw.get("_planned_steps")
+        if isinstance(planned_steps, (int, float)) and planned_steps > 0:
+            cell["planned_steps"] = int(planned_steps)
         cells.append(cell)
     return cells
 

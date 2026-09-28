@@ -84,20 +84,19 @@ class CellCardRenderer:
         return "cell-card cell-card-compact" if self.config.compact else "cell-card"
 
     def _render_header(self) -> str:
+        # Training cells carry a subtitle. Inference cells keep the original ISL/OSL header.
         if self._cell.get("subtitle"):
+            title = html.escape(str(self._cell.get("policy") or self._cell.get("cell_id")))
             subtitle = html.escape(str(self._cell["subtitle"]))
         elif str(self._cell.get("policy") or "").startswith("SIZE="):
             subtitle = f"NNODES={html.escape(str(self._cell.get('concurrency')))}"
         else:
+            title = html.escape(str(self._cell["policy"]))
             subtitle = (
-                f"ISL={html.escape(str(self._cell.get('isl')))} "
-                f"OSL={html.escape(str(self._cell.get('osl')))} "
-                f"&middot; C={html.escape(str(self._cell.get('concurrency')))}"
+                f"ISL={self._cell['isl']} OSL={self._cell['osl']} "
+                f"&middot; C={self._cell['concurrency']}"
             )
-        return (
-            f"<header><div class='cell-title'>{html.escape(str(self._cell.get('policy') or self._cell.get('cell_id')))}</div>"
-            f"<div class='cell-sub'>{subtitle}</div></header>"
-        )
+        return f"<header><div class='cell-title'>{title}</div><div class='cell-sub'>{subtitle}</div></header>"
 
     def _render_timeline(self) -> str:
         if self.config.compact:
@@ -132,9 +131,12 @@ class CellCardRenderer:
             hm_cls = "headline-margin-fail" if headline.get("status") == "fail" else "headline-margin"
             headline_margin_html = f"<div class='{hm_cls}'>{html.escape(headline['margin'])}</div>"
 
-        unit = (headline or {}).get("unit") or "tok/s"
+        if self._cell.get("subtitle"):
+            unit = html.escape(str((headline or {}).get("unit") or "tok/s"))
+        else:
+            unit = "tok/s"
         return (
-            f"<div class='headline'>{headline_val}<span class='headline-unit'>{html.escape(str(unit))}</span></div>"
+            f"<div class='headline'>{headline_val}<span class='headline-unit'>{unit}</span></div>"
             f"{headline_margin_html}"
         )
 

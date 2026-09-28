@@ -8,7 +8,7 @@ Metric vocabulary for Megatron Run Deck profiles.
 METRIC_UNITS = {
     "throughput_per_gpu": "TFLOP/s/GPU",
     "tokens_per_gpu": "tok/s/GPU",
-    "elapsed_time_per_iteration": "s",
+    "elapsed_time_per_iteration": "ms",
     "step_time_p50_ms": "ms",
     "step_time_p95_ms": "ms",
     "mem_usage": "ratio",
