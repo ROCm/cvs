@@ -104,13 +104,17 @@ class RundeckPublisher:
         )
 
         viewer_path = self._write_viewer(profile, config, out_dir, payload)
-        summary_path = write_inference_ci_summary(payload, config, out_dir)
         artifacts = {
             "html": html_path_written,
             "json": json_path,
             "payload": payload,
-            "summary": summary_path,
         }
+        # The CI summary is inference-shaped (worst cells / parity / tok/s); only
+        # emit it for the sweep builder. Non-sweep decks (e.g. status_matrix) carry
+        # their verdict in the main deck HTML.
+        builder_id = profile.get("dataset_builder", "sweep") if isinstance(profile, dict) else "sweep"
+        if builder_id == "sweep":
+            artifacts["summary"] = write_inference_ci_summary(payload, config, out_dir)
         if viewer_path is not None:
             artifacts["viewer"] = viewer_path
 
@@ -119,7 +123,7 @@ class RundeckPublisher:
             config.suite_id,
             artifacts["html"],
             artifacts["json"],
-            artifacts["summary"],
+            artifacts.get("summary", "n/a"),
         )
         self._register_artifacts(artifacts, config)
         return artifacts
@@ -152,7 +156,9 @@ class RundeckPublisher:
             return
         self.report_manager.add_html_to_report(artifacts["html"], link_name=config.link_name)
         self.report_manager.add_html_to_report(artifacts["json"], link_name=f"{config.link_name} JSON")
-        self.report_manager.add_html_to_report(artifacts["summary"], link_name=f"{config.link_name} summary")
+        summary = artifacts.get("summary")
+        if summary is not None:
+            self.report_manager.add_html_to_report(summary, link_name=f"{config.link_name} summary")
         viewer = artifacts.get("viewer")
         if viewer is not None:
             self.report_manager.add_html_to_report(viewer, link_name=f"{config.link_name} viewer")
