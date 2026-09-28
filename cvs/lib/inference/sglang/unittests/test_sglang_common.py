@@ -265,6 +265,18 @@ class TestSglangCommonHelpers(unittest.TestCase):
             ],
         )
 
+    def test_add_cli_flags_block_accepts_string_true(self):
+        block = sglang_common.add_cli_flags_block(
+            {
+                'lng_ctx_activate': 'true',
+                'context_length': '262144',
+                'chunked_prefill_size': '8192',
+            },
+            indent='',
+        )
+
+        self.assertIn('--context-length 262144 \\', block.splitlines())
+
     def test_add_cli_flags_block_omits_long_context_flags_when_disabled(self):
         block = sglang_common.add_cli_flags_block(
             {

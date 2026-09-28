@@ -1309,7 +1309,7 @@ class PytorchXditServerParams(BaseModel):
     )
     master_addr: str = Field(
         default="",
-        description="Unused. torchrun rendezvous is the first cluster node at runtime.",
+        description="torchrun rendezvous address. Empty probes the first address on the rank-0 node.",
     )
     master_port: Any = Field(default="29500", description="torchrun rendezvous port")
     model_rev: str = Field(default="", description="Pinned Hugging Face snapshot when model is a repo id")
@@ -1368,7 +1368,10 @@ class PytorchXditUnifiedConfigFile(BaseModel):
         default=None,
         description="Ordered server nodes for distributed jobs",
     )
-    master_addr: str = Field(default="", description="torchrun rendezvous address")
+    master_addr: str = Field(
+        default="",
+        description="torchrun rendezvous address. Empty probes the first address on the rank-0 node.",
+    )
     master_port: int = Field(default=29500, ge=1, le=65535, description="torchrun rendezvous port")
     nccl_ib_hca: str = Field(default="", description="NCCL_IB_HCA for multi-node jobs")
     nccl_socket_ifname: str = Field(default="", description="NCCL_SOCKET_IFNAME for multi-node jobs")

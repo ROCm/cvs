@@ -22,6 +22,7 @@ from cvs.lib.inference.xdit.xdit_flux_job import (
     is_flux2_model,
     parallel_product,
     resolve_distributed_execution_hosts,
+    resolve_master_addr,
     resolve_flux2_example_host_mount,
     resolve_flux2_hf_repo_id,
     resolve_flux_model_type,
@@ -631,6 +632,24 @@ class TestFluxParallelism(unittest.TestCase):
         cluster = {"node_dict": {"10.0.0.1": {}, "10.0.0.2": {}}}
         with self.assertRaisesRegex(ValueError, "nnodes >= 2"):
             resolve_distributed_execution_hosts(cluster, {"nnodes": 1})
+
+    def test_resolve_master_addr_uses_configured_value(self):
+        addr = resolve_master_addr(
+            {"master_addr": "10.1.2.3"},
+            {"rank0": "host0"},
+            "rank0",
+            s_phdl=MagicMock(),
+        )
+        self.assertEqual(addr, "10.1.2.3")
+
+    def test_resolve_master_addr_probes_rank0_when_unset(self):
+        phdl = MagicMock()
+        with patch(
+            "cvs.lib.inference.xdit.xdit_flux_job._exec_on_single_node",
+            return_value="10.9.8.7 extra",
+        ):
+            addr = resolve_master_addr({}, {"rank0": "host0"}, "rank0", s_phdl=phdl)
+        self.assertEqual(addr, "10.9.8.7")
 
     def test_distributed_hosts_reject_nnodes_larger_than_cluster(self):
         cluster = {"node_dict": {"10.0.0.1": {}}}

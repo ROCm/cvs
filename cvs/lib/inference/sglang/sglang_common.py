@@ -336,13 +336,24 @@ def _normalize_cli_flags(raw: Any) -> list[str]:
     raise ValueError(f'add_flags must be a list or str, got {type(raw).__name__}')
 
 
+def long_context_requested(value):
+    """True for JSON true and for the string forms users paste into configs."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ('true', '1', 'yes', 'on')
+    if isinstance(value, int):
+        return value == 1
+    return False
+
+
 def _long_context_cli_flags(bp_dict, *, include_chunked_prefill=True):
     """Build server flags required by an activated long-context workload.
 
     Chunked-prefill caps apply only to prefill (or unified) servers. Decode still
     needs ``--context-length`` so it can hold the transferred KV cache.
     """
-    if bp_dict.get('lng_ctx_activate') is not True:
+    if not long_context_requested(bp_dict.get('lng_ctx_activate')):
         return []
 
     context_length = bp_dict.get('context_length')

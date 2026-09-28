@@ -38,9 +38,11 @@ class TestXditConfigLoader(unittest.TestCase):
                 },
                 "benchmark_params": {
                     "flux1_dev_t2i": {
+                        "prompt": "A small cat",
                         "torchrun_nproc": 8,
                         "ulysses_degree": 8,
                         "ring_degree": 1,
+                        "expected_results": {"auto": {"max_avg_pipe_time_s": 10.0}},
                     }
                 },
             }
@@ -91,6 +93,7 @@ class TestXditConfigLoader(unittest.TestCase):
                 },
                 "params": {
                     "wan22_i2v_a14b": {
+                        "prompt": "A small cat",
                         "torchrun_nproc": 8,
                         "ulysses_size": 8,
                         "ring_size": 2,
@@ -145,7 +148,14 @@ class TestXditConfigLoader(unittest.TestCase):
                         },
                     },
                 },
-                "params": {"wan22_i2v_a14b": {"torchrun_nproc": 8, "ulysses_size": 8, "ring_size": 1}},
+                "params": {
+                    "wan22_i2v_a14b": {
+                        "prompt": "A small cat",
+                        "torchrun_nproc": 8,
+                        "ulysses_size": 8,
+                        "ring_size": 1,
+                    }
+                },
             },
             {"auto": {"max_avg_pipe_time_s": 300.0}},
         )
@@ -193,7 +203,7 @@ class TestXditConfigLoader(unittest.TestCase):
                         },
                     },
                 },
-                "params": {"wan22_i2v_a14b": {"torchrun_nproc": 8}},
+                "params": {"wan22_i2v_a14b": {"prompt": "A small cat", "torchrun_nproc": 8}},
                 "nnodes": 2,
                 "master_addr": "10.0.0.1",
             },
@@ -295,6 +305,7 @@ class TestXditConfigLoader(unittest.TestCase):
                     "benchmark_serv_node": "node-a",
                 },
                 "benchmark_params": {
+                    "prompt": "A small cat",
                     "height": 1024,
                     "ulysses_degree": 8,
                     "torchrun_nproc": 8,
@@ -338,6 +349,7 @@ class TestXditConfigLoader(unittest.TestCase):
                     "benchmark_serv_node": "node-a",
                 },
                 "benchmark_params": {
+                    "prompt": "A small cat",
                     "height": 1024,
                     "ulysses_degree": 8,
                     "torchrun_nproc": 8,
@@ -431,6 +443,7 @@ class TestXditConfigLoader(unittest.TestCase):
             },
             "params": {
                 "wan22_i2v_a14b": {
+                    "prompt": "A small cat",
                     "torchrun_nproc": 8,
                     "ulysses_size": 8,
                     "ring_size": 2,
@@ -454,6 +467,26 @@ class TestXditConfigLoader(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "nnodes >= 2"):
             load_variant(path, {"username": "test"})
+
+    def test_unknown_workload_key_is_rejected(self):
+        payload = self._distributed_payload(nnodes=2)
+        payload["params"]["wan22_i2v_a14b"]["ulysses_degre"] = 8
+        path = self._write_config(payload, {"auto": {"max_avg_pipe_time_s": 300.0}})
+
+        with self.assertRaisesRegex(ValueError, "ulysses_degre"):
+            load_variant(path, {"node_dict": {"node-a": {}, "node-b": {}}})
+
+    def test_top_level_container_env_hf_token_does_not_reach_docker_env(self):
+        payload = self._distributed_payload(nnodes=2)
+        payload["container"]["env"] = {"HF_TOKEN": "hf_secret", "NCCL_DEBUG": "ERROR"}
+        path = self._write_config(payload, {"auto": {"max_avg_pipe_time_s": 300.0}})
+
+        variant = load_variant(path, {"node_dict": {"node-a": {}, "node-b": {}}})
+        container = orchestrator_container_from_variant(variant)
+
+        self.assertNotIn("HF_TOKEN", container["env"])
+        self.assertEqual(container["env"]["NCCL_DEBUG"], "ERROR")
+        self.assertNotIn("HF_TOKEN", variant.inference["container_config"]["env_dict"])
 
     def test_distributed_fails_when_cluster_is_smaller_than_nnodes(self):
         path = self._write_config(

@@ -366,8 +366,9 @@ class SglangDistributed:
         self.poll_for_inference_completion()
 
         tp = int(self.bp_dict.get('tensor_parallelism', 1))
-        int(self.bp_dict.get('pipeline_parallelism', 1))
-        num_gpus = self.nnodes * tp
+        pp = int(self.bp_dict.get('pipeline_parallelism', 1))
+        # --tp-size and --pp-size are the job-wide rank counts. nnodes only places those ranks.
+        num_gpus = tp * pp
         peak_tflops = float(i_dict.get('peak_gpu_tflops', 1300))
         num_params = float(i_dict.get('model_num_params', 70e9))
         for node, m in (self.inference_results_dict or {}).items():

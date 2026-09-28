@@ -1,5 +1,5 @@
 {
-    "_comment": "SGLang disaggregated Qwen3.5-397B-A17B-FP8 workload workload with cache-aware prefill and decode routing.",
+    "_comment": "SGLang disaggregated Qwen3.5-397B-A17B-FP8 workload with cache-aware prefill and decode routing.",
     "enforce_thresholds": false,
     "gpu_name" : "<changeme> mi325",
     "threshold_json": "mi325_sglang_qwen35_397b_threshold.json",

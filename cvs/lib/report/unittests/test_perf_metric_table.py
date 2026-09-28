@@ -70,6 +70,19 @@ class TestPerfMetricTable(unittest.TestCase):
         self.assertIn('Recorded', html_out)
         self.assertIn('reference: min_tok_s 100', html_out)
         self.assertIn('metric unavailable', html_out)
+        self.assertNotIn('<th>Node</th>', html_out)
+
+    def test_render_benchmark_metrics_html_names_node_when_several_nodes(self):
+        html_out = render_benchmark_metrics_html(
+            [
+                {'node': 'rank0', 'metric': 'goodput', 'status': 'pass'},
+                {'node': 'rank1', 'metric': 'goodput', 'status': 'fail'},
+            ]
+        )
+
+        self.assertIn('<th>Node</th>', html_out)
+        self.assertIn('rank0', html_out)
+        self.assertIn('rank1', html_out)
 
     def test_is_benchmark_metrics_extra_detects_wrapped_table(self):
         html_out = render_benchmark_metrics_html([{'node': 'n1', 'metric': 'goodput', 'status': 'pass'}])

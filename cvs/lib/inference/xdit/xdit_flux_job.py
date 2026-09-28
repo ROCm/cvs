@@ -346,8 +346,11 @@ def resolve_master_addr(
     *,
     s_phdl=None,
 ) -> str:
-    """Resolve torchrun rendezvous from rank-0 (first cluster node)."""
-    del inference_dict
+    """Use a configured rendezvous address, otherwise the first rank-0 address."""
+    configured = str((inference_dict or {}).get("master_addr") or "").strip()
+    if configured:
+        log.info("Using configured master_addr for rank-0 node %s: %s", rank0_node, configured)
+        return configured
     if s_phdl is not None:
         try:
             ip_cmd = "hostname -I | awk '{print $1}'"

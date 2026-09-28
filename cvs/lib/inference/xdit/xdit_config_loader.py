@@ -8,7 +8,7 @@ All rights reserved.
 import json
 from pathlib import Path
 
-from pydantic import Field, create_model
+from pydantic import Field, ValidationError, create_model
 
 from cvs.lib.utils.config_loader import (
     BaseVariantConfig,
@@ -86,8 +86,20 @@ def _container_env(inference):
     return {str(key): str(value) for key, value in env.items() if value is not None}
 
 
+def _strip_hf_token_env(env):
+    if isinstance(env, dict):
+        env.pop("HF_TOKEN", None)
+        env.pop("HUGGING_FACE_HUB_TOKEN", None)
+    return env
+
+
 def _merged_container_env(container):
     runtime_args = dict((container.get("runtime") or {}).get("args") or {})
+    # Drop the token from both sources. A later merge must not put it back on docker -e.
+    _strip_hf_token_env(container.get("env"))
+    _strip_hf_token_env(runtime_args.get("env"))
+    live_runtime_env = ((container.get("runtime") or {}).get("args") or {}).get("env")
+    _strip_hf_token_env(live_runtime_env)
     env = dict(container.get("env") or {})
     env.update(dict(runtime_args.get("env") or {}))
     return {str(key): str(value) for key, value in env.items() if value is not None}
@@ -355,6 +367,31 @@ def _is_legacy_root(raw):
     return isinstance(raw.get("config"), dict) and isinstance(raw.get("benchmark_params"), dict)
 
 
+def _validate_legacy_config(raw):
+    """Fail at load on unknown keys instead of falling through to schema defaults."""
+    from cvs.parsers.schemas import PytorchXditFluxConfigFile, PytorchXditWanConfigFile
+
+    benchmark_params = raw.get("benchmark_params") or {}
+    model = PytorchXditWanConfigFile if benchmark_params.get("wan22_i2v_a14b") else PytorchXditFluxConfigFile
+    try:
+        model.model_validate(raw)
+    except ValidationError as exc:
+        raise ValueError(f"invalid xDiT config: {exc}") from exc
+
+
+def _validate_unified_config(raw):
+    """Fail at load on unknown keys instead of falling through to schema defaults."""
+    from cvs.parsers.schemas import PytorchXditUnifiedConfigFile
+
+    check = dict(raw)
+    # Partial fixtures omit the sibling file; packaged configs always set it.
+    check.setdefault("threshold_json", "unspecified.json")
+    try:
+        PytorchXditUnifiedConfigFile.model_validate(check)
+    except ValidationError as exc:
+        raise ValueError(f"invalid xDiT config: {exc}") from exc
+
+
 def orchestrator_container_from_variant(variant):
     return _flatten_orchestrator_container(variant.container.model_dump())
 
@@ -383,6 +420,7 @@ def load_variant(config_path, cluster_dict):
     if _is_legacy_root(peek):
         config = resolve_test_config_placeholders(peek["config"], cluster_dict)
         benchmark_params = resolve_test_config_placeholders(peek["benchmark_params"], cluster_dict)
+        _validate_legacy_config({"config": config, "benchmark_params": benchmark_params})
         inference, benchmark_params, volume_dict = _legacy_runtime_views(config, benchmark_params)
         topology = "distributed" if int(inference.get("nnodes") or 1) > 1 else "single"
         _apply_distributed_host_scope(inference, cluster_dict, topology)
@@ -407,6 +445,7 @@ def load_variant(config_path, cluster_dict):
     framework = raw.get("framework")
     if framework not in (None, "xdit", "pytorch_xdit"):
         raise ValueError(f"unsupported framework {framework!r} in {config_path!r}; expected 'xdit'")
+    _validate_unified_config(raw)
 
     raw["container"] = {
         key: value for key, value in dict(raw.get("container") or {}).items() if not str(key).startswith("_")

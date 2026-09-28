@@ -25,7 +25,7 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir
+from cvs.lib.inference.sglang.sglang_common import cleanup_sglang_log_dir, long_context_requested
 from cvs.lib.verify_lib import verify_dmesg_for_errors
 
 from cvs.tests.inference.sglang.conftest import flat_expected_from_specs
@@ -114,7 +114,7 @@ def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, reque
 
 
 def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
-    if im_obj.bp_dict.get("lng_ctx_activate") is not True:
+    if not long_context_requested(im_obj.bp_dict.get("lng_ctx_activate")):
         pytest.skip("long-context accuracy is disabled by lng_ctx_activate")
 
     globals.error_list = []
