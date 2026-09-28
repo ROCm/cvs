@@ -10,7 +10,7 @@ import re
 import time
 import xlsxwriter
 
-from cvs.lib.utils_lib import fail_test
+from cvs.lib.utils_lib import *
 
 log = logging.getLogger(__name__)
 
@@ -89,10 +89,6 @@ def _log_lat_run_done(lat_test, msg_size, result_dict):
             sum(all_lats) / len(all_lats),
             len(all_lats),
         )
-
-from cvs.lib import globals
-
-log = globals.log
 
 
 def detect_rocm_path(phdl, config_rocm_path):
