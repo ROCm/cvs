@@ -644,6 +644,24 @@ async def install_exporters(
     )
 
 
+def _last_failure_reason(install_log, failed_components):
+    """Summarize why the failed components failed, for the node status message.
+
+    The full installer log only reaches the fleet-manager container log, so without
+    this the UI shows component names with no cause.
+    """
+    reasons = []
+    for component in failed_components:
+        messages = [
+            entry["message"]
+            for entry in install_log
+            if entry.get("component") == component and not entry.get("success")
+        ]
+        if messages:
+            reasons.append(f"{component}: {messages[-1]}")
+    return " | ".join(reasons) if reasons else "See fleet-manager logs for details."
+
+
 async def install_single_node(
     node_id: int,
     node_ip: str,
@@ -742,7 +760,8 @@ async def install_single_node(
                     return {"node_id": node_id, "success": True, "warnings": failed}
                 else:
                     node.status = DBNodeStatus.ERROR.value
-                    node.status_message = f"Failed to install: {', '.join(failed)}"
+                    reason = _last_failure_reason(installer.install_log, failed)
+                    node.status_message = f"Failed to install: {', '.join(failed)}. {reason}"[:500]
                     logger.warning(f"[Parallel] Node {node_ip} installation failed: {failed}")
                     db.commit()
                     return {"node_id": node_id, "success": False, "error": f"Failed: {', '.join(failed)}"}
@@ -1025,3 +1044,4 @@ async def run_gpu_info_refresh(job_id: str, node_group_id: int, node_ids: List[i
         logger.exception(f"GPU info refresh job {job_id} failed: {e}")
     finally:
         db.close()
+

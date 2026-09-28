@@ -26,6 +26,14 @@ NC='\033[0m' # No Color
 
 KEEP_DATA=false
 WITH_GPU=false
+ORIGINAL_ARGS=("$@")
+
+# sudo drops env unless the flag is passed on the sudo command line (see manage.sh).
+if [ "${DEPLOY_SH_SUDOED:-}" = "1" ]; then
+    ALREADY_SUDOED="true"
+else
+    ALREADY_SUDOED="false"
+fi
 
 show_help() {
     echo "Usage: ./deploy.sh [OPTIONS]"
@@ -63,10 +71,23 @@ echo -e "${BLUE}  AMD GPU Fleet Manager - Clean Deployment${NC}"
 echo -e "${BLUE}================================================${NC}"
 echo ""
 
-# Check docker access
+# Check docker access. Any docker info failure used to exec sudo forever:
+# sudo retries the same failing docker info (daemon down, missing docker, rootless).
+DOCKER_INFO_ERR="$(docker info 2>&1 >/dev/null || true)"
 if ! docker info &> /dev/null; then
+    if [ "$ALREADY_SUDOED" = "true" ] || [ "$(id -u)" -eq 0 ]; then
+        echo -e "${RED}Error: Docker is not usable (not a sudo-permissions loop).${NC}"
+        echo -e "${RED}docker info:${NC}"
+        echo "$DOCKER_INFO_ERR"
+        echo -e "${YELLOW}Check: docker is installed, the daemon is running, and this user can use it.${NC}"
+        echo "  command -v docker"
+        echo "  sudo systemctl status docker"
+        echo "  ls -l /var/run/docker.sock"
+        echo "  groups   # expect 'docker' for passwordless docker, or use rootless carefully"
+        exit 1
+    fi
     echo -e "${YELLOW}Docker requires elevated privileges. Re-running with sudo...${NC}"
-    exec sudo "$0" "$@"
+    exec sudo DEPLOY_SH_SUDOED=1 "$0" "${ORIGINAL_ARGS[@]}"
 fi
 
 # Docker compose command
@@ -145,24 +166,11 @@ rm -f server/config/prometheus/targets/*.json
 touch server/config/prometheus/targets/.gitkeep
 chmod 777 server/config/prometheus/targets/
 
-# Step 4: Build UI
-echo -e "${YELLOW}Step 4: Building UI...${NC}"
-cd server/ui
-if [ ! -d "node_modules" ]; then
-    echo -e "${YELLOW}Installing npm dependencies...${NC}"
-    npm install
-fi
-rm -rf dist
-npm run build
-
-# Copy to static folder
-echo -e "${YELLOW}Copying UI build to static folder...${NC}"
-rm -rf ../fleet_manager/static
-cp -r dist ../fleet_manager/static
-cd "$SCRIPT_DIR"
-
-# Step 5: Build and start all services
-echo -e "${YELLOW}Step 5: Building and starting services...${NC}"
+# Step 4: Build and start all services.
+# The UI is built by the node:20 stage in Dockerfile.fleet-manager, which also
+# overwrites fleet_manager/static, so a host npm build here would be discarded.
+# Use `./manage.sh ui` when iterating on the UI outside a container.
+echo -e "${YELLOW}Step 4: Building and starting services...${NC}"
 if [ "$KEEP_DATA" = false ]; then
     export RESET_DATABASE=true
 fi
@@ -175,11 +183,11 @@ else
     $COMPOSE up -d --build
 fi
 
-# Step 6: Wait for services to be healthy
-echo -e "${YELLOW}Step 6: Waiting for services to start...${NC}"
+# Step 5: Wait for services to be healthy
+echo -e "${YELLOW}Step 5: Waiting for services to start...${NC}"
 sleep 15
 
-# Step 7: Verify health
+# Step 6: Verify health
 echo -e "${BLUE}Checking service health...${NC}"
 echo ""
 
@@ -223,3 +231,4 @@ echo "  4. Upload SSH key and click 'Verify Connectivity'"
 echo "  5. Click 'Install' to deploy exporters to the nodes"
 echo "  6. View metrics in Grafana dashboards"
 echo ""
+

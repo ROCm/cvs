@@ -217,6 +217,7 @@ function NodeGroupDetail() {
   const connectedNodes = nodeGroup.nodes.filter((n) => n.status === 'connected')
   const unreachableNodes = nodeGroup.nodes.filter((n) => n.status === 'unreachable')
   const activeNodes = nodeGroup.nodes.filter((n) => n.status === 'active')
+  const errorNodes = nodeGroup.nodes.filter((n) => n.status === 'error')
 
   // Find the associated monitoring server and metric group
   const monitoringServer = monitoringServers.find(s => s.id === nodeGroup.monitoring_server_id)
@@ -524,8 +525,8 @@ function NodeGroupDetail() {
                     : `Install on ${connectedNodes.length} connected nodes`}
                 </button>
 
-                {/* Force reinstall option */}
-                {(activeNodes.length > 0 || connectedNodes.length > 0) && (
+                {/* Force reinstall option — error nodes are the main reason to retry */}
+                {(activeNodes.length > 0 || connectedNodes.length > 0 || errorNodes.length > 0) && (
                   <button
                     onClick={() => {
                       setInstallError(null)
@@ -610,7 +611,10 @@ function NodeGroupDetail() {
                     <td className="py-3 px-4 text-sm text-amd-gray-500">
                       GPU: {node.gpu_exporter_port}, Node: {node.node_exporter_port}
                     </td>
-                    <td className="py-3 px-4 text-sm text-amd-gray-500 max-w-xs truncate">
+                    <td
+                      className="py-3 px-4 text-sm text-amd-gray-500 max-w-xs truncate"
+                      title={node.status_message || ''}
+                    >
                       {node.status_message || '-'}
                     </td>
                     <td className="py-3 px-4">
@@ -697,3 +701,4 @@ function NodeGroupDetail() {
 }
 
 export default NodeGroupDetail
+
