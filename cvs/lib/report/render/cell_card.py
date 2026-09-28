@@ -84,9 +84,13 @@ class CellCardRenderer:
         return "cell-card cell-card-compact" if self.config.compact else "cell-card"
 
     def _render_header(self) -> str:
+        if str(self._cell["policy"]).startswith("SIZE="):
+            subtitle = f"NNODES={self._cell['concurrency']}"
+        else:
+            subtitle = f"ISL={self._cell['isl']} OSL={self._cell['osl']} &middot; C={self._cell['concurrency']}"
         return (
             f"<header><div class='cell-title'>{html.escape(str(self._cell['policy']))}</div>"
-            f"<div class='cell-sub'>ISL={self._cell['isl']} OSL={self._cell['osl']} &middot; C={self._cell['concurrency']}</div></header>"
+            f"<div class='cell-sub'>{subtitle}</div></header>"
         )
 
     def _render_timeline(self) -> str:

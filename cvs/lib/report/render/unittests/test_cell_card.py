@@ -145,6 +145,23 @@ class TestCellCardRenderer(unittest.TestCase):
         self.assertIn("test_cell_123", html)
         self.assertIn("test_host", html)
 
+    def test_render_xdit_cell_uses_diffusion_labels(self):
+        renderer = CellCardRenderer(self.basic_config)
+        cell = dict(
+            self.sample_cell,
+            policy="SIZE=720*1280,FRAMES=81,STEPS=40,BENCH=1",
+            cell_id="SIZE=720*1280,FRAMES=81,STEPS=40,BENCH=1",
+            concurrency=2,
+        )
+
+        rendered = renderer.render(cell)
+
+        self.assertIn("SIZE=720*1280,FRAMES=81,STEPS=40,BENCH=1", rendered)
+        self.assertIn("NNODES=2", rendered)
+        self.assertNotIn("ISL=", rendered)
+        self.assertNotIn("OSL=", rendered)
+        self.assertNotIn("C=2", rendered)
+
     def test_render_compact_mode(self):
         """Test rendering in compact mode."""
         compact_config = CellCardConfig(
