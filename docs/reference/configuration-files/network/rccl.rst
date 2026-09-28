@@ -1,6 +1,6 @@
 .. meta::
-  :description: Configure RCCL benchmark configuration file variables
-  :keywords: RCCL, ROCm, benchmark, CVS
+  :description: Reference for RCCL test configuration files in CVS, covering collective benchmarks, regression sweeps, environment scripts, and heatmap generation for AMD GPU clusters.
+  :keywords: CVS, RCCL, ROCm, benchmark, collective, InfiniBand, RDMA, GPU, AMD, JSON, configuration, network, heatmap
 
 **********************************************************************
 ROCm Communication Collectives Library (RCCL) test configuration files
@@ -26,8 +26,8 @@ CVS provides the following RCCL suites:
 
 All suites also collect host/network information and check firewall state before performance runs.
 
-How to run
-==========
+Run RCCL test commands
+======================
 
 See :doc:`/how-to/test-suites/network/rccl` for ``cvs run`` examples, environment script staging, and heatmap generation.
 
@@ -226,6 +226,8 @@ Set ``verify_bus_bw`` to ``"True"`` to require actual bandwidth to reach at leas
 Collective meanings
 -------------------
 
+The following collectives can be specified in the ``results`` block; each name maps to a distinct RCCL operation.
+
 - ``all_reduce_perf``: all ranks reduce then receive the reduced result.
 - ``all_gather_perf``: each rank receives data from all ranks.
 - ``scatter_perf``: root rank distributes shards to all ranks.
@@ -269,6 +271,8 @@ Heatmap generation
 
 Generate performance heatmaps by comparing actual test results against a golden reference:
 
+The following command generates an HTML heatmap that highlights per-collective bandwidth deviations from the reference.
+
 .. code-block:: bash
 
   cvs generate heatmap \
@@ -292,6 +296,8 @@ Environment script setup
 
 All cluster configurations require an environment script to be sourced before RCCL tests, regardless of NIC type (Broadcom/ConnectX/AINIC):
 
+Follow these steps to select and configure the correct environment script for your cluster hardware.
+
 1. **For AINIC clusters:** Ensure AMD ANP is installed and available on all target nodes, then edit ``input/config_file/rccl/ainic_env_script.sh`` and set ``ANP_HOME_DIR`` to your ANP install path.
 
 2. **For other NIC types:** Use the appropriate environment script (``thor2_env_script.sh`` for Broadcom, ``cx7_env_script.sh`` for ConnectX-7, etc.).
@@ -305,7 +311,7 @@ The environment script contains essential RCCL/NCCL/UCX tuning parameters and pa
 Known issue: bnxt_re (Thor2) multi-node GPU Direct RDMA failure
 =================================================================
 
-**Symptom:** on bnxt_re (Broadcom Thor2) clusters, multi-node RCCL/NCCL jobs fail
+**Symptom:** On bnxt_re (Broadcom Thor2) clusters, multi-node RCCL/NCCL jobs fail
 symmetrically on every node during ``ncclCommInitRank`` with:
 
 .. code-block:: text
@@ -319,7 +325,7 @@ with a matching kernel-side error in ``dmesg``:
 
   infiniband bng_re0: bng_re_reg_user_mr: ib_umem_get failed! rc = -14
 
-**Root cause:** this is not a per-node config or cabling issue -- it reproduces
+**Root cause:** This is not a per-node config or cabling issue -- it reproduces
 identically on every node because it is a build/config gap. RCCL's
 ``src/transport/net.cc`` only compiles its ROCm-native GPU memory registration
 path (``hsa_amd_portable_export_dmabuf``) when built against
@@ -332,7 +338,7 @@ call on a raw GPU device pointer. Without a peer-memory kernel module,
 ``bnxt_re``'s driver cannot pin that pointer via ``get_user_pages`` and rejects
 it with ``EFAULT`` ("Bad address").
 
-**Fix:** set ``NCCL_CUMEM_ENABLE=1`` (alongside ``NCCL_DMABUF_ENABLE=1``) in the
+**Fix:** Set ``NCCL_CUMEM_ENABLE=1`` (alongside ``NCCL_DMABUF_ENABLE=1``) in the
 environment script used for bnxt_re/Thor2 clusters. ``input/env_file/rccl/thor2_env_script.sh``
 sets this by default. Enabling CUMEM also lets NCCL recognize GPUs on a
 UALoE/scale-up fabric as directly P2P-reachable (``P2P/CUMEMMNNVL``), bypassing
@@ -347,6 +353,8 @@ Verified on a 2-node bnxt_re/Helios cluster (4 GPUs/node, 8 ranks total): with
 
 Validation and artifacts
 ========================
+
+After a run, CVS produces the following outputs that can be used for pass/fail assessment and further analysis.
 
 - Test-level pass/fail is based on command execution plus enabled validations (``results``, bandwidth checks, dip checks).
 - Performance reports are generated under ``/tmp/rccl_perf_report_*.html``.

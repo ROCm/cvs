@@ -1,1 +1,1 @@
-rocm_setup_version(VERSION 0.2.0)
+rocm_setup_version(VERSION 0.3.0)

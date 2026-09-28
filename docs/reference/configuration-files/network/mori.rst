@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure the variables in the MORI configuration file
-  :keywords: communication, ROCm, install, cvs, MORI, RDMA, multi-node, MI35X
+  :description: Reference for the MORI network configuration file in CVS, covering RDMA read/write bandwidth, latency thresholds, container setup, and NIC device options.
+  :keywords: CVS, MORI, RDMA, ROCm, network, bandwidth, latency, InfiniBand, AMD, GPU, JSON, configuration, multi-node
 
-*************************************************
-MORI configuration file
-*************************************************
+*************************************************************************
+MORI network configuration file reference for Cluster Validation Suite (CVS)
+*************************************************************************
 
 MORI (Memory-Oriented RDMA Interface) tests validate RDMA communication performance across multi-node AMD GPU clusters.
 These tests ensure optimal bandwidth, latency, and reliability for distributed workloads that require high-speed inter-node communication.
@@ -22,7 +22,7 @@ Change the parameters as needed in the MORI configuration file: ``mori_config.js
 
 .. note::
 
-  - ``{user-id}`` will be resolved to the current username in the runtime. You can also manually change this value to your username.
+  - ``{user-id}`` resolves to the current username at runtime. You can also manually change this value to your username.
   - Replace all ``<changeme>`` placeholders with actual values for your cluster.
 
 ``mori_config.json``
