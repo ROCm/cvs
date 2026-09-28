@@ -47,12 +47,20 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 .cmd-block h3 { margin: 0 0 0.5rem; font-size: 0.75rem; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--muted); }
 .notes { font-size: 0.85rem; color: var(--muted); margin-top: 0.75rem; }
-.tl-row { display: flex; gap: 3px; min-height: 52px; border-radius: 8px; overflow: hidden; }
-.tl-seg { background: linear-gradient(180deg, #2d3548 0%, #232836 100%);
-  display: flex; flex-direction: column; justify-content: center; align-items: center;
-  padding: 0.35rem; min-width: 48px; border-right: 1px solid var(--border); }
-.tl-lbl { font-size: 0.65rem; color: var(--muted); text-align: center; }
-.tl-val { font-size: 0.8rem; font-weight: 600; color: var(--accent); }
+.tl-row { display: flex; gap: 6px; min-height: 56px; align-items: stretch; }
+/* Deep tones carry white text; each stage cycles a distinct hue. */
+.tl-tone1 { --tl-c: #c2410c; }
+.tl-tone2 { --tl-c: #1d4ed8; }
+.tl-tone3 { --tl-c: #7e22ce; }
+.tl-tone4 { --tl-c: #15803d; }
+.tl-tone5 { --tl-c: #a16207; }
+.tl-tone6 { --tl-c: #be185d; }
+.tl-seg { background: var(--tl-c, var(--panel)); color: #fff; display: flex; flex-direction: column;
+  justify-content: center; align-items: center; padding: 0.35rem; min-width: 56px; overflow: hidden;
+  border-radius: 6px; }
+.tl-seg:hover { filter: brightness(1.15); }
+.tl-lbl { font-size: 0.68rem; color: rgba(255, 255, 255, 0.85); text-align: center; overflow-wrap: anywhere; }
+.tl-val { font-size: 0.8rem; font-weight: 700; color: #fff; }
 .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
 .summary-card { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; }
 .summary-card h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }

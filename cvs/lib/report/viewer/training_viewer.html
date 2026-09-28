@@ -29,8 +29,15 @@ details.series-pick > summary { cursor:pointer; list-style:none; background:#0e1
   box-shadow: 0 12px 40px rgba(0,0,0,0.5); }
 .series-menu .cb { display:flex; align-items:center; gap:0.45rem; font-size:0.8rem; color: var(--text);
   padding: 0.12rem 0; white-space: nowrap; }
-.grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; }
-.chart-card { background:#ffffff; border:1px solid var(--border); border-radius:10px; padding:8px; height: 320px; }
+/* Layout: small grid (default) or stacked one-below-another (megatron-style, wide). */
+#charts { display:grid; gap:16px; }
+#charts.layout-grid { grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); }
+#charts.layout-stacked { grid-template-columns: 1fr; }
+.chart-card { border:1px solid var(--border); border-radius:10px; padding:10px; }
+.chart-card.bg-white { background:#ffffff; }
+.chart-card.bg-dark { background:#0e1117; }
+#charts.layout-grid .chart-card { height: 340px; }
+#charts.layout-stacked .chart-card { height: 420px; max-width: 900px; }
 .muted { color: var(--muted); }
 .hint { font-size: 0.78rem; color: var(--muted); margin: 0.3rem 0 0; }
 </style>
@@ -44,6 +51,12 @@ details.series-pick > summary { cursor:pointer; list-style:none; background:#0e1
   <label>Skip initial steps
     <select id="skip"></select>
   </label>
+  <label>Background
+    <select id="bg"><option value="dark">Dark</option><option value="white">White</option></select>
+  </label>
+  <label>Layout
+    <select id="layout"><option value="grid">Grid</option><option value="stacked">Stacked</option></select>
+  </label>
   <details class="series-pick">
     <summary id="series-summary">Select metrics ▾</summary>
     <div class="series-menu" id="series-list"></div>
@@ -56,13 +69,14 @@ details.series-pick > summary { cursor:pointer; list-style:none; background:#0e1
 </div>
 <p class="hint">Each chart overlays every sweep for one metric (cross-sweep comparison). Scroll/drag to zoom &amp; pan; double-click "Reset zoom".</p>
 
-<section id="charts" class="grid"></section>
+<section id="charts" class="layout-grid"></section>
 <p id="empty" class="muted" hidden>No TensorBoard series were collected for this run.</p>
 
 __EMBEDDED_JSON__
 <script>
 (function () {
-  var COLORS = ["#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2","#17becf","#bcbd22","#7f7f7f"];
+  // Megatron Run Deck series palette.
+  var COLORS = ["#ff6b35", "#6b9fff", "#c77dff", "#3dd68c", "#f0c040", "#ff5c6a"];
 
   function payload() {
     var el = document.getElementById("embedded-report-json");
@@ -76,6 +90,8 @@ __EMBEDDED_JSON__
   var VS = DS.viewer_settings || {};
   var DEFAULTS = VS.default_series || [];
   var SKIP = (typeof VS.skip_initial_steps === "number") ? VS.skip_initial_steps : 5;
+  var BG = "dark";        // 'dark' | 'white'
+  var LAYOUT = "grid";    // 'grid' | 'stacked'
 
   var SWEEPS = Object.keys(SERIES).sort();
   var tagSet = {};
@@ -87,10 +103,17 @@ __EMBEDDED_JSON__
   if (!Object.keys(selected).length) { ALL_TAGS.slice(0, 6).forEach(function (t) { selected[t] = true; }); }
 
   var charts = [];
-  var whiteBg = { id: "whiteBg", beforeDraw: function (c) {
+  // Paint the plot background for the current mode (also makes copied images opaque).
+  var bgPlugin = { id: "bgFill", beforeDraw: function (c) {
     var x = c.ctx; x.save(); x.globalCompositeOperation = "destination-over";
-    x.fillStyle = "#ffffff"; x.fillRect(0, 0, c.width, c.height); x.restore();
+    x.fillStyle = (BG === "white") ? "#ffffff" : "#0e1117"; x.fillRect(0, 0, c.width, c.height); x.restore();
   }};
+
+  function theme() {
+    return (BG === "white")
+      ? { title: "#111", tick: "#333", grid: "#eeeeee" }
+      : { title: "#e6e9f0", tick: "#9aa3b5", grid: "rgba(42,47,61,0.6)" };
+  }
 
   function pts(arr) {
     var out = [];
@@ -100,35 +123,38 @@ __EMBEDDED_JSON__
 
   function draw() {
     var host = document.getElementById("charts");
+    host.className = "layout-" + LAYOUT;
     charts.forEach(function (c) { c.destroy(); });
     charts = [];
     host.innerHTML = "";
-    var tags = ALL_TAGS.filter(function (t) { return selected[t]; });
+    var t = theme();
+    var tags = ALL_TAGS.filter(function (t2) { return selected[t2]; });
     document.getElementById("empty").hidden = tags.length > 0;
     document.getElementById("meta").textContent =
       SWEEPS.length + " sweep(s) · " + tags.length + "/" + ALL_TAGS.length + " metrics · skip " + SKIP;
     tags.forEach(function (tag) {
-      var card = document.createElement("div"); card.className = "chart-card";
+      var card = document.createElement("div");
+      card.className = "chart-card " + (BG === "white" ? "bg-white" : "bg-dark");
       var cv = document.createElement("canvas"); card.appendChild(cv); host.appendChild(card);
       var datasets = SWEEPS.map(function (s, j) {
         return { label: s, data: pts((SERIES[s] || {})[tag]), borderColor: COLORS[j % COLORS.length],
-          backgroundColor: COLORS[j % COLORS.length], borderWidth: 1.4, pointRadius: 0, tension: 0.1 };
+          backgroundColor: COLORS[j % COLORS.length], borderWidth: 2, pointRadius: 0, tension: 0.1 };
       });
       charts.push(new Chart(cv, {
-        type: "line", data: { datasets: datasets }, plugins: [whiteBg],
+        type: "line", data: { datasets: datasets }, plugins: [bgPlugin],
         options: {
           responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
           interaction: { mode: "nearest", intersect: false },
           plugins: {
-            title: { display: true, text: tag, color: "#111" },
-            legend: { labels: { color: "#333", boxWidth: 10, font: { size: 10 } } },
+            title: { display: true, text: tag, color: t.title, font: { size: 13 } },
+            legend: { labels: { color: t.tick, boxWidth: 12, font: { size: 11 } } },
             zoom: { zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: "xy" },
               pan: { enabled: true, mode: "xy" } }
           },
           scales: {
-            x: { type: "linear", title: { display: true, text: "step", color: "#333" },
-              ticks: { color: "#333", font: { size: 9 } }, grid: { color: "#eee" } },
-            y: { ticks: { color: "#333", font: { size: 9 } }, grid: { color: "#eee" } }
+            x: { type: "linear", title: { display: true, text: "step", color: t.tick },
+              ticks: { color: t.tick, font: { size: 10 } }, grid: { color: t.grid } },
+            y: { ticks: { color: t.tick, font: { size: 10 } }, grid: { color: t.grid } }
           }
         }
       }));
@@ -143,13 +169,15 @@ __EMBEDDED_JSON__
       if (n === SKIP) o.selected = true; sk.appendChild(o);
     });
     sk.addEventListener("change", function () { SKIP = parseInt(sk.value, 10) || 0; draw(); });
+    document.getElementById("bg").addEventListener("change", function (e) { BG = e.target.value; draw(); });
+    document.getElementById("layout").addEventListener("change", function (e) { LAYOUT = e.target.value; draw(); });
 
     var box = document.getElementById("series-list");
-    ALL_TAGS.forEach(function (t) {
+    ALL_TAGS.forEach(function (tag) {
       var lab = document.createElement("label"); lab.className = "cb";
-      var cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!selected[t];
-      cb.addEventListener("change", function () { if (cb.checked) selected[t] = true; else delete selected[t]; draw(); });
-      lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + t)); box.appendChild(lab);
+      var cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!selected[tag];
+      cb.addEventListener("change", function () { if (cb.checked) selected[tag] = true; else delete selected[tag]; draw(); });
+      lab.appendChild(cb); lab.appendChild(document.createTextNode(" " + tag)); box.appendChild(lab);
     });
     function setAll(on, onlyDefaults) {
       selected = {};

@@ -23,9 +23,15 @@ from cvs.lib.report.types import DEFAULT_SESSION_LIFECYCLE_LABELS
 
 SESSION_FALLBACK = DEFAULT_SESSION_LIFECYCLE_LABELS
 
+# Vibrant series palette (matches the megatron Run Deck look) used for dynamic charts.
+_SERIES_COLORS = ("#ff6b35", "#6b9fff", "#c77dff", "#3dd68c", "#f0c040", "#ff5c6a")
+
 
 class DeckCardRenderer:
     """Profile-driven card renderers for Run Deck static HTML sections."""
+
+    # Lifecycle-segment palette (cycled per stage): each is a deep hue that carries white text.
+    _TONES = ("tone1", "tone2", "tone3", "tone4", "tone5", "tone6")
 
     def __init__(
         self,
@@ -56,13 +62,16 @@ class DeckCardRenderer:
         report = payload.get("report") or {}
         timeline_total = sum(lifecycle.values()) or 1.0
         parts = []
+        tone = 0
         for lbl in report.get("session_lifecycle_labels", ()) or SESSION_FALLBACK:
             sec = lifecycle.get(lbl, 0.0)
             if sec <= 0:
                 continue
             pct = 100.0 * sec / timeline_total
+            seg_tone = self._TONES[tone % len(self._TONES)]
+            tone += 1
             parts.append(
-                f"<div class='tl-seg' style='flex-grow:{pct:.2f}'>"
+                f"<div class='tl-seg tl-{seg_tone}' style='flex-grow:{pct:.2f}'>"
                 f"<span class='tl-lbl'>{html.escape(lbl.replace('_', ' '))}</span>"
                 f"<span class='tl-val'>{sec:.1f}s</span></div>"
             )
@@ -190,23 +199,28 @@ class DeckCardRenderer:
         if not specs:
             return ""
         specs_json = json.dumps(specs, separators=(",", ":")).replace("<", "\\u003c")
+        palette_json = json.dumps(list(_SERIES_COLORS))
         canvases = "".join(
-            "<div style='flex:0 0 auto;background:#fff;border:1px solid var(--border);border-radius:6px;padding:6px'>"
+            "<div style='flex:0 0 auto;background:var(--panel);border:1px solid var(--border);"
+            "border-radius:8px;padding:8px'>"
             f"<canvas id='mbar-{i}' width='360' height='240'></canvas></div>"
             for i in range(len(specs))
         )
+        # Deck theme (dark): transparent chart, light title/ticks, subtle grid; bars use
+        # the megatron series palette cycled across the x categories.
         script = (
             "<script src='https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js'></script>"
-            "<script>(function(){var C=" + specs_json + ";"
+            "<script>(function(){var C=" + specs_json + ";var P=" + palette_json + ";"
             "function draw(){if(!window.Chart){return setTimeout(draw,60);}"
             "C.forEach(function(c,i){var el=document.getElementById('mbar-'+i);if(!el)return;"
+            "var colors=c.data.map(function(_v,j){return P[j%P.length];});"
             "new Chart(el,{type:'bar',data:{labels:c.labels,datasets:[{label:c.title,"
-            "data:c.data,backgroundColor:'#1f77b4'}]},"
+            "data:c.data,backgroundColor:colors,borderRadius:4}]},"
             "options:{responsive:false,plugins:{legend:{display:false},"
-            "title:{display:true,text:c.title,color:'#111'}},"
-            "scales:{x:{title:{display:!!c.xtitle,text:c.xtitle,color:'#333'},"
-            "ticks:{color:'#333',font:{size:9},maxRotation:40}},"
-            "y:{ticks:{color:'#333',font:{size:9}}}}}});});}"
+            "title:{display:true,text:c.title,color:'#e6e9f0'}},"
+            "scales:{x:{title:{display:!!c.xtitle,text:c.xtitle,color:'#9aa3b5'},"
+            "grid:{color:'rgba(42,47,61,0.6)'},ticks:{color:'#9aa3b5',font:{size:9},maxRotation:40}},"
+            "y:{grid:{color:'rgba(42,47,61,0.6)'},ticks:{color:'#9aa3b5',font:{size:9}}}}}});});}"
             "draw();})();</script>"
         )
         return f"<div style='display:flex;flex-wrap:wrap;gap:16px'>{canvases}</div>{script}"
