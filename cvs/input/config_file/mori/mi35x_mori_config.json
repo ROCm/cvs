@@ -29,6 +29,10 @@
             "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libionic-rdmav34.so",
             "/etc/libibverbs.d/ionic.driver": "/etc/libibverbs.d/ionic.driver"
          },
+         "_example_thor2_volume_dict_entry":
+         {
+            "/usr/local/lib/libbnxt_re-rdmav34.so": "/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so:ro"
+         },
          "env_dict":
          {
          }
