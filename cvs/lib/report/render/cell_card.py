@@ -89,6 +89,7 @@ class CellCardRenderer:
             title = html.escape(str(self._cell.get("policy") or self._cell.get("cell_id")))
             subtitle = html.escape(str(self._cell["subtitle"]))
         elif str(self._cell.get("policy") or "").startswith("SIZE="):
+            title = html.escape(str(self._cell["policy"]))
             subtitle = f"NNODES={html.escape(str(self._cell.get('concurrency')))}"
         else:
             title = html.escape(str(self._cell["policy"]))
