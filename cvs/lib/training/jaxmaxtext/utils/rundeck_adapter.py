@@ -35,6 +35,8 @@ _TB_CURVES = (
     (("learning/current_learning_rate", "learning/learning_rate"), "_learning_rate_curve"),
     (("learning/grad_norm", "grad_norm"), "_grad_norm_curve"),
 )
+# TB tags already mapped to a dedicated deck curve; excluded from _extra_curves.
+_MAPPED_TB_TAGS = frozenset(tag for tags, _dst in _TB_CURVES for tag in tags)
 
 _TOKEN_RE = re.compile(r"([A-Za-z_]+)=([^,]+)")
 
@@ -42,15 +44,17 @@ _TOKEN_RE = re.compile(r"([A-Za-z_]+)=([^,]+)")
 def jax_cell_dimensions(_variant_config, sweep_name):
     """Parse a JAX sweep name into deck cell dimensions.
 
-    Sweep names look like ``PRECISION=BF16,SEQLEN=4096,BATCH=3`` (any subset);
-    the implicit single run is ``default``. Returns ``{bs, sl, precision}`` keyed
-    to the deck's ``dimension_fields``; missing tokens yield empty strings.
+    Sweep names are the config's ``sweeps`` keys, e.g.
+    ``BS=4,PRECISION=BF16,SL=8192`` (any subset, any order); the implicit single
+    run is ``default``. ``BATCH``/``SEQLEN`` are accepted as aliases for
+    ``BS``/``SL``. Returns ``{bs, sl, precision}`` keyed to the deck's
+    ``dimension_fields``; missing tokens yield empty strings.
     """
     tokens = {key.upper(): value.strip() for key, value in _TOKEN_RE.findall(str(sweep_name or ""))}
     return {
-        "bs": tokens.get("BATCH", ""),
-        "sl": tokens.get("SEQLEN", ""),
-        "precision": tokens.get("PRECISION", ""),
+        "bs": tokens.get("BS") or tokens.get("BATCH") or "",
+        "sl": tokens.get("SL") or tokens.get("SEQLEN") or "",
+        "precision": tokens.get("PRECISION") or "",
     }
 
 
@@ -110,6 +114,16 @@ def flat_train_res_from_nested(training_res_dict):
             curve = _tb_curve(tb_scalars, tags)
             if curve:
                 combo[dst] = curve
+        # Every other TB scalar becomes a selectable (default-off) viewer curve.
+        extra = {}
+        for tag, series in tb_scalars.items():
+            if tag in _MAPPED_TB_TAGS:
+                continue
+            pts = [[int(step), float(value)] for step, value in series if _finite(value)]
+            if pts:
+                extra[tag] = pts
+        if extra:
+            combo["_extra_curves"] = extra
         planned = rec.get("planned_steps")
         if isinstance(planned, (int, float)) and planned > 0:
             combo["_planned_steps"] = int(planned)
