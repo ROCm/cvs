@@ -348,8 +348,11 @@ class HtmlReportManager:
                 shutil.copy2(source_path, dest_path)
                 log.info("Added file to report bundle: %s -> %s", source_path, dest_path)
 
-            # Return relative path for potential linking
-            rel_path = dest_path.relative_to(self.htmlpath.parent)
+            # Return relative path for potential linking. dest_path is resolved
+            # (absolute), so resolve the report dir too -- otherwise a relative
+            # --html makes relative_to() raise "one path is relative and the other
+            # is absolute" and the link is silently dropped.
+            rel_path = dest_path.relative_to(self.htmlpath.resolve().parent)
             rel_path_str = str(rel_path)
 
             # Track the added report (unless it's a per-row artifact linked elsewhere)
