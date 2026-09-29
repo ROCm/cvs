@@ -14,7 +14,7 @@ See :doc:`/how-to/test-suites/burn-in-diag/health` for more information on runni
 
   In this configuration file, ``{user-id}`` resolves to the current username at runtime. You can also manually change this value to your username.
 
-.. dropdown:: ``mi300_health_config.json``
+.. dropdown:: ``health_config.json``
 
   .. code:: json
 

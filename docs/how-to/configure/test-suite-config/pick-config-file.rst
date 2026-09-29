@@ -32,7 +32,7 @@ The following suites are available for burn-in and diagnostic workloads:
      - ``input/config_file/platform/host_config.json``
      - ``cvs config list platform``
    * - Health
-     - ``input/config_file/health/mi300_health_config.json``
+     - ``input/config_file/health/health_config.json``
      - ``cvs config list health``
    * - Preflight
      - ``input/config_file/preflight/preflight_config.json``

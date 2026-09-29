@@ -37,7 +37,7 @@ CVS ships templates under ``cvs/input/config_file/``. Use ``cvs config`` to disc
 .. code:: bash
 
   cvs config copy platform/host_config.json --output ~/cvs_workspace/host_config.json
-  cvs config copy health/mi300_health_config.json --output ~/cvs_workspace/mi300_health_config.json
+  cvs config copy health/health_config.json --output ~/cvs_workspace/health_config.json
   cvs config copy rccl/rccl_config.json --output ~/cvs_workspace/rccl_config.json
   cvs config copy --all --output ~/cvs_workspace/
   cvs config copy --all --output ~/cvs_workspace/ --force
