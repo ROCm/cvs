@@ -84,10 +84,8 @@ Expected output (suite names and totals vary by version):
       • rvs_cvs
       • transferbench_cvs
 
-    cvs.tests.health.install (5 test suites)
+    cvs.tests.health.install (3 test suites)
       • install_agfhc
-      • install_babelstream
-      • install_rocblas
       • install_rvs
       • install_transferbench
 
@@ -96,7 +94,7 @@ Expected output (suite names and totals vary by version):
       • install_ibperf_tools
   <<truncated>>
   ================================================================================
-  Total: 48 test suites across 1 package(s)
+  Total: 47 test suites across 1 package(s)
 
 If ``cvs --version`` prints the updated version number and ``cvs list`` shows available test suites, the upgrade was successful.
 
