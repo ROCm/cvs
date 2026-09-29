@@ -36,6 +36,8 @@ PROFILE_STEM_ALIASES: dict[str, str] = {
     "xdit_wan22_14b_diffusers_distributed": "xdit",
     "megatron_single": "megatron",
     "megatron_distributed": "megatron",
+    "jaxmaxtext_single": "jaxmaxtext",
+    "jaxmaxtext_distributed": "jaxmaxtext",
 }
 
 DEFAULT_SOURCES: dict[str, str] = {
