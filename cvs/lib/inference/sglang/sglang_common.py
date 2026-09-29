@@ -24,7 +24,7 @@ DEFAULT_SGLANG_PREFILL_SERV_PORT = "30001"
 DEFAULT_SGLANG_DECODE_SERV_PORT = "30002"
 DEFAULT_SGLANG_PREFILL_COORD_PORT = "40001"
 DEFAULT_SGLANG_DECODE_COORD_PORT = "40002"
-AMD_SMI_METRIC_CMD = "sudo amd-smi metric --json"
+AMD_SMI_METRIC_CMD = "amd-smi metric --json"
 
 _DISAGG_PINNED_ROLE_KEYS = (
     "prefill_node_list",
@@ -886,13 +886,12 @@ def run_lm_eval_benchmark_test(
 
 
 def build_log_dir_cleanup_cmd(log_dir: str, user: str) -> str:
-    """Shell command: rm -rf, recreate, chown (host namespace, not in-container)."""
+    """Build the host-side log directory reset command."""
     if not log_dir or not str(log_dir).strip():
         raise ValueError("log_dir must be a non-empty path")
     log_dir = str(log_dir).strip()
-    quser = shlex.quote(str(user))
     qdir = shlex.quote(log_dir)
-    return f"sudo rm -rf {qdir} && sudo mkdir -p {qdir} && sudo chown -R {quser}:{quser} {qdir}"
+    return f"rm -rf {qdir} && mkdir -p {qdir}"
 
 
 def cleanup_sglang_log_dir(
