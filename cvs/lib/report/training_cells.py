@@ -209,7 +209,11 @@ def _combo_dimensions(sweep_name, variant_config):
 
 def _model_id(variant_config):
     tp = getattr(variant_config, "train_params", None) or {}
-    return str(tp.get("tokenizer_model") or tp.get("model") or "—")
+    model = tp.get("tokenizer_model") or tp.get("model")
+    if not model:
+        model_obj = getattr(variant_config, "model", None)
+        model = getattr(model_obj, "id", None) if model_obj is not None else None
+    return str(model or "\u2014")
 
 
 def _gpu_id(variant_config):
