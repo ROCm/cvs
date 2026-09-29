@@ -347,20 +347,42 @@ def build_training_cells(config, variant_config, train_res_dict, lifecycle_repor
     return cells
 
 
+def _fmt_results_value(value):
+    """Render a results-table actual with at most four decimal places."""
+    if value is None:
+        return "\u2014"
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        rounded = round(value, 4)
+        return int(rounded) if rounded.is_integer() else rounded
+    return value
+
+
+def _all_metric_columns(config):
+    """Dimension columns plus one column per declared metric (metric_units order)."""
+    columns = [("Model", None), ("GPU", None)]
+    for _field, label, _prefix in _dimension_fields(config):
+        columns.append((label, None))
+    for short in config.metric_units:
+        columns.append((short, config.full_metric(short)))
+    return columns
+
+
 def build_training_results_table(config, cells):
-    headers = [label for label, _key in config.results_columns]
+    columns = _all_metric_columns(config) if getattr(config, "results_all_metrics", False) else config.results_columns
+    headers = [label for label, _key in columns]
     field_by_header = {"Model": "model", "GPU": "gpu", "Host": "host"}
     for field, label, _prefix in _dimension_fields(config):
         field_by_header[label] = field
     rows = []
     for cell in cells:
         row = []
-        for label, key in config.results_columns:
+        for label, key in columns:
             if key is None:
-                row.append(cell.get(field_by_header.get(label), "—") or "—")
+                row.append(cell.get(field_by_header.get(label), "\u2014") or "\u2014")
             else:
-                value = cell.get("actuals", {}).get(key)
-                row.append(value if value is not None else "—")
+                row.append(_fmt_results_value(cell.get("actuals", {}).get(key)))
         rows.append(row)
     return {"headers": headers, "rows": rows}
 

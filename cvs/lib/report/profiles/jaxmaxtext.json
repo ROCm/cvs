@@ -4,7 +4,7 @@
   "suite_id": "jaxmaxtext",
   "report_basename": "jaxmaxtext_run_deck",
   "title": "JAX MaxText Run Deck",
-  "subtitle": "JAX MaxText · single-node & distributed training summary",
+  "subtitle": "JAX MaxText · {mode} training summary",
   "footer": "CVS jaxmaxtext · render-only · does not affect gates",
   "link_name": "JAX MaxText Run Deck",
   "dataset_builder": "training_sweep",
@@ -25,6 +25,7 @@
     "throughput_metric": "training.tflops_per_sec_per_gpu",
     "headline_metric": "training.tflops_per_sec_per_gpu",
     "series_label": "JAX MaxText sweep",
+    "results_all_metrics": true,
     "tier_order": ["throughput", "convergence", "stability", "record"],
     "dimension_fields": [
       ["bs", "BS", "BS="],
