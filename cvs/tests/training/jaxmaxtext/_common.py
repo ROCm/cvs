@@ -380,6 +380,11 @@ def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, 
         "step_metrics": job.step_metrics,
         "eval_metrics": job.eval_metrics,
         "num_nodes": job.num_nodes,
+        "planned_steps": job.steps,
+        # Deck curves for learning_rate / grad_norm come from TensorBoard, which
+        # stdout does not carry. Best-effort: {} when unavailable, so charting is
+        # simply skipped rather than failing the run.
+        "tb_scalars": job.collect_tb_scalars(),
     }
 
 
