@@ -73,6 +73,14 @@ class InferenceReportConfig:
     gsm8k_prev_run_max_drop: float = 0.01
     run_card_display_builder: RunCardDisplayFn = field(default=lambda _variant, _prov: [("Suite", "inference", False)])
     launch_provenance_builder: Optional[LaunchProvenanceFn] = None
+    # Training decks converge on the shared sweep-cell model. A framework may
+    # supply a cell-dimension provider (variant_config, sweep_name) -> {field: value}
+    # plus an ordered dimension_fields descriptor of (cell_field, header_label,
+    # chart_prefix). When cell_dimensions is None the builder keeps Megatron's
+    # native mbs/gbs/tp/pp handling, so the merged Megatron deck is unaffected.
+    cell_dimensions: Optional[Callable] = None
+    dimension_fields: tuple = ()
+    sweep_series_label: str = "Megatron sweep"
 
     @property
     def gated_tiers(self) -> tuple[str, ...]:
