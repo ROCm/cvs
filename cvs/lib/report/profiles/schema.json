@@ -44,7 +44,8 @@
         "metric_categories": { "type": "string" },
         "metric_verdict": { "type": "string" },
         "run_card_display": { "type": "string" },
-        "launch_provenance": { "type": "string" }
+        "launch_provenance": { "type": "string" },
+        "cell_dimensions": { "type": "string" }
       }
     },
     "cards": {

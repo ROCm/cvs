@@ -169,6 +169,18 @@ def training_res_dict():
     return {}
 
 
+@pytest.fixture(scope="module")
+def train_res_dict():
+    """Flat, deck-facing view of the per-sweep results (the Run Deck profile's
+    sources.results binds this fixture).
+
+    Filled from training_res_dict in test_print_results_table -- during the run,
+    before module teardown, which is when the session store captures it. The
+    suite's own gating keeps reading the richer nested training_res_dict.
+    """
+    return {}
+
+
 def pytest_collection_modifyitems(items):
     """Pin the lifecycle order explicitly."""
     rank = {

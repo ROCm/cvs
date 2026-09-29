@@ -39,6 +39,7 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     extract_checkpoint_timings,
 )
 from cvs.lib.training.jaxmaxtext.utils.loss_curve import render_loss_curve_png
+from cvs.lib.training.jaxmaxtext.utils.rundeck_adapter import flat_train_res_from_nested
 from cvs.lib.utils.verdict import evaluate_all, ThresholdViolation
 from cvs.lib.utils_lib import fail_test, update_test_result
 
@@ -356,6 +357,13 @@ def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, 
     # training.wall_time_seconds / convergence_* keys were never in
     # TRAINING_METRICS, so nothing displayed or gated them.
     log.info("[training] sweep '%s' wall-clock: %.1fs", sweep_name, wall_time)
+
+    # Record the per-sweep training duration for the Run Deck lifecycle timeline.
+    # The deck matches cells by the full sweep name, so key it that way (the pytest
+    # param id is the compact label); the per-test HTML panel keys off the real
+    # nodeid and is unaffected.
+    combo_nodeid = f"{request.node.nodeid.split('[', 1)[0]}[{sweep_name}]"
+    lifecycle.record(combo_nodeid, "training", wall_time)
 
     baseline = variant_config.training.scaling_baseline
     results["training.scaling_efficiency_pct"] = compute_scaling_efficiency(
@@ -880,10 +888,16 @@ def _print_checkpoint_io(training_res_dict):
     )
 
 
-def print_results_table(training_res_dict, request):
+def print_results_table(training_res_dict, train_res_dict, request):
     """Summarize all sweeps: console tables, single metric-results HTML, and a
     consolidated PASS/FAIL summary recorded via globals.error_list for the pytest
-    final summary."""
+    final summary.
+
+    Also fills ``train_res_dict`` with the flat, deck-facing view of the nested
+    results so the Run Deck (bound to that fixture) can render at session end.
+    """
+    train_res_dict.update(flat_train_res_from_nested(training_res_dict))
+
     if not training_res_dict.get("sweeps"):
         log.info("training_res_dict empty, nothing to print")
         return
