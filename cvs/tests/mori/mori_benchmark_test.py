@@ -7,102 +7,12 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import pytest
 
-import re
-import time
-import json
-
-from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
-from cvs.lib import docker_lib
+from cvs.lib.verify_lib import verify_dmesg_for_errors
 from cvs.lib import mori_lib
 from cvs.lib import globals
 
 log = globals.log
-
-
-# Importing additional cmd line args to script ..
-@pytest.fixture(scope="module")
-def cluster_file(pytestconfig):
-    """
-    Retrieve the --cluster_file CLI option provided to pytest.
-
-    Args:
-      pytestconfig: Built-in pytest fixture exposing command-line options.
-
-    Returns:
-      str: Path to the cluster JSON file specified via --cluster_file.
-
-    Notes:
-      - Ensure your pytest.ini or CLI includes: --cluster_file=/path/to/cluster.json
-      - Use module scope so the value is resolved once per test module.
-    """
-    return pytestconfig.getoption("cluster_file")
-
-
-@pytest.fixture(scope="module")
-def mori_config_file(pytestconfig):
-    """
-    Retrieve the --config_file CLI option provided to pytest.
-
-    """
-    return pytestconfig.getoption("config_file")
-
-
-# Importing the cluster and cofig files to script to access node, switch, test config params
-@pytest.fixture(scope="module")
-def cluster_dict(cluster_file):
-    """
-    Load the entire cluster configuration from the provided JSON file.
-
-    Args:
-      cluster_file (str): Path to the cluster JSON file.
-
-    Returns:
-      dict: Parsed JSON representing the cluster (nodes, credentials, etc.).
-
-    Notes:
-      - Logs the loaded structure for visibility; consider using log.debug if verbose.
-    """
-    with open(cluster_file) as json_file:
-        cluster_dict = json.load(json_file)
-
-    # Resolve path placeholders like {user-id} in cluster config
-    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info("%s", cluster_dict)
-    return cluster_dict
-
-
-@pytest.fixture(scope="module")
-def mori_dict(mori_config_file, cluster_dict):
-    with open(mori_config_file) as json_file:
-        mori_dict = json.load(json_file)
-    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
-    mori_dict = resolve_test_config_placeholders(mori_dict, cluster_dict)
-    return mori_dict
-
-
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
-
-
-@pytest.fixture(scope="module")
-def gpu_type(phdl, cluster_dict):
-    """
-    Returns:
-      str: The GPU type (e.g., 'mi300', 'mi300x') used to select model parameters and logic.
-    """
-
-    log.info("%s", phdl)
-    head_node = phdl.host_list[0]
-    smi_out_dict = phdl.exec('rocm-smi -a | head -30')
-    smi_out = smi_out_dict[head_node]
-    gpu_type = get_model_from_rocm_smi_output(smi_out)
-    return gpu_type
 
 
 # -----------------------------------------------------------------------------
@@ -115,95 +25,60 @@ def gpu_type(phdl, cluster_dict):
 #   - The fixture is instantiated once per test module
 #   - The same MoriBenchmark object is shared across all tests in that module
 #
-# This is appropriate because:
-#   - MoriBenchmark setup may be expensive (environment, connections, state)
-#   - Tests are logically related and can reuse the same benchmark object
-#   - Avoids redundant initialization overhead for each test case
-#
 # Dependencies:
-#   phdl      : Platform/host abstraction used to execute remote commands
+#   orch      : Orchestrator (container or baremetal) from the suite conftest
 #   mori_dict : Configuration dictionary for MORI benchmark parameters
-#   gpu_type  : GPU type identifier (used to select tuning/expectations)
+#   lifecycle : Cross-test state; a failed container launch skips every user
 #
 # Side effects:
 #   - Resets global error list at fixture creation time to ensure a clean
 #     error state before any tests are executed.
 # -----------------------------------------------------------------------------
 @pytest.fixture(scope="module")
-def mori_obj(phdl, mori_dict, gpu_type):
-    # Initialize (or reset) global error tracking before tests begin
+def mori_obj(orch, mori_dict, lifecycle):
+    if lifecycle.failed:
+        pytest.skip("mori container launch failed")
     globals.error_list = []
-
-    # Create the MORI benchmark object that encapsulates:
-    #   - Command execution
-    #   - Distributed benchmark orchestration
-    #   - Result collection and validation logic
-    mori_obj = mori_lib.MoriBenchmark(phdl, mori_dict, gpu_type)
-
-    # Provide the initialized MoriBenchmark instance to all tests
-    # in this module that request the `mori_obj` fixture
-    return mori_obj
+    return mori_lib.MoriBenchmark(orch, mori_dict)
 
 
-def test_cleanup_stale_containers(phdl, mori_dict):
-    """
-    Pytest: Clean up potentially stale Docker containers and volumes before tests.
-
-    Running this cleanup as a test guarantees a clean and predictable
-    environment before MORI benchmark tests are executed.
-
-    Args:
-        phdl      : Platform handler used to execute Docker commands on the host
-        mori_dict : Configuration dictionary containing MORI test parameters,
-                    including the expected container name
-    """
-    container_name = mori_dict['container_name']
-    docker_lib.kill_docker_container(phdl, container_name)
-    docker_lib.delete_all_containers_and_volumes(phdl)
+def test_cleanup_stale_containers(orch):
+    """Kept for test-ID compatibility. Under the container orchestrator a
+    ``per_run`` launch force-removes a same-named container itself, and the
+    legacy ``docker system prune`` is not safe on shared nodes."""
+    pytest.skip("stale-container cleanup is handled by the orchestrator launch")
 
 
-def test_launch_mori_container(phdl, mori_dict):
-    log.info('Testcase launch mori containers')
-    globals.error_list = []
-    container_name = mori_dict['container_name']
-    docker_lib.launch_docker_container(
-        phdl,
-        container_name,
-        mori_dict['container_image'],
-        mori_dict['container_config']['device_list'],
-        mori_dict['container_config']['volume_dict'],
-        mori_dict['container_config']['env_dict'],
-        shm_size='48G',
-        timeout=60 * 20,
-        ulimit_memlock='-1',
-    )
-    # ADD verifications ..
-    time.sleep(30)
-    log.info('Verify if the containers have been launched properly')
-    out_dict = phdl.exec('docker ps')
-    for node in out_dict.keys():
-        if not re.search(f'{container_name}', out_dict[node], re.I):
-            fail_test(f'Failed to launch container on node {node}')
-    update_test_result()
+def test_launch_mori_container(orch, lifecycle):
+    if orch.orchestrator_type != "container":
+        pytest.skip("baremetal orchestrator: no container to launch")
+    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+    lifecycle.torn_down = False
+    if not orch.setup_containers():
+        lifecycle.failed = True
+        pytest.fail(f"setup_containers() returned False for {name}")
+    if not orch.verify_containers_running(name):
+        lifecycle.failed = True
+        pytest.fail(f"container {name} not running after setup_containers()")
 
 
-# Setup the ib MORI devices and ensure they show up in the container
+# Ensure the MORI RDMA devices show up where the benchmarks run
 def test_setup_ibv_devices(mori_obj):
     globals.error_list = []
     mori_obj.check_ibv_devices()
-    mori_obj.exec_nic_setup_scripts()
     update_test_result()
 
 
 def test_install_container_packages(mori_obj):
     globals.error_list = []
-    mori_obj.install_packages()
+    if not mori_obj.install_packages():
+        pytest.skip("baremetal orchestrator: host packages are not installed by the suite")
     update_test_result()
 
 
 def test_setup_env(mori_obj):
     globals.error_list = []
-    mori_obj.create_env_script()
+    mori_obj.create_run_log_dir()
     update_test_result()
 
 
@@ -316,3 +191,28 @@ def test_io_write(mori_obj, buffer_size, transfer_batch_size, no_of_qp_per_trans
         op_type='write', enable_sess=True, buffer_size=buffer_size, transfer_batch_size=transfer_batch_size
     )
     update_test_result()
+
+
+def test_verify_dmesg(orch, lifecycle):
+    """Scan host dmesg over the suite's window. Always via ``orch.all`` (the host
+    handle), because a container cannot read the host kernel log reliably."""
+    if not lifecycle.dmesg_start:
+        pytest.skip("no dmesg start timestamp was recorded")
+    if not orch.sudo_prefix():
+        pytest.skip("passwordless sudo unavailable on the hosts; dmesg scan needs sudo")
+    globals.error_list = []
+    end_time = orch.all.exec(mori_lib.DMESG_DATE_CMD)
+    verify_dmesg_for_errors(orch.all, lifecycle.dmesg_start, end_time, till_end_flag=False)
+    update_test_result()
+
+
+def test_teardown(orch, lifecycle):
+    if orch.orchestrator_type != "container":
+        lifecycle.torn_down = True
+        pytest.skip("baremetal orchestrator: no container to tear down")
+    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+    orch.teardown_containers()
+    lifecycle.torn_down = True
+    # no_launch / persistent containers are left running by design.
+    if orch.container_config.get("lifetime", "per_run") == "per_run" and orch.verify_containers_running(name):
+        pytest.fail(f"container {name} still running after teardown_containers()")
