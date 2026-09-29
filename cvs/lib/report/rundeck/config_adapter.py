@@ -68,6 +68,22 @@ class ProfileConfigResolver:
         return tuple(series)
 
     @staticmethod
+    def _parse_dimension_fields(raw: list) -> tuple[tuple[str, str, str], ...]:
+        out = []
+        for entry in raw or []:
+            if isinstance(entry, dict):
+                field = entry.get("field")
+                if not field:
+                    continue
+                out.append((str(field), str(entry.get("label", field)), str(entry.get("prefix", ""))))
+            elif isinstance(entry, (list, tuple)) and entry:
+                field = entry[0]
+                label = entry[1] if len(entry) > 1 else field
+                prefix = entry[2] if len(entry) > 2 else ""
+                out.append((str(field), str(label), str(prefix)))
+        return tuple(out)
+
+    @staticmethod
     def _parse_cell_highlights(raw: list) -> tuple[tuple[str, str], ...]:
         out = []
         for entry in raw:
@@ -140,6 +156,11 @@ class ProfileConfigResolver:
             sweep.get("cell_highlights") or profile.get("cell_highlights") or []
         )
 
+        cell_dimensions = None
+        if hooks.get("cell_dimensions"):
+            cell_dimensions = cls.import_callable(hooks["cell_dimensions"])
+        dimension_fields = cls._parse_dimension_fields(sweep.get("dimension_fields") or [])
+
         run_card_builder = None
         if hooks.get("run_card_display"):
             run_card_builder = cls.import_callable(hooks["run_card_display"])
@@ -201,6 +222,9 @@ class ProfileConfigResolver:
             or "client.output_throughput",
             metric_verdict=metric_verdict,
             metric_contract=profile.get("metric_contract"),
+            cell_dimensions=cell_dimensions,
+            dimension_fields=dimension_fields,
+            sweep_series_label=sweep.get("series_label") or "Megatron sweep",
             **kwargs,
         )
 
