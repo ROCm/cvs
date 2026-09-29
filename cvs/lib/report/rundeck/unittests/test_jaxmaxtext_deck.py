@@ -35,7 +35,7 @@ def _flat():
         "BS=4,PRECISION=BF16,SL=8192": {
             "tflops_per_sec_per_gpu": ["180", "185.4"],
             "tokens_per_sec_per_gpu": ["3000"],
-            "final_loss": ["2.01"],
+            "final_loss": ["2.0123456"],
             "step_time_p50_ms": ["671.2"],
             "step_time_p95_ms": ["708.0"],
             "_loss_curve": [[0, 2.5], [10, 2.0]],
@@ -83,6 +83,62 @@ class TestJaxDeckDatasets(unittest.TestCase):
         entry = datasets["chart_series"]["tflops_per_sec_per_gpu"][0]
         self.assertEqual(entry["label"], "JAX MaxText sweep")
         self.assertEqual(entry["x_labels"], ["BS=4", "BS=8"])
+
+    def test_results_table_includes_all_metrics_rounded(self):
+        datasets = build_datasets(
+            "training_sweep",
+            {"results": _flat(), "variant": _variant(), "lifecycle_report": {}},
+            load_json_profile("jaxmaxtext"),
+        )
+        headers = datasets["results_table"]["headers"]
+        for expected in [
+            "Model",
+            "GPU",
+            "BS",
+            "SL",
+            "Precision",
+            "tflops_per_sec_per_gpu",
+            "final_loss",
+            "eval_loss",
+            "steps_to_target",
+            "time_to_target_seconds",
+        ]:
+            self.assertIn(expected, headers)
+        loss_idx = headers.index("final_loss")
+        loss_vals = [row[loss_idx] for row in datasets["results_table"]["rows"]]
+        # 2.0123456 rounds to at most four decimals.
+        self.assertIn(2.0123, loss_vals)
+
+    def test_subtitle_reflects_run_mode(self):
+        payload = build_rundeck_payload(
+            profile=load_json_profile("jaxmaxtext"),
+            store={"cvs_results_dict": _flat(), "variant_config": _variant(), "lifecycle_report": {}},
+            cvs_version="0.2.0",
+        )
+        self.assertEqual(payload["report"]["subtitle"], "JAX MaxText \u00b7 distributed training summary")
+
+    def test_viewer_uses_resolved_subtitle(self):
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from cvs.lib.report.rundeck.config_adapter import build_inference_config_from_profile
+        from cvs.lib.report.rundeck.generate_rundeck import RundeckPublisher
+
+        profile = load_json_profile("jaxmaxtext")
+        config = build_inference_config_from_profile(profile)
+        payload = build_rundeck_payload(
+            profile=profile,
+            store={"cvs_results_dict": _flat(), "variant_config": _variant(), "lifecycle_report": {}},
+            cvs_version="0.2.0",
+        )
+        publisher = RundeckPublisher(SimpleNamespace(config=SimpleNamespace()), None)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = publisher._write_viewer(profile, config, Path(tmp), payload)
+            text = path.read_text(encoding="utf-8")
+            # The rendered subtitle element resolves {mode}; the raw profile is
+            # only embedded as (non-displayed) JSON data.
+            self.assertIn('<p class="subtitle">JAX MaxText \u00b7 distributed training summary</p>', text)
 
     def test_gate_matrix_and_summary(self):
         datasets = build_datasets(

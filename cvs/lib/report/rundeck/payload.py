@@ -50,6 +50,30 @@ class RundeckPayloadBuilder:
         )
         self.config = resolve_report_config(ctx.profile)
 
+    @staticmethod
+    def _training_mode_label(variant_config, suite_stem):
+        """Actual run mode for a training deck subtitle: distributed / single-node."""
+        distributed = getattr(getattr(variant_config, "training", None), "distributed", None)
+        if distributed is True:
+            return "distributed"
+        if distributed is False:
+            return "single-node"
+        stem = str(suite_stem or "")
+        if stem.endswith("_distributed"):
+            return "distributed"
+        if stem.endswith("_single"):
+            return "single-node"
+        return "single-node & distributed"
+
+    def _resolve_subtitle(self, variant_config):
+        """Substitute a ``{mode}`` token in the profile subtitle with the run mode."""
+        subtitle = self.config.subtitle or ""
+        if "{mode}" not in subtitle:
+            return subtitle
+        store = getattr(self.ctx, "store", None)
+        suite_stem = store.get("suite_stem") if isinstance(store, dict) else None
+        return subtitle.replace("{mode}", self._training_mode_label(variant_config, suite_stem))
+
     def build(self) -> dict[str, Any]:
         datasets = self._build_datasets()
         prov = self._provenance()
@@ -94,7 +118,7 @@ class RundeckPayloadBuilder:
             or ("record" if self.builder_id not in ("sweep", "training_sweep") else "na"),
             "report": {
                 "title": self.config.title,
-                "subtitle": self.config.subtitle,
+                "subtitle": self._resolve_subtitle(variant_config),
                 "footer": self.config.footer,
                 "metric_tier_order": self.config.metric_tier_order,
                 "headline_metric": self.config.headline_metric,

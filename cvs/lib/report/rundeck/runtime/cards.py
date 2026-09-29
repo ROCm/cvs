@@ -235,11 +235,14 @@ class DeckCardRenderer:
     @staticmethod
     def render_table(_payload: dict, _card: dict, data: Any) -> str:
         table = data if isinstance(data, dict) else {}
-        return render_results_table_html(
+        # .results-wrap gives the (potentially wide, all-metrics) table a
+        # horizontal scrollbar instead of overflowing the card.
+        inner = render_results_table_html(
             table.get("headers") or [],
             table.get("rows") or [],
             empty_message="No results table rows.",
         )
+        return f"<div class='results-wrap'>{inner}</div>"
 
     @staticmethod
     def render_status_matrix(payload: dict, _card: dict, data: Any) -> str:

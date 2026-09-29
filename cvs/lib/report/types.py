@@ -81,6 +81,10 @@ class InferenceReportConfig:
     cell_dimensions: Optional[Callable] = None
     dimension_fields: tuple = ()
     sweep_series_label: str = "Megatron sweep"
+    # When true, the training results table auto-includes a column for every
+    # declared metric (metric_units) instead of the fixed results_columns, so
+    # frameworks with many metrics (jax) show them all.
+    results_all_metrics: bool = False
 
     @property
     def gated_tiers(self) -> tuple[str, ...]:

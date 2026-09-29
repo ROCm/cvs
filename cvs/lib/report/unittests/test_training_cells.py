@@ -129,6 +129,36 @@ class TestGenericTrainingCells(unittest.TestCase):
         self.assertEqual(summary["meta"], "Peak at BS=8,SL=8192,PRECISION=BF16")
 
 
+class TestResultsTableAllMetrics(unittest.TestCase):
+    def _config(self):
+        return make_inference_report_config(
+            suite_id="jaxmaxtext",
+            results_columns=(("Model", None),),
+            metric_units={"tflops_per_sec_per_gpu": "TFLOP/s/GPU", "final_loss": "loss"},
+            tier_metric_specs=lambda _cell, _tier: {},
+            metric_tier_order=("throughput", "record"),
+            metric_prefix="training.",
+            cell_highlights=(("tflops_per_sec_per_gpu", "TFLOPs"),),
+            headline_metric="training.tflops_per_sec_per_gpu",
+            cell_dimensions=_jax_dimensions,
+            dimension_fields=(("bs", "BS", "BS="), ("sl", "SL", "SL="), ("precision", "Precision", "")),
+            results_all_metrics=True,
+        )
+
+    def test_all_declared_metrics_columns_and_float_rounding(self):
+        config = self._config()
+        res = {"BS=4,PRECISION=BF16,SL=8192": {"tflops_per_sec_per_gpu": ["1.23456789"], "final_loss": ["2.0"]}}
+        cells = build_training_cells(config, _jax_variant(), res, {})
+        table = build_training_results_table(config, cells)
+        self.assertEqual(
+            table["headers"],
+            ["Model", "GPU", "BS", "SL", "Precision", "tflops_per_sec_per_gpu", "final_loss"],
+        )
+        row = table["rows"][0]
+        self.assertIn(1.2346, row)  # rounded to four decimals
+        self.assertIn(2, row)  # whole float rendered as int
+
+
 class TestDimensionFieldsFallback(unittest.TestCase):
     def test_empty_dimension_fields_fall_back_to_megatron(self):
         config = SimpleNamespace(dimension_fields=())
