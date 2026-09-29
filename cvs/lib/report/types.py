@@ -57,6 +57,7 @@ class InferenceReportConfig:
     inference_test_substring: str = "test_inference"
     session_lifecycle_labels: tuple[str, ...] = DEFAULT_SESSION_LIFECYCLE_LABELS
     cell_lifecycle_labels: tuple[str, ...] = DEFAULT_CELL_LIFECYCLE_LABELS
+    expand_lifecycle_labels: tuple[str, ...] = ()
     sweep_throughput_metric: str = "client.output_throughput"
     sweep_ttft_metric: str = "client.mean_ttft_ms"
     headline_metric: str = "client.output_throughput"
@@ -80,7 +81,7 @@ class InferenceReportConfig:
     def full_metric(self, short: str) -> str:
         if short.startswith(f"{self.metric_prefix}"):
             return short
-        if short.startswith(("scaling.", "gpu.")):
+        if short.startswith(("scaling.", "gpu.", "training.")):
             return short
         return f"{self.metric_prefix}{short}"
 

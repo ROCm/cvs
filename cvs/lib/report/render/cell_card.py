@@ -84,14 +84,17 @@ class CellCardRenderer:
         return "cell-card cell-card-compact" if self.config.compact else "cell-card"
 
     def _render_header(self) -> str:
-        if str(self._cell["policy"]).startswith("SIZE="):
-            subtitle = f"NNODES={self._cell['concurrency']}"
+        # Training cells carry a subtitle. Inference cells keep the original ISL/OSL header.
+        if self._cell.get("subtitle"):
+            title = html.escape(str(self._cell.get("policy") or self._cell.get("cell_id")))
+            subtitle = html.escape(str(self._cell["subtitle"]))
+        elif str(self._cell.get("policy") or "").startswith("SIZE="):
+            title = html.escape(str(self._cell["policy"]))
+            subtitle = f"NNODES={html.escape(str(self._cell.get('concurrency')))}"
         else:
+            title = html.escape(str(self._cell["policy"]))
             subtitle = f"ISL={self._cell['isl']} OSL={self._cell['osl']} &middot; C={self._cell['concurrency']}"
-        return (
-            f"<header><div class='cell-title'>{html.escape(str(self._cell['policy']))}</div>"
-            f"<div class='cell-sub'>{subtitle}</div></header>"
-        )
+        return f"<header><div class='cell-title'>{title}</div><div class='cell-sub'>{subtitle}</div></header>"
 
     def _render_timeline(self) -> str:
         if self.config.compact:
@@ -126,8 +129,12 @@ class CellCardRenderer:
             hm_cls = "headline-margin-fail" if headline.get("status") == "fail" else "headline-margin"
             headline_margin_html = f"<div class='{hm_cls}'>{html.escape(headline['margin'])}</div>"
 
+        if self._cell.get("subtitle"):
+            unit = html.escape(str((headline or {}).get("unit") or "tok/s"))
+        else:
+            unit = "tok/s"
         return (
-            f"<div class='headline'>{headline_val}<span class='headline-unit'>tok/s</span></div>{headline_margin_html}"
+            f"<div class='headline'>{headline_val}<span class='headline-unit'>{unit}</span></div>{headline_margin_html}"
         )
 
     def _render_tiers(self) -> str:
@@ -230,8 +237,8 @@ class CellCardRenderer:
 .cell-mini-tl {{ display: flex; gap: 4px; min-height: 36px; border-radius: 6px; overflow: hidden; font-size: 0.65rem; }}
 .cell-mini-seg {{ display: flex; flex-direction: column; justify-content: center; align-items: center;
   padding: 0.25rem; background: rgba(255,255,255,0.05); min-width: 40px; }}
-.tl-lbl {{ font-size: 0.65rem; color: {t['muted']}; text-align: center; }}
-.tl-val {{ font-size: 0.8rem; font-weight: 600; color: {t['accent']}; }}
+.cell-mini-seg .tl-lbl {{ font-size: 0.65rem; color: {t['muted']}; text-align: center; }}
+.cell-mini-seg .tl-val {{ font-size: 0.8rem; font-weight: 600; color: {t['accent']}; }}
 .chip {{ font-size: 0.7rem; font-weight: 600; text-transform: uppercase; padding: 0.2rem 0.5rem;
   border-radius: 999px; display: inline-block;{chip_margin} }}
 .chip-pass {{ background: rgba(61,214,140,0.15); color: {t['pass']}; }}

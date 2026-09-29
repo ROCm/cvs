@@ -34,6 +34,8 @@ PROFILE_STEM_ALIASES: dict[str, str] = {
     "xdit_wan22_14b_single": "xdit",
     "xdit_wan22_14b_diffusers_single": "xdit",
     "xdit_wan22_14b_diffusers_distributed": "xdit",
+    "megatron_single": "megatron",
+    "megatron_distributed": "megatron",
 }
 
 DEFAULT_SOURCES: dict[str, str] = {
