@@ -109,16 +109,16 @@ def _training_nnodes(variant_config):
 
 
 def hide_training_scaling_efficiency(variant_config, lifecycle_report=None, suite_stem=None):
-    """True for single-node Megatron / Primus (no scale-out to report)."""
+    """True for single-node Megatron / TorchTitan (no scale-out to report)."""
     stem = str(suite_stem or "")
-    if "megatron_single" in stem:
+    if "megatron_single" in stem or "torchtitan_single" in stem:
         return True
-    if "megatron_distributed" in stem:
+    if "megatron_distributed" in stem or "torchtitan_distributed" in stem:
         return False
     nodeids = " ".join(str(k) for k in (lifecycle_report or {}))
-    if "megatron_single.py" in nodeids:
+    if "megatron_single.py" in nodeids or "torchtitan_single.py" in nodeids:
         return True
-    if "megatron_distributed.py" in nodeids:
+    if "megatron_distributed.py" in nodeids or "torchtitan_distributed.py" in nodeids:
         return False
     nnodes = _training_nnodes(variant_config)
     return nnodes is not None and nnodes <= 1
@@ -168,11 +168,13 @@ def _combo_dimensions(sweep_name, variant_config):
                 "precision": str(getattr(combo, "precision", "") or ""),
                 "tensor_parallelism": str(
                     getattr(combo, "tensor_parallelism", None)
+                    or getattr(combo, "tensor_parallel_degree", None)
                     or (getattr(combo, "model_extra", None) or {}).get("tensor_parallelism")
                     or ""
                 ),
                 "pipeline_parallelism": str(
                     getattr(combo, "pipeline_parallelism", None)
+                    or getattr(combo, "pipeline_parallel_degree", None)
                     or (getattr(combo, "model_extra", None) or {}).get("pipeline_parallelism")
                     or ""
                 ),
@@ -182,8 +184,10 @@ def _combo_dimensions(sweep_name, variant_config):
                 "micro_batch_size": str(combo.get("micro_batch_size") or ""),
                 "global_batch_size": str(combo.get("global_batch_size") or ""),
                 "precision": str(combo.get("precision") or ""),
-                "tensor_parallelism": str(combo.get("tensor_parallelism") or ""),
-                "pipeline_parallelism": str(combo.get("pipeline_parallelism") or ""),
+                "tensor_parallelism": str(combo.get("tensor_parallelism") or combo.get("tensor_parallel_degree") or ""),
+                "pipeline_parallelism": str(
+                    combo.get("pipeline_parallelism") or combo.get("pipeline_parallel_degree") or ""
+                ),
             }
     tp = getattr(variant_config, "train_params", None) or {}
     if sweep_name == DEFAULT_SWEEP_NAME or not sweep_name:
@@ -191,8 +195,8 @@ def _combo_dimensions(sweep_name, variant_config):
             "micro_batch_size": str(tp.get("micro_batch_size") or ""),
             "global_batch_size": str(tp.get("global_batch_size") or ""),
             "precision": str(tp.get("precision") or ""),
-            "tensor_parallelism": str(tp.get("tensor_parallelism") or ""),
-            "pipeline_parallelism": str(tp.get("pipeline_parallelism") or ""),
+            "tensor_parallelism": str(tp.get("tensor_parallelism") or tp.get("tensor_parallel_degree") or ""),
+            "pipeline_parallelism": str(tp.get("pipeline_parallelism") or tp.get("pipeline_parallel_degree") or ""),
         }
     try:
         parsed = parse_sweep_cell_key(sweep_name)
@@ -202,14 +206,14 @@ def _combo_dimensions(sweep_name, variant_config):
             "global_batch_size": "",
             "precision": "",
         }
-    parsed["tensor_parallelism"] = str(tp.get("tensor_parallelism") or "")
-    parsed["pipeline_parallelism"] = str(tp.get("pipeline_parallelism") or "")
+    parsed["tensor_parallelism"] = str(tp.get("tensor_parallelism") or tp.get("tensor_parallel_degree") or "")
+    parsed["pipeline_parallelism"] = str(tp.get("pipeline_parallelism") or tp.get("pipeline_parallel_degree") or "")
     return parsed
 
 
 def _model_id(variant_config):
     tp = getattr(variant_config, "train_params", None) or {}
-    model = tp.get("tokenizer_model") or tp.get("model")
+    model = tp.get("tokenizer_model") or tp.get("model_name") or tp.get("model")
     if not model:
         model_obj = getattr(variant_config, "model", None)
         model = getattr(model_obj, "id", None) if model_obj is not None else None
@@ -222,8 +226,12 @@ def _gpu_id(variant_config):
 
 def _train_params_parallel(variant_config, dims):
     tp = getattr(variant_config, "train_params", None) or {}
-    tensor = dims.get("tensor_parallelism") or str(tp.get("tensor_parallelism") or "1")
-    pipeline = dims.get("pipeline_parallelism") or str(tp.get("pipeline_parallelism") or "1")
+    tensor = dims.get("tensor_parallelism") or str(
+        tp.get("tensor_parallelism") or tp.get("tensor_parallel_degree") or "1"
+    )
+    pipeline = dims.get("pipeline_parallelism") or str(
+        tp.get("pipeline_parallelism") or tp.get("pipeline_parallel_degree") or "1"
+    )
     return tensor, pipeline
 
 
@@ -324,17 +332,19 @@ def build_training_cells(config, variant_config, train_res_dict, lifecycle_repor
             **_pytest_nodeids(config, lifecycle_report, cell_id),
         }
         _apply_cell_dimensions(config, cell, variant_config, sweep_name)
-        for src, dst in (
-            ("_loss_curve", "loss_curve"),
-            ("_perplexity_curve", "perplexity_curve"),
-            ("_learning_rate_curve", "learning_rate_curve"),
-            ("_grad_norm_curve", "grad_norm_curve"),
-            ("_throughput_curve", "throughput_curve"),
-            ("_tokens_curve", "tokens_curve"),
+        for sources, dst in (
+            (("_loss_curve",), "loss_curve"),
+            (("_perplexity_curve",), "perplexity_curve"),
+            (("_learning_rate_curve",), "learning_rate_curve"),
+            (("_grad_norm_curve",), "grad_norm_curve"),
+            (("_throughput_curve", "_tflops_curve"), "throughput_curve"),
+            (("_tokens_curve", "_tps_curve"), "tokens_curve"),
         ):
-            curve = raw.get(src)
-            if isinstance(curve, list) and curve:
-                cell[dst] = curve
+            for src in sources:
+                curve = raw.get(src)
+                if isinstance(curve, list) and curve:
+                    cell[dst] = curve
+                    break
         extra = raw.get("_extra_curves")
         if isinstance(extra, dict) and extra:
             cell["extra_curves"] = {
@@ -444,6 +454,14 @@ def build_training_chart_series(config, cells):
     return series
 
 
+def _headline_unit(config):
+    units = config.metric_units or {}
+    headline = config.headline_metric or ""
+    prefix = getattr(config, "metric_prefix", "") or ""
+    short = headline[len(prefix) :] if prefix and headline.startswith(prefix) else headline
+    return units.get(short) or units.get(headline) or units.get("throughput_per_gpu") or ""
+
+
 def build_training_summaries(config, cells):
     best = None
     for cell in cells:
@@ -464,9 +482,7 @@ def build_training_summaries(config, cells):
             "label": getattr(config, "sweep_series_label", None) or "Megatron sweep",
             "max_output_throughput": value,
             "conc_at_max_tput": cell.get("cell_id"),
-            "headline_unit": config.metric_units.get("throughput_per_gpu")
-            or config.metric_units.get(config.headline_metric)
-            or "TFLOP/s/GPU",
+            "headline_unit": _headline_unit(config),
             "meta": "Peak at " + str(cell.get("cell_id") or ""),
             "cell_count": len(cells),
         }

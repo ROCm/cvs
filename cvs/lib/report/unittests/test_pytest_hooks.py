@@ -88,6 +88,41 @@ class TestPytestHooks(unittest.TestCase):
         self.assertIs(store["cvs_results_dict"], results)
         self.assertIs(store["variant_config"], variant)
 
+    def test_bind_module_resolves_train_res_dict_from_torchtitan_profile(self):
+        from cvs.lib.report.profile import load_json_profile
+
+        profile = load_json_profile("torchtitan")
+        results = {"MBS=1,GBS=8,PRECISION=bf16": {"tokens_per_sec": ["12000"]}}
+        variant = object()
+        lifecycle = SimpleNamespace(report={})
+        request = SimpleNamespace(
+            config=SimpleNamespace(_suite_report_config=profile),
+            _finalizers=[],
+        )
+
+        def fake_getfixturevalue(name):
+            if name == "train_res_dict":
+                return results
+            if name == "variant_config":
+                return variant
+            if name == "lifecycle":
+                return lifecycle
+            raise _FixtureLookupError(name)
+
+        request.getfixturevalue = fake_getfixturevalue
+        request.addfinalizer = request._finalizers.append
+
+        gen = pytest_hooks.cvs_rundeck_bind_module_fixture(request, None)
+        next(gen)
+        for fn in request._finalizers:
+            fn()
+        with self.assertRaises(StopIteration):
+            next(gen)
+
+        store = get_session_results()
+        self.assertIs(store["cvs_results_dict"], results)
+        self.assertIs(store["variant_config"], variant)
+
 
 if __name__ == "__main__":
     unittest.main()

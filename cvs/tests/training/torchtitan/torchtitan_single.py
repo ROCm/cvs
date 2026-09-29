@@ -12,16 +12,16 @@ Lifecycle (each stage is a separate test):
   test_launch_container  — launch the container once for all sweep combos
   test_download_tokenizer— download tokenizer if needed for model family
   test_smoke             — fixed small cell: model loads and runs N steps without error
-  test_training          — parametrized: one test per sweep combo; kills GPU
-                           processes in finally so VRAM is free for the next combo
-  test_metric            — parametrized: threshold check per combo via evaluate_all
-  test_loss_curve        — parametrized: slope-based loss decrease check with PNG render
+  test_checkpoint        — checkpoint save + resume; uses the smoke cell's batch and precision
+  test_training          — parametrized: one test per sweep combo; a failed combo does not
+                           skip the rest. Kills GPU processes in finally so VRAM is free
+  test_metric            — parametrized: threshold check per combo; optional specs may be missing
+  test_loss_curve        — parametrized: slope check plus loss, tps, tflops, and step-time curves
   test_teardown          — tear down the container once after all combos
 '''
 
-import json
-import os
 import re
+import shlex
 import time
 
 import pytest
@@ -34,11 +34,13 @@ from cvs.lib.training.torchtitan.utils.convergence import (
     compute_convergence,
     parse_step_metrics,
 )
-from cvs.lib.training.torchtitan.utils.loss_curve import (
-    parse_all_loss_points,
+from cvs.lib.training.torchtitan.utils.iteration_metrics import (
+    derive_step_time_stats,
+    parse_iteration_metrics,
     sample_loss_curve,
-    evaluate_loss_decreasing,
+    sample_training_curves,
 )
+from cvs.lib.training.torchtitan.utils.loss_curve import evaluate_loss_decreasing
 from cvs.lib.training.torchtitan.utils.loss_curve_plot import render_loss_curve_png
 from cvs.lib.training.torchtitan.utils.scaling import compute_scaling_efficiency
 from cvs.lib.utils.verdict import _check_one, ThresholdViolation
@@ -63,36 +65,6 @@ _SMOKE_MBS = "1"
 _SMOKE_GBS = "8"
 _SMOKE_ITERS = "10"
 _SMOKE_PRECISION = "BF16"
-
-
-def pytest_generate_tests(metafunc):
-    """Parametrize per-sweep tests for both suites from sweep.runs.
-
-    Tests that take sweep_name get one row per combination key listed in
-    sweep.runs (must exist in sweep.combinations). No cartesian product.
-    The pytest ID is the combination key so it matches the threshold cell.
-    """
-    if "sweep_name" not in metafunc.fixturenames:
-        return
-    names = []
-    combinations = {}
-    config_file = metafunc.config.getoption("config_file")
-    if config_file and os.path.isfile(config_file):
-        with open(config_file) as fp:
-            raw = json.load(fp)
-
-        sweep = raw.get("sweep") or {}
-        combinations = sweep.get("combinations") or {}
-        runs = sweep.get("runs", list(combinations.keys()))
-        for run_id in runs:
-            if run_id not in combinations:
-                log.warning("sweep.runs entry %s not found in sweep.combinations; skipping", run_id)
-                continue
-            names.append(run_id)
-    if not names and not combinations:
-        names = ["default"]
-    if names:
-        metafunc.parametrize("sweep_name", names, ids=names)
 
 
 def test_launch_container(orch, variant_config, lifecycle, request):
@@ -214,6 +186,7 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
       - resume_losses[last_ckpt_step+1] <= save_losses[last_ckpt_step] + tol (no loss spike).
 
     Skipped if checkpoint.enforce=false.
+    MBS, GBS, and precision come from the ``smoke`` block (same as test_smoke).
     """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -221,6 +194,11 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
     ckpt_cfg = variant_config.checkpoint
     if not ckpt_cfg.enforce:
         pytest.skip("checkpoint.enforce=false in config; skipping test_checkpoint")
+
+    smoke = variant_config.smoke
+    mbs = smoke.micro_batch_size or _SMOKE_MBS
+    gbs = smoke.global_batch_size.strip() or _SMOKE_GBS
+    precision = smoke.precision or _SMOKE_PRECISION
 
     # Checkpoint directory must be volume-mounted into the container
     log_dir = variant_config.config.get("log_dir")
@@ -234,9 +212,9 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
             orch,
             variant_config,
             hf_token=hf_token,
-            micro_batch_size=_SMOKE_MBS,
-            global_batch_size=_SMOKE_GBS,
-            precision=_SMOKE_PRECISION,
+            micro_batch_size=mbs,
+            global_batch_size=gbs,
+            precision=precision,
             distributed_training=False,
             tune_model_params=False,
             run_label=run_label,
@@ -300,9 +278,9 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
         orch,
         variant_config,
         hf_token=hf_token,
-        micro_batch_size=_SMOKE_MBS,
-        global_batch_size=_SMOKE_GBS,
-        precision=_SMOKE_PRECISION,
+        micro_batch_size=mbs,
+        global_batch_size=gbs,
+        precision=precision,
         distributed_training=False,
         tune_model_params=False,
         run_label="checkpoint_parser",
@@ -397,8 +375,6 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
     update_test_result()
 
     if not request.node.session.testsfailed:
-        import shlex
-
         orch.exec(f"rm -rf {shlex.quote(ckpt_dir)}")
     else:
         log.info("checkpoint dir retained for debugging: %s", ckpt_dir)
@@ -440,7 +416,7 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
         tt_obj.verify_training_results()
         elapsed = time.monotonic() - t
     except Exception:
-        lifecycle.failed = True
+        train_res_dict[sweep_name] = None
         raise
     finally:
         tt_obj.stop_training_processes()
@@ -452,10 +428,11 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
     train_res_dict[sweep_name] = tt_obj.training_results_dict
     train_res_dict[sweep_name]["_combo_log_dir"] = tt_obj.combo_log_dir
 
-    tput_per_gpu = train_res_dict[sweep_name].get("throughput_per_gpu", [])
-    if tput_per_gpu:
+    # tps is tokens/s/device. Cluster total matches scaling_baseline (tok/s/GPU * 8).
+    tps_per_device = train_res_dict[sweep_name].get("tokens_per_sec", [])
+    if tps_per_device:
         gpus_per_node = 8
-        tokens_per_sec_total = float(tput_per_gpu[-1]) * int(tt_obj.nnodes) * gpus_per_node
+        tokens_per_sec_total = float(tps_per_device[-1]) * int(tt_obj.nnodes) * gpus_per_node
         baseline = variant_config.scaling_baseline
         efficiency = compute_scaling_efficiency(
             tokens_per_sec_total,
@@ -494,54 +471,68 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
 
 def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
     """Stage 4 (parametrized): compare each combo's metrics against thresholds."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
     if not train_res_dict.get(sweep_name):
-        pytest.skip(f"no recorded results for combo '{sweep_name}' (training did not run)")
+        pytest.skip(f"no recorded results for combo '{sweep_name}' (training did not run or failed)")
 
-    if not variant_config.enforce_thresholds:
-        log.info("enforce_thresholds=false; skipping verdict for combo '%s'", sweep_name)
-        return
-
-    cell = variant_config.cell_key(sweep_name)
-    thresholds = variant_config.thresholds.get(cell)
-    if not thresholds:
-        log.warning("no thresholds defined for cell '%s'; skipping threshold checks", cell)
-        return
-
+    t = time.monotonic()
     actuals_raw = train_res_dict[sweep_name]
     request.node.user_properties.append(("training_log_tail", actuals_raw.get("_log_tail", "")))
     actuals = {f"training.{k}": float(v[-1]) for k, v in actuals_raw.items() if v and not k.startswith("_")}
 
-    log.info("--- Threshold check for combo '%s' ---", sweep_name)
-    violations = []
-    for metric, spec in thresholds.items():
-        if metric not in actuals:
-            msg = f"{metric}: missing from actuals"
-            log.error("  FAILED  %s", msg)
-            violations.append(msg)
-            continue
-        if actuals[metric] is None:
-            msg = f"{metric}: value is None (metric unavailable for this run)"
-            log.error("  FAILED  %s", msg)
-            violations.append(msg)
-            continue
-        spec_with_actuals = dict(spec)
-        if spec.get("kind") == "min_ratio":
-            spec_with_actuals["_actuals"] = actuals
-        v = _check_one(metric, actuals[metric], spec_with_actuals)
-        if v:
-            log.error("  FAILED  %s", v)
-            violations.append(v)
-        else:
-            log.info("  PASSED  %s: actual=%s  threshold=%s", metric, actuals[metric], spec)
+    try:
+        if not variant_config.enforce_thresholds:
+            log.info("enforce_thresholds=false; record-only for combo '%s'", sweep_name)
+            for metric, value in actuals.items():
+                log.info("  RECORD  %s: actual=%s", metric, value)
+            return
 
-    if violations:
-        summary = "FAILED\n" + "\n".join(violations)
-        log.error("--- %d violation(s) for combo '%s' ---", len(violations), sweep_name)
-        request.node.user_properties.append(("threshold_comparison", summary))
-        raise ThresholdViolation(violations)
+        cell = variant_config.cell_key(sweep_name)
+        thresholds = variant_config.thresholds.get(cell)
+        if not thresholds:
+            log.warning("no thresholds defined for cell '%s'; skipping threshold checks", cell)
+            return
 
-    log.info("--- All threshold checks PASSED for combo '%s' ---", sweep_name)
-    request.node.user_properties.append(("threshold_comparison", "PASSED"))
+        log.info("--- Threshold check for combo '%s' ---", sweep_name)
+        violations = []
+        for metric, spec in thresholds.items():
+            if metric not in actuals:
+                if spec.get("optional"):
+                    log.info("  SKIPPED  %s: missing from actuals", metric)
+                    continue
+                msg = f"{metric}: missing from actuals"
+                log.error("  FAILED  %s", msg)
+                violations.append(msg)
+                continue
+            if actuals[metric] is None:
+                if spec.get("optional"):
+                    log.info("  SKIPPED  %s: value is None (metric unavailable for this run)", metric)
+                    continue
+                msg = f"{metric}: value is None (metric unavailable for this run)"
+                log.error("  FAILED  %s", msg)
+                violations.append(msg)
+                continue
+            spec_with_actuals = dict(spec)
+            if spec.get("kind") == "min_ratio":
+                spec_with_actuals["_actuals"] = actuals
+            v = _check_one(metric, actuals[metric], spec_with_actuals)
+            if v:
+                log.error("  FAILED  %s", v)
+                violations.append(v)
+            else:
+                log.info("  PASSED  %s: actual=%s  threshold=%s", metric, actuals[metric], spec)
+
+        if violations:
+            summary = "FAILED\n" + "\n".join(violations)
+            log.error("--- %d violation(s) for combo '%s' ---", len(violations), sweep_name)
+            request.node.user_properties.append(("threshold_comparison", summary))
+            raise ThresholdViolation(violations)
+
+        log.info("--- All threshold checks PASSED for combo '%s' ---", sweep_name)
+        request.node.user_properties.append(("threshold_comparison", "PASSED"))
+    finally:
+        lifecycle.record(request.node.nodeid, "metrics", time.monotonic() - t)
 
 
 def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle, request):
@@ -550,7 +541,7 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
         pytest.skip("a prior lifecycle stage failed")
 
     if not train_res_dict.get(sweep_name):
-        pytest.skip(f"no recorded results for combo '{sweep_name}' (training did not run)")
+        pytest.skip(f"no recorded results for combo '{sweep_name}' (training did not run or failed)")
 
     combo_log_dir = train_res_dict[sweep_name].get("_combo_log_dir")
     if not combo_log_dir:
@@ -562,8 +553,19 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
     log_text = list(out_dict.values())[-1] or ""
 
     lc = variant_config.loss_curve
-    step_metrics = parse_all_loss_points(log_text)
+    combo = variant_config.sweep.combinations[sweep_name]
+    seq = variant_config.train_params.get("sequence_length")
+    nnodes = len(getattr(orch, "hosts", None) or [])
+    world_size = nnodes * 8 if nnodes else None
+    step_metrics = parse_iteration_metrics(
+        log_text,
+        seq_length=seq,
+        global_batch_size=combo.global_batch_size,
+        world_size=world_size,
+    )
     points = sample_loss_curve(step_metrics, lc.sample_every, lc.milestone_steps)
+    train_res_dict[sweep_name].update(sample_training_curves(step_metrics, lc.sample_every, lc.milestone_steps))
+    train_res_dict[sweep_name].update(derive_step_time_stats(step_metrics))
 
     log.info("--- Loss curve check for combo '%s' (%d points sampled) ---", sweep_name, len(points))
 

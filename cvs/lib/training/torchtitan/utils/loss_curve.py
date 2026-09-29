@@ -11,34 +11,21 @@ evaluate_loss_decreasing — slope-based smooth-decrease check (least-squares)
 
 from __future__ import annotations
 
-import re
 from typing import Dict, List, Optional, Tuple
+
+from cvs.lib.training.torchtitan.utils.iteration_metrics import (
+    parse_iteration_metrics,
+    sample_metric_curve,
+)
 
 
 def parse_all_loss_points(log_text: str) -> List[Dict]:
-    """Extract every (step, loss) pair from a full TorchTitan training log.
+    """Extract every step row that carries a loss from a TorchTitan training log.
 
-    Each TorchTitan log line has the form:
-        step: <N> | loss: <value> | ...
-
-    Scans all step lines and returns them as a list of
-    ``{"step": int, "loss": float}`` dicts in log order. Only lines that
-    contain both a step number and a numeric loss value are included.
-
-    Args:
-        log_text: Full training log text.
-
-    Returns:
-        List of ``{"step": int, "loss": float}`` dicts, one per parsed line.
+    Delegates to ``parse_iteration_metrics``. Rows also include tps, tflops,
+    grad_norm, and memory when those fields are on the same ``step:`` line.
     """
-    results = []
-    pattern = re.compile(
-        r'step:\s+(\d+)[^\n]*?\bloss:\s*([0-9.eE+\-]+)',
-        re.I,
-    )
-    for m in pattern.finditer(log_text):
-        results.append({"step": int(m.group(1)), "loss": float(m.group(2))})
-    return results
+    return [row for row in parse_iteration_metrics(log_text) if isinstance(row.get("loss"), (int, float))]
 
 
 def sample_loss_curve(
@@ -46,42 +33,13 @@ def sample_loss_curve(
     sample_every: int = 10,
     milestone_steps: Optional[List[int]] = None,
 ) -> List[Tuple[int, float]]:
-    """Downsample per-step training loss for the loss curve check.
+    """Downsample per-step training loss after the warmup prefix.
 
-    Keeps a point when its step is a multiple of ``sample_every``, is one of
-    the ``milestone_steps`` (e.g. 100/500/1k/5k), or is the first/last
-    recorded step. The first/last inclusion keeps short runs from producing
-    an empty curve.
-
-    Args:
-        step_metrics:    List of ``{"step": int, "loss": float}`` dicts as
-                         returned by ``parse_all_loss_points``.
-        sample_every:    Keep every Nth step (default 10).
-        milestone_steps: Additional steps to always include.
-
-    Returns:
-        Ordered, de-duplicated list of ``(step, loss)`` tuples. Empty when
-        ``step_metrics`` is empty or contains no numeric loss values.
+    The first 10% of steps are dropped (compile / cache). Of what remains, a
+    point is kept when its step is a multiple of ``sample_every``, is one of
+    the ``milestone_steps``, or is the first or last remaining step.
     """
-    milestones = set(milestone_steps or [])
-    every = sample_every if sample_every and sample_every > 0 else 1
-
-    loss_steps = [
-        s for s in (step_metrics or []) if s.get("step") is not None and isinstance(s.get("loss"), (int, float))
-    ]
-    if not loss_steps:
-        return []
-
-    first_step = loss_steps[0]["step"]
-    last_step = loss_steps[-1]["step"]
-
-    picked: Dict[int, float] = {}
-    for s in loss_steps:
-        step = s["step"]
-        if step % every == 0 or step in milestones or step in (first_step, last_step):
-            picked[step] = s["loss"]
-
-    return [(step, picked[step]) for step in sorted(picked)]
+    return sample_metric_curve(step_metrics, "loss", sample_every, milestone_steps)
 
 
 def evaluate_loss_decreasing(
