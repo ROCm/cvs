@@ -162,7 +162,8 @@ def pytest_collection_modifyitems(items):
         "test_training": 4,
         "test_metric": 5,
         "test_loss_curve": 6,
-        "test_teardown": 7,
+        "test_print_results_table": 7,
+        "test_teardown": 8,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
@@ -193,11 +194,6 @@ def pytest_runtest_makereport(item, call):
     if artifacts:
         for link_name, rel_path in artifacts:
             extras.append(pytest_html.extras.url(rel_path, name=link_name))
-    if report.failed:
-        props = dict(item.user_properties)
-        log_tail = props.get("training_log_tail")
-        if log_tail:
-            extras.append(pytest_html.extras.text(log_tail, name="Training Log (tail)"))
     report.extras = extras
 
 
