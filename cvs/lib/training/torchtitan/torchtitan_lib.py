@@ -19,6 +19,10 @@ from cvs.lib import globals
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
+from cvs.lib.training.torchtitan.utils.iteration_metrics import (
+    parse_iteration_metrics,
+    summarize_step_metrics,
+)
 from cvs.lib.training.torchtitan.utils.model_registry import (
     TORCHTITAN_MODELS,
     PRECISION_FLAGS,
@@ -518,24 +522,18 @@ class TorchTitanTrainingJob:
             self.orch.exec(f'bash -c {shlex.quote(self.job_cmd)}')
 
     def get_training_results_dict(self):
-        """Parse training results from logs."""
-        if self.distributed_training:
-            log_files = [f'{self.combo_log_dir}/out-node{i}/training.log' for i in range(self.nnodes)]
-        else:
-            log_files = [f'{self.combo_log_dir}/out-node0/training.log']
+        """Parse rank-0 training metrics as post-warmup means.
 
-        all_results = {}
-        for log_file in log_files:
-            out_dict = self.orch.exec(f'cat {log_file}')
-            for host, output in out_dict.items():
-                if output:
-                    parsed = _parse_training_results(output)
-                    for metric, values in parsed.items():
-                        if metric not in all_results:
-                            all_results[metric] = []
-                        all_results[metric].extend(values)
-
-        return all_results
+        TorchTitan prints the ``step:`` line from rank 0, which is node 0.
+        Means skip the first 10% of steps. When that line is absent, fall back
+        to the older whole-log regex (last match wins at the threshold check).
+        """
+        log_text = self._read_last_node_log()
+        rows = parse_iteration_metrics(log_text)
+        summarized = summarize_step_metrics(rows)
+        if summarized:
+            return summarized
+        return _parse_training_results(log_text)
 
     def scan_for_training_errors(self):
         """Scan training logs for known error patterns."""
@@ -703,17 +701,17 @@ class TorchTitanTrainingJob:
         return losses
 
     def _read_last_node_log(self, tail_lines=0):
-        """Read the training log from the last node and return its output.
+        """Read the rank-0 training log (node 0).
 
         Args:
             tail_lines (int): If > 0, only the last N lines of the log are read.
 
         Returns:
-            str: Log text from the last node.
+            str: Log text from node 0.
         """
-        n = len(self.orch.hosts)
-        last_host = self.orch.hosts[-1]
+        # Rank 0 emits the step metrics line; that process is node 0.
+        rank0 = self.orch.hosts[0]
         tail_suffix = f' | tail -{tail_lines}' if tail_lines > 0 else ''
-        log_path = f'{self.combo_log_dir}/out-node{n - 1}/training.log'
-        out_dict = self.orch.exec(f'cat {log_path}{tail_suffix}', hosts=[last_host])
-        return out_dict.get(last_host) or ''
+        log_path = f'{self.combo_log_dir}/out-node0/training.log'
+        out_dict = self.orch.exec(f'cat {log_path}{tail_suffix}', hosts=[rank0])
+        return out_dict.get(rank0) or ''

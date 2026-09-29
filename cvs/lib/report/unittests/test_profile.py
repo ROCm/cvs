@@ -59,6 +59,18 @@ class TestProfile(unittest.TestCase):
                 "cvs.lib.report.profiles.hooks.megatron_run_card:megatron_run_card_display",
             )
 
+    def test_torchtitan_stems_share_one_profile(self):
+        for stem in ("torchtitan", "torchtitan_single", "torchtitan_distributed"):
+            profile = load_json_profile(stem)
+            self.assertIsNotNone(profile, stem)
+            self.assertEqual(profile["suite_id"], "torchtitan")
+            self.assertEqual(profile["dataset_builder"], "training_sweep")
+            self.assertEqual(profile["sources"]["results"], "train_res_dict")
+            self.assertEqual(
+                profile["hooks"]["run_card_display"],
+                "cvs.lib.report.profiles.hooks.torchtitan_run_card:torchtitan_run_card_display",
+            )
+
     def test_vllm_hooks_point_at_canonical_metric_contract(self):
         profile = load_json_profile("vllm")
         self.assertEqual(

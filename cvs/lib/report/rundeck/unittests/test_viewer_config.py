@@ -80,6 +80,19 @@ class TestViewerConfig(unittest.TestCase):
         self.assertTrue(any(col.get("field") == "mbs" for col in vc["table_columns"]))
         self.assertTrue(any(col.get("field") == "precision" for col in vc["table_columns"]))
 
+    def test_torchtitan_profile_viewer_config(self):
+        import json
+
+        from cvs.lib.report.profile import profile_json_path
+
+        profile = json.loads(profile_json_path("torchtitan").read_text(encoding="utf-8"))
+        config = resolve_report_config(profile)
+        vc = ViewerConfigBuilder(profile, config).build()
+        self.assertEqual(vc["group_by"], ["mbs", "gbs"])
+        self.assertFalse(vc["interactivity"]["enabled"])
+        self.assertFalse(vc["sweep_charts"]["enabled"])
+        self.assertIn("training.tokens_per_sec", vc["metrics"])
+
     def test_sweep_charts_follow_interactivity_when_unset(self):
         profile = generic_sweep_profile()
         profile["viewer"] = {"interactivity": {"enabled": False}}

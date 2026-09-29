@@ -123,7 +123,7 @@ Artifacts next to the pytest HTML report:
 The interactive viewer includes a **Token Throughput per GPU vs. Interactivity**
 chart (InferenceX-style) for inference sweeps. Configure axis metrics under
 `viewer.interactivity` in the profile JSON; open the viewer sidecar from the nav
-link or sweep banner. **Megatron** (`training_sweep`) uses the same explorer
+link or sweep banner. **Megatron** and **TorchTitan** (`training_sweep`) use the same explorer
 (MBS/GBS filters, heatmap, gates) with Interactivity and cross-shape Sweep charts
 disabled (combo bars stay on the static deck, including p50 / p95 step time); when cells include sampled
 ``loss_curve`` / ``perplexity_curve`` / ``learning_rate_curve`` / ``grad_norm_curve`` /
