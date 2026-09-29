@@ -30,7 +30,7 @@ Pass the cluster file and test suite config from your workspace:
 
   cvs run agfhc_cvs \
     --cluster_file ~/cvs_workspace/cluster.json \
-    --config_file ~/cvs_workspace/mi300_health_config.json \
+    --config_file ~/cvs_workspace/health_config.json \
     --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html \
     --log-file=/tmp/test.log -vvv -s
 
@@ -43,7 +43,7 @@ List test cases in a suite
 
   cvs list agfhc_cvs \
     --cluster_file ~/cvs_workspace/cluster.json \
-    --config_file ~/cvs_workspace/mi300_health_config.json
+    --config_file ~/cvs_workspace/health_config.json
 
 Run one test function
 =============================
@@ -54,7 +54,7 @@ Add the test function name after the suite name:
 
   cvs run agfhc_cvs test_agfhc_hbm \
     --cluster_file ~/cvs_workspace/cluster.json \
-    --config_file ~/cvs_workspace/mi300_health_config.json \
+    --config_file ~/cvs_workspace/health_config.json \
     --html=/var/www/html/cvs/agfhc.html --capture=tee-sys --self-contained-html \
     --log-file=/tmp/test.log -vvv -s
 
