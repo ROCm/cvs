@@ -118,8 +118,8 @@ details.metric-pick > summary::-webkit-details-marker { display: none; }
 .metric-menu .cb { display: flex; flex-direction: row; align-items: center; gap: 0.45rem;
   font-size: 0.8rem; color: var(--text); padding: 0.15rem 0; white-space: nowrap; }
 .metric-menu .cb input { flex: 0 0 auto; width: auto; margin: 0; }
-.metric-menu .menu-actions { display: flex; gap: 0.4rem; margin-top: 0.5rem; padding-top: 0.5rem;
-  border-top: 1px solid var(--border); }
+.metric-menu .menu-actions { display: flex; gap: 0.4rem; margin-bottom: 0.5rem; padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border); }
 .metric-menu .menu-actions button {
   background: #12151f; color: var(--text); border: 1px solid var(--border); border-radius: 6px;
   padding: 0.25rem 0.5rem; font-size: 0.72rem; cursor: pointer;
@@ -242,12 +242,13 @@ tr.changed td { background: rgba(255,107,53,0.1); }
     <label class="filter-field" id="layout-field" style="display:none"><span class="filter-label">Layout</span><select id="f-layout" aria-label="Metric chart layout"><option value="stacked">Stacked</option><option value="grid">Grid</option></select></label>
     <div class="filter-field" id="metric-pick-field" style="display:none"><span class="filter-label">Select metrics</span>
       <details class="metric-pick"><summary id="metric-pick-summary">Metrics ▾</summary>
-        <div class="metric-menu"><div id="metric-pick-list"></div>
+        <div class="metric-menu">
           <div class="menu-actions">
             <button type="button" id="metric-pick-defaults">Defaults</button>
             <button type="button" id="metric-pick-all">All</button>
             <button type="button" id="metric-pick-none">None</button>
           </div>
+          <div id="metric-pick-list"></div>
         </div>
       </details>
     </div>

@@ -145,11 +145,14 @@ class RundeckPublisher:
             return None
         viewer_name = viewer_basename_for(config.report_basename)
         viewer_path = out_dir / viewer_name
+        # Use the payload's resolved subtitle (e.g. {mode} substituted) rather than
+        # the raw profile subtitle, so the viewer matches the deck page.
+        resolved_subtitle = (payload.get("report") or {}).get("subtitle") or config.subtitle
         write_interactive_viewer(
             viewer_path,
             json_basename=f"{config.report_basename}.json",
             title=config.title,
-            subtitle=config.subtitle,
+            subtitle=resolved_subtitle,
             tier_order=config.metric_tier_order,
             embed_payload=payload,
         )

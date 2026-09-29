@@ -225,6 +225,7 @@ class ProfileConfigResolver:
             cell_dimensions=cell_dimensions,
             dimension_fields=dimension_fields,
             sweep_series_label=sweep.get("series_label") or "Megatron sweep",
+            results_all_metrics=bool(sweep.get("results_all_metrics", False)),
             **kwargs,
         )
 
