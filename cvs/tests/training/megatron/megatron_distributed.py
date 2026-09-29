@@ -32,11 +32,14 @@ from cvs.lib.training.megatron.utils.convergence import (
     compute_convergence,
     parse_step_metrics,
 )
-from cvs.lib.training.megatron.utils.loss_curve import (
-    parse_all_loss_points,
+from cvs.lib.training.megatron.utils.iteration_metrics import (
+    derive_step_time_stats,
+    dialect_from_image,
+    parse_iteration_metrics,
     sample_loss_curve,
-    evaluate_loss_decreasing,
+    sample_training_curves,
 )
+from cvs.lib.training.megatron.utils.loss_curve import evaluate_loss_decreasing
 from cvs.lib.training.megatron.utils.loss_curve_plot import render_loss_curve_png
 from cvs.lib.training.megatron.utils.scaling import compute_scaling_efficiency
 from cvs.lib.utils.verdict import _check_one, ThresholdViolation
@@ -468,59 +471,63 @@ def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
     if not train_res_dict.get(sweep_name):
         pytest.skip(f"no recorded results for combo '{sweep_name}' (training did not run or failed)")
 
+    t = time.monotonic()
     actuals_raw = train_res_dict[sweep_name]
     request.node.user_properties.append(("training_log_tail", actuals_raw.get("_log_tail", "")))
     actuals = {f"training.{k}": float(v[-1]) for k, v in actuals_raw.items() if v and not k.startswith("_")}
 
-    if not variant_config.enforce_thresholds:
-        log.info("enforce_thresholds=false; record-only for combo '%s'", sweep_name)
-        for metric, value in actuals.items():
-            log.info("  RECORD  %s: actual=%s", metric, value)
-        return
+    try:
+        if not variant_config.enforce_thresholds:
+            log.info("enforce_thresholds=false; record-only for combo '%s'", sweep_name)
+            for metric, value in actuals.items():
+                log.info("  RECORD  %s: actual=%s", metric, value)
+            return
 
-    cell = variant_config.cell_key(sweep_name)
-    thresholds = variant_config.thresholds.get(cell)
-    if not thresholds:
-        log.warning("no thresholds defined for cell '%s'; skipping threshold checks", cell)
-        return
+        cell = variant_config.cell_key(sweep_name)
+        thresholds = variant_config.thresholds.get(cell)
+        if not thresholds:
+            log.warning("no thresholds defined for cell '%s'; skipping threshold checks", cell)
+            return
 
-    log.info("--- Threshold check for combo '%s' ---", sweep_name)
-    violations = []
-    for metric, spec in thresholds.items():
-        if metric not in actuals:
-            if spec.get("optional"):
-                log.info("  SKIPPED  %s: missing from actuals", metric)
+        log.info("--- Threshold check for combo '%s' ---", sweep_name)
+        violations = []
+        for metric, spec in thresholds.items():
+            if metric not in actuals:
+                if spec.get("optional"):
+                    log.info("  SKIPPED  %s: missing from actuals", metric)
+                    continue
+                msg = f"{metric}: missing from actuals"
+                log.error("  FAILED  %s", msg)
+                violations.append(msg)
                 continue
-            msg = f"{metric}: missing from actuals"
-            log.error("  FAILED  %s", msg)
-            violations.append(msg)
-            continue
-        if actuals[metric] is None:
-            if spec.get("optional"):
-                log.info("  SKIPPED  %s: value is None (metric unavailable for this run)", metric)
+            if actuals[metric] is None:
+                if spec.get("optional"):
+                    log.info("  SKIPPED  %s: value is None (metric unavailable for this run)", metric)
+                    continue
+                msg = f"{metric}: value is None (metric unavailable for this run)"
+                log.error("  FAILED  %s", msg)
+                violations.append(msg)
                 continue
-            msg = f"{metric}: value is None (metric unavailable for this run)"
-            log.error("  FAILED  %s", msg)
-            violations.append(msg)
-            continue
-        spec_with_actuals = dict(spec)
-        if spec.get("kind") == "min_ratio":
-            spec_with_actuals["_actuals"] = actuals
-        v = _check_one(metric, actuals[metric], spec_with_actuals)
-        if v:
-            log.error("  FAILED  %s", v)
-            violations.append(v)
-        else:
-            log.info("  PASSED  %s: actual=%s  threshold=%s", metric, actuals[metric], spec)
+            spec_with_actuals = dict(spec)
+            if spec.get("kind") == "min_ratio":
+                spec_with_actuals["_actuals"] = actuals
+            v = _check_one(metric, actuals[metric], spec_with_actuals)
+            if v:
+                log.error("  FAILED  %s", v)
+                violations.append(v)
+            else:
+                log.info("  PASSED  %s: actual=%s  threshold=%s", metric, actuals[metric], spec)
 
-    if violations:
-        summary = "FAILED\n" + "\n".join(violations)
-        log.error("--- %d violation(s) for combo '%s' ---", len(violations), sweep_name)
-        request.node.user_properties.append(("threshold_comparison", summary))
-        raise ThresholdViolation(violations)
+        if violations:
+            summary = "FAILED\n" + "\n".join(violations)
+            log.error("--- %d violation(s) for combo '%s' ---", len(violations), sweep_name)
+            request.node.user_properties.append(("threshold_comparison", summary))
+            raise ThresholdViolation(violations)
 
-    log.info("--- All threshold checks PASSED for combo '%s' ---", sweep_name)
-    request.node.user_properties.append(("threshold_comparison", "PASSED"))
+        log.info("--- All threshold checks PASSED for combo '%s' ---", sweep_name)
+        request.node.user_properties.append(("threshold_comparison", "PASSED"))
+    finally:
+        lifecycle.record(request.node.nodeid, "metrics", time.monotonic() - t)
 
 
 def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle, request):
@@ -543,8 +550,15 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
     log_text = out_dict.get(last_host) or ""
 
     lc = variant_config.loss_curve
-    step_metrics = parse_all_loss_points(log_text)
+    dialect = dialect_from_image(orch.container_config.get("image", ""))
+    tp = getattr(variant_config, "train_params", None) or {}
+    seq = tp.get("sequence_length") if isinstance(tp, dict) else getattr(tp, "sequence_length", None)
+    nnodes = len(getattr(orch, "hosts", None) or [])
+    world_size = nnodes * 8 if nnodes else None
+    step_metrics = parse_iteration_metrics(log_text, dialect, seq_length=seq, world_size=world_size)
     points = sample_loss_curve(step_metrics, lc.sample_every, lc.milestone_steps)
+    train_res_dict[sweep_name].update(sample_training_curves(step_metrics, lc.sample_every, lc.milestone_steps))
+    train_res_dict[sweep_name].update(derive_step_time_stats(step_metrics))
 
     log.info("--- Loss curve check for combo '%s' (%d points sampled) ---", sweep_name, len(points))
 
