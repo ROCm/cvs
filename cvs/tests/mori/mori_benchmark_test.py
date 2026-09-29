@@ -174,7 +174,11 @@ input_test_matrix = [
 def test_io_read(mori_obj, buffer_size, transfer_batch_size, no_of_qp_per_transfer):
     globals.error_list = []
     mori_obj.run_mori_torch_io_test(
-        op_type='read', enable_sess=True, buffer_size=buffer_size, transfer_batch_size=transfer_batch_size
+        op_type='read',
+        enable_sess=True,
+        buffer_size=buffer_size,
+        transfer_batch_size=transfer_batch_size,
+        no_of_qp_per_transfer=no_of_qp_per_transfer,
     )
     update_test_result()
 
@@ -192,7 +196,11 @@ def test_io_read(mori_obj, buffer_size, transfer_batch_size, no_of_qp_per_transf
 def test_io_write(mori_obj, buffer_size, transfer_batch_size, no_of_qp_per_transfer):
     globals.error_list = []
     mori_obj.run_mori_torch_io_test(
-        op_type='write', enable_sess=True, buffer_size=buffer_size, transfer_batch_size=transfer_batch_size
+        op_type='write',
+        enable_sess=True,
+        buffer_size=buffer_size,
+        transfer_batch_size=transfer_batch_size,
+        no_of_qp_per_transfer=no_of_qp_per_transfer,
     )
     update_test_result()
 
