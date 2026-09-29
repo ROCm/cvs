@@ -16,6 +16,71 @@ from cvs.lib.training.megatron.utils.training_config_loader import (
 _HOST = "cluster"
 _SCALING_SUFFIX = "scaling_efficiency_pct"
 
+# Megatron's native sweep axes. Used when a profile does not supply its own
+# dimension_fields, so the merged Megatron deck renders identically.
+_MEGATRON_DIMENSION_FIELDS = (
+    ("mbs", "MBS", "MBS="),
+    ("gbs", "GBS", "GBS="),
+    ("precision", "Precision", ""),
+    ("tp", "TP", ""),
+    ("pp", "PP", ""),
+)
+
+
+def _dimension_fields(config):
+    return tuple(getattr(config, "dimension_fields", ()) or ()) or _MEGATRON_DIMENSION_FIELDS
+
+
+def _generic_subtitle(dimension_fields, cell):
+    prefixed, plain = [], []
+    for field, _label, prefix in dimension_fields:
+        value = cell.get(field)
+        if value in (None, ""):
+            continue
+        if prefix:
+            prefixed.append(f"{prefix}{value}")
+        else:
+            plain.append(str(value))
+    head = " ".join(prefixed)
+    tail = " \u00b7 ".join(plain)
+    if head and tail:
+        return f"{head} \u00b7 {tail}"
+    return head or tail
+
+
+def _apply_generic_dimensions(config, cell, raw_dims):
+    dims = {str(k): ("" if v is None else str(v)) for k, v in (raw_dims or {}).items()}
+    for field, _label, _prefix in config.dimension_fields:
+        cell[field] = dims.get(field, "")
+    for key, value in dims.items():
+        cell.setdefault(key, value)
+    precision = dims.get("precision") or ""
+    cell["concurrency"] = precision or "1"
+    cell["subtitle"] = _generic_subtitle(config.dimension_fields, cell)
+
+
+def _apply_megatron_dimensions(cell, variant_config, sweep_name):
+    dims = _combo_dimensions(sweep_name, variant_config)
+    tensor, pipeline = _train_params_parallel(variant_config, dims)
+    mbs = dims.get("micro_batch_size") or ""
+    gbs = dims.get("global_batch_size") or ""
+    precision = dims.get("precision") or ""
+    cell["mbs"] = mbs
+    cell["gbs"] = gbs
+    cell["precision"] = precision
+    cell["tp"] = tensor
+    cell["pp"] = pipeline
+    cell["concurrency"] = precision or "1"
+    cell["subtitle"] = f"MBS={mbs} GBS={gbs} \u00b7 {precision}" if precision else f"MBS={mbs} GBS={gbs}"
+
+
+def _apply_cell_dimensions(config, cell, variant_config, sweep_name):
+    hook = getattr(config, "cell_dimensions", None)
+    if callable(hook):
+        _apply_generic_dimensions(config, cell, hook(variant_config, sweep_name))
+    else:
+        _apply_megatron_dimensions(cell, variant_config, sweep_name)
+
 
 def _training_nnodes(variant_config):
     if variant_config is None:
@@ -214,13 +279,8 @@ def build_training_cells(config, variant_config, train_res_dict, lifecycle_repor
         if raw is None or not isinstance(raw, dict):
             continue
         actuals = flatten_training_combo_actuals(raw)
-        dims = _combo_dimensions(sweep_name, variant_config)
-        tensor, pipeline = _train_params_parallel(variant_config, dims)
         cell_id = _cell_id(variant_config, sweep_name)
         thresholds_cell = thresholds_map.get(cell_id) or {}
-        mbs = dims.get("micro_batch_size") or ""
-        gbs = dims.get("global_batch_size") or ""
-        precision = dims.get("precision") or ""
         metrics = []
         for short, label in config.cell_highlights:
             full = config.full_metric(short)
@@ -245,28 +305,21 @@ def build_training_cells(config, variant_config, train_res_dict, lifecycle_repor
         tiers = {
             tier: builder.tier_status(actuals, thresholds_cell, tier, enforce) for tier in config.metric_tier_order
         }
-        subtitle = f"MBS={mbs} GBS={gbs} · {precision}" if precision else f"MBS={mbs} GBS={gbs}"
         cell = {
             "model": model,
             "gpu": gpu,
-            "mbs": mbs,
-            "gbs": gbs,
-            "precision": precision,
-            "tp": tensor,
-            "pp": pipeline,
             "policy": cell_id,
-            "concurrency": precision or "1",
             "host": _HOST,
             "show_host_in_label": False,
             "cell_id": cell_id,
             "label": cell_id,
-            "subtitle": subtitle,
             "metrics": metrics,
             "tiers": tiers,
             "actuals": dict(actuals),
             "cell_lifecycle": _lifecycle_for_cell(config, lifecycle_report, cell_id),
             **_pytest_nodeids(config, lifecycle_report, cell_id),
         }
+        _apply_cell_dimensions(config, cell, variant_config, sweep_name)
         for src, dst in (
             ("_loss_curve", "loss_curve"),
             ("_perplexity_curve", "perplexity_curve"),
@@ -287,16 +340,9 @@ def build_training_cells(config, variant_config, train_res_dict, lifecycle_repor
 
 def build_training_results_table(config, cells):
     headers = [label for label, _key in config.results_columns]
-    field_by_header = {
-        "Model": "model",
-        "GPU": "gpu",
-        "MBS": "mbs",
-        "GBS": "gbs",
-        "Precision": "precision",
-        "TP": "tp",
-        "PP": "pp",
-        "Host": "host",
-    }
+    field_by_header = {"Model": "model", "GPU": "gpu", "Host": "host"}
+    for field, label, _prefix in _dimension_fields(config):
+        field_by_header[label] = field
     rows = []
     for cell in cells:
         row = []
@@ -313,15 +359,19 @@ def build_training_results_table(config, cells):
 _CHART_X_DIMENSIONS = (("mbs", "MBS="), ("gbs", "GBS="), ("precision", ""))
 
 
-def chart_x_labels(cells):
+def _chart_x_dimensions(config):
+    fields = tuple(getattr(config, "dimension_fields", ()) or ())
+    if fields:
+        return tuple((field, prefix) for field, _label, prefix in fields)
+    return _CHART_X_DIMENSIONS
+
+
+def chart_x_labels(cells, dimensions=None):
     """Tick labels holding only the sweep dimensions that vary; full key stays in the tooltip."""
-    varying = [
-        (field, prefix)
-        for field, prefix in _CHART_X_DIMENSIONS
-        if len({str(cell.get(field) or "") for cell in cells}) > 1
-    ]
+    dims = tuple(dimensions) if dimensions else _CHART_X_DIMENSIONS
+    varying = [(field, prefix) for field, prefix in dims if len({str(cell.get(field) or "") for cell in cells}) > 1]
     if not varying:
-        varying = [(field, prefix) for field, prefix in _CHART_X_DIMENSIONS if any(c.get(field) for c in cells)]
+        varying = [(field, prefix) for field, prefix in dims if any(c.get(field) for c in cells)]
     labels = []
     for index, cell in enumerate(cells):
         parts = [f"{prefix}{cell.get(field)}" for field, prefix in varying if cell.get(field)]
@@ -331,7 +381,8 @@ def chart_x_labels(cells):
 
 def build_training_chart_series(config, cells):
     series = {}
-    x_labels = chart_x_labels(cells)
+    series_label = getattr(config, "sweep_series_label", None) or "Megatron sweep"
+    x_labels = chart_x_labels(cells, _chart_x_dimensions(config))
     x_tips = [cell.get("cell_id") or x_labels[i] for i, cell in enumerate(cells)]
     for chart in config.chart_series:
         full = config.full_metric(chart.metric_suffix)
@@ -350,7 +401,7 @@ def build_training_chart_series(config, cells):
             {
                 "isl": "all",
                 "osl": "all",
-                "label": "Megatron sweep",
+                "label": series_label,
                 "points": points,
                 "x_labels": [x_labels[i] for i, _val in points],
                 "x_tips": [x_tips[i] for i, _val in points],
@@ -376,7 +427,7 @@ def build_training_summaries(config, cells):
     value, cell = best
     return [
         {
-            "label": "Megatron sweep",
+            "label": getattr(config, "sweep_series_label", None) or "Megatron sweep",
             "max_output_throughput": value,
             "conc_at_max_tput": cell.get("cell_id"),
             "headline_unit": config.metric_units.get("throughput_per_gpu")
