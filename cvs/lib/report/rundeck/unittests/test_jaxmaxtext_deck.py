@@ -20,10 +20,10 @@ def _variant():
         container=SimpleNamespace(image="rocm/jax-maxtext:latest"),
         cluster={"node_dict": {"n0": {}, "n1": {}}},
         thresholds={
-            "PRECISION=BF16,SEQLEN=4096,BATCH=4": {
+            "BS=4,PRECISION=BF16,SL=8192": {
                 "training.tflops_per_sec_per_gpu": {"kind": "min", "value": 100},
             },
-            "PRECISION=BF16,SEQLEN=4096,BATCH=8": {
+            "BS=8,PRECISION=BF16,SL=8192": {
                 "training.tflops_per_sec_per_gpu": {"kind": "min", "value": 100},
             },
         },
@@ -32,7 +32,7 @@ def _variant():
 
 def _flat():
     return {
-        "PRECISION=BF16,SEQLEN=4096,BATCH=4": {
+        "BS=4,PRECISION=BF16,SL=8192": {
             "tflops_per_sec_per_gpu": ["180", "185.4"],
             "tokens_per_sec_per_gpu": ["3000"],
             "final_loss": ["2.01"],
@@ -42,7 +42,7 @@ def _flat():
             "_learning_rate_curve": [[0, 1e-4], [10, 9e-5]],
             "_planned_steps": 20,
         },
-        "PRECISION=BF16,SEQLEN=4096,BATCH=8": {
+        "BS=8,PRECISION=BF16,SL=8192": {
             "tflops_per_sec_per_gpu": ["150"],
             "final_loss": ["2.20"],
         },
@@ -59,10 +59,10 @@ class TestJaxDeckDatasets(unittest.TestCase):
         cells = datasets["cells"]
         self.assertEqual(len(cells), 2)
         b4 = next(c for c in cells if c["bs"] == "4")
-        self.assertEqual(b4["sl"], "4096")
+        self.assertEqual(b4["sl"], "8192")
         self.assertEqual(b4["precision"], "BF16")
-        self.assertEqual(b4["subtitle"], "BS=4 SL=4096 \u00b7 BF16")
-        self.assertEqual(b4["cell_id"], "PRECISION=BF16,SEQLEN=4096,BATCH=4")
+        self.assertEqual(b4["subtitle"], "BS=4 SL=8192 \u00b7 BF16")
+        self.assertEqual(b4["cell_id"], "BS=4,PRECISION=BF16,SL=8192")
         self.assertEqual(b4["actuals"]["training.tflops_per_sec_per_gpu"], 185.4)
         self.assertEqual(b4["loss_curve"], [[0, 2.5], [10, 2.0]])
         self.assertEqual(b4["learning_rate_curve"], [[0, 1e-4], [10, 9e-5]])
@@ -93,7 +93,7 @@ class TestJaxDeckDatasets(unittest.TestCase):
         self.assertTrue(datasets["gate_matrix"])
         summary = datasets["sweep_summaries"][0]
         self.assertEqual(summary["label"], "JAX MaxText sweep")
-        self.assertEqual(summary["meta"], "Peak at PRECISION=BF16,SEQLEN=4096,BATCH=4")
+        self.assertEqual(summary["meta"], "Peak at BS=4,PRECISION=BF16,SL=8192")
 
 
 class TestJaxProfileResolves(unittest.TestCase):
@@ -124,7 +124,7 @@ class TestJaxPayloadAndHtml(unittest.TestCase):
         html = render_rundeck_html(payload)
         self.assertIn("JAX MaxText Run Deck", html)
         self.assertIn("JAX MaxText", html)
-        self.assertIn("PRECISION=BF16,SEQLEN=4096,BATCH=4", html)
+        self.assertIn("BS=4,PRECISION=BF16,SL=8192", html)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ def _nested():
                 "tb_scalars": {
                     "learning/current_learning_rate": [(0, 1e-4), (10, 9e-5)],
                     "learning/grad_norm": [(0, 3.0), (10, 2.0)],
+                    "perf/step_time_seconds": [(0, 1.5), (10, 1.4)],
                 },
                 "planned_steps": 20,
             }
@@ -34,7 +35,12 @@ def _nested():
 
 
 class TestJaxCellDimensions(unittest.TestCase):
-    def test_parses_precision_seqlen_batch(self):
+    def test_parses_bs_sl_precision_config_key_format(self):
+        # The real config keys use BS/SL/PRECISION, e.g. "BS=4,PRECISION=BF16,SL=8192".
+        dims = jax_cell_dimensions(None, "BS=4,PRECISION=BF16,SL=8192")
+        self.assertEqual(dims, {"bs": "4", "sl": "8192", "precision": "BF16"})
+
+    def test_parses_batch_seqlen_aliases(self):
         dims = jax_cell_dimensions(None, "PRECISION=BF16,SEQLEN=4096,BATCH=3")
         self.assertEqual(dims, {"bs": "3", "sl": "4096", "precision": "BF16"})
 
@@ -59,6 +65,9 @@ class TestFlatTrainResFromNested(unittest.TestCase):
         self.assertEqual(combo["_learning_rate_curve"], [[0, 1e-4], [10, 9e-5]])
         self.assertEqual(combo["_grad_norm_curve"], [[0, 3.0], [10, 2.0]])
         self.assertEqual(combo["_planned_steps"], 20)
+        # Unmapped TB tags become selectable extra curves; mapped ones do not.
+        self.assertEqual(combo["_extra_curves"], {"perf/step_time_seconds": [[0, 1.5], [10, 1.4]]})
+        self.assertNotIn("learning/grad_norm", combo["_extra_curves"])
 
     def test_flat_output_feeds_shared_flatten(self):
         combo = flat_train_res_from_nested(_nested())["PRECISION=BF16,SEQLEN=4096,BATCH=3"]
@@ -107,6 +116,7 @@ class TestSharedBuilderConsumesJaxData(unittest.TestCase):
         self.assertEqual(cell["actuals"]["training.tflops_per_sec_per_gpu"], 185.4)
         self.assertEqual(cell["loss_curve"], [[0, 2.5], [10, 2.0]])
         self.assertEqual(cell["learning_rate_curve"], [[0, 1e-4], [10, 9e-5]])
+        self.assertEqual(cell["extra_curves"], {"perf/step_time_seconds": [[0, 1.5], [10, 1.4]]})
 
 
 if __name__ == "__main__":

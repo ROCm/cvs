@@ -279,6 +279,12 @@ class TestTrainingSweepBuilder(unittest.TestCase):
             self.assertIn("buildLossChart", text)
             self.assertIn("buildStepCharts", text)
             self.assertIn("loss_curve", text)
+            # Metric-graph controls: background / layout / metric multi-select.
+            self.assertIn('id="f-bg"', text)
+            self.assertIn('id="f-layout"', text)
+            self.assertIn('id="metric-pick-list"', text)
+            self.assertIn('id="step-charts"', text)
+            self.assertIn("initStepChartControls", text)
 
 
 class TestTrainingChartLabels(unittest.TestCase):
