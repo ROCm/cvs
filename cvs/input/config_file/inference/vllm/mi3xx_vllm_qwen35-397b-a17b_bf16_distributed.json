@@ -62,7 +62,6 @@
     "max_model_len": 2056,
     "max_num_seqs": 64,
     "gpu_memory_utilization": 0.85,
-    "enforce_eager": true,
     "language_model_only": true,
     "_comment_context": "max_model_len covers the fixed ISL plus OSL with eight tokens of padding; update it when changing the sweep lengths.",
     "_comment_startup": "The readiness polling budget allows slow checkpoint loading; it does not resolve tokenizer, backend or runtime compatibility failures."

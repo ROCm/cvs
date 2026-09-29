@@ -67,7 +67,6 @@
     "max_model_len": 2056,
     "max_num_seqs": 64,
     "gpu_memory_utilization": 0.85,
-    "enforce_eager": true,
     "tokenizer_mode": "deepseek_v4",
     "moe_backend": "triton_unfused",
     "enable_chunked_prefill": true,

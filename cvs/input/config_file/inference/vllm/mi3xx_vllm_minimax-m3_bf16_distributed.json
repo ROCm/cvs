@@ -63,7 +63,6 @@
     "max_model_len": 2056,
     "max_num_seqs": 64,
     "gpu_memory_utilization": 0.85,
-    "enforce_eager": true,
     "block_size": 128,
     "attention_backend": "TRITON_ATTN",
     "_comment_context": "max_model_len covers the fixed ISL plus OSL with eight tokens of padding; update it when changing the sweep lengths.",

@@ -70,7 +70,6 @@
     "max_model_len": 2056,
     "max_num_seqs": 64,
     "gpu_memory_utilization": 0.85,
-    "enforce_eager": true,
     "limit_mm_per_prompt": {
       "image": 0,
       "video": 0
