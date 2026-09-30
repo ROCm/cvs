@@ -736,7 +736,7 @@ class SglangDisaggPD:
     ) -> None:
         for iteration in range(1, no_of_iterations):
             log.info('Starting %s readiness poll iteration %d', label, iteration)
-            grep_cmd = f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} {shlex.quote(log_path)} || true"
+            grep_cmd = f"grep -a -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} {shlex.quote(log_path)} || true"
             text = self._container_exec_text(grep_cmd, hosts=hosts)
             if _SERVER_READY_RE.search(text):
                 log.info('Wait 60 secs before serving traffic')

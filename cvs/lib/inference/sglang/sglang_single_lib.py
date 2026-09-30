@@ -216,7 +216,7 @@ class SglangSingle:
 
             def grep_cmd(host):
                 return (
-                    f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} "
+                    f"grep -a -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} "
                     f"{shlex.quote(self._server_log_path(host))} || true"
                 )
 

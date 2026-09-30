@@ -295,7 +295,7 @@ class SglangDistributed:
         log_path = self.server_log_path(0)
         for iteration in range(1, no_of_iterations):
             log.info('Starting rank-0 server readiness poll iteration %d', iteration)
-            grep_cmd = f"grep -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} {shlex.quote(log_path)} || true"
+            grep_cmd = f"grep -a -B 20 -A 20 -E {_SERVER_READY_RE.pattern!r} {shlex.quote(log_path)} || true"
             text = self._container_exec_text(grep_cmd, hosts=[self.rank0_node])
             if _SERVER_READY_RE.search(text):
                 log.info('Wait 60 secs before serving traffic')
