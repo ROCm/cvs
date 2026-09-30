@@ -140,7 +140,7 @@ Completion/error are "batteries included" via the patterns, but the
 - **Verbosity:** the poller runs quietly (`silent_poll=True`); pass
   `silent_poll=False` to echo the per-node `tail`/`grep` commands and their
   output (`print_console=True`) when debugging the poll loop itself.
-- **Timeout:** raises `RuntimeError` when `timeout_s` elapses before completion.
+- **Timeout:** raises `LogPollTimeout` (a `RuntimeError` subclass) when `timeout_s` elapses before completion.
 
 ## ConsoleSpinner
 

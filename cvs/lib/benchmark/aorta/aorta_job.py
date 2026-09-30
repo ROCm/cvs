@@ -15,7 +15,7 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
 from cvs.lib.benchmark.aorta import aorta_artifacts
-from cvs.lib.utils.log_poller import LogPoller
+from cvs.lib.utils.log_poller import LogPollTimeout, LogPoller
 from cvs.lib import verify_lib
 
 log = logging.getLogger(__name__)
@@ -34,6 +34,8 @@ class AortaJob:
     execution does not depend on the legacy runner/result hierarchy. Duration
     is zero until benchmark execution starts.
     """
+
+    _TRACE_FRESHNESS_SKEW_SECONDS = 60
 
     def __init__(self, orch, variant_config, node_vpc_ips=None):
         self.orch = orch
@@ -285,18 +287,23 @@ class AortaJob:
         )
         return {host: int(value) for host, value in results.items() if value.isdigit()}
 
-    def _phase_finished(self):
-        return len(self._phase_exit_codes()) == len(self.hosts)
-
     def _poll_phase(self):
         warned = set()
+        last_codes = {}
 
         def is_complete():
-            failed_now = {host for host, code in self._phase_exit_codes().items() if code != 0} - warned
+            nonlocal last_codes
+            try:
+                codes = self._phase_exit_codes()
+            except RuntimeError as exc:
+                log.warning("Transient error scraping Aorta exit codes, will retry: %s", exc)
+                return False
+            last_codes = codes
+            failed_now = {host for host, code in codes.items() if code != 0} - warned
             for host in failed_now:
                 log.warning("Aorta command failed early on %s; waiting for remaining hosts", host)
             warned.update(failed_now)
-            return self._phase_finished()
+            return len(codes) == len(self.hosts)
 
         try:
             LogPoller(
@@ -308,11 +315,13 @@ class AortaJob:
                 label="Aorta in progress",
                 log=log,
             ).poll()
-        except RuntimeError as exc:
-            if "did not complete within" in str(exc):
-                raise TimeoutError(str(exc)) from exc
-            raise
-        failed = {host: code for host, code in self._phase_exit_codes().items() if code != 0}
+        except LogPollTimeout as exc:
+            raise TimeoutError(str(exc)) from exc
+        # is_complete() only returns True once every host has a recorded exit
+        # code, so the codes it last observed are still the authoritative,
+        # final result -- reuse them instead of re-scraping (which could hit
+        # the same transient error this method has no retry policy for here).
+        failed = {host: code for host, code in last_codes.items() if code != 0}
         if failed:
             raise RuntimeError(f"Aorta command failed on nodes: {failed}")
 
@@ -334,7 +343,13 @@ class AortaJob:
         """Launch all rank groups concurrently, recording node-local freshness floors."""
         if not self.launch_commands:
             raise RuntimeError("Call build_launch_cmd before start_job")
-        self.trace_floors = {host: float(value.strip()) for host, value in self._exec("date +%s.%N").items()}
+        # Each node's clock is read fresh, but the filesystem serving traces (e.g. NFS)
+        # may lag behind it; subtract a bounded tolerance so a trace written moments
+        # after this floor isn't rejected as stale, while still excluding prior runs.
+        self.trace_floors = {
+            host: float(value.strip()) - self._TRACE_FRESHNESS_SKEW_SECONDS
+            for host, value in self._exec("date +%s.%N").items()
+        }
         self.start_time = time.time()
         self.status = "running"
         self.started = True
@@ -366,17 +381,37 @@ class AortaJob:
         """Record each host's own clock before the GPU workload."""
         self.kernel_start = self._exec("date +'%a %b %e %H:%M:%S'", on_host=True)
 
+    def _dmesg_exec(self, cmd):
+        """Run a dmesg scan command, requiring every host to respond.
+
+        A host silently absent from a non-detailed result (e.g. dropped from
+        the transport's reachable set) would otherwise scan as "no errors
+        found" instead of "scan failed" -- request detailed results and check
+        the full expected host set before handing text to the verifier.
+        """
+        results = self.orch.exec_on_host(cmd, hosts=self.hosts, timeout=120, detailed=True, print_console=False)
+        results = results or {}
+        missing = [host for host in self.hosts if host not in results]
+        failed = []
+        for host in self.hosts:
+            if host in missing:
+                continue
+            exit_code = results[host].get("exit_code")
+            output = _text(results[host]).strip()
+            # The verifier's command ends in egrep, which exits 1 when it
+            # selects no lines. A quiet window is empty; a dmesg or sudo
+            # failure includes stderr in the captured output.
+            if exit_code == 0 or (exit_code == 1 and not output):
+                continue
+            failed.append(host)
+        if missing or failed:
+            raise RuntimeError(f"Dmesg scan incomplete: missing hosts {missing}, failed hosts {failed}")
+        return {host: _text(results[host]) for host in self.hosts}
+
     def check_kernel_errors(self):
         """Scan the workload's kernel window through the shared verifier."""
         ends = self._exec("date +'%a %b %e %H:%M:%S'", on_host=True)
-        handle = SimpleNamespace(
-            exec=lambda cmd: self.orch.exec_on_host(
-                cmd,
-                hosts=self.hosts,
-                timeout=120,
-                print_console=False,
-            )
-        )
+        handle = SimpleNamespace(exec=self._dmesg_exec)
         verify_lib.verify_dmesg_for_errors(handle, self.kernel_start, ends, till_end_flag=False)
 
     def _download_archive(self, host, rank, filename, destination):

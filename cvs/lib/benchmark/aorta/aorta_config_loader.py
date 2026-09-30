@@ -50,6 +50,22 @@ _CVS_PLACEHOLDER = re.compile(
     r"home|user|home-mount-dir|node-dir-name)\}"
 )
 _UNKNOWN_PLACEHOLDER = re.compile(r"\{[a-zA-Z0-9_.-]+\}")
+# Keys the Docker runtime (cvs/core/runtimes/docker.py) actually consumes;
+# anything else is a typo that would otherwise be silently ignored.
+_KNOWN_DOCKER_RUNTIME_ARGS = {
+    "volumes",
+    "devices",
+    "env",
+    "cap_add",
+    "security_opt",
+    "group_add",
+    "network",
+    "user",
+    "ipc",
+    "ulimit",
+    "privileged",
+    "registry",
+}
 _OPAQUE_FIELDS = {
     ("container", "env"),
     ("multi_node", "extra_env"),
@@ -101,6 +117,9 @@ def _validate_variant(self):
         path = PurePosixPath(value)
         if not value or path.is_absolute() or ".." in path.parts:
             raise ValueError(f"Script/config paths must be relative to the Aorta repository: {value!r}")
+    unknown_args = set(self.container.runtime.args) - _KNOWN_DOCKER_RUNTIME_ARGS
+    if unknown_args:
+        raise ValueError(f"Unknown container.runtime.args key(s): {sorted(unknown_args)}")
     volumes = self.container.runtime.args.get("volumes", [])
     writable_mount = False
     mount_endpoints = [PurePosixPath(self.aorta_path), PurePosixPath(self.container_mount_path)]
@@ -132,6 +151,11 @@ def _validate_variant(self):
     for key in ("NCCL_MAX_NCHANNELS", "NCCL_MAX_P2P_NCHANNELS"):
         if key in env and not 1 <= int(env[key]) <= 256:
             raise ValueError(f"{key} must be in 1..256")
+    for key in ("TORCH_NCCL_HIGH_PRIORITY", "RCCL_MSCCL_ENABLE"):
+        if key in env and int(env[key]) not in (0, 1):
+            raise ValueError(f"{key} must be 0 or 1")
+    if "OMP_NUM_THREADS" in env and int(env["OMP_NUM_THREADS"]) < 1:
+        raise ValueError("OMP_NUM_THREADS must be >= 1")
     expected = self.thresholds.get("expected_results", {})
     if set(self.thresholds) - {"expected_results"}:
         raise ValueError("Aorta threshold files must contain an expected_results block")

@@ -65,7 +65,7 @@ class AortaReportParser:
         if not PANDAS_AVAILABLE:
             raise ImportError("pandas is required for AortaReportParser. Install with: pip install pandas openpyxl")
 
-    def parse(self, run_result) -> ParseResult[AortaTraceMetrics]:
+    def parse(self, run_result):
         """
         Parse benchmark results from Aorta's analysis reports.
 

@@ -13,6 +13,7 @@ from cvs.lib import globals
 from cvs.lib.benchmark.aorta.aorta_artifacts import pack_traces
 from cvs.lib.benchmark.aorta.aorta_config_loader import AortaVariantConfig
 from cvs.lib.benchmark.aorta.aorta_job import AortaJob, _text
+from cvs.lib.utils.log_poller import LogPollTimeout
 from cvs.lib.benchmark.aorta.unittests.fixtures import variant_dict
 
 
@@ -180,21 +181,21 @@ class TestAortaJob(unittest.TestCase):
         launches = self.orch.exec_cmd_list.call_args.args[0]
         self.assertTrue(all("nohup setsid bash" in command for command in launches))
 
-    def test_phase_finished_when_every_host_has_recorded_an_exit_code(self):
+    def test_phase_exit_codes_reports_per_host_completion(self):
         job = self.job()
         job.log_paths = ["/tmp/rank0.log", "/tmp/rank1.log"]
         self.orch.exec_cmd_list.return_value = {
             "node-a": "0\nCVS_AORTA_COMMAND_OK",
             "node-b": "\nCVS_AORTA_COMMAND_OK",
         }
-        self.assertFalse(job._phase_finished())
-        # A recorded failure (non-zero exit) still counts as "finished" -- success
-        # is judged separately by _poll_phase, not by _phase_finished.
+        self.assertEqual(job._phase_exit_codes(), {"node-a": 0})
+        # A recorded failure (non-zero exit) still counts as "recorded" -- success
+        # is judged separately by _poll_phase, not by _phase_exit_codes.
         self.orch.exec_cmd_list.return_value["node-b"] = "3\nCVS_AORTA_COMMAND_OK"
-        self.assertTrue(job._phase_finished())
+        self.assertEqual(job._phase_exit_codes(), {"node-a": 0, "node-b": 3})
         self.orch.exec_cmd_list.return_value["node-b"] = "connection failed"
         with self.assertRaises(RuntimeError):
-            job._phase_finished()
+            job._phase_exit_codes()
 
     @patch("cvs.lib.benchmark.aorta.aorta_job.LogPoller")
     def test_benchmark_polling_updates_status_and_duration(self, poller):
@@ -218,10 +219,14 @@ class TestAortaJob(unittest.TestCase):
     def test_poll_timeout_is_distinguished_from_a_node_failure(self, poller):
         job = self.job()
         job.log_paths = ["/tmp/rank0.log", "/tmp/rank1.log"]
-        poller.return_value.poll.side_effect = RuntimeError("Aorta did not complete within 30s")
+        poller.return_value.poll.side_effect = LogPollTimeout("Aorta did not complete within 30s")
         with self.assertRaises(TimeoutError):
             job.poll_for_completion()
         self.assertEqual(job.status, "timeout")
+        poller.return_value.poll.side_effect = RuntimeError("Aorta did not complete within 30s")
+        with self.assertRaises(RuntimeError):
+            job.poll_for_completion()
+        self.assertEqual(job.status, "failed")
 
     @patch("cvs.lib.benchmark.aorta.aorta_job.LogPoller")
     def test_poll_phase_logs_newly_failed_hosts_without_ending_the_wait(self, poller):
@@ -230,9 +235,7 @@ class TestAortaJob(unittest.TestCase):
         with patch.object(job, "_phase_exit_codes", return_value={"node-a": 0, "node-b": 0}):
             job._poll_phase()
         is_complete = poller.call_args.kwargs["is_complete"]
-        # is_complete() reads _phase_exit_codes() twice per call (once directly,
-        # once via _phase_finished), so each simulated poll tick repeats its value.
-        codes = [{"node-a": 1}, {"node-a": 1}, {"node-a": 1, "node-b": 0}, {"node-a": 1, "node-b": 0}]
+        codes = [{"node-a": 1}, {"node-a": 1, "node-b": 0}]
         with (
             patch.object(job, "_phase_exit_codes", side_effect=codes),
             self.assertLogs("cvs.lib.benchmark.aorta.aorta_job", level="WARNING") as logs,
@@ -242,13 +245,52 @@ class TestAortaJob(unittest.TestCase):
         self.assertEqual(sum("node-a" in message for message in logs.output), 1)
 
     @patch("cvs.lib.benchmark.aorta.aorta_job.LogPoller")
+    def test_is_complete_retries_after_a_transient_scrape_failure(self, poller):
+        job = self.job()
+        job.log_paths = ["/tmp/rank0.log", "/tmp/rank1.log"]
+        with patch.object(job, "_phase_exit_codes", return_value={"node-a": 0, "node-b": 0}):
+            job._poll_phase()
+        is_complete = poller.call_args.kwargs["is_complete"]
+        with (
+            patch.object(job, "_phase_exit_codes", side_effect=RuntimeError("connection failed")),
+            self.assertLogs("cvs.lib.benchmark.aorta.aorta_job", level="WARNING") as logs,
+        ):
+            self.assertFalse(is_complete())
+        self.assertTrue(any("Transient error" in message for message in logs.output))
+
+    @patch("cvs.lib.benchmark.aorta.aorta_job.LogPoller")
     def test_poll_reports_failed_nodes_only_after_all_nodes_finish(self, poller):
+        # poll() only returns once is_complete() has observed every host, so the
+        # final failure check must reuse those last-observed codes rather than
+        # re-scraping -- simulate the real contract by invoking the captured
+        # is_complete closure from poll()'s side effect.
+        def fake_poll():
+            poller.call_args.kwargs["is_complete"]()
+
+        poller.return_value.poll.side_effect = fake_poll
         job = self.job()
         job.log_paths = ["/tmp/rank0.log", "/tmp/rank1.log"]
         with patch.object(job, "_phase_exit_codes", return_value={"node-a": 0, "node-b": 3}):
             with self.assertRaisesRegex(RuntimeError, "node-b.*3"):
                 job._poll_phase()
         poller.return_value.poll.assert_called_once()
+
+    @patch("cvs.lib.benchmark.aorta.aorta_job.LogPoller")
+    def test_poll_phase_does_not_rescrape_after_poll_returns(self, poller):
+        # A transient error scraping exit codes right after poll() returns must
+        # not fail an otherwise-completed run: _poll_phase must reuse the codes
+        # is_complete() already observed instead of calling _phase_exit_codes()
+        # again (where a second transient failure would have no retry cover).
+        def fake_poll():
+            poller.call_args.kwargs["is_complete"]()
+
+        poller.return_value.poll.side_effect = fake_poll
+        job = self.job()
+        job.log_paths = ["/tmp/rank0.log", "/tmp/rank1.log"]
+        codes = MagicMock(return_value={"node-a": 0, "node-b": 0})
+        with patch.object(job, "_phase_exit_codes", codes):
+            job._poll_phase()
+        codes.assert_called_once()
 
     @patch("cvs.lib.benchmark.aorta.aorta_job.LogPoller")
     def test_rccl_polling_cleanup_and_skip(self, poller):
@@ -284,7 +326,8 @@ class TestAortaJob(unittest.TestCase):
         job = self.job()
         job.launch_commands = ["true", "true"]
         job.start_job()
-        self.assertEqual(job.trace_floors, {"node-a": 1000.5, "node-b": 2000.5})
+        skew = AortaJob._TRACE_FRESHNESS_SKEW_SECONDS
+        self.assertEqual(job.trace_floors, {"node-a": 1000.5 - skew, "node-b": 2000.5 - skew})
         self.assertTrue(job.started)
         self.assertEqual(job.status, "running")
         self.assertEqual(len(self.orch.exec_cmd_list.call_args.args[0]), 2)
@@ -409,7 +452,10 @@ class TestAortaJob(unittest.TestCase):
             "node-a": "Wed Sep 23 12:01:00",
             "node-b": "Wed Sep 23 12:02:00",
         }
-        outputs = {"node-a": "GPU reset begin", "node-b": "ordinary kernel event"}
+        outputs = {
+            "node-a": {"exit_code": 0, "output": "GPU reset begin"},
+            "node-b": {"exit_code": 0, "output": "ordinary kernel event"},
+        }
         with (
             patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
             patch.object(job, "_exec", return_value=ends) as execute,
@@ -426,7 +472,7 @@ class TestAortaJob(unittest.TestCase):
         self.assertIn("awk", command)
         self.assertEqual(
             self.orch.exec_on_host.call_args.kwargs,
-            {"hosts": self.orch.hosts, "timeout": 120, "print_console": False},
+            {"hosts": self.orch.hosts, "timeout": 120, "detailed": True, "print_console": False},
         )
 
     def test_kernel_scan_reports_host_command_failures(self):
@@ -439,6 +485,60 @@ class TestAortaJob(unittest.TestCase):
         ):
             self.orch.exec_on_host.side_effect = RuntimeError("node-b unreachable")
             with self.assertRaisesRegex(RuntimeError, "node-b unreachable"):
+                job.check_kernel_errors()
+
+    def test_kernel_scan_detects_missing_host_response(self):
+        # A host silently absent from the returned dict (e.g. dropped by the
+        # transport as unreachable) must fail the scan instead of reading as
+        # "no errors found" on that host.
+        job = self.job()
+        job.kernel_start = {host: "Wed Sep 23 12:00:00" for host in self.orch.hosts}
+        ends = {host: "Wed Sep 23 12:01:00" for host in self.orch.hosts}
+        with (
+            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
+            patch.object(job, "_exec", return_value=ends),
+        ):
+            self.orch.exec_on_host.return_value = {"node-a": {"exit_code": 0, "output": ""}}
+            with self.assertRaisesRegex(RuntimeError, "missing hosts.*node-b"):
+                job.check_kernel_errors()
+
+    def test_kernel_scan_detects_nonzero_exit_code(self):
+        job = self.job()
+        job.kernel_start = {host: "Wed Sep 23 12:00:00" for host in self.orch.hosts}
+        ends = {host: "Wed Sep 23 12:01:00" for host in self.orch.hosts}
+        with (
+            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
+            patch.object(job, "_exec", return_value=ends),
+        ):
+            self.orch.exec_on_host.return_value = {
+                "node-a": {"exit_code": 0, "output": ""},
+                "node-b": {"exit_code": 1, "output": "permission denied"},
+            }
+            with self.assertRaisesRegex(RuntimeError, "failed hosts.*node-b"):
+                job.check_kernel_errors()
+
+    def test_kernel_scan_accepts_quiet_egrep_window(self):
+        # egrep exits 1 when the filtered slice is empty. That is a quiet
+        # window, not a failed scan; a real failure includes command output.
+        job = self.job()
+        job.kernel_start = {host: "Wed Sep 23 12:00:00" for host in self.orch.hosts}
+        ends = {host: "Wed Sep 23 12:01:00" for host in self.orch.hosts}
+        with (
+            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
+            patch.object(job, "_exec", return_value=ends),
+        ):
+            self.orch.exec_on_host.return_value = {host: {"exit_code": 1, "output": ""} for host in self.orch.hosts}
+            job.check_kernel_errors()
+        self.assertEqual(globals.error_list, [])
+        self.orch.exec_on_host.return_value = {
+            "node-a": {"exit_code": 0, "output": ""},
+            "node-b": {"exit_code": 2, "output": ""},
+        }
+        with (
+            patch.dict(os.environ, {"CVS_DMESG_PARSER": "legacy"}),
+            patch.object(job, "_exec", return_value=ends),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "failed hosts.*node-b"):
                 job.check_kernel_errors()
 
     def test_teardown_reports_stop_failure_after_ownership_restore(self):

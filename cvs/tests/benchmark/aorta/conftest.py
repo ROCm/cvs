@@ -64,7 +64,10 @@ def aorta_job(orch, variant_config, cluster_dict, lifecycle, request):
     if not single and len(orch.hosts) < 2:
         pytest.fail("aorta_distributed requires at least two nodes; use aorta_single for one node")
     addresses = {host: data.get("vpc_ip") for host, data in cluster_dict["node_dict"].items()}
-    job = AortaJob(orch, variant_config, node_vpc_ips=addresses)
+    try:
+        job = AortaJob(orch, variant_config, node_vpc_ips=addresses)
+    except ValueError as exc:
+        pytest.fail(str(exc))
     try:
         yield job
     finally:

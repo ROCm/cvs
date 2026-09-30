@@ -94,6 +94,12 @@ class TestAortaConfig(unittest.TestCase):
         raw["container"]["runtime"]["args"]["volumes"] = [f"{raw['aorta_path']}/:/mnt"]
         AortaVariantConfig.model_validate(raw)
 
+    def test_unknown_runtime_arg_key_typo_rejected(self):
+        raw = variant_dict()
+        raw["container"]["runtime"]["args"]["privilaged"] = True
+        with self.assertRaisesRegex(ValidationError, "Unknown container.runtime.args key.*privilaged"):
+            AortaVariantConfig.model_validate(raw)
+
     def test_clone_requires_url(self):
         self.raw["aorta_auto_clone"] = True
         with self.assertRaisesRegex(ValidationError, "aorta_clone_url"):
@@ -103,10 +109,25 @@ class TestAortaConfig(unittest.TestCase):
         for block in (
             {"extra_env": {"BAD-NAME": "1"}},
             {"extra_env": {"NCCL_MAX_NCHANNELS": "257"}},
+            {"extra_env": {"TORCH_NCCL_HIGH_PRIORITY": "2"}},
+            {"extra_env": {"RCCL_MSCCL_ENABLE": "2"}},
+            {"extra_env": {"OMP_NUM_THREADS": "0"}},
             {"extra_train_args": [1]},
         ):
             self.raw["multi_node"] = block
             with self.subTest(block=block), self.assertRaises(ValidationError):
+                AortaVariantConfig.model_validate(self.raw)
+
+    def test_valid_boundary_environment_values_are_accepted(self):
+        for block in (
+            {"extra_env": {"TORCH_NCCL_HIGH_PRIORITY": "0"}},
+            {"extra_env": {"TORCH_NCCL_HIGH_PRIORITY": "1"}},
+            {"extra_env": {"RCCL_MSCCL_ENABLE": "0"}},
+            {"extra_env": {"RCCL_MSCCL_ENABLE": "1"}},
+            {"extra_env": {"OMP_NUM_THREADS": "1"}},
+        ):
+            self.raw["multi_node"] = block
+            with self.subTest(block=block):
                 AortaVariantConfig.model_validate(self.raw)
 
     def test_thresholds_reject_typos_ranges_and_non_finite_values(self):
