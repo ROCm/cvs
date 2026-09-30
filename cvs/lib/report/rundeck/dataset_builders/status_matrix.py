@@ -92,9 +92,12 @@ def build_status_matrix_datasets(sources: dict, profile: dict) -> dict:
 
     overall = "fail" if n_fail else ("pass" if n_pass else "na")
 
+    # ANC was the first status-matrix suite. Other suites set version_label so
+    # the run card is not labeled as ANC.
+    version_label = str(meta.get("version_label") or "ANC version")
     run_card_display = [
         ("Cluster", str(meta.get("cluster") or "—"), False),
-        ("ANC version", str(meta.get("version") or "—"), False),
+        (version_label, str(meta.get("version") or "—"), False),
         ("Suite", str(meta.get("suite") or "—"), False),
         ("Groups", str(len(group_names)), False),
         ("Nodes", str(len(node_labels)), False),

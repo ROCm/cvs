@@ -78,7 +78,23 @@ class TestStatusMatrixBuilder(unittest.TestCase):
         self.assertEqual(out["counts"], {"pass": 3, "fail": 1, "na": 2})
         labels = {r[0]: r[1] for r in out["run_card_display"]}
         self.assertEqual(labels["Cluster"], "c1")
+        self.assertEqual(labels["ANC version"], "1.4.9")
         self.assertEqual(labels["Groups"], "3")
+
+    def test_version_label_comes_from_meta(self):
+        results = {
+            "_meta": {
+                "cluster": "c1",
+                "version": "1.3.0",
+                "version_label": "RVS version",
+                "suite": "rvs_cvs",
+            },
+            "groups": {"mem": {"nodes": {"n1": {"status": "pass", "items": []}}}},
+        }
+        out = build_status_matrix_datasets(_sources(results), {})
+        labels = {r[0]: r[1] for r in out["run_card_display"]}
+        self.assertEqual(labels["RVS version"], "1.3.0")
+        self.assertNotIn("ANC version", labels)
 
     def test_empty_results_yield_empty_grid(self):
         out = build_status_matrix_datasets(_sources({}), {})
