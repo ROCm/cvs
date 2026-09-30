@@ -193,6 +193,15 @@ run card, health overview, bandwidth highlights, then the status matrix, and
 `interactive_viewer` writes the health viewer beside the deck. The bandwidth
 card uses `when_empty: hide`.
 
+`profiles/rvs_cvs.json` uses executed CVS tests as matrix groups, not parsed RVS
+modules. For RVS 1.3 or newer with a nonzero `rvs_test_level`, individual module
+tests are skipped, so the matrix normally contains `gpu_enumeration` and one
+`level_config` group. Metrics parsed from GST, IET, PEBB, PBQT, Babel, and MEM
+stdout stay attached to that LEVEL cell. Level 0 and RVS versions before 1.3
+instead record the individual test groups that run. Regex matching remains the
+only pass/fail path; metric parsing is display-only. Failed-cell items show the
+configured gate regex and the matching RVS output line.
+
 ## Author tiers
 
 | Tier | You add | Core adds |

@@ -9,12 +9,17 @@ Shape (consumed by cvs/lib/report/rundeck/dataset_builders/status_matrix.py)::
 
     {
       "_meta":  {"cluster": ..., "version": ..., "version_label": "RVS version", "suite": ...},
-      "groups": {"<module>": {"nodes": {"<label>": <node record>}}},
+      "groups": {"<executed CVS test>": {"nodes": {"<label>": <node record>}}},
     }
 
 Optional per-node ``metrics``, ``series``, and ``heatmaps`` follow that builder's
 contract. Parsing never feeds ``classify_output``; a missing or older RVS
-measurement leaves those lists empty and the module verdict unchanged.
+measurement leaves those lists empty and the test-group verdict unchanged.
+
+For RVS 1.3 or newer with a nonzero test level, the matrix normally contains
+``gpu_enumeration`` and one ``level_config`` group. Measurements from several
+RVS modules can be attached to that LEVEL cell. Individual module groups are
+recorded only when those CVS tests execute, such as level 0 or RVS before 1.3.
 '''
 
 import re
@@ -96,7 +101,8 @@ def classify_output(output, fail_patterns):
 
     A node fails when any caller-supplied pattern matches. The patterns are the
     same ones the suite uses to call fail_test, so the deck verdict matches the
-    module check rather than a second parser.
+    suite check rather than a second parser. The matching output line is stored
+    only for drill-down; it does not participate in a second verdict.
     '''
     text = output if isinstance(output, str) else ""
     items = []
@@ -108,11 +114,15 @@ def classify_output(output, fail_patterns):
         except re.error:
             matched = None
         if matched:
+            line_start = text.rfind("\n", 0, matched.start()) + 1
+            line_end = text.find("\n", matched.end())
+            if line_end < 0:
+                line_end = len(text)
             items.append(
                 {
                     "name": str(pattern),
                     "status": "fail",
-                    "message": "matched failure pattern",
+                    "message": text[line_start:line_end].strip() or matched.group(0),
                 }
             )
     if items:
@@ -121,7 +131,7 @@ def classify_output(output, fail_patterns):
 
 
 def build_node_record(status, items=None, items_summary="", metrics=None, series=None, heatmaps=None):
-    '''Assemble one node record for a module.'''
+    '''Assemble one node record for an executed CVS test group.'''
     normalized = str(status or "na").lower()
     if normalized not in _STATUSES:
         normalized = "na"
@@ -143,9 +153,9 @@ def build_node_record(status, items=None, items_summary="", metrics=None, series
 
 def record_group(res_dict, group, node_records, meta=None):
     '''
-    Merge one module's per-node records into the accumulating results dict.
+    Merge one executed CVS test group's per-node records into the results dict.
 
-    Idempotent per (group, node): a re-run of the same module overwrites.
+    Idempotent per (group, node): a re-run of the same test overwrites.
     '''
     if meta:
         existing = res_dict.get("_meta")
@@ -476,7 +486,7 @@ def parse_node_performance(text, module_hint=""):
 
 
 def record_outputs(res_dict, group, out_dict, fail_patterns, meta=None):
-    '''Classify each node's output and merge the module into ``res_dict``.'''
+    '''Classify each node's output and merge the executed CVS test group.'''
     node_records = {}
     for node, output in (out_dict or {}).items():
         status, items = classify_output(output, fail_patterns)

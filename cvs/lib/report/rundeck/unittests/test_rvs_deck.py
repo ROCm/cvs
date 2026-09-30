@@ -28,7 +28,13 @@ _RVS_RESULTS = {
                 "node-a": {
                     "status": "fail",
                     "items_summary": "1 failure pattern(s)",
-                    "items": [{"name": r"\[ERROR\s*\]", "status": "fail", "message": "matched failure pattern"}],
+                    "items": [
+                        {
+                            "name": r"\[ERROR\s*\]",
+                            "status": "fail",
+                            "message": "[ERROR ] gst action failed on GPU2",
+                        }
+                    ],
                     "errors_json_href": "",
                     "log_tarball_href": "",
                 }
@@ -55,7 +61,9 @@ class TestRvsDeck(unittest.TestCase):
         self.assertEqual(self.profile["sources"]["results"], "rvs_res_dict")
         self.assertEqual(self.profile["dataset_builder"], "status_matrix")
         self.assertIn("Pass rate", self.html)
-        self.assertIn("LEVEL run", self.html)
+        self.assertIn("Columns are executed CVS tests", self.html)
+        self.assertIn("level_config", self.html)
+        self.assertIn("module measurements remain inside the LEVEL cell", self.html)
         linked_payload = SummaryMetaApplier(resolve_report_config(self.profile)).apply(copy.deepcopy(self.payload))
         linked = render_rundeck_html(linked_payload)
         self.assertIn("rvs_run_deck_viewer.html", linked)
@@ -76,7 +84,7 @@ class TestRvsDeck(unittest.TestCase):
         self.assertIn("status-matrix", self.html)
         self.assertIn("gst_single", self.html)
         self.assertIn("node-a", self.html)
-        self.assertIn("matched failure pattern", self.html)
+        self.assertIn("gst action failed on GPU2", self.html)
 
     def test_no_inference_gate_vocabulary(self):
         self.assertNotIn("Gate matrix", self.html)

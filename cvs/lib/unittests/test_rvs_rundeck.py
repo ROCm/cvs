@@ -26,6 +26,8 @@ class TestClassifyOutput(unittest.TestCase):
         self.assertEqual(status, "fail")
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["status"], "fail")
+        self.assertEqual(items[0]["name"], r"\[ERROR\s*\]")
+        self.assertEqual(items[0]["message"], "module [ERROR ] gst failed")
 
     def test_clean_output_passes(self):
         status, items = rvs_rundeck.classify_output("RVS module completed", [r"\[ERROR\s*\]"])
@@ -44,6 +46,7 @@ class TestClassifyOutput(unittest.TestCase):
         status, items = rvs_rundeck.classify_output(output, [r"\[ERROR\s*\]", r"\bFAIL\b"])
         self.assertEqual(status, "fail")
         self.assertEqual(len(items), 2)
+        self.assertEqual([item["message"] for item in items], ["gst [ERROR ] boom", "mem FAIL seen"])
 
     def test_invalid_regex_is_ignored(self):
         status, items = rvs_rundeck.classify_output("anything", ["["])
