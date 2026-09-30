@@ -136,7 +136,7 @@ Set `rccl.cvs_params.topology_check` in your config:
 | Mode | Behaviour |
 | --- | --- |
 | `warn` (default) | Log a mismatch banner and record the differences; topology mismatches alone do not fail the test. |
-| `strict` | Record the differences and fail the test through the normal CVS result checks. Result collection continues, and pairwise runs are marked unclean. |
+| `strict` | Record the differences and call `fail_test` directly for that test case. Result collection continues, and pairwise runs are marked unclean. |
 | `off` | Disable the requested-vs-reported comparison. Result parsing and schema validation remain active, and aggregation still rejects rows whose topology disagrees. The audit file contains the mode and an empty check list. |
 
 Older configs that omit the setting use `warn`. Mode names are case insensitive;
@@ -147,10 +147,14 @@ For bare-metal `mpirun`, it comes from `-np`, the cluster node list, and hostfil
 slots. If the MPI ranks cannot be divided evenly across those nodes, the check is
 recorded as `skipped` with a reason because this comparison supports uniform
 launches. An empty result set, or a result set in which every row omits all topology
-fields, is also recorded as `skipped`, including in `strict` mode. Partial topology
-blocks and topology that appears or disappears between rows still produce
-mismatches. Malformed JSON result structures fail result loading independently of
-the topology-check mode; CVS expects an array of result objects.
+fields, is also recorded as `skipped`, including in `strict` mode. A row that omits
+topology entirely is not itself a mismatch as long as another row reports topology
+matching the request; fields absent from every row still mismatch against what was
+requested, and a field present in both the baseline row and a later row with a
+different value produces a mismatch. Rows are only compared against the baseline,
+not against each other, so two non-baseline rows can still disagree on a field the
+baseline never reported. Malformed JSON result structures fail result loading
+independently of the topology-check mode; CVS expects an array of result objects.
 
 The existing `rccl_test_params.threads_per_gpu` key has two meanings:
 
@@ -172,9 +176,10 @@ file beside the configured result file. The regression suite currently reuses
 `rccl_result_file` across cases, so later cases overwrite the earlier result and
 audit files. Callers using `RcclJob` directly can set a distinct `rccl_result_file`
 per case to retain every audit. Each check entry contains
-`label`, `requested`, `reported` (the first row's topology), `mismatches`, `mode`,
-and `verdict` (`pass`, `mismatch`, or `skipped`). Skipped entries include a `reason`;
-differences in later rows appear in `mismatches` with their zero-based row index.
+`label`, `requested`, `reported` (the first row that contains any topology field, not
+necessarily row 0), `mismatches`, `mode`, and `verdict` (`pass`, `mismatch`, or
+`skipped`). Skipped entries include a `reason`; differences in later rows appear in
+`mismatches` with their zero-based row index.
 Checks collected before an aborted run are still saved.
 
 For a launch requesting 2 nodes, 1 rank per node, and 8 GPUs per rank, affected

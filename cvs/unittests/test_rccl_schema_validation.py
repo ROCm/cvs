@@ -52,7 +52,7 @@ class TestRcclSchemaValidation(unittest.TestCase):
             RcclTestsMultinodeRaw.model_validate(payload)
 
     def test_schema_accepts_captured_global_local_rank_label_swap(self):
-        """Values captured from a real multi-node run exhibiting the AIMVT-334 label swap."""
+        """Values captured from a real multi-node run where the launcher's requested rank/node counts and rccl-tests' reported values were swapped."""
         payload = {
             'numCycle': 0,
             'name': 'AllReduce',

@@ -670,7 +670,7 @@ class TestRcclTopology(unittest.TestCase):
         self.assertEqual(rccl_lib.compare_topology(self.requested, self.requested), [])
 
     def test_compare_captured_mislabeled_topology(self):
-        """Values captured from a real multi-node run exhibiting the AIMVT-334 label swap."""
+        """Values captured from a real multi-node run where the launcher's requested rank/node counts and rccl-tests' reported values were swapped."""
         original = deepcopy(self.row)
         self.assertEqual(
             rccl_lib.compare_topology(self.requested, self.row),
@@ -818,13 +818,23 @@ class TestRcclTopology(unittest.TestCase):
 
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_absent_topology_in_only_some_rows_is_not_skipped(self, fail):
-        for rows in ([{}, self.requested], [self.requested, {}], [{}, {'gpusPerRank': 8}]):
+        for rows in ([{}, self.requested], [self.requested, {}]):
             with self.subTest(rows=rows):
                 job = self._job(cvs_params={'topology_check': 'strict'})
                 job._check_reported_topology(rows, 'regression', 8)
-                self.assertEqual(job.topology_checks[0]['verdict'], 'mismatch')
-                self.assertIn('row 1', job.topology_checks[0]['mismatches'][-1])
-        self.assertEqual(fail.call_count, 3)
+                self.assertEqual(job.topology_checks[0]['verdict'], 'pass')
+        job = self._job(cvs_params={'topology_check': 'strict'})
+        job._check_reported_topology([{}, {'gpusPerRank': 8}], 'regression', 8)
+        self.assertEqual(job.topology_checks[0]['verdict'], 'mismatch')
+        self.assertEqual(
+            job.topology_checks[0]['mismatches'],
+            [
+                'nodes: requested 2, reported <missing>',
+                'ranks: requested 2, reported <missing>',
+                'ranksPerNode: requested 1, reported <missing>',
+            ],
+        )
+        self.assertEqual(fail.call_count, 1)
 
     @patch('cvs.lib.rccl_lib.compare_topology')
     def test_topology_check_skips_invalid_result_shapes(self, compare):
@@ -871,7 +881,35 @@ class TestRcclTopology(unittest.TestCase):
         job._check_reported_topology([self.requested, self.row], 'regression', 8)
         fail.assert_called_once()
         self.assertIn('row 1', fail.call_args.args[0])
-        self.assertIn("'nodes': 1", job.topology_checks[0]['mismatches'][0])
+        mismatches = job.topology_checks[0]['mismatches']
+        self.assertIn('nodes differs from row 0', mismatches[0])
+        self.assertIn('row 0 reported 2, row 1 reported 1', mismatches[0])
+        self.assertTrue(any('ranksPerNode differs from row 0' in mismatch for mismatch in mismatches))
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_later_inconsistent_row_is_detected_against_nonzero_baseline(self, fail):
+        job = self._job(cvs_params={'topology_check': 'strict'})
+        job._check_reported_topology([{}, self.requested, self.row], 'regression', 8)
+        fail.assert_called_once()
+        self.assertIn('row 2', fail.call_args.args[0])
+        mismatches = job.topology_checks[0]['mismatches']
+        self.assertIn('nodes differs from row 1', mismatches[0])
+        self.assertIn('row 1 reported 2, row 2 reported 1', mismatches[0])
+        self.assertTrue(any('ranksPerNode differs from row 1' in mismatch for mismatch in mismatches))
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_sparse_baseline_does_not_mask_later_conflicting_value(self, fail):
+        job = self._job(cvs_params={'topology_check': 'strict'})
+        job._check_reported_topology([{'gpusPerRank': 8}, {'nodes': 1}], 'regression', 8)
+        record = job.topology_checks[0]
+        self.assertEqual(record['reported'], {'gpusPerRank': 8})
+        self.assertIn('nodes: requested 2, reported 1', record['mismatches'])
+        fail.assert_called_once()
+
+    def test_sparse_baseline_still_triggers_common_cu_hint(self):
+        with patch.object(rccl_lib.log, 'warning') as warning:
+            self.job._check_reported_topology([{'gpusPerRank': 8}, self.row], 'float', 8)
+        self.assertIn('common.cu', warning.call_args.args[1])
 
     def test_result_model_accepts_single_node_and_multinode(self):
         single = {key: value for key, value in self.row.items() if key not in rccl_lib.TOPOLOGY_FIELDS}
@@ -982,7 +1020,11 @@ class TestRcclTopology(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'schema validation failed'):
             self.job.run_perf()
         self.assertIn('SEVERE DATA CORRUPTION', fail.call_args.args[0])
-        self.assertEqual(len(saved['/results/rccl_topology_check.json']['checks']), 1)
+        checks = saved['/results/rccl_topology_check.json']['checks']
+        self.assertEqual(len(checks), 2)
+        self.assertEqual([check['label'] for check in checks], ['all_reduce_perf_float', 'all_reduce_perf_half'])
+        self.assertEqual(checks[1]['verdict'], 'mismatch')
+        self.assertEqual(checks[1]['reported'], {field: self.row[field] for field in rccl_lib.TOPOLOGY_FIELDS})
 
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_regression_counts_gpus_across_threads_and_checks_all_raw_rows(self, fail):

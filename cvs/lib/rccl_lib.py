@@ -772,11 +772,11 @@ class RcclJob:
             record['reason'] = 'No result rows available'
             return
         reported_rows = [{field: row[field] for field in TOPOLOGY_FIELDS if field in row} for row in observed_rows]
-        reported = reported_rows[0]
-        record['reported'] = reported
         if not any(reported_rows):
             record['reason'] = 'Producer did not report topology fields'
             return
+        baseline_index, reported = next((index, row) for index, row in enumerate(reported_rows) if row)
+        record['reported'] = reported
         if isinstance(self.launcher, MpiRun) and requested['ranks'] % requested['nodes']:
             record['reason'] = (
                 'MPI ranks are not evenly divisible by the number of cluster nodes; only uniform launches are supported'
@@ -784,10 +784,21 @@ class RcclJob:
             log.warning('Topology check skipped for %s: %s', label, record['reason'])
             return
 
-        mismatches = compare_topology(requested, reported)
-        for index, row_topology in enumerate(reported_rows[1:], start=1):
-            if row_topology != reported:
-                mismatches.append(f'row {index}: topology differs from row 0 (reported {row_topology})')
+        reported_union = {}
+        for row_topology in reported_rows:
+            for field, value in row_topology.items():
+                reported_union.setdefault(field, value)
+
+        mismatches = compare_topology(requested, reported_union)
+        for index, row_topology in enumerate(reported_rows):
+            if index == baseline_index or not row_topology:
+                continue
+            mismatches.extend(
+                f'row {index}: {field} differs from row {baseline_index} '
+                f'(row {baseline_index} reported {reported[field]}, row {index} reported {row_topology[field]})'
+                for field in TOPOLOGY_FIELDS
+                if field in reported and field in row_topology and reported[field] != row_topology[field]
+            )
         record['mismatches'] = mismatches
         record['verdict'] = 'mismatch' if mismatches else 'pass'
         if not mismatches:
@@ -801,9 +812,9 @@ class RcclJob:
         )
         if (
             requested['nodes'] > 1
-            and reported.get('nodes') == 1
-            and reported.get('ranks') == requested['ranks']
-            and reported.get('ranksPerNode') == requested['ranks']
+            and reported_union.get('nodes') == 1
+            and reported_union.get('ranks') == requested['ranks']
+            and reported_union.get('ranksPerNode') == requested['ranks']
         ):
             message += (
                 'rccl-tests may report the global MPI size as ranksPerNode in common.cu, '
@@ -941,6 +952,7 @@ class RcclJob:
             else:
                 log.error(f'Validation Failed: {error}')
                 fail_test(f'RCCL Test {dtype} schema validation failed: {error}')
+            self._check_reported_topology(results, label, gpus_per_rank)
             raise RuntimeError(f'RCCL Test {dtype} schema validation failed') from error
 
     def _aggregate_perf_results(self, validated_results, base_path):
