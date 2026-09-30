@@ -885,13 +885,12 @@ def run_lm_eval_benchmark_test(
     return summary
 
 
-def build_log_dir_cleanup_cmd(log_dir: str, user: str) -> str:
+def build_log_dir_cleanup_cmd(log_dir: str) -> str:
     """Build the host-side log directory reset command."""
     if not log_dir or not str(log_dir).strip():
         raise ValueError("log_dir must be a non-empty path")
-    log_dir = str(log_dir).strip()
-    qdir = shlex.quote(log_dir)
-    return f"rm -rf {qdir} && mkdir -p {qdir}"
+    qdir = shlex.quote(str(log_dir).strip())
+    return f"(rm -rf {qdir} || sudo -n rm -rf {qdir}) && mkdir -p {qdir}"
 
 
 def cleanup_sglang_log_dir(
@@ -904,7 +903,7 @@ def cleanup_sglang_log_dir(
     """Reset log root on cluster hosts via baremetal SSH (``orch.head`` / ``orch.all``)."""
     if all_nodes is None:
         all_nodes = len(orch.hosts) > 1
-    cmd = build_log_dir_cleanup_cmd(log_dir, orch.user)
+    cmd = build_log_dir_cleanup_cmd(log_dir)
     if all_nodes:
         orch.all.exec(cmd, timeout=timeout)
     else:
