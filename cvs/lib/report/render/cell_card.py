@@ -181,7 +181,15 @@ class CellCardRenderer:
         if self.config.pytest_html_basename and pytest_nid:
             pytest_link = " &middot; " + pytest_row_link_html(self.config.pytest_html_basename, pytest_nid)
 
-        return f"<footer class='cell-foot'>{html.escape(self._cell['cell_id'])}{host_line}{pytest_link}</footer>"
+        # Surface why per-step curves are absent (e.g. TensorBoard collection was
+        # skipped/failed) instead of the charts silently vanishing.
+        tb_note = self._cell.get("tb_note")
+        note_line = f"<div class='cell-note'>curves: {html.escape(str(tb_note))}</div>" if tb_note else ""
+
+        return (
+            f"<footer class='cell-foot'>{html.escape(self._cell['cell_id'])}{host_line}{pytest_link}</footer>"
+            f"{note_line}"
+        )
 
     def _tier_chip(self, status: str, label: str) -> str:
         return f'<span class="chip chip-{html.escape(status)}">{html.escape(label)}</span>'
@@ -249,6 +257,7 @@ class CellCardRenderer:
 .bar-fill {{ height: 100%; border-radius: 2px; }}
 .bar-pass {{ background: {t['pass']}; }} .bar-fail {{ background: {t['fail']}; }} .bar-record {{ background: {t['record']}; }}
 .target, .metric-label, .cell-foot {{ font-size: 0.7rem; color: {t['muted']}; }}
+.cell-note {{ font-size: 0.68rem; color: {t['muted']}; font-style: italic; margin-top: 0.2rem; }}
 .metric-row-highlight {{ outline: 1px solid {t['record']}; border-radius: 6px; padding: 0.25rem; }}
 .margin {{ font-size: 0.7rem; color: {t['pass']}; display: block; }}
 .margin-fail {{ color: {t['fail']}; }}

@@ -22,6 +22,7 @@ from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import (
     MaxTextTrainingJob,
     _ALWAYS_ON_ERR_PATTERNS,
     _NAN_INF_RE,
+    _TB_COLLECT_MAX_BYTES,
     needs_hf_tokenizer,
 )
 from cvs.lib.utils.log_poller import LogPoller
@@ -762,25 +763,53 @@ def _b64_tar(files):
 
 
 class CollectTbScalarsTests(unittest.TestCase):
+    @staticmethod
+    def _wire(orch, b64, size_kb=16):
+        """Answer the du size-probe then the tar|base64 pull (in that order)."""
+
+        def _side(cmd, *_a, **_k):
+            if "du -ck" in str(cmd):
+                return {orch.hosts[0]: f"{size_kb}\ttotal\n"}
+            return {orch.hosts[0]: b64}
+
+        orch.exec.side_effect = _side
+
     def test_parses_scalars_from_node0_tar(self):
         job, orch = _make_job(hosts=["h0", "h1"])
         blob = _tfevents_blob(0, "learning/loss", 12.0) + _tfevents_blob(1, "learning/loss", 11.0)
-        orch.exec.return_value = {"h0": _b64_tar({"events.out.tfevents.1.host": blob})}
+        self._wire(orch, _b64_tar({"events.out.tfevents.1.host": blob}))
         scalars = job.collect_tb_scalars()
         self.assertEqual([s for s, _v in scalars["learning/loss"]], [0, 1])
-        # collection targets node 0 only and stays off-console
+        self.assertEqual(job.tb_collection_note, "")
+        # the pull targets node 0 only, stays off-console, and is bounded by a timeout
         self.assertEqual(orch.exec.call_args.kwargs.get("hosts"), ["h0"])
         self.assertIs(orch.exec.call_args.kwargs.get("print_console"), False)
+        self.assertIsNotNone(orch.exec.call_args.kwargs.get("timeout"))
 
-    def test_empty_output_returns_empty(self):
+    def test_empty_output_returns_empty_with_note(self):
         job, orch = _make_job(hosts=["h0"])
         orch.exec.return_value = {"h0": ""}
         self.assertEqual(job.collect_tb_scalars(), {})
+        self.assertIn("no TensorBoard events", job.tb_collection_note)
 
-    def test_exec_failure_is_swallowed(self):
+    def test_exec_failure_is_swallowed_with_note(self):
         job, orch = _make_job(hosts=["h0"])
         orch.exec.side_effect = RuntimeError("no container")
         self.assertEqual(job.collect_tb_scalars(), {})
+        self.assertIn("failed", job.tb_collection_note)
+
+    def test_oversize_events_are_skipped_without_pull(self):
+        job, orch = _make_job(hosts=["h0"])
+        huge_kb = (_TB_COLLECT_MAX_BYTES // 1024) + 1024
+
+        def _side(cmd, *_a, **_k):
+            if "du -ck" in str(cmd):
+                return {"h0": f"{huge_kb}\ttotal\n"}
+            raise AssertionError("tar pull must not run when events exceed the size cap")
+
+        orch.exec.side_effect = _side
+        self.assertEqual(job.collect_tb_scalars(), {})
+        self.assertIn("cap", job.tb_collection_note)
 
 
 class ScanDmesgForErrorsTests(unittest.TestCase):

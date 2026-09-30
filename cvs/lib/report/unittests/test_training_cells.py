@@ -102,6 +102,12 @@ class TestGenericTrainingCells(unittest.TestCase):
         self.assertNotIn("mbs", first)
         self.assertNotIn("tp", first)
 
+    def test_tb_note_surfaced_on_cell(self):
+        config = _jax_config()
+        res = {"BS=4,PRECISION=BF16,SL=8192": {"throughput_per_gpu": ["1"], "_tb_note": "collection failed (timeout)"}}
+        cells = build_training_cells(config, _jax_variant(), res, {})
+        self.assertEqual(cells[0]["tb_note"], "collection failed (timeout)")
+
     def test_results_table_headers_map_generic_fields(self):
         config = _jax_config()
         cells = build_training_cells(config, _jax_variant(), _jax_res(), {})

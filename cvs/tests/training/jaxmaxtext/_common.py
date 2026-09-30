@@ -383,17 +383,22 @@ def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, 
     results["training.steps_to_target"] = steps_to_target
     results["training.time_to_target_seconds"] = time_to_target
 
-    training_res_dict.setdefault("sweeps", {})[sweep_name] = {
+    # Deck curves for learning_rate / grad_norm come from TensorBoard, which
+    # stdout does not carry. Best-effort and bounded: {} when unavailable, with a
+    # reason in tb_collection_note that the deck surfaces on the cell.
+    tb_scalars = job.collect_tb_scalars()
+    sweep_rec = {
         "results": results,
         "step_metrics": job.step_metrics,
         "eval_metrics": job.eval_metrics,
         "num_nodes": job.num_nodes,
         "planned_steps": job.steps,
-        # Deck curves for learning_rate / grad_norm come from TensorBoard, which
-        # stdout does not carry. Best-effort: {} when unavailable, so charting is
-        # simply skipped rather than failing the run.
-        "tb_scalars": job.collect_tb_scalars(),
+        "tb_scalars": tb_scalars,
     }
+    tb_note = getattr(job, "tb_collection_note", "")
+    if tb_note:
+        sweep_rec["tb_note"] = tb_note
+    training_res_dict.setdefault("sweeps", {})[sweep_name] = sweep_rec
 
 
 def _latest_checkpoint_step_path(orch, ckpt_dir):

@@ -340,6 +340,9 @@ def build_training_cells(config, variant_config, train_res_dict, lifecycle_repor
             cell["extra_curves"] = {
                 str(tag): series for tag, series in extra.items() if isinstance(series, list) and series
             }
+        tb_note = raw.get("_tb_note")
+        if tb_note:
+            cell["tb_note"] = str(tb_note)
         planned_steps = raw.get("_planned_steps")
         if isinstance(planned_steps, (int, float)) and planned_steps > 0:
             cell["planned_steps"] = int(planned_steps)
