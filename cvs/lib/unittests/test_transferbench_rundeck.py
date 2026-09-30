@@ -96,6 +96,113 @@ class TestRecordScalingAndSchmoo(unittest.TestCase):
         self.assertEqual(node["items"][0]["status"], "pass")
 
 
+A2A_BOX = (
+    "TransferBench v1.67.00 (HEAD:2bc42cd) (Single-node mode)\n"
+    "│  RTotal │ 326.11   325.01   326.48   324.77   324.87   326.37   324.68   326.75 │    2605.03 │\n"
+)
+P2P_REAL = (
+    "TransferBench v1.67.00 (HEAD:2bc42cd) (Single-node mode)\n"
+    "                           CPU->CPU  CPU->GPU  GPU->CPU  GPU->GPU\n"
+    "Averages (During UniDir):    100.21     44.83     54.70     48.76\n"
+    "Averages (During  BiDir):     89.50     44.73     44.81     45.82\n"
+)
+
+
+def _metric(node, name):
+    for item in node.get("metrics") or []:
+        if item["name"] == name:
+            return item
+    raise AssertionError(name)
+
+
+def _series_named(node, name):
+    for item in node.get("series") or []:
+        if item["name"] == name:
+            return item
+    raise AssertionError(name)
+
+
+class TestA2aCharts(unittest.TestCase):
+    def test_box_rtotal_emits_per_gpu_metrics_and_series(self):
+        results = {}
+        meta = transferbench_rundeck.make_meta({"cluster_name": "helios"}, "transferbench_cvs")
+        transferbench_rundeck.record_a2a(results, {"node-a": A2A_BOX}, {"gpu_to_gpu_a2a_rtotal": "320"}, meta=meta)
+        node = _node(results, "a2a", "node-a")
+        self.assertEqual(node["status"], "pass")
+        self.assertEqual(node["items"][0]["name"], "GPU0")
+        gpu00 = _metric(node, "GPU00")
+        self.assertEqual(gpu00["value"], 326.11)
+        self.assertEqual(gpu00["unit"], "GB/s")
+        self.assertEqual(gpu00["threshold"], 320.0)
+        self.assertEqual(gpu00["direction"], "higher")
+        self.assertEqual(gpu00["status"], "pass")
+        self.assertEqual(_metric(node, "GPU07")["value"], 326.75)
+        series = _series_named(node, "RTotal")
+        self.assertEqual([point["x"] for point in series["points"]], [f"GPU{idx:02d}" for idx in range(8)])
+        self.assertEqual(series["points"][3]["y"], 324.77)
+        self.assertEqual(results["_meta"]["version"], "1.67.00")
+
+    def test_simple_line_marks_gpu_under_threshold(self):
+        results = {}
+        transferbench_rundeck.record_a2a(results, {"n1": A2A_LINE}, A2A_EXPECT)
+        node = _node(results, "a2a")
+        self.assertEqual(node["status"], "fail")
+        self.assertEqual(_metric(node, "GPU00")["status"], "fail")
+        self.assertEqual(_metric(node, "GPU00")["value"], 90.0)
+        self.assertEqual(_metric(node, "GPU01")["status"], "pass")
+
+    def test_missing_rtotal_omits_charts_but_keeps_version(self):
+        results = {}
+        meta = transferbench_rundeck.make_meta({"cluster_name": "helios"}, "transferbench_cvs")
+        transferbench_rundeck.record_a2a(results, {"n1": "TransferBench v1.67.00\nno table\n"}, A2A_EXPECT, meta=meta)
+        node = _node(results, "a2a")
+        self.assertEqual(node["status"], "fail")
+        self.assertNotIn("metrics", node)
+        self.assertNotIn("series", node)
+        self.assertEqual(results["_meta"]["version"], "1.67.00")
+
+
+class TestP2pCharts(unittest.TestCase):
+    def test_double_space_bidir_and_unidir_paths(self):
+        results = {}
+        meta = transferbench_rundeck.make_meta({"name": "lab"}, "transferbench_cvs")
+        transferbench_rundeck.record_p2p(results, {"node-a": P2P_REAL}, P2P_EXPECT, meta=meta)
+        node = _node(results, "p2p", "node-a")
+        self.assertEqual(node["status"], "pass")
+        self.assertEqual(node["items_summary"], "UniDir 48.76 / BiDir 45.82 GB/s")
+        unidir = _metric(node, "UniDir")
+        self.assertEqual(unidir["value"], 48.76)
+        self.assertEqual(unidir["threshold"], 33.9)
+        self.assertEqual(unidir["status"], "pass")
+        bidir = _metric(node, "BiDir")
+        self.assertEqual(bidir["value"], 45.82)
+        self.assertEqual(bidir["threshold"], 43.9)
+        paths = _series_named(node, "UniDir")["points"]
+        self.assertEqual([point["x"] for point in paths], ["CPU->CPU", "CPU->GPU", "GPU->CPU", "GPU->GPU"])
+        self.assertEqual(paths[0]["y"], 100.21)
+        self.assertEqual(paths[-1]["y"], 48.76)
+        self.assertEqual(_series_named(node, "BiDir")["points"][0]["y"], 89.50)
+        self.assertEqual(results["_meta"]["version"], "1.67.00")
+
+    def test_below_threshold_fails_without_dropping_series(self):
+        results = {}
+        low = dict(P2P_EXPECT)
+        low["avg_gpu_to_gpu_p2p_bidir_bw"] = "90"
+        transferbench_rundeck.record_p2p(results, {"n1": P2P_REAL}, low)
+        node = _node(results, "p2p")
+        self.assertEqual(node["status"], "fail")
+        self.assertEqual(_metric(node, "BiDir")["status"], "fail")
+        self.assertEqual(_metric(node, "UniDir")["status"], "pass")
+
+    def test_abort_omits_charts(self):
+        results = {}
+        transferbench_rundeck.record_p2p(results, {"n1": P2P_ABORT}, P2P_EXPECT)
+        node = _node(results, "p2p")
+        self.assertEqual(node["status"], "fail")
+        self.assertNotIn("metrics", node)
+        self.assertNotIn("series", node)
+
+
 class TestRecordCompletion(unittest.TestCase):
     def test_clean_healthcheck_passes(self):
         results = {}

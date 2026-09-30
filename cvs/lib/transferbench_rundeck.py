@@ -7,7 +7,16 @@ status_matrix builder from TransferBench stdout CVS already collects per node.
 
 Bandwidth presets keep the measured GB/s in the cell drill-down. healthcheck
 and a2asweep have no numeric gate, so their verdict uses the same failure
-indicators as ``scan_test_results``.
+indicators as ``scan_test_results``. Chart fields never change that verdict:
+missing or unrecognized output simply omits metrics, series, and heatmaps.
+
+When the v1.67 tables are present, a2a emits one RTotal metric per GPU
+(threshold ``gpu_to_gpu_a2a_rtotal``) and an ``RTotal`` series. p2p emits
+``UniDir`` and ``BiDir`` GPU-to-GPU metrics plus a series of the four path
+averages. The BiDir banner is ``Averages (During  BiDir)`` (two spaces).
+``TransferBench vX.Y.Z`` from the banner is stored on ``_meta.version``.
+healthcheck and a2asweep stay scan-indicator verdicts; scaling and schmoo keep
+their existing bandwidth gates.
 
 Shape (consumed by cvs/lib/report/rundeck/dataset_builders/status_matrix.py)::
 
@@ -33,14 +42,6 @@ _A2A_RTOTAL_RE = re.compile(
     r"([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+"
     r"([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s+([0-9\.]+)\s*"
 )
-_P2P_UNIDIR_RE = re.compile(
-    r"Averages\s+\(During\s+UniDir\):\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+([0-9\.]+)",
-    re.I,
-)
-_P2P_BIDIR_RE = re.compile(
-    r"Averages\s+\(During\s+BiDir\):\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+([0-9\.]+)",
-    re.I,
-)
 _SCALING_BEST_RE = re.compile(
     r"(?m)^[ \t]*Best\s+(?:[0-9\.]+\(\s*[0-9]+\)\s+){2}([0-9\.]+)",
 )
@@ -57,6 +58,12 @@ _SCHMOO_FIELDS = (
     ("remote read", "32_cu_rem_read"),
     ("remote write", "32_cu_rem_write"),
     ("remote copy", "32_cu_rem_copy"),
+)
+_P2P_PATHS = ("CPU->CPU", "CPU->GPU", "GPU->CPU", "GPU->GPU")
+_VERSION_RE = re.compile(r"TransferBench\s+v([0-9]+(?:\.[0-9A-Za-z]+)*)")
+_P2P_LINE_RE = re.compile(
+    r"Averages\s+\(During\s+(UniDir|BiDir)\):\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)",
+    re.I,
 )
 
 
@@ -80,13 +87,83 @@ def _text(output):
     return str(output or "")
 
 
+def _number(value):
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _below(value, threshold):
     if threshold in (None, ""):
         return False
-    try:
-        return float(value) < float(threshold)
-    except (TypeError, ValueError):
+    left = _number(value)
+    right = _number(threshold)
+    if left is None or right is None:
         return False
+    return left < right
+
+
+def _bandwidth_metric(name, value, threshold, unit="GB/s"):
+    numeric = _number(value)
+    if numeric is None:
+        return None
+    metric = {
+        "name": name,
+        "value": numeric,
+        "unit": unit,
+        "direction": "higher",
+        "status": "fail" if _below(numeric, threshold) else "pass",
+    }
+    limit = _number(threshold) if threshold not in (None, "") else None
+    if limit is not None:
+        metric["threshold"] = limit
+    return metric
+
+
+def _series(name, points, unit="GB/s", x_label="", y_label=""):
+    kept = []
+    for point in points or []:
+        if not isinstance(point, dict):
+            continue
+        y_val = _number(point.get("y"))
+        if y_val is None:
+            continue
+        kept.append({"x": point.get("x"), "y": y_val})
+    if not kept:
+        return None
+    series = {"name": name, "unit": unit, "points": kept}
+    if x_label:
+        series["x_label"] = x_label
+    if y_label:
+        series["y_label"] = y_label
+    return series
+
+
+def _charts(metrics=None, series=None, heatmaps=None):
+    extras = {}
+    metrics = [item for item in (metrics or []) if item]
+    series = [item for item in (series or []) if item]
+    heatmaps = [item for item in (heatmaps or []) if item]
+    if metrics:
+        extras["metrics"] = metrics
+    if series:
+        extras["series"] = series
+    if heatmaps:
+        extras["heatmaps"] = heatmaps
+    return extras
+
+
+def _note_version(res_dict, version):
+    if not version:
+        return
+    meta = res_dict.get("_meta")
+    if not isinstance(meta, dict):
+        return
+    if meta.get("version") in (None, "", "—"):
+        meta["version"] = version
 
 
 def _metric_item(name, value, threshold):
@@ -102,18 +179,20 @@ def _missing_item(name, message):
     return {"name": name, "status": "fail", "message": message}
 
 
-def build_node_record(status, items=None, items_summary=""):
+def build_node_record(status, items=None, items_summary="", metrics=None, series=None, heatmaps=None):
     '''Assemble one node record for a preset.'''
     normalized = str(status or "na").lower()
     if normalized not in _STATUSES:
         normalized = "na"
-    return {
+    record = {
         "status": normalized,
         "items_summary": items_summary or "",
         "items": items or [],
         "errors_json_href": "",
         "log_tarball_href": "",
     }
+    record.update(_charts(metrics, series, heatmaps))
+    return record
 
 
 def record_group(res_dict, group, node_records, meta=None):
@@ -126,12 +205,32 @@ def record_group(res_dict, group, node_records, meta=None):
     return res_dict
 
 
+def _unpack_classify(result):
+    status, items, summary = result[0], result[1], result[2]
+    extras = result[3] if len(result) > 3 and isinstance(result[3], dict) else {}
+    return status, items, summary, extras
+
+
 def _record_classified(res_dict, group, out_dict, classify, meta=None):
     node_records = {}
+    version = None
     for node, output in (out_dict or {}).items():
-        status, items, summary = classify(_text(output))
-        node_records[str(node)] = build_node_record(status, items, summary)
-    return record_group(res_dict, group, node_records, meta=meta)
+        text = _text(output)
+        found = _VERSION_RE.search(text)
+        if found and not version:
+            version = found.group(1)
+        status, items, summary, extras = _unpack_classify(classify(text))
+        node_records[str(node)] = build_node_record(
+            status,
+            items,
+            summary,
+            metrics=extras.get("metrics"),
+            series=extras.get("series"),
+            heatmaps=extras.get("heatmaps"),
+        )
+    recorded = record_group(res_dict, group, node_records, meta=meta)
+    _note_version(recorded, version)
+    return recorded
 
 
 def _rollup(items, summary):
@@ -150,7 +249,14 @@ def record_a2a(res_dict, out_dict, exp_dict, meta=None):
             return "fail", [_missing_item("RTotal", message)], message
         items = [_metric_item(f"GPU{idx}", raw, threshold) for idx, raw in enumerate(match.groups())]
         worst = min(float(raw) for raw in match.groups())
-        return _rollup(items, f"min RTotal {worst} GB/s")
+        metrics = []
+        points = []
+        for idx, raw in enumerate(match.groups()):
+            label = f"GPU{idx:02d}"
+            metrics.append(_bandwidth_metric(label, raw, threshold))
+            points.append({"x": label, "y": raw})
+        status, items, summary = _rollup(items, f"min RTotal {worst} GB/s")
+        return status, items, summary, _charts(metrics, [_series("RTotal", points, x_label="{x}", y_label="GB/s")])
 
     return _record_classified(res_dict, "a2a", out_dict, classify, meta)
 
@@ -158,24 +264,36 @@ def record_a2a(res_dict, out_dict, exp_dict, meta=None):
 def record_p2p(res_dict, out_dict, exp_dict, meta=None):
     '''Record average unidirectional and bidirectional GPU-to-GPU bandwidth.'''
     expected = exp_dict or {}
+    gates = {
+        "UniDir": expected.get("avg_gpu_to_gpu_p2p_unidir_bw"),
+        "BiDir": expected.get("avg_gpu_to_gpu_p2p_bidir_bw"),
+    }
 
     def classify(text):
+        lines = {}
+        for match in _P2P_LINE_RE.finditer(text):
+            key = "UniDir" if match.group(1).lower() == "unidir" else "BiDir"
+            if key not in lines:
+                lines[key] = match.groups()[1:]
         items = []
-        uni = _P2P_UNIDIR_RE.search(text)
-        bi = _P2P_BIDIR_RE.search(text)
-        if uni:
-            items.append(_metric_item("UniDir", uni.group(1), expected.get("avg_gpu_to_gpu_p2p_unidir_bw")))
-        else:
-            items.append(_missing_item("UniDir", "UniDir averages not found"))
-        if bi:
-            items.append(_metric_item("BiDir", bi.group(1), expected.get("avg_gpu_to_gpu_p2p_bidir_bw")))
-        else:
-            items.append(_missing_item("BiDir", "BiDir averages not found"))
-        if uni and bi:
-            summary = f"UniDir {uni.group(1)} / BiDir {bi.group(1)} GB/s"
+        metrics = []
+        series = []
+        for name in ("UniDir", "BiDir"):
+            values = lines.get(name)
+            if not values:
+                items.append(_missing_item(name, f"{name} averages not found"))
+                continue
+            gpu_gpu = values[-1]
+            items.append(_metric_item(name, gpu_gpu, gates[name]))
+            metrics.append(_bandwidth_metric(name, gpu_gpu, gates[name]))
+            points = [{"x": label, "y": raw} for label, raw in zip(_P2P_PATHS, values)]
+            series.append(_series(name, points, x_label="{x}", y_label="GB/s"))
+        if "UniDir" in lines and "BiDir" in lines:
+            summary = f"UniDir {lines['UniDir'][-1]} / BiDir {lines['BiDir'][-1]} GB/s"
         else:
             summary = "p2p averages not found"
-        return _rollup(items, summary)
+        status, items, summary = _rollup(items, summary)
+        return status, items, summary, _charts(metrics, series)
 
     return _record_classified(res_dict, "p2p", out_dict, classify, meta)
 
