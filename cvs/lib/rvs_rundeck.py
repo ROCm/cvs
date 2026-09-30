@@ -37,6 +37,8 @@ _GROUP_MODULES = {
 
 _PRECISION_MATCH = ("bf16", "fp16", "fp32", "fp64", "fp8")
 _PRECISION_ORDER = ("fp8", "fp16", "bf16", "fp32", "fp64")
+_KERNELS = ("Read", "Write", "Copy", "Mul", "Add", "Triad", "Dot")
+_KERNEL_NAMES = {name.lower(): name for name in _KERNELS}
 
 _MODULE_NAME = re.compile(r"Module name\s*:\s*(?P<module>\S+)", re.I)
 _ACTION_NAME = re.compile(r"Action name\s*:\s*(?P<action>\S+)", re.I)
@@ -68,6 +70,12 @@ _PBQT_DONE = re.compile(
     r".*?bidirectional:\s*(?P<bidi>\S+)\s+(?P<value>[\d.]+)\s+GBps\s+duration:",
     re.I,
 )
+_BABEL_ROW = re.compile(
+    r"(?:^|\s)(?P<gpu>\d+)\s+(?P<kernel>Read|Write|Copy|Mul|Add|Triad|Dot)\s+"
+    r"(?P<mbytes>[\d.]+)\s+[\d.]+\s+[\d.]+\s+[\d.]+",
+    re.I,
+)
+_MEM_BW = re.compile(r"mem\s+Test\s+\d+\s*:.*?bandwidth\s*=\s*(?P<value>[\d.]+)\s*GB/s", re.I)
 
 
 def make_meta(cluster_dict, version, suite_name):
@@ -358,6 +366,62 @@ def _pbqt_performance(pairs):
     return metrics, [heatmap]
 
 
+def _in_babel(module, action, hint):
+    if module == "babel" or (not module and hint == "babel"):
+        return True
+    if module:
+        return False
+    act = str(action or "").lower()
+    return act.startswith("hbm") or "babel" in act
+
+
+def _take_babel(line, labels, samples):
+    match = _BABEL_ROW.search(line)
+    if not match:
+        return False
+    kernel = _KERNEL_NAMES[match.group("kernel").lower()]
+    label = _label_for(match.group("gpu"), labels)
+    samples[(label, kernel)] = float(match.group("mbytes"))
+    return True
+
+
+def _take_mem(line, values):
+    match = _MEM_BW.search(line)
+    if not match:
+        return False
+    values.append(float(match.group("value")))
+    return True
+
+
+def _babel_performance(samples):
+    '''Node charts use the slowest GPU per kernel; the heatmap keeps every GPU.'''
+    if not samples:
+        return [], []
+    kernels = [name for name in _KERNELS if any(kernel == name for _label, kernel in samples)]
+    labels = sorted({label for label, _kernel in samples}, key=_label_key)
+    metrics = []
+    for kernel in kernels:
+        slowest = min(value for (_label, name), value in samples.items() if name == kernel)
+        metrics.append(_metric(kernel, slowest, "MB/s", "babel", direction="higher"))
+    grid = [[samples.get((label, kernel)) for kernel in kernels] for label in labels]
+    heatmap = {
+        "name": "babel",
+        "unit": "MB/s",
+        "group": "babel",
+        "rows": labels,
+        "cols": kernels,
+        "values": grid,
+        "direction": "higher",
+        "row_label": "GPU",
+        "col_label": "Kernel",
+    }
+    return metrics, [heatmap]
+
+
+def _mem_performance(values):
+    return [_metric("bandwidth", value, "GB/s", "mem", direction="higher") for value in values]
+
+
 def _iet_performance(peaks, statuses):
     metrics = []
     points = []
@@ -377,21 +441,33 @@ def parse_node_performance(text, module_hint=""):
 
     Returns ``{"metrics", "series", "heatmaps"}``. Unknown or empty output
     yields empty lists. Interval GST samples without ``Target GFLOPS`` are
-    ignored, as are PEBB/PBQT ``(*)`` samples. IET keeps the peak ``Power(W)``
+    ignored, as are PEBB/PBQT ``(*)`` samples. Babel metrics are the first
+    table column (MiBytes/sec), one per kernel. IET keeps the peak ``Power(W)``
     per GPU; RVS does not print a temperature for this module.
     '''
     body = text if isinstance(text, str) else ""
     labels = _device_labels(body)
+    hint = _hint_module(module_hint)
+    current_module = hint
+    current_action = ""
     gst_samples = {}
     iet_peaks = {}
     iet_status = {}
     pebb_samples = {}
     pbqt_pairs = {}
+    babel_samples = {}
+    mem_values = []
     for raw in body.splitlines():
         line = raw.strip()
         if not line:
             continue
-        if _MODULE_NAME.search(line) or _ACTION_NAME.search(line):
+        module_match = _MODULE_NAME.search(line)
+        if module_match:
+            current_module = module_match.group("module").strip().lower()
+            continue
+        action_match = _ACTION_NAME.search(line)
+        if action_match:
+            current_action = action_match.group("action").strip()
             continue
         if _take_gst(line, labels, gst_samples):
             continue
@@ -399,15 +475,20 @@ def parse_node_performance(text, module_hint=""):
             continue
         if _take_pebb(line, pebb_samples):
             continue
-        _take_pbqt(line, pbqt_pairs)
+        if _take_pbqt(line, pbqt_pairs):
+            continue
+        if _in_babel(current_module, current_action, hint) and _take_babel(line, labels, babel_samples):
+            continue
+        _take_mem(line, mem_values)
     metrics, series = _gst_performance(gst_samples)
     iet_metrics, iet_series = _iet_performance(iet_peaks, iet_status)
     pebb_metrics, pebb_series = _pebb_performance(pebb_samples)
-    pbqt_metrics, heatmaps = _pbqt_performance(pbqt_pairs)
+    pbqt_metrics, pbqt_heatmaps = _pbqt_performance(pbqt_pairs)
+    babel_metrics, babel_heatmaps = _babel_performance(babel_samples)
     return {
-        "metrics": metrics + iet_metrics + pebb_metrics + pbqt_metrics,
+        "metrics": metrics + iet_metrics + pebb_metrics + pbqt_metrics + babel_metrics + _mem_performance(mem_values),
         "series": series + iet_series + pebb_series,
-        "heatmaps": heatmaps,
+        "heatmaps": pbqt_heatmaps + babel_heatmaps,
     }
 
 

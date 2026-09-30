@@ -266,5 +266,86 @@ class TestPebbAndPbqtMetrics(unittest.TestCase):
         self.assertAlmostEqual(node["metrics"][0]["value"], 54.828)
 
 
+class TestBabelAndMemMetrics(unittest.TestCase):
+    def test_babel_uses_first_column_and_gpu_kernel_heatmap(self):
+        text = "\n".join(
+            [
+                "[GPU:: 5 - 2987 - 0000:15:00.0]",
+                "[GPU:: 2 - 9091 - 0000:75:00.0]",
+                "Action name :hbm_full",
+                "Module name :babel",
+                "GPU Id      Function    MiBytes/sec    Max MiB/s      Min MiB/s      Avg MiB/s",
+                "2987        Read        100.0          5068077.546    4583316.549    4978787.260",
+                "2987        Triad       50.0           4360496.063    3957406.353    4285494.042",
+                "9091        Read        80.0           5054319.123    4568593.596    4985863.158",
+                "Module name :gst",
+                "2987        Read        999.0          1              1              1",
+            ]
+        )
+        perf = rvs_rundeck.parse_node_performance(text, module_hint="level_config")
+        by_name = {metric["name"]: metric for metric in perf["metrics"]}
+        self.assertEqual(set(by_name), {"Read", "Triad"})
+        self.assertAlmostEqual(by_name["Read"]["value"], 80.0)
+        self.assertAlmostEqual(by_name["Triad"]["value"], 50.0)
+        self.assertEqual(by_name["Read"]["unit"], "MB/s")
+        self.assertEqual(by_name["Read"]["direction"], "higher")
+        self.assertEqual(by_name["Read"]["group"], "babel")
+        heat = perf["heatmaps"][0]
+        self.assertEqual(heat["name"], "babel")
+        self.assertEqual(heat["rows"], ["GPU2", "GPU5"])
+        self.assertEqual(heat["cols"], ["Read", "Triad"])
+        self.assertEqual(heat["row_label"], "GPU")
+        self.assertEqual(heat["col_label"], "Kernel")
+        self.assertAlmostEqual(heat["values"][0][0], 80.0)
+        self.assertIsNone(heat["values"][0][1])
+        self.assertAlmostEqual(heat["values"][1][0], 100.0)
+        self.assertAlmostEqual(heat["values"][1][1], 50.0)
+
+    def test_babel_action_context_and_per_module_hint(self):
+        headed = "\n".join(
+            [
+                "Action name :hbm_full",
+                "2987 Read 4011893.551 0.00020 0.00035 0.00028",
+            ]
+        )
+        perf = rvs_rundeck.parse_node_performance(headed, module_hint="level_config")
+        self.assertAlmostEqual(perf["metrics"][0]["value"], 4011893.551)
+        self.assertEqual(perf["metrics"][0]["name"], "Read")
+
+        bare = "2987 Read 10.0 1 1 1"
+        self.assertEqual(rvs_rundeck.parse_node_performance(bare, module_hint="gst_single")["metrics"], [])
+        hinted = rvs_rundeck.parse_node_performance(bare, module_hint="babel_stream")
+        self.assertEqual(hinted["metrics"][0]["group"], "babel")
+        self.assertAlmostEqual(hinted["metrics"][0]["value"], 10.0)
+
+    def test_mem_bandwidth_or_verdict_only(self):
+        text = "\n".join(
+            [
+                "Module name :mem",
+                "[memtest] mem Test 1 : PASS",
+                "[memtest] mem Test 11: elapsedtime = 23682.550781 bandwidth = 2161.934570GB/s",
+                "[memtest] mem Test 11: elapsedtime = 23617.277344 bandwidth = 2167.909912GB/s",
+            ]
+        )
+        perf = rvs_rundeck.parse_node_performance(text, module_hint="mem_test")
+        self.assertEqual(len(perf["metrics"]), 2)
+        self.assertEqual([metric["name"] for metric in perf["metrics"]], ["bandwidth", "bandwidth"])
+        self.assertAlmostEqual(perf["metrics"][0]["value"], 2161.934570)
+        self.assertAlmostEqual(perf["metrics"][1]["value"], 2167.909912)
+        self.assertEqual(perf["metrics"][0]["unit"], "GB/s")
+        self.assertEqual(perf["metrics"][0]["group"], "mem")
+        self.assertEqual(perf["series"], [])
+        self.assertEqual(perf["heatmaps"], [])
+
+        pass_only = "[memtest] mem Test 1 : PASS"
+        perf = rvs_rundeck.parse_node_performance(pass_only, module_hint="mem_test")
+        self.assertEqual(perf["metrics"], [])
+        results = {}
+        rvs_rundeck.record_outputs(results, "mem_test", {"node-b": pass_only}, [])
+        node = results["groups"]["mem_test"]["nodes"]["node-b"]
+        self.assertEqual(node["status"], "pass")
+        self.assertNotIn("metrics", node)
+
+
 if __name__ == "__main__":
     unittest.main()
