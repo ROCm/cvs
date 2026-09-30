@@ -13,7 +13,7 @@ import shlex
 
 from cvs.lib.env_lib import build_env_prefix
 from cvs.lib.utils_lib import *
-from cvs.lib import globals
+from cvs.lib import globals, transferbench_rundeck
 
 log = globals.log
 
@@ -200,6 +200,18 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
+@pytest.fixture(scope="module")
+def transferbench_res_dict():
+    """
+    Module-scoped structured TransferBench results for the Run Deck status matrix.
+
+    Each preset merges its per-node verdict into this dict. The transferbench_cvs
+    profile names this fixture in sources.results, so session binding captures it
+    at module teardown.
+    """
+    return {}
+
+
 def detect_rocm_path(orch, config_rocm_path):
     """
     Detect the ROCm installation path, supporting both old (/opt/rocm) and new (/opt/rocm/core-X.Y) layouts.
@@ -376,9 +388,22 @@ def parse_tb_schmoo_bw(out_dict, exp_dict):
             )
 
 
+def _capture_tb_rundeck(res_dict, cluster_dict, recorder, *args):
+    """Best-effort: a reporting problem must not change the TransferBench pass/fail."""
+    if res_dict is None:
+        return
+    try:
+        meta = transferbench_rundeck.make_meta(cluster_dict, 'transferbench_cvs')
+        recorder(res_dict, *args, meta=meta)
+    except Exception as exc:
+        log.warning('TransferBench: could not capture Run Deck results: %s', exc)
+
+
 def test_transfer_bench_a2a(
     orch,
     config_dict,
+    transferbench_res_dict,
+    cluster_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run Transferbench a2a')
@@ -388,12 +413,21 @@ def test_transfer_bench_a2a(
     scan_test_results(out_dict)
     parse_tb_a2a_bw(out_dict, config_dict['results'])
     scan_test_results(out_dict)
+    _capture_tb_rundeck(
+        transferbench_res_dict,
+        cluster_dict,
+        transferbench_rundeck.record_a2a,
+        out_dict,
+        config_dict['results'],
+    )
     update_test_result()
 
 
 def test_transfer_bench_p2p(
     orch,
     config_dict,
+    transferbench_res_dict,
+    cluster_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run Transferbench p2p')
@@ -402,12 +436,21 @@ def test_transfer_bench_p2p(
     print_test_output(log, out_dict)
     parse_tb_p2p_bw(out_dict, config_dict['results'])
     scan_test_results(out_dict)
+    _capture_tb_rundeck(
+        transferbench_res_dict,
+        cluster_dict,
+        transferbench_rundeck.record_p2p,
+        out_dict,
+        config_dict['results'],
+    )
     update_test_result()
 
 
 def test_transfer_bench_healthcheck(
     orch,
     config_dict,
+    transferbench_res_dict,
+    cluster_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench healthcheck')
@@ -415,12 +458,21 @@ def test_transfer_bench_healthcheck(
     out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 3))
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
+    _capture_tb_rundeck(
+        transferbench_res_dict,
+        cluster_dict,
+        transferbench_rundeck.record_completion,
+        'healthcheck',
+        out_dict,
+    )
     update_test_result()
 
 
 def test_transfer_bench_a2asweep(
     orch,
     config_dict,
+    transferbench_res_dict,
+    cluster_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench a2asweep')
@@ -428,12 +480,21 @@ def test_transfer_bench_a2asweep(
     out_dict = run_transferbench(orch, config_dict, preset, timeout=(60 * 10))
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
+    _capture_tb_rundeck(
+        transferbench_res_dict,
+        cluster_dict,
+        transferbench_rundeck.record_completion,
+        'a2asweep',
+        out_dict,
+    )
     update_test_result()
 
 
 def test_transfer_bench_scaling(
     orch,
     config_dict,
+    transferbench_res_dict,
+    cluster_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench scaling')
@@ -448,12 +509,21 @@ def test_transfer_bench_scaling(
     print_test_output(log, out_dict)
     parse_tb_scaling_bw(out_dict, config_dict['results'])
     scan_test_results(out_dict)
+    _capture_tb_rundeck(
+        transferbench_res_dict,
+        cluster_dict,
+        transferbench_rundeck.record_scaling,
+        out_dict,
+        config_dict['results'],
+    )
     update_test_result()
 
 
 def test_transfer_bench_schmoo(
     orch,
     config_dict,
+    transferbench_res_dict,
+    cluster_dict,
 ):
     globals.error_list = []
     log.info('Testcase Run TransferBench schmoo')
@@ -468,4 +538,11 @@ def test_transfer_bench_schmoo(
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
     parse_tb_schmoo_bw(out_dict, config_dict['results'])
+    _capture_tb_rundeck(
+        transferbench_res_dict,
+        cluster_dict,
+        transferbench_rundeck.record_schmoo,
+        out_dict,
+        config_dict['results'],
+    )
     update_test_result()
