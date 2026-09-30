@@ -112,6 +112,12 @@ REPORT_STYLE_OVERRIDES = """<style>
     tr.cvs-benchmark-metric-detail-row.failed .col-result {
         color: red !important;
     }
+    tr.cvs-benchmark-metric-detail-row.skipped .col-result {
+        color: #c9a100 !important;
+    }
+    tr.cvs-benchmark-metric-detail-row.record .col-result {
+        color: #4a9edd !important;
+    }
     .filters .cvs-subtests-count {
         color: #1565c0;
     }

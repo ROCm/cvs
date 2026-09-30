@@ -7,13 +7,28 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
+from cvs.lib.report.benchmark_metric_registry import (
+    benchmark_metric_columns_for_nodeid,
+    benchmark_metric_rows_from_item,
+    benchmark_metric_rows_from_report,
+    mark_collapsible_result_cell,
+    patch_benchmark_metrics_into_html,
+    stamp_benchmark_metric_rows_on_report,
+)
+from cvs.lib.report.render.perf_metric_table import render_benchmark_metrics_html
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 from cvs.lib.training.megatron.utils.training_config_loader import load_training_variant
+
+# test_metric records one pass/fail verdict row per metric; these hooks render
+# them as an expandable per-metric panel under the parent test row and inject a
+# subtest summary count, mirroring the inference benchmark suites.
+_METRIC_TEST_NAME = "test_metric"
 
 log = globals.log
 
@@ -168,13 +183,39 @@ def pytest_collection_modifyitems(items):
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
 
-@pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_makereport(item, call):
-    """Attach this test's recorded timing rows to its HTML report detail panel."""
-    outcome = yield
-    report = outcome.get_result()
-    if report.when != "call":
+def _nodeid_test_name(nodeid):
+    return nodeid.rsplit("::", 1)[-1].split("[", 1)[0]
+
+
+def _is_full_log_extra(extra):
+    return isinstance(extra, dict) and extra.get("format_type") == "url" and extra.get("name") == "Full Log"
+
+
+def _is_url_extra(extra):
+    return isinstance(extra, dict) and extra.get("format_type") == "url"
+
+
+def _attach_metric_artifact_extras(item, report):
+    """Add this combo's results-table (and any lifecycle) artifact links to the test_metric row."""
+    lc = item.funcargs.get("lifecycle")
+    artifacts = getattr(lc, "artifacts", {}).get(item.nodeid) if lc else None
+    if not artifacts:
         return
+    try:
+        import pytest_html
+    except ImportError:
+        return
+    extras = list(getattr(report, "extras", []) or [])
+    existing = {(e.get("name"), e.get("content")) for e in extras if isinstance(e, dict)}
+    for link_name, rel_path in artifacts:
+        if (link_name, rel_path) in existing:
+            continue
+        extras.append(pytest_html.extras.url(rel_path, name=link_name))
+    report.extras = extras
+
+
+def _attach_lifecycle_extras(item, report):
+    """Attach recorded stage-timing rows and artifact links to a test's report."""
     lc = item.funcargs.get("lifecycle")
     if not lc:
         return
@@ -195,6 +236,74 @@ def pytest_runtest_makereport(item, call):
         for link_name, rel_path in artifacts:
             extras.append(pytest_html.extras.url(rel_path, name=link_name))
     report.extras = extras
+
+
+def _attach_metric_verdict_extras_for_nodeid(report, nodeid, rows):
+    """Keep the Full Log and results-table links and add the collapsible per-metric panel."""
+    if not rows:
+        return
+    try:
+        import pytest_html
+    except ImportError:
+        return
+    extras = [extra for extra in getattr(report, "extras", []) or [] if _is_url_extra(extra)]
+    columns = benchmark_metric_columns_for_nodeid(nodeid)
+    extras.append(pytest_html.extras.html(render_benchmark_metrics_html(rows, columns=columns)))
+    report.extras = extras
+    stamp_benchmark_metric_rows_on_report(report, rows)
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_makereport(item, call):
+    """Attach stage-timing rows (most tests) or the per-metric panel (test_metric)."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != "call":
+        return
+    if _nodeid_test_name(report.nodeid) == _METRIC_TEST_NAME:
+        _attach_metric_artifact_extras(item, report)
+        _attach_metric_verdict_extras_for_nodeid(report, item.nodeid, benchmark_metric_rows_from_item(item))
+        return
+    _attach_lifecycle_extras(item, report)
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_logreport(report):
+    """Re-attach the per-metric panel after pytest-html stores the call report."""
+    yield
+    if report.when != "call" or _nodeid_test_name(report.nodeid) != _METRIC_TEST_NAME:
+        return
+    rows = benchmark_metric_rows_from_report(report)
+    if rows:
+        _attach_metric_verdict_extras_for_nodeid(report, report.nodeid, rows)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_html_results_table_html(report, data):
+    """Drop the inline log for test_metric rows; the panel replaces it."""
+    if _nodeid_test_name(report.nodeid) != _METRIC_TEST_NAME:
+        return
+    if benchmark_metric_rows_from_report(report):
+        del data[:]
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_html_results_table_row(report, cells):
+    """Mark test_metric result cells collapsible so the metric panel expands."""
+    if report.when != "call" or _nodeid_test_name(report.nodeid) != _METRIC_TEST_NAME:
+        return
+    if benchmark_metric_rows_from_report(report):
+        cells[0] = mark_collapsible_result_cell(str(cells[0]))
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    """Patch the written pytest-html so metric rows expose the collapsible panel
+    and the filter bar shows the per-metric subtest counts."""
+    yield
+    htmlpath = getattr(session.config.option, "htmlpath", None)
+    if htmlpath:
+        patch_benchmark_metrics_into_html(Path(htmlpath), benchmark_test_name=_METRIC_TEST_NAME)
 
 
 # def pytest_html_results_table_header(cells):
