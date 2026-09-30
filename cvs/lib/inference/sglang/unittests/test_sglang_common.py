@@ -730,6 +730,67 @@ class TestSglangCommonHelpers(unittest.TestCase):
         fail.assert_called_once()
         self.assertIn('completion_endpoint', fail.call_args.args[0])
 
+    def test_build_log_dir_cleanup_cmd_uses_sudo_only_when_requested(self):
+        plain = sglang_common.build_log_dir_cleanup_cmd('/home/droy/LOGS/sglang')
+        self.assertEqual(plain, 'rm -rf /home/droy/LOGS/sglang && mkdir -p /home/droy/LOGS/sglang')
+        self.assertNotIn('sudo', plain)
+
+        privileged = sglang_common.build_log_dir_cleanup_cmd('/home/droy/LOGS/sglang', use_sudo=True)
+        self.assertEqual(
+            privileged,
+            'sudo -n rm -rf /home/droy/LOGS/sglang && mkdir -p /home/droy/LOGS/sglang',
+        )
+
+    def test_build_log_dir_cleanup_cmd_rejects_empty_path(self):
+        with self.assertRaises(ValueError):
+            sglang_common.build_log_dir_cleanup_cmd('  ')
+
+    def test_cleanup_log_dir_uses_sudo_when_passwordless_sudo_works(self):
+        handle = mock.Mock()
+        orch = mock.Mock()
+        orch.hosts = ['n1', 'n2']
+        orch.all = handle
+        with mock.patch.object(
+            sglang_common,
+            'get_passwordless_sudo_status',
+            return_value={'n1': True, 'n2': True},
+        ):
+            sglang_common.cleanup_sglang_log_dir(orch, '/logs/sglang')
+        cmd = handle.exec.call_args.args[0]
+        self.assertIn('sudo -n rm -rf /logs/sglang', cmd)
+        self.assertNotIn('||', cmd)
+        handle.exec_cmd_list.assert_not_called()
+
+    def test_cleanup_log_dir_skips_sudo_when_passwordless_sudo_unavailable(self):
+        handle = mock.Mock()
+        orch = mock.Mock()
+        orch.hosts = ['n1']
+        orch.head = handle
+        with mock.patch.object(sglang_common, 'get_passwordless_sudo_status', return_value={'n1': False}):
+            with mock.patch.object(sglang_common.log, 'info'):
+                sglang_common.cleanup_sglang_log_dir(orch, '/logs/sglang')
+        cmd = handle.exec.call_args.args[0]
+        self.assertEqual(cmd, 'rm -rf /logs/sglang && mkdir -p /logs/sglang')
+        self.assertNotIn('sudo', cmd)
+
+    def test_cleanup_log_dir_splits_sudo_per_host(self):
+        handle = mock.Mock()
+        handle.host_list = ['n1', 'n2']
+        orch = mock.Mock()
+        orch.hosts = ['n1', 'n2']
+        orch.all = handle
+        with mock.patch.object(
+            sglang_common,
+            'get_passwordless_sudo_status',
+            return_value={'n1': True, 'n2': False},
+        ):
+            with mock.patch.object(sglang_common.log, 'info'):
+                sglang_common.cleanup_sglang_log_dir(orch, '/logs/sglang')
+        handle.exec.assert_not_called()
+        cmds = handle.exec_cmd_list.call_args.args[0]
+        self.assertEqual(cmds[0], 'sudo -n rm -rf /logs/sglang && mkdir -p /logs/sglang')
+        self.assertEqual(cmds[1], 'rm -rf /logs/sglang && mkdir -p /logs/sglang')
+
 
 if __name__ == '__main__':
     unittest.main()
