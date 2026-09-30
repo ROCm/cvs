@@ -37,6 +37,12 @@ from cvs.lib.training.jaxmaxtext.utils.tb_events import read_scalars_from_bytes
 
 log = globals.log
 
+# Bounds for the best-effort TensorBoard scalar pull in collect_tb_scalars: the
+# whole tar is base64-buffered in controller memory, so cap the size and time so
+# a stalled node or a huge events dir cannot hang the sweep or exhaust memory.
+_TB_COLLECT_TIMEOUT_S = 120
+_TB_COLLECT_MAX_BYTES = 200 * 1024 * 1024
+
 # Bound lazily to cvs.lib.verify_lib.verify_dmesg_for_errors on first use so this
 # module stays importable without the broader utils stack that verify_lib pulls
 # in (rocm_plib, node_scraper, pytest, ...). Tests patch this symbol directly.
@@ -283,30 +289,73 @@ class MaxTextTrainingJob:
         run_name = self._run_name()
         return f"{self.out_dir}/{run_name}/tensorboard/{run_name}"
 
+    @staticmethod
+    def _exec_first_field(out, node):
+        """First whitespace-delimited token of a node's stdout, or ''."""
+        raw = (out or {}).get(node, "")
+        text = raw if isinstance(raw, str) else (raw or {}).get("output", "")
+        parts = (text or "").split()
+        return parts[0] if parts else ""
+
     def collect_tb_scalars(self):
         """Read the coordinator's TensorBoard scalars into ``{tag: [(step, val)]}``.
 
         Pulls node 0's event files over ``orch.exec`` (tar | base64, one round
         trip) and parses them with the dependency-free tb_events reader. This is a
-        report-time convenience: any failure (no TB dir, tar/base64 missing) logs
-        and returns ``{}`` so charting is skipped rather than failing the run.
+        best-effort, report-time convenience that never raises: it is bounded by a
+        timeout and a size cap (the whole tar is buffered in controller memory), and
+        any skip/failure returns ``{}`` while recording a human-readable reason in
+        ``self.tb_collection_note`` so the deck can show why curves are missing
+        instead of failing silently. ``tb_collection_note`` is empty on success.
         """
+        self.tb_collection_note = ""
         node0 = self.orch.hosts[0]
         tb_dir = self._tb_events_dir()
+
+        # Size guard first: sum event-file KiB (POSIX ``du -ck``) and skip the pull
+        # when it exceeds the cap, so a huge dir never gets buffered whole.
+        size_cmd = (
+            f"cd {shlex.quote(tb_dir)} 2>/dev/null && "
+            f"du -ck events.out.tfevents.* 2>/dev/null | tail -1 | cut -f1 || true"
+        )
+        try:
+            size_out = self.orch.exec(size_cmd, hosts=[node0], print_console=False, timeout=_TB_COLLECT_TIMEOUT_S)
+        except Exception as e:  # noqa: BLE001 - collection must never break the run
+            self.tb_collection_note = f"size probe failed ({e})"
+            log.warning("tb collect: %s", self.tb_collection_note)
+            return {}
+        try:
+            total_bytes = int(self._exec_first_field(size_out, node0)) * 1024
+        except ValueError:
+            total_bytes = 0
+        if total_bytes <= 0:
+            self.tb_collection_note = "no TensorBoard events found"
+            log.info("tb collect: %s under %s", self.tb_collection_note, tb_dir)
+            return {}
+        if total_bytes > _TB_COLLECT_MAX_BYTES:
+            self.tb_collection_note = (
+                f"skipped: {total_bytes // (1024 * 1024)} MiB of events exceeds "
+                f"{_TB_COLLECT_MAX_BYTES // (1024 * 1024)} MiB cap"
+            )
+            log.warning("tb collect: %s (%s)", self.tb_collection_note, tb_dir)
+            return {}
+
         cmd = (
             f"cd {shlex.quote(tb_dir)} 2>/dev/null && tar -cf - events.out.tfevents.* 2>/dev/null | base64 -w0 || true"
         )
         try:
-            out = self.orch.exec(cmd, hosts=[node0], print_console=False)
+            out = self.orch.exec(cmd, hosts=[node0], print_console=False, timeout=_TB_COLLECT_TIMEOUT_S)
         except Exception as e:  # noqa: BLE001 - collection must never break the run
-            log.warning("tb collect: exec failed (%s)", e)
+            self.tb_collection_note = f"collection failed ({e})"
+            log.warning("tb collect: %s", self.tb_collection_note)
             return {}
 
         raw = (out or {}).get(node0, "")
         b64 = raw if isinstance(raw, str) else (raw or {}).get("output", "")
         b64 = "".join((b64 or "").split())  # drop any wrapping/whitespace
         if not b64:
-            log.info("tb collect: no TensorBoard events under %s", tb_dir)
+            self.tb_collection_note = "no TensorBoard events found"
+            log.info("tb collect: %s under %s", self.tb_collection_note, tb_dir)
             return {}
 
         try:
@@ -319,10 +368,13 @@ class MaxTextTrainingJob:
                         if fh is not None:
                             blobs.append(fh.read())
         except (ValueError, tarfile.TarError, OSError) as e:
-            log.warning("tb collect: decode/untar failed (%s)", e)
+            self.tb_collection_note = f"decode/untar failed ({e})"
+            log.warning("tb collect: %s", self.tb_collection_note)
             return {}
 
         scalars = read_scalars_from_bytes(blobs)
+        if not scalars:
+            self.tb_collection_note = "no scalar series parsed from events"
         log.info("tb collect: %d scalar tags from %d event file(s)", len(scalars), len(blobs))
         return scalars
 

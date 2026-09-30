@@ -26,7 +26,7 @@ def _mode(variant):
     training = getattr(variant, "training", None)
     if training is not None and getattr(training, "distributed", False):
         return "distributed"
-    return "single"
+    return "single-node"
 
 
 def _node_count(variant):
