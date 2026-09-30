@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "extends": "health_status_base",
   "profile_id": "transferbench_cvs_rundeck",
   "suite_id": "transferbench_cvs",
   "report_basename": "transferbench_run_deck",
@@ -7,36 +8,16 @@
   "subtitle": "TransferBench · preset results across the cluster",
   "footer": "CVS TransferBench · render-only · per-node verdict from the collected preset run (pass / fail)",
   "link_name": "TransferBench Run Deck",
-  "dataset_builder": "status_matrix",
-  "interactive_viewer": true,
   "sources": {
     "results": "transferbench_res_dict"
   },
   "cards": [
     {
-      "type": "run_card",
-      "id": "run-card",
-      "title": "Run card",
-      "bind": "datasets.status_matrix.run_card_display"
-    },
-    {
-      "type": "status_overview",
-      "id": "overview",
-      "title": "Health overview",
-      "bind": "datasets.status_matrix.overview"
-    },
-    {
-      "type": "metric_charts",
       "id": "metrics",
-      "title": "Bandwidth highlights",
-      "bind": "datasets.status_matrix.metric_charts",
-      "when_empty": "hide"
+      "title": "Bandwidth highlights"
     },
     {
-      "type": "status_matrix",
       "id": "results",
-      "title": "Full results",
-      "bind": "datasets.status_matrix",
       "hint": "Open a cell for that preset's bandwidth, healthcheck subtests, and log links."
     }
   ]

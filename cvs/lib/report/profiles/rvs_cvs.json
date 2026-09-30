@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "extends": "health_status_base",
   "profile_id": "rvs_cvs_rundeck",
   "suite_id": "rvs_cvs",
   "report_basename": "rvs_run_deck",
@@ -7,36 +8,12 @@
   "subtitle": "ROCm Validation Suite · executed health tests across the cluster",
   "footer": "CVS RVS · render-only · per-node verdict from the collected RVS run (pass / fail)",
   "link_name": "RVS Run Deck",
-  "dataset_builder": "status_matrix",
-  "interactive_viewer": true,
   "sources": {
     "results": "rvs_res_dict"
   },
   "cards": [
     {
-      "type": "run_card",
-      "id": "run-card",
-      "title": "Run card",
-      "bind": "datasets.status_matrix.run_card_display"
-    },
-    {
-      "type": "status_overview",
-      "id": "overview",
-      "title": "Health overview",
-      "bind": "datasets.status_matrix.overview"
-    },
-    {
-      "type": "metric_charts",
-      "id": "metrics",
-      "title": "Measurements",
-      "bind": "datasets.status_matrix.metric_charts",
-      "when_empty": "hide"
-    },
-    {
-      "type": "status_matrix",
       "id": "results",
-      "title": "Full results",
-      "bind": "datasets.status_matrix",
       "hint": "Columns are executed CVS tests. A default RVS 1.3+ run records gpu_enumeration and one level_config column; module measurements remain inside the LEVEL cell. Open a failed cell for its gate regex and matching RVS output line."
     }
   ]

@@ -151,6 +151,12 @@ accepts an optional `hint` string; otherwise it shows generic item-breakdown
 help. The deck nav links the viewer from `summary.viewer_html`, the same way
 sweep decks do.
 
+Health suites can extend `profiles/health_status_base.json` for the shared run
+card, overview, optional measurements (`when_empty: hide`), and full-results
+stack. Profile inheritance merges card entries by `id`, preserving base order;
+a suite overlay only needs to provide the card `id` and fields it customizes,
+such as a measurement title or result hint.
+
 ```json
 {
   "dataset_builder": "status_matrix",

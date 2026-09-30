@@ -71,6 +71,32 @@ class TestProfile(unittest.TestCase):
         self.assertEqual(profile["cards"][2]["when_empty"], "hide")
         self.assertTrue(profile["cards"][3]["hint"])
 
+    def test_health_profiles_extend_shared_card_stack(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        base = load_json_profile("health_status_base")
+        Draft202012Validator(schema).validate(base)
+        self.assertEqual(
+            [card["id"] for card in base["cards"]],
+            ["run-card", "overview", "metrics", "results"],
+        )
+
+        rvs_raw = json.loads(profile_json_path("rvs_cvs").read_text(encoding="utf-8"))
+        transferbench_raw = json.loads(profile_json_path("transferbench_cvs").read_text(encoding="utf-8"))
+        self.assertEqual(rvs_raw["extends"], "health_status_base")
+        self.assertEqual(rvs_raw["cards"], [{"id": "results", "hint": rvs_raw["cards"][0]["hint"]}])
+        self.assertEqual(transferbench_raw["extends"], "health_status_base")
+        self.assertEqual([card["id"] for card in transferbench_raw["cards"]], ["metrics", "results"])
+
+        rvs = load_json_profile("rvs_cvs")
+        transferbench = load_json_profile("transferbench_cvs")
+        self.assertEqual([card["id"] for card in rvs["cards"]], ["run-card", "overview", "metrics", "results"])
+        self.assertEqual(
+            [card["id"] for card in transferbench["cards"]],
+            ["run-card", "overview", "metrics", "results"],
+        )
+        self.assertEqual(transferbench["cards"][2]["title"], "Bandwidth highlights")
+        self.assertEqual(rvs["cards"][2]["title"], "Measurements")
+
     def test_rvs_profile_validates_against_schema(self):
         schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
         profile = load_json_profile("rvs_cvs")
