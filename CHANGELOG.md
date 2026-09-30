@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RCCL `mpirun` uses the orchestrator's non-default SSH port for container launches.
 - RCCL pairwise/incremental runs no longer inherit the full cluster's legacy flat bandwidth thresholds; only NIC/rank-keyed thresholds (already scoped to node count) carry over to the pairwise sub-cluster run.
 - `RcclJob` no longer requires `cluster_node_list` to start with the orchestrator's head node; the orchestrator's own head node is used regardless of list order.
-
+- RCCL result-directory sentinel check reads the per-host path `download_from_head` returns instead of the unsuffixed path passed in, so the probe no longer rejects a valid shared/bind-mounted directory before every run.
 ## [0.2.0] - 2026-09-23
 
 ### Added
