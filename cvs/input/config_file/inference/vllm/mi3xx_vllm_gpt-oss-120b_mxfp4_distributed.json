@@ -23,8 +23,7 @@
       "TP_SOCKET_IFNAME": "<changeme>",
       "NCCL_IB_GID_INDEX": "<changeme>",
       "NCCL_DEBUG": "ERROR",
-      "HF_HUB_OFFLINE": "1",
-      "TRANSFORMERS_OFFLINE": "1"
+      "HF_HUB_OFFLINE": "1"
     },
     "runtime": {
       "name": "docker",

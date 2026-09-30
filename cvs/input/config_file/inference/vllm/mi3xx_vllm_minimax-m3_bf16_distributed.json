@@ -24,7 +24,6 @@
       "NCCL_IB_GID_INDEX": "<changeme>",
       "NCCL_DEBUG": "ERROR",
       "HF_HUB_OFFLINE": "1",
-      "TRANSFORMERS_OFFLINE": "1",
       "VLLM_USE_BREAKABLE_CUDAGRAPH": "0"
     },
     "runtime": {
