@@ -314,6 +314,7 @@ BENIGN_DMESG_LINES = [
     "PCI: CLS 64 bytes, default 64",
     "ast 0000:54:00.0: Using default configuration",
     "mpt3sas_cm0: CurrentHostPageSize is 0: Setting default host page size to 4k",
+    "RAS: Correctable Errors collector initialized.",
 ]
 
 REAL_FAULT_DMESG_LINES = [
@@ -355,6 +356,12 @@ class TestErrPatterns(unittest.TestCase):
 
     def test_segfault_flags_crash(self):
         self.assertIn("crash", self._matching_keys(REAL_FAULT_DMESG_LINES[0]))
+
+    def test_correctable_error_report_still_flags_hardware(self):
+        self.assertEqual(
+            self._matching_keys("pcieport 0000:00:01.1: AER: Correctable error message received from 0000:01:00.0"),
+            ["hardware"],
+        )
 
     @patch("cvs.lib.verify_lib.fail_test")
     def test_legacy_verify_dmesg_ignores_benign_lines(self, mock_fail_test):
