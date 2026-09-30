@@ -26,6 +26,18 @@ PROFILE_STEM_ALIASES: dict[str, str] = {
     "sglang_disagg_distributed": "sglang",
     "vllm_single": "vllm",
     "vllm_distributed": "vllm",
+    "rccl_perf": "rccl",
+    "rccl_regression": "rccl",
+    "rccl_pairwise": "rccl",
+    "xdit_flux_dev_single": "xdit",
+    "xdit_flux_dev_distributed": "xdit",
+    "xdit_wan22_14b_single": "xdit",
+    "xdit_wan22_14b_diffusers_single": "xdit",
+    "xdit_wan22_14b_diffusers_distributed": "xdit",
+    "megatron_single": "megatron",
+    "megatron_distributed": "megatron",
+    "jaxmaxtext_single": "jaxmaxtext",
+    "jaxmaxtext_distributed": "jaxmaxtext",
 }
 
 DEFAULT_SOURCES: dict[str, str] = {

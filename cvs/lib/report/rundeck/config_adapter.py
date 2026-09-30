@@ -68,6 +68,22 @@ class ProfileConfigResolver:
         return tuple(series)
 
     @staticmethod
+    def _parse_dimension_fields(raw: list) -> tuple[tuple[str, str, str], ...]:
+        out = []
+        for entry in raw or []:
+            if isinstance(entry, dict):
+                field = entry.get("field")
+                if not field:
+                    continue
+                out.append((str(field), str(entry.get("label", field)), str(entry.get("prefix", ""))))
+            elif isinstance(entry, (list, tuple)) and entry:
+                field = entry[0]
+                label = entry[1] if len(entry) > 1 else field
+                prefix = entry[2] if len(entry) > 2 else ""
+                out.append((str(field), str(label), str(prefix)))
+        return tuple(out)
+
+    @staticmethod
     def _parse_cell_highlights(raw: list) -> tuple[tuple[str, str], ...]:
         out = []
         for entry in raw:
@@ -82,6 +98,12 @@ class ProfileConfigResolver:
         """Materialize ``InferenceReportConfig`` from a JSON deck profile."""
         builder = profile.get("dataset_builder", "sweep")
         if builder in ("series", "matrix", "status_matrix"):
+            hooks = profile.get("hooks") or {}
+            extra = {}
+            if hooks.get("run_card_display"):
+                extra["run_card_display_builder"] = cls.import_callable(hooks["run_card_display"])
+            if hooks.get("launch_provenance"):
+                extra["launch_provenance_builder"] = cls.import_callable(hooks["launch_provenance"])
             return make_inference_report_config(
                 suite_id=profile.get("suite_id") or profile.get("profile_id", "suite"),
                 report_basename=profile.get("report_basename") or f"{profile.get('suite_id', 'suite')}_run_deck",
@@ -93,6 +115,7 @@ class ProfileConfigResolver:
                 metric_units={"bus_bw": "GB/s", "alg_bw": "GB/s"},
                 tier_metric_specs=lambda _c, _t: {},
                 interactive_viewer=bool(profile.get("interactive_viewer", False)),
+                **extra,
             )
 
         hooks = profile.get("hooks") or {}
@@ -133,6 +156,11 @@ class ProfileConfigResolver:
             sweep.get("cell_highlights") or profile.get("cell_highlights") or []
         )
 
+        cell_dimensions = None
+        if hooks.get("cell_dimensions"):
+            cell_dimensions = cls.import_callable(hooks["cell_dimensions"])
+        dimension_fields = cls._parse_dimension_fields(sweep.get("dimension_fields") or [])
+
         run_card_builder = None
         if hooks.get("run_card_display"):
             run_card_builder = cls.import_callable(hooks["run_card_display"])
@@ -147,6 +175,8 @@ class ProfileConfigResolver:
             kwargs["session_lifecycle_labels"] = tuple(lifecycle["session_labels"])
         if lifecycle.get("cell_labels"):
             kwargs["cell_lifecycle_labels"] = tuple(lifecycle["cell_labels"])
+        if lifecycle.get("expand_labels"):
+            kwargs["expand_lifecycle_labels"] = tuple(lifecycle["expand_labels"])
 
         behavior = profile.get("behavior") or {}
         return make_inference_report_config(
@@ -192,6 +222,10 @@ class ProfileConfigResolver:
             or "client.output_throughput",
             metric_verdict=metric_verdict,
             metric_contract=profile.get("metric_contract"),
+            cell_dimensions=cell_dimensions,
+            dimension_fields=dimension_fields,
+            sweep_series_label=sweep.get("series_label") or "Megatron sweep",
+            results_all_metrics=bool(sweep.get("results_all_metrics", False)),
             **kwargs,
         )
 

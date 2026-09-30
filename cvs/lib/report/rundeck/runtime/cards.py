@@ -26,6 +26,9 @@ SESSION_FALLBACK = DEFAULT_SESSION_LIFECYCLE_LABELS
 class DeckCardRenderer:
     """Profile-driven card renderers for Run Deck static HTML sections."""
 
+    DEFAULT_MAX_LINE_CHART_SERIES = 40
+    _TONES = ("tone1", "tone2", "tone3", "tone4", "tone5", "tone6")
+
     def __init__(
         self,
         *,
@@ -50,12 +53,47 @@ class DeckCardRenderer:
         notes_html = f"<p class='notes'>{html.escape(notes)}</p>" if notes else ""
         return f"<div class='meta-grid'>{hero_html}</div>{notes_html}"
 
-    def render_lifecycle(self, payload: dict, _card: dict, data: Any) -> str:
-        lifecycle = data if isinstance(data, dict) else payload.get("lifecycle") or {}
-        report = payload.get("report") or {}
+    @staticmethod
+    def _cell_stage_times(payload, label):
+        times = []
+        for cell in payload.get("cells") or []:
+            sec = (cell.get("cell_lifecycle") or {}).get(label)
+            try:
+                sec = float(sec)
+            except (TypeError, ValueError):
+                continue
+            if sec <= 0:
+                continue
+            name = cell.get("subtitle") or cell.get("label") or cell.get("cell_id") or cell.get("policy") or label
+            times.append((str(name), sec))
+        return times
+
+    @staticmethod
+    def _stage_html(label, sec, pct, tone, per_cell):
+        head = (
+            f"<span class='tl-lbl'>{html.escape(label.replace('_', ' '))}</span><span class='tl-val'>{sec:.1f}s</span>"
+        )
+        if not per_cell:
+            return f"<div class='tl-seg tl-{tone}' style='flex-grow:{pct:.2f}'>{head}</div>"
+        cells = "".join(
+            f"<div class='tl-cell tl-{cell_tone}' "
+            f"style='flex-grow:{100.0 * cell_sec / sec:.2f}' title='{html.escape(f'{name}: {cell_sec:.1f}s')}'>"
+            f"<span class='tl-lbl'>{html.escape(name)}</span>"
+            f"<span class='tl-val'>{cell_sec:.1f}s</span></div>"
+            for name, cell_sec, cell_tone in per_cell
+        )
+        return (
+            f"<div class='tl-group tl-{tone}' style='flex-grow:{pct:.2f}'>"
+            f"<div class='tl-group-head'>{head}</div>"
+            f"<div class='tl-group-body'>{cells}</div></div>"
+        )
+
+    @staticmethod
+    def _plain_timeline(lifecycle, labels):
+        """One untoned segment per stage. Inference decks use this path."""
         timeline_total = sum(lifecycle.values()) or 1.0
         parts = []
-        for lbl in report.get("session_lifecycle_labels", ()) or SESSION_FALLBACK:
+        for lbl in labels:
             sec = lifecycle.get(lbl, 0.0)
             if sec <= 0:
                 continue
@@ -67,20 +105,64 @@ class DeckCardRenderer:
             )
         return "".join(parts) or "<p class='muted'>No lifecycle timings recorded.</p>"
 
+    def render_lifecycle(self, payload: dict, _card: dict, data: Any) -> str:
+        lifecycle = data if isinstance(data, dict) else payload.get("lifecycle") or {}
+        report = payload.get("report") or {}
+        expand = tuple(report.get("expand_lifecycle_labels") or ())
+        labels = report.get("session_lifecycle_labels", ()) or SESSION_FALLBACK
+        if not expand:
+            return self._plain_timeline(lifecycle, labels)
+        # Expanded stages total their per-cell times: sweep cells run back to back, so the
+        # session spends the sum, not the longest cell.
+        per_cell = {lbl: self._cell_stage_times(payload, lbl) for lbl in expand}
+        totals = {
+            lbl: (sum(sec for _, sec in per_cell[lbl]) if per_cell.get(lbl) else lifecycle.get(lbl, 0.0))
+            for lbl in labels
+        }
+        timeline_total = sum(totals.values()) or 1.0
+        parts = []
+        # Stages and sweep cells share one palette cursor so a cell never repeats the colour
+        # of a stage sitting next to it.
+        tone = 0
+        for lbl in labels:
+            sec = totals[lbl]
+            if sec <= 0:
+                continue
+            stage_tone = self._TONES[tone % len(self._TONES)]
+            tone += 1
+            cells = []
+            for name, cell_sec in per_cell.get(lbl) or []:
+                cells.append((name, cell_sec, self._TONES[tone % len(self._TONES)]))
+                tone += 1
+            parts.append(self._stage_html(lbl, sec, 100.0 * sec / timeline_total, stage_tone, cells))
+        return "".join(parts) or "<p class='muted'>No lifecycle timings recorded.</p>"
+
+    @staticmethod
+    def _summary_card_html(summary):
+        if summary.get("label"):
+            title = str(summary["label"])
+            meta = str(summary.get("meta") or "")
+            unit = str(summary.get("headline_unit") or "tok/s")
+        else:
+            title = f"ISL={summary.get('isl', '')} \u00b7 OSL={summary.get('osl', '')}"
+            sat = " \u00b7 saturated at max C" if summary.get("saturated") else ""
+            meta = (
+                f"Peak at C={summary.get('conc_at_max_tput')}"
+                f" \u00b7 TTFT {fmt_num(summary.get('ttft_at_max_tput'))} ms{sat}"
+            )
+            unit = "tok/s"
+        return (
+            f"<article class='summary-card'><h3>{html.escape(title)}</h3>"
+            f"<div class='summary-stat'>{fmt_num(summary['max_output_throughput'])} "
+            f"<span class='headline-unit'>{html.escape(unit)}</span></div>"
+            f"<div class='summary-meta'>{html.escape(meta)}</div></article>"
+        )
+
     def render_sweep_analytics(self, payload: dict, _card: dict, data: Any) -> str:
         sweep = data if isinstance(data, dict) else {}
         summaries = sweep.get("sweep_summaries") or payload.get("sweep_summaries") or []
         summary_html = (
-            "".join(
-                f"<article class='summary-card'><h3>ISL={html.escape(str(s['isl']))} "
-                f"\u00b7 OSL={html.escape(str(s['osl']))}</h3>"
-                f"<div class='summary-stat'>{fmt_num(s['max_output_throughput'])} "
-                f"<span class='headline-unit'>tok/s</span></div>"
-                f"<div class='summary-meta'>Peak at C={s['conc_at_max_tput']}"
-                f" &middot; TTFT {fmt_num(s.get('ttft_at_max_tput'))} ms"
-                f"{' &middot; saturated at max C' if s.get('saturated') else ''}</div></article>"
-                for s in summaries
-            )
+            "".join(self._summary_card_html(s) for s in summaries)
             or "<p class='muted'>No sweep summary (no throughput data).</p>"
         )
 
@@ -153,11 +235,14 @@ class DeckCardRenderer:
     @staticmethod
     def render_table(_payload: dict, _card: dict, data: Any) -> str:
         table = data if isinstance(data, dict) else {}
-        return render_results_table_html(
+        # .results-wrap gives the (potentially wide, all-metrics) table a
+        # horizontal scrollbar instead of overflowing the card.
+        inner = render_results_table_html(
             table.get("headers") or [],
             table.get("rows") or [],
             empty_message="No results table rows.",
         )
+        return f"<div class='results-wrap'>{inner}</div>"
 
     @staticmethod
     def render_status_matrix(payload: dict, _card: dict, data: Any) -> str:
@@ -262,6 +347,12 @@ class DeckCardRenderer:
             entries = raw
         if not entries:
             return "<p class='muted'>No series data.</p>"
+        entries = sorted(entries, key=lambda e: str(e.get("label", "")) if isinstance(e, dict) else "")
+        total = len(entries)
+        max_series = series_cfg.get("max_series", self.DEFAULT_MAX_LINE_CHART_SERIES)
+        truncated = bool(max_series) and total > max_series
+        if truncated:
+            entries = entries[:max_series]
         parts = []
         title = card.get("title") or y_field
         for entry in entries:
@@ -269,10 +360,23 @@ class DeckCardRenderer:
                 continue
             points = entry.get("points") or []
             label = entry.get("label") or title
-            part = self._charts.render_series_chart(str(label), points, series_cfg.get("unit") or "GB/s")
+            part = self._charts.render_series_chart(
+                str(label),
+                points,
+                series_cfg.get("unit") or "GB/s",
+                x_label=series_cfg.get("x_label") or "{x}",
+            )
             if part:
                 parts.append(part)
-        return f"<div class='chart-grid'>{''.join(parts)}</div>" if parts else "<p class='muted'>No series data.</p>"
+        if not parts:
+            return "<p class='muted'>No series data.</p>"
+        banner = (
+            f"<p class='muted'>Showing {len(parts)} of {total} series charts. "
+            "Full results remain in the results table and JSON export.</p>"
+            if truncated
+            else ""
+        )
+        return f"{banner}<div class='chart-grid'>{''.join(parts)}</div>"
 
     @staticmethod
     def render_heatmap(_payload: dict, card: dict, data: Any) -> str:

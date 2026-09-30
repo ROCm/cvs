@@ -98,7 +98,46 @@ h1 { margin: 0 0 0.25rem; font-size: 1.6rem; font-weight: 600; letter-spacing: -
 .chart-wrap { position: relative; height: 240px; }
 .chart-wrap-tall { height: 300px; }
 .chart-wrap-interactivity { height: min(520px, 70vh); min-height: 380px; }
+.chart-wrap-loss { height: min(420px, 55vh); min-height: 280px; }
 .chart-card-wide { max-width: 100%; }
+/* Metric-graph controls: multi-select dropdown for choosing which per-step
+   curve panels to show. */
+details.metric-pick { position: relative; }
+details.metric-pick > summary {
+  cursor: pointer; list-style: none; background: #12151f; color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 0.35rem 0.55rem; font-size: 0.85rem;
+}
+details.metric-pick > summary::-webkit-details-marker { display: none; }
+.metric-menu {
+  position: absolute; z-index: 30; margin-top: 4px; max-height: 320px; overflow: auto;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.5rem 0.65rem; min-width: 15rem; box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+}
+/* flex-direction:row overrides the toolbar's `label { flex-direction: column }`
+   so each checkbox sits inline with its label on one row. */
+.metric-menu .cb { display: flex; flex-direction: row; align-items: center; gap: 0.45rem;
+  font-size: 0.8rem; color: var(--text); padding: 0.15rem 0; white-space: nowrap; }
+.metric-menu .cb input { flex: 0 0 auto; width: auto; margin: 0; }
+.metric-menu .menu-actions { display: flex; gap: 0.4rem; margin-bottom: 0.5rem; padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border); }
+.metric-menu .menu-actions button {
+  background: #12151f; color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.25rem 0.5rem; font-size: 0.72rem; cursor: pointer;
+}
+.metric-menu .menu-actions button:hover { border-color: var(--accent); }
+/* Layout of the per-step curve panels: stacked (default, full width) or a
+   compact multi-column grid. The extra-curve panels live in a wrapper; display:
+   contents lets them participate directly in the parent grid instead of forming
+   one stacked cell. */
+#step-charts-extra { display: contents; }
+#step-charts.layout-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); align-items: start; }
+#step-charts.layout-grid .panel { margin: 0; }
+#step-charts.layout-grid .chart-wrap-loss { height: 320px; min-height: 240px; }
+/* White background mode for the curve panels (charts re-theme in JS). */
+#step-charts.bg-white .panel { background: #ffffff; border-color: #d9dde6; }
+#step-charts.bg-white .panel h2,
+#step-charts.bg-white .panel .subsection-hint { color: #333; }
+#step-charts.bg-white .chart-card { background: #ffffff; }
 .panel-interactivity { margin-bottom: 1.25rem; }
 .interactivity-head { margin-bottom: 0.75rem; }
 .interactivity-chart-title {
@@ -180,8 +219,14 @@ tr.changed td { background: rgba(255,107,53,0.1); }
 <nav class="viewer-nav" id="viewer-nav">
   <a href="#filters">Filters</a>
   <a href="#overview">Overview</a>
-  <a href="#interactivity-panel">Interactivity</a>
-  <a href="#charts">Charts</a>
+  <a href="#interactivity-panel" id="nav-interactivity">Interactivity</a>
+  <a href="#loss-panel" id="nav-loss-curves" style="display:none">Loss curves</a>
+  <a href="#ppl-panel" id="nav-ppl-curves" style="display:none">Perplexity</a>
+  <a href="#lr-panel" id="nav-lr-curves" style="display:none">Learning rate</a>
+  <a href="#grad-norm-panel" id="nav-grad-norm-curves" style="display:none">Grad norm</a>
+  <a href="#tflops-panel" id="nav-tflops-curves" style="display:none">TFLOP/s/GPU</a>
+  <a href="#tokens-panel" id="nav-tokens-curves" style="display:none">Tokens/s/GPU</a>
+  <a href="#charts" id="nav-charts">Charts</a>
   <a href="#heatmap">Heatmap</a>
   <a href="#gates">Gates</a>
   <a href="#cells">Cells</a>
@@ -192,6 +237,21 @@ tr.changed td { background: rgba(255,107,53,0.1); }
   <h2>Filters</h2>
   <div class="toolbar">
     <div id="dimension-filters" class="toolbar-dims"></div>
+    <label class="filter-field" id="warmup-field" style="display:none"><span class="filter-label">Warmup</span><select id="f-warmup" aria-label="Skip initial steps by percent"></select></label>
+    <label class="filter-field" id="bg-field" style="display:none"><span class="filter-label">Background</span><select id="f-bg" aria-label="Metric chart background"><option value="dark">Dark</option><option value="white">White</option></select></label>
+    <label class="filter-field" id="layout-field" style="display:none"><span class="filter-label">Layout</span><select id="f-layout" aria-label="Metric chart layout"><option value="stacked">Stacked</option><option value="grid">Grid</option></select></label>
+    <div class="filter-field" id="metric-pick-field" style="display:none"><span class="filter-label">Select metrics</span>
+      <details class="metric-pick"><summary id="metric-pick-summary">Metrics ▾</summary>
+        <div class="metric-menu">
+          <div class="menu-actions">
+            <button type="button" id="metric-pick-defaults">Defaults</button>
+            <button type="button" id="metric-pick-all">All</button>
+            <button type="button" id="metric-pick-none">None</button>
+          </div>
+          <div id="metric-pick-list"></div>
+        </div>
+      </details>
+    </div>
     <label class="filter-field"><span class="filter-label">Tier fail</span><select id="f-tier"><option value="">Any</option></select></label>
     <label class="filter-field filter-search"><span class="filter-label">Search</span><input id="f-search" type="search" placeholder="cell id, host…"/></label>
     <label class="filter-field filter-baseline"><span class="filter-label">Baseline JSON</span><input id="f-baseline" type="file" accept=".json,application/json"/></label>
@@ -230,6 +290,57 @@ tr.changed td { background: rgba(255,107,53,0.1); }
     </article>
   </div>
 </section>
+
+<div id="step-charts" class="layout-stacked">
+<section class="panel" id="loss-panel" style="display:none">
+  <h2>Loss curves</h2>
+  <p class="subsection-hint">Sampled lm_loss vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>
+  <article class="chart-card chart-card-wide">
+    <div class="chart-wrap chart-wrap-loss" id="loss-chart-wrap"></div>
+  </article>
+</section>
+
+<section class="panel" id="ppl-panel" style="display:none">
+  <h2>Perplexity</h2>
+  <p class="subsection-hint">exp(lm_loss) vs step · train-token PPL (nats) · one series per filtered combo · scroll to zoom · shift+drag to pan</p>
+  <article class="chart-card chart-card-wide">
+    <div class="chart-wrap chart-wrap-loss" id="ppl-chart-wrap"></div>
+  </article>
+</section>
+
+<section class="panel" id="lr-panel" style="display:none">
+  <h2>Learning rate</h2>
+  <p class="subsection-hint">Sampled learning_rate vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>
+  <article class="chart-card chart-card-wide">
+    <div class="chart-wrap chart-wrap-loss" id="lr-chart-wrap"></div>
+  </article>
+</section>
+
+<section class="panel" id="grad-norm-panel" style="display:none">
+  <h2>Grad norm</h2>
+  <p class="subsection-hint">Sampled grad_norm vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>
+  <article class="chart-card chart-card-wide">
+    <div class="chart-wrap chart-wrap-loss" id="grad-norm-chart-wrap"></div>
+  </article>
+</section>
+
+<section class="panel" id="tflops-panel" style="display:none">
+  <h2>TFLOP/s/GPU</h2>
+  <p class="subsection-hint">Sampled throughput per GPU vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>
+  <article class="chart-card chart-card-wide">
+    <div class="chart-wrap chart-wrap-loss" id="tflops-chart-wrap"></div>
+  </article>
+</section>
+
+<section class="panel" id="tokens-panel" style="display:none">
+  <h2>Tokens/s/GPU</h2>
+  <p class="subsection-hint">Sampled tokens/s/GPU vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>
+  <article class="chart-card chart-card-wide">
+    <div class="chart-wrap chart-wrap-loss" id="tokens-chart-wrap"></div>
+  </article>
+</section>
+<div id="step-charts-extra"></div>
+</div>
 
 <section class="panel" id="charts" style="display:none">
   <h2>Sweep charts</h2>
@@ -290,9 +401,149 @@ let reportData = null;
 let allCells = [];
 let chartInstances = [];
 let comparisonChartMode = 'bar';
+// Per-step metric-graph controls (training decks): background, layout, and which
+// curve panels are shown. selectedStepMetrics stays null for inference viewers
+// (no step curves) so their charts render unchanged.
+let chartBackground = 'dark';
+let chartLayout = 'stacked';
+let selectedStepMetrics = null;
+let extraStepSpecsCache = null;
 let interactivityLogScale = true;
 let interactivityShowLabels = true;
 let interactivityChart = null;
+let lossChart = null;
+const STEP_CHARTS = [
+  { panel: 'loss-panel', wrap: 'loss-chart-wrap', nav: 'nav-loss-curves', field: 'loss_curve', yTitle: 'lm_loss' },
+  { panel: 'ppl-panel', wrap: 'ppl-chart-wrap', nav: 'nav-ppl-curves', field: 'perplexity_curve', yTitle: 'perplexity' },
+  { panel: 'lr-panel', wrap: 'lr-chart-wrap', nav: 'nav-lr-curves', field: 'learning_rate_curve', yTitle: 'learning_rate' },
+  { panel: 'grad-norm-panel', wrap: 'grad-norm-chart-wrap', nav: 'nav-grad-norm-curves', field: 'grad_norm_curve', yTitle: 'grad_norm' },
+  { panel: 'tflops-panel', wrap: 'tflops-chart-wrap', nav: 'nav-tflops-curves', field: 'throughput_curve', yTitle: 'TFLOP/s/GPU' },
+  { panel: 'tokens-panel', wrap: 'tokens-chart-wrap', nav: 'nav-tokens-curves', field: 'tokens_curve', yTitle: 'tokens/s/GPU' },
+];
+
+function stepSpecId(spec) { return spec.id || spec.field; }
+function stepSpecLabel(spec) { return spec.yTitle || stepSpecId(spec); }
+function stepSpecCurve(cell, spec) {
+  return spec.extraTag ? (cell.extra_curves || {})[spec.extraTag] : cell[spec.field];
+}
+
+function stepChartTheme() {
+  return chartBackground === 'white'
+    ? { title: '#222', tick: '#333', grid: '#e6e6e6', legend: '#222', fill: '#ffffff' }
+    : { title: '#9aa3b5', tick: '#9aa3b5', grid: '#2a2f3d', legend: '#e8eaef', fill: '#0e1117' };
+}
+
+const stepBgPlugin = {
+  id: 'stepBgFill',
+  beforeDraw(chart) {
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-over';
+    ctx.fillStyle = stepChartTheme().fill;
+    ctx.fillRect(0, 0, chart.width, chart.height);
+    ctx.restore();
+  },
+};
+
+// Extra per-step curves a framework may attach beyond the six fixed panels
+// (cell.extra_curves). One panel is created per tag under #step-charts-extra.
+function extraStepSpecs() {
+  if (extraStepSpecsCache) return extraStepSpecsCache;
+  const host = $('step-charts-extra');
+  const specs = [];
+  if (!host) { extraStepSpecsCache = specs; return specs; }
+  const tags = new Set();
+  allCells.forEach(c => Object.keys(c.extra_curves || {}).forEach(t => tags.add(t)));
+  [...tags].sort().forEach(tag => {
+    const slug = 'extra-' + tag.replace(/[^A-Za-z0-9_-]/g, '_');
+    const panelId = slug + '-panel';
+    if (!document.getElementById(panelId)) {
+      const panel = document.createElement('section');
+      panel.className = 'panel';
+      panel.id = panelId;
+      panel.style.display = 'none';
+      panel.innerHTML = '<h2>' + escapeHtmlText(tag) + '</h2>'
+        + '<p class="subsection-hint">' + escapeHtmlText(tag)
+        + ' vs step · one series per filtered combo · scroll to zoom · shift+drag to pan</p>'
+        + '<article class="chart-card chart-card-wide"><div class="chart-wrap chart-wrap-loss" id="'
+        + slug + '-wrap"></div></article>';
+      host.appendChild(panel);
+    }
+    specs.push({ panel: panelId, wrap: slug + '-wrap', nav: null, extraTag: tag, yTitle: tag, id: 'extra:' + tag });
+  });
+  extraStepSpecsCache = specs;
+  return specs;
+}
+
+function allStepSpecs() { return STEP_CHARTS.concat(extraStepSpecs()); }
+
+function hasAnyStepCurves() {
+  return allCells.some(c => STEP_CHARTS.some(s => Array.isArray(c[s.field]) && c[s.field].length)
+    || (c.extra_curves && Object.keys(c.extra_curves).length));
+}
+
+function applyStepChartLayout() {
+  const host = $('step-charts');
+  if (!host) return;
+  host.className = 'layout-' + chartLayout + (chartBackground === 'white' ? ' bg-white' : '');
+}
+
+function initStepChartControls() {
+  if (!hasAnyStepCurves()) return;
+  ['bg-field', 'layout-field', 'metric-pick-field'].forEach(id => {
+    const el = $(id);
+    if (el) el.style.display = '';
+  });
+  const specs = allStepSpecs();
+  const defaults = STEP_CHARTS.map(s => s.field);
+  if (selectedStepMetrics === null) selectedStepMetrics = new Set(defaults);
+
+  const list = $('metric-pick-list');
+  if (list) {
+    list.innerHTML = '';
+    specs.forEach(spec => {
+      const id = stepSpecId(spec);
+      const label = document.createElement('label');
+      label.className = 'cb';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = selectedStepMetrics.has(id);
+      cb.addEventListener('change', () => {
+        if (cb.checked) selectedStepMetrics.add(id); else selectedStepMetrics.delete(id);
+        render();
+      });
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(' ' + stepSpecLabel(spec)));
+      list.appendChild(label);
+    });
+  }
+
+  const setAll = mode => {
+    selectedStepMetrics = new Set();
+    specs.forEach(spec => {
+      const id = stepSpecId(spec);
+      const pick = mode === 'all' ? true : (mode === 'defaults' ? defaults.includes(id) : false);
+      if (pick) selectedStepMetrics.add(id);
+    });
+    if (list) {
+      list.querySelectorAll('input[type=checkbox]').forEach((cb, i) => {
+        cb.checked = selectedStepMetrics.has(stepSpecId(specs[i]));
+      });
+    }
+    render();
+  };
+  const onAll = $('metric-pick-all');
+  const onNone = $('metric-pick-none');
+  const onDefaults = $('metric-pick-defaults');
+  if (onAll) onAll.addEventListener('click', () => setAll('all'));
+  if (onNone) onNone.addEventListener('click', () => setAll('none'));
+  if (onDefaults) onDefaults.addEventListener('click', () => setAll('defaults'));
+
+  const bgSel = $('f-bg');
+  const layoutSel = $('f-layout');
+  if (bgSel) bgSel.addEventListener('change', e => { chartBackground = e.target.value; render(); });
+  if (layoutSel) layoutSel.addEventListener('change', e => { chartLayout = e.target.value; render(); });
+}
 let interactivityTooltipPinned = false;
 let interactivityTooltipOver = false;
 let interactivityTooltipHideTimer = null;
@@ -346,6 +597,7 @@ const FALLBACK_VIEWER_CONFIG = {
   ],
   heatmap_row_fields: ['isl', 'osl', 'policy'],
   comparison_hint: 'Compare ISL/OSL shapes at each concurrency · hover for values · dashed lines stay visible when trends overlap',
+  sweep_charts: { enabled: true },
   interactivity: {
     enabled: true,
     tpot_metric: 'client.mean_tpot_ms',
@@ -402,6 +654,13 @@ function shapeLabelFromSummary(s) {
   return shapeLabelFromParts(groupByFields().map(f => s[f]));
 }
 
+function sweepChartsEnabled() {
+  const vc = viewerConfig();
+  const cfg = vc.sweep_charts || {};
+  if (Object.prototype.hasOwnProperty.call(cfg, 'enabled')) return !!cfg.enabled;
+  return (vc.interactivity || {}).enabled !== false;
+}
+
 function interactivityTpotMetric() {
   return (viewerConfig().interactivity || {}).tpot_metric || 'client.mean_tpot_ms';
 }
@@ -431,6 +690,13 @@ function initViewerUi() {
   const inter = vc.interactivity || {};
   if (interTitle && inter.title) interTitle.textContent = inter.title;
   if (interHint && inter.hint) interHint.textContent = inter.hint;
+  const navInter = $('nav-interactivity');
+  if (navInter) navInter.style.display = inter.enabled ? '' : 'none';
+  const navCharts = $('nav-charts');
+  const chartsPanel = $('charts');
+  const sweepOn = sweepChartsEnabled();
+  if (navCharts) navCharts.style.display = sweepOn ? '' : 'none';
+  if (chartsPanel && !sweepOn) chartsPanel.style.display = 'none';
 
   const heatmapSel = $('heatmap-metric');
   if (heatmapSel) {
@@ -626,15 +892,43 @@ function cellBarPct(cell, metricKey) {
   return Number(entry.bar_pct);
 }
 
+function concurrencyField() {
+  return viewerConfig().concurrency_field || 'concurrency';
+}
+
+function cellConcurrency(cell) {
+  const v = cell[concurrencyField()];
+  return v == null || v === '' ? null : v;
+}
+
+function concurrencyTickLabel(value) {
+  return concurrencyField() === 'concurrency' ? 'C=' + value : String(value);
+}
+
+function sortedConcurrencyKeys(values) {
+  const uniq = [];
+  const seen = new Set();
+  values.forEach(v => {
+    if (v == null || v === '') return;
+    const key = String(v);
+    if (seen.has(key)) return;
+    seen.add(key);
+    uniq.push(v);
+  });
+  const allNumeric = uniq.every(v => Number.isFinite(Number(v)));
+  if (allNumeric) return uniq.map(Number).sort((a, b) => a - b);
+  return uniq.map(String).sort();
+}
+
 function pointsByConcurrency(rows, valueFn) {
   const byConc = new Map();
   rows.forEach(c => {
-    const conc = Number(c.concurrency);
+    const conc = cellConcurrency(c);
     const val = valueFn(c);
-    if (val == null || Number.isNaN(conc)) return;
-    byConc.set(conc, val);
+    if (conc == null || val == null) return;
+    byConc.set(String(conc), val);
   });
-  return [...byConc.entries()].sort((a, b) => a[0] - b[0]);
+  return sortedConcurrencyKeys([...byConc.keys()]).map(k => [k, byConc.get(String(k))]);
 }
 
 function filteredCells() {
@@ -718,6 +1012,14 @@ function destroyCharts() {
   clearEl('margin-grid');
   const interactivityWrap = $('interactivity-chart-wrap');
   if (interactivityWrap) interactivityWrap.innerHTML = '';
+  STEP_CHARTS.forEach(spec => {
+    const wrap = $(spec.wrap);
+    if (wrap) wrap.innerHTML = '';
+    const panel = $(spec.panel);
+    if (panel) panel.style.display = 'none';
+    const nav = $(spec.nav);
+    if (nav) nav.style.display = 'none';
+  });
   ['comparison-block', 'margin-block'].forEach(id => {
     const el = $(id);
     if (el) el.style.display = 'none';
@@ -725,6 +1027,7 @@ function destroyCharts() {
   const interPanel = $('interactivity-panel');
   if (interPanel) interPanel.style.display = 'none';
   interactivityChart = null;
+  lossChart = null;
   interactivityTooltipPinned = false;
   interactivityTooltipOver = false;
   clearTimeout(interactivityTooltipHideTimer);
@@ -742,17 +1045,25 @@ function updateComparisonToggleUI() {
   linesBtn.setAttribute('aria-pressed', String(!isBar));
 }
 
+function summaryCardHtml(s) {
+  const title = s.label ? escapeHtmlText(s.label) : shapeLabelFromSummary(s);
+  const unit = escapeHtmlText(s.headline_unit || 'tok/s');
+  const meta = s.meta != null
+    ? escapeHtmlText(s.meta)
+    : 'Peak at C=' + escapeHtmlText(s.conc_at_max_tput)
+      + ' · TTFT ' + (s.ttft_at_max_tput != null ? Number(s.ttft_at_max_tput).toFixed(1) : '—') + ' ms'
+      + (s.saturated ? ' · saturated' : '');
+  return '<article class="summary-card"><h3>' + title + '</h3>'
+    + '<div class="summary-stat">' + metricVal({ actuals: { headline: s.max_output_throughput } }, 'headline')
+    + ' <span style="font-size:0.75rem;font-weight:500;color:var(--muted)">' + unit + '</span></div>'
+    + '<div class="summary-meta">' + meta + '</div></article>';
+}
+
 function buildOverview() {
   const grid = $('summary-grid');
   const summaries = reportData.sweep_summaries || [];
-  grid.innerHTML = summaries.map(s => (
-    '<article class="summary-card"><h3>' + shapeLabelFromSummary(s) + '</h3>'
-    + '<div class="summary-stat">' + metricVal({ actuals: { 'client.output_throughput': s.max_output_throughput } }, 'client.output_throughput')
-    + ' <span style="font-size:0.75rem;font-weight:500;color:var(--muted)">tok/s</span></div>'
-    + '<div class="summary-meta">Peak at C=' + s.conc_at_max_tput
-    + ' · TTFT ' + (s.ttft_at_max_tput != null ? Number(s.ttft_at_max_tput).toFixed(1) : '—') + ' ms'
-    + (s.saturated ? ' · saturated' : '') + '</div></article>'
-  )).join('') || '<p class="subsection-hint">No sweep summary data.</p>';
+  grid.innerHTML = summaries.map(summaryCardHtml).join('')
+    || '<p class="subsection-hint">No sweep summary data.</p>';
 
   const status = reportData.overall_status || 'record';
   const badge = $('hero-status');
@@ -805,23 +1116,23 @@ function buildChartComparisonFromRows(rows) {
       shapeRows.forEach(c => {
         const val = metricNum(c, spec.metric);
         if (val == null) return;
-        const conc = Number(c.concurrency);
-        if (Number.isNaN(conc)) return;
-        byConc.set(conc, val);
-        allConcs.add(conc);
+        const conc = cellConcurrency(c);
+        if (conc == null) return;
+        byConc.set(String(conc), val);
+        allConcs.add(String(conc));
       });
       if (byConc.size) {
         shapeSeries.push({ label: shapeLabelFromParts(parts), byConc });
       }
     });
     if (shapeSeries.length < 2) return;
-    const concurrencies = [...allConcs].sort((a, b) => a - b);
+    const concurrencies = sortedConcurrencyKeys([...allConcs]);
     if (concurrencies.length < 2) return;
     out[spec.suffix] = {
       concurrencies,
       series: shapeSeries.map(s => ({
         label: s.label,
-        values: concurrencies.map(c => s.byConc.get(c) ?? null),
+        values: concurrencies.map(c => s.byConc.get(String(c)) ?? null),
       })),
       title: spec.title,
       unit: spec.unit,
@@ -1348,6 +1659,207 @@ function buildInteractivityChart(rows) {
   return true;
 }
 
+const WARMUP_PERCENTS = [0, 5, 7, 10, 15, 20, 30];
+
+function plannedStepsFor(cell) {
+  const planned = Number(cell && cell.planned_steps);
+  if (Number.isFinite(planned) && planned > 0) return planned;
+  let last = 0;
+  STEP_CHARTS.forEach(spec => {
+    (cell && cell[spec.field] || []).forEach(pt => {
+      const step = Number(pt && pt[0]);
+      if (Number.isFinite(step) && step > last) last = step;
+    });
+  });
+  return last;
+}
+
+function warmupStepFor(total, pct) {
+  const steps = Number(total);
+  const percent = Number(pct);
+  if (!Number.isFinite(steps) || steps <= 0 || !Number.isFinite(percent) || percent <= 0) return 0;
+  return Math.floor(steps * percent / 100);
+}
+
+function warmupPercent() {
+  const field = $('warmup-field');
+  const sel = $('f-warmup');
+  if (!field || !sel || field.style.display === 'none') return 0;
+  const n = Number(sel.value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function parseCurvePoints(curve, skip) {
+  if (!Array.isArray(curve)) return [];
+  const cutoff = Number(skip) || 0;
+  return curve
+    .map(pt => {
+      if (!Array.isArray(pt) || pt.length < 2) return null;
+      const x = Number(pt[0]);
+      const y = Number(pt[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      if (cutoff && x <= cutoff) return null;
+      return { x, y };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.x - b.x);
+}
+
+function populateWarmupSteps() {
+  const sel = $('f-warmup');
+  const field = $('warmup-field');
+  if (!sel || !field) return;
+  const totals = [];
+  allCells.forEach(c => {
+    const total = plannedStepsFor(c);
+    if (total > 0) totals.push(total);
+  });
+  if (!totals.length) {
+    field.style.display = 'none';
+    return;
+  }
+  const lo = Math.min.apply(null, totals);
+  const hi = Math.max.apply(null, totals);
+  field.style.display = '';
+  sel.innerHTML = WARMUP_PERCENTS.map(pct => {
+    const stepLo = warmupStepFor(lo, pct);
+    const stepHi = warmupStepFor(hi, pct);
+    const stepLabel = stepLo === stepHi ? String(stepLo) : (stepLo + '–' + stepHi);
+    return '<option value="' + pct + '">' + pct + '% (step ' + stepLabel + ')</option>';
+  }).join('');
+  sel.value = '10';
+}
+
+function parseLossPoints(curve) {
+  return parseCurvePoints(curve);
+}
+
+function makeStepChart(canvas, datasets, yTitle) {
+  const t = stepChartTheme();
+  const ch = new Chart(canvas, {
+    type: 'line',
+    data: { datasets },
+    plugins: [stepBgPlugin],
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      parsing: false,
+      interaction: { mode: 'nearest', intersect: false },
+      plugins: {
+        legend: { labels: { color: t.legend, boxWidth: 12, font: { size: 11 } } },
+        tooltip: { callbacks: { label: ctx => {
+          const y = ctx.parsed && ctx.parsed.y;
+          const x = ctx.parsed && ctx.parsed.x;
+          return (ctx.dataset.label || '') + ': step ' + x + '  ' + yTitle + ' ' + y;
+        } } },
+        zoom: {
+          limits: {
+            x: { min: 'original', max: 'original' },
+            y: { min: 'original', max: 'original' },
+          },
+          pan: {
+            enabled: true,
+            mode: 'xy',
+            modifierKey: 'shift',
+            threshold: 8,
+          },
+          zoom: {
+            wheel: { enabled: true, speed: 0.09, modifierKey: null },
+            pinch: { enabled: true },
+            drag: {
+              enabled: true,
+              modifierKey: null,
+              backgroundColor: 'rgba(107,159,255,0.14)',
+              borderColor: 'rgba(107,159,255,0.55)',
+              borderWidth: 1,
+            },
+            mode: 'xy',
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          title: { display: true, text: 'Step', color: t.title, font: { size: 11 } },
+          ticks: { color: t.tick },
+          grid: { color: t.grid },
+        },
+        y: {
+          type: 'linear',
+          title: { display: true, text: yTitle, color: t.title, font: { size: 11 } },
+          ticks: { color: t.tick },
+          grid: { color: t.grid },
+        },
+      },
+    },
+  });
+  chartInstances.push(ch);
+  return ch;
+}
+
+function makeLossChart(canvas, datasets) {
+  lossChart = makeStepChart(canvas, datasets, 'lm_loss');
+  return lossChart;
+}
+
+function buildStepChart(rows, spec) {
+  const panel = $(spec.panel);
+  const wrap = $(spec.wrap);
+  const nav = spec.nav ? $(spec.nav) : null;
+  if (!panel || !wrap) return false;
+
+  wrap.innerHTML = '';
+  panel.style.display = 'none';
+  if (nav) nav.style.display = 'none';
+
+  if (selectedStepMetrics && !selectedStepMetrics.has(stepSpecId(spec))) return false;
+
+  const datasets = [];
+  rows.forEach((c, index) => {
+    const pts = parseCurvePoints(stepSpecCurve(c, spec), warmupStepFor(plannedStepsFor(c), warmupPercent()));
+    if (!pts.length) return;
+    const color = CHART_COLORS[index % CHART_COLORS.length];
+    const dashed = LINE_DASHES[index % LINE_DASHES.length];
+    datasets.push({
+      label: c.subtitle || c.cell_id || ('combo ' + index),
+      data: pts,
+      borderColor: color,
+      backgroundColor: color,
+      borderWidth: 2,
+      borderDash: dashed,
+      tension: 0.15,
+      fill: false,
+      pointRadius: pts.length > 40 ? 0 : 3,
+      pointHoverRadius: 5,
+      pointStyle: LINE_POINT_STYLES[index % LINE_POINT_STYLES.length],
+      pointBackgroundColor: color,
+      pointBorderColor: '#1a1d27',
+      pointBorderWidth: 1,
+      spanGaps: true,
+      order: dashed.length ? index : index + 10,
+    });
+  });
+
+  if (!datasets.length) return false;
+
+  const canvas = document.createElement('canvas');
+  wrap.appendChild(canvas);
+  const ch = makeStepChart(canvas, datasets, spec.yTitle);
+  if (spec.field === 'loss_curve') lossChart = ch;
+  panel.style.display = 'block';
+  if (nav) nav.style.display = '';
+  return true;
+}
+
+function buildLossChart(rows) {
+  return buildStepChart(rows, STEP_CHARTS[0]);
+}
+
+function buildStepCharts(rows) {
+  allStepSpecs().forEach(spec => buildStepChart(rows, spec));
+  applyStepChartLayout();
+}
+
 function buildMarginCharts(rows) {
   const block = $('margin-block');
   const grid = $('margin-grid');
@@ -1371,14 +1883,14 @@ function buildMarginCharts(rows) {
   });
 
   if (!shapeSeries.length) return;
-  const concurrencies = [...allConcs].sort((a, b) => a - b);
+  const concurrencies = sortedConcurrencyKeys([...allConcs]);
   if (concurrencies.length < 2) return;
 
-  const labels = concurrencies.map(c => 'C=' + c);
+  const labels = concurrencies.map(concurrencyTickLabel);
   const datasets = shapeSeries.map((s, i) => buildLineDataset({
     label: s.label,
     data: concurrencies.map(c => {
-      const hit = s.points.find(p => p[0] === c);
+      const hit = s.points.find(p => String(p[0]) === String(c));
       return hit ? hit[1] : null;
     }),
   }, i, CHART_COLORS[i % CHART_COLORS.length]));
@@ -1415,7 +1927,7 @@ function buildComparisonCharts(rows) {
 
   Object.keys(comparison).sort().forEach(suffix => {
     const entry = comparison[suffix];
-    const labels = entry.concurrencies.map(c => 'C=' + c);
+    const labels = entry.concurrencies.map(concurrencyTickLabel);
     const datasets = entry.series.map((s, i) => {
       const color = CHART_COLORS[i % CHART_COLORS.length];
       if (chartType === 'bar') {
@@ -1457,11 +1969,16 @@ function buildCharts(rows) {
   const chartsPanel = $('charts');
 
   buildInteractivityChart(rows);
-  buildComparisonCharts(rows);
-  buildMarginCharts(rows);
+  buildStepCharts(rows);
+  if (sweepChartsEnabled()) {
+    buildComparisonCharts(rows);
+    buildMarginCharts(rows);
+  }
 
-  const hasSweepCharts = ($('comparison-grid') && $('comparison-grid').children.length)
-    || ($('margin-grid') && $('margin-grid').children.length);
+  const hasSweepCharts = sweepChartsEnabled() && (
+    ($('comparison-grid') && $('comparison-grid').children.length)
+    || ($('margin-grid') && $('margin-grid').children.length)
+  );
   chartsPanel.style.display = hasSweepCharts ? 'block' : 'none';
 }
 
@@ -1487,36 +2004,46 @@ function buildHeatmap(rows) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(c);
   });
+  // Keep the panel (and its metric picker) visible on empty results so a metric
+  // with no data -- e.g. scaling efficiency on a single-node run -- shows an
+  // in-place message instead of the whole card disappearing.
   if (!groups.size) {
-    panel.style.display = 'none';
+    if (hint) hint.textContent = meta.label + ' · no cells match the current filters';
+    wrap.innerHTML = '<p class="subsection-hint" style="margin:0.5rem 0 0">'
+      + 'No cells match the current filters.</p>';
+    panel.style.display = 'block';
     return;
   }
-  const concField = viewerConfig().concurrency_field || 'concurrency';
-  const allConcs = [...new Set(rows.map(c => Number(c[concField])))].sort((a, b) => a - b);
+  const concField = concurrencyField();
+  const allConcs = sortedConcurrencyKeys(rows.map(c => cellConcurrency(c)));
   const values = [];
   groups.forEach(cells => cells.forEach(c => {
     const v = metricNum(c, metricKey);
     if (v != null) values.push(v);
   }));
   if (!values.length) {
-    panel.style.display = 'none';
+    if (hint) hint.textContent = meta.label + ' · no numeric values collected for the filtered cells';
+    wrap.innerHTML = '<p class="subsection-hint" style="margin:0.5rem 0 0">No <strong>'
+      + escapeHtmlText(meta.label) + '</strong> values are available for the current selection. '
+      + 'Pick another metric above.</p>';
+    panel.style.display = 'block';
     return;
   }
   const minV = Math.min(...values);
   const maxV = Math.max(...values);
   if (hint) {
-    hint.textContent = meta.label + ' · concurrency columns · greener is '
+    hint.textContent = meta.label + ' · ' + fieldLabel(concField) + ' columns · greener is '
       + (meta.higherBetter ? 'higher' : 'lower') + ' · filtered cells';
   }
   const rowHeader = rowFields.map(f => fieldLabel(f)).join(' / ');
   let html = '<table class="data heat"><thead><tr><th>' + rowHeader + '</th>';
-  allConcs.forEach(c => { html += '<th>C=' + c + '</th>'; });
+  allConcs.forEach(c => { html += '<th>' + escapeHtmlText(concurrencyTickLabel(c)) + '</th>'; });
   html += '</tr></thead><tbody>';
   [...groups.entries()].sort().forEach(([key, cells]) => {
     const parts = key.split('|');
     html += '<tr><td>' + rowFields.map((f, i) => fieldLabel(f) + '=' + (parts[i] || '—')).join(' · ') + '</td>';
     allConcs.forEach(conc => {
-      const cell = cells.find(c => Number(c[concField]) === conc);
+      const cell = cells.find(c => String(cellConcurrency(c)) === String(conc));
       const v = cell ? metricNum(cell, metricKey) : null;
       if (v == null) {
         html += '<td class="matrix-na">—</td>';
@@ -1760,7 +2287,9 @@ loadReportData().then(data => {
   initViewerUi();
   buildOverview();
   populateFilters();
-  ['f-tier', 'f-search'].forEach(id => {
+  populateWarmupSteps();
+  initStepChartControls();
+  ['f-tier', 'f-search', 'f-warmup'].forEach(id => {
     const el = $(id);
     if (el) {
       el.addEventListener('input', render);

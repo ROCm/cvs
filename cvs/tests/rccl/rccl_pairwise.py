@@ -7,6 +7,7 @@ from cvs.lib import rccl_lib
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import globals
+from cvs.lib.report.profiles.hooks.rccl_session import publish_graph
 
 log = globals.log
 
@@ -14,6 +15,9 @@ SPUR_SUBSET_SKIP = (
     'SPUR 0.11 ignores --nodelist on job steps; pairwise/incremental RCCL is not '
     'supported until Spur applies -w to nested steps.'
 )
+
+rccl_res_dict = {}
+rccl_run_nodes = {}
 
 
 class _HostSubset:
@@ -94,6 +98,9 @@ def run_pairwise_rccl(orch, node_pair_vpc, node_pair_mgmt, config_dict, phase_la
             node_pair_vpc,
         ).run_perf()
         log.info('Pairwise result for %s: %s', phase_label, result_dict)
+        if result_dict:
+            rccl_res_dict[phase_label] = result_dict
+            rccl_run_nodes[phase_label] = list(node_pair_mgmt)
     except Exception as exc:
         log.error('Pairwise RCCL failed for %s: %s', phase_label, exc)
         return None, False
@@ -418,4 +425,16 @@ def test_rccl_incremental(orch, node_list, config_dict, vpc_node_list):
         {'final_valid_cluster': valid_mgmt, 'excluded_nodes': phase2_fail},
     )
 
+    update_test_result()
+
+
+def test_gen_graph(cvs_results_dict):
+    globals.error_list = []
+    log.info('Final pairwise result dict')
+    log.info("%s", rccl_res_dict)
+    try:
+        graph = publish_graph(rccl_res_dict, cvs_results_dict)
+        log.info("%s", graph)
+    except Exception:
+        log.warning("RCCL pairwise Run Deck results unavailable", exc_info=True)
     update_test_result()

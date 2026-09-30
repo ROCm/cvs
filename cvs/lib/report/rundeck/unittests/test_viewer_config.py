@@ -26,6 +26,7 @@ class TestViewerConfig(unittest.TestCase):
         self.assertIn("client.output_throughput", vc["heatmap_metrics"])
         self.assertTrue(any(col.get("field") == "isl" for col in vc["table_columns"]))
         self.assertTrue(vc["interactivity"]["enabled"])
+        self.assertTrue(vc["sweep_charts"]["enabled"])
         self.assertEqual(vc["interactivity"]["tpot_metric"], "client.mean_tpot_ms")
         self.assertEqual(vc["interactivity"]["output_throughput_metric"], "client.output_throughput")
         self.assertEqual(vc["interactivity"]["total_throughput_metric"], "client.total_token_throughput")
@@ -57,6 +58,34 @@ class TestViewerConfig(unittest.TestCase):
         self.assertEqual(vc["interactivity"]["tpot_metric"], "mean_tpot_ms")
         self.assertIn("output_throughput_per_sec", vc["metrics"])
         self.assertIn("mean_tpot_ms", vc["metrics"])
+
+    def test_megatron_profile_viewer_config(self):
+        import json
+
+        from cvs.lib.report.profile import profile_json_path
+
+        profile = json.loads(profile_json_path("megatron").read_text(encoding="utf-8"))
+        config = resolve_report_config(profile)
+        vc = ViewerConfigBuilder(profile, config).build()
+        self.assertEqual(vc["group_by"], ["mbs", "gbs"])
+        self.assertEqual(
+            {f["field"] for f in vc["filters"]},
+            {"mbs", "gbs", "precision", "tp", "pp"},
+        )
+        self.assertEqual(vc["concurrency_field"], "precision")
+        self.assertEqual(vc["heatmap_row_fields"], ["mbs", "gbs", "tp", "pp"])
+        self.assertFalse(vc["interactivity"]["enabled"])
+        self.assertFalse(vc["sweep_charts"]["enabled"])
+        self.assertIn("training.throughput_per_gpu", vc["metrics"])
+        self.assertTrue(any(col.get("field") == "mbs" for col in vc["table_columns"]))
+        self.assertTrue(any(col.get("field") == "precision" for col in vc["table_columns"]))
+
+    def test_sweep_charts_follow_interactivity_when_unset(self):
+        profile = generic_sweep_profile()
+        profile["viewer"] = {"interactivity": {"enabled": False}}
+        config = resolve_report_config(profile)
+        vc = ViewerConfigBuilder(profile, config).build()
+        self.assertFalse(vc["sweep_charts"]["enabled"])
 
     def test_viewer_config_builder_class(self):
         profile = generic_sweep_profile()

@@ -43,7 +43,8 @@ class RundeckPublisher:
             )
             return None
 
-        store = get_session_results()
+        store = dict(get_session_results())
+        store.setdefault("suite_stem", getattr(self.config, "_suite_name", None))
         results = store.get("cvs_results_dict") or store.get("inf_res_dict")
         if not results:
             log.info("Skipping Run Deck generation: no results in session store")
@@ -51,7 +52,7 @@ class RundeckPublisher:
 
         variant_config = store.get("variant_config")
         builder_id = profile.get("dataset_builder") if isinstance(profile, dict) else "sweep"
-        if variant_config is None and builder_id == "sweep":
+        if variant_config is None and builder_id in ("sweep", "training_sweep"):
             log.warning("Skipping Run Deck generation: variant_config not in session store")
             return None
 
@@ -137,15 +138,21 @@ class RundeckPublisher:
     ) -> Optional[Path]:
         if not config.interactive_viewer or not isinstance(profile, (dict, InferenceReportConfig)):
             return None
-        if isinstance(profile, dict) and profile.get("dataset_builder", "sweep") != "sweep":
+        if isinstance(profile, dict) and profile.get("dataset_builder", "sweep") not in (
+            "sweep",
+            "training_sweep",
+        ):
             return None
         viewer_name = viewer_basename_for(config.report_basename)
         viewer_path = out_dir / viewer_name
+        # Use the payload's resolved subtitle (e.g. {mode} substituted) rather than
+        # the raw profile subtitle, so the viewer matches the deck page.
+        resolved_subtitle = (payload.get("report") or {}).get("subtitle") or config.subtitle
         write_interactive_viewer(
             viewer_path,
             json_basename=f"{config.report_basename}.json",
             title=config.title,
-            subtitle=config.subtitle,
+            subtitle=resolved_subtitle,
             tier_order=config.metric_tier_order,
             embed_payload=payload,
         )
@@ -166,4 +173,9 @@ class RundeckPublisher:
 
 def generate_rundeck(session, report_manager) -> Optional[dict[str, Any]]:
     """Build and publish Run Deck artifacts at pytest session finish."""
-    return RundeckPublisher(session, report_manager).publish()
+    try:
+        return RundeckPublisher(session, report_manager).publish()
+    except Exception:
+        # Optional artifacts must not replace the suite's qualification outcome.
+        log.error("Run Deck generation failed; preserving the suite result", exc_info=True)
+        return None

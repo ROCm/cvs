@@ -20,7 +20,6 @@ from _pytest.stash import StashKey
 from cvs.lib.report.render.perf_metric_table import (
     MetricColumn,
     dedupe_metric_rows,
-    is_benchmark_metrics_extra,
     render_benchmark_metrics_html,
 )
 
@@ -173,16 +172,14 @@ def _apply_benchmark_entry_patch(
 ) -> None:
     extras: list[dict[str, Any]] = []
     has_full_log = False
-    has_metric_table = False
     for extra in entry.get('extras') or []:
         if _is_full_log_extra(extra) and not has_full_log:
             extras.append(extra)
             has_full_log = True
-        elif is_benchmark_metrics_extra(extra) and not has_metric_table:
-            extras.append(extra)
-            has_metric_table = True
-    if not has_metric_table:
-        extras.append(benchmark_metrics_extra(rows, columns=columns))
+    # pytest-subtests runs pytest_runtest_makereport once per subtest, so a table
+    # rendered mid-test holds only the metrics verified so far. Always re-render
+    # from the recorded rows, which are complete once the test body has finished.
+    extras.append(benchmark_metrics_extra(rows, columns=columns))
     entry['extras'] = extras
     entry['log'] = ''
 

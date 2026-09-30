@@ -8,6 +8,53 @@ CVS provides three RCCL suites:
 
 Host and network diagnostics use the host OS. Perf and regression retain their time-bounded dmesg checks when passwordless sudo is available. RCCL execution and cleanup use the orchestrator's execution environment.
 
+## Run Deck reports
+
+With `--html`, `rccl_perf`, `rccl_regression`, and `rccl_pairwise` generate
+`rccl_run_deck.html` and `rccl_run_deck.json` in the `<suite>_html` directory
+beside the pytest report. Both artifacts are linked from the pytest report
+and included in its zip bundle. Perf and regression also retain their
+existing amCharts reports.
+
+The deck includes bus bandwidth, algorithm bandwidth, and time curves by
+message size, a results table, and a run card. Collectives and message sizes
+come from collected results, including when only part of a suite runs.
+Pairwise series retain their Phase 0/1/2 labels, and its run card lists the
+node and MPI rank counts used across those runs.
+
+Reporting does not change qualification checks. The deck uses the existing
+graph conversion: when several rows share a series and message size, the
+last row wins across in-place/out-of-place, data type, and cycle dimensions.
+The Thresholds row reflects the configured `verify_*` switches; it does not
+confirm that a bus-bandwidth threshold was found or applied. Existing
+threshold configuration mismatches still require separate correction.
+
+Chart x-axis labels are humanized (`1K`, `1M`, `1G`); the results table and
+`rccl_run_deck.json` keep the raw byte size so external tooling can still
+sort or filter on it numerically. On large clusters, `rccl_pairwise` can
+produce one series per node pair — each chart card renders at most 40 series
+(configurable per card via the profile's `max_series`) and shows a "Showing N
+of M" banner when truncated; the full set always remains in the results
+table and JSON export.
+
+### Heatmap
+
+`heatmap` is a standalone result-comparison suite, reusable beyond RCCL-only
+flows. Discover it with `cvs list heatmap`, then compare two result JSONs:
+
+```bash
+cvs run heatmap \
+  --cluster_file input/cluster_file/cluster.json \
+  --config_file input/config_file/heatmap/heatmap_config.json \
+  --html=/var/www/html/cvs/heatmap.html --capture=tee-sys --self-contained-html \
+  --log-file=/tmp/heatmap.log -vvv -s
+```
+
+Heatmap config requires:
+- `actual_json_file`: Path to test results JSON
+- `reference_json_file`: Path to golden/reference results JSON
+- `heatmap_output_file`: Output HTML path (optional)
+
 ## Configuration
 
 Start from [`rccl_config.json`](../../input/config_file/rccl/rccl_config.json). Replace any `<changeme>` values and configure paths, interfaces, node counts, and reference bandwidths for your cluster.
