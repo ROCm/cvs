@@ -18,7 +18,7 @@ from cvs.lib import globals
 log = globals.log
 
 _IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.I)
-_HCA_NAME_RE = re.compile(r"^(mlx5_\d+|rdma\d+|rocep\w+|bnxt_\w+)$", re.I)
+_HCA_NAME_RE = re.compile(r"^(mlx5_\d+|ionic_\d+|rdma\d+|rocep\w+|bnxt_\w+)$", re.I)
 _NETDEV_NAME_RE = re.compile(r"^[a-zA-Z0-9_.:-]{1,64}$")
 _INVALID_NETDEV_MARKERS = (
     "command not found",
