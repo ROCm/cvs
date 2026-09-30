@@ -232,7 +232,7 @@
     },
 
     "tier3_info": {
-      "_comment": "Primus Tier 3 Host/GPU/Network info via primus-cli direct -- preflight --host --gpu --network (opt-in; default skip). No Slurm.",
+      "_comment": "Primus Tier 3 Host/GPU/Network info via primus-cli direct -- preflight --host --gpu --network (runs by default; set connectivity_mode to 'skip' to disable). No Slurm.",
 
       "connectivity_mode": "run",
       "_comment_connectivity_mode": "Options: 'run' (default) or 'skip'. Independent of node_smoke.connectivity_mode — disabling node_smoke does not disable Tier 3.",

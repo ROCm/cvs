@@ -52,6 +52,35 @@ class TestPreflightUpdateTestResult(unittest.TestCase):
         self.assertIn('nodeA', reason)
         self.assertIn('nodeB', reason)
 
+    def test_summary_sections_are_not_reported_as_nodes(self):
+        reason = self._fail_reason(
+            {
+                'status': 'FAIL',
+                'failed_nodes': ['nodeA'],
+                'node_results': {'nodeA': {'status': 'FAIL'}, 'nodeB': {'status': 'PASS'}},
+                'vpod_membership': {'status': 'FAIL', 'errors': ['mismatch']},
+                'setup_results': {'status': 'FAIL', 'node_results': {}},
+                'pod_membership': {'status': 'FAIL'},
+            }
+        )
+        self.assertIn('nodeA', reason)
+        self.assertNotIn('vpod_membership', reason)
+        self.assertNotIn('setup_results', reason)
+        self.assertNotIn('pod_membership', reason)
+        self.assertNotIn('node_results', reason)
+
+    def test_node_results_names_hosts_when_failed_nodes_is_absent(self):
+        reason = self._fail_reason(
+            {
+                'status': 'FAIL',
+                'node_results': {'nodeB': {'status': 'FAIL'}, 'nodeA': {'status': 'PASS'}},
+                'pod_membership': {'status': 'FAIL'},
+            }
+        )
+        self.assertIn('nodeB', reason)
+        self.assertNotIn('nodeA', reason)
+        self.assertNotIn('pod_membership', reason)
+
     def test_per_node_all_passing_keeps_row_passing(self):
         self.assertIsNone(
             preflight_checks.preflight_update_test_result({'nodeA': {'status': 'PASS'}, 'nodeB': {'status': 'PASS'}})

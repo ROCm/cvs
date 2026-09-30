@@ -9,8 +9,10 @@ Preflight checks configuration file reference for Cluster Validation Suite (CVS)
 The preflight checks validate cluster health and configuration consistency before
 running performance tests, RCCL training, or inference workloads. Checks include
 GPU node health, optional MI4XX scale-up fabric admission, IFoE L2 and
-TransferBench gates, RDMA inventory and connectivity, and optional **Node Smoke
-Tier 1**, **Tier 2**, and **Tier 3** Primus checks.
+TransferBench gates, RDMA inventory and connectivity, and **Node Smoke
+Tier 1**, **Tier 2**, and **Tier 3** Primus checks. The Node Smoke tiers run
+by default. Set ``connectivity_mode`` to ``"skip"`` (and ``tier2_perf`` to
+``false`` for Tier 2) to disable one.
 
 Configuration file location: ``cvs/input/config_file/preflight/preflight_config.json``
 
@@ -62,8 +64,11 @@ Legacy keys ``node_smoke`` and ``tier3_info`` are normalized to
 Node Smoke tiers
 ================
 
-Node Smoke checks are opt-in. Preflight reports each tier separately in the
-console summary and HTML report.
+Node Smoke checks run by default. Set a tier's ``connectivity_mode`` to
+``"skip"`` to disable it, or set ``node_smoke_tier1.tier2_perf`` to ``false``
+to disable Tier 2 only. Preflight reports each tier separately in the
+console summary and HTML report. The console count is the number of checks
+Primus reported, not a fixed catalog size.
 
 .. list-table::
    :header-rows: 1
@@ -74,29 +79,29 @@ console summary and HTML report.
      - Primus command
      - Count (8 GPU)
    * - Tier 1
-     - ``node_smoke_tier1.connectivity_mode: "run"``
+     - ``node_smoke_tier1.connectivity_mode: "run"`` (default)
      - ``node_smoke`` (per node)
-     - 39 per node
+     - one row per GPU plus 7 collectors
    * - Tier 2
-     - ``node_smoke_tier1.tier2_perf: true``
+     - ``node_smoke_tier1.tier2_perf: true`` (default)
      - ``node_smoke --tier2-perf`` (per node)
-     - 17 per node
+     - GEMM and HBM per GPU, plus local RCCL
    * - Tier 3
-     - ``node_smoke_tier3.connectivity_mode: "run"``
+     - ``node_smoke_tier3.connectivity_mode: "run"`` (default)
      - ``preflight --host --gpu --network`` (cluster)
-     - 27 cluster-wide
+     - host, GPU, and network groups
 
 Tier 1 and Tier 2 counts are **per node** (the summary does not multiply by node
-count). Tier 3 is **cluster-wide** (27 collector checks from the validation
-tracker, not the 13 aggregated markdown report sections).
+count). Tier 3 is **cluster-wide**. A row is passed only when Primus reported
+that check. A node-level pass does not mark unreported checks as passed.
 
 Example console output:
 
 .. code:: text
 
-  ✅ Node Smoke Tier 1: PASS - 2/2 nodes passed Node Smoke Tier 1; 39 tests run per node
+  ✅ Node Smoke Tier 1: PASS - 2/2 nodes passed Node Smoke Tier 1; 15 tests run per node
   ✅ Node Smoke Tier 2: PASS - 2/2 nodes passed Node Smoke Tier 2; 17 tests run per node
-  ✅ Node Smoke Tier 3: PASS - 2/2 nodes passed Node Smoke Tier 3; 27 tests run cluster-wide
+  ✅ Node Smoke Tier 3: PASS - 2/2 nodes passed Node Smoke Tier 3; 3 tests run cluster-wide
 
 Sample configuration
 ====================
@@ -159,7 +164,7 @@ Node Smoke Tier 1 (``node_smoke_tier1``)
 Node Smoke Tier 3 (``node_smoke_tier3``)
 ----------------------------------------
 
-- ``connectivity_mode`` — ``"run"`` or ``"skip"`` (independent of Tier 1)
+- ``connectivity_mode`` — ``"run"`` (default) or ``"skip"`` (independent of Tier 1)
 - ``primus_dir`` / ``venv_activate`` — Optional; empty inherits from Tier 1
 - ``dist_timeout_sec`` — ``torch.distributed`` init timeout
 - ``report_file_name`` — Base name for Primus markdown report (default ``node_smoke_tier3``)

@@ -12,31 +12,20 @@ from cvs.lib.preflight.node_smoke_counts import (
     DEFAULT_GPUS_PER_NODE,
     TIER1_COLLECTOR_LABELS,
     TIER1_NODE_OPERATIONAL_COLLECTORS,
-    TIER1_PER_GPU_CHECKS,
     TIER2_CHECK_LABELS,
     TIER2_PER_GPU_CHECKS,
     TIER2_RCCL_METRIC,
     TIER3_CHECK_CATALOG,
-    _collector_ran,
-    _resolve_gpu_count,
+    TIER3_TOP_LEVEL_GROUPS,
+    _has_number,
+    _has_own_verdict,
+    _tier2_point_measured,
     aggregate_node_smoke_test_counts,
-    count_tier3_tests_from_results,
+    tier3_reported_groups,
 )
 
-_GPU_META_KEYS = {
-    "gpu",
-    "id",
-    "index",
-    "device",
-    "status",
-    "ok",
-    "passed",
-    "bdf",
-    "pci",
-    "uuid",
-    "name",
-    "message",
-}
+_NOT_REPORTED = "Primus did not report this check"
+_TIER3_GROUP_LABELS = {"host": "Host", "gpu": "GPU", "network": "Network"}
 
 
 def _status_from_value(value, default="pass"):
@@ -122,48 +111,23 @@ def _node_fail_reasons(result):
     return unique
 
 
-def _unattributed_reasons(reasons, known_keys):
-    """Node-level failures Primus did not prefix with a check name.
-
-    Without these, a node that never produced a parseable payload fails every check
-    row with no explanation of why.
-    """
-    attributed = set()
-    for key in known_keys:
-        attributed.update(_reasons_for_key(key, reasons))
-    return [str(reason) for reason in reasons or [] if str(reason) not in attributed]
-
-
-def _named_gpu_checks(entry, catalog):
-    if not isinstance(entry, dict):
-        return [(key, None) for key in catalog]
-    checks = entry.get("checks") or entry.get("subprocess_checks")
-    if isinstance(checks, list) and checks:
-        rows = []
-        for idx, check in enumerate(checks[: len(catalog)]):
-            key = catalog[idx]
-            rows.append((key, check))
-        while len(rows) < len(catalog):
-            rows.append((catalog[len(rows)], entry))
-        return rows
-    named = [(key, entry[key]) for key in entry if key not in _GPU_META_KEYS]
-    if len(named) >= len(catalog):
-        mapped = []
-        used = set()
-        for catalog_key in catalog:
-            match = next((item for item in named if item[0] == catalog_key), None)
-            if match:
-                mapped.append(match)
-                used.add(match[0])
-            else:
-                leftover = next((item for item in named if item[0] not in used), None)
-                if leftover:
-                    mapped.append((catalog_key, leftover[1]))
-                    used.add(leftover[0])
-                else:
-                    mapped.append((catalog_key, entry))
-        return mapped
-    return [(key, entry) for key in catalog]
+def _own_status(value):
+    """Verdict stored on this value, or None when the value does not state one."""
+    if not _has_own_verdict(value):
+        return None
+    if isinstance(value, bool):
+        return "pass" if value else "fail"
+    if isinstance(value, dict):
+        if "status" in value:
+            return _status_from_value(value.get("status"), default=None)
+        if "ok" in value:
+            return _status_from_value(value.get("ok"), default=None)
+        if "passed" in value:
+            return _status_from_value(value.get("passed"), default=None)
+        if value.get("error") == "skipped":
+            return "skip"
+        return None
+    return _status_from_value(value, default=None)
 
 
 def _slug(text):
@@ -179,20 +143,23 @@ def _gpu_slots(gpus_per_node):
 
 
 def tier1_check_catalog(hosts, gpus_per_node=DEFAULT_GPUS_PER_NODE):
-    """Every Tier 1 check that will run, as one catalog entry per pytest row."""
+    """One pytest row per configured GPU plus one per node collector.
+
+    The GPU row is the ``per_gpu`` verdict Primus reports. It is not expanded into
+    subprocess checks the payload does not name.
+    """
     catalog = []
     for host in sorted(hosts or []):
         host_slug = _slug(host)
         for gpu_idx in _gpu_slots(gpus_per_node):
-            for check_key in TIER1_PER_GPU_CHECKS:
-                catalog.append(
-                    _catalog_entry(
-                        host,
-                        f"{host}/gpu{gpu_idx}/{check_key}",
-                        f"{host} GPU {gpu_idx} {check_key.replace('_', ' ')}",
-                        f"{host_slug}-gpu{gpu_idx}-{_slug(check_key)}",
-                    )
+            catalog.append(
+                _catalog_entry(
+                    host,
+                    f"{host}/gpu{gpu_idx}",
+                    f"{host} GPU {gpu_idx}",
+                    f"{host_slug}-gpu{gpu_idx}",
                 )
+            )
         for collector in TIER1_NODE_OPERATIONAL_COLLECTORS:
             catalog.append(
                 _catalog_entry(
@@ -235,19 +202,15 @@ def tier2_check_catalog(hosts, gpus_per_node=DEFAULT_GPUS_PER_NODE):
 
 
 def tier3_check_catalog_entries():
-    """Every cluster-wide Tier 3 collector check, as one catalog entry per pytest row."""
-    catalog = []
-    for group, label, occurrence in _catalog_occurrences():
-        suffix = f" ({occurrence})" if occurrence > 1 else ""
-        catalog.append(
-            _catalog_entry(
-                "cluster",
-                f"cluster/{group}/{label}/{occurrence}",
-                f"{group}: {label}{suffix}",
-                f"{group}-{_slug(label)}-{occurrence}",
-            )
-        )
-    return catalog
+    """One pytest row per Primus group (host, gpu, network).
+
+    Individual collector names from the finding map are not rows: Primus reports
+    one status for the group list, and a node-level pass is not a pass of each name.
+    """
+    return [
+        _catalog_entry("cluster", f"cluster/{group}", _TIER3_GROUP_LABELS.get(group, group), group)
+        for group in TIER3_TOP_LEVEL_GROUPS
+    ]
 
 
 def _numeric_field(entry, *keys):
@@ -264,75 +227,66 @@ def _numeric_field(entry, *keys):
     return None
 
 
+def _configured_gpu_slots(results, reported):
+    """Match the collection catalog: configured width, else however many were reported."""
+    configured = results.get("gpus_per_node") if isinstance(results, dict) else None
+    if configured:
+        return int(configured)
+    return len(reported)
+
+
 def build_tier1_metric_rows(node_smoke_results):
-    """One pytest-html subtest row per Tier 1 catalog check on each node."""
+    """One pytest-html row per configured GPU and node collector.
+
+    A row passes or fails only when that GPU entry or collector is in the payload,
+    or a fail reason names it. A node-level pass does not mark the rest passed.
+    """
     if not node_smoke_results or node_smoke_results.get("skipped"):
         return []
     node_results = node_smoke_results.get("node_results") or {}
-    gpus_per_node = node_smoke_results.get("gpus_per_node")
     rows = []
     for host, result in sorted(node_results.items()):
         payload = _node_payload(result)
         reasons = _node_fail_reasons(result)
-        node_status = _status_from_value(
-            result.get("status") if isinstance(result, dict) else None,
-            default="fail",
-        )
         tier1 = payload.get("tier1") if isinstance(payload.get("tier1"), dict) else {}
         per_gpu = list(tier1.get("per_gpu") or [])
-        n_gpus = _resolve_gpu_count(payload, gpus_per_node)
-        if n_gpus <= 0 and per_gpu:
-            n_gpus = len(per_gpu)
-        node_reasons = _unattributed_reasons(
-            reasons,
-            (
-                *TIER1_PER_GPU_CHECKS,
-                *TIER1_NODE_OPERATIONAL_COLLECTORS,
-                *(f"gpu{idx}" for idx in range(max(n_gpus, len(per_gpu)))),
-            ),
-        )
-        for gpu_idx in range(n_gpus):
-            entry = per_gpu[gpu_idx] if gpu_idx < len(per_gpu) else {}
-            gpu_id = _gpu_index(entry, gpu_idx)
-            gpu_status = _status_from_value(entry, default=node_status)
-            for check_key, check_value in _named_gpu_checks(entry, TIER1_PER_GPU_CHECKS):
-                status = _status_from_value(check_value, default=gpu_status)
-                hits = _reasons_for_key(check_key, reasons) or _reasons_for_key(f"gpu{gpu_id}", reasons)
-                if hits and status == "pass":
-                    status = "fail"
-                label = f"GPU {gpu_id} {check_key.replace('_', ' ')}"
-                rows.append(
-                    _row(
-                        host,
-                        f"{host}/gpu{gpu_idx}/{check_key}",
-                        label,
-                        status,
-                        reason="; ".join(hits or (node_reasons if status == "fail" else [])),
-                    )
-                )
-        for collector in TIER1_NODE_OPERATIONAL_COLLECTORS:
-            if n_gpus <= 0 and not _collector_ran(collector, tier1.get(collector)):
-                continue
-            value = tier1.get(collector)
-            status = _status_from_value(value, default="pass" if node_status == "pass" else node_status)
-            hits = _reasons_for_key(collector, reasons)
+        for gpu_idx in range(_configured_gpu_slots(node_smoke_results, per_gpu)):
+            entry = per_gpu[gpu_idx] if gpu_idx < len(per_gpu) else None
+            gpu_id = _gpu_index(entry, gpu_idx) if isinstance(entry, dict) else gpu_idx
+            hits = _reasons_for_key(f"gpu{gpu_id}", reasons) or _reasons_for_key(f"gpu{gpu_idx}", reasons)
+            verdict = _own_status(entry)
             if hits:
                 status = "fail"
+                reason = "; ".join(hits)
+            elif verdict:
+                status = verdict
+                reason = ""
+            else:
+                status = "skip"
+                reason = _NOT_REPORTED
+            rows.append(_row(host, f"{host}/gpu{gpu_idx}", f"GPU {gpu_id}", status, reason=reason))
+        for collector in TIER1_NODE_OPERATIONAL_COLLECTORS:
+            hits = _reasons_for_key(collector, reasons)
+            verdict = _own_status(tier1.get(collector)) if collector in tier1 else None
+            if hits:
+                status = "fail"
+                reason = "; ".join(hits)
+            elif verdict:
+                status = verdict
+                reason = ""
+            else:
+                status = "skip"
+                reason = _NOT_REPORTED
             label = TIER1_COLLECTOR_LABELS.get(collector, collector.replace("_", " "))
-            rows.append(
-                _row(
-                    host,
-                    f"{host}/{collector}",
-                    label,
-                    status,
-                    reason="; ".join(hits or (node_reasons if status == "fail" else [])),
-                )
-            )
+            rows.append(_row(host, f"{host}/{collector}", label, status, reason=reason))
     return rows
 
 
 def build_tier2_metric_rows(node_smoke_results):
-    """One pytest-html subtest row per Tier 2 catalog check on each node."""
+    """One pytest-html row per Tier 2 GEMM, HBM, and local RCCL check.
+
+    A row passes only when that metric or an explicit verdict is in the payload.
+    """
     if not node_smoke_results or node_smoke_results.get("skipped"):
         return []
     if not node_smoke_results.get("tier2_perf"):
@@ -341,24 +295,13 @@ def build_tier2_metric_rows(node_smoke_results):
             return []
     node_results = node_smoke_results.get("node_results") or {}
     thresholds = node_smoke_results.get("tier2_thresholds") or {}
-    gpus_per_node = node_smoke_results.get("gpus_per_node")
     rows = []
     for host, result in sorted(node_results.items()):
         payload = _node_payload(result)
         reasons = _node_fail_reasons(result)
-        node_status = _status_from_value(
-            result.get("status") if isinstance(result, dict) else None,
-            default="fail",
-        )
         tier2 = payload.get("tier2") if isinstance(payload.get("tier2"), dict) else {}
-        per_gpu = list(tier2.get("per_gpu") or (payload.get("tier1") or {}).get("per_gpu") or [])
-        n_gpus = _resolve_gpu_count(payload, gpus_per_node)
-        if n_gpus <= 0 and per_gpu:
-            n_gpus = len(per_gpu)
-        node_reasons = _unattributed_reasons(
-            reasons,
-            (*TIER2_PER_GPU_CHECKS, TIER2_RCCL_METRIC, "gemm", "hbm", "rccl"),
-        )
+        per_gpu = [entry for entry in (tier2.get("per_gpu") or []) if isinstance(entry, dict)]
+        n_gpus = _configured_gpu_slots(node_smoke_results, per_gpu)
         gemm_spec = (
             {"kind": ">=", "value": thresholds.get("gemm_tflops_min")} if thresholds.get("gemm_tflops_min") else None
         )
@@ -367,22 +310,27 @@ def build_tier2_metric_rows(node_smoke_results):
         for gpu_idx in range(n_gpus):
             entry = per_gpu[gpu_idx] if gpu_idx < len(per_gpu) else {}
             gpu_id = _gpu_index(entry, gpu_idx)
-            gpu_status = _status_from_value(entry, default=node_status)
             for check_key in TIER2_PER_GPU_CHECKS:
-                check_value = entry.get(check_key) if isinstance(entry, dict) else None
+                check_value = entry.get(check_key) if check_key in entry else None
                 if (
                     check_value is None
                     and isinstance(tier2.get(check_key), list)
                     and gpu_idx < len(tier2.get(check_key))
                 ):
                     check_value = tier2[check_key][gpu_idx]
-                status = _status_from_value(check_value if check_value is not None else entry, default=gpu_status)
                 hits = _reasons_for_key(check_key, reasons) or _reasons_for_key(
                     "gemm" if check_key == "large_gemm" else "hbm",
                     reasons,
                 )
                 if hits:
                     status = "fail"
+                    reason = "; ".join(hits)
+                elif _tier2_point_measured(check_key, check_value, entry):
+                    status = _own_status(check_value) or "pass"
+                    reason = ""
+                else:
+                    status = "skip"
+                    reason = _NOT_REPORTED
                 if check_key == "large_gemm":
                     actual = _numeric_field(
                         check_value if isinstance(check_value, dict) else entry, "gemm_tflops", "tflops", "large_gemm"
@@ -405,52 +353,60 @@ def build_tier2_metric_rows(node_smoke_results):
                         actual=actual,
                         unit=unit,
                         spec=spec,
-                        reason="; ".join(hits or (node_reasons if status == "fail" else [])),
+                        reason=reason,
                     )
                 )
         if n_gpus > 1:
-            rccl_value = tier2.get("rccl") or tier2.get(TIER2_RCCL_METRIC)
-            status = _status_from_value(rccl_value, default=node_status)
+            rccl_value = tier2.get("rccl") if tier2.get("rccl") is not None else tier2.get(TIER2_RCCL_METRIC)
             hits = _reasons_for_key("rccl", reasons) or _reasons_for_key(TIER2_RCCL_METRIC, reasons)
+            rccl_measured = _has_own_verdict(rccl_value) or _has_number(
+                rccl_value if isinstance(rccl_value, dict) else {}, "rccl_gbs", "gbs"
+            )
             if hits:
                 status = "fail"
+                reason = "; ".join(hits)
+            elif rccl_measured:
+                status = _own_status(rccl_value) or "pass"
+                reason = ""
+            else:
+                status = "skip"
+                reason = _NOT_REPORTED
             rows.append(
                 _row(
                     host,
                     f"{host}/{TIER2_RCCL_METRIC}",
                     TIER2_CHECK_LABELS[TIER2_RCCL_METRIC],
                     status,
-                    actual=_numeric_field(rccl_value if isinstance(rccl_value, dict) else tier2, "rccl_gbs", "gbs"),
+                    actual=_numeric_field(rccl_value if isinstance(rccl_value, dict) else {}, "rccl_gbs", "gbs"),
                     unit="GB/s",
                     spec=rccl_spec,
-                    reason="; ".join(hits or (node_reasons if status == "fail" else [])),
+                    reason=reason,
                 )
             )
     return rows
 
 
-def _catalog_occurrences():
-    counts = {}
+def _groups_named_by_reason(reason):
+    """Map one Primus finding onto host, gpu, or network via the finding catalog."""
+    text = str(reason).lower()
+    named = set()
     for group, label in TIER3_CHECK_CATALOG:
-        counts[(group, label)] = counts.get((group, label), 0) + 1
-        yield group, label, counts[(group, label)]
-
-
-def _reason_matches_label(label, reasons):
-    needle = label.lower()
-    hits = []
-    for reason in reasons or []:
-        text = str(reason)
-        if needle in text.lower():
-            hits.append(text)
-    return hits
+        if label.lower() in text:
+            named.add(group)
+    for group in TIER3_TOP_LEVEL_GROUPS:
+        if re.search(rf"\b{group}\b", text):
+            named.add(group)
+    return named
 
 
 def build_tier3_metric_rows(tier3_results):
-    """One pytest-html subtest row per cluster-wide Tier 3 catalog check."""
+    """One pytest-html row per host/GPU/network group Primus was asked to run.
+
+    A group passes only when Primus named it in ``checks=`` and the node status
+    is pass. A finding fails the group it names. Every other group is skipped,
+    including when the cluster failed without naming a group.
+    """
     if not tier3_results or tier3_results.get("skipped"):
-        return []
-    if not count_tier3_tests_from_results(tier3_results):
         return []
     node_results = tier3_results.get("node_results") or {}
     reasons = []
@@ -472,28 +428,46 @@ def build_tier3_metric_rows(tier3_results):
             continue
         seen_reasons.add(reason)
         unique_reasons.append(reason)
-    label_matched = any(_reason_matches_label(label, unique_reasons) for _, label in TIER3_CHECK_CATALOG)
+    reported = set(tier3_reported_groups(tier3_results))
+    failed_groups = {}
+    for reason in unique_reasons:
+        for group in _groups_named_by_reason(reason):
+            failed_groups.setdefault(group, []).append(str(reason))
     rows = []
-    for group, label, occurrence in _catalog_occurrences():
-        hits = _reason_matches_label(label, unique_reasons)
-        if node_status == "pass":
-            status = "pass"
-        elif hits:
+    for group in TIER3_TOP_LEVEL_GROUPS:
+        if group in failed_groups:
             status = "fail"
-        elif label_matched:
+            reason = "; ".join(failed_groups[group])
+        elif group in reported and node_status == "pass":
             status = "pass"
+            reason = ""
         else:
-            # Primus failed without naming a collector, so no check can be called clean.
-            status = "fail"
-            hits = unique_reasons
-        suffix = f" ({occurrence})" if occurrence > 1 else ""
+            status = "skip"
+            reason = _NOT_REPORTED
         rows.append(
             _row(
                 "cluster",
-                f"cluster/{group}/{label}/{occurrence}",
-                f"{group}: {label}{suffix}",
+                f"cluster/{group}",
+                _TIER3_GROUP_LABELS.get(group, group),
                 status,
-                reason="; ".join(hits),
+                reason=reason,
             )
         )
     return rows
+
+
+def tier_runner_row_hidden(runner_outcome, checks_collected, check_failed, check_passed):
+    """Hide the tier runner row only when a check row already shows the same verdict.
+
+    A failed runner stays in the HTML when every check row skipped or passed, so a
+    setup error or an unparsed node failure cannot disappear behind the check list.
+    A passed runner stays when no check row passed, so a node-level pass is not
+    replaced by a list of unmeasured skips.
+    """
+    if not checks_collected:
+        return False
+    if runner_outcome == "failed":
+        return bool(check_failed)
+    if runner_outcome == "passed":
+        return bool(check_passed)
+    return True

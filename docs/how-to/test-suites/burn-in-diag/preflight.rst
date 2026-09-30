@@ -6,7 +6,7 @@
 Run CVS preflight and node smoke check tests
 ********************************************
 
-Preflight checks validate cluster health and configuration consistency before performance, RCCL, training, or inference workloads. Checks include GPU node health, optional MI4XX fabric admission, IFoE and TransferBench gates, RDMA inventory, and optional Node Smoke tiers.
+Preflight checks validate cluster health and configuration consistency before performance, RCCL, training, or inference workloads. Checks include GPU node health, optional MI4XX fabric admission, IFoE and TransferBench gates, RDMA inventory, and Node Smoke tiers. Node Smoke Tier 1, Tier 2, and Tier 3 run by default.
 
 .. _preflight-set-up-config:
 
@@ -21,7 +21,7 @@ Follow these steps to set up the preflight configuration.
 
      cvs config copy preflight/preflight_config.json --output ~/cvs_workspace/preflight/preflight_config.json
 
-2. Edit paths, thresholds, and optional Node Smoke settings. Replace every ``<changeme>`` placeholder.
+2. Edit paths, thresholds, and Node Smoke settings. Replace every ``<changeme>`` placeholder. Node Smoke runs unless ``connectivity_mode`` is ``"skip"``.
 
 For the complete field reference including Node Smoke tier options and RDMA inventory settings, see :doc:`/reference/configuration-files/burn-in-diag/preflight`.
 

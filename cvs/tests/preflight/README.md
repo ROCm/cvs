@@ -16,7 +16,7 @@ The preflight checks system validates essential cluster health and configuration
    for generic profiles, an `amd-smi fabric --json` single-vPod precondition)
    *(AIMVT-181; opt-in)*
 7. **Node Smoke Tier 1** - Per-node GPU/RDMA operational roll-call via Primus `node_smoke`
-8. **Node Smoke Tier 2 (optional)** - Per-node perf sanity when `tier2_perf` is enabled (GEMM, HBM, local RCCL)
+8. **Node Smoke Tier 2** - Per-node perf sanity (GEMM, HBM, local RCCL). Runs by default; set `tier2_perf` to `false` to disable it
 9. **Node Smoke Tier 3** - Cluster-wide Host/GPU/Network inventory via Primus `preflight --host --gpu --network`
 10. **RDMA Connectivity** - Tests node-to-node RDMA communication using `ibv_rc_pingpong`
 
@@ -249,9 +249,9 @@ Node Smoke checks run by default and are configured under `node_smoke_tier1` and
 
 | Tier | Config | Scope | Default count (8 GPU) |
 |------|--------|-------|------------------------|
-| **Tier 1** | `node_smoke_tier1.connectivity_mode: "run"` | Per node | 39 tests run per node |
-| **Tier 2** | `node_smoke_tier1.tier2_perf: true` | Per node | 17 tests run per node |
-| **Tier 3** | `node_smoke_tier3.connectivity_mode: "run"` | Cluster-wide | 27 tests run cluster-wide |
+| **Tier 1** | `node_smoke_tier1.connectivity_mode: "run"` (default) | Per node | one reported GPU verdict per GPU, plus collectors present in the payload |
+| **Tier 2** | `node_smoke_tier1.tier2_perf: true` (default) | Per node | GEMM and HBM metrics that were reported, plus local RCCL when reported |
+| **Tier 3** | `node_smoke_tier3.connectivity_mode: "run"` (default) | Cluster-wide | host, GPU, and network groups Primus named |
 
 Tier 1 runs `primus-cli direct --single -- node_smoke` on each node. Tier 2 adds
 `--tier2-perf` (large GEMM TFLOPS, HBM D2D bandwidth, local multi-GPU RCCL).
@@ -261,9 +261,9 @@ distributed rendezvous across the cluster. Tier 3 is independent of Tier 1.
 Preflight reports each tier separately in the console and HTML summary, for example:
 
 ```
-✅ Node Smoke Tier 1: PASS - 2/2 nodes passed Node Smoke Tier 1; 39 tests run per node
+✅ Node Smoke Tier 1: PASS - 2/2 nodes passed Node Smoke Tier 1; 15 tests run per node
 ✅ Node Smoke Tier 2: PASS - 2/2 nodes passed Node Smoke Tier 2; 17 tests run per node
-✅ Node Smoke Tier 3: PASS - 2/2 nodes passed Node Smoke Tier 3; 27 tests run cluster-wide
+✅ Node Smoke Tier 3: PASS - 2/2 nodes passed Node Smoke Tier 3; 3 tests run cluster-wide
 ```
 
 See [README_preflight_config.md](../../input/config_file/preflight/README_preflight_config.md)
@@ -294,20 +294,25 @@ Each Node Smoke tier contributes one pytest row per catalog check, so the HTML r
 lists every check individually with its own result, duration, and **Full Log** link:
 
 ```
-Passed  preflight_checks.py::test_node_smoke_tier1_check[10_0_0_11-gpu0-gpu_subprocess_1]
+Passed  preflight_checks.py::test_node_smoke_tier1_check[10_0_0_11-gpu0]
 Failed  preflight_checks.py::test_node_smoke_tier1_check[10_0_0_12-gpu_processes]
 Passed  preflight_checks.py::test_node_smoke_tier2_check[10_0_0_11-gpu0-large_gemm]
-Passed  preflight_checks.py::test_node_smoke_tier3_check[host-cpu-1]
+Passed  preflight_checks.py::test_node_smoke_tier3_check[host]
 ```
 
 The catalogs are built at collection time from the cluster file's node list and
 `gpus_per_node`, so the rows appear even when a tier is skipped — they report as
-`Skipped` rather than disappearing. The row counts are 39 per node for Tier 1, 17 per
-node for Tier 2, and 27 cluster-wide for Tier 3.
+`Skipped` rather than disappearing. Tier 1 has one row per configured GPU plus the
+7 node collectors. Tier 2 has GEMM and HBM rows per GPU plus local RCCL when the
+node has more than one GPU. Tier 3 has one row each for host, GPU, and network.
+A row is Passed only when Primus reported that check. Unreported rows are Skipped,
+and the tier runner row stays in the report when its failure is not already on a
+check row.
 
 `cvs run preflight_checks test_node_smoke_tier1` selects the tier's check rows along
-with the tier itself. The tier test still runs Primus, but its own report row is
-omitted whenever its check rows are present, since those already carry the detail.
+with the tier itself. The tier test still runs Primus. Its report row is omitted
+when a check row already shows the same pass or failure. It stays when the tier
+failed and no check row failed, so that failure remains in the HTML report.
 
 Unlike the other preflight tests, which are reporting-only, the Node Smoke tests report
 real verdicts: a failing check fails its own row, and the tier test fails when any node
@@ -323,9 +328,9 @@ sortable tables.
 ✅ GID Consistency: PASS (64/64 interfaces have GID index 3)
 ⚪ RDMA Connectivity: SKIPPED (Test skipped by configuration)
 ✅ ROCm Versions: PASS (All nodes running 6.2.0)
-✅ Node Smoke Tier 1: PASS - 2/2 nodes passed Node Smoke Tier 1; 39 tests run per node
+✅ Node Smoke Tier 1: PASS - 2/2 nodes passed Node Smoke Tier 1; 15 tests run per node
 ✅ Node Smoke Tier 2: PASS - 2/2 nodes passed Node Smoke Tier 2; 17 tests run per node
-✅ Node Smoke Tier 3: PASS - 2/2 nodes passed Node Smoke Tier 3; 27 tests run cluster-wide
+✅ Node Smoke Tier 3: PASS - 2/2 nodes passed Node Smoke Tier 3; 3 tests run cluster-wide
 
 Overall Status: PASS - Cluster ready for performance testing (connectivity not tested)
 ```
@@ -384,7 +389,7 @@ cvs run pytorch_xdit_wan \
    - L2 connectivity using `afmctl test ping` (opt-in)
    - TransferBench scale-up data-path smoketest (opt-in)
 6. Run Node Smoke Tier 1 (and Tier 2 while tier2_perf is enabled) per node
-7. Run Node Smoke Tier 3 cluster inventory (opt-in)
+7. Run Node Smoke Tier 3 cluster inventory (runs by default)
 8. Run RDMA checks:
    - Interface naming and presence
    - GID consistency

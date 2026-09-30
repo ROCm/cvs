@@ -115,49 +115,40 @@ Preflight reports **Node Smoke Tier 1**, **Tier 2**, and **Tier 3** as separate 
 console summary and HTML report. Each tier appends a test-count suffix when enabled:
 
 ```
-✅ Node Smoke Tier 1: PASS - 2/2 nodes passed Node Smoke Tier 1; 39 tests run per node
+✅ Node Smoke Tier 1: PASS - 2/2 nodes passed Node Smoke Tier 1; 15 tests run per node
 ✅ Node Smoke Tier 2: PASS - 2/2 nodes passed Node Smoke Tier 2; 17 tests run per node
-✅ Node Smoke Tier 3: PASS - 2/2 nodes passed Node Smoke Tier 3; 27 tests run cluster-wide
+✅ Node Smoke Tier 3: PASS - 2/2 nodes passed Node Smoke Tier 3; 3 tests run cluster-wide
 ```
 
-Counts follow the validation-tracker catalog in `cvs/lib/preflight/node_smoke_counts.py`. Tier 1
-and Tier 2 counts are **per node** (not multiplied across the cluster in the summary). Tier 3 is
-**cluster-wide** (one catalog run, not × node count).
+The suffix is the number of checks Primus actually reported (`cvs/lib/preflight/node_smoke_counts.py`).
+A configured slot or a finding-map name is not counted, and is not marked Passed, unless the
+payload contains that result. Tier 1 and Tier 2 counts are **per node** (not multiplied across
+the cluster in the summary). Tier 3 is **cluster-wide**.
 
-### Tier 1 — per node (39 on an 8-GPU node)
+### Tier 1 — per node
 
-Formula: `4 × gpus_per_node + 7` node operational collectors.
+Pytest collects one row per configured GPU plus these 7 node collectors: `gpu_processes`,
+`nics`, `host_limits`, `gpu_low_level`, `xgmi`, `tooling`, `gpu_visibility`. On an 8-GPU node
+that reports every GPU verdict and every collector, the summary says 15 tests run per node.
 
-| Category | Count (8 GPU) | Notes |
-|----------|---------------|-------|
-| Per-GPU subprocess checks | 32 | 4 checks × 8 GPUs |
-| Node operational collectors | 7 | `gpu_processes`, `nics`, `host_limits`, `gpu_low_level`, `xgmi`, `tooling`, `gpu_visibility` |
+A GPU row passes only when that `per_gpu` entry has its own verdict. A collector row passes
+only when its key is present. Inventory findings (`gpu_info`, `host_info`, `network_info`),
+fingerprint, clock, and dmesg are not rows.
 
-Inventory-style findings (`gpu_info`, `host_info`, `network_info`), fingerprint, clock, and dmesg
-are excluded from the Tier 1 count (they are drift/inventory collectors, not operational gates).
+### Tier 2 — per node
 
-### Tier 2 — per node (17 on an 8-GPU node)
+Runs by default (`node_smoke_tier1.tier2_perf: true`). Pytest collects two rows per configured
+GPU (large GEMM TFLOPS and HBM bandwidth) plus local RCCL when the node has more than one GPU.
+A row passes only when that metric or an explicit verdict is in the payload. An 8-GPU node
+that reports both metrics and RCCL shows 17 tests run per node.
 
-Enabled with `node_smoke_tier1.tier2_perf: true`. Formula: `2 × gpus_per_node + 1` (RCCL omitted when `gpus_per_node < 2`).
+### Tier 3 — cluster-wide
 
-| Check | Count (8 GPU) |
-|-------|---------------|
-| Large GEMM TFLOPS floor (8192³ bf16) | 8 |
-| HBM device-to-device bandwidth | 8 |
-| Local multi-GPU RCCL all-reduce | 1 |
-
-### Tier 3 — cluster-wide (27 checks)
-
-Runs `preflight --host --gpu --network` once across the cluster. CVS counts **27 individual
-collector checks** from the validation tracker, not the **13** aggregated markdown report
-sections Primus emits (for example, one `## CPU` table covers all hosts but the tracker still
-lists CPU as its own check).
-
-| Group (`--flag`) | Checks |
-|------------------|--------|
-| Host (`--host`) | Host identity (×2), CPU, Memory (×2), NUMA, PCIe inventory, PCIe link status (×3) — **10** |
-| GPU (`--gpu`) | GPU enumeration, identity, occupancy, GPU/NUMA mapping, topology (×2), perf sanity (×2) — **8** |
-| Network (`--network`) | Network summary, distributed intent, distributed env, network path (×2), InfiniBand/RDMA, RCCL/NCCL config (×2), runtime process group — **9** |
+Runs `preflight --host --gpu --network` once across the cluster. Pytest collects three rows:
+host, GPU, and network. A group passes only when Primus names it in `checks=` and the node
+status is pass. A FAIL finding fails the group it names (for example a CPU finding fails the
+host row). The other groups stay Skipped rather than Passed. The finding map in
+`node_smoke_counts.py` is only used to attribute that text; it is not 27 passed checks.
 
 ## Configuration Parameters
 
@@ -686,7 +677,7 @@ cvs run preflight_checks \
    - Review per-node fail reasons in the preflight HTML report
 
 9. **Node Smoke Tier 3 Failures**
-   - Set `node_smoke_tier3.connectivity_mode` to `"run"` (independent of Tier 1)
+   - Tier 3 runs by default; set `node_smoke_tier3.connectivity_mode` to `"skip"` to disable it (independent of Tier 1)
    - Ensure NCCL transport env vars are set when validating RDMA/RCCL inventory findings
    - Review `<artifacts_root_dir>/node_smoke_tier3/node_smoke_tier3.md` on the leader node
    - Increase `ssh_timeout` or `dist_timeout_sec` on large or slow clusters

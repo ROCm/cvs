@@ -228,12 +228,47 @@ def _recorded_statuses(result):
     ]
 
 
-def _recorded_failed_nodes(result):
-    return sorted(
-        node
-        for node, node_result in result.items()
-        if isinstance(node_result, dict) and str(node_result.get('status') or '').upper() == 'FAIL'
+def _summary_result(result):
+    """True when the dict is a check summary rather than a flat node-to-result map."""
+    return any(
+        key in result
+        for key in (
+            'status',
+            'skipped',
+            'message',
+            'mode',
+            'failed_nodes',
+            'node_results',
+            'nodes',
+            'vpod_membership',
+            'pod_membership',
+            'setup_results',
+        )
     )
+
+
+def _nodes_with_status(node_map, status):
+    if not isinstance(node_map, dict):
+        return []
+    return sorted(
+        str(node)
+        for node, node_result in node_map.items()
+        if isinstance(node_result, dict) and str(node_result.get('status') or '').upper() == status
+    )
+
+
+def _recorded_failed_nodes(result):
+    """Hostnames that failed. Summary sections such as vpod_membership are not hosts."""
+    listed = result.get('failed_nodes')
+    if isinstance(listed, (list, tuple)) and any(listed):
+        return sorted(str(node) for node in listed if node)
+    for key in ('node_results', 'nodes'):
+        nested = result.get(key)
+        if isinstance(nested, dict) and nested:
+            return _nodes_with_status(nested, 'FAIL')
+    if _summary_result(result):
+        return []
+    return _nodes_with_status(result, 'FAIL')
 
 
 def _recorded_outcome_message(result, default):
@@ -804,7 +839,7 @@ def _report_node_smoke_check(tier, check):
         f" | {reason}" if reason else '',
     )
     if row['status'] == 'skip':
-        pytest.skip(f"{label}: '{check['label']}' was not executed")
+        pytest.skip(reason or f"{label}: '{check['label']}' was not reported by Primus")
     if row['status'] not in ('pass', 'record'):
         pytest.fail(f"{label}: '{check['label']}' failed. {reason or measurement or 'No detail reported'}")
 
@@ -877,7 +912,7 @@ def test_node_smoke_tier1(phdl, config_dict):
 
 
 def test_node_smoke_tier1_check(tier1_check):
-    """One row per Node Smoke Tier 1 catalog check (4 per GPU + 7 node collectors)."""
+    """One row per configured GPU and per node collector Primus reports."""
     _report_node_smoke_check('tier1', tier1_check)
 
 
@@ -960,7 +995,7 @@ def test_node_smoke_tier3(phdl, config_dict):
 
 
 def test_node_smoke_tier3_check(tier3_check):
-    """One row per Node Smoke Tier 3 cluster-wide collector check."""
+    """One row per Tier 3 group Primus reports (host, GPU, network)."""
     _report_node_smoke_check('tier3', tier3_check)
 
 
