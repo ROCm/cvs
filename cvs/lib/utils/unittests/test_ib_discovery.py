@@ -51,6 +51,10 @@ class TestParseIbvDevinfoList(unittest.TestCase):
 """
         self.assertEqual(_parse_ibv_devinfo_list(raw), ["rdma3", "rdma0", "rdma2", "rdma1"])
 
+    def test_keeps_ionic_hcas_alongside_mlx5(self):
+        raw = "9 HCAs found:\nmlx5_0\nionic_0\nionic_1\nionic_7\n"
+        self.assertEqual(_parse_ibv_devinfo_list(raw), ["mlx5_0", "ionic_0", "ionic_1", "ionic_7"])
+
 
 class TestDiscoverSocketNetdev(unittest.TestCase):
     def test_resolves_common_netdev_from_cluster_ips(self):

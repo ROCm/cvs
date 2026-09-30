@@ -18,7 +18,7 @@ from cvs.lib import globals
 log = globals.log
 
 _IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.I)
-_HCA_NAME_RE = re.compile(r"^(mlx5_\d+|rdma\d+|rocep\w+|bnxt_\w+)$", re.I)
+_HCA_NAME_RE = re.compile(r"^(mlx5_\d+|ionic_\d+|rdma\d+|rocep\w+|bnxt_\w+)$", re.I)
 _NETDEV_NAME_RE = re.compile(r"^[a-zA-Z0-9_.:-]{1,64}$")
 _INVALID_NETDEV_MARKERS = (
     "command not found",
@@ -151,10 +151,7 @@ def _usable_ipv4(token):
 
 def _host_to_ipv4_cmd(host):
     # Skip 127.0.0.1. Spur /etc/hosts lists the node name there ahead of the real address.
-    inner = (
-        f"getent ahostsv4 {shlex.quote(host)} 2>/dev/null | "
-        "awk '$1 !~ /^127\\./ {print $1; exit}'"
-    )
+    inner = f"getent ahostsv4 {shlex.quote(host)} 2>/dev/null | awk '$1 !~ /^127\\./ {{print $1; exit}}'"
     return f"bash -c {shlex.quote(inner)}"
 
 
