@@ -17,7 +17,9 @@ from cvs.lib.preflight.node_smoke_rows import (
     build_tier2_metric_rows,
     build_tier3_metric_rows,
     tier1_check_catalog,
+    tier1_runner_outcome,
     tier2_check_catalog,
+    tier2_runner_outcome,
     tier3_check_catalog_entries,
     tier_runner_row_hidden,
 )
@@ -259,6 +261,67 @@ class TestTierRunnerRowVisibility(unittest.TestCase):
         self.assertNotIn("preflight_checks.py::test_node_smoke_tier1", hidden)
         self.assertIn("preflight_checks.py::test_node_smoke_tier1_check[gpu0]", hidden)
         self.assertEqual(counts["failed"], 1)
+
+
+class TestTierRunnerOutcomes(unittest.TestCase):
+    def test_tier2_runner_skips_when_primus_reports_no_metrics(self):
+        results = {
+            "tier2_perf": True,
+            "gpus_per_node": 8,
+            "node_results": {
+                "n1": {
+                    "status": "PASS",
+                    "node_payload": {"tier2": {"per_gpu": [{"gpu": idx} for idx in range(8)]}},
+                }
+            },
+        }
+        rows = build_tier2_metric_rows(results)
+        self.assertEqual(len(rows), 17)
+        self.assertTrue(all(row["status"] == "skip" for row in rows))
+        self.assertEqual(tier2_runner_outcome(rows), "skip")
+
+    def test_tier1_runner_does_not_inherit_a_tier2_miss(self):
+        collectors = {key: {"ok": True} for key in TIER1_NODE_OPERATIONAL_COLLECTORS}
+        results = {
+            "tier2_perf": True,
+            "gpus_per_node": 1,
+            "total_nodes": 1,
+            "failed_nodes": ["n1"],
+            "unknown_nodes": [],
+            "node_results": {
+                "n1": {
+                    "status": "FAIL",
+                    "fail_reasons": ["large_gemm: 100 < 600"],
+                    "node_payload": {
+                        "tier1": {"per_gpu": [{"gpu": 0, "status": "PASS"}], **collectors},
+                        "tier2": {"per_gpu": [{"gpu": 0, "gemm_tflops": 100, "hbm_gbs": 3000}]},
+                    },
+                }
+            },
+        }
+        tier1_rows = build_tier1_metric_rows(results)
+        tier2_rows = build_tier2_metric_rows(results)
+        self.assertEqual(tier2_runner_outcome(tier2_rows), "fail")
+        self.assertEqual(tier1_runner_outcome(results, tier1_rows, tier2_rows), "pass")
+
+    def test_tier1_runner_still_fails_an_unattributed_node(self):
+        results = {
+            "tier2_perf": True,
+            "gpus_per_node": 1,
+            "total_nodes": 1,
+            "failed_nodes": ["n1"],
+            "node_results": {
+                "n1": {
+                    "status": "FAIL",
+                    "fail_reasons": ["could not determine node_smoke status from output"],
+                    "node_payload": {},
+                }
+            },
+        }
+        tier1_rows = build_tier1_metric_rows(results)
+        tier2_rows = build_tier2_metric_rows(results)
+        self.assertEqual(tier2_runner_outcome(tier2_rows), "skip")
+        self.assertEqual(tier1_runner_outcome(results, tier1_rows, tier2_rows), "fail")
 
 
 if __name__ == "__main__":

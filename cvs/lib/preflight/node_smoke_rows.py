@@ -456,6 +456,53 @@ def build_tier3_metric_rows(tier3_results):
     return rows
 
 
+def row_is_failure(row):
+    return str(row.get('status') or '').lower() not in ('pass', 'skip', 'record')
+
+
+def rows_were_measured(rows):
+    return any(str(row.get('status') or '').lower() != 'skip' for row in rows)
+
+
+def tier2_runner_outcome(rows):
+    """Pass only when a Tier 2 check was measured and none failed.
+
+    ``tier2_perf`` still collects a row per configured check. If Primus reported
+    none of them, the runner must skip rather than pass.
+    """
+    if any(row_is_failure(row) for row in rows):
+        return 'fail'
+    if rows and not rows_were_measured(rows):
+        return 'skip'
+    return 'pass'
+
+
+def unexplained_tier1_nodes(results, tier2_rows):
+    """Nodes whose node_smoke failure is not already a failing Tier 2 check.
+
+    ``failed_nodes`` is the verdict of the single invocation, which includes
+    ``--tier2-perf``. A GEMM or HBM miss must not be reported as a Tier 1 failure.
+    A node that failed without a Tier 2 row still belongs to Tier 1.
+    """
+    explained = {row.get('node') for row in tier2_rows if row_is_failure(row)}
+    nodes = []
+    for node in list(results.get('failed_nodes') or []) + list(results.get('unknown_nodes') or []):
+        if node and node not in explained and node not in nodes:
+            nodes.append(node)
+    return nodes
+
+
+def tier1_runner_outcome(results, tier1_rows, tier2_rows):
+    """Fail Tier 1 from its own rows, not from a Tier 2 threshold miss."""
+    if any(row_is_failure(row) for row in tier1_rows):
+        return 'fail'
+    if unexplained_tier1_nodes(results, tier2_rows):
+        return 'fail'
+    if tier1_rows and not rows_were_measured(tier1_rows):
+        return 'skip'
+    return 'pass'
+
+
 def tier_runner_row_hidden(runner_outcome, checks_collected, check_failed, check_passed):
     """Hide the tier runner row only when a check row already shows the same verdict.
 

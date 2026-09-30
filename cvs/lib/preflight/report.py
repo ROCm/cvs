@@ -26,6 +26,10 @@ from cvs.lib.preflight.node_smoke_rows import (
     build_tier1_metric_rows,
     build_tier2_metric_rows,
     build_tier3_metric_rows,
+    row_is_failure,
+    tier1_runner_outcome,
+    tier2_runner_outcome,
+    unexplained_tier1_nodes,
 )
 from cvs.lib.report.render.perf_metric_table import render_benchmark_metrics_html
 from cvs.lib import globals
@@ -558,15 +562,27 @@ class PreflightReportGenerator(PreflightCheck):
 
         node_results = node_smoke_results.get('node_results') or {}
         total_nodes = len(node_results)
-        failed_nodes = list(
-            node_smoke_results.get('failed_nodes') or [n for n, r in node_results.items() if r.get('status') == 'FAIL']
+        tier1_rows = build_tier1_metric_rows(node_smoke_results)
+        tier2_rows = build_tier2_metric_rows(node_smoke_results) if node_smoke_results.get('tier2_perf') else []
+        outcome = tier1_runner_outcome(node_smoke_results, tier1_rows, tier2_rows)
+        if outcome == 'skip':
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': total_nodes,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': f'{NODE_SMOKE_TIER1_LABEL}: Primus reported no Tier 1 checks',
+            }
+        failed_nodes = sorted(
+            {row.get('node') for row in tier1_rows if row_is_failure(row)}
+            | set(unexplained_tier1_nodes(node_smoke_results, tier2_rows))
         )
         unknown_nodes = list(
             node_smoke_results.get('unknown_nodes')
             or [n for n, r in node_results.items() if r.get('status') not in ('PASS', 'FAIL')]
         )
-        passing_nodes = total_nodes - len(failed_nodes) - len(unknown_nodes)
-        status = 'FAIL' if failed_nodes or unknown_nodes else 'PASS'
+        passing_nodes = total_nodes - len(failed_nodes)
+        status = 'FAIL' if outcome == 'fail' else 'PASS'
         test_counts = self._node_smoke_test_counts(node_smoke_results)
         summary_text = f"{passing_nodes}/{total_nodes} nodes passed {NODE_SMOKE_TIER1_LABEL}" + format_tests_run_suffix(
             test_counts.get('tier1_tests_run'),
@@ -604,26 +620,37 @@ class PreflightReportGenerator(PreflightCheck):
                 'summary': f'{NODE_SMOKE_TIER2_LABEL} not enabled (set node_smoke_tier1.tier2_perf=true)',
             }
 
-        tier1_summary = self._summarize_node_smoke_tier1_results(node_smoke_results)
+        node_results = node_smoke_results.get('node_results') or {}
+        total_nodes = len(node_results)
+        tier2_rows = build_tier2_metric_rows(node_smoke_results)
+        if tier2_runner_outcome(tier2_rows) == 'skip':
+            return {
+                'status': 'SKIPPED',
+                'total_nodes': total_nodes,
+                'passing_nodes': 0,
+                'failed_nodes': [],
+                'summary': f'{NODE_SMOKE_TIER2_LABEL}: Primus reported no Tier 2 metrics',
+            }
+        failed_nodes = sorted({row.get('node') for row in tier2_rows if row_is_failure(row)})
         test_counts = self._node_smoke_test_counts(node_smoke_results)
         thresholds = node_smoke_results.get('tier2_thresholds') or {}
         summary_text = (
-            f"{tier1_summary['passing_nodes']}/{tier1_summary['total_nodes']} nodes passed {NODE_SMOKE_TIER2_LABEL} "
+            f"{total_nodes - len(failed_nodes)}/{total_nodes} nodes passed {NODE_SMOKE_TIER2_LABEL} "
             f"(GEMM>={thresholds.get('gemm_tflops_min', '?')} TFLOPS, "
             f"HBM>={thresholds.get('hbm_gbs_min', '?')} GB/s, "
             f"RCCL>={thresholds.get('rccl_gbs_min', '?')} GB/s)"
             + format_tests_run_suffix(
                 test_counts.get('tier2_tests_run'),
                 per_node=True,
-                total_nodes=tier1_summary['total_nodes'],
+                total_nodes=total_nodes,
             )
         )
         return {
-            'status': tier1_summary['status'],
-            'total_nodes': tier1_summary['total_nodes'],
-            'passing_nodes': tier1_summary['passing_nodes'],
-            'failed_nodes': tier1_summary['failed_nodes'],
-            'unknown_nodes': tier1_summary.get('unknown_nodes', []),
+            'status': 'FAIL' if failed_nodes else 'PASS',
+            'total_nodes': total_nodes,
+            'passing_nodes': total_nodes - len(failed_nodes),
+            'failed_nodes': failed_nodes,
+            'unknown_nodes': list(node_smoke_results.get('unknown_nodes') or []),
             'tier2_tests_run': test_counts.get('tier2_tests_run', 0),
             'summary': summary_text,
         }

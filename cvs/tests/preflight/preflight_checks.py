@@ -26,6 +26,10 @@ from cvs.lib.preflight.node_smoke_rows import (
     build_tier1_metric_rows,
     build_tier2_metric_rows,
     build_tier3_metric_rows,
+    row_is_failure,
+    tier1_runner_outcome,
+    tier2_runner_outcome,
+    unexplained_tier1_nodes,
 )
 
 # RdmaConnectivityCheck not used - using legacy function temporarily
@@ -844,6 +848,41 @@ def _report_node_smoke_check(tier, check):
         pytest.fail(f"{label}: '{check['label']}' failed. {reason or measurement or 'No detail reported'}")
 
 
+def _report_tier1_from_rows(results):
+    """Fail Tier 1 only for Tier 1 checks, or a node failure Tier 2 did not record."""
+    rows = build_tier1_metric_rows(results)
+    tier2_rows = build_tier2_metric_rows(results) if results.get('tier2_perf') else []
+    outcome = tier1_runner_outcome(results, rows, tier2_rows)
+    if outcome == 'skip':
+        preflight_update_test_result(
+            {'skipped': True, 'message': f'{NODE_SMOKE_TIER1_LABEL}: Primus reported no Tier 1 checks'}
+        )
+        return
+
+    failed = [row for row in rows if row_is_failure(row)]
+    unexplained = unexplained_tier1_nodes(results, tier2_rows)
+    total = results.get('total_nodes', 0)
+    if failed:
+        log.warning("%s FAIL on %d/%d check(s)", NODE_SMOKE_TIER1_LABEL, len(failed), len(rows))
+    elif unexplained:
+        log.warning(
+            "%s FAIL on %d/%d node(s): %s",
+            NODE_SMOKE_TIER1_LABEL,
+            len(unexplained),
+            total,
+            ", ".join(unexplained),
+        )
+    else:
+        log.info("%s PASS on %d/%d nodes", NODE_SMOKE_TIER1_LABEL, len(results.get('passing_nodes') or []), total)
+
+    preflight_update_test_result()
+
+    if failed:
+        pytest.fail(f"{NODE_SMOKE_TIER1_LABEL} failed on {len(failed)}/{len(rows)} check(s)")
+    if unexplained:
+        pytest.fail(f"{NODE_SMOKE_TIER1_LABEL} failed on {len(unexplained)}/{total} node(s): {', '.join(unexplained)}")
+
+
 def _report_tier_node_verdict(label, results):
     """Log the tier's node roll-up and fail the row when any node did not pass.
 
@@ -908,7 +947,7 @@ def test_node_smoke_tier1(phdl, config_dict):
         preflight_update_test_result(results)
         return
 
-    _report_tier_node_verdict(NODE_SMOKE_TIER1_LABEL, results)
+    _report_tier1_from_rows(results)
 
 
 def test_node_smoke_tier1_check(tier1_check):
@@ -937,7 +976,13 @@ def test_node_smoke_tier2(phdl, config_dict):
         return
 
     rows = build_tier2_metric_rows(results)
-    failed = [row for row in rows if str(row.get('status') or '').lower() not in ('pass', 'skip', 'record')]
+    if tier2_runner_outcome(rows) == 'skip':
+        preflight_update_test_result(
+            {'skipped': True, 'message': f'{NODE_SMOKE_TIER2_LABEL}: Primus reported no Tier 2 metrics'}
+        )
+        return
+
+    failed = [row for row in rows if row_is_failure(row)]
     if failed:
         log.warning("%s FAIL on %d/%d check(s)", NODE_SMOKE_TIER2_LABEL, len(failed), len(rows))
     else:

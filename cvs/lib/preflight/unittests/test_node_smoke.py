@@ -226,7 +226,11 @@ class TestPreflightNodeSmokeReporting(unittest.TestCase):
                 "xgmi": {"ok": True},
                 "tooling": {"ok": True},
                 "gpu_visibility": {"ok": True},
-            }
+            },
+            "tier2": {
+                "per_gpu": [{"gpu": i, "gemm_tflops": 800, "hbm_gbs": 3000} for i in range(8)],
+                "rccl": {"status": "PASS", "gbs": 120},
+            },
         }
         tier1_results = {
             "tier2_perf": True,
