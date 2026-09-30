@@ -7,7 +7,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import json
 import re
-import shlex
 
 import pytest
 
@@ -40,10 +39,7 @@ def detect_rocm_path(orch, config_rocm_path):
 
     log.info('Auto-detecting ROCm path...')
 
-    # Glob + pipeline need a shell; docker-exec does not spawn one.
-    out_dict = orch.exec(
-        "bash -c 'ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1'",
-    )
+    out_dict = orch.exec('ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1')
     for output in out_dict.values():
         if output and '/opt/rocm/core-' in output:
             rocm_path = output.strip()
@@ -93,11 +89,21 @@ def _realign_install_paths(config_dict, old_root, new_root):
             config_dict[key] = config_dict[key].replace(old_root, new_root)
 
 
+def _payload_sudo_prefix(orch):
+    """Sudo for a command passed to orch.exec().
+
+    sudo_prefix() is host passwordless sudo. Container exec already applies
+    that to `docker exec`, and the payload runs inside the container.
+    """
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        return ''
+    return orch.sudo_prefix()
+
+
 def _gst_conf_ls_cmd(config_dict):
     mi300x = config_dict['config_path_mi300x']
     default = config_dict['config_path_default']
-    inner = f'ls -l {mi300x}/gst_single.conf 2>/dev/null || ls -l {default}/gst_single.conf 2>/dev/null'
-    return f'bash -c {shlex.quote(inner)}'
+    return f'ls -l {mi300x}/gst_single.conf 2>/dev/null || ls -l {default}/gst_single.conf 2>/dev/null'
 
 
 @pytest.fixture(scope="module")
@@ -200,7 +206,7 @@ def _try_apt_install_rvs(orch, config_dict, rocm_path, sudo_prefix):
         return False, rocm_path
 
     verify_inner = f'which rvs 2>/dev/null || ls {config_dict["path"]} 2>/dev/null'
-    verify_bin = orch.exec(f'bash -c {shlex.quote(verify_inner)}', timeout=60)
+    verify_bin = orch.exec(verify_inner, timeout=60)
     rvs_bin_found = False
     for node, output in verify_bin.items():
         stripped = output.strip()
@@ -227,50 +233,56 @@ def _install_rvs_tarball(orch, config_dict, rocm_path, git_install_path, sudo_pr
     extras_dir = _DEFAULT_EXTRAS_DIR if sudo_prefix else git_install_path.rstrip('/')
     if not sudo_prefix:
         log.info(
-            'No passwordless sudo; extracting RVS tarball under git_install_path=%s '
-            '(set path/config_path_* in the health config to this tree for rvs_cvs)',
+            'Extracting RVS tarball under git_install_path=%s '
+            '(no in-command sudo; set path/config_path_* in the health config to this tree for rvs_cvs)',
             extras_dir,
         )
 
-    out_dict = orch.exec(f'test -d {git_install_path}', detailed=True)
-    if any(info.get('exit_code') != 0 for info in out_dict.values()):
-        orch.exec(f'mkdir -p {git_install_path}')
+    try:
+        out_dict = orch.exec(f'test -d {git_install_path}', detailed=True)
+        if any(info.get('exit_code') != 0 for info in out_dict.values()):
+            orch.exec(f'mkdir -p {git_install_path}')
 
-    list_inner = f"curl -sSL {_TARBALL_INDEX_URL} | grep -oE 'amdrocm7-rvs-[^\"]+\\.tar\\.gz' | sort -V -u | tail -1"
-    out_dict = orch.exec(f'bash -c {shlex.quote(list_inner)}', timeout=60)
-    latest_tarball = ''
-    for node, output in out_dict.items():
-        stripped = output.strip()
-        if stripped.endswith('.tar.gz'):
-            latest_tarball = stripped
-            log.info(f'Latest RVS tarball detected on node {node}: {latest_tarball}')
-            break
+        list_inner = (
+            f"curl -sSL {_TARBALL_INDEX_URL} | grep -oE 'amdrocm7-rvs-[^\"]+\\.tar\\.gz' | sort -V -u | tail -1"
+        )
+        out_dict = orch.exec(list_inner, timeout=60)
+        latest_tarball = ''
+        for node, output in out_dict.items():
+            stripped = output.strip()
+            if stripped.endswith('.tar.gz'):
+                latest_tarball = stripped
+                log.info(f'Latest RVS tarball detected on node {node}: {latest_tarball}')
+                break
 
-    if not latest_tarball:
-        fail_test(f'Could not determine latest RVS tarball from {_TARBALL_INDEX_URL}')
+        if not latest_tarball:
+            fail_test(f'Could not determine latest RVS tarball from {_TARBALL_INDEX_URL}')
+            return rocm_path
+
+        runtime_lib_path = config_dict.get('rocm_runtime_lib_path') or ''
+        tarball_default_libs = '/install/lib:/install/lib/rocm_sysdeps:/install/lib/llvm/lib'
+        ld_prefix_parts = [f'{extras_dir}/lib']
+        if runtime_lib_path:
+            ld_prefix_parts.append(runtime_lib_path)
+        ld_prefix_parts.append(tarball_default_libs)
+        ld_prefix = ':'.join(ld_prefix_parts)
+
+        install_cmd = (
+            f'cd {git_install_path} && '
+            f'rm -f amdrocm7-rvs-*.tar.gz && '
+            f'wget -q {_TARBALL_INDEX_URL}{latest_tarball} && '
+            f'{sudo_prefix}mkdir -p {extras_dir} && '
+            f'{sudo_prefix}tar -xzf {latest_tarball} -C {extras_dir} && '
+            f'export LD_LIBRARY_PATH={ld_prefix}:$LD_LIBRARY_PATH && '
+            f'ldd {extras_dir}/bin/rvs; echo "RVS_INSTALL_STATUS:$?"'
+        )
+        out_dict = orch.exec(install_cmd, timeout=1200)
+        for node, output in out_dict.items():
+            if not re.search(r'RVS_INSTALL_STATUS:0', output):
+                fail_test(f'RVS tarball install failed on node {node}')
+    except Exception as exc:
+        fail_test(f'RVS tarball install failed: {exc}')
         return rocm_path
-
-    runtime_lib_path = config_dict.get('rocm_runtime_lib_path') or ''
-    tarball_default_libs = '/install/lib:/install/lib/rocm_sysdeps:/install/lib/llvm/lib'
-    ld_prefix_parts = [f'{extras_dir}/lib']
-    if runtime_lib_path:
-        ld_prefix_parts.append(runtime_lib_path)
-    ld_prefix_parts.append(tarball_default_libs)
-    ld_prefix = ':'.join(ld_prefix_parts)
-
-    install_cmd = (
-        f'cd {git_install_path} && '
-        f'rm -f amdrocm7-rvs-*.tar.gz && '
-        f'wget -q {_TARBALL_INDEX_URL}{latest_tarball} && '
-        f'{sudo_prefix}mkdir -p {extras_dir} && '
-        f'{sudo_prefix}tar -xzf {latest_tarball} -C {extras_dir} && '
-        f'export LD_LIBRARY_PATH={ld_prefix}:$LD_LIBRARY_PATH && '
-        f'ldd {extras_dir}/bin/rvs; echo "RVS_INSTALL_STATUS:$?"'
-    )
-    out_dict = orch.exec(f'bash -c {shlex.quote(install_cmd)}', timeout=1200)
-    for node, output in out_dict.items():
-        if not re.search(r'RVS_INSTALL_STATUS:0', output):
-            fail_test(f'RVS tarball install failed on node {node}')
 
     log.info(f'RVS installed via tarball to {extras_dir}; updating rocm_path from {rocm_path} to {extras_dir}')
     _realign_install_paths(config_dict, rocm_path, extras_dir)
@@ -320,7 +332,7 @@ def test_install_rvs(orch, config_dict):
 
     log.info('Testcase install RVS (ROCmValidationSuite)')
     git_install_path = config_dict['git_install_path']
-    sudo_prefix = orch.sudo_prefix()
+    sudo_prefix = _payload_sudo_prefix(orch)
 
     out_dict = orch.exec('which rvs', timeout=30)
     rvs_found = False
@@ -348,7 +360,7 @@ def test_install_rvs(orch, config_dict):
             rocm_path = _install_rvs_tarball(orch, config_dict, rocm_path, git_install_path, sudo_prefix)
 
     verify_inner = f'which rvs || ls -l {rocm_path}/bin/rvs*'
-    out_dict = orch.exec(f'bash -c {shlex.quote(verify_inner)}', timeout=60)
+    out_dict = orch.exec(verify_inner, timeout=60)
     for node, output in out_dict.items():
         if re.search('not found|No such file', output, re.IGNORECASE) and not re.search('rvs', output):
             fail_test(f'RVS installation verification failed on node {node}')

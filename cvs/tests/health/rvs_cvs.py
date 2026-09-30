@@ -8,7 +8,6 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 import json
 import re
-import shlex
 
 import pytest
 from packaging import version
@@ -18,6 +17,17 @@ from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 from cvs.lib.utils_lib import *
 
 log = globals.log
+
+
+def _payload_sudo_prefix(orch):
+    """Sudo for a command passed to orch.exec().
+
+    sudo_prefix() is host passwordless sudo. Container exec already applies
+    that to `docker exec`, and the payload runs inside the container.
+    """
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        return ''
+    return orch.sudo_prefix()
 
 
 # Importing additional cmd line args to script ..
@@ -216,7 +226,7 @@ def get_gpu_device_name(orch):
     """
     device_map = {}
 
-    out_dict = orch.exec(f'{orch.sudo_prefix()}amd-smi static -a -g 0 --json', timeout=30)
+    out_dict = orch.exec(f'{_payload_sudo_prefix(orch)}amd-smi static -a -g 0 --json', timeout=30)
 
     for node, output in out_dict.items():
         try:
@@ -268,8 +278,7 @@ def get_available_device_folders(orch, base_config_path):
     """
     available_folders = {}
 
-    list_inner = f'ls -d {base_config_path}/*/ 2>/dev/null'
-    out_dict = orch.exec(f'bash -c {shlex.quote(list_inner)}', timeout=30)
+    out_dict = orch.exec(f'ls -d {base_config_path}/*/ 2>/dev/null', timeout=30)
 
     for node, output in out_dict.items():
         folders = []
@@ -373,14 +382,14 @@ def _build_rvs_cmd(rvs_path, rvs_args, *, sudo_prefix='', ld_path=None):
       ROCm install (typically ~/install/lib + rocm_sysdeps + llvm/lib) to
       LD_LIBRARY_PATH makes the dynamic loader pick up the matching libs (amd_smi,
       rocm_smi, hsa, libdrm shims) instead of the system ones. Privileged tests
-      (peqt, level_config) use orch.sudo_prefix() ('' or 'sudo -n '). Setting
-      LD_LIBRARY_PATH inside bash after sudo avoids sudo stripping it. bash -c
-      is required because docker-exec does not spawn a shell.
+      pass _payload_sudo_prefix() ('' inside a container, 'sudo -n ' on bare metal).
+      sudo strips LD_LIBRARY_PATH, so the assignment goes through `env` when that
+      prefix is set.
 
     Args:
       rvs_path: Directory containing the rvs binary (e.g. '/opt/rocm/extras-7/bin').
       rvs_args: Args to rvs (e.g. '-c /path/to.conf', '-r 4').
-      sudo_prefix: From orch.sudo_prefix(); empty when passwordless sudo is unavailable.
+      sudo_prefix: From _payload_sudo_prefix(); empty when the command must not sudo.
       ld_path: Optional LD_LIBRARY_PATH prefix; falsy values mean "don't override".
 
     Returns:
@@ -388,8 +397,10 @@ def _build_rvs_cmd(rvs_path, rvs_args, *, sudo_prefix='', ld_path=None):
     """
     bin_path = f'{rvs_path}/rvs'
     if ld_path:
-        inner = f'export LD_LIBRARY_PATH="{ld_path}:$LD_LIBRARY_PATH" && {bin_path} {rvs_args}'
-        return f'{sudo_prefix}bash -c {shlex.quote(inner)}'
+        ld_expr = f'{ld_path}:$LD_LIBRARY_PATH'
+        if sudo_prefix:
+            return f'{sudo_prefix}env LD_LIBRARY_PATH="{ld_expr}" {bin_path} {rvs_args}'
+        return f'LD_LIBRARY_PATH="{ld_expr}" {bin_path} {rvs_args}'
     if sudo_prefix:
         return f'{sudo_prefix}{bin_path} {rvs_args}'
     return f'{bin_path} {rvs_args}'
@@ -478,7 +489,7 @@ def execute_rvs_test(
             ]
 
             for sed_cmd in sed_commands:
-                sed_result = orch.exec(f'bash -c {shlex.quote(sed_cmd)}', timeout=30)
+                sed_result = orch.exec(sed_cmd, timeout=30)
                 for node, output in sed_result.items():
                     if output.strip():
                         log.warning(f'Node {node}: sed command output: {output}')
@@ -496,7 +507,7 @@ def execute_rvs_test(
         ld_path = config_dict.get('rocm_runtime_lib_path') or ''
 
         # PEQT requires elevated permissions when passwordless sudo exists.
-        sudo_prefix = orch.sudo_prefix() if test_name == 'peqt_single' else ''
+        sudo_prefix = _payload_sudo_prefix(orch) if test_name == 'peqt_single' else ''
         rvs_cmd = _build_rvs_cmd(rvs_path, f'-c {config_path}', sudo_prefix=sudo_prefix, ld_path=ld_path)
 
         with timed_stage(lifecycle, test_name):
@@ -604,7 +615,7 @@ def test_rvs_level_config(orch, config_dict, rvs_version, rvs_test_level, rvs_re
 
     # Run RVS with level configuration
     # The -r option runs all modules with predefined configuration for that level
-    rvs_cmd = _build_rvs_cmd(rvs_path, f'-r {rvs_test_level}', sudo_prefix=orch.sudo_prefix(), ld_path=ld_path)
+    rvs_cmd = _build_rvs_cmd(rvs_path, f'-r {rvs_test_level}', sudo_prefix=_payload_sudo_prefix(orch), ld_path=ld_path)
 
     log.info(f'Executing: {rvs_cmd}')
     with timed_stage(lifecycle, "level_config"):
