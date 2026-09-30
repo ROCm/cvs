@@ -67,8 +67,8 @@ Main config file used by ``rccl_perf`` and ``rccl_regression``:
         },
         "cvs_params": {
           "verify_bus_bw": "False",
-          "verify_bw_dip": "True",
-          "verify_lat_dip": "True",
+          "verify_bw_dip": "False",
+          "verify_lat_dip": "False",
           "cluster_snapshot_debug": "False",
           "rccl_result_file": "/home/{user-id}/rccl_result_file.json"
         },
@@ -108,8 +108,8 @@ Main config file used by ``rccl_perf`` and ``rccl_regression``:
         },
         "cvs_params": {
           "verify_bus_bw": "False",
-          "verify_bw_dip": "True", 
-          "verify_lat_dip": "True",
+          "verify_bw_dip": "False",
+          "verify_lat_dip": "False",
           "rccl_result_file": "/home/{user-id}/rccl_result_file.json"
         },
         "results": {}
@@ -194,22 +194,21 @@ Configuration parameters for RCCL suites:
      - ``"False"``
      - Enable bus-bandwidth threshold validation.
    * - ``verify_bw_dip``
-     - ``"True"``
+     - ``"False"``
      - Enable bandwidth-dip validation.
    * - ``verify_lat_dip``
-     - ``"True"``
+     - ``"False"``
      - Enable latency-dip validation.
    * - ``cluster_snapshot_debug``
      - ``"False"``
      - Enables before/after cluster metric snapshots around tests.
-   * - ``results``
-     - ``{}``
-     - Expected threshold values used for pass/fail validation.
 
 Expected results format
 -----------------------
 
-The ``results`` section is used for threshold validation. Values are keyed by collective and message size (bytes), with expected bus bandwidth values.
+The ``results`` section is a sibling of ``cvs_params`` under ``rccl``. Values are keyed by collective and message size (bytes), with expected bus bandwidth in GB/s. Re-baseline the shipped values for your cluster before enabling checks. The shipped values assume two nodes with eight ranks per node.
+
+Set ``verify_bus_bw`` to ``"True"`` to require actual bandwidth to reach at least 95% of the configured value. A missing collective threshold fails the test when this check is enabled. Set ``verify_bw_dip`` or ``verify_lat_dip`` to ``"True"`` to check for bandwidth or latency dips at the configured message sizes; either check can fail the test.
 
 .. dropdown:: ``results`` snippet
 

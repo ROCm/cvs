@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- RCCL bandwidth thresholds and dip checks now read the configured `rccl.results` table.
+  The shipped dip-check defaults are now `"False"`. Existing configs with
+  `verify_bw_dip` or `verify_lat_dip` set to `"True"`, including copies of the
+  previous defaults, will begin running those checks and may report failures.
+  Re-baseline the thresholds for your cluster before enabling bandwidth verification.
+
 ## [0.2.0] - 2026-09-23
 
 ### Added
