@@ -374,7 +374,7 @@ tr.changed td { background: rgba(255,107,53,0.1); }
       <select id="heatmap-metric" aria-label="Heatmap metric"></select>
     </label>
   </div>
-  <p class="subsection-hint" id="heatmap-hint">Concurrency columns · greener is better for throughput · greener is lower for latency</p>
+  <p class="subsection-hint" id="heatmap-hint">Concurrency columns · stronger blue is better for throughput · stronger blue is lower for latency</p>
   <div style="overflow-x:auto" id="heatmap-wrap"></div>
 </section>
 
@@ -1073,7 +1073,7 @@ function buildOverview() {
 
 const LINE_DASHES = [[], [7, 4], [3, 3], [10, 4, 2, 4]];
 const LINE_POINT_STYLES = ['circle', 'rect', 'triangle', 'rectRot'];
-const CHART_COLORS = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#9aa3b5', '#ff5c6a'];
+const CHART_COLORS = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#f0c040', '#ff5c6a'];
 
 function shapeLabel(isl, osl) {
   return shapeLabelFromParts([isl, osl]);
@@ -1986,9 +1986,8 @@ function heatCellStyle(v, minV, maxV, higherBetter) {
   const span = maxV - minV || 1;
   const pct = higherBetter ? (v - minV) / span : 1 - (v - minV) / span;
   const clamped = Math.max(0, Math.min(1, pct));
-  const r = Math.round(255 - clamped * 120);
-  const g = Math.round(80 + clamped * 120);
-  return 'background:rgba(' + r + ',' + g + ',100,0.35)';
+  const alpha = (0.15 + 0.6 * clamped).toFixed(2);
+  return 'background:rgba(107,159,255,' + alpha + ')';
 }
 
 function buildHeatmap(rows) {
@@ -2032,7 +2031,7 @@ function buildHeatmap(rows) {
   const minV = Math.min(...values);
   const maxV = Math.max(...values);
   if (hint) {
-    hint.textContent = meta.label + ' · ' + fieldLabel(concField) + ' columns · greener is '
+    hint.textContent = meta.label + ' · ' + fieldLabel(concField) + ' columns · stronger blue is '
       + (meta.higherBetter ? 'higher' : 'lower') + ' · filtered cells';
   }
   const rowHeader = rowFields.map(f => fieldLabel(f)).join(' / ');
