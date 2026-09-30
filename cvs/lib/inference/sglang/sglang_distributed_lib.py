@@ -172,12 +172,13 @@ class SglangDistributed:
     ) -> str:
         return first_output(self._container_exec(cmd, hosts=hosts, timeout=timeout))
 
-    def _host_exec(self, cmd, *, hosts=None, timeout=None):
+    def _host_exec(self, cmd, *, hosts=None, timeout=None, print_console=None):
         """Run ``cmd`` on the host OS (not inside the container), e.g. amd-smi / dmesg."""
         target = [self.benchmark_serv_node] if hosts is None else as_node_list(hosts)
         if not target:
             return {}
-        return self.orch.exec_on_host(cmd, hosts=target, timeout=timeout)
+        extra = {} if print_console is None else {'print_console': print_console}
+        return self.orch.exec_on_host(cmd, hosts=target, timeout=timeout, **extra)
 
     def _host_exec_text(
         self,

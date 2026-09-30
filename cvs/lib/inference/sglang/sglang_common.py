@@ -1009,7 +1009,7 @@ def collect_sglang_gpu_topology(
             group_stats[name] = {"per_node": {}, "total": 0}
             continue
         per_node = count_occupied_gpus_per_node(
-            host_exec(amd_smi_cmd, hosts=hosts, timeout=timeout),
+            host_exec(amd_smi_cmd, hosts=hosts, timeout=timeout, print_console=False),
             mem_threshold_mb=mem_threshold_mb,
         )
         group_total = sum(per_node.values())
