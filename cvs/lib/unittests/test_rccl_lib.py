@@ -13,7 +13,7 @@ from cvs.core.run_layout import RunLayout
 class _FakeOrch:
     def __init__(self, ssh_port=22):
         self.exec = MagicMock()
-        self.exec_host = MagicMock()
+        self.exec_on_host = MagicMock()
         self.exec_on_head = MagicMock()
         self.upload_to_head = MagicMock()
         self.download_from_head = MagicMock()
@@ -405,13 +405,13 @@ class TestRcclLib(unittest.TestCase):
         self.assertIsInstance(job.openmpi, rccl_lib.OpenMPI)
         self.assertIsInstance(job.launcher, rccl_lib.Srun)
 
-    def test_rccl_job_rejects_head_node_mismatch(self):
+    def test_rccl_job_uses_orchestrator_head_node_regardless_of_list_order(self):
         orch = _FakeOrch()
         orch.head_node = 'n2'
         config = {'mpi_params': {}, 'rccl_test_params': {}, 'cvs_params': {}}
 
-        with self.assertRaisesRegex(ValueError, "must start with orchestrator head 'n2'"):
-            rccl_lib.RcclJob.from_config(orch, 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2'])
+        job = rccl_lib.RcclJob.from_config(orch, 'all_reduce_perf', config, ['n1', 'n2'], ['v1', 'v2'])
+        self.assertEqual(job.head_node, 'n2')
 
     @patch.object(rccl_lib.RcclJob, '_prepare_result_directory')
     @patch.object(rccl_lib.RcclJob, '_detect_output_flag', return_value='-X')
@@ -707,43 +707,53 @@ class TestRcclLib(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='rccl shared ') as tmpdir:
             job.cvs_params['rccl_result_file'] = f'{tmpdir}/results.json'
             sentinel = Path(tmpdir) / '.cvs-rccl-probe'
+            orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+            orch.download_from_head.side_effect = lambda remote, local: Path(local).write_text(
+                'probe', encoding='utf-8'
+            )
 
-            def write_probe(cmd, **kwargs):
-                if kwargs.get('detailed'):
-                    sentinel.write_text('probe', encoding='utf-8')
-                return {'head': {'output': '', 'exit_code': 0}}
-
-            orch.exec_on_head.side_effect = write_probe
             with patch.object(rccl_lib.uuid, 'uuid4', return_value=MagicMock(hex='probe')):
                 job._prepare_result_directory()
-            self.assertFalse(sentinel.exists())
             command = orch.exec_on_head.call_args_list[0].args[0]
             self.assertIn(shlex.quote(tmpdir), command)
             self.assertIn(shlex.quote(str(sentinel)), command)
+            remote_arg, local_arg = orch.download_from_head.call_args.args
+            self.assertEqual(remote_arg, str(sentinel))
+            self.assertFalse(Path(local_arg).exists())
             orch.all.exec.assert_not_called()
             orch.head.exec.assert_not_called()
 
     def test_managed_result_directory_rejects_mismatched_sentinel(self):
         orch = _FakeOrch()
         orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+        orch.download_from_head.side_effect = lambda remote, local: Path(local).write_text(
+            'different filesystem', encoding='utf-8'
+        )
         job = self._job(orch)
         with tempfile.TemporaryDirectory() as tmpdir:
             job.cvs_params['rccl_result_file'] = f'{tmpdir}/results.json'
-            sentinel = Path(tmpdir) / '.cvs-rccl-probe'
-            sentinel.write_text('different filesystem', encoding='utf-8')
             with patch.object(rccl_lib.uuid, 'uuid4', return_value=MagicMock(hex='probe')):
                 with self.assertRaisesRegex(RuntimeError, 'sentinel is not visible'):
                     job._prepare_result_directory()
-            self.assertFalse(sentinel.exists())
 
-    def test_baremetal_result_directory_does_not_require_local_shared_path(self):
+    def test_non_managed_result_directory_also_verifies_sentinel_via_download(self):
+        orch = _FakeOrch()
+        orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
+        orch.download_from_head.side_effect = lambda remote, local: Path(local).write_text('probe', encoding='utf-8')
+        job = self._job(orch)
+        job.managed = False
+        with patch.object(rccl_lib.uuid, 'uuid4', return_value=MagicMock(hex='probe')):
+            job._prepare_result_directory()
+        self.assertIn('mkdir -p -- /shared', orch.exec_on_head.call_args_list[0].args[0])
+        orch.download_from_head.assert_called_once()
+
+    def test_non_managed_result_directory_rejects_unmounted_result_path(self):
         orch = _FakeOrch()
         orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
         job = self._job(orch)
         job.managed = False
-        job._prepare_result_directory()
-        self.assertEqual(orch.exec_on_head.call_args.args[0], 'mkdir -p -- /shared')
-        orch.exec_on_head.assert_called_once()
+        with self.assertRaisesRegex(RuntimeError, 'bind-mount the result directory'):
+            job._prepare_result_directory()
 
     def test_default_result_file_uses_run_layout(self):
         job = self._job(_FakeOrch())
@@ -795,7 +805,7 @@ class TestRcclLib(unittest.TestCase):
         self.assertEqual(rccl_lib.configured_collectives(config), collectives)
         del config['rccl_test_params']['rccl_collective']
         self.assertEqual(rccl_lib.configured_collectives(config), ['reduce_perf'])
-        self.assertEqual(rccl_lib.configured_collectives({}), ['all_reduce_perf'])
+        self.assertEqual(rccl_lib.configured_collectives({}), rccl_lib.DEFAULT_COLLECTIVES)
 
     def test_thresholds_fail_perf_and_regression_for_both_config_shapes(self):
         references = [

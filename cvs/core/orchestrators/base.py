@@ -57,7 +57,7 @@ class Orchestrator(ABC):
         pass
 
     @abstractmethod
-    def exec_host(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+    def exec_on_host(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """Execute a command on the host OS, bypassing runtime environments."""
         pass
 

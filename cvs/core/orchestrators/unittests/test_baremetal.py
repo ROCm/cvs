@@ -76,10 +76,10 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         self.assertEqual(result, {"10.0.0.1": "ok"})
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
-    def test_exec_host_targets_requested_host_subset(self, _mock_pssh):
+    def test_exec_on_host_targets_requested_host_subset(self, _mock_pssh):
         orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
         with patch.object(orch, "exec", return_value={"10.0.0.2": "ok"}) as exec_mock:
-            result = orch.exec_host("date", hosts=["10.0.0.2"], timeout=5)
+            result = orch.exec_on_host("date", hosts=["10.0.0.2"], timeout=5)
 
         exec_mock.assert_called_once_with(
             "date",

@@ -28,7 +28,7 @@ class _HostSubset:
         self.hosts = list(hosts)
 
     def exec(self, cmd, **kwargs):
-        return self.orch.exec_host(cmd, hosts=self.hosts, **kwargs)
+        return self.orch.exec_on_host(cmd, hosts=self.hosts, **kwargs)
 
 
 def _skip_if_spur_cannot_select_nodes():
@@ -75,21 +75,31 @@ def run_pairwise_rccl(orch, node_pair_vpc, node_pair_mgmt, config_dict, phase_la
 
     error_count_before = len(globals.error_list)
     diagnostic_hosts = _HostSubset(orch, node_pair_mgmt)
-    sudo_status = get_passwordless_sudo_status(diagnostic_hosts)
-    can_scan_dmesg = set(sudo_status) == set(node_pair_mgmt) and all(sudo_status.values())
-    if can_scan_dmesg:
-        diagnostic_hosts.exec('sudo echo "Starting RCCL pairwise phase" | sudo tee /dev/kmsg')
-    else:
-        no_sudo_nodes = [node for node in node_pair_mgmt if not sudo_status.get(node, False)]
-        log.warning(
-            "Skipping pairwise dmesg markers/verification because passwordless sudo is unavailable on nodes: %s",
-            no_sudo_nodes,
-        )
-    start_time = diagnostic_hosts.exec('date +"%a %b %e %H:%M:%S"')
+    can_scan_dmesg = False
+    start_time = None
+    try:
+        sudo_status = get_passwordless_sudo_status(diagnostic_hosts)
+        can_scan_dmesg = set(sudo_status) == set(node_pair_mgmt) and all(sudo_status.values())
+        if can_scan_dmesg:
+            diagnostic_hosts.exec('sudo echo "Starting RCCL pairwise phase" | sudo tee /dev/kmsg')
+        else:
+            no_sudo_nodes = [node for node in node_pair_mgmt if not sudo_status.get(node, False)]
+            log.warning(
+                "Skipping pairwise dmesg markers/verification because passwordless sudo is unavailable on nodes: %s",
+                no_sudo_nodes,
+            )
+        start_time = diagnostic_hosts.exec('date +"%a %b %e %H:%M:%S"')
+    except Exception as exc:
+        log.warning('Pairwise pre-run host diagnostics failed for %s: %s', phase_label, exc)
+        can_scan_dmesg = False
 
     try:
         pair_config = dict(config_dict)
         pair_config['mpi_params'] = mpi_params_pair
+        # Legacy flat results.<test_name>.bus_bw thresholds aren't rank-count scoped; drop them here.
+        pair_config['results'] = {
+            key: value for key, value in config_dict.get('results', {}).items() if key in rccl_lib.NIC_TYPES
+        }
         result_dict = rccl_lib.RcclJob.from_config(
             orch,
             'all_reduce_perf',
@@ -105,11 +115,14 @@ def run_pairwise_rccl(orch, node_pair_vpc, node_pair_mgmt, config_dict, phase_la
         log.error('Pairwise RCCL failed for %s: %s', phase_label, exc)
         return None, False
     finally:
-        if can_scan_dmesg:
-            diagnostic_hosts.exec('sudo echo "End of RCCL pairwise phase" | sudo tee /dev/kmsg')
-        end_time = diagnostic_hosts.exec('date +"%a %b %e %H:%M:%S"')
-        if can_scan_dmesg:
-            verify_dmesg_for_errors(diagnostic_hosts, start_time, end_time, till_end_flag=False)
+        try:
+            if can_scan_dmesg:
+                diagnostic_hosts.exec('sudo echo "End of RCCL pairwise phase" | sudo tee /dev/kmsg')
+            end_time = diagnostic_hosts.exec('date +"%a %b %e %H:%M:%S"')
+            if can_scan_dmesg and start_time is not None:
+                verify_dmesg_for_errors(diagnostic_hosts, start_time, end_time, till_end_flag=False)
+        except Exception as exc:
+            log.warning('Pairwise post-run host diagnostics failed for %s: %s', phase_label, exc)
 
     clean_run = len(globals.error_list) == error_count_before
     if not clean_run:

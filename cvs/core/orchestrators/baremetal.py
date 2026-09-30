@@ -128,7 +128,7 @@ class BaremetalOrchestrator(Orchestrator):
             finally:
                 phandle.destroy_clients()
 
-    def exec_host(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+    def exec_on_host(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
         """Execute directly on the host OS."""
         return self.exec(
             cmd,

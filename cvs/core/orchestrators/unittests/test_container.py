@@ -365,10 +365,10 @@ class TestContainerOrchestratorExecForwarding(unittest.TestCase):
         self.assertIs(self._kwarg(self.runtime.exec.call_args, "detailed", 4), True)
 
     @patch("cvs.core.orchestrators.baremetal.BaremetalOrchestrator.exec")
-    def test_exec_host_bypasses_container_runtime(self, host_exec):
+    def test_exec_on_host_bypasses_container_runtime(self, host_exec):
         host_exec.return_value = {"10.0.0.2": "ok"}
 
-        result = self.orch.exec_host("date", hosts=["10.0.0.2"], timeout=5)
+        result = self.orch.exec_on_host("date", hosts=["10.0.0.2"], timeout=5)
 
         host_exec.assert_called_once_with(
             "date",

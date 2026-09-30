@@ -186,9 +186,28 @@ def convert_to_graph_dict(result_dict):
     return graph_dict
 
 
+DEFAULT_COLLECTIVES = [
+    'all_reduce_perf',
+    'all_gather_perf',
+    'scatter_perf',
+    'gather_perf',
+    'reduce_scatter_perf',
+    'sendrecv_perf',
+    'alltoall_perf',
+    'alltoallv_perf',
+    'broadcast_perf',
+]
+
+
+NIC_TYPES = ('ainic', 'thor', 'connectx')
+
+
 def configured_collectives(config):
     """Read the collective list, accepting the older top-level config key."""
-    return config.get('rccl_test_params', {}).get('rccl_collective', config.get('rccl_collective', ['all_reduce_perf']))
+    test_params_collective = config.get('rccl_test_params', {}).get('rccl_collective')
+    if test_params_collective is not None:
+        return test_params_collective
+    return config.get('rccl_collective', DEFAULT_COLLECTIVES)
 
 
 class OpenMPI:
@@ -482,12 +501,6 @@ class RcclJob:
     ):
         if not cluster_node_list:
             raise ValueError('cluster_node_list must contain at least one node')
-        orchestrator_head = getattr(orch, 'head_node', None)
-        if orchestrator_head is not None and cluster_node_list[0] != orchestrator_head:
-            raise ValueError(
-                f'cluster_node_list must start with orchestrator head {orchestrator_head!r}; '
-                f'got {cluster_node_list[0]!r}'
-            )
 
         self.orch = orch
         self.test_name = test_name
@@ -503,7 +516,7 @@ class RcclJob:
         self.no_of_nodes = int(mpi_params.get('no_of_nodes', 2))
         self.no_of_local_ranks = int(mpi_params.get('no_of_local_ranks', 8))
         self.no_of_global_ranks = self.no_of_nodes * self.no_of_local_ranks
-        self.head_node = orchestrator_head or cluster_node_list[0]
+        self.head_node = getattr(orch, 'head_node', None) or cluster_node_list[0]
         self.rccl_tests_dir = rccl_test_params.get('rccl_tests_dir', '/usr/local/rccl-tests/build')
         self.cvs_exec_timeout = int(cvs_params.get('cvs_exec_timeout', 2400))
         self.managed = is_managed_compute()
@@ -582,23 +595,27 @@ class RcclJob:
         return str(RunLayout.get().run_dir / 'rccl_result_file.json')
 
     def _prepare_result_directory(self):
-        """Require a writable result directory, shared with CVS on managed runs."""
+        """Require a result directory CVS can create and read back via download_from_head."""
         directory = Path(self.result_file).parent
         token = uuid.uuid4().hex
-        sentinel = directory / f'.cvs-rccl-{token}' if self.managed else None
-        cmd = f'mkdir -p -- {shlex.quote(str(directory))}'
-        if sentinel is not None:
-            cmd += f' && (umask 077; printf %s {token} > {shlex.quote(str(sentinel))})'
+        sentinel = directory / f'.cvs-rccl-{token}'
+        cmd = (
+            f'mkdir -p -- {shlex.quote(str(directory))}'
+            f' && (umask 077; printf %s {token} > {shlex.quote(str(sentinel))})'
+        )
+        local_sentinel = None
         try:
             result = self.orch.exec_on_head(cmd, timeout=30, detailed=True)
             output, exit_code = self._result_payload((result or {}).get(self.head_node))
             if exit_code != 0:
                 raise OSError(f'head-node directory check failed (exit {exit_code}): {output}')
-            if sentinel is not None:
-                with sentinel.open('r+', encoding='utf-8') as probe:
-                    if probe.read() != token:
-                        raise OSError('head-node sentinel is not visible to CVS')
-                    probe.write('\n')
+
+            fd, local_path = tempfile.mkstemp(prefix='cvs-rccl-sentinel-')
+            os.close(fd)
+            local_sentinel = Path(local_path)
+            self.orch.download_from_head(str(sentinel), str(local_sentinel))
+            if local_sentinel.read_text(encoding='utf-8') != token:
+                raise OSError('head-node sentinel is not visible through download_from_head')
         except Exception as exc:
             raise RuntimeError(
                 f'Cannot use RCCL result directory {directory} on {self.head_node}: {exc}. '
@@ -607,15 +624,15 @@ class RcclJob:
                 'With the container backend, bind-mount the result directory at the same path.'
             ) from exc
         finally:
-            if sentinel is not None:
+            try:
+                self.orch.exec_on_head(f'rm -f -- {shlex.quote(str(sentinel))}', timeout=30)
+            except Exception as exc:
+                log.warning('Could not remove RCCL sentinel %s on %s: %s', sentinel, self.head_node, exc)
+            if local_sentinel is not None:
                 try:
-                    self.orch.exec_on_head(f'rm -f -- {shlex.quote(str(sentinel))}', timeout=30)
-                except Exception as exc:
-                    log.warning('Could not remove RCCL sentinel %s on %s: %s', sentinel, self.head_node, exc)
-                try:
-                    sentinel.unlink(missing_ok=True)
+                    local_sentinel.unlink(missing_ok=True)
                 except OSError as exc:
-                    log.warning('Could not remove local RCCL sentinel %s: %s', sentinel, exc)
+                    log.warning('Could not remove local RCCL sentinel %s: %s', local_sentinel, exc)
 
     @staticmethod
     def _require_spur_job_step():
