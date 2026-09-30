@@ -22,6 +22,55 @@ from cvs.lib.report.types import DEFAULT_SESSION_LIFECYCLE_LABELS
 
 SESSION_FALLBACK = DEFAULT_SESSION_LIFECYCLE_LABELS
 
+_DEFAULT_STATUS_HINT_HTML = (
+    "Click a cell's <strong>items</strong> to expand that node × group's item breakdown and artifact links."
+)
+
+
+def _suppressed_when_empty(card, data):
+    if card.get("when_empty") != "hide":
+        return False
+    if is_empty(data):
+        return True
+    if str(card.get("type")) != "metric_charts" or not isinstance(data, dict):
+        return False
+    return not any(data.get(key) for key in ("metrics", "series", "heatmaps"))
+
+
+def _fmt_pass_rate(rate):
+    if rate is None:
+        return "\u2014"
+    pct = 100.0 * float(rate)
+    rounded = round(pct, 1)
+    if abs(rounded - round(rounded)) < 0.05:
+        return f"{int(round(rounded))}%"
+    return f"{rounded:.1f}%"
+
+
+def _threshold_note(metric, threshold):
+    if threshold is None:
+        return ""
+    direction = str(metric.get("direction") or "")
+    sense = {"higher": "higher is better", "lower": "lower is better"}.get(direction, "")
+    note = f"threshold {fmt_num(threshold)}"
+    unit = str(metric.get("unit") or "")
+    if unit:
+        note = f"{note} {unit}"
+    if sense:
+        note = f"{note} · {sense}"
+    return note
+
+
+def _heat_style(value, threshold, direction, lo, hi):
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "hm-na", ""
+    if threshold is not None and direction in ("higher", "lower"):
+        ok = value >= threshold if direction == "higher" else value <= threshold
+        return ("hm-pass" if ok else "hm-fail"), ""
+    span = (hi - lo) or 1.0
+    alpha = 0.15 + 0.6 * ((value - lo) / span)
+    return "hm-scale", f"background:rgba(107,159,255,{alpha:.2f})"
+
 
 class DeckCardRenderer:
     """Profile-driven card renderers for Run Deck static HTML sections."""
@@ -265,11 +314,12 @@ class DeckCardRenderer:
                 cells.append(DeckCardRenderer._status_cell_html(cell))
             body_rows.append(f"<tr>{''.join(cells)}</tr>")
 
+        hint = str(_card.get("hint") or "").strip() if isinstance(_card, dict) else ""
+        hint_html = html.escape(hint) if hint else _DEFAULT_STATUS_HINT_HTML
         return (
             "<div class='results-wrap'><table class='status-matrix'>"
             f"{header}{''.join(body_rows)}</table></div>"
-            "<p class='muted sm-hint'>Click a cell's <strong>items</strong> to expand that "
-            "node × group's ANC item breakdown and artifact links.</p>"
+            f"<p class='muted sm-hint'>{hint_html}</p>"
         )
 
     @staticmethod
@@ -325,6 +375,209 @@ class DeckCardRenderer:
             f"<span class='sm-caret'></span></summary>"
             f"<div class='sm-body'>{summary_line}{item_rows}{links_html}</div>"
             f"</details></td>"
+        )
+
+    @staticmethod
+    def render_status_overview(_payload, _card, data):
+        overview = data if isinstance(data, dict) else {}
+        counts = overview.get("counts") if isinstance(overview.get("counts"), dict) else {}
+        total = sum(int(counts.get(key) or 0) for key in ("pass", "fail", "na"))
+        if total <= 0 and not overview.get("failures_by_node") and not overview.get("failures_by_group"):
+            return "<p class='muted'>No node results recorded.</p>"
+        rate = _fmt_pass_rate(overview.get("pass_rate"))
+        passed = int(counts.get("pass") or 0)
+        failed = int(counts.get("fail") or 0)
+        na_count = int(counts.get("na") or 0)
+        summary = (
+            "<div class='summary-grid'>"
+            "<div class='summary-card'><h3>Pass rate</h3>"
+            f"<div class='summary-stat'>{html.escape(rate)}</div>"
+            f"<div class='summary-meta'>{passed} passed · {failed} failed · {na_count} n/a</div>"
+            "</div></div>"
+        )
+        tables = (
+            "<div class='overview-split'>"
+            f"<div>{DeckCardRenderer._failure_table('Node', overview.get('failures_by_node') or [], 'node')}</div>"
+            f"<div>{DeckCardRenderer._failure_table('Group', overview.get('failures_by_group') or [], 'group')}</div>"
+            "</div>"
+        )
+        return summary + tables
+
+    @staticmethod
+    def _failure_table(title, rows, label_key):
+        if not rows:
+            return "<p class='muted'>No results.</p>"
+        max_fail = max(int(row.get("fail") or 0) for row in rows if isinstance(row, dict)) or 1
+        body = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            fail = int(row.get("fail") or 0)
+            width = 100.0 * fail / max_fail if fail else 0
+            body.append(
+                "<tr>"
+                f"<td>{html.escape(str(row.get(label_key, '')))}</td>"
+                f"<td class='ov-fail'>{fail}"
+                f"<span class='fail-track'><span class='fail-fill' style='width:{width:.0f}%'></span></span></td>"
+                f"<td>{int(row.get('pass') or 0)}</td>"
+                f"<td>{int(row.get('na') or 0)}</td>"
+                "</tr>"
+            )
+        head = f"<tr><th>{html.escape(title)}</th><th>Fail</th><th>Pass</th><th>n/a</th></tr>"
+        return f"<table class='overview-table'><thead>{head}</thead><tbody>{''.join(body)}</tbody></table>"
+
+    def render_metric_charts(self, _payload, _card, data):
+        charts = data if isinstance(data, dict) else {}
+        metrics = [item for item in (charts.get("metrics") or []) if isinstance(item, dict)]
+        series = [item for item in (charts.get("series") or []) if isinstance(item, dict)]
+        heatmaps = [item for item in (charts.get("heatmaps") or []) if isinstance(item, dict)]
+        if not metrics and not series and not heatmaps:
+            return "<p class='muted'>No metric data recorded.</p>"
+        parts = []
+        grouped = {}
+        group_order = []
+        for metric in metrics:
+            group = str(metric.get("group") or "")
+            if group not in grouped:
+                grouped[group] = []
+                group_order.append(group)
+            grouped[group].append(self._metric_bar_panel(metric))
+        for group in group_order:
+            panels = "".join(panel for panel in grouped[group] if panel)
+            if not panels:
+                continue
+            title = f"<h3 class='chart-group-title'>{html.escape(group)}</h3>" if group else ""
+            parts.append(f"<div class='chart-group'>{title}<div class='chart-grid'>{panels}</div></div>")
+        series_html = "".join(self._metric_series_panel(item) for item in series)
+        if series_html:
+            parts.append(
+                "<div class='chart-group'><h3 class='chart-group-title'>Series</h3>"
+                f"<div class='chart-grid'>{series_html}</div></div>"
+            )
+        heat_html = "".join(self._heatmap_panel(item) for item in heatmaps)
+        if heat_html:
+            parts.append(f"<div class='chart-group'><h3 class='chart-group-title'>Heatmaps</h3>{heat_html}</div>")
+        return "".join(parts) or "<p class='muted'>No metric data recorded.</p>"
+
+    def _metric_bar_panel(self, metric):
+        points = []
+        for point in metric.get("points") or []:
+            if not isinstance(point, dict):
+                continue
+            try:
+                value = float(point.get("value"))
+            except (TypeError, ValueError):
+                continue
+            points.append((point, value))
+        if not points:
+            return ""
+        threshold = metric.get("threshold")
+        try:
+            threshold = float(threshold) if threshold is not None else None
+        except (TypeError, ValueError):
+            threshold = None
+        scale_values = [value for _, value in points]
+        if threshold is not None:
+            scale_values.append(threshold)
+        domain_min, domain_max, ticks = SweepChartRenderer._display_scale(min(scale_values), max(scale_values))
+        y_labels = "".join(
+            f"<span class='chart-ylbl' style='bottom:{SweepChartRenderer._value_pct(tick, domain_min, domain_max):.2f}%'>"
+            f"{html.escape(fmt_num(tick))}</span>"
+            for tick in ticks
+        )
+        grid = "".join(
+            "<span class='chart-hline' "
+            f"style='bottom:{SweepChartRenderer._value_pct(tick, domain_min, domain_max):.2f}%'></span>"
+            for tick in ticks
+        )
+        bars = []
+        x_ticks = []
+        unit = str(metric.get("unit") or "")
+        for point, value in points:
+            height = SweepChartRenderer._value_pct(value, domain_min, domain_max)
+            status = str(point.get("status") or "")
+            bar_class = f"chart-bar-{status}" if status in ("pass", "fail", "na") else "chart-bar-accent"
+            label = str(point.get("node") or "")
+            tip = html.escape(f"{label}: {fmt_num(value)} {unit}".strip())
+            bars.append(
+                "<div class='chart-col'>"
+                f"<div class='chart-bar {bar_class} chart-has-tip' style='height:{height:.1f}%' "
+                f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div></div>"
+            )
+            x_ticks.append(f"<span class='chart-xlbl'><span class='chart-xlbl-line'>{html.escape(label)}</span></span>")
+        marker = ""
+        if threshold is not None:
+            pct = SweepChartRenderer._value_pct(threshold, domain_min, domain_max)
+            marker = f"<span class='chart-threshold' style='bottom:{pct:.2f}%' title='threshold'></span>"
+        title = str(metric.get("name") or "metric")
+        note = _threshold_note(metric, threshold)
+        note_html = f"<p class='metric-note'>{html.escape(note)}</p>" if note else ""
+        return (
+            f"<div class='chart-panel'><h3>{html.escape(title)}</h3>{note_html}"
+            f"<div class='chart-viz'><div class='chart-ywrap'><div class='chart-ylabels'>{y_labels}</div></div>"
+            f"<div class='chart-main'><div class='chart-plotbox'><div class='chart-hgrid' aria-hidden='true'>{grid}</div>"
+            f"{marker}<div class='chart-bars'>{''.join(bars)}</div></div>"
+            f"<div class='chart-xrow'>{''.join(x_ticks)}</div></div></div>"
+            f"<div class='chart-unit'>{html.escape(unit)}</div></div>"
+        )
+
+    def _metric_series_panel(self, series):
+        points = []
+        for point in series.get("points") or []:
+            if isinstance(point, dict) and point.get("y") is not None:
+                points.append((point.get("x"), point.get("y")))
+            elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                points.append((point[0], point[1]))
+        title = str(series.get("name") or "series")
+        node = series.get("node")
+        if node:
+            title = f"{title} · {node}"
+        x_label = str(series.get("x_label") or "{x}")
+        if "{x}" not in x_label:
+            x_label = "{x}"
+        return self._charts.render_series_chart(title, points, str(series.get("unit") or ""), x_label=x_label)
+
+    @staticmethod
+    def _heatmap_panel(heat):
+        rows = heat.get("rows") or []
+        cols = heat.get("cols") or []
+        values = heat.get("values") or []
+        if not rows or not cols:
+            return ""
+        numbers = [
+            value
+            for row in values
+            if isinstance(row, list)
+            for value in row
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        ]
+        lo = min(numbers) if numbers else 0.0
+        hi = max(numbers) if numbers else 1.0
+        threshold = heat.get("threshold")
+        try:
+            threshold = float(threshold) if threshold is not None else None
+        except (TypeError, ValueError):
+            threshold = None
+        direction = str(heat.get("direction") or "")
+        head = "<tr><th></th>" + "".join(f"<th>{html.escape(str(col))}</th>" for col in cols) + "</tr>"
+        body = []
+        for index, row_name in enumerate(rows):
+            row_values = values[index] if index < len(values) and isinstance(values[index], list) else []
+            cells = []
+            for col_index, _col in enumerate(cols):
+                value = row_values[col_index] if col_index < len(row_values) else None
+                css, style = _heat_style(value, threshold, direction, lo, hi)
+                shown = "—" if value is None else fmt_num(value)
+                cells.append(f"<td class='hm-cell {css}' style='{style}'>{html.escape(shown)}</td>")
+            body.append(f"<tr><th>{html.escape(str(row_name))}</th>{''.join(cells)}</tr>")
+        title = str(heat.get("name") or "heatmap")
+        if heat.get("node"):
+            title = f"{title} · {heat['node']}"
+        unit = str(heat.get("unit") or "")
+        unit_html = f"<div class='chart-unit'>{html.escape(unit)}</div>" if unit else ""
+        return (
+            f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
+            f"<div class='hm-wrap'><table class='hm-table'>{head}{''.join(body)}</table></div>{unit_html}</div>"
         )
 
     @staticmethod
@@ -402,6 +655,8 @@ class DeckCardRenderer:
             "sweep_cell_cards": self.render_cell_cards,
             "table": self.render_table,
             "status_matrix": self.render_status_matrix,
+            "status_overview": self.render_status_overview,
+            "metric_charts": self.render_metric_charts,
             "launch_panel": self.render_launch,
             "line_chart": self.render_line_chart,
             "heatmap": self.render_heatmap,
@@ -416,7 +671,7 @@ class DeckCardRenderer:
 
         bind = card.get("bind") or card_type
         data = resolve_bind(payload, bind) if "." in bind else payload.get(bind)
-        if card.get("when_empty") == "hide" and is_empty(data):
+        if _suppressed_when_empty(card, data):
             return "", "", False
 
         html_body = renderer(payload, card, data)

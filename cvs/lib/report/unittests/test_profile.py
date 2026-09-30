@@ -15,6 +15,48 @@ class TestProfile(unittest.TestCase):
         Draft202012Validator.check_schema(schema)
         Draft202012Validator(schema).validate(load_json_profile("rccl"))
 
+    def test_status_matrix_health_cards_validate_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        profile = {
+            "schema_version": 1,
+            "profile_id": "health_example",
+            "suite_id": "health_example",
+            "report_basename": "health_example_run_deck",
+            "title": "Health Run Deck",
+            "dataset_builder": "status_matrix",
+            "interactive_viewer": True,
+            "sources": {"results": "cvs_results_dict"},
+            "cards": [
+                {
+                    "type": "run_card",
+                    "id": "run-card",
+                    "title": "Run card",
+                    "bind": "datasets.status_matrix.run_card_display",
+                },
+                {
+                    "type": "status_overview",
+                    "id": "overview",
+                    "title": "Health overview",
+                    "bind": "datasets.status_matrix.overview",
+                },
+                {
+                    "type": "metric_charts",
+                    "id": "metrics",
+                    "title": "Metrics",
+                    "bind": "datasets.status_matrix.metric_charts",
+                    "when_empty": "hide",
+                },
+                {
+                    "type": "status_matrix",
+                    "id": "results",
+                    "title": "Full results",
+                    "bind": "datasets.status_matrix",
+                    "hint": "Click a cell's items to expand that node × group.",
+                },
+            ],
+        }
+        Draft202012Validator(schema).validate(profile)
+
     def test_transferbench_profile_validates_against_schema(self):
         schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
         profile = load_json_profile("transferbench_cvs")
