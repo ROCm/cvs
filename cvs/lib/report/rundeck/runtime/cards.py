@@ -14,6 +14,7 @@ from cvs.lib.report.formatting import fmt_num, link_or_text_html
 from cvs.lib.report.inference_payload import sweep_has_multi_shape_comparison
 from cvs.lib.report.render.cell_card import CellCardConfig, CellCardRenderer
 from cvs.lib.report.render.gate_matrix import GateMatrixRenderer
+from cvs.lib.report.render.loss_chart import SERIES_COLORS
 from cvs.lib.report.render.panel_shell import render_results_table_html
 from cvs.lib.report.rundeck.context import is_empty, resolve_bind
 from cvs.lib.report.rundeck.runtime.sweep_charts import SweepChartRenderer
@@ -72,9 +73,6 @@ def _heat_style(value, threshold, direction, lo, hi):
     return "hm-scale", f"background:rgba(107,159,255,{alpha:.2f})"
 
 
-_SERIES_COLORS = ("#6b9fff", "#ff6b35", "#3dd68c", "#c77dff", "#ffd166", "#ef476f", "#06d6a0", "#118ab2")
-
-
 def _as_float(value):
     try:
         return float(value)
@@ -101,6 +99,17 @@ def _ordered_nodes(points):
         if node not in nodes:
             nodes.append(node)
     return nodes
+
+
+def _shared_prefix(names):
+    """Leading word every name shares ("power GPU2", "power GPU3" -> "power"), else ""."""
+    if len(names) < 2:
+        return ""
+    words = [str(name).split(" ", 1) for name in names]
+    first = words[0][0]
+    if all(len(parts) == 2 and parts[0] == first for parts in words):
+        return first
+    return ""
 
 
 def _worst_point(points, direction):
@@ -442,12 +451,27 @@ class DeckCardRenderer:
         passed = int(counts.get("pass") or 0)
         failed = int(counts.get("fail") or 0)
         na_count = int(counts.get("na") or 0)
+        share = max(total, 1)
+        stack = "".join(
+            f"<span class='ov-stack-{key}' style='width:{100.0 * count / share:.1f}%'></span>"
+            for key, count in (("pass", passed), ("fail", failed), ("na", na_count))
+            if count
+        )
+        rate_tone = "summary-stat-fail" if failed else ("summary-stat-pass" if passed else "")
         summary = (
-            "<div class='summary-grid'>"
+            "<div class='summary-grid ov-stats'>"
             "<div class='summary-card'><h3>Pass rate</h3>"
-            f"<div class='summary-stat'>{html.escape(rate)}</div>"
+            f"<div class='summary-stat {rate_tone}'>{html.escape(rate)}</div>"
+            f"<div class='ov-stack'>{stack}</div>"
             f"<div class='summary-meta'>{passed} passed · {failed} failed · {na_count} n/a</div>"
-            "</div></div>"
+            "</div>"
+            f"<div class='summary-card'><h3>Passed</h3><div class='summary-stat summary-stat-pass'>{passed}</div>"
+            "<div class='summary-meta'>node × group</div></div>"
+            f"<div class='summary-card'><h3>Failed</h3><div class='summary-stat summary-stat-fail'>{failed}</div>"
+            "<div class='summary-meta'>node × group</div></div>"
+            f"<div class='summary-card'><h3>Not evaluated</h3><div class='summary-stat summary-stat-na'>{na_count}</div>"
+            "<div class='summary-meta'>node × group</div></div>"
+            "</div>"
         )
         tables = (
             "<div class='overview-split'>"
@@ -501,7 +525,10 @@ class DeckCardRenderer:
             parts.append(f"<div class='chart-group'>{title}<div class='chart-grid'>{''.join(panels)}</div></div>")
         heat_html = "".join(self._heatmap_panel(item) for item in heatmaps)
         if heat_html:
-            parts.append(f"<div class='chart-group'><h3 class='chart-group-title'>Heatmaps</h3>{heat_html}</div>")
+            parts.append(
+                "<div class='chart-group'><h3 class='chart-group-title'>Heatmaps</h3>"
+                f"<div class='chart-grid chart-grid-heat'>{heat_html}</div></div>"
+            )
         return "".join(parts) or "<p class='muted'>No metric data recorded.</p>"
 
     def _metric_group_panels(self, metrics):
@@ -558,6 +585,9 @@ class DeckCardRenderer:
             for tick in ticks
         )
         grid = "".join(f"<span class='chart-hline' style='bottom:{pct(tick):.2f}%'></span>" for tick in ticks)
+        prefix = _shared_prefix([name for name, _bars in columns])
+        if prefix:
+            columns = [(name[len(prefix) + 1 :], bars) for name, bars in columns]
         cols_html = []
         x_ticks = []
         for name, bars in columns:
@@ -566,7 +596,8 @@ class DeckCardRenderer:
                 status = str(point.get("status") or "")
                 bar_class = f"chart-bar-{status}" if status in ("pass", "fail", "na") else "chart-bar-accent2"
                 who = str(point.get("node") or "") if rollup else label
-                tip = html.escape(f"{name} · {who}: {fmt_num(value)} {unit}".strip())
+                full_name = f"{prefix} {name}" if prefix else name
+                tip = html.escape(f"{full_name} · {who}: {fmt_num(value)} {unit} ({status or 'n/a'})".strip())
                 bar_html.append(
                     f"<div class='chart-bar {bar_class} chart-has-tip' style='height:{pct(value):.1f}%' "
                     f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div>"
@@ -582,9 +613,14 @@ class DeckCardRenderer:
         elif len(nodes) > 1:
             notes.append("bars left→right: " + ", ".join(nodes))
         note_html = "".join(f"<p class='metric-note'>{html.escape(note)}</p>" for note in notes if note)
-        title = str(metric0.get("name") or "metric") if len(columns) == 1 else unit or "value"
+        if len(columns) == 1:
+            title = str(metric0.get("name") or "metric")
+        else:
+            title = prefix or unit or "value"
+        # A few clusters read fine at grid width; only long x-axes need the full row.
+        wide = " chart-panel-wide" if len(columns) > 4 else ""
         return (
-            f"<div class='chart-panel chart-panel-wide'><h3>{html.escape(title)}</h3>{note_html}"
+            f"<div class='chart-panel{wide}'><h3>{html.escape(title)}</h3>{note_html}"
             f"<div class='chart-viz'><div class='chart-ywrap'><div class='chart-ylabels'>{y_labels}</div></div>"
             f"<div class='chart-main'><div class='chart-plotbox'><div class='chart-hgrid' aria-hidden='true'>{grid}</div>"
             f"{marker}<div class='chart-bars'>{''.join(cols_html)}</div></div>"
@@ -635,28 +671,35 @@ class DeckCardRenderer:
         ys = [y for _node, points in lines for _x, y in points]
         domain_min, domain_max, ticks = SweepChartRenderer._display_scale(min(ys), max(ys))
 
+        # A narrow canvas keeps axis text legible when the panel sits in a three-column grid.
+        left, right = 64, 392
+
         def y_of(value):
             return 180 - 160 * SweepChartRenderer._value_pct(value, domain_min, domain_max) / 100
 
         def x_of(x):
-            return 70 + 500 * x_values.index(x) / max(1, len(x_values) - 1)
+            return left + (right - left) * x_values.index(x) / max(1, len(x_values) - 1)
 
         x_label = str(sample.get("x_label") or "")
         svg = []
         for tick in ticks:
             y = y_of(tick)
             svg.append(
-                f"<line x1='70' x2='570' y1='{y:.2f}' y2='{y:.2f}' stroke='var(--border)'/>"
-                f"<text x='62' y='{y:.2f}' text-anchor='end' dominant-baseline='middle'>"
+                f"<line x1='{left}' x2='{right}' y1='{y:.2f}' y2='{y:.2f}' stroke='var(--border)'/>"
+                f"<text x='{left - 6}' y='{y:.2f}' text-anchor='end' dominant-baseline='middle'>"
                 f"{html.escape(fmt_num(tick))}</text>"
             )
-        step = max(1, (len(x_values) + 7) // 8)
+        step = max(1, (len(x_values) + 5) // 6)
+        last = len(x_values) - 1
         for index, x in enumerate(x_values):
-            if index % step == 0 or index == len(x_values) - 1:
-                svg.append(f"<text x='{x_of(x):.2f}' y='202' text-anchor='middle'>{html.escape(str(x))}</text>")
+            ticked = index % step == 0 and (last - index >= step / 2 or index == last)
+            if not ticked and index != last:
+                continue
+            anchor = "end" if index == last and last > 0 else ("start" if index == 0 and last > 0 else "middle")
+            svg.append(f"<text x='{x_of(x):.2f}' y='202' text-anchor='{anchor}'>{html.escape(str(x))}</text>")
         legend = []
         for index, (node, points) in enumerate(lines):
-            color = _SERIES_COLORS[index % len(_SERIES_COLORS)]
+            color = SERIES_COLORS[index % len(SERIES_COLORS)]
             coords = " ".join(f"{x_of(x):.2f},{y_of(y):.2f}" for x, y in points)
             svg.append(f"<polyline points='{coords}' fill='none' stroke='{color}' stroke-width='2'/>")
             for x, y in points:
@@ -672,13 +715,13 @@ class DeckCardRenderer:
         more = (
             f"<span class='muted'>+{total - len(lines)} more nodes in the viewer</span>" if total > len(lines) else ""
         )
-        axis = f" · x: {x_label}" if x_label else ""
+        title = f"{name} by {x_label}" if x_label else name
         return (
-            f"<div class='chart-panel'><h3>{html.escape(name)}</h3>"
+            f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
             f"<div class='series-legend'>{''.join(legend)}{more}</div>"
-            f"<svg viewBox='0 0 600 220' role='img' aria-label='{html.escape(name)}' "
-            f"style='width:100%;fill:currentColor;font-size:11px'>{''.join(svg)}</svg>"
-            f"<div class='chart-unit'>{html.escape(unit + axis)}</div></div>"
+            f"<svg viewBox='0 0 400 214' role='img' aria-label='{html.escape(title)}' "
+            f"style='width:100%;fill:var(--muted);font-size:11px'>{''.join(svg)}</svg>"
+            f"<div class='chart-unit'>{html.escape(unit)}</div></div>"
         )
 
     @staticmethod

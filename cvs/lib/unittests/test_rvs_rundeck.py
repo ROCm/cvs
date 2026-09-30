@@ -310,6 +310,21 @@ class TestBabelAndMemMetrics(unittest.TestCase):
         self.assertEqual(hinted["heatmaps"][0]["group"], "babel")
         self.assertAlmostEqual(hinted["heatmaps"][0]["values"][0][0], 10.0)
 
+    def test_babel_survives_clipped_module_token(self):
+        text = "\n".join(
+            [
+                "Action name :hbm_full",
+                "Module name :babe",
+                "2987        Read        100.0    9    8    7",
+            ]
+        )
+        perf = rvs_rundeck.parse_node_performance(text, module_hint="level_config")
+        self.assertEqual(perf["heatmaps"][0]["group"], "babel")
+        self.assertAlmostEqual(perf["heatmaps"][0]["values"][0][0], 100.0)
+
+        gst = "\n".join(["Action name :hbm_full", "Module name :gst", "2987 Read 100.0 9 8 7"])
+        self.assertEqual(rvs_rundeck.parse_node_performance(gst, module_hint="level_config")["heatmaps"], [])
+
     def test_mem_bandwidth_or_verdict_only(self):
         text = "\n".join(
             [

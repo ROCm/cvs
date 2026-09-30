@@ -329,7 +329,7 @@ def record_p2p(res_dict, out_dict, exp_dict, meta=None):
             # The cell already shows the gated GPU->GPU number. The chart is the four-path breakdown.
             items.append(_metric_item(name, values[-1], gates[name]))
             points = [{"x": label, "y": raw} for label, raw in zip(_P2P_PATHS, values)]
-            series.append(_series(name, points, x_label="{x}", y_label="GB/s"))
+            series.append(_series(name, points, x_label="path", y_label="GB/s"))
         if "UniDir" in lines and "BiDir" in lines:
             summary = f"UniDir {lines['UniDir'][-1]} / BiDir {lines['BiDir'][-1]} GB/s"
         else:
@@ -387,7 +387,7 @@ def _scaling_series(text, header, endpoints):
             continue
         for name, value in zip(endpoints, values):
             points[name].append({"x": int(parts[0]), "y": value})
-    return [_series(name, points[name], x_label="NumCUs {x}", y_label="GB/s") for name in endpoints]
+    return [_series(name, points[name], x_label="CUs", y_label="GB/s") for name in endpoints]
 
 
 def _scaling_visuals(text):
@@ -433,7 +433,7 @@ def _schmoo_visuals(text, expected):
         # One CU row is a bar, not a curve. The 32 CU bars carry the thresholds.
         if len(points) < 2:
             continue
-        series.append(_series(label, points, x_label="CUs {x}", y_label="GB/s"))
+        series.append(_series(label, points, x_label="CUs", y_label="GB/s"))
     metrics = []
     gated = _SCHMOO_32_RE.search(text)
     if gated:

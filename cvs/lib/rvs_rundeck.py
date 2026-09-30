@@ -39,6 +39,9 @@ _GROUP_MODULES = {
     "peqt_single": "peqt",
     "level_config": "",
 }
+# RVS can clip the module token in interleaved output ("Module name :babe"); only a known
+# token is trusted over the action name.
+_KNOWN_MODULES = frozenset(module for module in _GROUP_MODULES.values() if module)
 
 _PRECISION_MATCH = ("bf16", "fp16", "fp32", "fp64", "fp8")
 _PRECISION_ORDER = ("fp8", "fp16", "bf16", "fp32", "fp64")
@@ -371,7 +374,7 @@ def _pbqt_performance(pairs):
 def _in_babel(module, action, hint):
     if module == "babel" or (not module and hint == "babel"):
         return True
-    if module:
+    if module in _KNOWN_MODULES:
         return False
     act = str(action or "").lower()
     return act.startswith("hbm") or "babel" in act
