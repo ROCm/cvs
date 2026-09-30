@@ -14,7 +14,7 @@ from packaging import version
 
 from cvs.lib.utils_lib import *
 
-from cvs.lib import globals
+from cvs.lib import globals, rvs_rundeck
 
 log = globals.log
 
@@ -74,6 +74,18 @@ def rvs_test_level(config_dict):
     except (ValueError, TypeError):
         log.warning(f'Invalid RVS test level format in config: {level}. Using default level 4')
         return 4
+
+
+@pytest.fixture(scope="module")
+def rvs_res_dict():
+    """
+    Module-scoped structured RVS results for the Run Deck status matrix.
+
+    Each module test merges its per-node pass/fail into this dict. The rvs_cvs
+    profile names this fixture in sources.results, so session binding captures
+    it at module teardown.
+    """
+    return {}
 
 
 @pytest.fixture(scope="module")
@@ -401,7 +413,18 @@ def parse_rvs_test_results(test_config, out_dict):
             log.info(f'RVS {test_name} test passed on node {node}')
 
 
-def execute_rvs_test(orch, config_dict, test_name):
+def _capture_rvs_rundeck(rvs_res_dict, cluster_dict, group, out_dict, fail_patterns, version):
+    """Best-effort: a reporting problem must not change the RVS pass/fail."""
+    if rvs_res_dict is None:
+        return
+    try:
+        meta = rvs_rundeck.make_meta(cluster_dict, version, "rvs_cvs")
+        rvs_rundeck.record_outputs(rvs_res_dict, group, out_dict, fail_patterns, meta=meta)
+    except Exception as exc:
+        log.warning("RVS '%s': could not capture Run Deck results: %s", group, exc)
+
+
+def execute_rvs_test(orch, config_dict, test_name, rvs_res_dict=None, cluster_dict=None, rvs_version=None):
     """
     Generic function to execute any RVS test.
 
@@ -479,6 +502,8 @@ def execute_rvs_test(orch, config_dict, test_name):
 
         # Parse and validate results
         parse_rvs_test_results(test_config, out_dict)
+        fail_pattern = test_config.get('fail_regex_pattern', r'\[ERROR\s*\]')
+        _capture_rvs_rundeck(rvs_res_dict, cluster_dict, test_name, out_dict, [fail_pattern], rvs_version)
     else:
         fail_test(f'Configuration file [{config_file}] for {test_name} not found on any/some node.')
 
@@ -527,7 +552,7 @@ def parse_rvs_level_results(test_config, out_dict, level):
 ################################################################################
 
 
-def test_rvs_level_config(orch, config_dict, rvs_version, rvs_test_level):
+def test_rvs_level_config(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
     """
     Run RVS LEVEL-based configuration test.
     This test runs all RVS modules collectively using the -r (run level) option.
@@ -586,11 +611,19 @@ def test_rvs_level_config(orch, config_dict, rvs_version, rvs_test_level):
 
     # Parse and validate results
     parse_rvs_level_results(test_config, out_dict, rvs_test_level)
+    _capture_rvs_rundeck(
+        rvs_res_dict,
+        cluster_dict,
+        "level_config",
+        out_dict,
+        test_config.get('fail_regex_patterns', []),
+        rvs_version,
+    )
 
     update_test_result()
 
 
-def test_rvs_gpu_enumeration(orch, config_dict):
+def test_rvs_gpu_enumeration(orch, config_dict, rvs_res_dict, cluster_dict, rvs_version):
     """
     Run RVS GPU enumeration test to detect and validate GPU presence.
     This is a basic connectivity and detection test.
@@ -614,10 +647,18 @@ def test_rvs_gpu_enumeration(orch, config_dict):
         if re.search(r'No supported GPUs available', out_dict[node], re.I):
             fail_test(f'No GPUs detected in RVS enumeration on node {node}')
 
+    _capture_rvs_rundeck(
+        rvs_res_dict,
+        cluster_dict,
+        "gpu_enumeration",
+        out_dict,
+        [r"No supported GPUs available"],
+        rvs_version,
+    )
     update_test_result()
 
 
-def test_rvs_mem_test(orch, config_dict, rvs_version, rvs_test_level):
+def test_rvs_mem_test(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
     """
     Run RVS Memory Test.
     This test validates GPU memory functionality and integrity.
@@ -634,10 +675,17 @@ def test_rvs_mem_test(orch, config_dict, rvs_version, rvs_test_level):
         pytest.skip(f"test_rvs_mem_test: {skip_reason}")
 
     test_name = 'mem_test'
-    execute_rvs_test(orch, config_dict, test_name)
+    execute_rvs_test(
+        orch,
+        config_dict,
+        test_name,
+        rvs_res_dict=rvs_res_dict,
+        cluster_dict=cluster_dict,
+        rvs_version=rvs_version,
+    )
 
 
-def test_rvs_gst_single(orch, config_dict, rvs_version, rvs_test_level):
+def test_rvs_gst_single(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
     """
     Run RVS GST (GPU Stress Test) - Single GPU validation test.
     This test runs the GPU stress test configuration to validate GPU functionality
@@ -655,10 +703,17 @@ def test_rvs_gst_single(orch, config_dict, rvs_version, rvs_test_level):
         pytest.skip(f"test_rvs_gst_single: {skip_reason}")
 
     test_name = 'gst_single'
-    execute_rvs_test(orch, config_dict, test_name)
+    execute_rvs_test(
+        orch,
+        config_dict,
+        test_name,
+        rvs_res_dict=rvs_res_dict,
+        cluster_dict=cluster_dict,
+        rvs_version=rvs_version,
+    )
 
 
-def test_rvs_iet_stress(orch, config_dict, rvs_version, rvs_test_level):
+def test_rvs_iet_stress(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
     """
     Run RVS IET (Peak Power Test) - Single GPU validation test.
     This test validates power consumption and thermal behavior under load.
@@ -675,10 +730,17 @@ def test_rvs_iet_stress(orch, config_dict, rvs_version, rvs_test_level):
         pytest.skip(f"test_rvs_iet_stress: {skip_reason}")
 
     test_name = 'iet_stress'
-    execute_rvs_test(orch, config_dict, test_name)
+    execute_rvs_test(
+        orch,
+        config_dict,
+        test_name,
+        rvs_res_dict=rvs_res_dict,
+        cluster_dict=cluster_dict,
+        rvs_version=rvs_version,
+    )
 
 
-def test_rvs_pebb_single(orch, config_dict, rvs_version, rvs_test_level):
+def test_rvs_pebb_single(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
     """
     Run RVS PEBB (PCI Express Bandwidth Benchmark).
     This test measures and validates PCI Express bandwidth performance.
@@ -695,10 +757,17 @@ def test_rvs_pebb_single(orch, config_dict, rvs_version, rvs_test_level):
         pytest.skip(f"test_rvs_pebb_single: {skip_reason}")
 
     test_name = 'pebb_single'
-    execute_rvs_test(orch, config_dict, test_name)
+    execute_rvs_test(
+        orch,
+        config_dict,
+        test_name,
+        rvs_res_dict=rvs_res_dict,
+        cluster_dict=cluster_dict,
+        rvs_version=rvs_version,
+    )
 
 
-def test_rvs_pbqt_single(orch, config_dict, rvs_version, rvs_test_level):
+def test_rvs_pbqt_single(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
     """
     Run RVS PBQT (P2P Benchmark and Qualification Tool).
     This test validates peer-to-peer communication between GPUs.
@@ -715,10 +784,17 @@ def test_rvs_pbqt_single(orch, config_dict, rvs_version, rvs_test_level):
         pytest.skip(f"test_rvs_pbqt_single: {skip_reason}")
 
     test_name = 'pbqt_single'
-    execute_rvs_test(orch, config_dict, test_name)
+    execute_rvs_test(
+        orch,
+        config_dict,
+        test_name,
+        rvs_res_dict=rvs_res_dict,
+        cluster_dict=cluster_dict,
+        rvs_version=rvs_version,
+    )
 
 
-def test_rvs_babel_stream(orch, config_dict, rvs_version, rvs_test_level):
+def test_rvs_babel_stream(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
     """
     Run RVS BABEL Benchmark test.
     This test runs the BABEL streaming benchmark for GPU memory bandwidth validation.
@@ -735,4 +811,11 @@ def test_rvs_babel_stream(orch, config_dict, rvs_version, rvs_test_level):
         pytest.skip(f"test_rvs_babel_stream: {skip_reason}")
 
     test_name = 'babel_stream'
-    execute_rvs_test(orch, config_dict, test_name)
+    execute_rvs_test(
+        orch,
+        config_dict,
+        test_name,
+        rvs_res_dict=rvs_res_dict,
+        cluster_dict=cluster_dict,
+        rvs_version=rvs_version,
+    )
