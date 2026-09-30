@@ -35,22 +35,8 @@ class GitMetadata:
         branch = cls._run(["rev-parse", "--abbrev-ref", "HEAD"])
         return "" if branch == "HEAD" else branch
 
-    @classmethod
-    def worktree_dirty(cls) -> bool:
-        try:
-            result = subprocess.run(
-                ["git", "status", "--porcelain"],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=2,
-            )
-            return bool(result.stdout.strip())
-        except (OSError, subprocess.SubprocessError):
-            return False
-
     @staticmethod
-    def format_ref(*, commit: str = "", branch: str = "", dirty: bool = False) -> str:
+    def format_ref(*, commit: str = "", branch: str = "") -> str:
         if not commit and not branch:
             return ""
         parts: list[str] = []
@@ -58,10 +44,7 @@ class GitMetadata:
             parts.append(commit)
         if branch:
             parts.append(branch)
-        ref = " @ ".join(parts) if len(parts) == 2 else parts[0]
-        if dirty:
-            ref = f"{ref} (dirty)"
-        return ref
+        return " @ ".join(parts) if len(parts) == 2 else parts[0]
 
 
 class ProvenanceCollector:
@@ -165,12 +148,8 @@ def git_branch_name() -> str:
     return GitMetadata.branch_name()
 
 
-def git_worktree_dirty() -> bool:
-    return GitMetadata.worktree_dirty()
-
-
-def format_git_ref(*, commit: str = "", branch: str = "", dirty: bool = False) -> str:
-    return GitMetadata.format_ref(commit=commit, branch=branch, dirty=dirty)
+def format_git_ref(*, commit: str = "", branch: str = "") -> str:
+    return GitMetadata.format_ref(commit=commit, branch=branch)
 
 
 def build_inference_report_provenance(

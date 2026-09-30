@@ -2276,7 +2276,7 @@ function compareSequential(a, b) {
 }
 
 function compareSweepCells(a, b) {
-  const fields = ['isl', 'osl', 'policy', 'concurrency', 'model', 'gpu', 'host', 'cell_id'];
+  const fields = ['model', 'gpu', 'isl', 'osl', 'policy', 'concurrency', 'host', 'cell_id'];
   for (let i = 0; i < fields.length; i++) {
     const cmp = compareSequential(a[fields[i]], b[fields[i]]);
     if (cmp) return cmp;

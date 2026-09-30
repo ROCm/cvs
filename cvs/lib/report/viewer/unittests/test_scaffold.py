@@ -39,6 +39,7 @@ class TestViewerScaffold(unittest.TestCase):
             self.assertIn("suite_report.json", text)
             self.assertIn("embedded-report-json", text)
             self.assertIn("function compareSweepCells", text)
+            self.assertIn("['model', 'gpu', 'isl', 'osl', 'policy', 'concurrency', 'host', 'cell_id']", text)
             self.assertIn("all_cells", text)
             self.assertIn('"cell_id"', text)
             self.assertIn("chart.js", text)

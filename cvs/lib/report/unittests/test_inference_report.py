@@ -99,6 +99,22 @@ class TestInferenceReport(unittest.TestCase):
         self.assertNotIn("Compare shapes at each concurrency", doc)
         self.assertIn("interactive viewer", doc)
 
+    def test_chart_series_and_summaries_order_shapes_numerically(self):
+        inf_res = {}
+        for isl, conc in (("1024", 1), ("1024", 2), ("128", 1), ("128", 2)):
+            inf_res[("org/example-model", "mi300x", isl, "32", "default", conc)] = {
+                "10.0.0.1": {"client.output_throughput": float(conc)}
+            }
+        payload = build_inference_report_payload(
+            config=generic_inference_report_config(),
+            variant_config=generic_variant(),
+            inf_res_dict=inf_res,
+            lifecycle_report={},
+        )
+        labels = [group["label"] for group in payload["chart_series"]["output_throughput"]]
+        self.assertEqual(labels, ["ISL=128 · OSL=32", "ISL=1024 · OSL=32"])
+        self.assertEqual([summary["isl"] for summary in payload["sweep_summaries"]], ["128", "1024"])
+
     def test_sweep_has_multi_shape_comparison(self):
         cfg = generic_inference_report_config()
         multi = build_inference_report_payload(
