@@ -3,6 +3,7 @@
 import unittest
 
 from cvs.lib.training.megatron.utils.results_table import (
+    build_benchmark_metric_row,
     build_metric_row,
     format_expected,
     format_value,
@@ -68,6 +69,34 @@ class TestResultsTable(unittest.TestCase):
         self.assertIn("483.2400", html)
         self.assertIn("#2e7d32", html)  # PASS color
         self.assertIn("#c62828", html)  # FAIL color
+
+    def test_build_benchmark_metric_row(self):
+        spec = {"kind": "min", "value": 260}
+        row = build_benchmark_metric_row(
+            "training.throughput_per_gpu", spec, 483.24, "pass", reason="", enforced=True
+        )
+        self.assertEqual(
+            row,
+            {
+                "node": "",
+                "metric": "throughput_per_gpu",
+                "label": "throughput_per_gpu",
+                "status": "pass",
+                "actual": 483.24,
+                "unit": "TFLOP/s/GPU",
+                "spec": spec,
+                "reason": "",
+                "enforced": True,
+            },
+        )
+
+    def test_build_benchmark_metric_row_failure_carries_reason(self):
+        row = build_benchmark_metric_row(
+            "training.tokens_per_gpu", {"kind": "min", "value": 1836}, 1689.6, "fail", reason="below min", enforced=True
+        )
+        self.assertEqual(row["status"], "fail")
+        self.assertEqual(row["reason"], "below min")
+        self.assertEqual(row["unit"], "tok/s/GPU")
 
     def test_render_escapes_html(self):
         rows = [build_metric_row("<b>", "training.x", None, "<script>", "N/A")]

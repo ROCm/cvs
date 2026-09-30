@@ -70,6 +70,27 @@ def build_metric_row(sweep, metric, spec, value, status):
     }
 
 
+def build_benchmark_metric_row(metric, spec, value, status, reason="", enforced=True):
+    """Registry-format row for the collapsible per-metric pass/fail panel rendered
+    by ``cvs.lib.report.render.perf_metric_table.render_benchmark_metrics_html``.
+
+    ``status`` is one of ``pass``/``fail``/``skip``/``record`` (lower-case, as the
+    shared renderer expects). ``node`` is empty because a training sweep verdict is
+    cluster-wide, so the renderer drops the node column.
+    """
+    return {
+        "node": "",
+        "metric": metric_display_name(metric),
+        "label": metric_display_name(metric),
+        "status": status,
+        "actual": value,
+        "unit": metric_unit(metric),
+        "spec": spec,
+        "reason": reason,
+        "enforced": enforced,
+    }
+
+
 def render_metric_results_html(metric_rows, title):
     """Render the Sweep/Metric/Expected/Actual/Unit/Status rows as a full HTML doc."""
     body = ""

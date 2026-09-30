@@ -41,7 +41,12 @@ from cvs.lib.training.megatron.utils.iteration_metrics import (
 )
 from cvs.lib.training.megatron.utils.loss_curve import evaluate_loss_decreasing
 from cvs.lib.training.megatron.utils.loss_curve_plot import render_loss_curve_png
-from cvs.lib.training.megatron.utils.results_table import build_metric_row, render_metric_results_html
+from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
+from cvs.lib.training.megatron.utils.results_table import (
+    build_benchmark_metric_row,
+    build_metric_row,
+    render_metric_results_html,
+)
 from cvs.lib.training.megatron.utils.scaling import compute_scaling_efficiency
 from cvs.lib.utils.verdict import _check_one, ThresholdViolation
 from cvs.lib.utils_lib import update_test_result
@@ -475,7 +480,15 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
 
 
 def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
-    """Stage 4 (parametrized): compare each combo's metrics against thresholds."""
+    """Stage 4 (parametrized): compare each combo's metrics against thresholds.
+
+    Every metric is evaluated and recorded as its own pass/fail verdict row so the
+    report renders them as an expandable per-metric panel under this test (the same
+    collapsible view the inference benchmark suites use): expand ``test_metric`` to
+    see tflops_per_sec_per_gpu, tokens_s_gpu, step_time_p50_ms, step_time_p95_ms,
+    ... each as Passed/Failed. All metrics are checked even when one fails, and the
+    parent test fails as a whole if any gated metric violated its threshold.
+    """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     if not train_res_dict.get(sweep_name):
@@ -488,21 +501,19 @@ def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
 
     rows = train_res_dict.setdefault("metric_rows", [])
     sweep_row_start = len(rows)
+    verdicts = []
     try:
         cell = variant_config.cell_key(sweep_name)
         thresholds = variant_config.thresholds.get(cell) or {}
+        enforce = variant_config.enforce_thresholds
 
-        if not variant_config.enforce_thresholds:
-            log.info("enforce_thresholds=false; record-only for combo '%s'", sweep_name)
+        if not enforce or not thresholds:
+            reason = "enforce_thresholds=false" if not enforce else f"no thresholds for cell '{cell}'"
+            log.info("record-only for combo '%s' (%s)", sweep_name, reason)
             for metric, value in actuals.items():
-                log.info("  RECORD  %s: actual=%s", metric, value)
-                rows.append(build_metric_row(sweep_name, metric, thresholds.get(metric), value, "RECORD"))
-            return
-
-        if not thresholds:
-            log.warning("no thresholds defined for cell '%s'; skipping threshold checks", cell)
-            for metric, value in actuals.items():
-                rows.append(build_metric_row(sweep_name, metric, None, value, "RECORD"))
+                spec = thresholds.get(metric)
+                rows.append(build_metric_row(sweep_name, metric, spec, value, "RECORD"))
+                verdicts.append(build_benchmark_metric_row(metric, spec, value, "record", enforced=False))
             return
 
         log.info("--- Threshold check for combo '%s' ---", sweep_name)
@@ -510,28 +521,38 @@ def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
         for metric, spec in thresholds.items():
             value = actuals.get(metric)
             if metric not in actuals or value is None:
-                if spec.get("optional"):
-                    log.info("  SKIPPED  %s: no value produced this run", metric)
-                    rows.append(build_metric_row(sweep_name, metric, spec, value, "N/A"))
-                    continue
                 msg = (
                     f"{metric}: missing from actuals"
                     if metric not in actuals
                     else f"{metric}: value is None (metric unavailable for this run)"
                 )
+                if spec.get("optional"):
+                    log.info("  SKIPPED  %s: no value produced this run", metric)
+                    rows.append(build_metric_row(sweep_name, metric, spec, value, "N/A"))
+                    verdicts.append(
+                        build_benchmark_metric_row(metric, spec, value, "skip", reason="no value produced this run")
+                    )
+                    continue
             else:
                 spec_with_actuals = dict(spec)
                 if spec.get("kind") == "min_ratio":
                     spec_with_actuals["_actuals"] = actuals
                 msg = _check_one(metric, value, spec_with_actuals)
 
-            status = "RECORD" if spec.get("kind") == "info" else ("FAIL" if msg else "PASS")
-            rows.append(build_metric_row(sweep_name, metric, spec, value, status))
-            if msg:
-                log.error("  FAILED  %s", msg)
+            if spec.get("kind") == "info":
+                row_status, verdict_status = "RECORD", "record"
+            elif msg:
+                row_status, verdict_status = "FAIL", "fail"
                 violations.append(msg)
             else:
-                log.info("  %s  %s: actual=%s  threshold=%s", status, metric, value, spec)
+                row_status, verdict_status = "PASS", "pass"
+            rows.append(build_metric_row(sweep_name, metric, spec, value, row_status))
+            verdicts.append(
+                build_benchmark_metric_row(
+                    metric, spec, value, verdict_status, reason=msg or "", enforced=spec.get("kind") != "info"
+                )
+            )
+            log.info("  %s  %s: actual=%s  threshold=%s", row_status, metric, value, spec)
 
         if violations:
             summary = "FAILED\n" + "\n".join(violations)
@@ -542,12 +563,14 @@ def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
         log.info("--- All threshold checks PASSED for combo '%s' ---", sweep_name)
         request.node.user_properties.append(("threshold_comparison", "PASSED"))
     finally:
+        if verdicts:
+            record_benchmark_metric_rows(request.node, verdicts)
         lifecycle.record(request.node.nodeid, "metrics", time.monotonic() - t)
         _attach_metric_artifacts(request, lifecycle, sweep_name, rows[sweep_row_start:], "single")
 
 
 def _attach_metric_artifacts(request, lifecycle, sweep_name, sweep_rows, mode):
-    """Attach this combo's metric-results table as a report link."""
+    """Attach this combo's metric-results table as a report link on the test_metric row."""
     mgr = getattr(request.config, "_html_report_manager", None)
     if mgr is None or not getattr(mgr, "is_enabled", False) or not sweep_rows:
         return
