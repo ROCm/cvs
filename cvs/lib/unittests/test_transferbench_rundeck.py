@@ -145,7 +145,7 @@ Testing all-to-all XGMI copies             ........FAIL (56 test(s))
 
 
 class TestA2aCharts(unittest.TestCase):
-    def test_box_rtotal_emits_per_gpu_metrics_and_series(self):
+    def test_box_rtotal_emits_per_gpu_metrics(self):
         results = {}
         meta = transferbench_rundeck.make_meta({"cluster_name": "helios"}, "transferbench_cvs")
         transferbench_rundeck.record_a2a(results, {"node-a": A2A_BOX}, {"gpu_to_gpu_a2a_rtotal": "320"}, meta=meta)
@@ -159,9 +159,7 @@ class TestA2aCharts(unittest.TestCase):
         self.assertEqual(gpu00["direction"], "higher")
         self.assertEqual(gpu00["status"], "pass")
         self.assertEqual(_metric(node, "GPU07")["value"], 326.75)
-        series = _series_named(node, "RTotal")
-        self.assertEqual([point["x"] for point in series["points"]], [f"GPU{idx:02d}" for idx in range(8)])
-        self.assertEqual(series["points"][3]["y"], 324.77)
+        self.assertNotIn("series", node)
         self.assertEqual(results["_meta"]["version"], "1.67.00")
 
     def test_simple_line_marks_gpu_under_threshold(self):
@@ -192,13 +190,9 @@ class TestP2pCharts(unittest.TestCase):
         node = _node(results, "p2p", "node-a")
         self.assertEqual(node["status"], "pass")
         self.assertEqual(node["items_summary"], "UniDir 48.76 / BiDir 45.82 GB/s")
-        unidir = _metric(node, "UniDir")
-        self.assertEqual(unidir["value"], 48.76)
-        self.assertEqual(unidir["threshold"], 33.9)
-        self.assertEqual(unidir["status"], "pass")
-        bidir = _metric(node, "BiDir")
-        self.assertEqual(bidir["value"], 45.82)
-        self.assertEqual(bidir["threshold"], 43.9)
+        self.assertEqual(node["items"][0]["name"], "UniDir")
+        self.assertEqual(node["items"][0]["status"], "pass")
+        self.assertNotIn("metrics", node)
         paths = _series_named(node, "UniDir")["points"]
         self.assertEqual([point["x"] for point in paths], ["CPU->CPU", "CPU->GPU", "GPU->CPU", "GPU->GPU"])
         self.assertEqual(paths[0]["y"], 100.21)
@@ -213,8 +207,9 @@ class TestP2pCharts(unittest.TestCase):
         transferbench_rundeck.record_p2p(results, {"n1": P2P_REAL}, low)
         node = _node(results, "p2p")
         self.assertEqual(node["status"], "fail")
-        self.assertEqual(_metric(node, "BiDir")["status"], "fail")
-        self.assertEqual(_metric(node, "UniDir")["status"], "pass")
+        self.assertEqual(node["items"][1]["name"], "BiDir")
+        self.assertEqual(node["items"][1]["status"], "fail")
+        self.assertEqual(node["items"][0]["status"], "pass")
 
     def test_abort_omits_charts(self):
         results = {}
@@ -354,13 +349,7 @@ class TestSweepScalingSchmooCharts(unittest.TestCase):
         self.assertEqual(heat["col_label"], "SubExec")
         self.assertEqual(heat["values"][1][-1], 327.09)
         self.assertNotIn("threshold", heat)
-        highest = _metric(node, "highest bandwidth")
-        self.assertEqual(highest["value"], 327.09)
-        self.assertEqual(highest["unit"], "GB/s")
-        self.assertNotIn("status", highest)
-        self.assertEqual(_metric(node, "BlockSize")["value"], 512)
-        self.assertEqual(_metric(node, "Unroll")["value"], 1)
-        self.assertEqual(_metric(node, "NumSubExec")["value"], 32)
+        self.assertNotIn("metrics", node)
         self.assertEqual(results["_meta"]["version"], "1.67.00")
 
     def test_a2asweep_abort_keeps_fail_and_charts(self):
@@ -378,39 +367,29 @@ class TestSweepScalingSchmooCharts(unittest.TestCase):
         node = _node(results, "a2asweep")
         self.assertEqual(node["status"], "pass")
         self.assertNotIn("heatmaps", node)
-        self.assertEqual(_metric(node, "highest bandwidth")["value"], 10.5)
-        self.assertEqual(_metric(node, "BlockSize")["value"], 256)
-        self.assertNotIn("Unroll", [item["name"] for item in node["metrics"]])
+        self.assertNotIn("metrics", node)
 
-    def test_scaling_series_per_endpoint_and_best_metrics(self):
+    def test_scaling_series_per_endpoint(self):
         results = {}
         transferbench_rundeck.record_scaling(results, {"node-a": SCALING_REAL}, {"best_gpu0_bw": "480"})
         node = _node(results, "scaling", "node-a")
         self.assertEqual(node["status"], "pass")
         self.assertEqual(node["items"][0]["name"], "GPU00")
+        self.assertEqual(node["items"][0]["status"], "pass")
         gpu00 = _series_named(node, "GPU00")
         self.assertEqual([point["x"] for point in gpu00["points"]], [1, 2, 32])
         self.assertEqual(gpu00["points"][-1]["y"], 843.62)
         self.assertEqual(_series_named(node, "CPU00")["points"][0]["y"], 22.74)
         self.assertEqual(_series_named(node, "GPU07")["points"][1]["y"], 49.00)
         self.assertEqual(len(node["series"]), 10)
-        best_gpu00 = _metric(node, "GPU00")
-        self.assertEqual(best_gpu00["value"], 843.62)
-        self.assertEqual(best_gpu00["threshold"], 480)
-        self.assertEqual(best_gpu00["status"], "pass")
-        gpu01 = _metric(node, "GPU01")
-        self.assertEqual(gpu01["value"], 49.43)
-        self.assertNotIn("threshold", gpu01)
-        self.assertNotIn("status", gpu01)
-        self.assertEqual(_metric(node, "CPU00")["value"], 56.28)
+        self.assertNotIn("metrics", node)
 
     def test_scaling_gpu00_below_threshold_fails_node(self):
         results = {}
         transferbench_rundeck.record_scaling(results, {"n1": SCALING_REAL}, {"best_gpu0_bw": "900"})
         node = _node(results, "scaling")
         self.assertEqual(node["status"], "fail")
-        self.assertEqual(_metric(node, "GPU00")["status"], "fail")
-        self.assertNotIn("status", _metric(node, "CPU01"))
+        self.assertEqual(node["items"][0]["status"], "fail")
 
     def test_schmoo_local_copy_misses_threshold_on_its_own_series(self):
         results = {}
@@ -438,7 +417,7 @@ class TestSweepScalingSchmooCharts(unittest.TestCase):
         self.assertEqual(node["status"], "fail")
         self.assertIn("not found", node["items"][0]["message"])
         self.assertNotIn("metrics", node)
-        self.assertEqual(_series_named(node, "local read")["points"][0]["y"], 1.0)
+        self.assertNotIn("series", node)
 
     def test_unknown_preset_text_does_not_raise(self):
         results = {}

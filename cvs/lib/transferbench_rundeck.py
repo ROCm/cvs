@@ -84,10 +84,7 @@ _HEALTH_PAIR_RE = re.compile(
     re.I,
 )
 _A2A_SWEEP_HEADER_RE = re.compile(r"BlkS\s+UnR\s+((?:SE\s*\d+\s*)+)", re.I)
-_HIGHEST_BW_RE = re.compile(r"Highest\b[^\n]*bandwidth found:\s*([0-9.]+)\s*GB/s", re.I)
 _SCALING_HEADER_RE = re.compile(r"(?m)^[ \t]*NumCUs\s+((?:(?:CPU|GPU)\d+\s*)+)", re.I)
-_BEST_LINE_RE = re.compile(r"(?m)^[ \t]*Best\s+(.+)$")
-_BEST_PAIR_RE = re.compile(r"([0-9.]+)\(\s*([0-9]+)\s*\)")
 _SCHMOO_ROW_RE = re.compile(
     r"(?m)^[ \t]*(?:[|│][ \t]*)*(?<![0-9])(\d+)(?![0-9])(?:[ \t]*[|│])?[ \t]+"
     r"([0-9.]+)[ \t]+([0-9.]+)[ \t]+([0-9.]+)[ \t]+"
@@ -168,13 +165,6 @@ def _series(name, points, unit="GB/s", x_label="", y_label=""):
     if y_label:
         series["y_label"] = y_label
     return series
-
-
-def _scalar_metric(name, value, unit=""):
-    numeric = _number(value)
-    if numeric is None:
-        return None
-    return {"name": name, "value": numeric, "unit": unit}
 
 
 def _heatmap(name, rows, cols, values, unit="GB/s", threshold=None, direction="higher", row_label="", col_label=""):
@@ -307,14 +297,10 @@ def record_a2a(res_dict, out_dict, exp_dict, meta=None):
             return "fail", [_missing_item("RTotal", message)], message
         items = [_metric_item(f"GPU{idx}", raw, threshold) for idx, raw in enumerate(match.groups())]
         worst = min(float(raw) for raw in match.groups())
-        metrics = []
-        points = []
-        for idx, raw in enumerate(match.groups()):
-            label = f"GPU{idx:02d}"
-            metrics.append(_bandwidth_metric(label, raw, threshold))
-            points.append({"x": label, "y": raw})
+        # The per-GPU bars are the chart. A second RTotal series would plot the same eight numbers.
+        metrics = [_bandwidth_metric(f"GPU{idx:02d}", raw, threshold) for idx, raw in enumerate(match.groups())]
         status, items, summary = _rollup(items, f"min RTotal {worst} GB/s")
-        return status, items, summary, _charts(metrics, [_series("RTotal", points, x_label="{x}", y_label="GB/s")])
+        return status, items, summary, _charts(metrics)
 
     return _record_classified(res_dict, "a2a", out_dict, classify, meta)
 
@@ -334,16 +320,14 @@ def record_p2p(res_dict, out_dict, exp_dict, meta=None):
             if key not in lines:
                 lines[key] = match.groups()[1:]
         items = []
-        metrics = []
         series = []
         for name in ("UniDir", "BiDir"):
             values = lines.get(name)
             if not values:
                 items.append(_missing_item(name, f"{name} averages not found"))
                 continue
-            gpu_gpu = values[-1]
-            items.append(_metric_item(name, gpu_gpu, gates[name]))
-            metrics.append(_bandwidth_metric(name, gpu_gpu, gates[name]))
+            # The cell already shows the gated GPU->GPU number. The chart is the four-path breakdown.
+            items.append(_metric_item(name, values[-1], gates[name]))
             points = [{"x": label, "y": raw} for label, raw in zip(_P2P_PATHS, values)]
             series.append(_series(name, points, x_label="{x}", y_label="GB/s"))
         if "UniDir" in lines and "BiDir" in lines:
@@ -351,7 +335,7 @@ def record_p2p(res_dict, out_dict, exp_dict, meta=None):
         else:
             summary = "p2p averages not found"
         status, items, summary = _rollup(items, summary)
-        return status, items, summary, _charts(metrics, series)
+        return status, items, summary, _charts(series=series)
 
     return _record_classified(res_dict, "p2p", out_dict, classify, meta)
 
@@ -359,16 +343,15 @@ def record_p2p(res_dict, out_dict, exp_dict, meta=None):
 def record_scaling(res_dict, out_dict, exp_dict, meta=None):
     '''Record the Best-row GPU00 bandwidth.
 
-    Series follow the NumCUs header so every CPU and GPU endpoint is charted.
-    The pass/fail gate stays the historical GPU00 capture, which skips two CPU
-    columns, matching ``parse_tb_scaling_bw``.
+    The chart is the NumCUs curve per endpoint. The pass/fail gate stays the
+    historical GPU00 capture, which skips two CPU columns, matching ``parse_tb_scaling_bw``.
     '''
     threshold = (exp_dict or {}).get("best_gpu0_bw")
 
     def classify(text):
         match = _SCALING_BEST_RE.search(text)
         gpu00 = match.group(1) if match else None
-        extras = _scaling_visuals(text, threshold, gpu00)
+        extras = _scaling_visuals(text)
         if not match:
             message = "Best row GPU00 bandwidth not found"
             return "fail", [_missing_item("GPU00", message)], message, extras
@@ -407,31 +390,10 @@ def _scaling_series(text, header, endpoints):
     return [_series(name, points[name], x_label="NumCUs {x}", y_label="GB/s") for name in endpoints]
 
 
-def _scaling_best_metrics(text, endpoints, threshold, gpu00_value):
-    best = _BEST_LINE_RE.search(text)
-    pairs = _BEST_PAIR_RE.findall(best.group(1)) if best else []
-    metrics = []
-    if endpoints and len(pairs) == len(endpoints):
-        for name, (bandwidth, _cus) in zip(endpoints, pairs):
-            value = gpu00_value if name == "GPU00" and gpu00_value is not None else bandwidth
-            if name == "GPU00":
-                metrics.append(_bandwidth_metric(name, value, threshold))
-            else:
-                metric = _scalar_metric(name, value, "GB/s")
-                if metric:
-                    metric["direction"] = "higher"
-                metrics.append(metric)
-        return metrics
-    if gpu00_value is not None:
-        metrics.append(_bandwidth_metric("GPU00", gpu00_value, threshold))
-    return metrics
-
-
-def _scaling_visuals(text, threshold, gpu00_value):
+def _scaling_visuals(text):
+    # Best-row bars repeat the last point of each curve, and the GPU00 gate is already the cell summary.
     header, endpoints = _scaling_endpoints(text)
-    series = _scaling_series(text, header, endpoints)
-    metrics = _scaling_best_metrics(text, endpoints, threshold, gpu00_value)
-    return _charts(metrics, series)
+    return _charts(series=_scaling_series(text, header, endpoints))
 
 
 def record_schmoo(res_dict, out_dict, exp_dict, meta=None):
@@ -468,6 +430,9 @@ def _schmoo_visuals(text, expected):
     series = []
     for idx, (label, _key) in enumerate(_SCHMOO_FIELDS):
         points = [{"x": cu, "y": values[idx]} for cu, values in rows]
+        # One CU row is a bar, not a curve. The 32 CU bars carry the thresholds.
+        if len(points) < 2:
+            continue
         series.append(_series(label, points, x_label="CUs {x}", y_label="GB/s"))
     metrics = []
     gated = _SCHMOO_32_RE.search(text)
@@ -503,21 +468,10 @@ def _a2asweep_heatmap(text):
 
 
 def _a2asweep_visuals(text):
-    metrics = []
-    highest = _HIGHEST_BW_RE.search(text)
-    if highest:
-        metrics.append(_scalar_metric("highest bandwidth", highest.group(1), "GB/s"))
-        tail = text[highest.end() :]
-        for name, pattern in (
-            ("BlockSize", r"BlockSize\s*:\s*([0-9.]+)"),
-            ("Unroll", r"Unroll\s*:\s*([0-9.]+)"),
-            ("NumSubExec", r"NumSubExec\s*:\s*([0-9.]+)"),
-        ):
-            found = re.search(pattern, tail, re.I)
-            if found:
-                metrics.append(_scalar_metric(name, found.group(1)))
+    # The heatmap is the sweep. Its brightest cell is the reported peak, and BlockSize/Unroll/NumSubExec
+    # are the winning config rather than a result to chart.
     heat = _a2asweep_heatmap(text)
-    return _charts(metrics, heatmaps=[heat] if heat else None)
+    return _charts(heatmaps=[heat] if heat else None)
 
 
 def _xgmi_heatmap(pairs):

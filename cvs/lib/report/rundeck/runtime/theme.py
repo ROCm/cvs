@@ -97,6 +97,14 @@ h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: 
 .chart-col { flex: 1 1 0; min-width: 0; max-width: 52px; height: 100%; display: flex; align-items: flex-end;
   justify-content: center; border-left: 1px solid rgba(42, 47, 61, 0.55); }
 .chart-col:first-child { border-left: none; }
+.chart-panel-wide { grid-column: 1 / -1; }
+.chart-cluster { gap: 3px; }
+.chart-cluster .chart-bar { flex: 1 1 0; width: auto; max-width: 18px; min-width: 4px; }
+.chart-xrow-cluster .chart-xlbl { max-width: none; }
+.series-legend { display: flex; flex-wrap: wrap; gap: 0.55rem 0.8rem; margin: -0.15rem 0 0.35rem;
+  font-size: 0.72rem; color: var(--muted); }
+.series-swatch { display: inline-block; width: 0.65rem; height: 0.65rem; margin-right: 0.3rem;
+  border-radius: 2px; vertical-align: -1px; }
 .chart-bar { width: 100%; max-width: 40px; min-height: 3px; border-radius: 4px 4px 0 0; }
 .chart-bar-accent { background: linear-gradient(180deg, var(--accent) 0%, #c44d28 100%); }
 .chart-bar-accent2 { background: linear-gradient(180deg, var(--accent2) 0%, #3d5a99 100%); }

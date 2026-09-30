@@ -72,10 +72,64 @@ def _heat_style(value, threshold, direction, lo, hi):
     return "hm-scale", f"background:rgba(107,159,255,{alpha:.2f})"
 
 
+_SERIES_COLORS = ("#6b9fff", "#ff6b35", "#3dd68c", "#c77dff", "#ffd166", "#ef476f", "#06d6a0", "#118ab2")
+
+
+def _as_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _metric_points(metric):
+    points = []
+    for point in metric.get("points") or []:
+        if not isinstance(point, dict):
+            continue
+        value = _as_float(point.get("value"))
+        if value is None:
+            continue
+        points.append((point, value))
+    return points
+
+
+def _ordered_nodes(points):
+    nodes = []
+    for point in points:
+        node = str(point.get("node") or "")
+        if node not in nodes:
+            nodes.append(node)
+    return nodes
+
+
+def _worst_point(points, direction):
+    if direction == "lower":
+        return max(points, key=lambda item: item[1])
+    return min(points, key=lambda item: item[1])
+
+
+def _series_points(series):
+    points = []
+    for point in series.get("points") or []:
+        if isinstance(point, dict):
+            x, y = point.get("x"), _as_float(point.get("y"))
+        elif isinstance(point, (list, tuple)) and len(point) >= 2:
+            x, y = point[0], _as_float(point[1])
+        else:
+            continue
+        if y is None:
+            continue
+        points.append((x, y))
+    return points
+
+
 class DeckCardRenderer:
     """Profile-driven card renderers for Run Deck static HTML sections."""
 
     DEFAULT_MAX_LINE_CHART_SERIES = 40
+    MAX_BAR_NODES = 16
+    MAX_SERIES_LINES = 8
     _TONES = ("tone1", "tone2", "tone3", "tone4", "tone5", "tone6")
 
     def __init__(
@@ -433,109 +487,199 @@ class DeckCardRenderer:
         heatmaps = [item for item in (charts.get("heatmaps") or []) if isinstance(item, dict)]
         if not metrics and not series and not heatmaps:
             return "<p class='muted'>No metric data recorded.</p>"
-        parts = []
-        grouped = {}
-        group_order = []
+        groups = {}
         for metric in metrics:
-            group = str(metric.get("group") or "")
-            if group not in grouped:
-                grouped[group] = []
-                group_order.append(group)
-            grouped[group].append(self._metric_bar_panel(metric))
-        for group in group_order:
-            panels = "".join(panel for panel in grouped[group] if panel)
+            groups.setdefault(str(metric.get("group") or ""), {"metrics": [], "series": []})["metrics"].append(metric)
+        for item in series:
+            groups.setdefault(str(item.get("group") or ""), {"metrics": [], "series": []})["series"].append(item)
+        parts = []
+        for group, members in groups.items():
+            panels = self._metric_group_panels(members["metrics"]) + self._series_group_panels(members["series"])
             if not panels:
                 continue
             title = f"<h3 class='chart-group-title'>{html.escape(group)}</h3>" if group else ""
-            parts.append(f"<div class='chart-group'>{title}<div class='chart-grid'>{panels}</div></div>")
-        series_html = "".join(self._metric_series_panel(item) for item in series)
-        if series_html:
-            parts.append(
-                "<div class='chart-group'><h3 class='chart-group-title'>Series</h3>"
-                f"<div class='chart-grid'>{series_html}</div></div>"
-            )
+            parts.append(f"<div class='chart-group'>{title}<div class='chart-grid'>{''.join(panels)}</div></div>")
         heat_html = "".join(self._heatmap_panel(item) for item in heatmaps)
         if heat_html:
             parts.append(f"<div class='chart-group'><h3 class='chart-group-title'>Heatmaps</h3>{heat_html}</div>")
         return "".join(parts) or "<p class='muted'>No metric data recorded.</p>"
 
-    def _metric_bar_panel(self, metric):
-        points = []
-        for point in metric.get("points") or []:
-            if not isinstance(point, dict):
+    def _metric_group_panels(self, metrics):
+        # One panel per (unit, threshold, direction) so metrics that share a gate
+        # land on one axis with one threshold line instead of one chart each.
+        charts = {}
+        settings = []
+        for metric in metrics:
+            points = _metric_points(metric)
+            if not points:
                 continue
-            try:
-                value = float(point.get("value"))
-            except (TypeError, ValueError):
+            threshold = _as_float(metric.get("threshold"))
+            unit = str(metric.get("unit") or "")
+            if not unit and threshold is None:
+                settings.append((metric, points))
                 continue
-            points.append((point, value))
-        if not points:
-            return ""
-        threshold = metric.get("threshold")
-        try:
-            threshold = float(threshold) if threshold is not None else None
-        except (TypeError, ValueError):
-            threshold = None
-        scale_values = [value for _, value in points]
+            key = (unit, threshold, str(metric.get("direction") or ""))
+            charts.setdefault(key, []).append((metric, points))
+        panels = [self._clustered_bar_panel(members) for members in charts.values()]
+        if settings:
+            panels.append(self._settings_panel(settings))
+        return [panel for panel in panels if panel]
+
+    def _clustered_bar_panel(self, members):
+        metric0 = members[0][0]
+        unit = str(metric0.get("unit") or "")
+        threshold = _as_float(metric0.get("threshold"))
+        direction = str(metric0.get("direction") or "")
+        nodes = _ordered_nodes(point for _metric, points in members for point, _value in points)
+        rollup = len(nodes) > self.MAX_BAR_NODES
+        columns = []
+        for metric, points in members:
+            if rollup:
+                point, value = _worst_point(points, direction)
+                columns.append((str(metric.get("name") or "metric"), [(point, value, f"worst of {len(points)}")]))
+            else:
+                by_node = {str(point.get("node") or ""): (point, value) for point, value in points}
+                columns.append(
+                    (
+                        str(metric.get("name") or "metric"),
+                        [(*by_node[node], node) for node in nodes if node in by_node],
+                    )
+                )
+        values = [value for _name, bars in columns for _point, value, _label in bars]
         if threshold is not None:
-            scale_values.append(threshold)
-        domain_min, domain_max, ticks = SweepChartRenderer._display_scale(min(scale_values), max(scale_values))
+            values.append(threshold)
+        domain_min, domain_max, ticks = SweepChartRenderer._display_scale(min(values), max(values))
+
+        def pct(value):
+            return SweepChartRenderer._value_pct(value, domain_min, domain_max)
+
         y_labels = "".join(
-            f"<span class='chart-ylbl' style='bottom:{SweepChartRenderer._value_pct(tick, domain_min, domain_max):.2f}%'>"
-            f"{html.escape(fmt_num(tick))}</span>"
+            f"<span class='chart-ylbl' style='bottom:{pct(tick):.2f}%'>{html.escape(fmt_num(tick))}</span>"
             for tick in ticks
         )
-        grid = "".join(
-            "<span class='chart-hline' "
-            f"style='bottom:{SweepChartRenderer._value_pct(tick, domain_min, domain_max):.2f}%'></span>"
-            for tick in ticks
-        )
-        bars = []
+        grid = "".join(f"<span class='chart-hline' style='bottom:{pct(tick):.2f}%'></span>" for tick in ticks)
+        cols_html = []
         x_ticks = []
-        unit = str(metric.get("unit") or "")
-        for point, value in points:
-            height = SweepChartRenderer._value_pct(value, domain_min, domain_max)
-            status = str(point.get("status") or "")
-            bar_class = f"chart-bar-{status}" if status in ("pass", "fail", "na") else "chart-bar-accent"
-            label = str(point.get("node") or "")
-            tip = html.escape(f"{label}: {fmt_num(value)} {unit}".strip())
-            bars.append(
-                "<div class='chart-col'>"
-                f"<div class='chart-bar {bar_class} chart-has-tip' style='height:{height:.1f}%' "
-                f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div></div>"
-            )
-            x_ticks.append(f"<span class='chart-xlbl'><span class='chart-xlbl-line'>{html.escape(label)}</span></span>")
+        for name, bars in columns:
+            bar_html = []
+            for point, value, label in bars:
+                status = str(point.get("status") or "")
+                bar_class = f"chart-bar-{status}" if status in ("pass", "fail", "na") else "chart-bar-accent2"
+                who = str(point.get("node") or "") if rollup else label
+                tip = html.escape(f"{name} · {who}: {fmt_num(value)} {unit}".strip())
+                bar_html.append(
+                    f"<div class='chart-bar {bar_class} chart-has-tip' style='height:{pct(value):.1f}%' "
+                    f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div>"
+                )
+            cols_html.append(f"<div class='chart-col chart-cluster'>{''.join(bar_html)}</div>")
+            x_ticks.append(f"<span class='chart-xlbl'><span class='chart-xlbl-line'>{html.escape(name)}</span></span>")
         marker = ""
         if threshold is not None:
-            pct = SweepChartRenderer._value_pct(threshold, domain_min, domain_max)
-            marker = f"<span class='chart-threshold' style='bottom:{pct:.2f}%' title='threshold'></span>"
-        title = str(metric.get("name") or "metric")
-        note = _threshold_note(metric, threshold)
-        note_html = f"<p class='metric-note'>{html.escape(note)}</p>" if note else ""
+            marker = f"<span class='chart-threshold' style='bottom:{pct(threshold):.2f}%' title='threshold'></span>"
+        notes = [_threshold_note(metric0, threshold)]
+        if rollup:
+            notes.append(f"worst node per bar across {len(nodes)} nodes")
+        elif len(nodes) > 1:
+            notes.append("bars left→right: " + ", ".join(nodes))
+        note_html = "".join(f"<p class='metric-note'>{html.escape(note)}</p>" for note in notes if note)
+        title = str(metric0.get("name") or "metric") if len(columns) == 1 else unit or "value"
         return (
-            f"<div class='chart-panel'><h3>{html.escape(title)}</h3>{note_html}"
+            f"<div class='chart-panel chart-panel-wide'><h3>{html.escape(title)}</h3>{note_html}"
             f"<div class='chart-viz'><div class='chart-ywrap'><div class='chart-ylabels'>{y_labels}</div></div>"
             f"<div class='chart-main'><div class='chart-plotbox'><div class='chart-hgrid' aria-hidden='true'>{grid}</div>"
-            f"{marker}<div class='chart-bars'>{''.join(bars)}</div></div>"
-            f"<div class='chart-xrow'>{''.join(x_ticks)}</div></div></div>"
+            f"{marker}<div class='chart-bars'>{''.join(cols_html)}</div></div>"
+            f"<div class='chart-xrow chart-xrow-cluster'>{''.join(x_ticks)}</div></div></div>"
             f"<div class='chart-unit'>{html.escape(unit)}</div></div>"
         )
 
-    def _metric_series_panel(self, series):
-        points = []
-        for point in series.get("points") or []:
-            if isinstance(point, dict) and point.get("y") is not None:
-                points.append((point.get("x"), point.get("y")))
-            elif isinstance(point, (list, tuple)) and len(point) >= 2:
-                points.append((point[0], point[1]))
-        title = str(series.get("name") or "series")
-        node = series.get("node")
-        if node:
-            title = f"{title} · {node}"
-        x_label = str(series.get("x_label") or "{x}")
-        if "{x}" not in x_label:
-            x_label = "{x}"
-        return self._charts.render_series_chart(title, points, str(series.get("unit") or ""), x_label=x_label)
+    @staticmethod
+    def _settings_panel(settings):
+        nodes = _ordered_nodes(point for _metric, points in settings for point, _value in points)
+        head = "<tr><th></th>" + "".join(f"<th>{html.escape(node)}</th>" for node in nodes) + "</tr>"
+        body = []
+        for metric, points in settings:
+            by_node = {str(point.get("node") or ""): value for point, value in points}
+            cells = "".join(
+                f"<td>{html.escape(fmt_num(by_node[node]) if node in by_node else '—')}</td>" for node in nodes
+            )
+            body.append(f"<tr><th>{html.escape(str(metric.get('name') or 'metric'))}</th>{cells}</tr>")
+        return (
+            "<div class='chart-panel'><h3>Settings</h3>"
+            f"<table class='overview-table'><thead>{head}</thead><tbody>{''.join(body)}</tbody></table></div>"
+        )
+
+    def _series_group_panels(self, series):
+        merged = {}
+        for item in series:
+            key = (str(item.get("name") or "series"), str(item.get("unit") or ""))
+            merged.setdefault(key, []).append(item)
+        panels = []
+        for (name, unit), items in merged.items():
+            lines = []
+            for item in items:
+                points = _series_points(item)
+                if len(points) >= 2:
+                    lines.append((str(item.get("node") or ""), points))
+            if lines:
+                panels.append(self._multi_series_panel(name, unit, lines, items[0]))
+        return panels
+
+    def _multi_series_panel(self, name, unit, lines, sample):
+        total = len(lines)
+        lines = lines[: self.MAX_SERIES_LINES]
+        x_values = []
+        for _node, points in lines:
+            for x, _y in points:
+                if x not in x_values:
+                    x_values.append(x)
+        ys = [y for _node, points in lines for _x, y in points]
+        domain_min, domain_max, ticks = SweepChartRenderer._display_scale(min(ys), max(ys))
+
+        def y_of(value):
+            return 180 - 160 * SweepChartRenderer._value_pct(value, domain_min, domain_max) / 100
+
+        def x_of(x):
+            return 70 + 500 * x_values.index(x) / max(1, len(x_values) - 1)
+
+        x_label = str(sample.get("x_label") or "")
+        svg = []
+        for tick in ticks:
+            y = y_of(tick)
+            svg.append(
+                f"<line x1='70' x2='570' y1='{y:.2f}' y2='{y:.2f}' stroke='var(--border)'/>"
+                f"<text x='62' y='{y:.2f}' text-anchor='end' dominant-baseline='middle'>"
+                f"{html.escape(fmt_num(tick))}</text>"
+            )
+        step = max(1, (len(x_values) + 7) // 8)
+        for index, x in enumerate(x_values):
+            if index % step == 0 or index == len(x_values) - 1:
+                svg.append(f"<text x='{x_of(x):.2f}' y='202' text-anchor='middle'>{html.escape(str(x))}</text>")
+        legend = []
+        for index, (node, points) in enumerate(lines):
+            color = _SERIES_COLORS[index % len(_SERIES_COLORS)]
+            coords = " ".join(f"{x_of(x):.2f},{y_of(y):.2f}" for x, y in points)
+            svg.append(f"<polyline points='{coords}' fill='none' stroke='{color}' stroke-width='2'/>")
+            for x, y in points:
+                tip = html.escape(f"{node} · {x}: {fmt_num(y)} {unit}".strip())
+                svg.append(
+                    f"<circle cx='{x_of(x):.2f}' cy='{y_of(y):.2f}' r='3' fill='{color}' tabindex='0' "
+                    f"role='img' aria-label='{tip}'><title>{tip}</title></circle>"
+                )
+            legend.append(
+                f"<span class='series-key'><span class='series-swatch' style='background:{color}'></span>"
+                f"{html.escape(node)}</span>"
+            )
+        more = (
+            f"<span class='muted'>+{total - len(lines)} more nodes in the viewer</span>" if total > len(lines) else ""
+        )
+        axis = f" · x: {x_label}" if x_label else ""
+        return (
+            f"<div class='chart-panel'><h3>{html.escape(name)}</h3>"
+            f"<div class='series-legend'>{''.join(legend)}{more}</div>"
+            f"<svg viewBox='0 0 600 220' role='img' aria-label='{html.escape(name)}' "
+            f"style='width:100%;fill:currentColor;font-size:11px'>{''.join(svg)}</svg>"
+            f"<div class='chart-unit'>{html.escape(unit + axis)}</div></div>"
+        )
 
     @staticmethod
     def _heatmap_panel(heat):

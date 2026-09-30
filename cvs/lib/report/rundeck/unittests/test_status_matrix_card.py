@@ -150,7 +150,14 @@ class TestStatusMatrixCard(unittest.TestCase):
                     ],
                 }
             ],
-            "series": [{"name": "power", "node": "n1", "unit": "W", "points": [{"x": "GPU0", "y": 300}]}],
+            "series": [
+                {
+                    "name": "power",
+                    "node": "n1",
+                    "unit": "W",
+                    "points": [{"x": "GPU0", "y": 300}, {"x": "GPU1", "y": 280}],
+                }
+            ],
             "heatmaps": [
                 {
                     "name": "xgmi",

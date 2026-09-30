@@ -272,6 +272,9 @@ def _gst_performance(samples):
         _label, (value, target, _ok) = slowest
         status = "fail" if any(not sample[2] for _label, sample in rows) else "pass"
         metrics.append(_metric(precision, value, "GFLOPS", "gst", threshold=target, direction="higher", status=status))
+        # One GPU is already the metric bar. A series is only the per-GPU spread.
+        if len(rows) < 2:
+            continue
         chart = _series(
             precision,
             [{"x": label, "y": sample[0]} for label, sample in rows],
@@ -321,23 +324,13 @@ def _take_pbqt(line, pairs):
 
 def _pebb_performance(samples):
     metrics = []
-    series = []
     for direction in ("h2d", "d2h"):
         rows = [(label, value) for (kind, label), value in samples.items() if kind == direction]
         rows.sort(key=lambda item: _label_key(item[0]))
         for label, value in rows:
             metrics.append(_metric(f"{direction} {label}", value, "GB/s", "pebb", direction="higher"))
-        chart = _series(
-            direction,
-            [{"x": label, "y": value} for label, value in rows],
-            "GB/s",
-            "pebb",
-            "GPU",
-            direction.upper(),
-        )
-        if chart:
-            series.append(chart)
-    return metrics, series
+    # The per-GPU bars are the chart; a direction series would repeat them.
+    return metrics, []
 
 
 def _pbqt_performance(pairs):
@@ -350,8 +343,6 @@ def _pbqt_performance(pairs):
         for dst in labels:
             row.append(None if src == dst else pairs.get((src, dst)))
         values.append(row)
-    present = [value for row in values for value in row if value is not None]
-    metrics = [_metric("xgmi", min(present), "GB/s", "pbqt", direction="higher")] if present else []
     heatmap = {
         "name": "xgmi",
         "unit": "GB/s",
@@ -363,7 +354,8 @@ def _pbqt_performance(pairs):
         "row_label": "Src",
         "col_label": "Dst",
     }
-    return metrics, [heatmap]
+    # The matrix already shows every link, including the slowest.
+    return [], [heatmap]
 
 
 def _in_babel(module, action, hint):
@@ -394,15 +386,11 @@ def _take_mem(line, values):
 
 
 def _babel_performance(samples):
-    '''Node charts use the slowest GPU per kernel; the heatmap keeps every GPU.'''
+    '''The GPU × kernel heatmap is the chart. A slowest-GPU bar would repeat a column.'''
     if not samples:
         return [], []
     kernels = [name for name in _KERNELS if any(kernel == name for _label, kernel in samples)]
     labels = sorted({label for label, _kernel in samples}, key=_label_key)
-    metrics = []
-    for kernel in kernels:
-        slowest = min(value for (_label, name), value in samples.items() if name == kernel)
-        metrics.append(_metric(kernel, slowest, "MB/s", "babel", direction="higher"))
     grid = [[samples.get((label, kernel)) for kernel in kernels] for label in labels]
     heatmap = {
         "name": "babel",
@@ -415,7 +403,7 @@ def _babel_performance(samples):
         "row_label": "GPU",
         "col_label": "Kernel",
     }
-    return metrics, [heatmap]
+    return [], [heatmap]
 
 
 def _mem_performance(values):
@@ -424,15 +412,10 @@ def _mem_performance(values):
 
 def _iet_performance(peaks, statuses):
     metrics = []
-    points = []
     for label in sorted(peaks, key=_label_key):
         metrics.append(_metric(f"power {label}", peaks[label], "W", "iet", status=statuses.get(label, "")))
-        points.append({"x": label, "y": peaks[label]})
-    series = []
-    chart = _series("power", points, "W", "iet", "GPU", "Power")
-    if chart:
-        series.append(chart)
-    return metrics, series
+    # One bar per GPU already. A power series would plot the same peaks.
+    return metrics, []
 
 
 def parse_node_performance(text, module_hint=""):
@@ -441,9 +424,9 @@ def parse_node_performance(text, module_hint=""):
 
     Returns ``{"metrics", "series", "heatmaps"}``. Unknown or empty output
     yields empty lists. Interval GST samples without ``Target GFLOPS`` are
-    ignored, as are PEBB/PBQT ``(*)`` samples. Babel metrics are the first
-    table column (MiBytes/sec), one per kernel. IET keeps the peak ``Power(W)``
-    per GPU; RVS does not print a temperature for this module.
+    ignored, as are PEBB/PBQT ``(*)`` samples. Babel and PBQT keep a heatmap
+    (MiBytes/sec is the first Babel column) and skip a second summary bar.
+    IET keeps the peak ``Power(W)`` per GPU; RVS does not print a temperature.
     '''
     body = text if isinstance(text, str) else ""
     labels = _device_labels(body)

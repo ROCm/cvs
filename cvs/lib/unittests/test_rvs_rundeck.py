@@ -108,7 +108,7 @@ class TestGstAndIetMetrics(unittest.TestCase):
         self.assertEqual(metric["direction"], "higher")
         self.assertEqual(metric["status"], "pass")
         self.assertEqual(metric["group"], "gst")
-        self.assertEqual(perf["series"][0]["points"], [{"x": "2987", "y": 1299650.0}])
+        self.assertEqual(perf["series"], [])
 
     def test_gst_precisions_and_slowest_gpu(self):
         text = "\n".join(
@@ -172,9 +172,7 @@ class TestGstAndIetMetrics(unittest.TestCase):
         self.assertEqual(power[0]["status"], "pass")
         self.assertEqual(power[1]["status"], "fail")
         self.assertTrue(all("temp" not in metric["name"].lower() for metric in perf["metrics"]))
-        series = next(item for item in perf["series"] if item["name"] == "power")
-        self.assertEqual(series["points"], [{"x": "GPU2", "y": 992.0}, {"x": "GPU5", "y": 991.0}])
-        self.assertEqual(series["group"], "iet")
+        self.assertEqual(perf["series"], [])
         gst = next(metric for metric in perf["metrics"] if metric["name"] == "fp64")
         self.assertEqual(gst["group"], "gst")
 
@@ -217,8 +215,7 @@ class TestPebbAndPbqtMetrics(unittest.TestCase):
         self.assertEqual(by_name["d2h GPU2"]["unit"], "GB/s")
         self.assertEqual(by_name["d2h GPU2"]["direction"], "higher")
         self.assertEqual(by_name["d2h GPU2"]["group"], "pebb")
-        d2h = next(item for item in perf["series"] if item["name"] == "d2h")
-        self.assertEqual([point["x"] for point in d2h["points"]], ["GPU2", "GPU5"])
+        self.assertEqual(perf["series"], [])
         self.assertEqual(perf["heatmaps"], [])
 
     def test_pbqt_pair_heatmap_and_slowest_link(self):
@@ -235,19 +232,15 @@ class TestPebbAndPbqtMetrics(unittest.TestCase):
             ]
         )
         perf = rvs_rundeck.parse_node_performance(text, module_hint="pbqt_single")
-        self.assertEqual(len(perf["metrics"]), 1)
-        metric = perf["metrics"][0]
-        self.assertEqual(metric["name"], "xgmi")
-        self.assertAlmostEqual(metric["value"], 99.1)
-        self.assertEqual(metric["unit"], "GB/s")
-        self.assertEqual(metric["direction"], "higher")
-        self.assertEqual(metric["group"], "pbqt")
+        self.assertEqual(perf["metrics"], [])
         heat = perf["heatmaps"][0]
         self.assertEqual(heat["name"], "xgmi")
         self.assertEqual(heat["rows"], ["GPU2", "GPU3"])
         self.assertEqual(heat["cols"], ["GPU2", "GPU3"])
         self.assertEqual(heat["row_label"], "Src")
         self.assertEqual(heat["col_label"], "Dst")
+        self.assertEqual(heat["group"], "pbqt")
+        self.assertEqual(heat["unit"], "GB/s")
         self.assertIsNone(heat["values"][0][0])
         self.assertAlmostEqual(heat["values"][0][1], 101.231)
         self.assertAlmostEqual(heat["values"][1][0], 99.1)
@@ -283,14 +276,10 @@ class TestBabelAndMemMetrics(unittest.TestCase):
             ]
         )
         perf = rvs_rundeck.parse_node_performance(text, module_hint="level_config")
-        by_name = {metric["name"]: metric for metric in perf["metrics"]}
-        self.assertEqual(set(by_name), {"Read", "Triad"})
-        self.assertAlmostEqual(by_name["Read"]["value"], 80.0)
-        self.assertAlmostEqual(by_name["Triad"]["value"], 50.0)
-        self.assertEqual(by_name["Read"]["unit"], "MB/s")
-        self.assertEqual(by_name["Read"]["direction"], "higher")
-        self.assertEqual(by_name["Read"]["group"], "babel")
+        self.assertEqual(perf["metrics"], [])
         heat = perf["heatmaps"][0]
+        self.assertEqual(heat["unit"], "MB/s")
+        self.assertEqual(heat["group"], "babel")
         self.assertEqual(heat["name"], "babel")
         self.assertEqual(heat["rows"], ["GPU2", "GPU5"])
         self.assertEqual(heat["cols"], ["Read", "Triad"])
@@ -309,14 +298,14 @@ class TestBabelAndMemMetrics(unittest.TestCase):
             ]
         )
         perf = rvs_rundeck.parse_node_performance(headed, module_hint="level_config")
-        self.assertAlmostEqual(perf["metrics"][0]["value"], 4011893.551)
-        self.assertEqual(perf["metrics"][0]["name"], "Read")
+        self.assertEqual(perf["heatmaps"][0]["cols"], ["Read"])
+        self.assertAlmostEqual(perf["heatmaps"][0]["values"][0][0], 4011893.551)
 
         bare = "2987 Read 10.0 1 1 1"
-        self.assertEqual(rvs_rundeck.parse_node_performance(bare, module_hint="gst_single")["metrics"], [])
+        self.assertEqual(rvs_rundeck.parse_node_performance(bare, module_hint="gst_single")["heatmaps"], [])
         hinted = rvs_rundeck.parse_node_performance(bare, module_hint="babel_stream")
-        self.assertEqual(hinted["metrics"][0]["group"], "babel")
-        self.assertAlmostEqual(hinted["metrics"][0]["value"], 10.0)
+        self.assertEqual(hinted["heatmaps"][0]["group"], "babel")
+        self.assertAlmostEqual(hinted["heatmaps"][0]["values"][0][0], 10.0)
 
     def test_mem_bandwidth_or_verdict_only(self):
         text = "\n".join(
@@ -382,10 +371,12 @@ class TestLevelOutputContext(unittest.TestCase):
         )
         perf = rvs_rundeck.parse_node_performance(text, module_hint="level_config")
         by_name = {metric["name"]: metric for metric in perf["metrics"]}
-        self.assertEqual(by_name["Read"]["group"], "babel")
-        self.assertAlmostEqual(by_name["Read"]["value"], 100.0)
+        babel = next(item for item in perf["heatmaps"] if item["name"] == "babel")
+        self.assertEqual(babel["group"], "babel")
+        self.assertAlmostEqual(babel["values"][0][babel["cols"].index("Read")], 100.0)
         self.assertEqual(by_name["d2h GPU5"]["group"], "pebb")
-        self.assertEqual(by_name["xgmi"]["group"], "pbqt")
+        xgmi = next(item for item in perf["heatmaps"] if item["name"] == "xgmi")
+        self.assertEqual(xgmi["group"], "pbqt")
         self.assertAlmostEqual(by_name["bandwidth"]["value"], 2167.909912)
         self.assertEqual(by_name["bandwidth"]["group"], "mem")
         self.assertEqual(by_name["fp8"]["group"], "gst")
@@ -394,7 +385,7 @@ class TestLevelOutputContext(unittest.TestCase):
         self.assertEqual(by_name["fp16"]["status"], "fail")
         self.assertEqual(by_name["power GPU5"]["group"], "iet")
         self.assertAlmostEqual(by_name["power GPU5"]["value"], 992.0)
-        self.assertEqual(perf["series"][0]["points"][0]["x"], "GPU5")
+        self.assertEqual(perf["series"], [])
         babel = next(item for item in perf["heatmaps"] if item["name"] == "babel")
         self.assertEqual(babel["rows"], ["GPU5"])
         xgmi = next(item for item in perf["heatmaps"] if item["name"] == "xgmi")
