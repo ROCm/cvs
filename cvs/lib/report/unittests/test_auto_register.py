@@ -49,6 +49,13 @@ class TestAutoRegister(unittest.TestCase):
         self.assertTrue(try_auto_register_suite_report(config))
         self.assertEqual(config._suite_report_config["suite_id"], "vllm")
 
+    def test_auto_register_loads_transferbench_cvs_profile(self):
+        config = SimpleNamespace(_suite_name="transferbench_cvs", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["suite_id"], "transferbench_cvs")
+        self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
+        self.assertEqual(config._suite_report_config["sources"]["results"], "transferbench_res_dict")
+
 
 if __name__ == "__main__":
     unittest.main()

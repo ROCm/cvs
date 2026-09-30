@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "profile_id": "transferbench_cvs_rundeck",
+  "suite_id": "transferbench_cvs",
+  "report_basename": "transferbench_run_deck",
+  "title": "TransferBench Run Deck",
+  "subtitle": "TransferBench · preset results across the cluster",
+  "footer": "CVS TransferBench · render-only · per-node verdict from the collected preset run (pass / fail)",
+  "link_name": "TransferBench Run Deck",
+  "dataset_builder": "status_matrix",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "transferbench_res_dict"
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "datasets.status_matrix.run_card_display"},
+    {"type": "status_matrix", "id": "results", "title": "Full results", "bind": "datasets.status_matrix"}
+  ]
+}

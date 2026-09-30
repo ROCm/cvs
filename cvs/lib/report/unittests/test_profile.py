@@ -15,6 +15,13 @@ class TestProfile(unittest.TestCase):
         Draft202012Validator.check_schema(schema)
         Draft202012Validator(schema).validate(load_json_profile("rccl"))
 
+    def test_transferbench_profile_validates_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        profile = load_json_profile("transferbench_cvs")
+        Draft202012Validator(schema).validate(profile)
+        self.assertEqual(profile["dataset_builder"], "status_matrix")
+        self.assertEqual(profile["sources"]["results"], "transferbench_res_dict")
+
     def test_default_sources_for_legacy_preset(self):
         cfg = make_inference_report_config(
             suite_id="demo",
