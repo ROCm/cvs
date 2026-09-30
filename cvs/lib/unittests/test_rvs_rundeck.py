@@ -347,5 +347,81 @@ class TestBabelAndMemMetrics(unittest.TestCase):
         self.assertNotIn("metrics", node)
 
 
+class TestLevelOutputContext(unittest.TestCase):
+    def test_level_run_keeps_one_verdict_and_labels_gpus_across_modules(self):
+        # Compact LEVEL excerpt: device ids in Babel/GST/IET, indexes only on PEBB/PBQT.
+        text = "\n".join(
+            [
+                "Action name :hbm_full",
+                "Module name :babel",
+                "2987        Read        100.0    9    8    7",
+                "2987        Triad       40.0     9    8    7",
+                "Action name :pcie_d2h_bandwidth",
+                "Module name :pebb",
+                "[pcie_d2h_bandwidth] pcie-bandwidth [ 1/16] [CPU:: 0] [GPU:: 5 - 2987 - 0000:15:00.0] "
+                "h2d::false d2h::true 52.849 GBps duration: 0.081268 secs",
+                "Action name :xgmi_d2d_bandwidth",
+                "Module name :pbqt",
+                "[xgmi_d2d_bandwidth] p2p-bandwidth[ 1/56] [GPU:: 5 - 2987 - 0000:15:00.0] "
+                "[GPU:: 2 - 9091 - 0000:75:00.0] bidirectional: true 101.231 GBps duration: 0.254565 secs",
+                "Action name :memtest",
+                "Module name :mem",
+                "[memtest] mem Test 1 : PASS",
+                "[memtest] mem Test 11: elapsedtime = 23617.277344 bandwidth = 2167.909912GB/s",
+                "Action name :compute-fp8-trig",
+                "Module name :gst",
+                "[compute-fp8-trig] [GPU:: 2987] GFLOPS 1400000",
+                "[compute-fp8-trig] [GPU:: 2987] GFLOPS 1299650 Target GFLOPS: 983000 met: TRUE",
+                "[compute-fp16-trig] [GPU:: 2987] GFLOPS 10 Target GFLOPS: 524000 met: FALSE",
+                "Action name :power-stress",
+                "Module name :iet",
+                "[power-stress] [GPU:: 2987] Power(W) 148.000000",
+                "[power-stress] [GPU:: 2987] Power(W) 992.000000",
+                "[power-stress] [GPU:: 2987] pass: TRUE",
+            ]
+        )
+        perf = rvs_rundeck.parse_node_performance(text, module_hint="level_config")
+        by_name = {metric["name"]: metric for metric in perf["metrics"]}
+        self.assertEqual(by_name["Read"]["group"], "babel")
+        self.assertAlmostEqual(by_name["Read"]["value"], 100.0)
+        self.assertEqual(by_name["d2h GPU5"]["group"], "pebb")
+        self.assertEqual(by_name["xgmi"]["group"], "pbqt")
+        self.assertAlmostEqual(by_name["bandwidth"]["value"], 2167.909912)
+        self.assertEqual(by_name["bandwidth"]["group"], "mem")
+        self.assertEqual(by_name["fp8"]["group"], "gst")
+        self.assertAlmostEqual(by_name["fp8"]["value"], 1299650.0)
+        self.assertEqual(by_name["fp8"]["status"], "pass")
+        self.assertEqual(by_name["fp16"]["status"], "fail")
+        self.assertEqual(by_name["power GPU5"]["group"], "iet")
+        self.assertAlmostEqual(by_name["power GPU5"]["value"], 992.0)
+        self.assertEqual(perf["series"][0]["points"][0]["x"], "GPU5")
+        babel = next(item for item in perf["heatmaps"] if item["name"] == "babel")
+        self.assertEqual(babel["rows"], ["GPU5"])
+        xgmi = next(item for item in perf["heatmaps"] if item["name"] == "xgmi")
+        self.assertEqual(xgmi["rows"], ["GPU2", "GPU5"])
+        self.assertAlmostEqual(xgmi["values"][1][0], 101.231)
+
+        results = {}
+        rvs_rundeck.record_outputs(
+            results,
+            "level_config",
+            {"node-a": text, "node-b": "module completed"},
+            [r"met:\s*FALSE"],
+            meta=rvs_rundeck.make_meta({"cluster_name": "lab"}, "1.7.0", "rvs_cvs"),
+        )
+        self.assertEqual(list(results["groups"]), ["level_config"])
+        self.assertEqual(results["_meta"]["version"], "1.7.0")
+        failed = results["groups"]["level_config"]["nodes"]["node-a"]
+        self.assertEqual(failed["status"], "fail")
+        self.assertIn("fp8", {metric["name"] for metric in failed["metrics"]})
+        quiet = results["groups"]["level_config"]["nodes"]["node-b"]
+        self.assertEqual(quiet["status"], "pass")
+        self.assertNotIn("metrics", quiet)
+
+        results = {}
+        rvs_rundeck.record_outputs(results, "level_config", {"node-a": text}, [])
+        self.assertEqual(results["groups"]["level_config"]["nodes"]["node-a"]["status"], "pass")
+
+
 if __name__ == "__main__":
     unittest.main()
