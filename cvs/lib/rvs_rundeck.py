@@ -56,6 +56,18 @@ _IET_PASS = re.compile(
     r"\[(?P<action>[^\]]+)\]\s*\[GPU::\s*(?P<gpu>\d+)\]\s*pass:\s*(?P<met>TRUE|FALSE)",
     re.I,
 )
+# Duration lines are the completed sample. "(*)" lines are in-progress intervals.
+_PEBB_DONE = re.compile(
+    r"\[(?P<action>[^\]]+)\]\s*pcie-bandwidth.*?\[GPU::\s*(?P<index>\d+)\s*-\s*(?P<gpu>\d+)\s*-"
+    r".*?h2d::(?P<h2d>\S+)\s+d2h::(?P<d2h>\S+)\s+(?P<value>[\d.]+)\s+GBps\s+duration:",
+    re.I,
+)
+_PBQT_DONE = re.compile(
+    r"\[(?P<action>[^\]]+)\]\s*p2p-bandwidth.*?\[GPU::\s*(?P<src_index>\d+)\s*-\s*(?P<src>\d+)\s*-"
+    r".*?\[GPU::\s*(?P<dst_index>\d+)\s*-\s*(?P<dst>\d+)\s*-"
+    r".*?bidirectional:\s*(?P<bidi>\S+)\s+(?P<value>[\d.]+)\s+GBps\s+duration:",
+    re.I,
+)
 
 
 def make_meta(cluster_dict, version, suite_name):
@@ -265,6 +277,87 @@ def _gst_performance(samples):
     return metrics, series
 
 
+def _keep_max(store, key, value):
+    previous = store.get(key)
+    if previous is None or value > previous:
+        store[key] = value
+
+
+def _take_pebb(line, samples):
+    if "(*)" in line:
+        return False
+    match = _PEBB_DONE.search(line)
+    if not match:
+        return False
+    label = f"GPU{int(match.group('index'))}"
+    value = float(match.group("value"))
+    # Each GPU is measured from more than one CPU socket; keep the faster socket.
+    if match.group("h2d").lower() == "true":
+        _keep_max(samples, ("h2d", label), value)
+    if match.group("d2h").lower() == "true":
+        _keep_max(samples, ("d2h", label), value)
+    return True
+
+
+def _take_pbqt(line, pairs):
+    if "(*)" in line:
+        return False
+    match = _PBQT_DONE.search(line)
+    if not match:
+        return False
+    src = f"GPU{int(match.group('src_index'))}"
+    dst = f"GPU{int(match.group('dst_index'))}"
+    pairs[(src, dst)] = float(match.group("value"))
+    return True
+
+
+def _pebb_performance(samples):
+    metrics = []
+    series = []
+    for direction in ("h2d", "d2h"):
+        rows = [(label, value) for (kind, label), value in samples.items() if kind == direction]
+        rows.sort(key=lambda item: _label_key(item[0]))
+        for label, value in rows:
+            metrics.append(_metric(f"{direction} {label}", value, "GB/s", "pebb", direction="higher"))
+        chart = _series(
+            direction,
+            [{"x": label, "y": value} for label, value in rows],
+            "GB/s",
+            "pebb",
+            "GPU",
+            direction.upper(),
+        )
+        if chart:
+            series.append(chart)
+    return metrics, series
+
+
+def _pbqt_performance(pairs):
+    if not pairs:
+        return [], []
+    labels = sorted({gpu for pair in pairs for gpu in pair}, key=_label_key)
+    values = []
+    for src in labels:
+        row = []
+        for dst in labels:
+            row.append(None if src == dst else pairs.get((src, dst)))
+        values.append(row)
+    present = [value for row in values for value in row if value is not None]
+    metrics = [_metric("xgmi", min(present), "GB/s", "pbqt", direction="higher")] if present else []
+    heatmap = {
+        "name": "xgmi",
+        "unit": "GB/s",
+        "group": "pbqt",
+        "rows": labels,
+        "cols": labels,
+        "values": values,
+        "direction": "higher",
+        "row_label": "Src",
+        "col_label": "Dst",
+    }
+    return metrics, [heatmap]
+
+
 def _iet_performance(peaks, statuses):
     metrics = []
     points = []
@@ -284,14 +377,16 @@ def parse_node_performance(text, module_hint=""):
 
     Returns ``{"metrics", "series", "heatmaps"}``. Unknown or empty output
     yields empty lists. Interval GST samples without ``Target GFLOPS`` are
-    ignored. IET keeps the peak ``Power(W)`` per GPU; RVS does not print a
-    temperature for this module.
+    ignored, as are PEBB/PBQT ``(*)`` samples. IET keeps the peak ``Power(W)``
+    per GPU; RVS does not print a temperature for this module.
     '''
     body = text if isinstance(text, str) else ""
     labels = _device_labels(body)
     gst_samples = {}
     iet_peaks = {}
     iet_status = {}
+    pebb_samples = {}
+    pbqt_pairs = {}
     for raw in body.splitlines():
         line = raw.strip()
         if not line:
@@ -300,10 +395,20 @@ def parse_node_performance(text, module_hint=""):
             continue
         if _take_gst(line, labels, gst_samples):
             continue
-        _take_iet(line, labels, iet_peaks, iet_status)
+        if _take_iet(line, labels, iet_peaks, iet_status):
+            continue
+        if _take_pebb(line, pebb_samples):
+            continue
+        _take_pbqt(line, pbqt_pairs)
     metrics, series = _gst_performance(gst_samples)
     iet_metrics, iet_series = _iet_performance(iet_peaks, iet_status)
-    return {"metrics": metrics + iet_metrics, "series": series + iet_series, "heatmaps": []}
+    pebb_metrics, pebb_series = _pebb_performance(pebb_samples)
+    pbqt_metrics, heatmaps = _pbqt_performance(pbqt_pairs)
+    return {
+        "metrics": metrics + iet_metrics + pebb_metrics + pbqt_metrics,
+        "series": series + iet_series + pebb_series,
+        "heatmaps": heatmaps,
+    }
 
 
 def record_outputs(res_dict, group, out_dict, fail_patterns, meta=None):

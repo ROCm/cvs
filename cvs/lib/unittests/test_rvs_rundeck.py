@@ -192,5 +192,79 @@ class TestGstAndIetMetrics(unittest.TestCase):
         self.assertNotIn("metrics", node)
 
 
+class TestPebbAndPbqtMetrics(unittest.TestCase):
+    def test_pebb_duration_per_gpu_direction_skips_intervals(self):
+        text = "\n".join(
+            [
+                "[pcie_d2h_bandwidth] pcie-bandwidth (*) [CPU:: 0] [GPU:: 2 - 9091 - 0000:75:00.0] "
+                "h2d::false d2h::true 10.000 GBps duration: 0.1 secs",
+                "[pcie_d2h_bandwidth] pcie-bandwidth [ 1/16] [CPU:: 0] [GPU:: 2 - 9091 - 0000:75:00.0] "
+                "h2d::false d2h::true 53.438 GBps duration: 0.080373 secs",
+                "[pcie_d2h_bandwidth] pcie-bandwidth [ 2/16] [CPU:: 1] [GPU:: 2 - 9091 - 0000:75:00.0] "
+                "h2d::false d2h::true 52.971 GBps duration: 0.081081 secs",
+                "[pcie_d2h_bandwidth] pcie-bandwidth [CPU:: 0] [GPU:: 2 - 9091 - 0000:75:00.0] distance:20 PCIe:20",
+                "[pcie_h2d_bandwidth] pcie-bandwidth [ 1/16] [CPU:: 0] [GPU:: 2 - 9091 - 0000:75:00.0] "
+                "h2d::true d2h::false 54.828 GBps duration: 0.078336 secs",
+                "[pcie_d2h_bandwidth] pcie-bandwidth [ 7/16] [CPU:: 0] [GPU:: 5 - 2987 - 0000:15:00.0] "
+                "h2d::false d2h::true 52.849 GBps duration: 0.081268 secs",
+            ]
+        )
+        perf = rvs_rundeck.parse_node_performance(text, module_hint="pebb_single")
+        by_name = {metric["name"]: metric for metric in perf["metrics"]}
+        self.assertEqual(set(by_name), {"h2d GPU2", "d2h GPU2", "d2h GPU5"})
+        self.assertAlmostEqual(by_name["d2h GPU2"]["value"], 53.438)
+        self.assertAlmostEqual(by_name["h2d GPU2"]["value"], 54.828)
+        self.assertEqual(by_name["d2h GPU2"]["unit"], "GB/s")
+        self.assertEqual(by_name["d2h GPU2"]["direction"], "higher")
+        self.assertEqual(by_name["d2h GPU2"]["group"], "pebb")
+        d2h = next(item for item in perf["series"] if item["name"] == "d2h")
+        self.assertEqual([point["x"] for point in d2h["points"]], ["GPU2", "GPU5"])
+        self.assertEqual(perf["heatmaps"], [])
+
+    def test_pbqt_pair_heatmap_and_slowest_link(self):
+        text = "\n".join(
+            [
+                "[xgmi_d2d_bandwidth] p2p-bandwidth[ 1/56] [GPU:: 2 - 9091 - 0000:75:00.0] "
+                "[GPU:: 3 - 51110 - 0000:05:00.0] bidirectional: true 101.231 GBps duration: 0.254565 secs",
+                "[xgmi_d2d_bandwidth] p2p-bandwidth[ 8/56] [GPU:: 3 - 51110 - 0000:05:00.0] "
+                "[GPU:: 2 - 9091 - 0000:75:00.0] bidirectional: true 99.100 GBps duration: 0.254476 secs",
+                "[xgmi_d2d_bandwidth] p2p-bandwidth (*) [GPU:: 2 - 9091 - 0000:75:00.0] "
+                "[GPU:: 3 - 51110 - 0000:05:00.0] bidirectional: true 1.000 GBps duration: 0.1 secs",
+                "[xgmi_d2d_bandwidth] p2p-bandwidth[ 2/56] [GPU:: 2 - 9091 - 0000:75:00.0] "
+                "[GPU:: 4 - 61326 - 0000:65:00.0] bidirectional: true 101.770 GBps",
+            ]
+        )
+        perf = rvs_rundeck.parse_node_performance(text, module_hint="pbqt_single")
+        self.assertEqual(len(perf["metrics"]), 1)
+        metric = perf["metrics"][0]
+        self.assertEqual(metric["name"], "xgmi")
+        self.assertAlmostEqual(metric["value"], 99.1)
+        self.assertEqual(metric["unit"], "GB/s")
+        self.assertEqual(metric["direction"], "higher")
+        self.assertEqual(metric["group"], "pbqt")
+        heat = perf["heatmaps"][0]
+        self.assertEqual(heat["name"], "xgmi")
+        self.assertEqual(heat["rows"], ["GPU2", "GPU3"])
+        self.assertEqual(heat["cols"], ["GPU2", "GPU3"])
+        self.assertEqual(heat["row_label"], "Src")
+        self.assertEqual(heat["col_label"], "Dst")
+        self.assertIsNone(heat["values"][0][0])
+        self.assertAlmostEqual(heat["values"][0][1], 101.231)
+        self.assertAlmostEqual(heat["values"][1][0], 99.1)
+        self.assertIsNone(heat["values"][1][1])
+
+    def test_bandwidth_metrics_do_not_change_node_verdict(self):
+        text = (
+            "[pcie_h2d_bandwidth] pcie-bandwidth [ 1/16] [CPU:: 0] [GPU:: 2 - 9091 - 0000:75:00.0] "
+            "h2d::true d2h::false 54.828 GBps duration: 0.078 secs [ERROR ]"
+        )
+        results = {}
+        rvs_rundeck.record_outputs(results, "pebb_single", {"node-a": text}, [r"\[ERROR\s*\]"])
+        node = results["groups"]["pebb_single"]["nodes"]["node-a"]
+        self.assertEqual(node["status"], "fail")
+        self.assertEqual(node["metrics"][0]["name"], "h2d GPU2")
+        self.assertAlmostEqual(node["metrics"][0]["value"], 54.828)
+
+
 if __name__ == "__main__":
     unittest.main()
