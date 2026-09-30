@@ -83,33 +83,35 @@ def cluster_dict(cluster_file):
 @pytest.fixture(scope="module")
 def config_dict(config_file, cluster_dict):
     """
-    Load and return the RCCL-specific configuration dictionary for the test module.
+    Load and return the RCCL install configuration dictionary for the test module.
 
-    Expected rccl_config.json structure:
+    Expected rccl_tests_install_config.json structure:
     {
-        "rccl": {
-            "installation_params": {
-                "nfs_install":            "True" | "False",
-                "rccl_lib_install":       "True" | "False",
-                "rccl_lib_install_dir":   "/path/to/rccl/install",
-                "rccl_tests_install_dir": "/path/to/rccl-tests",
-                "rccl_repository":        "https://github.com/ROCm/rocm-systems.git",
-                "rccl_git_tag":           "rocm-6.x.y",        (optional)
-                "rccl_tests_repository":  "same as rccl_repository if omitted",
-                "rccl_tests_git_tag":     "rocm-6.x.y",        (optional)
-                "rccl_sparse_path":       "projects/rccl",     (optional, auto for rocm-systems)
-                "rccl_tests_sparse_path": "projects/rccl-tests",
-                "ompi_install_dir":       "/opt/ompi/build",
-                "rocm_path":              "/opt/rocm"          (or "<changeme>"),
-                "rccl_tests_use_amdclang": "True" | "False"    (optional, default True)
-            }
+        "rccl_install": {
+            "nfs_install":            "True" | "False",
+            "rccl_lib_install":       "True" | "False",
+            "rccl_lib_install_dir":   "/path/to/rccl/install",
+            "rccl_tests_install_dir": "/path/to/rccl-tests",
+            "rccl_repository":        "https://github.com/ROCm/rocm-systems.git",
+            "rccl_git_tag":           "rocm-6.x.y",        (optional)
+            "rccl_tests_repository":  "same as rccl_repository if omitted",
+            "rccl_tests_git_tag":     "rocm-6.x.y",        (optional)
+            "rccl_sparse_path":       "projects/rccl",     (optional, auto for rocm-systems)
+            "rccl_tests_sparse_path": "projects/rccl-tests",
+            "ompi_install_dir":       "/opt/ompi/build",
+            "rocm_path":              "/opt/rocm"          (or "<changeme>"),
+            "rccl_tests_use_amdclang": "True" | "False"    (optional, default True),
+            "rccl_lib_build_timeout": "10800"              (optional, default 14400)
         }
     }
     """
     with open(config_file) as json_file:
         config_dict_t = json.load(json_file)
 
-    rccl_install_cfg = config_dict_t['rccl']['installation_params']
+    rccl_install_cfg = config_dict_t['rccl_install']
+
+    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
+    rccl_install_cfg = resolve_test_config_placeholders(rccl_install_cfg, cluster_dict)
     if not rccl_install_cfg.get("rccl_tests_repository"):
         rccl_install_cfg["rccl_tests_repository"] = rccl_install_cfg["rccl_repository"]
     log.info("%s", rccl_install_cfg)
@@ -339,7 +341,7 @@ def _rocm_hipcc(rocm_path):
 
 
 def _config_bool_str(value, default=True):
-    """Parse installation_params flags stored as \"True\" / \"False\" strings."""
+    """Parse rccl_install flags stored as \"True\" / \"False\" strings."""
     if value is None or str(value).strip() == "":
         return default
     return str(value).strip().lower() == "true"
@@ -491,6 +493,8 @@ def _install_rccl_lib(hdl, config_dict):
     sparse_path = _sparse_checkout_path(config_dict, for_tests=False)
     rocm_path = detect_rocm_path(hdl, config_dict.get("rocm_path", "<changeme>"))
     build_env = _build_env_exports(ompi_install_dir, rocm_path)
+    raw_timeout = str(config_dict.get("rccl_lib_build_timeout", "")).strip()
+    rccl_lib_build_timeout = int(raw_timeout) if raw_timeout else 14400
 
     if sparse_path:
         repo_dir = install_prefix
@@ -507,6 +511,7 @@ def _install_rccl_lib(hdl, config_dict):
     log.info("  workspace  : %s", install_prefix)
     log.info("  ROCm path  : %s", rocm_path)
     log.info("  OMPI prefix: %s", ompi_install_dir)
+    log.info("  build timeout: %s", rccl_lib_build_timeout)
 
     _git_clone_source(
         hdl,
@@ -519,7 +524,7 @@ def _install_rccl_lib(hdl, config_dict):
     rccl_build_dir = f"{rccl_project_dir}/build"
     hdl.exec(
         f"bash -c '{build_env}cd {rccl_project_dir} && mkdir -p build && cd build && cmake .. && make -j $(nproc)'",
-        timeout=14400,
+        timeout=rccl_lib_build_timeout,
     )
     nccl_home = rccl_build_dir
     search_roots = [rccl_build_dir, rccl_project_dir]
@@ -538,7 +543,7 @@ def _install_rccl_tests(hdl, config_dict, rccl_lib_prefix, use_custom_rccl_lib, 
 
     Args:
       hdl:                   Pssh handle (shdl or phdl, already resolved by caller).
-      config_dict:           installation_params from rccl_config.json.
+      config_dict:           rccl_install object from rccl_tests_install_config.json.
       rccl_lib_prefix:       RCCL install prefix or ROCm root for bundled librccl.
       use_custom_rccl_lib:   True when rccl-tests must link against a custom build.
 
@@ -611,7 +616,7 @@ def _install_rccl_tests(hdl, config_dict, rccl_lib_prefix, use_custom_rccl_lib, 
 def test_install_rccl_tests(phdl, shdl, config_dict):
     """
     Build and install rccl-tests (and optionally the RCCL library) according
-    to rccl_config.json installation_params.
+    to rccl_tests_install_config.json.
 
     Steps:
       1. Resolve the orchestrator handle: shdl (head node only) when
