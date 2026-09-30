@@ -51,7 +51,7 @@ class TestProfile(unittest.TestCase):
                     "id": "results",
                     "title": "Full results",
                     "bind": "datasets.status_matrix",
-                    "hint": "Click a cell's items to expand that node × group.",
+                    "hint": "Click a cell's items to expand that node Ã— group.",
                 },
             ],
         }
@@ -63,6 +63,13 @@ class TestProfile(unittest.TestCase):
         Draft202012Validator(schema).validate(profile)
         self.assertEqual(profile["dataset_builder"], "status_matrix")
         self.assertEqual(profile["sources"]["results"], "transferbench_res_dict")
+
+    def test_rvs_profile_validates_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        profile = load_json_profile("rvs_cvs")
+        Draft202012Validator(schema).validate(profile)
+        self.assertEqual(profile["dataset_builder"], "status_matrix")
+        self.assertEqual(profile["sources"]["results"], "rvs_res_dict")
 
     def test_default_sources_for_legacy_preset(self):
         cfg = make_inference_report_config(

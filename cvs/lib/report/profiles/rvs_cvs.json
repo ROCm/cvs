@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "profile_id": "rvs_cvs_rundeck",
+  "suite_id": "rvs_cvs",
+  "report_basename": "rvs_run_deck",
+  "title": "RVS Run Deck",
+  "subtitle": "ROCm Validation Suite · module results across the cluster",
+  "footer": "CVS RVS · render-only · per-node verdict from the collected RVS run (pass / fail)",
+  "link_name": "RVS Run Deck",
+  "dataset_builder": "status_matrix",
+  "interactive_viewer": false,
+  "sources": {
+    "results": "rvs_res_dict"
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "datasets.status_matrix.run_card_display"},
+    {"type": "status_matrix", "id": "results", "title": "Full results", "bind": "datasets.status_matrix"}
+  ]
+}
