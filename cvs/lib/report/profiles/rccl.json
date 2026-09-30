@@ -8,7 +8,8 @@
   "footer": "CVS rccl · render-only · does not affect gates",
   "link_name": "RCCL Run Deck",
   "dataset_builder": "series",
-  "interactive_viewer": false,
+  "interactive_viewer": true,
+  "viewer_template": "rccl_interactive.html",
   "sources": {
     "results": "cvs_results_dict",
     "variant": "variant_config"

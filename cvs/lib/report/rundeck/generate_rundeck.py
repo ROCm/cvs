@@ -140,7 +140,10 @@ class RundeckPublisher:
         if not config.interactive_viewer or not isinstance(profile, (dict, InferenceReportConfig)):
             return None
         builder_id = profile.get("dataset_builder", "sweep") if isinstance(profile, dict) else "sweep"
-        if builder_id not in ("sweep", "training_sweep", "status_matrix"):
+        template_name = profile.get("viewer_template") if isinstance(profile, dict) else None
+        if builder_id in ("sweep", "training_sweep", "status_matrix"):
+            pass
+        elif not template_name or not payload.get("datasets", {}).get(builder_id):
             return None
         viewer_name = viewer_basename_for(config.report_basename)
         viewer_path = out_dir / viewer_name
@@ -164,6 +167,7 @@ class RundeckPublisher:
             subtitle=resolved_subtitle,
             tier_order=config.metric_tier_order,
             embed_payload=payload,
+            template_name=template_name or "interactive.html",
         )
         return viewer_path
 

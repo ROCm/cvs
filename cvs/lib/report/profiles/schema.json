@@ -25,6 +25,7 @@
     "extends": { "type": "string", "description": "Stem of another profile JSON to merge before this one (child wins)." },
     "dataset_builder": { "enum": ["sweep", "series", "matrix", "status_matrix", "training_sweep"] },
     "interactive_viewer": { "type": "boolean" },
+    "viewer_template": { "type": "string" },
     "viewer_cell_threshold": { "type": "integer", "minimum": 1 },
     "sources": {
       "type": "object",

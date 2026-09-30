@@ -46,7 +46,7 @@ class TestGenerateRundeck(unittest.TestCase):
         self.assertTrue(try_auto_register_suite_report(config))
         return SimpleNamespace(config=config), HtmlReportManager(config)
 
-    def test_all_rccl_stems_publish_linked_html_and_json_in_zip(self):
+    def test_all_rccl_stems_publish_linked_html_json_and_viewer_in_zip(self):
         for suite in ("rccl_perf", "rccl_regression", "rccl_pairwise"):
             with self.subTest(suite=suite):
                 session, manager = self.make_session(suite)
@@ -54,7 +54,14 @@ class TestGenerateRundeck(unittest.TestCase):
                 with patch("cvs.lib.report.rundeck.generate_rundeck.get_session_results", return_value=store):
                     artifacts = generate_rundeck(session, manager)
                 self.assertNotIn("summary", artifacts)
-                self.assertNotIn("viewer", artifacts)
+                self.assertEqual(artifacts["viewer"], manager.log_dir / "rccl_run_deck_viewer.html")
+                viewer = artifacts["viewer"].read_text(encoding="utf-8")
+                self.assertIn("chart.js@4.4.1", viewer)
+                self.assertIn('id="embedded-report-json"', viewer)
+                self.assertIn("all_reduce_perf", viewer)
+                self.assertIn("all_gather_perf", viewer)
+                self.assertIn("Bus bandwidth vs message size", viewer)
+                self.assertIn("renderTable", viewer)
                 self.assertEqual(artifacts["html"], manager.log_dir / "rccl_run_deck.html")
                 payload = json.loads(artifacts["json"].read_text(encoding="utf-8"))
                 self.assertEqual(len(payload["results_table"]["rows"]), 3)
@@ -65,6 +72,7 @@ class TestGenerateRundeck(unittest.TestCase):
                 with zipfile.ZipFile(next(self.root.glob(f"{suite}_*.zip"))) as bundle:
                     self.assertIn(f"{suite}_html/rccl_run_deck.html", bundle.namelist())
                     self.assertIn(f"{suite}_html/rccl_run_deck.json", bundle.namelist())
+                    self.assertIn(f"{suite}_html/rccl_run_deck_viewer.html", bundle.namelist())
 
     def test_inference_profiles_keep_model_titles_viewers_and_ci_summaries(self):
         for suite in ("vllm", "sglang", "atom"):
@@ -76,6 +84,9 @@ class TestGenerateRundeck(unittest.TestCase):
                     artifacts = generate_rundeck(session, manager)
                 self.assertTrue(artifacts["summary"].is_file())
                 self.assertTrue(artifacts["viewer"].is_file())
+                viewer = artifacts["viewer"].read_text(encoding="utf-8")
+                self.assertIn('id="comparison-grid"', viewer)
+                self.assertNotIn("renderRunCard", viewer)
                 title = load_json_profile(suite)["title"]
                 self.assertIn(
                     f"<title>{title} &mdash; org/example-model</title>", artifacts["html"].read_text(encoding="utf-8")
