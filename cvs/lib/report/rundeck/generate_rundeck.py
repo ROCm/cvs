@@ -21,6 +21,7 @@ from cvs.lib.report.rundeck.publish_helpers import bundle_artifact_hrefs, cvs_ve
 from cvs.lib.report.rundeck.render import render_rundeck_html
 from cvs.lib.report.types import InferenceReportConfig
 from cvs.lib.report.viewer.scaffold import viewer_basename_for, write_interactive_viewer
+from cvs.lib.report.viewer.status_matrix import write_status_matrix_viewer
 
 log = globals.log
 
@@ -138,19 +139,27 @@ class RundeckPublisher:
     ) -> Optional[Path]:
         if not config.interactive_viewer or not isinstance(profile, (dict, InferenceReportConfig)):
             return None
-        if isinstance(profile, dict) and profile.get("dataset_builder", "sweep") not in (
-            "sweep",
-            "training_sweep",
-        ):
+        builder_id = profile.get("dataset_builder", "sweep") if isinstance(profile, dict) else "sweep"
+        if builder_id not in ("sweep", "training_sweep", "status_matrix"):
             return None
         viewer_name = viewer_basename_for(config.report_basename)
         viewer_path = out_dir / viewer_name
         # Use the payload's resolved subtitle (e.g. {mode} substituted) rather than
         # the raw profile subtitle, so the viewer matches the deck page.
         resolved_subtitle = (payload.get("report") or {}).get("subtitle") or config.subtitle
+        json_basename = f"{config.report_basename}.json"
+        if builder_id == "status_matrix":
+            write_status_matrix_viewer(
+                viewer_path,
+                json_basename=json_basename,
+                title=config.title,
+                subtitle=resolved_subtitle,
+                embed_payload=payload,
+            )
+            return viewer_path
         write_interactive_viewer(
             viewer_path,
-            json_basename=f"{config.report_basename}.json",
+            json_basename=json_basename,
             title=config.title,
             subtitle=resolved_subtitle,
             tier_order=config.metric_tier_order,

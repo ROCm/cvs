@@ -12,7 +12,8 @@ Suite owners enable Run Deck by adding `profiles/<stem>.json` (matching the
 1. Tests fill **session fixtures** (`cvs_results_dict` / `train_res_dict`, `variant_config`, `lifecycle`, …).
 2. Pytest auto-loads **`profiles/<stem>.json`** when present (matches `cvs run` stem).
 3. At session finish, **`rundeck/generate_rundeck.py`** builds datasets, renders HTML/JSON,
-   and optionally an interactive viewer for `sweep` and `training_sweep` suites.
+   and optionally an interactive viewer when `interactive_viewer` is true
+   (`sweep`, `training_sweep`, or `status_matrix`).
 
 ```mermaid
 flowchart LR
@@ -54,7 +55,7 @@ Root `cvs/conftest.py` binds fixtures from profile `sources` via `pytest_hooks.p
 | `sweep` | Cell-keyed dict → metric fields (ISL/OSL/concurrency sweeps) |
 | `series` | Nested dict: collective → message size → metrics |
 | `matrix` | Current results + golden reference for compare rows |
-| `status_matrix` | Categorical node × group pass/fail/na with per-item drill-down (ANC node checks) — see `profiles/anc_base.json` |
+| `status_matrix` | Node × group pass/fail/na with per-item drill-down. Optional per-node `metrics`, `series`, and `heatmaps` roll up into `overview` and `metric_charts`. Contract: `dataset_builders/status_matrix.py`. Example: `profiles/anc_base.json` |
 | `training_sweep` | String combo keys `MBS=…,GBS=…,PRECISION=…` → metric lists (`train_res_dict`) |
 
 Use `testing/fixtures.generic_sweep_profile()` as a template when authoring a
@@ -117,8 +118,8 @@ Artifacts next to the pytest HTML report:
 | File | When |
 | ---- | ---- |
 | `{report_basename}.html` + `.json` | Profile registered and results present |
-| `{report_basename}_viewer.html` | `sweep` or `training_sweep` + `interactive_viewer: true` |
-| `{report_basename}_summary.html` | CI one-pager |
+| `{report_basename}_viewer.html` | `interactive_viewer: true` and builder is `sweep`, `training_sweep`, or `status_matrix` |
+| `{report_basename}_summary.html` | `sweep` CI one-pager |
 
 The interactive viewer includes a **Token Throughput per GPU vs. Interactivity**
 chart (InferenceX-style) for inference sweeps. Configure axis metrics under
@@ -136,6 +137,55 @@ derives scalar **p50 / p95 step time** (ms) from per-iteration elapsed time
 (Primus instantaneous X, not running Y) for the Full results table — not extra charts.
 Single-node (`megatron_single`, Megatron-LM or Primus) omits scaling efficiency from
 the Full results table, cell highlights, and sweep charts; distributed keeps it.
+
+`status_matrix` profiles with `interactive_viewer: true` use the same publisher
+(`generate_rundeck.py`) and the same `{report_basename}.html`, `.json`, and
+`{report_basename}_viewer.html` names. The viewer template is
+`viewer/status_matrix.html` (node, group, and metric filters, threshold-aware
+charts, heatmaps, and searchable item results). It is separate from
+`viewer/interactive.html`. Static cards register on `DeckCardRenderer` in
+`runtime/cards.py`: `status_overview` binds `datasets.status_matrix.overview`
+and `metric_charts` binds `datasets.status_matrix.metric_charts` (`when_empty:
+hide` drops the card when all three lists are empty). The `status_matrix` card
+accepts an optional `hint` string; otherwise it shows generic item-breakdown
+help. The deck nav links the viewer from `summary.viewer_html`, the same way
+sweep decks do.
+
+```json
+{
+  "dataset_builder": "status_matrix",
+  "interactive_viewer": true,
+  "sources": {"results": "cvs_results_dict"},
+  "cards": [
+    {
+      "type": "run_card",
+      "id": "run-card",
+      "title": "Run card",
+      "bind": "datasets.status_matrix.run_card_display"
+    },
+    {
+      "type": "status_overview",
+      "id": "overview",
+      "title": "Health overview",
+      "bind": "datasets.status_matrix.overview"
+    },
+    {
+      "type": "metric_charts",
+      "id": "metrics",
+      "title": "Metrics",
+      "bind": "datasets.status_matrix.metric_charts",
+      "when_empty": "hide"
+    },
+    {
+      "type": "status_matrix",
+      "id": "results",
+      "title": "Full results",
+      "bind": "datasets.status_matrix",
+      "hint": "Click a cell's items to expand that node × group's breakdown and artifact links."
+    }
+  ]
+}
+```
 
 ## Author tiers
 
@@ -161,7 +211,11 @@ cvs/lib/report/
     config_adapter.py        # JSON profile → RunDeckConfig
     viewer_config.py         # interactive viewer config
     dataset_builders/        # sweep, series, matrix, status_matrix, training_sweep
-    runtime/                 # card components + theme
+    runtime/                 # card components + theme (card types on DeckCardRenderer.card_renderers)
+  viewer/
+    interactive.html         # sweep and training_sweep explorer
+    status_matrix.html       # status_matrix health explorer
+    status_matrix.py         # write_status_matrix_viewer
   profiles/schema.json
   pytest_hooks.py            # session fixture binding
   registry.py                # session store + profile registration
@@ -177,9 +231,9 @@ Library unit tests use `unittest` and live beside the module under test (see
 | Location | Covers |
 | -------- | ------ |
 | `report/unittests/` | registry, profile, cell_build, inference, provenance, … |
-| `report/rundeck/unittests/` | payload, viewer_config, config_builder, parity, training_sweep |
+| `report/rundeck/unittests/` | payload, viewer_config, config_builder, parity, training_sweep, status_matrix |
 | `report/render/unittests/` | cell card renderer |
-| `report/viewer/unittests/` | interactive viewer scaffold |
+| `report/viewer/unittests/` | interactive viewer scaffold and status-matrix viewer |
 | `report/panels/unittests/` | prev-run comparison panel |
 
 Shared test fixtures: `report/testing/fixtures.py`.

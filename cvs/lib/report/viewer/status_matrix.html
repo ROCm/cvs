@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>__TITLE__</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #0f1117; --panel: #1a1d27; --border: #2a2f3d; --text: #e8eaef; --muted: #9aa3b5;
+  --accent: #ff6b35; --accent2: #6b9fff; --pass: #3dd68c; --fail: #ff5c6a; --na: #5c6370;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
+  background: linear-gradient(160deg, #0a0c12 0%, #12151f 40%, #0f1117 100%);
+  color: var(--text); padding: 1.25rem; line-height: 1.45; }
+.wrap { max-width: 1200px; margin: 0 auto; }
+h1 { margin: 0 0 0.25rem; font-size: 1.6rem; font-weight: 600; }
+.subtitle, .muted { color: var(--muted); }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1rem 1.25rem; margin-bottom: 1rem; }
+.panel h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  margin: 0 0 0.85rem; }
+.toolbar { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.65rem; }
+.toolbar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.72rem; color: var(--muted); }
+.toolbar select, .toolbar input { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.5rem; width: 100%; font-size: 0.85rem; }
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; margin: 0.85rem 0; }
+.summary-card { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 10px; padding: 0.85rem 1rem; }
+.summary-stat { font-size: 1.35rem; font-weight: 700; color: var(--accent); }
+.overview-split { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
+table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+th, td { border-bottom: 1px solid var(--border); padding: 0.35rem 0.4rem; text-align: left; }
+th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; }
+.chart-block { background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 10px;
+  padding: 0.85rem; margin-bottom: 0.85rem; }
+.chart-block h3 { margin: 0 0 0.5rem; font-size: 0.9rem; }
+.chart-wrap { position: relative; min-height: 180px; }
+.hm-wrap { overflow-x: auto; }
+.hm-table td, .hm-table th { text-align: center; border: 1px solid var(--border); }
+.hm-pass { background: rgba(61,214,140,0.35); }
+.hm-fail { background: rgba(255,92,106,0.35); }
+.chip { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 999px; font-size: 0.68rem; text-transform: uppercase; }
+.chip-pass { color: var(--pass); } .chip-fail { color: var(--fail); } .chip-na { color: var(--na); }
+a { color: var(--accent2); }
+@media (max-width: 640px) {
+  body { padding: 0.75rem; }
+  .overview-split, .toolbar { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body data-viewer="status-matrix">
+<div class="wrap">
+<div class="hero">
+  <h1>__TITLE__</h1>
+  <p class="subtitle">__SUBTITLE__</p>
+  <p><a id="run-deck-link" href="#">Run deck</a></p>
+</div>
+<p id="load-error" class="muted" hidden></p>
+<section class="panel" id="overview">
+  <h2>Health overview</h2>
+  <div class="toolbar">
+    <label>Node<select id="f-node"><option value="">All nodes</option></select></label>
+    <label>Group<select id="f-group"><option value="">All groups</option></select></label>
+    <label>Metric<select id="f-metric"><option value="">All metrics</option></select></label>
+    <label>Search<input id="f-search" type="search" placeholder="Item, message, node, group"/></label>
+  </div>
+  <div class="summary-grid">
+    <div class="summary-card"><h3>Pass rate</h3><div class="summary-stat" id="pass-rate">—</div>
+      <div class="muted" id="pass-meta"></div></div>
+  </div>
+  <div class="overview-split">
+    <div><table id="by-node"></table></div>
+    <div><table id="by-group"></table></div>
+  </div>
+</section>
+<section class="panel" id="charts">
+  <h2>Metrics</h2>
+  <p id="metric-empty" class="muted" hidden>No metric data recorded.</p>
+  <div id="metric-charts"></div>
+</section>
+<section class="panel" id="series-panel">
+  <h2>Series</h2>
+  <p id="series-empty" class="muted" hidden>No series data recorded.</p>
+  <div id="series-charts"></div>
+</section>
+<section class="panel" id="heatmaps">
+  <h2>Heatmaps</h2>
+  <p id="heatmap-empty" class="muted" hidden>No heatmap data recorded.</p>
+  <div id="heatmap-charts"></div>
+</section>
+<section class="panel" id="details">
+  <h2>Detailed results</h2>
+  <p id="details-empty" class="muted" hidden>No matching results.</p>
+  <div class="hm-wrap"><table id="details-table"></table></div>
+</section>
+</div>
+__EMBEDDED_JSON__
+<script>
+const JSON_PATH = __JSON_PATH__;
+let charts = [];
+
+function $(id) { return document.getElementById(id); }
+
+function esc(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function num(value) {
+  if (typeof value === "boolean" || value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function statusMatrix(payload) {
+  if (!payload || typeof payload !== "object") return {};
+  const datasets = payload.datasets;
+  if (!datasets || typeof datasets !== "object") return {};
+  const matrix = datasets.status_matrix;
+  return matrix && typeof matrix === "object" ? matrix : {};
+}
+
+function selected(id) {
+  const el = $(id);
+  return el ? el.value : "";
+}
+
+function cellStatus(cell) {
+  const status = String((cell && cell.status) || "na").toLowerCase();
+  return status === "pass" || status === "fail" ? status : "na";
+}
+
+function visibleCells(matrix) {
+  const nodes = Array.isArray(matrix.nodes) ? matrix.nodes : [];
+  const groups = Array.isArray(matrix.groups) ? matrix.groups : [];
+  const grid = matrix.grid && typeof matrix.grid === "object" ? matrix.grid : {};
+  const nodeFilter = selected("f-node");
+  const groupFilter = selected("f-group");
+  const rows = [];
+  nodes.forEach(node => {
+    if (nodeFilter && node !== nodeFilter) return;
+    groups.forEach(group => {
+      if (groupFilter && group !== groupFilter) return;
+      const cell = (grid[node] && grid[node][group]) || {};
+      rows.push({node: node, group: group, cell: cell});
+    });
+  });
+  return rows;
+}
+
+function fmtRate(rate) {
+  if (rate == null) return "\u2014";
+  const rounded = Math.round(rate * 1000) / 10;
+  if (Math.abs(rounded - Math.round(rounded)) < 0.05) return Math.round(rounded) + "%";
+  return rounded.toFixed(1) + "%";
+}
+
+function ranked(map, label) {
+  return Object.keys(map).map(key => ({
+    label: key, pass: map[key].pass, fail: map[key].fail, na: map[key].na
+  })).sort((a, b) => b.fail - a.fail || String(a.label).localeCompare(String(b.label)));
+}
+
+function renderCountTable(el, title, rows) {
+  if (!rows.length) { el.innerHTML = ""; return; }
+  const body = rows.map(row =>
+    "<tr><td>" + esc(row.label) + "</td><td>" + row.fail + "</td><td>" + row.pass + "</td><td>" + row.na + "</td></tr>"
+  ).join("");
+  el.innerHTML = "<thead><tr><th>" + esc(title) + "</th><th>Fail</th><th>Pass</th><th>n/a</th></tr></thead><tbody>"
+    + body + "</tbody>";
+}
+
+function renderOverview(matrix) {
+  const rows = visibleCells(matrix);
+  const counts = {pass: 0, fail: 0, na: 0};
+  const byNode = {};
+  const byGroup = {};
+  rows.forEach(row => {
+    const status = cellStatus(row.cell);
+    counts[status] += 1;
+    [["node", row.node, byNode], ["group", row.group, byGroup]].forEach(entry => {
+      const bucket = entry[2][entry[1]] || {pass: 0, fail: 0, na: 0};
+      bucket[status] += 1;
+      entry[2][entry[1]] = bucket;
+    });
+  });
+  const evaluated = counts.pass + counts.fail;
+  $("pass-rate").textContent = rows.length ? fmtRate(evaluated ? counts.pass / evaluated : null) : "\u2014";
+  $("pass-meta").textContent = rows.length
+    ? (counts.pass + " passed · " + counts.fail + " failed · " + counts.na + " n/a")
+    : "No node results recorded.";
+  renderCountTable($("by-node"), "Node", ranked(byNode, "node"));
+  renderCountTable($("by-group"), "Group", ranked(byGroup, "group"));
+}
+
+function metricKey(item) {
+  return (item.group || "") + "||" + (item.name || "");
+}
+
+function wantsKey(item) {
+  const key = selected("f-metric");
+  return !key || metricKey(item) === key;
+}
+
+function wantsNodeGroup(item) {
+  const nodeFilter = selected("f-node");
+  const groupFilter = selected("f-group");
+  if (nodeFilter && item.node && item.node !== nodeFilter) return false;
+  if (groupFilter && item.group && item.group !== groupFilter) return false;
+  return true;
+}
+
+function colorFor(status) {
+  if (status === "pass") return "#3dd68c";
+  if (status === "fail") return "#ff5c6a";
+  if (status === "na") return "#5c6370";
+  return "#6b9fff";
+}
+
+function destroyCharts() {
+  charts.forEach(chart => chart.destroy());
+  charts = [];
+}
+
+function fillSelect(id, options) {
+  const el = $(id);
+  const current = el.value;
+  const first = el.options[0];
+  el.innerHTML = "";
+  el.appendChild(first);
+  options.forEach(opt => {
+    const option = document.createElement("option");
+    option.value = opt.value;
+    option.textContent = opt.label;
+    el.appendChild(option);
+  });
+  if ([...el.options].some(opt => opt.value === current)) el.value = current;
+}
+
+function populateFilters(matrix) {
+  fillSelect("f-node", (matrix.nodes || []).map(node => ({value: node, label: node})));
+  fillSelect("f-group", (matrix.groups || []).map(group => ({value: group, label: group})));
+  const charts = matrix.metric_charts || {};
+  const seen = {};
+  const options = [];
+  ["metrics", "series", "heatmaps"].forEach(kind => {
+    (charts[kind] || []).forEach(item => {
+      if (!item || typeof item !== "object") return;
+      const key = metricKey(item);
+      if (seen[key]) return;
+      seen[key] = true;
+      const label = item.group ? (item.group + " · " + item.name) : item.name;
+      options.push({value: key, label: label});
+    });
+  });
+  fillSelect("f-metric", options);
+}
+
+function renderMetricCharts(matrix) {
+  const host = $("metric-charts");
+  host.innerHTML = "";
+  const metrics = ((matrix.metric_charts || {}).metrics || []).filter(item => wantsKey(item));
+  const nodeFilter = selected("f-node");
+  const groupFilter = selected("f-group");
+  let drawn = 0;
+  metrics.forEach(metric => {
+    const points = (metric.points || []).filter(point => {
+      if (nodeFilter && point.node !== nodeFilter) return false;
+      if (groupFilter && (point.group || metric.group) !== groupFilter) return false;
+      return num(point.value) != null;
+    });
+    if (!points.length || typeof Chart === "undefined") return;
+    const block = document.createElement("div");
+    block.className = "chart-block";
+    const title = document.createElement("h3");
+    title.textContent = metric.group ? (metric.group + " · " + metric.name) : metric.name;
+    block.appendChild(title);
+    const threshold = num(metric.threshold);
+    if (threshold != null) {
+      const note = document.createElement("p");
+      note.className = "muted";
+      const sense = metric.direction === "lower" ? "lower is better" : (metric.direction === "higher" ? "higher is better" : "");
+      note.textContent = "threshold " + threshold + (metric.unit ? " " + metric.unit : "") + (sense ? " · " + sense : "");
+      block.appendChild(note);
+    }
+    const canvas = document.createElement("canvas");
+    block.appendChild(canvas);
+    host.appendChild(block);
+    const datasets = [{
+      type: "bar",
+      label: metric.name || "value",
+      data: points.map(point => num(point.value)),
+      backgroundColor: points.map(point => colorFor(point.status))
+    }];
+    if (threshold != null) {
+      datasets.push({
+        type: "line",
+        label: "Threshold",
+        data: points.map(() => threshold),
+        borderColor: "#ff6b35",
+        borderDash: [4, 4],
+        pointRadius: 0,
+        borderWidth: 2
+      });
+    }
+    charts.push(new Chart(canvas, {
+      data: {labels: points.map(point => point.node), datasets: datasets},
+      options: {
+        responsive: true,
+        plugins: {legend: {labels: {color: "#e8eaef"}}},
+        scales: {
+          x: {ticks: {color: "#9aa3b5"}},
+          y: {ticks: {color: "#9aa3b5"}, title: {display: !!metric.unit, text: metric.unit || "", color: "#9aa3b5"}}
+        }
+      }
+    }));
+    drawn += 1;
+  });
+  $("metric-empty").hidden = drawn > 0;
+}
+
+function renderSeries(matrix) {
+  const host = $("series-charts");
+  host.innerHTML = "";
+  const series = ((matrix.metric_charts || {}).series || []).filter(item => wantsKey(item) && wantsNodeGroup(item));
+  let drawn = 0;
+  series.forEach(item => {
+    const points = (item.points || []).map(point => {
+      if (Array.isArray(point)) return {x: point[0], y: num(point[1])};
+      return {x: point.x, y: num(point.y)};
+    }).filter(point => point.y != null);
+    if (!points.length || typeof Chart === "undefined") return;
+    const block = document.createElement("div");
+    block.className = "chart-block";
+    const title = document.createElement("h3");
+    title.textContent = (item.name || "series") + (item.node ? " · " + item.node : "");
+    const canvas = document.createElement("canvas");
+    block.appendChild(title);
+    block.appendChild(canvas);
+    host.appendChild(block);
+    charts.push(new Chart(canvas, {
+      type: "line",
+      data: {
+        labels: points.map(point => point.x),
+        datasets: [{label: item.unit || item.name || "series", data: points.map(point => point.y), borderColor: "#6b9fff", tension: 0.15}]
+      },
+      options: {responsive: true, plugins: {legend: {labels: {color: "#e8eaef"}}}, scales: {x: {ticks: {color: "#9aa3b5"}}, y: {ticks: {color: "#9aa3b5"}}}}
+    }));
+    drawn += 1;
+  });
+  $("series-empty").hidden = drawn > 0;
+}
+
+function heatClass(value, heat, lo, hi) {
+  if (value == null) return "hm-na";
+  const threshold = num(heat.threshold);
+  if (threshold != null && (heat.direction === "higher" || heat.direction === "lower")) {
+    const ok = heat.direction === "lower" ? value <= threshold : value >= threshold;
+    return ok ? "hm-pass" : "hm-fail";
+  }
+  return "";
+}
+
+function renderHeatmaps(matrix) {
+  const host = $("heatmap-charts");
+  host.innerHTML = "";
+  const heatmaps = ((matrix.metric_charts || {}).heatmaps || []).filter(item => wantsKey(item) && wantsNodeGroup(item));
+  heatmaps.forEach(heat => {
+    const rows = heat.rows || [];
+    const cols = heat.cols || [];
+    const values = heat.values || [];
+    const numbers = [];
+    values.forEach(row => (row || []).forEach(value => { const n = num(value); if (n != null) numbers.push(n); }));
+    const lo = numbers.length ? Math.min.apply(null, numbers) : 0;
+    const hi = numbers.length ? Math.max.apply(null, numbers) : 1;
+    let html = "<div class='chart-block'><h3>" + esc((heat.name || "heatmap") + (heat.node ? " · " + heat.node : "")) + "</h3>";
+    html += "<div class='hm-wrap'><table class='hm-table'><tr><th></th>";
+    cols.forEach(col => { html += "<th>" + esc(col) + "</th>"; });
+    html += "</tr>";
+    rows.forEach((rowName, index) => {
+      const row = values[index] || [];
+      html += "<tr><th>" + esc(rowName) + "</th>";
+      cols.forEach((_, colIndex) => {
+        const value = num(row[colIndex]);
+        const css = heatClass(value, heat, lo, hi);
+        let style = "";
+        if (!css && value != null) {
+          const alpha = 0.15 + 0.6 * ((value - lo) / ((hi - lo) || 1));
+          style = " style='background:rgba(107,159,255," + alpha.toFixed(2) + ")'";
+        }
+        html += "<td class='" + css + "'" + style + ">" + esc(value == null ? "—" : value) + "</td>";
+      });
+      html += "</tr>";
+    });
+    html += "</table></div></div>";
+    host.insertAdjacentHTML("beforeend", html);
+  });
+  $("heatmap-empty").hidden = heatmaps.length > 0;
+}
+
+function renderDetails(matrix) {
+  const query = selected("f-search").trim().toLowerCase();
+  const rows = [];
+  visibleCells(matrix).forEach(entry => {
+    const items = Array.isArray(entry.cell.items) ? entry.cell.items : [];
+    if (!items.length) {
+      rows.push({node: entry.node, group: entry.group, name: "", status: cellStatus(entry.cell), message: entry.cell.items_summary || ""});
+      return;
+    }
+    items.forEach(item => {
+      rows.push({
+        node: entry.node,
+        group: entry.group,
+        name: item.name || "",
+        status: item.status || cellStatus(entry.cell),
+        message: item.message || ""
+      });
+    });
+  });
+  const matched = rows.filter(row => {
+    if (!query) return true;
+    return [row.node, row.group, row.name, row.status, row.message].join(" ").toLowerCase().indexOf(query) !== -1;
+  });
+  const table = $("details-table");
+  if (!matched.length) {
+    table.innerHTML = "";
+    $("details-empty").hidden = false;
+    return;
+  }
+  $("details-empty").hidden = true;
+  const body = matched.map(row =>
+    "<tr><td>" + esc(row.node) + "</td><td>" + esc(row.group) + "</td><td>" + esc(row.name) + "</td><td><span class='chip chip-"
+    + esc(row.status) + "'>" + esc(row.status) + "</span></td><td>" + esc(row.message) + "</td></tr>"
+  ).join("");
+  table.innerHTML = "<thead><tr><th>Node</th><th>Group</th><th>Item</th><th>Status</th><th>Message</th></tr></thead><tbody>"
+    + body + "</tbody>";
+}
+
+function renderHealth(matrix) {
+  destroyCharts();
+  renderOverview(matrix);
+  renderMetricCharts(matrix);
+  renderSeries(matrix);
+  renderHeatmaps(matrix);
+  renderDetails(matrix);
+}
+
+function loadReportData() {
+  const embedded = $("embedded-report-json");
+  if (embedded && embedded.textContent.trim()) return Promise.resolve(JSON.parse(embedded.textContent));
+  return fetch(JSON_PATH).then(response => {
+    if (!response.ok) throw new Error(response.status + " " + response.statusText);
+    return response.json();
+  });
+}
+
+let reportMatrix = {};
+loadReportData().then(data => {
+  reportMatrix = statusMatrix(data);
+  const link = $("run-deck-link");
+  if (link && JSON_PATH) link.href = String(JSON_PATH).replace(/\.json$/i, ".html");
+  populateFilters(reportMatrix);
+  ["f-node", "f-group", "f-metric", "f-search"].forEach(id => {
+    $(id).addEventListener("input", () => renderHealth(reportMatrix));
+    $(id).addEventListener("change", () => renderHealth(reportMatrix));
+  });
+  renderHealth(reportMatrix);
+}).catch(err => {
+  const box = $("load-error");
+  box.hidden = false;
+  box.textContent = "Failed to load report JSON: " + err;
+});
+</script>
+</body>
+</html>
