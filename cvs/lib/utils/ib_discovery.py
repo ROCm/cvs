@@ -151,10 +151,7 @@ def _usable_ipv4(token):
 
 def _host_to_ipv4_cmd(host):
     # Skip 127.0.0.1. Spur /etc/hosts lists the node name there ahead of the real address.
-    inner = (
-        f"getent ahostsv4 {shlex.quote(host)} 2>/dev/null | "
-        "awk '$1 !~ /^127\\./ {print $1; exit}'"
-    )
+    inner = f"getent ahostsv4 {shlex.quote(host)} 2>/dev/null | awk '$1 !~ /^127\\./ {{print $1; exit}}'"
     return f"bash -c {shlex.quote(inner)}"
 
 
