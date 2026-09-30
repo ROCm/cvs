@@ -304,7 +304,9 @@ class TestPreflightNodeSmokeReporting(unittest.TestCase):
         self.assertIn("Node Smoke Tier 3", html_out)
         self.assertIn("GPU processes", html_out)
         self.assertIn("Large GEMM TFLOPS", html_out)
-        self.assertIn("cluster: Host", html_out)
+        # The shared metrics table used to prefix the node onto the check label
+        # ("cluster: Host") and now puts the node in its own column ("Host").
+        self.assertTrue("cluster: Host" in html_out or ">Host</td>" in html_out)
 
 
 class TestLegacyNodeSmokeConfigNormalization(unittest.TestCase):
