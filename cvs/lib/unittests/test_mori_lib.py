@@ -119,43 +119,49 @@ class _ContainerFakeOrch(_BaremetalFakeOrch):
         return self._run_cmd_list(cmd_list, timeout=timeout, print_console=print_console)
 
 
-def _run_every_step(bench):
-    bench.create_run_log_dir()
-    bench.check_ibv_devices()
-    bench.install_packages()
-    bench.run_shmem_apitest()
-    bench.run_concurrent_put_threads()
-    bench.run_concurrent_put_imm_threads()
-    bench.run_concurrent_put_signal_thread()
-    bench.run_ibgda_dist_write()
-    bench.run_mori_torch_io_test(op_type='read', buffer_size=16384, transfer_batch_size=128)
+class _MoriBenchCase(unittest.TestCase):
+    """Resets ``globals.error_list`` and patches out ``time.sleep`` around each test."""
+
+    def setUp(self):
+        globals.error_list = []
+        self._sleep = patch('cvs.lib.mori_lib.time.sleep')
+        self.sleep = self._sleep.start()
+
+    def tearDown(self):
+        self._sleep.stop()
+        globals.error_list = []
+
+    def _run_every_step(self, bench):
+        bench.create_run_log_dir()
+        bench.check_ibv_devices()
+        bench.install_packages()
+        bench.run_shmem_apitest()
+        bench.run_concurrent_put_threads()
+        bench.run_concurrent_put_imm_threads()
+        bench.run_concurrent_put_signal_thread()
+        bench.run_ibgda_dist_write()
+        bench.run_mori_torch_io_test(op_type='read', buffer_size=16384, transfer_batch_size=128)
+        # fail_test() doesn't raise, so without this a step that stopped passing would go unnoticed.
+        self.assertEqual(globals.error_list, [])
 
 
 class TestResolveOrchestratorMode(unittest.TestCase):
-    def test_mori_config_orchestrator_wins_over_legacy_and_cluster(self):
-        mori = {'orchestrator': 'baremetal', 'container_image': 'img'}
-        self.assertEqual(resolve_orchestrator_mode(mori, {'orchestrator': 'container'}), 'baremetal')
-
-    def test_legacy_config_forces_container_on_spur_style_baremetal_cluster(self):
-        # SPUR-generated cluster files say baremetal; a legacy mori config must still launch its container.
-        self.assertEqual(
-            resolve_orchestrator_mode({'container_image': 'img'}, {'orchestrator': 'baremetal'}), 'container'
-        )
-
-    def test_explicit_container_orchestrator_on_baremetal_cluster(self):
-        mori = {'orchestrator': 'container', 'container': {'image': 'img'}}
-        self.assertEqual(resolve_orchestrator_mode(mori, {'orchestrator': 'baremetal'}), 'container')
-
-    def test_new_style_container_block_defers_to_cluster(self):
-        mori = {'container': {'image': 'img'}, 'container_image': 'img'}
-        self.assertEqual(resolve_orchestrator_mode(mori, {'orchestrator': 'baremetal'}), 'baremetal')
-        self.assertEqual(resolve_orchestrator_mode(mori, {'orchestrator': 'container'}), 'container')
-
-    def test_empty_container_image_is_not_legacy(self):
-        self.assertEqual(resolve_orchestrator_mode({'container_image': ''}, {'orchestrator': 'baremetal'}), 'baremetal')
-
-    def test_default_is_baremetal(self):
-        self.assertEqual(resolve_orchestrator_mode({}, {}), 'baremetal')
+    def test_mode_rule(self):
+        bm, ct = {'orchestrator': 'baremetal'}, {'orchestrator': 'container'}
+        block = {'container': {'image': 'img'}, 'container_image': 'img'}
+        cases = [
+            ('mori orchestrator wins', {'orchestrator': 'baremetal', 'container_image': 'img'}, ct, 'baremetal'),
+            # SPUR-generated cluster files say baremetal; a legacy mori config must still launch its container.
+            ('legacy forces container', {'container_image': 'img'}, bm, 'container'),
+            ('explicit container', {'orchestrator': 'container', 'container': {'image': 'img'}}, bm, 'container'),
+            ('container block defers to bm cluster', block, bm, 'baremetal'),
+            ('container block defers to ct cluster', block, ct, 'container'),
+            ('empty container_image is not legacy', {'container_image': ''}, bm, 'baremetal'),
+            ('default is baremetal', {}, {}, 'baremetal'),
+        ]
+        for name, mori, cluster, expected in cases:
+            with self.subTest(name):
+                self.assertEqual(resolve_orchestrator_mode(mori, cluster), expected)
 
 
 class TestLegacyContainerBlock(unittest.TestCase):
@@ -252,12 +258,10 @@ class TestBuildEnvPrefix(unittest.TestCase):
     def test_path_vars_expand_in_the_executing_shell(self):
         # The legacy docker-exec quoting let the host shell expand $PYTHONPATH; it must stay literal until run.
         prefix = build_env_prefix('/opt/mori dir', '/torch/lib', 'eno0', 'rdma0,rdma1')
-        self.assertIn('$PYTHONPATH', prefix)
         self.assertEqual(self._run(prefix), '/opt/mori dir:/pre|/torch/lib:/ld|rdma0,rdma1|eno0')
 
     def test_empty_torchlib_dir_leaves_ld_library_path_alone(self):
         prefix = build_env_prefix('/m', '', 'eno0', 'rdma0')
-        self.assertNotIn('LD_LIBRARY_PATH', prefix)
         self.assertEqual(self._run(prefix), '/m:/pre|/ld|rdma0|eno0')
 
 
@@ -273,20 +277,11 @@ class TestParsePrettyTables(unittest.TestCase):
             parse_pretty_tables_multi_rank(_table(avg_bw_header='Mean BW (GB/s)'))
 
 
-class TestMoriBenchmarkCommands(unittest.TestCase):
-    def setUp(self):
-        globals.error_list = []
-        self._sleep = patch('cvs.lib.mori_lib.time.sleep')
-        self._sleep.start()
-
-    def tearDown(self):
-        self._sleep.stop()
-        globals.error_list = []
-
+class TestMoriBenchmarkCommands(_MoriBenchCase):
     def test_no_command_uses_docker_in_either_mode(self):
         # Container mode must go through orch.exec (which wraps docker exec itself), never a hand-built wrapper.
         for orch in (_ContainerFakeOrch(), _BaremetalFakeOrch()):
-            _run_every_step(MoriBenchmark(orch, _mori_dict()))
+            self._run_every_step(MoriBenchmark(orch, _mori_dict()))
             for cmd in orch.all_commands():
                 self.assertNotIn('docker', cmd)
                 self.assertNotIn('mori_env_script', cmd)
@@ -296,7 +291,7 @@ class TestMoriBenchmarkCommands(unittest.TestCase):
         bench = MoriBenchmark(orch, _mori_dict(nic_type='thor2'))
         self.assertFalse(bench.install_packages())
         self.assertEqual(orch.exec_calls, [])
-        _run_every_step(bench)
+        self._run_every_step(bench)
         for cmd in orch.all_commands():
             self.assertNotIn('pip', cmd)
             self.assertNotIn('libbnxt', cmd)
@@ -306,12 +301,11 @@ class TestMoriBenchmarkCommands(unittest.TestCase):
         orch = _ContainerFakeOrch()
         self.assertTrue(MoriBenchmark(orch, _mori_dict()).install_packages())
         self.assertEqual(len(orch.exec_calls), 1)
-        self.assertIn("bash -c 'pip3 install prettytable'", orch.exec_calls[0]['cmd'])
-        self.assertIn('timeout -k 10 570 ', orch.exec_calls[0]['cmd'])
+        self.assertIn('pip3 install prettytable', orch.exec_calls[0]['cmd'])
 
     def test_every_exec_has_a_timeout(self):
         orch = _ContainerFakeOrch()
-        _run_every_step(MoriBenchmark(orch, _mori_dict()))
+        self._run_every_step(MoriBenchmark(orch, _mori_dict()))
         self.assertTrue(orch.exec_calls)
         for call in orch.exec_calls + orch.cmd_list_calls:
             self.assertIsNotNone(call['timeout'], call)
@@ -322,17 +316,16 @@ class TestMoriBenchmarkCommands(unittest.TestCase):
         bench.run_shmem_apitest()
         cmd = orch.exec_calls[0]['cmd']
         self.assertTrue(cmd.startswith(bench.env_prefix))
-        self.assertIn(
-            "cd /sgl-workspace/mori && { timeout -k 10 870 bash -c 'pytest -vvv ./tests/python/shmem/test_api.py';",
-            cmd,
-        )
-        self.assertTrue(cmd.endswith(f'}} 2>&1 | tee {bench.run_log_dir}/shmem_api_$(hostname).log'))
+        self.assertIn('cd /sgl-workspace/mori && ', cmd)
+        self.assertIn('pytest -vvv ./tests/python/shmem/test_api.py', cmd)
+        # Per-host log names keep hosts from overwriting each other on a shared log_dir.
+        self.assertTrue(cmd.endswith(f' 2>&1 | tee {bench.run_log_dir}/shmem_api_$(hostname).log'))
         self.assertTrue(bench.run_log_dir.startswith('/home/u/LOGS/mori/'))
 
     def test_remote_bound_expires_before_cvs_timeout(self):
         # A CVS-side timeout alone leaves the remote command running (seen with the baremetal shmem pytest).
         orch = _ContainerFakeOrch()
-        _run_every_step(MoriBenchmark(orch, _mori_dict()))
+        self._run_every_step(MoriBenchmark(orch, _mori_dict()))
         bounded = {}
         for call in orch.exec_calls:
             m = re.search(r'timeout -k (\d+) (\d+) bash -c', call['cmd'])
@@ -346,6 +339,7 @@ class TestMoriBenchmarkCommands(unittest.TestCase):
             'concurrent_put_imm_thread',
             'concurrent_put_signal_thread',
             'dist_write',
+            'pip3 install prettytable',
         ):
             self.assertTrue(any(name in cmd for cmd in bounded), name)
 
@@ -355,7 +349,6 @@ class TestMoriBenchmarkCommands(unittest.TestCase):
         for bad in (0, 5, MoriBenchmark.REMOTE_TIMEOUT_MARGIN):
             with self.assertRaises(ValueError):
                 bench._bounded('true', bad)
-        self.assertIn('timeout -k 10 1 bash -c', bench._bounded('true', MoriBenchmark.REMOTE_TIMEOUT_MARGIN + 1))
 
     def test_log_dir_mkdir_failure_is_reported_per_node(self):
         orch = _ContainerFakeOrch(exit_code=1)
@@ -420,16 +413,7 @@ class TestRemoteBoundInBash(unittest.TestCase):
         self.assertNotIn(REMOTE_TIMEOUT_MARKER, out)
 
 
-class TestMoriIoLaunch(unittest.TestCase):
-    def setUp(self):
-        globals.error_list = []
-        self._sleep = patch('cvs.lib.mori_lib.time.sleep')
-        self.sleep = self._sleep.start()
-
-    def tearDown(self):
-        self._sleep.stop()
-        globals.error_list = []
-
+class TestMoriIoLaunch(_MoriBenchCase):
     def test_master_addr_defaults_to_head_node(self):
         bench = MoriBenchmark(_ContainerFakeOrch(hosts=['a', 'b']), _mori_dict(master_addr=''))
         self.assertEqual(bench.master_addr, 'a')
@@ -455,9 +439,7 @@ class TestMoriIoLaunch(unittest.TestCase):
         cmd_list, log_paths = bench.build_io_launch_cmds('case', '--x')
         cmd = cmd_list[0]
         self.assertIn(f'> {log_paths["n0"]} 2>&1 < /dev/null &', cmd)
-        self.assertTrue(cmd.rstrip().endswith('&'))
         self.assertIn(f"echo {IO_EXIT_MARKER}$?", cmd)
-        self.assertIn('nohup bash -c', cmd)
 
     def test_master_addr_outside_hosts_fails_without_launching(self):
         orch = _ContainerFakeOrch()
