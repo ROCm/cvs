@@ -84,6 +84,32 @@ class TestRcclLib(unittest.TestCase):
         self.assertEqual(len(captured.output), 1)
         self.assertIn('rccl.results', captured.output[0])
 
+    def test_legacy_results_fallback_with_empty_root_results(self):
+        config = self._shipped_config()
+        config['cvs_params']['results'] = config['results']
+        config['results'] = {}
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            expected = self._configured_job(config)._expected_for_test()
+        self.assertEqual(expected['8589934592'], {'bus_bw': 330.0})
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn('rccl.cvs_params.results is deprecated', captured.output[0])
+
+    def test_malformed_results_report_one_failure_during_regression(self):
+        config = self._shipped_config()
+        config['results'] = {'all_reduce_perf': {'bus_bw': 'invalid'}}
+        config['cvs_params']['verify_bus_bw'] = 'True'
+        job = self._configured_job(config)
+        with (
+            patch.object(rccl_lib.globals, 'error_list', []),
+            patch.object(job, 'prepare'),
+            patch.object(job, 'execute', return_value='RCCL output'),
+            patch.object(job, 'read_results', return_value=[]),
+            patch.object(job, 'collect_gpu_info'),
+        ):
+            job.run_regression()
+            self.assertEqual(len(rccl_lib.globals.error_list), 1)
+            self.assertIn('rccl.results.all_reduce_perf.bus_bw', rccl_lib.globals.error_list[0])
+
     @patch('cvs.lib.rccl_lib.fail_test')
     def test_requested_bus_bw_without_thresholds_fails(self, mock_fail_test):
         verifier = rccl_lib.RcclVerifier('unknown_perf', [], None, {'verify_bus_bw': 'True'})
@@ -384,6 +410,14 @@ class TestRcclLib(unittest.TestCase):
         mock_fail_test.assert_not_called()
 
     @patch('cvs.lib.rccl_lib.fail_test')
+    def test_check_bw_dip_no_results(self, mock_fail_test):
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', [], {'1024': {'bus_bw': 80.0}})
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            verifier.check_bw_dip()
+        self.assertIn('No RCCL results available for BW dip check', captured.output[0])
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
     def test_check_lat_dip_success(self, mock_fail_test):
         """Test successful latency dip validation"""
         test_name = "all_reduce_perf"
@@ -420,6 +454,14 @@ class TestRcclLib(unittest.TestCase):
         ]
 
         rccl_lib.RcclVerifier(test_name, output, None).check_lat_dip()
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.rccl_lib.fail_test')
+    def test_check_lat_dip_no_results(self, mock_fail_test):
+        verifier = rccl_lib.RcclVerifier('all_reduce_perf', [], {'1024': {'bus_bw': 80.0}})
+        with self.assertLogs(rccl_lib.log, level='WARNING') as captured:
+            verifier.check_lat_dip()
+        self.assertIn('No RCCL results available for latency dip check', captured.output[0])
         mock_fail_test.assert_not_called()
 
     def _openmpi(self):

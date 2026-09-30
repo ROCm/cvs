@@ -37,11 +37,12 @@ rccl_err_dict = {
 class RcclVerifier:
     """Pass/fail checks on one RCCL result set. Log scan is separate (stdout)."""
 
-    def __init__(self, test_name, results, expected=None, cvs_params=None):
+    def __init__(self, test_name, results, expected=None, cvs_params=None, resolver_failed=False):
         self.test_name = test_name
         self.results = results
         self.expected = expected
         self.cvs_params = cvs_params or {}
+        self.resolver_failed = resolver_failed
 
     @staticmethod
     def scan_logs(output):
@@ -94,6 +95,9 @@ class RcclVerifier:
         if not expected:
             log.warning(f"No reference data provided for BW dip check, skipping validation for {test_name}")
             return
+        if not self.results:
+            log.warning(f"No RCCL results available for BW dip check, skipping validation for {test_name}")
+            return
         ref_msg_sizes = set(str(size) for size in expected.keys())
         log.info(f"Validating BW dip only for reference message sizes: {ref_msg_sizes}")
         in_place = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
@@ -120,6 +124,9 @@ class RcclVerifier:
         if not expected:
             log.warning(f"No reference data provided for latency dip check, skipping validation for {test_name}")
             return
+        if not self.results:
+            log.warning(f"No RCCL results available for latency dip check, skipping validation for {test_name}")
+            return
         ref_msg_sizes = set(str(size) for size in expected.keys())
         log.info(f"Validating latency dip only for reference message sizes: {ref_msg_sizes}")
         in_place = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
@@ -143,7 +150,7 @@ class RcclVerifier:
         if re.search('True', self.cvs_params.get('verify_bus_bw', 'False'), re.I):
             if self.expected:
                 self.check_bus_bw()
-            else:
+            elif not self.resolver_failed:
                 fail_test(f'No bus bandwidth thresholds for {self.test_name} in rccl.results.{self.test_name}')
         if re.search('True', self.cvs_params.get('verify_bw_dip', 'False'), re.I):
             self.check_bw_dip()
@@ -525,9 +532,11 @@ class RcclJob:
     ):
         """Build a job directly from the grouped RCCL configuration."""
         expected_results = config_dict.get('results')
-        if expected_results is None and 'results' in config_dict['cvs_params']:
-            log.warning('rccl.cvs_params.results is deprecated; move it to rccl.results')
-            expected_results = config_dict['cvs_params']['results']
+        if not expected_results:
+            cvs_params_results = config_dict.get('cvs_params', {}).get('results')
+            if cvs_params_results:
+                log.warning('rccl.cvs_params.results is deprecated; move it to rccl.results')
+                expected_results = cvs_params_results
         return cls(
             phdl=phdl,
             shdl=shdl,
@@ -739,7 +748,10 @@ class RcclJob:
 
         result_out = self.read_results(result_file)
         self.collect_gpu_info()
-        self._verify_results(result_out, self._expected_for_test())
+        error_count_before = len(globals.error_list)
+        expected = self._expected_for_test()
+        resolver_failed = len(globals.error_list) > error_count_before
+        self._verify_results(result_out, expected, resolver_failed)
         return result_out
 
     def run_perf(self):
@@ -767,8 +779,10 @@ class RcclJob:
         aggregated = self._aggregate_perf_results(validated_results, base_path)
         self.collect_gpu_info()
         verification_results = self._verification_results(aggregated, raw_results)
+        error_count_before = len(globals.error_list)
         expected = self._expected_for_test()
-        self._verify_results(verification_results, expected)
+        resolver_failed = len(globals.error_list) > error_count_before
+        self._verify_results(verification_results, expected, resolver_failed)
         return raw_results
 
     def _run_perf_dtype(self, dtype, result_file):
@@ -879,8 +893,8 @@ class RcclJob:
                 continue
         return expected or None
 
-    def _verify_results(self, results, expected):
-        RcclVerifier(self.test_name, results, expected, self.cvs_params).check()
+    def _verify_results(self, results, expected, resolver_failed=False):
+        RcclVerifier(self.test_name, results, expected, self.cvs_params, resolver_failed).check()
 
     @staticmethod
     def aggregate_results(validated_results: List[RcclTests]) -> List[RcclTestsAggregated]:
