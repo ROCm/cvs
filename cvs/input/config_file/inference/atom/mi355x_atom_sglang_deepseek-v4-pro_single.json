@@ -1,0 +1,151 @@
+{
+  "_comment": "DeepSeek-V4-Pro FP4 single-node SGLang parity (MI355X). SGLang does not currently serve V4-Pro; this stem exists so the suite can be tried. Thresholds are not a gate.",
+  "gpu_arch": "mi355x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi355x_atom_sglang_deepseek-v4-pro_single_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "deepseek-ai/DeepSeek-V4-Pro",
+    "remote": 0,
+    "precision": "fp4"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "sglang_mi355x_deepseek_v4_pro",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-models-mount>:/models:ro"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "server_params": {
+    "backend": "sglang",
+    "nnodes": "1",
+    "log_level": "info",
+    "model": "{paths.models_dir}/DeepSeek-V4-Pro",
+    "tensor_parallelism": "8",
+    "pipeline_parallelism": "1",
+    "max_concurrency": "128",
+    "memory_fraction": "0.9",
+    "tokenizer_mode": "auto",
+    "inference_poll_iterations": "16",
+    "context_length": "4096",
+    "add_flags": [
+      "--trust-remote-code",
+      "--disable-cuda-graph",
+      "--mem-fraction-static",
+      "0.9",
+      "--attention-backend",
+      "aiter"
+    ],
+    "benchmark_serv_node": "<changeme>",
+    "proxy_router_serv_port": "8000",
+    "env": {
+      "SGLANG_USE_AITER": "1",
+      "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
+      "HF_HOME": "{paths.shared_fs}/.cache/huggingface",
+      "SGLANG_ROCM_ARCH": "gfx950",
+      "GPU_ARCHS": "gfx950"
+    }
+  },
+  "benchmark_params": {
+    "backend": "sglang",
+    "data_set_name": "random",
+    "num_prompts": "1000",
+    "random_range_ratio": "0.8"
+  },
+  "sweeps": {
+    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128": {},
+    "ISL=128,OSL=32,TP=8,PP=1,CONC=1": {}
+  },
+  "runs": [],
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      },
+      {
+        "id": "gsm8k_strict",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4,
+        "metadata": {
+          "filter": "strict-match"
+        }
+      },
+      {
+        "id": "gsm8k_stderr",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4,
+        "metadata": {
+          "filter": "flexible-extract"
+        }
+      },
+      {
+        "id": "hellaswag",
+        "task": "hellaswag",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "mmlu_pro",
+        "task": "mmlu_pro",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      },
+      {
+        "id": "bbh",
+        "task": "bbh",
+        "num_fewshot": 3,
+        "num_concurrent": 4
+      },
+      {
+        "id": "musr",
+        "task": "musr",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "arc_challenge",
+        "task": "arc_challenge",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      },
+      {
+        "id": "winogrande",
+        "task": "winogrande",
+        "num_fewshot": 0,
+        "num_concurrent": 4
+      }
+    ]
+  }
+}
