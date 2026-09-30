@@ -17,7 +17,12 @@ averages. The BiDir banner is ``Averages (During  BiDir)`` (two spaces).
 ``TransferBench vX.Y.Z`` from the banner is stored on ``_meta.version``.
 healthcheck adds subtest items, per-GPU measured/criteria metrics, and an
 ``XGMI`` heatmap, but its node status stays on the scan indicators. a2asweep
-stays a scan-indicator verdict; scaling and schmoo keep their bandwidth gates.
+keeps that scan verdict and adds a BlockSize/Unroll × SubExec heatmap plus
+highest-bandwidth and best BlockSize / Unroll / NumSubExec metrics. scaling
+adds one series per NumCUs endpoint and a Best-row metric per endpoint; only
+GPU00 carries ``best_gpu0_bw``. schmoo adds one series per local and remote
+column (separate charts, so the GB/s scales stay apart) and threshold metrics
+for the gated 32 CU row.
 
 Shape (consumed by cvs/lib/report/rundeck/dataset_builders/status_matrix.py)::
 
@@ -77,6 +82,16 @@ _HEALTH_GPU_RE = re.compile(
 _HEALTH_PAIR_RE = re.compile(
     r"GPU\s+(\d+)\s+to\s+GPU\s+(\d+)\s*:\s*([0-9.]+)\s*GB/s\s*Criteria:\s*([0-9.]+)",
     re.I,
+)
+_A2A_SWEEP_HEADER_RE = re.compile(r"BlkS\s+UnR\s+((?:SE\s*\d+\s*)+)", re.I)
+_HIGHEST_BW_RE = re.compile(r"Highest\b[^\n]*bandwidth found:\s*([0-9.]+)\s*GB/s", re.I)
+_SCALING_HEADER_RE = re.compile(r"(?m)^[ \t]*NumCUs\s+((?:(?:CPU|GPU)\d+\s*)+)", re.I)
+_BEST_LINE_RE = re.compile(r"(?m)^[ \t]*Best\s+(.+)$")
+_BEST_PAIR_RE = re.compile(r"([0-9.]+)\(\s*([0-9]+)\s*\)")
+_SCHMOO_ROW_RE = re.compile(
+    r"(?m)^[ \t]*(?:[|│][ \t]*)*(?<![0-9])(\d+)(?![0-9])(?:[ \t]*[|│])?[ \t]+"
+    r"([0-9.]+)[ \t]+([0-9.]+)[ \t]+([0-9.]+)[ \t]+"
+    r"([0-9.]+)[ \t]+([0-9.]+)[ \t]+([0-9.]+)"
 )
 
 
@@ -153,6 +168,13 @@ def _series(name, points, unit="GB/s", x_label="", y_label=""):
     if y_label:
         series["y_label"] = y_label
     return series
+
+
+def _scalar_metric(name, value, unit=""):
+    numeric = _number(value)
+    if numeric is None:
+        return None
+    return {"name": name, "value": numeric, "unit": unit}
 
 
 def _heatmap(name, rows, cols, values, unit="GB/s", threshold=None, direction="higher", row_label="", col_label=""):
@@ -335,36 +357,167 @@ def record_p2p(res_dict, out_dict, exp_dict, meta=None):
 
 
 def record_scaling(res_dict, out_dict, exp_dict, meta=None):
-    '''Record the Best-row GPU00 bandwidth.'''
+    '''Record the Best-row GPU00 bandwidth.
+
+    Series follow the NumCUs header so every CPU and GPU endpoint is charted.
+    The pass/fail gate stays the historical GPU00 capture, which skips two CPU
+    columns, matching ``parse_tb_scaling_bw``.
+    '''
     threshold = (exp_dict or {}).get("best_gpu0_bw")
 
     def classify(text):
         match = _SCALING_BEST_RE.search(text)
+        gpu00 = match.group(1) if match else None
+        extras = _scaling_visuals(text, threshold, gpu00)
         if not match:
             message = "Best row GPU00 bandwidth not found"
-            return "fail", [_missing_item("GPU00", message)], message
-        item = _metric_item("GPU00", match.group(1), threshold)
-        return _rollup([item], f"GPU00 best {match.group(1)} GB/s")
+            return "fail", [_missing_item("GPU00", message)], message, extras
+        item = _metric_item("GPU00", gpu00, threshold)
+        status, items, summary = _rollup([item], f"GPU00 best {gpu00} GB/s")
+        return status, items, summary, extras
 
     return _record_classified(res_dict, "scaling", out_dict, classify, meta)
 
 
+def _scaling_endpoints(text):
+    header = _SCALING_HEADER_RE.search(text)
+    if not header:
+        return None, []
+    endpoints = [f"{kind.upper()}{num}" for kind, num in re.findall(r"(CPU|GPU)(\d+)", header.group(1), re.I)]
+    return header, endpoints
+
+
+def _scaling_series(text, header, endpoints):
+    if not header or not endpoints:
+        return []
+    rest = text[header.end() :]
+    best_at = re.search(r"(?m)^[ \t]*Best\b", rest)
+    body = rest[: best_at.start()] if best_at else rest
+    points = {name: [] for name in endpoints}
+    width = len(endpoints) + 1
+    for line in body.splitlines():
+        parts = line.split()
+        if len(parts) != width or not re.fullmatch(r"\d+", parts[0]):
+            continue
+        values = [_number(token) for token in parts[1:]]
+        if any(item is None for item in values):
+            continue
+        for name, value in zip(endpoints, values):
+            points[name].append({"x": int(parts[0]), "y": value})
+    return [_series(name, points[name], x_label="NumCUs {x}", y_label="GB/s") for name in endpoints]
+
+
+def _scaling_best_metrics(text, endpoints, threshold, gpu00_value):
+    best = _BEST_LINE_RE.search(text)
+    pairs = _BEST_PAIR_RE.findall(best.group(1)) if best else []
+    metrics = []
+    if endpoints and len(pairs) == len(endpoints):
+        for name, (bandwidth, _cus) in zip(endpoints, pairs):
+            value = gpu00_value if name == "GPU00" and gpu00_value is not None else bandwidth
+            if name == "GPU00":
+                metrics.append(_bandwidth_metric(name, value, threshold))
+            else:
+                metric = _scalar_metric(name, value, "GB/s")
+                if metric:
+                    metric["direction"] = "higher"
+                metrics.append(metric)
+        return metrics
+    if gpu00_value is not None:
+        metrics.append(_bandwidth_metric("GPU00", gpu00_value, threshold))
+    return metrics
+
+
+def _scaling_visuals(text, threshold, gpu00_value):
+    header, endpoints = _scaling_endpoints(text)
+    series = _scaling_series(text, header, endpoints)
+    metrics = _scaling_best_metrics(text, endpoints, threshold, gpu00_value)
+    return _charts(metrics, series)
+
+
 def record_schmoo(res_dict, out_dict, exp_dict, meta=None):
-    '''Record the 32 CU local and remote read/write/copy bandwidths.'''
+    '''Record the 32 CU local and remote read/write/copy bandwidths.
+
+    Each column is its own series so local and remote GB/s stay on separate
+    scales. Threshold metrics are the gated 32 CU row.
+    '''
     expected = exp_dict or {}
 
     def classify(text):
+        extras = _schmoo_visuals(text, expected)
         match = _SCHMOO_32_RE.search(text)
         if not match:
             message = "32 CU row not found"
-            return "fail", [_missing_item("32 CU", message)], message
+            return "fail", [_missing_item("32 CU", message)], message, extras
         items = [
             _metric_item(label, match.group(idx + 1), expected.get(key))
             for idx, (label, key) in enumerate(_SCHMOO_FIELDS)
         ]
-        return _rollup(items, f"32 CU local copy {match.group(3)} GB/s")
+        status, items, summary = _rollup(items, f"32 CU local copy {match.group(3)} GB/s")
+        return status, items, summary, extras
 
     return _record_classified(res_dict, "schmoo", out_dict, classify, meta)
+
+
+def _schmoo_visuals(text, expected):
+    rows = []
+    for match in _SCHMOO_ROW_RE.finditer(text):
+        values = [_number(match.group(idx)) for idx in range(2, 8)]
+        if any(item is None for item in values):
+            continue
+        rows.append((int(match.group(1)), values))
+    series = []
+    for idx, (label, _key) in enumerate(_SCHMOO_FIELDS):
+        points = [{"x": cu, "y": values[idx]} for cu, values in rows]
+        series.append(_series(label, points, x_label="CUs {x}", y_label="GB/s"))
+    metrics = []
+    gated = _SCHMOO_32_RE.search(text)
+    if gated:
+        for idx, (label, key) in enumerate(_SCHMOO_FIELDS):
+            metrics.append(_bandwidth_metric(label, gated.group(idx + 1), expected.get(key)))
+    return _charts(metrics, series)
+
+
+def _a2asweep_heatmap(text):
+    header = _A2A_SWEEP_HEADER_RE.search(text)
+    if not header:
+        return None
+    cols = [f"SE {num}" for num in re.findall(r"SE\s*(\d+)", header.group(1), re.I)]
+    if not cols:
+        return None
+    rest = text[header.end() :]
+    end = re.search(r"Highest|={5,}", rest)
+    body = rest[: end.start()] if end else rest
+    rows = []
+    values = []
+    width = len(cols) + 2
+    for line in body.splitlines():
+        parts = line.split()
+        if len(parts) != width or not re.fullmatch(r"\d+", parts[0]) or not re.fullmatch(r"\d+", parts[1]):
+            continue
+        nums = [_number(token) for token in parts[2:]]
+        if any(item is None for item in nums):
+            continue
+        rows.append(f"{parts[0]}/{parts[1]}")
+        values.append(nums)
+    return _heatmap("a2a sweep", rows, cols, values, row_label="BlkS/UnR", col_label="SubExec")
+
+
+def _a2asweep_visuals(text):
+    metrics = []
+    highest = _HIGHEST_BW_RE.search(text)
+    if highest:
+        metrics.append(_scalar_metric("highest bandwidth", highest.group(1), "GB/s"))
+        tail = text[highest.end() :]
+        for name, pattern in (
+            ("BlockSize", r"BlockSize\s*:\s*([0-9.]+)"),
+            ("Unroll", r"Unroll\s*:\s*([0-9.]+)"),
+            ("NumSubExec", r"NumSubExec\s*:\s*([0-9.]+)"),
+        ):
+            found = re.search(pattern, tail, re.I)
+            if found:
+                metrics.append(_scalar_metric(name, found.group(1)))
+    heat = _a2asweep_heatmap(text)
+    return _charts(metrics, heatmaps=[heat] if heat else None)
 
 
 def _xgmi_heatmap(pairs):
@@ -412,6 +565,8 @@ def record_completion(res_dict, group, out_dict, meta=None):
         subtests, extras = ([], {})
         if str(group) == "healthcheck":
             subtests, extras = _healthcheck_visuals(text)
+        elif str(group) == "a2asweep":
+            extras = _a2asweep_visuals(text)
         if match:
             snippet = match.group(0).strip()
             return "fail", list(subtests) + [_missing_item(str(group), snippet)], snippet, extras

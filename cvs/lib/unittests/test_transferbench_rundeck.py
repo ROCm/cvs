@@ -300,5 +300,160 @@ class TestHealthcheckCharts(unittest.TestCase):
         self.assertNotIn("metrics", node)
 
 
+A2A_SWEEP = """\
+TransferBench v1.67.00 (HEAD:2bc42cd) (Single-node mode)
+ BlkS   UnR    SE 004   SE 008   SE 012   SE 016   SE 024   SE 032
+  256     1    113.41   215.96   296.31   319.75   324.02   322.96
+  512     1    203.89   311.82   310.15   319.70   325.20   327.09
+=======================================================================================
+Highest GPU-event-timed (min) bandwidth found:  327.09 GB/s
+          BlockSize  :     512
+          Unroll     :       1
+          NumSubExec :      32
+"""
+
+SCALING_REAL = (
+    "TransferBench v1.67.00 (HEAD:2bc42cd) (Single-node mode)\n"
+    "NumCUs CPU00 CPU01 GPU00 GPU01 GPU02 GPU03 GPU04 GPU05 GPU06 GPU07\n"
+    "1 22.74 22.83 34.77 35.69 35.48 35.48 35.32 35.28 35.41 35.41\n"
+    "2 41.39 41.55 69.35 49.24 49.28 49.79 49.12 49.80 48.66 49.00\n"
+    "32 56.28 56.29 843.62 48.80 48.85 49.14 48.57 48.98 47.68 48.69\n"
+    "Best 56.28( 32) 56.29( 32) 843.62( 32) 49.43(  6) 49.90(  6) "
+    "49.79(  6) 49.12(  2) 49.80(  2) 48.66(  2) 49.78(  5)\n"
+)
+
+SCHMOO_REAL = """\
+TransferBench v1.67.00 (HEAD:2bc42cd) (Single-node mode)
+       | Local Read  | Local Write | Local Copy  | Remote Read | Remote Write| Remote Copy |
+  #CUs |G00->G00->N00|N00->G00->G00|G00->G00->G00|G01->G00->N00|N00->G00->G01|G00->G00->G01|
+    16      3000.000      1500.000       700.000        40.000        41.000        42.000
+    32      3465.248      1642.561       806.209        49.072        49.911        49.312
+"""
+SCHMOO_REAL_EXPECT = {
+    "32_cu_local_read": "1650",
+    "32_cu_local_write": "1250.0",
+    "32_cu_local_copy": "1250.0",
+    "32_cu_rem_read": "48.0",
+    "32_cu_rem_write": "48.0",
+    "32_cu_rem_copy": "48.0",
+}
+
+
+class TestSweepScalingSchmooCharts(unittest.TestCase):
+    def test_a2asweep_heatmap_and_best_config(self):
+        results = {}
+        meta = transferbench_rundeck.make_meta({"cluster_name": "helios"}, "transferbench_cvs")
+        transferbench_rundeck.record_completion(results, "a2asweep", {"node-a": A2A_SWEEP}, meta=meta)
+        node = _node(results, "a2asweep", "node-a")
+        self.assertEqual(node["status"], "pass")
+        self.assertEqual(node["items_summary"], "completed")
+        heat = _heatmap_named(node, "a2a sweep")
+        self.assertEqual(heat["rows"], ["256/1", "512/1"])
+        self.assertEqual(heat["cols"], ["SE 004", "SE 008", "SE 012", "SE 016", "SE 024", "SE 032"])
+        self.assertEqual(heat["row_label"], "BlkS/UnR")
+        self.assertEqual(heat["col_label"], "SubExec")
+        self.assertEqual(heat["values"][1][-1], 327.09)
+        self.assertNotIn("threshold", heat)
+        highest = _metric(node, "highest bandwidth")
+        self.assertEqual(highest["value"], 327.09)
+        self.assertEqual(highest["unit"], "GB/s")
+        self.assertNotIn("status", highest)
+        self.assertEqual(_metric(node, "BlockSize")["value"], 512)
+        self.assertEqual(_metric(node, "Unroll")["value"], 1)
+        self.assertEqual(_metric(node, "NumSubExec")["value"], 32)
+        self.assertEqual(results["_meta"]["version"], "1.67.00")
+
+    def test_a2asweep_abort_keeps_fail_and_charts(self):
+        results = {}
+        transferbench_rundeck.record_completion(results, "a2asweep", {"n1": P2P_ABORT + A2A_SWEEP})
+        node = _node(results, "a2asweep")
+        self.assertEqual(node["status"], "fail")
+        self.assertIn("allocate memory", node["items"][0]["message"])
+        self.assertIn("heatmaps", node)
+
+    def test_a2asweep_without_table_omits_heatmap(self):
+        results = {}
+        text = "Highest GPU-event-timed (min) bandwidth found:  10.5 GB/s\n          BlockSize  :     256\n"
+        transferbench_rundeck.record_completion(results, "a2asweep", {"n1": text})
+        node = _node(results, "a2asweep")
+        self.assertEqual(node["status"], "pass")
+        self.assertNotIn("heatmaps", node)
+        self.assertEqual(_metric(node, "highest bandwidth")["value"], 10.5)
+        self.assertEqual(_metric(node, "BlockSize")["value"], 256)
+        self.assertNotIn("Unroll", [item["name"] for item in node["metrics"]])
+
+    def test_scaling_series_per_endpoint_and_best_metrics(self):
+        results = {}
+        transferbench_rundeck.record_scaling(results, {"node-a": SCALING_REAL}, {"best_gpu0_bw": "480"})
+        node = _node(results, "scaling", "node-a")
+        self.assertEqual(node["status"], "pass")
+        self.assertEqual(node["items"][0]["name"], "GPU00")
+        gpu00 = _series_named(node, "GPU00")
+        self.assertEqual([point["x"] for point in gpu00["points"]], [1, 2, 32])
+        self.assertEqual(gpu00["points"][-1]["y"], 843.62)
+        self.assertEqual(_series_named(node, "CPU00")["points"][0]["y"], 22.74)
+        self.assertEqual(_series_named(node, "GPU07")["points"][1]["y"], 49.00)
+        self.assertEqual(len(node["series"]), 10)
+        best_gpu00 = _metric(node, "GPU00")
+        self.assertEqual(best_gpu00["value"], 843.62)
+        self.assertEqual(best_gpu00["threshold"], 480)
+        self.assertEqual(best_gpu00["status"], "pass")
+        gpu01 = _metric(node, "GPU01")
+        self.assertEqual(gpu01["value"], 49.43)
+        self.assertNotIn("threshold", gpu01)
+        self.assertNotIn("status", gpu01)
+        self.assertEqual(_metric(node, "CPU00")["value"], 56.28)
+
+    def test_scaling_gpu00_below_threshold_fails_node(self):
+        results = {}
+        transferbench_rundeck.record_scaling(results, {"n1": SCALING_REAL}, {"best_gpu0_bw": "900"})
+        node = _node(results, "scaling")
+        self.assertEqual(node["status"], "fail")
+        self.assertEqual(_metric(node, "GPU00")["status"], "fail")
+        self.assertNotIn("status", _metric(node, "CPU01"))
+
+    def test_schmoo_local_copy_misses_threshold_on_its_own_series(self):
+        results = {}
+        transferbench_rundeck.record_schmoo(results, {"node-a": SCHMOO_REAL}, SCHMOO_REAL_EXPECT)
+        node = _node(results, "schmoo", "node-a")
+        self.assertEqual(node["status"], "fail")
+        local_copy = _metric(node, "local copy")
+        self.assertEqual(local_copy["value"], 806.209)
+        self.assertEqual(local_copy["threshold"], 1250.0)
+        self.assertEqual(local_copy["status"], "fail")
+        self.assertEqual(_metric(node, "local read")["status"], "pass")
+        self.assertEqual(_metric(node, "remote copy")["value"], 49.312)
+        self.assertEqual(_metric(node, "remote copy")["status"], "pass")
+        local_series = _series_named(node, "local copy")
+        remote_series = _series_named(node, "remote copy")
+        self.assertEqual([point["y"] for point in local_series["points"]], [700.0, 806.209])
+        self.assertEqual([point["y"] for point in remote_series["points"]], [42.0, 49.312])
+        self.assertGreater(local_series["points"][-1]["y"], remote_series["points"][-1]["y"] * 10)
+
+    def test_schmoo_without_32_row_keeps_series_and_fails(self):
+        results = {}
+        text = "    16      1.0      2.0      3.0      4.0      5.0      6.0\n"
+        transferbench_rundeck.record_schmoo(results, {"n1": text}, SCHMOO_REAL_EXPECT)
+        node = _node(results, "schmoo")
+        self.assertEqual(node["status"], "fail")
+        self.assertIn("not found", node["items"][0]["message"])
+        self.assertNotIn("metrics", node)
+        self.assertEqual(_series_named(node, "local read")["points"][0]["y"], 1.0)
+
+    def test_unknown_preset_text_does_not_raise(self):
+        results = {}
+        for recorder, args in (
+            (transferbench_rundeck.record_scaling, ({"n1": "not a table"}, {"best_gpu0_bw": "1"})),
+            (transferbench_rundeck.record_schmoo, ({"n1": "not a table"}, SCHMOO_REAL_EXPECT)),
+        ):
+            recorder(results, *args)
+        transferbench_rundeck.record_completion(results, "a2asweep", {"n1": "BlkS UnR\nno columns\n"})
+        self.assertEqual(_node(results, "scaling")["status"], "fail")
+        self.assertNotIn("series", _node(results, "scaling"))
+        self.assertEqual(_node(results, "schmoo")["status"], "fail")
+        self.assertEqual(_node(results, "a2asweep")["status"], "pass")
+        self.assertNotIn("heatmaps", _node(results, "a2asweep"))
+
+
 if __name__ == "__main__":
     unittest.main()
