@@ -187,6 +187,12 @@ sweep decks do.
 }
 ```
 
+`profiles/transferbench_cvs.json` is a suite on this path. Its capture module
+fills optional per-node `metrics`, `series`, and `heatmaps`. The deck order is
+run card, health overview, bandwidth highlights, then the status matrix, and
+`interactive_viewer` writes the health viewer beside the deck. The bandwidth
+card uses `when_empty: hide`.
+
 ## Author tiers
 
 | Tier | You add | Core adds |

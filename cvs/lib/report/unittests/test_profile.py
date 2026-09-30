@@ -63,6 +63,13 @@ class TestProfile(unittest.TestCase):
         Draft202012Validator(schema).validate(profile)
         self.assertEqual(profile["dataset_builder"], "status_matrix")
         self.assertEqual(profile["sources"]["results"], "transferbench_res_dict")
+        self.assertTrue(profile["interactive_viewer"])
+        self.assertEqual(
+            [card["type"] for card in profile["cards"]],
+            ["run_card", "status_overview", "metric_charts", "status_matrix"],
+        )
+        self.assertEqual(profile["cards"][2]["when_empty"], "hide")
+        self.assertTrue(profile["cards"][3]["hint"])
 
     def test_rvs_profile_validates_against_schema(self):
         schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
