@@ -98,8 +98,7 @@ Workload and launch
 Environment values move from the old ``environment`` block to ``container.env``.
 ``TENSILE_STREAMK_MAX_CUS`` defaults to 256 minus ``NCCL_MAX_NCHANNELS``. The launch environment
 prepends the RCCL build and ROCm library paths unless ``LD_LIBRARY_PATH`` is explicitly set.
-The benchmark requires passwordless ``sudo -n journalctl -k`` access for bounded kernel-error
-scanning on every node.
+The benchmark requires passwordless ``sudo dmesg`` on every node for the bounded kernel-error scan.
 
 Analysis and thresholds
 -----------------------

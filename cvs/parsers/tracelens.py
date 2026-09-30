@@ -51,7 +51,7 @@ class TraceLensParser:
         if use_tracelens and not TRACELENS_AVAILABLE:
             log.warning("TraceLens not available, falling back to basic parsing")
 
-    def parse(self, run_result) -> ParseResult[AortaTraceMetrics]:
+    def parse(self, run_result):
         """
         Parse benchmark results into validated metrics.
 

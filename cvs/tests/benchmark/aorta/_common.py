@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import pytest
 
 from cvs.lib import globals
+from cvs.lib.report.artifacts import export_payload
 from cvs.lib.utils_lib import fail_test, update_test_result
 from cvs.parsers.aorta_report import AortaReportParser
 from cvs.parsers.schemas import ParseStatus
@@ -34,7 +35,11 @@ def launch_container(aorta_job, lifecycle):
         aorta_job.prepare_hosts()
         orch = aorta_job.orch
         if not orch.setup_containers(groups=aorta_job.container_groups()):
-            pytest.fail("Aorta container setup failed")
+            error = getattr(orch.runtime, "last_setup_error", None) or {}
+            image = error.get("image") or orch.container_config.get("image")
+            reason = error.get("reason", "unknown reason")
+            failed_hosts = error.get("failed_hosts", [])
+            pytest.fail(f"Aorta container setup failed for image {image!r}: {reason} on hosts {failed_hosts}")
         lifecycle.container_started = True
         name = orch.get_container_name(orch.container_config, orch.container_config["image"])
         if not orch.verify_containers_running(name):
@@ -183,7 +188,7 @@ def generate_report(aorta_job, lifecycle):
         }
         aorta_job.output_dir.mkdir(parents=True, exist_ok=True)
         path = aorta_job.output_dir / "aorta_benchmark_report.json"
-        path.write_text(json.dumps(report, indent=2) + "\n")
+        path.write_text(json.dumps(export_payload(report), indent=2, default=str) + "\n")
         aorta_job.artifacts["report"] = path
         log.info("Aorta report saved to %s", path)
 
