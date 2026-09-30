@@ -69,6 +69,11 @@ class TestFlatTrainResFromNested(unittest.TestCase):
         self.assertEqual(combo["_extra_curves"], {"perf/step_time_seconds": [[0, 1.5], [10, 1.4]]})
         self.assertNotIn("learning/grad_norm", combo["_extra_curves"])
 
+    def test_tb_note_carried_to_flat_combo(self):
+        nested = {"sweeps": {"BS=4,PRECISION=BF16,SL=8192": {"results": {}, "tb_note": "skipped: too big"}}}
+        combo = flat_train_res_from_nested(nested)["BS=4,PRECISION=BF16,SL=8192"]
+        self.assertEqual(combo["_tb_note"], "skipped: too big")
+
     def test_flat_output_feeds_shared_flatten(self):
         combo = flat_train_res_from_nested(_nested())["PRECISION=BF16,SEQLEN=4096,BATCH=3"]
         actuals = flatten_training_combo_actuals(combo)

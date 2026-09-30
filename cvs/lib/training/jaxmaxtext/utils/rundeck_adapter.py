@@ -127,5 +127,8 @@ def flat_train_res_from_nested(training_res_dict):
         planned = rec.get("planned_steps")
         if isinstance(planned, (int, float)) and planned > 0:
             combo["_planned_steps"] = int(planned)
+        note = rec.get("tb_note")
+        if note:
+            combo["_tb_note"] = str(note)
         flat[name] = combo
     return flat
