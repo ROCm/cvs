@@ -8,12 +8,36 @@
   "footer": "CVS RVS · render-only · per-node verdict from the collected RVS run (pass / fail)",
   "link_name": "RVS Run Deck",
   "dataset_builder": "status_matrix",
-  "interactive_viewer": false,
+  "interactive_viewer": true,
   "sources": {
     "results": "rvs_res_dict"
   },
   "cards": [
-    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "datasets.status_matrix.run_card_display"},
-    {"type": "status_matrix", "id": "results", "title": "Full results", "bind": "datasets.status_matrix"}
+    {
+      "type": "run_card",
+      "id": "run-card",
+      "title": "Run card",
+      "bind": "datasets.status_matrix.run_card_display"
+    },
+    {
+      "type": "status_overview",
+      "id": "overview",
+      "title": "Health overview",
+      "bind": "datasets.status_matrix.overview"
+    },
+    {
+      "type": "metric_charts",
+      "id": "metrics",
+      "title": "Measurements",
+      "bind": "datasets.status_matrix.metric_charts",
+      "when_empty": "hide"
+    },
+    {
+      "type": "status_matrix",
+      "id": "results",
+      "title": "Full results",
+      "bind": "datasets.status_matrix",
+      "hint": "Open a cell for that node's RVS module, or for the whole LEVEL run. Failure patterns from the RVS output are listed inside the cell."
+    }
   ]
 }
