@@ -896,6 +896,9 @@ class AtomJob:
         extra = shlex.split(self.bench_extra_args) if self.bench_extra_args else []
         if "--disable-tqdm" not in extra:
             argv.append("--disable-tqdm")
+        # bench serve loads the tokenizer itself. Custom models fail unless this matches the server.
+        if self.serve_args.get("trust-remote-code") is True and "--trust-remote-code" not in extra:
+            argv.append("--trust-remote-code")
         if extra:
             argv.extend(extra)
         return argv

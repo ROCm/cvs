@@ -407,6 +407,21 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         self.assertEqual(job._vllm_client_argv().count("--disable-tqdm"), 1)
 
+    def test_vllm_client_argv_trust_remote_code_follows_serve_args(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertNotIn("--trust-remote-code", job._vllm_client_argv())
+        job.serve_args["trust-remote-code"] = True
+        argv = job._vllm_client_argv()
+        self.assertEqual(argv.count("--trust-remote-code"), 1)
+
     def test_client_log_failures_uses_grep_not_tail(self):
         orch = FakeOrch(exec_on_head_return={"node0": ""})
         job = AtomJob(
