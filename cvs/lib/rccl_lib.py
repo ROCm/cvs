@@ -603,19 +603,19 @@ class RcclJob:
             f'mkdir -p -- {shlex.quote(str(directory))}'
             f' && (umask 077; printf %s {token} > {shlex.quote(str(sentinel))})'
         )
-        local_sentinel = None
         try:
             result = self.orch.exec_on_head(cmd, timeout=30, detailed=True)
             output, exit_code = self._result_payload((result or {}).get(self.head_node))
             if exit_code != 0:
                 raise OSError(f'head-node directory check failed (exit {exit_code}): {output}')
 
-            fd, local_path = tempfile.mkstemp(prefix='cvs-rccl-sentinel-')
-            os.close(fd)
-            local_sentinel = Path(local_path)
-            self.orch.download_from_head(str(sentinel), str(local_sentinel))
-            if local_sentinel.read_text(encoding='utf-8') != token:
-                raise OSError('head-node sentinel is not visible through download_from_head')
+            # download_from_head suffixes the local path per host; read back the actual path it returns.
+            with tempfile.TemporaryDirectory(prefix='cvs-rccl-sentinel-') as tmpdir:
+                local_prefix = os.path.join(tmpdir, sentinel.name)
+                paths = self.orch.download_from_head(str(sentinel), local_prefix)
+                local_sentinel = Path(paths[self.head_node])
+                if local_sentinel.read_text(encoding='utf-8') != token:
+                    raise OSError('head-node sentinel is not visible through download_from_head')
         except Exception as exc:
             raise RuntimeError(
                 f'Cannot use RCCL result directory {directory} on {self.head_node}: {exc}. '
@@ -628,11 +628,6 @@ class RcclJob:
                 self.orch.exec_on_head(f'rm -f -- {shlex.quote(str(sentinel))}', timeout=30)
             except Exception as exc:
                 log.warning('Could not remove RCCL sentinel %s on %s: %s', sentinel, self.head_node, exc)
-            if local_sentinel is not None:
-                try:
-                    local_sentinel.unlink(missing_ok=True)
-                except OSError as exc:
-                    log.warning('Could not remove local RCCL sentinel %s: %s', local_sentinel, exc)
 
     @staticmethod
     def _require_spur_job_step():

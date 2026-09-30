@@ -10,6 +10,17 @@ import cvs.lib.rccl_lib as rccl_lib
 from cvs.core.run_layout import RunLayout
 
 
+def _download_writes_suffixed_path(content, host='head'):
+    """Mimic parallel-ssh's download_file: suffix the local path per host and return that path."""
+
+    def _download(_remote, local):
+        actual_path = f'{local}_{host}'
+        Path(actual_path).write_text(content, encoding='utf-8')
+        return {host: actual_path}
+
+    return _download
+
+
 class _FakeOrch:
     def __init__(self, ssh_port=22):
         self.exec = MagicMock()
@@ -708,9 +719,7 @@ class TestRcclLib(unittest.TestCase):
             job.cvs_params['rccl_result_file'] = f'{tmpdir}/results.json'
             sentinel = Path(tmpdir) / '.cvs-rccl-probe'
             orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
-            orch.download_from_head.side_effect = lambda remote, local: Path(local).write_text(
-                'probe', encoding='utf-8'
-            )
+            orch.download_from_head.side_effect = _download_writes_suffixed_path('probe')
 
             with patch.object(rccl_lib.uuid, 'uuid4', return_value=MagicMock(hex='probe')):
                 job._prepare_result_directory()
@@ -720,15 +729,14 @@ class TestRcclLib(unittest.TestCase):
             remote_arg, local_arg = orch.download_from_head.call_args.args
             self.assertEqual(remote_arg, str(sentinel))
             self.assertFalse(Path(local_arg).exists())
+            self.assertFalse(Path(f'{local_arg}_head').exists())
             orch.all.exec.assert_not_called()
             orch.head.exec.assert_not_called()
 
     def test_managed_result_directory_rejects_mismatched_sentinel(self):
         orch = _FakeOrch()
         orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
-        orch.download_from_head.side_effect = lambda remote, local: Path(local).write_text(
-            'different filesystem', encoding='utf-8'
-        )
+        orch.download_from_head.side_effect = _download_writes_suffixed_path('different filesystem')
         job = self._job(orch)
         with tempfile.TemporaryDirectory() as tmpdir:
             job.cvs_params['rccl_result_file'] = f'{tmpdir}/results.json'
@@ -739,7 +747,7 @@ class TestRcclLib(unittest.TestCase):
     def test_non_managed_result_directory_also_verifies_sentinel_via_download(self):
         orch = _FakeOrch()
         orch.exec_on_head.return_value = {'head': {'output': '', 'exit_code': 0}}
-        orch.download_from_head.side_effect = lambda remote, local: Path(local).write_text('probe', encoding='utf-8')
+        orch.download_from_head.side_effect = _download_writes_suffixed_path('probe')
         job = self._job(orch)
         job.managed = False
         with patch.object(rccl_lib.uuid, 'uuid4', return_value=MagicMock(hex='probe')):
