@@ -33,6 +33,7 @@ HEADER_MAP = {
 _HEADER_MAP_CI = {k.lower(): v for k, v in HEADER_MAP.items()}
 
 IO_EXIT_MARKER = 'MORI_IO_EXIT_CODE='
+REMOTE_TIMEOUT_MARKER = 'MORI_REMOTE_TIMEOUT after '
 
 # Seconds precision: verify_dmesg_for_errors' node-scraper path treats the end time as an exclusive cutoff.
 DMESG_DATE_CMD = 'date +"%a %b %e %H:%M:%S"'
@@ -280,6 +281,11 @@ class MoriBenchmark:
     IO_LAUNCH_TIMEOUT = 60
     IO_POLL_TIMEOUT = 600
     IO_POLL_INTERVAL = 10
+    # A CVS-side exec timeout only stops waiting; the remote command keeps running.
+    # The remote bound (exec timeout - margin, then SIGKILL after kill_after) must
+    # expire first so the command's process group is gone before CVS gives up.
+    REMOTE_TIMEOUT_MARGIN = 30
+    REMOTE_KILL_AFTER = 10
 
     def __init__(self, orch, mori_dict):
         self.orch = orch
@@ -299,9 +305,28 @@ class MoriBenchmark:
         self.expected_results_dict = self.mori_dict['expected_results']
         self.env_prefix = build_env_prefix(self.mori_dir, self.torchlib_dir, self.oob_port, self.mori_device_list)
 
-    def _mori_cmd(self, cmd, log_name=None):
-        """Prefix ``cmd`` with the MORI env and ``cd mori_dir``; optionally tee it to a per-host log."""
-        full = f'{self.env_prefix}cd {shlex.quote(self.mori_dir)} && {cmd}'
+    def _bounded(self, cmd, timeout):
+        """Wrap ``cmd`` in coreutils ``timeout`` sized to expire before the CVS-side ``timeout``.
+
+        Without ``--foreground``, ``timeout`` signals its whole process group, which
+        reaches pytest's spawned ranks and mpiexec. On expiry it prints
+        ``REMOTE_TIMEOUT_MARKER`` so the cause shows up in the output and log.
+        """
+        if timeout <= self.REMOTE_TIMEOUT_MARGIN:
+            raise ValueError(f'timeout {timeout}s must exceed REMOTE_TIMEOUT_MARGIN {self.REMOTE_TIMEOUT_MARGIN}s')
+        remote = timeout - self.REMOTE_TIMEOUT_MARGIN
+        return (
+            f'{{ timeout -k {self.REMOTE_KILL_AFTER} {remote} bash -c {shlex.quote(cmd)}; rc=$?; '
+            f'if [ $rc -eq 124 ] || [ $rc -eq 137 ]; then echo "{REMOTE_TIMEOUT_MARKER}{remote}s rc=$rc"; fi; }}'
+        )
+
+    def _mori_cmd(self, cmd, timeout, log_name=None):
+        """Prefix the bounded ``cmd`` with the MORI env and ``cd mori_dir``; optionally tee it to a per-host log.
+
+        The ``tee`` sits outside the bounded process group, so output written before
+        a remote timeout is kept.
+        """
+        full = f'{self.env_prefix}cd {shlex.quote(self.mori_dir)} && {self._bounded(cmd, timeout)}'
         if log_name:
             full += f' 2>&1 | tee {self.run_log_dir}/{log_name}_$(hostname).log'
         return full
@@ -324,7 +349,7 @@ class MoriBenchmark:
         if not self.is_container:
             log.info('baremetal: not installing packages on the host; prettytable must already be installed')
             return False
-        self.orch.exec('pip3 install prettytable', timeout=self.PIP_TIMEOUT)
+        self.orch.exec(self._bounded('pip3 install prettytable', self.PIP_TIMEOUT), timeout=self.PIP_TIMEOUT)
         return True
 
     def check_ibv_devices(
@@ -340,7 +365,9 @@ class MoriBenchmark:
     def run_shmem_apitest(
         self,
     ):
-        cmd = self._mori_cmd('pytest -vvv ./tests/python/shmem/test_api.py', log_name='shmem_api')
+        cmd = self._mori_cmd(
+            'pytest -vvv ./tests/python/shmem/test_api.py', log_name='shmem_api', timeout=self.SHMEM_TIMEOUT
+        )
         out_dict = self.orch.exec(cmd, timeout=self.SHMEM_TIMEOUT)
         for node in out_dict.keys():
             if not re.search('PASSED', out_dict[node], re.I):
@@ -354,6 +381,7 @@ class MoriBenchmark:
             f'-np {no_of_procs} ./build/examples/dist_write -c {ctas} -t {threads} '
             f'-b {min_val} -e {max_val} -f 2 -q {qp_count} -n {iters}',
             log_name='ibgda_dist_write',
+            timeout=self.IBGDA_TIMEOUT,
         )
         out_dict = self.orch.exec(cmd, timeout=self.IBGDA_TIMEOUT)
         exp_res_dict = self.expected_results_dict['ibgda_write']
@@ -390,7 +418,11 @@ class MoriBenchmark:
     def run_dispatch_combine(
         self,
     ):
-        cmd = self._mori_cmd('pytest -vvv ./tests/python/ops/test_dispatch_combine.py', log_name='dispatch_combine')
+        cmd = self._mori_cmd(
+            'pytest -vvv ./tests/python/ops/test_dispatch_combine.py',
+            log_name='dispatch_combine',
+            timeout=self.SHMEM_TIMEOUT,
+        )
         out_dict = self.orch.exec(cmd, timeout=self.SHMEM_TIMEOUT)
         for node in out_dict.keys():
             if not re.search('PASSED', out_dict[node], re.I):
@@ -402,7 +434,9 @@ class MoriBenchmark:
         self,
     ):
         cmd = self._mori_cmd(
-            'pytest -vvv ./tests/python/ops/bench_dispatch_combine.py', log_name='bench_dispatch_combine'
+            'pytest -vvv ./tests/python/ops/bench_dispatch_combine.py',
+            log_name='bench_dispatch_combine',
+            timeout=self.SHMEM_TIMEOUT,
         )
         out_dict = self.orch.exec(cmd, timeout=self.SHMEM_TIMEOUT)
         for node in out_dict.keys():
@@ -415,7 +449,9 @@ class MoriBenchmark:
         self,
     ):
         cmd = self._mori_cmd(
-            'mpiexec --allow-run-as-root -np 2 ./build/examples/concurrent_put_thread', log_name='concurrent_put_thread'
+            'mpiexec --allow-run-as-root -np 2 ./build/examples/concurrent_put_thread',
+            log_name='concurrent_put_thread',
+            timeout=self.CONCURRENT_PUT_TIMEOUT,
         )
         out_dict = self.orch.exec(cmd, timeout=self.CONCURRENT_PUT_TIMEOUT)
         for node in out_dict.keys():
@@ -436,6 +472,7 @@ class MoriBenchmark:
         cmd = self._mori_cmd(
             'mpiexec --allow-run-as-root -np 2 ./build/examples/concurrent_put_imm_thread',
             log_name='concurrent_put_imm_thread',
+            timeout=self.CONCURRENT_PUT_TIMEOUT,
         )
         out_dict = self.orch.exec(cmd, timeout=self.CONCURRENT_PUT_TIMEOUT)
         for node in out_dict.keys():
@@ -456,6 +493,7 @@ class MoriBenchmark:
         cmd = self._mori_cmd(
             'mpiexec --allow-run-as-root -np 2 ./build/examples/concurrent_put_signal_thread',
             log_name='concurrent_put_signal_thread',
+            timeout=self.CONCURRENT_PUT_TIMEOUT,
         )
         out_dict = self.orch.exec(cmd, timeout=self.CONCURRENT_PUT_TIMEOUT)
         for node in out_dict.keys():

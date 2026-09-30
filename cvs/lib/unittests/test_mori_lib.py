@@ -5,9 +5,16 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+# Unit tests for cvs/lib/mori_lib.py: orchestrator mode rule and legacy container
+# translation, inline env, command bounds (remote timeout beats the CVS timeout),
+# baremetal safety, and the I/O launch/poll/kill flow against a recording fake orch.
+
 import copy
+import os
 import re
+import shutil
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +22,7 @@ from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.lib import globals
 from cvs.lib.mori_lib import (
     IO_EXIT_MARKER,
+    REMOTE_TIMEOUT_MARKER,
     MoriBenchmark,
     build_env_prefix,
     build_orch_testsuite_config,
@@ -297,7 +305,9 @@ class TestMoriBenchmarkCommands(unittest.TestCase):
     def test_container_installs_prettytable_inside_container(self):
         orch = _ContainerFakeOrch()
         self.assertTrue(MoriBenchmark(orch, _mori_dict()).install_packages())
-        self.assertEqual([c['cmd'] for c in orch.exec_calls], ['pip3 install prettytable'])
+        self.assertEqual(len(orch.exec_calls), 1)
+        self.assertIn("bash -c 'pip3 install prettytable'", orch.exec_calls[0]['cmd'])
+        self.assertIn('timeout -k 10 570 ', orch.exec_calls[0]['cmd'])
 
     def test_every_exec_has_a_timeout(self):
         orch = _ContainerFakeOrch()
@@ -312,9 +322,40 @@ class TestMoriBenchmarkCommands(unittest.TestCase):
         bench.run_shmem_apitest()
         cmd = orch.exec_calls[0]['cmd']
         self.assertTrue(cmd.startswith(bench.env_prefix))
-        self.assertIn('cd /sgl-workspace/mori && pytest -vvv ./tests/python/shmem/test_api.py', cmd)
-        self.assertIn(f'| tee {bench.run_log_dir}/shmem_api_$(hostname).log', cmd)
+        self.assertIn(
+            "cd /sgl-workspace/mori && { timeout -k 10 870 bash -c 'pytest -vvv ./tests/python/shmem/test_api.py';",
+            cmd,
+        )
+        self.assertTrue(cmd.endswith(f'}} 2>&1 | tee {bench.run_log_dir}/shmem_api_$(hostname).log'))
         self.assertTrue(bench.run_log_dir.startswith('/home/u/LOGS/mori/'))
+
+    def test_remote_bound_expires_before_cvs_timeout(self):
+        # A CVS-side timeout alone leaves the remote command running (seen with the baremetal shmem pytest).
+        orch = _ContainerFakeOrch()
+        _run_every_step(MoriBenchmark(orch, _mori_dict()))
+        bounded = {}
+        for call in orch.exec_calls:
+            m = re.search(r'timeout -k (\d+) (\d+) bash -c', call['cmd'])
+            if m:
+                kill_after, remote = int(m.group(1)), int(m.group(2))
+                self.assertLess(remote + kill_after, call['timeout'], call['cmd'][:120])
+                bounded[call['cmd']] = remote
+        for name in (
+            'shmem/test_api.py',
+            'concurrent_put_thread',
+            'concurrent_put_imm_thread',
+            'concurrent_put_signal_thread',
+            'dist_write',
+        ):
+            self.assertTrue(any(name in cmd for cmd in bounded), name)
+
+    def test_timeout_not_above_margin_is_rejected(self):
+        # Otherwise the remote bound could outlive the CVS-side timeout it exists to beat.
+        bench = MoriBenchmark(_ContainerFakeOrch(), _mori_dict())
+        for bad in (0, 5, MoriBenchmark.REMOTE_TIMEOUT_MARGIN):
+            with self.assertRaises(ValueError):
+                bench._bounded('true', bad)
+        self.assertIn('timeout -k 10 1 bash -c', bench._bounded('true', MoriBenchmark.REMOTE_TIMEOUT_MARGIN + 1))
 
     def test_log_dir_mkdir_failure_is_reported_per_node(self):
         orch = _ContainerFakeOrch(exit_code=1)
@@ -330,6 +371,53 @@ class TestMoriBenchmarkCommands(unittest.TestCase):
         self.assertEqual(len(globals.error_list), 1)
         self.assertIn('rdma1', globals.error_list[0])
         self.assertIn('node n1', globals.error_list[0])
+
+
+class TestRemoteBoundInBash(unittest.TestCase):
+    """Runs the generated command in a real bash to prove the bound kills the whole tree."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.tmp, 'mori'))
+        self.bench = MoriBenchmark(
+            _BaremetalFakeOrch(),
+            _mori_dict(
+                mori_dir=os.path.join(self.tmp, 'mori'), log_dir=os.path.join(self.tmp, 'logs'), torchlib_dir=''
+            ),
+        )
+        os.makedirs(self.bench.run_log_dir)
+        self.tag = f'{os.getpid()}{id(self) % 100000}'
+
+    def tearDown(self):
+        subprocess.run(['pkill', '-9', '-f', f'[s]leep 300.{self.tag}'], check=False)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run(self, inner, timeout):
+        cmd = self.bench._mori_cmd(inner, timeout=timeout, log_name='probe')
+        return subprocess.run(['bash', '-c', cmd], capture_output=True, text=True, check=False).stdout
+
+    def _alive(self):
+        out = subprocess.run(['pgrep', '-f', f'[s]leep 300.{self.tag}'], capture_output=True, text=True).stdout
+        return out.split()
+
+    def test_expired_bound_kills_children_and_keeps_output(self):
+        # A child and a detached grandchild in the same process group, like pytest's spawned ranks.
+        # Their fds are redirected so a regression fails fast instead of holding the tee open.
+        inner = f'echo started; (sleep 300.{self.tag} >/dev/null 2>&1 &) ; sleep 300.{self.tag} >/dev/null 2>&1'
+        margin = MoriBenchmark.REMOTE_TIMEOUT_MARGIN
+        out = self._run(inner, timeout=margin + 1)
+        self.assertIn('started', out)
+        self.assertIn(f'{REMOTE_TIMEOUT_MARKER}1s rc=124', out)
+        self.assertEqual(self._alive(), [])
+        logs = os.listdir(self.bench.run_log_dir)
+        self.assertEqual(len(logs), 1)
+        with open(os.path.join(self.bench.run_log_dir, logs[0])) as fp:
+            self.assertIn(REMOTE_TIMEOUT_MARKER, fp.read())
+
+    def test_command_within_bound_is_unmarked(self):
+        out = self._run('echo PASSED', timeout=600)
+        self.assertIn('PASSED', out)
+        self.assertNotIn(REMOTE_TIMEOUT_MARKER, out)
 
 
 class TestMoriIoLaunch(unittest.TestCase):
