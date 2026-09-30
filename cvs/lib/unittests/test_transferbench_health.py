@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from cvs.core.runtimes.docker import DockerRuntime
 
 _TB_PATH = Path(__file__).resolve().parents[2] / 'tests' / 'health' / 'transferbench_cvs.py'
 _SPEC = importlib.util.spec_from_file_location('transferbench_cvs_under_test', _TB_PATH)
@@ -76,6 +77,7 @@ class TestTransferBenchEnvAndCommand(unittest.TestCase):
 
     def test_run_transferbench_passes_orch_sudo_prefix(self):
         orch = MagicMock()
+        orch.orchestrator_type = 'baremetal'
         orch.sudo_prefix.return_value = 'sudo -n '
         orch.exec.return_value = {'nodeA': 'ok'}
         with patch.object(tb, 'detect_rocm_path', return_value='/opt/rocm'):
@@ -84,6 +86,36 @@ class TestTransferBenchEnvAndCommand(unittest.TestCase):
             )
         cmd = orch.exec.call_args.args[0]
         self.assertTrue(cmd.startswith('sudo -n bash -c '))
+
+    def test_run_transferbench_container_sudo_stays_on_docker_exec(self):
+        captured = []
+
+        class _Host:
+            def exec(self, cmd, timeout=None, detailed=False, print_console=True):
+                captured.append(cmd)
+                return {'host1': 'ok'}
+
+        class _Orch:
+            orchestrator_type = 'container'
+            hosts = ('host1',)
+            all = _Host()
+
+            def sudo_prefix(self):
+                return 'sudo -n '
+
+            def exec(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+                return DockerRuntime(MagicMock(), self).exec('cvs_health', cmd, hosts, timeout, detailed, print_console)
+
+        with patch.object(tb, 'detect_rocm_path', return_value='/opt/rocm'):
+            tb.run_transferbench(
+                _Orch(), {'path': '/tb', 'rocm_path': '/opt/rocm', 'num_cpu_devices': 2}, 'p2p', timeout=30
+            )
+        self.assertEqual(len(captured), 1)
+        rendered = captured[0]
+        self.assertTrue(rendered.startswith('sudo -n docker exec cvs_health bash -c '))
+        payload = rendered.split(' bash -c ', 1)[1]
+        self.assertNotIn('sudo', payload)
+        self.assertIn('TransferBench', payload)
 
     def test_detect_command_counts_populated_cpulists(self):
         self.assertIn('for f in /sys/devices/system/node/node*/cpulist', tb._DETECT_NUM_CPU_DEVICES_CMD)

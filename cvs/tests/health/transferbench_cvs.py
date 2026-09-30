@@ -99,9 +99,20 @@ def resolve_configured_tb_env(config_dict):
     return extra
 
 
+def _payload_sudo_prefix(orch):
+    """Sudo for a command passed to orch.exec().
+
+    sudo_prefix() is host passwordless sudo. Container exec already applies
+    that to `docker exec`, and the payload runs inside the container.
+    """
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        return ''
+    return orch.sudo_prefix()
+
+
 def detect_num_cpu_devices(orch):
     """Probe populated CPU NUMA nodes; return a count only when all hosts agree."""
-    out_dict = orch.exec(f'bash -c {shlex.quote(_DETECT_NUM_CPU_DEVICES_CMD)}', timeout=30)
+    out_dict = orch.exec(_DETECT_NUM_CPU_DEVICES_CMD, timeout=30)
     counts = {}
     for node, output in (out_dict or {}).items():
         text = output if isinstance(output, str) else (output or {}).get('output', '')
@@ -136,9 +147,10 @@ def build_transferbench_command(path, rocm_path, preset, extra_env=None, sudo_pr
     """Build a TransferBench invocation with env inside an inner bash.
 
     Cluster/PSSH ``env_vars`` do not survive sudo wrappers, so NUM_CPU_DEVICES
-    and LD_LIBRARY_PATH must be exported in the inner script. sudo_prefix is
-    orch.sudo_prefix() ('' or 'sudo -n '); bash -c is required because docker-exec
-    does not spawn a shell.
+    and LD_LIBRARY_PATH are exported in the inner script. sudo strips the
+    environment, which is why the exports sit inside bash -c after the prefix.
+    sudo_prefix is _payload_sudo_prefix(): '' inside a container, 'sudo -n ' on
+    bare metal.
     """
     env = {'LD_LIBRARY_PATH': f'{rocm_path}/lib:$LD_LIBRARY_PATH'}
     if extra_env:
@@ -155,7 +167,7 @@ def run_transferbench(orch, config_dict, preset, timeout, extra_env=None, lifecy
     env = resolve_runtime_tb_env(orch, config_dict)
     if extra_env:
         env.update(extra_env)
-    cmd = build_transferbench_command(path, rocm_path, preset, env, sudo_prefix=orch.sudo_prefix())
+    cmd = build_transferbench_command(path, rocm_path, preset, env, sudo_prefix=_payload_sudo_prefix(orch))
     log.info('TransferBench command: %s', cmd)
     with timed_stage(lifecycle, stage or preset):
         return orch.exec(cmd, timeout=timeout)
