@@ -122,6 +122,28 @@ def _series_named(node, name):
     raise AssertionError(name)
 
 
+def _heatmap_named(node, name):
+    for item in node.get("heatmaps") or []:
+        if item["name"] == name:
+            return item
+    raise AssertionError(name)
+
+
+HEALTHCHECK_REAL = """\
+TransferBench v1.67.00 (HEAD:2bc42cd) (Single-node mode)
+Testing HBM performance [READ]             ........PASS
+Testing unidirectional host to device copy ........PASS
+Testing bidirectional host<->device copies ........FAIL (8 test(s))
+ GPU 00: Measured:  86.17 GB/s      Criteria:  87.30 GB/s
+ GPU 01: Measured:  86.09 GB/s      Criteria:  87.30 GB/s
+Testing all-to-all XGMI copies             ........FAIL (56 test(s))
+ GPU 00 to GPU 01:  40.30 GB/s      Criteria:  43.65 GB/s
+ GPU 00 to GPU 02:  40.73 GB/s      Criteria:  43.65 GB/s
+ GPU 01 to GPU 00:  41.22 GB/s      Criteria:  43.65 GB/s
+ GPU 01 to GPU 02:  40.71 GB/s      Criteria:  43.65
+"""
+
+
 class TestA2aCharts(unittest.TestCase):
     def test_box_rtotal_emits_per_gpu_metrics_and_series(self):
         results = {}
@@ -216,6 +238,66 @@ class TestRecordCompletion(unittest.TestCase):
         node = _node(results, "a2asweep")
         self.assertEqual(node["status"], "fail")
         self.assertIn("allocate memory", node["items"][0]["message"])
+
+
+class TestHealthcheckCharts(unittest.TestCase):
+    def test_subtests_metrics_and_xgmi_heatmap(self):
+        results = {}
+        meta = transferbench_rundeck.make_meta({"cluster_name": "helios"}, "transferbench_cvs")
+        transferbench_rundeck.record_completion(results, "healthcheck", {"node-a": HEALTHCHECK_REAL}, meta=meta)
+        node = _node(results, "healthcheck", "node-a")
+        self.assertEqual(node["status"], "pass")
+        self.assertEqual(node["items_summary"], "2 pass, 2 fail")
+        names = [item["name"] for item in node["items"]]
+        self.assertEqual(
+            names,
+            [
+                "HBM performance [READ]",
+                "unidirectional host to device copy",
+                "bidirectional host<->device copies",
+                "all-to-all XGMI copies",
+            ],
+        )
+        self.assertEqual(node["items"][0]["status"], "pass")
+        self.assertEqual(node["items"][2]["status"], "fail")
+        self.assertEqual(node["items"][2]["message"], "FAIL (8 test(s))")
+        gpu00 = _metric(node, "GPU00")
+        self.assertEqual(gpu00["value"], 86.17)
+        self.assertEqual(gpu00["threshold"], 87.30)
+        self.assertEqual(gpu00["status"], "fail")
+        self.assertEqual(_metric(node, "GPU01")["value"], 86.09)
+        heat = _heatmap_named(node, "XGMI")
+        self.assertEqual(heat["rows"], ["GPU00", "GPU01", "GPU02"])
+        self.assertEqual(heat["cols"], heat["rows"])
+        self.assertEqual(heat["row_label"], "Src")
+        self.assertEqual(heat["col_label"], "Dst")
+        self.assertEqual(heat["threshold"], 43.65)
+        self.assertEqual(heat["direction"], "higher")
+        self.assertEqual(heat["values"][0], [None, 40.30, 40.73])
+        self.assertEqual(heat["values"][1][0], 41.22)
+        self.assertIsNone(heat["values"][1][1])
+        self.assertEqual(heat["values"][2], [None, None, None])
+        self.assertEqual(results["_meta"]["version"], "1.67.00")
+
+    def test_scan_failure_still_fails_the_node(self):
+        results = {}
+        text = HEALTHCHECK_REAL + "\n" + P2P_ABORT
+        transferbench_rundeck.record_completion(results, "healthcheck", {"n1": text})
+        node = _node(results, "healthcheck")
+        self.assertEqual(node["status"], "fail")
+        self.assertIn("allocate memory", node["items"][-1]["message"])
+        self.assertIn("metrics", node)
+        self.assertIn("heatmaps", node)
+
+    def test_garbled_pairs_omit_heatmap(self):
+        results = {}
+        text = "Testing HBM performance [READ] ........PASS\n GPU 00 to GPU 01: nope GB/s Criteria: 1\n"
+        transferbench_rundeck.record_completion(results, "healthcheck", {"n1": text})
+        node = _node(results, "healthcheck")
+        self.assertEqual(node["status"], "pass")
+        self.assertEqual(node["items_summary"], "1 pass, 0 fail")
+        self.assertNotIn("heatmaps", node)
+        self.assertNotIn("metrics", node)
 
 
 if __name__ == "__main__":

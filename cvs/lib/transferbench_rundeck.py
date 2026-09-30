@@ -15,8 +15,9 @@ When the v1.67 tables are present, a2a emits one RTotal metric per GPU
 ``UniDir`` and ``BiDir`` GPU-to-GPU metrics plus a series of the four path
 averages. The BiDir banner is ``Averages (During  BiDir)`` (two spaces).
 ``TransferBench vX.Y.Z`` from the banner is stored on ``_meta.version``.
-healthcheck and a2asweep stay scan-indicator verdicts; scaling and schmoo keep
-their existing bandwidth gates.
+healthcheck adds subtest items, per-GPU measured/criteria metrics, and an
+``XGMI`` heatmap, but its node status stays on the scan indicators. a2asweep
+stays a scan-indicator verdict; scaling and schmoo keep their bandwidth gates.
 
 Shape (consumed by cvs/lib/report/rundeck/dataset_builders/status_matrix.py)::
 
@@ -63,6 +64,18 @@ _P2P_PATHS = ("CPU->CPU", "CPU->GPU", "GPU->CPU", "GPU->GPU")
 _VERSION_RE = re.compile(r"TransferBench\s+v([0-9]+(?:\.[0-9A-Za-z]+)*)")
 _P2P_LINE_RE = re.compile(
     r"Averages\s+\(During\s+(UniDir|BiDir)\):\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)",
+    re.I,
+)
+_HEALTH_TEST_RE = re.compile(
+    r"(?m)^[ \t]*Testing\s+(.+?)\s*\.{2,}\s*(PASS|FAIL)(?:\s*\((\d+)\s+test\(s\)\))?",
+    re.I,
+)
+_HEALTH_GPU_RE = re.compile(
+    r"GPU\s+(\d+)\s*:\s*Measured:\s*([0-9.]+)\s*GB/s\s*Criteria:\s*([0-9.]+)\s*GB/s",
+    re.I,
+)
+_HEALTH_PAIR_RE = re.compile(
+    r"GPU\s+(\d+)\s+to\s+GPU\s+(\d+)\s*:\s*([0-9.]+)\s*GB/s\s*Criteria:\s*([0-9.]+)",
     re.I,
 )
 
@@ -140,6 +153,29 @@ def _series(name, points, unit="GB/s", x_label="", y_label=""):
     if y_label:
         series["y_label"] = y_label
     return series
+
+
+def _heatmap(name, rows, cols, values, unit="GB/s", threshold=None, direction="higher", row_label="", col_label=""):
+    if not rows or not cols or len(values) != len(rows):
+        return None
+    if any(not isinstance(row, list) or len(row) != len(cols) for row in values):
+        return None
+    heat = {
+        "name": name,
+        "unit": unit,
+        "rows": [str(row) for row in rows],
+        "cols": [str(col) for col in cols],
+        "values": values,
+        "direction": direction,
+    }
+    limit = _number(threshold) if threshold not in (None, "") else None
+    if limit is not None:
+        heat["threshold"] = limit
+    if row_label:
+        heat["row_label"] = row_label
+    if col_label:
+        heat["col_label"] = col_label
+    return heat
 
 
 def _charts(metrics=None, series=None, heatmaps=None):
@@ -331,14 +367,59 @@ def record_schmoo(res_dict, out_dict, exp_dict, meta=None):
     return _record_classified(res_dict, "schmoo", out_dict, classify, meta)
 
 
+def _xgmi_heatmap(pairs):
+    if not pairs:
+        return None
+    indexes = sorted({src for src, _dst, _bw, _limit in pairs} | {dst for _src, dst, _bw, _limit in pairs})
+    labels = [f"GPU{idx:02d}" for idx in indexes]
+    position = {idx: pos for pos, idx in enumerate(indexes)}
+    values = [[None for _label in labels] for _label in labels]
+    criteria = []
+    for src, dst, bandwidth, limit in pairs:
+        values[position[src]][position[dst]] = bandwidth
+        if limit is not None:
+            criteria.append(limit)
+    threshold = criteria[0] if criteria and all(item == criteria[0] for item in criteria) else None
+    return _heatmap("XGMI", labels, labels, values, threshold=threshold, row_label="Src", col_label="Dst")
+
+
+def _healthcheck_visuals(text):
+    items = []
+    for match in _HEALTH_TEST_RE.finditer(text):
+        verdict = match.group(2)
+        count = match.group(3)
+        status = "fail" if verdict.lower() == "fail" else "pass"
+        message = f"{verdict.upper()} ({count} test(s))" if count else verdict.upper()
+        items.append({"name": match.group(1).strip(), "status": status, "message": message})
+    metrics = []
+    for match in _HEALTH_GPU_RE.finditer(text):
+        metrics.append(_bandwidth_metric(f"GPU{int(match.group(1)):02d}", match.group(2), match.group(3)))
+    pairs = []
+    for match in _HEALTH_PAIR_RE.finditer(text):
+        bandwidth = _number(match.group(3))
+        if bandwidth is None:
+            continue
+        pairs.append((int(match.group(1)), int(match.group(2)), bandwidth, _number(match.group(4))))
+    heat = _xgmi_heatmap(pairs)
+    return items, _charts(metrics, heatmaps=[heat] if heat else None)
+
+
 def record_completion(res_dict, group, out_dict, meta=None):
     '''Record a preset that is pass/fail from scan indicators, with no bandwidth row.'''
 
     def classify(text):
         match = _SCAN_FAIL_RE.search(text)
-        if not match:
-            return "pass", [], "completed"
-        snippet = match.group(0).strip()
-        return "fail", [_missing_item(str(group), snippet)], snippet
+        subtests, extras = ([], {})
+        if str(group) == "healthcheck":
+            subtests, extras = _healthcheck_visuals(text)
+        if match:
+            snippet = match.group(0).strip()
+            return "fail", list(subtests) + [_missing_item(str(group), snippet)], snippet, extras
+        if subtests:
+            # "Testing ... FAIL" is not a scan_test_results indicator, so it stays
+            # in the drill-down and does not change the node verdict.
+            failed = sum(1 for item in subtests if item["status"] == "fail")
+            return "pass", subtests, f"{len(subtests) - failed} pass, {failed} fail", extras
+        return "pass", [], "completed", extras
 
     return _record_classified(res_dict, group, out_dict, classify, meta)
