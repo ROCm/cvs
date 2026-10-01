@@ -61,8 +61,7 @@ Run the IB Perf suite:
      cvs run install_ibperf_tools \
        --cluster_file ~/cvs_workspace/cluster.json \
        --config_file ~/cvs_workspace/ibperf/ibperf_config.json \
-       --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html \
-       --log-file=/tmp/ib.log -vvv -s
+       --capture=tee-sys -vvv -s
 
 2. Start the IB Perf test:
 
@@ -71,5 +70,4 @@ Run the IB Perf suite:
      cvs run ib_perf_bw_test \
        --cluster_file ~/cvs_workspace/cluster.json \
        --config_file ~/cvs_workspace/ibperf/ibperf_config.json \
-       --html=/var/www/html/cvs/ib.html --capture=tee-sys --self-contained-html \
-       --log-file=/tmp/ib.log -vvv -s
+       --capture=tee-sys -vvv -s

@@ -43,8 +43,7 @@ Run the full preflight suite:
   cvs run preflight_checks \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/preflight/preflight_config.json \
-    --html=/var/www/html/cvs/preflight.html --capture=tee-sys --self-contained-html \
-    --log-file=/tmp/preflight.log -vvv -s
+    --capture=tee-sys -vvv -s
 
 Run individual Node Smoke tiers:
 
@@ -53,7 +52,6 @@ Run individual Node Smoke tiers:
   cvs run preflight_checks test_node_smoke_tier1 \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/preflight/preflight_config.json
-
   cvs run preflight_checks test_node_smoke_tier3 \
     --cluster_file ~/cvs_workspace/cluster.json \
     --config_file ~/cvs_workspace/preflight/preflight_config.json

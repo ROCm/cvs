@@ -35,8 +35,7 @@ Run any suite with:
 
   cvs run <suite> \
     --cluster_file cvs/input/cluster_file/<cluster>.json \
-    --config_file cvs/input/config_file/inference/sglang/<config>.json \
-    --html=~/cvs_results/sglang.html
+    --config_file cvs/input/config_file/inference/sglang/<config>.json
 
 Copy a template locally:
 

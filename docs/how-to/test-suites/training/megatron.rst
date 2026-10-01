@@ -136,7 +136,7 @@ Use a ``*_single.json`` config with ``megatron_single`` and a ``*_distributed.js
 
 - ``--cluster_file`` — JSON describing the node(s); see :doc:`/how-to/configure/cluster-config`.
 - ``--config_file`` — one of the files under ``input/config_file/training/megatron/``; field reference: :doc:`/reference/configuration-files/training/megatron`.
-- ``--html`` / ``--self-contained-html`` — write the HTML report.
+- ``--html`` / ``--self-contained-html`` — optional HTML path override. ``cvs run`` writes a self-contained report under the run directory by default.
 
 Single-node — MI300X / MI325X
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -148,7 +148,7 @@ Use the shared ``mi3xx_`` template. Set ``gpu_name`` and ``threshold_json`` to t
   cvs run megatron_single \
     --cluster_file input/cluster_file/cluster.json \
     --config_file input/config_file/training/megatron/mi3xx_megatron_llama-3.1-8b_single.json \
-    --html ./logs/megatron_single.html --self-contained-html -vvv -s
+    -vvv -s
 
 Single-node — MI355X
 ~~~~~~~~~~~~~~~~~~~~
@@ -158,7 +158,7 @@ Single-node — MI355X
   cvs run megatron_single \
     --cluster_file input/cluster_file/cluster.json \
     --config_file input/config_file/training/megatron/mi355x_megatron_llama-3.1-8b_single.json \
-    --html ./logs/megatron_single.html --self-contained-html -vvv -s
+    -vvv -s
 
 Distributed — MI300X / MI325X
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -170,7 +170,7 @@ Use the shared ``mi3xx_`` template. Set ``gpu_name`` and ``threshold_json`` to t
   cvs run megatron_distributed \
     --cluster_file input/cluster_file/cluster.json \
     --config_file input/config_file/training/megatron/mi3xx_megatron_llama-3.3-70b_distributed.json \
-    --html ./logs/megatron_distributed.html --self-contained-html -vvv -s
+    -vvv -s
 
 Run a specific stage
 ~~~~~~~~~~~~~~~~~~~~

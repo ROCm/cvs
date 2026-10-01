@@ -64,11 +64,7 @@ Run ``rvs_cvs`` the same way you run any CVS test suite, but with the container 
   cvs run rvs_cvs \
       --cluster_file ~/cvs_workspace/cluster_container.json \
       --config_file ~/cvs_workspace/health/health_config.json \
-      --html=/var/www/html/cvs/rvs.html \
-      --self-contained-html \
-      --capture=tee-sys \
-      --log-file=/tmp/rvs.log \
-      -vvv -s
+      --capture=tee-sys -vvv -s
 
 What happens during the run:
 

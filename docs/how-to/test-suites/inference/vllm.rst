@@ -103,9 +103,7 @@ Step 3: Run the suite
 
   cvs run vllm_single \
     --cluster_file /tmp/cvs/cluster.json \
-    --config_file /tmp/cvs/vllm_singlenode_config.json \
-    --html /tmp/cvs/vllm.html --self-contained-html \
-    --log-file /tmp/cvs/cvs.log
+    --config_file /tmp/cvs/vllm_singlenode_config.json
 
 Use ``vllm_distributed`` for one distributed service across the cluster:
 
@@ -113,13 +111,13 @@ Use ``vllm_distributed`` for one distributed service across the cluster:
 
   cvs run vllm_distributed \
     --cluster_file /tmp/cvs/cluster.json \
-    --config_file /tmp/cvs/vllm_multinode_config.json \
-    --html /tmp/cvs/vllm.html --self-contained-html \
-    --log-file /tmp/cvs/cvs.log
+    --config_file /tmp/cvs/vllm_multinode_config.json
 
 .. note::
 
-  ``--self-contained-html`` only takes effect together with ``--html``. Always pass both, so the report is a single file you can attach or copy off the cluster.
+  ``cvs run`` writes a self-contained HTML report under the run directory by default.
+  Pass ``--html PATH`` to override the location. Direct ``pytest`` still needs ``--html``
+  (and ``--self-contained-html`` if you want a single portable file).
 
   Any flag CVS does not recognize is passed straight through to pytest, so options such as ``-vvv`` and ``--capture=tee-sys`` work as usual.
 
