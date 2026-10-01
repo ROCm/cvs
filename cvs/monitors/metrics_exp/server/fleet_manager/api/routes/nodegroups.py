@@ -645,11 +645,18 @@ async def install_exporters(
 
 
 # Closers logged after the real cause. The last of these must not be what the UI stores.
+# Each installer writes one of these unconditionally on the failure path, after stderr,
+# journal text, or container logs.
 _GENERIC_FAILURE_PREFIXES = (
     "Installed but service not active",
     "Installation completed but service not active",
     "Service not active (",
     "Metrics not ready (",
+    "Container not running",
+    "Installation completed but service not responding",
+    "Installed but service not responding",
+    "Installed but metrics not yet available",
+    "Installation completed but container runtime not found",
 )
 
 _STATUS_MESSAGE_LIMIT = 500
@@ -1083,3 +1090,4 @@ async def run_gpu_info_refresh(job_id: str, node_group_id: int, node_ids: List[i
         logger.exception(f"GPU info refresh job {job_id} failed: {e}")
     finally:
         db.close()
+

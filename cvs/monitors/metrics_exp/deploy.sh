@@ -73,8 +73,10 @@ echo ""
 
 # Check docker access. Any docker info failure used to exec sudo forever:
 # sudo retries the same failing docker info (daemon down, missing docker, rootless).
-DOCKER_INFO_ERR="$(docker info 2>&1 >/dev/null || true)"
-if ! docker info &> /dev/null; then
+# One invocation: stdout is noise, stderr is the message we print on failure.
+DOCKER_INFO_RC=0
+DOCKER_INFO_ERR="$(docker info 2>&1 >/dev/null)" || DOCKER_INFO_RC=$?
+if [ "$DOCKER_INFO_RC" -ne 0 ]; then
     if [ "$ALREADY_SUDOED" = "true" ] || [ "$(id -u)" -eq 0 ]; then
         echo -e "${RED}Error: Docker is not usable (not a sudo-permissions loop).${NC}"
         echo -e "${RED}docker info:${NC}"
