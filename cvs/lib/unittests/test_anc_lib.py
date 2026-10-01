@@ -117,7 +117,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
 
             def exec(self, cmd, timeout=None):
                 self.cmd = cmd
-                return {"node1": "version 1.4.9"}
+                return {"node1": "Release Version: 1.4.9\n"}
 
         phdl = FakePhdl()
         with patch.object(anc_lib, "print_test_output"):
@@ -203,7 +203,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
 
             def exec(self, cmd, timeout=None):
                 self.cmd = cmd
-                return {"node1": "ANC version 1.4.9"}
+                return {"node1": "Release Name: helios-nda\nRelease Version: 1.4.9\n"}
 
         phdl = FakePhdl()
         with patch.object(anc_lib, "print_test_output"):
@@ -215,7 +215,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
         # Legacy installed 1.4.10 satisfies a request for 1.4.9 (installed >= required).
         class FakePhdl:
             def exec(self, cmd, timeout=None):
-                return {"node1": "ANC version 1.4.10"}
+                return {"node1": "Release Version: 1.4.10\n"}
 
         with patch.object(anc_lib, "print_test_output"):
             result = anc_lib.node_version_matches(FakePhdl(), "1.4.9", anc_bin="/opt/amdtools/anc/anc.py")
@@ -225,7 +225,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
         # Legacy installed 1.4.8 does NOT satisfy a request for 1.4.9.
         class FakePhdl:
             def exec(self, cmd, timeout=None):
-                return {"node1": "ANC version 1.4.8"}
+                return {"node1": "Release Version: 1.4.8\n"}
 
         with patch.object(anc_lib, "print_test_output"):
             result = anc_lib.node_version_matches(FakePhdl(), "1.4.9", anc_bin="/opt/amdtools/anc/anc.py")
@@ -235,14 +235,14 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
         # A legacy --version that reports an rc satisfies a base request (rc == base).
         class FakePhdl:
             def exec(self, cmd, timeout=None):
-                return {"node1": "ANC version 1.7.0-rc.1"}
+                return {"node1": "Release Version: 1.7.0-rc.1\n"}
 
         with patch.object(anc_lib, "print_test_output"):
             result = anc_lib.node_version_matches(FakePhdl(), "1.7.0", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertTrue(result["node1"])
 
     def test_absent_anc_does_not_satisfy(self):
-        # No parseable version in the output -> node does not satisfy.
+        # No Release Version line (command-not-found) -> node does not satisfy.
         class FakePhdl:
             def exec(self, cmd, timeout=None):
                 return {"node1": "anc.py: command not found"}
@@ -250,6 +250,26 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
         with patch.object(anc_lib, "print_test_output"):
             result = anc_lib.node_version_matches(FakePhdl(), "1.4.9", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertFalse(result["node1"])
+
+    def test_legacy_ignores_unrelated_numbers_and_path(self):
+        # HIGH-finding regression: a warning number printed before the version,
+        # and the version embedded in a relocatable path in a "No such file"
+        # error, must NOT be read as the installed release. node1 has a real
+        # Release Version record (after a warning); node2 is absent under
+        # /opt/anc-1.6.0/... and must NOT be mistaken for 1.6.0.
+        def exec_impl(cmd, timeout=None):
+            return {
+                "node1": "WARNING: libfoo 2.3 deprecated\nRelease Version: 1.4.9\n",
+                "node2": "bash: /opt/anc-1.6.0/anc/anc.py: No such file or directory\n",
+            }
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return exec_impl(cmd, timeout)
+
+        with patch.object(anc_lib, "print_test_output"):
+            versions = anc_lib.node_installed_versions(FakePhdl(), anc_bin="/opt/anc-1.6.0/anc/anc.py")
+        self.assertEqual(versions, {"node1": "1.4.9", "node2": None})
 
     def test_generation_detected_from_node_not_requested_url(self):
         # A direct 1.6.0 build is already installed. The generation is read from
@@ -265,7 +285,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
                 cmds.append(cmd)
                 if "--content-list" in cmd:
                     return {"node1": content_out}
-                return {"node1": "anc.py tool version 0.9.9"}  # direct --version: tool version
+                return {"node1": "Framework Version: 0.9.9"}  # direct --version: tool/framework version
 
         with patch.object(anc_lib, "print_test_output"):
             result = anc_lib.node_version_matches(FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
@@ -285,7 +305,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
                     "node1": "  anc-release-helios-nda    1.6.0   Helios NDA Release\n",
                     "node2": "Available content plugins (2):\n  base - Base items\n",
                 }
-            return {"node1": "irrelevant", "node2": "ANC version 1.4.9"}
+            return {"node1": "irrelevant", "node2": "Release Version: 1.4.9\n"}
 
         class FakePhdl:
             def exec(self, cmd, timeout=None):
@@ -335,6 +355,21 @@ class TestCompareAncVersions(unittest.TestCase):
         self.assertFalse(anc_lib.is_strict_anc_version("7"))
         self.assertFalse(anc_lib.is_strict_anc_version(""))
         self.assertFalse(anc_lib.is_strict_anc_version(None))
+        # Uppercase RC must be rejected: the grammar is lowercase and the URL /
+        # --content-list / --version extractors are case-sensitive, so accepting
+        # 1.7.0-RC.2 here would let it collapse to 1.7.0 downstream and let a
+        # lower RC satisfy the guard.
+        self.assertFalse(anc_lib.is_strict_anc_version("1.7.0-RC.2"))
+        self.assertFalse(anc_lib.is_strict_anc_version("1.7.0-Rc.1"))
+
+    def test_uppercase_rc_config_is_rejected_not_collapsed(self):
+        # End-to-end: an uppercase-RC config paired with an uppercase-RC archive
+        # must be flagged invalid, NOT silently read as base 1.7.0 (which would
+        # let config RC.2 pass against archive RC.1).
+        cfg = {"anc": {"anc_version": "1.7.0-RC.2", "anc_release_url": "http://x/anc-1.7.0-RC.1-1.x86_64.rpm"}}
+        problem = anc_lib.check_version_matches_url(cfg)
+        self.assertIsNotNone(problem)
+        self.assertIn("not a valid ANC version", problem)
 
     def test_rc_equals_its_base(self):
         self.assertEqual(anc_lib.compare_anc_versions("1.7.0-rc.1", "1.7.0"), 0)
@@ -466,6 +501,32 @@ class TestDetectPackageFlavour(unittest.TestCase):
 
     def test_detect_package_type_wrapper_legacy_deb(self):
         self.assertEqual(anc_lib.detect_package_type("http://x/anc-1.4.9-deb-linux-x64.tar.gz"), "deb")
+
+
+class TestParseVersionFromVersionOutput(unittest.TestCase):
+    '''_parse_version_from_version_output: read ONLY the labelled Release Version
+    record, never an unrelated number from stdout/stderr.'''
+
+    def test_reads_release_version_line(self):
+        out = "Release Name: helios-nda\nRelease Version: 1.4.9\n"
+        self.assertEqual(anc_lib._parse_version_from_version_output(out), "1.4.9")
+
+    def test_reads_rc_release_version(self):
+        self.assertEqual(anc_lib._parse_version_from_version_output("Release Version: 1.7.0-rc.1"), "1.7.0-rc.1")
+
+    def test_ignores_warning_number_before_version(self):
+        out = "WARNING: libfoo 2.3 deprecated\nRelease Version: 1.4.9\n"
+        self.assertEqual(anc_lib._parse_version_from_version_output(out), "1.4.9")
+
+    def test_absent_under_versioned_path_is_none(self):
+        # The 1.6.0 inside the relocatable path must NOT be parsed as the release.
+        out = "bash: /opt/anc-1.6.0/anc/anc.py: No such file or directory\n"
+        self.assertIsNone(anc_lib._parse_version_from_version_output(out))
+
+    def test_no_release_line_is_none(self):
+        self.assertIsNone(anc_lib._parse_version_from_version_output("anc.py: command not found"))
+        self.assertIsNone(anc_lib._parse_version_from_version_output(""))
+        self.assertIsNone(anc_lib._parse_version_from_version_output(None))
 
 
 class TestParseVersionFromUrl(unittest.TestCase):

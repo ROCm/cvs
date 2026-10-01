@@ -546,7 +546,11 @@ _URL_VERSION_RE = re.compile(r"\d+\.\d+(?:\.\d+)*(?:-rc\.\d+)?")
 # token (groups: 1 = base, 2 = rc number). Base requires at least two
 # dot-separated components, so a lone integer is not a version. The rc is part
 # of the same token, so it is never lost when the version is embedded in text.
-_VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)(?:-rc\.(\d+))?", re.IGNORECASE)
+# Case-SENSITIVE lowercase ``-rc.`` on purpose: the ANC grammar is lowercase and
+# the URL / --content-list / --version extractors are all case-sensitive, so an
+# IGNORECASE strict gate would accept ``1.7.0-RC.2`` that those extractors then
+# read as plain ``1.7.0`` -- letting a lower RC silently satisfy the guard.
+_VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)(?:-rc\.(\d+))?")
 
 
 def is_strict_anc_version(version):
@@ -927,11 +931,22 @@ def node_release_versions(phdl, anc_bin=ANC_BIN):
 def _parse_version_from_version_output(output):
     '''
     Extract the ANC release version (with any ``-rc.<n>``) from ``--version``
-    output, or None. Legacy (<=1.4.x) ``--version`` prints the release version;
-    reads the first dotted-numeric token plus an optional rc suffix.
+    output, or None. ANC's ``--version`` prints the release on a labelled line
+    ``Release Version: <version>`` (see anclib ``_display_versions``); the
+    version is read ONLY from that record.
+
+    Anchoring to the label is deliberate: a bare "first dotted number" scan over
+    combined stdout/stderr would mis-read an unrelated number -- e.g. a warning
+    printed before the version, or the ``1.6.0`` inside a relocatable path in a
+    shell ``/opt/anc-1.6.0/anc/anc.py: No such file`` error when ANC is absent --
+    and let the precheck/verify pass on a value that is not the installed
+    release. No ``Release Version:`` line -> None (absent / command failure).
     '''
-    match = re.search(r"\d+\.\d+(?:\.\d+)*(?:-rc\.\d+)?", output or "")
-    return match.group(0) if match else None
+    match = re.search(
+        r"Release\s+Version:\s*(\d+\.\d+(?:\.\d+)*(?:-rc\.\d+)?)",
+        output or "",
+    )
+    return match.group(1) if match else None
 
 
 def node_installed_versions(phdl, anc_bin=ANC_BIN):
