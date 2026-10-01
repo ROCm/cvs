@@ -1,0 +1,7 @@
+# Default owners for the entire repository.
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+* @venksrin09 @frepaul @cijohnson @anujmittal-amd
+
+# CI workflows require maintainer review
+.github/workflows/** @venksrin09 @frepaul @cijohnson @anujmittal-amd
