@@ -143,7 +143,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
 
         phdl = FakePhdl()
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(phdl, "1.5.5", anc_bin="/opt/amdtools/anc/anc.py", is_direct=True)
+            result = anc_lib.node_version_matches(phdl, "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertIn("/opt/amdtools/anc/anc.py --content-list", phdl.cmd)
         self.assertTrue(result["node1"])
 
@@ -156,9 +156,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
                 return {"node1": content_out}
 
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(
-                FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py", is_direct=True
-            )
+            result = anc_lib.node_version_matches(FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertFalse(result["node1"])
 
     def test_direct_higher_installed_satisfies(self):
@@ -170,9 +168,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
                 return {"node1": content_out}
 
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(
-                FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py", is_direct=True
-            )
+            result = anc_lib.node_version_matches(FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertTrue(result["node1"])
 
     def test_direct_installed_rc_satisfies_base_request(self):
@@ -184,9 +180,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
                 return {"node1": content_out}
 
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(
-                FakePhdl(), "1.7.0", anc_bin="/opt/amdtools/anc/anc.py", is_direct=True
-            )
+            result = anc_lib.node_version_matches(FakePhdl(), "1.7.0", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertTrue(result["node1"])
 
     def test_direct_installed_rc1_does_not_satisfy_rc2(self):
@@ -198,9 +192,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
                 return {"node1": content_out}
 
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(
-                FakePhdl(), "1.7.0-rc.2", anc_bin="/opt/amdtools/anc/anc.py", is_direct=True
-            )
+            result = anc_lib.node_version_matches(FakePhdl(), "1.7.0-rc.2", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertFalse(result["node1"])
 
     def test_legacy_uses_version_flag(self):
@@ -259,6 +251,50 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
             result = anc_lib.node_version_matches(FakePhdl(), "1.4.9", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertFalse(result["node1"])
 
+    def test_generation_detected_from_node_not_requested_url(self):
+        # A direct 1.6.0 build is already installed. The generation is read from
+        # the node's own --content-list output, so the direct release version is
+        # used even though no is_direct flag is passed -- the node's --version
+        # (which on a direct build reports the unrelated tool version, 0.9.9) is
+        # never consulted because the anc-release-* line is authoritative.
+        content_out = "  anc-release-helios-nda    1.6.0   Helios NDA Release\n"
+        cmds = []
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                cmds.append(cmd)
+                if "--content-list" in cmd:
+                    return {"node1": content_out}
+                return {"node1": "anc.py tool version 0.9.9"}  # direct --version: tool version
+
+        with patch.object(anc_lib, "print_test_output"):
+            result = anc_lib.node_version_matches(FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
+        self.assertTrue(result["node1"])  # 1.6.0 (content-list) >= 1.5.5, not 0.9.9
+        # The content-list probe is authoritative; --version is not used when the
+        # anc-release-* line is present, so no fallback probe was issued.
+        self.assertTrue(any("--content-list" in c for c in cmds))
+        self.assertFalse(any("--version" in c for c in cmds))
+
+    def test_mixed_generation_per_node(self):
+        # node1 is direct (anc-release-* line); node2 is legacy (no such line,
+        # version read from --version). Each node's generation is detected
+        # independently from its own output.
+        def exec_impl(cmd, timeout=None):
+            if "--content-list" in cmd:
+                return {
+                    "node1": "  anc-release-helios-nda    1.6.0   Helios NDA Release\n",
+                    "node2": "Available content plugins (2):\n  base - Base items\n",
+                }
+            return {"node1": "irrelevant", "node2": "ANC version 1.4.9"}
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return exec_impl(cmd, timeout)
+
+        with patch.object(anc_lib, "print_test_output"):
+            versions = anc_lib.node_installed_versions(FakePhdl(), anc_bin="/opt/amdtools/anc/anc.py")
+        self.assertEqual(versions, {"node1": "1.6.0", "node2": "1.4.9"})
+
 
 class TestCompareAncVersions(unittest.TestCase):
     '''compare_anc_versions / parse_anc_version: ANC version ordering.'''
@@ -286,6 +322,19 @@ class TestCompareAncVersions(unittest.TestCase):
         # "1.7.0-rc.1 build" must compare as rc.1, NOT collapse to base 1.7.0
         # and thus read equal to 1.7.0-rc.2.
         self.assertEqual(anc_lib.compare_anc_versions("1.7.0-rc.1 build", "1.7.0-rc.2"), -1)
+
+    def test_is_strict_anc_version(self):
+        # Strict gate for user-configured values: whole-string match only.
+        self.assertTrue(anc_lib.is_strict_anc_version("1.7.0"))
+        self.assertTrue(anc_lib.is_strict_anc_version("1.7.0-rc.1"))
+        self.assertTrue(anc_lib.is_strict_anc_version(" 1.4.9 "))  # surrounding whitespace is stripped
+        # Trailing/leading garbage or a malformed rc must NOT pass.
+        self.assertFalse(anc_lib.is_strict_anc_version("1.7.0-rc.bad"))
+        self.assertFalse(anc_lib.is_strict_anc_version("release-1.7.0"))
+        self.assertFalse(anc_lib.is_strict_anc_version("1.7.0 build"))
+        self.assertFalse(anc_lib.is_strict_anc_version("7"))
+        self.assertFalse(anc_lib.is_strict_anc_version(""))
+        self.assertFalse(anc_lib.is_strict_anc_version(None))
 
     def test_rc_equals_its_base(self):
         self.assertEqual(anc_lib.compare_anc_versions("1.7.0-rc.1", "1.7.0"), 0)
@@ -504,6 +553,16 @@ class TestCheckVersionMatchesUrl(unittest.TestCase):
         problem = anc_lib.check_version_matches_url(cfg)
         self.assertIsNotNone(problem)
         self.assertIn("garbage", problem)
+
+    def test_contextual_configured_version_is_problem(self):
+        # The comparator tolerates surrounding text, so without the strict gate
+        # these would be silently read as 1.7.0 and pass. They must be rejected.
+        for bad in ("release-1.7.0", "1.7.0-rc.bad", "1.7.0 build"):
+            with self.subTest(bad=bad):
+                cfg = {"anc": {"anc_version": bad, "anc_release_url": "http://x/anc-1.7.0-x86_64.tar.gz"}}
+                problem = anc_lib.check_version_matches_url(cfg)
+                self.assertIsNotNone(problem)
+                self.assertIn("not a valid ANC version", problem)
 
     def test_legacy_url_match(self):
         cfg = {"anc": {"anc_version": "1.4.9", "anc_release_url": "http://x/anc-1.4.9-tar-linux-x64.tar.gz"}}
@@ -995,24 +1054,38 @@ class TestInstallAncVersionGating(unittest.TestCase):
         globals_patcher.start()
         self.addCleanup(globals_patcher.stop)
 
-    def _cfg(self, version):
-        # Direct tar URL so detect_package_flavour -> ("tar", is_direct=True).
+    def _cfg(self, version, url="http://x/anc-1.5.5-x86_64.tar.gz"):
+        # Direct tar URL by default -> detect_package_flavour yields a direct tar.
         return {
             "anc": {
-                "anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz",
+                "anc_release_url": url,
                 "anc_version": version,
                 "ANC_INSTALL_PATH": "",
             }
         }
 
-    def test_precheck_skip_when_installed_satisfies(self):
-        # Node already runs 1.6.0 (>= requested 1.5.5): install must be skipped
-        # and no sub-installer invoked.
-        content_out = "  anc-release-helios-nda    1.6.0   Helios NDA Release\n"
+    @staticmethod
+    def _content(version):
+        return f"  anc-release-helios-nda    {version}   Helios NDA Release\n" if version else ""
+
+    def _phdl(self, state):
+        '''A phdl whose --content-list reply reflects the current installed
+        version in ``state`` (flipped by the mocked installer), so the precheck
+        and post-verify probes read the right phase. Only --content-list is
+        answered; a None version yields empty output (absent), exercising the
+        legacy --version fallback path too (also empty here).'''
+        content = self._content
 
         class FakePhdl:
             def exec(self, cmd, timeout=None):
-                return {"node1": content_out}
+                return {"node1": content(state["installed"])}
+
+        return FakePhdl()
+
+    def test_precheck_skip_when_installed_satisfies(self):
+        # Node already runs 1.6.0 (>= requested 1.5.5): install must be skipped
+        # and no sub-installer invoked.
+        state = {"installed": "1.6.0"}
 
         with (
             patch.object(anc_lib, "print_test_output"),
@@ -1020,33 +1093,27 @@ class TestInstallAncVersionGating(unittest.TestCase):
             patch.object(anc_lib, "_install_anc_tar_direct") as installer,
             patch.object(anc_lib, "fail_test") as ft,
         ):
-            anc_lib.install_anc(FakePhdl(), self.CLUSTER, self._cfg("1.5.5"))
+            anc_lib.install_anc(self._phdl(state), self.CLUSTER, self._cfg("1.5.5"))
 
         installer.assert_not_called()
         ft.assert_not_called()
         upd.assert_called_once()
 
     def test_no_skip_when_installed_lower_then_verifies(self):
-        # Node runs 1.5.4 (< requested 1.5.5): precheck does NOT skip; after the
-        # install the post-verify sees 1.5.5 and passes with no failure.
-        responses = iter(
-            [
-                {"node1": "  anc-release-helios-nda    1.5.4   Helios NDA Release\n"},  # precheck
-                {"node1": "  anc-release-helios-nda    1.5.5   Helios NDA Release\n"},  # post-verify
-            ]
-        )
+        # Node runs 1.5.4 (< requested 1.5.5): precheck does NOT skip; the mocked
+        # installer bumps the node to 1.5.5 so the post-verify passes.
+        state = {"installed": "1.5.4"}
 
-        class FakePhdl:
-            def exec(self, cmd, timeout=None):
-                return next(responses)
+        def do_install(*args, **kwargs):
+            state["installed"] = "1.5.5"
 
         with (
             patch.object(anc_lib, "print_test_output"),
             patch.object(anc_lib, "update_test_result") as upd,
-            patch.object(anc_lib, "_install_anc_tar_direct") as installer,
+            patch.object(anc_lib, "_install_anc_tar_direct", side_effect=do_install) as installer,
             patch.object(anc_lib, "fail_test") as ft,
         ):
-            anc_lib.install_anc(FakePhdl(), self.CLUSTER, self._cfg("1.5.5"))
+            anc_lib.install_anc(self._phdl(state), self.CLUSTER, self._cfg("1.5.5"))
 
         installer.assert_called_once()
         ft.assert_not_called()
@@ -1055,27 +1122,50 @@ class TestInstallAncVersionGating(unittest.TestCase):
     def test_post_verify_fails_when_version_absent_after_install(self):
         # Install runs (nothing present at precheck) but the post-verify still
         # does not satisfy the request -> fail_test is called.
-        responses = iter(
-            [
-                {"node1": ""},  # precheck: absent
-                {"node1": "  anc-release-helios-nda    1.5.4   Helios NDA Release\n"},  # post-verify: still too low
-            ]
-        )
+        state = {"installed": None}  # absent; installer (mocked) leaves it too low
 
-        class FakePhdl:
-            def exec(self, cmd, timeout=None):
-                return next(responses)
+        def do_install(*args, **kwargs):
+            state["installed"] = "1.5.4"
 
         with (
             patch.object(anc_lib, "print_test_output"),
             patch.object(anc_lib, "update_test_result"),
-            patch.object(anc_lib, "_install_anc_tar_direct"),
+            patch.object(anc_lib, "_install_anc_tar_direct", side_effect=do_install),
             patch.object(anc_lib, "fail_test") as ft,
         ):
-            anc_lib.install_anc(FakePhdl(), self.CLUSTER, self._cfg("1.5.5"))
+            anc_lib.install_anc(self._phdl(state), self.CLUSTER, self._cfg("1.5.5"))
 
         ft.assert_called_once()
         self.assertIn("node1", ft.call_args[0][0])
+
+    def test_mixed_cluster_does_not_skip_all_or_nothing(self):
+        # Documented all-or-nothing behavior: node1 already satisfies (1.6.0) but
+        # node2 is below the minimum (1.5.4), so the precheck must NOT skip and
+        # the installer runs for the whole set (node1 included). Regression guard
+        # for the "skip only when EVERY node satisfies" contract.
+        cluster = {"node_dict": {"node1": {}, "node2": {}}, "username": "u", "priv_key_file": "k"}
+        state = {"node1": "1.6.0", "node2": "1.5.4"}
+
+        def do_install(*args, **kwargs):
+            state["node2"] = "1.5.5"  # installer brings the lagging node up
+
+        content = self._content
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return {host: content(ver) for host, ver in state.items()}
+
+        with (
+            patch.object(anc_lib, "print_test_output"),
+            patch.object(anc_lib, "update_test_result") as upd,
+            patch.object(anc_lib, "_install_anc_tar_direct", side_effect=do_install) as installer,
+            patch.object(anc_lib, "fail_test") as ft,
+        ):
+            anc_lib.install_anc(FakePhdl(), cluster, self._cfg("1.5.5"))
+
+        installer.assert_called_once()  # NOT skipped despite node1 satisfying
+        ft.assert_not_called()  # post-verify passes once node2 is bumped
+        upd.assert_called_once()
 
 
 class TestChownArgumentQuoted(unittest.TestCase):
