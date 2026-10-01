@@ -544,18 +544,25 @@ PackageFlavour = namedtuple("PackageFlavour", ["pkg_type", "is_direct"])
 #     of a longer token. Without it an ATTACHED malformed rc silently truncates
 #     (``1.7.0-rc.bad`` -> ``1.7.0``; ``1.7.0-rc.1foo`` -> ``1.7.0-rc.1``;
 #     ``1.7.0rc1`` -> ``1.7.0``). It rejects a trailing ``.<digit>`` (mid-base),
-#     any alnum (mid-token junk), and a bare ``-rc`` (a malformed rc). A package
-#     revision like the ``-1`` in ``...-1.7.0-rc.1-1.x86_64.rpm`` is still fine:
-#     ``-1`` begins with ``-`` then a digit, which the boundary allows.
+#     any alnum (mid-token junk), and a trailing ``-rc`` in ANY case (``-RC`` /
+#     ``-Rc`` too, so an uppercase rc suffix is rejected rather than truncated to
+#     its base). A package revision like the ``-1`` in
+#     ``...-1.7.0-rc.1-1.x86_64.rpm`` is still fine: ``-1`` begins with ``-``
+#     then a digit, which the boundary allows.
 _VERSION_BODY = r"\d+\.\d+(?:\.\d+)*(?:-rc\.\d+)?"
 _VERSION_BODY_GROUPED = r"(\d+\.\d+(?:\.\d+)*)(?:-rc\.(\d+))?"
-_VERSION_END = r"(?!\.\d)(?![0-9A-Za-z])(?!-rc)"
+_VERSION_END = r"(?!\.\d)(?![0-9A-Za-z])(?![-][rR][cC])"
 
 # Extract the semantic version (``1.4.9`` / ``1.5.5`` / ``1.7.0-rc.1``) from a
-# release URL. The first well-formed dotted-numeric run in the filename is the
-# version in every ANC naming scheme, legacy and direct alike ("x86_64"/"x64"
-# have no dot-separated triple, so they never match first).
+# release URL. The FIRST dotted-numeric run in the filename is the version in
+# every ANC naming scheme, legacy and direct alike ("x86_64"/"x64" have no
+# dot-separated triple, so they never start a candidate). The parser anchors the
+# full grammar at that first candidate position (see parse_version_from_url) and
+# does NOT scan onward -- so a malformed first token (e.g. ``1.7.0-rc.bad``) is
+# rejected rather than silently skipped in favour of a later number like the
+# ``2.31`` in a ``-glibc-2.31`` suffix.
 _URL_VERSION_RE = re.compile(_VERSION_BODY + _VERSION_END)
+_URL_VERSION_CANDIDATE_RE = re.compile(r"\d+\.\d+")
 
 # Match a dotted-numeric release with its optional ``-rc.<n>`` suffix as ONE
 # token (groups: 1 = base, 2 = rc number). The rc is part of the same token, so
@@ -709,10 +716,13 @@ def parse_version_from_url(anc_release_url):
     '''
     Extract the semantic version embedded in an ANC release URL, or None.
 
-    Matches the first dotted-numeric run in the filename (e.g. ``1.4.9`` from
-    ``...-1.4.9-deb-linux-x64.tar.gz``, ``1.5.5`` from
-    ``...-1.5.5-x86_64.tar.gz`` and ``..._1.5.5_amd64.deb``). Returns None when
-    the URL is empty or carries no version token.
+    Locates the FIRST dotted-numeric candidate in the filename (e.g. ``1.4.9``
+    from ``...-1.4.9-deb-linux-x64.tar.gz``, ``1.5.5`` from
+    ``...-1.5.5-x86_64.tar.gz`` and ``..._1.5.5_amd64.deb``) and requires the
+    full ANC grammar to match AT that position. Returns None when the URL is
+    empty, carries no candidate, or the first candidate is not a well-formed ANC
+    version -- so a malformed leading token (``anc-1.7.0-rc.bad-glibc-2.31...``)
+    is rejected rather than skipped in favour of the later ``2.31``.
 
     Used by the fail-fast config guard to abort (before contacting any node)
     when the user-supplied ``anc.anc_version`` is GREATER than the archive
@@ -721,7 +731,10 @@ def parse_version_from_url(anc_release_url):
     if not anc_release_url:
         return None
     name = anc_release_url.rsplit("/", 1)[-1]
-    match = _URL_VERSION_RE.search(name)
+    candidate = _URL_VERSION_CANDIDATE_RE.search(name)
+    if not candidate:
+        return None
+    match = _URL_VERSION_RE.match(name, candidate.start())
     return match.group(0) if match else None
 
 

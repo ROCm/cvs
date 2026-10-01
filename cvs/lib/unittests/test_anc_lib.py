@@ -579,6 +579,18 @@ class TestParseVersionFromUrl(unittest.TestCase):
         self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0-rc.1foo.rpm"))
         self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0rc1.rpm"))
 
+    def test_uppercase_attached_rc_is_rejected(self):
+        # An uppercase -RC suffix must be rejected, not truncated to the base --
+        # otherwise 1.7.0-RC.1 reads as 1.7.0 and a request for 1.7.0-rc.2 passes.
+        self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0-RC.1.rpm"))
+        self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0-Rc.2.rpm"))
+
+    def test_malformed_first_token_not_skipped_for_later_number(self):
+        # When the first dotted candidate is a malformed version, the parser must
+        # reject it rather than skip ahead to an unrelated later number (e.g. the
+        # 2.31 in a -glibc-2.31 suffix).
+        self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0-rc.bad-glibc-2.31.tar.gz"))
+
     def test_package_revision_still_allowed(self):
         # The "-1" package revision after a valid rc is fine (boundary allows -<digit>).
         self.assertEqual(
