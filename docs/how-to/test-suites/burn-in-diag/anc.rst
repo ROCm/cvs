@@ -25,7 +25,7 @@ Set up config
 
    - ``anc_release_url`` — URL of the ANC release archive to download and install
    - ``log_folder_path`` — controller-side directory prefix for collected logs and auto-generated HTML reports
-   - ``anc_version`` — expected ANC version (must match the version in ``anc_release_url``)
+   - ``anc_version`` — minimum required ANC version (the version in ``anc_release_url`` must be >= this; installed builds that satisfy it are not reinstalled)
 
 3. Optionally set ``ANC_INSTALL_PATH`` for relocatable **tar** installs. Deb and rpm packages ignore this key and always install under ``/opt/amdtools``.
 

@@ -542,8 +542,11 @@ PackageFlavour = namedtuple("PackageFlavour", ["pkg_type", "is_direct"])
 # ``...-1.7.0-rc.1-1.x86_64.rpm``) is deliberately not part of the version.
 _URL_VERSION_RE = re.compile(r"\d+\.\d+(?:\.\d+)*(?:-rc\.\d+)?")
 
-# Pull the optional ``-rc.<n>`` pre-release suffix off a version string.
-_RC_SUFFIX_RE = re.compile(r"-rc\.(\d+)\s*$", re.IGNORECASE)
+# Match a dotted-numeric release with its optional ``-rc.<n>`` suffix as ONE
+# token (groups: 1 = base, 2 = rc number). Base requires at least two
+# dot-separated components, so a lone integer is not a version. The rc is part
+# of the same token, so it is never lost when the version is embedded in text.
+_VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)(?:-rc\.(\d+))?", re.IGNORECASE)
 
 
 def parse_anc_version(version):
@@ -551,27 +554,25 @@ def parse_anc_version(version):
     Parse an ANC version string into a comparable ``(base_tuple, rc)`` pair.
 
     ``base_tuple`` is the dotted-numeric release (e.g. ``(1, 7, 0)``); ``rc`` is
-    the release-candidate number when the string ends in ``-rc.<n>``, else None
-    (a final/base release). Returns None when no dotted-numeric version is
-    present. Surrounding text is tolerated: only the version token is read.
+    the release-candidate number when the version carries a ``-rc.<n>`` suffix,
+    else None (a final/base release). Returns None when no dotted-numeric version
+    is present -- a bare integer does NOT qualify. Surrounding text is tolerated:
+    the first ``X.Y[.Z...]`` token (with any attached ``-rc.<n>``) is read.
 
     Examples:
-      "1.7.0"        -> ((1, 7, 0), None)
-      "1.7.0-rc.1"   -> ((1, 7, 0), 1)
-      "1.4.9"        -> ((1, 4, 9), None)
+      "1.7.0"               -> ((1, 7, 0), None)
+      "1.7.0-rc.1"          -> ((1, 7, 0), 1)
+      "ANC 1.7.0-rc.1 build" -> ((1, 7, 0), 1)
+      "1.4.9"               -> ((1, 4, 9), None)
+      "7"                   -> None
     '''
     if not version:
         return None
-    text = str(version).strip()
-    rc = None
-    rc_match = _RC_SUFFIX_RE.search(text)
-    if rc_match:
-        rc = int(rc_match.group(1))
-        text = text[: rc_match.start()]
-    base_match = re.search(r"\d+(?:\.\d+)*", text)
-    if not base_match:
+    match = _VERSION_RE.search(str(version))
+    if not match:
         return None
-    base = tuple(int(part) for part in base_match.group(0).split("."))
+    base = tuple(int(part) for part in match.group(1).split("."))
+    rc = int(match.group(2)) if match.group(2) is not None else None
     return (base, rc)
 
 
@@ -707,7 +708,10 @@ def check_version_matches_url(config_dict):
     satisfies the request); only a URL OLDER than the request is a config error.
 
     Only enforced when BOTH a version is configured and one can be parsed from
-    the URL; a blank version or an unparseable URL yields None (no opinion).
+    the URL; a blank version or an unparseable URL yields None (no opinion). A
+    configured version that is present but unparseable IS a problem (the URL
+    parsed, so the fault is the configured value) and is reported so the run
+    fails fast instead of contacting nodes with a bad config.
     Applies to legacy and direct packaging alike so a user cannot point a run at
     an archive that cannot satisfy the version they asked for.
     '''
@@ -727,7 +731,10 @@ def check_version_matches_url(config_dict):
                 f"requested version -- lower anc_version or point the URL at a newer archive"
             )
     except ValueError:
-        return None
+        return (
+            f"config anc.anc_version ({configured}) is not a valid ANC version; "
+            f"expected a dotted release like 1.7.0 or 1.7.0-rc.1"
+        )
     return None
 
 
