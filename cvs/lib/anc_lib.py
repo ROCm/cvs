@@ -1890,7 +1890,8 @@ def _safe_tar_extract(tf, dest_dir):
 
     Used as the fallback on interpreters without ``extractall(filter="data")``
     (added in 3.12 / backported to 3.9.17+, 3.10.12+, 3.11.4+). For parity with
-    ``filter="data"`` each member is validated before extraction:
+    ``filter="data"`` each member is validated, then extracted INDIVIDUALLY so
+    no bulk ``extractall`` ever runs on unvalidated members:
       - its final path must stay within ``dest_dir`` (no absolute path, no
         ``..`` traversal, no escaping link target), and
       - it must be a regular file, directory, or link -- device/FIFO members are
@@ -1909,7 +1910,7 @@ def _safe_tar_extract(tf, dest_dir):
             link_target = os.path.join(dest_dir, os.path.dirname(member.name), member.linkname)
             if not _is_within_directory(dest_dir, link_target):
                 raise tarfile.TarError(f"unsafe link target in tar archive: {member.name!r}")
-    tf.extractall(dest_dir)  # nosec B202 - members validated above: contained paths, no special files
+        tf.extract(member, dest_dir)
 
 
 def _pull_log_dir(single, host, user, log_dir, dest_dir):
