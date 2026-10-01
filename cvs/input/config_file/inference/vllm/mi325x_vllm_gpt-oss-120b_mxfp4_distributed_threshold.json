@@ -1,7 +1,7 @@
 {
   "_comment": "Uncalibrated zero placeholders for the packaged 32-metric assertion subset. The paired config keeps enforce_thresholds false, so all finite metrics record without gating. Add or remove registered metrics as needed, and replace every retained placeholder with a measured value before enabling enforcement.",
   "_comment_accuracy": "The optional top-level accuracy block is task-qualified and exempt from vLLM sweep metric validation. Its shape remains: \"accuracy\": {\"<task-id>\": {\"<lm-eval-metric>\": {\"kind\": \"min\", \"value\": 0}}}.",
-  "ISL=1024,OSL=1024,TP=4,PP=2,CONC=16": {
+  "ISL=8192,OSL=1024,TP=8,PP=2,CONC=16": {
     "failed": {
       "kind": "max",
       "value": 0
@@ -131,7 +131,137 @@
       "value": 0
     }
   },
-  "ISL=1024,OSL=1024,TP=4,PP=2,CONC=32": {
+  "ISL=8192,OSL=1024,TP=8,PP=2,CONC=32": {
+    "failed": {
+      "kind": "max",
+      "value": 0
+    },
+    "success_rate": {
+      "kind": "min",
+      "value": 0
+    },
+    "output_throughput": {
+      "kind": "min",
+      "value": 0
+    },
+    "total_token_throughput": {
+      "kind": "min",
+      "value": 0
+    },
+    "mean_ttft_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "median_ttft_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "p90_ttft_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "p95_ttft_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "p99_ttft_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "mean_tpot_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "median_tpot_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "p90_tpot_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "p95_tpot_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "p99_tpot_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "mean_itl_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "median_itl_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "p95_itl_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "p99_itl_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "mean_e2el_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "median_e2el_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "p90_e2el_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "p95_e2el_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "p99_e2el_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "peak_gpu_memory_mb": {
+      "kind": "max",
+      "value": 0
+    },
+    "model_load_memory_mb": {
+      "kind": "max",
+      "value": 0
+    },
+    "model_load_s": {
+      "kind": "max",
+      "value": 0
+    },
+    "gpu_bandwidth_util_pct": {
+      "kind": "min",
+      "value": 0
+    },
+    "gpu_compute_util_pct": {
+      "kind": "min",
+      "value": 0
+    },
+    "queue_time_p50_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "queue_time_p95_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "prefill_time_p50_ms": {
+      "kind": "max",
+      "value": 0
+    },
+    "prefill_time_p95_ms": {
+      "kind": "max",
+      "value": 0
+    }
+  },
+  "ISL=8192,OSL=1024,TP=8,PP=2,CONC=64": {
     "failed": {
       "kind": "max",
       "value": 0
