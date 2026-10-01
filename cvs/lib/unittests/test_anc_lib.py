@@ -504,7 +504,7 @@ class TestParseVersionFromUrl(unittest.TestCase):
 
 
 class TestCheckVersionMatchesUrl(unittest.TestCase):
-    '''check_version_matches_url: abort only when configured version > URL version.'''
+    '''check_version_matches_url: abort when the configured version is invalid or > URL version.'''
 
     def test_match_returns_none(self):
         cfg = {"anc": {"anc_version": "1.5.5", "anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz"}}

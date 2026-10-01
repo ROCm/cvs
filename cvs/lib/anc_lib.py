@@ -701,7 +701,8 @@ def parse_version_from_url(anc_release_url):
     the URL is empty or carries no version token.
 
     Used by the fail-fast config guard to abort (before contacting any node)
-    when the user-supplied ``anc.anc_version`` disagrees with the archive.
+    when the user-supplied ``anc.anc_version`` is GREATER than the archive
+    version (the archive could not satisfy the requested version).
     '''
     if not anc_release_url:
         return None
