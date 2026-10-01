@@ -44,16 +44,35 @@ def _rocm_version_from_index(torch_pip_index_url):
     return match.group(1), match.group(2)
 
 
-def _hip_matches_torch_index(hip_version, torch_pip_index_url):
+def _match_index_version(pip_install_mode):
+    """Index major.minor applies only when minimal mode installs from that URL."""
+    return (pip_install_mode or "minimal").strip().lower() not in ("skip", "requirements")
+
+
+def _torch_index_for_mode(pip_install_mode, torch_pip_index_url):
+    """Index URL enforced by verify and shared-install followers.
+
+    Skip and requirements do not install from ``torch_pip_index_url``. An empty
+    index keeps the HIP-build check and does not pin ``rocmX.Y``.
+    """
+    if _match_index_version(pip_install_mode):
+        return torch_pip_index_url
+    return ""
+
+
+def _hip_matches_torch_index(hip_version, torch_pip_index_url, match_index_version=True):
     """Return True when installed ``torch.version.hip`` satisfies the pip index.
 
     A CUDA or CPU wheel has no HIP version and is not compatible. When the index
-    URL encodes ``rocmX.Y``, major.minor must match so an older importable wheel
-    is not left in place.
+    URL encodes ``rocmX.Y`` and ``match_index_version`` is set, major.minor must
+    match so an older importable wheel is not left in place. Skip and requirements
+    modes keep the HIP-build check and ignore the index version.
     """
     parts = str(hip_version or "").split(".")
     if len(parts) < 2 or not parts[0] or not parts[1]:
         return False
+    if not match_index_version:
+        return True
     minor = parts[1].split("+")[0]
     expected = _rocm_version_from_index(torch_pip_index_url)
     if expected is None:
@@ -61,13 +80,14 @@ def _hip_matches_torch_index(hip_version, torch_pip_index_url):
     return parts[0] == expected[0] and minor == expected[1]
 
 
-def _torch_compat_python(torch_pip_index_url):
+def _torch_compat_python(torch_pip_index_url, match_index_version=True):
     """``python -c`` body: exit 0 when the venv torch matches the ROCm index.
 
     String quotes are shell-escaped (``\\"``) so the snippet can sit inside
     ``python -c "..."`` both at the top level and inside ``bash -c '...'``.
+    ``match_index_version`` false requires a HIP build only.
     """
-    expected = _rocm_version_from_index(torch_pip_index_url)
+    expected = _rocm_version_from_index(torch_pip_index_url) if match_index_version else None
     if expected:
         major, minor = expected
         version_ok = f'len(parts)>=2 and parts[0]==\\"{major}\\" and parts[1].split(\\"+\\")[0]==\\"{minor}\\"'
@@ -157,11 +177,12 @@ def build_primus_verify_command(
     primus_dir: str,
     venv_activate: str,
     torch_pip_index_url: str = _DEFAULT_TORCH_INDEX,
+    match_index_version: bool = True,
 ) -> str:
     """Shell snippet: verify Primus checkout and a compatible ROCm torch in venv."""
     primus_q = shlex.quote(primus_dir)
     activate_q = shlex.quote(venv_activate)
-    probe = _torch_compat_python(torch_pip_index_url)
+    probe = _torch_compat_python(torch_pip_index_url, match_index_version=match_index_version)
     return (
         f"test -f {primus_q}/runner/primus-cli && test -f {activate_q} && "
         f"bash -c 'source {activate_q} && cd {primus_q} && python -c \"{probe}\"'"
@@ -180,15 +201,17 @@ def build_wait_for_shared_primus_command(
     poll_interval: int = 5,
     max_wait: int = 900,
     torch_pip_index_url: str = _DEFAULT_TORCH_INDEX,
+    match_index_version: bool = True,
 ) -> str:
     """Wait until another node finishes clone/venv on shared NFS home.
 
-    The poll requires a HIP build matching ``torch_pip_index_url``. An older
-    importable wheel must not let followers proceed while the leader reinstalls.
+    Minimal mode requires a HIP build matching ``torch_pip_index_url`` so followers
+    do not proceed on an older wheel while the leader reinstalls. Other modes
+    require a HIP build only.
     """
     primus_q = shlex.quote(primus_dir)
     activate_q = shlex.quote(venv_activate)
-    probe = _torch_compat_python(torch_pip_index_url)
+    probe = _torch_compat_python(torch_pip_index_url, match_index_version=match_index_version)
     attempts = max(1, max_wait // max(1, poll_interval))
     # Flat shell (no nested bash -c) so SSH quoting stays intact across nodes.
     return (
@@ -226,7 +249,7 @@ def build_primus_venv_install_command(
         # minimal: ROCm torch only (Primus node_smoke). No pip install -e .
         # Import success is not enough: a previous wheel (for example rocm6.2 on a
         # rocm7.2 index) still imports and would be left in place to crash later.
-        probe = _torch_compat_python(torch_pip_index_url)
+        probe = _torch_compat_python(torch_pip_index_url, match_index_version=True)
         install = (
             f"bash -c 'source {activate_q} && "
             f"if ! python -c \"{probe}\" 2>/dev/null; then "
@@ -237,7 +260,7 @@ def build_primus_venv_install_command(
     verify = build_primus_verify_command(
         primus_dir=primus_dir,
         venv_activate=venv_activate,
-        torch_pip_index_url=torch_pip_index_url,
+        torch_pip_index_url=_torch_index_for_mode(mode, torch_pip_index_url),
     )
 
     return f"{create_venv} && {install} && {verify}"
@@ -386,7 +409,7 @@ class PrimusSetup(PreflightCheck):
             primus_dir=self.primus_dir,
             venv_activate=self.venv_activate,
             max_wait=self.setup_timeout,
-            torch_pip_index_url=self.torch_pip_index_url,
+            torch_pip_index_url=_torch_index_for_mode(self.pip_install_mode, self.torch_pip_index_url),
         )
 
         use_shared = self.shared_install and len(hosts) > 1

@@ -3,6 +3,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
@@ -86,17 +87,45 @@ class TestHipMatchesTorchIndex(unittest.TestCase):
     def test_shell_probe_agrees_with_helper(self):
         index = "https://download.pytorch.org/whl/rocm7.2"
         for hip in (None, "", "6.2.41134", "7.2.0", "7.2.26015", "7.10.1", "7.2+git"):
-            self.assertEqual(
-                _probe_exit_code(hip, index) == 0,
-                _hip_matches_torch_index(hip, index),
-                hip,
-            )
+            for match_index in (True, False):
+                self.assertEqual(
+                    _probe_exit_code(hip, index, match_index_version=match_index) == 0,
+                    _hip_matches_torch_index(hip, index, match_index_version=match_index),
+                    f"hip={hip!r} match_index={match_index}",
+                )
+
+    def test_hip_only_accepts_older_rocm_wheel(self):
+        index = "https://download.pytorch.org/whl/rocm7.2"
+        self.assertTrue(_hip_matches_torch_index("6.2.41134", index, match_index_version=False))
+        self.assertFalse(_hip_matches_torch_index(None, index, match_index_version=False))
 
 
-def _probe_exit_code(hip, index):
+def _shared_setup_commands(pip_install_mode):
+    """Commands PrimusSetup sends when two nodes share one venv."""
+    phdl = MagicMock()
+    phdl.reachable_hosts = ["nodeA", "nodeB"]
+    phdl.exec_cmd_list.return_value = {
+        "nodeA": "CVS_PRIMUS_SETUP_OK\n",
+        "nodeB": "CVS_PRIMUS_SETUP_OK\n",
+    }
+    orch = MagicMock()
+    orch.all = phdl
+    cfg = {
+        "node_smoke_tier1": {
+            "primus_dir": "/home/user/Primus",
+            "venv_activate": "/home/user/envs/preflight/.venv/bin/activate",
+            "pip_install_mode": pip_install_mode,
+            "torch_pip_index_url": "https://download.pytorch.org/whl/rocm7.2",
+        }
+    }
+    PrimusSetup(orch, ["nodeA", "nodeB"], cfg).run()
+    return phdl.exec_cmd_list.call_args[0][0]
+
+
+def _probe_exit_code(hip, index, match_index_version=True):
     import types
 
-    snippet = _torch_compat_python(index).replace('\\"', '"')
+    snippet = _torch_compat_python(index, match_index_version=match_index_version).replace('\\"', '"')
     torch_mod = types.ModuleType("torch")
     torch_mod.version = types.SimpleNamespace(hip=hip)
     saved = sys.modules.get("torch")
@@ -195,6 +224,56 @@ class TestPrimusSetupCommands(unittest.TestCase):
         self.assertIn('parts[0]==\\"6\\"', cmd)
         self.assertIn('parts[1].split(\\"+\\")[0]==\\"2\\"', cmd)
         self.assertNotIn('parts[0]==\\"7\\"', cmd)
+
+    def test_skip_mode_checks_hip_build_not_index_version(self):
+        index = "https://download.pytorch.org/whl/rocm7.2"
+        cmd = build_primus_venv_install_command(
+            primus_dir="/home/user/Primus",
+            venv_activate="/home/user/envs/preflight/.venv/bin/activate",
+            pip_install_mode="skip",
+            torch_pip_index_url=index,
+        )
+        probe = _torch_compat_python(index, match_index_version=False)
+        self.assertIn(probe, cmd)
+        self.assertNotIn("--force-reinstall", cmd)
+        self.assertNotIn('parts[0]==\\"7\\"', cmd)
+        self.assertEqual(_probe_exit_code("6.2.41134", index, match_index_version=False), 0)
+        self.assertNotEqual(_probe_exit_code(None, index, match_index_version=False), 0)
+
+    def test_requirements_mode_checks_hip_build_not_index_version(self):
+        index = "https://download.pytorch.org/whl/rocm7.2"
+        cmd = build_primus_venv_install_command(
+            primus_dir="/home/user/Primus",
+            venv_activate="/home/user/envs/preflight/.venv/bin/activate",
+            pip_install_mode="requirements",
+            torch_pip_index_url=index,
+        )
+        probe = _torch_compat_python(index, match_index_version=False)
+        self.assertIn("pip install -r requirements.txt", cmd)
+        self.assertIn(probe, cmd)
+        self.assertNotIn("--force-reinstall", cmd)
+        self.assertNotIn("--index-url", cmd)
+        self.assertNotIn('parts[0]==\\"7\\"', cmd)
+        self.assertEqual(_probe_exit_code("6.2.41134", index, match_index_version=False), 0)
+        self.assertNotEqual(_probe_exit_code("", index, match_index_version=False), 0)
+
+    def test_shared_followers_do_not_pin_index_outside_minimal_mode(self):
+        hip_only = _torch_compat_python("", match_index_version=True)
+        for mode in ("skip", "requirements", "SKIP", " Requirements "):
+            commands = _shared_setup_commands(mode)
+            follower = commands[1]
+            self.assertIn(hip_only, follower, mode)
+            self.assertNotIn('parts[0]==\\"7\\"', follower, mode)
+            self.assertNotIn("rocm7.2", follower, mode)
+        self.assertEqual(_probe_exit_code("6.2.41134", ""), 0)
+        self.assertNotEqual(_probe_exit_code(None, ""), 0)
+
+    def test_shared_followers_pin_index_in_minimal_mode(self):
+        commands = _shared_setup_commands("minimal")
+        follower = commands[1]
+        self.assertIn('parts[0]==\\"7\\"', follower)
+        self.assertIn('parts[1].split(\\"+\\")[0]==\\"2\\"', follower)
+        self.assertNotEqual(_probe_exit_code("6.2.41134", "https://download.pytorch.org/whl/rocm7.2"), 0)
 
     def test_wait_uses_same_hip_probe_as_install(self):
         index = "https://download.pytorch.org/whl/rocm7.1"
