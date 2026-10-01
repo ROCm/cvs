@@ -59,8 +59,10 @@ class TestRunIbPerfLatTest(unittest.TestCase):
         self.gpu_nic_dict = {n: {f'card{g}': {'rdma_dev': f'rdma{g}'} for g in range(8)} for n in nodes}
         self.gpu_numa_dict = {n: {f'card{g}': {'local_cpulist': '0-63'} for g in range(8)} for n in nodes}
         self.bck_nic_dict = {n: {} for n in nodes}
-        lat = {k: '1.0' for k in ('t_min', 't_max', 't_typical', 't_avg', 't_stdev', 't_99_pct', 't_99_9_pct')}
-        self.lat_numb = {n: dict(lat) for n in nodes}
+        lat_keys = ('t_min', 't_max', 't_typical', 't_avg', 't_stdev', 't_99_pct', 't_99_9_pct')
+        self.lat_numb = {
+            n: {k: f'{n_idx}.{k_idx}' for k_idx, k in enumerate(lat_keys)} for n_idx, n in enumerate(nodes)
+        }
         self.phdl = MagicMock()
         self.shdl = MagicMock()
 
@@ -93,14 +95,24 @@ class TestRunIbPerfLatTest(unittest.TestCase):
 
     def test_builds_latency_commands_without_bandwidth_flags(self):
         _, perftest_cmds = self._run()
+        self.assertEqual(
+            perftest_cmds[self.SERVER][0],
+            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=0'
+            ' -x 3 --report_gbits -F -p 1516 -s 64 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+        )
+        self.assertEqual(
+            perftest_cmds[self.CLIENT][0],
+            'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=0'
+            ' -x 3 --report_gbits -F -p 1516 -s 64 10.0.0.1 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
+        )
         for node, cmds in perftest_cmds.items():
             self.assertEqual(len(cmds), 8, node)
             for gpu_no, cmd in enumerate(cmds):
                 tokens = cmd.split()
-                self.assertIn(f'{self.APP_PATH}/ib_write_lat', tokens)
-                self.assertIn(f'rdma{gpu_no}', tokens)
+                self.assertEqual(tokens[tokens.index('-d') + 1], f'rdma{gpu_no}')
+                self.assertEqual(tokens[tokens.index('-p') + 1], str(1516 + gpu_no))
                 self.assertIn(f'--use_rocm={gpu_no}', tokens)
-                self.assertIn(str(1516 + gpu_no), tokens)
+                self.assertNotIn('--use_rocm_dmabuf', tokens)
                 for bw_only_flag in ('-b', '-D', '-q'):
                     self.assertNotIn(bw_only_flag, tokens)
         for cmd in perftest_cmds[self.CLIENT]:
@@ -115,8 +127,7 @@ class TestRunIbPerfLatTest(unittest.TestCase):
     def test_collects_latency_for_every_gpu(self):
         result, _ = self._run()
         for node in (self.SERVER, self.CLIENT):
-            self.assertEqual(sorted(result[node]), list(range(8)))
-            self.assertEqual(result[node][0]['t_avg'], '1.0')
+            self.assertEqual(result[node], {i: self.lat_numb[node] for i in range(8)})
 
 
 if __name__ == '__main__':
