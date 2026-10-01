@@ -8,7 +8,9 @@ from importlib.machinery import FileFinder
 # Add the parent directory to sys.path to import main
 sys.path.insert(0, os.path.dirname(__file__))
 
+import cvs.lib.globals
 import cvs.main as main
+from cvs.lib.globals import get_verbosity, set_verbosity
 
 
 class TestMain(unittest.TestCase):
@@ -16,6 +18,13 @@ class TestMain(unittest.TestCase):
     def setUpClass(cls):
         """Set up shared test data"""
         cls.expected_ordered_plugins = ["config", "copy-config", "generate", "list", "run", "scp", "monitor", "exec"]
+
+    def setUp(self):
+        self._saved_verbosity = get_verbosity()
+        set_verbosity(0)
+
+    def tearDown(self):
+        set_verbosity(self._saved_verbosity)
 
     def test_get_version_success(self):
         """Test successful version retrieval"""
@@ -114,6 +123,62 @@ class TestMain(unittest.TestCase):
                         for other_plugin in real_plugins:
                             if other_plugin is not plugin:
                                 other_plugin.run.assert_not_called()
+
+
+class TestCliVerbosity(unittest.TestCase):
+    def setUp(self):
+        self._saved_verbosity = get_verbosity()
+        set_verbosity(0)
+
+    def tearDown(self):
+        set_verbosity(self._saved_verbosity)
+
+    def test_counts_v_flags(self):
+        self.assertEqual(main._cli_verbosity(["list"]), 0)
+        self.assertEqual(main._cli_verbosity(["run", "agfhc", "-s"]), 0)
+        self.assertEqual(main._cli_verbosity(["run", "agfhc", "-vvv", "-s"]), 3)
+        self.assertEqual(main._cli_verbosity(["-v", "-v", "-v", "list"]), 3)
+        self.assertEqual(main._cli_verbosity(["--verbose", "list"]), 1)
+        self.assertEqual(main._cli_verbosity(["-vfoo"]), 0)
+        self.assertEqual(main._cli_verbosity(["-v", "exec", "--cmd", "hostname", "-v"]), 1)
+        self.assertEqual(main._cli_verbosity(["-vv", "exec", "--cmd", "hostname", "-v"]), 2)
+        self.assertEqual(main._cli_verbosity(["-vvv", "run", "agfhc", "-vvv", "-s"]), 3)
+
+    def test_run_suffix_vvv_stays_in_extra_args(self):
+        plugin = MagicMock()
+        plugin.get_name.return_value = "run"
+        plugin.get_order.return_value = 0
+        plugin.get_epilog.return_value = ""
+
+        def get_parser(subparsers):
+            parser = subparsers.add_parser("run")
+            parser.add_argument("test")
+            parser.set_defaults(_plugin=plugin)
+            return parser
+
+        plugin.get_parser.side_effect = get_parser
+        _, extra = main.build_arg_parser([plugin]).parse_known_args(["run", "agfhc", "-vvv", "-s"])
+        self.assertIn("-vvv", extra)
+        self.assertEqual(main._cli_verbosity(["run", "agfhc", "-vvv", "-s"]), 3)
+
+    def test_main_applies_verbosity_before_dispatch(self):
+        plugin = MagicMock()
+        plugin.get_name.return_value = "list"
+        plugin.get_order.return_value = 0
+        plugin.get_epilog.return_value = ""
+
+        def get_parser(subparsers):
+            parser = subparsers.add_parser("list")
+            parser.set_defaults(_plugin=plugin)
+            return parser
+
+        plugin.get_parser.side_effect = get_parser
+
+        with patch("cvs.main.sys.argv", ["cvs", "-vv", "list"]):
+            main.main(plugins=[plugin])
+
+        self.assertEqual(get_verbosity(), 2)
+        plugin.run.assert_called_once()
 
 
 if __name__ == "__main__":
