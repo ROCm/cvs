@@ -117,8 +117,9 @@ def pytest_collection_modifyitems(items):
     }
 
     def key(it):
-        if str(it.path.parent) != _HERE:
-            return 99
         return rank.get(it.originalname or it.name.split("[")[0], 50)
 
-    items.sort(key=key)
+    # This hook sees the whole session; permute only mori's own slots so other suites stay put.
+    slots = [i for i, it in enumerate(items) if str(it.path.parent) == _HERE]
+    for i, it in zip(slots, sorted((items[i] for i in slots), key=key)):
+        items[i] = it

@@ -52,7 +52,11 @@ def test_cleanup_stale_containers(orch):
 def test_launch_mori_container(orch, lifecycle):
     if orch.orchestrator_type != "container":
         pytest.skip("baremetal orchestrator: no container to launch")
-    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+    image = orch.container_config.get("image")
+    if not image:
+        lifecycle.failed = True
+        pytest.fail("container.image is not set in the mori config")
+    name = orch.get_container_name(orch.container_config, image)
     lifecycle.torn_down = False
     if not orch.setup_containers():
         lifecycle.failed = True
@@ -210,7 +214,11 @@ def test_teardown(orch, lifecycle):
     if orch.orchestrator_type != "container":
         lifecycle.torn_down = True
         pytest.skip("baremetal orchestrator: no container to tear down")
-    name = orch.get_container_name(orch.container_config, orch.container_config["image"])
+    image = orch.container_config.get("image")
+    if not image:
+        lifecycle.torn_down = True
+        pytest.skip("container.image is not set in the mori config: no container was launched")
+    name = orch.get_container_name(orch.container_config, image)
     orch.teardown_containers()
     lifecycle.torn_down = True
     # no_launch / persistent containers are left running by design.
