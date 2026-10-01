@@ -11,7 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Node Smoke Tier 1, Tier 2, and Tier 3 now run by default. Set `node_smoke_tier1.connectivity_mode` or `node_smoke_tier3.connectivity_mode` to `"skip"` to disable a tier, or set `node_smoke_tier1.tier2_perf` to `false` to disable Tier 2 only. Previously all three were opt-in (`connectivity_mode` defaulted to `"skip"` and `tier2_perf` defaulted to `false`).
+
 ### Fixed
+
+- Preflight HTML rows for Node Smoke pass or fail only when Primus reported that check. A node-level result no longer marks unreported Tier 1 GPU slots or Tier 3 collector names as passed.
+- A Node Smoke tier failure stays in the pytest-html report when the per-check rows do not already show it.
+- Preflight failure messages name the hosts that failed. Config sections such as `vpod_membership` and `setup_results` are no longer reported as node names.
 
 ## [0.2.0] - 2026-09-23
 
