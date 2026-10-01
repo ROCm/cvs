@@ -5,6 +5,7 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
+import math
 import re
 import shlex
 import time
@@ -183,6 +184,8 @@ class MoriBenchmark:
     IO_LAUNCH_TIMEOUT = 60
     IO_POLL_TIMEOUT = 600
     IO_POLL_INTERVAL = 10
+    # Floor for a poll's exec timeout near the deadline; a normal poll takes milliseconds.
+    IO_POLL_MIN_TIMEOUT = 10
     # A CVS-side exec timeout only stops waiting; the remote command keeps running.
     # The remote bound (exec timeout - margin, then SIGKILL after kill_after) must
     # expire first so the command's process group is gone before CVS gives up.
@@ -451,6 +454,10 @@ class MoriBenchmark:
     def poll_io_completion(self, log_paths, timeout=None, interval=None):
         """Poll every host's log for ``IO_EXIT_MARKER`` until all hosts report or ``timeout`` expires.
 
+        Each poll's exec timeout and each sleep are clamped to the remaining budget, so
+        a hung poll overruns ``timeout`` by at most ``IO_POLL_MIN_TIMEOUT`` per host the
+        transport reads serially (SSH), not ``SETUP_TIMEOUT``.
+
         Returns ``{host: exit_code}`` for the hosts that finished; a host missing
         from the result did not finish in time.
         """
@@ -460,14 +467,17 @@ class MoriBenchmark:
         exit_codes = {}
         cmd_list = [f"grep -ho '{IO_EXIT_MARKER}[0-9]*' {log_paths[h]} 2>/dev/null | tail -1" for h in self.host_list]
         while True:
-            out_dict = self._exec_cmd_list(cmd_list, timeout=self.SETUP_TIMEOUT, print_console=False)
+            remaining = deadline - time.monotonic()
+            poll_timeout = min(self.SETUP_TIMEOUT, max(self.IO_POLL_MIN_TIMEOUT, math.ceil(remaining)))
+            out_dict = self._exec_cmd_list(cmd_list, timeout=poll_timeout, print_console=False)
             for host in self.host_list:
                 match = re.search(rf'{IO_EXIT_MARKER}(\d+)', out_dict.get(host) or '')
                 if match:
                     exit_codes[host] = int(match.group(1))
-            if len(exit_codes) == len(self.host_list) or time.monotonic() >= deadline:
+            remaining = deadline - time.monotonic()
+            if len(exit_codes) == len(self.host_list) or remaining <= 0:
                 return exit_codes
-            time.sleep(interval)
+            time.sleep(min(interval, remaining))
 
     def kill_io_processes(self):
         # The [x] bracket keeps pkill -f from matching the shell that runs this command.

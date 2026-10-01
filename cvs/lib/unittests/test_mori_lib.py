@@ -391,10 +391,49 @@ class TestMoriIoLaunch(_MoriBenchCase):
     def test_poll_times_out_with_partial_result(self):
         responder = lambda cmd, host: f'{IO_EXIT_MARKER}0' if host == 'n0' else ''  # noqa: E731
         bench = MoriBenchmark(_ContainerFakeOrch(responder=responder), _mori_dict())
-        with patch('cvs.lib.mori_lib.time.monotonic', side_effect=[0, 5, 700]):
+        # Clock reads: deadline, then before and after each poll.
+        with patch('cvs.lib.mori_lib.time.monotonic', side_effect=[0, 0, 5, 5, 700]):
             codes = bench.poll_io_completion({'n0': '/l0', 'n1': '/l1'}, timeout=600, interval=1)
         self.assertEqual(codes, {'n0': 0})
-        self.assertEqual(self.sleep.call_count, 1)
+        self.sleep.assert_called_once_with(1)
+
+    def _virtual_clock(self):
+        clock = {'t': 0.0}
+        self.sleep.side_effect = lambda s: clock.__setitem__('t', clock['t'] + s)
+        monotonic = patch('cvs.lib.mori_lib.time.monotonic', side_effect=lambda: clock['t'])
+        monotonic.start()
+        self.addCleanup(monotonic.stop)
+        return clock
+
+    def test_hung_poll_near_the_deadline_is_clamped_to_the_remaining_budget(self):
+        # Over SSH a hung host's poll runs for its whole read timeout; a full SETUP_TIMEOUT
+        # there used to overrun a 600s budget by 120s per hung host.
+        clock = self._virtual_clock()
+        polls = []
+
+        class HangingOrch(_ContainerFakeOrch):
+            def exec_cmd_list(self, cmd_list, timeout=None, print_console=True):
+                polls.append((clock['t'], timeout))
+                if clock['t'] >= 595:
+                    clock['t'] += timeout
+                return {'n0': f'{IO_EXIT_MARKER}0', 'n1': ''}
+
+        bench = MoriBenchmark(HangingOrch(), _mori_dict())
+        codes = bench.poll_io_completion({'n0': '/l0', 'n1': '/l1'}, timeout=600, interval=10)
+        self.assertEqual(codes, {'n0': 0})
+        for start, timeout in polls:
+            self.assertLessEqual(timeout, MoriBenchmark.SETUP_TIMEOUT)
+            self.assertLessEqual(timeout, max(MoriBenchmark.IO_POLL_MIN_TIMEOUT, 600 - start), (start, timeout))
+        self.assertEqual(polls[0][1], MoriBenchmark.SETUP_TIMEOUT)
+        self.assertLessEqual(clock['t'], 600 + MoriBenchmark.IO_POLL_MIN_TIMEOUT)
+
+    def test_sleep_never_runs_past_the_deadline(self):
+        clock = self._virtual_clock()
+        bench = MoriBenchmark(_ContainerFakeOrch(responder=lambda cmd, host: ''), _mori_dict())
+        codes = bench.poll_io_completion({'n0': '/l0', 'n1': '/l1'}, timeout=25, interval=10)
+        self.assertEqual(codes, {})
+        self.assertEqual([c.args[0] for c in self.sleep.call_args_list], [10, 10, 5])
+        self.assertEqual(clock['t'], 25)
 
     def test_unfinished_host_fails_and_processes_are_killed(self):
         responder = lambda cmd, host: '' if IO_EXIT_MARKER in cmd else _default_responder(cmd, host)  # noqa: E731
