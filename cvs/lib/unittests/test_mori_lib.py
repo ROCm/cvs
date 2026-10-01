@@ -5,11 +5,10 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-# Unit tests for cvs/lib/mori_lib.py: orchestrator mode rule and legacy container
-# translation, inline env, command bounds (remote timeout beats the CVS timeout),
-# baremetal safety, and the I/O launch/poll/kill flow against a recording fake orch.
+# Unit tests for cvs/lib/mori_lib.py: inline env from the config, command bounds
+# (remote timeout beats the CVS timeout), baremetal safety, and the I/O
+# launch/poll/kill flow against a recording fake orch.
 
-import copy
 import os
 import re
 import shutil
@@ -18,17 +17,12 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.lib import globals
 from cvs.lib.mori_lib import (
     IO_EXIT_MARKER,
     REMOTE_TIMEOUT_MARKER,
     MoriBenchmark,
-    build_env_prefix,
-    build_orch_testsuite_config,
-    legacy_container_block,
     parse_pretty_tables_multi_rank,
-    resolve_orchestrator_mode,
 )
 
 
@@ -50,10 +44,13 @@ def _mori_dict(**overrides):
     d = {
         'master_addr': '',
         'master_port': '1234',
-        'oob_port': 'eno0',
-        'torchlib_dir': '/torch/lib',
         'mori_dir': '/sgl-workspace/mori',
-        'mori_device_list': 'rdma0,rdma1',
+        'env': {
+            'NCCL_SOCKET_IFNAME': 'eno0',
+            'GLOO_SOCKET_IFNAME': 'eno0',
+            'MORI_RDMA_DEVICES': 'rdma0,rdma1',
+            'LD_LIBRARY_PATH': '/torch/lib:$LD_LIBRARY_PATH',
+        },
         'nic_type': 'thor2',
         'log_dir': '/home/u/LOGS/mori',
         'expected_results': {'ibgda_write': {}, 'io_read': {}, 'io_write': {}},
@@ -145,109 +142,7 @@ class _MoriBenchCase(unittest.TestCase):
         self.assertEqual(globals.error_list, [])
 
 
-class TestResolveOrchestratorMode(unittest.TestCase):
-    def test_mode_rule(self):
-        bm, ct = {'orchestrator': 'baremetal'}, {'orchestrator': 'container'}
-        block = {'container': {'image': 'img'}, 'container_image': 'img'}
-        cases = [
-            ('mori orchestrator wins', {'orchestrator': 'baremetal', 'container_image': 'img'}, ct, 'baremetal'),
-            # SPUR-generated cluster files say baremetal; a legacy mori config must still launch its container.
-            ('legacy forces container', {'container_image': 'img'}, bm, 'container'),
-            ('explicit container', {'orchestrator': 'container', 'container': {'image': 'img'}}, bm, 'container'),
-            ('container block defers to bm cluster', block, bm, 'baremetal'),
-            ('container block defers to ct cluster', block, ct, 'container'),
-            ('empty container_image is not legacy', {'container_image': ''}, bm, 'baremetal'),
-            ('default is baremetal', {}, {}, 'baremetal'),
-        ]
-        for name, mori, cluster, expected in cases:
-            with self.subTest(name):
-                self.assertEqual(resolve_orchestrator_mode(mori, cluster), expected)
-
-
-class TestLegacyContainerBlock(unittest.TestCase):
-    def test_translates_every_legacy_key(self):
-        mori = {
-            'container_image': 'rocm/mori:x',
-            'container_name': 'mori_container',
-            'container_config': {
-                'device_list': ['/dev/dri', '/dev/kfd'],
-                'volume_dict': {'/home/u': '/home/u', '/a.so': '/b.so:ro'},
-                'env_dict': {'FOO': '1'},
-            },
-        }
-        self.assertEqual(
-            legacy_container_block(mori),
-            {
-                'image': 'rocm/mori:x',
-                'name': 'mori_container',
-                'runtime': {
-                    'args': {'devices': ['/dev/dri', '/dev/kfd'], 'volumes': ['/home/u:/home/u', '/a.so:/b.so:ro']}
-                },
-                'env': {'FOO': '1'},
-            },
-        )
-
-    def test_empty_config_yields_empty_block(self):
-        self.assertEqual(legacy_container_block({'container_config': {'volume_dict': {}, 'env_dict': {}}}), {})
-
-
-class TestBuildOrchTestsuiteConfig(unittest.TestCase):
-    def setUp(self):
-        self.cluster = {
-            'orchestrator': 'baremetal',
-            'node_dict': {'n0': {}, 'n1': {}},
-            'username': 'u',
-            'priv_key_file': '/k',
-            'container': {'image': 'cluster/img', 'runtime': {'name': 'docker', 'args': {'ipc': 'host'}}},
-        }
-
-    def test_baremetal_passes_empty_container_block(self):
-        # A cluster-level container block must not be validated/used for a baremetal run.
-        cfg = build_orch_testsuite_config({'orchestrator': 'baremetal', 'container_image': 'x'}, self.cluster)
-        self.assertEqual(cfg, {'orchestrator': 'baremetal', 'container': {}})
-
-    def test_precedence_cluster_then_legacy_then_mori_block(self):
-        mori = {'container_image': 'legacy/img', 'container_name': 'mori_container'}
-        cfg = build_orch_testsuite_config(mori, self.cluster)
-        self.assertEqual(cfg['orchestrator'], 'container')
-        self.assertEqual(cfg['container']['image'], 'legacy/img')
-        self.assertEqual(cfg['container']['runtime'], {'name': 'docker', 'args': {'ipc': 'host'}})
-
-        mori['orchestrator'] = 'container'
-        mori['container'] = {'image': 'block/img'}
-        cfg = build_orch_testsuite_config(mori, self.cluster)
-        self.assertEqual(cfg['container']['image'], 'block/img')
-        self.assertEqual(cfg['container']['name'], 'mori_container')
-
-    def test_devices_deduplicated_against_orch_defaults(self):
-        mori = {
-            'container_image': 'img',
-            'container_config': {'device_list': ['/dev/dri', '/dev/kfd', '/dev/foo', '/dev/foo']},
-        }
-        cfg = build_orch_testsuite_config(mori, self.cluster)
-        self.assertEqual(cfg['container']['runtime']['args']['devices'], ['/dev/foo'])
-
-    def test_inputs_not_mutated(self):
-        mori = {
-            'orchestrator': 'container',
-            'container': {'image': 'i', 'runtime': {'args': {'devices': ['/dev/kfd']}}},
-        }
-        mori_before = copy.deepcopy(mori)
-        cluster_before = copy.deepcopy(self.cluster)
-        build_orch_testsuite_config(mori, self.cluster)
-        self.assertEqual(mori, mori_before)
-        self.assertEqual(self.cluster, cluster_before)
-
-    def test_result_is_accepted_by_orchestrator_config(self):
-        cfg = OrchestratorConfig.from_configs(
-            self.cluster, build_orch_testsuite_config({'container_image': 'img'}, self.cluster)
-        )
-        self.assertEqual(cfg.orchestrator, 'container')
-        self.assertEqual(cfg.container['image'], 'img')
-        self.assertEqual(cfg.container['lifetime'], 'per_run')
-
-
-class TestBuildEnvPrefix(unittest.TestCase):
+class TestEnvPrefix(unittest.TestCase):
     def _run(self, prefix):
         env = {'PATH': '/usr/bin:/bin', 'PYTHONPATH': '/pre', 'LD_LIBRARY_PATH': '/ld'}
         script = (
@@ -255,14 +150,33 @@ class TestBuildEnvPrefix(unittest.TestCase):
         )
         return subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True, check=True).stdout
 
-    def test_path_vars_expand_in_the_executing_shell(self):
-        # The legacy docker-exec quoting let the host shell expand $PYTHONPATH; it must stay literal until run.
-        prefix = build_env_prefix('/opt/mori dir', '/torch/lib', 'eno0', 'rdma0,rdma1')
+    def _bench(self, mori_dir, env):
+        return MoriBenchmark(_BaremetalFakeOrch(), _mori_dict(mori_dir=mori_dir, env=env))
+
+    def test_config_env_expands_in_the_executing_shell(self):
+        # $PYTHONPATH / $LD_LIBRARY_PATH must stay literal until the remote shell runs the command.
+        env = {
+            'LD_LIBRARY_PATH': '/torch/lib:$LD_LIBRARY_PATH',
+            'MORI_RDMA_DEVICES': 'rdma0,rdma1',
+            'GLOO_SOCKET_IFNAME': 'eno0',
+        }
+        prefix = self._bench('/opt/mori dir', env).env_prefix
         self.assertEqual(self._run(prefix), '/opt/mori dir:/pre|/torch/lib:/ld|rdma0,rdma1|eno0')
 
-    def test_empty_torchlib_dir_leaves_ld_library_path_alone(self):
-        prefix = build_env_prefix('/m', '', 'eno0', 'rdma0')
-        self.assertEqual(self._run(prefix), '/m:/pre|/ld|rdma0|eno0')
+    def test_code_adds_only_pythonpath(self):
+        prefix = self._bench('/m', {}).env_prefix
+        self.assertEqual(self._run(prefix), '/m:/pre|/ld||')
+        self.assertEqual(re.findall(r'export (\w+)=', prefix), ['PYTHONPATH'])
+
+    def test_env_pythonpath_does_not_drop_mori_dir(self):
+        prefix = self._bench('/m', {'PYTHONPATH': '/x:$PYTHONPATH'}).env_prefix
+        self.assertEqual(self._run(prefix).split('|')[0], '/m:/x:/pre')
+
+    def test_missing_env_block_still_builds_a_runnable_prefix(self):
+        d = _mori_dict()
+        del d['env']
+        bench = MoriBenchmark(_BaremetalFakeOrch(), d)
+        self.assertEqual(self._run(bench.env_prefix), '/sgl-workspace/mori:/pre|/ld||')
 
 
 class TestParsePrettyTables(unittest.TestCase):
@@ -365,6 +279,14 @@ class TestMoriBenchmarkCommands(_MoriBenchCase):
         self.assertIn('rdma1', globals.error_list[0])
         self.assertIn('node n1', globals.error_list[0])
 
+    def test_unset_mori_rdma_devices_fails_without_running_ibv_devinfo(self):
+        # An empty device list would otherwise pass the check vacuously.
+        orch = _ContainerFakeOrch()
+        MoriBenchmark(orch, _mori_dict(env={'NCCL_SOCKET_IFNAME': 'eno0'})).check_ibv_devices()
+        self.assertEqual(len(globals.error_list), 1)
+        self.assertIn('MORI_RDMA_DEVICES', globals.error_list[0])
+        self.assertEqual(orch.exec_calls, [])
+
 
 class TestRemoteBoundInBash(unittest.TestCase):
     """Runs the generated command in a real bash to prove the bound kills the whole tree."""
@@ -374,9 +296,7 @@ class TestRemoteBoundInBash(unittest.TestCase):
         os.makedirs(os.path.join(self.tmp, 'mori'))
         self.bench = MoriBenchmark(
             _BaremetalFakeOrch(),
-            _mori_dict(
-                mori_dir=os.path.join(self.tmp, 'mori'), log_dir=os.path.join(self.tmp, 'logs'), torchlib_dir=''
-            ),
+            _mori_dict(mori_dir=os.path.join(self.tmp, 'mori'), log_dir=os.path.join(self.tmp, 'logs'), env={}),
         )
         os.makedirs(self.bench.run_log_dir)
         self.tag = f'{os.getpid()}{id(self) % 100000}'

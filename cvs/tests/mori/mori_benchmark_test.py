@@ -44,8 +44,8 @@ def mori_obj(orch, mori_dict, lifecycle):
 
 def test_cleanup_stale_containers(orch):
     """Kept for test-ID compatibility. Under the container orchestrator a
-    ``per_run`` launch force-removes a same-named container itself, and the
-    legacy ``docker system prune`` is not safe on shared nodes."""
+    ``per_run`` launch force-removes a same-named container itself, and
+    ``docker system prune`` is not safe on shared nodes."""
     pytest.skip("stale-container cleanup is handled by the orchestrator launch")
 
 

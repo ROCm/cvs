@@ -5,14 +5,12 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import copy
 import re
 import shlex
 import time
 from typing import List, Dict, Tuple
 
-from cvs.core.orchestrators.container import DEFAULT_CONTAINER_ARGS
-from cvs.lib import globals
+from cvs.lib import env_lib, globals
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
@@ -37,102 +35,6 @@ REMOTE_TIMEOUT_MARKER = 'MORI_REMOTE_TIMEOUT after '
 
 # Seconds precision: verify_dmesg_for_errors' node-scraper path treats the end time as an exclusive cutoff.
 DMESG_DATE_CMD = 'date +"%a %b %e %H:%M:%S"'
-
-
-def _deep_merge(base, override):
-    """Recursively merge ``override`` onto ``base``; dicts merge key-wise, scalars and lists replace."""
-    if not (isinstance(base, dict) and isinstance(override, dict)):
-        return override
-    out = dict(base)
-    for k, v in override.items():
-        out[k] = _deep_merge(base[k], v) if k in base else v
-    return out
-
-
-def resolve_orchestrator_mode(mori_dict, cluster_dict):
-    """Pick the orchestrator for the mori suite.
-
-    Order: the mori config's ``orchestrator``; else ``container`` for a legacy
-    config (``container_image`` set, no ``container`` block), because the legacy
-    suite always launched its own container; else the cluster file's value.
-    The legacy rule matters under SPUR, whose generated cluster file says
-    ``baremetal``.
-    """
-    if mori_dict.get('orchestrator'):
-        return mori_dict['orchestrator']
-    if mori_dict.get('container_image') and 'container' not in mori_dict:
-        return 'container'
-    return cluster_dict.get('orchestrator', 'baremetal')
-
-
-def legacy_container_block(mori_dict):
-    """Translate the legacy mori container keys into an orch ``container`` block.
-
-    ``container_image`` / ``container_name`` -> ``image`` / ``name``;
-    ``container_config.device_list`` -> ``runtime.args.devices``;
-    ``container_config.volume_dict`` ``{src: dst}`` -> ``runtime.args.volumes`` ``["src:dst"]``;
-    ``container_config.env_dict`` -> ``env``.
-    """
-    block = {}
-    if mori_dict.get('container_image'):
-        block['image'] = mori_dict['container_image']
-    if mori_dict.get('container_name'):
-        block['name'] = mori_dict['container_name']
-    container_config = mori_dict.get('container_config') or {}
-    args = {}
-    devices = list(container_config.get('device_list') or [])
-    if devices:
-        args['devices'] = devices
-    volumes = [f'{src}:{dst}' for src, dst in (container_config.get('volume_dict') or {}).items()]
-    if volumes:
-        args['volumes'] = volumes
-    if args:
-        block['runtime'] = {'args': args}
-    if container_config.get('env_dict'):
-        block['env'] = dict(container_config['env_dict'])
-    return block
-
-
-def build_orch_testsuite_config(mori_dict, cluster_dict):
-    """Return the ``testsuite_config`` passed to ``OrchestratorConfig.from_configs``.
-
-    Container mode layers cluster ``container`` < legacy mori keys < mori
-    ``container`` block, and drops devices the orchestrator already adds by
-    default. Baremetal mode passes an empty container block so a cluster-level
-    container block is not validated for a run that never uses it.
-    """
-    mode = resolve_orchestrator_mode(mori_dict, cluster_dict)
-    if mode != 'container':
-        return {'orchestrator': mode, 'container': {}}
-    block = _deep_merge(cluster_dict.get('container') or {}, legacy_container_block(mori_dict))
-    block = copy.deepcopy(_deep_merge(block, mori_dict.get('container') or {}))
-    args = block.get('runtime', {}).get('args', {})
-    if 'devices' in args:
-        default_devices = DEFAULT_CONTAINER_ARGS['devices']
-        deduped = []
-        for dev in args['devices']:
-            if dev not in default_devices and dev not in deduped:
-                deduped.append(dev)
-        args['devices'] = deduped
-    return {'orchestrator': 'container', 'container': block}
-
-
-def build_env_prefix(mori_dir, torchlib_dir, oob_port, mori_device_list):
-    """Shell ``export`` prefix for every MORI command.
-
-    Exported inline, not via a sourced file, so it works the same in the
-    container and on a baremetal host without shared ``/tmp`` state. The
-    ``$PYTHONPATH`` / ``$LD_LIBRARY_PATH`` references stay literal so the shell
-    that runs the command expands them.
-    """
-    exports = [f'export PYTHONPATH={shlex.quote(mori_dir)}:$PYTHONPATH']
-    if torchlib_dir:
-        exports.append(f'export LD_LIBRARY_PATH={shlex.quote(torchlib_dir)}:$LD_LIBRARY_PATH')
-    for var in ('NCCL_SOCKET_IFNAME', 'GLOO_SOCKET_IFNAME', 'GLOO_TCP_IFNAME'):
-        exports.append(f'export {var}={shlex.quote(oob_port)}')
-    exports.append('export GAI_PREFER_IPV4=1')
-    exports.append(f'export MORI_RDMA_DEVICES={shlex.quote(mori_device_list)}')
-    return '; '.join(exports) + '; '
 
 
 def _convert_value(val: str):
@@ -295,15 +197,21 @@ class MoriBenchmark:
         self.mori_dict = mori_dict
         self.master_addr = self.mori_dict.get('master_addr') or orch.head_node
         self.master_port = self.mori_dict['master_port']
-        self.oob_port = self.mori_dict['oob_port']
-        self.torchlib_dir = self.mori_dict.get('torchlib_dir', '')
         self.mori_dir = self.mori_dict['mori_dir']
-        self.mori_device_list = self.mori_dict['mori_device_list']
+        self.env = dict(self.mori_dict.get('env') or {})
+        self.mori_device_list = self.env.get('MORI_RDMA_DEVICES', '')
         self.nic_type = self.mori_dict.get('nic_type', '')
         self.log_dir = self.mori_dict['log_dir']
         self.run_log_dir = f"{self.log_dir}/{time.strftime('%Y%m%d_%H%M%S')}"
         self.expected_results_dict = self.mori_dict['expected_results']
-        self.env_prefix = build_env_prefix(self.mori_dir, self.torchlib_dir, self.oob_port, self.mori_device_list)
+        # Exported inline rather than via container.env so the same prefix works under baremetal.
+        # benchmark.py imports tests.python.* from mori_dir, so that PYTHONPATH entry is exported
+        # last: it then stacks on any PYTHONPATH from env instead of being replaced by it.
+        exports = [
+            env_lib.build_env_prefix(self.env),
+            env_lib.build_env_prefix({'PYTHONPATH': f'{self.mori_dir}:$PYTHONPATH'}),
+        ]
+        self.env_prefix = ' ; '.join(e for e in exports if e) + '; '
 
     def _bounded(self, cmd, timeout):
         """Wrap ``cmd`` in coreutils ``timeout`` sized to expire before the CVS-side ``timeout``.
@@ -355,6 +263,9 @@ class MoriBenchmark:
     def check_ibv_devices(
         self,
     ):
+        if not self.mori_device_list:
+            fail_test('ERROR - env.MORI_RDMA_DEVICES is not set in the mori config')
+            return
         out_dict = self.orch.exec('ibv_devinfo', timeout=self.SETUP_TIMEOUT)
         for node in out_dict.keys():
             dev_list = self.mori_device_list.split(',')

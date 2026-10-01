@@ -12,12 +12,22 @@ import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.mori_lib import DMESG_DATE_CMD, build_orch_testsuite_config
+from cvs.lib.mori_lib import DMESG_DATE_CMD
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders, resolve_test_config_placeholders
 
 log = globals.log
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _deep_merge(base, override):
+    """Recursively merge ``override`` onto ``base``; dicts merge key-wise, scalars and lists replace."""
+    if not (isinstance(base, dict) and isinstance(override, dict)):
+        return override
+    out = dict(base)
+    for k, v in override.items():
+        out[k] = _deep_merge(base[k], v) if k in base else v
+    return out
 
 
 @pytest.fixture(scope="module")
@@ -71,9 +81,11 @@ def orch(cluster_dict, mori_dict, lifecycle):
     is launched by test_launch_mori_container and removed by test_teardown;
     the finalizer is a leak guard for runs that never reach test_teardown.
     """
-    testsuite_config = build_orch_testsuite_config(mori_dict, cluster_dict)
-    log.info("mori orchestrator: %s", testsuite_config["orchestrator"])
+    testsuite_config = {"container": _deep_merge(cluster_dict.get("container", {}), mori_dict.get("container", {}))}
+    if mori_dict.get("orchestrator"):
+        testsuite_config["orchestrator"] = mori_dict["orchestrator"]
     cfg = OrchestratorConfig.from_configs(cluster_dict, testsuite_config)
+    log.info("mori orchestrator: %s", cfg.orchestrator)
     o = OrchestratorFactory.create_orchestrator(log, cfg)
     lifecycle.dmesg_start = o.all.exec(DMESG_DATE_CMD)
     yield o

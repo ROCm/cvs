@@ -22,6 +22,7 @@ Set up config
 2. Edit the file and configure:
 
    - ``no_of_nodes`` — number of nodes in the cluster
+   - ``orchestrator`` — ``container`` to run MORI inside the ``container.image`` image, or ``baremetal`` to run it directly on the hosts. Baremetal needs MORI built on every host, with ``mori_dir`` and ``env`` pointing at it.
    - Every field still set to ``<changeme>`` — replace with cluster-specific values before running
 
 For the complete field reference, see :doc:`/reference/configuration-files/network/mori`.
