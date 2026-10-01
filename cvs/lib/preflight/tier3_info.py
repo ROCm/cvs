@@ -246,7 +246,7 @@ class Tier3InfoCheck(PreflightCheck):
         cfg = self.config_dict or {}
 
         self.mode = _normalize_mode(
-            get_preflight_nested(cfg, NODE_SMOKE_TIER3_SECTION, LEGACY_TIER3_INFO_SECTION, "connectivity_mode", "skip")
+            get_preflight_nested(cfg, NODE_SMOKE_TIER3_SECTION, LEGACY_TIER3_INFO_SECTION, "connectivity_mode", "run")
         )
         self.primus_dir = str(resolve_tier3_setting(cfg, "primus_dir", "") or "")
         self.venv_activate = str(resolve_tier3_setting(cfg, "venv_activate", "") or "")
@@ -320,7 +320,7 @@ class Tier3InfoCheck(PreflightCheck):
                 "node_results": {},
             }
 
-        hosts = [h for h in self.node_list if h in self.phdl.reachable_hosts]
+        hosts = [h for h in self.node_list if h in self.orch.all.reachable_hosts]
         if not hosts:
             return {
                 "mode": self.mode,
@@ -334,7 +334,7 @@ class Tier3InfoCheck(PreflightCheck):
             from cvs.lib.preflight.primus_setup import PrimusSetup
 
             setup = PrimusSetup(
-                self.phdl,
+                self.orch,
                 hosts,
                 self.config_dict,
                 config_section=self.CONFIG_SECTION,
@@ -364,7 +364,7 @@ class Tier3InfoCheck(PreflightCheck):
         )
 
         commands: List[str] = []
-        for h in self.phdl.reachable_hosts:
+        for h in self.orch.all.reachable_hosts:
             if h not in hosts_set:
                 commands.append("true")
             else:
@@ -387,7 +387,7 @@ class Tier3InfoCheck(PreflightCheck):
                     )
                 )
 
-        out_dict = self.phdl.exec_cmd_list(commands, timeout=self.ssh_timeout)
+        out_dict = self.orch.all.exec_cmd_list(commands, timeout=self.ssh_timeout)
 
         node_results: Dict[str, Any] = {}
         cluster_report = None

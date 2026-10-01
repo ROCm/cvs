@@ -1000,7 +1000,7 @@ control_node_k8s-prod.json
 #### Check Grafana Dashboards
 
 ```bash
-curl -s -u admin:admin "http://localhost:30030/api/search?type=dash-db" | python3 -c "
+curl -s -u "$GRAFANA_USER:$GRAFANA_PASSWORD" "http://localhost:30030/api/search?type=dash-db" | python3 -c "
 import json,sys
 for d in json.load(sys.stdin):
     print(f\"{d.get('folderTitle','General')}/{d['title']} (uid:{d['uid']})\")"

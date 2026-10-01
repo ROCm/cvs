@@ -16,6 +16,14 @@ LEGACY_PREFLIGHT_TEST_ALIASES = {
     "test_tier3_info": "test_node_smoke_tier3",
 }
 
+# Each Node Smoke tier runs Primus once and then publishes one pytest row per catalog
+# check, so selecting a tier has to pull in its per-check rows too.
+PREFLIGHT_TEST_COMPANIONS = {
+    "test_node_smoke_tier1": ("test_node_smoke_tier1_check",),
+    "test_node_smoke_tier2": ("test_node_smoke_tier2_check",),
+    "test_node_smoke_tier3": ("test_node_smoke_tier3_check",),
+}
+
 
 def resolve_test_function_name(name: str) -> str:
     """Map deprecated preflight test function names to their canonical pytest targets."""
@@ -23,14 +31,15 @@ def resolve_test_function_name(name: str) -> str:
 
 
 def resolve_test_function_names(names):
-    """Resolve legacy aliases and drop duplicates while preserving order."""
+    """Resolve legacy aliases, pull in companion tests, and drop duplicates in order."""
     resolved = []
     seen = set()
     for name in names:
         canonical = resolve_test_function_name(name)
-        if canonical not in seen:
-            seen.add(canonical)
-            resolved.append(canonical)
+        for target in (canonical, *PREFLIGHT_TEST_COMPANIONS.get(canonical, ())):
+            if target not in seen:
+                seen.add(target)
+                resolved.append(target)
     return resolved
 
 

@@ -3,7 +3,7 @@
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
@@ -18,6 +18,12 @@ from cvs.lib.preflight.node_smoke import (
     resolve_rdma_gid_index,
     resolve_rdma_interfaces,
 )
+
+
+def _make_orch(phdl):
+    orch = MagicMock()
+    orch.all = phdl
+    return orch
 
 
 class TestBuildNodeSmokeFlags(unittest.TestCase):
@@ -169,7 +175,7 @@ class TestNodeSmokeCheckRun(unittest.TestCase):
             "node2": "wrote /tmp/smoke/c.json status=PASS\n",
         }
 
-        checker = NodeSmokeCheck(phdl, ["node0", "node2"], self._config())
+        checker = NodeSmokeCheck(_make_orch(phdl), ["node0", "node2"], self._config())
         results = checker.run()
 
         cmd_list = phdl.exec_cmd_list.call_args[0][0]
@@ -191,7 +197,7 @@ class TestNodeSmokeCheckRun(unittest.TestCase):
         cfg = self._config()
         cfg["node_smoke"]["tier2_perf"] = True
         cfg["node_smoke"]["ssh_timeout"] = 300
-        checker = NodeSmokeCheck(phdl, ["node0"], cfg)
+        checker = NodeSmokeCheck(_make_orch(phdl), ["node0"], cfg)
         checker.run()
 
         timeout = phdl.exec_cmd_list.call_args.kwargs.get("timeout") or phdl.exec_cmd_list.call_args[1].get("timeout")
@@ -201,6 +207,23 @@ class TestNodeSmokeCheckRun(unittest.TestCase):
         self.assertIn("--gemm-tflops-min 600", cmd)
         self.assertIn("--hbm-gbs-min 2000", cmd)
         self.assertIn("--rccl-gbs-min 100", cmd)
+
+    def test_auto_setup_passes_orchestrator_not_handle(self):
+        phdl = MagicMock()
+        phdl.reachable_hosts = ["node0"]
+        orch = _make_orch(phdl)
+        cfg = self._config()
+        cfg["node_smoke"]["auto_setup"] = True
+
+        with patch("cvs.lib.preflight.primus_setup.PrimusSetup") as setup_cls:
+            setup_cls.return_value.run.return_value = {
+                "status": "FAIL",
+                "message": "setup failed",
+                "node_results": {},
+            }
+            NodeSmokeCheck(orch, ["node0"], cfg).run()
+
+        self.assertIs(setup_cls.call_args.args[0], orch)
 
 
 class TestPreflightNodeSmokeReporting(unittest.TestCase):
@@ -226,12 +249,16 @@ class TestPreflightNodeSmokeReporting(unittest.TestCase):
                 "xgmi": {"ok": True},
                 "tooling": {"ok": True},
                 "gpu_visibility": {"ok": True},
-            }
+            },
+            "tier2": {
+                "per_gpu": [{"gpu": i, "gemm_tflops": 800, "hbm_gbs": 3000} for i in range(8)],
+                "rccl": {"status": "PASS", "gbs": 120},
+            },
         }
         tier1_results = {
             "tier2_perf": True,
             "gpus_per_node": 8,
-            "tier1_tests_run": 39,
+            "tier1_tests_run": 15,
             "tier2_tests_run": 17,
             "node_results": {
                 "node0": {"status": "PASS", "node_payload": tier1_payload},
@@ -249,8 +276,10 @@ class TestPreflightNodeSmokeReporting(unittest.TestCase):
         }
         tier3_results = {
             "skipped": False,
-            "tier3_tests_run": 27,
-            "node_results": {"node0": {"status": "PASS"}, "node1": {"status": "PASS"}},
+            "node_results": {
+                "node0": {"status": "PASS", "checks": ["host,gpu,network"]},
+                "node1": {"status": "PASS", "checks": ["host,gpu,network"]},
+            },
             "failed_nodes": [],
             "unknown_nodes": [],
             "passing_nodes": ["node0", "node1"],
@@ -263,15 +292,44 @@ class TestPreflightNodeSmokeReporting(unittest.TestCase):
         tier3_summary = generator._summarize_node_smoke_tier3_results(tier3_results)
 
         self.assertIn(
-            "2/2 nodes passed Node Smoke Tier 1; 39 tests run per node",
+            "2/2 nodes passed Node Smoke Tier 1; 15 tests run per node",
             tier1_summary["summary"],
         )
         self.assertIn("Node Smoke Tier 2", tier2_summary["summary"])
         self.assertIn("17 tests run per node", tier2_summary["summary"])
         self.assertIn(
-            "2/2 nodes passed Node Smoke Tier 3; 27 tests run cluster-wide",
+            "2/2 nodes passed Node Smoke Tier 3; 3 tests run cluster-wide",
             tier3_summary["summary"],
         )
+
+        report_generator = PreflightReportGenerator(
+            None,
+            {
+                "summary": {
+                    "overall_status": "PASS",
+                    "checks": {
+                        "node_smoke_tier1": tier1_summary,
+                        "node_smoke_tier2": tier2_summary,
+                        "node_smoke_tier3": tier3_summary,
+                    },
+                    "recommendations": [],
+                },
+                "node_smoke_tier1": tier1_results,
+                "node_smoke_tier3": tier3_results,
+            },
+            config_dict={},
+        )
+        html_out = report_generator._generate_html_content()
+        self.assertIn("cvs-node-smoke-results", html_out)
+        self.assertIn("?sort=result", html_out)
+        self.assertIn("Node Smoke Tier 1", html_out)
+        self.assertIn("Node Smoke Tier 2", html_out)
+        self.assertIn("Node Smoke Tier 3", html_out)
+        self.assertIn("GPU processes", html_out)
+        self.assertIn("Large GEMM TFLOPS", html_out)
+        # The shared metrics table used to prefix the node onto the check label
+        # ("cluster: Host") and now puts the node in its own column ("Host").
+        self.assertTrue("cluster: Host" in html_out or ">Host</td>" in html_out)
 
 
 class TestLegacyNodeSmokeConfigNormalization(unittest.TestCase):
