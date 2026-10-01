@@ -8,7 +8,7 @@ Platform test configuration file reference for Cluster Validation Suite (CVS)
 
 Run host check scripts to validate host-side configurations, such as model load balancing enablement, PCIe checks, kernel version, and ROCm version.
 
-The following sample shows the ``host_config.json`` structure. Replace the values with your cluster's actual versions before running:
+The following sample shows the ``host_config.json`` structure. Each setting ships as ``<changeme>``. The matching ``_example_*`` key shows a sample value and is ignored at load time. Replace every ``<changeme>`` with your cluster's actual version before running:
 
 See :doc:`/how-to/test-suites/burn-in-diag/platform` for more information on running these tests.
 
@@ -17,33 +17,59 @@ See :doc:`/how-to/test-suites/burn-in-diag/platform` for more information on run
   .. code:: json
     
     {
-
+        "_comment": "Replace every <changeme>. Keys starting with _ are examples or comments and are ignored.",
         "host":
         {
-          "os_version": "Ubuntu 24.04.1 LTS",
-          "kernel_version": "6.8.0-60-generic",
-          "rocm_version": "6.4.1",
-          "bios_version": "20171212",
-          "pci_realloc": "off",
-          "online_memory": "1.3T",
-          "gpu_count": "8",
-          "gpu_pcie_speed": "32",
-          "gpu_pcie_width": "16",
+          "os_version": "<changeme>",
+          "_example_os_version": "Ubuntu 24.04.1 LTS",
+          "kernel_version": "<changeme>",
+          "_example_kernel_version": "6.8.0-60-generic",
+          "rocm_version": "<changeme>",
+          "_example_rocm_version": "7.0.2",
+          "bios_version": "<changeme>",
+          "_example_bios_version": "20171212",
+          "pci_realloc": "<changeme>",
+          "_example_pci_realloc": "off",
+          "online_memory": "<changeme>",
+          "_example_online_memory": "1.3T",
+          "gpu_count": "<changeme>",
+          "_example_gpu_count": "8",
+          "gpu_pcie_speed": "<changeme>",
+          "_example_gpu_pcie_speed": "32",
+          "gpu_pcie_width": "<changeme>",
+          "_example_gpu_pcie_width": "16",
+          "nic_pcie_speed": "<changeme>",
+          "_example_nic_pcie_speed": "32",
+          "nic_pcie_width": "<changeme>",
+          "_example_nic_pcie_width": "16",
           "fw_dict":
           {
-              "CP_MEC1": "32945",
-              "CP_MEC2": "32945",
-              "RLC": "65",
-              "SDMA0": "24",
-              "SDMA1": "24",
-              "VCN": "09.11.70.09",
-              "RLC_RESTORE_LIST_GPM_MEM": "4",
-              "RLC_RESTORE_LIST_SRM_MEM": "4",
-              "RLC_RESTORE_LIST_CNTL": "4",
-              "PSP_SOSDRV": "00.36.02.56",
-              "TA_RAS": "1B.36.02.14",
-              "TA_XGMI": "20.00.00.14",
-              "PM": "07.85.11.01"
+              "CP_MEC1": "<changeme>",
+              "_example_CP_MEC1": "32945",
+              "CP_MEC2": "<changeme>",
+              "_example_CP_MEC2": "32945",
+              "RLC": "<changeme>",
+              "_example_RLC": "65",
+              "SDMA0": "<changeme>",
+              "_example_SDMA0": "24",
+              "SDMA1": "<changeme>",
+              "_example_SDMA1": "24",
+              "VCN": "<changeme>",
+              "_example_VCN": "09.11.70.09",
+              "RLC_RESTORE_LIST_GPM_MEM": "<changeme>",
+              "_example_RLC_RESTORE_LIST_GPM_MEM": "4",
+              "RLC_RESTORE_LIST_SRM_MEM": "<changeme>",
+              "_example_RLC_RESTORE_LIST_SRM_MEM": "4",
+              "RLC_RESTORE_LIST_CNTL": "<changeme>",
+              "_example_RLC_RESTORE_LIST_CNTL": "4",
+              "PSP_SOSDRV": "<changeme>",
+              "_example_PSP_SOSDRV": "00.36.02.56",
+              "TA_RAS": "<changeme>",
+              "_example_TA_RAS": "1B.36.02.14",
+              "TA_XGMI": "<changeme>",
+              "_example_TA_XGMI": "20.00.00.14",
+              "PM": "<changeme>",
+              "_example_PM": "07.85.11.01"
             }
         }
       }       
@@ -51,14 +77,14 @@ See :doc:`/how-to/test-suites/burn-in-diag/platform` for more information on run
 Parameters
 ==========
 
-The following parameters are available in the platform configuration file. Set each to the expected value for your cluster — the test compares the actual system state against these values.
+The following parameters are available in the platform configuration file. Set each to the expected value for your cluster — the test compares the actual system state against these values. The table lists the ``_example_*`` strings shipped beside ``<changeme>``, not live defaults. Delete ``nic_pcie_speed`` and ``nic_pcie_width`` when the NIC is attached over UALink rather than PCIe.
 
 .. list-table::
    :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
-     - Default values
+     - Example values
      - Description
    * - ``os_version``
      - Ubuntu 24.04.1 LTS
@@ -67,7 +93,7 @@ The following parameters are available in the platform configuration file. Set e
      - ``6.8.0-60-generic``
      - Version of kernel
    * - ``rocm_version``
-     - ``<cluster-specific>``
+     - ``7.0.2``
      - ROCm version installed on the cluster nodes
    * - ``bios_version``
      - ``20171212``
@@ -87,6 +113,12 @@ The following parameters are available in the platform configuration file. Set e
    * - ``gpu_pcie_width``
      - 16
      - Width of PCIe
+   * - ``nic_pcie_speed``
+     - 32
+     - Backend NIC PCIe speed in GT/s. Omit this key when the NIC uses UALink.
+   * - ``nic_pcie_width``
+     - 16
+     - Backend NIC PCIe width. Omit this key when the NIC uses UALink.
    * - ``CP_MEC1``
      - 32945
      - Compute Pipeline MicroEngine Controller 1 firmware

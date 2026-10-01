@@ -397,6 +397,22 @@ def resolve_cluster_config_placeholders(cluster_dict):
     return resolved_cluster
 
 
+def omit_doc_config_keys(config):
+    """Drop documentation keys from a config tree.
+
+    Sample configs keep the live value in the real field and the previous
+    cluster-specific string in a sibling whose name starts with ``_``
+    (``_example_*``, ``_comment*``). Those keys are not settings.
+    """
+    if isinstance(config, dict):
+        return {
+            key: omit_doc_config_keys(value) for key, value in config.items() if not str(key).startswith('_')
+        }
+    if isinstance(config, list):
+        return [omit_doc_config_keys(item) for item in config]
+    return config
+
+
 def resolve_test_config_placeholders(config_dict, cluster_dict):
     """
     Resolve path placeholders in test configuration dictionary.
