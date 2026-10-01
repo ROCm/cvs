@@ -405,9 +405,7 @@ def omit_doc_config_keys(config):
     (``_example_*``, ``_comment*``). Those keys are not settings.
     """
     if isinstance(config, dict):
-        return {
-            key: omit_doc_config_keys(value) for key, value in config.items() if not str(key).startswith('_')
-        }
+        return {key: omit_doc_config_keys(value) for key, value in config.items() if not str(key).startswith('_')}
     if isinstance(config, list):
         return [omit_doc_config_keys(item) for item in config]
     return config
