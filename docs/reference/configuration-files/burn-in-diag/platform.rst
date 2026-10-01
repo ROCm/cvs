@@ -40,8 +40,10 @@ See :doc:`/how-to/test-suites/burn-in-diag/platform` for more information on run
           "_example_gpu_pcie_width": "16",
           "nic_pcie_speed": "<changeme>",
           "_example_nic_pcie_speed": "32",
+          "_comment_nic_pcie_speed": "If the NIC is connected via UALink (for example, MI450) delete nic_pcie_speed. Otherwise replace <changeme> with the NIC PCIe speed.",
           "nic_pcie_width": "<changeme>",
           "_example_nic_pcie_width": "16",
+          "_comment_nic_pcie_width": "If the NIC is connected via UALink (for example, MI450) delete nic_pcie_width. Otherwise replace <changeme> with the NIC PCIe width.",
           "fw_dict":
           {
               "CP_MEC1": "<changeme>",
