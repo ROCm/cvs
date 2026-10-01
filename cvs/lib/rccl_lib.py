@@ -11,7 +11,7 @@ import re
 import json
 import shlex
 import tempfile
-from typing import List
+import uuid
 from pathlib import Path
 
 # Third party libraries
@@ -156,6 +156,9 @@ class RcclVerifier:
             last_msg_size = act_dict['size']
 
     def check(self):
+        if not self.results:
+            fail_test(f'RCCL test {self.test_name} produced no result rows')
+            return
         if re.search('True', self.cvs_params.get('verify_bus_bw', 'False'), re.I) and self.expected:
             self.check_bus_bw()
         if re.search('True', self.cvs_params.get('verify_bw_dip', 'True'), re.I):
@@ -199,6 +202,30 @@ def convert_to_graph_dict(result_dict):
     return graph_dict
 
 
+DEFAULT_COLLECTIVES = [
+    'all_reduce_perf',
+    'all_gather_perf',
+    'scatter_perf',
+    'gather_perf',
+    'reduce_scatter_perf',
+    'sendrecv_perf',
+    'alltoall_perf',
+    'alltoallv_perf',
+    'broadcast_perf',
+]
+
+
+NIC_TYPES = ('ainic', 'thor', 'connectx')
+
+
+def configured_collectives(config):
+    """Read the collective list, accepting the older top-level config key."""
+    test_params_collective = config.get('rccl_test_params', {}).get('rccl_collective')
+    if test_params_collective is not None:
+        return test_params_collective
+    return config.get('rccl_collective', DEFAULT_COLLECTIVES)
+
+
 class OpenMPI:
     """Open MPI configuration consumed by rccl-tests during MPI_Init."""
 
@@ -215,17 +242,17 @@ class OpenMPI:
         path = os.path.normpath(str(mpi_dir or '/usr/local'))
         return os.path.dirname(path) if os.path.basename(path) == 'bin' else path
 
-    def prepare(self, phdl, shdl, head_node):
+    def prepare(self, orch, head_node):
         if self.prepared:
             return self
-        self.pml, self.ucx_env = self._determine_pml_config(phdl, shdl, head_node)
+        self.pml, self.ucx_env = self._determine_pml_config(orch, head_node)
         self.prepared = True
         return self
 
-    def _ucx_available(self, shdl, head_node):
+    def _ucx_available(self, orch, head_node):
         check_ucx_cmd = f'{self.prefix}/bin/ompi_info | grep "pml: ucx" | wc -l'
         try:
-            ucx_check_out = shdl.exec(check_ucx_cmd)
+            ucx_check_out = orch.exec_on_head(check_ucx_cmd)
             ucx_available = int(ucx_check_out[head_node].strip()) > 0
             log.info("UCX available in OpenMPI build" if ucx_available else "UCX not available in OpenMPI build")
             return ucx_available
@@ -235,7 +262,7 @@ class OpenMPI:
         libmpi_path = f'{self.prefix}/lib/libmpi.so'
         check_ldd_cmd = f'ldd {libmpi_path} | grep ucx | wc -l'
         try:
-            ldd_out = shdl.exec(check_ldd_cmd)
+            ldd_out = orch.exec_on_head(check_ldd_cmd)
             ucx_available = int(ldd_out[head_node].strip()) > 0
             log.info("UCX linked in libmpi.so" if ucx_available else "UCX not linked in libmpi.so")
             return ucx_available
@@ -243,7 +270,7 @@ class OpenMPI:
             log.warning(f"ldd check failed: {e}; assuming UCX is not available")
             return False
 
-    def _determine_pml_config(self, phdl, shdl, head_node):
+    def _determine_pml_config(self, orch, head_node):
         """Choose PML from mpi_params.mpi_pml, falling back to ob1 if UCX is unusable."""
         mpi_pml = str(self.mpi_params.get('mpi_pml', 'auto')).lower()
         ucx_tls = self.mpi_params.get('ucx_tls', 'rc,self,sm,tcp') or 'rc,self,sm,tcp'
@@ -257,7 +284,7 @@ class OpenMPI:
             return 'ob1', {}
 
         log.info(f'mpi_pml val in config is {mpi_pml}')
-        if not self._ucx_available(shdl, head_node):
+        if not self._ucx_available(orch, head_node):
             log.warning('UCX not detected — falling back to pml ob1')
             log.info('PML: ob1  UCX params: ')
             return 'ob1', {}
@@ -267,7 +294,7 @@ class OpenMPI:
         if not net_dev_list:
             log.warning("'net_dev_list' missing or empty — auto-detecting from backend NICs...")
             try:
-                net_dev_list = linux_utils.get_ucx_net_devices(phdl)
+                net_dev_list = linux_utils.get_ucx_net_devices(orch)
             except ValueError as exc:
                 log.error(f'UCX net device auto-detection failed: {exc}')
                 log.warning('Falling back to pml ob1 due to auto-detection failure')
@@ -298,11 +325,11 @@ class OpenMPI:
 
 
 class MpiRun:
-    """Launch rccl-tests through Open MPI's mpirun on bare metal."""
+    """Launch rccl-tests through Open MPI's mpirun in the orchestrator environment."""
 
-    def __init__(self, openmpi, shdl, cluster_nodes, vpc_nodes, global_ranks):
+    def __init__(self, openmpi, orch, cluster_nodes, vpc_nodes, global_ranks):
         self.openmpi = openmpi
-        self.shdl = shdl
+        self.orch = orch
         self.cluster_nodes = cluster_nodes
         self.vpc_nodes = vpc_nodes
         self.global_ranks = global_ranks
@@ -319,12 +346,12 @@ class MpiRun:
         slots = self.topology()['ranksPerNode']
         host_file = ''.join(f'{node} slots={slots}\n' for node in self.vpc_nodes)
         self.hosts_file_path = f'/tmp/rccl_hosts_file_{os.environ.get("USER", "cvs")}.txt'
-        self.shdl.exec(f'rm -f {self.hosts_file_path}')
-        self.shdl.exec(f'echo "{host_file}" > {self.hosts_file_path}')
+        self.orch.exec_on_head(f'rm -f {self.hosts_file_path}')
+        self.orch.exec_on_head(f'echo "{host_file}" > {self.hosts_file_path}')
         return self
 
     def cleanup(self):
-        """No per-node session directory to remove; mpirun creates its own."""
+        """MpiRun has no launcher-owned process or session state to remove."""
 
     def command(self, binary_cmd, env_file=None, env_overrides=None):
         self.prepare()
@@ -343,6 +370,14 @@ class MpiRun:
             f'--hostfile {self.hosts_file_path}',
             '--bind-to numa',
         ]
+        if self.orch.ssh_port != 22:
+            mpirun_args.extend(
+                [
+                    '--mca plm_rsh_agent ssh',
+                    f'--mca plm_rsh_args "-p {self.orch.ssh_port} '
+                    '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"',
+                ]
+            )
         mpirun_args.extend(f'-x {key}={value}' for key, value in mpi_init['env'].items())
         mpirun_args.extend(f'--mca {key} {value}' for key, value in mpi_init['mca'].items())
         mpirun_args.append(rank_cmd)
@@ -352,9 +387,9 @@ class MpiRun:
 class Srun:
     """Launch a nested PMIx step through Slurm srun or Spur's spur run."""
 
-    def __init__(self, openmpi, phdl, cluster_nodes, no_of_nodes, local_ranks, global_ranks):
+    def __init__(self, openmpi, orch, cluster_nodes, no_of_nodes, local_ranks, global_ranks):
         self.openmpi = openmpi
-        self.phdl = phdl
+        self.orch = orch
         self.cluster_nodes = cluster_nodes
         self.no_of_nodes = no_of_nodes
         self.local_ranks = local_ranks
@@ -377,7 +412,7 @@ class Srun:
             return self
         parent = f'/tmp/{os.environ.get("USER", "cvs")}'
         session_dir = f'{parent}/ompi-{os.environ.get("SLURM_JOB_ID") or f"cvs-{os.getpid()}"}'
-        self.phdl.exec(
+        self.orch.exec(
             f'mkdir -p -m 700 {shlex.quote(parent)} 2>/dev/null || true; '
             f'mkdir -p {shlex.quote(session_dir)} && chmod 700 {shlex.quote(session_dir)}'
         )
@@ -389,7 +424,7 @@ class Srun:
         if not self.session_dir:
             return
         try:
-            self.phdl.exec(f'rm -rf {shlex.quote(self.session_dir)}', timeout=30)
+            self.orch.exec(f'rm -rf {shlex.quote(self.session_dir)}', timeout=30)
         except Exception as exc:
             log.warning(f'Session dir cleanup for {self.session_dir} raised {exc!r} (continuing)')
         self.session_dir = ''
@@ -478,8 +513,7 @@ class RcclJob:
 
     def __init__(
         self,
-        phdl,
-        shdl,
+        orch,
         test_name,
         env_file,
         mpi_params,
@@ -488,12 +522,12 @@ class RcclJob:
         cluster_node_list,
         vpc_node_list,
         env_overrides=None,
+        expected_results=None,
     ):
         if not cluster_node_list:
             raise ValueError('cluster_node_list must contain at least one node')
 
-        self.phdl = phdl
-        self.shdl = shdl
+        self.orch = orch
         self.test_name = test_name
         self.env_file = env_file
         self.mpi_params = mpi_params
@@ -502,11 +536,12 @@ class RcclJob:
         self.cluster_node_list = cluster_node_list
         self.vpc_node_list = vpc_node_list
         self.env_overrides = env_overrides
+        self.expected_results = cvs_params.get('results', {}) if expected_results is None else expected_results
 
         self.no_of_nodes = int(mpi_params.get('no_of_nodes', 2))
         self.no_of_local_ranks = int(mpi_params.get('no_of_local_ranks', 8))
         self.no_of_global_ranks = self.no_of_nodes * self.no_of_local_ranks
-        self.head_node = cluster_node_list[0]
+        self.head_node = getattr(orch, 'head_node', None) or cluster_node_list[0]
         self.rccl_tests_dir = rccl_test_params.get('rccl_tests_dir', '/usr/local/rccl-tests/build')
         self.cvs_exec_timeout = int(cvs_params.get('cvs_exec_timeout', 2400))
         self.managed = is_managed_compute()
@@ -514,7 +549,7 @@ class RcclJob:
         if self.managed:
             self.launcher = Srun(
                 self.openmpi,
-                phdl,
+                orch,
                 cluster_node_list,
                 self.no_of_nodes,
                 self.no_of_local_ranks,
@@ -523,7 +558,7 @@ class RcclJob:
         else:
             self.launcher = MpiRun(
                 self.openmpi,
-                shdl,
+                orch,
                 cluster_node_list,
                 vpc_node_list,
                 self.no_of_global_ranks,
@@ -539,8 +574,7 @@ class RcclJob:
     @classmethod
     def from_config(
         cls,
-        phdl,
-        shdl,
+        orch,
         test_name,
         config_dict,
         cluster_node_list,
@@ -550,8 +584,7 @@ class RcclJob:
     ):
         """Build a job directly from the grouped RCCL configuration."""
         return cls(
-            phdl=phdl,
-            shdl=shdl,
+            orch=orch,
             test_name=test_name,
             env_file=config_dict.get('env_source_script', '/dev/null'),
             mpi_params=config_dict['mpi_params'],
@@ -560,6 +593,7 @@ class RcclJob:
             cluster_node_list=cluster_node_list,
             vpc_node_list=vpc_node_list,
             env_overrides=env_overrides,
+            expected_results=config_dict.get('results'),
         )
 
     def prepare(self):
@@ -568,16 +602,62 @@ class RcclJob:
             return self
 
         self._require_spur_job_step()
+        self._prepare_result_directory()
         log.info(f'Starting RCCL Test ..........................................{self.test_name}')
         log.info(f'%% VPC Node IPs {self.vpc_node_list}')
 
-        self.openmpi.prepare(self.phdl, self.shdl, self.head_node)
+        self.openmpi.prepare(self.orch, self.head_node)
         self.launcher.prepare()
 
         binary_path = f'{self.rccl_tests_dir}/{self.test_name}'
         self.output_flag = self._detect_output_flag(binary_path)
         self.prepared = True
         return self
+
+    @property
+    def result_file(self):
+        """Result path shared by the collective, combined, and aggregated files."""
+        configured = self.cvs_params.get('rccl_result_file')
+        if configured:
+            return str(configured)
+        from cvs.core.run_layout import RunLayout
+
+        return str(RunLayout.get().run_dir / 'rccl_result_file.json')
+
+    def _prepare_result_directory(self):
+        """Require a result directory CVS can create and read back via download_from_head."""
+        directory = Path(self.result_file).parent
+        token = uuid.uuid4().hex
+        sentinel = directory / f'.cvs-rccl-{token}'
+        cmd = (
+            f'mkdir -p -- {shlex.quote(str(directory))}'
+            f' && (umask 077; printf %s {token} > {shlex.quote(str(sentinel))})'
+        )
+        try:
+            result = self.orch.exec_on_head(cmd, timeout=30, detailed=True)
+            output, exit_code = self._result_payload((result or {}).get(self.head_node))
+            if exit_code != 0:
+                raise OSError(f'head-node directory check failed (exit {exit_code}): {output}')
+
+            # download_from_head suffixes the local path per host; read back the actual path it returns.
+            with tempfile.TemporaryDirectory(prefix='cvs-rccl-sentinel-') as tmpdir:
+                local_prefix = os.path.join(tmpdir, sentinel.name)
+                paths = self.orch.download_from_head(str(sentinel), local_prefix)
+                local_sentinel = Path(paths[self.head_node])
+                if local_sentinel.read_text(encoding='utf-8') != token:
+                    raise OSError('head-node sentinel is not visible through download_from_head')
+        except Exception as exc:
+            raise RuntimeError(
+                f'Cannot use RCCL result directory {directory} on {self.head_node}: {exc}. '
+                'Set --workspace or CVS_WORKSPACE to writable shared storage and use '
+                'cvs_params.rccl_result_file="{run_dir}/rccl_result_file.json". '
+                'With the container backend, bind-mount the result directory at the same path.'
+            ) from exc
+        finally:
+            try:
+                self.orch.exec_on_head(f'rm -f -- {shlex.quote(str(sentinel))}', timeout=30)
+            except Exception as exc:
+                log.warning('Could not remove RCCL sentinel %s on %s: %s', sentinel, self.head_node, exc)
 
     @staticmethod
     def _require_spur_job_step():
@@ -614,7 +694,7 @@ class RcclJob:
         log.info('%%%%%%%%%%%%%%%%')
         error_count_before = len(globals.error_list)
         try:
-            out_dict = self.shdl.exec(cmd, timeout=self.cvs_exec_timeout, detailed=True)
+            out_dict = self.orch.exec_on_head(cmd, timeout=self.cvs_exec_timeout, detailed=True)
             if not out_dict or self.head_node not in out_dict:
                 return self._fail(reason, f'RCCL launch produced no result from {self.head_node}: {cmd}')
             output, exit_code = self._result_payload(out_dict[self.head_node])
@@ -638,7 +718,7 @@ class RcclJob:
 
         Pssh.exec()'s timeout is a client-side SSH read timeout. It does not
         signal remote ranks, so a timed-out launch can leave mpirun and the
-        rccl-tests binary holding GPUs on every host phdl can reach. Cleanup
+        rccl-tests binary holding GPUs on every node the orchestrator can reach. Cleanup
         runs on job failure so the next pairwise/incremental sub-test does not
         oversubscribe those GPUs. Patterns cover both MpiRun leftovers and the
         job binary; they must not match srun or spur.
@@ -646,7 +726,7 @@ class RcclJob:
         log.warning(f'Cleaning up stale RCCL/mpirun processes on all reachable hosts ({reason})')
         for pattern in ('prterun', 'mpirun.*rccl_hosts_file', self.test_name):
             try:
-                self.phdl.exec(f"pkill -9 -f '{pattern}' || true", timeout=30)
+                self.orch.exec(f"pkill -9 -f '{pattern}' || true", timeout=30)
             except Exception as kill_exc:
                 log.warning(f'Cleanup pkill for pattern {pattern!r} raised {kill_exc!r} (continuing)')
         self.launcher.cleanup()
@@ -666,7 +746,7 @@ class RcclJob:
         """Return -X if the binary supports --rccl_output_file, else legacy -x."""
         try:
             check_new_cmd = f'strings {binary_path} | grep -q "\\-\\-rccl_output_file"'
-            result = self.shdl.exec(f'{check_new_cmd} && echo "NEW" || echo "OLD"')
+            result = self.orch.exec_on_head(f'{check_new_cmd} && echo "NEW" || echo "OLD"')
             output = result[self.head_node].strip()
             if output == "NEW":
                 log.debug(f"Detected new RCCL test format: using -X/--rccl_output_file for {binary_path}")
@@ -679,11 +759,13 @@ class RcclJob:
 
     def read_results(self, result_file, label=None):
         log_label = label or self.test_name
+        # HTTP transfers copy locally because agents rely on shared storage;
+        # container results must also be visible at this path on the host.
         with tempfile.TemporaryDirectory(prefix='cvs_rccl_dl_') as tmpdir:
             local_prefix = os.path.join(tmpdir, os.path.basename(result_file))
-            paths = self.shdl.download_file(result_file, local_prefix)
+            paths = self.orch.download_from_head(result_file, local_prefix)
             local_path = paths[self.head_node]
-            log.info('SFTP download succeeded for %s <- %s:%s', log_label, self.head_node, result_file)
+            log.info('Result download succeeded for %s <- %s:%s', log_label, self.head_node, result_file)
             with open(local_path, 'r', encoding='utf-8') as f:
                 raw_output = f.read()
             try:
@@ -718,19 +800,16 @@ class RcclJob:
                 json.dump(payload, tf, indent=2)
                 tmp_path = tf.name
             try:
-                self.shdl.upload_file(tmp_path, result_file)
-                log.info('SFTP upload succeeded for %s -> %s:%s', label, self.head_node, result_file)
+                # HTTP copies require the same shared path as the ranks; host
+                # transfers reach containers only through a bind mount.
+                self.orch.upload_to_head(tmp_path, result_file)
+                log.info('Result upload succeeded for %s -> %s:%s', label, self.head_node, result_file)
                 return True
-            except IOError as e:
-                log.error('SFTP upload failed for %s -> %s:%s: %r', label, self.head_node, result_file, e)
-                return False
             except Exception as e:
-                log.error(
-                    'SFTP upload unexpected error for %s -> %s:%s: %r',
-                    label,
-                    self.head_node,
-                    result_file,
-                    e,
+                fail_test(
+                    f'Failed to save RCCL results for {label} to {self.head_node}:{result_file}: {e}. '
+                    'Check result-directory permissions and shared storage (--workspace or CVS_WORKSPACE); '
+                    'containers require a bind mount at the same path.'
                 )
                 return False
         finally:
@@ -741,7 +820,7 @@ class RcclJob:
                     log.warning('Failed to remove temp file %s: %r', tmp_path, e)
 
     def collect_gpu_info(self):
-        smi_out_dict = self.shdl.exec('rocm-smi -a | head -30')
+        smi_out_dict = self.orch.exec_on_head('rocm-smi -a | head -30')
         get_model_from_rocm_smi_output(smi_out_dict[self.head_node])
 
     def expected_topology(self, gpus_per_rank):
@@ -843,7 +922,7 @@ class RcclJob:
         self.topology_checks = []
         params = self.rccl_test_params
         threads = int(params.get('threads_per_gpu', 1))
-        result_file = self.cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
+        result_file = self.result_file
         binary_cmd = (
             f'{self.rccl_tests_dir}/{self.test_name} '
             f'-b {params.get("start_msg_size", "1024")} '
@@ -854,7 +933,7 @@ class RcclJob:
             f'-n {params.get("no_of_iterations", 20)} '
             f'-N {params.get("no_of_cycles", 1)} '
             f'-c {params.get("check_iteration_count", 1)}{self.test_flags()} '
-            f'-Z json {self.output_flag} {result_file}'
+            f'-Z json {self.output_flag} {shlex.quote(result_file)}'
         )
         result_out = []
         try:
@@ -866,8 +945,7 @@ class RcclJob:
         if not result_out:
             return []
         self.collect_gpu_info()
-        expected = self.cvs_params.get('results', {})
-        test_expected = expected.get(self.test_name) if expected else None
+        test_expected = self._expected_results(['float'])
         self._verify_results(result_out, test_expected)
         return result_out
 
@@ -876,7 +954,7 @@ class RcclJob:
         self.topology_checks = []
         params = self.rccl_test_params
         data_types = params.get('data_types', ['float'])
-        result_file = self.cvs_params.get('rccl_result_file', '/tmp/rccl_result_output.json')
+        result_file = self.result_file
         base_path = Path(result_file)
         raw_results = []
         validated_results = []
@@ -902,7 +980,7 @@ class RcclJob:
         aggregated = self._aggregate_perf_results(validated_results, base_path)
         self.collect_gpu_info()
         verification_results = self._verification_results(aggregated, raw_results)
-        expected = self._perf_expected_results(data_types)
+        expected = self._expected_results(data_types)
         self._verify_results(verification_results, expected)
         return raw_results
 
@@ -922,7 +1000,7 @@ class RcclJob:
             f'-d {dtype} '
             f'-n {params.get("no_of_iterations", 20)} '
             f'-N {params.get("no_of_cycles", 1)}{self.test_flags()} '
-            f'-Z json {self.output_flag} {result_file}'
+            f'-Z json {self.output_flag} {shlex.quote(result_file)}'
         )
         if self.execute(binary_cmd, f'exception in rccl_perf ({dtype})') is None:
             self._check_reported_topology([], label, gpus_per_rank)
@@ -994,7 +1072,8 @@ class RcclJob:
         log.info(f'Converted {len(results)} aggregated results for verification')
         return results
 
-    def _perf_expected_results(self, data_types):
+    def _expected_results(self, data_types):
+        """Resolve NIC/rank references or normalize legacy collective thresholds."""
         nic_model = self.cvs_params.get('nic_model', 'ainic')
         if re.search('ainic|pensando|amd', nic_model, re.I):
             nic_type = 'ainic'
@@ -1008,17 +1087,21 @@ class RcclJob:
 
         result_key = f'{self.test_name}-{"_".join(data_types)}-{self.no_of_global_ranks}'
         log.info(f'Looking up results with key: {result_key} in nic_type: {nic_type}')
-        expected = self.cvs_params.get('results', {})
+        expected = self.expected_results
         nic_results = expected.get(nic_type, {}) if isinstance(expected, dict) else {}
         if result_key in nic_results:
             log.info(f'Found expected results: {nic_type}/{result_key}')
-        return nic_results.get(result_key)
+            return nic_results[result_key]
+        test_results = expected.get(self.test_name) if isinstance(expected, dict) else None
+        if test_results and 'bus_bw' in test_results:
+            return {size: {'bus_bw': bandwidth} for size, bandwidth in test_results['bus_bw'].items()}
+        return test_results
 
     def _verify_results(self, results, expected):
         RcclVerifier(self.test_name, results, expected, self.cvs_params).check()
 
     @staticmethod
-    def aggregate_results(validated_results: List[RcclTests]) -> List[RcclTestsAggregated]:
+    def aggregate_results(validated_results):
         """Aggregate rccl-test rows into mean/std per (name, size, type, inPlace)."""
         if not validated_results:
             raise ValueError("validated_results list cannot be empty")

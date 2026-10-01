@@ -11,10 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.
+- RCCL result files default to the run directory. Every run verifies shared result-path access via a sentinel round-trip through `download_from_head` before launching, and result-save failures fail the test. Container runs require the result directory mounted at the same host/container path.
+- `Orchestrator` now declares `exec_on_host`, `upload_to_head`, and `download_from_head` as required methods. RCCL uses these interfaces for host diagnostics and result transfers instead of reaching through internal handles. Custom orchestrator subclasses must implement all three methods.
 - Node Smoke Tier 1, Tier 2, and Tier 3 now run by default. Set `node_smoke_tier1.connectivity_mode` or `node_smoke_tier3.connectivity_mode` to `"skip"` to disable a tier, or set `node_smoke_tier1.tier2_perf` to `false` to disable Tier 2 only. Previously all three were opt-in (`connectivity_mode` defaulted to `"skip"` and `tier2_perf` defaulted to `false`).
 
 ### Fixed
 
+- RCCL regression reads configured collectives from `rccl_test_params`, with a fallback for older configurations. Both perf and regression consult top-level `results`, accepting NIC/data-type/rank references and legacy flat bandwidth thresholds.
+- RCCL `mpirun` uses the orchestrator's non-default SSH port for container launches.
+- RCCL pairwise/incremental runs no longer inherit the full cluster's legacy flat bandwidth thresholds; only NIC/rank-keyed thresholds (already scoped to node count) carry over to the pairwise sub-cluster run.
+- `RcclJob` no longer requires `cluster_node_list` to start with the orchestrator's head node; the orchestrator's own head node is used regardless of list order.
+- RCCL result-directory sentinel check reads the per-host path `download_from_head` returns instead of the unsuffixed path passed in, so the probe no longer rejects a valid shared/bind-mounted directory before every run.
 - Preflight HTML rows for Node Smoke pass or fail only when Primus reported that check. A node-level result no longer marks unreported Tier 1 GPU slots or Tier 3 collector names as passed.
 - A Node Smoke tier failure stays in the pytest-html report when the per-check rows do not already show it.
 - Preflight failure messages name the hosts that failed. Config sections such as `vpod_membership` and `setup_results` are no longer reported as node names.

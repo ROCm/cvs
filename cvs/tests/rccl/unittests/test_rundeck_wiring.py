@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from cvs.lib import globals
+from cvs.lib import globals, rccl_lib
 from cvs.lib.report.profiles.hooks.rccl_run_card import rccl_run_card_display
 from cvs.tests.rccl import conftest, rccl_pairwise, rccl_perf, rccl_regression
 
@@ -34,15 +34,22 @@ class TestRundeckWiring(unittest.TestCase):
                 self.assertEqual(store["all_reduce_perf"][1024]["bus_bw"], 350.0)
                 self.assertEqual(html.build_rccl_amcharts_graph.call_args.args[2], store)
 
-    def test_regression_collectives_use_top_level_or_suite_default(self):
-        for top_level, expected in ((None, ["all_reduce_perf"]), (["broadcast_perf"], ["broadcast_perf"])):
-            with self.subTest(top_level=top_level), tempfile.TemporaryDirectory() as temp_dir:
-                rccl = {
+    def test_regression_collectives_use_rccl_test_params_or_legacy_fallback(self):
+        cases = (
+            ({}, rccl_lib.DEFAULT_COLLECTIVES),
+            ({"rccl_collective": ["broadcast_perf"]}, ["broadcast_perf"]),
+            ({"rccl_test_params": {"rccl_collective": ["all_gather_perf"]}}, ["all_gather_perf"]),
+            (
+                {
                     "rccl_test_params": {"rccl_collective": ["all_gather_perf"]},
-                    "regression": {"NCCL_ALGO": ["Ring"]},
-                }
-                if top_level is not None:
-                    rccl["rccl_collective"] = top_level
+                    "rccl_collective": ["broadcast_perf"],
+                },
+                ["all_gather_perf"],
+            ),
+        )
+        for overrides, expected in cases:
+            with self.subTest(overrides=overrides), tempfile.TemporaryDirectory() as temp_dir:
+                rccl = {"regression": {"NCCL_ALGO": ["Ring"]}, **overrides}
                 config_path = Path(temp_dir) / "rccl.json"
                 config_path.write_text(json.dumps({"rccl": rccl}), encoding="utf-8")
                 metafunc = SimpleNamespace(
@@ -71,8 +78,9 @@ class TestRundeckWiring(unittest.TestCase):
         ):
             job.return_value.run_perf.return_value = self.raw
             variant = conftest.variant_config.__wrapped__(request)
-            rccl_pairwise.test_rccl_pairwise(None, None, cluster, config, ["v0", "v1", "v2"])
-            rccl_pairwise.test_rccl_incremental(None, None, cluster, config, ["v0", "v1", "v2"])
+            node_list = list(cluster["node_dict"])
+            rccl_pairwise.test_rccl_pairwise(None, node_list, config, ["v0", "v1", "v2"])
+            rccl_pairwise.test_rccl_incremental(None, node_list, config, ["v0", "v1", "v2"])
             store = {}
             rccl_pairwise.test_gen_graph(store)
             self.assertEqual(job.call_count, 5)
@@ -91,6 +99,25 @@ class TestRundeckWiring(unittest.TestCase):
             self.assertEqual(rows["MPI ranks"], "8, 16, 24")
             self.assertEqual(rows["Collectives"], "all_reduce_perf")
         self.assertEqual(config["mpi_params"]["no_of_nodes"], "99")
+
+    def test_pairwise_run_strips_legacy_flat_thresholds_but_keeps_nic_keyed(self):
+        config = {
+            "mpi_params": {"no_of_nodes": "99", "no_of_local_ranks": "8"},
+            "cvs_params": {},
+            "results": {
+                "all_reduce_perf": {"bus_bw": {"1024": "100"}},
+                "ainic": {"all_reduce_perf-float-16": {"1024": {"bus_bw": "100"}}},
+            },
+        }
+        with (
+            patch.object(rccl_pairwise, "get_passwordless_sudo_status", return_value={}),
+            patch.object(rccl_pairwise.rccl_lib.RcclJob, "from_config") as from_config,
+        ):
+            from_config.return_value.run_perf.return_value = self.raw
+            rccl_pairwise.run_pairwise_rccl(None, ["v0", "v1"], ["n0", "n1"], config, "Phase1 n0 <-> n1")
+        passed_config = from_config.call_args.args[2]
+        self.assertEqual(passed_config["results"], {"ainic": config["results"]["ainic"]})
+        self.assertEqual(config["results"]["all_reduce_perf"], {"bus_bw": {"1024": "100"}})
 
     def test_pairwise_report_failure_does_not_repeat_previous_test_failures(self):
         with patch.object(rccl_pairwise, "publish_graph", side_effect=ValueError("invalid report data")):
