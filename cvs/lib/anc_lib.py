@@ -533,24 +533,34 @@ def _fail_unreachable_nodes(cluster_dict, out_dict, action):
 # the token MUST be checked before the extension.
 PackageFlavour = namedtuple("PackageFlavour", ["pkg_type", "is_direct"])
 
+# The ANC version grammar, defined once and reused by every extractor so the
+# "what counts as a version" rule cannot drift between them.
+#   _VERSION_BODY: a dotted-numeric base (>=2 components, so a lone integer is
+#     not a version) with an OPTIONAL lowercase ``-rc.<n>`` suffix. Lowercase is
+#     deliberate -- an IGNORECASE match would accept ``1.7.0-RC.2`` that the
+#     case-sensitive extractors then read as plain ``1.7.0``, letting a lower RC
+#     silently satisfy the guard.
+#   _VERSION_END: a boundary that forbids the match from stopping in the middle
+#     of a longer token. Without it an ATTACHED malformed rc silently truncates
+#     (``1.7.0-rc.bad`` -> ``1.7.0``; ``1.7.0-rc.1foo`` -> ``1.7.0-rc.1``;
+#     ``1.7.0rc1`` -> ``1.7.0``). It rejects a trailing ``.<digit>`` (mid-base),
+#     any alnum (mid-token junk), and a bare ``-rc`` (a malformed rc). A package
+#     revision like the ``-1`` in ``...-1.7.0-rc.1-1.x86_64.rpm`` is still fine:
+#     ``-1`` begins with ``-`` then a digit, which the boundary allows.
+_VERSION_BODY = r"\d+\.\d+(?:\.\d+)*(?:-rc\.\d+)?"
+_VERSION_BODY_GROUPED = r"(\d+\.\d+(?:\.\d+)*)(?:-rc\.(\d+))?"
+_VERSION_END = r"(?!\.\d)(?![0-9A-Za-z])(?!-rc)"
+
 # Extract the semantic version (``1.4.9`` / ``1.5.5`` / ``1.7.0-rc.1``) from a
-# release URL. The first dotted-numeric run in the filename is the version in
-# every ANC naming scheme, legacy and direct alike ("x86_64"/"x64" have no
-# dot-separated triple, so they never match first). The optional ``-rc.<n>``
-# suffix is captured so pre-release archives compare correctly (see
-# compare_anc_versions); the trailing package revision (e.g. the ``-1`` in
-# ``...-1.7.0-rc.1-1.x86_64.rpm``) is deliberately not part of the version.
-_URL_VERSION_RE = re.compile(r"\d+\.\d+(?:\.\d+)*(?:-rc\.\d+)?")
+# release URL. The first well-formed dotted-numeric run in the filename is the
+# version in every ANC naming scheme, legacy and direct alike ("x86_64"/"x64"
+# have no dot-separated triple, so they never match first).
+_URL_VERSION_RE = re.compile(_VERSION_BODY + _VERSION_END)
 
 # Match a dotted-numeric release with its optional ``-rc.<n>`` suffix as ONE
-# token (groups: 1 = base, 2 = rc number). Base requires at least two
-# dot-separated components, so a lone integer is not a version. The rc is part
-# of the same token, so it is never lost when the version is embedded in text.
-# Case-SENSITIVE lowercase ``-rc.`` on purpose: the ANC grammar is lowercase and
-# the URL / --content-list / --version extractors are all case-sensitive, so an
-# IGNORECASE strict gate would accept ``1.7.0-RC.2`` that those extractors then
-# read as plain ``1.7.0`` -- letting a lower RC silently satisfy the guard.
-_VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)(?:-rc\.(\d+))?")
+# token (groups: 1 = base, 2 = rc number). The rc is part of the same token, so
+# it is never lost when the version is embedded in text.
+_VERSION_RE = re.compile(_VERSION_BODY_GROUPED + _VERSION_END)
 
 
 def is_strict_anc_version(version):
@@ -891,7 +901,7 @@ def resolve_anc_paths_from_config(config_dict):
 # --content-list has no version column and no anc-release-* plugin at all, so
 # this pattern deliberately never matches there (legacy uses --version instead).
 ANC_RELEASE_PLUGIN_RE = re.compile(
-    r"^\s*anc-release-\S+\s+(\d+\.\d+(?:\.\d+)*(?:-rc\.\d+)?)\b",
+    r"^\s*anc-release-\S+\s+(" + _VERSION_BODY + r")" + _VERSION_END,
     re.MULTILINE,
 )
 
@@ -943,7 +953,7 @@ def _parse_version_from_version_output(output):
     release. No ``Release Version:`` line -> None (absent / command failure).
     '''
     match = re.search(
-        r"Release\s+Version:\s*(\d+\.\d+(?:\.\d+)*(?:-rc\.\d+)?)",
+        r"Release\s+Version:\s*(" + _VERSION_BODY + r")" + _VERSION_END,
         output or "",
     )
     return match.group(1) if match else None
@@ -1875,15 +1885,23 @@ def _is_within_directory(directory, target):
 
 def _safe_tar_extract(tf, dest_dir):
     '''
-    Extract ``tf`` into ``dest_dir`` rejecting any member that would escape it.
+    Extract ``tf`` into ``dest_dir`` rejecting any member that would escape it
+    or create a special file.
 
     Used as the fallback on interpreters without ``extractall(filter="data")``
-    (added in 3.12 / backported to 3.9.17+, 3.10.12+, 3.11.4+). Each member's
-    final path is validated to stay within ``dest_dir`` -- an absolute path, a
-    ``..`` traversal, or an unsafe link target raises instead of writing outside
-    the destination (the ``filter="data"`` path does the same natively).
+    (added in 3.12 / backported to 3.9.17+, 3.10.12+, 3.11.4+). For parity with
+    ``filter="data"`` each member is validated before extraction:
+      - its final path must stay within ``dest_dir`` (no absolute path, no
+        ``..`` traversal, no escaping link target), and
+      - it must be a regular file, directory, or link -- device/FIFO members are
+        rejected so a node-controlled archive cannot drop a block/char device or
+        a FIFO onto the controller (a FIFO could later block report archiving).
+    Any violation raises ``tarfile.TarError`` (caught by the caller) instead of
+    extracting.
     '''
     for member in tf.getmembers():
+        if member.isdev():  # char device, block device, or FIFO
+            raise tarfile.TarError(f"unsafe special-file member in tar archive: {member.name!r}")
         target = os.path.join(dest_dir, member.name)
         if not _is_within_directory(dest_dir, target):
             raise tarfile.TarError(f"unsafe path in tar archive: {member.name!r}")
@@ -1891,7 +1909,7 @@ def _safe_tar_extract(tf, dest_dir):
             link_target = os.path.join(dest_dir, os.path.dirname(member.name), member.linkname)
             if not _is_within_directory(dest_dir, link_target):
                 raise tarfile.TarError(f"unsafe link target in tar archive: {member.name!r}")
-    tf.extractall(dest_dir)  # nosec B202 - members validated above to stay within dest_dir
+    tf.extractall(dest_dir)  # nosec B202 - members validated above: contained paths, no special files
 
 
 def _pull_log_dir(single, host, user, log_dir, dest_dir):

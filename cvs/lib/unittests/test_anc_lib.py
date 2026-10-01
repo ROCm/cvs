@@ -451,6 +451,11 @@ class TestParseReleaseVersionFromContentList(unittest.TestCase):
         )
         self.assertEqual(anc_lib.parse_release_version_from_content_list(out), "1.7.0-rc.1")
 
+    def test_malformed_rc_in_column_is_rejected(self):
+        # A malformed rc in the version column must not truncate to the base.
+        out = "  anc-release-helios-nda    1.7.0-rc.bad   Helios NDA Release\n"
+        self.assertIsNone(anc_lib.parse_release_version_from_content_list(out))
+
 
 class TestDetectPackageFlavour(unittest.TestCase):
     '''detect_package_flavour: flavour + legacy/direct generation from the name.'''
@@ -528,6 +533,10 @@ class TestParseVersionFromVersionOutput(unittest.TestCase):
         self.assertIsNone(anc_lib._parse_version_from_version_output(""))
         self.assertIsNone(anc_lib._parse_version_from_version_output(None))
 
+    def test_malformed_rc_in_label_is_rejected(self):
+        # A malformed rc on the labelled line must not truncate to the base.
+        self.assertIsNone(anc_lib._parse_version_from_version_output("Release Version: 1.7.0-rc.bad\n"))
+
 
 class TestParseVersionFromUrl(unittest.TestCase):
     '''parse_version_from_url: first dotted-numeric run in the filename.'''
@@ -561,6 +570,20 @@ class TestParseVersionFromUrl(unittest.TestCase):
         self.assertEqual(
             anc_lib.parse_version_from_url("http://x/anc-release-helios-nda-1.7.0-rc.1-1.x86_64.rpm"),
             "1.7.0-rc.1",
+        )
+
+    def test_malformed_attached_rc_is_rejected_not_truncated(self):
+        # An attached malformed rc must NOT silently truncate to the base (which
+        # would let the fail-fast guard approve a mis-versioned archive).
+        self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0-rc.bad.rpm"))
+        self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0-rc.1foo.rpm"))
+        self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0rc1.rpm"))
+
+    def test_package_revision_still_allowed(self):
+        # The "-1" package revision after a valid rc is fine (boundary allows -<digit>).
+        self.assertEqual(
+            anc_lib.parse_version_from_url("http://x/anc-1.7.0-rc.10-2.x86_64.rpm"),
+            "1.7.0-rc.10",
         )
 
 
@@ -1306,6 +1329,27 @@ class TestSafeTarExtract(unittest.TestCase):
             with _tar.open(tar_path) as tf:
                 with self.assertRaises(_tar.TarError):
                     anc_lib._safe_tar_extract(tf, dest)
+
+    def test_rejects_special_file_members(self):
+        # Device/FIFO members are rejected for parity with filter="data" so a
+        # node-controlled archive cannot drop a special file on the controller.
+        import tarfile as _tar
+        import tempfile
+
+        for type_const in (_tar.FIFOTYPE, _tar.CHRTYPE, _tar.BLKTYPE):
+            with self.subTest(type=type_const):
+                with tempfile.TemporaryDirectory() as root:
+                    tar_path = os.path.join(root, "archive.tar")
+                    with _tar.open(tar_path, "w") as tf:
+                        info = _tar.TarInfo("logs/special")
+                        info.type = type_const
+                        tf.addfile(info)
+                    dest = os.path.join(root, "dest")
+                    os.makedirs(dest)
+                    with _tar.open(tar_path) as tf:
+                        with self.assertRaises(_tar.TarError):
+                            anc_lib._safe_tar_extract(tf, dest)
+                    self.assertFalse(os.path.exists(os.path.join(dest, "logs", "special")))
 
 
 if __name__ == "__main__":
