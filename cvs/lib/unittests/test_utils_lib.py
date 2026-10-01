@@ -65,23 +65,6 @@ class TestUtilsLib(unittest.TestCase):
             self.assertIn('OK', cmd, msg=label)
             self.assertIn('MISSING', cmd, msg=label)
 
-    def test_omit_doc_config_keys_drops_examples_and_comments(self):
-        raw = {
-            'os_version': '<changeme>',
-            '_example_os_version': 'Ubuntu 24.04.1 LTS',
-            '_comment': 'docs',
-            'fw_dict': {'CP_MEC1': '<changeme>', '_example_CP_MEC1': '32945'},
-            'notes': ['_keep', {'_comment': 'x', 'gpu_count': '<changeme>'}],
-        }
-        self.assertEqual(
-            utils_lib.omit_doc_config_keys(raw),
-            {
-                'os_version': '<changeme>',
-                'fw_dict': {'CP_MEC1': '<changeme>'},
-                'notes': ['_keep', {'gpu_count': '<changeme>'}],
-            },
-        )
-
 
 class TestResolveTestConfigPlaceholdersAorta(unittest.TestCase):
     """Aorta benchmark YAML uses the same resolver as other CVS test suites (see tests/benchmark/test_aorta.py)."""

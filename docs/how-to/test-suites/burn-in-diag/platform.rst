@@ -19,7 +19,12 @@ Set up config
 
      cvs config copy platform/host_config.json --output ~/cvs_workspace/platform/host_config.json
 
-2. Edit the file and replace every ``<changeme>`` under ``host`` and ``fw_dict`` with your cluster's actual version. Keys whose names start with ``_`` (``_example_*``, ``_comment*``) are documentation and are ignored. The string in each ``_example_*`` key is a sample, not the value the test compares.
+2. Edit the file and replace the values with your cluster's actual versions — leave no ``<changeme>`` placeholders:
+
+   - ``os_version``
+   - ``kernel_version``
+   - ``rocm_version``
+   - ``bios_version``
 
 For the complete field reference and expected-value format, see :doc:`/reference/configuration-files/burn-in-diag/platform`.
 

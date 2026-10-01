@@ -73,13 +73,11 @@ def config_dict(config_file, cluster_dict):
 
     Notes:
       - The top-level JSON is expected to include a 'host' key.
-      - Keys whose names start with '_' (_example_*, _comment*) are documentation
-        and are removed before placeholder checks and test comparisons.
       - Adjust if your configuration schema changes.
     """
     with open(config_file) as json_file:
         config_dict_t = json.load(json_file)
-    config_dict = omit_doc_config_keys(config_dict_t['host'])
+    config_dict = config_dict_t['host']
 
     # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
     config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)

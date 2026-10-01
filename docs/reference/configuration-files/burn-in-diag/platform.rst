@@ -8,7 +8,7 @@ Platform test configuration file reference for Cluster Validation Suite (CVS)
 
 Run host check scripts to validate host-side configurations, such as model load balancing enablement, PCIe checks, kernel version, and ROCm version.
 
-The following sample shows the ``host_config.json`` structure. Each setting ships as ``<changeme>``. The matching ``_example_*`` key shows a sample value and is ignored at load time. Replace every ``<changeme>`` with your cluster's actual version before running:
+The following sample shows the ``host_config.json`` structure. Replace the values with your cluster's actual versions before running:
 
 See :doc:`/how-to/test-suites/burn-in-diag/platform` for more information on running these tests.
 
@@ -17,7 +17,7 @@ See :doc:`/how-to/test-suites/burn-in-diag/platform` for more information on run
   .. code:: json
     
     {
-        "_comment": "Replace every <changeme>. Keys starting with _ are examples or comments and are ignored.",
+        "_comment": "Replace every <changeme> with this cluster's value before running. Keys whose names start with _ are examples or comments and are ignored.",
         "host":
         {
           "os_version": "<changeme>",
@@ -79,14 +79,14 @@ See :doc:`/how-to/test-suites/burn-in-diag/platform` for more information on run
 Parameters
 ==========
 
-The following parameters are available in the platform configuration file. Set each to the expected value for your cluster — the test compares the actual system state against these values. The table lists the ``_example_*`` strings shipped beside ``<changeme>``, not live defaults. Delete ``nic_pcie_speed`` and ``nic_pcie_width`` when the NIC is attached over UALink rather than PCIe.
+The following parameters are available in the platform configuration file. Set each to the expected value for your cluster — the test compares the actual system state against these values.
 
 .. list-table::
    :widths: 3 3 5
    :header-rows: 1
 
    * - Configuration parameters
-     - Example values
+     - Default values
      - Description
    * - ``os_version``
      - Ubuntu 24.04.1 LTS
@@ -95,7 +95,7 @@ The following parameters are available in the platform configuration file. Set e
      - ``6.8.0-60-generic``
      - Version of kernel
    * - ``rocm_version``
-     - ``7.0.2``
+     - ``<cluster-specific>``
      - ROCm version installed on the cluster nodes
    * - ``bios_version``
      - ``20171212``
@@ -115,12 +115,6 @@ The following parameters are available in the platform configuration file. Set e
    * - ``gpu_pcie_width``
      - 16
      - Width of PCIe
-   * - ``nic_pcie_speed``
-     - 32
-     - Backend NIC PCIe speed in GT/s. Omit this key when the NIC uses UALink.
-   * - ``nic_pcie_width``
-     - 16
-     - Backend NIC PCIe width. Omit this key when the NIC uses UALink.
    * - ``CP_MEC1``
      - 32945
      - Compute Pipeline MicroEngine Controller 1 firmware
