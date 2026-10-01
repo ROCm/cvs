@@ -452,7 +452,6 @@ class SglangDisaggPD:
         log.info('%%%% self.prefill_nnodes {}'.format(self.prefill_nnodes))
         dist_init_addr = f"{self.inf_dict['prefill_coordinator_addr']}:{self.inf_dict['prefill_coordinator_port']}"
         flags_block = add_cli_flags_block(self.bp_dict, indent='    ')
-        disaggregation_ib_device = "ionic_1"
 
         for i in range(0, int(self.prefill_nnodes)):
             node = prefill_node_list[i]
@@ -461,7 +460,7 @@ class SglangDisaggPD:
                 f"export NODE_RANK={i}\n"
                 f"python3 -m sglang.launch_server --model {self.bp_dict['model']} \\\n"
                 f"    --disaggregation-mode prefill \\\n"
-                f"    --disaggregation-ib-device {disaggregation_ib_device} \\\n"
+                f"    --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \\\n"
                 f"    --host {node} \\\n"
                 f"    --port {self.inf_dict['prefill_serv_port']} \\\n"
                 f"    --dtype {dtype} \\\n"
@@ -518,7 +517,6 @@ class SglangDisaggPD:
         dist_init_addr = f"{self.inf_dict['decode_coordinator_addr']}:{self.inf_dict['decode_coordinator_port']}"
         flags_block = add_cli_flags_block(self.bp_dict, indent='    ', include_chunked_prefill=False)
 
-        disaggregation_ib_device = "ionic_1"
         for i in range(0, int(self.decode_nnodes)):
             node = decode_node_list[i]
             launch_body = (
@@ -526,7 +524,7 @@ class SglangDisaggPD:
                 f"export NODE_RANK={i}\n"
                 f"python3 -m sglang.launch_server --model {self.bp_dict['model']} \\\n"
                 f"    --disaggregation-mode decode \\\n"
-                f"    --disaggregation-ib-device {disaggregation_ib_device} \\\n"
+                f"    --disaggregation-ib-device {self.inf_dict['nccl_ib_hca']} \\\n"
                 f"    --host {node} \\\n"
                 f"    --port {self.inf_dict['decode_serv_port']} \\\n"
                 f"    --trust-remote-code \\\n"
