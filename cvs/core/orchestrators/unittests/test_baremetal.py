@@ -76,6 +76,15 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         self.assertEqual(result, {"10.0.0.1": "ok"})
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_download_file_delegates_to_host_transport(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.all = MagicMock()
+        orch.all.download_file.return_value = {"10.0.0.2": "/tmp/result.log"}
+        result = orch.download_file("/remote/result.log", "/tmp/result.log", hosts=["10.0.0.2"])
+        orch.all.download_file.assert_called_once_with("/remote/result.log", "/tmp/result.log", hosts=["10.0.0.2"])
+        self.assertEqual(result, {"10.0.0.2": "/tmp/result.log"})
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_forwards_print_console_false_to_all(self, _mock_pssh):
         """print_console=False must reach the pssh handle, not be swallowed here.
 

@@ -1,0 +1,92 @@
+{
+  "_comment": "Set every <changeme> for your cluster. gpus_per_node is the number of GPUs used per node; keep it consistent with the Aorta YAML and torchrun configuration.",
+  "schema_version": 1,
+  "threshold_json": "mi3xx_aorta_profile_overlap_2gpu_threshold.json",
+  "enforce_thresholds": true,
+  "paths": {
+    "shared_fs": "/<changeme>/aorta/{user-id}",
+    "models_dir": "{shared_fs}/models",
+    "log_dir": "{shared_fs}/logs",
+    "hf_token_file": ""
+  },
+  "model": {
+    "id": "profile_overlap_2gpu",
+    "remote": 0
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "{user-id}_aorta_benchmark",
+    "image": "jeffdaily/pytorch:torchrec-dlrm-complete",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "user": "root",
+        "ipc": "host",
+        "privileged": true,
+        "devices": [
+          "/dev/kfd",
+          "/dev/dri"
+        ],
+        "volumes": [
+          "{paths.shared_fs}/repo:/mnt"
+        ],
+        "cap_add": [
+          "SYS_PTRACE"
+        ],
+        "security_opt": [
+          "seccomp=unconfined"
+        ],
+        "group_add": [
+          "video"
+        ],
+        "ulimit": [
+          "memlock=-1:-1",
+          "stack=67108864:67108864"
+        ]
+      }
+    },
+    "env": {
+      "NCCL_MAX_NCHANNELS": "112",
+      "NCCL_MAX_P2P_NCHANNELS": "112",
+      "NCCL_DEBUG": "VERSION",
+      "TORCH_NCCL_HIGH_PRIORITY": "1",
+      "OMP_NUM_THREADS": "1",
+      "RCCL_MSCCL_ENABLE": "0"
+    }
+  },
+  "aorta_path": "{paths.shared_fs}/repo",
+  "container_mount_path": "/mnt",
+  "aorta_auto_clone": false,
+  "base_config": "config/profile_overlap_2gpu.yaml",
+  "rccl": {
+    "clone_url": "https://github.com/ROCm/rccl",
+    "branch": "develop",
+    "build_path": "/mnt/rccl"
+  },
+  "training_overrides": {
+    "training.max_steps": 15,
+    "profiling.active": 6
+  },
+  "build_script": "scripts/build_rccl.sh",
+  "experiment_script": "scripts/launch_rocm.sh",
+  "gpus_per_node": "<changeme>",
+  "timeout_seconds": 3600,
+  "skip_rccl_build": true,
+  "output_dir": "aorta_results",
+  "analysis": {
+    "enable_tracelens": false,
+    "enable_gemm_analysis": false,
+    "tracelens_script": "scripts/tracelens_single_config/run_tracelens_single_config.sh",
+    "gemm_script": "scripts/gemm_analysis/run_tracelens_analysis.sh",
+    "skip_if_exists": false
+  },
+  "multi_node": {
+    "master_launch_mode": "auto",
+    "train_script": "train.py",
+    "extra_torchrun_args": [],
+    "extra_train_args": [],
+    "extra_env": {},
+    "collect_traces": true
+  }
+}

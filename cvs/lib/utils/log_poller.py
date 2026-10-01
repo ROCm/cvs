@@ -23,6 +23,15 @@ def _result_text(result):
     return (result or {}).get("output", "") or ""
 
 
+class LogPollTimeout(RuntimeError):
+    """The poll deadline elapsed before completion.
+
+    A subclass of ``RuntimeError`` so existing ``except RuntimeError`` callers
+    still observe timeouts, while callers that must distinguish a timeout from
+    an error signature can catch this type instead of matching the message.
+    """
+
+
 class LogPoller:
     """Poll per-node log files until a completion marker appears.
 
@@ -32,7 +41,8 @@ class LogPoller:
     signatures (raising on the first match), and (4) checks for completion
     (``grep`` for ``complete_pattern``). Between drains a one-line
     :class:`ConsoleSpinner` shows the workload is alive. :meth:`poll` returns on
-    completion and raises ``RuntimeError`` on timeout or an error signature.
+    completion, raises ``LogPollTimeout`` when the deadline elapses, and raises
+    ``RuntimeError`` on an error signature.
 
     ``orch`` must expose ``hosts`` (ordered) and
     ``exec_cmd_list(cmd_list, print_console=False)`` where ``cmd_list[i]`` runs on
@@ -221,7 +231,7 @@ class LogPoller:
         try:
             while True:
                 if time.monotonic() >= deadline:
-                    raise RuntimeError(f"{self._error_label} did not complete within {timeout_s:.0f}s")
+                    raise LogPollTimeout(f"{self._error_label} did not complete within {timeout_s:.0f}s")
 
                 new_by_node = self.drain()
                 # Stream the followed node FIRST so the chunk reaches the log even

@@ -123,8 +123,8 @@ Available suites
 
        :doc:`Schema reference </reference/configuration-files/training/torchtitan>`
    * - Aorta
-     - ``input/config_file/aorta/aorta_benchmark.yaml``
-     - ``cvs config list aorta``
+     - ``input/config_file/benchmark/aorta/mi3xx_aorta_profile_overlap_2gpu_{single|distributed}.json``
+     - ``cvs config list benchmark/aorta``
 
 Inference
 =========

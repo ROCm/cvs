@@ -14,6 +14,7 @@ class DockerRuntime:
     def __init__(self, log, orchestrator):
         self.log = log
         self.orchestrator = orchestrator  # Reference to orchestrator for SSH execution
+        self.last_setup_error = None  # dict with 'image' and 'failed_hosts' from the last setup_containers() failure
 
     def check_image_exists(self, image_name):
         """Check if the Docker image exists on all nodes."""
@@ -91,8 +92,14 @@ class DockerRuntime:
             ulimits: Optional list of ulimits (overrides config)
             device_expansion: Optional shell expansion string for dynamic device discovery
         """
+        self.last_setup_error = None
         if not container_config or not container_config.get('image'):
             self.log.warning("No container config or image specified, skipping container start")
+            self.last_setup_error = {
+                'image': None,
+                'failed_hosts': [],
+                'reason': 'no container config or image specified',
+            }
             return False
 
         image = container_config['image']
@@ -134,8 +141,8 @@ class DockerRuntime:
         additional_args = self._build_runtime_args(runtime_args_config)
 
         # Basic args
-        vol_args = ' '.join([f'-v {v}' for v in volumes])
-        env_args = ' '.join([f'-e {k}={v}' for k, v in container_env.items()])
+        vol_args = ' '.join([f'-v {shlex.quote(v)}' for v in volumes])
+        env_args = ' '.join([f'-e {shlex.quote(f"{k}={v}")}' for k, v in container_env.items()])
         network_args = '--network host' if not runtime_args_config.get('network') else ''
 
         # Combine all arguments
@@ -151,7 +158,13 @@ class DockerRuntime:
                 load_result = self.load_image(container_config['image_tar'], timeout=300)
                 failed_load = [host for host, res in load_result.items() if res.get('exit_code') != 0]
                 if failed_load:
-                    self.log.error(f"Failed to load image tar on hosts: {failed_load}")
+                    for host in failed_load:
+                        self.log.error(f"Image tar load failed on {host}: {load_result[host].get('output', '')}")
+                    self.last_setup_error = {
+                        'image': image,
+                        'failed_hosts': failed_load,
+                        'reason': 'image tar load failed',
+                    }
                     return False
             else:
                 self.log.info(f"Image {container_config['image']} already exists, skipping tar load")
@@ -160,6 +173,7 @@ class DockerRuntime:
             # first for private images (e.g. rocm/ufb-private).
             self.log.info("Logging in to Docker registry before pulling image")
             if not self.registry_login(runtime_args_config['registry']):
+                self.last_setup_error = {'image': image, 'failed_hosts': [], 'reason': 'registry login failed'}
                 return False
 
         if not self.check_image_exists(image):
@@ -167,10 +181,15 @@ class DockerRuntime:
             pull_result = self.pull_image(image, timeout=600)
             failed_pull = [host for host, res in pull_result.items() if res.get('exit_code') != 0]
             if failed_pull:
-                self.log.error(f"Failed to pull image on hosts: {failed_pull}")
+                for host in failed_pull:
+                    self.log.error(f"Image pull failed on {host}: {pull_result[host].get('output', '')}")
+                self.last_setup_error = {'image': image, 'failed_hosts': failed_pull, 'reason': 'image pull failed'}
                 return False
 
-        cmd = f"{self.orchestrator.sudo_prefix()}docker run -d --name {container_name} {all_args_str} {image} sleep infinity"
+        cmd = (
+            f"{self.orchestrator.sudo_prefix()}docker run -d --name {shlex.quote(container_name)} "
+            f"{all_args_str} {shlex.quote(image)} sleep infinity"
+        )
 
         self.log.info(f"Starting long-running containers on {len(self.orchestrator.hosts)} nodes: {container_name}")
         self.log.debug(f"Container start command: {cmd}")
@@ -186,7 +205,9 @@ class DockerRuntime:
 
         if not success:
             failed = [host for host, output in result.items() if output['exit_code'] != 0]
-            self.log.error(f"Container startup failed on hosts: {failed}")
+            for host in failed:
+                self.log.error(f"Container startup failed on {host}: {result[host].get('output', '')}")
+            self.last_setup_error = {'image': image, 'failed_hosts': failed, 'reason': 'container startup failed'}
             # Clean up partial starts
             self.teardown_containers(container_name)
             return False
@@ -294,47 +315,51 @@ class DockerRuntime:
         # Volumes
         volumes = runtime_args_config.get('volumes', [])
         for vol in volumes:
-            args.extend(['-v', vol])
+            args.extend(['-v', shlex.quote(vol)])
 
         # Devices
         devices = runtime_args_config.get('devices', [])
         for dev in devices:
-            args.extend(['--device', dev])
+            args.extend(['--device', shlex.quote(dev)])
 
         # Environment variables
         env_vars = runtime_args_config.get('env', {})
-        for key, value in env_vars:
-            args.extend(['-e', f'{key}={value}'])
+        for key, value in env_vars.items():
+            args.extend(['-e', shlex.quote(f'{key}={value}')])
 
         # Capabilities
         cap_add = runtime_args_config.get('cap_add', [])
         for cap in cap_add:
-            args.extend(['--cap-add', cap])
+            args.extend(['--cap-add', shlex.quote(cap)])
 
         # Security options
         security_opt = runtime_args_config.get('security_opt', [])
         for opt in security_opt:
-            args.extend(['--security-opt', opt])
+            args.extend(['--security-opt', shlex.quote(opt)])
 
         # Group add
         group_add = runtime_args_config.get('group_add', [])
         for group in group_add:
-            args.extend(['--group-add', group])
+            args.extend(['--group-add', shlex.quote(str(group))])
 
         # Network
         network = runtime_args_config.get('network')
         if network:
-            args.extend(['--network', network])
+            args.extend(['--network', shlex.quote(network)])
+
+        user = runtime_args_config.get('user')
+        if user is not None:
+            args.extend(['--user', shlex.quote(str(user))])
 
         # IPC
         ipc = runtime_args_config.get('ipc')
         if ipc:
-            args.extend(['--ipc', ipc])
+            args.extend(['--ipc', shlex.quote(ipc)])
 
         # Ulimit
         ulimit = runtime_args_config.get('ulimit', [])
         for ul in ulimit:
-            args.extend(['--ulimit', ul])
+            args.extend(['--ulimit', shlex.quote(ul)])
 
         # Privileged
         if runtime_args_config.get('privileged', False):
