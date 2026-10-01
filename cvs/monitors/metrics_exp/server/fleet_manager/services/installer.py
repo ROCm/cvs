@@ -245,8 +245,11 @@ class NodeInstaller:
         self._log("amd_exporter", "Container not running", False)
         return False
 
-    async def _node_metrics_served(self, port: int) -> bool:
-        """True if something on the node already answers node_exporter metrics on port."""
+    async def _node_metrics_served(self, port):
+        """True if something on the node already answers node_exporter metrics on port.
+
+        port is the exporter listen port (int).
+        """
         result = await self.ssh.execute(
             f"curl -s --max-time 5 http://localhost:{port}/metrics | grep -c '^node_' || echo 0"
         )
@@ -254,6 +257,32 @@ class NodeInstaller:
             return int(result.stdout.strip().splitlines()[-1]) > 0
         except (ValueError, IndexError):
             return False
+
+    async def _record_node_exporter_failure(self, port):
+        """Log why node_exporter did not stay up, then stop the Restart=always unit.
+
+        port is the exporter listen port (int). The SSH user often cannot read
+        system journals, so the diagnostics run with sudo.
+        """
+        diag = await self.ssh.execute(
+            "sudo journalctl -u node_exporter -n 30 --no-pager 2>&1"
+            " || sudo systemctl status node_exporter --no-pager 2>&1"
+        )
+        if diag.stdout.strip():
+            self._log("node_exporter", f"Service crash diagnostics:\n{diag.stdout[:1000]}", False)
+
+        # A pre-existing exporter (distro package, k8s DaemonSet) holding the port is the
+        # common cause, and it is invisible to the systemd unit-name check above.
+        listener = await self.ssh.execute(
+            f"sudo ss -tlnp 'sport = :{port}' 2>/dev/null || sudo lsof -i :{port} 2>/dev/null"
+        )
+        if listener.stdout.strip():
+            self._log("node_exporter", f"Port {port} already in use by:\n{listener.stdout[:500]}", False)
+
+        # Restart=always would otherwise retry this unit every 5s indefinitely.
+        # Harmless when start failed before the unit existed.
+        await self.ssh.execute("sudo systemctl disable --now node_exporter 2>/dev/null || true")
+        self._log("node_exporter", "Installed but service not active", False)
 
     async def install_node_exporter(
         self,
@@ -317,7 +346,9 @@ sudo systemctl start node_exporter
 
         result = await self.ssh.execute(install_script, timeout=120)
         if not result.success:
+            # enable already ran before start. A nonzero start leaves Restart=always retrying.
             self._log("node_exporter", f"Installation failed: {result.stderr}", False)
+            await self._record_node_exporter_failure(port)
             return False
 
         # Verify with retries
@@ -348,25 +379,7 @@ sudo systemctl start node_exporter
             self._log("node_exporter", f"Service is running on port {port} (metrics endpoint may need more time)")
             return True
 
-        # Capture service logs to help diagnose why node_exporter is failing to start
-        diag = await self.ssh.execute(
-            "journalctl -u node_exporter -n 30 --no-pager 2>&1 || systemctl status node_exporter --no-pager 2>&1"
-        )
-        if diag.stdout.strip():
-            self._log("node_exporter", f"Service crash diagnostics:\n{diag.stdout[:1000]}", False)
-
-        # A pre-existing exporter (distro package, k8s DaemonSet) holding the port is the
-        # common cause, and it is invisible to the systemd unit-name check above.
-        listener = await self.ssh.execute(
-            f"sudo ss -tlnp 'sport = :{port}' 2>/dev/null || sudo lsof -i :{port} 2>/dev/null"
-        )
-        if listener.stdout.strip():
-            self._log("node_exporter", f"Port {port} already in use by:\n{listener.stdout[:500]}", False)
-
-        # Restart=always would otherwise retry this unit every 5s indefinitely.
-        await self.ssh.execute("sudo systemctl disable --now node_exporter 2>/dev/null || true")
-
-        self._log("node_exporter", "Installed but service not active", False)
+        await self._record_node_exporter_failure(port)
         return False
 
     async def install_promtail(
