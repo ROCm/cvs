@@ -1249,5 +1249,64 @@ class TestChownArgumentQuoted(unittest.TestCase):
         self.assertIn("sudo chown 'alice'", captured["first"])
 
 
+class TestSafeTarExtract(unittest.TestCase):
+    '''_safe_tar_extract rejects members that would escape the destination
+    (the <3.12 fallback for extractall(filter="data")).'''
+
+    def _make_tar(self, root, member_name, link_target=None):
+        import tarfile as _tar
+
+        tar_path = os.path.join(root, "archive.tar")
+        with _tar.open(tar_path, "w") as tf:
+            if link_target is not None:
+                info = _tar.TarInfo(member_name)
+                info.type = _tar.SYMTYPE
+                info.linkname = link_target
+                tf.addfile(info)
+            else:
+                payload = os.path.join(root, "payload")
+                with open(payload, "w") as fh:
+                    fh.write("x")
+                tf.add(payload, arcname=member_name)
+        return tar_path
+
+    def test_extracts_safe_member(self):
+        import tarfile as _tar
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            tar_path = self._make_tar(root, "logs/console.log")
+            dest = os.path.join(root, "dest")
+            os.makedirs(dest)
+            with _tar.open(tar_path) as tf:
+                anc_lib._safe_tar_extract(tf, dest)
+            self.assertTrue(os.path.isfile(os.path.join(dest, "logs", "console.log")))
+
+    def test_rejects_parent_traversal_member(self):
+        import tarfile as _tar
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            tar_path = self._make_tar(root, "../escape.txt")
+            dest = os.path.join(root, "dest")
+            os.makedirs(dest)
+            with _tar.open(tar_path) as tf:
+                with self.assertRaises(_tar.TarError):
+                    anc_lib._safe_tar_extract(tf, dest)
+            self.assertFalse(os.path.exists(os.path.join(root, "escape.txt")))
+
+    def test_rejects_absolute_symlink_escape(self):
+        import tarfile as _tar
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            tar_path = self._make_tar(root, "link", link_target="/etc/passwd")
+            dest = os.path.join(root, "dest")
+            os.makedirs(dest)
+            with _tar.open(tar_path) as tf:
+                with self.assertRaises(_tar.TarError):
+                    anc_lib._safe_tar_extract(tf, dest)
+
+
 if __name__ == "__main__":
     unittest.main()

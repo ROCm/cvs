@@ -1866,6 +1866,34 @@ def _chown_tree_to_runner(host, root_path):
         log.warning("Node %s: could not chown log tree %s: %s", host, root_path, exc)
 
 
+def _is_within_directory(directory, target):
+    '''True when ``target`` resolves to a path inside ``directory`` (inclusive).'''
+    abs_dir = os.path.abspath(directory)
+    abs_target = os.path.abspath(target)
+    return os.path.commonpath([abs_dir, abs_target]) == abs_dir
+
+
+def _safe_tar_extract(tf, dest_dir):
+    '''
+    Extract ``tf`` into ``dest_dir`` rejecting any member that would escape it.
+
+    Used as the fallback on interpreters without ``extractall(filter="data")``
+    (added in 3.12 / backported to 3.9.17+, 3.10.12+, 3.11.4+). Each member's
+    final path is validated to stay within ``dest_dir`` -- an absolute path, a
+    ``..`` traversal, or an unsafe link target raises instead of writing outside
+    the destination (the ``filter="data"`` path does the same natively).
+    '''
+    for member in tf.getmembers():
+        target = os.path.join(dest_dir, member.name)
+        if not _is_within_directory(dest_dir, target):
+            raise tarfile.TarError(f"unsafe path in tar archive: {member.name!r}")
+        if member.issym() or member.islnk():
+            link_target = os.path.join(dest_dir, os.path.dirname(member.name), member.linkname)
+            if not _is_within_directory(dest_dir, link_target):
+                raise tarfile.TarError(f"unsafe link target in tar archive: {member.name!r}")
+    tf.extractall(dest_dir)  # nosec B202 - members validated above to stay within dest_dir
+
+
 def _pull_log_dir(single, host, user, log_dir, dest_dir):
     '''
     Copy the ENTIRE ANC log directory from the node into dest_dir.
@@ -1927,12 +1955,13 @@ def _pull_log_dir(single, host, user, log_dir, dest_dir):
         with tarfile.open(local_tar) as tf:
             # filter="data" sanitizes members (no absolute paths / "../" escapes)
             # and silences the 3.12+ extractall deprecation. The param was added
-            # in 3.12 / backported to 3.9.17+, 3.10.12+, 3.11.4+; fall back for
-            # older interpreters (repo targets python>=3.9).
+            # in 3.12 / backported to 3.9.17+, 3.10.12+, 3.11.4+; on older
+            # interpreters (repo targets python>=3.9) fall back to the explicit
+            # member-validating extractor, which enforces the same containment.
             try:
                 tf.extractall(dest_dir, filter="data")
             except TypeError:
-                tf.extractall(dest_dir)
+                _safe_tar_extract(tf, dest_dir)
     except Exception as exc:
         return None, f"could not extract log archive for {log_dir}: {exc}"
     finally:
