@@ -11,8 +11,10 @@ from cvs.lib.preflight.primus_setup import (
     build_primus_clone_or_update_command,
     build_primus_venv_install_command,
     build_wait_for_shared_primus_command,
+    _hip_matches_torch_index,
     parse_setup_output,
     _resolve_setting_from_sections,
+    _torch_compat_python,
     _venv_root_from_activate,
 )
 from cvs.lib.preflight.node_smoke import (
@@ -56,6 +58,60 @@ class TestPrimusSetupConfigResolution(unittest.TestCase):
             "",
         )
         self.assertEqual(value, "/tier1/Primus")
+
+
+class TestHipMatchesTorchIndex(unittest.TestCase):
+    def test_cpu_or_cuda_wheel_does_not_match(self):
+        index = "https://download.pytorch.org/whl/rocm7.2"
+        self.assertFalse(_hip_matches_torch_index(None, index))
+        self.assertFalse(_hip_matches_torch_index("", index))
+
+    def test_older_rocm_wheel_does_not_match_new_index(self):
+        self.assertFalse(_hip_matches_torch_index("6.2.41134", "https://download.pytorch.org/whl/rocm7.2"))
+
+    def test_matching_hip_minor(self):
+        index = "https://download.pytorch.org/whl/rocm7.2"
+        self.assertTrue(_hip_matches_torch_index("7.2.0", index))
+        self.assertTrue(_hip_matches_torch_index("7.2.26015", index))
+        self.assertTrue(_hip_matches_torch_index("7.2+git", index))
+
+    def test_minor_is_not_a_prefix(self):
+        self.assertFalse(_hip_matches_torch_index("7.10.0", "https://download.pytorch.org/whl/rocm7.1"))
+        self.assertFalse(_hip_matches_torch_index("7.1.0", "https://download.pytorch.org/whl/rocm7.10"))
+
+    def test_unversioned_index_accepts_any_hip_build(self):
+        self.assertTrue(_hip_matches_torch_index("6.2.0", "https://example.invalid/torch"))
+        self.assertFalse(_hip_matches_torch_index(None, "https://example.invalid/torch"))
+
+    def test_shell_probe_agrees_with_helper(self):
+        index = "https://download.pytorch.org/whl/rocm7.2"
+        for hip in (None, "", "6.2.41134", "7.2.0", "7.2.26015", "7.10.1", "7.2+git"):
+            self.assertEqual(
+                _probe_exit_code(hip, index) == 0,
+                _hip_matches_torch_index(hip, index),
+                hip,
+            )
+
+
+def _probe_exit_code(hip, index):
+    import types
+
+    snippet = _torch_compat_python(index).replace('\\"', '"')
+    torch_mod = types.ModuleType("torch")
+    torch_mod.version = types.SimpleNamespace(hip=hip)
+    saved = sys.modules.get("torch")
+    sys.modules["torch"] = torch_mod
+    try:
+        try:
+            exec(snippet, {"__name__": "__main__"})
+        except SystemExit as exc:
+            return int(exc.code or 0)
+        return 0
+    finally:
+        if saved is None:
+            sys.modules.pop("torch", None)
+        else:
+            sys.modules["torch"] = saved
 
 
 class TestPrimusSetupCommands(unittest.TestCase):
@@ -105,7 +161,9 @@ class TestPrimusSetupCommands(unittest.TestCase):
             max_wait=60,
         )
         self.assertIn("runner/primus-cli", cmd)
-        self.assertIn("import torch", cmd)
+        self.assertIn('parts[0]==\\"7\\"', cmd)
+        self.assertIn('parts[1].split(\\"+\\")[0]==\\"2\\"', cmd)
+        self.assertNotIn('python -c \\"import torch\\"', cmd)
         self.assertIn("while [ $i -lt 12 ]", cmd)
         self.assertIn("CVS_PRIMUS_SETUP_OK", cmd)
         self.assertNotIn("bash -c", cmd)
@@ -119,10 +177,40 @@ class TestPrimusSetupCommands(unittest.TestCase):
         )
         self.assertEqual(_venv_root_from_activate(activate), "/home/user/envs/preflight/.venv")
         self.assertIn("python3 -m venv", cmd)
-        self.assertIn("pip install torch", cmd)
+        self.assertIn("pip install --upgrade --force-reinstall torch", cmd)
+        self.assertIn("https://download.pytorch.org/whl/rocm7.2", cmd)
+        self.assertIn('parts[0]==\\"7\\"', cmd)
+        self.assertIn('parts[1].split(\\"+\\")[0]==\\"2\\"', cmd)
         self.assertNotIn("pip install -e .", cmd)
         self.assertIn("runner/primus-cli", cmd)
-        self.assertIn("import torch", cmd)
+
+    def test_venv_reinstalls_when_index_rocm_version_differs(self):
+        cmd = build_primus_venv_install_command(
+            primus_dir="/home/user/Primus",
+            venv_activate="/home/user/envs/preflight/.venv/bin/activate",
+            pip_install_mode="minimal",
+            torch_pip_index_url="https://download.pytorch.org/whl/rocm6.2",
+        )
+        self.assertIn("--force-reinstall", cmd)
+        self.assertIn('parts[0]==\\"6\\"', cmd)
+        self.assertIn('parts[1].split(\\"+\\")[0]==\\"2\\"', cmd)
+        self.assertNotIn('parts[0]==\\"7\\"', cmd)
+
+    def test_wait_uses_same_hip_probe_as_install(self):
+        index = "https://download.pytorch.org/whl/rocm7.1"
+        install = build_primus_venv_install_command(
+            primus_dir="/home/user/Primus",
+            venv_activate="/home/user/envs/preflight/.venv/bin/activate",
+            torch_pip_index_url=index,
+        )
+        wait = build_wait_for_shared_primus_command(
+            primus_dir="/home/user/Primus",
+            venv_activate="/home/user/envs/preflight/.venv/bin/activate",
+            torch_pip_index_url=index,
+        )
+        probe = _torch_compat_python(index)
+        self.assertIn(probe, install)
+        self.assertIn(probe, wait)
 
     def test_pathspec_error_is_git_not_pip(self):
         parsed = parse_setup_output(

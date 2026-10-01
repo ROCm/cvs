@@ -344,8 +344,9 @@ Legacy config key `node_smoke` is accepted as an alias for `node_smoke_tier1`.
   - Leader node clones/installs on shared NFS home; other nodes wait (recommended for shared home)
 - **`pip_install_mode`** (default: `"minimal"`)
   - `"minimal"` — ROCm PyTorch only; `"requirements"` — `pip install -r requirements.txt`; `"skip"` — venv only
-- **`torch_pip_index_url`** (default: `"https://download.pytorch.org/whl/rocm6.2"`)
+- **`torch_pip_index_url`** (default: `"https://download.pytorch.org/whl/rocm7.2"`)
   - PyTorch wheel index for minimal install; match your ROCm version
+  - On each run, minimal mode keeps an existing wheel only when `torch.version.hip` major.minor matches the `rocmX.Y` in this URL. Any other importable build (CPU, CUDA, or an older ROCm wheel) is reinstalled with `pip install --upgrade --force-reinstall`. Manual equivalent for a venv that already exists: `source <venv_activate> && pip install --upgrade --force-reinstall torch --index-url <torch_pip_index_url>`
 - **`primus_git_url`** (default: `"https://github.com/AMD-AIG-AIMA/Primus.git"`)
 - **`primus_git_branch`** (default: `"dev/preflight-direct-test"`)
 - **`primus_git_recurse_submodules`** (default: `false`)
@@ -673,7 +674,7 @@ cvs run preflight_checks \
    - Node Smoke runs by default; set `node_smoke_tier1.connectivity_mode` to `"skip"` to disable it
    - Verify `primus_dir` and `venv_activate`, or enable `auto_setup: true`
    - On shared NFS home, use `shared_install: true` to avoid parallel clone races
-   - Match `torch_pip_index_url` to your ROCm version
+   - Match `torch_pip_index_url` to your ROCm version. auto_setup replaces an existing torch wheel whose HIP version does not match that index; to do it by hand, `source` the venv and `pip install --upgrade --force-reinstall torch --index-url <torch_pip_index_url>`
    - Review per-node fail reasons in the preflight HTML report
 
 9. **Node Smoke Tier 3 Failures**
