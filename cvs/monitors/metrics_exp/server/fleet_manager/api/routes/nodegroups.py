@@ -644,6 +644,70 @@ async def install_exporters(
     )
 
 
+# Closers logged after the real cause. The last of these must not be what the UI stores.
+# Each installer writes one of these unconditionally on the failure path, after stderr,
+# journal text, or container logs.
+_GENERIC_FAILURE_PREFIXES = (
+    "Installed but service not active",
+    "Installation completed but service not active",
+    "Service not active (",
+    "Metrics not ready (",
+    "Container not running",
+    "Installation completed but service not responding",
+    "Installed but service not responding",
+    "Installed but metrics not yet available",
+    "Installation completed but container runtime not found",
+)
+
+_STATUS_MESSAGE_LIMIT = 500
+
+
+def _descriptive_failure(messages):
+    """Last unsuccessful log line that names a cause, not a generic closer."""
+    for message in reversed(messages):
+        text = " ".join(str(message).split())
+        if not text or text.startswith(_GENERIC_FAILURE_PREFIXES):
+            continue
+        return text
+    if not messages:
+        return ""
+    return " ".join(str(messages[-1]).split())
+
+
+def _last_failure_reason(install_log, failed_components, limit=_STATUS_MESSAGE_LIMIT):
+    """Summarize why the failed components failed, for the node status message.
+
+    The full installer log only reaches the fleet-manager container log, so without
+    this the UI shows component names with no cause. Each component is trimmed
+    before joining so one long journal dump cannot crowd out a later component
+    when the caller caps the whole status string.
+    """
+    header = f"Failed to install: {', '.join(failed_components)}. "
+    budget = max(0, limit - len(header))
+    reasons = []
+    described = []
+    for component in failed_components:
+        messages = [
+            entry["message"]
+            for entry in install_log
+            if entry.get("component") == component and not entry.get("success")
+        ]
+        text = _descriptive_failure(messages)
+        if text:
+            described.append((component, text))
+    if not described:
+        return "See fleet-manager logs for details."[:budget]
+
+    separators = 3 * (len(described) - 1)
+    share = max(1, (budget - separators) // len(described))
+    for component, text in described:
+        piece = f"{component}: {text}"
+        if len(piece) > share:
+            piece = piece[: max(1, share - 1)] + "…"
+        reasons.append(piece)
+    return " | ".join(reasons)
+
+
 async def install_single_node(
     node_id: int,
     node_ip: str,
@@ -742,7 +806,8 @@ async def install_single_node(
                     return {"node_id": node_id, "success": True, "warnings": failed}
                 else:
                     node.status = DBNodeStatus.ERROR.value
-                    node.status_message = f"Failed to install: {', '.join(failed)}"
+                    reason = _last_failure_reason(installer.install_log, failed)
+                    node.status_message = f"Failed to install: {', '.join(failed)}. {reason}"[:500]
                     logger.warning(f"[Parallel] Node {node_ip} installation failed: {failed}")
                     db.commit()
                     return {"node_id": node_id, "success": False, "error": f"Failed: {', '.join(failed)}"}
