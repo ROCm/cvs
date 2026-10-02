@@ -38,8 +38,6 @@
     "mori_dir":"<changeme>",
     "master_addr": "<changeme>",
     "master_port": "1234",
-    "_example_options_nic_type": "ainic|thor2|cx7",
-    "nic_type": "<changeme>",
     "log_dir": "/home/{user-id}/LOGS/mori",
     "expected_results":
     {

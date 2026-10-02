@@ -203,7 +203,6 @@ class MoriBenchmark:
         self.mori_dir = self.mori_dict['mori_dir']
         self.env = dict(self.mori_dict.get('env') or {})
         self.mori_device_list = self.env.get('MORI_RDMA_DEVICES', '')
-        self.nic_type = self.mori_dict.get('nic_type', '')
         self.log_dir = self.mori_dict['log_dir']
         self.run_log_dir = f"{self.log_dir}/{time.strftime('%Y%m%d_%H%M%S')}"
         self.expected_results_dict = self.mori_dict['expected_results']

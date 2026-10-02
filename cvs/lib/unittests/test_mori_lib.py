@@ -51,7 +51,6 @@ def _mori_dict(**overrides):
             'MORI_RDMA_DEVICES': 'rdma0,rdma1',
             'LD_LIBRARY_PATH': '/torch/lib:$LD_LIBRARY_PATH',
         },
-        'nic_type': 'thor2',
         'log_dir': '/home/u/LOGS/mori',
         'expected_results': {'ibgda_write': {}, 'io_read': {}, 'io_write': {}},
     }
@@ -202,7 +201,7 @@ class TestMoriBenchmarkCommands(_MoriBenchCase):
 
     def test_baremetal_never_installs_packages_or_touches_host_ibverbs(self):
         orch = _BaremetalFakeOrch()
-        bench = MoriBenchmark(orch, _mori_dict(nic_type='thor2'))
+        bench = MoriBenchmark(orch, _mori_dict())
         self.assertFalse(bench.install_packages())
         self.assertEqual(orch.exec_calls, [])
         self._run_every_step(bench)
