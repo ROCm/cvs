@@ -391,12 +391,12 @@ class TestInstallSshConfig(unittest.TestCase):
         self.assertTrue(results["n1"])
 
 
-class TestVerifyPasswordlessSsh(unittest.TestCase):
+class TestVerifySshConnectivity(unittest.TestCase):
     def test_single_node_returns_empty(self):
         orch = MagicMock()
         cluster = {"node_dict": {"n1": {}}}
         norm = {"remote_ssh_dir": "~/.ssh", "verify_timeout": 20, "verify_mode": "ring"}
-        results = lib.verify_passwordless_ssh(orch, cluster, norm)
+        results = lib.verify_ssh_connectivity(orch, cluster, norm)
         self.assertEqual(results, {})
 
     def test_ring_three_nodes_builds_three_probes(self):
@@ -405,7 +405,7 @@ class TestVerifyPasswordlessSsh(unittest.TestCase):
         orch.exec.return_value = {"n1": {"exit_code": 0, "output": ""}}
         cluster = {"node_dict": {"n1": {}, "n2": {}, "n3": {}}, "username": "u", "priv_key_file": "/k"}
         norm = {"remote_ssh_dir": "~/.ssh", "verify_timeout": 20, "verify_mode": "ring"}
-        results = lib.verify_passwordless_ssh(orch, cluster, norm)
+        results = lib.verify_ssh_connectivity(orch, cluster, norm)
         # ring: 3 nodes → 3 probes (n1→n2, n2→n3, n3→n1), one orch.exec call per probe
         self.assertEqual(orch.exec.call_count, 3)
         self.assertEqual(len(results), 3)
@@ -419,7 +419,7 @@ class TestVerifyPasswordlessSsh(unittest.TestCase):
         ]
         cluster = {"node_dict": {"n1": {}, "n2": {}}, "username": "u", "priv_key_file": "/k"}
         norm = {"remote_ssh_dir": "~/.ssh", "verify_timeout": 20, "verify_mode": "ring"}
-        results = lib.verify_passwordless_ssh(orch, cluster, norm)
+        results = lib.verify_ssh_connectivity(orch, cluster, norm)
         self.assertFalse(results[("n1", "n2")])
         self.assertTrue(results[("n2", "n1")])
 
