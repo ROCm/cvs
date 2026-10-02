@@ -5,16 +5,16 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import pytest
-
 import json
 import re
 import shlex
 
-from cvs.lib.env_lib import build_env_prefix
-from cvs.lib.utils_lib import *
+import pytest
+
 from cvs.lib import globals, transferbench_rundeck
+from cvs.lib.env_lib import build_env_prefix
 from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
+from cvs.lib.utils_lib import *
 
 log = globals.log
 
@@ -99,6 +99,17 @@ def resolve_configured_tb_env(config_dict):
     return extra
 
 
+def _payload_sudo_prefix(orch):
+    """Sudo for a command passed to orch.exec().
+
+    sudo_prefix() is host passwordless sudo. Container exec already applies
+    that to `docker exec`, and the payload runs inside the container.
+    """
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        return ''
+    return orch.sudo_prefix()
+
+
 def detect_num_cpu_devices(orch):
     """Probe populated CPU NUMA nodes; return a count only when all hosts agree."""
     out_dict = orch.exec(_DETECT_NUM_CPU_DEVICES_CMD, timeout=30)
@@ -132,18 +143,21 @@ def resolve_runtime_tb_env(orch, config_dict):
     return extra
 
 
-def build_transferbench_command(path, rocm_path, preset, extra_env=None):
-    """Build a ``sudo bash -c`` TransferBench invocation with env inside the inner shell.
+def build_transferbench_command(path, rocm_path, preset, extra_env=None, sudo_prefix=''):
+    """Build a TransferBench invocation with env inside an inner bash.
 
-    Cluster/PSSH ``env_vars`` do not survive these ``sudo bash -c`` wrappers, so
-    NUM_CPU_DEVICES and LD_LIBRARY_PATH must be exported in the inner script.
+    Cluster/PSSH ``env_vars`` do not survive sudo wrappers, so NUM_CPU_DEVICES
+    and LD_LIBRARY_PATH are exported in the inner script. sudo strips the
+    environment, which is why the exports sit inside bash -c after the prefix.
+    sudo_prefix is _payload_sudo_prefix(): '' inside a container, 'sudo -n ' on
+    bare metal.
     """
     env = {'LD_LIBRARY_PATH': f'{rocm_path}/lib:$LD_LIBRARY_PATH'}
     if extra_env:
         env.update(extra_env)
     exports = build_env_prefix(env)
     inner = f'{exports} && echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH" && {path}/TransferBench {preset}'
-    return f'sudo bash -c {shlex.quote(inner)}'
+    return f'{sudo_prefix}bash -c {shlex.quote(inner)}'
 
 
 def run_transferbench(orch, config_dict, preset, timeout, extra_env=None, lifecycle=None, stage=None):
@@ -153,7 +167,7 @@ def run_transferbench(orch, config_dict, preset, timeout, extra_env=None, lifecy
     env = resolve_runtime_tb_env(orch, config_dict)
     if extra_env:
         env.update(extra_env)
-    cmd = build_transferbench_command(path, rocm_path, preset, env)
+    cmd = build_transferbench_command(path, rocm_path, preset, env, sudo_prefix=_payload_sudo_prefix(orch))
     log.info('TransferBench command: %s', cmd)
     with timed_stage(lifecycle, stage or preset):
         return orch.exec(cmd, timeout=timeout)
