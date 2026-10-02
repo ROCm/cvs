@@ -5,10 +5,11 @@ All rights reserved.
 Build the structured ``transferbench_res_dict`` consumed by the Run Deck
 status_matrix builder from TransferBench stdout CVS already collects per node.
 
-Bandwidth presets keep the measured GB/s in the cell drill-down. healthcheck
-and a2asweep have no numeric gate, so their verdict uses the same failure
-indicators as ``scan_test_results``. Chart fields never change that verdict:
-missing or unrecognized output simply omits metrics, series, and heatmaps.
+Bandwidth presets keep the measured GB/s in the cell drill-down. Every preset
+also fails when the output matches the same indicators as ``scan_test_results``,
+including a healthcheck subtest line of ``Testing ... FAIL``. Chart fields never
+change that verdict: missing or unrecognized output simply omits metrics,
+series, and heatmaps.
 
 When the v1.67 tables are present, a2a emits one RTotal metric per GPU
 (threshold ``gpu_to_gpu_a2a_rtotal``) and an ``RTotal`` series. p2p emits
@@ -16,7 +17,8 @@ When the v1.67 tables are present, a2a emits one RTotal metric per GPU
 averages. The BiDir banner is ``Averages (During  BiDir)`` (two spaces).
 ``TransferBench vX.Y.Z`` from the banner is stored on ``_meta.version``.
 healthcheck adds subtest items, per-GPU measured/criteria metrics, and an
-``XGMI`` heatmap, but its node status stays on the scan indicators. a2asweep
+``XGMI`` heatmap. A ``Testing ... FAIL`` line fails the node, as does a scan
+indicator. a2asweep
 keeps that scan verdict and adds a BlockSize/Unroll × SubExec heatmap plus
 highest-bandwidth and best BlockSize / Unroll / NumSubExec metrics. scaling
 adds one series per NumCUs endpoint and a Best-row metric per endpoint; only
@@ -36,8 +38,8 @@ import re
 
 _STATUSES = ("pass", "fail", "na")
 
-# healthcheck and a2asweep do not publish a bandwidth row. Match the indicators
-# scan_test_results already uses to fail those presets.
+# Match the indicators scan_test_results already uses. Bandwidth presets apply
+# the same pattern after the metric rollup so a good GB/s line cannot hide it.
 _SCAN_FAIL_RE = re.compile(
     r"test FAIL |test ERROR |ABORT|Traceback|No such file|FATAL|"
     r"cannot allocate memory due to process memory policy",
@@ -227,6 +229,20 @@ def _missing_item(name, message):
     return {"name": name, "status": "fail", "message": message}
 
 
+def _with_scan(text, name, status, items, summary, extras=None):
+    '''Fail the cell when scan_test_results would, and keep the matched snippet.'''
+    match = _SCAN_FAIL_RE.search(text or "")
+    if not match:
+        if extras is None:
+            return status, items, summary
+        return status, items, summary, extras
+    snippet = match.group(0).strip()
+    items = list(items) + [_missing_item(name, snippet)]
+    if extras is None:
+        return "fail", items, snippet
+    return "fail", items, snippet, extras
+
+
 def build_node_record(status, items=None, items_summary="", metrics=None, series=None, heatmaps=None):
     '''Assemble one node record for a preset.'''
     normalized = str(status or "na").lower()
@@ -294,13 +310,13 @@ def record_a2a(res_dict, out_dict, exp_dict, meta=None):
         match = _A2A_RTOTAL_RE.search(text)
         if not match:
             message = "RTotal row not found"
-            return "fail", [_missing_item("RTotal", message)], message
+            return _with_scan(text, "a2a", "fail", [_missing_item("RTotal", message)], message)
         items = [_metric_item(f"GPU{idx}", raw, threshold) for idx, raw in enumerate(match.groups())]
         worst = min(float(raw) for raw in match.groups())
         # The per-GPU bars are the chart. A second RTotal series would plot the same eight numbers.
         metrics = [_bandwidth_metric(f"GPU{idx:02d}", raw, threshold) for idx, raw in enumerate(match.groups())]
         status, items, summary = _rollup(items, f"min RTotal {worst} GB/s")
-        return status, items, summary, _charts(metrics)
+        return _with_scan(text, "a2a", status, items, summary, _charts(metrics))
 
     return _record_classified(res_dict, "a2a", out_dict, classify, meta)
 
@@ -335,7 +351,7 @@ def record_p2p(res_dict, out_dict, exp_dict, meta=None):
         else:
             summary = "p2p averages not found"
         status, items, summary = _rollup(items, summary)
-        return status, items, summary, _charts(series=series)
+        return _with_scan(text, "p2p", status, items, summary, _charts(series=series))
 
     return _record_classified(res_dict, "p2p", out_dict, classify, meta)
 
@@ -354,10 +370,10 @@ def record_scaling(res_dict, out_dict, exp_dict, meta=None):
         extras = _scaling_visuals(text)
         if not match:
             message = "Best row GPU00 bandwidth not found"
-            return "fail", [_missing_item("GPU00", message)], message, extras
+            return _with_scan(text, "scaling", "fail", [_missing_item("GPU00", message)], message, extras)
         item = _metric_item("GPU00", gpu00, threshold)
         status, items, summary = _rollup([item], f"GPU00 best {gpu00} GB/s")
-        return status, items, summary, extras
+        return _with_scan(text, "scaling", status, items, summary, extras)
 
     return _record_classified(res_dict, "scaling", out_dict, classify, meta)
 
@@ -409,13 +425,13 @@ def record_schmoo(res_dict, out_dict, exp_dict, meta=None):
         match = _SCHMOO_32_RE.search(text)
         if not match:
             message = "32 CU row not found"
-            return "fail", [_missing_item("32 CU", message)], message, extras
+            return _with_scan(text, "schmoo", "fail", [_missing_item("32 CU", message)], message, extras)
         items = [
             _metric_item(label, match.group(idx + 1), expected.get(key))
             for idx, (label, key) in enumerate(_SCHMOO_FIELDS)
         ]
         status, items, summary = _rollup(items, f"32 CU local copy {match.group(3)} GB/s")
-        return status, items, summary, extras
+        return _with_scan(text, "schmoo", status, items, summary, extras)
 
     return _record_classified(res_dict, "schmoo", out_dict, classify, meta)
 
@@ -525,10 +541,10 @@ def record_completion(res_dict, group, out_dict, meta=None):
             snippet = match.group(0).strip()
             return "fail", list(subtests) + [_missing_item(str(group), snippet)], snippet, extras
         if subtests:
-            # "Testing ... FAIL" is not a scan_test_results indicator, so it stays
-            # in the drill-down and does not change the node verdict.
             failed = sum(1 for item in subtests if item["status"] == "fail")
-            return "pass", subtests, f"{len(subtests) - failed} pass, {failed} fail", extras
+            summary = f"{len(subtests) - failed} pass, {failed} fail"
+            status = "fail" if failed else "pass"
+            return status, subtests, summary, extras
         return "pass", [], "completed", extras
 
     return _record_classified(res_dict, group, out_dict, classify, meta)

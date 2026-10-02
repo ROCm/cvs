@@ -12,40 +12,42 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
-  background: linear-gradient(160deg, #0a0c12 0%, #12151f 40%, #0f1117 100%); background-attachment: fixed;
-  color: var(--text); line-height: 1.45; }
-.wrap { max-width: 1320px; margin: 0 auto; padding: 1.25rem; }
+  background: linear-gradient(160deg, #0a0c12 0%, #12151f 40%, #0f1117 100%);
+  color: var(--text); padding: 1.25rem; line-height: 1.45; }
+.wrap { max-width: 1200px; margin: 0 auto; }
 a { color: var(--accent2); }
 .muted { color: var(--muted); }
-.hero { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
-.hero h1 { margin: 0 0 0.2rem; font-size: 1.6rem; font-weight: 600; }
-.subtitle { margin: 0; color: var(--muted); }
-.meta-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.65rem; }
-.meta-chip { background: var(--panel2); border: 1px solid var(--border); border-radius: 999px; padding: 0.15rem 0.6rem;
-  font-size: 0.75rem; color: var(--muted); }
-.meta-chip b { color: var(--text); font-weight: 600; }
-.hero-side { display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem; }
-.pill { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; padding: 0.3rem 0.9rem; border-radius: 999px;
-  text-transform: uppercase; border: 1px solid currentColor; }
-.pill-pass { color: var(--pass); background: rgba(61,214,140,0.10); }
-.pill-fail { color: var(--fail); background: rgba(255,92,106,0.10); }
-.pill-na { color: var(--na); }
-.btn { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
-  padding: 0.35rem 0.8rem; font-size: 0.8rem; cursor: pointer; text-decoration: none; }
-.btn:hover { border-color: var(--accent2); }
-.toolbar { position: sticky; top: 0; z-index: 5; display: grid; gap: 0.6rem; align-items: end;
-  grid-template-columns: repeat(4, minmax(9rem, 1fr)) auto auto;
-  background: rgba(15,17,23,0.92); backdrop-filter: blur(6px); border: 1px solid var(--border); border-radius: 12px;
-  padding: 0.7rem 0.9rem; margin-bottom: 1rem; }
-.toolbar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.7rem; color: var(--muted);
-  text-transform: uppercase; letter-spacing: 0.06em; }
-.toolbar select, .toolbar input[type=search] { background: #10131b; color: var(--text); border: 1px solid var(--border);
-  border-radius: 6px; padding: 0.4rem 0.5rem; width: 100%; font-size: 0.85rem; text-transform: none; letter-spacing: 0; }
-.toolbar .toggle { flex-direction: row; align-items: center; gap: 0.4rem; white-space: nowrap; padding-bottom: 0.45rem;
-  font-size: 0.8rem; text-transform: none; letter-spacing: 0; color: var(--text); }
-.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+.hero { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between;
+  gap: 1rem; margin-bottom: 1rem; }
+h1 { margin: 0 0 0.25rem; font-size: 1.6rem; font-weight: 600; letter-spacing: -0.02em; }
+.subtitle { color: var(--muted); margin: 0; font-size: 0.95rem; }
+.status-badge { display: inline-block; padding: 0.35rem 0.75rem; border-radius: 999px;
+  font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.status-pass { background: rgba(61,214,140,0.15); color: var(--pass); border: 1px solid rgba(61,214,140,0.35); }
+.status-fail { background: rgba(255,92,106,0.15); color: var(--fail); border: 1px solid rgba(255,92,106,0.35); }
+.status-record { background: rgba(107,159,255,0.12); color: var(--accent2); border: 1px solid rgba(107,159,255,0.3); }
+.viewer-nav { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin-bottom: 1rem; padding: 0.65rem 1rem;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; font-size: 0.8rem; }
+.viewer-nav a { color: var(--accent2); text-decoration: none; }
+.viewer-nav a:hover { text-decoration: underline; }
+.toolbar { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 0.65rem 0.85rem; align-items: end; }
+.toolbar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.72rem; color: var(--muted); min-width: 0; }
+.toolbar label .filter-label { line-height: 1.2; white-space: nowrap; }
+.toolbar label.filter-search { grid-column: span 2; }
+.toolbar select, .toolbar input[type="search"] { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.5rem; width: 100%; min-width: 0; font-size: 0.85rem; }
+.toolbar button { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.65rem; font-size: 0.85rem; cursor: pointer; white-space: nowrap; }
+.toolbar button:hover { border-color: var(--accent); }
+.toolbar-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end;
+  grid-column: 1 / -1; justify-content: flex-end; padding-top: 0.1rem; }
+.meta-line { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.85rem; color: var(--muted); }
+.meta-line strong { color: var(--text); font-weight: 600; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1rem 1.25rem; margin-bottom: 1rem; box-shadow: 0 8px 32px rgba(0,0,0,0.25); }
 .panel > h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 0.85rem;
-  display: flex; justify-content: space-between; align-items: baseline; }
+  font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; }
 .panel > h2 .count { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
 .stat { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem 0.9rem; }
@@ -90,8 +92,11 @@ th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-
 .details td.msg { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.75rem; word-break: break-word; }
 .details tr.row-fail td { background: rgba(255,92,106,0.06); }
 .empty { color: var(--muted); font-size: 0.85rem; }
-@media (max-width: 860px) {
-  .toolbar { grid-template-columns: 1fr 1fr; position: static; }
+@media (max-width: 720px) {
+  .toolbar label.filter-search { grid-column: span 1; }
+}
+@media (max-width: 640px) {
+  body { padding: 0.75rem; }
   .chart-grid { grid-template-columns: 1fr; }
 }
 </style>
@@ -102,26 +107,42 @@ th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-
   <div>
     <h1>__TITLE__</h1>
     <p class="subtitle">__SUBTITLE__</p>
-    <div class="meta-row" id="meta-row"></div>
   </div>
-  <div class="hero-side">
-    <span class="pill pill-na" id="overall-pill">—</span>
-    <a id="run-deck-link" class="btn" href="#">Open Run deck</a>
-  </div>
+  <span class="status-badge status-record" id="hero-status">—</span>
 </header>
+
+<nav class="viewer-nav" id="viewer-nav">
+  <a href="#filters">Filters</a>
+  <a href="#overview">Overview</a>
+  <a href="#charts">Measurements</a>
+  <a href="#series-panel" id="nav-series">Series</a>
+  <a href="#heatmaps" id="nav-heatmaps">Heatmaps</a>
+  <a href="#details">Details</a>
+  <a id="run-deck-link" href="#" style="display:none">Run deck</a>
+</nav>
 <p id="load-error" class="muted" hidden></p>
 
-<div class="toolbar" role="search">
-  <label>Node<select id="f-node"><option value="">All nodes</option></select></label>
-  <label>Group<select id="f-group"><option value="">All groups</option></select></label>
-  <label>Measurement<select id="f-metric"><option value="">All measurements</option></select></label>
-  <label>Search<input id="f-search" type="search" placeholder="Item, message, node, group"/></label>
-  <label class="toggle"><input id="f-fail" type="checkbox"/>Failures only</label>
-  <button class="btn" id="f-reset" type="button">Reset</button>
-</div>
+<section class="panel" id="filters">
+  <h2>Filters</h2>
+  <div class="toolbar" role="search">
+    <label><span class="filter-label">Node</span><select id="f-node"><option value="">All</option></select></label>
+    <label><span class="filter-label">Group</span><select id="f-group"><option value="">All</option></select></label>
+    <label><span class="filter-label">Measurement</span><select id="f-metric"><option value="">All</option></select></label>
+    <label><span class="filter-label">Status</span><select id="f-status">
+      <option value="">Any</option><option value="fail">Fail</option><option value="pass">Pass</option><option value="na">Not evaluated</option>
+    </select></label>
+    <label class="filter-search"><span class="filter-label">Search</span><input id="f-search" type="search" placeholder="item, message, node…"/></label>
+    <div class="toolbar-actions">
+      <button type="button" id="btn-export">Export CSV</button>
+      <button type="button" id="btn-reset">Reset filters</button>
+    </div>
+  </div>
+  <div class="meta-line" id="meta" style="margin-top:0.85rem">Loading…</div>
+</section>
 
 <section class="panel" id="overview">
-  <h2>Health overview</h2>
+  <h2>Overview</h2>
+  <div class="meta-line" id="run-meta" style="margin-bottom:0.85rem"></div>
   <div class="stats">
     <div class="stat"><div class="label">Pass rate</div><div class="value" id="pass-rate">—</div>
       <div class="bar" id="pass-bar"></div><div class="sub" id="pass-meta"></div></div>
@@ -167,6 +188,7 @@ const NEUTRAL_BAR = "#6b9fff";
 // Past this many nodes a per-node bar chart is unreadable; bars switch to min / median / max.
 const MAX_NODE_DATASETS = 10;
 let charts = [];
+let detailRows = [];
 
 function $(id) { return document.getElementById(id); }
 
@@ -218,14 +240,14 @@ function visibleCells(matrix) {
   const grid = matrix.grid && typeof matrix.grid === "object" ? matrix.grid : {};
   const nodeFilter = selected("f-node");
   const groupFilter = selected("f-group");
-  const failOnly = selected("f-fail");
+  const statusFilter = selected("f-status");
   const rows = [];
   nodes.forEach(node => {
     if (nodeFilter && node !== nodeFilter) return;
     groups.forEach(group => {
       if (groupFilter && group !== groupFilter) return;
       const cell = (grid[node] && grid[node][group]) || {};
-      if (failOnly && cellStatus(cell) !== "fail") return;
+      if (statusFilter && cellStatus(cell) !== statusFilter) return;
       rows.push({node: node, group: group, cell: cell});
     });
   });
@@ -241,18 +263,30 @@ function fmtRate(rate) {
 
 function renderHeader(matrix) {
   const overall = cellStatus({status: matrix.overall_status});
-  const pill = $("overall-pill");
-  pill.className = "pill pill-" + overall;
-  pill.textContent = overall === "na" ? "n/a" : overall;
+  const badge = $("hero-status");
+  badge.className = "status-badge status-" + (overall === "na" ? "record" : overall);
+  badge.textContent = overall === "na" ? "n/a" : overall;
   const chips = [];
   const display = Array.isArray(matrix.run_card_display) ? matrix.run_card_display : [];
   display.forEach(entry => {
     if (!Array.isArray(entry) || entry.length < 2) return;
     const label = String(entry[0]);
     if (/^(passed|failed)$/i.test(label)) return;
-    chips.push("<span class='meta-chip'>" + esc(label) + " <b>" + esc(entry[1]) + "</b></span>");
+    chips.push("<span>" + esc(label) + " <strong>" + esc(entry[1]) + "</strong></span>");
   });
-  $("meta-row").innerHTML = chips.join("");
+  $("run-meta").innerHTML = chips.join("");
+  $("run-meta").hidden = !chips.length;
+}
+
+function renderMeta(matrix, counts, shown) {
+  const nodes = Array.isArray(matrix.nodes) ? matrix.nodes : [];
+  const groups = Array.isArray(matrix.groups) ? matrix.groups : [];
+  const total = nodes.length * groups.length;
+  $("meta").innerHTML = "<span>Showing <strong>" + shown + "</strong> of <strong>" + total + "</strong> cells</span>"
+    + "<span><strong>" + counts.pass + "</strong> pass</span>"
+    + "<span><strong>" + counts.fail + "</strong> fail</span>"
+    + (counts.na ? "<span><strong>" + counts.na + "</strong> not evaluated</span>" : "")
+    + "<span>Charts and details follow filters</span>";
 }
 
 function renderOverview(matrix) {
@@ -274,6 +308,7 @@ function renderOverview(matrix) {
   $("n-pass").textContent = counts.pass;
   $("n-fail").textContent = counts.fail;
   $("n-na").textContent = counts.na;
+  renderMeta(matrix, counts, rows.length);
   renderMatrix(matrix);
 }
 
@@ -283,8 +318,8 @@ function renderMatrix(matrix) {
   const grid = matrix.grid && typeof matrix.grid === "object" ? matrix.grid : {};
   const nodeFilter = selected("f-node");
   const groupFilter = selected("f-group");
-  const failOnly = selected("f-fail");
-  const shownNodes = nodes.filter(node => !failOnly || groups.some(group => cellStatus((grid[node] || {})[group]) === "fail"));
+  const statusFilter = selected("f-status");
+  const shownNodes = nodes.filter(node => !statusFilter || groups.some(group => cellStatus((grid[node] || {})[group]) === statusFilter));
   let html = "<thead><tr><th class='node'>Node</th>" + groups.map(group => "<th>" + esc(group) + "</th>").join("") + "</tr></thead><tbody>";
   shownNodes.forEach(node => {
     html += "<tr><td class='node'>" + esc(node) + "</td>";
@@ -354,7 +389,9 @@ function populateFilters(matrix) {
   fillSelect("f-metric", seen.map(name => ({value: name, label: name})));
   // Sections the suite never produces are noise; the empty message still covers filters that hide everything.
   $("series-panel").hidden = !present.series;
+  $("nav-series").hidden = !present.series;
   $("heatmaps").hidden = !present.heatmaps;
+  $("nav-heatmaps").hidden = !present.heatmaps;
   $("f-metric").closest("label").hidden = !seen.length;
 }
 
@@ -652,7 +689,7 @@ function linkCell(cell) {
 
 function renderDetails(matrix) {
   const query = selected("f-search").trim().toLowerCase();
-  const failOnly = selected("f-fail");
+  const statusFilter = selected("f-status");
   const rows = [];
   visibleCells(matrix).forEach(entry => {
     const items = Array.isArray(entry.cell.items) ? entry.cell.items : [];
@@ -674,10 +711,11 @@ function renderDetails(matrix) {
   });
   const rank = {fail: 0, na: 1, pass: 2};
   const matched = rows.filter(row => {
-    if (failOnly && row.status !== "fail") return false;
+    if (statusFilter && row.status !== statusFilter) return false;
     if (!query) return true;
     return [row.node, row.group, row.name, row.status, row.message].join(" ").toLowerCase().indexOf(query) !== -1;
   }).sort((a, b) => rank[a.status] - rank[b.status]);
+  detailRows = matched;
   const table = $("details-table");
   $("details-count").textContent = matched.length ? matched.length + " row" + (matched.length === 1 ? "" : "s") : "";
   if (!matched.length) {
@@ -714,22 +752,43 @@ function loadReportData() {
   });
 }
 
+function csvField(value) {
+  const text = String(value == null ? "" : value);
+  return /[",\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+function exportCsv() {
+  const lines = [["node", "group", "item", "status", "message"].join(",")];
+  detailRows.forEach(row => {
+    lines.push([row.node, row.group, row.name, row.status, row.message].map(csvField).join(","));
+  });
+  const blob = new Blob([lines.join("\n") + "\n"], {type: "text/csv"});
+  const anchor = document.createElement("a");
+  anchor.href = URL.createObjectURL(blob);
+  anchor.download = String(JSON_PATH || "health").replace(/\.json$/i, "") + "_results.csv";
+  anchor.click();
+  URL.revokeObjectURL(anchor.href);
+}
+
 let reportMatrix = {};
 loadReportData().then(data => {
   reportMatrix = statusMatrix(data);
   const link = $("run-deck-link");
-  if (link && JSON_PATH) link.href = String(JSON_PATH).replace(/\.json$/i, ".html");
+  if (link && JSON_PATH) {
+    link.href = String(JSON_PATH).replace(/\.json$/i, ".html");
+    link.style.display = "";
+  }
   renderHeader(reportMatrix);
   populateFilters(reportMatrix);
-  ["f-node", "f-group", "f-metric", "f-search", "f-fail"].forEach(id => {
+  ["f-node", "f-group", "f-metric", "f-status", "f-search"].forEach(id => {
     $(id).addEventListener("input", () => renderHealth(reportMatrix));
     $(id).addEventListener("change", () => renderHealth(reportMatrix));
   });
-  $("f-reset").addEventListener("click", () => {
-    ["f-node", "f-group", "f-metric", "f-search"].forEach(id => { $(id).value = ""; });
-    $("f-fail").checked = false;
+  $("btn-reset").addEventListener("click", () => {
+    ["f-node", "f-group", "f-metric", "f-status", "f-search"].forEach(id => { $(id).value = ""; });
     renderHealth(reportMatrix);
   });
+  $("btn-export").addEventListener("click", exportCsv);
   $("matrix-table").addEventListener("click", event => {
     const button = event.target.closest(".cell-btn");
     if (!button) return;

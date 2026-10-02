@@ -139,7 +139,6 @@ class DeckCardRenderer:
     DEFAULT_MAX_LINE_CHART_SERIES = 40
     MAX_BAR_NODES = 16
     MAX_SERIES_LINES = 8
-    _TONES = ("tone1", "tone2", "tone3", "tone4", "tone5", "tone6")
 
     def __init__(
         self,
@@ -181,40 +180,34 @@ class DeckCardRenderer:
         return times
 
     @staticmethod
-    def _stage_html(label, sec, pct, tone, per_cell):
+    def _stage_html(label, sec, pct, per_cell):
         head = (
             f"<span class='tl-lbl'>{html.escape(label.replace('_', ' '))}</span><span class='tl-val'>{sec:.1f}s</span>"
         )
         if not per_cell:
-            return f"<div class='tl-seg tl-{tone}' style='flex-grow:{pct:.2f}'>{head}</div>"
+            return f"<div class='tl-seg' style='flex-grow:{pct:.2f}'>{head}</div>"
         cells = "".join(
-            f"<div class='tl-cell tl-{cell_tone}' "
+            f"<div class='tl-cell' "
             f"style='flex-grow:{100.0 * cell_sec / sec:.2f}' title='{html.escape(f'{name}: {cell_sec:.1f}s')}'>"
             f"<span class='tl-lbl'>{html.escape(name)}</span>"
             f"<span class='tl-val'>{cell_sec:.1f}s</span></div>"
-            for name, cell_sec, cell_tone in per_cell
+            for name, cell_sec in per_cell
         )
         return (
-            f"<div class='tl-group tl-{tone}' style='flex-grow:{pct:.2f}'>"
+            f"<div class='tl-group' style='flex-grow:{pct:.2f}'>"
             f"<div class='tl-group-head'>{head}</div>"
             f"<div class='tl-group-body'>{cells}</div></div>"
         )
 
-    @staticmethod
-    def _plain_timeline(lifecycle, labels):
-        """One untoned segment per stage. Inference decks use this path."""
+    def _plain_timeline(self, lifecycle, labels):
+        """One segment per stage, sized against the full lifecycle sum."""
         timeline_total = sum(lifecycle.values()) or 1.0
         parts = []
         for lbl in labels:
             sec = lifecycle.get(lbl, 0.0)
             if sec <= 0:
                 continue
-            pct = 100.0 * sec / timeline_total
-            parts.append(
-                f"<div class='tl-seg' style='flex-grow:{pct:.2f}'>"
-                f"<span class='tl-lbl'>{html.escape(lbl.replace('_', ' '))}</span>"
-                f"<span class='tl-val'>{sec:.1f}s</span></div>"
-            )
+            parts.append(self._stage_html(lbl, sec, 100.0 * sec / timeline_total, ()))
         return "".join(parts) or "<p class='muted'>No lifecycle timings recorded.</p>"
 
     def render_lifecycle(self, payload: dict, _card: dict, data: Any) -> str:
@@ -233,20 +226,12 @@ class DeckCardRenderer:
         }
         timeline_total = sum(totals.values()) or 1.0
         parts = []
-        # Stages and sweep cells share one palette cursor so a cell never repeats the colour
-        # of a stage sitting next to it.
-        tone = 0
         for lbl in labels:
             sec = totals[lbl]
             if sec <= 0:
                 continue
-            stage_tone = self._TONES[tone % len(self._TONES)]
-            tone += 1
-            cells = []
-            for name, cell_sec in per_cell.get(lbl) or []:
-                cells.append((name, cell_sec, self._TONES[tone % len(self._TONES)]))
-                tone += 1
-            parts.append(self._stage_html(lbl, sec, 100.0 * sec / timeline_total, stage_tone, cells))
+            cells = per_cell.get(lbl) or ()
+            parts.append(self._stage_html(lbl, sec, 100.0 * sec / timeline_total, cells))
         return "".join(parts) or "<p class='muted'>No lifecycle timings recorded.</p>"
 
     @staticmethod

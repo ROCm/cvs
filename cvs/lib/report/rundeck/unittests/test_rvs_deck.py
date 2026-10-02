@@ -53,7 +53,10 @@ class TestRvsDeck(unittest.TestCase):
 
     def test_profile_cards_overview_and_viewer(self):
         types = [card["type"] for card in self.profile["cards"]]
-        self.assertEqual(types, ["run_card", "status_overview", "metric_charts", "status_matrix"])
+        self.assertEqual(
+            types,
+            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "status_matrix"],
+        )
         metrics = next(card for card in self.profile["cards"] if card["type"] == "metric_charts")
         self.assertEqual(metrics["bind"], "datasets.status_matrix.metric_charts")
         self.assertEqual(metrics["when_empty"], "hide")
@@ -70,6 +73,22 @@ class TestRvsDeck(unittest.TestCase):
         self.assertNotIn("No metric data recorded", self.html)
         self.assertNotIn("Measurements", self.html)
         self.assertNotIn("item breakdown", self.html)
+
+    def test_lifecycle_draws_recorded_rvs_stages(self):
+        store = {
+            "cvs_results_dict": _RVS_RESULTS,
+            "inf_res_dict": _RVS_RESULTS,
+            "lifecycle_report": {
+                "health": [("gpu_enumeration", 2.0, "s"), ("level_config", 90.0, "s"), ("gst_single", 0.0, "s")]
+            },
+        }
+        payload = build_rundeck_payload(profile=self.profile, store=store, provenance={}, cvs_version="dev")
+        html = render_rundeck_html(payload)
+        self.assertIn("Lifecycle timeline", html)
+        self.assertIn("gpu enumeration", html)
+        self.assertIn("level config", html)
+        self.assertIn("90.0s", html)
+        self.assertNotIn("mem test", html)
 
     def test_overall_status_is_fail(self):
         self.assertEqual(self.payload["overall_status"], "fail")

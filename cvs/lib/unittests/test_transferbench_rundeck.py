@@ -55,6 +55,15 @@ class TestRecordA2a(unittest.TestCase):
         self.assertEqual(_node(results, "a2a")["status"], "fail")
         self.assertIn("not found", _node(results, "a2a")["items"][0]["message"])
 
+    def test_traceback_fails_passing_rtotal(self):
+        results = {}
+        text = "RTotal 110.0 120.0 130.0 140.0 150.0 160.0 170.0 180.0\nTraceback (most recent call last):\n"
+        transferbench_rundeck.record_a2a(results, {"n1": text}, A2A_EXPECT)
+        node = _node(results, "a2a")
+        self.assertEqual(node["status"], "fail")
+        self.assertEqual(node["items"][0]["status"], "pass")
+        self.assertIn("Traceback", node["items"][-1]["message"])
+
 
 class TestRecordP2p(unittest.TestCase):
     def test_averages_above_threshold_pass(self):
@@ -71,6 +80,14 @@ class TestRecordP2p(unittest.TestCase):
         self.assertEqual(node["status"], "fail")
         self.assertEqual(node["items"][0]["message"], "UniDir averages not found")
 
+    def test_abort_fails_passing_averages(self):
+        results = {}
+        transferbench_rundeck.record_p2p(results, {"n1": P2P_OK + "ABORT\n"}, P2P_EXPECT)
+        node = _node(results, "p2p")
+        self.assertEqual(node["status"], "fail")
+        self.assertEqual(node["items"][0]["status"], "pass")
+        self.assertEqual(node["items"][-1]["message"], "ABORT")
+
 
 class TestRecordScalingAndSchmoo(unittest.TestCase):
     def test_scaling_best_gpu00(self):
@@ -84,6 +101,17 @@ class TestRecordScalingAndSchmoo(unittest.TestCase):
         results = {}
         transferbench_rundeck.record_scaling(results, {"n1": SCALING_OK}, {"best_gpu0_bw": "80"})
         self.assertEqual(_node(results, "scaling")["status"], "fail")
+
+    def test_abort_fails_passing_scaling_and_schmoo(self):
+        results = {}
+        transferbench_rundeck.record_scaling(results, {"n1": SCALING_OK + "ABORT\n"}, {"best_gpu0_bw": "50"})
+        self.assertEqual(_node(results, "scaling")["status"], "fail")
+        self.assertEqual(_node(results, "scaling")["items"][-1]["message"], "ABORT")
+        results = {}
+        passing = "  32  10.0  20.0  30.0  40.0  50.0  80.0\nABORT\n"
+        transferbench_rundeck.record_schmoo(results, {"n1": passing}, SCHMOO_EXPECT)
+        self.assertEqual(_node(results, "schmoo")["status"], "fail")
+        self.assertEqual(_node(results, "schmoo")["items"][-1]["message"], "ABORT")
 
     def test_schmoo_remote_copy_below_threshold(self):
         results = {}
@@ -241,7 +269,7 @@ class TestHealthcheckCharts(unittest.TestCase):
         meta = transferbench_rundeck.make_meta({"cluster_name": "helios"}, "transferbench_cvs")
         transferbench_rundeck.record_completion(results, "healthcheck", {"node-a": HEALTHCHECK_REAL}, meta=meta)
         node = _node(results, "healthcheck", "node-a")
-        self.assertEqual(node["status"], "pass")
+        self.assertEqual(node["status"], "fail")
         self.assertEqual(node["items_summary"], "2 pass, 2 fail")
         names = [item["name"] for item in node["items"]]
         self.assertEqual(
@@ -283,6 +311,15 @@ class TestHealthcheckCharts(unittest.TestCase):
         self.assertIn("allocate memory", node["items"][-1]["message"])
         self.assertIn("metrics", node)
         self.assertIn("heatmaps", node)
+
+    def test_subtest_fail_fails_the_cell(self):
+        results = {}
+        text = "Testing HBM performance [READ] ........FAIL\n"
+        transferbench_rundeck.record_completion(results, "healthcheck", {"n1": text})
+        node = _node(results, "healthcheck")
+        self.assertEqual(node["status"], "fail")
+        self.assertEqual(node["items_summary"], "0 pass, 1 fail")
+        self.assertEqual(node["items"][0]["status"], "fail")
 
     def test_garbled_pairs_omit_heatmap(self):
         results = {}

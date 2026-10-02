@@ -84,13 +84,30 @@ class TestTransferBenchDeck(unittest.TestCase):
 
     def test_profile_cards_and_viewer(self):
         types = [card["type"] for card in self.profile["cards"]]
-        self.assertEqual(types, ["run_card", "status_overview", "metric_charts", "status_matrix"])
-        self.assertEqual(self.profile["cards"][1]["bind"], "datasets.status_matrix.overview")
-        self.assertEqual(self.profile["cards"][2]["bind"], "datasets.status_matrix.metric_charts")
-        self.assertEqual(self.profile["cards"][2]["when_empty"], "hide")
+        self.assertEqual(
+            types,
+            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "status_matrix"],
+        )
+        self.assertEqual(self.profile["cards"][1]["bind"], "lifecycle")
+        self.assertEqual(self.profile["cards"][2]["bind"], "datasets.status_matrix.overview")
+        self.assertEqual(self.profile["cards"][3]["bind"], "datasets.status_matrix.metric_charts")
+        self.assertEqual(self.profile["cards"][3]["when_empty"], "hide")
         self.assertEqual(self.profile["sources"]["results"], "transferbench_res_dict")
         self.assertEqual(self.profile["dataset_builder"], "status_matrix")
         self.assertTrue(self.profile["interactive_viewer"])
+
+    def test_lifecycle_draws_recorded_presets(self):
+        store = {
+            "cvs_results_dict": _TB_RESULTS,
+            "inf_res_dict": _TB_RESULTS,
+            "lifecycle_report": {"health": [("a2a", 30.0, "s"), ("healthcheck", 8.5, "s")]},
+        }
+        payload = build_rundeck_payload(profile=self.profile, store=store, provenance={}, cvs_version="dev")
+        html = render_rundeck_html(payload)
+        self.assertIn("Lifecycle timeline", html)
+        self.assertIn("30.0s", html)
+        self.assertIn("8.5s", html)
+        self.assertNotIn("schmoo", html)
 
     def test_overall_status_is_fail(self):
         self.assertEqual(self.payload["overall_status"], "fail")

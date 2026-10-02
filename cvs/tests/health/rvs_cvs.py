@@ -15,6 +15,7 @@ from packaging import version
 from cvs.lib.utils_lib import *
 
 from cvs.lib import globals, rvs_rundeck
+from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 
 log = globals.log
 
@@ -74,6 +75,12 @@ def rvs_test_level(config_dict):
     except (ValueError, TypeError):
         log.warning(f'Invalid RVS test level format in config: {level}. Using default level 4')
         return 4
+
+
+@pytest.fixture(scope="module")
+def lifecycle():
+    """Wall-clock of each RVS command, bound as the deck lifecycle source."""
+    return HealthLifecycle()
 
 
 @pytest.fixture(scope="module")
@@ -424,7 +431,9 @@ def _capture_rvs_rundeck(rvs_res_dict, cluster_dict, group, out_dict, fail_patte
         log.warning("RVS '%s': could not capture Run Deck results: %s", group, exc)
 
 
-def execute_rvs_test(orch, config_dict, test_name, rvs_res_dict=None, cluster_dict=None, rvs_version=None):
+def execute_rvs_test(
+    orch, config_dict, test_name, rvs_res_dict=None, cluster_dict=None, rvs_version=None, lifecycle=None
+):
     """
     Generic function to execute any RVS test.
 
@@ -496,7 +505,8 @@ def execute_rvs_test(orch, config_dict, test_name, rvs_res_dict=None, cluster_di
         sudo = test_name == 'peqt_single'
         rvs_cmd = _build_rvs_cmd(rvs_path, f'-c {config_path}', sudo=sudo, ld_path=ld_path)
 
-        out_dict = orch.exec(f'{rvs_cmd}', timeout=timeout)
+        with timed_stage(lifecycle, test_name):
+            out_dict = orch.exec(f'{rvs_cmd}', timeout=timeout)
         print_test_output(log, out_dict)
         scan_test_results(out_dict)
 
@@ -552,7 +562,7 @@ def parse_rvs_level_results(test_config, out_dict, level):
 ################################################################################
 
 
-def test_rvs_level_config(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
+def test_rvs_level_config(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict, lifecycle):
     """
     Run RVS LEVEL-based configuration test.
     This test runs all RVS modules collectively using the -r (run level) option.
@@ -605,7 +615,8 @@ def test_rvs_level_config(orch, config_dict, rvs_version, rvs_test_level, rvs_re
     rvs_cmd = _build_rvs_cmd(rvs_path, f'-r {rvs_test_level}', sudo=True, ld_path=ld_path)
 
     log.info(f'Executing: {rvs_cmd}')
-    out_dict = orch.exec(rvs_cmd, timeout=timeout)
+    with timed_stage(lifecycle, "level_config"):
+        out_dict = orch.exec(rvs_cmd, timeout=timeout)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
 
@@ -623,7 +634,7 @@ def test_rvs_level_config(orch, config_dict, rvs_version, rvs_test_level, rvs_re
     update_test_result()
 
 
-def test_rvs_gpu_enumeration(orch, config_dict, rvs_res_dict, cluster_dict, rvs_version):
+def test_rvs_gpu_enumeration(orch, config_dict, rvs_res_dict, cluster_dict, rvs_version, lifecycle):
     """
     Run RVS GPU enumeration test to detect and validate GPU presence.
     This is a basic connectivity and detection test.
@@ -638,7 +649,8 @@ def test_rvs_gpu_enumeration(orch, config_dict, rvs_res_dict, cluster_dict, rvs_
     rvs_path = config_dict['path']
 
     # Run GPU enumeration (using gpup module)
-    out_dict = orch.exec(f'{rvs_path}/rvs -g', timeout=60)
+    with timed_stage(lifecycle, "gpu_enumeration"):
+        out_dict = orch.exec(f'{rvs_path}/rvs -g', timeout=60)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
 
@@ -658,7 +670,7 @@ def test_rvs_gpu_enumeration(orch, config_dict, rvs_res_dict, cluster_dict, rvs_
     update_test_result()
 
 
-def test_rvs_mem_test(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
+def test_rvs_mem_test(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict, lifecycle):
     """
     Run RVS Memory Test.
     This test validates GPU memory functionality and integrity.
@@ -682,10 +694,11 @@ def test_rvs_mem_test(orch, config_dict, rvs_version, rvs_test_level, rvs_res_di
         rvs_res_dict=rvs_res_dict,
         cluster_dict=cluster_dict,
         rvs_version=rvs_version,
+        lifecycle=lifecycle,
     )
 
 
-def test_rvs_gst_single(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
+def test_rvs_gst_single(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict, lifecycle):
     """
     Run RVS GST (GPU Stress Test) - Single GPU validation test.
     This test runs the GPU stress test configuration to validate GPU functionality
@@ -710,10 +723,11 @@ def test_rvs_gst_single(orch, config_dict, rvs_version, rvs_test_level, rvs_res_
         rvs_res_dict=rvs_res_dict,
         cluster_dict=cluster_dict,
         rvs_version=rvs_version,
+        lifecycle=lifecycle,
     )
 
 
-def test_rvs_iet_stress(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
+def test_rvs_iet_stress(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict, lifecycle):
     """
     Run RVS IET (Peak Power Test) - Single GPU validation test.
     This test validates power consumption and thermal behavior under load.
@@ -737,10 +751,11 @@ def test_rvs_iet_stress(orch, config_dict, rvs_version, rvs_test_level, rvs_res_
         rvs_res_dict=rvs_res_dict,
         cluster_dict=cluster_dict,
         rvs_version=rvs_version,
+        lifecycle=lifecycle,
     )
 
 
-def test_rvs_pebb_single(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
+def test_rvs_pebb_single(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict, lifecycle):
     """
     Run RVS PEBB (PCI Express Bandwidth Benchmark).
     This test measures and validates PCI Express bandwidth performance.
@@ -764,10 +779,11 @@ def test_rvs_pebb_single(orch, config_dict, rvs_version, rvs_test_level, rvs_res
         rvs_res_dict=rvs_res_dict,
         cluster_dict=cluster_dict,
         rvs_version=rvs_version,
+        lifecycle=lifecycle,
     )
 
 
-def test_rvs_pbqt_single(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
+def test_rvs_pbqt_single(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict, lifecycle):
     """
     Run RVS PBQT (P2P Benchmark and Qualification Tool).
     This test validates peer-to-peer communication between GPUs.
@@ -791,10 +807,11 @@ def test_rvs_pbqt_single(orch, config_dict, rvs_version, rvs_test_level, rvs_res
         rvs_res_dict=rvs_res_dict,
         cluster_dict=cluster_dict,
         rvs_version=rvs_version,
+        lifecycle=lifecycle,
     )
 
 
-def test_rvs_babel_stream(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict):
+def test_rvs_babel_stream(orch, config_dict, rvs_version, rvs_test_level, rvs_res_dict, cluster_dict, lifecycle):
     """
     Run RVS BABEL Benchmark test.
     This test runs the BABEL streaming benchmark for GPU memory bandwidth validation.
@@ -818,4 +835,5 @@ def test_rvs_babel_stream(orch, config_dict, rvs_version, rvs_test_level, rvs_re
         rvs_res_dict=rvs_res_dict,
         cluster_dict=cluster_dict,
         rvs_version=rvs_version,
+        lifecycle=lifecycle,
     )

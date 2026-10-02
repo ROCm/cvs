@@ -152,8 +152,9 @@ help. The deck nav links the viewer from `summary.viewer_html`, the same way
 sweep decks do.
 
 Health suites can extend `profiles/health_status_base.json` for the shared run
-card, overview, optional measurements (`when_empty: hide`), and full-results
-stack. Profile inheritance merges card entries by `id`, preserving base order;
+card, lifecycle timeline, overview, optional measurements (`when_empty: hide`),
+and full-results stack. Each suite lists its own `lifecycle.session_labels`;
+only stages with a recorded duration are drawn. Profile inheritance merges card entries by `id`, preserving base order;
 a suite overlay only needs to provide the card `id` and fields it customizes,
 such as a measurement title or result hint.
 
@@ -161,13 +162,19 @@ such as a measurement title or result hint.
 {
   "dataset_builder": "status_matrix",
   "interactive_viewer": true,
-  "sources": {"results": "cvs_results_dict"},
+  "sources": {"results": "cvs_results_dict", "lifecycle": "lifecycle"},
   "cards": [
     {
       "type": "run_card",
       "id": "run-card",
       "title": "Run card",
       "bind": "datasets.status_matrix.run_card_display"
+    },
+    {
+      "type": "lifecycle_timeline",
+      "id": "lifecycle",
+      "title": "Lifecycle timeline",
+      "bind": "lifecycle"
     },
     {
       "type": "status_overview",

@@ -11,6 +11,18 @@
   "sources": {
     "results": "rvs_res_dict"
   },
+  "lifecycle": {
+    "session_labels": [
+      "gpu_enumeration",
+      "level_config",
+      "mem_test",
+      "gst_single",
+      "iet_stress",
+      "pebb_single",
+      "pbqt_single",
+      "babel_stream"
+    ]
+  },
   "cards": [
     {
       "id": "results",

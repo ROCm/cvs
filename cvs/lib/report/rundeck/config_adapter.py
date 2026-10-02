@@ -104,6 +104,9 @@ class ProfileConfigResolver:
                 extra["run_card_display_builder"] = cls.import_callable(hooks["run_card_display"])
             if hooks.get("launch_provenance"):
                 extra["launch_provenance_builder"] = cls.import_callable(hooks["launch_provenance"])
+            lifecycle = profile.get("lifecycle") or {}
+            if lifecycle.get("session_labels"):
+                extra["session_lifecycle_labels"] = tuple(lifecycle["session_labels"])
             return make_inference_report_config(
                 suite_id=profile.get("suite_id") or profile.get("profile_id", "suite"),
                 report_basename=profile.get("report_basename") or f"{profile.get('suite_id', 'suite')}_run_deck",

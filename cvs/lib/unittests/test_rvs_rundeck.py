@@ -53,6 +53,13 @@ class TestClassifyOutput(unittest.TestCase):
         self.assertEqual(status, "pass")
         self.assertEqual(items, [])
 
+    def test_scan_indicator_fails_a_passing_measurement(self):
+        output = "[gst] [GPU:: 0] GFLOPS 100.0 Target GFLOPS: 50.0 met: TRUE\nTraceback (most recent call last):\n"
+        status, items = rvs_rundeck.classify_output(output, [r"\[ERROR\s*\]"])
+        self.assertEqual(status, "fail")
+        self.assertEqual(items[0]["name"], "scan")
+        self.assertIn("Traceback", items[0]["message"])
+
 
 class TestRecordOutputs(unittest.TestCase):
     def test_records_pass_and_fail_nodes(self):

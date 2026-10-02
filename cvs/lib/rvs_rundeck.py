@@ -26,6 +26,14 @@ import re
 
 _STATUSES = ("pass", "fail", "na")
 
+# Same indicators as scan_test_results. A matching line fails the cell even when
+# the suite's own fail_regex_pattern does not, because pytest already failed the node.
+_SCAN_FAIL_RE = re.compile(
+    r"test FAIL |test ERROR |ABORT|Traceback|No such file|FATAL|"
+    r"cannot allocate memory due to process memory policy",
+    re.I,
+)
+
 # Suite group names (gst_single, level_config, ...) are not the RVS module token
 # printed after "Module name :". LEVEL output carries several modules in one blob.
 _GROUP_MODULES = {
@@ -102,13 +110,16 @@ def classify_output(output, fail_patterns):
     '''
     Return (status, items) for one node's RVS output.
 
-    A node fails when any caller-supplied pattern matches. The patterns are the
-    same ones the suite uses to call fail_test, so the deck verdict matches the
-    suite check rather than a second parser. The matching output line is stored
-    only for drill-down; it does not participate in a second verdict.
+    A node fails when any caller-supplied pattern matches, or when the output
+    contains a scan_test_results indicator. The caller patterns are the same
+    ones the suite uses to call fail_test. The scan match is recorded for
+    drill-down and does not call fail_test itself.
     '''
     text = output if isinstance(output, str) else ""
     items = []
+    scan = _SCAN_FAIL_RE.search(text)
+    if scan:
+        items.append({"name": "scan", "status": "fail", "message": scan.group(0).strip()})
     for pattern in fail_patterns or []:
         if not pattern:
             continue

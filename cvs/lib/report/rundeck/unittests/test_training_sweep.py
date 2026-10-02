@@ -356,31 +356,27 @@ class TestLifecycleTimeline(unittest.TestCase):
             ],
         }
 
-    def test_expanded_stage_totals_cells_and_tones_each(self):
+    def test_expanded_stage_totals_cells(self):
         markup = DeckCardRenderer().render_lifecycle(self._payload(("training",)), {}, None)
         self.assertIn("773.6s", markup)
         self.assertIn("MBS=4 GBS=128 FP8", markup)
         self.assertIn("MBS=4 GBS=128 BF16", markup)
+        self.assertEqual(markup.count("class='tl-cell'"), 2)
 
-    def test_no_tone_repeats_between_stages_and_cells(self):
-        markup = DeckCardRenderer().render_lifecycle(self._payload(("training",)), {}, None)
-        tones = re.findall(r"tl-(tone\d)", markup)
-        self.assertEqual(tones, ["tone1", "tone2", "tone3", "tone4", "tone5"])
-
-    def test_blocks_are_filled_with_white_text(self):
+    def test_blocks_share_the_inference_style(self):
         from cvs.lib.report.rundeck.runtime.theme import report_css
 
         # The cell-card CSS ships its own .tl-val and is appended after the deck rules.
         css = report_css()
-        self.assertIn(".tl-seg, .tl-cell, .tl-group-head { background: var(--tl-c", css)
-        self.assertIn(".tl-val { font-size: 0.8rem; font-weight: 700; color: #fff; }", css)
+        self.assertIn(".tl-seg, .tl-group { background: linear-gradient(180deg, #2d3548 0%, #232836 100%);", css)
+        self.assertIn(".tl-val { font-size: 0.8rem; font-weight: 600; color: var(--accent); }", css)
+        self.assertNotIn("tl-tone", css)
         self.assertIn(".cell-mini-seg .tl-val", css)
 
     def test_unexpanded_stage_stays_one_segment(self):
         markup = DeckCardRenderer().render_lifecycle(self._payload(()), {}, None)
         self.assertIn("400.0s", markup)
-        self.assertIn("class='tl-seg'", markup)
-        self.assertNotIn("tl-tone", markup)
+        self.assertEqual(markup.count("class='tl-seg'"), 3)
         self.assertNotIn("tl-group", markup)
         self.assertNotIn("BF16", markup)
 
@@ -392,7 +388,28 @@ class TestLifecycleTimeline(unittest.TestCase):
         markup = DeckCardRenderer().render_lifecycle(payload, {}, None)
         self.assertIn("flex-grow:10.00", markup)
         self.assertIn("flex-grow:30.00", markup)
-        self.assertNotIn("tl-tone", markup)
+
+    def test_every_suite_renders_the_same_segments(self):
+        renderer = DeckCardRenderer()
+        inference = renderer.render_lifecycle(
+            {
+                "report": {"session_lifecycle_labels": ("container_launch", "server_ready", "teardown")},
+                "lifecycle": {"container_launch": 5.0, "server_ready": 10.0, "teardown": 2.0},
+            },
+            {},
+            None,
+        )
+        health = renderer.render_lifecycle(
+            {
+                "report": {"session_lifecycle_labels": ("a2a", "p2p", "healthcheck")},
+                "lifecycle": {"a2a": 42.0, "p2p": 38.5, "healthcheck": 18.0},
+            },
+            {},
+            None,
+        )
+        training = renderer.render_lifecycle(self._payload(()), {}, None)
+        classes = [re.findall(r"<div class='([^']+)'", markup) for markup in (inference, health, training)]
+        self.assertEqual(classes, [["tl-seg"] * 3] * 3)
 
     def test_profile_expands_training_stage(self):
         config = build_inference_config_from_profile(_profile())

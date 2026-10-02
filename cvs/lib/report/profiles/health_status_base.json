@@ -10,7 +10,8 @@
   "dataset_builder": "status_matrix",
   "interactive_viewer": true,
   "sources": {
-    "results": "cvs_results_dict"
+    "results": "cvs_results_dict",
+    "lifecycle": "lifecycle"
   },
   "cards": [
     {
@@ -18,6 +19,12 @@
       "id": "run-card",
       "title": "Run card",
       "bind": "datasets.status_matrix.run_card_display"
+    },
+    {
+      "type": "lifecycle_timeline",
+      "id": "lifecycle",
+      "title": "Lifecycle timeline",
+      "bind": "lifecycle"
     },
     {
       "type": "status_overview",

@@ -11,6 +11,16 @@
   "sources": {
     "results": "transferbench_res_dict"
   },
+  "lifecycle": {
+    "session_labels": [
+      "a2a",
+      "p2p",
+      "healthcheck",
+      "a2asweep",
+      "scaling",
+      "schmoo"
+    ]
+  },
   "cards": [
     {
       "id": "metrics",
