@@ -255,15 +255,15 @@ class TestBuildWriteSshConfigCmd(unittest.TestCase):
 class TestUploadClusterKeys(unittest.TestCase):
     def _make_orch(self, exit_code=0):
         orch = MagicMock()
-        orch.all.hosts = ["n1", "n2"]
+        orch.all.reachable_hosts = ["n1", "n2"]
         orch.exec.return_value = {
             "n1": {"output": "", "exit_code": exit_code},
             "n2": {"output": "", "exit_code": exit_code},
         }
         return orch
 
-    @patch("cvs.lib.ssh_keys_lib.os.path.isfile", return_value=True)
-    def test_upload_called_for_priv_and_pub(self, _isfile):
+    @patch("cvs.lib.ssh_keys_lib._resolve_remote_dir", return_value="/home/u/.ssh")
+    def test_upload_called_for_priv_and_pub(self, _resolve):
         orch = self._make_orch()
         norm = {
             "cluster_key_private_path": "/local/id",
@@ -273,13 +273,13 @@ class TestUploadClusterKeys(unittest.TestCase):
         }
         results = lib.upload_cluster_keys(orch, norm)
         self.assertEqual(orch.all.upload_file.call_count, 2)
-        calls = orch.all.upload_file.call_args_list
-        remote_paths = [c[0][1] for c in calls]
-        self.assertIn("~/.ssh/cluster_id", remote_paths)
-        self.assertIn("~/.ssh/cluster_id.pub", remote_paths)
+        remote_paths = [c[0][1] for c in orch.all.upload_file.call_args_list]
+        self.assertIn("/home/u/.ssh/cluster_id", remote_paths)
+        self.assertIn("/home/u/.ssh/cluster_id.pub", remote_paths)
         self.assertTrue(all(results.values()))
 
-    def test_upload_ioerror_marks_nodes_failed(self):
+    @patch("cvs.lib.ssh_keys_lib._resolve_remote_dir", return_value="/home/u/.ssh")
+    def test_upload_ioerror_marks_nodes_failed(self, _resolve):
         orch = self._make_orch()
         orch.all.upload_file.side_effect = IOError("sftp fail")
         norm = {
@@ -291,7 +291,8 @@ class TestUploadClusterKeys(unittest.TestCase):
         results = lib.upload_cluster_keys(orch, norm)
         self.assertTrue(all(not v for v in results.values()))
 
-    def test_chmod_failure_marks_node_failed(self):
+    @patch("cvs.lib.ssh_keys_lib._resolve_remote_dir", return_value="/home/u/.ssh")
+    def test_chmod_failure_marks_node_failed(self, _resolve):
         orch = self._make_orch(exit_code=1)
         norm = {
             "cluster_key_private_path": "/local/id",
@@ -335,21 +336,23 @@ class TestAuthorizeControllingStation(unittest.TestCase):
         self.assertEqual(results, {})
         orch.all.upload_file.assert_not_called()
 
-    def test_upload_and_authorize_called(self):
+    @patch("cvs.lib.ssh_keys_lib._resolve_remote_dir", return_value="/home/u/.ssh")
+    def test_upload_and_authorize_called(self, _resolve):
         orch = MagicMock()
-        orch.all.hosts = ["n1"]
+        orch.all.reachable_hosts = ["n1"]
         orch.exec.return_value = {"n1": {"output": "", "exit_code": 0}}
         norm = {
             "controlling_station_pubkey_path": "/local/ctrl.pub",
             "remote_ssh_dir": "~/.ssh",
         }
         results = lib.authorize_controlling_station(orch, norm)
-        orch.all.upload_file.assert_called_once_with("/local/ctrl.pub", "~/.ssh/.cvs_controlling_station.pub")
+        orch.all.upload_file.assert_called_once_with("/local/ctrl.pub", "/home/u/.ssh/.cvs_controlling_station.pub")
         self.assertTrue(results["n1"])
 
-    def test_upload_ioerror_marks_failed(self):
+    @patch("cvs.lib.ssh_keys_lib._resolve_remote_dir", return_value="/home/u/.ssh")
+    def test_upload_ioerror_marks_failed(self, _resolve):
         orch = MagicMock()
-        orch.all.hosts = ["n1"]
+        orch.all.reachable_hosts = ["n1"]
         orch.all.upload_file.side_effect = IOError("fail")
         norm = {
             "controlling_station_pubkey_path": "/local/ctrl.pub",
@@ -398,23 +401,27 @@ class TestVerifyPasswordlessSsh(unittest.TestCase):
 
     def test_ring_three_nodes_builds_three_probes(self):
         orch = MagicMock()
-        # exec_cmd_list returns per-node dict
-        orch.all.exec_cmd_list.return_value = {"n1": "", "n2": "", "n3": ""}
+        # orch.exec(hosts=[src], detailed=True) returns {src: {exit_code: 0}}
+        orch.exec.return_value = {"n1": {"exit_code": 0, "output": ""}}
         cluster = {"node_dict": {"n1": {}, "n2": {}, "n3": {}}, "username": "u", "priv_key_file": "/k"}
         norm = {"remote_ssh_dir": "~/.ssh", "verify_timeout": 20, "verify_mode": "ring"}
-        lib.verify_passwordless_ssh(orch, cluster, norm)
-        orch.all.exec_cmd_list.assert_called_once()
-        cmd_list = orch.all.exec_cmd_list.call_args[0][0]
-        self.assertEqual(len(cmd_list), 3)
+        results = lib.verify_passwordless_ssh(orch, cluster, norm)
+        # ring: 3 nodes → 3 probes (n1→n2, n2→n3, n3→n1), one orch.exec call per probe
+        self.assertEqual(orch.exec.call_count, 3)
+        self.assertEqual(len(results), 3)
 
-    def test_nonzero_output_error_marks_failed(self):
+    def test_nonzero_exit_code_marks_failed(self):
         orch = MagicMock()
-        orch.all.exec_cmd_list.return_value = {"n1": "error occurred", "n2": ""}
+        # First probe (n1→n2) fails; second (n2→n1) succeeds
+        orch.exec.side_effect = [
+            {"n1": {"exit_code": 1, "output": "Permission denied"}},
+            {"n2": {"exit_code": 0, "output": ""}},
+        ]
         cluster = {"node_dict": {"n1": {}, "n2": {}}, "username": "u", "priv_key_file": "/k"}
         norm = {"remote_ssh_dir": "~/.ssh", "verify_timeout": 20, "verify_mode": "ring"}
         results = lib.verify_passwordless_ssh(orch, cluster, norm)
-        failed = [pair for pair, ok in results.items() if not ok]
-        self.assertTrue(len(failed) >= 0)  # structure validated; specific values depend on mapping
+        self.assertFalse(results[("n1", "n2")])
+        self.assertTrue(results[("n2", "n1")])
 
 
 if __name__ == "__main__":
