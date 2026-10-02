@@ -144,7 +144,7 @@
       "_comment_pip_install_mode": "Venv deps after clone: 'minimal' (torch only), 'requirements' (pip install -r requirements.txt), or 'skip' (venv only).",
 
       "torch_pip_index_url": "https://download.pytorch.org/whl/rocm7.2",
-      "_comment_torch_pip_index_url": "PyTorch wheel index for minimal install. Match your ROCm version (e.g. rocm7.2).",
+      "_comment_torch_pip_index_url": "PyTorch wheel index for minimal install. Match your ROCm version (e.g. rocm7.2). auto_setup replaces an already-importable torch when torch.version.hip major.minor does not match this index, so an older ROCm wheel is not left in the shared venv.",
 
       "primus_git_url": "https://github.com/AMD-AIG-AIMA/Primus.git",
       "_comment_primus_git_url": "Primus repository URL for one-time clone.",
