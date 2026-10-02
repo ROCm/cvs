@@ -3,6 +3,7 @@
 import unittest
 
 from cvs.lib.report.rundeck.runtime.cards import DeckCardRenderer
+from cvs.lib.report.rundeck.runtime.theme import report_css
 
 
 def _dataset():
@@ -106,6 +107,109 @@ class TestStatusMatrixCard(unittest.TestCase):
         self.assertEqual(section_id, "results")
         self.assertIn("Full results", html)
         self.assertTrue(in_nav)
+
+    def test_default_hint_is_generic(self):
+        html = self.renderer.render_status_matrix({}, {}, _dataset())
+        self.assertIn("item breakdown", html)
+        self.assertNotIn("ANC", html)
+
+    def test_profile_hint_is_escaped(self):
+        html = self.renderer.render_status_matrix({}, {"hint": "<b>Preset items</b>"}, _dataset())
+        self.assertIn("&lt;b&gt;Preset items&lt;/b&gt;", html)
+        self.assertNotIn("item breakdown", html)
+
+    def test_status_overview_shows_pass_rate_and_failures(self):
+        overview = {
+            "pass_rate": 0.75,
+            "counts": {"pass": 3, "fail": 1, "na": 2},
+            "failures_by_node": [{"node": "n2", "fail": 1, "pass": 1, "na": 0}],
+            "failures_by_group": [{"group": "hbm_lvl3", "fail": 1, "pass": 1, "na": 0}],
+        }
+        html = self.renderer.render_status_overview({}, {}, overview)
+        self.assertIn("75%", html)
+        self.assertIn("n2", html)
+        self.assertIn("hbm_lvl3", html)
+        self.assertIn("overview-table", html)
+
+    def test_status_overview_empty(self):
+        html = self.renderer.render_status_overview({}, {}, {"counts": {"pass": 0, "fail": 0, "na": 0}})
+        self.assertIn("No node results", html)
+
+    def test_metric_charts_threshold_series_and_heatmap(self):
+        data = {
+            "metrics": [
+                {
+                    "name": "rtotal",
+                    "group": "a2a",
+                    "unit": "GB/s",
+                    "threshold": 400,
+                    "direction": "higher",
+                    "points": [
+                        {"node": "n1", "value": 420, "status": "pass"},
+                        {"node": "n2", "value": 10, "status": "fail"},
+                    ],
+                }
+            ],
+            "series": [
+                {
+                    "name": "power",
+                    "node": "n1",
+                    "unit": "W",
+                    "points": [{"x": "GPU0", "y": 300}, {"x": "GPU1", "y": 280}],
+                }
+            ],
+            "heatmaps": [
+                {
+                    "name": "xgmi",
+                    "node": "n1",
+                    "unit": "GB/s",
+                    "rows": ["GPU0"],
+                    "cols": ["GPU1"],
+                    "values": [[48.2]],
+                    "threshold": 40,
+                    "direction": "higher",
+                }
+            ],
+        }
+        html = self.renderer.render_metric_charts({}, {}, data)
+        self.assertIn("chart-bar-pass", html)
+        self.assertIn("chart-bar-fail", html)
+        self.assertIn("chart-threshold", html)
+        self.assertIn("higher is better", html)
+        self.assertIn("power", html)
+        self.assertIn("hm-pass", html)
+        self.assertIn("xgmi", html)
+
+    def test_metric_charts_empty_message(self):
+        html = self.renderer.render_metric_charts({}, {}, {"metrics": [], "series": [], "heatmaps": []})
+        self.assertIn("No metric data", html)
+
+    def test_metric_charts_hide_when_empty(self):
+        card = {
+            "type": "metric_charts",
+            "id": "metrics",
+            "title": "Metrics",
+            "bind": "datasets.status_matrix.metric_charts",
+            "when_empty": "hide",
+        }
+        payload = {"datasets": {"status_matrix": {"metric_charts": {"metrics": [], "series": [], "heatmaps": []}}}}
+        section_id, html, in_nav = self.renderer.render_card(payload, card)
+        self.assertEqual(section_id, "")
+        self.assertEqual(html, "")
+        self.assertFalse(in_nav)
+
+    def test_health_cards_registered(self):
+        renderers = self.renderer.card_renderers()
+        self.assertIn("status_overview", renderers)
+        self.assertIn("metric_charts", renderers)
+
+    def test_theme_includes_overview_and_heatmap_rules(self):
+        css = report_css()
+        self.assertIn(".overview-split", css)
+        self.assertIn(".chart-bar-pass", css)
+        self.assertIn(".chart-threshold", css)
+        self.assertIn(".hm-pass", css)
+        self.assertIn("grid-template-columns: 1fr", css)
 
 
 if __name__ == "__main__":

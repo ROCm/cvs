@@ -58,6 +58,10 @@
           "bind": { "type": "string" },
           "id": { "type": "string" },
           "title": { "type": "string" },
+          "hint": {
+            "type": "string",
+            "description": "Optional help line. status_matrix shows this instead of the generic item-breakdown hint."
+          },
           "when_empty": { "enum": ["hide"] },
           "columns_from": { "type": "string" }
         }

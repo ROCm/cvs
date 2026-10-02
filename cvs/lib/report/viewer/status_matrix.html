@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>__TITLE__</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #0f1117; --panel: #1a1d27; --panel2: rgba(255,255,255,0.03); --border: #2a2f3d; --text: #e8eaef; --muted: #9aa3b5;
+  --accent: #ff6b35; --accent2: #6b9fff; --accent3: #c77dff; --pass: #3dd68c; --fail: #ff5c6a; --na: #5c6370;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
+  background: linear-gradient(160deg, #0a0c12 0%, #12151f 40%, #0f1117 100%);
+  color: var(--text); padding: 1.25rem; line-height: 1.45; }
+.wrap { max-width: 1200px; margin: 0 auto; }
+a { color: var(--accent2); }
+.muted { color: var(--muted); }
+.hero { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between;
+  gap: 1rem; margin-bottom: 1rem; }
+h1 { margin: 0 0 0.25rem; font-size: 1.6rem; font-weight: 600; letter-spacing: -0.02em; }
+.subtitle { color: var(--muted); margin: 0; font-size: 0.95rem; }
+.status-badge { display: inline-block; padding: 0.35rem 0.75rem; border-radius: 999px;
+  font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.status-pass { background: rgba(61,214,140,0.15); color: var(--pass); border: 1px solid rgba(61,214,140,0.35); }
+.status-fail { background: rgba(255,92,106,0.15); color: var(--fail); border: 1px solid rgba(255,92,106,0.35); }
+.status-record { background: rgba(107,159,255,0.12); color: var(--accent2); border: 1px solid rgba(107,159,255,0.3); }
+.viewer-nav { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin-bottom: 1rem; padding: 0.65rem 1rem;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; font-size: 0.8rem; }
+.viewer-nav a { color: var(--accent2); text-decoration: none; }
+.viewer-nav a:hover { text-decoration: underline; }
+.toolbar { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 0.65rem 0.85rem; align-items: end; }
+.toolbar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.72rem; color: var(--muted); min-width: 0; }
+.toolbar label .filter-label { line-height: 1.2; white-space: nowrap; }
+.toolbar label.filter-search { grid-column: span 2; }
+.toolbar select, .toolbar input[type="search"] { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.5rem; width: 100%; min-width: 0; font-size: 0.85rem; }
+.toolbar button { background: #12151f; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.35rem 0.65rem; font-size: 0.85rem; cursor: pointer; white-space: nowrap; }
+.toolbar button:hover { border-color: var(--accent); }
+.toolbar-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: flex-end;
+  grid-column: 1 / -1; justify-content: flex-end; padding-top: 0.1rem; }
+.meta-line { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.85rem; color: var(--muted); }
+.meta-line strong { color: var(--text); font-weight: 600; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1rem 1.25rem; margin-bottom: 1rem; box-shadow: 0 8px 32px rgba(0,0,0,0.25); }
+.panel > h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 0.85rem;
+  font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; }
+.panel > h2 .count { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+.stat { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 0.75rem 0.9rem; }
+.stat .label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.stat .value { font-size: 1.6rem; font-weight: 700; margin-top: 0.15rem; }
+.stat .sub { font-size: 0.75rem; color: var(--muted); }
+.v-pass { color: var(--pass); } .v-fail { color: var(--fail); } .v-na { color: var(--na); }
+.bar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; margin-top: 0.45rem; display: flex; }
+.bar span { display: block; height: 100%; }
+.matrix-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+th, td { border-bottom: 1px solid var(--border); padding: 0.4rem 0.5rem; text-align: left; vertical-align: top; }
+th { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+.matrix th, .matrix td { border: 1px solid var(--border); text-align: center; }
+.matrix th.node, .matrix td.node { text-align: left; white-space: nowrap; vertical-align: middle; }
+.matrix td { padding: 0; vertical-align: middle; }
+.matrix td.node { padding: 0.4rem 0.6rem; }
+.cell-btn { width: 100%; min-height: 3rem; border: 0; background: transparent; color: var(--text); cursor: pointer;
+  padding: 0.45rem 0.5rem; font: inherit; display: flex; flex-direction: column; align-items: center; gap: 0.15rem; }
+.cell-btn:hover, .cell-btn.active { outline: 2px solid var(--accent2); outline-offset: -2px; }
+.cell-pass { background: rgba(61,214,140,0.10); } .cell-fail { background: rgba(255,92,106,0.16); } .cell-na { background: transparent; }
+.cell-sum { font-size: 0.72rem; color: var(--muted); max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip { display: inline-block; padding: 0.08rem 0.45rem; border-radius: 999px; font-size: 0.66rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em; }
+.chip-pass { color: var(--pass); background: rgba(61,214,140,0.14); }
+.chip-fail { color: var(--fail); background: rgba(255,92,106,0.16); }
+.chip-na { color: var(--muted); background: rgba(92,99,112,0.2); }
+.section-title { font-size: 0.95rem; font-weight: 600; margin: 1.1rem 0 0.6rem; display: flex; align-items: center; gap: 0.5rem; }
+.section-title:first-child { margin-top: 0; }
+.chart-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 0.85rem; }
+.chart-block { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 0.8rem 0.9rem; min-width: 0; }
+.chart-block h3 { margin: 0; font-size: 0.85rem; font-weight: 600; }
+.chart-note { font-size: 0.72rem; color: var(--muted); margin: 0.1rem 0 0.4rem; }
+.chart-wrap { position: relative; height: 240px; }
+.hm-wrap { overflow-x: auto; }
+.hm-table { font-variant-numeric: tabular-nums; }
+.hm-table td, .hm-table th { text-align: center; border: 1px solid var(--border); padding: 0.3rem 0.45rem; white-space: nowrap; }
+.hm-table td { font-size: 0.75rem; }
+.hm-pass { background: rgba(61,214,140,0.35); }
+.hm-fail { background: rgba(255,92,106,0.35); }
+.hm-na { color: var(--na); }
+.details td.msg { font-family: Consolas, "Cascadia Mono", monospace; font-size: 0.75rem; word-break: break-word; }
+.details tr.row-fail td { background: rgba(255,92,106,0.06); }
+.empty { color: var(--muted); font-size: 0.85rem; }
+@media (max-width: 720px) {
+  .toolbar label.filter-search { grid-column: span 1; }
+}
+@media (max-width: 640px) {
+  body { padding: 0.75rem; }
+  .chart-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body data-viewer="status-matrix">
+<div class="wrap">
+<header class="hero">
+  <div>
+    <h1>__TITLE__</h1>
+    <p class="subtitle">__SUBTITLE__</p>
+  </div>
+  <span class="status-badge status-record" id="hero-status">—</span>
+</header>
+
+<nav class="viewer-nav" id="viewer-nav">
+  <a href="#filters">Filters</a>
+  <a href="#overview">Overview</a>
+  <a href="#charts">Measurements</a>
+  <a href="#series-panel" id="nav-series">Series</a>
+  <a href="#heatmaps" id="nav-heatmaps">Heatmaps</a>
+  <a href="#details">Details</a>
+  <a id="run-deck-link" href="#" style="display:none">Run deck</a>
+</nav>
+<p id="load-error" class="muted" hidden></p>
+
+<section class="panel" id="filters">
+  <h2>Filters</h2>
+  <div class="toolbar" role="search">
+    <label><span class="filter-label">Node</span><select id="f-node"><option value="">All</option></select></label>
+    <label><span class="filter-label">Group</span><select id="f-group"><option value="">All</option></select></label>
+    <label><span class="filter-label">Measurement</span><select id="f-metric"><option value="">All</option></select></label>
+    <label><span class="filter-label">Status</span><select id="f-status">
+      <option value="">Any</option><option value="fail">Fail</option><option value="pass">Pass</option><option value="na">Not evaluated</option>
+    </select></label>
+    <label class="filter-search"><span class="filter-label">Search</span><input id="f-search" type="search" placeholder="item, message, node…"/></label>
+    <div class="toolbar-actions">
+      <button type="button" id="btn-export">Export CSV</button>
+      <button type="button" id="btn-reset">Reset filters</button>
+    </div>
+  </div>
+  <div class="meta-line" id="meta" style="margin-top:0.85rem">Loading…</div>
+</section>
+
+<section class="panel" id="overview">
+  <h2>Overview</h2>
+  <div class="meta-line" id="run-meta" style="margin-bottom:0.85rem"></div>
+  <div class="stats">
+    <div class="stat"><div class="label">Pass rate</div><div class="value" id="pass-rate">—</div>
+      <div class="bar" id="pass-bar"></div><div class="sub" id="pass-meta"></div></div>
+    <div class="stat"><div class="label">Passed</div><div class="value v-pass" id="n-pass">0</div><div class="sub">node × group</div></div>
+    <div class="stat"><div class="label">Failed</div><div class="value v-fail" id="n-fail">0</div><div class="sub">node × group</div></div>
+    <div class="stat"><div class="label">Not evaluated</div><div class="value v-na" id="n-na">0</div><div class="sub">node × group</div></div>
+  </div>
+  <p class="muted" style="font-size:0.75rem;margin:0 0 0.4rem">Click a cell to focus that node and group.</p>
+  <div class="matrix-wrap"><table class="matrix" id="matrix-table"></table></div>
+</section>
+
+<section class="panel" id="charts">
+  <h2>Measurements <span class="count muted" id="metric-count"></span></h2>
+  <p id="metric-empty" class="empty" hidden>No metric data recorded.</p>
+  <div id="metric-charts"></div>
+</section>
+
+<section class="panel" id="series-panel">
+  <h2>Series <span class="count muted" id="series-count"></span></h2>
+  <p id="series-empty" class="empty" hidden>No series data recorded.</p>
+  <div id="series-charts" class="chart-grid"></div>
+</section>
+
+<section class="panel" id="heatmaps">
+  <h2>Heatmaps <span class="count muted" id="heatmap-count"></span></h2>
+  <p id="heatmap-empty" class="empty" hidden>No heatmap data recorded.</p>
+  <div id="heatmap-charts" class="chart-grid"></div>
+</section>
+
+<section class="panel" id="details">
+  <h2>Detailed results <span class="count muted" id="details-count"></span></h2>
+  <p id="details-empty" class="empty" hidden>No matching results.</p>
+  <div class="hm-wrap"><table class="details" id="details-table"></table></div>
+</section>
+</div>
+__EMBEDDED_JSON__
+<script>
+const JSON_PATH = __JSON_PATH__;
+// Same palette and status colours as the static decks (render/loss_chart.py SERIES_COLORS, theme.py).
+const SERIES_COLORS = ["#ff6b35", "#6b9fff", "#c77dff", "#3dd68c", "#f0c040", "#ff5c6a"];
+const STATUS_COLORS = {pass: "#3dd68c", fail: "#ff5c6a", na: "#5c6370"};
+const NEUTRAL_BAR = "#6b9fff";
+// Past this many nodes a per-node bar chart is unreadable; bars switch to min / median / max.
+const MAX_NODE_DATASETS = 10;
+let charts = [];
+let detailRows = [];
+
+function $(id) { return document.getElementById(id); }
+
+function esc(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function num(value) {
+  if (typeof value === "boolean" || value == null || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function fmtNum(value) {
+  if (value == null) return "\u2014";
+  const digits = Math.abs(value) >= 1000 ? 0 : (Math.abs(value) >= 100 ? 1 : 2);
+  return value.toLocaleString(undefined, {maximumFractionDigits: digits});
+}
+
+function statusMatrix(payload) {
+  if (!payload || typeof payload !== "object") return {};
+  const datasets = payload.datasets;
+  if (!datasets || typeof datasets !== "object") return {};
+  const matrix = datasets.status_matrix;
+  return matrix && typeof matrix === "object" ? matrix : {};
+}
+
+function selected(id) {
+  const el = $(id);
+  if (!el) return "";
+  return el.type === "checkbox" ? (el.checked ? "1" : "") : el.value;
+}
+
+function cellStatus(cell) {
+  const status = String((cell && cell.status) || "na").toLowerCase();
+  return status === "pass" || status === "fail" ? status : "na";
+}
+
+function nodeColor(matrix, node) {
+  const nodes = Array.isArray(matrix.nodes) ? matrix.nodes : [];
+  const index = Math.max(0, nodes.indexOf(node));
+  return SERIES_COLORS[index % SERIES_COLORS.length];
+}
+
+function visibleCells(matrix) {
+  const nodes = Array.isArray(matrix.nodes) ? matrix.nodes : [];
+  const groups = Array.isArray(matrix.groups) ? matrix.groups : [];
+  const grid = matrix.grid && typeof matrix.grid === "object" ? matrix.grid : {};
+  const nodeFilter = selected("f-node");
+  const groupFilter = selected("f-group");
+  const statusFilter = selected("f-status");
+  const rows = [];
+  nodes.forEach(node => {
+    if (nodeFilter && node !== nodeFilter) return;
+    groups.forEach(group => {
+      if (groupFilter && group !== groupFilter) return;
+      const cell = (grid[node] && grid[node][group]) || {};
+      if (statusFilter && cellStatus(cell) !== statusFilter) return;
+      rows.push({node: node, group: group, cell: cell});
+    });
+  });
+  return rows;
+}
+
+function fmtRate(rate) {
+  if (rate == null) return "\u2014";
+  const rounded = Math.round(rate * 1000) / 10;
+  if (Math.abs(rounded - Math.round(rounded)) < 0.05) return Math.round(rounded) + "%";
+  return rounded.toFixed(1) + "%";
+}
+
+function renderHeader(matrix) {
+  const overall = cellStatus({status: matrix.overall_status});
+  const badge = $("hero-status");
+  badge.className = "status-badge status-" + (overall === "na" ? "record" : overall);
+  badge.textContent = overall === "na" ? "n/a" : overall;
+  const chips = [];
+  const display = Array.isArray(matrix.run_card_display) ? matrix.run_card_display : [];
+  display.forEach(entry => {
+    if (!Array.isArray(entry) || entry.length < 2) return;
+    const label = String(entry[0]);
+    if (/^(passed|failed)$/i.test(label)) return;
+    chips.push("<span>" + esc(label) + " <strong>" + esc(entry[1]) + "</strong></span>");
+  });
+  $("run-meta").innerHTML = chips.join("");
+  $("run-meta").hidden = !chips.length;
+}
+
+function renderMeta(matrix, counts, shown) {
+  const nodes = Array.isArray(matrix.nodes) ? matrix.nodes : [];
+  const groups = Array.isArray(matrix.groups) ? matrix.groups : [];
+  const total = nodes.length * groups.length;
+  $("meta").innerHTML = "<span>Showing <strong>" + shown + "</strong> of <strong>" + total + "</strong> cells</span>"
+    + "<span><strong>" + counts.pass + "</strong> pass</span>"
+    + "<span><strong>" + counts.fail + "</strong> fail</span>"
+    + (counts.na ? "<span><strong>" + counts.na + "</strong> not evaluated</span>" : "")
+    + "<span>Charts and details follow filters</span>";
+}
+
+function renderOverview(matrix) {
+  const rows = visibleCells(matrix);
+  const counts = {pass: 0, fail: 0, na: 0};
+  rows.forEach(row => { counts[cellStatus(row.cell)] += 1; });
+  const evaluated = counts.pass + counts.fail;
+  const rate = evaluated ? counts.pass / evaluated : null;
+  const rateEl = $("pass-rate");
+  rateEl.textContent = rows.length ? fmtRate(rate) : "\u2014";
+  rateEl.className = "value " + (rate == null ? "v-na" : (counts.fail ? "v-fail" : "v-pass"));
+  $("pass-meta").textContent = rows.length
+    ? (counts.pass + " passed · " + counts.fail + " failed · " + counts.na + " n/a")
+    : "No node results recorded.";
+  const total = rows.length || 1;
+  $("pass-bar").innerHTML = ["pass", "fail", "na"].map(key =>
+    "<span style='width:" + (100 * counts[key] / total).toFixed(1) + "%;background:var(--" + key + ")'></span>"
+  ).join("");
+  $("n-pass").textContent = counts.pass;
+  $("n-fail").textContent = counts.fail;
+  $("n-na").textContent = counts.na;
+  renderMeta(matrix, counts, rows.length);
+  renderMatrix(matrix);
+}
+
+function renderMatrix(matrix) {
+  const nodes = Array.isArray(matrix.nodes) ? matrix.nodes : [];
+  const groups = Array.isArray(matrix.groups) ? matrix.groups : [];
+  const grid = matrix.grid && typeof matrix.grid === "object" ? matrix.grid : {};
+  const nodeFilter = selected("f-node");
+  const groupFilter = selected("f-group");
+  const statusFilter = selected("f-status");
+  const shownNodes = nodes.filter(node => !statusFilter || groups.some(group => cellStatus((grid[node] || {})[group]) === statusFilter));
+  let html = "<thead><tr><th class='node'>Node</th>" + groups.map(group => "<th>" + esc(group) + "</th>").join("") + "</tr></thead><tbody>";
+  shownNodes.forEach(node => {
+    html += "<tr><td class='node'>" + esc(node) + "</td>";
+    groups.forEach(group => {
+      const cell = (grid[node] && grid[node][group]) || {};
+      const status = cellStatus(cell);
+      const active = nodeFilter === node && groupFilter === group ? " active" : "";
+      const summary = cell.items_summary || "";
+      html += "<td class='cell-" + status + "'><button type='button' class='cell-btn" + active + "' data-node='" + esc(node)
+        + "' data-group='" + esc(group) + "' title='" + esc(summary) + "'><span class='chip chip-" + status + "'>"
+        + (status === "na" ? "n/a" : status) + "</span><span class='cell-sum'>" + esc(summary) + "</span></button></td>";
+    });
+    html += "</tr>";
+  });
+  $("matrix-table").innerHTML = html + "</tbody>";
+}
+
+function cellEntries(matrix, kind) {
+  const measurement = selected("f-metric");
+  const out = [];
+  visibleCells(matrix).forEach(row => {
+    const list = Array.isArray(row.cell[kind]) ? row.cell[kind] : [];
+    list.forEach(item => {
+      if (!item || typeof item !== "object") return;
+      const group = item.group || row.group;
+      if (measurement && group !== measurement) return;
+      out.push(Object.assign({}, item, {node: row.node, group: group, cellGroup: row.group}));
+    });
+  });
+  return out;
+}
+
+function destroyCharts() {
+  charts.forEach(chart => chart.destroy());
+  charts = [];
+}
+
+function fillSelect(id, options) {
+  const el = $(id);
+  const current = el.value;
+  const first = el.options[0];
+  el.innerHTML = "";
+  el.appendChild(first);
+  options.forEach(opt => {
+    const option = document.createElement("option");
+    option.value = opt.value;
+    option.textContent = opt.label;
+    el.appendChild(option);
+  });
+  if ([...el.options].some(opt => opt.value === current)) el.value = current;
+}
+
+function populateFilters(matrix) {
+  fillSelect("f-node", (matrix.nodes || []).map(node => ({value: node, label: node})));
+  fillSelect("f-group", (matrix.groups || []).map(group => ({value: group, label: group})));
+  const grid = matrix.grid && typeof matrix.grid === "object" ? matrix.grid : {};
+  const seen = [];
+  const present = {metrics: false, series: false, heatmaps: false};
+  Object.keys(grid).forEach(node => Object.keys(grid[node] || {}).forEach(group => {
+    const cell = grid[node][group] || {};
+    ["metrics", "series", "heatmaps"].forEach(kind => (Array.isArray(cell[kind]) ? cell[kind] : []).forEach(item => {
+      present[kind] = true;
+      const name = (item && item.group) || group;
+      if (seen.indexOf(name) === -1) seen.push(name);
+    }));
+  }));
+  fillSelect("f-metric", seen.map(name => ({value: name, label: name})));
+  // Sections the suite never produces are noise; the empty message still covers filters that hide everything.
+  $("series-panel").hidden = !present.series;
+  $("nav-series").hidden = !present.series;
+  $("heatmaps").hidden = !present.heatmaps;
+  $("nav-heatmaps").hidden = !present.heatmaps;
+  $("f-metric").closest("label").hidden = !seen.length;
+}
+
+function axisStyle(title) {
+  return {ticks: {color: "#9aa3b5"}, grid: {color: "rgba(255,255,255,0.05)"},
+    title: {display: !!title, text: title || "", color: "#9aa3b5"}};
+}
+
+function sharedPrefix(names) {
+  if (names.length < 2) return "";
+  const first = String(names[0]).split(" ");
+  if (first.length < 2) return "";
+  return names.every(name => String(name).split(" ")[0] === first[0] && String(name).split(" ").length > 1) ? first[0] : "";
+}
+
+function median(values) {
+  const sorted = values.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+// Health values usually sit just above their threshold; a zero-based axis hides that margin.
+function valueRange(datasets, threshold) {
+  const values = threshold == null ? [] : [threshold];
+  datasets.forEach(dataset => dataset.data.forEach(value => { if (value != null) values.push(value); }));
+  if (!values.length) return {};
+  const lo = Math.min.apply(null, values);
+  const hi = Math.max.apply(null, values);
+  const pad = (hi - lo) * 0.25 || Math.abs(hi) * 0.05 || 1;
+  const step = Math.pow(10, Math.floor(Math.log10(pad))) || 1;
+  return {beginAtZero: false, min: Math.max(0, Math.floor((lo - pad) / step) * step), max: Math.ceil((hi + pad * 0.5) / step) * step};
+}
+
+function statusColor(status) {
+  return STATUS_COLORS[status] || NEUTRAL_BAR;
+}
+
+// A line dataset cannot span the plot when there is only one category, so the threshold is drawn directly.
+const thresholdLine = {
+  id: "thresholdLine",
+  afterDatasetsDraw(chart, _args, opts) {
+    if (opts == null || opts.value == null) return;
+    const y = chart.scales.y.getPixelForValue(opts.value);
+    const area = chart.chartArea;
+    if (y < area.top || y > area.bottom) return;
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.strokeStyle = "#ff6b35";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(area.left, y);
+    ctx.lineTo(area.right, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const text = "threshold " + fmtNum(opts.value);
+    ctx.font = "600 11px Segoe UI, system-ui, sans-serif";
+    const width = ctx.measureText(text).width + 8;
+    ctx.fillStyle = "rgba(15,17,23,0.85)";
+    ctx.fillRect(area.left + 4, y - 17, width, 15);
+    ctx.fillStyle = "#ff6b35";
+    ctx.textAlign = "left";
+    ctx.fillText(text, area.left + 8, y - 6);
+    ctx.restore();
+  }
+};
+
+function newBlock(host, title, note) {
+  const block = document.createElement("div");
+  block.className = "chart-block";
+  block.innerHTML = "<h3>" + esc(title) + "</h3>" + (note ? "<p class='chart-note'>" + esc(note) + "</p>" : "");
+  host.appendChild(block);
+  return block;
+}
+
+function addCanvas(block) {
+  const wrap = document.createElement("div");
+  wrap.className = "chart-wrap";
+  const canvas = document.createElement("canvas");
+  wrap.appendChild(canvas);
+  block.appendChild(wrap);
+  return canvas;
+}
+
+function sectionHost(host, sections, group) {
+  if (!sections[group]) {
+    const title = document.createElement("div");
+    title.className = "section-title";
+    title.textContent = group;
+    const grid = document.createElement("div");
+    grid.className = "chart-grid";
+    host.appendChild(title);
+    host.appendChild(grid);
+    sections[group] = grid;
+  }
+  return sections[group];
+}
+
+function renderMetricCharts(matrix) {
+  const host = $("metric-charts");
+  host.innerHTML = "";
+  const metrics = cellEntries(matrix, "metrics").filter(item => num(item.value) != null);
+  const panels = {};
+  const order = [];
+  metrics.forEach(item => {
+    const threshold = num(item.threshold);
+    const settings = !item.unit && threshold == null;
+    const key = [item.group, settings ? "__settings__" : (item.unit || ""), threshold == null ? "" : threshold, item.direction || ""].join("||");
+    if (!panels[key]) {
+      panels[key] = {group: item.group, unit: item.unit || "", threshold: threshold, direction: item.direction || "",
+        settings: settings, names: [], byNode: {}};
+      order.push(key);
+    }
+    const panel = panels[key];
+    if (panel.names.indexOf(item.name) === -1) panel.names.push(item.name);
+    panel.byNode[item.node] = panel.byNode[item.node] || {};
+    panel.byNode[item.node][item.name] = {value: num(item.value), status: item.status};
+  });
+  const sections = {};
+  order.forEach(key => {
+    const panel = panels[key];
+    const grid = sectionHost(host, sections, panel.group);
+    const nodes = Object.keys(panel.byNode);
+    if (panel.settings) {
+      const block = newBlock(grid, "Settings", "");
+      let html = "<div class='hm-wrap'><table><thead><tr><th>Node</th>" + panel.names.map(name => "<th>" + esc(name) + "</th>").join("") + "</tr></thead><tbody>";
+      nodes.forEach(node => {
+        html += "<tr><td>" + esc(node) + "</td>" + panel.names.map(name => "<td>" + fmtNum((panel.byNode[node][name] || {}).value) + "</td>").join("") + "</tr>";
+      });
+      block.insertAdjacentHTML("beforeend", html + "</tbody></table></div>");
+      return;
+    }
+    const prefix = sharedPrefix(panel.names);
+    const labels = panel.names.map(name => prefix ? String(name).slice(prefix.length + 1) : name);
+    const title = prefix || (panel.names.length === 1 ? panel.names[0] : (panel.unit || "values"));
+    const sense = panel.direction === "lower" ? "lower is better" : (panel.direction === "higher" ? "higher is better" : "");
+    const noteParts = [];
+    if (panel.threshold != null) noteParts.push("threshold " + fmtNum(panel.threshold) + (panel.unit ? " " + panel.unit : ""));
+    if (sense) noteParts.push(sense);
+    const rollup = nodes.length > MAX_NODE_DATASETS;
+    if (rollup) noteParts.push("min / median / max across " + nodes.length + " nodes");
+    else if (nodes.length > 1) noteParts.push("bars left→right: " + nodes.join(", "));
+    const block = newBlock(grid, title, noteParts.join(" · "));
+    if (typeof Chart === "undefined") return;
+    let datasets;
+    if (rollup) {
+      const stats = [["min", Math.min], ["median", null], ["max", Math.max]];
+      datasets = stats.map((entry, index) => ({
+        type: "bar", label: entry[0], backgroundColor: SERIES_COLORS[index],
+        data: panel.names.map(name => {
+          const values = nodes.map(node => (panel.byNode[node][name] || {}).value).filter(v => v != null);
+          if (!values.length) return null;
+          return entry[1] ? entry[1].apply(null, values) : median(values);
+        })
+      }));
+    } else {
+      datasets = nodes.map(node => {
+        const rows = panel.names.map(name => panel.byNode[node][name] || {});
+        return {
+          type: "bar", label: node, backgroundColor: rows.map(row => statusColor(row.status)),
+          data: rows.map(row => row.value == null ? null : row.value), statuses: rows.map(row => row.status || "")
+        };
+      });
+    }
+    datasets.forEach(dataset => { dataset.maxBarThickness = 44; dataset.borderRadius = 3; });
+    charts.push(new Chart(addCanvas(block), {
+      data: {labels: labels, datasets: datasets},
+      plugins: [thresholdLine],
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          thresholdLine: {value: panel.threshold},
+          legend: {display: rollup, labels: {color: "#e8eaef", boxWidth: 12}},
+          tooltip: {callbacks: {label: ctx => {
+            const status = ctx.dataset.statuses ? ctx.dataset.statuses[ctx.dataIndex] : "";
+            return ctx.dataset.label + ": " + fmtNum(ctx.parsed.y) + (panel.unit ? " " + panel.unit : "") + (status ? " (" + status + ")" : "");
+          }}}
+        },
+        scales: {x: axisStyle(""), y: Object.assign(axisStyle(panel.unit), valueRange(datasets, panel.threshold))}
+      }
+    }));
+  });
+  $("metric-count").textContent = order.length ? order.length + " chart" + (order.length === 1 ? "" : "s") : "";
+  $("metric-empty").hidden = order.length > 0;
+}
+
+function seriesPoints(item) {
+  return (item.points || []).map(point => {
+    if (Array.isArray(point)) return {x: point[0], y: num(point[1])};
+    return {x: point.x, y: num(point.y)};
+  }).filter(point => point.y != null);
+}
+
+function renderSeries(matrix) {
+  const host = $("series-charts");
+  host.innerHTML = "";
+  const byKey = {};
+  const order = [];
+  cellEntries(matrix, "series").forEach(item => {
+    const points = seriesPoints(item);
+    if (points.length < 2) return;
+    const key = item.group + "||" + item.name;
+    if (!byKey[key]) {
+      byKey[key] = {group: item.group, name: item.name, xLabel: item.x_label || "", unit: item.unit || item.y_label || "", lines: []};
+      order.push(key);
+    }
+    byKey[key].lines.push({node: item.node, points: points});
+  });
+  order.forEach(key => {
+    const entry = byKey[key];
+    const title = entry.group + " · " + entry.name + (entry.xLabel ? " by " + entry.xLabel : "");
+    const block = newBlock(host, title, entry.lines.length + " node" + (entry.lines.length === 1 ? "" : "s"));
+    if (typeof Chart === "undefined") return;
+    const labels = [];
+    entry.lines.forEach(line => line.points.forEach(point => { if (labels.indexOf(point.x) === -1) labels.push(point.x); }));
+    const datasets = entry.lines.slice(0, MAX_NODE_DATASETS).map(line => {
+      const lookup = {};
+      line.points.forEach(point => { lookup[point.x] = point.y; });
+      const color = nodeColor(matrix, line.node);
+      return {type: "line", label: line.node, data: labels.map(x => lookup[x] == null ? null : lookup[x]),
+        borderColor: color, backgroundColor: color, tension: 0.2, pointRadius: 3, spanGaps: true};
+    });
+    charts.push(new Chart(addCanvas(block), {
+      data: {labels: labels, datasets: datasets},
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {legend: {labels: {color: "#e8eaef", boxWidth: 12}},
+          tooltip: {callbacks: {label: ctx => ctx.dataset.label + ": " + fmtNum(ctx.parsed.y) + (entry.unit ? " " + entry.unit : "")}}},
+        scales: {x: axisStyle(entry.xLabel), y: axisStyle(entry.unit)}
+      }
+    }));
+  });
+  $("series-count").textContent = order.length ? order.length + " chart" + (order.length === 1 ? "" : "s") : "";
+  $("series-empty").hidden = order.length > 0;
+}
+
+function heatClass(value, heat) {
+  if (value == null) return "hm-na";
+  const threshold = num(heat.threshold);
+  if (threshold != null && (heat.direction === "higher" || heat.direction === "lower")) {
+    const ok = heat.direction === "lower" ? value <= threshold : value >= threshold;
+    return ok ? "hm-pass" : "hm-fail";
+  }
+  return "";
+}
+
+function renderHeatmaps(matrix) {
+  const host = $("heatmap-charts");
+  host.innerHTML = "";
+  const heatmaps = cellEntries(matrix, "heatmaps");
+  heatmaps.forEach(heat => {
+    const rows = heat.rows || [];
+    const cols = heat.cols || [];
+    const values = heat.values || [];
+    const numbers = [];
+    values.forEach(row => (row || []).forEach(value => { const n = num(value); if (n != null) numbers.push(n); }));
+    const lo = numbers.length ? Math.min.apply(null, numbers) : 0;
+    const hi = numbers.length ? Math.max.apply(null, numbers) : 1;
+    const note = [heat.unit, numbers.length ? "range " + fmtNum(lo) + " – " + fmtNum(hi) : ""].filter(Boolean).join(" · ");
+    const heatName = heat.name || "heatmap";
+    const heatTitle = (heat.group && heat.group !== heatName ? heat.group + " · " : "") + heatName + " · " + heat.node;
+    let html = "<div class='chart-block'><h3>" + esc(heatTitle) + "</h3>"
+      + (note ? "<p class='chart-note'>" + esc(note) + "</p>" : "");
+    html += "<div class='hm-wrap'><table class='hm-table'><tr><th>" + esc(heat.row_label && heat.col_label ? heat.row_label + " \\ " + heat.col_label : "") + "</th>";
+    cols.forEach(col => { html += "<th>" + esc(col) + "</th>"; });
+    html += "</tr>";
+    rows.forEach((rowName, index) => {
+      const row = values[index] || [];
+      html += "<tr><th>" + esc(rowName) + "</th>";
+      cols.forEach((_, colIndex) => {
+        const value = num(row[colIndex]);
+        const css = heatClass(value, heat);
+        let style = "";
+        if (!css && value != null) {
+          const alpha = 0.15 + 0.6 * ((value - lo) / ((hi - lo) || 1));
+          style = " style='background:rgba(107,159,255," + alpha.toFixed(2) + ")'";
+        }
+        html += "<td class='" + css + "'" + style + " title='" + esc(rowName + " → " + cols[colIndex]) + "'>" + esc(fmtNum(value)) + "</td>";
+      });
+      html += "</tr>";
+    });
+    html += "</table></div></div>";
+    host.insertAdjacentHTML("beforeend", html);
+  });
+  $("heatmap-count").textContent = heatmaps.length ? heatmaps.length + " map" + (heatmaps.length === 1 ? "" : "s") : "";
+  $("heatmap-empty").hidden = heatmaps.length > 0;
+}
+
+function linkCell(cell) {
+  const links = [];
+  if (cell.errors_json_href) links.push("<a href='" + esc(cell.errors_json_href) + "'>errors</a>");
+  if (cell.log_tarball_href) links.push("<a href='" + esc(cell.log_tarball_href) + "'>logs</a>");
+  return links.join(" · ");
+}
+
+function renderDetails(matrix) {
+  const query = selected("f-search").trim().toLowerCase();
+  const statusFilter = selected("f-status");
+  const rows = [];
+  visibleCells(matrix).forEach(entry => {
+    const items = Array.isArray(entry.cell.items) ? entry.cell.items : [];
+    const links = linkCell(entry.cell);
+    if (!items.length) {
+      rows.push({node: entry.node, group: entry.group, name: "", status: cellStatus(entry.cell), message: entry.cell.items_summary || "", links: links});
+      return;
+    }
+    items.forEach(item => {
+      rows.push({
+        node: entry.node,
+        group: entry.group,
+        name: item.name || "",
+        status: cellStatus({status: item.status || entry.cell.status}),
+        message: item.message || "",
+        links: links
+      });
+    });
+  });
+  const rank = {fail: 0, na: 1, pass: 2};
+  const matched = rows.filter(row => {
+    if (statusFilter && row.status !== statusFilter) return false;
+    if (!query) return true;
+    return [row.node, row.group, row.name, row.status, row.message].join(" ").toLowerCase().indexOf(query) !== -1;
+  }).sort((a, b) => rank[a.status] - rank[b.status]);
+  detailRows = matched;
+  const table = $("details-table");
+  $("details-count").textContent = matched.length ? matched.length + " row" + (matched.length === 1 ? "" : "s") : "";
+  if (!matched.length) {
+    table.innerHTML = "";
+    $("details-empty").hidden = false;
+    return;
+  }
+  $("details-empty").hidden = true;
+  const hasLinks = matched.some(row => row.links);
+  const body = matched.map(row =>
+    "<tr class='row-" + row.status + "'><td>" + esc(row.node) + "</td><td>" + esc(row.group) + "</td><td>" + esc(row.name)
+    + "</td><td><span class='chip chip-" + row.status + "'>" + (row.status === "na" ? "n/a" : row.status) + "</span></td><td class='msg'>"
+    + esc(row.message) + "</td>" + (hasLinks ? "<td>" + row.links + "</td>" : "") + "</tr>"
+  ).join("");
+  table.innerHTML = "<thead><tr><th>Node</th><th>Group</th><th>Item</th><th>Status</th><th>Message</th>"
+    + (hasLinks ? "<th>Logs</th>" : "") + "</tr></thead><tbody>" + body + "</tbody>";
+}
+
+function renderHealth(matrix) {
+  destroyCharts();
+  renderOverview(matrix);
+  renderMetricCharts(matrix);
+  renderSeries(matrix);
+  renderHeatmaps(matrix);
+  renderDetails(matrix);
+}
+
+function loadReportData() {
+  const embedded = $("embedded-report-json");
+  if (embedded && embedded.textContent.trim()) return Promise.resolve(JSON.parse(embedded.textContent));
+  return fetch(JSON_PATH).then(response => {
+    if (!response.ok) throw new Error(response.status + " " + response.statusText);
+    return response.json();
+  });
+}
+
+function csvField(value) {
+  const text = String(value == null ? "" : value);
+  return /[",\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+function exportCsv() {
+  const lines = [["node", "group", "item", "status", "message"].join(",")];
+  detailRows.forEach(row => {
+    lines.push([row.node, row.group, row.name, row.status, row.message].map(csvField).join(","));
+  });
+  const blob = new Blob([lines.join("\n") + "\n"], {type: "text/csv"});
+  const anchor = document.createElement("a");
+  anchor.href = URL.createObjectURL(blob);
+  anchor.download = String(JSON_PATH || "health").replace(/\.json$/i, "") + "_results.csv";
+  anchor.click();
+  URL.revokeObjectURL(anchor.href);
+}
+
+let reportMatrix = {};
+loadReportData().then(data => {
+  reportMatrix = statusMatrix(data);
+  const link = $("run-deck-link");
+  if (link && JSON_PATH) {
+    link.href = String(JSON_PATH).replace(/\.json$/i, ".html");
+    link.style.display = "";
+  }
+  renderHeader(reportMatrix);
+  populateFilters(reportMatrix);
+  ["f-node", "f-group", "f-metric", "f-status", "f-search"].forEach(id => {
+    $(id).addEventListener("input", () => renderHealth(reportMatrix));
+    $(id).addEventListener("change", () => renderHealth(reportMatrix));
+  });
+  $("btn-reset").addEventListener("click", () => {
+    ["f-node", "f-group", "f-metric", "f-status", "f-search"].forEach(id => { $(id).value = ""; });
+    renderHealth(reportMatrix);
+  });
+  $("btn-export").addEventListener("click", exportCsv);
+  $("matrix-table").addEventListener("click", event => {
+    const button = event.target.closest(".cell-btn");
+    if (!button) return;
+    const same = $("f-node").value === button.dataset.node && $("f-group").value === button.dataset.group;
+    $("f-node").value = same ? "" : button.dataset.node;
+    $("f-group").value = same ? "" : button.dataset.group;
+    renderHealth(reportMatrix);
+  });
+  renderHealth(reportMatrix);
+}).catch(err => {
+  const box = $("load-error");
+  box.hidden = false;
+  box.textContent = "Failed to load report JSON: " + err;
+});
+</script>
+</body>
+</html>
