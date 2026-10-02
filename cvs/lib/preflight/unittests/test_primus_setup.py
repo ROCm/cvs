@@ -123,24 +123,34 @@ def _shared_setup_commands(pip_install_mode):
 
 
 def _probe_exit_code(hip, index, match_index_version=True):
+    code, _err = _probe_exec(hip, index, match_index_version=match_index_version)
+    return code
+
+
+def _probe_exec(hip, index, match_index_version=True):
+    import io
     import types
 
     snippet = _torch_compat_python(index, match_index_version=match_index_version).replace('\\"', '"')
     torch_mod = types.ModuleType("torch")
     torch_mod.version = types.SimpleNamespace(hip=hip)
-    saved = sys.modules.get("torch")
+    saved_torch = sys.modules.get("torch")
+    saved_err = sys.stderr
+    err = io.StringIO()
     sys.modules["torch"] = torch_mod
+    sys.stderr = err
     try:
         try:
             exec(snippet, {"__name__": "__main__"})
         except SystemExit as exc:
-            return int(exc.code or 0)
-        return 0
+            return int(exc.code or 0), err.getvalue()
+        return 0, err.getvalue()
     finally:
-        if saved is None:
+        sys.stderr = saved_err
+        if saved_torch is None:
             sys.modules.pop("torch", None)
         else:
-            sys.modules["torch"] = saved
+            sys.modules["torch"] = saved_torch
 
 
 class TestPrimusSetupCommands(unittest.TestCase):
@@ -275,6 +285,48 @@ class TestPrimusSetupCommands(unittest.TestCase):
         self.assertIn('parts[1].split(\\"+\\")[0]==\\"2\\"', follower)
         self.assertNotEqual(_probe_exit_code("6.2.41134", "https://download.pytorch.org/whl/rocm7.2"), 0)
 
+    def test_skip_verify_reports_non_hip_wheel(self):
+        cmd = build_primus_venv_install_command(
+            primus_dir="/home/user/Primus",
+            venv_activate="/home/user/envs/preflight/.venv/bin/activate",
+            pip_install_mode="skip",
+            torch_pip_index_url="https://download.pytorch.org/whl/rocm7.2",
+        )
+        self.assertIn("sys.stderr.write", cmd)
+        self.assertNotIn("2>/dev/null", cmd)
+        code, err = _probe_exec(None, "", match_index_version=False)
+        self.assertEqual(code, 1)
+        self.assertIn("torch.version.hip=none", err)
+        self.assertIn("required=HIP", err)
+        parsed = parse_setup_output(err)
+        self.assertEqual(parsed["status"], "FAIL")
+        self.assertEqual(parsed["errors"], ["incompatible torch wheel: torch.version.hip=none required=HIP"])
+
+    def test_version_mismatch_diagnostic_names_required_rocm(self):
+        code, err = _probe_exec("6.2.41134", "https://download.pytorch.org/whl/rocm7.2")
+        self.assertEqual(code, 1)
+        self.assertIn("torch.version.hip=6.2.41134", err)
+        self.assertIn("required=rocm7.2", err)
+        parsed = parse_setup_output("Already on branch\n" + err)
+        self.assertEqual(
+            parsed["errors"],
+            ["incompatible torch wheel: torch.version.hip=6.2.41134 required=rocm7.2"],
+        )
+
+    def test_install_and_poll_suppress_probe_stderr(self):
+        minimal = build_primus_venv_install_command(
+            primus_dir="/home/user/Primus",
+            venv_activate="/home/user/envs/preflight/.venv/bin/activate",
+            pip_install_mode="minimal",
+        )
+        self.assertIn('2>/dev/null; then', minimal)
+        wait = build_wait_for_shared_primus_command(
+            primus_dir="/home/user/Primus",
+            venv_activate="/home/user/envs/preflight/.venv/bin/activate",
+        )
+        self.assertIn('2>/dev/null &&', wait)
+        self.assertIn("sys.stderr.write", wait)
+
     def test_wait_uses_same_hip_probe_as_install(self):
         index = "https://download.pytorch.org/whl/rocm7.1"
         install = build_primus_venv_install_command(
@@ -341,6 +393,11 @@ class TestParseSetupOutput(unittest.TestCase):
         parsed = parse_setup_output("")
         self.assertEqual(parsed["status"], "FAIL")
         self.assertIn("empty setup output", parsed["errors"][0])
+
+    def test_incompatible_wheel_diagnostic_is_preserved(self):
+        parsed = parse_setup_output("incompatible torch wheel: torch.version.hip=none required=HIP\n")
+        self.assertEqual(parsed["status"], "FAIL")
+        self.assertEqual(parsed["errors"], ["incompatible torch wheel: torch.version.hip=none required=HIP"])
 
 
 if __name__ == "__main__":

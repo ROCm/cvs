@@ -24,6 +24,7 @@ from cvs.lib.preflight.node_smoke import (
 )
 
 _GIT_ERROR_RE = re.compile(r"(?:^|\n)(?:fatal:|error:\s+pathspec)", re.IGNORECASE)
+_TORCH_INCOMPATIBLE_RE = re.compile(r"incompatible torch wheel: torch\.version\.hip=(\S*) required=(\S+)")
 _PIP_ERROR_RE = re.compile(r"(?:^|\n)ERROR:\s(?!.*pathspec)", re.IGNORECASE)
 _SHELL_ERROR_RE = re.compile(
     r"(?:^|\n)(?:bash:\s|/bin/bash:\s|syntax error:|fatal: timed out waiting)",
@@ -80,12 +81,23 @@ def _hip_matches_torch_index(hip_version, torch_pip_index_url, match_index_versi
     return parts[0] == expected[0] and minor == expected[1]
 
 
+def _required_torch_label(torch_pip_index_url, match_index_version):
+    """Human-readable build the probe requires: ``rocmX.Y`` or any ``HIP`` build."""
+    expected = _rocm_version_from_index(torch_pip_index_url) if match_index_version else None
+    if expected:
+        major, minor = expected
+        return f"rocm{major}.{minor}"
+    return "HIP"
+
+
 def _torch_compat_python(torch_pip_index_url, match_index_version=True):
     """``python -c`` body: exit 0 when the venv torch matches the ROCm index.
 
     String quotes are shell-escaped (``\\"``) so the snippet can sit inside
     ``python -c "..."`` both at the top level and inside ``bash -c '...'``.
-    ``match_index_version`` false requires a HIP build only.
+    ``match_index_version`` false requires a HIP build only. On failure the
+    snippet writes ``torch.version.hip`` and the required build to stderr.
+    Install and poll commands redirect that stderr; verify does not.
     """
     expected = _rocm_version_from_index(torch_pip_index_url) if match_index_version else None
     if expected:
@@ -93,11 +105,19 @@ def _torch_compat_python(torch_pip_index_url, match_index_version=True):
         version_ok = f'len(parts)>=2 and parts[0]==\\"{major}\\" and parts[1].split(\\"+\\")[0]==\\"{minor}\\"'
     else:
         version_ok = "len(parts)>=2 and parts[0] and parts[1]"
+    required = _required_torch_label(torch_pip_index_url, match_index_version)
+    diagnostic = (
+        "sys.stderr.write("
+        '\\"incompatible torch wheel: torch.version.hip=%s required=' + required + '\\"'
+        ' % ((hip or \\"none\\"),) + chr(10))'
+    )
     return (
         "import sys,torch; "
         'hip=str(getattr(torch.version,\\"hip\\",None) or \\"\\"); '
         'parts=hip.split(\\".\\"); '
-        f"sys.exit(0 if {version_ok} else 1)"
+        f"ok=({version_ok}); "
+        f"(ok or {diagnostic}); "
+        "sys.exit(0 if ok else 1)"
     )
 
 
@@ -289,6 +309,14 @@ def parse_setup_output(output: str) -> Dict[str, Any]:
         return {"status": "FAIL", "errors": ["pip install failed during Primus setup"]}
     if "No module named 'torch'" in text or "ModuleNotFoundError" in text:
         return {"status": "FAIL", "errors": ["torch not available in venv after setup"]}
+    incompatible = _TORCH_INCOMPATIBLE_RE.search(text)
+    if incompatible:
+        hip = incompatible.group(1) or "none"
+        required = incompatible.group(2)
+        return {
+            "status": "FAIL",
+            "errors": [f"incompatible torch wheel: torch.version.hip={hip} required={required}"],
+        }
     if _SETUP_OK_MARKER in text:
         return {"status": "PASS", "errors": []}
     if not text:
