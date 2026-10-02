@@ -330,8 +330,8 @@ def install_ssh_config(orch, cluster_dict, norm_config):
     return _detailed_to_bool(out)
 
 
-def verify_passwordless_ssh(orch, cluster_dict, norm_config):
-    """Probe passwordless SSH between node pairs. Returns {(src, dst): bool}."""
+def verify_ssh_connectivity(orch, cluster_dict, norm_config):
+    """Probe SSH connectivity between node pairs. Returns {(src_node, dst_node): bool}."""
     nodes = list(cluster_dict.get("node_dict", {}).keys())
     if len(nodes) < 2:
         return {}
@@ -345,28 +345,28 @@ def verify_passwordless_ssh(orch, cluster_dict, norm_config):
     results = {}
 
     if mode == "ring":
-        for i, src in enumerate(nodes):
-            dst = nodes[(i + 1) % len(nodes)]
-            if src == dst:
+        for i, src_node in enumerate(nodes):
+            dst_node = nodes[(i + 1) % len(nodes)]
+            if src_node == dst_node:
                 continue
-            cmd = f"ssh -F {ssh_config_path} -o BatchMode=yes -o ConnectTimeout={timeout} {dst} true"
-            out = orch.exec(cmd, hosts=[src], timeout=timeout + 10, detailed=True)
-            detail = out.get(src, {})
+            cmd = f"ssh -F {ssh_config_path} -o BatchMode=yes -o ConnectTimeout={timeout} {dst_node} true"
+            out = orch.exec(cmd, hosts=[src_node], timeout=timeout + 10, detailed=True)
+            detail = out.get(src_node, {})
             ok = isinstance(detail, dict) and detail.get("exit_code", -1) == 0
-            results[(src, dst)] = ok
+            results[(src_node, dst_node)] = ok
 
     else:
         # full_mesh: O(n*(n-1)) probes, one exec per source node
-        for src in nodes:
-            peers = [n for n in nodes if n != src]
+        for src_node in nodes:
+            peers = [n for n in nodes if n != src_node]
             if not peers:
                 continue
-            for dst in peers:
-                cmd = f"ssh -F {ssh_config_path} -o BatchMode=yes -o ConnectTimeout={timeout} {dst} true"
-                out = orch.exec(cmd, hosts=[src], timeout=timeout + 10, detailed=True)
-                detail = out.get(src, {})
+            for dst_node in peers:
+                cmd = f"ssh -F {ssh_config_path} -o BatchMode=yes -o ConnectTimeout={timeout} {dst_node} true"
+                out = orch.exec(cmd, hosts=[src_node], timeout=timeout + 10, detailed=True)
+                detail = out.get(src_node, {})
                 ok = isinstance(detail, dict) and detail.get("exit_code", -1) == 0
-                results[(src, dst)] = ok
+                results[(src_node, dst_node)] = ok
 
     return results
 

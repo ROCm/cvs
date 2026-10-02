@@ -152,7 +152,7 @@ def test_write_ssh_config(orch, cluster_dict, norm_config):
     update_test_result()
 
 
-def test_verify_passwordless_ssh(orch, cluster_dict, norm_config):
+def test_verify_ssh_connectivity(orch, cluster_dict, norm_config):
     globals.error_list = []
 
     nodes = list(cluster_dict.get("node_dict", {}).keys())
@@ -162,11 +162,11 @@ def test_verify_passwordless_ssh(orch, cluster_dict, norm_config):
     if not norm_config.get("verify_connectivity", True):
         pytest.skip("verify_connectivity disabled in config")
 
-    log.info("Testcase: verify passwordless SSH between node pairs")
+    log.info("Testcase: verify SSH connectivity between node pairs")
 
-    pair_results = ssh_keys_lib.verify_passwordless_ssh(orch, cluster_dict, norm_config)
-    for (src, dst), ok in pair_results.items():
+    connectivity_results = ssh_keys_lib.verify_ssh_connectivity(orch, cluster_dict, norm_config)
+    for (src_node, dst_node), ok in connectivity_results.items():
         if not ok:
-            fail_test(f"passwordless SSH {src} -> {dst} failed")
+            fail_test(f"SSH connectivity check failed: {src_node} -> {dst_node}")
 
     update_test_result()
