@@ -51,9 +51,9 @@ class TestEvaluateMetricVerdicts(unittest.TestCase):
         self.assertEqual(
             [(item["metric"], item["status"], item["enforced"]) for item in verdicts],
             [
-                ("request_throughput", "record", False),
-                ("output_throughput", "record", False),
-                ("mean_ttft_ms", "record", False),
+                ("request_throughput", "pass", False),
+                ("output_throughput", "pass", False),
+                ("mean_ttft_ms", "pass", False),
             ],
         )
 
@@ -71,9 +71,9 @@ class TestEvaluateMetricVerdicts(unittest.TestCase):
         self.assertEqual(
             [(item["metric"], item["status"], item["enforced"]) for item in verdicts],
             [
-                ("request_throughput", "record", False),
+                ("request_throughput", "pass", False),
                 ("output_throughput", "fail", True),
-                ("mean_ttft_ms", "record", False),
+                ("mean_ttft_ms", "pass", False),
             ],
         )
 
@@ -120,7 +120,7 @@ class TestEvaluateMetricVerdicts(unittest.TestCase):
                 )
                 self.assertEqual(
                     [(item["metric"], item["status"], item["enforced"]) for item in verdicts],
-                    [("request_throughput", "record", False)],
+                    [("request_throughput", "pass", False)],
                 )
 
     def test_missing_gpu_and_prometheus_gates_fail_never_skip(self):

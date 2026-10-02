@@ -3,6 +3,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 '''
 
+import inspect
 import json
 import os
 from pathlib import Path
@@ -47,6 +48,23 @@ def _is_subtest_report(report) -> bool:
         return True
     if _PluginSubtestReport is not None and isinstance(report, _PluginSubtestReport):
         return True
+    return False
+
+
+def _called_from_subtest_context():
+    """The inner makereport is not a SubtestReport yet, so skip the metric panel.
+
+    Attaching it here copies the full table onto every subtest, and pytest-html
+    then lists each metric twice.
+    """
+    frame = inspect.currentframe()
+    while frame is not None:
+        filename = frame.f_code.co_filename.replace("\\", "/")
+        if frame.f_code.co_name == "__exit__" and (
+            filename.endswith("/_pytest/subtests.py") or filename.endswith("/pytest_subtests/plugin.py")
+        ):
+            return True
+        frame = frame.f_back
     return False
 
 
@@ -251,7 +269,7 @@ def pytest_runtest_makereport(item, call):
     """Attach metric rows before pytest-html consumes the parent call report."""
     outcome = yield
     report = outcome.get_result()
-    if not _is_verification_report(report):
+    if _called_from_subtest_context() or not _is_verification_report(report):
         return
     _attach_metric_panel(report, benchmark_metric_rows_from_item(item))
 
