@@ -117,7 +117,7 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
 
             def exec(self, cmd, timeout=None):
                 self.cmd = cmd
-                return {"node1": "version 1.4.9"}
+                return {"node1": "Release Version: 1.4.9\n"}
 
         phdl = FakePhdl()
         with patch.object(anc_lib, "print_test_output"):
@@ -143,11 +143,12 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
 
         phdl = FakePhdl()
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(phdl, "1.5.5", anc_bin="/opt/amdtools/anc/anc.py", is_direct=True)
+            result = anc_lib.node_version_matches(phdl, "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertIn("/opt/amdtools/anc/anc.py --content-list", phdl.cmd)
         self.assertTrue(result["node1"])
 
     def test_direct_mismatch_is_false(self):
+        # Installed 1.5.4 does NOT satisfy a request for 1.5.5 (installed < required).
         content_out = "  anc-release-helios-nda    1.5.4   Helios NDA Release\n"
 
         class FakePhdl:
@@ -155,10 +156,249 @@ class TestNodeVersionMatchesUsesAncBin(unittest.TestCase):
                 return {"node1": content_out}
 
         with patch.object(anc_lib, "print_test_output"):
-            result = anc_lib.node_version_matches(
-                FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py", is_direct=True
-            )
+            result = anc_lib.node_version_matches(FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
         self.assertFalse(result["node1"])
+
+    def test_direct_higher_installed_satisfies(self):
+        # Installed 1.6.0 satisfies a request for 1.5.5 (installed >= required).
+        content_out = "  anc-release-helios-nda    1.6.0   Helios NDA Release\n"
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return {"node1": content_out}
+
+        with patch.object(anc_lib, "print_test_output"):
+            result = anc_lib.node_version_matches(FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
+        self.assertTrue(result["node1"])
+
+    def test_direct_installed_rc_satisfies_base_request(self):
+        # Installed 1.7.0-rc.1 satisfies a request for base 1.7.0 (rc == base).
+        content_out = "  anc-release-helios-nda    1.7.0-rc.1 Helios NDA Release\n"
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return {"node1": content_out}
+
+        with patch.object(anc_lib, "print_test_output"):
+            result = anc_lib.node_version_matches(FakePhdl(), "1.7.0", anc_bin="/opt/amdtools/anc/anc.py")
+        self.assertTrue(result["node1"])
+
+    def test_direct_installed_rc1_does_not_satisfy_rc2(self):
+        # Installed 1.7.0-rc.1 does NOT satisfy a request for 1.7.0-rc.2.
+        content_out = "  anc-release-helios-nda    1.7.0-rc.1 Helios NDA Release\n"
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return {"node1": content_out}
+
+        with patch.object(anc_lib, "print_test_output"):
+            result = anc_lib.node_version_matches(FakePhdl(), "1.7.0-rc.2", anc_bin="/opt/amdtools/anc/anc.py")
+        self.assertFalse(result["node1"])
+
+    def test_legacy_uses_version_flag(self):
+        # Legacy (<=1.4.x) reads the release version off `anc.py --version`.
+        class FakePhdl:
+            def __init__(self):
+                self.cmd = None
+
+            def exec(self, cmd, timeout=None):
+                self.cmd = cmd
+                return {"node1": "Release Name: helios-nda\nRelease Version: 1.4.9\n"}
+
+        phdl = FakePhdl()
+        with patch.object(anc_lib, "print_test_output"):
+            result = anc_lib.node_version_matches(phdl, "1.4.9", anc_bin="/opt/amdtools/anc/anc.py")
+        self.assertIn("/opt/amdtools/anc/anc.py --version", phdl.cmd)
+        self.assertTrue(result["node1"])
+
+    def test_legacy_higher_installed_satisfies(self):
+        # Legacy installed 1.4.10 satisfies a request for 1.4.9 (installed >= required).
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return {"node1": "Release Version: 1.4.10\n"}
+
+        with patch.object(anc_lib, "print_test_output"):
+            result = anc_lib.node_version_matches(FakePhdl(), "1.4.9", anc_bin="/opt/amdtools/anc/anc.py")
+        self.assertTrue(result["node1"])
+
+    def test_legacy_lower_installed_does_not_satisfy(self):
+        # Legacy installed 1.4.8 does NOT satisfy a request for 1.4.9.
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return {"node1": "Release Version: 1.4.8\n"}
+
+        with patch.object(anc_lib, "print_test_output"):
+            result = anc_lib.node_version_matches(FakePhdl(), "1.4.9", anc_bin="/opt/amdtools/anc/anc.py")
+        self.assertFalse(result["node1"])
+
+    def test_legacy_installed_rc_satisfies_base_request(self):
+        # A legacy --version that reports an rc satisfies a base request (rc == base).
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return {"node1": "Release Version: 1.7.0-rc.1\n"}
+
+        with patch.object(anc_lib, "print_test_output"):
+            result = anc_lib.node_version_matches(FakePhdl(), "1.7.0", anc_bin="/opt/amdtools/anc/anc.py")
+        self.assertTrue(result["node1"])
+
+    def test_absent_anc_does_not_satisfy(self):
+        # No Release Version line (command-not-found) -> node does not satisfy.
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return {"node1": "anc.py: command not found"}
+
+        with patch.object(anc_lib, "print_test_output"):
+            result = anc_lib.node_version_matches(FakePhdl(), "1.4.9", anc_bin="/opt/amdtools/anc/anc.py")
+        self.assertFalse(result["node1"])
+
+    def test_legacy_ignores_unrelated_numbers_and_path(self):
+        # HIGH-finding regression: a warning number printed before the version,
+        # and the version embedded in a relocatable path in a "No such file"
+        # error, must NOT be read as the installed release. node1 has a real
+        # Release Version record (after a warning); node2 is absent under
+        # /opt/anc-1.6.0/... and must NOT be mistaken for 1.6.0.
+        def exec_impl(cmd, timeout=None):
+            return {
+                "node1": "WARNING: libfoo 2.3 deprecated\nRelease Version: 1.4.9\n",
+                "node2": "bash: /opt/anc-1.6.0/anc/anc.py: No such file or directory\n",
+            }
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return exec_impl(cmd, timeout)
+
+        with patch.object(anc_lib, "print_test_output"):
+            versions = anc_lib.node_installed_versions(FakePhdl(), anc_bin="/opt/anc-1.6.0/anc/anc.py")
+        self.assertEqual(versions, {"node1": "1.4.9", "node2": None})
+
+    def test_generation_detected_from_node_not_requested_url(self):
+        # A direct 1.6.0 build is already installed. The generation is read from
+        # the node's own --content-list output, so the direct release version is
+        # used even though no is_direct flag is passed -- the node's --version
+        # (which on a direct build reports the unrelated tool version, 0.9.9) is
+        # never consulted because the anc-release-* line is authoritative.
+        content_out = "  anc-release-helios-nda    1.6.0   Helios NDA Release\n"
+        cmds = []
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                cmds.append(cmd)
+                if "--content-list" in cmd:
+                    return {"node1": content_out}
+                return {"node1": "Framework Version: 0.9.9"}  # direct --version: tool/framework version
+
+        with patch.object(anc_lib, "print_test_output"):
+            result = anc_lib.node_version_matches(FakePhdl(), "1.5.5", anc_bin="/opt/amdtools/anc/anc.py")
+        self.assertTrue(result["node1"])  # 1.6.0 (content-list) >= 1.5.5, not 0.9.9
+        # The content-list probe is authoritative; --version is not used when the
+        # anc-release-* line is present, so no fallback probe was issued.
+        self.assertTrue(any("--content-list" in c for c in cmds))
+        self.assertFalse(any("--version" in c for c in cmds))
+
+    def test_mixed_generation_per_node(self):
+        # node1 is direct (anc-release-* line); node2 is legacy (no such line,
+        # version read from --version). Each node's generation is detected
+        # independently from its own output.
+        def exec_impl(cmd, timeout=None):
+            if "--content-list" in cmd:
+                return {
+                    "node1": "  anc-release-helios-nda    1.6.0   Helios NDA Release\n",
+                    "node2": "Available content plugins (2):\n  base - Base items\n",
+                }
+            return {"node1": "irrelevant", "node2": "Release Version: 1.4.9\n"}
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return exec_impl(cmd, timeout)
+
+        with patch.object(anc_lib, "print_test_output"):
+            versions = anc_lib.node_installed_versions(FakePhdl(), anc_bin="/opt/amdtools/anc/anc.py")
+        self.assertEqual(versions, {"node1": "1.6.0", "node2": "1.4.9"})
+
+
+class TestCompareAncVersions(unittest.TestCase):
+    '''compare_anc_versions / parse_anc_version: ANC version ordering.'''
+
+    def test_parse_base_and_rc(self):
+        self.assertEqual(anc_lib.parse_anc_version("1.7.0"), ((1, 7, 0), None))
+        self.assertEqual(anc_lib.parse_anc_version("1.7.0-rc.1"), ((1, 7, 0), 1))
+        self.assertEqual(anc_lib.parse_anc_version("1.4.9"), ((1, 4, 9), None))
+
+    def test_parse_none_when_no_version(self):
+        self.assertIsNone(anc_lib.parse_anc_version(""))
+        self.assertIsNone(anc_lib.parse_anc_version("no-version-here"))
+
+    def test_parse_bare_integer_is_not_a_version(self):
+        # A lone integer has no dotted base, so it is rejected (not ((7,), None)).
+        self.assertIsNone(anc_lib.parse_anc_version("7"))
+
+    def test_parse_rc_kept_with_trailing_text(self):
+        # The rc suffix is part of the version token, so surrounding text on
+        # either side does not drop it (regression for the end-anchored parser).
+        self.assertEqual(anc_lib.parse_anc_version("ANC 1.7.0-rc.1 build"), ((1, 7, 0), 1))
+        self.assertEqual(anc_lib.parse_anc_version("release 1.7.0-rc.2\n"), ((1, 7, 0), 2))
+
+    def test_rc_with_trailing_text_not_equal_to_other_rc(self):
+        # "1.7.0-rc.1 build" must compare as rc.1, NOT collapse to base 1.7.0
+        # and thus read equal to 1.7.0-rc.2.
+        self.assertEqual(anc_lib.compare_anc_versions("1.7.0-rc.1 build", "1.7.0-rc.2"), -1)
+
+    def test_is_strict_anc_version(self):
+        # Strict gate for user-configured values: whole-string match only.
+        self.assertTrue(anc_lib.is_strict_anc_version("1.7.0"))
+        self.assertTrue(anc_lib.is_strict_anc_version("1.7.0-rc.1"))
+        self.assertTrue(anc_lib.is_strict_anc_version(" 1.4.9 "))  # surrounding whitespace is stripped
+        # Trailing/leading garbage or a malformed rc must NOT pass.
+        self.assertFalse(anc_lib.is_strict_anc_version("1.7.0-rc.bad"))
+        self.assertFalse(anc_lib.is_strict_anc_version("release-1.7.0"))
+        self.assertFalse(anc_lib.is_strict_anc_version("1.7.0 build"))
+        self.assertFalse(anc_lib.is_strict_anc_version("7"))
+        self.assertFalse(anc_lib.is_strict_anc_version(""))
+        self.assertFalse(anc_lib.is_strict_anc_version(None))
+        # Uppercase RC must be rejected: the grammar is lowercase and the URL /
+        # --content-list / --version extractors are case-sensitive, so accepting
+        # 1.7.0-RC.2 here would let it collapse to 1.7.0 downstream and let a
+        # lower RC satisfy the guard.
+        self.assertFalse(anc_lib.is_strict_anc_version("1.7.0-RC.2"))
+        self.assertFalse(anc_lib.is_strict_anc_version("1.7.0-Rc.1"))
+
+    def test_uppercase_rc_config_is_rejected_not_collapsed(self):
+        # End-to-end: an uppercase-RC config paired with an uppercase-RC archive
+        # must be flagged invalid, NOT silently read as base 1.7.0 (which would
+        # let config RC.2 pass against archive RC.1).
+        cfg = {"anc": {"anc_version": "1.7.0-RC.2", "anc_release_url": "http://x/anc-1.7.0-RC.1-1.x86_64.rpm"}}
+        problem = anc_lib.check_version_matches_url(cfg)
+        self.assertIsNotNone(problem)
+        self.assertIn("not a valid ANC version", problem)
+
+    def test_rc_equals_its_base(self):
+        self.assertEqual(anc_lib.compare_anc_versions("1.7.0-rc.1", "1.7.0"), 0)
+        self.assertEqual(anc_lib.compare_anc_versions("1.7.0", "1.7.0-rc.1"), 0)
+
+    def test_rc_to_rc_numeric(self):
+        self.assertEqual(anc_lib.compare_anc_versions("1.7.0-rc.1", "1.7.0-rc.2"), -1)
+        self.assertEqual(anc_lib.compare_anc_versions("1.7.0-rc.2", "1.7.0-rc.1"), 1)
+        # numeric, not lexical: rc.2 < rc.10
+        self.assertEqual(anc_lib.compare_anc_versions("1.7.0-rc.2", "1.7.0-rc.10"), -1)
+
+    def test_base_ordering(self):
+        self.assertEqual(anc_lib.compare_anc_versions("1.6.0", "1.7.0-rc.1"), -1)
+        self.assertEqual(anc_lib.compare_anc_versions("1.7.0-rc.5", "1.8.0"), -1)
+        self.assertEqual(anc_lib.compare_anc_versions("1.4.9", "1.4.10"), -1)
+
+    def test_zero_padding(self):
+        self.assertEqual(anc_lib.compare_anc_versions("1.7", "1.7.0"), 0)
+
+    def test_unparseable_raises(self):
+        with self.assertRaises(ValueError):
+            anc_lib.compare_anc_versions("garbage", "1.7.0")
+
+    def test_satisfies(self):
+        self.assertTrue(anc_lib.anc_version_satisfies("1.7.0-rc.1", "1.7.0"))
+        self.assertTrue(anc_lib.anc_version_satisfies("1.8.0", "1.7.0"))
+        self.assertFalse(anc_lib.anc_version_satisfies("1.7.0-rc.1", "1.7.0-rc.2"))
+        self.assertFalse(anc_lib.anc_version_satisfies("1.6.0", "1.7.0"))
+        self.assertFalse(anc_lib.anc_version_satisfies("garbage", "1.7.0"))
 
 
 class TestParseReleaseVersionFromContentList(unittest.TestCase):
@@ -195,6 +435,26 @@ class TestParseReleaseVersionFromContentList(unittest.TestCase):
     def test_two_part_version(self):
         out = "  anc-release-venice-nda    2.0   Venice NDA Release\n"
         self.assertEqual(anc_lib.parse_release_version_from_content_list(out), "2.0")
+
+    def test_rc_version_from_real_node_output(self):
+        # Shape of a real --content-list run that carries an rc release version.
+        out = (
+            "Start Time: 2026-09-23 07:43:13\n"
+            "Log Directory: /home/testuser/logs/anc_20260923-074313\n\n"
+            "Available content plugins (6):\n"
+            "  Name                      Version Description\n"
+            "  ainic-nda                 1.0.0   NDA Test Content for AMD AINIC\n"
+            "  anc-release-helios-nda    1.7.0-rc.1 Helios NDA Release\n"
+            "  base                      1.1.0   Base ANC items and utilities available for all test plans\n"
+            "  helios-nda                1.0.3   Helios NDA Test Content\n"
+            "Program exiting with return code ANC_SUCCESS [0]\n"
+        )
+        self.assertEqual(anc_lib.parse_release_version_from_content_list(out), "1.7.0-rc.1")
+
+    def test_malformed_rc_in_column_is_rejected(self):
+        # A malformed rc in the version column must not truncate to the base.
+        out = "  anc-release-helios-nda    1.7.0-rc.bad   Helios NDA Release\n"
+        self.assertIsNone(anc_lib.parse_release_version_from_content_list(out))
 
 
 class TestDetectPackageFlavour(unittest.TestCase):
@@ -248,6 +508,36 @@ class TestDetectPackageFlavour(unittest.TestCase):
         self.assertEqual(anc_lib.detect_package_type("http://x/anc-1.4.9-deb-linux-x64.tar.gz"), "deb")
 
 
+class TestParseVersionFromVersionOutput(unittest.TestCase):
+    '''_parse_version_from_version_output: read ONLY the labelled Release Version
+    record, never an unrelated number from stdout/stderr.'''
+
+    def test_reads_release_version_line(self):
+        out = "Release Name: helios-nda\nRelease Version: 1.4.9\n"
+        self.assertEqual(anc_lib._parse_version_from_version_output(out), "1.4.9")
+
+    def test_reads_rc_release_version(self):
+        self.assertEqual(anc_lib._parse_version_from_version_output("Release Version: 1.7.0-rc.1"), "1.7.0-rc.1")
+
+    def test_ignores_warning_number_before_version(self):
+        out = "WARNING: libfoo 2.3 deprecated\nRelease Version: 1.4.9\n"
+        self.assertEqual(anc_lib._parse_version_from_version_output(out), "1.4.9")
+
+    def test_absent_under_versioned_path_is_none(self):
+        # The 1.6.0 inside the relocatable path must NOT be parsed as the release.
+        out = "bash: /opt/anc-1.6.0/anc/anc.py: No such file or directory\n"
+        self.assertIsNone(anc_lib._parse_version_from_version_output(out))
+
+    def test_no_release_line_is_none(self):
+        self.assertIsNone(anc_lib._parse_version_from_version_output("anc.py: command not found"))
+        self.assertIsNone(anc_lib._parse_version_from_version_output(""))
+        self.assertIsNone(anc_lib._parse_version_from_version_output(None))
+
+    def test_malformed_rc_in_label_is_rejected(self):
+        # A malformed rc on the labelled line must not truncate to the base.
+        self.assertIsNone(anc_lib._parse_version_from_version_output("Release Version: 1.7.0-rc.bad\n"))
+
+
 class TestParseVersionFromUrl(unittest.TestCase):
     '''parse_version_from_url: first dotted-numeric run in the filename.'''
 
@@ -275,20 +565,74 @@ class TestParseVersionFromUrl(unittest.TestCase):
     def test_empty_returns_none(self):
         self.assertIsNone(anc_lib.parse_version_from_url(""))
 
+    def test_rc_url_keeps_suffix(self):
+        # The rc suffix is part of the version; the trailing package revision is not.
+        self.assertEqual(
+            anc_lib.parse_version_from_url("http://x/anc-release-helios-nda-1.7.0-rc.1-1.x86_64.rpm"),
+            "1.7.0-rc.1",
+        )
+
+    def test_malformed_attached_rc_is_rejected_not_truncated(self):
+        # An attached malformed rc must NOT silently truncate to the base (which
+        # would let the fail-fast guard approve a mis-versioned archive).
+        self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0-rc.bad.rpm"))
+        self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0-rc.1foo.rpm"))
+        self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0rc1.rpm"))
+
+    def test_uppercase_attached_rc_is_rejected(self):
+        # An uppercase -RC suffix must be rejected, not truncated to the base --
+        # otherwise 1.7.0-RC.1 reads as 1.7.0 and a request for 1.7.0-rc.2 passes.
+        self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0-RC.1.rpm"))
+        self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0-Rc.2.rpm"))
+
+    def test_malformed_first_token_not_skipped_for_later_number(self):
+        # When the first dotted candidate is a malformed version, the parser must
+        # reject it rather than skip ahead to an unrelated later number (e.g. the
+        # 2.31 in a -glibc-2.31 suffix).
+        self.assertIsNone(anc_lib.parse_version_from_url("http://x/anc-1.7.0-rc.bad-glibc-2.31.tar.gz"))
+
+    def test_package_revision_still_allowed(self):
+        # The "-1" package revision after a valid rc is fine (boundary allows -<digit>).
+        self.assertEqual(
+            anc_lib.parse_version_from_url("http://x/anc-1.7.0-rc.10-2.x86_64.rpm"),
+            "1.7.0-rc.10",
+        )
+
 
 class TestCheckVersionMatchesUrl(unittest.TestCase):
-    '''check_version_matches_url: abort when configured version != URL version.'''
+    '''check_version_matches_url: abort when the configured version is invalid or > URL version.'''
 
     def test_match_returns_none(self):
         cfg = {"anc": {"anc_version": "1.5.5", "anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz"}}
         self.assertIsNone(anc_lib.check_version_matches_url(cfg))
 
-    def test_mismatch_returns_problem(self):
+    def test_config_lower_than_url_is_ok(self):
+        # config < url is fine: the archive can satisfy the requested version.
         cfg = {"anc": {"anc_version": "1.5.4", "anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz"}}
+        self.assertIsNone(anc_lib.check_version_matches_url(cfg))
+
+    def test_config_higher_than_url_returns_problem(self):
+        cfg = {"anc": {"anc_version": "1.5.6", "anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz"}}
         problem = anc_lib.check_version_matches_url(cfg)
         self.assertIsNotNone(problem)
-        self.assertIn("1.5.4", problem)
+        self.assertIn("1.5.6", problem)
         self.assertIn("1.5.5", problem)
+
+    def test_rc_config_matches_base_url(self):
+        # rc is treated equal to its base, so config rc.1 vs url base is OK.
+        cfg = {"anc": {"anc_version": "1.7.0-rc.1", "anc_release_url": "http://x/anc-1.7.0-x86_64.rpm"}}
+        self.assertIsNone(anc_lib.check_version_matches_url(cfg))
+
+    def test_base_config_matches_rc_url(self):
+        # config base vs url rc of same base is OK (equal).
+        cfg = {"anc": {"anc_version": "1.7.0", "anc_release_url": "http://x/anc-1.7.0-rc.1-1.x86_64.rpm"}}
+        self.assertIsNone(anc_lib.check_version_matches_url(cfg))
+
+    def test_higher_rc_config_than_url_rc_aborts(self):
+        cfg = {"anc": {"anc_version": "1.7.0-rc.2", "anc_release_url": "http://x/anc-1.7.0-rc.1-1.x86_64.rpm"}}
+        problem = anc_lib.check_version_matches_url(cfg)
+        self.assertIsNotNone(problem)
+        self.assertIn("1.7.0-rc.2", problem)
 
     def test_blank_version_skips(self):
         cfg = {"anc": {"anc_version": "", "anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz"}}
@@ -297,6 +641,24 @@ class TestCheckVersionMatchesUrl(unittest.TestCase):
     def test_unparseable_url_skips(self):
         cfg = {"anc": {"anc_version": "1.5.5", "anc_release_url": "http://x/anc-release.tar.gz"}}
         self.assertIsNone(anc_lib.check_version_matches_url(cfg))
+
+    def test_unparseable_configured_version_is_problem(self):
+        # URL parses (1.5.5) but the configured version does not; this is a bad
+        # config value and must be reported, not swallowed into None.
+        cfg = {"anc": {"anc_version": "garbage", "anc_release_url": "http://x/anc-1.5.5-x86_64.tar.gz"}}
+        problem = anc_lib.check_version_matches_url(cfg)
+        self.assertIsNotNone(problem)
+        self.assertIn("garbage", problem)
+
+    def test_contextual_configured_version_is_problem(self):
+        # The comparator tolerates surrounding text, so without the strict gate
+        # these would be silently read as 1.7.0 and pass. They must be rejected.
+        for bad in ("release-1.7.0", "1.7.0-rc.bad", "1.7.0 build"):
+            with self.subTest(bad=bad):
+                cfg = {"anc": {"anc_version": bad, "anc_release_url": "http://x/anc-1.7.0-x86_64.tar.gz"}}
+                problem = anc_lib.check_version_matches_url(cfg)
+                self.assertIsNotNone(problem)
+                self.assertIn("not a valid ANC version", problem)
 
     def test_legacy_url_match(self):
         cfg = {"anc": {"anc_version": "1.4.9", "anc_release_url": "http://x/anc-1.4.9-tar-linux-x64.tar.gz"}}
@@ -687,7 +1049,7 @@ class TestValidateClusterUsername(unittest.TestCase):
     '''validate_cluster_username rejects usernames unsafe for shell interpolation.'''
 
     def test_clean_username_ok(self):
-        self.assertIsNone(anc_lib.validate_cluster_username({"username": "ashmishr"}))
+        self.assertIsNone(anc_lib.validate_cluster_username({"username": "testuser"}))
 
     def test_missing_or_blank_is_deferred(self):
         self.assertIsNone(anc_lib.validate_cluster_username({}))
@@ -709,7 +1071,7 @@ class TestValidateAncConfig(unittest.TestCase):
         base.update(anc)
         return {"anc": base}
 
-    def _cluster(self, username="ashmishr"):
+    def _cluster(self, username="testuser"):
         return {"username": username}
 
     def test_clean_config_no_problems(self):
@@ -720,10 +1082,20 @@ class TestValidateAncConfig(unittest.TestCase):
         problems = anc_lib.validate_anc_config(self._cfg(anc_release_url=""), self._cluster(), require_log_folder=False)
         self.assertTrue(any("anc_release_url" in p for p in problems))
 
-    def test_version_mismatch_flagged(self):
-        cfg = self._cfg(anc_version="1.5.4")  # url is 1.5.5
+    def test_config_newer_than_url_flagged(self):
+        cfg = self._cfg(anc_version="1.5.6")  # url is 1.5.5; config newer than archive
         problems = anc_lib.validate_anc_config(cfg, self._cluster(), require_log_folder=False)
-        self.assertTrue(any("does not match" in p for p in problems))
+        self.assertTrue(any("is newer than" in p for p in problems))
+
+    def test_config_older_than_url_ok(self):
+        cfg = self._cfg(anc_version="1.5.4")  # url is 1.5.5; archive can satisfy request
+        problems = anc_lib.validate_anc_config(cfg, self._cluster(), require_log_folder=False)
+        self.assertFalse(any("newer than" in p or "does not match" in p for p in problems))
+
+    def test_unparseable_version_flagged(self):
+        cfg = self._cfg(anc_version="garbage")  # url parses, configured value does not
+        problems = anc_lib.validate_anc_config(cfg, self._cluster(), require_log_folder=False)
+        self.assertTrue(any("not a valid ANC version" in p for p in problems))
 
     def test_unsafe_prefix_flagged_cleanly(self):
         cfg = self._cfg(ANC_INSTALL_PATH="//")
@@ -768,6 +1140,130 @@ class TestTarCleanupFiltersDotDot(unittest.TestCase):
         self.assertIn('case "$name" in */*|.|..) continue;; esac', cmd)
 
 
+class TestInstallAncVersionGating(unittest.TestCase):
+    '''install_anc: anc_version drives the precheck skip and post-install verify.'''
+
+    CLUSTER = {"node_dict": {"node1": {}}, "username": "u", "priv_key_file": "k"}
+
+    def setUp(self):
+        globals_patcher = patch.object(anc_lib.globals, "error_list", [])
+        globals_patcher.start()
+        self.addCleanup(globals_patcher.stop)
+
+    def _cfg(self, version, url="http://x/anc-1.5.5-x86_64.tar.gz"):
+        # Direct tar URL by default -> detect_package_flavour yields a direct tar.
+        return {
+            "anc": {
+                "anc_release_url": url,
+                "anc_version": version,
+                "ANC_INSTALL_PATH": "",
+            }
+        }
+
+    @staticmethod
+    def _content(version):
+        return f"  anc-release-helios-nda    {version}   Helios NDA Release\n" if version else ""
+
+    def _phdl(self, state):
+        '''A phdl whose --content-list reply reflects the current installed
+        version in ``state`` (flipped by the mocked installer), so the precheck
+        and post-verify probes read the right phase. Only --content-list is
+        answered; a None version yields empty output (absent), exercising the
+        legacy --version fallback path too (also empty here).'''
+        content = self._content
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return {"node1": content(state["installed"])}
+
+        return FakePhdl()
+
+    def test_precheck_skip_when_installed_satisfies(self):
+        # Node already runs 1.6.0 (>= requested 1.5.5): install must be skipped
+        # and no sub-installer invoked.
+        state = {"installed": "1.6.0"}
+
+        with (
+            patch.object(anc_lib, "print_test_output"),
+            patch.object(anc_lib, "update_test_result") as upd,
+            patch.object(anc_lib, "_install_anc_tar_direct") as installer,
+            patch.object(anc_lib, "fail_test") as ft,
+        ):
+            anc_lib.install_anc(self._phdl(state), self.CLUSTER, self._cfg("1.5.5"))
+
+        installer.assert_not_called()
+        ft.assert_not_called()
+        upd.assert_called_once()
+
+    def test_no_skip_when_installed_lower_then_verifies(self):
+        # Node runs 1.5.4 (< requested 1.5.5): precheck does NOT skip; the mocked
+        # installer bumps the node to 1.5.5 so the post-verify passes.
+        state = {"installed": "1.5.4"}
+
+        def do_install(*args, **kwargs):
+            state["installed"] = "1.5.5"
+
+        with (
+            patch.object(anc_lib, "print_test_output"),
+            patch.object(anc_lib, "update_test_result") as upd,
+            patch.object(anc_lib, "_install_anc_tar_direct", side_effect=do_install) as installer,
+            patch.object(anc_lib, "fail_test") as ft,
+        ):
+            anc_lib.install_anc(self._phdl(state), self.CLUSTER, self._cfg("1.5.5"))
+
+        installer.assert_called_once()
+        ft.assert_not_called()
+        upd.assert_called_once()
+
+    def test_post_verify_fails_when_version_absent_after_install(self):
+        # Install runs (nothing present at precheck) but the post-verify still
+        # does not satisfy the request -> fail_test is called.
+        state = {"installed": None}  # absent; installer (mocked) leaves it too low
+
+        def do_install(*args, **kwargs):
+            state["installed"] = "1.5.4"
+
+        with (
+            patch.object(anc_lib, "print_test_output"),
+            patch.object(anc_lib, "update_test_result"),
+            patch.object(anc_lib, "_install_anc_tar_direct", side_effect=do_install),
+            patch.object(anc_lib, "fail_test") as ft,
+        ):
+            anc_lib.install_anc(self._phdl(state), self.CLUSTER, self._cfg("1.5.5"))
+
+        ft.assert_called_once()
+        self.assertIn("node1", ft.call_args[0][0])
+
+    def test_mixed_cluster_does_not_skip_all_or_nothing(self):
+        # Documented all-or-nothing behavior: node1 already satisfies (1.6.0) but
+        # node2 is below the minimum (1.5.4), so the precheck must NOT skip and
+        # the installer runs for the whole set (node1 included). Regression guard
+        # for the "skip only when EVERY node satisfies" contract.
+        cluster = {"node_dict": {"node1": {}, "node2": {}}, "username": "u", "priv_key_file": "k"}
+        state = {"node1": "1.6.0", "node2": "1.5.4"}
+
+        def do_install(*args, **kwargs):
+            state["node2"] = "1.5.5"  # installer brings the lagging node up
+
+        content = self._content
+
+        class FakePhdl:
+            def exec(self, cmd, timeout=None):
+                return {host: content(ver) for host, ver in state.items()}
+
+        with (
+            patch.object(anc_lib, "print_test_output"),
+            patch.object(anc_lib, "update_test_result") as upd,
+            patch.object(anc_lib, "_install_anc_tar_direct", side_effect=do_install) as installer,
+            patch.object(anc_lib, "fail_test") as ft,
+        ):
+            anc_lib.install_anc(FakePhdl(), cluster, self._cfg("1.5.5"))
+
+        installer.assert_called_once()  # NOT skipped despite node1 satisfying
+        ft.assert_not_called()  # post-verify passes once node2 is bumped
+        upd.assert_called_once()
+
+
 class TestChownArgumentQuoted(unittest.TestCase):
     '''_pull_log_dir single-quotes the chown user argument (defense in depth).'''
 
@@ -786,6 +1282,86 @@ class TestChownArgumentQuoted(unittest.TestCase):
         # we only care that the archive command quotes the user.
         anc_lib._pull_log_dir(FakeSingle(), "node1", "alice", "/root/logs/run1", "/tmp/dest")
         self.assertIn("sudo chown 'alice'", captured["first"])
+
+
+class TestSafeTarExtract(unittest.TestCase):
+    '''_safe_tar_extract rejects members that would escape the destination
+    (the <3.12 fallback for extractall(filter="data")).'''
+
+    def _make_tar(self, root, member_name, link_target=None):
+        import tarfile as _tar
+
+        tar_path = os.path.join(root, "archive.tar")
+        with _tar.open(tar_path, "w") as tf:
+            if link_target is not None:
+                info = _tar.TarInfo(member_name)
+                info.type = _tar.SYMTYPE
+                info.linkname = link_target
+                tf.addfile(info)
+            else:
+                payload = os.path.join(root, "payload")
+                with open(payload, "w") as fh:
+                    fh.write("x")
+                tf.add(payload, arcname=member_name)
+        return tar_path
+
+    def test_extracts_safe_member(self):
+        import tarfile as _tar
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            tar_path = self._make_tar(root, "logs/console.log")
+            dest = os.path.join(root, "dest")
+            os.makedirs(dest)
+            with _tar.open(tar_path) as tf:
+                anc_lib._safe_tar_extract(tf, dest)
+            self.assertTrue(os.path.isfile(os.path.join(dest, "logs", "console.log")))
+
+    def test_rejects_parent_traversal_member(self):
+        import tarfile as _tar
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            tar_path = self._make_tar(root, "../escape.txt")
+            dest = os.path.join(root, "dest")
+            os.makedirs(dest)
+            with _tar.open(tar_path) as tf:
+                with self.assertRaises(_tar.TarError):
+                    anc_lib._safe_tar_extract(tf, dest)
+            self.assertFalse(os.path.exists(os.path.join(root, "escape.txt")))
+
+    def test_rejects_absolute_symlink_escape(self):
+        import tarfile as _tar
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            tar_path = self._make_tar(root, "link", link_target="/etc/passwd")
+            dest = os.path.join(root, "dest")
+            os.makedirs(dest)
+            with _tar.open(tar_path) as tf:
+                with self.assertRaises(_tar.TarError):
+                    anc_lib._safe_tar_extract(tf, dest)
+
+    def test_rejects_special_file_members(self):
+        # Device/FIFO members are rejected for parity with filter="data" so a
+        # node-controlled archive cannot drop a special file on the controller.
+        import tarfile as _tar
+        import tempfile
+
+        for type_const in (_tar.FIFOTYPE, _tar.CHRTYPE, _tar.BLKTYPE):
+            with self.subTest(type=type_const):
+                with tempfile.TemporaryDirectory() as root:
+                    tar_path = os.path.join(root, "archive.tar")
+                    with _tar.open(tar_path, "w") as tf:
+                        info = _tar.TarInfo("logs/special")
+                        info.type = type_const
+                        tf.addfile(info)
+                    dest = os.path.join(root, "dest")
+                    os.makedirs(dest)
+                    with _tar.open(tar_path) as tf:
+                        with self.assertRaises(_tar.TarError):
+                            anc_lib._safe_tar_extract(tf, dest)
+                    self.assertFalse(os.path.exists(os.path.join(dest, "logs", "special")))
 
 
 if __name__ == "__main__":

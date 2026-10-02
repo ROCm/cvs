@@ -79,7 +79,7 @@ The following table describes each key in the ``anc`` configuration block.
    * - ``install_timeout``
      - Download and install inactivity timeout in seconds (default ``1800``), used only by ``anc_installation`` / the install pre-task. Not a total budget: a progress heartbeat keeps a slow download alive; a genuine stall still fails.
    * - ``anc_version``
-     - Expected ANC version. Install skips when this version is already present and post-verifies the match. When set, it must equal the version in ``anc_release_url``.
+     - Minimum required ANC version. Install is skipped only when **every** expected node already satisfies it (installed >= requested); if any node is below the minimum, the installer runs across all nodes (already-satisfying nodes are reinstalled). After installing, every node is post-verified to satisfy the version; a release candidate counts as its base release (``1.7.0-rc.1`` satisfies ``1.7.0``). When set, the version in ``anc_release_url`` must be >= this value (the archive must be able to satisfy the request).
    * - ``anc_release_url``
      - URL of the ANC release archive. Packaging is auto-detected from the filename: **legacy (≤1.4.x)** outer tarballs include a ``-deb-`` / ``-rpm-`` / ``-tar-`` token; **direct (1.5.0+)** URLs point at a ``.deb`` / ``.rpm`` / ``.tar.gz`` with no flavour token.
    * - ``ANC_INSTALL_PATH``
