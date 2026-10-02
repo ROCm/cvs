@@ -921,6 +921,7 @@ class SglangDisaggPD:
             exec_probe=lambda cmd, timeout: self._container_exec(cmd, hosts=self.benchmark_serv_node, timeout=timeout),
             probe_host_key=self.benchmark_serv_node[0],
             log_label='OpenAI endpoint probe inside benchmark container, same pattern as GSM8K/benchserv',
+            include_structured_output=False,
         )
         self.log_kv_transfer_logs()
         return summaries

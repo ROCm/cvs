@@ -23,6 +23,21 @@ def _chat_body(*, content="", reasoning_content="", model="test/model"):
     }
 
 
+class TestOpenAIProbeScript(unittest.TestCase):
+    def test_default_script_includes_structured_output(self):
+        src = OpenAIProbe.probe_script(8000, "meta-llama/Llama-3.1-70B-Instruct")
+        self.assertIn('"response_format": {"type": "json_object"}', src)
+        self.assertIn('out["structured_output_book"]', src)
+
+    def test_script_omits_structured_output_when_disabled(self):
+        src = OpenAIProbe.probe_script(8000, "meta-llama/Llama-3.1-70B-Instruct", include_structured_output=False)
+        self.assertNotIn("json_object", src)
+        self.assertNotIn("structured_output_book", src)
+        self.assertIn('out["model_endpoint"]', src)
+        self.assertIn('out["chat_completion_endpoint"]', src)
+        self.assertIn('out["completion_endpoint"]', src)
+
+
 class TestOpenAIProbeReasoningModels(unittest.TestCase):
     def test_chat_accepts_reasoning_content_when_content_empty(self):
         results = {
