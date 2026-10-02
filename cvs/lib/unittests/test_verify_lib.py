@@ -1,5 +1,6 @@
 import datetime
 import os
+import re
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -306,6 +307,103 @@ class TestNodeScraperTimeRangeFiltering(unittest.TestCase):
             "minute-truncated analysis_range_end reproduces the historical bug "
             "(demonstrates why _parse_cvs_time must preserve seconds)",
         )
+
+
+BENIGN_DMESG_LINES = [
+    "infiniband rdma0: Changing to default roce traffic class DSCP 26 and SL 3",
+    "PCI: CLS 64 bytes, default 64",
+    "ast 0000:54:00.0: Using default configuration",
+    "mpt3sas_cm0: CurrentHostPageSize is 0: Setting default host page size to 4k",
+    "RAS: Correctable Errors collector initialized.",
+]
+
+REAL_FAULT_DMESG_LINES = [
+    "python[3215696]: segfault at 75b800000034 ip 000075b86b22d5aa sp 00007ffef62526f0 error 4 "
+    "in libmori_application.so[75b86b200000+c7000] likely on CPU 124 (core 84, socket 1)",
+    "traps: python[4021] general protection fault ip:7f3a5c0b12e4 sp:7ffd2a8c1e50 error:0 in libc.so.6",
+    "amdgpu 0000:05:00.0: amdgpu: [gfxhub] page fault (src_id:0 ring:153 vmid:8 pasid:32770)",
+    "amdgpu 0000:05:00.0: amdgpu: [mmhub0] retry page fault (src_id:0 ring:0 vmid:0 pasid:0)",
+    "amdgpu 0000:05:00.0: GPU fault detected: 146 0x0c680401",
+    "BUG: unable to handle page fault for address: ffffc90000a3f000",
+    "pcieport 0000:00:01.1: AER: Correctable error message received from 0000:01:00.0",
+]
+
+
+class TestErrPatterns(unittest.TestCase):
+    def tearDown(self):
+        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
+
+    def _matching_keys(self, line):
+        return [key for key, pattern in verify_lib.err_patterns_dict.items() if re.search(pattern, line, re.I)]
+
+    def test_benign_lines_match_no_error_pattern(self):
+        for line in BENIGN_DMESG_LINES:
+            with self.subTest(line=line):
+                self.assertEqual(self._matching_keys(line), [])
+
+    def test_real_fault_lines_match_an_error_pattern(self):
+        for line in REAL_FAULT_DMESG_LINES:
+            with self.subTest(line=line):
+                self.assertTrue(self._matching_keys(line))
+
+    def test_standalone_fault_word_still_flags_crash(self):
+        for line in (
+            "traps: python[4021] general protection fault ip:7f3a5c0b12e4 sp:7ffd2a8c1e50 error:0 in libc.so.6",
+            "amdgpu 0000:05:00.0: GPU fault detected: 146 0x0c680401",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(self._matching_keys(line), ["crash"])
+
+    def test_segfault_flags_crash(self):
+        self.assertIn("crash", self._matching_keys(REAL_FAULT_DMESG_LINES[0]))
+
+    def test_correctable_error_report_still_flags_hardware(self):
+        self.assertEqual(
+            self._matching_keys("pcieport 0000:00:01.1: AER: Correctable error message received from 0000:01:00.0"),
+            ["hardware"],
+        )
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    def test_legacy_verify_dmesg_ignores_benign_lines(self, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "\n".join(BENIGN_DMESG_LINES)}
+
+        result = verify_lib.verify_dmesg_for_errors(
+            phdl, {"node1": "Wed Sep 30 18:05:22"}, {"node1": "Wed Sep 30 18:26:07"}, till_end_flag=False
+        )
+
+        self.assertEqual(result, {"node1": []})
+        mock_fail_test.assert_not_called()
+
+    @patch("cvs.lib.verify_lib.fail_test")
+    def test_legacy_verify_dmesg_flags_real_faults(self, mock_fail_test):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "legacy"
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "\n".join(BENIGN_DMESG_LINES + REAL_FAULT_DMESG_LINES)}
+
+        result = verify_lib.verify_dmesg_for_errors(
+            phdl, {"node1": "Wed Sep 30 18:05:22"}, {"node1": "Wed Sep 30 18:26:07"}, till_end_flag=False
+        )
+
+        self.assertEqual(set(result["node1"]), set(REAL_FAULT_DMESG_LINES))
+        mock_fail_test.assert_called()
+
+    def _cvs_events(self, lines, level):
+        dmesg = "".join(
+            f"2026-09-30T16:38:51,{i:06d}+00:00 kern  :{level:<6}: {line}\n" for i, line in enumerate(lines)
+        )
+        events = verify_lib.node_scraper_adapter.parse_dmesg(
+            dmesg, analysis_args={"error_regex": verify_lib.cvs_dmesg_error_regex()}
+        )
+        return [e for e in events if (e["description"] or "").startswith("CVS ")]
+
+    def test_node_scraper_cvs_patterns_ignore_benign_lines(self):
+        self.assertEqual(self._cvs_events(BENIGN_DMESG_LINES, "warn"), [])
+
+    def test_node_scraper_cvs_patterns_flag_bare_fault(self):
+        events = self._cvs_events(["amdgpu 0000:05:00.0: GPU fault detected: 146 0x0c680401"], "err")
+        self.assertEqual([e["description"] for e in events], ["CVS crash pattern"])
 
 
 class TestVerifyHostLspci(unittest.TestCase):
