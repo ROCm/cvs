@@ -37,6 +37,7 @@ class TestViewerScaffold(unittest.TestCase):
             )
             text = out.read_text(encoding="utf-8")
             self.assertIn("suite_report.json", text)
+            self.assertIn("Use the Run Deck JSON from an identical run.", text)
             self.assertIn("embedded-report-json", text)
             self.assertIn("function compareSweepCells", text)
             self.assertIn("['model', 'gpu', 'isl', 'osl', 'policy', 'concurrency', 'host', 'cell_id']", text)
