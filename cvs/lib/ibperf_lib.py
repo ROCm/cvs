@@ -46,6 +46,10 @@ DEFAULT_LAT_TESTS = ['ib_write_lat', 'ib_send_lat']
 SUPPORTED_BW_TESTS = ('ib_write_bw', 'ib_read_bw', 'ib_send_bw')
 SUPPORTED_LAT_TESTS = ('ib_write_lat', 'ib_read_lat', 'ib_send_lat')
 
+# Covers connection setup, the client's launch delay, and perftest's warm-up margins.
+PERFTEST_EXIT_SLACK_S = 60
+PERFTEST_EXIT_POLL_S = 5
+
 
 def _configured_tests(config, key, defaults, supported):
     """Return configured perftest binaries, or defaults when the key is absent.
@@ -488,6 +492,20 @@ def resolve_gid_index(phdl, node_dev_dict, gid_index, expected_gid_type=DEFAULT_
     return index
 
 
+def wait_for_perftest_exit(phdl, app_name, timeout):
+    """Poll every node until no ``app_name`` process is left or ``timeout`` seconds pass.
+
+    Returns the nodes still running ``app_name`` when the wait ended; empty when all exited.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        out_dict = phdl.exec(f'pgrep -x {app_name} > /dev/null && echo running || echo exited', print_console=False)
+        running = [node for node, out in out_dict.items() if 'running' in out]
+        if not running or time.monotonic() >= deadline:
+            return running
+        time.sleep(PERFTEST_EXIT_POLL_S)
+
+
 def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
     res_dict = {}
 
@@ -504,24 +522,23 @@ def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
             fail_test(f'IB Test failed - Error patterns seen on node {node}')
 
     # Collect the BW, PPS numbers
+    pattern = r"{}\s+\d+\s+[0-9\.]+\s+([0-9\.]+)\s+([0-9\.]+)".format(msg_size)
+    pending = list(out_dict.keys())
     for i in range(1, 10):
         log.debug('BW collection iteration %d for msg_size %s', i, msg_size)
         out_dict = phdl.exec(cmd, print_console=False)
-        for node in out_dict.keys():
-            res_dict[node] = {}
-            pattern = r"{}\s+\d+\s+[0-9\.]+\s+([0-9\.]+)\s+([0-9\.]+)".format(msg_size)
-            if re.search(pattern, out_dict[node]):
-                match = re.search(pattern, out_dict[node])
-                res_dict[node]['bw'] = match.group(1)
-                res_dict[node]['pps'] = match.group(2)
-                continue
-            else:
-                log.debug('Node %s: results not ready, sleeping 10s (iteration %d)', node, i)
-                time.sleep(10)
-            fail_test(
-                f'ERROR !!! on node {node} Client did not complete even after max iterations for msg size {msg_size}'
-            )
-            fail_test(f'ERROR !!! pls check log file for errors on node {node}')
+        for node in list(pending):
+            match = re.search(pattern, out_dict.get(node, ''))
+            if match:
+                res_dict[node] = {'bw': match.group(1), 'pps': match.group(2)}
+                pending.remove(node)
+        if not pending:
+            break
+        log.debug('Nodes %s: results not ready, sleeping 10s (iteration %d)', pending, i)
+        time.sleep(10)
+    for node in pending:
+        fail_test(f'ERROR !!! on node {node} Client did not complete even after max iterations for msg size {msg_size}')
+        fail_test(f'ERROR !!! pls check log file for errors on node {node}')
     _log_bw_summary(msg_size, res_dict, instance_no)
     return res_dict
 
@@ -543,27 +560,22 @@ def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None, result_nodes=None):
     pattern = r"{}\s+\d+\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)".format(
         msg_size
     )
+    keys = ('t_min', 't_max', 't_typical', 't_avg', 't_stdev', 't_99_pct', 't_99_9_pct')
+    pending = list(required_nodes)
     for i in range(1, 4):
         log.debug('Latency collection iteration %d for msg_size %s', i, msg_size)
         out_dict = phdl.exec(cmd, print_console=False)
-        for node in required_nodes:
+        for node in list(pending):
             match = re.search(pattern, out_dict.get(node, ''))
             if match:
-                res_dict[node] = {
-                    't_min': match.group(1),
-                    't_max': match.group(2),
-                    't_typical': match.group(3),
-                    't_avg': match.group(4),
-                    't_stdev': match.group(5),
-                    't_99_pct': match.group(6),
-                    't_99_9_pct': match.group(7),
-                }
-            else:
-                log.debug('Node %s: latency results not ready, sleeping 10s (iteration %d)', node, i)
-                time.sleep(10)
-    for node in required_nodes:
-        if node not in res_dict:
-            fail_test(f'ERROR !!! on node {node} Client did not complete for msg size {msg_size}')
+                res_dict[node] = dict(zip(keys, match.groups()))
+                pending.remove(node)
+        if not pending:
+            break
+        log.debug('Nodes %s: latency results not ready, sleeping 10s (iteration %d)', pending, i)
+        time.sleep(10)
+    for node in pending:
+        fail_test(f'ERROR !!! on node {node} Client did not complete for msg size {msg_size}')
     _log_lat_summary(msg_size, res_dict, instance_no)
     return res_dict
 
@@ -916,7 +928,10 @@ def run_ib_perf_bw_test(
     time.sleep(2)
     phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
 
-    time.sleep(20)
+    exit_timeout = duration + PERFTEST_EXIT_SLACK_S
+    running = wait_for_perftest_exit(phdl, bw_test, exit_timeout)
+    if running:
+        log.warning('%s still running on %s after %ss; reading logs anyway', bw_test, running, exit_timeout)
 
     for instance_no in range(0, inst_count):
         try:
@@ -1054,8 +1069,9 @@ def run_ib_perf_lat_test(
     time.sleep(2)
     phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
 
-    # wait for the duration of test
-    time.sleep(20)
+    running = wait_for_perftest_exit(phdl, lat_test, PERFTEST_EXIT_SLACK_S)
+    if running:
+        log.warning('%s still running on %s after %ss; reading logs anyway', lat_test, running, PERFTEST_EXIT_SLACK_S)
 
     result_nodes = list(bck_nic_dict)[1::2] if lat_test == 'ib_read_lat' else None
     for instance_no in range(0, inst_count):

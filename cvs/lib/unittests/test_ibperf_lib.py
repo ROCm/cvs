@@ -4,7 +4,7 @@ import unittest
 import tempfile
 import zipfile
 from pathlib import Path
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, MagicMock, call, patch
 import cvs.lib.ibperf_lib as ibperf_lib
 from cvs.lib import globals
 
@@ -358,6 +358,96 @@ class TestIbperfLib(unittest.TestCase):
         worksheet.merge_range.assert_any_call('A1:Z1', 'Test ib_write_lat - latency results', ANY)
 
 
+BW_LOG = '8192 bytes of GPU buffer\n 8192       5000           512.00             517.14             7.89\n'
+LAT_LOG = '64 bytes of GPU buffer\n 64       1000          1.50   3.20   1.60   1.65   0.05   2.10   3.00\n'
+
+
+class TestWaitForPerftestExit(unittest.TestCase):
+    @patch.object(ibperf_lib.time, 'sleep')
+    def test_returns_once_every_node_exited(self, mock_sleep):
+        phdl = MagicMock()
+        phdl.exec.side_effect = [
+            {'node1': 'running', 'node2': 'exited'},
+            {'node1': 'exited', 'node2': 'exited'},
+        ]
+
+        self.assertEqual(ibperf_lib.wait_for_perftest_exit(phdl, 'ib_write_bw', 90), [])
+        self.assertEqual(phdl.exec.call_count, 2)
+        self.assertIn('pgrep -x ib_write_bw', phdl.exec.call_args.args[0])
+        mock_sleep.assert_called_once_with(ibperf_lib.PERFTEST_EXIT_POLL_S)
+
+    @patch.object(ibperf_lib.time, 'sleep')
+    @patch.object(ibperf_lib.time, 'monotonic', side_effect=[0, 10, 91])
+    def test_returns_running_nodes_at_timeout(self, _monotonic, mock_sleep):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': 'exited', 'node2': 'running'}
+
+        self.assertEqual(ibperf_lib.wait_for_perftest_exit(phdl, 'ib_write_bw', 90), ['node2'])
+        self.assertEqual(phdl.exec.call_count, 2)
+        mock_sleep.assert_called_once_with(ibperf_lib.PERFTEST_EXIT_POLL_S)
+
+
+class TestGetIbBwPps(unittest.TestCase):
+    @patch.object(ibperf_lib.time, 'sleep')
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_stops_polling_once_every_node_reports(self, mock_fail, mock_sleep):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': BW_LOG, 'node2': BW_LOG}
+
+        res = ibperf_lib.get_ib_bw_pps(phdl, 8192, 'cat /tmp/ib_perf_0_logs')
+
+        self.assertEqual(res, {n: {'bw': '517.14', 'pps': '7.89'} for n in ('node1', 'node2')})
+        self.assertEqual(phdl.exec.call_count, 2)
+        mock_fail.assert_not_called()
+        mock_sleep.assert_not_called()
+
+    @patch.object(ibperf_lib.time, 'sleep')
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_late_node_is_retried_without_failing(self, mock_fail, _sleep):
+        phdl = MagicMock()
+        partial = '8192 bytes of GPU buffer\n'
+        phdl.exec.side_effect = [
+            {'node1': BW_LOG, 'node2': partial},
+            {'node1': BW_LOG, 'node2': partial},
+            {'node1': '', 'node2': BW_LOG},
+        ]
+
+        res = ibperf_lib.get_ib_bw_pps(phdl, 8192, 'cat /tmp/ib_perf_0_logs')
+
+        self.assertEqual(sorted(res), ['node1', 'node2'])
+        mock_fail.assert_not_called()
+
+    @patch.object(ibperf_lib.time, 'sleep')
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_fails_once_per_node_after_retries_run_out(self, mock_fail, mock_sleep):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': BW_LOG, 'node2': '8192 bytes of GPU buffer\n'}
+
+        res = ibperf_lib.get_ib_bw_pps(phdl, 8192, 'cat /tmp/ib_perf_0_logs')
+
+        self.assertEqual(res, {'node1': {'bw': '517.14', 'pps': '7.89'}})
+        self.assertEqual(mock_sleep.call_count, 9)
+        self.assertEqual(mock_fail.call_count, 2)
+        self.assertTrue(all('node2' in c.args[0] for c in mock_fail.call_args_list))
+
+
+class TestGetIbLatNumb(unittest.TestCase):
+    @patch.object(ibperf_lib.time, 'sleep')
+    @patch.object(ibperf_lib, 'fail_test')
+    def test_fails_once_per_node_after_retries_run_out(self, mock_fail, mock_sleep):
+        phdl = MagicMock()
+        phdl.exec.return_value = {'node1': LAT_LOG, 'node2': '64 bytes of GPU buffer\n'}
+
+        res = ibperf_lib.get_ib_lat_numb(phdl, 64, 'cat /tmp/ib_perf_0_logs')
+
+        self.assertEqual(list(res), ['node1'])
+        self.assertEqual(res['node1']['t_avg'], '1.65')
+        self.assertEqual(res['node1']['t_99_9_pct'], '3.00')
+        self.assertEqual(mock_sleep.call_count, 3)
+        self.assertEqual(mock_fail.call_count, 1)
+        self.assertTrue(all('node2' in c.args[0] for c in mock_fail.call_args_list))
+
+
 class TestGetPerftestConfigureCmd(unittest.TestCase):
     def test_includes_rocm_dmabuf_by_default(self):
         self.assertEqual(
@@ -575,8 +665,21 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
         self.run_latency()
         self.assertFalse(any('--help' in call.args[0] for call in self.phdl.exec.call_args_list))
 
+    @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
+    def test_waits_for_perftest_exit(self, mock_wait):
+        self.run_latency()
+        mock_wait.assert_called_once_with(self.phdl, 'ib_write_lat', ibperf_lib.PERFTEST_EXIT_SLACK_S)
+
 
 class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
+    @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
+    def test_waits_for_perftest_exit_bounded_by_duration(self, mock_wait):
+        res = self.run_bandwidth(duration=30)
+        mock_wait.assert_called_once_with(self.phdl, 'ib_write_bw', 30 + ibperf_lib.PERFTEST_EXIT_SLACK_S)
+        self.assertNotIn(call(20), ibperf_lib.time.sleep.call_args_list)
+        self.assertEqual(ibperf_lib.get_ib_bw_pps.call_count, 8)
+        self.assertEqual(sorted(res['node1']), list(range(8)))
+
     def test_builds_bw_commands_without_dmabuf(self):
         self.run_bandwidth(use_dmabuf=False)
         self.assertEqual(
@@ -1034,9 +1137,10 @@ class TestFindUnmatchedThresholds(unittest.TestCase):
 
 
 class TestSampleConfigDuration(unittest.TestCase):
+    @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
     @patch.object(ibperf_lib.time, 'sleep')
     @patch.object(ibperf_lib, 'get_ib_bw_pps', return_value={})
-    def test_sample_duration_finishes_before_results_are_read(self, _bw_pps, mock_sleep):
+    def test_sample_duration_finishes_before_results_are_read(self, _bw_pps, _sleep, mock_wait):
         config = json.loads(SAMPLE_CONFIG.read_text())['ibperf']
         duration = int(config['duration'])
         nodes = ('node1', 'node2')
@@ -1063,8 +1167,7 @@ class TestSampleConfigDuration(unittest.TestCase):
 
         _, client_cmd = phdl.exec_cmd_list.call_args_list[1].args[0]
         self.assertIn(f' -D {duration} ', client_cmd)
-        results_read_after = max(c.args[0] for c in mock_sleep.call_args_list)
-        self.assertLess(duration + PERFTEST_SETUP_HEADROOM_S, results_read_after)
+        self.assertLess(duration + PERFTEST_SETUP_HEADROOM_S, mock_wait.call_args.args[2])
 
 
 if __name__ == '__main__':
