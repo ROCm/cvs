@@ -1,177 +1,127 @@
 # Deployment Guide
 
-This guide covers different deployment options for CVS Cluster Monitor.
+CVS Cluster Monitor ships as **one Go binary** plus the pre-built React UI
+inside a Docker image. Redis is a sibling container for RCCL history.
 
-## Docker Deployment (Recommended)
+## Docker (recommended)
 
-The Docker container packages **all** frontend and backend dependencies. Users don't need to install Node.js, Python, or any dependencies manually.
-
-### What's Included in the Docker Image
-
-- ✅ Python 3.10 with all backend dependencies
-- ✅ Pre-built React frontend (production build)
-- ✅ CVS library for GPU metrics
-- ✅ All Node.js dependencies (build-time only)
-- ✅ SSH client for cluster access
+The image does **not** include Python. Build stages: Go 1.25, Node 18 (frontend
+only), Alpine runtime.
 
 ### Prerequisites
 
-- Docker and Docker Compose installed on the host machine
-- SSH keys for cluster access (mounted as volume)
-- Network access to cluster nodes
+- Docker and Docker Compose v2
+- SSH access to cluster nodes (direct or jump host)
+- A private key the nodes already trust (upload in the UI, or copy with
+  `setup-ssh-keys.sh` / `full-rebuild.sh`)
 
-### Step 1: Prepare Configuration
+### 1. Configuration
+
+From `cvs/monitors/cluster-mon`:
 
 ```bash
-# Clone repository
-git clone <repository-url>
-cd project-clustermon
-
-# Copy configuration templates
 cp config/cluster.yaml.example config/cluster.yaml
 cp config/nodes.txt.example config/nodes.txt
-
-# Edit configuration files
-nano config/cluster.yaml  # Add your SSH credentials
-nano config/nodes.txt     # Add your cluster nodes
+# edit cluster.yaml (username, key_file) and nodes.txt
 ```
 
-### Step 2: Build and Run
+Optional `.env`:
+
+```
+CLUSTER_MON_PORT=8005
+POLLING__INTERVAL=60
+REDIS_PASSWORD=cvs_cluster_mon
+# CLUSTER_MON_API_TOKEN=   # leave unset unless a proxy injects the header
+# CORS_ORIGINS=http://localhost:5173
+```
+
+### 2. Build and run
 
 ```bash
-# Build and start container
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop container
-docker-compose down
+./full-rebuild.sh
+# or
+sudo docker compose up -d --build
 ```
 
-### Step 3: Access Dashboard
+- Host port **8005** → container **8001** (`CLUSTER_MON_PORT` overrides the host side)
+- Volumes: `./config:/app/config`, named volume `cluster_mon_ssh:/root/.ssh`
+- Redis data: named volume `redis_data`
 
-Open browser to **http://localhost:8005**
+Do **not** bind-mount host `~/.ssh`. Do **not** `docker compose down -v` unless
+you intend to wipe uploaded keys and RCCL history.
 
-### Docker Compose Configuration
+### 3. Dashboard
 
-The `docker-compose.yml` file handles:
+**http://\<host\>:8005**
 
-- **Port mapping**: 8001 (host) → 8001 (container)
-- **Volume mounts**:
-  - `./config:/app/config` - Configuration files
-  - `~/.ssh:/root/.ssh:ro` - SSH keys (read-only)
-- **Environment variables**: Polling interval, debug mode, etc.
-- **Health checks**: Automatic container health monitoring
-- **Restart policy**: Automatically restart on failure
+```bash
+curl -s http://localhost:8005/health
+# {"status":"healthy","ssh_manager":true,"collecting":true,"clients":0}
+```
 
-### Custom Docker Run
+If `nodes.txt` and a key are already present, the process probes SSH on start
+and begins collecting. Otherwise use **Configuration** → upload key → Save →
+Reload.
 
-Without docker-compose:
+### Compose vs `docker run`
+
+Prefer compose (Redis + volume + env). A lone container without Redis still
+serves metrics; RCCL Timeline history will not survive restart.
 
 ```bash
 docker build -t cvs-cluster-monitor .
-
-docker run -d \
-  --name cvs-cluster-monitor \
-  -p 8001:8001 \
-  -v $(pwd)/config:/app/config \
-  -v ~/.ssh:/root/.ssh:ro \
+docker run -d --name cvs-cluster-monitor \
+  -p 8005:8001 \
+  -v "$(pwd)/config:/app/config" \
+  -v cluster_mon_ssh:/root/.ssh \
   -e POLLING__INTERVAL=60 \
-  -e POLLING__FAILURE_THRESHOLD=5 \
+  -e CLUSTER_MONITOR_HOME=/app \
   cvs-cluster-monitor
 ```
 
-## Bare Metal Deployment
-
-For development or if Docker is not available.
-
-### Prerequisites
-
-- Python 3.10+
-- Node.js 18+
-- SSH access to cluster nodes
-
-### Backend Setup
+## Bare metal (development)
 
 ```bash
-cd backend
+# Go API (no UI unless you pass -static)
+make run LISTEN=:8001 CONFIG_DIR=./config
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure
-cp ../config/cluster.yaml.example ../config/cluster.yaml
-cp ../config/nodes.txt.example ../config/nodes.txt
-# Edit configuration files
-
-# Run backend
-uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+# UI
+cd frontend && npm ci && npm run build
+make run LISTEN=:8001 CONFIG_DIR=./config STATIC_DIR=frontend/dist
 ```
 
-### Frontend Setup (Development)
+Point Redis at `STORAGE__REDIS__URL` / `STORAGE__REDIS__PASSWORD` if you want
+RCCL history. Default yaml is `redis://localhost:6379`.
+
+## Production
+
+### Network
+
+Do not expose the UI port on an open campus LAN. Prefer SSH tunnel, VPN, or
+host firewall. Example:
 
 ```bash
-cd frontend
-
-# Install dependencies
-npm install
-
-# Create environment file
-cp .env.example .env
-
-# Run development server
-npm run dev
+ssh -L 8005:127.0.0.1:8005 user@monitor-host
 ```
 
-Frontend will be available at **http://localhost:5173**
+### TLS and auth
 
-### Frontend Build (Production)
+The binary speaks HTTP. Terminate TLS on a reverse proxy. Optional shared
+secret: set `CLUSTER_MON_API_TOKEN` and have the proxy add
+`Authorization: Bearer <token>` or `X-API-Token` on `/api/ssh-keys` and
+`/api/config`. The stock React UI does not send that header.
 
-```bash
-cd frontend
-npm install
-npm run build
+### Nginx (WebSocket)
 
-# Built files will be in frontend/dist/
-# Copy to backend/static/ to serve from FastAPI
-cp -r dist/* ../backend/static/
-```
-
-## Production Deployment Considerations
-
-### Security
-
-1. **SSH Keys**: Use read-only mounts
-   ```yaml
-   volumes:
-     - ~/.ssh:/root/.ssh:ro
-   ```
-
-2. **Passwords**: Configure only via web UI (stored in memory only)
-
-3. **Network**: Restrict port 8001 with firewall if needed
-   ```bash
-   # Example: Allow only from specific IP
-   iptables -A INPUT -p tcp --dport 8001 -s 192.168.1.0/24 -j ACCEPT
-   iptables -A INPUT -p tcp --dport 8001 -j DROP
-   ```
-
-### Reverse Proxy (Nginx)
-
-Example Nginx configuration:
+Proxy **8005** (published host port) or **8001** if you use `network_mode: host`.
 
 ```nginx
 server {
-    listen 80;
+    listen 443 ssl;
     server_name cluster-monitor.example.com;
 
     location / {
-        proxy_pass http://localhost:8001;
+        proxy_pass http://127.0.0.1:8005;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -180,9 +130,8 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 
-    # WebSocket support
     location /ws/ {
-        proxy_pass http://localhost:8001;
+        proxy_pass http://127.0.0.1:8005;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -191,9 +140,7 @@ server {
 }
 ```
 
-### Systemd Service (Bare Metal)
-
-Create `/etc/systemd/system/cvs-cluster-monitor.service`:
+### Systemd (bare metal)
 
 ```ini
 [Unit]
@@ -202,10 +149,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=your_user
-WorkingDirectory=/path/to/project-clustermon/backend
-Environment="PATH=/path/to/project-clustermon/backend/venv/bin"
-ExecStart=/path/to/project-clustermon/backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8001
+WorkingDirectory=/opt/cluster-mon
+ExecStart=/usr/local/bin/cluster-mon -listen :8001 -config-dir /opt/cluster-mon/config -static /opt/cluster-mon/static
 Restart=always
 RestartSec=10
 
@@ -213,152 +158,54 @@ RestartSec=10
 WantedBy=multi-user.target
 ```
 
-Enable and start:
+## Logs and health
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable cvs-cluster-monitor
-sudo systemctl start cvs-cluster-monitor
-sudo systemctl status cvs-cluster-monitor
+sudo docker compose logs -f cvs-cluster-monitor
+sudo docker compose logs --tail=100 cvs-cluster-monitor
+
+curl -s http://localhost:8005/health
 ```
 
-## Monitoring and Logs
+Useful log lines: `pssh_reprobe_failed`, `initial_probe_done`,
+`metrics_collected`, `rccl_state_transition`.
 
-### Docker Logs
+## Scaling
 
 ```bash
-# View logs
-docker-compose logs -f
-
-# View last 100 lines
-docker-compose logs --tail=100
-
-# Export logs
-docker-compose logs > cluster-monitor.log
-```
-
-### Health Check
-
-```bash
-# Check container health
-docker ps
-
-# Manual health check
-curl http://localhost:8001/health
-```
-
-### Metrics
-
-The health endpoint returns:
-
-```json
-{
-  "status": "healthy",
-  "ssh_manager": true,
-  "collecting": true,
-  "clients": 2
-}
-```
-
-## Scaling and Performance
-
-### Resource Limits (Docker)
-
-Add to `docker-compose.yml`:
-
-```yaml
-services:
-  cvs-cluster-monitor:
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 2G
-        reservations:
-          cpus: '1'
-          memory: 1G
-```
-
-### Polling Configuration
-
-Adjust based on cluster size:
-
-```bash
-# Small cluster (< 10 nodes)
+# small
 POLLING__INTERVAL=30
-
-# Medium cluster (10-50 nodes)
+# medium
 POLLING__INTERVAL=60
-
-# Large cluster (50+ nodes)
+# large
 POLLING__INTERVAL=120
 ```
 
-## Upgrading
+SSH is a persistent pool (not one process per command). Jump-host changes
+rebuild the pool; node-list-only reloads do not.
 
-### Docker Deployment
-
-```bash
-# Pull latest code
-git pull
-
-# Rebuild and restart
-docker-compose down
-docker-compose build
-docker-compose up -d
-```
-
-### Bare Metal
+## Upgrade
 
 ```bash
-# Pull latest code
 git pull
-
-# Update backend
-cd backend
-source venv/bin/activate
-pip install -r requirements.txt
-sudo systemctl restart cvs-cluster-monitor
-
-# Update frontend (if needed)
-cd ../frontend
-npm install
-npm run build
+sudo docker compose up -d --build
 ```
+
+Named volumes keep Redis AOF and `/root/.ssh`. Confirm with
+`sudo docker logs cvs-cluster-monitor --tail 50`.
 
 ## Backup
 
-### Configuration Backup
-
 ```bash
-# Backup configuration
-tar -czf cluster-monitor-config-$(date +%Y%m%d).tar.gz config/
-
-# Restore
-tar -xzf cluster-monitor-config-20260224.tar.gz
+tar -czf cluster-mon-config-$(date +%Y%m%d).tar.gz config/
+# keys live in Docker volume cluster_mon_ssh, not in ./config
 ```
 
 ## Troubleshooting
 
-See README.md troubleshooting section for common issues.
+See [README.md](README.md). Common deploy mistakes:
 
-### Container Restart Loop
-
-```bash
-# Check logs
-docker-compose logs
-
-# Common issues:
-# - Missing config files
-# - Invalid YAML syntax
-# - SSH key permissions
-```
-
-### High Memory Usage
-
-```bash
-# Check memory usage
-docker stats cvs-cluster-monitor
-
-# Reduce polling frequency or node count
-```
+- `docker compose up` without `--build` after a source change (binary is in the image)
+- `docker compose port … 8005` — the **container** port is `8001`
+- Binding `~/.ssh` from the host
+- Setting `CLUSTER_MON_API_TOKEN` without a proxy that injects it
