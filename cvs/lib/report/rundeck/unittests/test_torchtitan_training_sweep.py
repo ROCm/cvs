@@ -34,10 +34,16 @@ def _train_res():
             "step_time_p50_ms": ["11.5"],
             "step_time_p95_ms": ["19.15"],
             "scaling_efficiency_pct": ["90"],
+            "_planned_steps": 20,
             "_loss_curve": [[1, 2.0], [10, 1.2]],
             "_tps_curve": [[1, 10000.0], [10, 12000.0]],
             "_tflops_curve": [[1, 150.0], [10, 180.0]],
             "_grad_norm_curve": [[1, 1.0], [10, 0.5]],
+            "_extra_curves": {
+                "memory (GiB)": [[1, 38.0], [10, 40.0]],
+                "MFU (%)": [[1, 30.0], [10, 32.0]],
+                "step time (ms)": [[1, 12.0], [10, 11.0]],
+            },
         },
         "MBS=2,GBS=16,PRECISION=bf16": {
             "tokens_per_sec": ["20000"],
@@ -65,6 +71,14 @@ class TestTorchTitanTrainingSweep(unittest.TestCase):
         self.assertEqual(small["tokens_curve"], [[1, 10000.0], [10, 12000.0]])
         self.assertEqual(small["throughput_curve"], [[1, 150.0], [10, 180.0]])
         self.assertEqual(small["loss_curve"], [[1, 2.0], [10, 1.2]])
+        self.assertEqual(
+            sorted(small["extra_curves"]),
+            ["MFU (%)", "memory (GiB)", "step time (ms)"],
+        )
+        self.assertEqual(small["extra_curves"]["step time (ms)"], [[1, 12.0], [10, 11.0]])
+        self.assertEqual(small["planned_steps"], 20)
+        large = next(c for c in cells if c["mbs"] == "2")
+        self.assertNotIn("extra_curves", large)
         self.assertEqual(datasets["sweep_summaries"][0]["label"], "TorchTitan sweep")
         self.assertEqual(datasets["sweep_summaries"][0]["headline_unit"], "tok/s/device")
         self.assertEqual(datasets["sweep_summaries"][0]["max_output_throughput"], 20000.0)

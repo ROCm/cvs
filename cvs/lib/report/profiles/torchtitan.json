@@ -66,6 +66,7 @@
       "rdma_setup",
       "tokenizer_download",
       "smoke",
+      "checkpoint",
       "training",
       "metrics",
       "teardown"

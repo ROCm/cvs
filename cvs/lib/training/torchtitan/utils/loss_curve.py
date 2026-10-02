@@ -33,13 +33,14 @@ def sample_loss_curve(
     sample_every: int = 10,
     milestone_steps: Optional[List[int]] = None,
 ) -> List[Tuple[int, float]]:
-    """Downsample per-step training loss after the warmup prefix.
+    """Downsample per-step training loss for the slope gate.
 
-    The first 10% of steps are dropped (compile / cache). Of what remains, a
-    point is kept when its step is a multiple of ``sample_every``, is one of
-    the ``milestone_steps``, or is the first or last remaining step.
+    A point is kept when its step is a multiple of ``sample_every``, is one of
+    the ``milestone_steps``, or is the first or last step. Warmup steps stay
+    in the series: ``evaluate_loss_decreasing`` fits these points, and dropping
+    the first 10% would change pass/fail without a change to ``max_slope``.
     """
-    return sample_metric_curve(step_metrics, "loss", sample_every, milestone_steps)
+    return sample_metric_curve(step_metrics, "loss", sample_every, milestone_steps, warmup_frac=0)
 
 
 def evaluate_loss_decreasing(

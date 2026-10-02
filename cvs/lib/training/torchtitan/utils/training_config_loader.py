@@ -267,6 +267,7 @@ _CONTAINER_ENV_TO_JOB = {
 
 class TorchTitanVariantConfig(_Forbid):
     gpu_name: str
+    gpus_per_node: int = 8  # torchrun --nproc_per_node; override when a node is not 8 GPUs
     enforce_thresholds: bool = True
     threshold_json: str = ""
     paths: TorchTitanPaths

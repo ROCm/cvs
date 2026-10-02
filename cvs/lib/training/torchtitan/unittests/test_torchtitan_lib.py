@@ -174,6 +174,54 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
         self.assertEqual(job.run_label_sanitized, 'torchtitan_training')
         self.assertIn('torchtitan_training', job.combo_log_dir)
 
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.detect_rocm_path')
+    def test_nproc_and_world_size_follow_gpus_per_node(self, mock_detect_rocm):
+        """torchrun and the step-time world size use config gpus_per_node, not a fixed 8."""
+        mock_detect_rocm.return_value = '/opt/rocm'
+        self.mock_variant_config.gpus_per_node = 4
+
+        single = TorchTitanTrainingJob(
+            orch=self.mock_orch,
+            variant_config=self.mock_variant_config,
+            hf_token='test_token',
+            run_label='gpus4',
+            distributed_training=False,
+        )
+        self.assertEqual(single.gpus_per_node, 4)
+        self.assertEqual(single.world_size, 4)
+        single.build_training_job_cmd()
+        self.assertIn('--nproc_per_node 4', single.job_cmd)
+
+        distributed = TorchTitanTrainingJob(
+            orch=self.mock_orch,
+            variant_config=self.mock_variant_config,
+            hf_token='test_token',
+            run_label='gpus4-dist',
+            distributed_training=True,
+            tune_model_params=False,
+        )
+        self.assertEqual(distributed.world_size, len(self.mock_orch.hosts) * 4)
+
+    @patch('cvs.lib.training.torchtitan.torchtitan_lib.detect_rocm_path')
+    def test_step_time_stats_are_on_the_results_dict(self, mock_detect_rocm):
+        """P50/P95 are parsed with the results, so test_metric can gate them."""
+        mock_detect_rocm.return_value = '/opt/rocm'
+        self.mock_variant_config.gpus_per_node = 4
+        job = TorchTitanTrainingJob(
+            orch=self.mock_orch,
+            variant_config=self.mock_variant_config,
+            hf_token='test_token',
+            global_batch_size='48',
+            run_label='step-time',
+            distributed_training=False,
+        )
+        job.sequence_length = '8192'
+        job._read_last_node_log = lambda tail_lines=0: 'step: 5  loss: 2.0  tps: 8,000\n'
+        results = job.get_training_results_dict()
+        expected = 48 * 8192 / 4 / 8000 * 1000.0
+        self.assertAlmostEqual(float(results['step_time_p50_ms'][0]), expected)
+        self.assertAlmostEqual(float(results['step_time_p95_ms'][0]), expected)
+
 
 if __name__ == '__main__':
     unittest.main()
