@@ -216,10 +216,10 @@ def build_write_ssh_config_cmd(remote_ssh_dir, block_text, mode):
     if mode == "overwrite":
         return f"echo {shlex.quote(b64)} | base64 -d > {cfg} && chmod 600 {cfg}"
 
-    # managed_block: delete old CVS block (if any) then append fresh one
-    begin_q = shlex.quote(SSH_CONFIG_BEGIN)
-    end_q = shlex.quote(SSH_CONFIG_END)
-    sed_del = f"sed -i '/{begin_q}/,/{end_q}/d' {cfg} 2>/dev/null || true"
+    # managed_block: delete old CVS block (if any) then append fresh one.
+    # Use \|...| alternate sed delimiter so the marker strings (which contain
+    # spaces and #) never collide with the surrounding single-quote context.
+    sed_del = f"sed -i '\\|{SSH_CONFIG_BEGIN}|,\\|{SSH_CONFIG_END}|d' {cfg} 2>/dev/null || true"
     append = f"echo {shlex.quote(b64)} | base64 -d >> {cfg} && chmod 600 {cfg}"
     return f"touch {cfg} && {sed_del} && {append}"
 
@@ -229,6 +229,22 @@ def build_write_ssh_config_cmd(remote_ssh_dir, block_text, mode):
 # ---------------------------------------------------------------------------
 
 
+def _resolve_remote_dir(orch, remote_ssh_dir):
+    """Return an absolute path for remote_ssh_dir, expanding a leading ~.
+
+    SFTP (libssh2 copy_file) does not expand ~ — resolve it via `echo $HOME`
+    on any one node (all nodes share the same username so $HOME is uniform).
+    Returns a plain string.
+    """
+    if not remote_ssh_dir.startswith("~"):
+        return remote_ssh_dir
+
+    suffix = remote_ssh_dir[1:]  # e.g. "/.ssh" or ""
+    out = orch.exec("echo $HOME", timeout=10)
+    home = next(iter(out.values())).strip()
+    return home + suffix
+
+
 def upload_cluster_keys(orch, norm_config):
     """SFTP private+public cluster key to every node; apply permissions. Returns {node: bool}."""
     priv_local = norm_config["cluster_key_private_path"]
@@ -236,12 +252,11 @@ def upload_cluster_keys(orch, norm_config):
     key_name = norm_config["key_name"]
     remote_ssh_dir = norm_config["remote_ssh_dir"]
 
-    remote_priv = f"{remote_ssh_dir}/{key_name}"
-    remote_pub = f"{remote_ssh_dir}/{key_name}.pub"
+    abs_dir = _resolve_remote_dir(orch, remote_ssh_dir)
+    results = {node: True for node in orch.all.reachable_hosts}
 
-    results = {node: True for node in orch.all.hosts}
-
-    for local, remote in ((priv_local, remote_priv), (pub_local, remote_pub)):
+    for local, fname in ((priv_local, key_name), (pub_local, key_name + ".pub")):
+        remote = f"{abs_dir}/{fname}"
         try:
             orch.all.upload_file(local, remote)
         except IOError as e:
@@ -252,13 +267,9 @@ def upload_cluster_keys(orch, norm_config):
     perms_cmd = build_key_perms_cmd(remote_ssh_dir, key_name)
     out = orch.exec(perms_cmd, timeout=30, detailed=True)
     for node, detail in out.items():
-        if isinstance(detail, dict):
-            if detail.get("exit_code", 0) != 0:
-                log.error("chmod keys failed on %s: %s", node, detail.get("output", ""))
-                results[node] = False
-        else:
-            if "error" in str(detail).lower():
-                results[node] = False
+        if isinstance(detail, dict) and detail.get("exit_code", -1) != 0:
+            log.error("chmod keys failed on %s: %s", node, detail.get("output", ""))
+            results[node] = False
 
     return results
 
@@ -281,9 +292,10 @@ def authorize_controlling_station(orch, norm_config):
         return {}
 
     remote_ssh_dir = norm_config["remote_ssh_dir"]
-    remote_tmp = f"{remote_ssh_dir}/.cvs_controlling_station.pub"
+    abs_dir = _resolve_remote_dir(orch, remote_ssh_dir)
+    remote_tmp = f"{abs_dir}/.cvs_controlling_station.pub"
 
-    results = {node: True for node in orch.all.hosts}
+    results = {node: True for node in orch.all.reachable_hosts}
     try:
         orch.all.upload_file(controlling_local, remote_tmp)
     except IOError as e:
@@ -333,27 +345,15 @@ def verify_passwordless_ssh(orch, cluster_dict, norm_config):
     results = {}
 
     if mode == "ring":
-        # Build one probe command per node (node i -> node i+1 mod n), run via exec_cmd_list
-        cmd_list = []
-        pairs = []
         for i, src in enumerate(nodes):
             dst = nodes[(i + 1) % len(nodes)]
             if src == dst:
                 continue
-            pairs.append((src, dst))
-            cmd_list.append(f"ssh -F {ssh_config_path} -o BatchMode=yes -o ConnectTimeout={timeout} {dst} true")
-        out = orch.all.exec_cmd_list(cmd_list, timeout=timeout + 10)
-        for (src, dst), output in zip(
-            pairs, [out.get(node, "") for node in nodes if node != nodes[0] or len(nodes) < 2]
-        ):
-            results[(src, dst)] = "error" not in str(output).lower() and output is not None
-
-        # exec_cmd_list returns {node: output}; map back by position
-        node_outputs = [out.get(node, "") for node in nodes]
-        results = {}
-        for i, (src, dst) in enumerate(pairs):
-            raw = node_outputs[i] if i < len(node_outputs) else ""
-            results[(src, dst)] = raw is not None and "error" not in str(raw).lower()
+            cmd = f"ssh -F {ssh_config_path} -o BatchMode=yes -o ConnectTimeout={timeout} {dst} true"
+            out = orch.exec(cmd, hosts=[src], timeout=timeout + 10, detailed=True)
+            detail = out.get(src, {})
+            ok = isinstance(detail, dict) and detail.get("exit_code", -1) == 0
+            results[(src, dst)] = ok
 
     else:
         # full_mesh: O(n*(n-1)) probes, one exec per source node
@@ -361,26 +361,12 @@ def verify_passwordless_ssh(orch, cluster_dict, norm_config):
             peers = [n for n in nodes if n != src]
             if not peers:
                 continue
-            cmd_list = [
-                f"ssh -F {ssh_config_path} -o BatchMode=yes -o ConnectTimeout={timeout} {dst} true" for dst in peers
-            ]
-            # Run all probes from src via a temporary single-host handle
-            from cvs.lib.parallel_ssh_lib import Pssh
-
-            tmp = Pssh(
-                log,
-                [src],
-                user=cluster_dict.get("username"),
-                pkey=cluster_dict.get("priv_key_file"),
-                host_key_check=False,
-            )
-            try:
-                src_out = tmp.exec_cmd_list(cmd_list, timeout=timeout + 10)
-                outputs = [src_out.get(src, "")] if len(peers) == 1 else list(src_out.values())
-                for dst, raw in zip(peers, outputs):
-                    results[(src, dst)] = raw is not None and "error" not in str(raw).lower()
-            finally:
-                tmp.destroy_clients()
+            for dst in peers:
+                cmd = f"ssh -F {ssh_config_path} -o BatchMode=yes -o ConnectTimeout={timeout} {dst} true"
+                out = orch.exec(cmd, hosts=[src], timeout=timeout + 10, detailed=True)
+                detail = out.get(src, {})
+                ok = isinstance(detail, dict) and detail.get("exit_code", -1) == 0
+                results[(src, dst)] = ok
 
     return results
 
@@ -395,17 +381,7 @@ def _detailed_to_bool(out):
     result = {}
     for node, detail in out.items():
         if isinstance(detail, dict):
-            result[node] = detail.get("exit_code", 0) == 0
+            result[node] = detail.get("exit_code", -1) == 0
         else:
-            result[node] = True
+            result[node] = False
     return result
-
-
-def _upload_local_file(orch, local_path, remote_path):
-    """SFTP upload with IOError handling. Returns True on success."""
-    try:
-        orch.all.upload_file(local_path, remote_path)
-        return True
-    except IOError as e:
-        log.error("SFTP upload %s -> %s failed: %r", local_path, remote_path, e)
-        return False
