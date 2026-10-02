@@ -227,7 +227,7 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
         else:
             full_cmd = cmd
 
-        self.log.info(f'cmd = {full_cmd}')
+        (self.log.info if print_console else self.log.debug)(f'cmd = {full_cmd}')
 
         # Log command execution
         if self.log:
@@ -307,7 +307,7 @@ class MultiProcessParallelHandle(ShardableHandleInterface):
         command_by_host = dict(zip(cmd_hosts, raw_commands))
         filtered_commands = [command_by_host[h] for h in self.reachable_hosts if h in command_by_host]
 
-        self.log.info("%s", filtered_commands)
+        (self.log.info if print_console else self.log.debug)("%s", filtered_commands)
 
         # Log command list execution
         if self.log:

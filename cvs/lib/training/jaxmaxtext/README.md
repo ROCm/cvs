@@ -28,7 +28,8 @@ order):
 | Method | What it does |
 |---|---|
 | `setup_tokenizer()` | Downloads the HF tokenizer — **skipped** when `needs_hf_tokenizer()` is false (all enabled runs are `dataset_type=synthetic`). |
-| `setup_training_env()` | Writes the env script (`env_vars`, `XLA_FLAGS`, and the `nccl.*` exports incl. `NCCL_IB_GID_INDEX`) and the MaxText YAML into the container scratch dir. |
+| `checkout_maxtext_branch()` | Optional post-launch `git reset --hard` + `git checkout <maxtext_branch>` in `maxtext_root` on every node, then the optional `maxtext_install_cmd`. No-op when both are empty. |
+| `setup_training_env()` | Writes the per-run MaxText YAML into the container scratch dir. The common env (`container.env{}` plus `XLA_FLAGS` folded in from `xla_flags{}`) is set at `docker run` time by the orchestrator and inherited by `docker exec`, so there is no env script to source. |
 | `build_training_cmd()` | Resolves the train entrypoint (first existing of `train_script_paths`) and per-rank JAX distributed env. |
 | `start_training()` | Clears each node's stale `training.log`, then launches the per-node launcher with `nohup` (parallel `exec_cmd_list`, one rank per host). |
 | `poll_for_completion()` | Streams only NEW node-0 log lines each poll, scans **every** node's new chunk for `error_patterns`/NaN (raises + logs the offending chunk), and detects the completion marker. |
@@ -46,12 +47,20 @@ in-container `id -un` — docker jobs run as root, which would collide on
 
 ## `utils/training_config_loader.py`
 
-Pydantic models for the config. `TrainingConfig` (extra keys allowed, so
-`_*_comment` fields pass through) with nested blocks: `Tokenizer`, `NcclConfig`,
-`JaxDistributed`, `RdmaLib`, `ScalingBaseline`, `Convergence`, `LossCurve`,
-`SmokeTest`, `CheckpointResume`, `Sweep`. `NcclConfig` hard-exits when a
-cluster-specific field (`ib_hca[_list]`, `socket_ifname`, `gloo_socket_ifname`,
-`ib_gid_index`) is left as `<changeme>`.
+`normalize_training_config(raw)` maps the on-disk config layout (CVS params at
+the root, `container` incl. its `env`, `train_params` with the `maxtext_config`
+passthrough + structured `xla_flags`, root-level tests blocks, and the
+`sweeps{name: overrides}` map + `runs` selector) onto the internal shape the
+runtime consumes. It infers `distributed` from the presence of the NCCL IB
+device vars in `container.env`, folds `xla_flags` into that env as a single
+`XLA_FLAGS` var, reads `steps`/`enable_checkpointing`/`tokenizer_path` from
+`maxtext_config`, and **hard-exits when any `container.env` value still contains
+`<changeme>`** (the shipped NCCL RDMA/NIC device selection).
+
+Pydantic models for the normalized config: `TrainingConfig` (extra keys allowed,
+so `_*_comment` fields pass through) with nested blocks: `Tokenizer`,
+`NcclConfig`, `JaxDistributed`, `RdmaLib`, `ScalingBaseline`, `Convergence`,
+`LossCurve`, `SmokeTest`, `CheckpointResume`, `Sweep`.
 
 Entry points:
 

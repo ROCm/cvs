@@ -9,8 +9,6 @@ export MPI_HOME="<changeme>/openmpi"
 # NCCL tuning parameters
 export NCCL_DEBUG=ERROR
 export NCCL_IB_HCA="mlx5_0,mlx5_1,mlx5_2,mlx5_3,mlx5_4,mlx5_5,mlx5_6,mlx5_7"
-export UCX_NET_DEVICES="mlx5_0:1,mlx5_1:1,mlx5_2:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_7:1"
-export UCX_TLS=tcp
 export NCCL_SOCKET_IFNAME=eth1,eth0
 export NCCL_IB_GID_INDEX=1
 export NCCL_IB_TIMEOUT=30

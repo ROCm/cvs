@@ -55,25 +55,35 @@ class ComparisonPanelBuilder:
             report_dir=self.report_dir,
         )
         if prev_run_path:
+            baseline_payload = load_report_json(Path(prev_run_path))
+            if not isinstance(baseline_payload, dict):
+                baseline_payload = {}
             prev_run_panel = build_prev_run_panel(
                 cells,
                 Path(prev_run_path),
                 headline_metric=self.config.headline_metric,
+                expected_suite_id=self.config.suite_id,
+                expected_metric_contract=self.config.metric_contract,
+                baseline_payload=baseline_payload,
             )
             if prev_run_panel:
                 panels["prev_run"] = prev_run_panel
 
             if lifecycle_report:
                 current_accuracy = extract_accuracy_from_lifecycle(lifecycle_report)
-                baseline_payload = load_report_json(Path(prev_run_path)) or {}
-                accuracy_prev = build_accuracy_prev_run_panel(
-                    current_accuracy,
-                    baseline_payload,
-                    metric_key=self.config.gsm8k_prev_run_metric,
-                    max_drop=self.config.gsm8k_prev_run_max_drop,
+                accuracy_baseline_compatible = (
+                    baseline_payload.get("schema_version") == 1
+                    and baseline_payload.get("suite_id") == self.config.suite_id
                 )
-                if accuracy_prev:
-                    panels["accuracy_prev_run"] = accuracy_prev
+                if accuracy_baseline_compatible:
+                    accuracy_prev = build_accuracy_prev_run_panel(
+                        current_accuracy,
+                        baseline_payload,
+                        metric_key=self.config.gsm8k_prev_run_metric,
+                        max_drop=self.config.gsm8k_prev_run_max_drop,
+                    )
+                    if accuracy_prev:
+                        panels["accuracy_prev_run"] = accuracy_prev
 
                 scale_ref = resolve_scale_accuracy_ref_json_path(getattr(self.config, "scale_accuracy_ref_json", ""))
                 if scale_ref:

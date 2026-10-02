@@ -141,9 +141,10 @@ class PrimusTrainingJob:
         tune_model_params=False,
         scripts_dir=None,
         run_label=None,
+        sweep_overrides=None,
     ):
         self.orch = orch
-        self.model_name = variant_config.model_params['model_name']
+        self.model_name = variant_config.train_params['model_name']
         self.hf_token = hf_token
         self.tune_model_params = tune_model_params
         self.distributed_training = distributed_training
@@ -160,12 +161,10 @@ class PrimusTrainingJob:
         self.training_end_time = None
 
         self.home_dir = os.path.expanduser('~')
-        tdict = dict(variant_config.config)
-        tdict.setdefault('training_iterations', 10)
-        tdict.setdefault('nnodes', '1')
+        tdict = variant_config.job_config_dict()
         tdict.setdefault('nccl_socket_ifname', 'ensf1np1')
         tdict.setdefault('gloo_socket_ifname', 'ensf1np1')
-        tdict.setdefault('nccl_ib_hca_list', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
+        tdict.setdefault('nccl_ib_hca', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
         tdict.setdefault('nccl_ib_gid_index', '3')
         tdict.setdefault('nccl_debug', 'ERROR')
         tdict.setdefault('data_cache_dir', f'{self.home_dir}/cache')
@@ -176,23 +175,15 @@ class PrimusTrainingJob:
         tdict.setdefault('primus_root', '/workspace/Primus')
         tdict.setdefault('primus_cli', 'runner/primus-cli')
 
-        self.iterations = int(tdict['training_iterations'])
         self.checkpoint_dir = None
         self.save_interval = None
         self.load_checkpoint = False
 
-        self.nnodes = str(tdict['nnodes'])
-        if int(self.nnodes) != len(orch.hosts):
-            log.warning(
-                'config nnodes=%s does not match cluster host count=%d; using cluster host count',
-                self.nnodes,
-                len(orch.hosts),
-            )
-            self.nnodes = str(len(orch.hosts))
+        self.nnodes = str(len(orch.hosts))
 
         self.nccl_socket_ifname = tdict['nccl_socket_ifname']
         self.gloo_socket_ifname = tdict['gloo_socket_ifname']
-        self.nccl_ib_hca_list = tdict['nccl_ib_hca_list']
+        self.nccl_ib_hca = tdict['nccl_ib_hca']
         self.nccl_ib_gid_index = tdict['nccl_ib_gid_index']
         self.nccl_debug = tdict['nccl_debug']
         self.data_cache_dir = tdict['data_cache_dir']
@@ -202,9 +193,10 @@ class PrimusTrainingJob:
         self.verify_network_errors = tdict['verify_network_errors']
         self.primus_root = tdict['primus_root']
         self.primus_cli = tdict['primus_cli']
-        self.gpu_arch = getattr(variant_config, 'gpu_arch', '')
+        self.gpu_arch = variant_config.gpu_name
 
-        pdict = dict(variant_config.model_params)
+        pdict = dict(variant_config.train_params)
+        pdict.update(sweep_overrides or {})
         pdict['micro_batch_size'] = micro_batch_size
         pdict['global_batch_size'] = global_batch_size
         if precision:
@@ -214,11 +206,17 @@ class PrimusTrainingJob:
         pdict.setdefault('precision', 'BF16')
         pdict.setdefault('micro_batch_size', '2')
         pdict.setdefault('global_batch_size', '128')
+        pdict.setdefault('training_iterations', 10)
+        pdict.setdefault('tensor_parallelism', '1')
+        pdict.setdefault('pipeline_parallelism', '1')
 
         self.tokenizer_model = pdict['tokenizer_model']
         self.precision = pdict['precision']
         self.micro_batch_size = pdict['micro_batch_size']
         self.global_batch_size = pdict['global_batch_size']
+        self.iterations = int(pdict['training_iterations'])
+        self.tensor_parallelism = pdict['tensor_parallelism']
+        self.pipeline_parallelism = pdict['pipeline_parallelism']
 
         raw_label = run_label or f"{self.model_name}_mbs{micro_batch_size}_gbs{global_batch_size}_{self.precision}"
         self.run_label = re.sub(r'[^A-Za-z0-9._-]', '_', str(raw_label))
@@ -370,12 +368,7 @@ class PrimusTrainingJob:
         exp_path = self._exp_config_path()
         log.info('Primus EXP config path: %s', exp_path)
 
-        env_exports = (
-            f'export HF_TOKEN="{self.hf_token}"; '
-            f'export LOG_DIR={self.log_dir}; '
-            f'export NCCL_SOCKET_IFNAME={self.nccl_socket_ifname}; '
-            f'export GLOO_SOCKET_IFNAME={self.gloo_socket_ifname}; '
-        )
+        env_exports = f'export HF_TOKEN="{self.hf_token}"; export LOG_DIR={self.log_dir}; '
 
         if re.search(r'MI3(00|25)X', self.gpu_arch, re.I):
             env_exports += 'export PRIMUS_TURBO_ATTN_V3_ATOMIC_FP32=1; export NVTE_CK_IS_V3_ATOMIC_FP32=1; '
@@ -394,28 +387,24 @@ class PrimusTrainingJob:
         batch_args = (
             f'--micro_batch_size {self.micro_batch_size} '
             f'--global_batch_size {self.global_batch_size} '
-            f'--train_iters {self.iterations}'
+            f'--train_iters {self.iterations} '
+            f'--tensor_model_parallel_size {self.tensor_parallelism} '
+            f'--pipeline_model_parallel_size {self.pipeline_parallelism}'
         )
         if self.checkpoint_dir and not self.load_checkpoint:
-            batch_args += f' --save_interval {self.save_interval or self.iterations}'
+            batch_args += f' --save --save_interval {self.save_interval or self.iterations}'
         if self.load_checkpoint and self.checkpoint_dir:
             batch_args += f' --load {self.checkpoint_dir}/checkpoints'
             if self.distributed_training:
                 batch_args += ' --auto_detect_ckpt_format'
 
         if self.distributed_training:
-            env_exports += (
-                f'export NCCL_IB_HCA_LIST={self.nccl_ib_hca_list}; '
-                f'export NCCL_IB_HCA={self.nccl_ib_hca_list}; '
-                f'export NCCL_DEBUG={self.nccl_debug}; '
-                f'export NCCL_IB_GID_INDEX={self.nccl_ib_gid_index}; '
-            )
             for i in range(len(self.orch.hosts)):
                 log_file = f'{self.combo_log_dir}/out-node{i}/training.log'
                 full_cmd = (
                     env_exports
                     + f'cd {self.primus_root} && '
-                    + f'NNODES={self.nnodes} NODE_RANK={i} MASTER_ADDR={self.master_address} '
+                    + f'NODE_RANK={i} '
                     + f'nohup bash {self.primus_cli} direct '
                     + f'--log_file {log_file} '
                     + f'-- train pretrain --config {exp_path} {batch_args} &'

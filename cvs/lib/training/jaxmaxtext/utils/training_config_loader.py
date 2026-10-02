@@ -202,6 +202,18 @@ class TrainingConfig(_Allow):
     # Deprecated single-path form; kept for backward compatibility and used as a
     # final fallback candidate when train_script_paths is empty.
     train_script: str = "/workspace/maxtext/src/MaxText/train.py"
+    # Optional: after container launch, cd to `maxtext_root`, `git reset --hard`,
+    # and check out `maxtext_branch`. Empty branch (default) = leave the image's
+    # MaxText checkout as-is (no-op). `maxtext_install_cmd`, when set, is run
+    # verbatim in the container from `maxtext_root` after checkout -- MaxText
+    # installs its CODE with `--no-deps` and its DEPENDENCIES from a requirements
+    # file (see src/dependencies/scripts/setup.sh and the rocm Dockerfile), so a
+    # plain `pip install -e .` does NOT pull a branch's updated deps (e.g. a
+    # newer JAX). Use the framework's own recipe, e.g. for ROCm:
+    #   python3 -m pip install -r src/dependencies/requirements/base_requirements/rocm-requirements.txt && python3 -m pip install --no-deps -e .
+    maxtext_branch: str = ""
+    maxtext_root: str = "/workspace/maxtext"
+    maxtext_install_cmd: str = ""
     maxtext_config: Dict[str, Any] = {}
     tokenizer: Tokenizer
     nic_type: str = "thor2"
@@ -300,6 +312,197 @@ class TrainingVariantConfig(BaseVariantConfig):
         return selected
 
 
+# ---------- config layout normalization ----------
+
+# NCCL IB device key used to infer whether a config is a multi-node/RDMA run
+# (single-node configs carry no IB device selection). NCCL_IB_HCA is the only
+# HCA-selection var NCCL/RCCL honors, so it alone is the distributed marker.
+_NCCL_IB_DEVICE_KEY = "NCCL_IB_HCA"
+
+
+def _build_xla_flags_env(xla_flags):
+    """Build the ``XLA_FLAGS`` value from a structured ``xla_flags`` map.
+
+    Joins ``{k: v}`` into ``--k=v --k=v ...`` and wraps the whole thing in double
+    quotes so it survives as ONE ``docker run -e XLA_FLAGS="..."`` token: the
+    orchestrator emits ``-e KEY=VALUE`` unquoted and the command is evaluated by a
+    remote shell, so an unquoted spaced value would split into separate tokens.
+    Returns ``""`` for an empty map -- the caller then omits ``XLA_FLAGS`` entirely
+    rather than exporting an empty one that would clobber XLA's own defaults.
+    """
+    if not xla_flags:
+        return ""
+    joined = " ".join(f"--{k}={v}" for k, v in xla_flags.items())
+    return f'"{joined}"'
+
+
+def _fp8_quantization(gpu_name):
+    """MaxText FP8 quantization value for a GPU family.
+
+    CDNA4 (MI350/MI355 class) supports OCP FP8 -> ``fp8``; CDNA3 (MI300X/MI325X)
+    uses the NANOO/fnuz FP8 format -> ``nanoo_fp8``.
+    """
+    return "fp8" if str(gpu_name or "").lower().startswith("mi35") else "nanoo_fp8"
+
+
+def _parse_sweep_key(name, gpu_name=""):
+    """Parse a sweep key like ``BS=3,PRECISION=FP8,SL=8192`` into maxtext overrides.
+
+    Comma-separated ``KEY=VALUE`` tokens (case-insensitive keys):
+      - ``BS`` -> ``per_device_batch_size`` (int)
+      - ``SL`` -> ``max_target_length`` (int)
+      - ``PRECISION`` -> ``quantization`` (``BF16`` -> ``""``; ``FP8`` -> the GPU's
+        FP8 flavor via ``_fp8_quantization``)
+
+    Malformed ``KEY=VALUE`` tokens raise (so a typo like ``BATCH=3`` or
+    ``PRECISION=FP16`` fails loudly at config load instead of silently running the
+    base config). Tokens without ``=`` are treated as opaque label parts and
+    ignored, so an arbitrary cell name (e.g. ``default``) still works; any extra
+    override goes in the sweep's ``{}`` and takes precedence over the parsed key.
+    """
+    out = {}
+    for tok in str(name).split(","):
+        key, sep, val = tok.partition("=")
+        if not sep:
+            continue
+        key = key.strip().upper()
+        val = val.strip()
+        if key == "BS":
+            if not val.isdigit():
+                raise ValueError(f"sweep key '{name}': BS must be a positive integer, got '{val}'")
+            out["per_device_batch_size"] = int(val)
+        elif key == "SL":
+            if not val.isdigit():
+                raise ValueError(f"sweep key '{name}': SL must be a positive integer, got '{val}'")
+            out["max_target_length"] = int(val)
+        elif key == "PRECISION":
+            precision = val.upper()
+            if precision not in ("BF16", "FP8"):
+                raise ValueError(f"sweep key '{name}': PRECISION must be BF16 or FP8, got '{val}'")
+            out["quantization"] = _fp8_quantization(gpu_name) if precision == "FP8" else ""
+        else:
+            raise ValueError(f"sweep key '{name}': unknown token '{key}' (expected BS, PRECISION, or SL)")
+    return out
+
+
+def normalize_training_config(raw):
+    """Map the on-disk training-config layout onto the internal config shape.
+
+    The file layout groups canonical keys at the root (`gpu_name`, `gpus_per_node`,
+    `paths`, tests blocks), under `container` (incl. its `env`), and under
+    `train_params` (canonical training keys + the `maxtext_config` passthrough +
+    structured `xla_flags`); sweeps are a `{name: overrides}` map with a `runs`
+    selector. This rebuilds the shape the runtime consumes: `schema_version`/
+    `framework`/`model` are synthesized internally, `container.env` is kept on the
+    container (so the orchestrator forwards it as `docker run -e`), `xla_flags` is
+    folded into that env as a single `XLA_FLAGS` var (only when non-empty), and
+    `sweeps`/`runs` become the internal sweep list + `enabled_sweep_list`. The
+    per-node/dynamic vars (JAX_COORDINATOR_IP, NNODES, NODE_RANK,
+    JAX_PROCESS_INDEX) and credentials are injected by the launcher, not here.
+    Raises ValueError on a missing `train_params` block or an unresolved
+    `<changeme>` in the container env.
+    """
+    if "train_params" not in raw:
+        raise ValueError(
+            "training config missing required 'train_params' block (expected the current jaxmaxtext config layout)"
+        )
+    tp = raw.get("train_params") or {}
+    # Keep only the ContainerSpec fields (drop nested _comment keys); `env` stays
+    # so it is forwarded verbatim to `docker run -e` by the orchestrator.
+    container = {k: v for k, v in (raw.get("container") or {}).items() if not str(k).startswith("_")}
+    env = {k: v for k, v in dict(container.get("env", {}) or {}).items() if not str(k).startswith("_")}
+    mc = dict(tp.get("maxtext_config") or {})
+
+    # Fold the structured xla_flags into the container env as one XLA_FLAGS var
+    # (omitted when empty so XLA's defaults are not clobbered).
+    xla_flags_env = _build_xla_flags_env(tp.get("xla_flags") or {})
+    if xla_flags_env:
+        env["XLA_FLAGS"] = xla_flags_env
+    container["env"] = env
+
+    # Fail on any unresolved placeholder in the container env (e.g. the NCCL RDMA
+    # device selection shipped as <changeme>); running with these would silently
+    # use the wrong NIC/RDMA devices.
+    for k, v in env.items():
+        if isinstance(v, str) and "<changeme>" in v.lower():
+            raise ValueError(
+                f"container.env['{k}'] is still '<changeme>'. Set your cluster's "
+                "value (RDMA/NIC device, interface, ...) before running."
+            )
+
+    # sweeps: {key: overrides}. The key encodes the primary params (BS/PRECISION/
+    # SL) and is parsed into maxtext overrides; the per-sweep dict may add any
+    # extra override (e.g. "steps") and takes precedence over the parsed values.
+    # `_`-prefixed keys inside a sweep dict (e.g. "_comment") are ignored.
+    gpu_name = raw.get("gpu_name", "")
+    sweeps = []
+    for name, ov in (raw.get("sweeps") or {}).items():
+        if str(name).startswith("_"):
+            continue
+        overrides = _parse_sweep_key(name, gpu_name)
+        overrides.update({k: v for k, v in dict(ov or {}).items() if not str(k).startswith("_")})
+        sweeps.append({"name": name, "maxtext_overrides": overrides})
+
+    training = {
+        # A config that selects NCCL IB devices is a multi-node/RDMA run;
+        # single-node configs carry no IB device env, so this infers `distributed`
+        # without a run_mode field in the file.
+        "distributed": bool(env.get(_NCCL_IB_DEVICE_KEY)),
+        "gpus_per_node": raw.get("gpus_per_node", 8),
+        "steps": mc.get("steps", 30),
+        "enable_checkpointing": bool(mc.get("enable_checkpointing", False)),
+        "train_script_paths": tp.get("train_script_paths")
+        or [
+            "/workspace/maxtext/src/maxtext/trainers/pre_train/train.py",
+            "/workspace/maxtext/src/MaxText/train.py",
+        ],
+        # Optional post-launch MaxText branch checkout + install recipe (see the
+        # MaxTextTrainingJob.checkout_maxtext_branch docs); carried from
+        # train_params so a config can pin a branch (e.g. release/v26.7 for DSv4).
+        "maxtext_branch": tp.get("maxtext_branch", ""),
+        "maxtext_root": tp.get("maxtext_root", "/workspace/maxtext"),
+        "maxtext_install_cmd": tp.get("maxtext_install_cmd", ""),
+        "maxtext_config": mc,
+        "tokenizer": {
+            "hf_model_id": tp.get("hf_model_id", ""),
+            # tokenizer_path is a MaxText param: read it from maxtext_config
+            # (fallback to train_params) so the download target and the run yml
+            # stay in sync from a single place.
+            "tokenizer_path": mc.get("tokenizer_path") or tp.get("tokenizer_path", ""),
+        },
+        "scaling_baseline": raw.get("scaling_baseline") or {},
+        "convergence": raw.get("convergence") or {},
+        "loss_curve": raw.get("loss_curve") or {},
+        "smoke": raw.get("smoke") or {},
+        "checkpoint_resume": raw.get("checkpoint_resume") or {},
+        "error_patterns": raw.get("error_patterns") or {},
+        "sweeps": sweeps,
+        "enabled_sweep_list": list(raw.get("runs") or []),
+    }
+
+    internal = {
+        "schema_version": 1,
+        "framework": "jaxmaxtext",
+        "enforce_thresholds": bool(raw.get("enforce_thresholds", True)),
+        "threshold_json": raw.get("threshold_json", ""),
+        "gpu_arch": raw.get("gpu_name", ""),
+        "paths": raw.get("paths", {}),
+        # model.id is a CVS-side label (run name, report/loss-curve filenames).
+        # It defaults to the MaxText preset (maxtext_config.model_name); set an
+        # explicit train_params.model_id only when a friendlier label is wanted.
+        "model": {
+            "id": tp.get("model_id") or mc.get("model_name", ""),
+            "remote": 0,
+            "precision": mc.get("dtype", ""),
+        },
+        "container": container,
+        "training": training,
+    }
+    if "thresholds" in raw:
+        internal["thresholds"] = raw["thresholds"]
+    return internal
+
+
 # ---------- public API (training) ----------
 
 
@@ -307,9 +510,13 @@ def load_training_variant(config_path, cluster_dict):
     """Load and validate a jaxmaxtext variant config + its sibling threshold file.
 
     Delegates the file read + placeholder substitution + threshold discovery to
-    the generic `substitute_config`, then attaches the thresholds and builds the
-    typed `TrainingVariantConfig`.
+    the generic `substitute_config` (which also rejects an unresolved
+    `<changeme>` in `threshold_json` -- the mi3xx configs ship it tagged so the
+    user picks the GPU-specific threshold), normalizes the on-disk layout onto the
+    internal shape (see `normalize_training_config`), attaches the thresholds, and
+    builds the typed `TrainingVariantConfig`.
     """
     raw, thresholds = substitute_config(config_path, cluster_dict)
+    raw = normalize_training_config(raw)
     raw["thresholds"] = thresholds
     return TrainingVariantConfig(**raw)

@@ -309,6 +309,17 @@ class TestSubstituteConfigThresholdJsonField(unittest.TestCase):
             raw, thresholds = substitute_config(config_path, cluster_dict)
             self.assertEqual(raw["schema_version"], 1)
 
+    def test_changeme_in_threshold_json_raises_value_error(self):
+        """A threshold_json still carrying a <changeme> tag must fail with a clear
+        ValueError (not a generic file-not-found on the tagged name)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            self._write_threshold(tmp_dir, "mi325x_variant_threshold.json")
+            cfg = _base_config_dict("mi325x_variant_threshold.json <changeme>")
+            config_path = self._write_config(tmp_dir, cfg)
+            with self.assertRaises(ValueError):
+                substitute_config(config_path, {})
+
     def test_sibling_threshold_discovered_when_threshold_json_empty(self):
         """When threshold_json is omitted, a sole sibling *threshold.json is used."""
         with tempfile.TemporaryDirectory() as tmp:

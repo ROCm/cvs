@@ -28,6 +28,12 @@ training_err_dict = {
 err_counters_pattern = 'err|retransmit|drop|discard|naks|invalid|oflow|out_of_buffer|reset|fail'
 
 
+def _default_nic_type(gpu_name):
+    if re.search(r'MI355', gpu_name or '', re.I):
+        return 'ainic'
+    return 'thor2'
+
+
 # Ordered fallback chains for parsing Megatron-LM training output.
 # Each chain is tried in order; first non-empty match wins. Seeded with
 # [new, old] so newer Megatron output (e.g. `throughput per GPU
@@ -207,9 +213,8 @@ class MegatronTrainingJob:
           - phdl.exec(cmd: str) -> Dict[node, str] or str, depending on implementation
           - phdl.exec_cmd_list(cmd_list: List[str]) -> Dict[node, str]
       - Docker container is pre-deployed and accessible on each node.
-      - Training scripts exist under {megatron_root}/examples/llama/ (default
-        `/workspace/Megatron-LM/`; configurable via the `megatron_root` and
-        `training_scripts` keys in the training config).
+      - Training scripts exist under {megatron_root}/examples/ (default
+        `/workspace/Megatron-LM/`).
       - External helpers referenced in the methods are available in scope:
           - linux_utils.get_rdma_stats_dict, linux_utils.get_nic_ethtool_stats_dict
           - json_to_dict, fail_test, verify_dmesg_for_errors, log, training_err_dict
@@ -228,25 +233,26 @@ class MegatronTrainingJob:
         tune_model_params=False,
         scripts_dir=None,
         run_label=None,
+        sweep_overrides=None,
     ):
         """
         Initialize job configuration from a MegatronVariantConfig + sweep-level params.
 
         Args:
           orch: Orchestrator handle for container and host command execution.
-          variant_config: MegatronVariantConfig holding container, config, model_params, sweep.
+          variant_config: MegatronVariantConfig holding container, config, train_params, sweep.
           hf_token: Hugging Face token passed to the job environment.
-          batch_size: Global batch size for this sweep cell (overrides model_params).
-          micro_batch_size: Micro batch size for this sweep cell (overrides model_params).
+          batch_size: Global batch size for this sweep cell (overrides train_params).
+          micro_batch_size: Micro batch size for this sweep cell (overrides train_params).
           precision: Optional precision override for this sweep cell. When None, falls
-            back to model_params.precision (default: TE_FP8).
+            back to train_params.precision if set, else TE_FP8.
           distributed_training: True for multi-node distributed runs.
           tune_model_params: If True, adjust batch size based on cluster size.
           scripts_dir: Optional override for the per-node wrapper scripts folder.
         """
 
         self.orch = orch
-        self.model_name = variant_config.model_params["model_name"]
+        self.model_name = variant_config.train_params["model_name"]
         self.hf_token = hf_token
         self.tune_model_params = tune_model_params
 
@@ -263,12 +269,9 @@ class MegatronTrainingJob:
 
         # Training config — copy to avoid mutating the variant_config dict
         self.home_dir = os.path.expanduser("~")
-        tdict = dict(variant_config.config)
-        tdict.setdefault('training_iterations', 10)
-        tdict.setdefault('nnodes', '1')
-        tdict.setdefault('nic_type', 'thor2')
+        tdict = variant_config.job_config_dict()
+        tdict.setdefault('nic_type', _default_nic_type(variant_config.gpu_name))
         tdict.setdefault('hca_id_pattern', 'bnxt_|rocep')
-        tdict.setdefault('nccl_ib_hca_list', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
         tdict.setdefault('nccl_ib_hca', 'bnxt_re0,bnxt_re1,bnxt_re2,bnxt_re3,bnxt_re4,bnxt_re5,bnxt_re6,bnxt_re7')
         tdict.setdefault('nccl_socket_ifname', 'ensf1np1')
         tdict.setdefault('gloo_socket_ifname', 'ensf1np1')
@@ -285,17 +288,9 @@ class MegatronTrainingJob:
 
         self.container_image = orch.container_config["image"]
         self.distributed_training = distributed_training
-        self.iterations = int(tdict['training_iterations'])
-        self.nnodes = str(tdict['nnodes'])
-        if int(self.nnodes) != len(orch.hosts):
-            log.warning(
-                f"config nnodes={self.nnodes} does not match cluster host count={len(orch.hosts)}; "
-                f"using cluster host count"
-            )
-            self.nnodes = str(len(orch.hosts))
+        self.nnodes = str(len(orch.hosts))
         self.nic_type = tdict['nic_type']
         self.hca_id_pattern = tdict['hca_id_pattern']
-        self.nccl_ib_hca_list = tdict['nccl_ib_hca_list']
         self.nccl_ib_hca = tdict['nccl_ib_hca']
         self.nccl_socket_ifname = tdict['nccl_socket_ifname']
         self.gloo_socket_ifname = tdict['gloo_socket_ifname']
@@ -310,13 +305,14 @@ class MegatronTrainingJob:
         self.megatron_root = tdict['megatron_root']
         self.training_scripts = tdict['training_scripts']
 
-        # Model params — merge variant_config.model_params with sweep-level overrides
-        pdict = dict(variant_config.model_params)
+        pdict = dict(variant_config.train_params)
+        pdict.update(sweep_overrides or {})
         pdict['micro_batch_size'] = micro_batch_size
         pdict['global_batch_size'] = global_batch_size
         if precision:
             pdict['precision'] = precision
         pdict.pop('model_name', None)
+        pdict.setdefault('precision', 'TE_FP8')
         # Per-combo log dir so sweep combos don't overwrite each other's
         # training.log. Label is the sweep combination name (run_label); falls
         # back to a model_name/mbs/gbs/precision tag when none is provided.
@@ -333,7 +329,7 @@ class MegatronTrainingJob:
         pdict.setdefault('tensor_parallelism', '1')
         pdict.setdefault('pipeline_parallelism', '1')
         pdict.setdefault('recompute', '0')
-        pdict.setdefault('precision', 'TE_FP8')
+        pdict.setdefault('training_iterations', 10)
 
         self.tokenizer_model = pdict['tokenizer_model']
         self.model_size = pdict['model_size']
@@ -345,6 +341,7 @@ class MegatronTrainingJob:
         self.pipeline_parallelism = pdict['pipeline_parallelism']
         self.recompute = pdict['recompute']
         self.precision = pdict['precision']
+        self.iterations = int(pdict['training_iterations'])
 
         # Resolve the training script for this tokenizer family. The mapping is
         # config-driven (training_scripts), so adding a new family (e.g. 'llama-4')
@@ -528,8 +525,6 @@ class MegatronTrainingJob:
         self,
     ):
         # Construct the main megatron training command
-        # Compute the batch size and mini batch size based on the cluster size
-        # Add NIC and Socket details for distributed training ..
         cmd = ''
 
         # cmd = f'docker exec {self.container_name} /bin/bash -c """'
@@ -548,19 +543,7 @@ class MegatronTrainingJob:
         )
 
         if self.distributed_training is True:
-            # Add the backend network related environment variables ..
-            cmd = (
-                cmd
-                + f'export NCCL_IB_HCA_LIST={self.nccl_ib_hca_list}; '
-                + f'export NCCL_IB_HCA={self.nccl_ib_hca}; '
-                + f'export NCCL_SOCKET_IFNAME={self.nccl_socket_ifname}; '
-                + f'export GLOO_SOCKET_IFNAME={self.gloo_socket_ifname}; '
-                + f'export NCCL_DEBUG={self.nccl_debug}; '
-                + f'export NCCL_IB_GID_INDEX={self.nccl_ib_gid_index}; '
-            )
-
-        if self.distributed_training is True:
-            # Build base cmd; NODE_RANK={i} is injected per-host in start_training_job
+            # Build base cmd; NODE_RANK={i} is injected per-host
             cmd = (
                 cmd
                 + f'RECOMPUTE={self.recompute} '
@@ -571,7 +554,6 @@ class MegatronTrainingJob:
                 + f'MODEL_SIZE={self.model_size} {self.iters_env}={self.iterations} '
                 + self.precision_env
                 + ' '
-                + f'MASTER_ADDR={self.master_address} NNODES={self.nnodes} '
             )
 
             for i in range(len(self.orch.hosts)):

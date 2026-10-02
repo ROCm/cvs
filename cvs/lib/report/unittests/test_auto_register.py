@@ -29,10 +29,39 @@ class TestAutoRegister(unittest.TestCase):
         self.assertTrue(try_auto_register_suite_report(config))
         self.assertEqual(config._suite_report_config["suite_id"], "sglang")
 
+    def test_auto_register_loads_rccl_aliases(self):
+        for stem in ("rccl_perf", "rccl_regression", "rccl_pairwise"):
+            with self.subTest(stem=stem):
+                config = SimpleNamespace(_suite_name=stem, _suite_report_config=None)
+                self.assertTrue(try_auto_register_suite_report(config))
+                self.assertEqual(config._suite_report_config["suite_id"], "rccl")
+                self.assertEqual(config._suite_report_config["dataset_builder"], "series")
+
+    def test_auto_register_loads_megatron_alias(self):
+        for stem in ("megatron_single", "megatron_distributed"):
+            config = SimpleNamespace(_suite_name=stem, _suite_report_config=None)
+            self.assertTrue(try_auto_register_suite_report(config), stem)
+            self.assertEqual(config._suite_report_config["suite_id"], "megatron")
+            self.assertEqual(config._suite_report_config["dataset_builder"], "training_sweep")
+
     def test_auto_register_loads_vllm_json_profile(self):
         config = SimpleNamespace(_suite_name="vllm", _suite_report_config=None)
         self.assertTrue(try_auto_register_suite_report(config))
         self.assertEqual(config._suite_report_config["suite_id"], "vllm")
+
+    def test_auto_register_loads_transferbench_cvs_profile(self):
+        config = SimpleNamespace(_suite_name="transferbench_cvs", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["suite_id"], "transferbench_cvs")
+        self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
+        self.assertEqual(config._suite_report_config["sources"]["results"], "transferbench_res_dict")
+
+    def test_auto_register_loads_rvs_cvs_profile(self):
+        config = SimpleNamespace(_suite_name="rvs_cvs", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["suite_id"], "rvs_cvs")
+        self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
+        self.assertEqual(config._suite_report_config["sources"]["results"], "rvs_res_dict")
 
 
 if __name__ == "__main__":

@@ -317,15 +317,15 @@ class NodeHealthCheck(PreflightCheck):
 
     def _exec_all(self, command: str) -> Dict[str, str]:
         try:
-            result = self.phdl.exec(command, timeout=90, print_console=False)
+            result = self.orch.all.exec(command, timeout=90, print_console=False)
         except TypeError:
-            result = self.phdl.exec(command, timeout=90)
+            result = self.orch.all.exec(command, timeout=90)
         return result if isinstance(result, dict) else {}
 
     def _exec_commands_by_host(self, commands: Mapping[str, str]) -> Dict[str, str]:
         """Run one command per reachable host in one sharded SSH operation."""
-        hosts = list(getattr(self.phdl, "reachable_hosts", []) or [])
-        executor = getattr(self.phdl, "exec_cmd_list", None)
+        hosts = list(getattr(self.orch.all, "reachable_hosts", []) or [])
+        executor = getattr(self.orch.all, "exec_cmd_list", None)
         if callable(executor):
             try:
                 output = executor([commands.get(host, "true") for host in hosts], timeout=90, print_console=False)
@@ -628,7 +628,7 @@ class NodeHealthCheck(PreflightCheck):
         }
 
     def run(self) -> Dict[str, Any]:
-        hosts = list(getattr(self.phdl, "reachable_hosts", []) or [])
+        hosts = list(getattr(self.orch.all, "reachable_hosts", []) or [])
         self.results = {
             node: {
                 "status": "PASS",

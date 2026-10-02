@@ -15,21 +15,20 @@ from cvs.lib.inference.utils.vllm_config_loader import VariantConfig
 
 
 def _base_kwargs(**overrides):
+    cell = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"
     kwargs = dict(
-        schema_version=1,
-        framework="vllm",
         enforce_thresholds=False,
+        threshold_json="threshold.json",
         paths={
             "shared_fs": "/home/x",
             "models_dir": "/home/x/models",
             "log_dir": "/home/x/LOGS",
             "hf_token_file": "/home/x/.hf",
         },
-        model={"id": "/models/test-model", "remote": 0},
-        sweep={
-            "sequence_combinations": [{"name": "a", "isl": "1024", "osl": "1024"}],
-            "runs": [{"combo": "a", "concurrency": 16}],
-        },
+        container={"name": "test", "image": "test", "runtime": {"name": "docker", "args": {}}},
+        server_params={"model": "/models/test-model", "tensor_parallel_size": 8},
+        sweeps={cell: {}},
+        runs=[cell],
         thresholds={},
     )
     kwargs.update(overrides)
@@ -67,19 +66,10 @@ class TestAccuracyThresholdKeyDoesNotTripSweepCoverage(unittest.TestCase):
     unrecognized sweep-cell key by _check_thresholds_cover_sweep, now that it
     delegates to the shared validate_thresholds_cover_sweep."""
 
-    _CELL = "ISL=1024,OSL=1024,TP=8,CONC=16"
+    _CELL = "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"
 
     def _full_gated_specs(self):
-        from cvs.lib.inference.utils.vllm_config_loader import GATED_GPU_METRICS
-        from cvs.lib.inference.utils.vllm_parsing import GATED_METRICS
-
-        out = {}
-        for m in GATED_METRICS:
-            kind = "max_ms" if m.endswith("_ms") else "max" if m == "failed" else "min"
-            out[f"client.{m}"] = {"kind": kind, "value": 0 if kind == "min" else 1e12}
-        for m in GATED_GPU_METRICS:
-            out[f"gpu.{m}"] = {"kind": "min", "value": 0}
-        return out
+        return {"output_throughput": {"kind": "min", "value": 0}}
 
     def test_accuracy_key_alongside_full_sweep_coverage_constructs(self):
         vc = VariantConfig(
@@ -93,8 +83,8 @@ class TestAccuracyThresholdKeyDoesNotTripSweepCoverage(unittest.TestCase):
         )
         self.assertIn("accuracy", vc.thresholds)
 
-    def test_typo_key_alongside_accuracy_still_raises(self):
-        with self.assertRaises(ValueError) as ctx:
+    def test_typo_key_is_rejected_at_config_load(self):
+        with self.assertRaisesRegex(ValueError, "threshold cells"):
             VariantConfig(
                 **_base_kwargs(
                     enforce_thresholds=True,
@@ -105,7 +95,6 @@ class TestAccuracyThresholdKeyDoesNotTripSweepCoverage(unittest.TestCase):
                     },
                 )
             )
-        self.assertIn("threshold keys matching no sweep cell", str(ctx.exception))
 
 
 if __name__ == "__main__":

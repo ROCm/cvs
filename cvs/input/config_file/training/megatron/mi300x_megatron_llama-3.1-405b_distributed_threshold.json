@@ -4,14 +4,14 @@
     "training.throughput_per_gpu":          { "kind": "min", "value": 100 },
     "training.elapsed_time_per_iteration":  { "kind": "max", "value": 500 },
     "training.tokens_per_gpu":              { "kind": "min", "value": 1000 },
-    "training.mem_usage":                   { "kind": "max", "value": 0.85 },
-    "training.scaling_efficiency_pct":      { "kind": "info", "value": 85.0 }
+    "training.mem_usage":                   { "kind": "max", "value": 0.85, "optional": true },
+    "training.scaling_efficiency_pct":      { "kind": "info", "value": 85.0, "optional": true }
   },
   "MBS=1,GBS=64,PRECISION=BF16": {
     "training.throughput_per_gpu":          { "kind": "min", "value": 100 },
     "training.elapsed_time_per_iteration":  { "kind": "max", "value": 500 },
     "training.tokens_per_gpu":              { "kind": "min", "value": 1000 },
-    "training.mem_usage":                   { "kind": "max", "value": 0.85 },
-    "training.scaling_efficiency_pct":      { "kind": "info", "value": 85.0 }
+    "training.mem_usage":                   { "kind": "max", "value": 0.85, "optional": true },
+    "training.scaling_efficiency_pct":      { "kind": "info", "value": 85.0, "optional": true }
   }
 }

@@ -3,7 +3,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
 Unit tests for cvs.lib.inference.vllm_job.VllmJob server-command construction:
-  - the duplicate --max-model-len fix (config-pin suppresses the derived value)
+  - per-cell --max-model-len fallback and explicit override precedence
   - server_signature(), which gates cross-cell server reuse
   - _flatten_serve_args boolean handling and log-level pass-through
   - _check_early_failure tail emission and CLI parse error detection
@@ -14,11 +14,7 @@ Unit tests for cvs.lib.inference.vllm_job.VllmJob server-command construction:
 import json
 import unittest
 import unittest.mock as mock
-from types import SimpleNamespace
-
-import pydantic
-
-from cvs.lib.inference.utils.vllm_config_loader import RoleServer
+from cvs.lib.inference.utils.vllm_config_loader import VariantConfig, serialize_cli_options
 from cvs.lib.inference.vllm_job import VllmJob
 
 _TP = 8
@@ -79,30 +75,8 @@ class FakeOrchMultiHost:
 
 def _make_job_for_check(tail_output="", grep_exit=1):
     """Construct a VllmJob suitable for testing _check_early_failure."""
-    variant = mock.MagicMock()
-    variant.params.tensor_parallelism = "8"
-    variant.params.pipeline_parallel_size = "1"
-    variant.params.master_addr = "localhost"
-    variant.params.master_port = "29501"
-    variant.params.nnodes = "1"
-    variant.params.port_no = "8000"
-    variant.params.random_range_ratio = "0.0"
-    variant.params.random_prefix_len = "0"
-    variant.params.burstiness = "1.0"
-    variant.params.seed = "0"
-    variant.params.request_rate = "inf"
-    variant.params.tokenizer_mode = "auto"
-    variant.params.percentile_metrics = "ttft,tpot,itl,e2el"
-    variant.params.metric_percentiles = "50,90,95,99"
-    variant.params.base_url = "http://0.0.0.0"
-    variant.params.dataset_name = "random"
-    variant.params.backend = "vllm"
-    variant.model.id = "/models/test-model"
+    variant = _variant()
     variant.paths.log_dir = "/tmp/test_logs"
-    variant.paths.models_dir = "/tmp/models"
-    variant.roles.server.serve_args = {}
-    variant.roles.server.env = {}
-    variant.roles.server.ib_netdev = None
     orch = FakeOrchWithOutput(tail_output=tail_output, grep_exit=grep_exit)
     return VllmJob(
         orch=orch,
@@ -115,44 +89,34 @@ def _make_job_for_check(tail_output="", grep_exit=1):
     )
 
 
-def _variant(serve_args=None):
-    params = SimpleNamespace(
-        tensor_parallelism=str(_TP),
-        pipeline_parallel_size=str(_PP),
-        master_addr="10.0.0.1",
-        master_port="29501",
-        nnodes=str(_NNODES),
-        port_no="8000",
-        random_range_ratio="0.8",
-        random_prefix_len="0",
-        burstiness="1.0",
-        seed="0",
-        request_rate="inf",
-        tokenizer_mode="auto",
-        percentile_metrics="ttft,tpot,itl,e2el",
-        metric_percentiles="50,90,95,99",
-        base_url="http://0.0.0.0",
-        dataset_name="random",
-        backend="vllm",
-    )
-    return SimpleNamespace(
-        params=params,
-        model=SimpleNamespace(id="/models/Kimi-K2.5-W4A8"),
-        paths=SimpleNamespace(log_dir="/logs", models_dir="/models"),
-        roles=SimpleNamespace(
-            server=SimpleNamespace(
-                serve_args=dict(serve_args or {}),
-                env={"VLLM_ROCM_USE_AITER": "1"},
-                ib_netdev="enp159s0np0",
-            )
-        ),
+def _variant(serve_args=None, benchmark_params=None, sweep_options=None):
+    options = {key.replace("-", "_"): value for key, value in (serve_args or {}).items()}
+    distributed_executor_backend = options.pop("distributed_executor_backend", "mp")
+    cell = f"ISL=1024,OSL=1024,TP={_TP},PP={_PP},CONC=16"
+    return VariantConfig(
+        enforce_thresholds=False,
+        threshold_json="threshold.json",
+        ib_netdev="enp159s0np0",
+        paths={"shared_fs": "/logs", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": "/logs/.hf"},
+        container={"name": "test", "image": "test", "env": {}, "runtime": {"name": "docker", "args": {}}},
+        server_params={
+            "model": "/models/Kimi-K2.5-W4A8",
+            "tensor_parallel_size": _TP,
+            "pipeline_parallel_size": _PP,
+            "port": 8000,
+            "distributed_executor_backend": distributed_executor_backend,
+            **options,
+        },
+        benchmark_params=benchmark_params or {},
+        sweeps={cell: sweep_options or {}},
+        runs=[cell],
     )
 
 
-def _job(isl, osl, conc, serve_args=None):
+def _job(isl, osl, conc, serve_args=None, benchmark_params=None):
     return VllmJob(
         orch=FakeOrch(),
-        variant=_variant(serve_args),
+        variant=_variant(serve_args, benchmark_params),
         hf_token="tok",
         isl=isl,
         osl=osl,
@@ -161,19 +125,55 @@ def _job(isl, osl, conc, serve_args=None):
     )
 
 
-class TestMaxModelLenNoDuplicate(unittest.TestCase):
+class TestMaxModelLenFallback(unittest.TestCase):
     def test_config_pin_wins_and_no_duplicate(self):
-        argv = _job("1024", "1024", 16, serve_args={"max-model-len": "16384"})._server_argv(0)
+        argv = _job("1024", "1024", 16, serve_args={"max_model_len": "16384"})._server_argv(0)
         idxs = [i for i, a in enumerate(argv) if a == "--max-model-len"]
         self.assertEqual(len(idxs), 1, "config-pinned max-model-len must appear exactly once")
         self.assertEqual(argv[idxs[0] + 1], "16384", "config value must win")
 
-    def test_derived_emitted_when_not_pinned(self):
-        argv = _job("1024", "1024", 16, serve_args={})._server_argv(0)
-        idxs = [i for i, a in enumerate(argv) if a == "--max-model-len"]
-        self.assertEqual(len(idxs), 1, "derived max-model-len must still be emitted when unpinned")
-        # 1024+1024 worst-case derived value, definitely not the 16384 config value
-        self.assertNotEqual(argv[idxs[0] + 1], "16384")
+    def test_explicit_null_suppresses_fallback_and_emits_no_flag(self):
+        argv = _job("1024", "1024", 16, serve_args={"max_model_len": None})._server_argv(0)
+        self.assertNotIn("--max-model-len", argv)
+
+    def test_derives_expected_catalog_lengths_when_omitted(self):
+        for isl, osl, expected in (
+            ("1024", "1024", "2056"),
+            ("1024", "8192", "9224"),
+            ("8192", "1024", "9224"),
+        ):
+            with self.subTest(isl=isl, osl=osl):
+                argv = _job(isl, osl, 16, serve_args={})._server_argv(0)
+                idx = argv.index("--max-model-len")
+                self.assertEqual(argv.count("--max-model-len"), 1)
+                self.assertEqual(argv[idx + 1], expected)
+
+    def test_uses_effective_per_cell_range_and_prefix_overrides(self):
+        variant = _variant(
+            benchmark_params={"random_range_ratio": 0.8, "random_prefix_len": 64},
+            sweep_options={"random_range_ratio": 0.25, "random_prefix_len": 7},
+        )
+        (run,) = variant.resolved_runs()
+        job = VllmJob(
+            orch=FakeOrch(),
+            variant=variant,
+            hf_token="tok",
+            isl=run.cell.isl,
+            osl=run.cell.osl,
+            concurrency=run.cell.concurrency,
+            num_prompts=run.benchmark_params["num_prompts"],
+            benchmark_params=run.benchmark_params,
+        )
+        argv = job._server_argv(0)
+        idx = argv.index("--max-model-len")
+        self.assertEqual(argv[idx + 1], "2575")
+
+
+class TestEffectiveHosts(unittest.TestCase):
+    def test_node_count_comes_from_orchestrator_hosts(self):
+        job = _job("1024", "1024", 16)
+        self.assertEqual(job.nnodes, "2")
+        self.assertEqual(job.hosts, ("10.0.0.1", "10.0.0.2"))
 
 
 class TestServerSignatureReuse(unittest.TestCase):
@@ -194,12 +194,23 @@ class TestServerSignatureReuse(unittest.TestCase):
             _job("8192", "1024", 16, sa).server_signature(),
         )
 
-    def test_derived_mml_distinguishes_osl(self):
-        # Without a pin, max-model-len is derived per (isl+osl); different OSL must
-        # change the signature so a real restart happens.
+    def test_different_derived_mml_restarts_across_cells(self):
         self.assertNotEqual(
             _job("1024", "1024", 16, serve_args={}).server_signature(),
             _job("1024", "8192", 16, serve_args={}).server_signature(),
+        )
+
+    def test_equal_derived_mml_reuses_across_cells(self):
+        self.assertEqual(
+            _job("1024", "8192", 16, serve_args={}).server_signature(),
+            _job("8192", "1024", 16, serve_args={}).server_signature(),
+        )
+
+    def test_explicit_null_mml_reuses_across_isl_osl(self):
+        serve_args = {"max_model_len": None}
+        self.assertEqual(
+            _job("1024", "1024", 16, serve_args).server_signature(),
+            _job("8192", "1024", 16, serve_args).server_signature(),
         )
 
     def test_signature_strips_node_rank_and_is_hashable(self):
@@ -226,6 +237,13 @@ class TestRunClientEnsuresOutDir(unittest.TestCase):
             f"(which skips build_server_cmd) can still write client.log; head cmds: {job.orch.head_cmds}",
         )
 
+    def test_run_client_uses_harness_owned_percentiles(self):
+        job = _job("1024", "1024", 8)
+        job.run_client()
+        bench = next(command for command in job.orch.head_cmds if "vllm" in command and "bench" in command)
+        self.assertIn("--percentile-metrics ttft,tpot,itl,e2el", bench)
+        self.assertIn("--metric-percentiles 50,90,95,99", bench)
+
 
 class TestRunClientTrustRemoteCode(unittest.TestCase):
     """Models with a custom tokenizer (e.g. Kimi-K2.6's auto_map) need the bench
@@ -238,28 +256,48 @@ class TestRunClientTrustRemoteCode(unittest.TestCase):
         self.assertTrue(bench, f"no bench client command issued; head cmds: {job.orch.head_cmds}")
         return bench[-1]
 
-    def test_trust_remote_code_passed_when_server_enables_it(self):
-        job = _job("1024", "1024", 8, serve_args={"max-model-len": "16384", "trust-remote-code": True})
+    def test_trust_remote_code_passed_when_benchmark_enables_it(self):
+        job = _job("1024", "1024", 8, benchmark_params={"trust_remote_code": True})
         self.assertIn("--trust-remote-code", self._bench_cmd(job))
 
-    def test_trust_remote_code_absent_when_server_omits_it(self):
-        job = _job("1024", "1024", 8, serve_args={"max-model-len": "16384"})
+    def test_trust_remote_code_absent_when_benchmark_omits_it(self):
+        job = _job("1024", "1024", 8)
         self.assertNotIn("--trust-remote-code", self._bench_cmd(job))
 
+    def test_resolved_cell_flags_override_benchmark_defaults(self):
+        for base, override, present in ((False, True, True), (True, False, False)):
+            with self.subTest(base=base, override=override):
+                variant = _variant(
+                    benchmark_params={"ignore_eos": base, "trust_remote_code": base},
+                    sweep_options={"ignore_eos": override, "trust_remote_code": override},
+                )
+                (run,) = variant.resolved_runs()
+                job = VllmJob(
+                    orch=FakeOrch(),
+                    variant=variant,
+                    hf_token="tok",
+                    isl=run.cell.isl,
+                    osl=run.cell.osl,
+                    concurrency=run.cell.concurrency,
+                    num_prompts=run.benchmark_params["num_prompts"],
+                    benchmark_params=run.benchmark_params,
+                )
+                command = self._bench_cmd(job)
+                self.assertEqual("--ignore-eos" in command, present)
+                self.assertEqual("--trust-remote-code" in command, present)
 
-class TestFlattenServeArgsFalse(unittest.TestCase):
-    def test_false_value_omitted(self):
-        result = VllmJob._flatten_serve_args({"enable-prefix-caching": False, "tensor-parallel-size": "8"})
-        self.assertNotIn("--enable-prefix-caching", result)
-        self.assertNotIn("False", result)
-        self.assertEqual(result, ["--tensor-parallel-size", "8"])
+
+class TestSerializeServeArgs(unittest.TestCase):
+    def test_false_value_is_rejected(self):
+        with self.assertRaises(ValueError):
+            serialize_cli_options({"enable_prefix_caching": False})
 
     def test_true_value_emits_flag_only(self):
-        result = VllmJob._flatten_serve_args({"enforce-eager": True})
+        result = serialize_cli_options({"enforce_eager": True})
         self.assertEqual(result, ["--enforce-eager"])
 
     def test_log_level_passed_through(self):
-        result = VllmJob._flatten_serve_args({"log-level": "debug"})
+        result = serialize_cli_options({"log_level": "debug"})
         self.assertEqual(result, ["--log-level", "debug"])
 
 
@@ -322,19 +360,6 @@ class TestDumpServerLog(unittest.TestCase):
         ranks_dumped = {call.args[2] for call in mock_log.info.call_args_list if len(call.args) >= 4}
         self.assertEqual(ranks_dumped, {0}, "worker rank 1 has no server log under ray and must be skipped")
         self.assertEqual(len(orch.exec_calls), 1, "only rank 0's cat should be issued")
-
-
-class TestRoleServerLogLevelValidator(unittest.TestCase):
-    def test_invalid_log_level_rejected(self):
-        with self.assertRaises(pydantic.ValidationError) as ctx:
-            RoleServer(serve_args={"log-level": "verbose"})
-        msg = str(ctx.exception)
-        self.assertIn("log-level", msg)
-        self.assertIn("verbose", msg)
-
-    def test_valid_log_level_accepted(self):
-        rs = RoleServer(serve_args={"log-level": "debug"})
-        self.assertEqual(rs.serve_args["log-level"], "debug")
 
 
 class FakeOrchWithHeadOutput:

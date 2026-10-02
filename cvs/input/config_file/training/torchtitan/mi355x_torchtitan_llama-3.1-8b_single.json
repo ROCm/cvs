@@ -1,61 +1,13 @@
 {
-  "schema_version": 1,
-  "framework": "torchtitan_single",
-  "gpu_arch": "MI355X",
+  "gpu_name": "MI355X",
   "enforce_thresholds": true,
-  "loss_curve": {
-    "sample_every": 10,
-    "milestone_steps": [100, 500, 1000, 5000],
-    "max_slope": 0.0,
-    "enforce": true
-  },
-  "convergence": {
-    "target_metric": "auto",
-    "target_value": 2.0
-  },
-  "checkpoint": {
-    "enforce": false,
-    "save_interval": 20,
-    "save_iters": 21,
-    "resume_iters": 25,
-    "loss_rtol": 0.05,
-    "checkpoint_dir": ""
-  },
   "threshold_json": "mi355x_torchtitan_llama-3.1-8b_single_threshold.json",
-  "config": {
+  "paths": {
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOGS/torchtitan",
     "scripts_dir": "/home/{user-id}/SCRIPTS/torchtitan",
     "data_cache_dir": "/home/{user-id}/cache",
-    "rocm_dir": "",
-    "torchtitan_root": "/workspace/Primus/third_party/torchtitan",
-    "training_iterations": "10",
-    "nnodes": "1",
-    "nic_type": "thor2",
-    "nccl_socket_ifname": "ensf1np1",
-    "gloo_socket_ifname": "ensf1np1",
-    "nccl_ib_gid_index": "3",
-    "nccl_debug": "ERROR",
-    "master_address": "127.0.0.1",
-    "verify_network_errors": "False",
-    "use_generated_config": "True"
-  },
-  "model_params": {
-    "model_name": "llama3_1_8b",
-    "hf_model_name": "meta-llama/Llama-3.1-8B",
-    "sequence_length": "8192",
-    "dataset": "c4",
-    "lr": "3e-4",
-    "warmup_steps": "200",
-    "activation_checkpointing": "selective",
-    "compile": "false",
-    "tensor_parallel_degree": "1",
-    "pipeline_parallel_degree": "1",
-    "context_parallel_degree": "1",
-    "expert_parallel_degree": "1",
-    "enable_async_tensor_parallel": "false",
-    "precompute_float8_dynamic_scale_for_fsdp": "false",
-    "data_parallel_shard_degree": "8"
+    "rocm_dir": ""
   },
   "container": {
     "lifetime": "per_run",
@@ -70,47 +22,98 @@
         "shm_size": "128G",
         "volumes": [
           "/home/{user-id}:/home/{user-id}",
-          "/dev/infiniband:/dev/infiniband"
+          "/dev/infiniband:/dev/infiniband",
+          "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro"
         ],
         "devices": [
           "/dev/kfd",
           "/dev/dri"
         ]
       }
+    },
+    "env": {
+      "NNODES": "1",
+      "MASTER_ADDR": "127.0.0.1",
+      "NCCL_SOCKET_IFNAME": "eno0 <changeme>",
+      "GLOO_SOCKET_IFNAME": "eno0 <changeme>",
+      "NCCL_IB_GID_INDEX": "3 <changeme>",
+      "NCCL_DEBUG": "ERROR <changeme>"
     }
+  },
+  "train_params": {
+    "model_name": "llama3_1_8b",
+    "hf_model_name": "meta-llama/Llama-3.1-8B",
+    "sequence_length": "8192",
+    "dataset": "c4",
+    "lr": "3e-4",
+    "warmup_steps": "200",
+    "activation_checkpointing": "selective",
+    "compile": "false",
+    "tensor_parallel_degree": "1",
+    "pipeline_parallel_degree": "1",
+    "context_parallel_degree": "1",
+    "expert_parallel_degree": "1",
+    "enable_async_tensor_parallel": "false",
+    "precompute_float8_dynamic_scale_for_fsdp": "false",
+    "data_parallel_shard_degree": "8",
+    "torchtitan_root": "/workspace/Primus/third_party/torchtitan",
+    "training_iterations": "<changeme>",
+    "nic_type": "thor2",
+    "tokenizer_model": "meta-llama/Llama-3.1-8B"
+  },
+  "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",
+  "smoke": {
+    "enabled": true,
+    "iters": 10,
+    "micro_batch_size": "1",
+    "global_batch_size": "8",
+    "precision": "BF16"
+  },
+  "_loss_curve_comment": "sample training loss every `sample_every` steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
+  "loss_curve": {
+    "sample_every": 10,
+    "milestone_steps": [
+      100,
+      500,
+      1000,
+      5000
+    ],
+    "max_slope": 0.0,
+    "enforce": true
+  },
+  "_convergence_comment": "target_metric auto uses validation loss when available, else training loss. target_value <= 0 disables convergence checking (record-only).",
+  "convergence": {
+    "target_metric": "auto",
+    "target_value": 2.0
+  },
+  "_checkpoint_comment": "save_interval controls checkpoint frequency (steps); save_iters is the step at which the save-phase run stops; resume_iters is the step at which the resume-phase run stops. Loss at resume_iters must match the save-phase loss within loss_rtol. enforce=false makes checkpoint testing record-only.",
+  "checkpoint": {
+    "enforce": false,
+    "save_interval": 20,
+    "save_iters": 21,
+    "resume_iters": 25,
+    "loss_rtol": 0.05
   },
   "sweep": {
     "combinations": {
-      "llama3_1_8b-mi355-bs48-mbs6-bf16": {
-        "name": "llama3_1_8b_mbs6_gbs48_BF16",
-        "global_batch_size": "48",
-        "micro_batch_size": "6",
-        "precision": "BF16"
+      "MBS=6,GBS=48,PRECISION=BF16": {
+        "name": "llama3_1_8b_mbs6_gbs48_BF16"
       },
-      "llama3_1_8b-mi355-bs48-mbs6-fp8": {
-        "name": "llama3_1_8b_mbs6_gbs48_FP8",
-        "global_batch_size": "48",
-        "micro_batch_size": "6",
-        "precision": "FP8"
+      "MBS=6,GBS=48,PRECISION=FP8": {
+        "name": "llama3_1_8b_mbs6_gbs48_FP8"
       },
-      "llama3_1_8b-mi355-bs48-mbs6-mxfp8": {
-        "name": "llama3_1_8b_mbs6_gbs48_MXFP8",
-        "global_batch_size": "48",
-        "micro_batch_size": "6",
-        "precision": "MXFP8"
+      "MBS=6,GBS=48,PRECISION=MXFP8": {
+        "name": "llama3_1_8b_mbs6_gbs48_MXFP8"
       },
-      "llama3_1_8b-mi355-bs48-mbs6-mxfp4": {
-        "name": "llama3_1_8b_mbs6_gbs48_MXFP4",
-        "global_batch_size": "48",
-        "micro_batch_size": "6",
-        "precision": "MXFP4"
+      "MBS=6,GBS=48,PRECISION=MXFP4": {
+        "name": "llama3_1_8b_mbs6_gbs48_MXFP4"
       }
     },
     "runs": [
-      "llama3_1_8b-mi355-bs48-mbs6-bf16",
-      "llama3_1_8b-mi355-bs48-mbs6-fp8",
-      "llama3_1_8b-mi355-bs48-mbs6-mxfp8",
-      "llama3_1_8b-mi355-bs48-mbs6-mxfp4"
+      "MBS=6,GBS=48,PRECISION=BF16",
+      "MBS=6,GBS=48,PRECISION=FP8",
+      "MBS=6,GBS=48,PRECISION=MXFP8",
+      "MBS=6,GBS=48,PRECISION=MXFP4"
     ]
   }
 }

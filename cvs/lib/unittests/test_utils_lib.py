@@ -23,6 +23,14 @@ class TestUtilsLib(unittest.TestCase):
         utils_lib.scan_test_results(out_dict)
         mock_fail_test.assert_not_called()
 
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_scan_test_results_cpuset_allocation_abort(self, mock_fail_test):
+        out_dict = {
+            'host1': 'Transfer 0: DST 0: CPU 2 on rank 0 cannot allocate memory due to process memory policy/cpuset'
+        }
+        utils_lib.scan_test_results(out_dict)
+        mock_fail_test.assert_called()
+
     def test_cluster_target_output_label_strips_and_sanitizes(self):
         self.assertEqual(utils_lib.cluster_target_output_label("  node1.example.com  "), "node1.example.com")
         self.assertEqual(utils_lib.cluster_target_output_label("a/b"), "a_b")
@@ -56,6 +64,23 @@ class TestUtilsLib(unittest.TestCase):
         for label, cmd in cmds.items():
             self.assertIn('OK', cmd, msg=label)
             self.assertIn('MISSING', cmd, msg=label)
+
+    def test_omit_doc_config_keys_drops_examples_and_comments(self):
+        raw = {
+            'os_version': '<changeme>',
+            '_example_os_version': 'Ubuntu 24.04.1 LTS',
+            '_comment': 'docs',
+            'fw_dict': {'CP_MEC1': '<changeme>', '_example_CP_MEC1': '32945'},
+            'notes': ['_keep', {'_comment': 'x', 'gpu_count': '<changeme>'}],
+        }
+        self.assertEqual(
+            utils_lib.omit_doc_config_keys(raw),
+            {
+                'os_version': '<changeme>',
+                'fw_dict': {'CP_MEC1': '<changeme>'},
+                'notes': ['_keep', {'gpu_count': '<changeme>'}],
+            },
+        )
 
 
 class TestResolveTestConfigPlaceholdersAorta(unittest.TestCase):

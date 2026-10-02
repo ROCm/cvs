@@ -5,8 +5,6 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import pytest
-
 import re
 import os
 import time
@@ -15,175 +13,15 @@ import itertools
 
 from cvs.lib import rccl_lib
 from cvs.lib import html_lib
-from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import globals
+from cvs.lib.report.profiles.hooks.rccl_session import publish_graph
 
 log = globals.log
 
 
 rccl_res_dict = {}
-
-
-# Importing additional cmd line args to script ..
-@pytest.fixture(scope="module")
-def cluster_file(pytestconfig):
-    """
-    Return the path to the cluster configuration JSON file passed via pytest CLI.
-
-    Expects:
-      - pytest to be invoked with: --cluster_file <path>
-
-    Args:
-      pytestconfig: Built-in pytest config object used to access CLI options.
-
-    Returns:
-      str: Filesystem path to the cluster configuration file.
-    """
-    return pytestconfig.getoption("cluster_file")
-
-
-@pytest.fixture(scope="module")
-def config_file(pytestconfig):
-    """
-    Return the path to the test configuration JSON file passed via pytest CLI.
-
-    Expects:
-      - pytest to be invoked with: --config_file <path>
-
-    Args:
-      pytestconfig: Built-in pytest config object used to access CLI options.
-
-    Returns:
-      str: Filesystem path to the test configuration file.
-    """
-    return pytestconfig.getoption("config_file")
-
-
-@pytest.fixture(scope="module")
-def cluster_dict(cluster_file):
-    """
-    Load and expose full cluster configuration for the test module.
-
-    Behavior:
-      - Opens the JSON at cluster_file and parses it into a Python dict.
-      - Logs the parsed dictionary for visibility and debugging.
-      - Returns the entire cluster configuration (node list, credentials, etc.).
-
-    Args:
-      cluster_file (str): Path to the cluster configuration JSON.
-
-    Returns:
-      dict: Parsed cluster configuration. Expected keys include:
-            - 'node_dict': Map of node name -> node metadata
-            - 'username': SSH username
-            - 'priv_key_file': Path to SSH private key
-    """
-    with open(cluster_file) as json_file:
-        cluster_dict = json.load(json_file)
-
-    # Resolve path placeholders like {user-id} in cluster config
-    cluster_dict = resolve_cluster_config_placeholders(cluster_dict)
-    log.info("%s", cluster_dict)
-    return cluster_dict
-
-
-@pytest.fixture(scope="module")
-def config_dict(config_file, cluster_dict):
-    """
-    Load and return the RCCL-specific configuration dictionary for the test module.
-
-    Args:
-      config_file (str): Path to a JSON config file provided by another fixture.
-
-    Returns:
-      dict: The value of the "rccl" key from the loaded JSON, logged for visibility.
-
-    Notes:
-      - Expects the JSON file to contain a top-level key "rccl".
-      - Uses module scope so the config is parsed once per test module.
-      - Consider adding validation (e.g., assert "rccl" in config) to fail fast on bad configs.
-    """
-    with open(config_file) as json_file:
-        config_dict_t = json.load(json_file)
-    config_dict = config_dict_t['rccl']
-
-    # Resolve path placeholders like {user-id}, {home-mount-dir}, etc.
-    config_dict = resolve_test_config_placeholders(config_dict, cluster_dict)
-    log.info("%s", config_dict)
-    return config_dict
-
-
-@pytest.fixture(scope="module")
-def phdl(cluster_dict):
-    """
-    Build and return a parallel SSH handle (Pssh) for all cluster nodes.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture containing:
-        - node_dict: dict of node_name -> node_details
-        - username: SSH username
-        - priv_key_file: path to SSH private key
-
-    Returns:
-      Pssh: Handle configured for all nodes (for broadcast/parallel operations).
-
-    Notes:
-      - Prints the cluster_dict for quick debugging; consider replacing with log.debug.
-      - Module-scoped so a single shared handle is used across all tests in the module.
-      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
-      - Assumes Pssh(log, node_list, user=..., pkey=...) is available in scope.
-    """
-    log.info("%s", cluster_dict)
-    env_vars = cluster_dict.get("env_vars")
-    node_list = list(cluster_dict['node_dict'].keys())
-    phdl = Pssh(log, node_list, user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return phdl
-
-
-@pytest.fixture(scope="module")
-def shdl(cluster_dict):
-    """
-    Build and return a parallel SSH handle (Pssh) for the head node only.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture (see phdl docstring).
-
-    Returns:
-      Pssh: Handle configured for the first node (head node) in node_dict.
-
-    Notes:
-      - Useful when commands should be executed only from a designated head node.
-      - Module scope ensures a single connection context for the duration of the module.
-      - nhdl_dict is currently unused; it can be removed unless used elsewhere.
-    """
-    node_list = list(cluster_dict['node_dict'].keys())
-    env_vars = cluster_dict.get("env_vars")
-    head_node = node_list[0]
-    shdl = Pssh(log, [head_node], user=cluster_dict['username'], pkey=cluster_dict['priv_key_file'], env_vars=env_vars)
-    return shdl
-
-
-@pytest.fixture(scope="module")
-def vpc_node_list(cluster_dict):
-    """
-    Collect and return a list of VPC IPs for all nodes in the cluster.
-
-    Args:
-      cluster_dict (dict): Cluster metadata fixture containing node_dict with vpc_ip per node.
-
-    Returns:
-      list[str]: List of VPC IP addresses in the cluster, ordered by node_dict iteration.
-
-    Notes:
-      - Iteration order depends on the insertion order of node_dict.
-      - Consider validating that each node entry contains a 'vpc_ip' key.
-    """
-    vpc_node_list = []
-    for node in list(cluster_dict['node_dict'].keys()):
-        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
-    return vpc_node_list
 
 
 def pytest_generate_tests(metafunc):
@@ -242,7 +80,7 @@ def pytest_generate_tests(metafunc):
 
     if env_axes and "rccl_collective" in metafunc.fixturenames:
         # Always parametrize collectives
-        rccl_collective_list = rccl.get("rccl_collective", ["all_reduce_perf"])
+        rccl_collective_list = rccl_lib.configured_collectives(rccl)
 
         # Build environment variable combinations as dicts for **regression_params
         env_fixture_names = [name for name, _ in env_axes]
@@ -275,7 +113,7 @@ def pytest_generate_tests(metafunc):
 # Start of test cases.
 
 
-def test_collect_hostinfo(phdl):
+def test_collect_hostinfo(orch):
     """
     Collect basic ROCm/host info from all nodes.
 
@@ -288,13 +126,13 @@ def test_collect_hostinfo(phdl):
     """
 
     globals.error_list = []
-    phdl.exec('cat /opt/rocm/.info/version')
-    phdl.exec('hipconfig')
-    phdl.exec('rocm_agent_enumerator')
+    orch.all.exec('cat /opt/rocm/.info/version')
+    orch.all.exec('hipconfig')
+    orch.all.exec('rocm_agent_enumerator')
     update_test_result()
 
 
-def test_collect_networkinfo(phdl):
+def test_collect_networkinfo(orch):
     """
     Collect basic RDMA/verbs info from all nodes.
 
@@ -304,14 +142,14 @@ def test_collect_networkinfo(phdl):
     """
 
     globals.error_list = []
-    phdl.exec('rdma link')
-    phdl.exec('ibv_devinfo')
+    orch.all.exec('rdma link')
+    orch.all.exec('ibv_devinfo')
     update_test_result()
 
 
-def test_disable_firewall(phdl):
+def test_disable_firewall(orch):
     globals.error_list = []
-    sudo_status = get_passwordless_sudo_status(phdl)
+    sudo_status = get_passwordless_sudo_status(orch.all)
     no_sudo_nodes = [node for node, ok in sudo_status.items() if not ok]
     if no_sudo_nodes:
         log.warning(
@@ -319,34 +157,34 @@ def test_disable_firewall(phdl):
         )
         update_test_result()
         return
-    phdl.exec('sudo service ufw stop')
+    orch.all.exec('sudo service ufw stop')
     time.sleep(2)
-    out_dict = phdl.exec('sudo service ufw status')
+    out_dict = orch.all.exec('sudo service ufw status')
     for node in out_dict.keys():
         if not re.search('inactive|dead|stopped|disabled|not be found|unrecognized service', out_dict[node], re.I):
             fail_test(f'Service ufw not disabled properly on node {node}')
     update_test_result()
 
 
-def test_print_env_once(phdl, shdl, config_dict):
+def test_print_env_once(orch, config_dict):
     """Single test to print environment script - don't dump env in every test."""
     globals.error_list = []
     env_script = config_dict.get('env_source_script', '/dev/null')
     if env_script and str(env_script).lower() != 'none':
         # Cat the env script file to show its contents
         cmd = f'echo === Environment Script: {env_script} === && cat {env_script}'
-        shdl.exec(cmd)
+        orch.exec_on_head(cmd)
     update_test_result()
 
 
-def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regression_params):
+def test_rccl_perf(orch, node_list, vpc_node_list, config_dict, rccl_collective, regression_params):
     """
     Execute RCCL regression test across the cluster with parametrized environment overrides.
 
     Parameters (from fixtures and config):
-      - phdl: parallel execution handle for nodes (expects exec/exec_cmd_list).
-      - shdl: switch or auxiliary handle used by rccl_lib (implementation-specific).
-      - cluster_dict: cluster topology and credentials (expects node_dict, username, etc.).
+      - orch: orchestrator for RCCL execution and host diagnostics.
+      - node_list: cluster management hostnames.
+      - vpc_node_list: cluster addresses used by MPI.
       - config_dict: test configuration with RCCL/MPI paths, env, and thresholds.
       - rccl_collective: which RCCL collective test to run (e.g., "all_reduce_perf").
       - regression_params: dict of all regression parametrized values (NCCL_ALGO, NCCL_PROTO, NCCL_*_NCHANNELS, etc.)
@@ -355,7 +193,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regre
       1) Capture start time to bound dmesg checks later.
       2) Optionally snapshot cluster metrics before the test (for debugging/compare).
       3) Build env_overrides dict from all regression parameters.
-      4) Invoke rccl_lib.rccl_regression with parameters built from config and fixtures.
+      4) Invoke RcclJob.from_config(...).run_regression() with parameters built from config and fixtures.
       5) Capture end time and verify dmesg for errors between start/end.
       6) Optionally snapshot metrics again and compare before/after.
       7) Call update_test_result() to finalize test status.
@@ -365,7 +203,7 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regre
     """
 
     globals.error_list = []
-    sudo_status = get_passwordless_sudo_status(phdl)
+    sudo_status = get_passwordless_sudo_status(orch.all)
     can_use_sudo = all(sudo_status.values())
     if not can_use_sudo:
         no_sudo_nodes = [node for node, ok in sudo_status.items() if not ok]
@@ -377,77 +215,60 @@ def test_rccl_perf(phdl, shdl, cluster_dict, config_dict, rccl_collective, regre
 
     params_str = ' '.join(f'{k}={v}' for k, v in regression_params.items())
     if can_use_sudo:
-        phdl.exec(f'sudo echo "Starting Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
+        orch.all.exec(f'sudo echo "Starting Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
 
-    # start_time = phdl.exec('date')
-    # Seconds precision matters: verify_dmesg_for_errors' node-scraper path
-    # treats analysis_range_end as an exclusive cutoff, so a minute-truncated
-    # end time silently drops the final minute of this test's dmesg window.
-    start_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
-    node_list = list(cluster_dict['node_dict'].keys())
-
-    # Build list of nodes and their VPC IPs (used by the RCCL test)
-    # make sure the VPC IPs are reachable from all nodes for passwordless ssh
-    # otherwise use the regular mgmt-ip if that is reachable.
-    vpc_node_list = []
-    for node in list(cluster_dict['node_dict'].keys()):
-        vpc_node_list.append(cluster_dict['node_dict'][node]['vpc_ip'])
+    # Minute precision can drop kernel events from the end of the test window.
+    start_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
 
     # Get cluster snapshot ..
     if can_use_sudo and re.search(
         'True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I
     ):
-        cluster_dict_before = create_cluster_metrics_snapshot(phdl)
+        cluster_dict_before = create_cluster_metrics_snapshot(orch.all)
 
     # Build env_overrides from all regression parameters (convert values to strings)
     env_overrides = {k: str(v) for k, v in regression_params.items()}
 
-    env_script = config_dict.get('env_source_script', '/dev/null')
-    result_dict = rccl_lib.rccl_regression(
-        phdl,
-        shdl,
+    result_dict = rccl_lib.RcclJob.from_config(
+        orch,
         rccl_collective,
-        env_script,
-        config_dict['mpi_params'],
-        config_dict['rccl_test_params'],
-        config_dict['cvs_params'],
+        config_dict,
         node_list,
         vpc_node_list,
-        env_overrides,
-    )
+        env_overrides=env_overrides,
+    ).run_regression()
 
     log.info("%s", result_dict)
     key_name = f'{rccl_collective}-{params_str}'
     rccl_res_dict[key_name] = result_dict
 
     # Scan dmesg between start and end times cluster wide ..
-    # end_time = phdl.exec('date')
     if can_use_sudo:
-        phdl.exec(f'sudo echo "End of Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
+        orch.all.exec(f'sudo echo "End of Test {rccl_collective} {params_str}" | sudo tee /dev/kmsg')
 
-    end_time = phdl.exec('date +"%a %b %e %H:%M:%S"')
+    end_time = orch.all.exec('date +"%a %b %e %H:%M:%S"')
     if can_use_sudo:
         # Bound dmesg scan to this test's own start..end window (per-test).
         # till_end_flag=True scans from start_time to the end of the dmesg
         # buffer, which causes earlier-test kernel events (e.g. a scatter_perf
         # segfault) to repeatedly fail every subsequent parametrized test.
-        verify_dmesg_for_errors(phdl, start_time, end_time, till_end_flag=False)
+        verify_dmesg_for_errors(orch.all, start_time, end_time, till_end_flag=False)
 
     # Get new cluster snapshot and compare ..
     if can_use_sudo and re.search(
         'True', config_dict.get('cvs_params', {}).get('cluster_snapshot_debug', 'False'), re.I
     ):
-        cluster_dict_after = create_cluster_metrics_snapshot(phdl)
+        cluster_dict_after = create_cluster_metrics_snapshot(orch.all)
         compare_cluster_metrics_snapshots(cluster_dict_before, cluster_dict_after)
 
     # Update test results based on any failures ..
     update_test_result()
 
 
-def test_gen_graph(request):
+def test_gen_graph(request, cvs_results_dict):
     log.info('Final Global result dict')
     log.info("%s", rccl_res_dict)
-    rccl_graph_dict = rccl_lib.convert_to_graph_dict(rccl_res_dict)
+    rccl_graph_dict = publish_graph(rccl_res_dict, cvs_results_dict)
     log.info("%s", rccl_graph_dict)
 
     proc_id = os.getpid()

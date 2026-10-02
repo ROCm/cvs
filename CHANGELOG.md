@@ -5,17 +5,41 @@ All notable changes to ROCm Cluster Validation Suite (CVS) are documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - Unreleased
+## [0.3.0] - Unreleased
+
+### Added
+
+### Changed
+
+- RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.
+- RCCL result files default to the run directory. Every run verifies shared result-path access via a sentinel round-trip through `download_from_head` before launching, and result-save failures fail the test. Container runs require the result directory mounted at the same host/container path.
+- `Orchestrator` now declares `exec_on_host`, `upload_to_head`, and `download_from_head` as required methods. RCCL uses these interfaces for host diagnostics and result transfers instead of reaching through internal handles. Custom orchestrator subclasses must implement all three methods.
+- Node Smoke Tier 1, Tier 2, and Tier 3 now run by default. Set `node_smoke_tier1.connectivity_mode` or `node_smoke_tier3.connectivity_mode` to `"skip"` to disable a tier, or set `node_smoke_tier1.tier2_perf` to `false` to disable Tier 2 only. Previously all three were opt-in (`connectivity_mode` defaulted to `"skip"` and `tier2_perf` defaulted to `false`).
+
+### Fixed
+
+- RCCL regression reads configured collectives from `rccl_test_params`, with a fallback for older configurations. Both perf and regression consult top-level `results`, accepting NIC/data-type/rank references and legacy flat bandwidth thresholds.
+- RCCL `mpirun` uses the orchestrator's non-default SSH port for container launches.
+- RCCL pairwise/incremental runs no longer inherit the full cluster's legacy flat bandwidth thresholds; only NIC/rank-keyed thresholds (already scoped to node count) carry over to the pairwise sub-cluster run.
+- `RcclJob` no longer requires `cluster_node_list` to start with the orchestrator's head node; the orchestrator's own head node is used regardless of list order.
+- RCCL result-directory sentinel check reads the per-host path `download_from_head` returns instead of the unsuffixed path passed in, so the probe no longer rejects a valid shared/bind-mounted directory before every run.
+- Preflight HTML rows for Node Smoke pass or fail only when Primus reported that check. A node-level result no longer marks unreported Tier 1 GPU slots or Tier 3 collector names as passed.
+- A Node Smoke tier failure stays in the pytest-html report when the per-check rows do not already show it.
+- Preflight failure messages name the hosts that failed. Config sections such as `vpod_membership` and `setup_results` are no longer reported as node names.
+- RCCL: compare reported topology with launcher settings in performance and regression runs, with configurable `warn` (default), `strict`, and `off` modes and a separate JSON audit that preserves producer metadata. Count GPUs across all threads in regression launches, and skip topology checks when every row omits topology.
+- RCCL: accept single-node results without a topology block, reject mixed result shapes regardless of row order, and report malformed JSON result structures without crashing row processing.
+- RCCL: return cleanly when a run produces no result rows instead of raising `IndexError` from the bandwidth-dip check. Log scanning still fails these runs for missing bandwidth numbers.
+
+## [0.2.0] - 2026-09-23
 
 ### Added
 
 - Installable Python package layout: tests, lib, and input live under `cvs/`; `cvs` CLI; Makefile install/test targets.
-- JAX MaxText training suite: smoke test, checkpoint save/resume I/O timing metrics, additional model configs and threshold files.
-- TorchTitan single-node and distributed training suites.
+- Training: JAX MaxText, TorchTitan, Megatron (single & multi-node).
 - Aorta / benchmark training microbenchmarks with schema, configs, and runner.
 - Preflight suite: MI4XX node-health and IFoE checks, nodesmoke tiers (including Primus CLI tier 1 and tier 3), ROCm version consistency.
 - AMD Node Check (ANC) suite: CPU/GPU group suites, multi-format install, HTML reports, fail-fast install/ldconfig, inactivity timeouts.
-- Inference: ATOM (including multinode), unified topology-parametrized vLLM (single + distributed; MI300X workloads, GPU/Prometheus metrics, lm-eval accuracy, OpenAI-compatible smoke), SGLang (Llama 70B and DeepSeek-R1 distributed), pytorch_xdit Flux.1 text-to-image and WAN 2.2 image-to-video (including disaggregated multinode).
+- Inference: vLLM (single & distributed), SGLang (single, distributed and disaggregated), xDiT (single & distributed and ATOM (single).
 - MORI RDMA performance tests.
 - Pairwise RCCL tests.
 - Container backend: `container.lifetime` schema, `setup_script` provisioning, persistent mode, CVS container image.

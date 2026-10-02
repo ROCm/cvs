@@ -3,8 +3,7 @@ Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
 Pure JSON -> {scalar: float} projector for lm-eval-harness `results.json`
-payloads (see cvs/lib/inference/utils/AGENTS.md for the broader
-accuracy-evaluation design). Auto-discovers every numeric metric rather than
+payloads. Auto-discovers every numeric metric rather than
 requiring a per-task registry, so group tasks (e.g. RULER's per-seq-length
 metrics) and custom tasks fall out of the same walk with no special-casing.
 '''

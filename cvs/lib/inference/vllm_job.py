@@ -2,11 +2,10 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Unified vLLM benchmark job for single-node and multinode distributed runs.
+vLLM benchmark job for one explicit target-host group.
 
 Routing contract:
-  - build_server_cmd: BROADCAST env-script write + mkdir to ALL nodes.
-    On single-node (nnodes=1) broadcast and targeted exec are equivalent.
+  - build_server_cmd: writes the environment script to every target host.
   - start_server: one targeted orch.exec(..., hosts=[host]) per host, with
     per-rank --node-rank. On single-node this yields one (0, head) iteration.
   - run_client / wait_client_complete / parse_results: HEAD-ONLY via
@@ -16,18 +15,18 @@ Routing contract:
   - wait_ready / is_ready: BROADCAST so every shard is checked.
   - stop_server: BROADCAST pkill to all nodes.
 
-Distributed vs single-node branching is localised to _server_argv only:
+Distributed vs single-node branching is localised to _server_argv only. The
+target host group, rather than the variant config, determines node count:
 distributed flags (--node-rank, --master-addr, --master-port, --nnodes,
 --pipeline-parallel-size, --distributed-executor-backend) are added iff
 int(nnodes) > 1. Everything else is topology-blind.
 
 IB device config (distributed only):
-  ib_hcas: discovered HCA names for NCCL_IB_HCA, passed in from the
-      test_discover_topology lifecycle step. Written into the per-node env
-      script.
-  ib_netdev: explicit Linux netdev name for NCCL_SOCKET_IFNAME /
-      GLOO_SOCKET_IFNAME. Read directly from variant.roles.server.ib_netdev.
-      Required when nnodes > 1 (enforced by VariantConfig validator).
+  NCCL_IB_HCA: inherited from container.env when configured there. Otherwise,
+      ib_hcas discovered by test_discover_topology are written into the
+      per-node env script.
+  Socket interfaces: inherited from container.env. The legacy top-level
+      ib_netdev fallback is written into the per-node environment script.
 '''
 
 from __future__ import annotations
@@ -41,10 +40,13 @@ import time
 from typing import Optional
 
 from cvs.lib import globals
-from cvs.lib.inference.utils.vllm_parsing import to_client_metrics
+from cvs.lib.inference.utils.vllm_config_loader import serialize_cli_options
+from cvs.lib.inference.utils.vllm_metrics import project_vllm_metrics
 from cvs.lib.utils.model_query_lib import OpenAIProbe
 
 log = globals.log
+_PERCENTILE_METRICS = "ttft,tpot,itl,e2el"
+_METRIC_PERCENTILES = "50,90,95,99"
 
 
 def scrape_vllm_metrics(orch, base_url: str, port_no: str, timeout_s: "float | None" = None) -> "str | None":
@@ -78,8 +80,8 @@ def scrape_vllm_metrics(orch, base_url: str, port_no: str, timeout_s: "float | N
 class VllmJob:
     """Unified vLLM benchmark job for single-node and multinode distributed runs.
 
-    Construct with the result of test_discover_topology (ib_hcas) for distributed
-    runs; pass None (or omit) for single-node.
+    For distributed configurations without ``container.env.NCCL_IB_HCA``,
+    construct with the HCA names returned by test_discover_topology.
 
     The ``orch`` instance is expected to already have ``setup_containers()`` and
     (for multinode) ``setup_sshd()`` called against it by the test lifecycle.
@@ -111,6 +113,7 @@ class VllmJob:
         r"|RuntimeError:.*[Ee]ngine",
         re.I,
     )
+    _MAX_MODEL_LEN_PAD = 8
 
     def __init__(
         self,
@@ -121,16 +124,9 @@ class VllmJob:
         osl,
         concurrency,
         num_prompts,
+        benchmark_params=None,
         ib_hcas: Optional[list] = None,
-        goodput_slo=None,
         log_subdir="vllm",
-        server_precheck_wait_s=30,
-        server_warmup_wait_s=330,
-        server_poll_count=60,
-        server_poll_wait_s=60,
-        client_initial_wait_s=120,
-        client_poll_count=20,
-        client_poll_wait_s=60,
     ):
         self.orch = orch
         self.variant = variant
@@ -139,49 +135,67 @@ class VllmJob:
         self.osl = str(osl)
         self.concurrency = str(concurrency)
         self.num_prompts = str(num_prompts)
-        # Discovered HCA names for NCCL_IB_HCA (multinode only). Passed in from
-        # test_discover_topology so discovery runs once per lifecycle, not per cell.
-        self.ib_hcas = ib_hcas or []
-        self.goodput_slo = goodput_slo
+        self.ib_hcas = [] if variant.container.nccl_ib_hcas is not None else (ib_hcas or [])
         self.log_subdir = log_subdir
+        self.hosts = tuple(orch.hosts)
+        if not self.hosts:
+            raise ValueError("VllmJob requires at least one target host")
+        topology = getattr(variant, "_effective_topology", None) if hasattr(variant, "__pydantic_private__") else None
+        if topology is not None and topology.hosts != self.hosts:
+            raise ValueError("vLLM topology hosts do not match the orchestrator")
 
-        p = variant.params
-        self.tp = p.tensor_parallelism
-        self.pp = p.pipeline_parallel_size
-        self.master_addr = p.master_addr
-        self.master_port = p.master_port
-        self.nnodes = p.nnodes
-        self.port_no = p.port_no
-        self.random_range_ratio = p.random_range_ratio
-        self.random_prefix_len = p.random_prefix_len
-        self.burstiness = p.burstiness
-        self.seed = p.seed
-        self.request_rate = p.request_rate
-        self.tokenizer_mode = p.tokenizer_mode
-        self.percentile_metrics = p.percentile_metrics
-        self.metric_percentiles = p.metric_percentiles
-        self.base_url = p.base_url
-        self.dataset_name = p.dataset_name
-        self.backend = p.backend
+        p = variant.server_params
+        b = dict(benchmark_params or {})
+        if not b:
+            b = variant.benchmark_params.model_dump()
+            b.update(variant.benchmark_params.extra_options())
+        self.tp = str(p.tensor_parallel_size)
+        self.pp = (
+            str(topology.pipeline_parallel_size)
+            if topology is not None
+            else (str(p.pipeline_parallel_size) if len(self.hosts) > 1 else "1")
+        )
+        self.master_addr = self.hosts[0]
+        self.master_port = str(p.dist_init_port)
+        self.nnodes = str(topology.nnodes) if topology is not None else str(len(self.hosts))
+        self.port_no = str(p.port)
+        self.random_range_ratio = str(b["random_range_ratio"])
+        self.random_prefix_len = str(b["random_prefix_len"])
+        self.burstiness = str(b["burstiness"])
+        self.seed = str(b["seed"])
+        self.request_rate = str(b["request_rate"])
+        self.tokenizer_mode = str(b["tokenizer_mode"])
+        self.base_url = "http://0.0.0.0"
+        self.dataset_name = str(b["dataset_name"])
+        self.backend = str(b["backend"])
+        self.ignore_eos = bool(b["ignore_eos"])
+        self.trust_remote_code = bool(b["trust_remote_code"])
 
-        self.model_id = variant.model.id
+        self.model_id = p.model
         self.log_dir = variant.paths.log_dir
-        self.serve_args = dict(variant.roles.server.serve_args)
-        self.server_env = dict(variant.roles.server.env)
+        self.serve_args = p.extra_options()
+        self.distributed_executor_backend = p.distributed_executor_backend
+        self.benchmark_options = {
+            key: value
+            for key, value in b.items()
+            if key not in type(variant.benchmark_params).model_fields
+            and key not in {"random_input_len", "random_output_len", "max_concurrency"}
+        }
+        self.server_env = {}
         self.models_dir = variant.paths.models_dir
-        self.ib_netdev = variant.roles.server.ib_netdev
+        self.ib_netdev = None if variant.container.socket_env_configured else variant.ib_netdev
 
         self.out_dir = f"{self.log_dir}/{self.log_subdir}/out-node0/isl{self.isl}_osl{self.osl}_conc{self.concurrency}"
         self.server_log = f"{self.out_dir}/vllm_serve_server.log"
         self.client_log = f"{self.out_dir}/client.log"
 
-        self._precheck_wait = server_precheck_wait_s
-        self._warmup_wait = server_warmup_wait_s
-        self._server_poll_count = server_poll_count
-        self._server_poll_wait = server_poll_wait_s
-        self._client_initial_wait = client_initial_wait_s
-        self._client_poll_count = client_poll_count
-        self._client_poll_wait = client_poll_wait_s
+        self._precheck_wait = 30
+        self._warmup_wait = p.server_warmup_wait_s
+        self._server_poll_count = p.server_poll_iterations
+        self._server_poll_wait = p.server_poll_wait_s
+        self._client_initial_wait = int(b["client_initial_wait_s"])
+        self._client_poll_count = int(b["client_poll_iterations"])
+        self._client_poll_wait = int(b["client_poll_wait_s"])
 
     # ---------- derived builders ----------
 
@@ -193,31 +207,12 @@ class VllmJob:
         mutate serve_args after construction see the updated value.  Only the
         exact lowercase string 'ray' matches (AC6/AC8 case-sensitivity).
         """
-        return self.serve_args.get("distributed-executor-backend") == "ray"
-
-    _MML_PAD = 8
+        return self.distributed_executor_backend == "ray"
 
     def _derive_max_model_len(self):
-        r = float(self.random_range_ratio)
-        worst = (int(self.isl) + int(self.osl)) * (1.0 + r)
-        return str(math.ceil(worst) + int(self.random_prefix_len) + self._MML_PAD)
-
-    @staticmethod
-    def _flatten_serve_args(mapping):
-        """Convert {flag: value} serve-args map to a flat vllm serve arg list."""
-        argv = []
-        for flag, value in mapping.items():
-            opt = f"--{flag}"
-            if value is True:
-                argv.append(opt)
-            elif value is False:
-                pass  # boolean False → omit the flag entirely
-            elif isinstance(value, (list, tuple)):
-                for v in value:
-                    argv.extend([opt, str(v)])
-            else:
-                argv.extend([opt, str(value)])
-        return argv
+        ratio = float(self.random_range_ratio)
+        worst_case_length = (int(self.isl) + int(self.osl)) * (1.0 + ratio)
+        return str(math.ceil(worst_case_length) + int(self.random_prefix_len) + self._MAX_MODEL_LEN_PAD)
 
     def _server_argv(self, rank: int) -> list:
         """vllm serve arg list for a specific node rank.
@@ -234,10 +229,7 @@ class VllmJob:
             "--port",
             str(self.port_no),
         ]
-        # Emit a derived --max-model-len ONLY when the config did not set one in
-        # serve_args. Emitting both makes vllm see the flag twice (the serve_args
-        # value silently wins); the explicit config value takes precedence here.
-        if "max-model-len" not in self.serve_args:
+        if "max_model_len" not in self.serve_args:
             argv += ["--max-model-len", self._derive_max_model_len()]
         if int(self.nnodes) > 1 and not self._is_ray_backend:
             # mp multi-node: inject the full distributed-executor block.
@@ -261,7 +253,9 @@ class VllmJob:
                 argv.append("--headless")
         if int(self.nnodes) > 1 and self._is_ray_backend and int(self.pp) > 1:
             argv += ["--pipeline-parallel-size", str(self.pp)]
-        argv.extend(self._flatten_serve_args(self.serve_args))
+        if int(self.nnodes) > 1 and self._is_ray_backend:
+            argv += ["--distributed-executor-backend", "ray"]
+        argv.extend(serialize_cli_options(self.serve_args))
         return argv
 
     def _rank_log(self, rank: int) -> str:
@@ -290,22 +284,10 @@ class VllmJob:
     # ---------- server side ----------
 
     def build_server_cmd(self):
-        """Write per-node env scripts and create per-rank output directories.
-
-        Broadcast to ALL nodes so every rank has its env script and out-dir
-        before start_server launches the per-host processes. On single-node
-        the broadcast and targeted exec are equivalent.
-
-        IB devices (ib_hcas, ib_netdev) are written into the env script only
-        when present — they come from test_discover_topology (ib_hcas) and
-        directly from the config (ib_netdev). No runtime patches, no probing.
-        """
+        """Write the server environment and create per-rank output directories."""
         env_lines = [
             f"export HF_TOKEN={shlex.quote(self.hf_token)}",
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
-            "export VLLM_USE_AITER_UNIFIED_ATTENTION=1",
-            "export VLLM_ROCM_USE_AITER_MHA=0",
-            "export VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4=1",
         ]
         if self.ib_hcas:
             env_lines.append(f"export NCCL_IB_HCA={shlex.quote(','.join(self.ib_hcas))}")
@@ -330,7 +312,7 @@ class VllmJob:
           3. Any non-zero exit code OR EARLY_FAILURE_RE match in output raises
              RuntimeError before serve is attempted.
         """
-        head = self.orch.hosts[0]
+        head = self.hosts[0]
         # Step 1: bootstrap head node.
         head_cmd = f"ray start --head --port={self.master_port}"
         out = self.orch.exec(head_cmd, hosts=[head], detailed=True)
@@ -338,7 +320,7 @@ class VllmJob:
             if result.get("exit_code", 0) != 0 or self.EARLY_FAILURE_RE.search(result.get("output", "") or ""):
                 raise RuntimeError(f"ray bootstrap failed on {h} rank 0")
         # Step 2: bootstrap each worker node.
-        for rank, host in enumerate(self.orch.hosts):
+        for rank, host in enumerate(self.hosts):
             if rank == 0:
                 continue
             worker_cmd = f"ray start --address={self.master_addr}:{self.master_port}"
@@ -357,7 +339,7 @@ class VllmJob:
         if self._is_ray_backend and int(self.nnodes) > 1:
             # Ray multi-node: cluster bootstrap then head-only serve (AC12).
             self._bootstrap_ray_cluster()
-            head = self.orch.hosts[0]
+            head = self.hosts[0]
             serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv(0))
             rank_log = self._rank_log(0)
             inner = f"source /tmp/server_env_script.sh && nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
@@ -367,7 +349,7 @@ class VllmJob:
                     raise RuntimeError(f"vllm server failed to launch on {h} (rank 0): {output[-500:]}")
         else:
             # mp multi-node or single-node (any backend): serve on every host.
-            for rank, host in enumerate(self.orch.hosts):
+            for rank, host in enumerate(self.hosts):
                 serve_cmd = " ".join(shlex.quote(str(a)) for a in self._server_argv(rank))
                 rank_log = self._rank_log(rank)
                 inner = f"source /tmp/server_env_script.sh && nohup {serve_cmd} > {shlex.quote(rank_log)} 2>&1 &"
@@ -385,7 +367,7 @@ class VllmJob:
         once the head is up.
         """
         pattern = self.READINESS_RE.pattern
-        for rank, host in enumerate(self.orch.hosts):
+        for rank, host in enumerate(self.hosts):
             if rank > 0 and int(self.nnodes) > 1:
                 continue
             rank_log = self._rank_log(rank)
@@ -406,7 +388,7 @@ class VllmJob:
         Tailing/grepping a non-existent log on a worker would spuriously fail
         or hang, so workers are skipped entirely (AC22).
         """
-        for rank, host in enumerate(self.orch.hosts):
+        for rank, host in enumerate(self.hosts):
             if self._is_ray_backend and int(self.nnodes) > 1 and rank > 0:
                 continue
             rank_log = self._rank_log(rank)
@@ -521,16 +503,7 @@ class VllmJob:
     # ---------- client side (head-only) ----------
 
     def run_client(self):
-        """Launch bench serve on the HEAD node only via exec_on_head.
-
-        exec_on_head is required (not orch.exec broadcast): on multinode,
-        broadcast would launch N competing clients, each connecting to the same
-        server endpoint and inflating load.
-        """
-        # Ensure this cell's head output dir exists. build_server_cmd creates it
-        # on a fresh bringup, but the server-reuse path skips build_server_cmd,
-        # so the client (which writes client.log + results here) must guarantee
-        # the directory itself.
+        """Launch the benchmark client on the orchestrator head."""
         self.orch.exec_on_head(f"mkdir -p {shlex.quote(self.out_dir)}")
         args = [
             "vllm",
@@ -565,28 +538,20 @@ class VllmJob:
             "--random-prefix-len",
             self.random_prefix_len,
             "--percentile-metrics",
-            self.percentile_metrics,
+            _PERCENTILE_METRICS,
             "--metric-percentiles",
-            self.metric_percentiles,
-            "--ignore-eos",
+            _METRIC_PERCENTILES,
             "--save-result",
             "--result-dir",
             self.out_dir,
             "--result-filename",
             "results",
         ]
-        # The bench client loads the tokenizer from --model to count tokens. Some
-        # models (e.g. Kimi-K2.6) ship a custom tokenizer via tokenizer_config
-        # auto_map, which transformers refuses to load without trust-remote-code.
-        # Mirror the server's setting so the client can load the same tokenizer.
-        if self.serve_args.get("trust-remote-code") is True:
+        if self.ignore_eos:
+            args.append("--ignore-eos")
+        if self.trust_remote_code:
             args.append("--trust-remote-code")
-        if self.goodput_slo:
-            args.append("--goodput")
-            for metric, key in (("ttft", "ttft_ms"), ("tpot", "tpot_ms"), ("e2el", "e2el_ms")):
-                val = self.goodput_slo.get(key)
-                if val is not None:
-                    args.append(f"{metric}:{val}")
+        args.extend(serialize_cli_options(self.benchmark_options))
         bench_cmd = " ".join(shlex.quote(str(a)) for a in args)
         client_cmd = f"source /tmp/server_env_script.sh && {bench_cmd} > {shlex.quote(self.client_log)} 2>&1 &"
         self.orch.exec_on_head("bash -c " + shlex.quote(client_cmd))
@@ -658,7 +623,7 @@ class VllmJob:
         preserved in the captured output even though _check_early_failure()
         stops tailing this log once startup is confirmed.
         """
-        for rank, host in enumerate(self.orch.hosts):
+        for rank, host in enumerate(self.hosts):
             if self._is_ray_backend and int(self.nnodes) > 1 and rank > 0:
                 continue
             rank_log = self._rank_log(rank)
@@ -686,5 +651,11 @@ class VllmJob:
                 # stack trace or an HTML error page, and raw newlines there
                 # would break up CI output and pasted ticket bodies.
                 raise RuntimeError(f"unparseable results artifact on {host}: {artifact}: {e}: {text[:500]!r}") from e
-            results[host] = to_client_metrics(raw, tp=self.tp, isl=self.isl, pp=self.pp)
+            results[host] = project_vllm_metrics(
+                raw,
+                tp=self.tp,
+                isl=self.isl,
+                pp=self.pp,
+                artifact_path=f'{host}:{artifact}',
+            )
         return results

@@ -37,8 +37,14 @@ def thresholds_run_card_row(variant: Any) -> Tuple[str, str, bool]:
 
 
 def _default_run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bool]]:
+    server_params = getattr(variant, "server_params", None)
+    model = (
+        getattr(server_params, "model", None)
+        if server_params is not None
+        else getattr(getattr(variant, "model", None), "id", None)
+    )
     rows: List[Tuple[str, str, bool]] = [
-        ("Model", getattr(getattr(variant, "model", None), "id", "\u2014"), False),
+        ("Model", model or "\u2014", False),
         ("GPU", getattr(variant, "gpu_arch", "\u2014"), False),
         thresholds_run_card_row(variant),
     ]
@@ -48,6 +54,8 @@ def _default_run_card(variant: Any, provenance: dict) -> List[Tuple[str, str, bo
     params = getattr(variant, "params", None)
     if params is not None and hasattr(params, "tensor_parallelism"):
         rows.append(("TP", str(params.tensor_parallelism), False))
+    elif server_params is not None:
+        rows.append(("TP", str(server_params.tensor_parallel_size), False))
     rows.extend(provenance_link_rows(provenance))
     return rows
 
@@ -99,11 +107,14 @@ def make_inference_report_config(
     workload = inference_test_substring or f"test_{suite_id}"
     session_labels = kwargs.pop("session_lifecycle_labels", DEFAULT_SESSION_LIFECYCLE_LABELS)
     cell_labels = kwargs.pop("cell_lifecycle_labels", DEFAULT_CELL_LIFECYCLE_LABELS)
+    expand_labels = kwargs.pop("expand_lifecycle_labels", ())
     row_card_extras = kwargs.pop("row_card_extras", True)
     interactive_viewer = kwargs.pop("interactive_viewer", True)
     viewer_cell_threshold = kwargs.pop("viewer_cell_threshold", 24)
+    metric_verdict = kwargs.pop("metric_verdict", None)
+    metric_contract = kwargs.pop("metric_contract", None)
 
-    return InferenceReportConfig(
+    config = InferenceReportConfig(
         suite_id=suite_id,
         report_basename=basename,
         title=display_title,
@@ -119,10 +130,14 @@ def make_inference_report_config(
         inference_test_substring=workload,
         session_lifecycle_labels=session_labels,
         cell_lifecycle_labels=cell_labels,
+        expand_lifecycle_labels=expand_labels,
         row_card_extras=row_card_extras,
         row_card_test_names=row_card_test_names,
         interactive_viewer=interactive_viewer,
         viewer_cell_threshold=viewer_cell_threshold,
+        metric_verdict=metric_verdict,
+        metric_contract=dict(metric_contract) if metric_contract is not None else None,
         run_card_display_builder=run_card_display_builder or _default_run_card,
         **kwargs,
     )
+    return config

@@ -20,7 +20,7 @@
   },
   "container": {
     "lifetime": "per_run",
-    "image": "rocm/atom-dev:latest",
+    "image": "<changeme>",
     "name": "atom",
     "runtime": {
       "name": "docker",

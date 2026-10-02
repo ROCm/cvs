@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run TorchTitan pre-training benchmarks
-  :keywords: CVS, TorchTitan, training
+  :description: Run TorchTitan pre-training benchmarks with CVS to validate single-node and multi-node throughput, loss curve, and checkpoint metrics on AMD Instinct GPUs.
+  :keywords: CVS, TorchTitan, training, benchmark, AMD Instinct, ROCm, AMD, GPU, PyTorch, distributed, RDMA, Llama
 
-***********************
-TorchTitan training tests
-***********************
+**************************************************
+Run TorchTitan pre-training benchmarks with CVS
+**************************************************
 
 TorchTitan validates single-node and multi-node pre-training on AMD Instinct GPUs. CVS drives training inside a container, parses logs, and gates on throughput, loss-curve, and optional checkpoint metrics.
 
@@ -17,6 +17,8 @@ There are two suites:
 
 Set up config
 =============
+
+Follow these steps to set up the TorchTitan configuration.
 
 1. List available TorchTitan configuration files:
 
@@ -43,6 +45,8 @@ Run tests
 
 List available stages
 ---------------------
+
+Run the following command to list available stages:
 
 .. code:: bash
 

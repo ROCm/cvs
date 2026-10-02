@@ -93,7 +93,12 @@ def scan_test_results(out_dict):
     # Iterate over each host's output
     for host in out_dict.keys():
         # Search for any high-level failure pattern in the raw output
-        match = re.search('test FAIL |test ERROR |ABORT|Traceback|No such file|FATAL', out_dict[host], re.I)
+        match = re.search(
+            r'test FAIL |test ERROR |ABORT|Traceback|No such file|FATAL|'
+            r'cannot allocate memory due to process memory policy',
+            out_dict[host],
+            re.I,
+        )
         if match:
             # Record the span of the first match (currently unused; could help with slicing)
             # start_index = match.start()
@@ -102,9 +107,12 @@ def scan_test_results(out_dict):
             words = out_dict[host].split()
             # Find the index of the target word in the list of words
             target_word_index = -1
+            actual_word = match.group(0)
             for i, word in enumerate(words):
                 # Check if this token contains any of the target substrings
-                if re.search('FAIL|ERR|ABORT|Traceback', word, re.I):  # Check if the pattern is part of the word
+                if re.search(
+                    'FAIL|ERR|ABORT|Traceback|allocate', word, re.I
+                ):  # Check if the pattern is part of the word
                     target_word_index = i
                     actual_word = word
                     break
@@ -118,9 +126,11 @@ def scan_test_results(out_dict):
                 log.error(f"Words before: {before_words}")
                 log.error(f"Words after: {after_words}")
                 log.error(f'Test failed in scan_result on node {host} due to pattern ')
-            fail_test(
-                f'Test failed in scan_result on node {host} due to pattern {before_words} {actual_word} {after_words}'
-            )
+                fail_test(
+                    f'Test failed in scan_result on node {host} due to pattern {before_words} {actual_word} {after_words}'
+                )
+            else:
+                fail_test(f'Test failed in scan_result on node {host} due to pattern {match.group(0)!r}')
 
 
 def json_to_dict(json_string):
@@ -385,6 +395,20 @@ def resolve_cluster_config_placeholders(cluster_dict):
     resolved_cluster = _resolve_placeholders_in_dict(cluster_dict, replacements)
 
     return resolved_cluster
+
+
+def omit_doc_config_keys(config):
+    """Drop documentation keys from a config tree.
+
+    Sample configs keep the live value in the real field and the previous
+    cluster-specific string in a sibling whose name starts with ``_``
+    (``_example_*``, ``_comment*``). Those keys are not settings.
+    """
+    if isinstance(config, dict):
+        return {key: omit_doc_config_keys(value) for key, value in config.items() if not str(key).startswith('_')}
+    if isinstance(config, list):
+        return [omit_doc_config_keys(item) for item in config]
+    return config
 
 
 def resolve_test_config_placeholders(config_dict, cluster_dict):

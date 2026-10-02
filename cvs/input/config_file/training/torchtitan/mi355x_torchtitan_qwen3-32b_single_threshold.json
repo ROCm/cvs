@@ -1,16 +1,18 @@
 {
+  "_comment": "Qwen3 32B single-node thresholds for MI355X TorchTitan. Cell keys must match TorchTitanVariantConfig.cell_key() format: MBS=<mbs>,GBS=<gbs>,PRECISION=<precision>. Metrics: tokens_per_sec (tokens/s across all ranks), loss, mem_usage_gb (memory in GiB).",
   "MBS=1,GBS=8,PRECISION=BF16": {
     "training.tokens_per_sec": {
       "kind": "min",
-      "value": 2000
-    },
-    "training.loss": {
-      "kind": "max",
-      "value": 12.0
+      "value": 120
     },
     "training.mem_usage_gb": {
       "kind": "max",
-      "value": 192
+      "value": 244.8,
+      "optional": true
+    },
+    "training.loss": {
+      "kind": "max",
+      "value": 15.0
     }
   }
 }

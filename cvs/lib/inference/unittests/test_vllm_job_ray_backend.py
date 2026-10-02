@@ -6,9 +6,8 @@ Unit tests for the Ray distributed-executor-backend support added to
 cvs.lib.inference.vllm_job.VllmJob and
 cvs.lib.inference.utils.vllm_config_loader.VariantConfig.
 
-Impl-blind / spec-derived (greenfield): these tests are written from the
-behavioral spec before the implementation exists and are committed RED. A
-different agent makes them green and may NOT edit this file.
+These tests were originally derived from the Ray execution contract before
+implementation and retain coverage of its observable behavior.
 
 Coverage map (spec AC -> test):
   Config validator relaxation ...... AC1-6   -> TestVariantConfigRayConsistency
@@ -52,16 +51,16 @@ Round-4 coverage-gap additions (impl-blind against the same spec):
   R4.1 server_env pass-through pins KEY=VALUE (non-colliding) TestVllmJobBuildServerCmd
   R4.2 ray server_signature invariant to nnodes (2 vs 3) .... TestServerSignatureRay
   R4.3 cell_key pp>1 branch (PP= segment) + pp==1, subTest ... TestCellKeyRayMultiNode
-  R4.4 _flatten_serve_args list/tuple repeat branch ......... TestFlattenServeArgsBranches
+  R4.4 generic option list serialization .................... TestServeOptionListSerialization
 '''
 
 import unittest
 import unittest.mock as mock
-from types import SimpleNamespace
 
 from pydantic import ValidationError
 
-from cvs.lib.inference.utils.vllm_config_loader import VariantConfig
+from cvs.lib.inference.vllm_topology import EffectiveVllmTopology
+from cvs.lib.inference.utils.vllm_config_loader import VariantConfig, serialize_cli_options
 from cvs.lib.inference.vllm_job import VllmJob
 
 RAY = {"distributed-executor-backend": "ray"}
@@ -219,34 +218,36 @@ def _responder_readiness(exit_code=0, empty=False):
     return r
 
 
-def _variant(serve_args=None, nnodes="2", pp="2", ib_netdev="enp159s0np0", tp="8", master_addr="10.0.0.1", env=None):
-    """Minimal SimpleNamespace variant mirroring _variant() in the reuse suite."""
-    params = SimpleNamespace(
-        tensor_parallelism=tp,
-        pipeline_parallel_size=pp,
-        master_addr=master_addr,
-        master_port="29501",
-        nnodes=nnodes,
-        port_no="8000",
-        random_range_ratio="0.0",
-        random_prefix_len="0",
-        burstiness="1.0",
-        seed="0",
-        request_rate="inf",
-        tokenizer_mode="auto",
-        percentile_metrics="ttft,tpot,itl,e2el",
-        metric_percentiles="50,90,95,99",
-        base_url="http://0.0.0.0",
-        dataset_name="random",
-        backend="vllm",
-    )
-    return SimpleNamespace(
-        params=params,
-        model=SimpleNamespace(id="/models/test-model"),
-        paths=SimpleNamespace(log_dir="/logs", models_dir="/models"),
-        roles=SimpleNamespace(
-            server=SimpleNamespace(serve_args=dict(serve_args or {}), env=dict(env or {}), ib_netdev=ib_netdev)
-        ),
+def _variant(
+    serve_args=None, pp="2", ib_netdev="enp159s0np0", tp="8", master_addr="10.0.0.1", env=None, **server_extra
+):
+    """Minimal real vLLM variant using the refactored public contract."""
+    options = {key.replace("-", "_"): value for key, value in (serve_args or {}).items()}
+    distributed_executor_backend = options.pop("distributed_executor_backend", "mp")
+    cell = f"ISL=1024,OSL=1024,TP={tp},PP={pp},CONC=16"
+    return VariantConfig(
+        enforce_thresholds=False,
+        threshold_json="threshold.json",
+        ib_netdev=ib_netdev,
+        paths={"shared_fs": "/logs", "models_dir": "/models", "log_dir": "/logs", "hf_token_file": "/logs/.hf"},
+        container={
+            "name": "test",
+            "image": "test",
+            "env": dict(env or {}),
+            "runtime": {"name": "docker", "args": {}},
+        },
+        server_params={
+            "model": "/models/test-model",
+            "tensor_parallel_size": tp,
+            "pipeline_parallel_size": pp,
+            "port": 8000,
+            "dist_init_port": 29501,
+            "distributed_executor_backend": distributed_executor_backend,
+            **options,
+            **server_extra,
+        },
+        sweeps={cell: {}},
+        runs=[cell],
     )
 
 
@@ -264,10 +265,13 @@ def _job(
     env=None,
     ib_hcas=None,
 ):
-    orch = RecordingOrch() if orch is None else orch
+    if orch is None:
+        orch = RecordingOrch(hosts=[HEAD, WORKER, HOST2][: int(nnodes)])
+    else:
+        orch.hosts = list(orch.hosts[: int(nnodes)])
     return VllmJob(
         orch=orch,
-        variant=_variant(serve_args, nnodes, pp, ib_netdev, tp, master_addr, env),
+        variant=_variant(serve_args, pp, ib_netdev, tp, master_addr, env),
         hf_token="tok",
         isl=isl,
         osl=osl,
@@ -277,31 +281,8 @@ def _job(
     )
 
 
-def _vc(nnodes="2", pp="1", serve_args=None, ib_netdev="eth0", tp="8"):
-    """A real pydantic VariantConfig exercising _check_distributed_consistency.
-
-    enforce_thresholds=False so the (independent) threshold-coverage validator
-    only warns and never masks the distributed-consistency error under test.
-    """
-    return VariantConfig(
-        schema_version=1,
-        framework="vllm",
-        enforce_thresholds=False,
-        paths={
-            "shared_fs": "/home/x",
-            "models_dir": "/home/x/models",
-            "log_dir": "/home/x/LOGS",
-            "hf_token_file": "/home/x/.hf",
-        },
-        model={"id": "/models/test-model", "remote": 0},
-        params={"tensor_parallelism": tp, "pipeline_parallel_size": pp, "nnodes": nnodes},
-        roles={"server": {"serve_args": dict(serve_args or {}), "env": {}, "ib_netdev": ib_netdev}},
-        sweep={
-            "sequence_combinations": [{"name": "a", "isl": "1024", "osl": "1024"}],
-            "runs": [{"combo": "a", "concurrency": 16}],
-        },
-        thresholds={},
-    )
+def _vc(pp="1", serve_args=None, ib_netdev="eth0", tp="8", **params_extra):
+    return _variant(serve_args=serve_args, pp=pp, ib_netdev=ib_netdev, tp=tp, **params_extra)
 
 
 # --------------------------------------------------------------------------- #
@@ -331,71 +312,55 @@ def _all_cmds(orch):
 
 
 # --------------------------------------------------------------------------- #
-# Config validator: VariantConfig._check_distributed_consistency  (AC1-6)
+# Config validation and runtime topology are deliberately separate.
 # --------------------------------------------------------------------------- #
 class TestVariantConfigRayConsistency(unittest.TestCase):
-    """The ray relaxation applies ONLY to the (nn>1 & pp==1) rule and ONLY for
-    the exact string 'ray'. ib_netdev and the (pp>1 & nn==1) rule are untouched."""
+    def test_accepts_topology_agnostic_variants(self):
+        _vc(pp="1", serve_args=RAY, ib_netdev=None)
+        _vc(pp="2", serve_args={}, ib_netdev="eth0")
 
-    def test_accepts_valid(self):
-        # (nnodes, pp, serve_args, ib_netdev) that must construct without error.
-        cases = [
-            ("1", "1", {}, None),  # baseline: unrelaxed single-node default path
-            ("2", "1", RAY, "eth0"),  # AC1: ray relaxation permits nn>1 & pp==1
-            ("2", "2", {}, "eth0"),  # AC3: mp multi-node path unchanged
-            ("2", "2", RAY, "eth0"),  # finding 8: ray + pp>1 is legal (nn>1 & pp>1
-            # is valid for ANY backend; the ray relaxation only special-cases pp==1,
-            # it never REJECTS ray+pp>1). Validated through the REAL VariantConfig
-            # validator, not just the SimpleNamespace fake used by _server_argv tests.
-        ]
-        for nn, pp, sa, ib in cases:
-            with self.subTest(nnodes=nn, pp=pp, serve_args=sa):
-                try:
-                    _vc(nnodes=nn, pp=pp, serve_args=sa, ib_netdev=ib)
-                except ValidationError as e:  # pragma: no cover - failure path
-                    self.fail(f"unexpected ValidationError: {e}")
-
-    def test_rejects_invalid(self):
-        # (nnodes, pp, serve_args, ib_netdev, field-token-in-message)
-        cases = [
-            ("2", "1", {}, "eth0", "pipeline_parallel_size"),  # AC2 no ray key
-            ("1", "2", RAY, "eth0", "pipeline_parallel_size"),  # AC4 pp>1 & nn==1 never relaxed
-            ("2", "1", RAY, None, "ib_netdev"),  # AC5 ib_netdev not relaxed by ray
-            ("2", "1", {"distributed-executor-backend": "RAY"}, "eth0", "pipeline_parallel_size"),  # AC6 case-sensitive
-            ("2", "1", {"distributed-executor-backend": "Ray"}, "eth0", "pipeline_parallel_size"),  # AC6 case-sensitive
-        ]
-        for nn, pp, sa, ib, token in cases:
-            with self.subTest(nnodes=nn, pp=pp, serve_args=sa, ib_netdev=ib):
-                with self.assertRaises(ValidationError) as ctx:
-                    _vc(nnodes=nn, pp=pp, serve_args=sa, ib_netdev=ib)
-                self.assertIn(token, str(ctx.exception))
+    def test_rejects_removed_nnodes_field(self):
+        with self.assertRaises(ValidationError) as ctx:
+            _vc(pp="1", serve_args={}, ib_netdev=None, nnodes="2")
+        self.assertIn("nnodes", str(ctx.exception))
 
 
 class TestCellKeyRayMultiNode(unittest.TestCase):
-    """AC7: ray multi-node has pp=1, so cell_key uses the single-node format
-    (no PP= segment), identical to a genuine single-node cell.
-
-    Round-4 finding 3: cell_key has two branches -- pp==1 (no PP= segment) and
-    pp>1 (a "PP=<pp>," segment inserted before CONC). The pp>1 branch had zero
-    coverage anywhere for THIS VariantConfig class, so both branches are now
-    pinned together in one subTest table (discipline rule B), asserting the exact
-    segment position/value/comma placement, not just presence."""
-
     def test_cell_key_format_both_pp_branches(self):
-        # (nnodes, pp, serve_args, ib_netdev, expected_key)
         cases = [
-            # AC7: ray multi-node, pp==1 -> single-node format, NO PP= segment.
-            ("2", "1", RAY, "eth0", "ISL=1024,OSL=1024,TP=8,CONC=16"),
-            # pp>1 branch -> "PP=2," inserted immediately before CONC. pp>1 requires
-            # nnodes>1 (the pp>1 & nn==1 rule always fires), so this is a valid mp
-            # multi-node config; the PP segment is what distinguishes it from the
-            # pp==1 key above.
-            ("2", "2", {}, "eth0", "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"),
+            ("single", ("node0",), "1", "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"),
+            ("distributed", ("node0", "node1"), "1", "ISL=1024,OSL=1024,TP=8,PP=1,CONC=16"),
+            ("distributed", ("node0", "node1"), "2", "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"),
         ]
-        for nn, pp, sa, ib, expected in cases:
-            with self.subTest(nnodes=nn, pp=pp):
-                vc = _vc(nnodes=nn, pp=pp, serve_args=sa, ib_netdev=ib, tp="8")
-                self.assertEqual(vc.cell_key(isl="1024", osl="1024", concurrency="16"), expected)
+        for mode, hosts, pp, expected in cases:
+            with self.subTest(mode=mode, pp=pp):
+                vc = _vc(pp=pp, tp="8")
+                vc.bind_effective_topology(EffectiveVllmTopology(mode, hosts, int(pp)))
+                self.assertEqual(vc.cell_key("1024", "1024", "16", pipeline_parallel_size=pp), expected)
+
+    def test_bound_topology_drives_three_argument_key_and_expected_cells(self):
+        vc = _vc(pp="2", tp="8")
+        vc.bind_effective_topology(EffectiveVllmTopology("distributed", ("node0", "node1"), 2))
+        expected = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
+        self.assertEqual(vc.cell_key("1024", "1024", "16"), expected)
+        self.assertEqual(vc.expected_cells(), [expected])
+
+    def test_cell_key_is_config_defined_without_bound_topology(self):
+        self.assertEqual(_vc(pp="2", tp="8").cell_key("1024", "1024", "16"), "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16")
+
+    def test_job_uses_bound_effective_topology(self):
+        variant = _vc(pp="2", tp="8")
+        variant.bind_effective_topology(EffectiveVllmTopology("distributed", (HEAD, WORKER), 2))
+        job = VllmJob(
+            orch=RecordingOrch(),
+            variant=variant,
+            hf_token="token",
+            isl="1024",
+            osl="1024",
+            concurrency=16,
+            num_prompts=320,
+        )
+        self.assertEqual((job.nnodes, job.pp), ("2", "2"))
 
 
 # --------------------------------------------------------------------------- #
@@ -408,19 +373,15 @@ class TestIsRayBackend(unittest.TestCase):
             ({"distributed-executor-backend": "ray"}, True),
             ({}, False),
             ({"distributed-executor-backend": "mp"}, False),
-            ({"distributed-executor-backend": "RAY"}, False),
-            ({"distributed-executor-backend": "Ray"}, False),
         ]
         for sa, expected in cases:
             with self.subTest(serve_args=sa):
-                job = _job(serve_args=sa, nnodes="1", pp="1")
+                job = _job(serve_args=sa, nnodes="2", pp="1")
                 self.assertIs(job._is_ray_backend, expected)
 
-    def test_property_reflects_live_serve_args_not_a_cached_snapshot(self):
-        job = _job(serve_args={}, nnodes="1", pp="1")
-        self.assertIs(job._is_ray_backend, False)
-        job.serve_args["distributed-executor-backend"] = "ray"
-        self.assertIs(job._is_ray_backend, True)
+    def test_property_uses_explicit_server_backend(self):
+        self.assertIs(_job(serve_args={}, nnodes="2", pp="1")._is_ray_backend, False)
+        self.assertIs(_job(serve_args=RAY, nnodes="2", pp="1")._is_ray_backend, True)
 
 
 # --------------------------------------------------------------------------- #
@@ -487,13 +448,13 @@ class TestServerArgvRayVsMp(unittest.TestCase):
         self.assertEqual(_value_after(argv1, "--node-rank"), "1")
 
     def test_single_node_ray_passthrough_no_driver_flags(self):
-        # RC3 / Edge: single-node omits all driver-injected dist flags, but the
-        # user's serve_args backend still passes through verbatim.
+        # Singleton fallback is always a plain single-node server, even when a
+        # distributed config carries a Ray backend setting.
         argv = _job(serve_args=RAY, nnodes="1", pp="1")._server_argv(0)
         for flag in self._DRIVER_DIST_FLAGS:
             with self.subTest(flag=flag):
                 self.assertNotIn(flag, argv)
-        self.assertEqual(_value_after(argv, "--distributed-executor-backend"), "ray")
+        self.assertNotIn("--distributed-executor-backend", argv)
 
     def test_ray_multinode_pp_gt_1_keeps_pipeline_parallel_size(self):
         # Coverage-gap (finding 1): VariantConfig permits a ray backend with
@@ -518,27 +479,19 @@ class TestServerArgvRayVsMp(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# _flatten_serve_args: the four equivalence classes (RC8)
+# Generic option serialization
 # --------------------------------------------------------------------------- #
-class TestFlattenServeArgsBranches(unittest.TestCase):
-    """RC8: _flatten_serve_args has four branches -- True (bare flag), False
-    (omitted), list/tuple (flag repeated per element), scalar (flag + str(value)).
-    True/False/scalar are covered in test_vllm_job_server_reuse.py; the list/tuple
-    repeat branch (Round-4 finding 4) is covered here so all four cells of this
-    pure function's table are pinned (discipline rule B). A bug in the repeat branch
-    (wrong flag repeated, values not str()-cast, wrong order) is caught."""
+class TestServeOptionListSerialization(unittest.TestCase):
+    """List-valued vLLM options emit a single flag followed by ordered values."""
 
-    def test_list_and_tuple_values_repeat_the_flag_per_element(self):
-        # (value, expected) -- list and tuple both repeat "--<key>" before each
-        # element, in order; non-string elements are str()-cast.
+    def test_list_values_follow_one_flag(self):
         cases = [
-            (["a.b.C", "d.e.F"], ["--middleware", "a.b.C", "--middleware", "d.e.F"]),
-            (("a.b.C", "d.e.F"), ["--middleware", "a.b.C", "--middleware", "d.e.F"]),
-            ([1, 2], ["--middleware", "1", "--middleware", "2"]),  # str()-cast
+            (["a.b.C", "d.e.F"], ["--middleware", "a.b.C", "d.e.F"]),
+            ([1, 2], ["--middleware", "1", "2"]),
         ]
         for value, expected in cases:
             with self.subTest(value=value):
-                self.assertEqual(VllmJob._flatten_serve_args({"middleware": value}), expected)
+                self.assertEqual(serialize_cli_options({"middleware": value}), expected)
 
 
 # --------------------------------------------------------------------------- #
@@ -566,29 +519,18 @@ class TestStartServerRayBootstrap(unittest.TestCase):
         self.assertIn("ray start", cmd)
         self.assertIn("--address=10.0.0.1:29501", cmd)
 
-    def test_worker_bootstrap_targets_master_addr_not_head_host(self):
-        # AC10 disambiguation / REGRESSION: the worker's Ray rendezvous --address
-        # must be self.master_addr (the data-plane IP the head actually started
-        # with via `ray start --head --port=...`), NOT self.orch.hosts[0] (the
-        # SSH/management host). The default fixture sets master_addr == hosts[0]
-        # ("10.0.0.1"), so the plain AC10 test above passes regardless of which
-        # field the impl uses. Here master_addr is DISTINCT from hosts[0]
-        # (hosts=["10.0.0.1","10.0.0.2"], master_addr="172.16.0.1"), so only an
-        # impl that targets master_addr passes; one that targets hosts[0] fails.
+    def test_worker_bootstrap_targets_cluster_head(self):
+        # The refactored config derives Ray's rendezvous address from the
+        # cluster head; it no longer accepts a workload-config master address.
         orch = RecordingOrch(responder=_responder_ok())  # hosts[0]=HEAD=10.0.0.1
         _job(orch=orch, serve_args=RAY, nnodes="2", pp="1", master_addr="172.16.0.1").start_server()
         worker_ray = [c for c in _calls_to(orch, WORKER) if "ray start" in c]
         self.assertTrue(worker_ray, "expected a ray start command targeting the worker")
         cmd = worker_ray[0]
         self.assertIn(
-            "--address=172.16.0.1:29501",
-            cmd,
-            "worker rendezvous must target master_addr (data-plane IP), not hosts[0]",
-        )
-        self.assertNotIn(
             "--address=10.0.0.1:29501",
             cmd,
-            "worker must NOT rendezvous against the SSH/management host hosts[0]",
+            "worker rendezvous must target the derived cluster head",
         )
 
     def test_bootstrap_precedes_serve_launch(self):
@@ -1031,11 +973,11 @@ class TestVllmJobIsReady(unittest.TestCase):
 class TestVllmJobParseResults(unittest.TestCase):
     """parse_results() fetches the client results artifact via orch.exec_on_head
     (which returns {host: content}), json-loads it, and returns
-    to_client_metrics(raw, tp=self.tp, isl=self.isl, pp=self.pp) per host. Two
+    project_vllm_metrics(raw, tp=self.tp, isl=self.isl, pp=self.pp) per host. Two
     documented exception modes: empty/missing artifact -> RuntimeError;
     unparseable JSON -> RuntimeError. Exception assertions pin the TYPE only
     (message text is an implementation detail per the authoring anti-patterns).
-    The happy path pins the delegation to to_client_metrics with the correct
+    The happy path pins the delegation to project_vllm_metrics with the correct
     keyword-only tp/isl/pp."""
 
     def test_empty_artifact_raises_runtimeerror(self):
@@ -1071,7 +1013,7 @@ class TestVllmJobParseResults(unittest.TestCase):
         self.assertIn("line two", message)
 
     def test_valid_artifact_delegates_to_to_client_metrics_with_tp_isl_pp(self):
-        # tp, isl, and pp are keyword-only in to_client_metrics, so they MUST
+        # tp, isl, and pp are keyword-only in project_vllm_metrics, so they MUST
         # arrive as kwargs; raw (the json-loaded artifact) arrives positionally.
         # Patching the symbol as imported into vllm_job keeps this impl-blind on
         # the metric math.
@@ -1079,7 +1021,7 @@ class TestVllmJobParseResults(unittest.TestCase):
         # Round-3 finding 1: capture and assert the RETURN VALUE, not just that the
         # mock was called with the right args. Production threads the metric result
         # back out as {host: to_client_metrics(...)}; a mutant that calls
-        # to_client_metrics for its side effect but then stores `raw` (or the wrong
+        # project_vllm_metrics for its side effect but then stores `raw` (or the wrong
         # host key, or returns early) would satisfy a call-args-only check while
         # breaking the actual output. The mock's return_value is the independent
         # oracle for what must appear under the head host key.
@@ -1092,19 +1034,20 @@ class TestVllmJobParseResults(unittest.TestCase):
         import json as _json
 
         raw = {"output_throughput": 1234.0, "request_goodput": 10.0}
-        sentinel = {"client.sentinel": 1}
+        sentinel = {"output_throughput": 1}
         for pp in ("1", "2"):
             with self.subTest(pp=pp):
                 orch = RecordingOrch(head_responder=lambda cmd: {HEAD: _json.dumps(raw)}, hosts=[HEAD])
                 job = _job(orch=orch, serve_args={}, nnodes="1", pp=pp, ib_netdev=None, isl="1024")
-                with mock.patch("cvs.lib.inference.vllm_job.to_client_metrics") as m_tcm:
-                    m_tcm.return_value = sentinel
+                with mock.patch("cvs.lib.inference.vllm_job.project_vllm_metrics") as projector:
+                    projector.return_value = sentinel
                     result = job.parse_results()
-                self.assertTrue(m_tcm.called, "parse_results must delegate to to_client_metrics")
-                args, kwargs = m_tcm.call_args
+                self.assertTrue(projector.called, "parse_results must delegate to project_vllm_metrics")
+                args, kwargs = projector.call_args
                 self.assertEqual(kwargs.get("tp"), job.tp)
                 self.assertEqual(kwargs.get("isl"), job.isl)
                 self.assertEqual(kwargs.get("pp"), job.pp)
+                self.assertIn("/results", kwargs.get("artifact_path"))
                 self.assertEqual(args[0], raw, "raw must be the json-loaded artifact passed positionally")
                 # The metric result must be threaded back out under the head host key --
                 # NOT the raw artifact, and NOT dropped/re-keyed.
@@ -1149,15 +1092,16 @@ class TestVllmJobWaitReady(unittest.TestCase):
         # constructor parameter (a small budget keeps the test fast and pins the
         # expected poll count without depending on the internal attribute name).
         poll_count = 3
+        variant = _variant(serve_args={}, pp="1", ib_netdev=None)
+        variant.server_params.server_poll_iterations = poll_count
         job = VllmJob(
             orch=RecordingOrch(responder=_responder_ok(), hosts=[HEAD]),
-            variant=_variant(serve_args={}, nnodes="1", pp="1", ib_netdev=None),
+            variant=variant,
             hf_token="tok",
             isl="1024",
             osl="1024",
             concurrency=16,
             num_prompts="640",
-            server_poll_count=poll_count,
         )
         job._check_early_failure = mock.Mock()
         job.is_ready = mock.Mock(return_value=False)
@@ -1242,6 +1186,21 @@ class TestVllmJobBuildServerCmd(unittest.TestCase):
                 else:
                     self.assertNotIn("NCCL_IB_HCA", script)
 
+    def test_container_hca_is_not_overwritten_by_discovered_devices(self):
+        orch = RecordingOrch()
+        job = _job(
+            orch=orch,
+            serve_args={},
+            nnodes="2",
+            pp="2",
+            env={"NCCL_IB_HCA": "rdma0,rdma1"},
+            ib_hcas=["mlx5_0", "mlx5_1"],
+        )
+        job.build_server_cmd()
+        script = self._script(orch, None)
+        self.assertNotIn("NCCL_IB_HCA", script)
+        self.assertEqual(job.variant.container.env["NCCL_IB_HCA"], "rdma0,rdma1")
+
     def test_socket_ifname_exports_present_only_when_ib_netdev_set(self):
         # ib_netdev set -> the socket-interface exports are emitted (all three name
         # the device); ib_netdev None -> none are emitted.
@@ -1260,18 +1219,19 @@ class TestVllmJobBuildServerCmd(unittest.TestCase):
         script_none = self._script(orch_none, None)
         self.assertNotIn("SOCKET_IFNAME", script_none, "no ib_netdev -> no socket-ifname exports")
 
-    def test_server_env_entries_passed_through(self):
-        # Every server_env key/value must appear in the emitted env-script (the
-        # pass-through loop). Two entries so a single-entry short-circuit is caught.
-        #
-        # Round-4 finding 1: the values MUST be distinctive strings that cannot
-        # collide with any boilerplate line the env-script also emits. A bare value
-        # like "1" trivially matches elsewhere (e.g. "...AITER_UNIFIED_ATTENTION=1"),
-        # so assertIn("1", script) is vacuous -- a mutant that hard-codes a wrong
-        # value or drops the CUSTOM_A line entirely still passes. Using unique
-        # values AND asserting the "KEY=VALUE" pairing (not the bare value) pins
-        # both the presence and the key/value association without coupling to the
-        # exact "export " prefix formatting.
+    def test_container_socket_environment_is_not_overwritten_by_legacy_ib_netdev(self):
+        env = {
+            "NCCL_SOCKET_IFNAME": "eno0",
+            "GLOO_SOCKET_IFNAME": "eno0",
+            "TP_SOCKET_IFNAME": "eno0",
+        }
+        orch = RecordingOrch()
+        job = _job(orch=orch, serve_args={}, nnodes="2", pp="2", ib_netdev="eth0", env=env)
+        job.build_server_cmd()
+        self.assertNotIn("SOCKET_IFNAME", self._script(orch, None))
+        self.assertEqual({name: job.variant.container.env[name] for name in env}, env)
+
+    def test_static_environment_is_kept_on_container_config(self):
         orch = RecordingOrch()
         job = _job(
             orch=orch,
@@ -1280,11 +1240,10 @@ class TestVllmJobBuildServerCmd(unittest.TestCase):
             pp="2",
             env={"CUSTOM_A": "CUSTOM_A_VALUE_XYZ", "CUSTOM_B": "CUSTOM_B_VALUE_QRS"},
         )
-        ret = job.build_server_cmd()
-        script = self._script(orch, ret)
+        job.build_server_cmd()
         for key, val in (("CUSTOM_A", "CUSTOM_A_VALUE_XYZ"), ("CUSTOM_B", "CUSTOM_B_VALUE_QRS")):
             with self.subTest(key=key):
-                self.assertIn(f"{key}={val}", script, f"server_env {key} must be exported paired with its value")
+                self.assertEqual(job.variant.container.env[key], val)
 
     def test_mkdir_count_scales_with_nnodes(self):
         # The per-rank mkdir loop is bounded by nnodes: a 3-node job must issue

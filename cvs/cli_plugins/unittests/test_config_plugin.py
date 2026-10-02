@@ -144,7 +144,7 @@ class TestConfigPlugin(unittest.TestCase):
         self.assertEqual(exc.exception.code, 2)
 
     def test_copy_overwrite_requires_force(self):
-        test_config_path = "training/jaxmaxtext/mi300x_jaxmaxtext_llama-3.3-70b_distributed.json"
+        test_config_path = "training/jaxmaxtext/mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json"
         with tempfile.TemporaryDirectory() as tmpdir:
             dest = os.path.join(tmpdir, "cfg.json")
             self.plugin.run(

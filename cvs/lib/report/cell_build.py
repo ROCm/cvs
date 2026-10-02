@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Mapping, Optional
 
 from cvs.lib.report.formatting import fmt_num
@@ -9,8 +10,13 @@ from cvs.lib.report.types import InferenceReportConfig
 from cvs.lib.report.verdict import _check_one
 
 
-def metric_pass(metric: str, actual: Any, spec: Optional[dict]) -> str:
-    if spec is None or actual is None:
+def metric_pass(metric: str, actual: Any, spec: Optional[dict], evaluator=None) -> str:
+    if spec is None:
+        return "na"
+    if evaluator is not None:
+        status, _reason = evaluator(metric, actual, spec)
+        return status
+    if actual is None:
         return "na"
     err = _check_one(metric, actual, spec)
     return "fail" if err else "pass"
@@ -71,22 +77,42 @@ class CellRecordBuilder:
         if not specs:
             return "na"
         for metric, spec in specs.items():
-            if metric_pass(metric, actuals.get(metric), spec) == "fail":
+            status = metric_pass(
+                metric,
+                actuals.get(metric),
+                spec,
+                evaluator=self.config.metric_verdict,
+            )
+            if status == "fail":
                 return "fail"
+            if status == "na":
+                return "na"
         return "pass"
 
-    def resolve_pytest_nodeids(self, concurrency: Any) -> dict[str, str]:
+    def resolve_pytest_nodeids(self, concurrency: Any, cell_id: str = "") -> dict[str, str]:
         conc_suffix = f"-{concurrency}]"
         inference_nid = ""
         metrics_nid = ""
+        metric_test_priority = {
+            "test_verify_cell_metrics": 0,
+            "test_cell_metrics": 1,
+            "test_metric": 2,
+            "test_gpu_metric": 3,
+            "test_prom_metric": 4,
+        }
+        metrics_priority = len(metric_test_priority)
         for nodeid in self._lifecycle_report():
-            if conc_suffix not in nodeid:
+            if cell_id and f"[{cell_id}" not in nodeid:
+                continue
+            if not cell_id and conc_suffix not in nodeid:
                 continue
             if self.config.inference_test_substring in nodeid:
                 inference_nid = inference_nid or nodeid
-            if "test_cell_metrics" in nodeid or "test_metric" in nodeid:
-                if not metrics_nid or "test_cell_metrics" in nodeid:
-                    metrics_nid = nodeid
+            test_name = nodeid.rsplit("::", 1)[-1].split("[", 1)[0]
+            priority = metric_test_priority.get(test_name)
+            if priority is not None and priority < metrics_priority:
+                metrics_nid = nodeid
+                metrics_priority = priority
         return {
             "pytest_inference_nodeid": inference_nid,
             "pytest_metrics_nodeid": metrics_nid,
@@ -95,12 +121,18 @@ class CellRecordBuilder:
     def _lifecycle_report(self) -> Mapping[str, list]:
         return getattr(self, "_ctx_lifecycle", {})
 
-    def lifecycle_for_cell(self, lifecycle_report: Mapping[str, list], concurrency: Any) -> Dict[str, float]:
+    def lifecycle_for_cell(
+        self, lifecycle_report: Mapping[str, list], concurrency: Any, cell_id: str = ""
+    ) -> Dict[str, float]:
         conc = str(concurrency)
         suffix = f"-{conc}]"
         out: Dict[str, float] = {}
         for nodeid, rows in lifecycle_report.items():
-            if self.config.inference_test_substring not in nodeid or suffix not in nodeid:
+            if self.config.inference_test_substring not in nodeid:
+                continue
+            if cell_id and f"[{cell_id}" not in nodeid:
+                continue
+            if not cell_id and suffix not in nodeid:
                 continue
             for label, value, unit in rows:
                 if unit != "s" or label not in self.config.cell_lifecycle_labels:
@@ -122,7 +154,8 @@ class CellRecordBuilder:
         multi_host: bool,
     ) -> dict:
         model, gpu, isl, osl, policy, conc = key
-        cell_id = variant_config.cell_key(isl, osl, conc)
+        is_canonical_key = isinstance(policy, str) and policy.startswith(("ISL=", "SIZE="))
+        cell_id = policy if is_canonical_key else variant_config.cell_key(isl, osl, conc)
         thresholds_map = getattr(variant_config, "thresholds", {}) or {}
         thresholds_cell = thresholds_map.get(cell_id) or {}
         enforce = bool(getattr(variant_config, "enforce_thresholds", False))
@@ -139,8 +172,26 @@ class CellRecordBuilder:
                     "actual": actual,
                     "unit": self.config.metric_units.get(short, ""),
                     "spec": spec,
-                    "status": metric_pass(full, actual, spec) if enforce and spec else "record",
-                    "bar_pct": bar_pct(float(actual), spec) if spec is not None and actual is not None else None,
+                    "status": (
+                        metric_pass(
+                            full,
+                            actual,
+                            spec,
+                            evaluator=self.config.metric_verdict,
+                        )
+                        if enforce and spec
+                        else "record"
+                    ),
+                    "bar_pct": (
+                        bar_pct(float(actual), spec)
+                        if spec is not None
+                        and actual is not None
+                        and (
+                            self.config.metric_verdict is None
+                            or (type(actual) in (int, float) and math.isfinite(actual))
+                        )
+                        else None
+                    ),
                     "margin": margin_text(actual, spec) if spec else None,
                 }
             )
@@ -149,7 +200,7 @@ class CellRecordBuilder:
             tier: self.tier_status(actuals, thresholds_cell, tier, enforce) for tier in self.config.metric_tier_order
         }
         self._ctx_lifecycle = lifecycle_report
-        pytest_links = self.resolve_pytest_nodeids(conc)
+        pytest_links = self.resolve_pytest_nodeids(conc, cell_id if is_canonical_key else "")
 
         return {
             "model": model,
@@ -164,7 +215,7 @@ class CellRecordBuilder:
             "metrics": metrics,
             "tiers": tiers,
             "actuals": dict(actuals),
-            "cell_lifecycle": self.lifecycle_for_cell(lifecycle_report, conc),
+            "cell_lifecycle": self.lifecycle_for_cell(lifecycle_report, conc, cell_id if is_canonical_key else ""),
             **pytest_links,
         }
 

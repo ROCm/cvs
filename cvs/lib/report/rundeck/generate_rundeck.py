@@ -21,6 +21,7 @@ from cvs.lib.report.rundeck.publish_helpers import bundle_artifact_hrefs, cvs_ve
 from cvs.lib.report.rundeck.render import render_rundeck_html
 from cvs.lib.report.types import InferenceReportConfig
 from cvs.lib.report.viewer.scaffold import viewer_basename_for, write_interactive_viewer
+from cvs.lib.report.viewer.status_matrix import write_status_matrix_viewer
 
 log = globals.log
 
@@ -43,7 +44,8 @@ class RundeckPublisher:
             )
             return None
 
-        store = get_session_results()
+        store = dict(get_session_results())
+        store.setdefault("suite_stem", getattr(self.config, "_suite_name", None))
         results = store.get("cvs_results_dict") or store.get("inf_res_dict")
         if not results:
             log.info("Skipping Run Deck generation: no results in session store")
@@ -51,7 +53,7 @@ class RundeckPublisher:
 
         variant_config = store.get("variant_config")
         builder_id = profile.get("dataset_builder") if isinstance(profile, dict) else "sweep"
-        if variant_config is None and builder_id == "sweep":
+        if variant_config is None and builder_id in ("sweep", "training_sweep"):
             log.warning("Skipping Run Deck generation: variant_config not in session store")
             return None
 
@@ -104,13 +106,17 @@ class RundeckPublisher:
         )
 
         viewer_path = self._write_viewer(profile, config, out_dir, payload)
-        summary_path = write_inference_ci_summary(payload, config, out_dir)
         artifacts = {
             "html": html_path_written,
             "json": json_path,
             "payload": payload,
-            "summary": summary_path,
         }
+        # The CI summary is inference-shaped (worst cells / parity / tok/s); only
+        # emit it for the sweep builder. Non-sweep decks (e.g. status_matrix) carry
+        # their verdict in the main deck HTML.
+        builder_id = profile.get("dataset_builder", "sweep") if isinstance(profile, dict) else "sweep"
+        if builder_id == "sweep":
+            artifacts["summary"] = write_inference_ci_summary(payload, config, out_dir)
         if viewer_path is not None:
             artifacts["viewer"] = viewer_path
 
@@ -119,7 +125,7 @@ class RundeckPublisher:
             config.suite_id,
             artifacts["html"],
             artifacts["json"],
-            artifacts["summary"],
+            artifacts.get("summary", "n/a"),
         )
         self._register_artifacts(artifacts, config)
         return artifacts
@@ -133,15 +139,29 @@ class RundeckPublisher:
     ) -> Optional[Path]:
         if not config.interactive_viewer or not isinstance(profile, (dict, InferenceReportConfig)):
             return None
-        if isinstance(profile, dict) and profile.get("dataset_builder", "sweep") != "sweep":
+        builder_id = profile.get("dataset_builder", "sweep") if isinstance(profile, dict) else "sweep"
+        if builder_id not in ("sweep", "training_sweep", "status_matrix"):
             return None
         viewer_name = viewer_basename_for(config.report_basename)
         viewer_path = out_dir / viewer_name
+        # Use the payload's resolved subtitle (e.g. {mode} substituted) rather than
+        # the raw profile subtitle, so the viewer matches the deck page.
+        resolved_subtitle = (payload.get("report") or {}).get("subtitle") or config.subtitle
+        json_basename = f"{config.report_basename}.json"
+        if builder_id == "status_matrix":
+            write_status_matrix_viewer(
+                viewer_path,
+                json_basename=json_basename,
+                title=config.title,
+                subtitle=resolved_subtitle,
+                embed_payload=payload,
+            )
+            return viewer_path
         write_interactive_viewer(
             viewer_path,
-            json_basename=f"{config.report_basename}.json",
+            json_basename=json_basename,
             title=config.title,
-            subtitle=config.subtitle,
+            subtitle=resolved_subtitle,
             tier_order=config.metric_tier_order,
             embed_payload=payload,
         )
@@ -152,7 +172,9 @@ class RundeckPublisher:
             return
         self.report_manager.add_html_to_report(artifacts["html"], link_name=config.link_name)
         self.report_manager.add_html_to_report(artifacts["json"], link_name=f"{config.link_name} JSON")
-        self.report_manager.add_html_to_report(artifacts["summary"], link_name=f"{config.link_name} summary")
+        summary = artifacts.get("summary")
+        if summary is not None:
+            self.report_manager.add_html_to_report(summary, link_name=f"{config.link_name} summary")
         viewer = artifacts.get("viewer")
         if viewer is not None:
             self.report_manager.add_html_to_report(viewer, link_name=f"{config.link_name} viewer")
@@ -160,4 +182,9 @@ class RundeckPublisher:
 
 def generate_rundeck(session, report_manager) -> Optional[dict[str, Any]]:
     """Build and publish Run Deck artifacts at pytest session finish."""
-    return RundeckPublisher(session, report_manager).publish()
+    try:
+        return RundeckPublisher(session, report_manager).publish()
+    except Exception:
+        # Optional artifacts must not replace the suite's qualification outcome.
+        log.error("Run Deck generation failed; preserving the suite result", exc_info=True)
+        return None

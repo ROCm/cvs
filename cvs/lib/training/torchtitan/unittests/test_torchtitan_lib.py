@@ -177,3 +177,63 @@ class TestTorchTitanTrainingJobLogPaths(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestDistributedConfigStructure(unittest.TestCase):
+    """Test that distributed configs have the required flattened structure."""
+
+    def test_distributed_configs_have_model_name(self):
+        """Test that all distributed configs have train_params.model_name at top level."""
+        import json
+        import glob
+        import os
+
+        # Find all mi355x distributed config files
+        config_dir = os.path.join(os.path.dirname(__file__), "../../../../input/config_file/training/torchtitan")
+        pattern = os.path.join(config_dir, "mi355x_torchtitan_*_distributed.json")
+        config_files = glob.glob(pattern)
+
+        self.assertGreater(len(config_files), 0, "No distributed config files found")
+
+        for config_file in config_files:
+            with self.subTest(config=os.path.basename(config_file)):
+                with open(config_file, "r") as f:
+                    config = json.load(f)
+
+                # Assert train_params exists
+                self.assertIn("train_params", config, f"{config_file}: Missing train_params")
+
+                train_params = config["train_params"]
+
+                # Assert model_name is at top level (not nested)
+                self.assertIn("model_name", train_params, f"{config_file}: Missing train_params.model_name")
+
+                # Assert model_name is a valid TORCHTITAN_MODELS key
+                model_name = train_params["model_name"]
+                valid_models = [
+                    "llama3_1_8b",
+                    "llama3_1_70b",
+                    "llama3_1_405b",
+                    "llama3_3_70b",
+                    "qwen3_32b",
+                    "deepseek_v2_lite",
+                ]
+                self.assertIn(
+                    model_name,
+                    valid_models,
+                    f"{config_file}: model_name {model_name} is not a valid TORCHTITAN_MODELS key",
+                )
+
+                # Assert tokenizer_model exists at top level
+                self.assertIn(
+                    "tokenizer_model",
+                    train_params,
+                    f"{config_file}: Missing train_params.tokenizer_model (required by test_download_tokenizer)",
+                )
+
+                # Assert train_params is NOT nested (no multi_node key)
+                self.assertNotIn(
+                    "multi_node",
+                    train_params,
+                    f"{config_file}: train_params should not contain nested multi_node structure",
+                )

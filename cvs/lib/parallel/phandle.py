@@ -266,9 +266,10 @@ class ParallelHandle:
         cmd_output = {}
         i = 0
         for item in output:
-            self.log.info('#----------------------------------------------------------#')
-            self.log.info(f'Host == {item.host} ==')
-            self.log.info('#----------------------------------------------------------#')
+            if print_console:
+                self.log.info('#----------------------------------------------------------#')
+                self.log.info(f'Host == {item.host} ==')
+                self.log.info('#----------------------------------------------------------#')
             cmd_out_str = ''
             if cmd_list:
                 self.log.debug("%s", cmd_list[i])
@@ -351,7 +352,7 @@ class ParallelHandle:
 
         client_kwargs = self._client_run_kwargs(timeout=timeout, inactivity_timeout=inactivity_timeout)
 
-        self.log.info(f'cmd = {full_cmd}')
+        (self.log.info if print_console else self.log.debug)(f'cmd = {full_cmd}')
 
         # Log command execution
         if self.log:
@@ -406,7 +407,7 @@ class ParallelHandle:
             timeout=timeout, inactivity_timeout=inactivity_timeout, host_args=cmd_list
         )
 
-        self.log.info("%s", cmd_list)
+        (self.log.info if print_console else self.log.debug)("%s", cmd_list)
 
         # Log command list execution
         if self.log:

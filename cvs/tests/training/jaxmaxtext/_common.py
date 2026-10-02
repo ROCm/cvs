@@ -39,6 +39,7 @@ from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     extract_checkpoint_timings,
 )
 from cvs.lib.training.jaxmaxtext.utils.loss_curve import render_loss_curve_png
+from cvs.lib.training.jaxmaxtext.utils.rundeck_adapter import flat_train_res_from_nested
 from cvs.lib.utils.verdict import evaluate_all, ThresholdViolation
 from cvs.lib.utils_lib import fail_test, update_test_result
 
@@ -87,19 +88,18 @@ def _sweep_label(name):
 def _enabled_sweep_names(config_file):
     """Read sweep names to run from the raw config (collection time, no fixtures).
 
-    Honors training.enabled_sweep_list (subset selector); falls back to every
-    declared sweep, or a single implicit "default" when none are declared.
+    Reads the `sweeps` map ({name: overrides}) and the `runs` selector; falls back
+    to every declared sweep, or a single implicit "default" when none are declared.
     """
     try:
         with open(config_file) as fp:
             raw = json.load(fp)
     except Exception:
         return ["default"]
-    training = raw.get("training", {})
-    names = [s.get("name") for s in training.get("sweeps", []) if s.get("name")]
+    names = [n for n in (raw.get("sweeps") or {}).keys() if not str(n).startswith("_")]
     if not names:
         return ["default"]
-    enabled = training.get("enabled_sweep_list") or names
+    enabled = raw.get("runs") or names
     return [n for n in enabled if n in names] or names
 
 
@@ -197,6 +197,15 @@ def launch_container(orch, variant_config, lifecycle, request):
         lifecycle.failed = True
         pytest.fail(f"container {name} not running after setup_containers()")
 
+    # Optional: check out a specific MaxText branch inside the freshly launched
+    # container (no-op unless training.maxtext_branch is set). Do it here, once,
+    # so every downstream stage runs against the requested code.
+    try:
+        MaxTextTrainingJob(orch, variant_config, hf_token="").checkout_maxtext_branch()
+    except Exception as e:  # noqa: BLE001
+        lifecycle.failed = True
+        pytest.fail(f"MaxText branch checkout failed: {e}")
+
 
 def setup_rdma(orch, variant_config, hf_token, lifecycle, request):
     """Distributed-only: copy RDMA library into container (thor2 NIC only)."""
@@ -268,6 +277,7 @@ def smoke(orch, variant_config, hf_token, lifecycle, request):
     smoke_sweep = SimpleNamespace(
         name="SMOKE",
         maxtext_overrides={
+            "steps": steps,
             "per_device_batch_size": batch,
             "max_target_length": seqlen,
             "dtype": "bfloat16",
@@ -348,6 +358,13 @@ def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, 
     # TRAINING_METRICS, so nothing displayed or gated them.
     log.info("[training] sweep '%s' wall-clock: %.1fs", sweep_name, wall_time)
 
+    # Record the per-sweep training duration for the Run Deck lifecycle timeline.
+    # The deck matches cells by the full sweep name, so key it that way (the pytest
+    # param id is the compact label); the per-test HTML panel keys off the real
+    # nodeid and is unaffected.
+    combo_nodeid = f"{request.node.nodeid.split('[', 1)[0]}[{sweep_name}]"
+    lifecycle.record(combo_nodeid, "training", wall_time)
+
     baseline = variant_config.training.scaling_baseline
     results["training.scaling_efficiency_pct"] = compute_scaling_efficiency(
         results.get("training.tokens_per_sec_total"),
@@ -366,12 +383,22 @@ def training_run(orch, variant_config, hf_token, sweep_name, training_res_dict, 
     results["training.steps_to_target"] = steps_to_target
     results["training.time_to_target_seconds"] = time_to_target
 
-    training_res_dict.setdefault("sweeps", {})[sweep_name] = {
+    # Deck curves for learning_rate / grad_norm come from TensorBoard, which
+    # stdout does not carry. Best-effort and bounded: {} when unavailable, with a
+    # reason in tb_collection_note that the deck surfaces on the cell.
+    tb_scalars = job.collect_tb_scalars()
+    sweep_rec = {
         "results": results,
         "step_metrics": job.step_metrics,
         "eval_metrics": job.eval_metrics,
         "num_nodes": job.num_nodes,
+        "planned_steps": job.steps,
+        "tb_scalars": tb_scalars,
     }
+    tb_note = getattr(job, "tb_collection_note", "")
+    if tb_note:
+        sweep_rec["tb_note"] = tb_note
+    training_res_dict.setdefault("sweeps", {})[sweep_name] = sweep_rec
 
 
 def _latest_checkpoint_step_path(orch, ckpt_dir):
@@ -431,6 +458,7 @@ def checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecyc
         v.training.enable_checkpointing = enable_ckpt
         ov = dict(base_overrides)
         ov.update(extra_overrides or {})
+        ov["steps"] = total_steps
         sweep = SimpleNamespace(name="CKPT", maxtext_overrides=ov)
         return MaxTextTrainingJob(orch, v, hf_token, sweep=sweep)
 
@@ -865,10 +893,16 @@ def _print_checkpoint_io(training_res_dict):
     )
 
 
-def print_results_table(training_res_dict, request):
+def print_results_table(training_res_dict, train_res_dict, request):
     """Summarize all sweeps: console tables, single metric-results HTML, and a
     consolidated PASS/FAIL summary recorded via globals.error_list for the pytest
-    final summary."""
+    final summary.
+
+    Also fills ``train_res_dict`` with the flat, deck-facing view of the nested
+    results so the Run Deck (bound to that fixture) can render at session end.
+    """
+    train_res_dict.update(flat_train_res_from_nested(training_res_dict))
+
     if not training_res_dict.get("sweeps"):
         log.info("training_res_dict empty, nothing to print")
         return

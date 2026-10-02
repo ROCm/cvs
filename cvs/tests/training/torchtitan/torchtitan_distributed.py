@@ -67,39 +67,33 @@ _SMOKE_PRECISION = "BF16"
 
 
 def pytest_generate_tests(metafunc):
-    """Parametrize test_training and test_metric from sweep.combinations filtered by sweep.runs.
+    """Parametrize per-sweep tests for both suites from sweep.runs.
 
-    sweep.combinations is a dict of {run_id: {micro_batch_size, global_batch_size, ...}}.
-    sweep.runs is a list of run_ids to execute (subset or all).
-    One case is emitted per entry in sweep.runs — no cartesian product.
-    The pytest parametrize ID is the run_id so that request.node.callspec.id
-    can be passed directly to variant_config.cell_key().
+    Tests that take sweep_name get one row per combination key listed in
+    sweep.runs (must exist in sweep.combinations). No cartesian product.
+    The pytest ID is the combination key so it matches the threshold cell.
     """
-    config_file = metafunc.config.getoption("config_file")
-    if not config_file or not os.path.isfile(config_file):
+    if "sweep_name" not in metafunc.fixturenames:
         return
-    with open(config_file) as fp:
-        raw = json.load(fp)
+    names = []
+    combinations = {}
+    config_file = metafunc.config.getoption("config_file")
+    if config_file and os.path.isfile(config_file):
+        with open(config_file) as fp:
+            raw = json.load(fp)
 
-    sweep = raw.get("sweep", {})
-    combinations = sweep.get("combinations", {})
-    runs = sweep.get("runs", list(combinations.keys()))
-
-    cases = []
-    ids = []
-    for run_id in runs:
-        if run_id not in combinations:
-            log.warning("sweep.runs entry '%s' not found in sweep.combinations; skipping", run_id)
-            continue
-        combo = combinations[run_id]
-        mbs = combo["micro_batch_size"]
-        gbs = combo["global_batch_size"]
-        precision = combo.get("precision", "")
-        cases.append((mbs, gbs, precision))
-        ids.append(run_id)
-
-    if "micro_batch_size" in metafunc.fixturenames and "global_batch_size" in metafunc.fixturenames and cases:
-        metafunc.parametrize("micro_batch_size,global_batch_size,precision", cases, ids=ids)
+        sweep = raw.get("sweep") or {}
+        combinations = sweep.get("combinations") or {}
+        runs = sweep.get("runs", list(combinations.keys()))
+        for run_id in runs:
+            if run_id not in combinations:
+                log.warning("sweep.runs entry %s not found in sweep.combinations; skipping", run_id)
+                continue
+            names.append(run_id)
+    if not names and not combinations:
+        names = ["default"]
+    if names:
+        metafunc.parametrize("sweep_name", names, ids=names)
 
 
 def test_launch_container(orch, variant_config, lifecycle, request):
@@ -185,28 +179,36 @@ def test_download_tokenizer(orch, variant_config, hf_token, lifecycle, request):
 
 
 def test_smoke(orch, variant_config, hf_token, lifecycle, request):
-    """Stage 3: smoke-test — model loads and runs _SMOKE_ITERS steps without error.
+    """Stage 2: smoke-test — model loads and runs smoke.iters steps without error.
 
-    Passes if training reaches iteration _SMOKE_ITERS/_SMOKE_ITERS without error.
-    No metric assertions — completion without error is the only requirement.
+    Knobs come from the top-level ``smoke`` block (defaults: 10 iters, MBS 1,
+    GBS 8, BF16). Set ``smoke.enabled`` false to skip. Completion without error
+    is the only requirement — no metric assertions.
     """
+    smoke = variant_config.smoke
+    if not smoke.enabled:
+        pytest.skip("smoke.enabled=false in config; skipping test_smoke")
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
     globals.error_list = []
+    mbs = smoke.micro_batch_size or _SMOKE_MBS
+    gbs = smoke.global_batch_size.strip() or _SMOKE_GBS
+    precision = smoke.precision or _SMOKE_PRECISION
+    iters = int(smoke.iters)
 
     tt_obj = _make_training_job(
         orch,
         variant_config,
         hf_token=hf_token,
-        micro_batch_size=_SMOKE_MBS,
-        global_batch_size=_SMOKE_GBS,
-        precision=_SMOKE_PRECISION,
+        micro_batch_size=mbs,
+        global_batch_size=gbs,
+        precision=precision,
         distributed_training=True,
         tune_model_params=False,
         run_label="smoke",
     )
-    tt_obj.iterations = int(_SMOKE_ITERS)
+    tt_obj.iterations = iters
     tt_obj.local_tokenizer_path = getattr(lifecycle, "tokenizer_path", None)
 
     t = time.monotonic()
@@ -224,7 +226,7 @@ def test_smoke(orch, variant_config, hf_token, lifecycle, request):
         lifecycle.failed = True
     update_test_result()
     lifecycle.record(request.node.nodeid, "smoke", time.monotonic() - t)
-    log.info("smoke PASSED | iters=%s", _SMOKE_ITERS)
+    log.info("smoke PASSED | iters=%s mbs=%s gbs=%s precision=%s", iters, mbs, gbs, precision)
 
 
 def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
@@ -433,9 +435,7 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
         log.info("checkpoint dir retained for debugging: %s", ckpt_dir)
 
 
-def test_training(
-    orch, variant_config, hf_token, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request
-):
+def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, lifecycle, request):
     """Stage 4 (parametrized): run one sweep combo inside the shared container.
 
     stop_training_processes() runs in a finally block after every combo so GPU
@@ -445,18 +445,19 @@ def test_training(
         pytest.skip("a prior lifecycle stage failed")
 
     nodeid = request.node.nodeid
-    combo_key = request.node.callspec.id
+    combo = variant_config.sweep.combinations[sweep_name]
     globals.error_list = []
     tt_obj = _make_training_job(
         orch,
         variant_config,
         hf_token=hf_token,
-        micro_batch_size=micro_batch_size,
-        global_batch_size=global_batch_size,
-        precision=precision,
+        micro_batch_size=combo.micro_batch_size,
+        global_batch_size=combo.global_batch_size,
+        precision=combo.precision,
         distributed_training=True,
         tune_model_params=False,
-        run_label=combo_key,
+        run_label=sweep_name,
+        sweep_overrides=combo.model_extra,
     )
 
     tt_obj.local_tokenizer_path = getattr(lifecycle, "tokenizer_path", None)
@@ -479,10 +480,10 @@ def test_training(
     request.node.user_properties.append(("metric_value", elapsed))
     request.node.user_properties.append(("metric_unit", "s"))
 
-    train_res_dict[combo_key] = tt_obj.training_results_dict
-    train_res_dict[combo_key]["_combo_log_dir"] = tt_obj.combo_log_dir
+    train_res_dict[sweep_name] = tt_obj.training_results_dict
+    train_res_dict[sweep_name]["_combo_log_dir"] = tt_obj.combo_log_dir
 
-    tput_per_gpu = train_res_dict[combo_key].get("throughput_per_gpu", [])
+    tput_per_gpu = train_res_dict[sweep_name].get("throughput_per_gpu", [])
     if tput_per_gpu:
         gpus_per_node = 8
         tokens_per_sec_total = float(tput_per_gpu[-1]) * int(tt_obj.nnodes) * gpus_per_node
@@ -494,10 +495,10 @@ def test_training(
             baseline.num_nodes,
         )
         if efficiency is not None:
-            train_res_dict[combo_key]["scaling_efficiency_pct"] = [str(efficiency)]
+            train_res_dict[sweep_name]["scaling_efficiency_pct"] = [str(efficiency)]
     try:
         tail = tt_obj._read_last_node_log(tail_lines=50)
-        train_res_dict[combo_key]["_log_tail"] = tail
+        train_res_dict[sweep_name]["_log_tail"] = tail
         request.node.user_properties.append(("training_log_tail", tail))
     except Exception:
         pass
@@ -508,9 +509,9 @@ def test_training(
         step_metrics = parse_step_metrics(log_text)
         steps_to_target, time_to_target = compute_convergence(step_metrics, [], conv.target_metric, conv.target_value)
         if steps_to_target is not None:
-            train_res_dict[combo_key]["steps_to_target"] = [str(steps_to_target)]
+            train_res_dict[sweep_name]["steps_to_target"] = [str(steps_to_target)]
         if time_to_target is not None:
-            train_res_dict[combo_key]["time_to_target_seconds"] = [str(time_to_target)]
+            train_res_dict[sweep_name]["time_to_target_seconds"] = [str(time_to_target)]
         log.info(
             "convergence: steps_to_target=%s time_to_target_seconds=%s",
             steps_to_target,
@@ -522,27 +523,26 @@ def test_training(
     update_test_result()
 
 
-def test_metric(variant_config, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request):
+def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
     """Stage 5 (parametrized): compare each combo's metrics against thresholds."""
-    combo_key = request.node.callspec.id
-    if combo_key not in train_res_dict:
-        pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run)")
+    if not train_res_dict.get(sweep_name):
+        pytest.skip(f"no recorded results for combo '{sweep_name}' (training did not run)")
 
     if not variant_config.enforce_thresholds:
-        log.info("enforce_thresholds=false; skipping verdict for combo '%s'", combo_key)
+        log.info("enforce_thresholds=false; skipping verdict for combo '%s'", sweep_name)
         return
 
-    cell = variant_config.cell_key(combo_key)
+    cell = variant_config.cell_key(sweep_name)
     thresholds = variant_config.thresholds.get(cell)
     if not thresholds:
         log.warning("no thresholds defined for cell '%s'; skipping threshold checks", cell)
         return
 
-    actuals_raw = train_res_dict[combo_key]
+    actuals_raw = train_res_dict[sweep_name]
     request.node.user_properties.append(("training_log_tail", actuals_raw.get("_log_tail", "")))
     actuals = {f"training.{k}": float(v[-1]) for k, v in actuals_raw.items() if v and not k.startswith("_")}
 
-    log.info("--- Threshold check for combo '%s' ---", combo_key)
+    log.info("--- Threshold check for combo '%s' ---", sweep_name)
     violations = []
     for metric, spec in thresholds.items():
         if metric not in actuals:
@@ -567,29 +567,26 @@ def test_metric(variant_config, micro_batch_size, global_batch_size, precision, 
 
     if violations:
         summary = "FAILED\n" + "\n".join(violations)
-        log.error("--- %d violation(s) for combo '%s' ---", len(violations), combo_key)
+        log.error("--- %d violation(s) for combo '%s' ---", len(violations), sweep_name)
         request.node.user_properties.append(("threshold_comparison", summary))
         raise ThresholdViolation(violations)
 
-    log.info("--- All threshold checks PASSED for combo '%s' ---", combo_key)
+    log.info("--- All threshold checks PASSED for combo '%s' ---", sweep_name)
     request.node.user_properties.append(("threshold_comparison", "PASSED"))
 
 
-def test_loss_curve(
-    orch, variant_config, micro_batch_size, global_batch_size, precision, train_res_dict, lifecycle, request
-):
+def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle, request):
     """Parametrized: slope-based loss curve check with PNG render."""
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
 
-    combo_key = request.node.callspec.id
-    if combo_key not in train_res_dict:
-        pytest.skip(f"no recorded results for combo '{combo_key}' (training did not run)")
+    if not train_res_dict.get(sweep_name):
+        pytest.skip(f"no recorded results for combo '{sweep_name}' (training did not run)")
 
-    combo_log_dir = train_res_dict[combo_key].get("_combo_log_dir")
+    combo_log_dir = train_res_dict[sweep_name].get("_combo_log_dir")
     if not combo_log_dir:
-        log.warning("no log dir recorded for combo '%s'; skipping loss curve check", combo_key)
-        pytest.skip(f"no log dir recorded for combo '{combo_key}'")
+        log.warning("no log dir recorded for combo '%s'; skipping loss curve check", sweep_name)
+        pytest.skip(f"no log dir recorded for combo '{sweep_name}'")
 
     n = len(orch.hosts)
     last_host = orch.hosts[-1]
@@ -601,7 +598,7 @@ def test_loss_curve(
     step_metrics = parse_all_loss_points(log_text)
     points = sample_loss_curve(step_metrics, lc.sample_every, lc.milestone_steps)
 
-    log.info("--- Loss curve check for combo '%s' (%d points sampled) ---", combo_key, len(points))
+    log.info("--- Loss curve check for combo '%s' (%d points sampled) ---", sweep_name, len(points))
 
     mgr = getattr(request.config, "_html_report_manager", None)
     mgr_enabled = mgr is not None and getattr(mgr, "is_enabled", False)
@@ -614,13 +611,13 @@ def test_loss_curve(
             import uuid as _uuid
 
             _Path(out_dir).mkdir(parents=True, exist_ok=True)
-            fname = f"loss_curve_{combo_key}_{str(_uuid.uuid4()).split('-')[-1]}.png"
+            fname = f"loss_curve_{sweep_name}_{str(_uuid.uuid4()).split('-')[-1]}.png"
             png_path = _Path(out_dir) / fname
-            title = f"Training Loss Curve — {variant_config.model_params.get('model_name', '')} [{combo_key}]"
+            title = f"Training Loss Curve — {variant_config.model_params.get('model_name', '')} [{sweep_name}]"
             rendered = render_loss_curve_png(points, png_path, title=title)
             if rendered:
                 rel_path = str(_Path(rendered).relative_to(mgr.htmlpath.parent))
-                lifecycle.add_artifact(request.node.nodeid, f"Loss Curve [{combo_key}]", rel_path, rendered)
+                lifecycle.add_artifact(request.node.nodeid, f"Loss Curve [{sweep_name}]", rel_path, rendered)
         except Exception as e:
             log.warning("loss curve: could not render PNG (%s)", e)
 
@@ -636,7 +633,7 @@ def test_loss_curve(
         request.node.user_properties.append(("metric_unit", "lm_loss"))
 
     if lc.enforce and not decreasing:
-        pytest.fail(f"training loss is not decreasing for combo '{combo_key}': {detail}")
+        pytest.fail(f"training loss is not decreasing for combo '{sweep_name}': {detail}")
 
 
 def test_teardown(orch, lifecycle, request):

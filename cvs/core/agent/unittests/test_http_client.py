@@ -65,6 +65,19 @@ class HttpClientTestBase(unittest.IsolatedAsyncioTestCase):
         return client
 
 
+class TestParallelHTTPClientInit(unittest.TestCase):
+    def test_ignores_ssh_client_kwargs(self):
+        client = ParallelHTTPClient(
+            {"h1": "http://h1"},
+            TOKEN,
+            timeout=60,
+            num_retries=2,
+            retry_delay=2,
+        )
+        self.assertIsNone(client._connect_timeout)
+        self.assertIsNone(client._client)
+
+
 class TestRunCommand(HttpClientTestBase):
     async def test_returns_host_output_per_host(self):
         client = self._make_client({"h1": "http://h1", "h2": "http://h2"}, _exec_handler)

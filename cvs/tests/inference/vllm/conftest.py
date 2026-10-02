@@ -5,15 +5,84 @@ All rights reserved.
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
+try:
+    from _pytest.subtests import SubtestReport as _BuiltinSubtestReport
+except ImportError:
+    _BuiltinSubtestReport = None
+try:
+    from pytest_subtests.plugin import SubTestReport as _PluginSubtestReport
+except ImportError:
+    _PluginSubtestReport = None
+
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
+from cvs.lib.inference.vllm_topology import resolve_vllm_topology, scope_vllm_cluster
 from cvs.lib.inference.utils.vllm_config_loader import load_variant
+from cvs.lib.inference.utils.vllm_metrics import VLLM_RESULTS_COLUMNS
+from cvs.lib.report.benchmark_metric_registry import (
+    benchmark_metric_columns_for_nodeid,
+    benchmark_metric_rows_from_item,
+    benchmark_metric_rows_from_report,
+    mark_collapsible_result_cell,
+    patch_benchmark_metrics_into_html,
+    stamp_benchmark_metric_rows_on_report,
+)
+from cvs.lib.report.render.perf_metric_table import (
+    is_benchmark_metrics_extra,
+    render_benchmark_metrics_html,
+)
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
+from cvs.tests.inference.vllm._shared import validate_vllm_execution_mode
 
 log = globals.log
+VLLM_METRIC_VERIFICATION_TEST = 'test_verify_cell_metrics'
+
+
+def _is_subtest_report(report) -> bool:
+    if _BuiltinSubtestReport is not None and isinstance(report, _BuiltinSubtestReport):
+        return True
+    if _PluginSubtestReport is not None and isinstance(report, _PluginSubtestReport):
+        return True
+    return False
+
+
+def _is_verification_report(report) -> bool:
+    test_name = report.nodeid.rsplit('::', 1)[-1].split('[', 1)[0]
+    return report.when == 'call' and test_name == VLLM_METRIC_VERIFICATION_TEST and not _is_subtest_report(report)
+
+
+def _is_full_log_extra(extra: object) -> bool:
+    return isinstance(extra, dict) and extra.get('format_type') == 'url' and extra.get('name') == 'Full Log'
+
+
+def _attach_metric_panel(report, rows) -> None:
+    if not rows:
+        return
+
+    try:
+        from pytest_html import extras as pytest_html_extras
+    except ImportError:
+        return
+
+    extras = []
+    has_full_log = False
+    has_metric_table = False
+    for extra in getattr(report, 'extras', []) or []:
+        if _is_full_log_extra(extra) and not has_full_log:
+            extras.append(extra)
+            has_full_log = True
+        elif is_benchmark_metrics_extra(extra) and not has_metric_table:
+            extras.append(extra)
+            has_metric_table = True
+    if not has_metric_table:
+        columns = benchmark_metric_columns_for_nodeid(report.nodeid) or VLLM_RESULTS_COLUMNS
+        extras.append(pytest_html_extras.html(render_benchmark_metrics_html(rows, columns=columns)))
+    report.extras = extras
+    stamp_benchmark_metric_rows_on_report(report, rows)
 
 
 def _deep_merge(base, override):
@@ -67,6 +136,10 @@ class _Lifecycle:
         self.failed = False
         self.torn_down = False
         self.report = {}  # nodeid -> list[(label, value, unit)]
+        self.live_server_sig = None
+        self.live_server_job = None
+        self.model_load_s = None
+        self.model_load_memory_mb = None
 
     def record(self, nodeid, label, value, unit="s"):
         self.report.setdefault(nodeid, []).append((label, value, unit))
@@ -78,7 +151,7 @@ def lifecycle():
 
 
 @pytest.fixture(scope="module")
-def orch(cluster_dict, variant_config, lifecycle):
+def orch(cluster_dict, variant_config, lifecycle, vllm_mode):
     """Construct a ContainerOrchestrator and own ONLY its teardown safety net.
 
     The actual launch/sshd happen in test_launch_container / test_setup_sshd
@@ -92,15 +165,16 @@ def orch(cluster_dict, variant_config, lifecycle):
     # variant ONTO the cluster block so cluster-set scalar/dict keys survive, with the
     # variant winning on conflicting keys. (List keys like runtime.args are replaced
     # here but recombined additively downstream in container.py's getters.)
+    suite_cluster = scope_vllm_cluster(vllm_mode, cluster_dict)
     container_block = _deep_merge(
-        cluster_dict.get("container", {}),
+        suite_cluster.get("container", {}),
         variant_config.container.model_dump(),
     )
     testsuite_config = {
         "orchestrator": "container",
         "container": container_block,
     }
-    cfg = OrchestratorConfig.from_configs(cluster_dict, testsuite_config)
+    cfg = OrchestratorConfig.from_configs(suite_cluster, testsuite_config)
     o = OrchestratorFactory.create_orchestrator(log, cfg)
     yield o
     try:
@@ -112,14 +186,32 @@ def orch(cluster_dict, variant_config, lifecycle):
 
 
 @pytest.fixture(scope="module")
+def vllm_mode(request):
+    stem = request.module.__name__.rsplit(".", 1)[-1]
+    if stem == "vllm_single":
+        return "single"
+    if stem == "vllm_distributed":
+        return "distributed"
+    pytest.fail(f"vLLM suite must be vllm_single or vllm_distributed, got {stem!r}")
+
+
+@pytest.fixture(scope="module")
+def vllm_targets(orch, variant_config, vllm_mode):
+    try:
+        topology = resolve_vllm_topology(vllm_mode, variant_config, orch.hosts)
+    except ValueError as exc:
+        pytest.fail(str(exc))
+
+    variant_config.bind_effective_topology(topology)
+    return topology.target_groups
+
+
+@pytest.fixture(scope="module")
 def hf_token(variant_config):
     path = variant_config.paths.hf_token_file
     if not os.path.isfile(path):
-        if variant_config.model.remote == 0:
-            # Pre-staged model: token not needed for download; server env sets
-            # HF_HUB_OFFLINE=1 to skip Hub auth checks entirely.
-            return ""
-        pytest.skip(f"hf_token file missing: {path}")
+        # vLLM configs always reference a mounted, pre-staged model.
+        return ""
     with open(path) as fp:
         return fp.read().strip()
 
@@ -129,7 +221,7 @@ def inf_res_dict():
     return {}
 
 
-def pytest_collection_modifyitems(items):
+def pytest_collection_modifyitems(config, items):
     """Pin the lifecycle order explicitly instead of relying on definition order.
 
     `test_print_results_table` is an imported function (its source line points
@@ -138,6 +230,7 @@ def pytest_collection_modifyitems(items):
     the benchmark cells, the results table, then teardown last. Items from other
     modules keep their relative order.
     """
+    validate_vllm_execution_mode(config)
     rank = {
         "test_launch_container": 0,
         "test_setup_sshd": 1,
@@ -145,9 +238,7 @@ def pytest_collection_modifyitems(items):
         "test_model_fetch": 3,
         "test_openai_compatible_smoke": 4,
         "test_vllm_inference": 5,
-        "test_metric": 6,
-        "test_gpu_metric": 6,
-        "test_prom_metric": 6,
+        VLLM_METRIC_VERIFICATION_TEST: 6,
         "test_accuracy_eval": 7,
         "test_print_results_table": 8,
         "test_teardown": 9,
@@ -155,29 +246,40 @@ def pytest_collection_modifyitems(items):
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
 
-# def pytest_html_results_table_header(cells):
-#     """Add Value + Unit columns just before the trailing Links column.
-#
-#     Populated for test_metric rows; blank for lifecycle/inference rows (they
-#     record no metric_value user-property). Scoped to this suite's conftest, so
-#     other suites' result tables are unaffected.
-#     """
-#     cells.insert(-1, "<th>Value</th>")
-#     cells.insert(-1, "<th>Unit</th>")
-#
-#
-# def pytest_html_results_table_row(report, cells):
-#     props = dict(report.user_properties)
-#     has = "metric_value" in props
-#     val = props.get("metric_value")
-#     unit = props.get("metric_unit", "") if has else ""
-#     if not has:
-#         shown = ""
-#     elif val is None:
-#         shown = "-"
-#     elif isinstance(val, float):
-#         shown = f"{val:.3f}"
-#     else:
-#         shown = str(val)
-#     cells.insert(-1, f"<td>{shown}</td>")
-#     cells.insert(-1, f"<td>{unit}</td>")
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_makereport(item, call):
+    """Attach metric rows before pytest-html consumes the parent call report."""
+    outcome = yield
+    report = outcome.get_result()
+    if not _is_verification_report(report):
+        return
+    _attach_metric_panel(report, benchmark_metric_rows_from_item(item))
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_logreport(report):
+    yield
+    if _is_verification_report(report):
+        rows = benchmark_metric_rows_from_report(report)
+        if rows:
+            _attach_metric_panel(report, rows)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_html_results_table_html(report, data):
+    if _is_verification_report(report) and benchmark_metric_rows_from_report(report):
+        del data[:]
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_html_results_table_row(report, cells):
+    if _is_verification_report(report) and benchmark_metric_rows_from_report(report):
+        cells[0] = mark_collapsible_result_cell(str(cells[0]))
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    yield
+    htmlpath = getattr(session.config.option, 'htmlpath', None)
+    if htmlpath:
+        patch_benchmark_metrics_into_html(Path(htmlpath), benchmark_test_name=VLLM_METRIC_VERIFICATION_TEST)

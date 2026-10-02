@@ -138,6 +138,7 @@ class TorchTitanTrainingJob:
         tune_model_params=True,
         scripts_dir=None,
         run_label=None,
+        sweep_overrides=None,
     ):
         self.orch = orch
         self.variant_config = variant_config
@@ -154,20 +155,23 @@ class TorchTitanTrainingJob:
         self.save_interval = None
         self.load_checkpoint = False
 
-        # Get config and model params
-        self.config = variant_config.config
-        self.model_params = variant_config.model_params
-        self.gpu_arch = variant_config.gpu_arch
+        # Get flattened config dict (paths + container.env + train_params)
+        self.config = variant_config.job_config_dict()
+        # Copy train_params and apply sweep-level overrides
+        self.model_params = dict(variant_config.train_params)
+        if sweep_overrides:
+            self.model_params.update(sweep_overrides)
+
+        self.gpu_arch = variant_config.gpu_name
 
         # Training configs with defaults
         self.container_image = self.config.get('container_image', 'rocm/pytorch:latest')
         self.container_name = self.config.get('container_name', 'torchtitan_training')
         self.torchtitan_root = self.config.get('torchtitan_root', '/workspace/Primus/third_party/torchtitan')
         self.iterations = int(self.config.get('training_iterations', 30))
-        self.nnodes = int(self.config.get('nnodes', 1))
+        self.nnodes = len(self.orch.hosts)
         self.nic_type = self.config.get('nic_type', 'thor2')
         self.hca_id_pattern = self.config.get('hca_id_pattern', 'bnxt_|rocep')
-        self.nccl_ib_hca_list = self.config.get('nccl_ib_hca_list', '')
         self.nccl_ib_hca = self.config.get('nccl_ib_hca', '')
         self.nccl_socket_ifname = self.config.get('nccl_socket_ifname', '')
         self.gloo_socket_ifname = self.config.get('gloo_socket_ifname', '')
@@ -195,6 +199,11 @@ class TorchTitanTrainingJob:
         self.verify_network_errors = self.config.get('verify_network_errors', 'False')
         self.rocm_path = detect_rocm_path(self.orch, self.config.get('rocm_dir', ''))
         self.use_generated_config = self.config.get('use_generated_config', 'True') == 'True'
+
+        # Per-combo log dir so sweep combos don't overwrite each other's training.log
+        raw_label = run_label or "torchtitan_training"
+        self.run_label_sanitized = re.sub(r'[^A-Za-z0-9._-]', '_', str(raw_label))
+        self.combo_log_dir = f'{self.log_dir}/torchtitan-logs/{self.run_label_sanitized}'
 
         # Per-combo log dir so sweep combos don't overwrite each other's training.log
         raw_label = run_label or "torchtitan_training"
@@ -426,7 +435,7 @@ class TorchTitanTrainingJob:
 
         # Distributed env vars
         if self.distributed_training:
-            cmd += f'export NCCL_IB_HCA={self.nccl_ib_hca_list}; '
+            cmd += f'export NCCL_IB_HCA={self.nccl_ib_hca}; '
             cmd += f'export NCCL_SOCKET_IFNAME={self.nccl_socket_ifname}; '
             cmd += f'export GLOO_SOCKET_IFNAME={self.gloo_socket_ifname}; '
             cmd += f'export NCCL_DEBUG={self.nccl_debug}; '
@@ -625,9 +634,9 @@ class TorchTitanTrainingJob:
     def _needs_local_tokenizer(self):
         """TorchTitan uses HF download script, so always downloads tokenizer.
 
-        Returns False since we use download_hf_assets() instead of download_tokenizer_model().
+        Returns True to trigger download_tokenizer_model() which calls download_hf_assets().
         """
-        return False
+        return True
 
     def download_tokenizer_model(self):
         """Download tokenizer model (wrapper for download_hf_assets).

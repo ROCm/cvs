@@ -10,12 +10,14 @@ Each suite has its own stage order (single-node, unified multi-node, or PD disag
 
 from __future__ import annotations
 
-import os
 import re
+import time
 from tabulate import tabulate
-from typing import Any, Mapping
+import pytest
 
 from cvs.lib import globals
+from cvs.lib.inference.sglang.sglang_config_loader import perf_specs_for_cell, resolve_benchmark_variant_key
+from cvs.lib.inference.sglang.sglang_common import perf_enforce_thresholds
 
 log = globals.log
 
@@ -25,52 +27,10 @@ __all__ = [
     "SGLANG_SINGLE_TEST_ORDER",
     "SGLANG_DISTRIBUTED_TEST_ORDER",
     "test_print_results_table",
+    "run_scan_inference_logs_after_workload",
 ]
 
 _SMOKE_LINE_RE = re.compile(r"^(.+) -> (Pass|Fail) \((\d+)\)$")
-
-
-def resolve_benchmark_variant_key(root: Mapping[str, Any], config_path: str) -> str:
-    """Pick which ``benchmark_params`` entry to run.
-
-    Resolution order:
-    1. Environment ``SGLANG_BENCHMARK_KEY`` (override for CI matrices).
-    2. Top-level JSON ``active_benchmark`` (string key into ``benchmark_params``).
-    3. If ``benchmark_params`` has exactly one key, use it.
-
-    ``root`` is the full JSON object loaded from ``--config_file`` (not only ``config``).
-    """
-    env_key = (os.environ.get("SGLANG_BENCHMARK_KEY") or "").strip()
-    bp = root.get("benchmark_params") or {}
-    if not isinstance(bp, dict) or not bp:
-        raise ValueError(f"benchmark_params missing or empty in {config_path!r}")
-
-    if env_key:
-        if env_key not in bp:
-            raise ValueError(
-                f"SGLANG_BENCHMARK_KEY={env_key!r} not found in benchmark_params ({config_path}); valid: {sorted(bp)!r}"
-            )
-        log.info("Using benchmark variant from env SGLANG_BENCHMARK_KEY=%r", env_key)
-        return env_key
-
-    explicit = root.get("active_benchmark")
-    if explicit is not None:
-        if explicit not in bp:
-            raise ValueError(
-                f"active_benchmark={explicit!r} not found in benchmark_params ({config_path}); valid: {sorted(bp)!r}"
-            )
-        log.info("Using benchmark variant from active_benchmark=%r", explicit)
-        return str(explicit)
-
-    if len(bp) == 1:
-        only = next(iter(bp))
-        log.info("Single benchmark_params entry; using %r", only)
-        return str(only)
-
-    raise ValueError(
-        f"Multiple benchmark_params keys in {config_path!r}: {sorted(bp)!r}. "
-        "Set top-level \"active_benchmark\" to one of them, or export SGLANG_BENCHMARK_KEY."
-    )
 
 
 # Stable test order for sglang_disagg_distributed (PD prefill/decode/router).
@@ -80,30 +40,35 @@ SGLANG_TEST_ORDER = {
     "test_launch_prefill_servers": 2,
     "test_launch_decode_servers": 3,
     "test_poll_for_server_ready": 4,
-    "test_launch_proxy_router": 5,
-    "test_openai_compatible_http_endpoints": 6,
-    "test_run_lm_eval_hellaswag_benchmark_test": 7,
-    "test_run_lm_eval_gsm8k_benchmark_test": 8,
-    "test_run_performance_benchmark_test": 9,
-    "test_verify_dmesg_after_benchmark": 10,
-    "test_disagg_gpu_topology": 11,
-    "test_print_results_table": 12,
-    "test_teardown": 13,
+    "test_scan_inference_logs_for_failure": 5,
+    "test_launch_proxy_router": 6,
+    "test_openai_compatible_http_endpoints": 7,
+    "test_run_long_context_accuracy": 8,
+    "test_run_lm_eval_hellaswag_benchmark_test": 9,
+    "test_run_lm_eval_gsm8k_benchmark_test": 10,
+    "test_run_performance_benchmark_test": 11,
+    "test_verify_dmesg_after_benchmark": 12,
+    "test_disagg_gpu_topology": 13,
+    "test_scan_inference_logs_after_workload": 14,
+    "test_print_results_table": 15,
+    "test_teardown": 16,
 }
 
-# Stable test order for sglang_single (one unified server, no PD).
+# Stable test order for sglang_single (full-model server on the first cluster host).
 SGLANG_SINGLE_TEST_ORDER = {
     "test_launch_container": 0,
     "test_rms_norm": 1,
     "test_launch_server": 2,
     "test_poll_for_server_ready": 3,
-    "test_openai_compatible_http_endpoints": 4,
-    "test_run_lm_eval_hellaswag_benchmark_test": 5,
-    "test_run_lm_eval_gsm8k_benchmark_test": 6,
-    "test_run_performance_benchmark_test": 7,
-    "test_verify_dmesg_after_benchmark": 8,
-    "test_print_results_table": 9,
-    "test_teardown": 10,
+    "test_scan_inference_logs_for_failure": 4,
+    "test_openai_compatible_http_endpoints": 5,
+    "test_run_lm_eval_hellaswag_benchmark_test": 6,
+    "test_run_lm_eval_gsm8k_benchmark_test": 7,
+    "test_run_performance_benchmark_test": 8,
+    "test_verify_dmesg_after_benchmark": 9,
+    "test_scan_inference_logs_after_workload": 10,
+    "test_print_results_table": 11,
+    "test_teardown": 12,
 }
 
 # Stable test order for sglang_distributed (unified multi-node server, no PD).
@@ -112,30 +77,31 @@ SGLANG_DISTRIBUTED_TEST_ORDER = {
     "test_rms_norm": 1,
     "test_launch_server": 2,
     "test_poll_for_server_ready": 3,
-    "test_openai_compatible_http_endpoints": 4,
-    "test_run_lm_eval_hellaswag_benchmark_test": 5,
-    "test_run_lm_eval_gsm8k_benchmark_test": 6,
-    "test_run_performance_benchmark_test": 7,
-    "test_verify_dmesg_after_benchmark": 8,
-    "test_distributed_gpu_topology": 9,
-    "test_print_results_table": 10,
-    "test_teardown": 11,
+    "test_scan_inference_logs_for_failure": 4,
+    "test_openai_compatible_http_endpoints": 5,
+    "test_run_lm_eval_hellaswag_benchmark_test": 6,
+    "test_run_lm_eval_gsm8k_benchmark_test": 7,
+    "test_run_performance_benchmark_test": 8,
+    "test_verify_dmesg_after_benchmark": 9,
+    "test_distributed_gpu_topology": 10,
+    "test_scan_inference_logs_after_workload": 11,
+    "test_print_results_table": 12,
+    "test_teardown": 13,
 }
 
 
-def _flat_threshold_specs(specs: dict) -> dict[str, float]:
-    """Threshold cell specs → {metric: numeric_gate}."""
-    out: dict[str, float] = {}
-    for metric, spec in (specs or {}).items():
-        if isinstance(spec, dict) and "value" in spec:
-            out[metric] = float(spec["value"])
-        elif spec is not None:
-            out[metric] = float(spec)
-    return out
+def run_scan_inference_logs_after_workload(im_obj, lifecycle, request):
+    """Fail the suite if server logs show NCCL/GPU/ROCm/app errors after workloads."""
+    globals.error_list = []
+    if lifecycle.server_ready_failed:
+        pytest.skip("startup log scan already ran")
+    t0 = time.monotonic()
+    im_obj.scan_for_inference_errors()
+    lifecycle.complete_stage(request, "scan_inference_logs_after_workload", t0)
 
 
-def _perf_result(actual, expected, metric_key: str) -> str:
-    if actual is None or expected is None:
+def _perf_result(actual, expected, metric_key, *, enforce_thresholds=True):
+    if not enforce_thresholds or actual is None or expected is None:
         return "-"
     a, e = float(actual), float(expected)
     if "ms" in metric_key.lower():
@@ -146,11 +112,7 @@ def _perf_result(actual, expected, metric_key: str) -> str:
 def _thresholds_for_cell(variant_config, isl, osl, conc) -> dict[str, float]:
     if variant_config is None:
         return {}
-    tp = (getattr(variant_config, "benchmark_params", None) or {}).get("tensor_parallelism", "-")
-    pp = (getattr(variant_config, "benchmark_params", None) or {}).get("pipeline_parallelism", "-")
-    cell_id = f"ISL={isl},OSL={osl},TP={tp},PP={pp},CONC={conc}"
-    raw = (getattr(variant_config, "thresholds", None) or {}).get(cell_id) or {}
-    return _flat_threshold_specs(raw)
+    return perf_specs_for_cell(getattr(variant_config, "thresholds", None) or {}, isl, osl, conc)
 
 
 def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
@@ -213,8 +175,6 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
         )
 
     bp = (getattr(variant_config, "benchmark_params", None) or {}) if variant_config else {}
-    tp = bp.get("tensor_parallelism", "8")
-    pp = bp.get("pipeline_parallelism", "1")
 
     _ACC_CELL_RE = re.compile(r"^ACC_ISL=(?P<isl>\d+),OSL=(?P<osl>\d+)$")
 
@@ -246,40 +206,7 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                 ),
             )
 
-    _CELL_RE = re.compile(r"^ISL=(?P<isl>\d+),OSL=(?P<osl>\d+),TP=(?P<tp>\d+),PP=(?P<pp>\d+),CONC=(?P<conc>\d+)$")
-    bp = (getattr(variant_config, "benchmark_params", None) or {}) if variant_config else {}
-    performance_by_cell = phase_labels.get("performance_by_cell") or {}
-    if performance_by_cell:
-        summary_rows = []
-        for cell_id, result in sorted(
-            performance_by_cell.items(),
-            key=lambda kv: (int(m.group("isl")), int(m.group("osl")), int(m.group("conc")))
-            if (m := _CELL_RE.match(str(kv[0])))
-            else (0, 0, 0),
-        ):
-            m = _CELL_RE.match(str(cell_id))
-            if m:
-                summary_rows.append(
-                    [
-                        m.group("isl"),
-                        m.group("osl"),
-                        m.group("tp"),
-                        m.group("pp"),
-                        m.group("conc"),
-                        result,
-                    ]
-                )
-            else:
-                summary_rows.append(["-", "-", tp, pp, str(cell_id), result])
-
-        log.info(
-            "\n\n\n\n======== Performance summary (by ISL/OSL cell) ========\n%s",
-            tabulate(
-                summary_rows,
-                headers=["ISL", "OSL", "TP", "PP", "Conc", "Result"],
-                tablefmt="github",
-            ),
-        )
+    enforce_thresholds = perf_enforce_thresholds(bp)
 
     PERF_METRICS = [
         ("Mean TTFT (ms)", "mean_ttft_ms"),
@@ -310,6 +237,7 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                 if actual is None:
                     continue
                 expected = expected_map.get(metric_key)
+                expected_display = f"{float(expected):.4f}" if expected is not None and enforce_thresholds else "-"
                 perf_rows.append(
                     [
                         model,
@@ -321,8 +249,8 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                         host,
                         label,
                         f"{float(actual):.4f}",
-                        f"{float(expected):.4f}" if expected is not None else "-",
-                        _perf_result(actual, expected, metric_key),
+                        expected_display,
+                        _perf_result(actual, expected, metric_key, enforce_thresholds=enforce_thresholds),
                     ]
                 )
 
@@ -347,5 +275,5 @@ def test_print_results_table(inf_res_dict, lifecycle, variant_config=None):
                 tablefmt="github",
             ),
         )
-    elif not smoke_results and not acc_rows and not performance_by_cell:
+    elif not smoke_results and not acc_rows:
         log.info("inf_res_dict empty, nothing to print")

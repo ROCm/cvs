@@ -11,7 +11,7 @@
       "_comment_gpus_per_node": "Exact number of AMD GPUs expected on every node.",
 
       "_example_expected_rocm_version": "6.2.0",
-      "expected_rocm_version": "10.0.0",
+      "expected_rocm_version": "<changeme>",
       "_comment_expected_rocm_version": "Expected ROCm version across all cluster nodes. Must match the output of 'amd-smi version' on all nodes. Format: 'major.minor.patch' (e.g., '6.2.0', '5.7.1')."
     },
 
@@ -25,11 +25,11 @@
         "_comment_connectivity_mode": "RDMA connectivity testing mode. Options: 'basic' (test adjacent node pairs, fast, ~14% coverage for 8 nodes), 'full_mesh' (test all possible node pairs, comprehensive, 100% coverage), 'skip' (skip RDMA connectivity testing entirely).",
 
         "_example_gid_index": "3",
-        "gid_index": "3",
+        "gid_index": "<changeme>",
         "_comment_gid_index": "GID index to check on all RDMA interfaces. Typically '3' for RoCE (RDMA over Converged Ethernet). Must be a valid GID index for your InfiniBand/RoCE setup.",
 
         "_example_interfaces": ["rocep28s0", "rocep62s0", "rocep79s0", "rocep96s0", "rocep158s0", "rocep190s0", "rocep206s0", "rocep222s0"],
-        "interfaces": ["rdma0", "rdma1", "rdma2", "rdma3", "rdma4", "rdma5", "rdma6", "rdma7"],
+        "interfaces": ["<changeme>"],
         "_comment_interfaces": "List of specific RDMA interface names that should be present on all cluster nodes. Examples: ['rocep28s0', 'rocep62s0'] for standard setup, ['mlx5_0', 'mlx5_1'] for Mellanox, ['ib0', 'ib1'] for generic InfiniBand.",
 
         "nodes_per_full_mesh_group": 32,
@@ -72,7 +72,7 @@
         "_comment_per_ping_timeout": "Optional value for afmctl's -t flag (per-ping timeout). Leave null to use afmctl's default.",
         "_comment_traffic_types": "Traffic categories to enforce when evaluating PASS/FAIL. Maps to afmctl's --traffic-type (request, response, non-ifoe). When all three are selected (default) --traffic-type is omitted so afmctl exercises every category.",
         "_comment_loss_threshold_pct": "Maximum tolerated packet loss percentage per traffic type. Defaults to 0.0 (any failure marks the node as FAIL).",
-        "_comment_ssh_timeout": "Overall SSH timeout (seconds) for each afmctl invocation. Increase for large port counts or high pings_per_port values.",
+        "_comment_ping_timeout": "PSSH read timeout (seconds) for each afmctl ping invocation. Increase for large port counts or high pings_per_port values.",
 
         "fabric_checks": false,
         "_comment_fabric_checks": "Enable MI4XX-only AIFM/AFM/vPOD, station-mask, and IFoE port admission checks.",
@@ -86,7 +86,13 @@
           "_comment_enabled": "Enable IFoE L2 connectivity validation.",
 
           "pings_per_port": 3,
-          "_comment_pings_per_port": "Ping samples sent per selected IFoE port pair."
+          "_comment_pings_per_port": "Ping samples sent per selected IFoE port pair.",
+
+          "ping_timeout": 600,
+          "_comment_ping_timeout": "PSSH read timeout in seconds for each afmctl ping invocation. Half-cabled BDFs can exceed the old 180s cap; 600s covers measured ~260s sweeps and afmctl's 5-minute default -t.",
+
+          "loss_threshold_pct": 0.0,
+          "_comment_loss_threshold_pct": "Maximum tolerated packet loss percentage per traffic type. 0.0 fails the node on any down port. Raise only when known-dead ports should not fail an otherwise healthy fabric."
         },
 
         "transferbench": {
@@ -114,7 +120,7 @@
     },
 
     "node_smoke": {
-      "_comment": "Primus node_smoke checks via primus-cli direct (opt-in; default skip). See Primus docs/node-smoke-test-instruction.md",
+      "_comment": "Primus node_smoke checks via primus-cli direct (runs by default; set connectivity_mode to 'skip' to disable). See Primus docs/node-smoke-test-instruction.md",
 
       "_setup_comment": "Primus clone/venv setup runs automatically when auto_setup is true (default). Manual equivalent:",
       "_setup_step_1": "git clone --recurse-submodules https://github.com/AMD-AIG-AIMA/Primus.git /home/{user-id}/INSTALL/Primus",
@@ -156,7 +162,7 @@
       "_comment_venv_activate": "Path to the Python virtualenv activate script used by primus-cli direct. Required when connectivity_mode is 'run'.",
 
       "connectivity_mode": "run",
-      "_comment_connectivity_mode": "Options: 'run' (host/GPU/RDMA roll-call via node_smoke) or 'skip' (default).",
+      "_comment_connectivity_mode": "Options: 'run' (default; host/GPU/RDMA roll-call via node_smoke) or 'skip'.",
 
       "gpus_per_node": 8,
       "_comment_gpus_per_node": "Expected GPU count per node (exported as GPUS_PER_NODE and passed to node_smoke --expected-gpus).",
@@ -226,10 +232,10 @@
     },
 
     "tier3_info": {
-      "_comment": "Primus Tier 3 Host/GPU/Network info via primus-cli direct -- preflight --host --gpu --network (opt-in; default skip). No Slurm.",
+      "_comment": "Primus Tier 3 Host/GPU/Network info via primus-cli direct -- preflight --host --gpu --network (runs by default; set connectivity_mode to 'skip' to disable). No Slurm.",
 
       "connectivity_mode": "run",
-      "_comment_connectivity_mode": "Options: 'run' or 'skip' (default). Independent of node_smoke.connectivity_mode — enabling node_smoke does not enable Tier 3.",
+      "_comment_connectivity_mode": "Options: 'run' (default) or 'skip'. Independent of node_smoke.connectivity_mode — disabling node_smoke does not disable Tier 3.",
 
       "auto_setup": true,
       "_comment_auto_setup": "When true, clone/update Primus and create venv before Tier 3 (falls back to node_smoke paths).",

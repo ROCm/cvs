@@ -110,6 +110,36 @@ class TestDetectScheduler(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unknown scheduler type 'kubernetes'"):
             detect_scheduler()
 
+    @patch("cvs.core.scheduler.subprocess.run")
+    @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
+    @patch.dict(os.environ, {"SPUR_JOB_ID": "107252", "SLURM_JOB_ID": "107252"})
+    def test_spur_job_id_wins_without_binaries(self, _mock_which, mock_run):
+        # AIMVT-319: compute nodes have no spur/scontrol; SPUR still sets SPUR_JOB_ID
+        # (and SLURM_* twins). Detection must not fall through to BARE_METAL.
+        self.assertEqual(detect_scheduler(), Scheduler.SPUR)
+        mock_run.assert_not_called()
+
+    @patch("cvs.core.scheduler.subprocess.run")
+    @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
+    @patch.dict(os.environ, {"SLURM_JOB_ID": "99"})
+    def test_slurm_job_id_without_spur_job_id(self, _mock_which, mock_run):
+        self.assertEqual(detect_scheduler(), Scheduler.SLURM)
+        mock_run.assert_not_called()
+
+    @patch("cvs.core.scheduler.subprocess.run")
+    @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only("scontrol"))
+    @patch.dict(os.environ, {"SPUR_JOB_ID": "1", "SLURM_JOB_ID": "1"})
+    def test_spur_job_id_checked_before_slurm_job_id(self, _mock_which, mock_run):
+        self.assertEqual(detect_scheduler(), Scheduler.SPUR)
+        mock_run.assert_not_called()
+
+    @patch("cvs.core.scheduler.subprocess.run")
+    @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
+    @patch.dict(os.environ, {"CVS_SCHEDULER": "slurm", "SPUR_JOB_ID": "1"})
+    def test_env_override_takes_precedence_over_job_id(self, _mock_which, mock_run):
+        self.assertEqual(detect_scheduler(), Scheduler.SLURM)
+        mock_run.assert_not_called()
+
 
 class TestRunningInJobStep(unittest.TestCase):
     def setUp(self):
@@ -167,6 +197,20 @@ class TestIsManagedCompute(unittest.TestCase):
         # plain SSH login to a managed head node) but this process was never
         # launched via srun, so it must not be treated as managed compute.
         self.assertFalse(is_managed_compute())
+
+    @patch("cvs.core.scheduler.shutil.which", side_effect=_which_only())
+    @patch.dict(
+        os.environ,
+        {
+            "SPUR_JOB_ID": "107252",
+            "SLURM_JOB_ID": "107252",
+            "SLURM_STEP_ID": "0",
+            "SLURM_PROCID": "0",
+        },
+    )
+    def test_true_in_spur_step_without_scheduler_binaries(self, _mock_which):
+        # End-to-end AIMVT-319: a spur srun step on a compute node with empty PATH.
+        self.assertTrue(is_managed_compute())
 
 
 class TestExpandHostlist(unittest.TestCase):

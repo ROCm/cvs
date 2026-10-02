@@ -13,7 +13,8 @@ Save timing uses the embedded microsecond timestamps on save bracket lines:
   [YYYY-MM-DD HH:MM:SS.ffffff] successfully saved checkpoint from iteration N to ...
 
 Load timing uses the outer second-precision header timestamps:
-  [YYYYMMDD HH:MM:SS]... loading checkpoint from ...
+  [YYYYMMDD HH:MM:SS]... loading checkpoint from ...              (single-node)
+  [YYYYMMDD HH:MM:SS]... loading distributed checkpoint from ...  (distributed)
   [YYYYMMDD HH:MM:SS]... successfully loaded checkpoint from ...
 
 Both single-node and distributed runs emit these lines on the master node (rank-0).
@@ -84,7 +85,8 @@ def parse_checkpoint_io_seconds(
 
         # Load start / end — keyword check first, then extract outer timestamp via
         # search() (not match()) so any invisible prefix bytes don't block the match.
-        if 'loading checkpoint from' in line and 'successfully' not in line:
+        # Single-node: "loading checkpoint from"; distributed: "loading distributed checkpoint from".
+        if 'loading' in line and 'checkpoint from' in line and 'successfully' not in line:
             outer_m = _OUTER_TS_RE.search(line)
             if outer_m:
                 load_start_ts = datetime.strptime(outer_m.group(1), _TS_FMT_S)

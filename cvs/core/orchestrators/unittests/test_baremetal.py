@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 from cvs.core.orchestrators.factory import OrchestratorConfig
 from cvs.core.orchestrators.baremetal import BaremetalOrchestrator
+from cvs.lib.parallel.config import ParallelConfig
 
 
 def _make_orch_config():
@@ -37,6 +38,46 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         BaremetalOrchestrator(MagicMock(), _make_orch_config())
         # __init__ creates two Pssh handles: self.head and self.all.
         self.assertEqual(mock_pssh.call_count, 2)
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_init_forwards_cluster_env_vars(self, mock_pssh):
+        cfg = _make_orch_config()
+        cfg.env_vars = {"PATH": "/opt/rocm/bin", "LD_LIBRARY_PATH": "/opt/rocm/lib"}
+        BaremetalOrchestrator(MagicMock(), cfg)
+        for call in mock_pssh.call_args_list:
+            self.assertEqual(call.kwargs.get("env_vars"), cfg.env_vars)
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_parallel_handle_settings_apply_to_both_handles(self, mock_pssh):
+        cfg = _make_orch_config()
+        cfg.parallel_handle = {
+            "config": {"hosts_per_shard": 8},
+            "transport_kwargs": {"timeout": 60, "num_retries": 2, "retry_delay": 2},
+        }
+        BaremetalOrchestrator(MagicMock(), cfg)
+        for call in mock_pssh.call_args_list:
+            self.assertIsInstance(call.kwargs["config"], ParallelConfig)
+            self.assertEqual(call.kwargs["config"].hosts_per_shard, 8)
+            self.assertEqual(call.kwargs["timeout"], 60)
+            self.assertEqual(call.kwargs["num_retries"], 2)
+            self.assertEqual(call.kwargs["retry_delay"], 2)
+            self.assertEqual(call.kwargs["transport"], "ssh")
+
+    @patch("cvs.core.orchestrators.baremetal.is_managed_compute", return_value=True)
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_parallel_handle_transport_kwargs_are_forwarded_on_http(self, mock_pssh, _managed):
+        cfg = _make_orch_config()
+        cfg.parallel_handle = {
+            "config": {"hosts_per_shard": 8},
+            "transport_kwargs": {"timeout": 60, "num_retries": 2, "retry_delay": 2},
+        }
+        BaremetalOrchestrator(MagicMock(), cfg)
+        for call in mock_pssh.call_args_list:
+            self.assertEqual(call.kwargs["transport"], "http")
+            self.assertEqual(call.kwargs["config"].hosts_per_shard, 8)
+            self.assertEqual(call.kwargs["timeout"], 60)
+            self.assertEqual(call.kwargs["num_retries"], 2)
+            self.assertEqual(call.kwargs["retry_delay"], 2)
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_init_sets_orchestrator_type(self, _mock_pssh):
@@ -66,6 +107,36 @@ class TestBaremetalOrchestrator(unittest.TestCase):
         result = orch.exec_on_head("hostname", timeout=10)
         orch.head.exec.assert_called_once_with("hostname", timeout=10, detailed=False, print_console=True)
         self.assertEqual(result, {"10.0.0.1": "ok"})
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_exec_on_host_targets_requested_host_subset(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        with patch.object(orch, "exec", return_value={"10.0.0.2": "ok"}) as exec_mock:
+            result = orch.exec_on_host("date", hosts=["10.0.0.2"], timeout=5)
+
+        exec_mock.assert_called_once_with(
+            "date",
+            hosts=["10.0.0.2"],
+            timeout=5,
+            detailed=False,
+            print_console=True,
+        )
+        self.assertEqual(result, {"10.0.0.2": "ok"})
+
+    @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
+    def test_head_file_transfers_delegate_to_head_handle(self, _mock_pssh):
+        orch = BaremetalOrchestrator(MagicMock(), _make_orch_config())
+        orch.head = MagicMock()
+        orch.head.upload_file.return_value = {"10.0.0.1": "/remote/result.json"}
+        orch.head.download_file.return_value = {"10.0.0.1": "/local/result.json"}
+
+        uploaded = orch.upload_to_head("/local/result.json", "/remote/result.json")
+        downloaded = orch.download_from_head("/remote/result.json", "/local/result.json")
+
+        orch.head.upload_file.assert_called_once_with("/local/result.json", "/remote/result.json")
+        orch.head.download_file.assert_called_once_with("/remote/result.json", "/local/result.json")
+        self.assertEqual(uploaded, {"10.0.0.1": "/remote/result.json"})
+        self.assertEqual(downloaded, {"10.0.0.1": "/local/result.json"})
 
     @patch("cvs.core.orchestrators.baremetal.MultiProcessParallelHandle")
     def test_exec_forwards_print_console_false_to_all(self, _mock_pssh):

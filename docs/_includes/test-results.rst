@@ -17,3 +17,23 @@ Test output examples
 .. image:: /images/failed.png
 
 .. image:: /images/stop.png
+
+Sample training test results
+----------------------------
+
+Sample output snapshots from a JAX MaxText training run.
+
+**HTML test report**
+
+.. image:: /images/jaxmaxtext_Training_html_report_sample.png
+   :alt: Sample JAX MaxText training HTML test report
+
+Sample inference test results
+-----------------------------
+
+Sample output snapshot from an SGLang inference run.
+
+**HTML test report**
+
+.. image:: /images/inference_pytest_report_sample.png
+   :alt: Sample SGLang inference HTML test report

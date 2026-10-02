@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run burn-in and diagnostic CVS test suites
-  :keywords: CVS, platform, health, preflight, burn-in, diag
+  :description: Run CVS burn-in and diagnostic test suites to validate GPU cluster health before network, training, or inference workloads on AMD Instinct hardware.
+  :keywords: CVS, burn-in, diagnostic, GPU, AMD Instinct, ROCm, AMD, health, AGFHC, RVS, TransferBench, preflight
 
-********************
-Burn-in / Diag tests
-********************
+*******************************************************************
+Run Cluster Validation Suite (CVS) burn-in and diagnostic test suites
+*******************************************************************
 
 Host validation, GPU burn-in, and preflight checks run before network, training, or inference workloads.
 
@@ -25,4 +25,4 @@ Host validation, GPU burn-in, and preflight checks run before network, training,
      - :doc:`/how-to/test-suites/burn-in-diag/preflight`
      - :doc:`/reference/configuration-files/burn-in-diag/preflight`
 
-See also :doc:`/how-to/run-tests/index` for common ``cvs run`` flags and workflow.
+See also :doc:`/how-to/test-suites/index` for common ``cvs run`` flags and workflow.

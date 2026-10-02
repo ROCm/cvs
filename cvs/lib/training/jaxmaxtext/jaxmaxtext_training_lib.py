@@ -19,18 +19,29 @@ Both single-node and distributed training use this same class; the config's
 
 from __future__ import annotations
 
+import base64
+import io
 import re
 import shlex
+import tarfile
 import time
 
 from cvs.lib import globals
+from cvs.lib.utils.log_poller import LogPoller
 from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import (
     parse_training_log,
     extract_step_metrics,
     extract_eval_metrics,
 )
+from cvs.lib.training.jaxmaxtext.utils.tb_events import read_scalars_from_bytes
 
 log = globals.log
+
+# Bounds for the best-effort TensorBoard scalar pull in collect_tb_scalars: the
+# whole tar is base64-buffered in controller memory, so cap the size and time so
+# a stalled node or a huge events dir cannot hang the sweep or exhaust memory.
+_TB_COLLECT_TIMEOUT_S = 120
+_TB_COLLECT_MAX_BYTES = 200 * 1024 * 1024
 
 # Bound lazily to cvs.lib.verify_lib.verify_dmesg_for_errors on first use so this
 # module stays importable without the broader utils stack that verify_lib pulls
@@ -54,6 +65,27 @@ _TRAINING_ERR_PATTERNS = {
     'tensorflow': r'tensorflow.CoordinationServiceError|tensorflow.BarrierError|CoordinationServiceError',
     'resource': r'RESOURCE_EXHAUSTED: Out of memory|failed: RESOURCE_EXHAUSTED',
     'segfault': r'Segmentation fault|SIGSEGV|signal 11|core dumped',
+}
+
+# Fatal Python-crash signatures scanned on EVERY run, in addition to (and even
+# when) a config supplies its own `error_patterns` (which otherwise fully
+# replace `_TRAINING_ERR_PATTERNS`). An unhandled traceback / import failure
+# crashes the rank immediately, so catching it here fails fast instead of
+# waiting for the completion-timeout.
+_ALWAYS_ON_ERR_PATTERNS = {
+    'python crash': r'Traceback \(most recent call last\):|ImportError:|ModuleNotFoundError:|Fatal Python error:',
+    # JAX/XLA distributed death: the coordinator aborts the process when a peer
+    # task fails to register / drops (e.g. a rank never comes up), so the
+    # survivors would otherwise poll to timeout. Match ONLY the terminal abort
+    # message -- NOT generic "/tensorflow.CoordinationService/..." RPC lines,
+    # which JAX also emits as benign WARNINGs during normal shutdown
+    # (WatchJobState CANCELLED/UNAVAILABLE once peers exit).
+    'jax distributed fatal': r'Terminating process because the JAX distributed service detected fatal errors',
+    # Any glog FATAL line ("F<MMDD> HH:MM:SS.uuuuuu ...") means the process called
+    # abort(); it is always terminal, so fail fast instead of polling to timeout.
+    # glog uses 'F' only for FATAL, so this never matches the benign 'W'/'E'
+    # coordination-shutdown warnings above.
+    'glog fatal': r'\bF\d{4} \d\d:\d\d:\d\d\.\d',
 }
 
 # NaN/Inf in any reported training metric -- loss/lm_loss/perplexity go NaN while
@@ -123,8 +155,22 @@ class MaxTextTrainingJob:
             merged.update(sweep.maxtext_overrides)
         self.maxtext_config = merged
 
+        # Effective step count for THIS sweep. A sweep may override `steps` (merged
+        # above); use that value -- not the base maxtext_config.steps -- for the run
+        # YAML, the poll/timeout budget, and the completion marker so a per-sweep
+        # override actually takes effect end-to-end.
+        self.steps = int(self.maxtext_config.get("steps", getattr(self.training, "steps", 30)) or 30)
+
         self.log_dir = variant.paths.log_dir
-        self.out_dir = f"{self.log_dir}/jaxmaxtext/{self.sweep_tag}" if self.sweep_tag else f"{self.log_dir}/jaxmaxtext"
+        # Namespace the output tree by model (from maxtext_config.model_name, else
+        # the model id) so different models never share a sweep folder, then by
+        # the per-sweep tag.
+        model_name = self.maxtext_config.get("model_name") or self.variant.model.id or "model"
+        self.out_dir = (
+            f"{self.log_dir}/jaxmaxtext/{model_name}/{self.sweep_tag}"
+            if self.sweep_tag
+            else f"{self.log_dir}/jaxmaxtext/{model_name}"
+        )
         self.num_nodes = len(orch.hosts)
         # GPUs-per-node is config-driven -- do not assume a uniform 8-GPU topology.
         # It feeds num_gpus -> tokens_per_sec_total -> scaling efficiency, so an
@@ -148,17 +194,15 @@ class MaxTextTrainingJob:
         self.training_start_time = None
 
         self._poll_wait_s = 60
-        self._poll_count = int(self.training.steps * 10)
+        self._poll_count = int(self.steps * 10)
         self._initial_wait_s = 60
+        # How often to fetch new training-log lines. Decoupled from the timeout
+        # budget (_poll_count * _poll_wait_s) so output surfaces quickly while the
+        # console shows a lightweight spinner between drains.
+        self._drain_interval_s = 10
 
         self._scratch_dir = None  # resolved lazily from paths.temp_dir
         self._train_script = None  # resolved lazily to the first existing candidate
-
-        # Per-node cursor (lines already surfaced) so polling STREAMS only the
-        # new training-log lines to the console once, instead of re-dumping a
-        # `tail -N` window every iteration (which bloated --log-file with
-        # repeated content).
-        self._log_line_cursor = [0] * self.num_nodes
 
     def _get_scratch_dir(self):
         """Host-user scratch base from ``paths.temp_dir`` (cached).
@@ -208,66 +252,138 @@ class MaxTextTrainingJob:
     # ---------- setup ----------
 
     def setup_training_env(self):
-        """Write env script and MaxText YAML config into the container."""
+        """Write the MaxText YAML config into the container.
+
+        Common environment (the config's ``container.env{}`` plus the
+        ``XLA_FLAGS`` folded in from ``xla_flags{}``) is set on the container at
+        ``docker run`` time by the orchestrator and inherited by ``docker exec``,
+        so there is no env script to source. Only the per-run YAML is written
+        here; per-node/dynamic vars + credentials are exported inside each node's
+        launcher (see ``build_training_cmd``).
+        """
         self.orch.exec(f"mkdir -p {shlex.quote(self._get_scratch_dir())}")
         self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}")
         for i in range(self.num_nodes):
             self.orch.exec(f"mkdir -p {shlex.quote(self.out_dir)}/out-node{i}")
-
-        self._write_env_script()
         self._write_maxtext_yaml()
 
-    def _build_xla_flags_str(self):
-        parts = []
-        for k, v in self.training.xla_flags.items():
-            parts.append(f"--{k}={v}")
-        return " ".join(parts)
+    def _node_log(self, i):
+        """Per-node training log path (one file per rank)."""
+        return f"{self.out_dir}/out-node{i}/training_node{i}.log"
 
-    def _write_env_script(self):
-        """Write the env script sourced before training launch."""
-        lines = []
+    def _node_dmesg_log(self, i):
+        """Per-node saved-dmesg log path (one file per rank)."""
+        return f"{self.out_dir}/out-node{i}/dmesg_node{i}.log"
 
-        lines.append(f"export HF_TOKEN={shlex.quote(self.hf_token)}")
-        lines.append(f"export HF_HOME={shlex.quote(self.variant.paths.models_dir)}")
-        lines.append("export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH")
+    def _node_dir(self, i):
+        """Per-node output dir (holds this rank's training/dmesg/redirect logs)."""
+        return f"{self.out_dir}/out-node{i}"
 
-        for k, v in self.training.env_vars.items():
-            lines.append(f"export {k}={shlex.quote(str(v))}")
+    def _run_name(self):
+        """MaxText run_name: model id, plus the per-sweep tag when sweeping."""
+        run_name = f"jaxmaxtext_{self.variant.model.id}"
+        return f"{run_name}_{self.sweep_tag}" if self.sweep_tag else run_name
 
-        xla_flags = self._build_xla_flags_str()
-        if xla_flags:
-            lines.append(f'export XLA_FLAGS="{xla_flags}"')
+    def _tb_events_dir(self):
+        """Coordinator TensorBoard events dir (MaxText writes under run_name)."""
+        run_name = self._run_name()
+        return f"{self.out_dir}/{run_name}/tensorboard/{run_name}"
 
-        if self.training.distributed:
-            nccl = self.training.nccl
-            if nccl.ib_hca:
-                lines.append(f"export NCCL_IB_HCA={shlex.quote(nccl.ib_hca)}")
-            if nccl.ib_hca_list:
-                lines.append(f"export NCCL_IB_HCA_LIST={shlex.quote(nccl.ib_hca_list)}")
-            if nccl.socket_ifname:
-                lines.append(f"export NCCL_SOCKET_IFNAME={shlex.quote(nccl.socket_ifname)}")
-            if nccl.gloo_socket_ifname:
-                lines.append(f"export GLOO_SOCKET_IFNAME={shlex.quote(nccl.gloo_socket_ifname)}")
-            if nccl.ib_gid_index:
-                lines.append(f"export NCCL_IB_GID_INDEX={shlex.quote(nccl.ib_gid_index)}")
-        else:
-            lines.append("export NCCL_IB_DISABLE=1")
-            lines.append("export NCCL_SHM_DISABLE=0")
-            lines.append("export NCCL_P2P_DISABLE=0")
+    @staticmethod
+    def _exec_first_field(out, node):
+        """First whitespace-delimited token of a node's stdout, or ''."""
+        raw = (out or {}).get(node, "")
+        text = raw if isinstance(raw, str) else (raw or {}).get("output", "")
+        parts = (text or "").split()
+        return parts[0] if parts else ""
 
-        env_script = "\n".join(lines) + "\n"
-        env_path = f"{self._get_scratch_dir()}/maxtext_env.sh"
-        self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > {env_path}"))
+    def collect_tb_scalars(self):
+        """Read the coordinator's TensorBoard scalars into ``{tag: [(step, val)]}``.
+
+        Pulls node 0's event files over ``orch.exec`` (tar | base64, one round
+        trip) and parses them with the dependency-free tb_events reader. This is a
+        best-effort, report-time convenience that never raises: it is bounded by a
+        timeout and a size cap (the whole tar is buffered in controller memory), and
+        any skip/failure returns ``{}`` while recording a human-readable reason in
+        ``self.tb_collection_note`` so the deck can show why curves are missing
+        instead of failing silently. ``tb_collection_note`` is empty on success.
+        """
+        self.tb_collection_note = ""
+        node0 = self.orch.hosts[0]
+        tb_dir = self._tb_events_dir()
+
+        # Size guard first: sum event-file KiB (POSIX ``du -ck``) and skip the pull
+        # when it exceeds the cap, so a huge dir never gets buffered whole.
+        size_cmd = (
+            f"cd {shlex.quote(tb_dir)} 2>/dev/null && "
+            f"du -ck events.out.tfevents.* 2>/dev/null | tail -1 | cut -f1 || true"
+        )
+        try:
+            size_out = self.orch.exec(size_cmd, hosts=[node0], print_console=False, timeout=_TB_COLLECT_TIMEOUT_S)
+        except Exception as e:  # noqa: BLE001 - collection must never break the run
+            self.tb_collection_note = f"size probe failed ({e})"
+            log.warning("tb collect: %s", self.tb_collection_note)
+            return {}
+        try:
+            total_bytes = int(self._exec_first_field(size_out, node0)) * 1024
+        except ValueError:
+            total_bytes = 0
+        if total_bytes <= 0:
+            self.tb_collection_note = "no TensorBoard events found"
+            log.info("tb collect: %s under %s", self.tb_collection_note, tb_dir)
+            return {}
+        if total_bytes > _TB_COLLECT_MAX_BYTES:
+            self.tb_collection_note = (
+                f"skipped: {total_bytes // (1024 * 1024)} MiB of events exceeds "
+                f"{_TB_COLLECT_MAX_BYTES // (1024 * 1024)} MiB cap"
+            )
+            log.warning("tb collect: %s (%s)", self.tb_collection_note, tb_dir)
+            return {}
+
+        cmd = (
+            f"cd {shlex.quote(tb_dir)} 2>/dev/null && tar -cf - events.out.tfevents.* 2>/dev/null | base64 -w0 || true"
+        )
+        try:
+            out = self.orch.exec(cmd, hosts=[node0], print_console=False, timeout=_TB_COLLECT_TIMEOUT_S)
+        except Exception as e:  # noqa: BLE001 - collection must never break the run
+            self.tb_collection_note = f"collection failed ({e})"
+            log.warning("tb collect: %s", self.tb_collection_note)
+            return {}
+
+        raw = (out or {}).get(node0, "")
+        b64 = raw if isinstance(raw, str) else (raw or {}).get("output", "")
+        b64 = "".join((b64 or "").split())  # drop any wrapping/whitespace
+        if not b64:
+            self.tb_collection_note = "no TensorBoard events found"
+            log.info("tb collect: %s under %s", self.tb_collection_note, tb_dir)
+            return {}
+
+        try:
+            tar_bytes = base64.b64decode(b64)
+            blobs = []
+            with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:") as tar:
+                for member in tar.getmembers():
+                    if member.isfile():
+                        fh = tar.extractfile(member)
+                        if fh is not None:
+                            blobs.append(fh.read())
+        except (ValueError, tarfile.TarError, OSError) as e:
+            self.tb_collection_note = f"decode/untar failed ({e})"
+            log.warning("tb collect: %s", self.tb_collection_note)
+            return {}
+
+        scalars = read_scalars_from_bytes(blobs)
+        if not scalars:
+            self.tb_collection_note = "no scalar series parsed from events"
+        log.info("tb collect: %d scalar tags from %d event file(s)", len(scalars), len(blobs))
+        return scalars
 
     def _write_maxtext_yaml(self):
         """Write the MaxText YAML config into the container."""
         mc = dict(self.maxtext_config)
 
-        run_name = f"jaxmaxtext_{self.variant.model.id}"
-        if self.sweep_tag:
-            run_name = f"{run_name}_{self.sweep_tag}"
-        mc["run_name"] = run_name
-        mc["steps"] = self.training.steps
+        mc["run_name"] = self._run_name()
+        mc["steps"] = self.steps
         mc["enable_checkpointing"] = self.training.enable_checkpointing
         mc["base_output_directory"] = self.out_dir
         mc["tokenizer_path"] = self.training.tokenizer.tokenizer_path
@@ -318,6 +434,95 @@ class MaxTextTrainingJob:
             if not re.search(r'hca_id:\s+(bnxt_|rocep|rdma)', output or "", re.I):
                 raise RuntimeError(f"RDMA library not properly configured on {host}: {(output or '')[:300]}")
 
+    # ---------- maxtext branch checkout ----------
+
+    def checkout_maxtext_branch(self):
+        """Optionally check out a MaxText branch and/or run an install recipe.
+
+        No-op when both ``training.maxtext_branch`` and
+        ``training.maxtext_install_cmd`` are empty. When a branch is set, on
+        every node: cd to ``training.maxtext_root``, discard local changes
+        (``git reset --hard``), best-effort ``git fetch``, then
+        ``git checkout <branch>``, verifying each node ended up on the requested
+        branch (a wrong/failed checkout fails the run rather than silently
+        training on the image's default code). The install recipe runs
+        independently: it executes whenever ``maxtext_install_cmd`` is set, even
+        with no branch checkout, so image-level fixes (e.g. swapping CUDA
+        ``tensorflow`` for ``tensorflow-cpu``) can be applied against the image's
+        baked-in MaxText.
+        """
+        branch = (getattr(self.training, "maxtext_branch", "") or "").strip()
+        install_cmd = (getattr(self.training, "maxtext_install_cmd", "") or "").strip()
+        if not branch and not install_cmd:
+            return
+        root = (getattr(self.training, "maxtext_root", "") or "/workspace/maxtext").strip()
+
+        if branch:
+            log.info("checking out MaxText branch '%s' in %s", branch, root)
+            cmd = (
+                f"cd {shlex.quote(root)} && git reset --hard && "
+                f"(git fetch --all --tags --quiet || true) && "
+                f"git checkout {shlex.quote(branch)} && git rev-parse --abbrev-ref HEAD"
+            )
+            outs = self._exec_all_nodes_or_fail(cmd, "MaxText branch checkout")
+            for host, text in outs.items():
+                log.info("[maxtext checkout %s]\n%s", host, text.strip()[-500:])
+
+            # Confirm every node is on the requested branch (detached HEAD or a
+            # failed checkout would report something else).
+            verify = self._exec_all_nodes_or_fail(
+                f"cd {shlex.quote(root)} && git rev-parse --abbrev-ref HEAD", "MaxText branch verify"
+            )
+            for host, text in verify.items():
+                current = text.strip().splitlines()[-1].strip() if text.strip() else ""
+                if current != branch:
+                    raise RuntimeError(
+                        f"MaxText branch checkout failed on {host}: expected '{branch}', "
+                        f"HEAD is '{current or '<unknown>'}' (root={root})"
+                    )
+
+        # Optional: run the framework's install recipe from the checkout so a
+        # branch that changed its dependencies (e.g. a newer JAX) is actually
+        # installed. `git checkout` updates the CODE, but MaxText installs its
+        # deps from a requirements file (not pyproject), so a plain
+        # `pip install -e .` won't pull them -- the caller supplies the correct
+        # command via training.maxtext_install_cmd (run verbatim from root).
+        if install_cmd:
+            log.info("running MaxText install command in %s: %s", root, install_cmd)
+            full = f"cd {shlex.quote(root)} && {install_cmd} && echo __MAXTEXT_INSTALL_OK__"
+            outs = self._exec_all_nodes_or_fail(full, "MaxText install", timeout=1800)
+            for host, text in outs.items():
+                text = text.strip()
+                log.info("[maxtext install %s]\n%s", host, text[-1200:])
+                if "__MAXTEXT_INSTALL_OK__" not in text:
+                    raise RuntimeError(f"MaxText install command failed on {host} (root={root}): {text[-800:]}")
+
+    def _exec_all_nodes_or_fail(self, cmd, what, timeout=None):
+        """Run ``cmd`` on every node and require all of them to succeed.
+
+        Uses ``detailed=True`` so the per-host exit code is available, and treats
+        a missing/short result (e.g. no reachable nodes) as a failure rather than
+        a silent success: raises unless every host in ``self.orch.hosts`` reported
+        back with exit code 0. Returns ``{host: output_text}``. (A backend that
+        returns a plain string per host -- no exit code -- is taken as success for
+        that host, so the completion markers checked by the caller still apply.)
+        """
+        res = self.orch.exec("bash -c " + shlex.quote(cmd), detailed=True, timeout=timeout) or {}
+        missing = [h for h in self.orch.hosts if h not in res]
+        if missing:
+            raise RuntimeError(f"{what}: no result from node(s) {missing} (ran on {sorted(res)} of {self.orch.hosts})")
+        outputs, failed = {}, []
+        for host in self.orch.hosts:
+            r = res[host]
+            code = r.get("exit_code", 0) if isinstance(r, dict) else 0
+            text = (r.get("output", "") if isinstance(r, dict) else r) or ""
+            outputs[host] = text
+            if code not in (0, None):
+                failed.append(f"{host} (exit {code}): {text.strip()[-300:]}")
+        if failed:
+            raise RuntimeError(f"{what} failed on: {'; '.join(failed)}")
+        return outputs
+
     # ---------- tokenizer ----------
 
     def setup_tokenizer(self):
@@ -360,47 +565,32 @@ class MaxTextTrainingJob:
         """
         scratch = self._get_scratch_dir()
         train_script = self._resolve_train_script()
+        # Train from the SAME tree that checkout_maxtext_branch() operates on so a
+        # branch checkout is actually the code that runs (cd + PYTHONPATH both use
+        # maxtext_root; train_script_paths are expected to live under it too).
+        root = (getattr(self.training, "maxtext_root", "") or "/workspace/maxtext").strip()
+        # Common env (container.env{} + XLA_FLAGS) is already set on the container
+        # via `docker run -e` and inherited here by `docker exec`. The launcher
+        # only adds credentials + the PER-NODE/dynamic vars that cannot be static:
+        # the coordinator address (first node), node count, and this rank's index.
+        coordinator_ip = self.orch.hosts[0] if self.training.distributed else "localhost"
         write_cmds = []
         for i in range(self.num_nodes):
             launcher_lines = [
                 "#!/bin/bash",
-                f"source {scratch}/maxtext_env.sh",
+                f"export HF_TOKEN={shlex.quote(self.hf_token)}",
+                f"export HF_HOME={shlex.quote(self.variant.paths.models_dir)}",
+                "export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH",
+                f"export JAX_COORDINATOR_IP={shlex.quote(coordinator_ip)}",
+                f"export NNODES={self.num_nodes}",
+                f"export NODE_RANK={i}",
+                f"export JAX_PROCESS_INDEX={i}",
+                f"export PYTHONPATH=$PYTHONPATH:{shlex.quote(root)}",
             ]
 
-            if self.training.distributed:
-                jax_dist = self.training.jax_distributed
-                # "auto" (or empty) -> use the first cluster node (node_dict order,
-                # i.e. orch.hosts[0]) as the JAX coordinator; an explicit IP in the
-                # config overrides it.
-                coordinator_ip = (getattr(jax_dist, "coordinator_ip", "") or "").strip()
-                if not coordinator_ip or coordinator_ip.lower() == "auto":
-                    coordinator_ip = self.orch.hosts[0]
-                launcher_lines.extend(
-                    [
-                        f"export JAX_COORDINATOR_IP={shlex.quote(coordinator_ip)}",
-                        f"export JAX_COORDINATOR_PORT={shlex.quote(jax_dist.coordinator_port)}",
-                        f"export NNODES={self.num_nodes}",
-                        f"export NODE_RANK={i}",
-                        f"export JAX_PROCESS_INDEX={i}",
-                        f"export JAX_DISTRIBUTED_INITIALIZATION_TIMEOUT_SECONDS={jax_dist.initialization_timeout_seconds}",
-                        f"export JAX_DISTRIBUTED_HEARTBEAT_TIMEOUT_SECONDS={jax_dist.heartbeat_timeout_seconds}",
-                    ]
-                )
-            else:
-                launcher_lines.extend(
-                    [
-                        "export JAX_COORDINATOR_IP=localhost",
-                        "export JAX_COORDINATOR_PORT=12346",
-                        "export NNODES=1",
-                        "export NODE_RANK=0",
-                        "export JAX_PROCESS_INDEX=0",
-                    ]
-                )
-
-            launcher_lines.append("export PYTHONPATH=$PYTHONPATH:/workspace/maxtext/")
-            log_file = f"{self.out_dir}/out-node{i}/training.log"
+            log_file = self._node_log(i)
             launcher_lines.append(
-                f"cd /workspace/maxtext && python {shlex.quote(train_script)} "
+                f"cd {shlex.quote(root)} && python {shlex.quote(train_script)} "
                 f"{scratch}/maxtext_config.yml 2>&1 | tee {shlex.quote(log_file)}"
             )
 
@@ -432,167 +622,84 @@ class MaxTextTrainingJob:
 
         scratch = self._get_scratch_dir()
 
-        # Clear each node's previous training.log BEFORE launch. The launcher
-        # only truncates the log once it reaches `python ... | tee training.log`;
-        # if this run dies earlier (env source fails, launcher never starts,
-        # etc.) a STALE log with an old "completed step: N" marker would remain
-        # and is_complete() would report success on the first poll -- a
-        # fail-open that lets smoke/training pass without this run doing the
-        # work. Removing it here means a run that never reaches `tee` leaves no
-        # log, so is_complete() stays false and the stage correctly times out.
-        clear_cmds = [
-            "bash -c " + shlex.quote(f"rm -f {shlex.quote(f'{self.out_dir}/out-node{i}/training.log')}")
+        # Reset each node's OWN out-node dir BEFORE launch: this clears the stale
+        # per-node training/dmesg logs so is_complete() cannot false-pass on an old
+        # "completed step: N" marker.
+        #
+        # CRITICAL for the shared (NFS) FS: a directory is only ever removed by the
+        # node that writes to it. Removing a shared dir from a single node (the
+        # sweep parent, or another node's out-node) changes/deletes an inode that
+        # peer nodes still have cached, leaving them with a stale handle -- their
+        # launcher redirect then fails with "No such file or directory". Doing the
+        # rm+mkdir per node (cmd_list[i] runs on hosts[i]) keeps each node's own
+        # cache consistent. The checkpoint dir lives under out_dir/<run_name>/, NOT
+        # under out-node*, so a resume's checkpoint is untouched by this reset.
+        reset_cmds = [
+            "bash -c "
+            + shlex.quote(f"rm -rf {shlex.quote(self._node_dir(i))} && mkdir -p {shlex.quote(self._node_dir(i))}")
             for i in range(self.num_nodes)
         ]
-        self.orch.exec_cmd_list(clear_cmds)
+        self.orch.exec_cmd_list(reset_cmds)
 
         launch_cmds = []
         for i in range(self.num_nodes):
             script_path = f"{scratch}/training_launcher_node{i}.sh"
-            redirect_log = f"{self.out_dir}/out-node{i}/training_redirect_logs"
-            inner = f"nohup bash {script_path} > {shlex.quote(redirect_log)} 2>&1 &"
+            redirect_log = f"{self._node_dir(i)}/training_redirect_logs"
+            # Belt-and-suspenders: ensure the (node-local) out-node dir exists
+            # right before the redirect; idempotent after the reset above.
+            inner = (
+                f"mkdir -p {shlex.quote(self._node_dir(i))} && "
+                f"nohup bash {script_path} > {shlex.quote(redirect_log)} 2>&1 &"
+            )
             launch_cmds.append("bash -c " + shlex.quote(inner))
 
         self.orch.exec_cmd_list(launch_cmds)
-
-        # Fresh run -> stream the log from the top.
-        self._log_line_cursor = [0] * self.num_nodes
 
         time.sleep(self._initial_wait_s)
 
     # ---------- polling ----------
 
-    def is_complete(self):
-        """Check if training has completed on all nodes.
-
-        Greps each node's own training.log in a single parallel
-        ``orch.exec_cmd_list`` call (``cmd_list[i]`` runs on ``hosts[i]``). Uses
-        ``|| true`` rather than ``|| echo 0`` so a no-match yields a clean "0":
-        ``grep -c`` already prints "0" and exits 1 on no match, so ``|| echo 0``
-        would emit "0\\n0" and defeat the equality check below.
-        """
-        final_step = self.training.steps - 1
-        pattern = f"completed step:\\s*{final_step},"
-        cmd_list = [
-            f"grep -cE {shlex.quote(pattern)} "
-            f"{shlex.quote(f'{self.out_dir}/out-node{i}/training.log')} 2>/dev/null || true"
-            for i in range(self.num_nodes)
-        ]
-        out = self.orch.exec_cmd_list(cmd_list, print_console=False)
-        if not out or len(out) < self.num_nodes:
-            return False
-        for _host, result in out.items():
-            text = result if isinstance(result, str) else (result or {}).get("output", "")
-            text = (text or "").strip()
-            if not text or text == "0":
-                return False
-        return True
-
-    def _scan_chunk_for_errors(self, host, i, text):
-        """Raise on the first known error signature (or NaN/Inf) in `text`.
-
-        Before raising, log the FULL offending chunk so the failure cause (e.g. a
-        compile traceback) is always visible in the console/--log-file -- the
-        exception message alone is truncated (text[-500:]) and can miss the root
-        line, and the chunk is otherwise not streamed for non-node-0 nodes.
-        """
-        if not text:
-            return
-        hit = None
-        if _NAN_INF_RE.search(text):
-            hit = "NaN/Inf in training metrics"
-        else:
-            for err_name, err_pattern in self.error_patterns.items():
-                if err_pattern and re.search(err_pattern, text, re.I):
-                    hit = f"error '{err_name}'"
-                    break
-        if hit:
-            log.error("[train node%s] FAILURE chunk (node %s / %s):\n%s", i, i, host, text.rstrip())
-            raise RuntimeError(f"Training {hit} on {host} (node {i}): {text[-500:]}")
-
-    def _drain_new_log_lines(self):
-        """Fetch training-log lines written since the last poll, on every node,
-        in one parallel call, and advance each node's cursor.
-
-        Returns ``{node_index: new_text}``. ``print_console=False`` so the
-        orchestrator does NOT re-echo the bulk output -- the caller decides what
-        to surface (we stream node 0 and scan every node for errors). This is
-        what makes the console/--log-file carry each log line ONCE instead of a
-        repeated ``tail`` window per poll.
-        """
-        cmd_list = [
-            f"tail -n +{self._log_line_cursor[i] + 1} "
-            f"{shlex.quote(f'{self.out_dir}/out-node{i}/training.log')} 2>/dev/null || true"
-            for i in range(self.num_nodes)
-        ]
-        out = self.orch.exec_cmd_list(cmd_list, print_console=False)
-        node_of = {h: i for i, h in enumerate(self.orch.hosts)}
-        new_by_node = {}
-        for host, result in (out or {}).items():
-            text = result if isinstance(result, str) else (result or {}).get("output", "")
-            text = text or ""
-            i = node_of.get(host)
-            if i is None or not text:
-                continue
-            # Advance the cursor by the number of newly read lines so the next
-            # poll starts right after them.
-            self._log_line_cursor[i] += len(text.splitlines())
-            new_by_node[i] = text
-        return new_by_node
-
     def poll_for_completion(self, timeout_s=None):
-        """Poll until training finishes or times out.
+        """Poll each node's training.log until the run completes or times out.
 
-        Each iteration streams only the NEW training-log lines (node 0 to the
-        console; all nodes scanned for error signatures), then checks for the
-        completion marker. A concise ``[poll]`` heartbeat makes the internal
-        polling visible without re-dumping the log.
+        Delegates to the reusable ``LogPoller`` (cvs/lib/utils/log_poller.py): it
+        drains new lines every ``_drain_interval_s``, streams node 0 to the log,
+        scans every node's new chunk for the always-on fatal signatures + the
+        config ``error_patterns`` (+ NaN/Inf), and detects completion when every
+        node logs ``completed step: <steps-1>``. A console spinner runs between
+        drains. Total budget stays ``_poll_count * _poll_wait_s``.
         """
         if timeout_s is None:
             timeout_s = self._poll_count * self._poll_wait_s
-
-        start = time.monotonic()
-        for it in range(self._poll_count):
-            elapsed = time.monotonic() - start
-            if elapsed >= timeout_s:
-                raise RuntimeError(f"training did not complete within {timeout_s}s (polled {it} times)")
-
-            new_by_node = self._drain_new_log_lines()
-
-            # Stream node 0's (coordinator) new lines to the console FIRST, so the
-            # chunk reaches the log even when the scan below raises on this same
-            # chunk (e.g. a compile traceback in the final drained lines).
-            node0_new = (new_by_node.get(0) or "").rstrip()
-            if node0_new:
-                log.info("[train node0]\n%s", node0_new)
-
-            # Then scan every node's new chunk for errors (raises on the first
-            # match; the scanner logs the offending chunk before raising).
-            for i, text in new_by_node.items():
-                self._scan_chunk_for_errors(self.orch.hosts[i], i, text)
-
-            if self.is_complete():
-                # Flush the tail lines written between the drain above and this
-                # completion check -- the final "completed step" marker, and
-                # anything after it (a shutdown traceback or a last-step NaN),
-                # land here. Stream node 0 FIRST, then scan EVERY node's final
-                # chunk (dropping non-0 nodes would hide a worker-only failure in
-                # this window; the scanner logs the offending chunk before raising).
-                tail = self._drain_new_log_lines()
-                node0_tail = (tail.get(0) or "").rstrip()
-                if node0_tail:
-                    log.info("[train node0]\n%s", node0_tail)
-                for i, text in tail.items():
-                    self._scan_chunk_for_errors(self.orch.hosts[i], i, text)
-                log.info("training complete (poll iter=%d, %.0fs elapsed)", it, elapsed)
-                return
-
-            log.info(
-                "[poll] iter=%d elapsed=%.0fs (streaming node0 log; scanning %d node(s))", it, elapsed, self.num_nodes
-            )
-            time.sleep(self._poll_wait_s)
-
-        raise RuntimeError(f"training did not complete after {self._poll_count} poll iterations")
+        # Scanned in order (first match wins): NaN/Inf, then the always-on fatal
+        # signatures, then the config / default error_patterns. The built-in
+        # fast-fail signatures MUST win on a key collision -- a config's
+        # error_patterns extends them but must never silently replace fast-fail
+        # detection -- so setdefault keeps the built-in when a config reuses a name.
+        error_patterns = {
+            "NaN/Inf in training metrics": _NAN_INF_RE.pattern,
+            **_ALWAYS_ON_ERR_PATTERNS,
+        }
+        for name, pattern in self.error_patterns.items():
+            error_patterns.setdefault(name, pattern)
+        LogPoller(
+            self.orch,
+            [self._node_log(i) for i in range(self.num_nodes)],
+            complete_pattern=f"completed step:\\s*{self.steps - 1},",
+            complete_policy="all",
+            error_patterns=error_patterns,
+            # Defaults spelled out so adopters see the knobs: no benign-error
+            # allowlist, and the tail/grep node commands stay off the console.
+            ignore_error_patterns=None,
+            silent_poll=True,
+            stream_node=0,
+            error_label="Training",
+            label="Training In Progress",
+            timeout_s=timeout_s,
+            drain_interval_s=self._drain_interval_s,
+            cmd_timeout_s=60,
+            log=log,
+        ).poll()
 
     # ---------- results ----------
 
@@ -603,7 +710,7 @@ class MaxTextTrainingJob:
         the pure `parse_training_log`, and stores both per-step and aggregate
         metrics on self.
         """
-        log_file = f"{self.out_dir}/out-node0/training.log"
+        log_file = self._node_log(0)
         # Read node 0's (coordinator) log. Only hosts[0] runs the cat; the other
         # nodes get a no-op so cmd_list[i] still lines up with hosts[i].
         cmd_list = [f"cat {shlex.quote(log_file)}" if i == 0 else "true" for i in range(self.num_nodes)]
@@ -670,9 +777,52 @@ class MaxTextTrainingJob:
                 from cvs.lib.verify_lib import verify_dmesg_for_errors as verify
             end_time = self._host_date()
             time.sleep(2)
+            # Save each node's dmesg alongside its training log (best-effort, own
+            # try) BEFORE the scan so it is captured even if the scan itself fails.
+            self._save_node_dmesg_logs(allh)
             verify(allh, self.training_start_time, end_time)
         except Exception as e:  # noqa: BLE001 - scan infra failure is non-fatal
             log.warning("dmesg verification skipped (scan failed): %s", e)
+
+    def _save_node_dmesg_logs(self, allh):
+        """Save each node's windowed dmesg to ``out-node{i}/dmesg_node{i}.log``.
+
+        Mirrors the scan's window: from the training start timestamp to the end of
+        the kernel buffer, NTP-aligned via node 0's start time (same derivation as
+        ``verify_dmesg_for_errors``). Writes one file per rank via the baremetal
+        host handle (``cmd_list[i]`` runs on ``hosts[i]``). Best-effort: never
+        raises, so a save failure cannot mask the training result.
+        """
+        try:
+            if not hasattr(allh, "exec_cmd_list"):
+                return
+            starts = self.training_start_time or {}
+            if not starts:
+                return
+            node0 = list(starts.keys())[0]
+            start_time = str(starts[node0]).rstrip("\n")
+            m = re.search(r"([a-zA-Z]+\s+[a-zA-Z]+\s+[0-9]+\s+[0-9]+:[0-9]+)", start_time)
+            if not m:
+                log.warning("dmesg save skipped: could not parse start time %r", start_time)
+                return
+            start_pattern = m.group(1)
+            cmd_list = []
+            for i in range(self.num_nodes):
+                node_dir = f"{self.out_dir}/out-node{i}"
+                # Run the whole capture+redirect as ROOT: dmesg needs sudo AND the
+                # per-node out-dir is created by the (root) container, so a non-root
+                # redirect into it is "Permission denied". `sudo bash -c` keeps the
+                # mkdir + dmesg + file write all as root (sudo alone would only
+                # elevate dmesg, leaving the redirect as the unprivileged user).
+                inner = (
+                    f"mkdir -p {shlex.quote(node_dir)} && "
+                    f"dmesg -T | sed -n '/{start_pattern}/,$p' > {shlex.quote(self._node_dmesg_log(i))}"
+                )
+                cmd_list.append("sudo bash -c " + shlex.quote(inner) + " || true")
+            allh.exec_cmd_list(cmd_list)
+            log.info("saved per-node dmesg logs (out-node*/dmesg_node*.log)")
+        except Exception as e:  # noqa: BLE001 - best-effort; never mask the training result
+            log.warning("could not save per-node dmesg logs: %s", e)
 
     # ---------- cleanup ----------
 

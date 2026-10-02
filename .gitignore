@@ -6,6 +6,7 @@ __pycache__/
 *.egg-info/
 
 # Virtual environments
+.venv/
 .test_venv/
 .cvs_venv/
 .ruff_venv/

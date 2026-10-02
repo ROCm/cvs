@@ -1,10 +1,10 @@
 .. meta::
-  :description: Configure the variables in the JAX MaxText training configuration files
-  :keywords: training, ROCm, cvs, JAX, MaxText
+  :description: Reference for CVS JAX MaxText training configuration files, covering container setup, sweep keys, threshold files, and distributed training parameters for AMD GPUs.
+  :keywords: CVS, JAX, MaxText, training, ROCm, GPU, AMD, distributed, JSON, configuration, benchmark, RCCL, InfiniBand
 
-****************************************
-JAX MaxText training configuration files
-****************************************
+*************************************************************************
+JAX MaxText training configuration files for Cluster Validation Suite (CVS)
+*************************************************************************
 
 The JAX MaxText suites (``jaxmaxtext_single`` / ``jaxmaxtext_distributed``) run
 `MaxText <https://github.com/AI-Hypercomputer/maxtext>`_ pre-training inside a
@@ -13,34 +13,41 @@ metrics with a PASS/FAIL HTML report.
 
 .. note::
 
-  JAX training in CVS is now **jaxmaxtext**. The legacy ``jax`` suites
+  JAX training in CVS is **jaxmaxtext**. The legacy ``jax`` suites
   (``jax_llama3_1_*``) have been removed; use ``jaxmaxtext_single`` /
   ``jaxmaxtext_distributed``.
 
 The JAX MaxText tests check:
 
-- **Container orchestration**: Docker setup with ROCm/RDMA
-- **Model load + smoke**: the model loads and trains a few steps with no error/NaN signature
-- **Per-sweep training**: one full run per enabled sweep (e.g. BF16, FP8)
-- **Performance targets**: TFLOP/s, tokens/s, step time, and multi-node scaling efficiency
-- **Convergence**: final loss / loss-decreasing trend, optional time-to-target
-- **Checkpoint save/resume** (opt-in): resume correctness + checkpoint I/O timing
+- **Container orchestration**: Docker setup with ROCm/RDMA.
+- **Model load + smoke**: The model loads and trains a few steps with no error/NaN signature.
+- **Per-sweep training**: One full run per enabled sweep (e.g., BF16, FP8).
+- **Performance targets**: TFLOP/s, tokens/s, step time, and multi-node scaling efficiency.
+- **Convergence**: Final loss / loss-decreasing trend, optional time-to-target.
+- **Checkpoint save/resume** (opt-in): resume correctness + checkpoint I/O timing.
 
 Use ``cvs config list training/jaxmaxtext`` to list available templates, or
 ``cvs config copy training/jaxmaxtext/<name>`` to copy one to your working directory.
 
 .. note::
 
-  - Parameters with the ``<changeme>`` value must be modified to your setup;
-    distributed runs hard-exit at config load until the ``nccl.*`` placeholders
-    (``ib_hca``, ``socket_ifname``, ``gloo_socket_ifname``, ``ib_gid_index``)
-    are set.
-  - ``{user-id}`` resolves to the cluster/OS username at runtime.
-  - Keys prefixed with ``_`` (e.g. ``_nccl_comment``, ``_example_ib_hca``) are
-    inline comments/examples and are ignored by the loader.
+  - Any value containing ``<changeme>`` must be replaced for your setup.
+    ``container.image`` ships with a ``<changeme>`` tag (e.g.
+    ``rocm/jax-training:maxtext-v26.4 <changeme>``) — set the image tag your
+    cluster has before running; unlike the env placeholders it is not caught at
+    config load but fails at container launch until replaced.
+    Distributed configs additionally ship the NCCL RDMA/NIC device-selection
+    vars in ``container.env`` with an example value plus a ``<changeme>`` tag
+    (``NCCL_IB_HCA``, ``NCCL_SOCKET_IFNAME``,
+    ``GLOO_SOCKET_IFNAME``, ``NCCL_IB_GID_INDEX``); the config **hard-exits at
+    load** while any ``container.env`` value still contains ``<changeme>``.
+  - ``{user-id}`` resolves to the cluster/OS username at runtime, and
+    ``{shared_fs}`` / ``{paths.*}`` self-references resolve from the ``paths`` block.
+  - Keys prefixed with ``_`` (e.g. ``_env_comment``, ``_train_params_comment``)
+    are inline comments and are ignored by the loader.
 
-The suite/lifecycle reference is in ``cvs/tests/training/jaxmaxtext/README.md``.
-The config files themselves live in
+The suite/lifecycle reference is in
+:doc:`/how-to/test-suites/training/jaxmaxtext`. The config files themselves live in
 ``cvs/input/config_file/training/jaxmaxtext/`` (each config plus a sibling
 ``_threshold.json``); this page documents every block and the threshold format.
 
@@ -49,61 +56,104 @@ Available configurations
 
 Config files follow the naming pattern ``<gpu>_jaxmaxtext_<model>_<mode>.json``.
 Each config has a sibling ``_threshold.json`` referenced by ``threshold_json``.
+The **mode is inferred from the config**: distributed configs carry the NCCL
+RDMA device-selection vars in ``container.env`` (and add the ``test_setup_rdma``
+stage); single-node configs omit them. Run single-node configs with
+``jaxmaxtext_single`` and distributed configs with ``jaxmaxtext_distributed``.
+
+The ``mi3xx_*`` configs are **GPU-generic and run on both MI300X and MI325X**
+(both CDNA3). They ship the MI325X batch sizes, so on MI300X (less HBM) a large
+batch may hit **OOM** — lower ``per_device_batch_size`` (the ``BS`` in the sweep
+key) if you see one. Because threshold targets are platform-specific, each
+``mi3xx_*`` config ships ``threshold_json`` with a ``<changeme>`` tag: point it at
+the ``mi300x_*`` or ``mi325x_*`` ``_threshold.json`` for your GPU **before
+running** (the config otherwise refuses to load). The ``mi35x_*`` config targets
+MI350-class (CDNA4) GPUs.
 
 .. list-table::
-   :widths: 4 2 2 2 2
+   :widths: 5 2 2 2
    :header-rows: 1
 
-   * - Model
-     - MI300X
-     - MI325X
-     - MI355X
+   * - Config file
+     - GPU(s)
      - Mode
-   * - Llama 3.3 70B
-     - ✓
-     - ✓
-     - ✓
-     - single (MI300X), distributed
-   * - Llama 3.1 8B
-     - ✓
-     - ✓
-     - ✓
+     - Precisions
+   * - ``mi3xx_jaxmaxtext_llama-3.1-8b_distributed.json``
+     - MI300X / MI325X
      - distributed
-   * - Llama 3.1 405B
-     - —
-     - ✓
-     - ✓
-     - distributed only
-   * - DeepSeek V2 Lite
-     - ✓
-     - ✓
-     - ✓
+     - BF16, FP8
+   * - ``mi3xx_jaxmaxtext_llama-3.1-70b_single.json``
+     - MI300X / MI325X
+     - single
+     - BF16, FP8
+   * - ``mi3xx_jaxmaxtext_llama-3.1-70b_distributed.json``
+     - MI300X / MI325X
      - distributed
+     - BF16, FP8
+   * - ``mi3xx_jaxmaxtext_llama-3.3-70b_single.json``
+     - MI300X / MI325X
+     - single
+     - BF16, FP8
+   * - ``mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json``
+     - MI300X / MI325X
+     - distributed
+     - BF16, FP8
+   * - ``mi3xx_jaxmaxtext_deepseek-v2-lite_distributed.json``
+     - MI300X / MI325X
+     - distributed
+     - BF16
+   * - ``mi3xx_jaxmaxtext_llama-3.1-405b_distributed.json``
+     - MI300X / MI325X
+     - distributed
+     - BF16, FP8
+   * - ``mi3xx_jaxmaxtext_deepseek-v4-284b_distributed.json``
+     - MI300X / MI325X
+     - distributed
+     - BF16
+   * - ``mi35x_jaxmaxtext_llama-3.1-70b_single.json``
+     - MI350-class
+     - single
+     - BF16, FP8
 
-Single-node configs set ``training.distributed: false`` and run with
-``jaxmaxtext_single``; distributed configs set ``training.distributed: true``,
-add the ``test_setup_rdma`` stage, and require the ``nccl.*`` network fields.
-Use a single-node config with ``jaxmaxtext_single`` and a distributed config
-with ``jaxmaxtext_distributed`` — the flag must match the suite.
+Threshold files stay **per-platform** (``mi300x_*_threshold.json`` and
+``mi325x_*_threshold.json``); the ``mi3xx_*`` config selects one via
+``threshold_json``.
+
+Config layout
+=============
+
+A config groups its keys into five areas:
+
+1. **CVS params at the root** — ``gpu_name``, ``gpus_per_node``, ``threshold_json``,
+   ``enforce_thresholds``, and ``paths``.
+2. **container** — image, Docker runtime args, and the static ``env`` exported
+   into the container on every node.
+3. **train_params** — the tokenizer source, train-script candidates, the
+   ``maxtext_config`` passthrough written verbatim to the MaxText YAML, and the
+   structured ``xla_flags`` (exported as one ``XLA_FLAGS`` env var).
+4. **tests blocks at the root** — ``scaling_baseline``, ``convergence``,
+   ``loss_curve``, ``smoke``, ``checkpoint_resume``, ``error_patterns``.
+5. **sweeps + runs** — ``sweeps`` is a ``{key: overrides}`` map (one full
+   training run each) whose key encodes the primary params
+   (``BS=..,PRECISION=..,SL=..``, parsed by CVS); ``runs`` selects which sweep
+   keys to execute.
 
 Example configuration
 =====================
 
-The blocks below are common to every JAX MaxText config; only ``model.id``,
-``maxtext_config.model_name``, the parallelism dims, and the sweeps differ
-between models. A representative distributed config
-(``mi325x_jaxmaxtext_llama-3.3-70b_distributed.json``):
+A representative distributed config
+(``mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json``, abridged):
 
-.. dropdown:: ``mi325x_jaxmaxtext_llama-3.3-70b_distributed.json`` (abridged)
+.. dropdown:: ``mi3xx_jaxmaxtext_llama-3.3-70b_distributed.json`` (abridged)
 
   .. code:: json
 
     {
-      "schema_version": 1,
-      "framework": "jaxmaxtext",
-      "gpu_arch": "mi325x",
-      "enforce_thresholds": true,
-      "threshold_json": "mi325x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json",
+      "gpu_name": "mi3xx",
+      "threshold_json": "mi325x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json <changeme>",
+      "enforce_thresholds": false,
+      "gpus_per_node": 8,
+
       "paths": {
         "shared_fs": "/home/{user-id}",
         "models_dir": "{shared_fs}/cache/maxtext",
@@ -111,27 +161,49 @@ between models. A representative distributed config
         "hf_token_file": "{shared_fs}/.hf_token",
         "temp_dir": "/tmp/{user-id}/jaxmaxtext"
       },
-      "model": { "id": "llama3.3-70b", "remote": 0, "precision": "bfloat16" },
+
       "container": {
         "lifetime": "per_run",
         "name": "rocm-jaxmaxtext-llama3.3-70b",
-        "image": "rocm/jax-training:maxtext-v26.4",
-        "runtime": { "name": "docker", "args": { "network": "host", "ipc": "host", "privileged": true, "shm-size": "256G", "volumes": ["..."] } }
+        "image": "rocm/jax-training:maxtext-v26.4 <changeme>",
+        "runtime": { "name": "docker", "args": { "network": "host", "ipc": "host", "privileged": true, "shm-size": "256G", "ulimit": ["nofile=65535:65535"], "volumes": ["..."] } },
+        "env": {
+          "GPU_MAX_HW_QUEUES": "2",
+          "HSA_FORCE_FINE_GRAIN_PCIE": "1",
+          "XLA_PYTHON_CLIENT_MEM_FRACTION": "0.97",
+
+          "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7 <changeme>",
+          "NCCL_SOCKET_IFNAME": "eno0 <changeme>",
+          "GLOO_SOCKET_IFNAME": "eno0 <changeme>",
+          "NCCL_IB_GID_INDEX": "3 <changeme>",
+
+          "NCCL_IB_DISABLE": "0",
+          "NCCL_IB_TC": "41",
+          "NCCL_IB_SL": "0",
+
+          "NVTE_FUSED_ATTN": "1",
+
+          "JAX_COORDINATOR_PORT": "12346",
+          "JAX_DISTRIBUTED_INITIALIZATION_TIMEOUT_SECONDS": "1800",
+          "JAX_DISTRIBUTED_HEARTBEAT_TIMEOUT_SECONDS": "900"
+        }
       },
-      "training": {
-        "distributed": true,
-        "gpus_per_node": 8,
-        "steps": 30,
-        "enable_checkpointing": false,
+
+      "train_params": {
+        "hf_model_id": "NousResearch/Meta-Llama-3-70B",
+        "train_script_paths": ["/workspace/maxtext/src/maxtext/trainers/pre_train/train.py", "/workspace/maxtext/src/MaxText/train.py"],
         "maxtext_config": {
           "base_config": "base.yml",
           "model_name": "llama3.3-70b",
+          "tokenizer_path": "{paths.models_dir}/Meta-Llama-70-B",
           "hardware": "gpu",
+          "steps": 30,
+          "enable_checkpointing": false,
           "attention": "cudnn_flash_te",
           "dtype": "bfloat16",
           "weight_dtype": "bfloat16",
-          "quantization": "",
           "dataset_type": "synthetic",
+          "quantization": "",
           "per_device_batch_size": 3,
           "max_target_length": 8192,
           "remat_policy": "full",
@@ -139,26 +211,27 @@ between models. A representative distributed config
           "ici_fsdp_parallelism": 8,
           "dcn_data_parallelism": -1
         },
-        "tokenizer": { "hf_model_id": "NousResearch/Meta-Llama-3-70B", "tokenizer_path": "{paths.models_dir}/Meta-Llama-70-B" },
-        "nic_type": "thor2",
-        "rdma_lib": { "host_source_file": "...", "container_mount_file": "...", "container_dest_file": "..." },
-        "env_vars": { "NNODES": "auto", "NCCL_IB_DISABLE": "0", "NCCL_IB_TC": "41", "NCCL_IB_SL": "0", "...": "..." },
-        "xla_flags": { "xla_gpu_autotune_level": "0", "...": "..." },
-        "nccl": { "ib_hca_list": "<changeme>", "ib_hca": "<changeme>", "socket_ifname": "<changeme>", "gloo_socket_ifname": "<changeme>", "ib_gid_index": "<changeme>" },
-        "jax_distributed": { "coordinator_ip": "auto", "coordinator_port": "12346" },
-        "scaling_baseline": { "tokens_per_sec_total": 394000.0, "num_nodes": 1 },
-        "convergence": { "target_metric": "auto", "target_value": 10.0 },
-        "loss_curve": { "sample_every": 10, "milestone_steps": [100, 500, 1000, 5000], "max_slope": 0.0, "enforce": true },
-        "smoke": { "enabled": true, "steps": 5, "per_device_batch_size": 1, "max_target_length": 2048 },
-        "checkpoint_resume": { "enabled": false, "steps_before_ckpt": 6, "steps_after_resume": 6, "checkpoint_period": 5, "loss_tolerance": 0.1, "delete_ckpt_dir": true },
-        "error_patterns": { "NCCL ERROR": "NCCL ERROR|NCCL timeout", "...": "..." },
-        "sweeps": [ { "name": "NNODES=2,STEPS=30,PRECISION=BF16,BATCH=3,GBS=48,SEQLEN=8192", "maxtext_overrides": { "per_device_batch_size": 3, "max_target_length": 8192, "quantization": "" } } ],
-        "enabled_sweep_list": ["NNODES=2,STEPS=30,PRECISION=BF16,BATCH=3,GBS=48,SEQLEN=8192"]
-      }
+        "xla_flags": { "xla_gpu_autotune_level": "0", "...": "..." }
+      },
+
+      "scaling_baseline": { "tokens_per_sec_total": 394000.0, "num_nodes": 1 },
+      "convergence": { "target_metric": "auto", "target_value": 10.0 },
+      "loss_curve": { "sample_every": 10, "milestone_steps": [100, 500, 1000, 5000], "max_slope": 0.0, "enforce": true },
+      "smoke": { "enabled": true, "steps": 5, "per_device_batch_size": 1, "max_target_length": 2048 },
+      "checkpoint_resume": { "enabled": false, "steps_before_ckpt": 6, "steps_after_resume": 6, "checkpoint_period": 5, "loss_tolerance": 0.1, "delete_ckpt_dir": true },
+      "error_patterns": { "NCCL ERROR": "NCCL ERROR|NCCL timeout", "...": "..." },
+
+      "sweeps": {
+        "BS=3,PRECISION=BF16,SL=8192": { "_comment": "extra maxtext_config overrides go here, e.g. \"steps\": 300" },
+        "BS=3,PRECISION=FP8,SL=8192":  { "_comment": "extra maxtext_config overrides go here, e.g. \"steps\": 300" }
+      },
+      "runs": ["BS=3,PRECISION=BF16,SL=8192", "BS=3,PRECISION=FP8,SL=8192"]
     }
 
-Top-level fields
-================
+Top-level (CVS) fields
+======================
+
+The following fields sit at the root of the configuration object and control suite-level behavior.
 
 .. list-table::
    :widths: 3 3 5
@@ -167,21 +240,24 @@ Top-level fields
    * - Field
      - Example
      - Description
-   * - ``schema_version``
-     - ``1``
-     - Config schema version. Must be ``1``.
-   * - ``framework``
-     - ``jaxmaxtext``
-     - Framework selector.
-   * - ``gpu_arch``
-     - ``mi325x``
-     - GPU architecture label (informational).
+   * - ``gpu_name``
+     - ``mi3xx``
+     - GPU architecture label (informational; also used in run/report labels).
+       ``mi3xx`` = GPU-generic CDNA3 (MI300X/MI325X); also drives the FP8 flavor
+       (``mi35*`` → ``fp8``, else ``nanoo_fp8``).
+   * - ``gpus_per_node``
+     - ``8``
+     - GPUs per node; ``num_gpus = num_nodes × gpus_per_node`` feeds
+       ``tokens_per_sec_total`` and scaling efficiency. Do not assume a fixed topology.
    * - ``enforce_thresholds``
-     - ``true``
+     - ``false``
      - If ``false``, ``test_metric`` records values but does not fail.
    * - ``threshold_json``
-     - ``mi325x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json``
-     - Companion threshold filename, resolved next to the config.
+     - ``mi325x_jaxmaxtext_llama-3.3-70b_distributed_threshold.json <changeme>``
+     - Companion threshold filename, resolved next to the config. The
+       ``mi3xx_*`` configs ship this with a ``<changeme>`` tag (thresholds are
+       per-platform); set it to the ``mi300x_*`` or ``mi325x_*`` threshold for
+       your GPU before running — the config refuses to load while it is tagged.
 
 ``paths``
 ---------
@@ -201,33 +277,13 @@ Top-level fields
      - Tokenizer/model cache directory.
    * - ``log_dir``
      - ``{shared_fs}/LOGS/jaxmaxtext``
-     - Training log output directory.
+     - Training log output directory (per-node logs are namespaced under it).
    * - ``hf_token_file``
      - ``{shared_fs}/.hf_token``
      - Hugging Face token file (for the tokenizer download).
    * - ``temp_dir``
      - ``/tmp/{user-id}/jaxmaxtext``
      - Host-user-namespaced in-container scratch for launcher scripts / MaxText YAML. Keep ``{user-id}`` so shared nodes never collide on ``/tmp/root``.
-
-``model``
----------
-
-.. list-table::
-   :widths: 3 3 5
-   :header-rows: 1
-
-   * - Field
-     - Example
-     - Description
-   * - ``id``
-     - ``llama3.3-70b``
-     - Model id used in run names / labels.
-   * - ``remote``
-     - ``0``
-     - ``0`` = weights/tokenizer already cached locally.
-   * - ``precision``
-     - ``bfloat16``
-     - Label only (the effective precision is set in ``maxtext_config`` / sweeps).
 
 ``container``
 -------------
@@ -246,58 +302,100 @@ Top-level fields
      - ``rocm-jaxmaxtext-llama3.3-70b``
      - Container instance name (any unique string).
    * - ``image``
-     - ``rocm/jax-training:maxtext-v26.4``
-     - **Required** — the MaxText/JAX ROCm image present on all nodes.
+     - ``rocm/jax-training:maxtext-v26.4 <changeme>``
+     - **Required** — the MaxText/JAX ROCm image present on all nodes. Ships with a ``<changeme>`` tag; replace it with the image tag your cluster has before running (not validated at config load, but the container launch fails until it is a valid image reference).
    * - ``runtime.args``
      - *(see snippet)*
      - Docker args: ``network: host``, ``ipc: host``, ``privileged: true``, ``shm-size``, ``ulimit``, and ``volumes``. Distributed configs mount ``/dev/infiniband`` and the NIC ``libibverbs`` provider (``:ro``); ``volumes`` also bind-mounts the home dir and the training-output dir.
+   * - ``env``
+     - *(dict)*
+     - Static environment exported into the container on every node at ``docker run`` time (see :ref:`jax-container-env`). The mode is inferred from it: a config that sets the NCCL IB device vars is treated as distributed.
 
-``training`` block
-==================
+.. _jax-container-env:
 
-Top-level scalar fields of the ``training`` block. The nested blocks
-(``maxtext_config``, ``tokenizer``, ``nccl``, …) are documented in their own
-sections below.
+``container.env``
+-----------------
+
+A flat ``{NAME: value}`` map exported into the container on every node at
+``docker run`` time and inherited by ``docker exec`` (there is no env script to
+source). Per-node/dynamic vars (``JAX_COORDINATOR_IP``, ``NNODES``,
+``NODE_RANK``, ``JAX_PROCESS_INDEX``) and credentials (``HF_TOKEN``, ``HF_HOME``,
+``LD_LIBRARY_PATH``, ``PYTHONPATH``) are injected by the launcher and must **not**
+be set here. ``XLA_FLAGS`` is not set here either — it is built from the
+structured ``train_params.xla_flags`` map. The vars are grouped for readability:
+
+.. list-table::
+   :widths: 3 3 5
+   :header-rows: 1
+
+   * - Group
+     - Examples
+     - Description
+   * - GPU / memory
+     - ``GPU_MAX_HW_QUEUES``, ``HSA_FORCE_FINE_GRAIN_PCIE``, ``HIP_FORCE_DEV_KERNARG``, ``HSA_NO_SCRATCH_RECLAIM``, ``XLA_PYTHON_CLIENT_MEM_FRACTION``
+     - ROCm/HIP tuning and the fraction of GPU memory JAX may allocate (e.g. ``0.97``).
+   * - NCCL device selection *(distributed)*
+     - ``NCCL_IB_HCA``, ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, ``NCCL_IB_GID_INDEX``
+     - Cluster-specific RDMA/NIC device selection, shipped as ``<example> <changeme>`` (see the :ref:`NCCL device selection note <jax-nccl-devices>`). Their presence marks the config as distributed.
+   * - NCCL tuning
+     - ``NCCL_DEBUG``, ``NCCL_IB_DISABLE``, ``NCCL_PROTO``, ``NCCL_IB_TC``, ``NCCL_IB_SL``, ``NCCL_CHECKS_DISABLE``, ``NCCL_CROSS_NIC``
+     - RoCE/IB transport tuning (``NCCL_IB_DISABLE: 0`` uses IB/RoCE; ``NCCL_IB_TC`` / ``NCCL_IB_SL`` are the RoCE traffic class / service level). On MI355-class images ``RCCL_WARP_SPEED_AUTO`` also lives here.
+   * - Transformer-Engine / Composable-Kernel
+     - ``NVTE_*``, ``NVTE_CK_*``
+     - Fused-attention numerics controls (numerics-sensitive; tune per model/BKC).
+   * - JAX coordinator
+     - ``JAX_COORDINATOR_PORT``, ``JAX_DISTRIBUTED_INITIALIZATION_TIMEOUT_SECONDS``, ``JAX_DISTRIBUTED_HEARTBEAT_TIMEOUT_SECONDS``
+     - JAX distributed coordinator port and the init-rendezvous / heartbeat timeouts.
+
+.. _jax-nccl-devices:
+
+.. note::
+
+  **NCCL device selection (distributed).** Each of
+  ``NCCL_IB_HCA``, ``NCCL_SOCKET_IFNAME``, ``GLOO_SOCKET_IFNAME``, and
+  ``NCCL_IB_GID_INDEX`` ships with an example value followed by a ``<changeme>``
+  tag (e.g. ``"rdma0,...,rdma7 <changeme>"``, ``"eno0 <changeme>"``,
+  ``"3 <changeme>"``). Replace the whole value with your cluster's setting — the
+  config **hard-exits at load** while any ``container.env`` value still contains
+  ``<changeme>``. Discover them with ``ibv_devices`` (HCAs) and ``ip -br link``
+  (host interface). ``GLOO_SOCKET_IFNAME`` accepts a single interface only.
+
+``train_params``
+================
 
 .. list-table::
    :widths: 3 3 5
    :header-rows: 1
 
    * - Field
-     - Default
+     - Example
      - Description
-   * - ``distributed``
-     - ``true``
-     - ``true`` = multi-node (adds the ``test_setup_rdma`` stage); ``false`` = single-node.
-   * - ``gpus_per_node``
-     - ``8``
-     - GPUs per node; ``num_gpus = num_nodes × gpus_per_node`` feeds ``tokens_per_sec_total`` and scaling efficiency. Do not assume a fixed topology.
-   * - ``verify_dmesg``
-     - ``true``
-     - Scan host ``dmesg`` on all nodes for GPU/HW/kernel faults over the run window. Set ``false`` on clusters without passwordless ``sudo`` for ``dmesg``.
-   * - ``steps``
-     - ``30``
-     - Training steps; also drives completion detection and the poll budget.
-   * - ``enable_checkpointing``
-     - ``false``
-     - Whether MaxText writes checkpoints during the run.
+   * - ``hf_model_id``
+     - ``NousResearch/Meta-Llama-3-70B``
+     - Hugging Face repo the tokenizer is downloaded from. Download is **skipped** when every enabled run uses ``dataset_type: synthetic``.
    * - ``train_script_paths``
      - *(list)*
      - Candidate in-container MaxText entrypoints; the job picks the first that exists (list newest-first, e.g. the v26.4+ path before the v26.3 path).
-   * - ``nic_type``
-     - ``thor2``
-     - NIC family; ``thor2`` (Broadcom) enables the backup RDMA-lib copy, ``none`` skips it.
-   * - ``error_patterns``
-     - *(dict)*
-     - ``{name: regex}`` scanned in each node's ``training.log`` during polling; a match fails that sweep's ``test_training_run``. Remove the block to use the built-in defaults.
+   * - ``model_id``
+     - ``llama3.3-70b``
+     - Optional CVS-side label for run names / report / loss-curve filenames. Defaults to ``maxtext_config.model_name``; set it only for a friendlier label.
+   * - ``maxtext_branch``
+     - ``""``
+     - Optional. When set, after container launch the job runs ``git reset --hard`` + ``git checkout <branch>`` in ``maxtext_root`` on every node and verifies the checkout. Empty (default) = use the image's baked-in MaxText unchanged.
+   * - ``maxtext_root``
+     - ``/workspace/maxtext``
+     - MaxText repository root inside the container (used by the branch checkout / install command).
+   * - ``maxtext_install_cmd``
+     - ``""``
+     - Optional shell command run verbatim from ``maxtext_root`` after launch (e.g. ``python3 -m pip install --no-deps -e .`` to make a checked-out branch the imported package). Runs whenever set, even without a branch checkout. Empty (default) = no install step.
 
-``maxtext_config``
-------------------
+``train_params.maxtext_config``
+-------------------------------
 
 Written verbatim into the MaxText YAML, so any valid MaxText parameter can be
-set. ``steps``, ``enable_checkpointing``, ``run_name``, ``base_output_directory``,
-and ``tokenizer_path`` are injected by the driver and must **not** be set here.
-The most-edited keys:
+set here (including ``steps``, ``enable_checkpointing``, and ``tokenizer_path``).
+``run_name`` and ``base_output_directory`` are injected by the driver and must
+**not** be set here. The most-edited keys:
 
 .. list-table::
    :widths: 3 3 5
@@ -312,9 +410,18 @@ The most-edited keys:
    * - ``model_name``
      - ``llama3.3-70b``
      - MaxText model preset (layers/heads/dims). Must exist in the image's MaxText.
+   * - ``tokenizer_path``
+     - ``{paths.models_dir}/Meta-Llama-70-B``
+     - In-container directory the tokenizer is written to / read from (the download target).
    * - ``hardware``
      - ``gpu``
      - Target backend.
+   * - ``steps``
+     - ``30``
+     - Training steps; also drives completion detection and the poll budget.
+   * - ``enable_checkpointing``
+     - ``false``
+     - Whether MaxText writes checkpoints during the run.
    * - ``attention``
      - ``cudnn_flash_te``
      - Attention kernel: ``dot_product`` / ``flash`` / ``cudnn_flash_te`` (use ``dot_product`` for models whose ``attention_type`` is compressed, e.g. DeepSeek V4).
@@ -323,10 +430,10 @@ The most-edited keys:
      - Compute dtype and master-weight dtype.
    * - ``quantization``
      - ``""``
-     - ``""`` = BF16; ``nanoo_fp8`` (MI300X/MI325X, CDNA3) or ``fp8`` (MI355X/MI350X, CDNA4) for FP8.
+     - ``""`` = BF16; ``nanoo_fp8`` (MI300X/MI325X, CDNA3) for FP8.
    * - ``dataset_type``
      - ``synthetic``
-     - ``synthetic`` = random token ids (no tokenizer download). Any other value (or unset → MaxText tfds/C4) requires the tokenizer.
+     - ``synthetic`` = random token ids (no tokenizer or data download; good for throughput/functional runs). For a real loss curve use ``hf`` with a dataset (see the real-data note below); any non-synthetic value requires the tokenizer.
    * - ``per_device_batch_size`` / ``max_target_length``
      - ``3`` / ``8192``
      - Per-GPU batch and sequence length (typically overridden per sweep).
@@ -342,134 +449,48 @@ The most-edited keys:
    * - ``dcn_*_parallelism``
      - ``dcn_data_parallelism: -1``
      - Cross-node parallelism dims; ``-1`` fills the remaining mesh axis.
-   * - ``opt_type``
-     - ``adamw``
-     - Optimizer (``adamw`` default; ``sgd`` used for some from-scratch synthetic runs).
 
 Other passthrough keys seen in the configs: ``packing``, ``megablox`` /
-``sparse_matmul`` / ``capacity_factor`` (MoE kernel path), ``profiler``,
+``sparse_matmul`` / ``capacity_factor`` / ``sharding_tolerance`` (MoE kernel
+path), ``profiler`` / ``skip_first_n_steps_for_profiler`` / ``profiler_steps``,
 ``shardy``, ``logits_dot_in_fp32``, ``param_scan_axis``, ``max_segments_per_seq``,
 ``kv_quant_*``, ``optimizer_memory_host_offload``, ``async_checkpointing``,
-``enable_goodput_recording`` / ``monitor_goodput``.
+``log_period``, ``enable_goodput_recording`` / ``monitor_goodput``.
 
-``tokenizer``
--------------
+.. note::
 
-.. list-table::
-   :widths: 3 4 5
-   :header-rows: 1
+  **Using real data (HuggingFace).** Configs default to ``dataset_type:
+  synthetic`` (random tokens; no data/tokenizer download) for throughput and
+  functional runs. For a genuine loss curve, set these keys inside
+  ``maxtext_config`` (the HF pipeline streams data — no full download):
 
-   * - Field
-     - Example
-     - Description
-   * - ``hf_model_id``
-     - ``NousResearch/Meta-Llama-3-70B``
-     - Hugging Face repo the tokenizer is downloaded from. Download is **skipped** when every enabled run uses ``dataset_type: synthetic``.
-   * - ``tokenizer_path``
-     - ``{paths.models_dir}/Meta-Llama-70-B``
-     - In-container directory the tokenizer is written to.
+  .. code:: json
 
-``rdma_lib`` (backup)
----------------------
+    "dataset_type": "hf",
+    "hf_path": "allenai/c4",
+    "hf_data_dir": "en",
+    "train_split": "train",
+    "tokenizer_type": "huggingface"
 
-Distributed only, and used **only** when a direct read-only ``.so`` bind-mount
-is not allowed. In that case the host lib is mounted as ``<name>.so.host``
-(``container_mount_file``) and copied to the real ``<name>.so``
-(``container_dest_file``) inside the container after launch. When the ``.so`` is
-bind-mounted ``:ro`` directly (the default in ``container.runtime.args.volumes``),
-this block is unused.
+  ``tokenizer_type: huggingface`` is required so MaxText loads the HF
+  ``tokenizer.json`` named by ``hf_model_id`` (the ``sentencepiece`` default
+  would mismatch it), and real data triggers the tokenizer download. Do **not**
+  place comment (``_``-prefixed) keys inside ``maxtext_config`` — every key there
+  is written verbatim to the run YAML and MaxText rejects unknown keys.
 
-.. list-table::
-   :widths: 3 5
-   :header-rows: 1
+``train_params.xla_flags``
+--------------------------
 
-   * - Field
-     - Description
-   * - ``host_source_file``
-     - Path to the NIC's ``libibverbs`` provider on the host.
-   * - ``container_mount_file``
-     - Where the host lib is mounted inside the container (``…so.host``).
-   * - ``container_dest_file``
-     - Real ``.so`` path the mounted file is copied to at launch.
+A structured ``{flag: value}`` map emitted as a single ``XLA_FLAGS`` env var
+(``--<flag>=<value> ...``) into ``container.env``. An empty map omits
+``XLA_FLAGS`` entirely (so XLA's own defaults are not clobbered). Notable entries
+include ``xla_gpu_autotune_level``, ``xla_gpu_enable_latency_hiding_scheduler``,
+and the all-gather / reduce-scatter combine thresholds.
 
-``env_vars`` and ``xla_flags``
-------------------------------
+Tests blocks
+============
 
-``env_vars`` is a dict exported before training; ``xla_flags`` is emitted as a
-single ``XLA_FLAGS`` string (``--<key>=<value>``). Notable entries:
-
-.. list-table::
-   :widths: 3 5
-   :header-rows: 1
-
-   * - Variable
-     - Description
-   * - ``NNODES``
-     - ``auto`` — replaced at runtime with the cluster node count.
-   * - ``XLA_PYTHON_CLIENT_MEM_FRACTION``
-     - Fraction of GPU memory JAX may allocate (e.g. ``0.97``).
-   * - ``NCCL_IB_DISABLE``
-     - ``0`` uses IB/RoCE; ``1`` forces the TCP socket path.
-   * - ``NCCL_IB_TC`` / ``NCCL_IB_SL``
-     - RoCE traffic class / service level. (``NCCL_IB_GID_INDEX`` is driven by ``nccl.ib_gid_index`` instead — do not set it here.)
-   * - ``NVTE_*`` / ``NVTE_CK_*``
-     - Transformer-Engine / Composable-Kernel fused-attention controls (numerics-sensitive; tune per model/BKC).
-   * - ``xla_gpu_autotune_level``
-     - XLA GEMM autotuning level.
-
-``nccl`` (distributed)
-----------------------
-
-Cluster-specific RDMA/NIC devices. Each field ships as ``<changeme>`` with a
-sibling ``_example_*`` value; distributed runs **hard-exit at config load** until
-they are set. Discover them with ``ibv_devices`` (HCAs) and ``ip -br link``
-(host interface).
-
-.. list-table::
-   :widths: 3 3 5
-   :header-rows: 1
-
-   * - Field
-     - Example
-     - Description / export
-   * - ``ib_hca_list``
-     - ``rdma0,…,rdma7``
-     - Comma-separated RDMA HCA list → ``NCCL_IB_HCA_LIST``.
-   * - ``ib_hca``
-     - ``rdma0,…,rdma7``
-     - Primary HCA(s) → ``NCCL_IB_HCA``.
-   * - ``socket_ifname``
-     - ``eno0``
-     - Control interface → ``NCCL_SOCKET_IFNAME`` (accepts a comma list).
-   * - ``gloo_socket_ifname``
-     - ``eno0``
-     - Gloo control interface → ``GLOO_SOCKET_IFNAME`` (single interface only).
-   * - ``ib_gid_index``
-     - ``3``
-     - RoCE GID index → ``NCCL_IB_GID_INDEX``.
-
-``jax_distributed``
--------------------
-
-.. list-table::
-   :widths: 3 3 5
-   :header-rows: 1
-
-   * - Field
-     - Default
-     - Description
-   * - ``coordinator_ip``
-     - ``auto``
-     - ``auto`` uses the first node in the cluster ``node_dict``; or set a specific IP.
-   * - ``coordinator_port``
-     - ``12346``
-     - JAX coordinator port.
-   * - ``initialization_timeout_seconds``
-     - ``1800``
-     - Distributed init rendezvous timeout.
-   * - ``heartbeat_timeout_seconds``
-     - ``900``
-     - Coordination-service heartbeat timeout.
+This section describes the optional test blocks that extend the base training run with additional validation passes.
 
 ``scaling_baseline`` (distributed)
 ----------------------------------
@@ -533,7 +554,8 @@ they are set. Discover them with ``ibv_devices`` (HCAs) and ``ip -br link``
 
 The smoke test (``test_smoke``) loads the model and runs a few steps at a small
 fixed batch/seqlen in BF16, passing only if no error/NaN signature fires (no
-metric checks). A failure gates the rest of the suite.
+metric checks). A failure gates the rest of the suite. When the block is omitted,
+the schema defaults apply (enabled).
 
 .. list-table::
    :widths: 3 2 5
@@ -599,65 +621,92 @@ restarts at the checkpoint step and the boundary loss matches Phase 1 within
      - ``{}``
      - Optional shrink of the model (same tokenizer/vocab) for a fast I/O check.
 
-Sweeps
-======
+``error_patterns``
+------------------
 
-Each sweep is one full training run; ``maxtext_overrides`` merges onto
-``maxtext_config`` for that run. ``enabled_sweep_list`` selects which sweeps to
-run. The sweep ``name`` is also the **threshold cell key**.
+A ``{name: regex}`` dict scanned in each node's ``training.log`` during polling;
+a match fails that sweep's ``test_training_run`` with the matched name. Remove
+the block to use the built-in defaults (NCCL, GPU HW faults, assertion/JAX stack
+traces, ROCm init errors, Python fatal errors, TF coordination errors,
+``RESOURCE_EXHAUSTED``/OOM, and segfaults).
+
+Sweeps and runs
+===============
+
+``sweeps`` is a ``{key: overrides}`` map — each entry is one full training run,
+and its **key** is both the parsed sweep spec and the **threshold cell key**.
+``runs`` is the list of sweep keys to actually execute.
+
+The key is a comma-separated, parseable spec that CVS turns into
+``maxtext_config`` overrides for that run:
 
 .. list-table::
-   :widths: 3 5
+   :widths: 2 3 5
    :header-rows: 1
 
-   * - Field
-     - Description
-   * - ``sweeps[].name``
-     - Cell key, format ``NNODES=..,STEPS=..,PRECISION=..,BATCH=..,GBS=..,SEQLEN=..``. ``NNODES`` (cluster), ``STEPS`` (``training.steps``) and ``GBS`` (= ``per_device_batch_size × total GPUs``) are labels only.
-   * - ``sweeps[].maxtext_overrides``
-     - Per-run overrides merged onto ``maxtext_config`` (typically ``per_device_batch_size``, ``max_target_length``, ``dtype`` / ``weight_dtype``, ``quantization``).
-   * - ``enabled_sweep_list``
-     - Subset of sweep ``name`` s to actually run.
+   * - Token
+     - Maps to
+     - Notes
+   * - ``BS``
+     - ``per_device_batch_size``
+     - Per-GPU batch size.
+   * - ``PRECISION``
+     - ``quantization``
+     - ``BF16`` → ``""``; ``FP8`` → the GPU's FP8 flavor (``nanoo_fp8`` on
+       MI300X/MI325X CDNA3, ``fp8`` on MI350-class CDNA4).
+   * - ``SL``
+     - ``max_target_length``
+     - Sequence length.
+
+``dtype`` / ``weight_dtype`` are always ``bfloat16`` (the ``maxtext_config``
+default) and are no longer repeated per sweep. Add **any extra** override inside
+the sweep's ``{}`` (it takes precedence over the parsed key), e.g. a per-sweep
+``steps`` — which CVS also uses for the run's timeout/poll budget and completion
+detection.
 
 .. code:: json
 
-  "sweeps": [
-    {
-      "name": "NNODES=2,STEPS=30,PRECISION=FP8,BATCH=3,GBS=48,SEQLEN=8192",
-      "maxtext_overrides": {
-        "per_device_batch_size": 3,
-        "max_target_length": 8192,
-        "dtype": "bfloat16",
-        "weight_dtype": "bfloat16",
-        "quantization": "nanoo_fp8"
-      }
+  "sweeps": {
+    "BS=3,PRECISION=FP8,SL=8192": {
+      "_comment": "extra maxtext_config overrides go here, e.g. \"steps\": 300"
     }
-  ],
-  "enabled_sweep_list": ["NNODES=2,STEPS=30,PRECISION=FP8,BATCH=3,GBS=48,SEQLEN=8192"]
+  },
+  "runs": ["BS=3,PRECISION=FP8,SL=8192"]
 
 Threshold files
 ===============
 
 Each config has a sibling ``<config-stem>_threshold.json`` referenced by
-``threshold_json``. It maps each **sweep name** (cell key) to a dict of
-``{metric: spec}``. A metric is gated (PASS/FAIL) only when
+``threshold_json``. It maps each **sweep key** (cell key) to a dict of
+``{metric: spec}``, one spec per line. A metric is gated (PASS/FAIL) only when
 ``enforce_thresholds: true`` **and** it has a numeric spec whose ``kind`` is not
-``info``; otherwise it is recorded. The cell key must match the sweep ``name``
-exactly (including ``NNODES``), or the metric falls back to ``RECORD``. Metrics
-not produced by a run report ``N/A`` (not a failure).
+``info``; otherwise it is recorded. The cell key must match the sweep key
+exactly, or the metric falls back to ``RECORD``. Metrics not produced by a run
+report ``N/A`` (not a failure).
+
+.. note::
+
+  The shipped threshold values were captured on a **2-node (2N)** run
+  (single-node configs: **1N**; the large ``llama-3.1-405b`` and
+  ``deepseek-v4-284b`` configs: **4N**). Throughput and step-time scale with the
+  GPU count, so if you run a different number of nodes, update the values to the
+  appropriate targets for that node count (see the ``_node_count_comment`` in
+  each threshold file).
 
 .. code:: json
 
-  "NNODES=2,STEPS=30,PRECISION=BF16,BATCH=3,GBS=48,SEQLEN=8192": {
-    "training.tflops_per_sec_per_gpu": { "kind": "min", "value": 260.0 },
-    "training.tokens_per_sec_per_gpu": { "kind": "min", "value": 1217.0 },
-    "training.final_loss":             { "kind": "max", "value": 15.0 },
-    "training.loss_decreased":         { "kind": "min", "value": 1 },
-    "training.step_time_p95_ms":       { "kind": "info", "value": 3600000.0 }
+  "BS=3,PRECISION=BF16,SL=8192": {
+    "training.tflops_per_sec_per_gpu": {"kind": "min", "value": 260.0},
+    "training.tokens_per_sec_per_gpu": {"kind": "min", "value": 1217.0},
+    "training.final_loss": {"kind": "max", "value": 15.0},
+    "training.loss_decreased": {"kind": "min", "value": 1},
+    "training.step_time_p95_ms": {"kind": "info", "value": 3600000.0}
   }
 
 Threshold kinds
 ---------------
+
+Each threshold entry specifies how the measured value is compared against the expected value.
 
 .. list-table::
    :widths: 2 3 5
@@ -692,6 +741,8 @@ Tracked metrics
 ---------------
 
 All metrics use the ``training.`` namespace.
+
+The suite records the following metrics; each can be referenced in threshold entries by its full dotted name.
 
 .. list-table::
    :widths: 3 1 1 5

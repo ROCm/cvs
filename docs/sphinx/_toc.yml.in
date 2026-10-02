@@ -4,21 +4,23 @@ defaults:
 root: index
 
 subtrees:
-- caption: Concepts
-  entries:
-  - file: concepts/what-is-cvs
-    title: What is Cluster Validation Suite?
-  - file: concepts/cvs-at-scale
-    title: Scalability and performance
 
-- caption: Getting started
+- entries:
+  - file: release-notes
+    title: Release notes
+  - file: what-is-cvs
+    title: What is CVS?
+
+- caption: Install
   entries:
-  - file: getting-started/quickstart
+  - file: install/quickstart
     title: Quickstart
-  - file: getting-started/install
-    title: Install
-  - file: getting-started/upgrade
-    title: Upgrade
+  - file: install/install
+    title: Install CVS
+  - file: install/upgrade
+    title: Upgrade CVS
+  - file: install/uninstall
+    title: Uninstall or downgrade CVS
 
 - caption: How to
   entries:
@@ -30,7 +32,7 @@ subtrees:
     - entries:
       - file: how-to/configure/test-suite-config/pick-config-file
         title: Choose config template
-  - file: how-to/run-tests/index
+  - file: how-to/test-suites/index
     title: Run tests
     subtrees:
     - entries:
@@ -60,20 +62,20 @@ subtrees:
         - entries:
           - file: how-to/test-suites/training/aorta
             title: Aorta benchmark
-          - file: how-to/test-suites/training/jax
+          - file: how-to/test-suites/training/jaxmaxtext
             title: JAX MaxText tests
           - file: how-to/test-suites/training/megatron
-            title: Megatron training tests
+            title: Megatron tests
           - file: how-to/test-suites/training/torchtitan
-            title: TorchTitan training tests
+            title: TorchTitan tests
       - file: how-to/test-suites/inference/index
         title: Inference tests
         subtrees:
         - entries:
           - file: how-to/test-suites/inference/vllm
-            title: Run vLLM inference benchmarks
+            title: vLLM tests
           - file: how-to/test-suites/inference/atom
-            title: ATOM inference tests
+            title: ATOM tests
           - file: how-to/test-suites/inference/sglang
             title: SGLang tests
           - file: how-to/test-suites/inference/xdit
@@ -95,10 +97,12 @@ subtrees:
           - file: how-to/monitor/live-dashboards/agentless
             title: Agentless (SSH)
           - file: how-to/monitor/live-dashboards/exporters
-            title: Agent (Exporters)
+            title: Exporters
 
 - caption: Reference
   entries:
+  - file: reference/cvs-at-scale
+    title: Scalability and performance
   - file: reference/cluster/passwordless-ssh
     title: Passwordless SSH
   - file: reference/cluster/cluster-file
@@ -106,7 +110,7 @@ subtrees:
   - file: how-to/run-with-containers
     title: Run with containers
   - file: reference/configuration-files/index
-    title: Test configuration files
+    title: Configuration files
     subtrees:
     - entries:
       - file: reference/configuration-files/burn-in-diag/index
@@ -148,17 +152,15 @@ subtrees:
           - file: reference/configuration-files/inference/atom
             title: ATOM
           - file: reference/configuration-files/inference/vllm
-            title: vLLM Inference
+            title: vLLM
           - file: reference/configuration-files/inference/sglang
-            title: SGLang Disaggregated
-          - file: reference/configuration-files/inference/flux1_t2i
-            title: Flux.1 Text-to-Image
-          - file: reference/configuration-files/inference/wan22_i2v
-            title: WAN 2.2 Image-to-Video
+            title: SGLang
+          - file: reference/configuration-files/inference/xdit
+            title: xDiT
   - file: reference/cli/cvs-run
     title: CLI reference
 
 - caption: About
   entries:
-  - file: license.rst
-    title: Licensing
+  - file: license
+    title: License

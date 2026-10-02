@@ -191,8 +191,7 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
     no accuracy tasks configured; `pytest_generate_tests` parametrizes with an
     empty list in that case, which pytest auto-skips as a single node -- same
     convention as a perf metric with no threshold entry. Gating values live in
-    the sibling threshold.json's `accuracy` block, keyed by task id (see
-    cvs/lib/inference/utils/AGENTS.md for the full design).
+    the sibling threshold.json's `accuracy` block, keyed by task id.
     """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -203,7 +202,12 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
     if task is None:
         pytest.skip(f"accuracy task {accuracy_task!r} not present in accuracy.tasks")
 
-    params = variant_config.params
+    if hasattr(variant_config, "server_params"):
+        base_url = f"http://0.0.0.0:{variant_config.server_params.port}"
+        model_id = variant_config.server_params.model
+    else:
+        base_url = f"{variant_config.params.base_url}:{variant_config.params.port_no}"
+        model_id = variant_config.model.id
     output_dir = f"{variant_config.paths.log_dir}/accuracy"
 
     t = time.monotonic()
@@ -211,9 +215,9 @@ def test_accuracy_eval(orch, variant_config, accuracy_task, lifecycle, request):
         actuals_by_id = run_accuracy_tasks(
             orch=orch,
             tasks=[task],
-            base_url=f"{params.base_url}:{params.port_no}",
-            model_id=variant_config.model.id,
-            model_path=variant_config.model.id,
+            base_url=base_url,
+            model_id=model_id,
+            model_path=model_id,
             output_dir=output_dir,
         )
     except RuntimeError as e:
@@ -245,6 +249,14 @@ def sort_lifecycle_items(items, rank):
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
 
+def _format_lifecycle_cell_value(value):
+    if value is None:
+        return "-"
+    if isinstance(value, float):
+        return f"{value:.1f}"
+    return str(value)
+
+
 def attach_lifecycle_html_table(item, report):
     if report.when != "call":
         return
@@ -254,7 +266,10 @@ def attach_lifecycle_html_table(item, report):
         return
     if pytest_html is None:
         return
-    body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
+    body = "".join(
+        f"<tr><td>{label}</td><td>{_format_lifecycle_cell_value(value)}</td><td>{unit}</td></tr>"
+        for label, value, unit in rows
+    )
     html = f"<table><tr><th>stage</th><th>value</th><th>unit</th></tr>{body}</table>"
     extras = getattr(report, "extras", [])
     extras.append(pytest_html.extras.html(html))

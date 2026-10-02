@@ -37,6 +37,9 @@ from cvs.lib.utils.model_query_lib import OpenAIProbe
 
 log = globals.log
 
+# ROCm atom images install vLLM as a Python package without a ``vllm`` console script on PATH.
+_VLLM_CLI_PREFIX = ("python3", "-m", "vllm.entrypoints.cli.main")
+
 
 class AtomJob:
     """ATOM benchmark job driven by an injected ContainerOrchestrator."""
@@ -54,13 +57,29 @@ class AtomJob:
         r"|unrecognized arguments|invalid choice|error: argument "
         r"|Free memory on device.*less than desired"
         r"|Engine core initialization failed"
-        r"|WorkerProc failed to start",
+        r"|WorkerProc failed to start"
+        r"|SafetensorError"
+        r"|incomplete metadata"
+        r"|proc died unexpectedly"
+        r"|load model runner failed"
+        r"|Failed to initialize all EngineCores"
+        r"|unexpected SHUTDOWN signal"
+        r"|ModuleNotFoundError"
+        r"|No module named",
         re.I,
     )
     FATAL_LOG_RE = re.compile(
         r"Free memory on device.{0,80}less than desired"
         r"|Engine core initialization failed"
-        r"|RuntimeError:.*[Ee]ngine",
+        r"|RuntimeError:.*[Ee]ngine"
+        r"|SafetensorError"
+        r"|incomplete metadata"
+        r"|proc died unexpectedly"
+        r"|load model runner failed"
+        r"|Failed to initialize all EngineCores"
+        r"|unexpected SHUTDOWN signal"
+        r"|ModuleNotFoundError"
+        r"|No module named",
         re.I,
     )
 
@@ -258,11 +277,6 @@ class AtomJob:
         else:
             self._exec_all(f"mkdir -p {shlex.quote(self.out_dir)}")
 
-    @staticmethod
-    def _is_deepseek_v4_model(model_id):
-        mid = (model_id or "").lower()
-        return "deepseek-v4" in mid or "deepseek_v4" in mid
-
     @classmethod
     def _merged_serve_args(cls, variant):
         merged = dict(cls._DEFAULT_SERVE_ARGS)
@@ -271,8 +285,6 @@ class AtomJob:
         gpu_mem = env.get("CVS_GPU_MEMORY_UTIL") or env.get("VLLM_GPU_MEMORY_UTIL")
         if gpu_mem is not None and "gpu-memory-utilization" not in merged:
             merged["gpu-memory-utilization"] = str(gpu_mem)
-        if "enforce-eager" not in merged and not cls._is_deepseek_v4_model(variant.model.id):
-            merged["enforce-eager"] = True
         return merged
 
     @staticmethod
@@ -399,7 +411,7 @@ class AtomJob:
             f"export HF_TOKEN={shlex.quote(self.hf_token)}",
             f"export HF_HUB_CACHE={shlex.quote(self.models_dir)}",
         ]
-        if self._uses_vllm_serve() and not self._is_deepseek_v4_model(self.model_id):
+        if self._uses_vllm_serve():
             env_lines.extend(
                 [
                     "export VLLM_USE_AITER_UNIFIED_ATTENTION=1",
@@ -442,7 +454,7 @@ class AtomJob:
 
     def _server_argv(self, rank=0):
         argv = [
-            "vllm",
+            *_VLLM_CLI_PREFIX,
             "serve",
             self.model_id,
             "--host",
@@ -614,6 +626,11 @@ class AtomJob:
             return out
         return self._exec_all(f"tail -{lines} {shlex.quote(self.server_log)}")
 
+    def _raise_if_atom_server_log_failed(self, host, output):
+        text = output or ""
+        if self.EARLY_FAILURE_RE.search(text) or self.FATAL_LOG_RE.search(text):
+            raise RuntimeError(f"atom server early failure on {host}: {text[-500:]}")
+
     def wait_ready(self):
         log.info("waiting %ds for server log to materialise", self._precheck_wait)
         time.sleep(self._precheck_wait)
@@ -621,8 +638,7 @@ class AtomJob:
         if self.driver == "atom":
             out = self._tail_server_logs(30)
             for host, output in out.items():
-                if self.EARLY_FAILURE_RE.search(output or ""):
-                    raise RuntimeError(f"atom server early failure on {host}: {output[-500:]}")
+                self._raise_if_atom_server_log_failed(host, output)
         else:
             self._check_coordinator_early_failure(emit_tail=True)
 
@@ -632,8 +648,7 @@ class AtomJob:
         if self.driver == "atom":
             out = self._tail_server_logs(30)
             for host, output in out.items():
-                if self.EARLY_FAILURE_RE.search(output or ""):
-                    raise RuntimeError(f"atom server early failure on {host}: {output[-500:]}")
+                self._raise_if_atom_server_log_failed(host, output)
         else:
             self._check_coordinator_early_failure(emit_tail=True)
 
@@ -645,8 +660,7 @@ class AtomJob:
             if self.driver == "atom":
                 poll_out = self._tail_server_logs(30)
                 for host, output in poll_out.items():
-                    if self.EARLY_FAILURE_RE.search(output or ""):
-                        raise RuntimeError(f"atom server early failure on {host}: {output[-500:]}")
+                    self._raise_if_atom_server_log_failed(host, output)
             else:
                 self._check_coordinator_early_failure()
             time.sleep(self._server_poll_wait)
@@ -746,7 +760,9 @@ class AtomJob:
             self._exec_all("bash -c 'pkill -f \"sglang.launch_server\" || true'")
         else:
             log.info("stopping vllm server")
-            self._exec_all("bash -c 'pkill -f \"vllm serve\" || true'")
+            self._exec_all(
+                "bash -c " + shlex.quote('pkill -f "vllm.entrypoints.cli.main serve" || pkill -f "vllm serve" || true')
+            )
         time.sleep(5)
 
     def _atom_client_argv(self):
@@ -834,7 +850,7 @@ class AtomJob:
 
     def _vllm_client_argv(self):
         argv = [
-            "vllm",
+            *_VLLM_CLI_PREFIX,
             "bench",
             "serve",
             "--model",

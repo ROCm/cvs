@@ -184,11 +184,17 @@ class BaseRunner(ABC):
         try:
             # Setup phase
             log.info(f"Setting up {self.__class__.__name__}...")
-            if not self.setup():
+            try:
+                setup_ok = self.setup()
+            finally:
+                # Set even if setup() raises or partially succeeds, so the
+                # finally block below still tears down resources a
+                # partially-successful setup already created.
+                self._setup_complete = True
+            if not setup_ok:
                 return RunResult(
                     status=RunStatus.FAILED, start_time=start_time, end_time=time.time(), error_message="Setup failed"
                 )
-            self._setup_complete = True
 
             # Run phase
             log.info(f"Running {self.__class__.__name__}...")

@@ -5,7 +5,9 @@
             "no_of_local_ranks": "8",
             "_comment_mpi_pml": "MPI Point-to-Point Messaging Layer: 'auto' (auto-detect UCX support), 'ucx' (force UCX), or 'ob1' (force OpenIB/TCP fallback). This remains in config because it is an MPI launch option, not an env-script setting.",
             "mpi_pml": "auto",
-            "mpi_dir": "/home/{user-id}/openmpi/bin",
+            "_comment_mpi_dir": "Open MPI install prefix. A trailing /bin is stripped. Used for mpirun and, on Spur/Slurm, OPAL_PREFIX plus OMPI_MCA_* exports — do not put those in the env script.",
+            "mpi_dir": "/home/{user-id}/openmpi",
+            "_comment_mpi_oob_port": "TCP OOB interface. Bare metal: mpirun --mca btl/oob_tcp_if_include. Managed: OMPI_MCA_btl_tcp_if_include / oob_tcp_if_include generated in rccl_lib.",
             "mpi_oob_port": "eth0",
             "ucx_tls": "rc,self,sm,tcp",
             "_comment_ucx_tls": "When user requested UCX either leave this parameter value blank for auto assignment or assign values e.g. rc,self,sm,tcp..",
@@ -13,7 +15,7 @@
             "_comment_net_dev_list": "Leave empty for auto-detection from backend NICs, or set explicitly e.g. bnxt_re0:1,bnxt_re1:1,.."
         },
 
-        "_comment_env_script": "RCCL/NCCL/UCX tuning parameters. Path configurations (mpi_dir, rccl_tests_dir) are now in mpi_params and rccl_test_params respectively.",
+        "_comment_env_script": "RCCL/NCCL/HSA/plugin tuning only. MPI/PMIx/ORTE (OMPI_MCA_*, OPAL_PREFIX, PMIX_MCA_gds, ORTE tmpdir) are set by rccl_lib from mpi_params.",
         "env_source_script": "/home/{user-id}/thor2_env_script.sh",
 
         "rccl_test_params": {
@@ -33,7 +35,7 @@
             "data_types": ["float"]
         },
 
-        "_comment_cvs_params": "The rccl_result_file.json will be appended by rccl_test_params.data_types. When it's float the file name will be rccl_result_file_float.json on the head node.",
+        "_comment_cvs_params": "Perf writes per-data-type files (for example rccl_result_file_float.json), combined results and an aggregated JSON on the head node. Managed runs require writable shared storage; containers must bind-mount the result directory at the same path.",
         "cvs_params": {
             "cluster_snapshot_debug": "False",
             "_comment_nic_model": "Set nic_model for validations (eg., 'thor' , 'ainic', 'connectx')",
@@ -41,9 +43,11 @@
             "verify_bus_bw": "False",
             "verify_bw_dip": "True",
             "verify_lat_dip": "True",
+            "_comment_topology_check": "How CVS reacts when rccl-tests' reported nodes/ranks/ranksPerNode/gpusPerRank disagree with the topology CVS launched. 'warn' (default) logs and records the mismatch; 'strict' fails the test; 'off' disables only the requested-vs-reported comparison. Checks are skipped when all rows omit topology. Use 'strict' once your rccl-tests build reports per-node rank counts correctly (see AIMVT-334).",
+            "topology_check": "warn",
             "_comment_cvs_exec_timeout": "Optional. CVS-side outer cap on the SSH-exec call wrapping mpirun (seconds, default 2400).",
             "cvs_exec_timeout": "2400",
-            "rccl_result_file": "/home/{user-id}/rccl_result_file.json",
+            "rccl_result_file": "{run_dir}/rccl_result_file.json",
             "pairwise_min_bw": "300",
             "_comment_pairwise_min_bw": "Minimum bus BW in GB/s required for Phase 2 incremental admission (Phase 1 pairwise never gates on bandwidth, matching the original bash tool). Set to 0 to skip the BW check.",
             "pairwise_results_file": "/tmp/rccl_pairwise_results.json",
@@ -60,7 +64,7 @@
             "NCCL_MAX_NCHANNELS": [ "8", "16" ]
         },
 
-        "_comments_results": "expected results below are for 2 node cluster, will vary based on cluster size",
+        "_comments_results": "Both perf and regression read results here. These legacy flat examples assume 2 nodes; calibrate for your hardware before setting verify_bus_bw=True. For references tied to NIC, data types and rank count, use results.<nic>.<collective>-<types>-<ranks>.<bytes>.bus_bw (see the RCCL README).",
         "results": {
             "all_reduce_perf": {
                 "bus_bw": {

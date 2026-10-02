@@ -8,10 +8,6 @@ library measures and how a suite can wire it in; the exact fixture/parametrize/t
 plumbing shown below is illustrative reference pseudocode drawn from an inference suite —
 adapt it to your suite's own lifecycle-as-tests structure.
 
-> **Prerequisite**: this guide assumes you have completed (or are familiar with)
-> the steps in `cvs/lib/inference/ADDING_A_SUITE.md`. Concepts like `cell_key`,
-> `GATED_METRICS`, and `inf_res_dict` structure are defined there.
-
 ---
 
 ## What it measures
@@ -269,8 +265,7 @@ Without this branch `test_gpu_metric` collects zero instances and produces no HT
 ```
 
 **`GATED_METRICS`** — if your `VariantConfig` subclass validates that every gated
-metric has a threshold entry (the two-axis coverage check in `ADDING_A_SUITE.md`
-Step 2), add all five `gpu.*` keys to your `GATED_METRICS` set:
+metric has a threshold entry, add all five `gpu.*` keys to your `GATED_METRICS` set:
 
 ```python
 GATED_METRICS = {

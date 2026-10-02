@@ -1,39 +1,13 @@
 {
-  "schema_version": 1,
-  "framework": "megatron_single",
-  "gpu_arch": "MI355X",
+  "gpu_name": "MI355X",
   "enforce_thresholds": true,
   "threshold_json": "mi355x_megatron_llama-3.1-8b_single_threshold.json",
-  "config": {
+  "paths": {
     "hf_token_file": "/home/{user-id}/.hf_token",
     "log_dir": "/home/{user-id}/LOGS/megatron",
     "scripts_dir": "/home/{user-id}/SCRIPTS/megatron",
     "data_cache_dir": "/home/{user-id}/cache",
-    "rocm_dir": "",
-    "megatron_root": "/workspace/Megatron-LM",
-    "_example_training_iterations": "30",
-    "training_iterations": "<changeme>",
-    "nnodes": "1",
-    "nic_type": "ainic",
-    "_example_nccl_socket_ifname": "ensf1np1",
-    "nccl_socket_ifname": "<changeme>",
-    "_example_gloo_socket_ifname": "ensf1np1",
-    "gloo_socket_ifname": "<changeme>",
-    "nccl_ib_gid_index": "3",
-    "nccl_debug": "ERROR",
-    "master_address": "127.0.0.1",
-    "verify_network_errors": "False"
-  },
-  "model_params": {
-    "model_name": "llama3.1_8B",
-    "tokenizer_model": "meta-llama/Llama-3.1-8B",
-    "model_size": "8",
-    "sequence_length": "8192",
-    "recompute": "0",
-    "fsdp": "0",
-    "tensor_parallelism": "1",
-    "pipeline_parallelism": "1",
-    "precision": "FP8"
+    "rocm_dir": ""
   },
   "container": {
     "lifetime": "per_run",
@@ -54,7 +28,36 @@
           "/dev/dri"
         ]
       }
+    },
+    "env": {
+      "MASTER_ADDR": "127.0.0.1",
+      "NCCL_SOCKET_IFNAME": "enp193s0f1np1 <changeme>",
+      "GLOO_SOCKET_IFNAME": "enp193s0f1np1 <changeme>",
+      "NCCL_IB_GID_INDEX": "3 <changeme>",
+      "NCCL_DEBUG": "ERROR <changeme>"
     }
+  },
+  "train_params": {
+    "model_name": "llama3.1_8B",
+    "tokenizer_model": "meta-llama/Llama-3.1-8B",
+    "model_size": "8",
+    "sequence_length": "8192",
+    "recompute": "0",
+    "fsdp": "0",
+    "tensor_parallelism": "1",
+    "pipeline_parallelism": "1",
+    "micro_batch_size": "4",
+    "global_batch_size": "128",
+    "precision": "BF16",
+    "training_iterations": "<changeme>"
+  },
+  "_smoke_comment": "test_smoke loads the model and runs a small fixed cell without metric gating. enabled=false skips it.",
+  "smoke": {
+    "enabled": true,
+    "iters": 10,
+    "micro_batch_size": "1",
+    "global_batch_size": "8",
+    "precision": "BF16"
   },
   "_loss_curve_comment": "sample training loss every `sample_every` steps (plus milestone_steps) and pass when the least-squares slope < max_slope. enforce=false makes it record-only.",
   "loss_curve": {
@@ -76,38 +79,27 @@
     "resume_iters": 25,
     "loss_rtol": 0.05
   },
+  "_sweep_comment": "combination key is MBS=<mbs>,GBS=<gbs>,PRECISION=<precision> for that cell (body may overlay extras such as training_iterations). Omit sweep to run one default cell from train_params.",
   "sweep": {
     "combinations": {
-      "llama3_1_8b-mi355x-bs128-mbs4-fp8": {
-        "name": "llama3_1_8b_mbs4_gbs128_FP8",
-        "global_batch_size": "128",
-        "micro_batch_size": "4",
-        "precision": "FP8"
+      "MBS=4,GBS=128,PRECISION=FP8": {
+        "training_iterations": "20"
       },
-      "llama3_1_8b-mi355x-bs128-mbs4-bf16": {
-        "name": "llama3_1_8b_mbs4_gbs128_BF16",
-        "global_batch_size": "128",
-        "micro_batch_size": "4",
-        "precision": "BF16"
+      "MBS=4,GBS=128,PRECISION=BF16": {
+        "training_iterations": "20"
       },
-      "llama3_1_8b-mi355x-bs128-mbs4-mxfp4": {
-        "name": "llama3_1_8b_mbs4_gbs128_MXFP4",
-        "global_batch_size": "128",
-        "micro_batch_size": "4",
-        "precision": "MXFP4"
+      "MBS=4,GBS=128,PRECISION=MXFP4": {
+        "training_iterations": "20"
       },
-      "llama3_1_8b-mi355x-bs128-mbs4-mxfp8": {
-        "name": "llama3_1_8b_mbs4_gbs128_MXFP8",
-        "global_batch_size": "128",
-        "micro_batch_size": "4",
-        "precision": "MXFP8"
+      "MBS=4,GBS=128,PRECISION=MXFP8": {
+        "training_iterations": "20"
       }
     },
     "runs": [
-      "llama3_1_8b-mi355x-bs128-mbs4-fp8",
-      "llama3_1_8b-mi355x-bs128-mbs4-bf16",
-      "llama3_1_8b-mi355x-bs128-mbs4-mxfp4",
-      "llama3_1_8b-mi355x-bs128-mbs4-mxfp8"
+      "MBS=4,GBS=128,PRECISION=FP8",
+      "MBS=4,GBS=128,PRECISION=BF16",
+      "MBS=4,GBS=128,PRECISION=MXFP4",
+      "MBS=4,GBS=128,PRECISION=MXFP8"
     ]
   }
 }

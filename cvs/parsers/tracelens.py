@@ -64,17 +64,33 @@ class TraceLensParser:
         Returns:
             ParseResult containing validated AortaTraceMetrics
         """
+        run_warnings = []
         if not run_result.succeeded:
-            return ParseResult(status=ParseStatus.FAILED, errors=[f"Run did not succeed: {run_result.error_message}"])
+            # A failed/timed-out node no longer discards traces collected from
+            # surviving nodes (see AortaRunner.run()), so a partial run can
+            # still have real data to parse. Only bail out below if there is
+            # nothing on disk to parse.
+            run_warnings.append(f"Run did not succeed: {run_result.error_message}")
+            log.warning(run_warnings[-1])
 
         trace_dir = run_result.get_artifact("torch_traces")
         if not trace_dir:
-            return ParseResult(status=ParseStatus.FAILED, errors=["No torch_traces artifact found in run result"])
+            return ParseResult(
+                status=ParseStatus.FAILED,
+                warnings=run_warnings,
+                errors=["No torch_traces artifact found in run result"],
+            )
 
         if not trace_dir.exists():
-            return ParseResult(status=ParseStatus.FAILED, errors=[f"Trace directory does not exist: {trace_dir}"])
+            return ParseResult(
+                status=ParseStatus.FAILED,
+                warnings=run_warnings,
+                errors=[f"Trace directory does not exist: {trace_dir}"],
+            )
 
-        return self.parse_trace_directory(trace_dir)
+        result = self.parse_trace_directory(trace_dir)
+        result.warnings = run_warnings + list(result.warnings)
+        return result
 
     def parse_trace_directory(self, trace_dir: Path) -> ParseResult[AortaTraceMetrics]:
         """

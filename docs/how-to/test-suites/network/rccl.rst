@@ -1,10 +1,12 @@
 .. meta::
-  :description: Run RCCL performance and regression suites
-  :keywords: CVS, rccl
+  :description: Run CVS RCCL performance and regression test suites to validate collective communication bandwidth across AMD Instinct GPU cluster nodes with ROCm.
+  :keywords: CVS, RCCL, collective communication, AMD Instinct, ROCm, AMD, GPU, InfiniBand, all-reduce, all-gather, performance
 
-**********
-RCCL tests
-**********
+***********************************************
+Run CVS RCCL performance and regression tests
+***********************************************
+
+RCCL tests validate collective communication bandwidth and correctness across AMD Instinct GPU nodes using all-reduce, all-gather, broadcast, and other collectives. Run RCCL after IB Perf passes to confirm that GPU-to-GPU communication meets performance thresholds.
 
 .. _rccl-set-up-config:
 
@@ -22,15 +24,12 @@ Set up config
    - ``rccl_dir``, ``rccl_tests_dir``, ``mpi_dir``
    - ``mpi_path_var``, ``rccl_path_var``, ``rocm_path_var``
 
-Full parameter list: :doc:`/reference/configuration-files/network/rccl`.
+For the complete field reference, see :doc:`/reference/configuration-files/network/rccl`.
 
 .. _rccl-run-tests:
 
 Run tests
 =========
-
-ROCm Communication Collectives Library (RCCL) tests
----------------------------------------------------
 
 You can list all available RCCL test cases using the CLI:
 
@@ -70,26 +69,40 @@ You can list all available RCCL test cases using the CLI:
     - test_print_env_once
     - test_rccl_perf
 
-Use these scripts to start RCCL tests with CVS:
-
-**Prerequisites: Environment Script Staging**
+Prerequisites for environment script staging
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Before running RCCL tests, ensure the environment script specified in ``env_source_script`` is available on all cluster nodes:
 
-- **With shared storage**: Place the environment script in a shared directory accessible from all nodes
-- **Without shared storage**: Use ``cvs scp`` to copy the environment script to all nodes. See :doc:`/how-to/copy-to-cluster` for detailed instructions and examples.
+With shared storage
+"""""""""""""""""""
+
+Place the environment script in a shared directory accessible from all nodes.
+
+Without shared storage
+""""""""""""""""""""""
+
+Use ``cvs scp`` to copy the environment script to all nodes. See :doc:`/how-to/copy-to-cluster` for detailed instructions and examples.
 
 1. Run RCCL performance suite:
 
 .. code:: bash
 
-  cvs run rccl_perf --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_config.json --html=/var/www/html/cvs/rccl_perf.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_perf.log -vvv -s
+  cvs run rccl_perf \
+    --cluster_file ~/cvs_workspace/cluster.json \
+    --config_file ~/cvs_workspace/rccl/rccl_config.json \
+    --html=/var/www/html/cvs/rccl_perf.html --capture=tee-sys --self-contained-html \
+    --log-file=/tmp/rccl_perf.log -vvv -s
 
 2. Run RCCL regression suite:
 
 .. code:: bash
 
-  cvs run rccl_regression --cluster_file input/cluster_file/cluster.json --config_file input/config_file/rccl/rccl_regression.json --html=/var/www/html/cvs/rccl_regression.html --capture=tee-sys --self-contained-html --log-file=/tmp/rccl_regression.log -vvv -s
+  cvs run rccl_regression \
+    --cluster_file ~/cvs_workspace/cluster.json \
+    --config_file ~/cvs_workspace/rccl/rccl_regression.json \
+    --html=/var/www/html/cvs/rccl_regression.html --capture=tee-sys --self-contained-html \
+    --log-file=/tmp/rccl_regression.log -vvv -s
 
 3. Generate RCCL performance heatmap:
 

@@ -1,12 +1,16 @@
 .. meta::
-  :description: Run vLLM inference benchmarks with CVS, single-node and multinode
-  :keywords: CVS, vLLM, inference, benchmark, multinode, ray, LLM, ROCm
+  :description: Run vLLM LLM inference tests with CVS on AMD Instinct GPUs, covering single-node and multinode distributed serving with ROCm and InfiniBand.
+  :keywords: CVS, vLLM, inference, benchmark, AMD Instinct, ROCm, AMD, GPU, LLM, multinode, InfiniBand, RDMA
 
-*****************************
-Run vLLM inference benchmarks
-*****************************
+***************************************
+Run vLLM LLM inference tests with CVS
+***************************************
 
-The vLLM suite measures LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. One parametrized suite covers both single-node and multinode runs — you select the topology in the configuration file, not by choosing a different suite.
+The vLLM suites measure LLM serving throughput, latency, and accuracy on AMD Instinct GPUs. ``vllm_single`` runs on the first cluster host and ignores additional hosts. ``vllm_distributed`` uses every host in the cluster file, with one-host fallback when only a single host is present. Packaged distributed recipes and thresholds are calibrated for two hosts; retune them before treating other sizes as pass/fail.
+
+For a mapping-style ``node_dict``, "first cluster host" is the first JSON key
+in insertion order. ``vllm_single`` rewrites ``head_node_dict.mgmt_ip`` to that
+host, so put the intended single-node target first in ``node_dict``.
 
 This page walks through a first run. For the full schema, every metric, and the threshold grammar, see :doc:`/reference/configuration-files/inference/vllm`.
 
@@ -23,7 +27,7 @@ On every cluster node:
 
 On the head node where you launch ``cvs run``:
 
-- CVS installed (see :doc:`/getting-started/install`).
+- CVS installed (see :doc:`/install/install`).
 - SSH key-based access to every cluster node.
 
 For a multinode run, additionally have on hand:
@@ -73,16 +77,22 @@ In the **configuration file**, set:
 - ``paths.shared_fs`` — the shared filesystem root. The other paths derive from it by default.
 - ``paths.models_dir`` — where the weights live. Make sure this path is also mounted into the container by ``container.runtime.args.volumes``.
 - ``paths.hf_token_file`` — path to your token file.
-- ``model.id`` — the model to serve.
+- ``server_params.model`` — the model to serve.
 
 For a **multinode** configuration, also set:
 
-- ``params.master_addr`` — the head node address.
-- ``roles.server.ib_netdev`` — the interface name you looked up in the prerequisites.
+- ``container.env.NCCL_IB_HCA`` — the comma-separated HCA names exposed on every node. The packaged MI3xx configurations use ``rdma0`` through ``rdma7``.
+- ``container.env.NCCL_SOCKET_IFNAME`` — the Linux netdev associated with the selected RNICs.
+- ``container.env.GLOO_SOCKET_IFNAME`` and ``TP_SOCKET_IFNAME`` — generally the frontend/control-plane interface.
+- ``container.env.NCCL_IB_GID_INDEX`` — the common fabric index reported by ``show_gids`` on every selected HCA and node. If ``show_gids`` is unavailable, inspect ``ibv_devinfo -v`` and the HCA's ``gid_attrs`` sysfs entries.
 
 .. tip::
 
-  Leave ``enforce_thresholds`` set to ``false`` for your first run on new hardware. The run then measures and records everything without failing on thresholds you have not calibrated yet. Set it to ``true`` once you know what good looks like.
+  Leave ``enforce_thresholds`` set to ``false`` for your first run on new
+  hardware. The run reports every finite value produced from the 56-metric
+  registry without gating. Packaged threshold templates intentionally retain
+  the previous 32-metric assertion subset; you may add any other registered
+  metric or remove entries before enabling calibrated thresholds.
 
 .. _vllm-run-tests:
 
@@ -91,17 +101,17 @@ Step 3: Run the suite
 
 .. code:: bash
 
-  cvs run vllm \
+  cvs run vllm_single \
     --cluster_file /tmp/cvs/cluster.json \
     --config_file /tmp/cvs/vllm_singlenode_config.json \
     --html /tmp/cvs/vllm.html --self-contained-html \
     --log-file /tmp/cvs/cvs.log
 
-The suite name is ``vllm`` for every topology. There is no separate distributed suite — a multinode run is the same command with a multinode configuration file:
+Use ``vllm_distributed`` for one distributed service across the cluster:
 
 .. code:: bash
 
-  cvs run vllm \
+  cvs run vllm_distributed \
     --cluster_file /tmp/cvs/cluster.json \
     --config_file /tmp/cvs/vllm_multinode_config.json \
     --html /tmp/cvs/vllm.html --self-contained-html \
@@ -116,12 +126,12 @@ The suite name is ``vllm`` for every topology. There is no separate distributed 
 Step 4: Read the results
 ========================
 
-Open the HTML report. Each lifecycle stage and each metric is its own row:
+Open the HTML report. Each lifecycle stage, benchmark cell, and verification phase is its own row:
 
 - **Lifecycle rows** — container launch, topology discovery, model fetch, the OpenAI-compatible smoke test, then teardown. These tell you *how far* the run got.
 - **Inference rows** — one per sweep cell, labelled ``<combo>-conc<N>``.
-- **Metric rows** — one per metric per cell. A metric that could not be measured is skipped rather than failed.
-- **Results table** — the summary near the end, also printed to the console. This is where you read the measured numbers.
+- **Verification rows** — one per cell. Expand the row to see every finite metric plus every configured threshold. Only configured thresholds create subtests when enforcement is enabled. A missing or invalid gated value fails for every datasource, including GPU and Prometheus.
+- **Results table** — the summary is also printed to the console. Metric names are bare (for example, ``output_throughput`` and ``queue_time_p95_ms``).
 
 Per-cell logs land under your configured ``log_dir``::
 
@@ -139,7 +149,7 @@ A skipped ``test_setup_sshd`` row is expected. vLLM communicates over the host n
 Going multinode
 ===============
 
-Three settings turn a single-node configuration into a multinode one: ``params.nnodes``, ``params.pipeline_parallel_size``, and ``roles.server.ib_netdev``. Which combination is valid depends on the distributed executor backend.
+The cluster file determines the host count: ``vllm_distributed`` forms one service from every listed host, or falls back to a single-node run when only one host is present. For distributed runs, configure ``server_params.pipeline_parallel_size`` to match the intended layout and set the HCA, socket-interface, and GID settings under ``container.env``. CVS derives the rendezvous address from the cluster head. Packaged configs use two hosts and ``pipeline_parallel_size`` of 2.
 
 Using the default backend (mp)
 ------------------------------
@@ -149,16 +159,18 @@ If you set nothing else, the suite uses ``mp``. It requires pipeline parallelism
 .. code:: json
 
     {
-      "params": {
-        "tensor_parallelism": "8",
-        "pipeline_parallel_size": "2",
-        "nnodes": "2",
-        "master_addr": "10.0.0.1"
-      },
-      "roles": {
-        "server": {
-          "ib_netdev": "ens51f1np1"
+      "container": {
+        "env": {
+          "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+          "NCCL_SOCKET_IFNAME": "eno0",
+          "GLOO_SOCKET_IFNAME": "eno0",
+          "TP_SOCKET_IFNAME": "eno0",
+          "NCCL_IB_GID_INDEX": "3"
         }
+      },
+      "server_params": {
+        "tensor_parallel_size": 8,
+        "pipeline_parallel_size": 2
       }
     }
 
@@ -167,24 +179,24 @@ CVS launches ``vllm serve`` on every node with the correct rank, adding ``--head
 Using ray
 ---------
 
-Ray is opt-in. Add it to ``serve_args``:
+Ray is opt-in. Set ``distributed_executor_backend`` in ``server_params``:
 
 .. code:: json
 
     {
-      "roles": {
-        "server": {
-          "serve_args": {
-            "distributed-executor-backend": "ray"
-          },
-          "ib_netdev": "ens51f1np1"
+      "container": {
+        "env": {
+          "NCCL_IB_HCA": "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7",
+          "NCCL_SOCKET_IFNAME": "eno0",
+          "GLOO_SOCKET_IFNAME": "eno0",
+          "TP_SOCKET_IFNAME": "eno0",
+          "NCCL_IB_GID_INDEX": "3"
         }
       },
-      "params": {
-        "tensor_parallelism": "8",
-        "pipeline_parallel_size": "1",
-        "nnodes": "2",
-        "master_addr": "10.0.0.1"
+      "server_params": {
+        "tensor_parallel_size": 8,
+        "pipeline_parallel_size": 1,
+        "distributed_executor_backend": "ray"
       }
     }
 
@@ -194,24 +206,29 @@ CVS then bootstraps a Ray cluster before serving: ``ray start --head`` on rank 0
 
   Ray is not required for multinode — ``mp`` is the default and works across nodes. What ray changes is that it **removes the pipeline-parallelism requirement**, so ``pipeline_parallel_size`` of 1 becomes valid. Use ray when you want pure tensor-parallel serving across nodes; use the default otherwise.
 
-  Only the exact lowercase string ``"ray"`` selects it. ``"Ray"`` silently falls back to ``mp`` and then fails validation if ``pipeline_parallel_size`` is 1.
+  Only the exact lowercase string ``"ray"`` selects it. Other values are rejected by configuration validation.
 
 Common pitfalls
 ===============
 
 **The run fails immediately with a validation error.** Configuration files are validated before anything launches, and every block except ``container`` rejects unknown keys — so a misspelled key is a hard error rather than a silently ignored setting. Read the message: it names the offending key.
 
-**"nnodes=2 > 1 requires pipeline_parallel_size > 1".** You configured multiple nodes on the default ``mp`` backend without pipeline parallelism. Either raise ``pipeline_parallel_size``, or switch to ray.
+**Distributed topology validation fails.** You configured multiple hosts on the default ``mp`` backend without pipeline parallelism. Either raise ``pipeline_parallel_size``, or switch to ray.
 
-**"ib_netdev is required in roles.server when nnodes > 1".** Set it to the interface name. There is deliberately no ``"auto"`` value — it cannot be derived reliably from HCA names.
+**"vllm_distributed requires container.env.NCCL_SOCKET_IFNAME".** Set all three socket-interface variables under ``container.env``. The interface cannot be derived reliably from HCA names.
 
 **"Container image not specified in config".** ``container.image`` is empty. Watch for this specific trap: if your configuration file has a ``container`` block that omits ``image``, it overwrites the cluster file's image with an empty string. Set ``image`` in whichever file defines the block.
 
 **Container launch crashes with "too many values to unpack".** You placed ``env`` under ``container.runtime.args``. It belongs at the ``container`` top level.
 
-**A threshold fails with "missing from actuals".** The threshold gates a metric this run did not produce. The usual cause is ``params.metric_percentiles`` omitting a percentile that a threshold references — the default ``"50,90,95,99"`` covers all gated latency metrics.
+**A threshold fails with "actual must be a finite built-in int or float".** The gated datasource did not produce a valid value. Inspect the raw benchmark artifact, GPU telemetry, or server metrics for that cell. The suite owns benchmark percentile collection; workload configuration cannot override it.
 
-**Every metric row skips.** The benchmark produced no parseable results. Check ``client.log`` and the server log for the cell.
+**A verification parent skips.** Either the benchmark produced no parseable result for that cell, threshold enforcement is disabled, or the cell has no active metric gates. Finite values are still retained as record rows.
+
+**A Run Deck baseline is incompatible.** vLLM reports identify the bare metric
+contract as ``{"id":"vllm-bare","version":1}``. Historical reports containing
+``client.*``, ``gpu.*``, or ``prom.*`` metric keys cannot be compared. Generate
+a new baseline with the current suite.
 
 **The sweep is slower than expected.** Cells that differ only in concurrency reuse the running server; changing ISL, OSL, TP, PP, or any server argument forces a restart and a weight reload. Ordering ``runs`` so concurrency varies fastest avoids needless reloads.
 
@@ -223,4 +240,4 @@ See also
 - :doc:`/reference/configuration-files/inference/vllm` — full configuration schema, metrics, and thresholds
 - :doc:`/reference/cluster/cluster-file` — cluster file schema
 - :doc:`/how-to/run-with-containers` — container backend in depth
-- :doc:`/how-to/run-tests/index` — running other CVS suites
+- :doc:`/how-to/test-suites/index` — running other CVS suites

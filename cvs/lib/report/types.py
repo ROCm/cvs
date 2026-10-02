@@ -50,12 +50,14 @@ class InferenceReportConfig:
     tier_metric_specs: TierMetricSpecsFn
     metric_units: dict[str, str]
     metric_prefix: str = "client."
+    threshold_metric_prefix: str | None = None
     cell_highlights: tuple[tuple[str, str], ...] = ()
     chart_series: tuple[ReportChartSeries, ...] = ()
     record_tier: str = "record"
     inference_test_substring: str = "test_inference"
     session_lifecycle_labels: tuple[str, ...] = DEFAULT_SESSION_LIFECYCLE_LABELS
     cell_lifecycle_labels: tuple[str, ...] = DEFAULT_CELL_LIFECYCLE_LABELS
+    expand_lifecycle_labels: tuple[str, ...] = ()
     sweep_throughput_metric: str = "client.output_throughput"
     sweep_ttft_metric: str = "client.mean_ttft_ms"
     headline_metric: str = "client.output_throughput"
@@ -65,10 +67,24 @@ class InferenceReportConfig:
     viewer_cell_threshold: int = 24
     prev_run_json: str = ""
     framework_parity_ref_json: str = ""
+    metric_verdict: Optional[Callable] = None
+    metric_contract: Optional[dict] = None
     gsm8k_prev_run_metric: str = "gsm8k_flex.gsm8k.exact_match__flexible-extract"
     gsm8k_prev_run_max_drop: float = 0.01
     run_card_display_builder: RunCardDisplayFn = field(default=lambda _variant, _prov: [("Suite", "inference", False)])
     launch_provenance_builder: Optional[LaunchProvenanceFn] = None
+    # Training decks converge on the shared sweep-cell model. A framework may
+    # supply a cell-dimension provider (variant_config, sweep_name) -> {field: value}
+    # plus an ordered dimension_fields descriptor of (cell_field, header_label,
+    # chart_prefix). When cell_dimensions is None the builder keeps Megatron's
+    # native mbs/gbs/tp/pp handling, so the merged Megatron deck is unaffected.
+    cell_dimensions: Optional[Callable] = None
+    dimension_fields: tuple = ()
+    sweep_series_label: str = "Megatron sweep"
+    # When true, the training results table auto-includes a column for every
+    # declared metric (metric_units) instead of the fixed results_columns, so
+    # frameworks with many metrics (jax) show them all.
+    results_all_metrics: bool = False
 
     @property
     def gated_tiers(self) -> tuple[str, ...]:
@@ -77,4 +93,16 @@ class InferenceReportConfig:
     def full_metric(self, short: str) -> str:
         if short.startswith(f"{self.metric_prefix}"):
             return short
+        if short.startswith(("scaling.", "gpu.", "training.")):
+            return short
         return f"{self.metric_prefix}{short}"
+
+    def threshold_metric(self, short: str) -> str:
+        """Key used in threshold JSON (may differ from ``full_metric`` for actuals)."""
+        if short.startswith(("scaling.", "gpu.", "accuracy.", "mtp.", "quant_parity")):
+            return short
+        prefix = self.threshold_metric_prefix if self.threshold_metric_prefix is not None else self.metric_prefix
+        bare = short[len(self.metric_prefix) :] if short.startswith(self.metric_prefix) else short
+        if not prefix:
+            return bare
+        return f"{prefix}{bare}" if not bare.startswith(prefix) else bare

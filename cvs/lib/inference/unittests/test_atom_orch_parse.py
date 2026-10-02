@@ -177,16 +177,14 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         merged = AtomJob._merged_serve_args(variant)
         self.assertEqual(merged["gpu-memory-utilization"], "0.75")
 
-    def test_merged_serve_args_skips_enforce_eager_for_deepseek_v4(self):
+    def test_merged_serve_args_does_not_inject_enforce_eager(self):
         variant = _fake_variant(driver="vllm_atom")
-        variant.model.id = "deepseek-ai/DeepSeek-V4-Pro"
         merged = AtomJob._merged_serve_args(variant)
         self.assertNotIn("enforce-eager", merged)
 
-    def test_build_server_cmd_skips_r1_aiter_env_for_deepseek_v4(self):
+    def test_build_server_cmd_exports_aiter_env_for_vllm_atom(self):
         orch = FakeOrch()
         variant = _fake_variant(driver="vllm_atom")
-        variant.model.id = "deepseek-ai/DeepSeek-V4-Pro"
         job = AtomJob(
             orch=orch,
             variant=variant,
@@ -199,8 +197,8 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         job.build_server_cmd()
         env_cmd = orch.commands[0][0]
-        self.assertNotIn("VLLM_USE_AITER_UNIFIED_ATTENTION", env_cmd)
-        self.assertNotIn("VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4", env_cmd)
+        self.assertIn("VLLM_USE_AITER_UNIFIED_ATTENTION", env_cmd)
+        self.assertIn("VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4", env_cmd)
 
     def test_flatten_serve_args_omits_false_flags(self):
         argv = AtomJob._flatten_serve_args({"enforce-eager": False, "trust-remote-code": True})
@@ -364,6 +362,19 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         self.assertIn("--disable-tqdm", job._vllm_client_argv())
 
+    def test_vllm_argv_uses_python_module_cli(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertEqual(job._server_argv(0)[:4], ["python3", "-m", "vllm.entrypoints.cli.main", "serve"])
+        self.assertEqual(job._vllm_client_argv()[:5], ["python3", "-m", "vllm.entrypoints.cli.main", "bench", "serve"])
+
     def test_vllm_client_argv_honors_bench_extra_disable_tqdm(self):
         job = AtomJob(
             orch=FakeOrch(),
@@ -437,6 +448,50 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertTrue(job.CLIENT_CRASH_RE.search("Traceback (most recent call last)"))
         self.assertTrue(job.CLIENT_LAUNCH_FAIL_RE.search("unrecognized arguments: --bad"))
         self.assertTrue(job.EARLY_FAILURE_RE.search("No such file or directory"))
+        crash = (
+            "safetensors._safetensors_rust.SafetensorError: Error while deserializing: "
+            "incomplete metadata, file not fully covered\n"
+            "[atom 20:48:35] AsyncIOProcManager(ModelRunner): [ModelRunner5/8] "
+            "proc died unexpectedly (exitcode=1), shutting down.\n"
+            "[atom 20:48:36] Engine Core: load model runner failed\n"
+            "RuntimeError: Engine Core Mgr: Received unexpected SHUTDOWN signal "
+            "from DP rank 0 during initialization\n"
+        )
+        self.assertTrue(job.EARLY_FAILURE_RE.search(crash))
+        self.assertTrue(job.FATAL_LOG_RE.search(crash))
+        missing_vllm = (
+            "/opt/venv/bin/python3: Error while finding module specification for "
+            "'vllm.entrypoints.cli.main' (ModuleNotFoundError: No module named 'vllm')"
+        )
+        self.assertTrue(job.EARLY_FAILURE_RE.search(missing_vllm))
+        self.assertTrue(job.FATAL_LOG_RE.search(missing_vllm))
+
+    def test_wait_ready_aborts_on_safetensors_engine_crash(self):
+        crash = (
+            "safetensors._safetensors_rust.SafetensorError: Error while deserializing: "
+            "incomplete metadata, file not fully covered\n"
+            "RuntimeError: Engine Core Mgr: Received unexpected SHUTDOWN signal "
+            "from DP rank 0 during initialization\n"
+        )
+        orch = FakeOrch(exec_return={"node0": crash}, exec_on_head_return={"node0": "NO\n"})
+        job = AtomJob(
+            orch=orch,
+            variant=_fake_variant(driver="atom"),
+            hf_token="tok",
+            isl="5000",
+            osl="1024",
+            concurrency=16,
+            num_prompts=100,
+            server_precheck_wait_s=0,
+            server_warmup_wait_s=0,
+            server_poll_count=60,
+            server_poll_wait_s=0,
+        )
+        with patch("cvs.lib.inference.atom.atom_orch.time.sleep"):
+            with self.assertRaises(RuntimeError) as ctx:
+                job.wait_ready()
+        self.assertIn("atom server early failure", str(ctx.exception))
+        self.assertNotIn("did not become ready before timeout", str(ctx.exception))
 
     def test_distributed_start_server_targets_each_host(self):
         orch = FakeOrch(hosts=["10.0.0.1", "10.0.0.2"])
@@ -501,6 +556,34 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertIn("ATOM_DP_RANK=0", launch_cmds[0])
         self.assertIn("ATOM_DP_RANK=1", launch_cmds[1])
         self.assertIn("ATOM_DP_SIZE=2", launch_cmds[0])
+
+    def test_atom_server_argv_does_not_inject_enforce_eager(self):
+        job = AtomJob(
+            orch=FakeOrch(hosts=["10.0.0.1"]),
+            variant=_fake_variant(driver="atom"),
+            hf_token="tok",
+            isl="128",
+            osl="32",
+            concurrency=1,
+            num_prompts=1,
+        )
+        argv = job._atom_server_argv()
+        self.assertNotIn("--enforce-eager", argv)
+
+    def test_atom_server_argv_respects_config_pinned_enforce_eager(self):
+        variant = _fake_variant(driver="atom")
+        variant.roles.server.atom_args = ["-tp", "8", "--enforce-eager"]
+        job = AtomJob(
+            orch=FakeOrch(hosts=["10.0.0.1"]),
+            variant=variant,
+            hf_token="tok",
+            isl="128",
+            osl="32",
+            concurrency=1,
+            num_prompts=1,
+        )
+        argv = job._atom_server_argv()
+        self.assertEqual(argv.count("--enforce-eager"), 1)
 
     def test_atom_server_argv_injects_max_model_len_from_params(self):
         job = AtomJob(
@@ -648,7 +731,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         self.assertNotIn("--headless", joined0)
         job.start_server()
         launch_cmds = [c for c, hosts in orch.commands if hosts]
-        self.assertIn("vllm serve", launch_cmds[0])
+        self.assertIn("vllm.entrypoints.cli.main serve", launch_cmds[0])
         self.assertIn("--pipeline-parallel-size 2", launch_cmds[1])
 
     def test_distributed_sglang_pp2_passes_sglang_dist_flags(self):

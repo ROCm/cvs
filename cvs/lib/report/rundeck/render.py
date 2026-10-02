@@ -79,9 +79,20 @@ def render_rundeck_html(payload: dict) -> str:
         if pending_gate_nav:
             nav_items.append(pending_gate_nav)
 
-    model_label = next((v for lbl, v, _ in payload.get("run_card_display", []) if lbl == "Model"), "run")
+    model_label = next((v for lbl, v, _ in payload.get("run_card_display", []) if lbl == "Model"), None)
+    if not model_label or str(model_label).strip() in ("—", "-", ""):
+        report_meta = payload.get("report") or {}
+        model_label = payload.get("suite_id") or report_meta.get("title") or "run"
     overall = payload.get("overall_status", "na")
     viewer_name = (payload.get("summary") or {}).get("viewer_html")
+    prev_panel = (payload.get("panels") or {}).get("prev_run") or {}
+    incompatibility = ""
+    if prev_panel.get("compatible") is False:
+        reason = html.escape(str(prev_panel.get("incompatibility") or "metric contract mismatch"))
+        incompatibility = (
+            "<section class='panel'><strong>Baseline comparison incompatible:</strong> "
+            f"{reason}. Comparisons are suppressed.</section>"
+        )
 
     nav = _build_nav(nav_items, viewer_name)
     return f"""<!DOCTYPE html>
@@ -91,5 +102,6 @@ def render_rundeck_html(payload: dict) -> str:
 <div class="hero-head"><div><h1>{html.escape(report.get('title', 'Run Deck'))}</h1>
 <p class="subtitle">{html.escape(report.get('subtitle', ''))}</p></div>{status_badge_html(overall)}</div>
 {nav}
+{incompatibility}
 {''.join(sections)}
 <footer class="page-foot">{html.escape(report.get('footer', ''))}</footer></div></body></html>"""

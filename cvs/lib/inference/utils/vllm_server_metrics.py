@@ -4,18 +4,14 @@ All rights reserved.
 
 Pure parsers for vLLM's engine-side Prometheus `/metrics` endpoint.
 
-This module owns the *vocabulary and math* of the `prom.*` namespace -- the
-mapping from two raw Prometheus text-exposition scrapes (one taken before a
-sweep cell's client run, one taken after) to the namespaced metric dict that
-downstream code (threshold files, the per-metric HTML rows, `evaluate_all`)
-keys on. Deliberately free of I/O and orchestration, matching
-`vllm_parsing.py`'s split: callers (`vllm_job.py`) fetch the scrape text,
-this module turns it into numbers.
-
-Namespacing contract: `prom.*` -- percentile metrics interpolated from
-Prometheus Histograms scraped off the live vLLM server, distinct from
-`client.*` (measured by the load generator) and `gpu.*` (amd-smi snapshots).
-Its own namespace rather than joining either of those.
+This module maps two raw Prometheus text-exposition scrapes (one taken before
+a sweep cell's client run, one taken after) into the bare Prometheus-backed
+keys owned by the vLLM metric registry, such as `queue_time_p50_ms` and
+`prefill_time_p95_ms`. The registry records their Prometheus datasource; the
+threshold, verdict, and reporting surfaces all use the same bare names.
+Deliberately free of I/O and orchestration, matching the client projector's
+split: callers (`vllm_job.py`) fetch the scrape text, and this module turns it
+into numbers.
 
 vLLM's histogram buckets are cumulative per scrape (each `le` bucket already
 counts everything at or below it), but the *counters themselves* are
@@ -28,20 +24,19 @@ never a single scrape.
 
 from __future__ import annotations
 
+import math
 import re
 
-# Human-readable derived metrics exposed as HTML rows (one row per entry per
-# cell), mirroring gpu.py's GPU_METRICS shape.
-PROM_METRICS: list[tuple[str, str]] = [
-    ("queue_time_p50_ms", "ms"),
-    ("queue_time_p95_ms", "ms"),
-    ("prefill_time_p50_ms", "ms"),
-    ("prefill_time_p95_ms", "ms"),
-]
-PROM_METRIC_UNITS: dict[str, str] = {k: u for k, u in PROM_METRICS}
+from cvs.lib.inference.utils.vllm_metrics import (
+    PROM_METRICS as _REGISTRY_PROM_METRICS,
+)
+from cvs.lib.inference.utils.vllm_metrics import (
+    PROM_METRIC_UNITS as _REGISTRY_PROM_METRIC_UNITS,
+)
 
-# vLLM Prometheus histogram names this module reads, and the (short_name
-# prefix, quantile) pairs each feeds into PROM_METRICS above.
+PROM_METRICS = _REGISTRY_PROM_METRICS
+PROM_METRIC_UNITS = _REGISTRY_PROM_METRIC_UNITS
+
 _QUEUE_TIME_METRIC = "vllm:request_queue_time_seconds"
 _PREFILL_TIME_METRIC = "vllm:request_prefill_time_seconds"
 
@@ -173,18 +168,19 @@ def histogram_quantile(buckets: "dict[str, float] | None", q: float) -> "float |
 def _quantile_ms(before_metrics: dict, after_metrics: dict, metric_name: str, q: float) -> "float | None":
     diffed = diff_histogram(before_metrics.get(metric_name), after_metrics.get(metric_name))
     seconds = histogram_quantile(diffed, q)
-    return None if seconds is None else seconds * 1000.0
+    milliseconds = None if seconds is None else seconds * 1000.0
+    return milliseconds if type(milliseconds) in (int, float) and math.isfinite(milliseconds) else None
 
 
 def to_prom_metrics(before_text: "str | None", after_text: "str | None") -> dict:
-    """Composed entry point: two raw scrape texts -> the `prom.*` metric dict.
+    """Composed entry point: two raw scrape texts -> canonical vLLM metrics.
 
     Analogous to vllm_parsing.py's to_client_metrics(). Returns an all-None
     dict (never a partial one, never a raise) if either scrape is
     missing/unparseable: a transport failure must degrade every prom.* key
     for the cell, not crash it.
     """
-    all_none = {f"prom.{short}": None for short, _unit in PROM_METRICS}
+    all_none = {short: None for short, _unit in PROM_METRICS}
     if not before_text or not after_text:
         return all_none
 
@@ -195,6 +191,6 @@ def to_prom_metrics(before_text: "str | None", after_text: "str | None") -> dict
 
     result = dict(all_none)
     for qname, q in _QUANTILES.items():
-        result[f"prom.queue_time_{qname}_ms"] = _quantile_ms(before_metrics, after_metrics, _QUEUE_TIME_METRIC, q)
-        result[f"prom.prefill_time_{qname}_ms"] = _quantile_ms(before_metrics, after_metrics, _PREFILL_TIME_METRIC, q)
+        result[f"queue_time_{qname}_ms"] = _quantile_ms(before_metrics, after_metrics, _QUEUE_TIME_METRIC, q)
+        result[f"prefill_time_{qname}_ms"] = _quantile_ms(before_metrics, after_metrics, _PREFILL_TIME_METRIC, q)
     return result

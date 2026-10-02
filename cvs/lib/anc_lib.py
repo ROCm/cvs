@@ -1930,7 +1930,12 @@ def _attach_node_errors_json(request, mgr, test_name, timestamp, results):
     (not moved) so the original stays inside the collected ANC log tree, and it is
     renamed to "<label>_<test>_<timestamp>_errors.json" so multiple nodes never
     collide in the shared report dir. These links always appear (pass or fail).
+
+    Returns {label: rel_path} for each node whose errors.json was attached, so the
+    Run Deck can link the SAME copied file (the deck HTML is a sibling of it in
+    the report dir) rather than recomputing a name that could drift.
     '''
+    hrefs = {}
     for r in results:
         if not r.errors_json or not os.path.isfile(r.errors_json):
             log.warning("ANC '%s': no %s to link for node %s", test_name, ERRORS_JSON, r.label)
@@ -1942,8 +1947,11 @@ def _attach_node_errors_json(request, mgr, test_name, timestamp, results):
                 r.errors_json, request=request, dest_name=dest_name, track_in_reports=False
             )
             _stash_report_link(request, rel_path, link_name)
+            if rel_path:
+                hrefs[r.label] = os.path.basename(rel_path)
         except Exception as exc:  # best-effort
             log.warning("ANC '%s': could not attach %s for node %s: %s", test_name, ERRORS_JSON, r.label, exc)
+    return hrefs
 
 
 def _attach_node_anc_tarballs(request, mgr, config_dict, test_name, timestamp, results, failed):
@@ -1954,20 +1962,24 @@ def _attach_node_anc_tarballs(request, mgr, config_dict, test_name, timestamp, r
     Gating (per config anc.ADD_ANC_LOGS_TO_HTML_REPORTS):
       - flag True  -> always attach.
       - flag False -> attach only when the test failed.
+
+    Returns {label: rel_path} for each node whose tarball was attached, so the
+    Run Deck can link the SAME copied file rather than recomputing a name.
     '''
     always = _as_bool(config_dict.get("anc", {}).get(ADD_ANC_LOGS_TO_HTML_KEY), default=False)
     if not always and not failed:
         log.info("ANC '%s': skipping ANC-log attach (test passed and %s is False)", test_name, ADD_ANC_LOGS_TO_HTML_KEY)
-        return
+        return {}
 
     present = [r for r in results if r.dest_dir and os.path.isdir(r.dest_dir) and os.listdir(r.dest_dir)]
     if not present:
         log.warning("ANC '%s': no collected logs to attach to HTML report", test_name)
-        return
+        return {}
 
     runner_base = resolve_runner_results_base(config_dict.get("run_config", {}))
     os.makedirs(runner_base, exist_ok=True)
 
+    hrefs = {}
     for r in present:
         node_dir = r.dest_dir.rstrip(os.sep)
         arcname = r.label or os.path.basename(node_dir)
@@ -1994,8 +2006,11 @@ def _attach_node_anc_tarballs(request, mgr, config_dict, test_name, timestamp, r
                 passed=not r.reason,
             )
             _stash_report_link(request, rel_path, link_name)
+            if rel_path:
+                hrefs[r.label] = os.path.basename(rel_path)
         except Exception as exc:  # best-effort
             log.warning("ANC '%s': could not attach logs for node %s: %s", test_name, r.label, exc)
+    return hrefs
 
 
 def _record_anc_verdict(request, test_name, results, passed_labels, failed_nodes):
@@ -2038,15 +2053,20 @@ def _attach_anc_logs_to_html(request, config_dict, test_name, results, timestamp
 
     ``results`` is a list of NodeResult. Best-effort throughout: a reporting
     problem is logged but never turned into a test failure.
+
+    Returns ({label: errors_json_href}, {label: log_tarball_href}) — the actual
+    relative names of the files placed next to the report, so the Run Deck links
+    the same copies instead of guessing a name.
     '''
     if request is None:
-        return
+        return {}, {}
     mgr = getattr(request.config, "_html_report_manager", None)
     if mgr is None or not getattr(mgr, "is_enabled", False):
-        return
+        return {}, {}
 
-    _attach_node_errors_json(request, mgr, test_name, timestamp, results)
-    _attach_node_anc_tarballs(request, mgr, config_dict, test_name, timestamp, results, failed)
+    errors_hrefs = _attach_node_errors_json(request, mgr, test_name, timestamp, results)
+    tarball_hrefs = _attach_node_anc_tarballs(request, mgr, config_dict, test_name, timestamp, results, failed)
+    return errors_hrefs or {}, tarball_hrefs or {}
 
 
 def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=None):
@@ -2201,6 +2221,77 @@ def run_anc_groups(phdl, cluster_dict, config_dict, groups, test_name, request=N
     _record_anc_verdict(request, test_name, results, passed_labels, failed_nodes)
 
     # Populate the per-test Links column before update_test_result() may raise.
-    _attach_anc_logs_to_html(request, config_dict, test_name, results, timestamp, bool(failed_nodes))
+    errors_hrefs, tarball_hrefs = _attach_anc_logs_to_html(
+        request, config_dict, test_name, results, timestamp, bool(failed_nodes)
+    )
+
+    # Capture structured per-node/per-group results into the Run Deck session
+    # store (best-effort; a reporting problem never fails the test).
+    _capture_rundeck_results(
+        request, cluster_dict, config_dict, groups, test_name, timestamp, results, errors_hrefs, tarball_hrefs
+    )
 
     update_test_result()
+
+
+def _console_log_under(dest_dir):
+    '''Locate the collected console.log under a node's dest_dir, or None.'''
+    if not dest_dir or not os.path.isdir(dest_dir):
+        return None
+    for root, _dirs, files in os.walk(dest_dir):
+        if CONSOLE_LOG in files:
+            return os.path.join(root, CONSOLE_LOG)
+    return None
+
+
+def _node_status(result):
+    '''Map a NodeResult to a deck status: pass | na | fail.'''
+    if result.reason is None:
+        return "pass"
+    if "not available on the remote system" in result.reason:
+        return "na"
+    return "fail"
+
+
+def _capture_rundeck_results(
+    request, cluster_dict, config_dict, groups, test_name, timestamp, results, errors_hrefs, tarball_hrefs
+):
+    '''
+    Build the structured per-node records for this group and merge them into the
+    module-scoped ``anc_res_dict`` fixture, which the Run Deck session binding
+    picks up at module teardown. No-op when the fixture is absent (e.g. the
+    install-only suite) or on any error.
+
+    ``errors_hrefs`` / ``tarball_hrefs`` map node label -> the relative name of
+    the errors.json / log tarball actually copied next to the report by
+    _attach_anc_logs_to_html, so the deck links the real files (not a recomputed
+    name that would 404).
+    '''
+    if request is None:
+        return
+    import pytest
+
+    try:
+        anc_res_dict = request.getfixturevalue("anc_res_dict")
+    except pytest.FixtureLookupError:  # fixture not defined for this suite; nothing to capture
+        return
+
+    try:
+        from cvs.lib import anc_rundeck
+
+        group_label = " ".join(groups) if isinstance(groups, (list, tuple)) else str(groups)
+        suite_name = getattr(request.config, "_suite_name", "") or "anc"
+        node_records = {}
+        for r in results:
+            console_path = _console_log_under(r.dest_dir)
+            node_records[r.label] = anc_rundeck.build_node_record(
+                status=_node_status(r),
+                console_path=console_path,
+                errors_json_path=r.errors_json,
+                errors_json_href=errors_hrefs.get(r.label, ""),
+                log_tarball_href=tarball_hrefs.get(r.label, ""),
+            )
+        meta = anc_rundeck.make_meta(cluster_dict, config_dict, suite_name, timestamp)
+        anc_rundeck.record_group(anc_res_dict, group_label, node_records, meta=meta)
+    except Exception as exc:  # best-effort; never fail the test on a reporting issue
+        log.warning("ANC '%s': could not capture Run Deck results: %s", test_name, exc)

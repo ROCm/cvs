@@ -13,8 +13,15 @@ import pytest
 from cvs.lib import globals
 from cvs.lib.inference.atom.atom_config_loader import (
     expand_sweep_parametrize,
+    gpu_arch_from_config_path,
+    resolve_atom_profile,
     reuse_server_flag,
     server_session_key,
+)
+from cvs.lib.inference.atom.atom_serving_config import (
+    is_serving_config,
+    materialize_atom_sweep,
+    serving_to_atom_variant_raw,
 )
 from cvs.lib.inference.atom.atom_dmesg import verify_dmesg_window
 from cvs.lib.inference.atom.atom_gpu_metrics import (
@@ -38,6 +45,7 @@ from cvs.lib.inference.atom.atom_parsing import (
     METRIC_TIERS,
     RECORD_METRICS,
     SCALING_METRIC_UNITS,
+    evaluate_specs_for_actuals,
     tier_metric_specs,
 )
 from cvs.lib.inference.atom.atom_quant_parity import (
@@ -120,12 +128,43 @@ def _quant_parity_requested(variant_config) -> bool:
     return bool(variant_config.quant_parity.enabled)
 
 
+def _collection_raw(config_file, pytestconfig):
+    """Flat config dict for collection-time parametrization (mirrors load_variant profile merge)."""
+    from pathlib import Path
+
+    with open(config_file) as fp:
+        raw = json.load(fp)
+    profile = pytestconfig.getoption("config_profile", default=None)
+    if not profile:
+        profile = os.environ.get("CVS_CONFIG_PROFILE")
+    profile = (profile or "").strip() or None
+
+    thresholds = {}
+    threshold_json = (raw.get("threshold_json") or "").strip()
+    if threshold_json:
+        threshold_path = Path(threshold_json)
+        if not threshold_path.is_absolute():
+            threshold_path = Path(config_file).parent / threshold_json
+        if threshold_path.is_file():
+            thresholds = json.loads(threshold_path.read_text())
+
+    if is_serving_config(raw):
+        if profile:
+            raise pytest.UsageError("serving-schema atom configs do not support --config_profile")
+        if not str(raw.get("gpu_arch") or "").strip():
+            raw["gpu_arch"] = gpu_arch_from_config_path(config_file)
+        raw = serving_to_atom_variant_raw(raw, thresholds)
+    else:
+        raw, _, _ = resolve_atom_profile(raw, thresholds, profile)
+        raw = materialize_atom_sweep(raw, thresholds)
+    return raw
+
+
 def pytest_generate_tests(metafunc):
     config_file = metafunc.config.getoption("config_file")
     if not config_file or not os.path.isfile(config_file):
         raise pytest.UsageError(f"--config_file not found or not specified: {config_file!r}")
-    with open(config_file) as fp:
-        raw = json.load(fp)
+    raw = _collection_raw(config_file, metafunc.config)
     if "accuracy_task" in metafunc.fixturenames:
         task_ids = [t["id"] for t in raw.get("accuracy", {}).get("tasks", [])]
         metafunc.parametrize("accuracy_task", task_ids, ids=task_ids)
@@ -360,13 +399,13 @@ def test_cell_metrics(
         pytest.fail(f"no threshold specs for tier {metric_tier!r} in cell {cell!r}")
     # ATOM benchmark_serving may omit some tail percentiles even when
     # metric_percentiles requests them; only gate metrics present in actuals.
-    specs = {k: v for k, v in specs.items() if k in actuals and actuals[k] is not None}
-    if not specs:
+    eval_actuals, eval_specs = evaluate_specs_for_actuals(specs, actuals, metric_tier=metric_tier)
+    if not eval_specs:
         pytest.fail(
             f"no assertable threshold specs for tier {metric_tier!r} in cell {cell!r} "
             f"(metrics missing from benchmark artifact)"
         )
-    evaluate_all(actuals, specs)
+    evaluate_all(eval_actuals, eval_specs)
 
 
 def test_atom_long_context_accuracy(orch, variant_config, long_context_acc_cell, lifecycle, request):

@@ -1,66 +1,105 @@
-'''
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
-
-Unified config schema for the vllm suite (single-node and distributed).
-
-Replaces inferencing_config_loader.py (single-node) and
-vllm_distributed_config_loader.py (distributed) with a single schema.
-Distributed params (pipeline_parallel_size, master_addr, master_port,
-nnodes) default to single-node values so the same VariantConfig works for
-both topologies.
-
-cell_key format:
-  Single-node (pp=1): ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<concurrency>
-  Distributed (pp>1): ISL=<isl>,OSL=<osl>,TP=<tp>,PP=<pp>,CONC=<concurrency>
-
-IB device config:
-  roles.server.ib_hca_devices: list[str] | "auto" | absent
-      If absent or "auto", use everything ibv_devinfo -l reports.
-      If an explicit list, validate at preflight (test_discover_topology).
-  roles.server.ib_netdev: str (required for distributed runs)
-      Linux network interface name for NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME.
-      Not derivable from HCA names. Operator sets it explicitly.
-      Optional for single-node (NCCL socket selection not critical).
-'''
+'''Typed config schema and run resolver for CVS vLLM workloads.'''
 
 from __future__ import annotations
 
-from collections import Counter
-from typing import Any, Dict, List, Optional, Union
+import json
+import re
+from dataclasses import dataclass
+from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from typing_extensions import Literal
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, create_model, model_validator
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyConfig
-from cvs.lib.inference.utils.inferencing_config_loader import validate_thresholds_cover_sweep
-from cvs.lib.inference.utils.vllm_server_metrics import PROM_METRICS
+from cvs.lib.inference.utils.vllm_metrics import METRIC_REGISTRY, validate_threshold_spec
 from cvs.lib.utils.config_loader import substitute_config
-from cvs.lib.utils.gpu import GPU_METRICS
 
-GATED_GPU_METRICS = {k for k, _unit in GPU_METRICS}
-# A fully separate, parallel gated family, following GPU_METRICS's precedent
-# rather than joining vllm_parsing.GATED_METRICS/METRIC_TIERS -- prom.* must
-# not be mixed into the client.* tiering machinery (a locked invariant test
-# partitions that set exactly).
-GATED_PROM_METRICS = {k for k, _unit in PROM_METRICS}
+GATED_GPU_METRICS = {definition.name for definition in METRIC_REGISTRY if definition.datasource == "gpu"}
+GATED_PROM_METRICS = {definition.name for definition in METRIC_REGISTRY if definition.datasource == "prometheus"}
+_CELL_RE = re.compile(
+    r"^ISL=(?P<isl>[1-9]\d*),OSL=(?P<osl>[1-9]\d*),TP=(?P<tp>[1-9]\d*),PP=(?P<pp>[1-9]\d*),CONC=(?P<concurrency>[1-9]\d*)$"
+)
+_METADATA_PREFIXES = ("_comment", "_example")
+_SOCKET_ENV = {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"}
+_SERVER_RESERVED = {"master_addr", "master_port", "nnodes", "node_rank", "headless"}
 
 
 class _Forbid(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class _Allow(BaseModel):
+class _Options(BaseModel):
+    """Strict at the section boundary, flexible only for upstream CLI options."""
+
     model_config = ConfigDict(extra="allow")
 
+    def extra_options(self) -> Dict[str, Any]:
+        return dict(self.model_extra or {})
 
-# ---------- sub-models ----------
+
+VllmThresholdSpec = create_model(
+    "VllmThresholdSpec",
+    __base__=_Forbid,
+    kind=(Any, ...),
+    value=(Any, ...),
+)
 
 
-class ContainerConfig(_Allow):
-    lifetime: str = "per_run"
-    name: str = ""
-    image: str = ""
+def _validate_vllm_thresholds(thresholds):
+    for cell_key, cell in thresholds.items():
+        if cell_key == "accuracy":
+            continue
+        if not isinstance(cell, dict):
+            raise ValueError(f"vLLM threshold cell {cell_key!r} must be an object")
+        for metric, raw_spec in cell.items():
+            if metric.startswith(_METADATA_PREFIXES):
+                continue
+            spec = VllmThresholdSpec.model_validate(raw_spec).model_dump()
+            validate_threshold_spec(metric, spec)
+
+
+class RuntimeArgs(_Forbid):
+    network: str = "host"
+    ipc: str = "host"
+    privileged: bool = True
+    volumes: List[str] = Field(default_factory=list)
+    devices: List[str] = Field(default_factory=list)
+
+
+class Runtime(_Forbid):
+    name: Literal["docker"] = "docker"
+    args: RuntimeArgs = Field(default_factory=RuntimeArgs)
+
+
+class ContainerConfig(_Forbid):
+    lifetime: Literal["no_launch", "per_run", "persistent"] = "per_run"
+    name: str
+    image: str
+    env: Dict[str, str] = Field(default_factory=dict)
+    runtime: Runtime = Field(default_factory=Runtime)
+
+    @model_validator(mode="after")
+    def _validate_network_env(self):
+        configured_sockets = _SOCKET_ENV & set(self.env)
+        if configured_sockets and configured_sockets != _SOCKET_ENV:
+            missing = sorted(_SOCKET_ENV - configured_sockets)
+            raise ValueError(f"container.env must set all socket interface variables together; missing: {missing}")
+        empty_sockets = sorted(name for name in configured_sockets if not self.env[name].strip())
+        if empty_sockets:
+            raise ValueError(f"container.env socket interface variables cannot be empty: {empty_sockets}")
+        if "NCCL_IB_HCA" in self.env and not self.nccl_ib_hcas:
+            raise ValueError("container.env.NCCL_IB_HCA must name at least one device")
+        return self
+
+    @property
+    def nccl_ib_hcas(self):
+        value = self.env.get("NCCL_IB_HCA")
+        if value is None:
+            return None
+        return [device.strip() for device in value.split(",") if device.strip()]
+
+    @property
+    def socket_env_configured(self):
+        return bool(_SOCKET_ENV & set(self.env))
 
 
 class Paths(_Forbid):
@@ -70,205 +109,261 @@ class Paths(_Forbid):
     hf_token_file: str
 
 
-class ModelSpec(_Forbid):
-    id: str
-    remote: Literal[0, 1]
+class ServerParams(_Options):
+    """Harness fields plus arbitrary vLLM ``serve`` flags in snake_case."""
 
-
-_VLLM_LOG_LEVELS = {"debug", "info", "warning", "error", "critical"}
-
-
-class RoleServer(_Forbid):
-    serve_args: Dict[str, Any] = {}
-    env: Dict[str, str] = {}
-    # IB HCA devices for NCCL_IB_HCA.
-    # absent or "auto" -> use whatever ibv_devinfo -l reports.
-    # explicit list -> validated at preflight against ibv_devinfo output.
-    ib_hca_devices: Union[Literal["auto"], List[str], None] = None
-    # Linux netdev for NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME.
-    # Required when nnodes > 1. No "auto" — not reliably derivable from HCA names.
-    ib_netdev: Optional[str] = None
-
-    @field_validator("serve_args", mode="after")
-    @classmethod
-    def _check_log_level(cls, v):
-        level = v.get("log-level")
-        if level is not None and level not in _VLLM_LOG_LEVELS:
-            raise ValueError(f"serve_args.log-level must be one of {sorted(_VLLM_LOG_LEVELS)}, got: {level!r}")
-        return v
-
-
-class Roles(_Forbid):
-    server: RoleServer = Field(default_factory=RoleServer)
-
-
-class GoodputSlo(_Forbid):
-    ttft_ms: float
-    tpot_ms: float
-    e2el_ms: float
-
-
-class SeqCombo(_Forbid):
-    name: str
-    isl: str
-    osl: str
-    goodput_slo: Optional[GoodputSlo] = None
-
-
-class Run(_Forbid):
-    combo: str
-    concurrency: int
-
-
-def validate_sweep_selector(combo_names, run_combo_refs):
-    """Single home for the sweep-selector rule: names unique, every run.combo known.
-
-    Called both at load time (via Sweep model_validator) and at collection time
-    (pytest_generate_tests reads raw JSON before load_variant runs) so the two
-    paths cannot drift.
-    """
-    counts = Counter(combo_names)
-    dupes = sorted(name for name, count in counts.items() if count > 1)
-    if dupes:
-        raise ValueError(f"duplicate sequence_combination names: {dupes}")
-    known = set(counts)
-    unknown = sorted({r for r in run_combo_refs if r not in known})
-    if unknown:
-        raise ValueError(f"run.combo names no sequence_combination: {unknown} (known: {sorted(known)})")
-
-
-class Sweep(_Forbid):
-    sequence_combinations: List[SeqCombo]
-    runs: List[Run]
+    backend: Literal["vllm"] = "vllm"
+    model: str
+    tensor_parallel_size: int
+    pipeline_parallel_size: int = 1
+    port: int = 8888
+    dist_init_port: int = 29501
+    server_poll_iterations: int = 60
+    server_poll_wait_s: int = 60
+    server_warmup_wait_s: int = 330
+    distributed_executor_backend: Literal["mp", "ray"] = "mp"
 
     @model_validator(mode="after")
-    def _check_runs_reference_known_combos(self):
-        validate_sweep_selector(
-            [c.name for c in self.sequence_combinations],
-            [r.combo for r in self.runs],
-        )
+    def _validate_upstream_options(self):
+        options = self.extra_options()
+        _validate_cli_option_map(options, section="server_params")
+        collisions = sorted(_SERVER_RESERVED & set(options))
+        if collisions:
+            raise ValueError(f"server_params cannot override harness fields: {collisions}")
         return self
 
 
-class Params(_Forbid):
-    backend: str = "vllm"
-    base_url: str = "http://0.0.0.0"
-    port_no: str = "8888"
+class BenchmarkParams(_Options):
+    """Harness fields plus arbitrary vLLM ``bench serve`` flags in snake_case."""
+
+    backend: Literal["vllm"] = "vllm"
     dataset_name: str = "random"
-    burstiness: str = "1.0"
-    seed: str = "0"
-    request_rate: str = "inf"
-    random_range_ratio: str = "0.8"
-    random_prefix_len: str = "0"
-    tensor_parallelism: str = "8"
-    # Distributed params. Defaults encode single-node (no PP, one node, localhost).
-    pipeline_parallel_size: str = "1"
-    master_addr: str = "localhost"
-    master_port: str = "29501"
-    nnodes: str = "1"
+    num_prompts: int = 3200
+    request_rate: Union[str, float] = "inf"
+    burstiness: float = 1.0
     tokenizer_mode: str = "auto"
-    percentile_metrics: str = "ttft,tpot,itl,e2el"
-    metric_percentiles: str = "50,90,95,99"
-    num_prompts: str = "3200"
-    client_poll_count: str = "20"
+    seed: int = 0
+    random_range_ratio: float = 0.0
+    random_prefix_len: int = 0
+    client_poll_iterations: int = 20
+    client_poll_wait_s: int = 60
+    client_initial_wait_s: int = 120
+    trust_remote_code: bool = False
+    ignore_eos: bool = True
+
+    @model_validator(mode="after")
+    def _validate_upstream_options(self):
+        options = self.extra_options()
+        _validate_cli_option_map(options, section="benchmark_params")
+        collisions = sorted(_BENCHMARK_RESERVED & set(options))
+        if collisions:
+            raise ValueError(f"benchmark_params cannot override harness fields: {collisions}")
+        return self
+
+
+_BENCHMARK_RESERVED = {
+    "backend",
+    "base_url",
+    "model",
+    "max_concurrency",
+    "random_input_len",
+    "random_output_len",
+    "result_dir",
+    "result_filename",
+    "percentile_metrics",
+    "metric_percentiles",
+}
+_OPTION_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def _validate_cli_option_map(options: Dict[str, Any], *, section: str) -> None:
+    for name, value in options.items():
+        if not _OPTION_NAME_RE.fullmatch(name):
+            raise ValueError(f"{section} option names must be snake_case: {name!r}")
+        if value is False:
+            raise ValueError(f"{section}.{name}=false is ambiguous; omit it or use the option's negative flag")
+        if isinstance(value, list) and any(isinstance(item, (list, dict)) for item in value):
+            raise ValueError(f"{section}.{name} lists may contain scalar values only")
+        if isinstance(value, dict):
+            try:
+                json.dumps(value, separators=(",", ":"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{section}.{name} must be JSON serializable") from exc
+
+
+def serialize_cli_options(options: Dict[str, Any]) -> List[str]:
+    """Serialize generic snake-case option maps for vLLM command lines."""
+    _validate_cli_option_map(options, section="option")
+    argv = []
+    for name, value in options.items():
+        if value is None:
+            continue
+        flag = f"--{name.replace('_', '-')}"
+        if value is True:
+            argv.append(flag)
+        elif isinstance(value, list):
+            argv.extend([flag, *(str(item) for item in value)])
+        elif isinstance(value, dict):
+            argv.extend([flag, json.dumps(value, separators=(",", ":"))])
+        else:
+            argv.extend([flag, str(value)])
+    return argv
+
+
+@dataclass(frozen=True)
+class RunCell:
+    key: str
+    isl: int
+    osl: int
+    tp: int
+    pp: int
+    concurrency: int
+
+    @classmethod
+    def parse(cls, value: str) -> RunCell:
+        match = _CELL_RE.fullmatch(value)
+        if not match:
+            raise ValueError("run cell must be canonical ISL=<n>,OSL=<n>,TP=<n>,PP=<n>,CONC=<n>")
+        values = {name: int(number) for name, number in match.groupdict().items()}
+        return cls(value, **values)
+
+
+@dataclass(frozen=True)
+class ResolvedRun:
+    cell: RunCell
+    benchmark_params: Dict[str, Any]
+
+
+def _strip_metadata(value: Any) -> Any:
+    """Remove local comments at schema boundaries without touching option payloads."""
+    if not isinstance(value, dict):
+        return value
+    cleaned = {key: item for key, item in value.items() if not key.startswith(_METADATA_PREFIXES)}
+    for section in ("paths", "container", "runtime", "args", "accuracy"):
+        if isinstance(cleaned.get(section), dict):
+            cleaned[section] = _strip_metadata(cleaned[section])
+    if isinstance(cleaned.get("tasks"), list):
+        cleaned["tasks"] = [
+            {key: item for key, item in task.items() if not key.startswith(_METADATA_PREFIXES)}
+            if isinstance(task, dict)
+            else task
+            for task in cleaned["tasks"]
+        ]
+    for section in ("server_params", "benchmark_params"):
+        if isinstance(cleaned.get(section), dict):
+            cleaned[section] = {
+                key: item for key, item in cleaned[section].items() if not key.startswith(_METADATA_PREFIXES)
+            }
+    if isinstance(cleaned.get("sweeps"), dict):
+        cleaned["sweeps"] = {
+            key: {
+                option: option_value
+                for option, option_value in values.items()
+                if not option.startswith(_METADATA_PREFIXES)
+            }
+            if isinstance(values, dict)
+            else values
+            for key, values in cleaned["sweeps"].items()
+            if not key.startswith(_METADATA_PREFIXES)
+        }
+    return cleaned
 
 
 class VariantConfig(_Forbid):
-    """Unified typed config for both single-node and distributed vllm runs.
-
-    Standalone (does not extend BaseVariantConfig) so it can be constructed
-    without the threshold_json field the base requires — absent from unit-test
-    fixtures. Production configs always supply it via substitute_config.
-
-    ``container`` is optional at model-level: unit-test fixtures omit it.
-    The conftest ``orch`` fixture accesses ``variant_config.container.model_dump()``.
-    """
-
-    schema_version: Literal[1]
-    framework: Literal["vllm"]
     enforce_thresholds: bool = True
-    container: ContainerConfig = Field(default_factory=ContainerConfig)
+    threshold_json: str
+    ib_hca_devices: Union[Literal["auto"], List[str], None] = "auto"
+    ib_netdev: Optional[str] = None
     paths: Paths
-    model: ModelSpec
-    roles: Roles = Field(default_factory=Roles)
-    params: Params = Field(default_factory=Params)
-    sweep: Sweep
+    container: ContainerConfig
+    server_params: ServerParams
+    benchmark_params: BenchmarkParams = Field(default_factory=BenchmarkParams)
+    sweeps: Dict[str, Dict[str, Any]]
+    runs: List[str]
     thresholds: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     accuracy: AccuracyConfig = Field(default_factory=AccuracyConfig)
+    _effective_topology: Any = PrivateAttr(default=None)
+    _run_cells: Dict[str, RunCell] = PrivateAttr(default_factory=dict)
 
     @model_validator(mode="after")
-    def _check_distributed_consistency(self):
-        nn = int(self.params.nnodes)
-        pp = int(self.params.pipeline_parallel_size)
-        # Ray backend uses its own distributed orchestration and does not require
-        # pipeline parallelism (pp=1 is the expected ray multi-node configuration).
-        # Only the exact lowercase string "ray" triggers this relaxation (AC6).
-        is_ray = self.roles.server.serve_args.get("distributed-executor-backend") == "ray"
-        if nn > 1 and pp == 1 and not is_ray:
-            raise ValueError(f"nnodes={nn} > 1 requires pipeline_parallel_size > 1 (got pp={pp})")
-        if pp > 1 and nn == 1:
-            raise ValueError(f"pipeline_parallel_size={pp} > 1 requires nnodes > 1 (got nnodes={nn})")
-        if nn > 1 and not self.roles.server.ib_netdev:
-            raise ValueError(
-                "ib_netdev is required in roles.server when nnodes > 1. "
-                "Set it to the Linux network interface name for NCCL_SOCKET_IFNAME "
-                "(e.g. \"ens51f1np1\"). Cannot be auto-derived from HCA names."
-            )
+    def _validate_runs_and_thresholds(self):
+        _validate_vllm_thresholds(self.thresholds)
+        if not self.runs:
+            raise ValueError("runs must be a nonempty explicit list")
+        parsed = {key: RunCell.parse(key) for key in self.sweeps}
+        if len(set(self.runs)) != len(self.runs):
+            raise ValueError("runs contains duplicate cells")
+        unknown_runs = sorted(set(self.runs) - set(parsed))
+        if unknown_runs:
+            raise ValueError(f"runs reference unknown sweeps: {unknown_runs}")
+        for cell in parsed.values():
+            if (
+                cell.tp != self.server_params.tensor_parallel_size
+                or cell.pp != self.server_params.pipeline_parallel_size
+            ):
+                raise ValueError(f"{cell.key} conflicts with server_params tensor/pipeline parallel size")
+        for cell_key, overrides in self.sweeps.items():
+            if not isinstance(overrides, dict):
+                raise ValueError(f"sweeps.{cell_key} must be an object")
+            reserved = sorted(_BENCHMARK_RESERVED & set(overrides))
+            if reserved:
+                raise ValueError(f"sweeps.{cell_key} cannot override harness fields: {reserved}")
+            boolean_fields = {"ignore_eos", "trust_remote_code"} & set(overrides)
+            for name in boolean_fields:
+                if not isinstance(overrides[name], bool):
+                    raise ValueError(f"sweeps.{cell_key}.{name} must be boolean")
+            cli_overrides = {name: value for name, value in overrides.items() if name not in boolean_fields}
+            _validate_cli_option_map(cli_overrides, section=f"sweeps.{cell_key}")
+        threshold_cells = set(self.thresholds) - {"accuracy"}
+        unknown_thresholds = sorted(threshold_cells - set(parsed))
+        if unknown_thresholds:
+            raise ValueError(f"threshold cells have no matching sweep: {unknown_thresholds}")
+        if self.enforce_thresholds:
+            missing = [key for key in self.runs if key not in threshold_cells]
+            if missing:
+                raise ValueError(f"selected runs missing threshold coverage: {missing}")
+        self._run_cells = parsed
         return self
 
-    @model_validator(mode="after")
-    def _check_remote_not_implemented(self):
-        if self.model.remote == 1:
-            raise NotImplementedError("model.remote=1 (remote model download) is not implemented.")
-        return self
+    @property
+    def model_id(self) -> str:
+        return self.server_params.model
 
-    def cell_key(self, isl, osl, concurrency):
-        """Canonical threshold key for one sweep cell.
+    def bind_effective_topology(self, topology) -> None:
+        self._effective_topology = topology
 
-        Emits PP= segment only for distributed runs (pp > 1), preserving
-        backward-compatible single-node keys (no PP= segment).
+    def cell(self, key: str) -> RunCell:
+        return self._run_cells[key]
 
-        Single-node: ISL=<isl>,OSL=<osl>,TP=<tp>,CONC=<concurrency>
-        Distributed:  ISL=<isl>,OSL=<osl>,TP=<tp>,PP=<pp>,CONC=<concurrency>
-        """
-        base = f"ISL={isl},OSL={osl},TP={self.params.tensor_parallelism},"
-        if int(self.params.pipeline_parallel_size) > 1:
-            base += f"PP={self.params.pipeline_parallel_size},"
-        return base + f"CONC={concurrency}"
+    def expected_cells(self) -> List[str]:
+        return list(self.runs)
 
-    def expected_cells(self):
-        by_name = {c.name: c for c in self.sweep.sequence_combinations}
-        return [self.cell_key(by_name[r.combo].isl, by_name[r.combo].osl, r.concurrency) for r in self.sweep.runs]
-
-    @model_validator(mode="after")
-    def _check_thresholds_cover_sweep(self):
-        """Every sweep cell must have a threshold entry; no metric within it is
-        mandatory. Evaluation (``test_metric``/``test_gpu_metric``/
-        ``test_prom_metric``) already treats an absent ``client.*``/``gpu.*``/
-        ``prom.*`` spec as "don't gate this metric" (skips the assertion), so
-        a threshold.json is free to gate only the handful of metrics an
-        operator cares about instead of every member of every family.
-        """
-        validate_thresholds_cover_sweep(
-            expected_cells=self.expected_cells(),
-            thresholds=self.thresholds,
-            enforce_thresholds=self.enforce_thresholds,
-            gated_metrics=set(),
+    def cell_key(self, isl, osl, concurrency, **_unused) -> str:
+        return (
+            f"ISL={isl},OSL={osl},TP={self.server_params.tensor_parallel_size},"
+            f"PP={self.server_params.pipeline_parallel_size},CONC={concurrency}"
         )
-        return self
 
-
-# ---------- public API ----------
+    def resolved_runs(self) -> List[ResolvedRun]:
+        base = self.benchmark_params.model_dump()
+        extras = self.benchmark_params.extra_options()
+        resolved = []
+        for key in self.runs:
+            values = {**base, **extras, **self.sweeps[key]}
+            values.update(
+                {
+                    "random_input_len": self.cell(key).isl,
+                    "random_output_len": self.cell(key).osl,
+                    "max_concurrency": self.cell(key).concurrency,
+                }
+            )
+            resolved.append(ResolvedRun(cell=self.cell(key), benchmark_params=values))
+        return resolved
 
 
 def load_variant(config_path, cluster_dict):
-    """Load and validate a vllm variant config + its sibling threshold file.
-
-    Strips fields unknown to VariantConfig before construction so production
-    configs (which carry extra keys like threshold_json) and unit-test fixtures
-    (which omit optional fields) are handled identically.
-    """
+    """Load a vLLM config, threshold file, placeholders, and selected runs."""
     raw, thresholds = substitute_config(config_path, cluster_dict)
-    known = {k: v for k, v in raw.items() if k in VariantConfig.model_fields}
-    known["thresholds"] = thresholds
-    return VariantConfig(**known)
+    raw = _strip_metadata(raw)
+    raw["thresholds"] = thresholds
+    return VariantConfig(**raw)

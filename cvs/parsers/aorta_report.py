@@ -76,13 +76,21 @@ class AortaReportParser:
         Returns:
             ParseResult containing validated AortaTraceMetrics for each rank
         """
+        run_warnings = []
         if not run_result.succeeded:
-            return ParseResult(status=ParseStatus.FAILED, errors=[f"Run did not succeed: {run_result.error_message}"])
+            # A failed/timed-out node no longer discards traces collected from
+            # surviving nodes (see AortaRunner.run()), so a partial run can
+            # still have real reports to parse. Only bail out below if there
+            # is nothing on disk to parse.
+            run_warnings.append(f"Run did not succeed: {run_result.error_message}")
+            log.warning(run_warnings[-1])
 
         # First try the tracelens_analysis artifact
         analysis_dir = run_result.get_artifact("tracelens_analysis")
         if analysis_dir and analysis_dir.exists():
-            return self.parse_analysis_directory(analysis_dir)
+            result = self.parse_analysis_directory(analysis_dir)
+            result.warnings = run_warnings + list(result.warnings)
+            return result
 
         # Fallback: look for analysis dir relative to trace dir
         trace_dir = run_result.get_artifact("torch_traces")
@@ -90,10 +98,13 @@ class AortaReportParser:
             parent_dir = trace_dir.parent
             analysis_dir = parent_dir / "tracelens_analysis"
             if analysis_dir.exists():
-                return self.parse_analysis_directory(analysis_dir)
+                result = self.parse_analysis_directory(analysis_dir)
+                result.warnings = run_warnings + list(result.warnings)
+                return result
 
         return ParseResult(
             status=ParseStatus.FAILED,
+            warnings=run_warnings,
             errors=["No tracelens_analysis artifact found. Ensure analysis.enable_tracelens is set in config."],
         )
 

@@ -1,10 +1,10 @@
 .. meta::
-  :description: Run inference and benchmarking CVS test suites
-  :keywords: CVS, vLLM, ATOM, SGLang, xDiT, inference
+  :description: Run CVS inference and benchmarking test suites for LLM serving and diffusion workloads on AMD Instinct GPU clusters with ROCm.
+  :keywords: CVS, inference, benchmark, AMD Instinct, ROCm, AMD, GPU, vLLM, ATOM, SGLang, xDiT, LLM
 
-*****************
-Inference tests
-*****************
+***************************************************************************
+Run Cluster Validation Suite (CVS) inference and benchmarking test suites
+***************************************************************************
 
 LLM serving, disaggregated prefill/decode, and diffusion workloads for cluster-scale inference validation.
 
@@ -26,6 +26,6 @@ LLM serving, disaggregated prefill/decode, and diffusion workloads for cluster-s
      - :doc:`/reference/configuration-files/inference/sglang`
    * - xDiT
      - :doc:`/how-to/test-suites/inference/xdit`
-     - :doc:`/reference/configuration-files/inference/flux1_t2i`, :doc:`/reference/configuration-files/inference/wan22_i2v`
+     - :doc:`/reference/configuration-files/inference/xdit`
 
-See also :doc:`/how-to/run-tests/index` for common ``cvs run`` flags and workflow.
+See also :doc:`/how-to/test-suites/index` for common ``cvs run`` flags and workflow.

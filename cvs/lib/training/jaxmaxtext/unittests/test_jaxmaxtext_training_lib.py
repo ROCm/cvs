@@ -10,11 +10,22 @@ MagicMock orch and a lightweight SimpleNamespace variant -- no SSH, no
 container, no real sleeps (mirrors test_megatron_training_lib.py).
 '''
 
+import base64
+import io
+import struct
+import tarfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import MaxTextTrainingJob, needs_hf_tokenizer
+from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import (
+    MaxTextTrainingJob,
+    _ALWAYS_ON_ERR_PATTERNS,
+    _NAN_INF_RE,
+    _TB_COLLECT_MAX_BYTES,
+    needs_hf_tokenizer,
+)
+from cvs.lib.utils.log_poller import LogPoller
 
 
 def _training(**overrides):
@@ -91,18 +102,37 @@ def _log(steps=3):
     return "\n".join(lines) + "\n"
 
 
+def _scan(job, host, i, text, log=None):
+    """Scan a chunk with the SAME wiring poll_for_completion gives the LogPoller.
+
+    Exercises jaxmaxtext's error-signature data (always-on + config error_patterns
+    + NaN/Inf) through the generic LogPoller.scan mechanism, built with the SAME
+    collision-safe merge (setdefault) production uses so built-ins are not clobbered.
+    """
+    error_patterns = {
+        "NaN/Inf in training metrics": _NAN_INF_RE.pattern,
+        **_ALWAYS_ON_ERR_PATTERNS,
+    }
+    for name, pattern in job.error_patterns.items():
+        error_patterns.setdefault(name, pattern)
+    LogPoller(
+        job.orch,
+        [job._node_log(k) for k in range(job.num_nodes)],
+        complete_pattern="x",
+        error_patterns=error_patterns,
+        error_label="Training",
+        timeout_s=1,
+        log=log,
+    ).scan(host, i, text)
+
+
 class ConstructorTests(unittest.TestCase):
     def test_node_and_gpu_counts(self):
         job, _ = _make_job(hosts=["h0", "h1"])
         self.assertEqual(job.num_nodes, 2)
         self.assertEqual(job.num_gpus, 16)
-        self.assertEqual(job.out_dir, "/logs/jaxmaxtext")
-
-    def test_build_xla_flags_str(self):
-        job, _ = _make_job()
-        s = job._build_xla_flags_str()
-        self.assertIn("--xla_gpu_autotune_level=0", s)
-        self.assertIn("--xla_gpu_enable_triton_gemm=False", s)
+        # out_dir is namespaced by model (from model_name, else model.id)
+        self.assertEqual(job.out_dir, "/logs/jaxmaxtext/llama3.3-70b")
 
     def test_gpus_per_node_from_config(self):
         # num_gpus derives from config gpus_per_node, not a hardcoded 8.
@@ -127,46 +157,24 @@ class StopTrainingTests(unittest.TestCase):
         self.assertIn("[t]raining_launcher_node", cmd)
 
 
-class IsCompleteTests(unittest.TestCase):
-    def test_all_nodes_complete(self):
-        job, orch = _make_job(hosts=["h0", "h1"])
-        orch.exec_cmd_list.return_value = {"h0": "1", "h1": "1"}
-        self.assertTrue(job.is_complete())
-
-    def test_one_node_incomplete(self):
-        job, orch = _make_job(hosts=["h0", "h1"])
-        orch.exec_cmd_list.return_value = {"h0": "1", "h1": "0"}
-        self.assertFalse(job.is_complete())
-
-    def test_missing_host_output(self):
-        job, orch = _make_job(hosts=["h0", "h1"])
-        orch.exec_cmd_list.return_value = {"h0": "1"}
-        self.assertFalse(job.is_complete())
-
-    def test_dict_shaped_result(self):
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": {"output": "1"}}
-        self.assertTrue(job.is_complete())
-
-
 class ScanForErrorsTests(unittest.TestCase):
     def test_clean_log_no_raise(self):
         job, _ = _make_job(hosts=["h0"])
-        job._scan_chunk_for_errors("h0", 0, _log())  # should not raise
+        _scan(job, "h0", 0, _log())  # should not raise
 
     def test_empty_chunk_no_raise(self):
         job, _ = _make_job(hosts=["h0"])
-        job._scan_chunk_for_errors("h0", 0, "")  # should not raise
+        _scan(job, "h0", 0, "")  # should not raise
 
     def test_nccl_error_raises(self):
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "some log\nNCCL ERROR: unhandled\n")
+            _scan(job, "h0", 0, "some log\nNCCL ERROR: unhandled\n")
 
     def test_nan_metric_raises(self):
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "completed step: 1, TFLOP/s/device: NaN\n")
+            _scan(job, "h0", 0, "completed step: 1, TFLOP/s/device: NaN\n")
 
     def test_nan_loss_raises_even_when_throughput_numeric(self):
         # Real failure signature: loss/lm_loss/perplexity go NaN while
@@ -178,12 +186,12 @@ class ScanForErrorsTests(unittest.TestCase):
             "lm_loss: nan, perplexity: nan, moe_lb_loss: 0.000\n"
         )
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, line)
+            _scan(job, "h0", 0, line)
 
     def test_aborting_nan_loss_line_raises(self):
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "metric_logger.py:270] Aborting training due to NaN loss.\n")
+            _scan(job, "h0", 0, "metric_logger.py:270] Aborting training due to NaN loss.\n")
 
     def test_failure_chunk_is_logged_before_raising(self):
         # The offending chunk (e.g. a compile traceback) must be logged so it
@@ -191,9 +199,9 @@ class ScanForErrorsTests(unittest.TestCase):
         # can miss the root cause, and non-node-0 chunks are not otherwise streamed.
         job, _ = _make_job(hosts=["h0", "h1"])
         chunk = "some log\nValueError: Compiler params for platform tpu cannot be used for gpu lowering.\ngrpc tail\n"
-        with patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.log") as mock_log:
-            with self.assertRaises(RuntimeError):
-                job._scan_chunk_for_errors("h1", 1, chunk)
+        mock_log = MagicMock()
+        with self.assertRaises(RuntimeError):
+            _scan(job, "h1", 1, chunk, log=mock_log)
         logged = " ".join(str(c) for c in mock_log.error.call_args_list)
         self.assertIn("FAILURE chunk", logged)
         self.assertIn("Compiler params for platform tpu", logged)
@@ -202,7 +210,8 @@ class ScanForErrorsTests(unittest.TestCase):
         # Regression guard: valid numeric metrics (incl. a big perplexity) must
         # NOT trip the NaN detector.
         job, _ = _make_job(hosts=["h0"])
-        job._scan_chunk_for_errors(
+        _scan(
+            job,
             "h0",
             0,
             "completed step: 2, TFLOP/s/device: 38.530, Tokens/s/device: 296.258, "
@@ -213,51 +222,69 @@ class ScanForErrorsTests(unittest.TestCase):
         # A config-provided error_patterns set fully REPLACES the built-in defaults.
         job, _ = _make_job(hosts=["h0"], error_patterns={"custom": "MY_CUSTOM_ERR"})
         # The default NCCL signature is no longer active -> no raise.
-        job._scan_chunk_for_errors("h0", 0, "some log\nNCCL ERROR: unhandled\n")
+        _scan(job, "h0", 0, "some log\nNCCL ERROR: unhandled\n")
         # The custom signature IS active -> raises.
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "boom MY_CUSTOM_ERR here\n")
+            _scan(job, "h0", 0, "boom MY_CUSTOM_ERR here\n")
 
     def test_default_error_patterns_used_when_config_empty(self):
         # No config error_patterns -> built-in defaults apply.
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "RESOURCE_EXHAUSTED: Out of memory\n")
+            _scan(job, "h0", 0, "RESOURCE_EXHAUSTED: Out of memory\n")
 
     def test_default_segfault_pattern_raises(self):
         # segfault is part of the built-in default signatures.
         job, _ = _make_job(hosts=["h0"])
         with self.assertRaises(RuntimeError):
-            job._scan_chunk_for_errors("h0", 0, "worker: Segmentation fault (core dumped)\n")
+            _scan(job, "h0", 0, "worker: Segmentation fault (core dumped)\n")
 
+    def test_import_error_caught_by_always_on_even_with_custom_patterns(self):
+        # A config that fully overrides error_patterns (no ImportError/Traceback)
+        # must STILL catch a fatal Python crash via the always-on set, so an
+        # import failure fails fast instead of running to the poll timeout.
+        job, _ = _make_job(hosts=["h0"], error_patterns={"custom": "MY_CUSTOM_ERR"})
+        chunk = (
+            "Traceback (most recent call last):\n"
+            "  File \".../jax_flash_attention.py\", line 21, in <module>\n"
+            "ImportError: cannot import name 'must_fuse_call' from 'jax.experimental.xla_metadata'\n"
+        )
+        with self.assertRaises(RuntimeError):
+            _scan(job, "h0", 0, chunk)
 
-class DrainNewLogLinesTests(unittest.TestCase):
-    def test_advances_cursor_and_returns_new_text(self):
-        job, orch = _make_job(hosts=["h0", "h1"])
-        orch.exec_cmd_list.return_value = {"h0": "l1\nl2\nl3\n", "h1": "a\nb\n"}
-        new = job._drain_new_log_lines()
-        self.assertEqual(new[0], "l1\nl2\nl3\n")
-        self.assertEqual(new[1], "a\nb\n")
-        # cursor advances by the number of lines read on each node.
-        self.assertEqual(job._log_line_cursor, [3, 2])
+    def test_colliding_config_key_cannot_disable_always_on_crash_detection(self):
+        # A config that reuses the always-on 'python crash' KEY with a harmless
+        # pattern must NOT disable fast-fail on a real traceback -- the built-in
+        # value wins the collision, so the crash is still caught.
+        job, _ = _make_job(hosts=["h0"], error_patterns={"python crash": "NEVER_MATCHES_THIS", "custom": "MY_ERR"})
+        with self.assertRaises(RuntimeError):
+            _scan(job, "h0", 0, "Traceback (most recent call last):\n  File x\nModuleNotFoundError: no mod\n")
 
-    def test_uses_cursor_offset_in_tail_and_no_console_echo(self):
-        job, orch = _make_job(hosts=["h0"])
-        job._log_line_cursor = [5]
-        orch.exec_cmd_list.return_value = {"h0": "l6\n"}
-        job._drain_new_log_lines()
-        # tail starts at the line after the cursor (5 -> +6) ...
-        cmd = orch.exec_cmd_list.call_args.args[0][0]
-        self.assertIn("tail -n +6", cmd)
-        # ... and the bulk read is NOT echoed to the console.
-        self.assertEqual(orch.exec_cmd_list.call_args.kwargs.get("print_console"), False)
+    def test_jax_distributed_fatal_caught_by_always_on(self):
+        # The glog FATAL from a JAX distributed coordination death must fail fast
+        # (always-on), even when the config overrides error_patterns.
+        job, _ = _make_job(hosts=["h0"], error_patterns={"custom": "MY_CUSTOM_ERR"})
+        chunk = (
+            "F0907 16:27:17.495912      69 client.h:80] Terminating process because the JAX "
+            "distributed service detected fatal errors. absl::Status: DEADLINE_EXCEEDED\n"
+            "RPC: /tensorflow.CoordinationService/RegisterTask\n"
+        )
+        with self.assertRaises(RuntimeError):
+            _scan(job, "h0", 0, chunk)
 
-    def test_empty_output_leaves_cursor_unchanged(self):
-        job, orch = _make_job(hosts=["h0"])
-        orch.exec_cmd_list.return_value = {"h0": ""}
-        new = job._drain_new_log_lines()
-        self.assertEqual(new, {})
-        self.assertEqual(job._log_line_cursor, [0])
+    def test_benign_coordination_shutdown_noise_not_flagged(self):
+        # After a run completes, JAX emits benign WARNINGs as peers exit; these
+        # mention CoordinationService/WatchJobState + CANCELLED/UNAVAILABLE but are
+        # NOT fatal, so they must not fail the (already succeeded) run.
+        job, _ = _make_job(hosts=["h0"])
+        chunk = (
+            "W0907 18:18:10.779063 1044 pjrt_client.cc:1604] WatchJobStateAsync failed for task 0: CANCELLED\n"
+            "Additional GRPC error information ... /tensorflow.CoordinationService/WatchJobState:\n"
+            "W0907 18:18:11.779792 1044 pjrt_client.cc:1604] WatchJobStateAsync failed for task 0: "
+            "UNAVAILABLE: failed to connect to all addresses ... Connection refused\n"
+        )
+        # must NOT raise
+        _scan(job, "h0", 0, chunk)
 
 
 class ParseResultsTests(unittest.TestCase):
@@ -342,10 +369,14 @@ class BuildTrainingCmdTests(unittest.TestCase):
         self.assertIn("NODE_RANK=1", cmds[1])
         # coordinator IP is host 0
         self.assertIn("JAX_COORDINATOR_IP=h0", cmds[0])
+        self.assertIn("NNODES=2", cmds[0])
         # resolved train script and user-namespaced scratch dir are wired in
         self.assertIn("/workspace/maxtext/src/MaxText/train.py", cmds[0])
-        self.assertIn("/tmp/tester/jaxmaxtext/maxtext_env.sh", cmds[0])
         self.assertIn("/tmp/tester/jaxmaxtext/maxtext_config.yml", cmds[0])
+        # per-node log file is one-per-rank; common env comes from docker -e, so
+        # the launcher no longer sources an env script.
+        self.assertIn("training_node0.log", cmds[0])
+        self.assertNotIn("maxtext_env.sh", cmds[0])
 
     def test_single_node_localhost_coordinator(self):
         job, orch = _make_job(hosts=["h0"], distributed=False)
@@ -364,21 +395,29 @@ class BuildTrainingCmdTests(unittest.TestCase):
         cmds = orch.exec_cmd_list.call_args.args[0]
         self.assertIn("JAX_COORDINATOR_IP=10.0.0.5", cmds[0])
 
-    def test_explicit_coordinator_ip_overrides_auto(self):
-        # A concrete coordinator_ip in the config wins over the first host.
-        job, orch = _make_job(
-            hosts=["10.0.0.5", "10.0.0.6"],
-            jax_distributed=SimpleNamespace(
-                coordinator_ip="10.9.9.9",
-                coordinator_port="12346",
-                initialization_timeout_seconds="1800",
-                heartbeat_timeout_seconds="900",
-            ),
-        )
+    def test_launcher_sets_creds_and_per_node_only(self):
+        # The launcher exports credentials + per-node/dynamic vars; the common
+        # env (NCCL/NVTE/XLA_FLAGS/JAX_COORDINATOR_PORT) is set on the container
+        # via docker -e, so it is NOT written into the launcher.
+        job, orch = _make_job(hosts=["10.0.0.5", "10.0.0.6"])
         _wire_container_exec(orch)
         job.build_training_cmd()
         cmds = orch.exec_cmd_list.call_args.args[0]
-        self.assertIn("JAX_COORDINATOR_IP=10.9.9.9", cmds[0])
+        self.assertIn("HF_TOKEN=", cmds[0])
+        self.assertIn("PYTHONPATH=", cmds[0])
+        self.assertIn("JAX_COORDINATOR_IP=10.0.0.5", cmds[1])  # first host, on every rank
+        self.assertNotIn("JAX_COORDINATOR_PORT", cmds[0])  # comes from container env (docker -e)
+        self.assertNotIn("NCCL_", cmds[0])
+
+    def test_launcher_uses_custom_maxtext_root(self):
+        # cd + PYTHONPATH follow training.maxtext_root so a branch checkout in
+        # that tree is the code that actually trains (not the image default).
+        job, orch = _make_job(hosts=["h0"], maxtext_root="/opt/maxtext_v267")
+        _wire_container_exec(orch)
+        job.build_training_cmd()
+        cmds = orch.exec_cmd_list.call_args.args[0]
+        self.assertIn("cd /opt/maxtext_v267 &&", cmds[0])
+        self.assertIn("PYTHONPATH=$PYTHONPATH:/opt/maxtext_v267", cmds[0])
 
 
 class TrainScriptResolveTests(unittest.TestCase):
@@ -460,6 +499,43 @@ class WriteMaxtextYamlTests(unittest.TestCase):
         # scan_layers True -> lowercase bool
         self.assertIn("scan_layers: true", written)
 
+    def test_sweep_steps_override_drives_yaml_and_poll(self):
+        # A per-sweep `steps` override (merged into maxtext_config) must drive the
+        # run YAML, the poll/timeout budget, and completion -- not the base steps.
+        base, _ = _make_job()
+        sweep = SimpleNamespace(name="BS=2,PRECISION=BF16,SL=8192", maxtext_overrides={"steps": 7})
+        job = MaxTextTrainingJob(base.orch, base.variant, hf_token="dummy", sweep=sweep)
+        self.assertEqual(job.steps, 7)  # base training.steps is 3
+        self.assertEqual(job._poll_count, 70)
+        job._write_maxtext_yaml()
+        written = " ".join(str(c.args[0]) for c in job.orch.exec.call_args_list)
+        self.assertIn("steps: 7", written)
+        self.assertNotIn("steps: 3", written)
+
+    def test_smoke_steps_override_wins_over_base_maxtext_config(self):
+        # Smoke passes training.smoke.steps via maxtext_overrides (not training.steps
+        # alone); base maxtext_config.steps must not leak into the run.
+        base, _ = _make_job()
+        base.variant.training.maxtext_config["steps"] = 30
+        sweep = SimpleNamespace(
+            name="SMOKE",
+            maxtext_overrides={
+                "steps": 5,
+                "per_device_batch_size": 1,
+                "max_target_length": 2048,
+                "dtype": "bfloat16",
+                "weight_dtype": "bfloat16",
+                "quantization": "",
+            },
+        )
+        job = MaxTextTrainingJob(base.orch, base.variant, hf_token="dummy", sweep=sweep)
+        self.assertEqual(job.steps, 5)
+        self.assertEqual(job._poll_count, 50)
+        job._write_maxtext_yaml()
+        written = " ".join(str(c.args[0]) for c in job.orch.exec.call_args_list)
+        self.assertIn("steps: 5", written)
+        self.assertNotIn("steps: 30", written)
+
     def test_empty_string_rendered_as_quoted_not_bare(self):
         # An empty-string maxtext param (e.g. profiler) must render as 'key: ""',
         # never bare 'key:' (which YAML reads as null and breaks MaxText enums).
@@ -471,21 +547,87 @@ class WriteMaxtextYamlTests(unittest.TestCase):
         self.assertNotIn("profiler: \n", written)
 
 
-class WriteEnvScriptTests(unittest.TestCase):
-    def test_distributed_exports_nccl_ib_gid_index_from_nccl_block(self):
-        # nccl.ib_gid_index is now wired to export NCCL_IB_GID_INDEX (like ib_hca),
-        # so the nccl block -- not env_vars -- is authoritative for the GID index.
-        job, orch = _make_job(hosts=["h0", "h1"])  # distributed=True
-        job._write_env_script()
-        written = "\n".join(str(c.args[0]) for c in orch.exec.call_args_list)
-        self.assertIn("export NCCL_IB_GID_INDEX=3", written)
-        self.assertIn("export NCCL_IB_HCA=", written)
+class CheckoutMaxtextBranchTests(unittest.TestCase):
+    def test_noop_when_branch_empty(self):
+        # Default fixture has no maxtext_branch -> getattr returns "" -> no exec.
+        job, orch = _make_job(hosts=["h0"])
+        job.checkout_maxtext_branch()
+        orch.exec.assert_not_called()
 
-    def test_single_node_does_not_export_nccl_ib_gid_index(self):
-        job, orch = _make_job(hosts=["h0"], distributed=False)
-        job._write_env_script()
-        written = "\n".join(str(c.args[0]) for c in orch.exec.call_args_list)
-        self.assertNotIn("NCCL_IB_GID_INDEX", written)
+    def test_checks_out_and_verifies_branch(self):
+        job, orch = _make_job(hosts=["h0", "h1"], maxtext_branch="feature/x", maxtext_root="/workspace/maxtext")
+        orch.exec.return_value = {"h0": "feature/x", "h1": "feature/x"}
+        job.checkout_maxtext_branch()  # both nodes on the branch -> no raise
+        first_cmd = orch.exec.call_args_list[0].args[0]
+        self.assertIn("git reset --hard", first_cmd)
+        self.assertIn("git checkout", first_cmd)
+        self.assertIn("feature/x", first_cmd)
+        self.assertIn("/workspace/maxtext", first_cmd)
+
+    def test_raises_when_a_node_is_on_wrong_branch(self):
+        job, orch = _make_job(hosts=["h0", "h1"], maxtext_branch="feature/x")
+        orch.exec.return_value = {"h0": "feature/x", "h1": "main"}  # h1 mismatch
+        with self.assertRaises(RuntimeError):
+            job.checkout_maxtext_branch()
+
+    def test_install_cmd_runs_after_checkout(self):
+        job, orch = _make_job(
+            hosts=["h0"],
+            maxtext_branch="release/v26.7",
+            maxtext_install_cmd="python3 -m pip install -r rocm-requirements.txt && python3 -m pip install --no-deps -e .",
+        )
+        orch.exec.side_effect = [
+            {"h0": "release/v26.7"},  # checkout
+            {"h0": "release/v26.7"},  # verify HEAD
+            {"h0": "installed\n__MAXTEXT_INSTALL_OK__"},  # install cmd
+        ]
+        job.checkout_maxtext_branch()  # no raise
+        install_cmd = orch.exec.call_args_list[-1].args[0]
+        self.assertIn("rocm-requirements.txt", install_cmd)
+        self.assertIn("--no-deps -e .", install_cmd)
+
+    def test_install_cmd_failure_raises(self):
+        job, orch = _make_job(
+            hosts=["h0"], maxtext_branch="release/v26.7", maxtext_install_cmd="python3 -m pip install -e ."
+        )
+        orch.exec.side_effect = [
+            {"h0": "release/v26.7"},  # checkout
+            {"h0": "release/v26.7"},  # verify HEAD
+            {"h0": "ERROR: install failed"},  # no success marker
+        ]
+        with self.assertRaises(RuntimeError):
+            job.checkout_maxtext_branch()
+
+    def test_install_cmd_runs_without_branch(self):
+        # Install recipe is decoupled from branch checkout: with an empty branch
+        # but a set install_cmd (e.g. the tensorflow-cpu swap on the image's baked
+        # MaxText), the recipe still runs and no git checkout is attempted.
+        job, orch = _make_job(
+            hosts=["h0"],
+            maxtext_install_cmd="python3 -m pip install 'tensorflow-cpu>=2.20.0'",
+        )
+        orch.exec.return_value = {"h0": "ok\n__MAXTEXT_INSTALL_OK__"}
+        job.checkout_maxtext_branch()  # no raise
+        self.assertEqual(len(orch.exec.call_args_list), 1)  # only the install, no checkout/verify
+        install_cmd = orch.exec.call_args_list[0].args[0]
+        self.assertIn("tensorflow-cpu", install_cmd)
+        self.assertNotIn("git checkout", install_cmd)
+
+    def test_raises_when_a_node_is_unreachable(self):
+        # A missing node in the result (e.g. unreachable) must fail rather than be
+        # treated as a silent success (the loop would otherwise be a no-op).
+        job, orch = _make_job(hosts=["h0", "h1"], maxtext_branch="feature/x")
+        orch.exec.return_value = {"h0": {"exit_code": 0, "output": "feature/x"}}  # h1 absent
+        with self.assertRaises(RuntimeError):
+            job.checkout_maxtext_branch()
+
+    def test_raises_on_nonzero_exit(self):
+        # Gate on the per-host exit code, not only stdout: a failed checkout with a
+        # non-zero exit must fail the run.
+        job, orch = _make_job(hosts=["h0"], maxtext_branch="feature/x")
+        orch.exec.return_value = {"h0": {"exit_code": 128, "output": "fatal: bad ref"}}
+        with self.assertRaises(RuntimeError):
+            job.checkout_maxtext_branch()
 
 
 class StartTrainingTests(unittest.TestCase):
@@ -499,18 +641,36 @@ class StartTrainingTests(unittest.TestCase):
         _sleep.assert_called_once()
 
     @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
-    def test_clears_stale_log_before_launch(self, _sleep):
-        # A stale training.log with an old "completed step" marker would make
-        # is_complete() pass on the first poll (fail-open). start_training must
-        # rm each node's log BEFORE launching.
+    def test_resets_each_nodes_own_out_dir_before_launch(self, _sleep):
+        # A stale run's "completed step" marker would make is_complete() pass on
+        # the first poll (fail-open). Each node resets its OWN out-node dir
+        # (cmd_list[i] on hosts[i]) so no node ever removes a shared dir another
+        # node has cached (which would leave a stale NFS handle).
         job, orch = _make_job(hosts=["h0", "h1"])
         job.start_training()
-        clear_cmds = orch.exec_cmd_list.call_args_list[0].args[0]
-        self.assertEqual(len(clear_cmds), 2)
-        self.assertTrue(all("rm -f" in c and "training.log" in c for c in clear_cmds))
-        # ... and the clear precedes the launch.
+        reset_cmds = orch.exec_cmd_list.call_args_list[0].args[0]
+        self.assertEqual(len(reset_cmds), 2)
+        self.assertIn("rm -rf", reset_cmds[0])
+        self.assertIn("out-node0", reset_cmds[0])
+        self.assertIn("mkdir -p", reset_cmds[0])
+        self.assertIn("out-node1", reset_cmds[1])
+        # never removes the shared parent sweep folder from a single node
+        self.assertFalse(
+            any(f"rm -rf {job.out_dir} " in c or c.strip().endswith(f"rm -rf {job.out_dir}") for c in reset_cmds)
+        )
         launch_cmds = orch.exec_cmd_list.call_args_list[-1].args[0]
-        self.assertTrue(all("nohup bash" in c for c in launch_cmds))
+        self.assertTrue(all("mkdir -p" in c and "out-node" in c and "nohup bash" in c for c in launch_cmds))
+
+    @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
+    def test_checkpoint_reset_keeps_parent_and_checkpoint(self, _sleep):
+        # The per-node reset removes only out-node dirs; the checkpoint lives under
+        # out_dir/<run_name>/, so a resume is unaffected and the parent is kept.
+        job, orch = _make_job(hosts=["h0", "h1"], enable_checkpointing=True)
+        job.start_training()
+        reset_cmds = orch.exec_cmd_list.call_args_list[0].args[0]
+        self.assertTrue(all("out-node" in c for c in reset_cmds))
+        # the shared parent folder is never rm'd
+        self.assertFalse(any(c.strip().endswith(f"rm -rf {job.out_dir}") for c in reset_cmds))
 
     @patch("cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib.time.sleep")
     def test_captures_host_start_time(self, _sleep):
@@ -527,41 +687,129 @@ class StartTrainingTests(unittest.TestCase):
 class PollForCompletionTests(unittest.TestCase):
     _LIB = "cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib"
 
-    @patch(f"{_LIB}.time.sleep")
-    def test_completion_path_scans_final_drain_for_nan(self, _sleep):
-        # The chunk fetched on the completion path (final "completed step" +
-        # anything after) must be error-scanned before declaring success.
-        job, _ = _make_job(hosts=["h0"])
-        job.is_complete = MagicMock(return_value=True)
-        job._drain_new_log_lines = MagicMock(
-            side_effect=[
-                {},  # loop-body drain: nothing new yet
-                {0: "completed step: 2, TFLOP/s/device: NaN\n"},  # completion-path drain
-            ]
-        )
-        with self.assertRaises(RuntimeError):
-            job.poll_for_completion()
+    @patch(f"{_LIB}.LogPoller")
+    def test_delegates_to_log_poller_with_expected_wiring(self, mock_poller_cls):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        job.poll_for_completion(timeout_s=1234)
+        mock_poller_cls.assert_called_once()
+        args, kwargs = mock_poller_cls.call_args
+        self.assertIs(args[0], orch)  # orchestrator
+        self.assertEqual(args[1], [job._node_log(0), job._node_log(1)])  # per-node logs
+        self.assertIn("completed step", kwargs["complete_pattern"])
+        self.assertEqual(kwargs["complete_policy"], "all")
+        # error_patterns is the merged dict: NaN/Inf + always-on + config.
+        ep = kwargs["error_patterns"]
+        self.assertEqual(ep["NaN/Inf in training metrics"], _NAN_INF_RE.pattern)
+        for k, v in _ALWAYS_ON_ERR_PATTERNS.items():
+            self.assertEqual(ep[k], v)
+        for k, v in job.error_patterns.items():
+            self.assertEqual(ep[k], v)
+        self.assertEqual(kwargs["stream_node"], 0)
+        # Defaults are passed explicitly so adopters see the knobs.
+        self.assertIsNone(kwargs["ignore_error_patterns"])
+        self.assertTrue(kwargs["silent_poll"])
+        self.assertEqual(kwargs["cmd_timeout_s"], 60)
+        self.assertEqual(kwargs["timeout_s"], 1234)
+        mock_poller_cls.return_value.poll.assert_called_once()
 
-    @patch(f"{_LIB}.time.sleep")
-    def test_completion_path_scans_worker_node_not_just_node0(self, _sleep):
-        # A worker-only (non-0) error in the completion window must still raise.
-        job, _ = _make_job(hosts=["h0", "h1"])
-        job.is_complete = MagicMock(return_value=True)
-        job._drain_new_log_lines = MagicMock(
-            side_effect=[
-                {},
-                {1: "some log\nNCCL ERROR: boom\n"},
-            ]
-        )
-        with self.assertRaises(RuntimeError):
-            job.poll_for_completion()
+    @patch(f"{_LIB}.LogPoller")
+    def test_config_cannot_clobber_always_on_signatures(self, mock_poller_cls):
+        # A config error_patterns key that collides with an always-on key must NOT
+        # override the built-in fast-fail pattern; non-colliding keys still apply.
+        collide = next(iter(_ALWAYS_ON_ERR_PATTERNS))
+        job, _ = _make_job(hosts=["h0"], error_patterns={collide: "CONFIG_OVERRIDE", "custom": "MY_ERR"})
+        job.poll_for_completion(timeout_s=1)
+        ep = mock_poller_cls.call_args.kwargs["error_patterns"]
+        self.assertEqual(ep[collide], _ALWAYS_ON_ERR_PATTERNS[collide])  # built-in wins
+        self.assertEqual(ep["custom"], "MY_ERR")  # non-colliding config key kept
 
-    @patch(f"{_LIB}.time.sleep")
-    def test_clean_completion_returns(self, _sleep):
+    @patch(f"{_LIB}.LogPoller")
+    def test_default_timeout_is_the_poll_budget(self, mock_poller_cls):
         job, _ = _make_job(hosts=["h0"])
-        job.is_complete = MagicMock(return_value=True)
-        job._drain_new_log_lines = MagicMock(side_effect=[{}, {0: _log()}])
-        job.poll_for_completion()  # should not raise
+        job.poll_for_completion()
+        self.assertEqual(mock_poller_cls.call_args.kwargs["timeout_s"], job._poll_count * job._poll_wait_s)
+
+
+def _tfevents_blob(step, tag, value):
+    """One TFRecord-framed Event with a single simple_value scalar."""
+
+    def _v(n):
+        out = bytearray()
+        while True:
+            b = n & 0x7F
+            n >>= 7
+            out.append(b | 0x80 if n else b)
+            if not n:
+                return bytes(out)
+
+    def _key(f, w):
+        return _v((f << 3) | w)
+
+    val = _key(1, 2) + _v(len(tag.encode())) + tag.encode() + _key(2, 5) + struct.pack("<f", value)
+    summary = _key(1, 2) + _v(len(val)) + val
+    event = _key(2, 0) + _v(step) + _key(5, 2) + _v(len(summary)) + summary
+    return struct.pack("<Q", len(event)) + b"\x00\x00\x00\x00" + event + b"\x00\x00\x00\x00"
+
+
+def _b64_tar(files):
+    """base64 of a tar containing ``{name: bytes}`` -- mimics the node-side dump."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:") as tar:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+class CollectTbScalarsTests(unittest.TestCase):
+    @staticmethod
+    def _wire(orch, b64, size_kb=16):
+        """Answer the du size-probe then the tar|base64 pull (in that order)."""
+
+        def _side(cmd, *_a, **_k):
+            if "du -ck" in str(cmd):
+                return {orch.hosts[0]: f"{size_kb}\ttotal\n"}
+            return {orch.hosts[0]: b64}
+
+        orch.exec.side_effect = _side
+
+    def test_parses_scalars_from_node0_tar(self):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        blob = _tfevents_blob(0, "learning/loss", 12.0) + _tfevents_blob(1, "learning/loss", 11.0)
+        self._wire(orch, _b64_tar({"events.out.tfevents.1.host": blob}))
+        scalars = job.collect_tb_scalars()
+        self.assertEqual([s for s, _v in scalars["learning/loss"]], [0, 1])
+        self.assertEqual(job.tb_collection_note, "")
+        # the pull targets node 0 only, stays off-console, and is bounded by a timeout
+        self.assertEqual(orch.exec.call_args.kwargs.get("hosts"), ["h0"])
+        self.assertIs(orch.exec.call_args.kwargs.get("print_console"), False)
+        self.assertIsNotNone(orch.exec.call_args.kwargs.get("timeout"))
+
+    def test_empty_output_returns_empty_with_note(self):
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec.return_value = {"h0": ""}
+        self.assertEqual(job.collect_tb_scalars(), {})
+        self.assertIn("no TensorBoard events", job.tb_collection_note)
+
+    def test_exec_failure_is_swallowed_with_note(self):
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec.side_effect = RuntimeError("no container")
+        self.assertEqual(job.collect_tb_scalars(), {})
+        self.assertIn("failed", job.tb_collection_note)
+
+    def test_oversize_events_are_skipped_without_pull(self):
+        job, orch = _make_job(hosts=["h0"])
+        huge_kb = (_TB_COLLECT_MAX_BYTES // 1024) + 1024
+
+        def _side(cmd, *_a, **_k):
+            if "du -ck" in str(cmd):
+                return {"h0": f"{huge_kb}\ttotal\n"}
+            raise AssertionError("tar pull must not run when events exceed the size cap")
+
+        orch.exec.side_effect = _side
+        self.assertEqual(job.collect_tb_scalars(), {})
+        self.assertIn("cap", job.tb_collection_note)
 
 
 class ScanDmesgForErrorsTests(unittest.TestCase):
@@ -604,6 +852,24 @@ class ScanDmesgForErrorsTests(unittest.TestCase):
         job, _ = self._job_with_host()
         job.training_start_time = {"h0": "t"}
         job.scan_dmesg_for_errors()  # infra failure must not propagate
+
+    @patch(f"{_LIB}.time.sleep")
+    @patch(f"{_LIB}._verify_dmesg_for_errors")
+    def test_saves_per_node_dmesg_logs(self, _mock_verify, _sleep):
+        # Each rank's windowed dmesg is written to its own out-node{i}/dmesg_node{i}.log
+        # via the baremetal host handle (cmd_list[i] -> hosts[i]).
+        job, orch = self._job_with_host()
+        job.training_start_time = {"h0": "Mon Jan  2 03:00", "h1": "Mon Jan  2 03:00"}
+        job.scan_dmesg_for_errors()
+        orch.all.exec_cmd_list.assert_called_once()
+        cmds = orch.all.exec_cmd_list.call_args.args[0]
+        self.assertEqual(len(cmds), 2)
+        self.assertIn("dmesg_node0.log", cmds[0])
+        self.assertIn("dmesg_node1.log", cmds[1])
+        # whole capture+redirect runs as root (so it can write the root-owned out dir)
+        self.assertIn("sudo bash -c", cmds[0])
+        self.assertIn("dmesg -T", cmds[0])
+        self.assertIn("Mon Jan  2 03:00", cmds[0])  # windowed from the training start
 
 
 if __name__ == "__main__":

@@ -25,9 +25,9 @@ factory consumes (the vllm conftest does exactly this before building the
 orchestrator). The loaded variant also carries a `thresholds` field with the
 parsed threshold contents.
 
-`model.remote=1` raises NotImplementedError -- schema is present, but the
-download/resolve logic lives in cvs-dtni-v1's `resource_resolver.py` and is
-out of scope for this PoC.
+`model.remote=1` raises NotImplementedError for suites other than xDiT.
+xDiT uses it as an opt-in for runtime Hugging Face snapshot download.
+
 '''
 
 from __future__ import annotations
@@ -81,6 +81,11 @@ class ContainerSpec(_Forbid):
     name: str
     image: str
     runtime: RuntimeSpec
+    # Environment variables passed to the container at `docker run` time (as
+    # `-e KEY=VALUE`, merged with the orchestrator defaults). The container
+    # orchestrator reads `container_config['env']`; carrying it on the spec means
+    # `container.model_dump()` forwards it verbatim to the runtime.
+    env: Dict[str, str] = Field(default_factory=dict)
 
 
 class BaseVariantConfig(_Forbid):
@@ -114,7 +119,7 @@ class BaseVariantConfig(_Forbid):
     # which is meaningless for a config we are going to reject anyway.
     @model_validator(mode="after")
     def _check_remote_not_implemented(self):
-        if self.model.remote == 1:
+        if self.model.remote == 1 and getattr(self, "framework", None) != "xdit":
             raise NotImplementedError(
                 "model.remote=1 (remote model download) is not implemented in the PoC. "
                 "Port from cvs-dtni-v1/resource_resolver.py before enabling."
@@ -205,6 +210,11 @@ def substitute_config(config_path, cluster_dict):
     raw = json.loads(config_path.read_text())
 
     threshold_json = (raw.get("threshold_json") or "").strip()
+    if "<changeme>" in threshold_json.lower():
+        raise ValueError(
+            f"threshold_json is still a placeholder ('{threshold_json}'). Set it to the correct "
+            "threshold file for your setup (e.g. the GPU-specific *_threshold.json) before running."
+        )
     if threshold_json:
         threshold_path = Path(threshold_json)
         if not threshold_path.is_absolute():
