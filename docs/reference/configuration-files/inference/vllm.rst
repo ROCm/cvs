@@ -770,8 +770,8 @@ Thresholds are keyed by canonical cell, then by a bare metric name:
 A cell may contain any subset of the registry, including an empty object. When
 ``enforce_thresholds`` is true, every selected run must have a threshold cell,
 but only specs present in that cell create verification subtests. When it is
-false, produced and configured values remain ``record`` rows and no threshold
-subtests run.
+false, produced and configured values are passing subtests and no threshold
+is asserted.
 
 Sweep specs are strict at load time regardless of enforcement:
 
@@ -905,9 +905,10 @@ Reporting and compatibility
 
 ``test_verify_cell_metrics`` remains one parent per cell. It computes all host
 rows before emitting one subtest for each present, enforced spec, so one failure
-does not hide sibling verdicts. Finite produced values without a spec are
-record-only HTML rows. The parent also emits one compact JUnit property with
-``actuals_by_host`` and metric contract ``{"id":"vllm-bare","version":1}``.
+does not hide sibling verdicts. With enforcement off, those rows pass and no
+threshold is asserted. With enforcement on, finite values without a spec also
+pass, and each enforced spec is a single subtest. The parent also emits one
+compact JUnit property with ``actuals_by_host`` and metric contract ``{"id":"vllm-bare","version":1}``.
 
 Run Deck tables, charts, and highlights use selected registry metrics rather
 than all 56 columns. Historical namespaced vLLM Run Deck artifacts do not match

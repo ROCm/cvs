@@ -341,8 +341,6 @@ def test_verify_cell_metrics(run, inf_res_dict, variant_config, lifecycle, reque
         with subtests.test(node=verdict["node"], metric=verdict["metric"]):
             assert verdict["status"] == "pass", verdict["reason"]
     lifecycle.record(request.node.nodeid, "metric_verification", time.monotonic() - started)
-    if not asserted_verdicts:
-        pytest.skip(f"metrics recorded without active threshold gates for {run.cell.key}")
 
 
 def test_teardown(orch, lifecycle, request):

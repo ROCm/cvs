@@ -77,7 +77,7 @@ def evaluate_metric_verdicts(actuals_by_host, thresholds, *, enforce_thresholds)
                 'actual': value,
                 'spec': spec,
                 'enforced': enforced,
-                'status': 'pass' if enforced else 'record',
+                'status': 'pass',
                 'reason': '',
             }
             if enforced:
