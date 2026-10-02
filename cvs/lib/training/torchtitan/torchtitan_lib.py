@@ -19,6 +19,11 @@ from cvs.lib import globals
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 from cvs.lib import linux_utils
+from cvs.lib.training.torchtitan.utils.iteration_metrics import (
+    derive_step_time_stats,
+    parse_iteration_metrics,
+    summarize_step_metrics,
+)
 from cvs.lib.training.torchtitan.utils.model_registry import (
     TORCHTITAN_MODELS,
     PRECISION_FLAGS,
@@ -26,6 +31,15 @@ from cvs.lib.training.torchtitan.utils.model_registry import (
 )
 
 log = globals.log
+
+
+def _positive_int(value, default):
+    """Use ``value`` when it is a positive int; otherwise ``default``."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return number if number > 0 else default
 
 
 training_err_dict = {
@@ -170,6 +184,10 @@ class TorchTitanTrainingJob:
         self.torchtitan_root = self.config.get('torchtitan_root', '/workspace/Primus/third_party/torchtitan')
         self.iterations = int(self.config.get('training_iterations', 30))
         self.nnodes = len(self.orch.hosts)
+        self.gpus_per_node = _positive_int(getattr(variant_config, "gpus_per_node", None), 8)
+        # Single-node torchrun is one node even if the orchestrator host list is longer.
+        rank_nodes = self.nnodes if self.distributed_training else 1
+        self.world_size = rank_nodes * self.gpus_per_node
         self.nic_type = self.config.get('nic_type', 'thor2')
         self.hca_id_pattern = self.config.get('hca_id_pattern', 'bnxt_|rocep')
         self.nccl_ib_hca = self.config.get('nccl_ib_hca', '')
@@ -287,8 +305,7 @@ class TorchTitanTrainingJob:
 
         # Adjust batch size for distributed if needed
         if self.tune_model_params and self.distributed_training:
-            gpus_per_node = 8
-            total_gpus = self.nnodes * gpus_per_node
+            total_gpus = self.world_size
             if int(self.global_batch_size) > 32:
                 if int(self.global_batch_size) % 32 == 0:
                     per_gpu_batch_size = int(self.global_batch_size) / 32
@@ -441,7 +458,7 @@ class TorchTitanTrainingJob:
             cmd += f'export NCCL_DEBUG={self.nccl_debug}; '
             cmd += f'export NCCL_IB_GID_INDEX={self.nccl_ib_gid_index}; '
 
-        nproc_per_node = 8
+        nproc_per_node = self.gpus_per_node
 
         if self.distributed_training:
             for i in range(self.nnodes):
@@ -518,24 +535,23 @@ class TorchTitanTrainingJob:
             self.orch.exec(f'bash -c {shlex.quote(self.job_cmd)}')
 
     def get_training_results_dict(self):
-        """Parse training results from logs."""
-        if self.distributed_training:
-            log_files = [f'{self.combo_log_dir}/out-node{i}/training.log' for i in range(self.nnodes)]
-        else:
-            log_files = [f'{self.combo_log_dir}/out-node0/training.log']
+        """Parse rank-0 training metrics. The gate reads the last logged step.
 
-        all_results = {}
-        for log_file in log_files:
-            out_dict = self.orch.exec(f'cat {log_file}')
-            for host, output in out_dict.items():
-                if output:
-                    parsed = _parse_training_results(output)
-                    for metric, values in parsed.items():
-                        if metric not in all_results:
-                            all_results[metric] = []
-                        all_results[metric].extend(values)
-
-        return all_results
+        TorchTitan prints the ``step:`` line from rank 0, which is node 0.
+        When that line is absent, fall back to the older whole-log regex.
+        Both paths leave the last match in ``values[-1]``.
+        """
+        log_text = self._read_last_node_log()
+        rows = parse_iteration_metrics(
+            log_text,
+            seq_length=self.sequence_length,
+            global_batch_size=self.global_batch_size,
+            world_size=self.world_size,
+        )
+        summarized = summarize_step_metrics(rows) or _parse_training_results(log_text)
+        # P50/P95 must be on this dict: test_metric runs before test_loss_curve.
+        summarized.update(derive_step_time_stats(rows))
+        return summarized
 
     def scan_for_training_errors(self):
         """Scan training logs for known error patterns."""
@@ -703,17 +719,17 @@ class TorchTitanTrainingJob:
         return losses
 
     def _read_last_node_log(self, tail_lines=0):
-        """Read the training log from the last node and return its output.
+        """Read the rank-0 training log (node 0).
 
         Args:
             tail_lines (int): If > 0, only the last N lines of the log are read.
 
         Returns:
-            str: Log text from the last node.
+            str: Log text from node 0.
         """
-        n = len(self.orch.hosts)
-        last_host = self.orch.hosts[-1]
+        # Rank 0 emits the step metrics line; that process is node 0.
+        rank0 = self.orch.hosts[0]
         tail_suffix = f' | tail -{tail_lines}' if tail_lines > 0 else ''
-        log_path = f'{self.combo_log_dir}/out-node{n - 1}/training.log'
-        out_dict = self.orch.exec(f'cat {log_path}{tail_suffix}', hosts=[last_host])
-        return out_dict.get(last_host) or ''
+        log_path = f'{self.combo_log_dir}/out-node0/training.log'
+        out_dict = self.orch.exec(f'cat {log_path}{tail_suffix}', hosts=[rank0])
+        return out_dict.get(rank0) or ''

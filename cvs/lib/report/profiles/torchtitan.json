@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "profile_id": "torchtitan_rundeck",
+  "suite_id": "torchtitan",
+  "report_basename": "torchtitan_run_deck",
+  "title": "TorchTitan Run Deck",
+  "subtitle": "TorchTitan · single-node & distributed training summary",
+  "footer": "CVS torchtitan · render-only · does not affect gates",
+  "link_name": "TorchTitan Run Deck",
+  "dataset_builder": "training_sweep",
+  "interactive_viewer": true,
+  "sources": {
+    "results": "train_res_dict",
+    "variant": "variant_config",
+    "lifecycle": "lifecycle"
+  },
+  "hooks": {
+    "tier_metric_specs": "cvs.lib.training.torchtitan.utils.torchtitan_metrics:tier_metric_specs",
+    "metric_units": "cvs.lib.training.torchtitan.utils.torchtitan_metrics:METRIC_UNITS",
+    "run_card_display": "cvs.lib.report.profiles.hooks.torchtitan_run_card:torchtitan_run_card_display"
+  },
+  "sweep": {
+    "metric_prefix": "training.",
+    "throughput_metric": "training.tokens_per_sec",
+    "ttft_metric": "training.step_time_p50_ms",
+    "headline_metric": "training.tokens_per_sec",
+    "series_label": "TorchTitan sweep",
+    "tier_order": ["throughput", "latency", "health", "record"],
+    "results_table_columns": [
+      ["Model", null],
+      ["GPU", null],
+      ["MBS", null],
+      ["GBS", null],
+      ["Precision", null],
+      ["TP", null],
+      ["PP", null],
+      ["Tok/s/device", "training.tokens_per_sec"],
+      ["TFLOP/s/device", "training.tflops"],
+      ["Loss", "training.loss"],
+      ["P50 step (ms)", "training.step_time_p50_ms"],
+      ["P95 step (ms)", "training.step_time_p95_ms"],
+      ["Mem (GiB)", "training.mem_usage_gb"],
+      ["Scaling eff. (%)", "training.scaling_efficiency_pct"]
+    ],
+    "cell_highlights": [
+      ["tokens_per_sec", "Tok/s/device"],
+      ["tflops", "TFLOP/s/device"],
+      ["loss", "Loss"],
+      ["mem_usage_gb", "Mem (GiB)"],
+      ["scaling_efficiency_pct", "Scaling eff. (%)"]
+    ],
+    "chart_series": [
+      {"metric_suffix": "tokens_per_sec", "title": "Tokens/s/device", "unit": "tok/s/device", "invert": false},
+      {"metric_suffix": "tflops", "title": "TFLOP/s/device", "unit": "TFLOP/s/device", "invert": false},
+      {"metric_suffix": "step_time_p50_ms", "title": "P50 step time", "unit": "ms", "invert": true},
+      {"metric_suffix": "step_time_p95_ms", "title": "P95 step time", "unit": "ms", "invert": true},
+      {"metric_suffix": "loss", "title": "Loss", "unit": "nats", "invert": true},
+      {"metric_suffix": "scaling_efficiency_pct", "title": "Scaling efficiency", "unit": "%", "invert": false},
+      {"metric_suffix": "steps_to_target", "title": "Steps to target", "unit": "steps", "invert": true},
+      {"metric_suffix": "time_to_target_seconds", "title": "Time to target", "unit": "s", "invert": true}
+    ]
+  },
+  "lifecycle": {
+    "session_labels": [
+      "container_launch",
+      "rdma_setup",
+      "tokenizer_download",
+      "smoke",
+      "checkpoint",
+      "training",
+      "metrics",
+      "teardown"
+    ],
+    "cell_labels": ["training"],
+    "expand_labels": ["training"]
+  },
+  "behavior": {
+    "inference_test_substring": "test_training",
+    "row_card_extras": false,
+    "row_card_test_names": ["test_metric"]
+  },
+  "viewer": {
+    "group_by": ["mbs", "gbs"],
+    "filters": ["mbs", "gbs", "precision", "tp", "pp"],
+    "concurrency_field": "precision",
+    "heatmap_row_fields": ["mbs", "gbs", "tp", "pp"],
+    "comparison_hint": "Compare MBS/GBS at each precision",
+    "sweep_charts": { "enabled": false },
+    "interactivity": { "enabled": false }
+  },
+  "cards": [
+    {"type": "run_card", "id": "run-card", "title": "Run card", "bind": "run_card_display"},
+    {"type": "lifecycle_timeline", "id": "lifecycle", "title": "Lifecycle timeline", "bind": "lifecycle"},
+    {"type": "sweep_analytics", "id": "sweep", "title": "Sweep analytics", "bind": "datasets.training_sweep"},
+    {"type": "gate_matrix", "id": "gates", "title": "Gate matrix", "bind": "gate_matrix"},
+    {"type": "gate_heatmap", "bind": "gate_matrix", "when_empty": "hide"},
+    {"type": "sweep_cell_cards", "id": "cells", "title": "Sweep cells", "bind": "cells"},
+    {"type": "table", "id": "results", "title": "Full results", "bind": "results_table"}
+  ]
+}

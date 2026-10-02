@@ -12,16 +12,16 @@ Lifecycle (each stage is a separate test):
   test_launch_container  — launch the container once for all sweep combos
   test_download_tokenizer— download tokenizer if needed for model family
   test_smoke             — fixed small cell: model loads and runs N steps without error
-  test_training          — parametrized: one test per sweep combo; kills GPU
-                           processes in finally so VRAM is free for the next combo
-  test_metric            — parametrized: threshold check per combo via evaluate_all
-  test_loss_curve        — parametrized: slope-based loss decrease check with PNG render
+  test_checkpoint        — checkpoint save + resume; uses the smoke cell's batch and precision
+  test_training          — parametrized: one test per sweep combo; a failed combo does not
+                           skip the rest. Kills GPU processes in finally so VRAM is free
+  test_metric            — parametrized: threshold check per combo; optional specs may be missing
+  test_loss_curve        — parametrized: slope check plus loss, tps, tflops, and step-time curves
   test_teardown          — tear down the container once after all combos
 '''
 
-import json
-import os
 import re
+import shlex
 import time
 
 import pytest
@@ -34,11 +34,12 @@ from cvs.lib.training.torchtitan.utils.convergence import (
     compute_convergence,
     parse_step_metrics,
 )
-from cvs.lib.training.torchtitan.utils.loss_curve import (
-    parse_all_loss_points,
+from cvs.lib.training.torchtitan.utils.iteration_metrics import (
+    parse_iteration_metrics,
     sample_loss_curve,
-    evaluate_loss_decreasing,
+    sample_training_curves,
 )
+from cvs.lib.training.torchtitan.utils.loss_curve import evaluate_loss_decreasing
 from cvs.lib.training.torchtitan.utils.loss_curve_plot import render_loss_curve_png
 from cvs.lib.training.torchtitan.utils.scaling import compute_scaling_efficiency
 from cvs.lib.utils.verdict import _check_one, ThresholdViolation
@@ -63,36 +64,6 @@ _SMOKE_MBS = "1"
 _SMOKE_GBS = "8"
 _SMOKE_ITERS = "10"
 _SMOKE_PRECISION = "BF16"
-
-
-def pytest_generate_tests(metafunc):
-    """Parametrize per-sweep tests for both suites from sweep.runs.
-
-    Tests that take sweep_name get one row per combination key listed in
-    sweep.runs (must exist in sweep.combinations). No cartesian product.
-    The pytest ID is the combination key so it matches the threshold cell.
-    """
-    if "sweep_name" not in metafunc.fixturenames:
-        return
-    names = []
-    combinations = {}
-    config_file = metafunc.config.getoption("config_file")
-    if config_file and os.path.isfile(config_file):
-        with open(config_file) as fp:
-            raw = json.load(fp)
-
-        sweep = raw.get("sweep") or {}
-        combinations = sweep.get("combinations") or {}
-        runs = sweep.get("runs", list(combinations.keys()))
-        for run_id in runs:
-            if run_id not in combinations:
-                log.warning("sweep.runs entry %s not found in sweep.combinations; skipping", run_id)
-                continue
-            names.append(run_id)
-    if not names and not combinations:
-        names = ["default"]
-    if names:
-        metafunc.parametrize("sweep_name", names, ids=names)
 
 
 def test_launch_container(orch, variant_config, lifecycle, request):
@@ -214,6 +185,7 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
       - resume_losses[last_ckpt_step+1] <= save_losses[last_ckpt_step] + tol (no loss spike).
 
     Skipped if checkpoint.enforce=false.
+    MBS, GBS, and precision come from the ``smoke`` block (same as test_smoke).
     """
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
@@ -222,186 +194,193 @@ def test_checkpoint(orch, variant_config, hf_token, lifecycle, request):
     if not ckpt_cfg.enforce:
         pytest.skip("checkpoint.enforce=false in config; skipping test_checkpoint")
 
-    # Checkpoint directory must be volume-mounted into the container
-    log_dir = variant_config.config.get("log_dir")
-    if not log_dir:
-        pytest.fail("config.log_dir is required for checkpoint tests (must be user-scoped and volume-mounted)")
-    ckpt_dir = ckpt_cfg.checkpoint_dir if ckpt_cfg.checkpoint_dir else f"{log_dir}/ckpt_torchtitan"
-    orch.exec(f"mkdir -p {ckpt_dir}")
+    started = time.monotonic()
+    try:
+        smoke = variant_config.smoke
+        mbs = smoke.micro_batch_size or _SMOKE_MBS
+        gbs = smoke.global_batch_size.strip() or _SMOKE_GBS
+        precision = smoke.precision or _SMOKE_PRECISION
 
-    def _run(run_label, iters, checkpoint_dir=None, save_interval=None, load_checkpoint=False):
-        job = _make_training_job(
+        # Checkpoint directory must be volume-mounted into the container
+        log_dir = variant_config.config.get("log_dir")
+        if not log_dir:
+            pytest.fail("config.log_dir is required for checkpoint tests (must be user-scoped and volume-mounted)")
+        ckpt_dir = ckpt_cfg.checkpoint_dir if ckpt_cfg.checkpoint_dir else f"{log_dir}/ckpt_torchtitan"
+        orch.exec(f"mkdir -p {ckpt_dir}")
+
+        def _run(run_label, iters, checkpoint_dir=None, save_interval=None, load_checkpoint=False):
+            job = _make_training_job(
+                orch,
+                variant_config,
+                hf_token=hf_token,
+                micro_batch_size=mbs,
+                global_batch_size=gbs,
+                precision=precision,
+                distributed_training=False,
+                tune_model_params=False,
+                run_label=run_label,
+            )
+            job.iterations = iters
+            job.local_tokenizer_path = getattr(lifecycle, "tokenizer_path", None)
+            if checkpoint_dir:
+                job.checkpoint_dir = checkpoint_dir
+                # Only set save_interval if not loading (resume phase should load only, not save)
+                if save_interval is not None and not load_checkpoint:
+                    job.save_interval = save_interval
+            job.load_checkpoint = load_checkpoint
+            try:
+                job.build_training_job_cmd()
+                job.start_training_job()
+                job.poll_for_training_completion()
+            finally:
+                job.stop_training_processes()
+            return job._read_last_node_log()
+
+        # Phase 1: save — train save_iters steps, writing checkpoint every save_interval steps
+        try:
+            save_log = _run(
+                "ckpt_save",
+                ckpt_cfg.save_iters,
+                checkpoint_dir=ckpt_dir,
+                save_interval=ckpt_cfg.save_interval,
+            )
+        except Exception:
+            raise
+
+        # Verify checkpoint was written
+        # TorchTitan checkpoint format: {checkpoint_dir}/step-{N}/
+        last_ckpt_step = (ckpt_cfg.save_iters // ckpt_cfg.save_interval) * ckpt_cfg.save_interval
+        ckpt_step_dir = f"{ckpt_dir}/step-{last_ckpt_step}"
+        check = orch.exec(f"test -d {ckpt_step_dir} && echo FOUND || echo MISSING")
+        head_node = orch.hosts[0]
+        if "MISSING" in (check or {}).get(head_node, "MISSING"):
+            ls_out = orch.exec(f"ls -laR {ckpt_dir} 2>&1 || echo DIR_EMPTY")
+            log.error("checkpoint listing:\n%s", (ls_out or {}).get(head_node, ""))
+            pytest.fail(
+                f"checkpoint not written after save phase; expected: {ckpt_step_dir}\n"
+                f"Check that log_dir ({log_dir}) is volume-mounted into the container."
+            )
+
+        expected_first = last_ckpt_step + 1
+
+        # Phase 2: load — resume from last checkpoint, train to resume_iters total
+        try:
+            resume_log = _run(
+                "ckpt_resume",
+                ckpt_cfg.resume_iters,
+                checkpoint_dir=ckpt_dir,
+                load_checkpoint=True,
+            )
+        except Exception:
+            raise
+
+        # Parse losses from both phases
+        tt_obj = _make_training_job(
             orch,
             variant_config,
             hf_token=hf_token,
-            micro_batch_size=_SMOKE_MBS,
-            global_batch_size=_SMOKE_GBS,
-            precision=_SMOKE_PRECISION,
+            micro_batch_size=mbs,
+            global_batch_size=gbs,
+            precision=precision,
             distributed_training=False,
             tune_model_params=False,
-            run_label=run_label,
+            run_label="checkpoint_parser",
         )
-        job.iterations = iters
-        job.local_tokenizer_path = getattr(lifecycle, "tokenizer_path", None)
-        if checkpoint_dir:
-            job.checkpoint_dir = checkpoint_dir
-            # Only set save_interval if not loading (resume phase should load only, not save)
-            if save_interval is not None and not load_checkpoint:
-                job.save_interval = save_interval
-        job.load_checkpoint = load_checkpoint
-        try:
-            job.build_training_job_cmd()
-            job.start_training_job()
-            job.poll_for_training_completion()
-        finally:
-            job.stop_training_processes()
-        return job._read_last_node_log()
+        save_losses = tt_obj._parse_step_losses(save_log)
+        resume_losses = tt_obj._parse_step_losses(resume_log)
 
-    # Phase 1: save — train save_iters steps, writing checkpoint every save_interval steps
-    try:
-        save_log = _run(
-            "ckpt_save",
-            ckpt_cfg.save_iters,
-            checkpoint_dir=ckpt_dir,
-            save_interval=ckpt_cfg.save_interval,
+        log.info("checkpoint save steps  : %s", sorted(save_losses))
+        log.info("checkpoint resume steps: %s", sorted(resume_losses))
+
+        # Checkpoint I/O timing — save & load (seconds)
+        save_io_times, _ = parse_checkpoint_io_seconds(save_log)
+        _, load_io_seconds = parse_checkpoint_io_seconds(resume_log)
+        log_checkpoint_io_times(save_io_times, load_io_seconds)
+
+        # Check 1: step counter restored — first logged step of resume == last_ckpt_step + 1
+        if not resume_losses:
+            pytest.fail("load phase produced no iteration logs; cannot verify step counter")
+
+        first_step = min(resume_losses)
+        log.info(
+            "CHECK 1 — step counter: last saved step in checkpoint=%d, first step in load phase=%d",
+            last_ckpt_step,
+            first_step,
         )
-    except Exception:
-        raise
-
-    # Verify checkpoint was written
-    # TorchTitan checkpoint format: {checkpoint_dir}/step-{N}/
-    last_ckpt_step = (ckpt_cfg.save_iters // ckpt_cfg.save_interval) * ckpt_cfg.save_interval
-    ckpt_step_dir = f"{ckpt_dir}/step-{last_ckpt_step}"
-    check = orch.exec(f"test -d {ckpt_step_dir} && echo FOUND || echo MISSING")
-    head_node = orch.hosts[0]
-    if "MISSING" in (check or {}).get(head_node, "MISSING"):
-        ls_out = orch.exec(f"ls -laR {ckpt_dir} 2>&1 || echo DIR_EMPTY")
-        log.error("checkpoint listing:\n%s", (ls_out or {}).get(head_node, ""))
-        pytest.fail(
-            f"checkpoint not written after save phase; expected: {ckpt_step_dir}\n"
-            f"Check that log_dir ({log_dir}) is volume-mounted into the container."
+        if first_step != expected_first:
+            pytest.fail(
+                f"FAILED step counter check: last saved checkpoint step={last_ckpt_step}, "
+                f"expected load to start at step {expected_first}, got {first_step}"
+            )
+        log.info(
+            "CHECK 1 PASSED — step counter correctly restored: last checkpoint step=%d, load phase started at step=%d",
+            last_ckpt_step,
+            first_step,
         )
 
-    expected_first = last_ckpt_step + 1
+        # Check 2: loss continuity — save loss at last_ckpt_step ≈ resume loss at first_step
+        save_val = save_losses.get(last_ckpt_step)
+        resume_val = resume_losses.get(first_step)
+        if save_val is None or resume_val is None:
+            pytest.fail(
+                f"Cannot compare losses: "
+                f"save step {last_ckpt_step} loss={save_val}, "
+                f"resume step {first_step} loss={resume_val}"
+            )
 
-    # Phase 2: load — resume from last checkpoint, train to resume_iters total
-    try:
-        resume_log = _run(
-            "ckpt_resume",
-            ckpt_cfg.resume_iters,
-            checkpoint_dir=ckpt_dir,
-            load_checkpoint=True,
+        tol = ckpt_cfg.loss_rtol * max(abs(save_val), 1e-9)
+        increase = resume_val - save_val
+        log.info(
+            "CHECK 2 — loss boundary: "
+            "loss at checkpoint step %d (save)=%.6f, "
+            "loss at step %d (load)=%.6f, increase=%.6f, allowed_increase=%.6f",
+            last_ckpt_step,
+            save_val,
+            first_step,
+            resume_val,
+            increase,
+            tol,
         )
-    except Exception:
-        raise
-
-    # Parse losses from both phases
-    tt_obj = _make_training_job(
-        orch,
-        variant_config,
-        hf_token=hf_token,
-        micro_batch_size=_SMOKE_MBS,
-        global_batch_size=_SMOKE_GBS,
-        precision=_SMOKE_PRECISION,
-        distributed_training=False,
-        tune_model_params=False,
-        run_label="checkpoint_parser",
-    )
-    save_losses = tt_obj._parse_step_losses(save_log)
-    resume_losses = tt_obj._parse_step_losses(resume_log)
-
-    log.info("checkpoint save steps  : %s", sorted(save_losses))
-    log.info("checkpoint resume steps: %s", sorted(resume_losses))
-
-    # Checkpoint I/O timing — save & load (seconds)
-    save_io_times, _ = parse_checkpoint_io_seconds(save_log)
-    _, load_io_seconds = parse_checkpoint_io_seconds(resume_log)
-    log_checkpoint_io_times(save_io_times, load_io_seconds)
-
-    # Check 1: step counter restored — first logged step of resume == last_ckpt_step + 1
-    if not resume_losses:
-        pytest.fail("load phase produced no iteration logs; cannot verify step counter")
-
-    first_step = min(resume_losses)
-    log.info(
-        "CHECK 1 — step counter: last saved step in checkpoint=%d, first step in load phase=%d",
-        last_ckpt_step,
-        first_step,
-    )
-    if first_step != expected_first:
-        pytest.fail(
-            f"FAILED step counter check: last saved checkpoint step={last_ckpt_step}, "
-            f"expected load to start at step {expected_first}, got {first_step}"
-        )
-    log.info(
-        "CHECK 1 PASSED — step counter correctly restored: last checkpoint step=%d, load phase started at step=%d",
-        last_ckpt_step,
-        first_step,
-    )
-
-    # Check 2: loss continuity — save loss at last_ckpt_step ≈ resume loss at first_step
-    save_val = save_losses.get(last_ckpt_step)
-    resume_val = resume_losses.get(first_step)
-    if save_val is None or resume_val is None:
-        pytest.fail(
-            f"Cannot compare losses: "
-            f"save step {last_ckpt_step} loss={save_val}, "
-            f"resume step {first_step} loss={resume_val}"
+        if increase > tol:
+            pytest.fail(
+                f"FAILED loss boundary check: "
+                f"loss increased from save step {last_ckpt_step}={save_val:.6f} "
+                f"to load step {first_step}={resume_val:.6f} "
+                f"(increase={increase:.6f} exceeds tolerance {tol:.6f} [{ckpt_cfg.loss_rtol * 100:.0f}%])"
+            )
+        log.info(
+            "CHECK 2 PASSED — loss did not increase beyond tolerance across checkpoint boundary: "
+            "save step %d loss=%.6f, load step %d loss=%.6f, increase=%.6f within tol=%.6f",
+            last_ckpt_step,
+            save_val,
+            first_step,
+            resume_val,
+            increase,
+            tol,
         )
 
-    tol = ckpt_cfg.loss_rtol * max(abs(save_val), 1e-9)
-    increase = resume_val - save_val
-    log.info(
-        "CHECK 2 — loss boundary: "
-        "loss at checkpoint step %d (save)=%.6f, "
-        "loss at step %d (load)=%.6f, increase=%.6f, allowed_increase=%.6f",
-        last_ckpt_step,
-        save_val,
-        first_step,
-        resume_val,
-        increase,
-        tol,
-    )
-    if increase > tol:
-        pytest.fail(
-            f"FAILED loss boundary check: "
-            f"loss increased from save step {last_ckpt_step}={save_val:.6f} "
-            f"to load step {first_step}={resume_val:.6f} "
-            f"(increase={increase:.6f} exceeds tolerance {tol:.6f} [{ckpt_cfg.loss_rtol * 100:.0f}%])"
+        avg_save_io = sum(e for _, e in save_io_times) / len(save_io_times) if save_io_times else None
+        log.info(
+            "test_checkpoint PASSED | "
+            "last_ckpt_step=%d first_resume_step=%d "
+            "save_loss=%.6f resume_loss=%.6f increase=%.6f | "
+            "save_io_avg=%s load_io=%s",
+            last_ckpt_step,
+            first_step,
+            save_val,
+            resume_val,
+            increase,
+            f"{avg_save_io:.2f}s" if avg_save_io is not None else "n/a",
+            f"{load_io_seconds:.2f}s" if load_io_seconds is not None else "n/a",
         )
-    log.info(
-        "CHECK 2 PASSED — loss did not increase beyond tolerance across checkpoint boundary: "
-        "save step %d loss=%.6f, load step %d loss=%.6f, increase=%.6f within tol=%.6f",
-        last_ckpt_step,
-        save_val,
-        first_step,
-        resume_val,
-        increase,
-        tol,
-    )
+        update_test_result()
 
-    avg_save_io = sum(e for _, e in save_io_times) / len(save_io_times) if save_io_times else None
-    log.info(
-        "test_checkpoint PASSED | "
-        "last_ckpt_step=%d first_resume_step=%d "
-        "save_loss=%.6f resume_loss=%.6f increase=%.6f | "
-        "save_io_avg=%s load_io=%s",
-        last_ckpt_step,
-        first_step,
-        save_val,
-        resume_val,
-        increase,
-        f"{avg_save_io:.2f}s" if avg_save_io is not None else "n/a",
-        f"{load_io_seconds:.2f}s" if load_io_seconds is not None else "n/a",
-    )
-    update_test_result()
-
-    if not request.node.session.testsfailed:
-        import shlex
-
-        orch.exec(f"rm -rf {shlex.quote(ckpt_dir)}")
-    else:
-        log.info("checkpoint dir retained for debugging: %s", ckpt_dir)
+        if not request.node.session.testsfailed:
+            orch.exec(f"rm -rf {shlex.quote(ckpt_dir)}")
+        else:
+            log.info("checkpoint dir retained for debugging: %s", ckpt_dir)
+    finally:
+        lifecycle.record(request.node.nodeid, "checkpoint", time.monotonic() - started)
 
 
 def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, lifecycle, request):
@@ -440,7 +419,7 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
         tt_obj.verify_training_results()
         elapsed = time.monotonic() - t
     except Exception:
-        lifecycle.failed = True
+        train_res_dict[sweep_name] = None
         raise
     finally:
         tt_obj.stop_training_processes()
@@ -451,11 +430,12 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
 
     train_res_dict[sweep_name] = tt_obj.training_results_dict
     train_res_dict[sweep_name]["_combo_log_dir"] = tt_obj.combo_log_dir
+    train_res_dict[sweep_name]["_world_size"] = tt_obj.world_size
 
-    tput_per_gpu = train_res_dict[sweep_name].get("throughput_per_gpu", [])
-    if tput_per_gpu:
-        gpus_per_node = 8
-        tokens_per_sec_total = float(tput_per_gpu[-1]) * int(tt_obj.nnodes) * gpus_per_node
+    # tps is tokens/s/device. Cluster total is that times the launched world size.
+    tps_per_device = train_res_dict[sweep_name].get("tokens_per_sec", [])
+    if tps_per_device:
+        tokens_per_sec_total = float(tps_per_device[-1]) * int(tt_obj.world_size)
         baseline = variant_config.scaling_baseline
         efficiency = compute_scaling_efficiency(
             tokens_per_sec_total,
@@ -494,54 +474,68 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
 
 def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
     """Stage 4 (parametrized): compare each combo's metrics against thresholds."""
+    if lifecycle.failed:
+        pytest.skip("a prior lifecycle stage failed")
     if not train_res_dict.get(sweep_name):
-        pytest.skip(f"no recorded results for combo '{sweep_name}' (training did not run)")
+        pytest.skip(f"no recorded results for combo '{sweep_name}' (training did not run or failed)")
 
-    if not variant_config.enforce_thresholds:
-        log.info("enforce_thresholds=false; skipping verdict for combo '%s'", sweep_name)
-        return
-
-    cell = variant_config.cell_key(sweep_name)
-    thresholds = variant_config.thresholds.get(cell)
-    if not thresholds:
-        log.warning("no thresholds defined for cell '%s'; skipping threshold checks", cell)
-        return
-
+    t = time.monotonic()
     actuals_raw = train_res_dict[sweep_name]
     request.node.user_properties.append(("training_log_tail", actuals_raw.get("_log_tail", "")))
     actuals = {f"training.{k}": float(v[-1]) for k, v in actuals_raw.items() if v and not k.startswith("_")}
 
-    log.info("--- Threshold check for combo '%s' ---", sweep_name)
-    violations = []
-    for metric, spec in thresholds.items():
-        if metric not in actuals:
-            msg = f"{metric}: missing from actuals"
-            log.error("  FAILED  %s", msg)
-            violations.append(msg)
-            continue
-        if actuals[metric] is None:
-            msg = f"{metric}: value is None (metric unavailable for this run)"
-            log.error("  FAILED  %s", msg)
-            violations.append(msg)
-            continue
-        spec_with_actuals = dict(spec)
-        if spec.get("kind") == "min_ratio":
-            spec_with_actuals["_actuals"] = actuals
-        v = _check_one(metric, actuals[metric], spec_with_actuals)
-        if v:
-            log.error("  FAILED  %s", v)
-            violations.append(v)
-        else:
-            log.info("  PASSED  %s: actual=%s  threshold=%s", metric, actuals[metric], spec)
+    try:
+        if not variant_config.enforce_thresholds:
+            log.info("enforce_thresholds=false; record-only for combo '%s'", sweep_name)
+            for metric, value in actuals.items():
+                log.info("  RECORD  %s: actual=%s", metric, value)
+            return
 
-    if violations:
-        summary = "FAILED\n" + "\n".join(violations)
-        log.error("--- %d violation(s) for combo '%s' ---", len(violations), sweep_name)
-        request.node.user_properties.append(("threshold_comparison", summary))
-        raise ThresholdViolation(violations)
+        cell = variant_config.cell_key(sweep_name)
+        thresholds = variant_config.thresholds.get(cell)
+        if not thresholds:
+            log.warning("no thresholds defined for cell '%s'; skipping threshold checks", cell)
+            return
 
-    log.info("--- All threshold checks PASSED for combo '%s' ---", sweep_name)
-    request.node.user_properties.append(("threshold_comparison", "PASSED"))
+        log.info("--- Threshold check for combo '%s' ---", sweep_name)
+        violations = []
+        for metric, spec in thresholds.items():
+            if metric not in actuals:
+                if spec.get("optional"):
+                    log.info("  SKIPPED  %s: missing from actuals", metric)
+                    continue
+                msg = f"{metric}: missing from actuals"
+                log.error("  FAILED  %s", msg)
+                violations.append(msg)
+                continue
+            if actuals[metric] is None:
+                if spec.get("optional"):
+                    log.info("  SKIPPED  %s: value is None (metric unavailable for this run)", metric)
+                    continue
+                msg = f"{metric}: value is None (metric unavailable for this run)"
+                log.error("  FAILED  %s", msg)
+                violations.append(msg)
+                continue
+            spec_with_actuals = dict(spec)
+            if spec.get("kind") == "min_ratio":
+                spec_with_actuals["_actuals"] = actuals
+            v = _check_one(metric, actuals[metric], spec_with_actuals)
+            if v:
+                log.error("  FAILED  %s", v)
+                violations.append(v)
+            else:
+                log.info("  PASSED  %s: actual=%s  threshold=%s", metric, actuals[metric], spec)
+
+        if violations:
+            summary = "FAILED\n" + "\n".join(violations)
+            log.error("--- %d violation(s) for combo '%s' ---", len(violations), sweep_name)
+            request.node.user_properties.append(("threshold_comparison", summary))
+            raise ThresholdViolation(violations)
+
+        log.info("--- All threshold checks PASSED for combo '%s' ---", sweep_name)
+        request.node.user_properties.append(("threshold_comparison", "PASSED"))
+    finally:
+        lifecycle.record(request.node.nodeid, "metrics", time.monotonic() - t)
 
 
 def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle, request):
@@ -550,7 +544,7 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
         pytest.skip("a prior lifecycle stage failed")
 
     if not train_res_dict.get(sweep_name):
-        pytest.skip(f"no recorded results for combo '{sweep_name}' (training did not run)")
+        pytest.skip(f"no recorded results for combo '{sweep_name}' (training did not run or failed)")
 
     combo_log_dir = train_res_dict[sweep_name].get("_combo_log_dir")
     if not combo_log_dir:
@@ -562,8 +556,17 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
     log_text = list(out_dict.values())[-1] or ""
 
     lc = variant_config.loss_curve
-    step_metrics = parse_all_loss_points(log_text)
+    combo = variant_config.sweep.combinations[sweep_name]
+    seq = variant_config.train_params.get("sequence_length")
+    world_size = train_res_dict[sweep_name].get("_world_size")
+    step_metrics = parse_iteration_metrics(
+        log_text,
+        seq_length=seq,
+        global_batch_size=combo.global_batch_size,
+        world_size=world_size,
+    )
     points = sample_loss_curve(step_metrics, lc.sample_every, lc.milestone_steps)
+    train_res_dict[sweep_name].update(sample_training_curves(step_metrics, lc.sample_every, lc.milestone_steps))
 
     log.info("--- Loss curve check for combo '%s' (%d points sampled) ---", sweep_name, len(points))
 
