@@ -1,7 +1,12 @@
 """Unit tests for Primus auto_setup preflight helper."""
 
 import os
+import shlex
+import stat
+import subprocess
 import sys
+import tempfile
+import textwrap
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
@@ -12,7 +17,10 @@ from cvs.lib.preflight.primus_setup import (
     build_primus_venv_install_command,
     build_wait_for_shared_primus_command,
     parse_setup_output,
+    rocm_major_minor_from_index_url,
     _resolve_setting_from_sections,
+    _torch_hip_check_script,
+    _torch_hip_match_shell,
     _venv_root_from_activate,
 )
 from cvs.lib.preflight.node_smoke import (
@@ -123,6 +131,56 @@ class TestPrimusSetupCommands(unittest.TestCase):
         self.assertNotIn("pip install -e .", cmd)
         self.assertIn("runner/primus-cli", cmd)
         self.assertIn("import torch", cmd)
+        self.assertNotIn('if ! python -c "import torch"', cmd)
+
+    def test_minimal_install_replaces_importable_incompatible_torch(self):
+        index = "https://download.pytorch.org/whl/rocm7.2"
+        activate = "/home/user/envs/preflight/.venv/bin/activate"
+        cmd = build_primus_venv_install_command(
+            primus_dir="/home/user/Primus",
+            venv_activate=activate,
+            pip_install_mode="minimal",
+            torch_pip_index_url=index,
+        )
+        self.assertEqual(rocm_major_minor_from_index_url(index), "7.2")
+        self.assertIn(shlex.quote(_torch_hip_check_script("7.2")), cmd)
+        self.assertIn("pip uninstall -y torch", cmd)
+        self.assertLess(cmd.index("if !"), cmd.index("pip uninstall -y torch"))
+        self.assertNotIn('if ! python -c "import torch"', cmd)
+        subprocess.run(["bash", "-n", "-c", cmd], check=True)
+
+    def test_index_without_rocm_token_always_reinstalls(self):
+        cmd = build_primus_venv_install_command(
+            primus_dir="/home/user/Primus",
+            venv_activate="/home/user/envs/preflight/.venv/bin/activate",
+            pip_install_mode="minimal",
+            torch_pip_index_url="https://example.invalid/simple",
+        )
+        self.assertIn("pip uninstall -y torch", cmd)
+        self.assertNotIn("if !", cmd)
+        self.assertNotIn("torch.version", cmd)
+
+    def test_skip_mode_does_not_reinstall_torch(self):
+        cmd = build_primus_venv_install_command(
+            primus_dir="/home/user/Primus",
+            venv_activate="/home/user/envs/preflight/.venv/bin/activate",
+            pip_install_mode="skip",
+            torch_pip_index_url="https://download.pytorch.org/whl/rocm7.2",
+        )
+        self.assertNotIn("pip uninstall", cmd)
+        self.assertNotIn("pip install torch", cmd)
+
+    def test_wait_requires_matching_hip_when_index_encodes_rocm(self):
+        cmd = build_wait_for_shared_primus_command(
+            primus_dir="/home/user/Primus",
+            venv_activate="/home/user/envs/preflight/.venv/bin/activate",
+            max_wait=60,
+            torch_pip_index_url="https://download.pytorch.org/whl/rocm7.2",
+        )
+        self.assertIn(shlex.quote(_torch_hip_check_script("7.2")), cmd)
+        self.assertNotIn('python -c "import torch"', cmd)
+        self.assertNotIn("bash -c", cmd)
+        subprocess.run(["bash", "-n", "-c", cmd], check=True)
 
     def test_pathspec_error_is_git_not_pip(self):
         parsed = parse_setup_output(
@@ -138,6 +196,77 @@ class TestPrimusSetupCommands(unittest.TestCase):
         )
         self.assertEqual(parsed["status"], "FAIL")
         self.assertIn("pip", parsed["errors"][0])
+
+
+class TestTorchHipCheckScript(unittest.TestCase):
+    def _run(self, hip=None, *, block_torch=False):
+        script = _torch_hip_check_script("7.2")
+        if block_torch:
+            prelude = (
+                "import builtins\n"
+                "_real = builtins.__import__\n"
+                "def _block(name, *args, **kwargs):\n"
+                "    if name == 'torch' or name.startswith('torch.'):\n"
+                "        raise ModuleNotFoundError(name)\n"
+                "    return _real(name, *args, **kwargs)\n"
+                "builtins.__import__ = _block\n"
+            )
+        else:
+            prelude = (
+                "import sys, types\n"
+                "mod = types.ModuleType('torch')\n"
+                f"mod.version = types.SimpleNamespace(hip={hip!r})\n"
+                "sys.modules['torch'] = mod\n"
+            )
+        proc = subprocess.run(
+            [sys.executable, "-c", prelude + script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return proc.returncode
+
+    def test_importable_rocm64_wheel_does_not_match_rocm72_index(self):
+        self.assertNotEqual(self._run("6.4.43484-aaa"), 0)
+
+    def test_matching_hip_major_minor_is_accepted(self):
+        self.assertEqual(self._run("7.2.25424"), 0)
+
+    def test_cpu_or_cuda_wheel_with_no_hip_is_replaced(self):
+        self.assertNotEqual(self._run(None), 0)
+
+    def test_missing_torch_fails_the_check(self):
+        self.assertNotEqual(self._run(block_torch=True), 0)
+
+    def test_shell_check_rejects_importable_incompatible_wheel(self):
+        self.assertNotEqual(self._shell_check("6.4.43484-aaa"), 0)
+        self.assertEqual(self._shell_check("7.2.25424"), 0)
+        self.assertNotEqual(self._shell_check(None), 0)
+
+    def _shell_check(self, hip):
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = os.path.join(tmp, "bin")
+            os.makedirs(bindir)
+            python_path = os.path.join(bindir, "python")
+            with open(python_path, "w", encoding="utf-8") as handle:
+                handle.write(
+                    textwrap.dedent(
+                        f"""\
+                        #!{sys.executable}
+                        import sys
+                        import types
+                        mod = types.ModuleType("torch")
+                        mod.version = types.SimpleNamespace(hip={hip!r})
+                        sys.modules["torch"] = mod
+                        if len(sys.argv) > 2 and sys.argv[1] == "-c":
+                            exec(sys.argv[2])
+                        """
+                    )
+                )
+            os.chmod(python_path, os.stat(python_path).st_mode | stat.S_IEXEC)
+            cmd = _torch_hip_match_shell(shlex.quote(python_path), "7.2")
+            proc = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=False)
+        return proc.returncode
 
 
 class TestParseSetupOutput(unittest.TestCase):
@@ -164,6 +293,18 @@ class TestParseSetupOutput(unittest.TestCase):
     def test_clean_output_passes_with_marker(self):
         parsed = parse_setup_output("Successfully installed torch\nCVS_PRIMUS_SETUP_OK\n")
         self.assertEqual(parsed["status"], "PASS")
+
+    def test_pip_dependency_warning_with_marker_passes(self):
+        parsed = parse_setup_output(
+            "Successfully installed torch-2.14.1+rocm7.2\n"
+            "ERROR: pip's dependency resolver does not currently take into account all the packages "
+            "that are installed. This behaviour is the source of the following dependency conflicts.\n"
+            "torchvision 0.24.1+rocm6.4 requires torch==2.9.1, but you have torch 2.14.1+rocm7.2 "
+            "which is incompatible.\n"
+            "CVS_PRIMUS_SETUP_OK\n"
+        )
+        self.assertEqual(parsed["status"], "PASS")
+        self.assertEqual(parsed["errors"], [])
 
     def test_output_without_marker_fails(self):
         parsed = parse_setup_output("Successfully installed torch\n")

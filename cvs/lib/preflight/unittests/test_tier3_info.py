@@ -100,6 +100,26 @@ class TestResolveTier3Setting(unittest.TestCase):
         self.assertEqual(setup.venv_activate, "/home/user/envs/preflight/.venv/bin/activate")
         self.assertIsNone(setup._validate())
 
+    def test_torch_index_inherits_from_node_smoke(self):
+        cfg = {
+            "tier3_info": {"auto_setup": True, "primus_dir": "", "venv_activate": ""},
+            "node_smoke": {
+                "primus_dir": "/home/user/INSTALL/Primus",
+                "venv_activate": "/home/user/envs/preflight/.venv/bin/activate",
+                "torch_pip_index_url": "https://download.pytorch.org/whl/rocm7.2",
+                "pip_install_mode": "minimal",
+            },
+        }
+        setup = PrimusSetup(
+            None,
+            ["node0"],
+            cfg,
+            config_section=NODE_SMOKE_TIER3_SECTION,
+            setting_resolver=resolve_tier3_setting,
+        )
+        self.assertEqual(setup.torch_pip_index_url, "https://download.pytorch.org/whl/rocm7.2")
+        self.assertEqual(setup.pip_install_mode, "minimal")
+
     def test_connectivity_mode_does_not_inherit_node_smoke(self):
         cfg = {
             "node_smoke": {"connectivity_mode": "run", "primus_dir": "/home/user/Primus"},
