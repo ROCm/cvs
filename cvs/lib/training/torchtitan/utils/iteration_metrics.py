@@ -10,7 +10,7 @@ TorchTitan's metrics logger prints one rank-0 line per step, for example:
 
 parse_iteration_metrics — fields from each ``step:`` line
 sample_metric_curve     — downsample a field the same way as the loss sampler
-summarize_step_metrics  — post-warmup means used by the threshold gate
+summarize_step_metrics  — per-step gate values; the threshold check reads the last step
 '''
 
 import math
@@ -53,8 +53,14 @@ CURVE_STORE_KEYS = (
     ('learning_rate', '_learning_rate_curve'),
     ('tps', '_tps_curve'),
     ('tflops', '_tflops_curve'),
-    ('memory_gib', '_memory_curve'),
-    ('mfu', '_mfu_curve'),
+)
+
+# The deck has six fixed step panels; anything else goes through extra_curves,
+# where the tag is both the panel title and the y-axis label.
+EXTRA_CURVE_TAGS = (
+    ('memory_gib', 'memory (GiB)'),
+    ('mfu', 'MFU (%)'),
+    ('elapsed_ms', 'step time (ms)'),
 )
 
 
@@ -157,13 +163,16 @@ def _warmup_cutoff(rows, warmup_frac=None):
     return int(last * frac)
 
 
-def sample_metric_curve(rows, value_key, sample_every=10, milestone_steps=None, warmup_frac=None):
-    """Downsample ``value_key`` after dropping the warmup prefix.
+def sample_metric_curve(rows, value_key, sample_every=10, milestone_steps=None, warmup_frac=None, cutoff=None):
+    """Downsample ``value_key`` after dropping steps at or below ``cutoff``.
 
-    Keeps a point when its step is a multiple of ``sample_every``, is one of
-    the milestone steps, or is the first or last step that remains after warmup.
+    ``cutoff`` skips a repeat of ``_warmup_cutoff`` when the caller already
+    computed it. Otherwise the cutoff is the first ``warmup_frac`` of the run.
+    A point is kept when its step is a multiple of ``sample_every``, is one of
+    the milestone steps, or is the first or last step that remains.
     """
-    cutoff = _warmup_cutoff(rows, warmup_frac)
+    if cutoff is None:
+        cutoff = _warmup_cutoff(rows, warmup_frac)
     milestones = set(milestone_steps or [])
     every = sample_every if sample_every and sample_every > 0 else 1
     keyed = [
@@ -189,16 +198,48 @@ def parse_all_loss_points(log_text):
 
 
 def sample_loss_curve(step_metrics, sample_every=10, milestone_steps=None):
-    return sample_metric_curve(step_metrics, 'loss', sample_every, milestone_steps)
+    """Downsample loss for the slope gate, including warmup steps.
+
+    ``evaluate_loss_decreasing`` fits these points. Dropping the first 10%
+    would change pass/fail for a spike that only happens during compile.
+    The Run Deck viewer trims warmup on the stored curves, not here.
+    """
+    return sample_metric_curve(step_metrics, 'loss', sample_every, milestone_steps, warmup_frac=0)
+
+
+def planned_step_count(rows):
+    """Planned iteration count, else the last observed step."""
+    planned = [int(row['total']) for row in (rows or []) if row.get('total')]
+    if planned:
+        return max(planned)
+    observed = [int(row['step']) for row in (rows or []) if row.get('step') is not None]
+    return max(observed) if observed else 0
 
 
 def sample_training_curves(rows, sample_every=10, milestone_steps=None):
-    """Sample loss / PPL / grad_norm / tps / tflops / memory into ``_``-prefixed lists."""
+    """Sample curves into ``_``-prefixed lists, including the warmup prefix.
+
+    The viewer drops a percentage of the run. ``_planned_steps`` is that denominator.
+    Loss / PPL / grad_norm / LR / tps / tflops use the deck's fixed panels.
+    Memory, MFU, and per-step time go under ``_extra_curves`` keyed by panel tag.
+    The slope gate uses ``sample_loss_curve``, which also keeps warmup.
+    """
     out = {}
+    cutoff = _warmup_cutoff(rows, 0)
     for value_key, store_key in CURVE_STORE_KEYS:
-        points = sample_metric_curve(rows, value_key, sample_every, milestone_steps)
+        points = sample_metric_curve(rows, value_key, sample_every, milestone_steps, cutoff=cutoff)
         if points:
             out[store_key] = [[step, val] for step, val in points]
+    extra = {}
+    for value_key, tag in EXTRA_CURVE_TAGS:
+        points = sample_metric_curve(rows, value_key, sample_every, milestone_steps, cutoff=cutoff)
+        if points:
+            extra[tag] = [[step, val] for step, val in points]
+    if extra:
+        out['_extra_curves'] = extra
+    planned = planned_step_count(rows)
+    if planned:
+        out['_planned_steps'] = planned
     return out
 
 
@@ -239,21 +280,21 @@ def derive_step_time_stats(rows, warmup_frac=None):
     }
 
 
-def summarize_step_metrics(rows, warmup_frac=None):
-    """Post-warmup mean of each gate metric, as a one-element string list.
+def summarize_step_metrics(rows):
+    """Per-step gate values in log order.
 
-    The threshold check reads ``values[-1]``. A single mean avoids treating the
-    last (often still-noisy) step as the run result. Metrics with no samples
-    are omitted so an optional threshold can skip them.
+    ``test_metric`` reads ``values[-1]``. That entry is the last logged step,
+    same as the older whole-log regex. A post-warmup mean would move tokens/s,
+    loss, TFLOP/s, and memory pass/fail. Metrics with no samples are omitted
+    so an optional threshold can skip them.
     """
-    cutoff = _warmup_cutoff(rows, warmup_frac)
     out = {}
     for dest, src in _SUMMARY_FIELDS:
         values = [
             float(row[src])
             for row in (rows or [])
-            if row.get('step') is not None and row['step'] > cutoff and isinstance(row.get(src), (int, float))
+            if row.get('step') is not None and isinstance(row.get(src), (int, float))
         ]
         if values:
-            out[dest] = [str(sum(values) / len(values))]
+            out[dest] = [str(value) for value in values]
     return out

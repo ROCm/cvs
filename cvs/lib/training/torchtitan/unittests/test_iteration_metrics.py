@@ -6,10 +6,13 @@ import unittest
 from cvs.lib.training.torchtitan.utils.iteration_metrics import (
     derive_step_time_stats,
     parse_iteration_metrics,
+    planned_step_count,
+    sample_loss_curve,
     sample_metric_curve,
     sample_training_curves,
     summarize_step_metrics,
 )
+from cvs.lib.training.torchtitan.utils.loss_curve import sample_loss_curve as gate_sample_loss_curve
 from cvs.lib.training.torchtitan.utils.torchtitan_metrics import METRIC_UNITS, tier_metric_specs
 
 STEP = (
@@ -96,6 +99,11 @@ class TestSampleAndSummarize(unittest.TestCase):
         self.assertIn(5, steps)
         self.assertEqual(steps[-1], 20)
 
+    def test_given_cutoff_overrides_warmup_frac(self):
+        rows = [{'step': i, 'total': 20, 'loss': float(i)} for i in range(1, 21)]
+        pts = sample_metric_curve(rows, 'loss', sample_every=1, warmup_frac=0, cutoff=5)
+        self.assertEqual([step for step, _ in pts][0], 6)
+
     def test_sample_training_curves(self):
         rows = parse_iteration_metrics(_log(4))
         stored = sample_training_curves(rows, sample_every=1)
@@ -103,17 +111,50 @@ class TestSampleAndSummarize(unittest.TestCase):
         self.assertIn('_perplexity_curve', stored)
         self.assertIn('_tps_curve', stored)
         self.assertIn('_tflops_curve', stored)
-        self.assertIn('_mfu_curve', stored)
+        self.assertNotIn('_memory_curve', stored)
+        self.assertNotIn('_mfu_curve', stored)
+        extra = stored['_extra_curves']
+        self.assertEqual(extra['memory (GiB)'][-1], [4, 44.0])
+        self.assertEqual(extra['MFU (%)'][-1], [4, 20.0])
+        self.assertNotIn('step time (ms)', extra)
+        self.assertEqual(stored['_planned_steps'], 4)
+        self.assertEqual(stored['_loss_curve'][0][0], 1)
+        self.assertEqual(extra['memory (GiB)'][0][0], 1)
 
-    def test_summarize_skips_warmup(self):
+    def test_stored_curves_keep_warmup_steps_for_the_viewer(self):
+        rows = [{'step': i, 'total': 20, 'loss': float(i)} for i in range(1, 21)]
+        stored = sample_training_curves(rows, sample_every=1)
+        self.assertEqual(stored['_planned_steps'], 20)
+        self.assertEqual(stored['_loss_curve'][0], [1, 1.0])
+        self.assertEqual(planned_step_count(rows), 20)
+        self.assertEqual(planned_step_count([]), 0)
+        gated = [step for step, _ in sample_loss_curve(rows, sample_every=1)]
+        self.assertEqual(gated[0], 1)
+        self.assertEqual(gated[-1], 20)
+        self.assertEqual(gate_sample_loss_curve(rows, sample_every=1)[0][0], 1)
+
+    def test_step_time_curve_from_tps(self):
+        rows = parse_iteration_metrics(_log(4), seq_length=8192, global_batch_size=48, world_size=8)
+        extra = sample_training_curves(rows, sample_every=1)['_extra_curves']
+        step, elapsed = extra['step time (ms)'][-1]
+        self.assertEqual(step, 4)
+        self.assertAlmostEqual(elapsed, 48 * 8192 / 8 / 4000 * 1000.0)
+
+    def test_no_extra_curves_when_fields_absent(self):
+        rows = parse_iteration_metrics('step: 1  loss: 2.0\nstep: 2  loss: 1.5\n')
+        self.assertNotIn('_extra_curves', sample_training_curves(rows, sample_every=1))
+
+    def test_summarize_gates_on_the_last_step(self):
         rows = parse_iteration_metrics(_log(10, loss0=10.0))
         summary = summarize_step_metrics(rows)
-        # steps 2..10, loss = 10 - 0.1*step
-        expected_loss = sum(10.0 - 0.1 * step for step in range(2, 11)) / 9
-        self.assertAlmostEqual(float(summary['loss'][0]), expected_loss)
-        self.assertAlmostEqual(float(summary['tokens_per_sec'][0]), sum(1000 * step for step in range(2, 11)) / 9)
-        self.assertIn('mem_usage_gb', summary)
-        self.assertIn('tflops', summary)
+        # loss = 10 - 0.1*step. The gate reads the last entry, not a mean.
+        self.assertEqual(len(summary['loss']), 10)
+        self.assertAlmostEqual(float(summary['loss'][-1]), 9.0)
+        self.assertAlmostEqual(float(summary['tokens_per_sec'][-1]), 10000.0)
+        self.assertAlmostEqual(float(summary['mem_usage_gb'][-1]), 50.0)
+        self.assertAlmostEqual(float(summary['tflops'][-1]), 110.0)
+        mean_loss = sum(10.0 - 0.1 * step for step in range(2, 11)) / 9
+        self.assertNotAlmostEqual(float(summary['loss'][-1]), mean_loss)
 
     def test_step_time_percentiles(self):
         rows = [{'step': i, 'total': 20, 'elapsed_ms': float(i)} for i in range(1, 21)]

@@ -22,7 +22,7 @@ class TestTorchTitanRunCard(unittest.TestCase):
         )
         rows = torchtitan_run_card_display(variant, {"pytest_html_href": "report.html"})
         by_label = {label: (value, is_link) for label, value, is_link in rows}
-        self.assertEqual(by_label["Model"][0], "llama3_1_8b")
+        self.assertEqual(by_label["Model"][0], "meta-llama/Llama-3.1-8B")
         self.assertEqual(by_label["GPU"][0], "MI355X")
         self.assertEqual(by_label["Framework"][0], "TorchTitan")
         self.assertEqual(by_label["Seq"][0], "8192")
@@ -43,6 +43,34 @@ class TestTorchTitanRunCard(unittest.TestCase):
         self.assertEqual(by_label["Model"], "meta-llama/Llama-3.1-8B")
         self.assertEqual(by_label["Framework"], "Primus")
         self.assertEqual(by_label["Thresholds"], "record-only")
+
+    def test_model_name_when_tokenizer_missing(self):
+        variant = SimpleNamespace(
+            gpu_arch="MI355X",
+            enforce_thresholds=False,
+            train_params={"model_name": "llama3_1_8b"},
+            container=SimpleNamespace(image="rocm/torchtitan:latest", env={}),
+        )
+        rows = torchtitan_run_card_display(variant, {})
+        by_label = {label: value for label, value, _is_link in rows}
+        self.assertEqual(by_label["Model"], "llama3_1_8b")
+
+    def test_parallelism_keys_match_results_table_order(self):
+        variant = SimpleNamespace(
+            gpu_arch="MI355X",
+            enforce_thresholds=False,
+            train_params={
+                "tensor_parallelism": "4",
+                "tensor_parallel_degree": "2",
+                "pipeline_parallelism": "2",
+                "pipeline_parallel_degree": "1",
+            },
+            container=SimpleNamespace(image="rocm/torchtitan:latest", env={}),
+        )
+        rows = torchtitan_run_card_display(variant, {})
+        by_label = {label: value for label, value, _is_link in rows}
+        self.assertEqual(by_label["TP"], "4")
+        self.assertEqual(by_label["PP"], "2")
 
 
 if __name__ == "__main__":

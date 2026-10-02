@@ -37,13 +37,13 @@ def _train_param(variant, *keys, default="—"):
 
 def torchtitan_run_card_display(variant, provenance):
     rows = [
-        ("Model", _train_param(variant, "model_name", "tokenizer_model"), False),
+        ("Model", _train_param(variant, "tokenizer_model", "model_name"), False),
         ("GPU", str(getattr(variant, "gpu_arch", None) or getattr(variant, "gpu_name", None) or "—"), False),
         ("Framework", _framework_label(variant), False),
         ("Image", _image_name(variant), False),
         ("Seq", _train_param(variant, "sequence_length", "seq_length"), False),
-        ("TP", _train_param(variant, "tensor_parallel_degree", "tensor_parallelism", default="1"), False),
-        ("PP", _train_param(variant, "pipeline_parallel_degree", "pipeline_parallelism", default="1"), False),
+        ("TP", _train_param(variant, "tensor_parallelism", "tensor_parallel_degree", default="1"), False),
+        ("PP", _train_param(variant, "pipeline_parallelism", "pipeline_parallel_degree", default="1"), False),
         thresholds_run_card_row(variant),
     ]
     rows.extend(provenance_link_rows(provenance or {}))
