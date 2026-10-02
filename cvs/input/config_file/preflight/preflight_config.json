@@ -125,7 +125,7 @@
       "_setup_comment": "Primus clone/venv setup runs automatically when auto_setup is true (default). Manual equivalent:",
       "_setup_step_1": "git clone --recurse-submodules https://github.com/AMD-AIG-AIMA/Primus.git /home/{user-id}/INSTALL/Primus",
       "_setup_step_2": "cd /home/{user-id}/INSTALL/Primus && git checkout dev/preflight-direct-test",
-      "_setup_step_3": "python3 -m venv /home/{user-id}/envs/preflight/.venv && pip install torch --index-url https://download.pytorch.org/whl/rocm6.2",
+      "_setup_step_3": "python3 -m venv /home/{user-id}/envs/preflight/.venv && pip install torch --index-url https://download.pytorch.org/whl/rocm7.2",
       "_setup_note": "Paths use {user-id} resolved at runtime. Set auto_setup to false to skip automatic install.",
 
       "auto_setup": true,
@@ -143,8 +143,8 @@
       "pip_install_mode": "minimal",
       "_comment_pip_install_mode": "Venv deps after clone: 'minimal' (torch only), 'requirements' (pip install -r requirements.txt), or 'skip' (venv only).",
 
-      "torch_pip_index_url": "https://download.pytorch.org/whl/rocm6.2",
-      "_comment_torch_pip_index_url": "PyTorch wheel index for minimal install. Match your ROCm version (e.g. rocm6.2, rocm7.1).",
+      "torch_pip_index_url": "https://download.pytorch.org/whl/rocm7.2",
+      "_comment_torch_pip_index_url": "PyTorch wheel index for minimal install. Match your ROCm version (e.g. rocm7.2).",
 
       "primus_git_url": "https://github.com/AMD-AIG-AIMA/Primus.git",
       "_comment_primus_git_url": "Primus repository URL for one-time clone.",
