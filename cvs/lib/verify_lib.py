@@ -135,6 +135,16 @@ def _parse_cvs_time(time_str):
     )
 
 
+def _is_unclassified_warning(event):
+    """Return True for a node-scraper event it could not classify and rated below ERROR.
+
+    node-scraper reports every kernel err/crit/alert/emerg line that matches none
+    of its patterns as an UNKNOWN-category WARNING ("Unknown dmesg error"). Such
+    lines (e.g. kube-proxy IPVS messages) are not evidence of a node fault.
+    """
+    return event.get('category') == 'UNKNOWN' and event.get('priority') in ('INFO', 'WARNING')
+
+
 def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
     """Scan per-node log text with node-scraper and report each detected error.
 
@@ -146,12 +156,18 @@ def _node_scraper_scan(output_dict, analysis_args=None, source_label='Dmesg'):
 
     Returns:
         {node: [matched lines]}; calls fail_test for each detected error.
+        Unclassified warnings (see _is_unclassified_warning) are logged as
+        warnings and left out of the result.
     """
     err_dict = {}
     for node in output_dict.keys():
         err_dict[node] = []
         events = node_scraper_adapter.parse_dmesg(output_dict[node], node_name=node, analysis_args=analysis_args)
-        for line in node_scraper_adapter.event_match_lines(events):
+        warn_events = [event for event in events if _is_unclassified_warning(event)]
+        fail_events = [event for event in events if not _is_unclassified_warning(event)]
+        for line in node_scraper_adapter.event_match_lines(warn_events):
+            log.warning(f'WARN - Unclassified kernel error *** {line} *** seen in {source_label} on node {node}')
+        for line in node_scraper_adapter.event_match_lines(fail_events):
             msg = f'ERROR - Failure pattern *** {line} *** seen in {source_label} on node {node}'
             fail_test(msg)
             err_dict[node].append(line)

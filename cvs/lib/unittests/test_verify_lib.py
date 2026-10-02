@@ -161,6 +161,87 @@ class TestFullDmesgScan(unittest.TestCase):
         mock_fail_test.assert_called()
 
 
+class TestNodeScraperUnclassifiedGate(unittest.TestCase):
+    UNKNOWN_EVENT = {
+        "priority": "WARNING",
+        "category": "UNKNOWN",
+        "description": "Unknown dmesg error",
+        "match_content": "IPVS: rr: TCP 192.0.2.10:8989 - no destination available",
+    }
+    RAS_EVENT = {
+        "priority": "ERROR",
+        "category": "RAS",
+        "description": "GPU Reset",
+        "match_content": "amdgpu: GPU reset begin!",
+    }
+
+    def tearDown(self):
+        os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
+
+    @patch("cvs.lib.verify_lib.log")
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    def test_unknown_warning_is_logged_not_failed(self, mock_parse, mock_fail, mock_log):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        mock_parse.return_value = [self.UNKNOWN_EVENT]
+        phdl = MagicMock()
+        phdl.exec.return_value = {"node1": "raw"}
+
+        result = verify_lib.verify_dmesg_for_errors(
+            phdl, {"node1": "Mon Jun  5 08:00:00"}, {"node1": "Mon Jun  5 09:00:00"}, till_end_flag=False
+        )
+
+        self.assertEqual(result, {"node1": []})
+        mock_fail.assert_not_called()
+        mock_log.warning.assert_called_once()
+        self.assertIn("IPVS", mock_log.warning.call_args[0][0])
+
+    @patch("cvs.lib.verify_lib.log")
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    def test_classified_error_still_fails_alongside_unknown(self, mock_parse, mock_fail, mock_log):
+        mock_parse.return_value = [self.UNKNOWN_EVENT, self.RAS_EVENT]
+
+        result = verify_lib._node_scraper_scan({"node1": "raw"})
+
+        self.assertEqual(result, {"node1": ["GPU Reset: amdgpu: GPU reset begin!"]})
+        mock_fail.assert_called_once()
+        self.assertIn("GPU reset begin", mock_fail.call_args[0][0])
+
+    @patch("cvs.lib.verify_lib.log")
+    @patch("cvs.lib.verify_lib.fail_test")
+    @patch.object(verify_lib.node_scraper_adapter, "parse_dmesg")
+    def test_unknown_category_at_error_priority_still_fails(self, mock_parse, mock_fail, mock_log):
+        mock_parse.return_value = [dict(self.UNKNOWN_EVENT, priority="ERROR")]
+
+        result = verify_lib._node_scraper_scan({"node1": "raw"})
+
+        self.assertEqual(len(result["node1"]), 1)
+        mock_fail.assert_called_once()
+        mock_log.warning.assert_not_called()
+
+    @patch("cvs.lib.verify_lib.log")
+    @patch("cvs.lib.verify_lib.fail_test")
+    def test_real_analyzer_fails_gpu_reset_but_not_ipvs(self, mock_fail, mock_log):
+        os.environ[verify_lib.DMESG_PARSER_ENV] = "node-scraper"
+        phdl = MagicMock()
+        phdl.exec.return_value = {
+            "node1": (
+                "kern  :err   : 2026-09-28T19:27:21,000000+00:00 IPVS: rr: TCP 192.0.2.10:8989 - no destination available\n"
+                "kern  :err   : 2026-09-28T19:27:22,000000+00:00 amdgpu 0000:05:00.0: amdgpu: GPU reset begin!\n"
+            )
+        }
+
+        result = verify_lib.full_dmesg_scan(phdl)
+
+        self.assertTrue(result["node1"])
+        self.assertFalse(any("IPVS" in line for line in result["node1"]))
+        self.assertTrue(any("GPU reset begin" in line for line in result["node1"]))
+        self.assertTrue(mock_fail.called)
+        self.assertFalse(any("IPVS" in c[0][0] for c in mock_fail.call_args_list))
+        self.assertTrue(any("IPVS" in c[0][0] for c in mock_log.warning.call_args_list))
+
+
 class TestDmesgMigrations(unittest.TestCase):
     def tearDown(self):
         os.environ.pop(verify_lib.DMESG_PARSER_ENV, None)
