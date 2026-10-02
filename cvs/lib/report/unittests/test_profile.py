@@ -15,6 +15,100 @@ class TestProfile(unittest.TestCase):
         Draft202012Validator.check_schema(schema)
         Draft202012Validator(schema).validate(load_json_profile("rccl"))
 
+    def test_status_matrix_health_cards_validate_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        profile = {
+            "schema_version": 1,
+            "profile_id": "health_example",
+            "suite_id": "health_example",
+            "report_basename": "health_example_run_deck",
+            "title": "Health Run Deck",
+            "dataset_builder": "status_matrix",
+            "interactive_viewer": True,
+            "sources": {"results": "cvs_results_dict"},
+            "cards": [
+                {
+                    "type": "run_card",
+                    "id": "run-card",
+                    "title": "Run card",
+                    "bind": "datasets.status_matrix.run_card_display",
+                },
+                {
+                    "type": "status_overview",
+                    "id": "overview",
+                    "title": "Health overview",
+                    "bind": "datasets.status_matrix.overview",
+                },
+                {
+                    "type": "metric_charts",
+                    "id": "metrics",
+                    "title": "Metrics",
+                    "bind": "datasets.status_matrix.metric_charts",
+                    "when_empty": "hide",
+                },
+                {
+                    "type": "status_matrix",
+                    "id": "results",
+                    "title": "Full results",
+                    "bind": "datasets.status_matrix",
+                    "hint": "Click a cell's items to expand that node Ã— group.",
+                },
+            ],
+        }
+        Draft202012Validator(schema).validate(profile)
+
+    def test_transferbench_profile_validates_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        profile = load_json_profile("transferbench_cvs")
+        Draft202012Validator(schema).validate(profile)
+        self.assertEqual(profile["dataset_builder"], "status_matrix")
+        self.assertEqual(profile["sources"]["results"], "transferbench_res_dict")
+        self.assertTrue(profile["interactive_viewer"])
+        self.assertEqual(
+            [card["type"] for card in profile["cards"]],
+            ["run_card", "lifecycle_timeline", "status_overview", "metric_charts", "status_matrix"],
+        )
+        self.assertEqual(profile["cards"][3]["when_empty"], "hide")
+        self.assertTrue(profile["cards"][4]["hint"])
+
+    def test_health_profiles_extend_shared_card_stack(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        base = load_json_profile("health_status_base")
+        Draft202012Validator(schema).validate(base)
+        self.assertEqual(
+            [card["id"] for card in base["cards"]],
+            ["run-card", "lifecycle", "overview", "metrics", "results"],
+        )
+
+        rvs_raw = json.loads(profile_json_path("rvs_cvs").read_text(encoding="utf-8"))
+        transferbench_raw = json.loads(profile_json_path("transferbench_cvs").read_text(encoding="utf-8"))
+        self.assertEqual(rvs_raw["extends"], "health_status_base")
+        self.assertEqual(rvs_raw["cards"], [{"id": "results", "hint": rvs_raw["cards"][0]["hint"]}])
+        self.assertEqual(transferbench_raw["extends"], "health_status_base")
+        self.assertEqual([card["id"] for card in transferbench_raw["cards"]], ["metrics", "results"])
+
+        rvs = load_json_profile("rvs_cvs")
+        transferbench = load_json_profile("transferbench_cvs")
+        self.assertEqual(
+            [card["id"] for card in rvs["cards"]],
+            ["run-card", "lifecycle", "overview", "metrics", "results"],
+        )
+        self.assertEqual(
+            [card["id"] for card in transferbench["cards"]],
+            ["run-card", "lifecycle", "overview", "metrics", "results"],
+        )
+        self.assertEqual(rvs["lifecycle"]["session_labels"][0], "gpu_enumeration")
+        self.assertEqual(transferbench["lifecycle"]["session_labels"][0], "a2a")
+        self.assertEqual(transferbench["cards"][3]["title"], "Bandwidth highlights")
+        self.assertEqual(rvs["cards"][3]["title"], "Measurements")
+
+    def test_rvs_profile_validates_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        profile = load_json_profile("rvs_cvs")
+        Draft202012Validator(schema).validate(profile)
+        self.assertEqual(profile["dataset_builder"], "status_matrix")
+        self.assertEqual(profile["sources"]["results"], "rvs_res_dict")
+
     def test_default_sources_for_legacy_preset(self):
         cfg = make_inference_report_config(
             suite_id="demo",

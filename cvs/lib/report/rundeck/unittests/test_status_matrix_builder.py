@@ -78,7 +78,23 @@ class TestStatusMatrixBuilder(unittest.TestCase):
         self.assertEqual(out["counts"], {"pass": 3, "fail": 1, "na": 2})
         labels = {r[0]: r[1] for r in out["run_card_display"]}
         self.assertEqual(labels["Cluster"], "c1")
+        self.assertEqual(labels["ANC version"], "1.4.9")
         self.assertEqual(labels["Groups"], "3")
+
+    def test_version_label_comes_from_meta(self):
+        results = {
+            "_meta": {
+                "cluster": "c1",
+                "version": "1.3.0",
+                "version_label": "RVS version",
+                "suite": "rvs_cvs",
+            },
+            "groups": {"mem": {"nodes": {"n1": {"status": "pass", "items": []}}}},
+        }
+        out = build_status_matrix_datasets(_sources(results), {})
+        labels = {r[0]: r[1] for r in out["run_card_display"]}
+        self.assertEqual(labels["RVS version"], "1.3.0")
+        self.assertNotIn("ANC version", labels)
 
     def test_empty_results_yield_empty_grid(self):
         out = build_status_matrix_datasets(_sources({}), {})
@@ -90,6 +106,118 @@ class TestStatusMatrixBuilder(unittest.TestCase):
         results = {"groups": {"g": {"nodes": {"n1": {"status": "weird", "items": []}}}}}
         out = build_status_matrix_datasets(_sources(results), {})
         self.assertEqual(out["grid"]["n1"]["g"]["status"], "na")
+
+    def test_verdict_only_cells_have_empty_performance_fields(self):
+        out = build_status_matrix_datasets(_sources(_RESULTS), {})
+        cell = out["grid"]["n1"]["cpu_sanity"]
+        self.assertEqual(cell["metrics"], [])
+        self.assertEqual(cell["series"], [])
+        self.assertEqual(cell["heatmaps"], [])
+        self.assertEqual(out["metric_charts"], {"metrics": [], "series": [], "heatmaps": []})
+
+    def test_overview_pass_rate_excludes_na(self):
+        out = build_status_matrix_datasets(_sources(_RESULTS), {})
+        overview = out["overview"]
+        self.assertEqual(overview["counts"], {"pass": 3, "fail": 1, "na": 2})
+        self.assertEqual(overview["evaluated"], 4)
+        self.assertEqual(overview["total"], 6)
+        self.assertAlmostEqual(overview["pass_rate"], 0.75)
+        self.assertEqual(overview["failures_by_node"][0]["node"], "n2")
+        self.assertEqual(overview["failures_by_node"][0]["fail"], 1)
+        self.assertEqual(overview["failures_by_group"][0]["group"], "hbm_lvl3")
+
+    def test_empty_results_overview_and_charts(self):
+        out = build_status_matrix_datasets(_sources({}), {})
+        overview = out["overview"]
+        self.assertIsNone(overview["pass_rate"])
+        self.assertEqual(overview["evaluated"], 0)
+        self.assertEqual(overview["total"], 0)
+        self.assertEqual(overview["failures_by_node"], [])
+        self.assertEqual(overview["failures_by_group"], [])
+        self.assertEqual(out["metric_charts"]["metrics"], [])
+
+    def test_metrics_series_and_heatmaps_roll_up(self):
+        results = {
+            "groups": {
+                "a2a": {
+                    "nodes": {
+                        "n1": {
+                            "status": "pass",
+                            "metrics": [
+                                {
+                                    "name": "rtotal",
+                                    "value": 412.5,
+                                    "unit": "GB/s",
+                                    "threshold": 400,
+                                    "direction": "higher",
+                                    "status": "pass",
+                                },
+                                {"name": "skipped", "value": "nope"},
+                            ],
+                            "series": [
+                                {"name": "power", "unit": "W", "points": [["GPU0", 10], {"x": "GPU1", "y": 12}]}
+                            ],
+                            "heatmaps": [
+                                {
+                                    "name": "xgmi",
+                                    "rows": ["GPU0", "GPU1"],
+                                    "cols": ["GPU0", "GPU1"],
+                                    "values": [[None, "48.2"], [47.1, None]],
+                                    "threshold": 40,
+                                    "direction": "higher",
+                                    "unit": "GB/s",
+                                }
+                            ],
+                        },
+                        "n2": {
+                            "status": "fail",
+                            "metrics": [{"name": "rtotal", "value": "390", "status": "fail", "group": "a2a"}],
+                        },
+                    }
+                }
+            }
+        }
+        out = build_status_matrix_datasets(_sources(results), {})
+        cell = out["grid"]["n1"]["a2a"]
+        self.assertEqual(len(cell["metrics"]), 1)
+        self.assertEqual(cell["metrics"][0]["group"], "a2a")
+        self.assertEqual(cell["series"][0]["points"], [{"x": "GPU0", "y": 10.0}, {"x": "GPU1", "y": 12.0}])
+        self.assertIsNone(cell["heatmaps"][0]["values"][0][0])
+        self.assertEqual(cell["heatmaps"][0]["values"][0][1], 48.2)
+        charts = out["metric_charts"]
+        self.assertEqual(len(charts["metrics"]), 1)
+        metric = charts["metrics"][0]
+        self.assertEqual(metric["name"], "rtotal")
+        self.assertEqual(metric["threshold"], 400.0)
+        self.assertEqual(metric["direction"], "higher")
+        self.assertEqual([point["node"] for point in metric["points"]], ["n1", "n2"])
+        self.assertEqual(metric["points"][1]["value"], 390.0)
+        self.assertEqual(metric["points"][1]["status"], "fail")
+        self.assertEqual(charts["series"][0]["node"], "n1")
+        self.assertNotIn("node", cell["series"][0])
+        self.assertEqual(charts["heatmaps"][0]["node"], "n1")
+
+    def test_malformed_performance_entries_are_dropped(self):
+        results = {
+            "groups": {
+                "g": {
+                    "nodes": {
+                        "n1": {
+                            "status": "pass",
+                            "metrics": "nope",
+                            "series": [{"name": "s", "points": []}, {"points": [[1, 2]]}],
+                            "heatmaps": [{"name": "h", "rows": ["a"], "cols": ["b", "c"], "values": [[1]]}],
+                        }
+                    }
+                }
+            }
+        }
+        out = build_status_matrix_datasets(_sources(results), {})
+        cell = out["grid"]["n1"]["g"]
+        self.assertEqual(cell["metrics"], [])
+        self.assertEqual(cell["series"], [])
+        self.assertEqual(cell["heatmaps"], [])
+        self.assertEqual(out["overall_status"], "pass")
 
 
 if __name__ == "__main__":

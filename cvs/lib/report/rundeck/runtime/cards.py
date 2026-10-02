@@ -14,6 +14,7 @@ from cvs.lib.report.formatting import fmt_num, link_or_text_html
 from cvs.lib.report.inference_payload import sweep_has_multi_shape_comparison
 from cvs.lib.report.render.cell_card import CellCardConfig, CellCardRenderer
 from cvs.lib.report.render.gate_matrix import GateMatrixRenderer
+from cvs.lib.report.render.loss_chart import SERIES_COLORS
 from cvs.lib.report.render.panel_shell import render_results_table_html
 from cvs.lib.report.rundeck.context import is_empty, resolve_bind
 from cvs.lib.report.rundeck.runtime.sweep_charts import SweepChartRenderer
@@ -22,12 +23,122 @@ from cvs.lib.report.types import DEFAULT_SESSION_LIFECYCLE_LABELS
 
 SESSION_FALLBACK = DEFAULT_SESSION_LIFECYCLE_LABELS
 
+_DEFAULT_STATUS_HINT_HTML = (
+    "Click a cell's <strong>items</strong> to expand that node × group's item breakdown and artifact links."
+)
+
+
+def _suppressed_when_empty(card, data):
+    if card.get("when_empty") != "hide":
+        return False
+    if is_empty(data):
+        return True
+    if str(card.get("type")) != "metric_charts" or not isinstance(data, dict):
+        return False
+    return not any(data.get(key) for key in ("metrics", "series", "heatmaps"))
+
+
+def _fmt_pass_rate(rate):
+    if rate is None:
+        return "\u2014"
+    pct = 100.0 * float(rate)
+    rounded = round(pct, 1)
+    if abs(rounded - round(rounded)) < 0.05:
+        return f"{int(round(rounded))}%"
+    return f"{rounded:.1f}%"
+
+
+def _threshold_note(metric, threshold):
+    if threshold is None:
+        return ""
+    direction = str(metric.get("direction") or "")
+    sense = {"higher": "higher is better", "lower": "lower is better"}.get(direction, "")
+    note = f"threshold {fmt_num(threshold)}"
+    unit = str(metric.get("unit") or "")
+    if unit:
+        note = f"{note} {unit}"
+    if sense:
+        note = f"{note} · {sense}"
+    return note
+
+
+def _heat_style(value, threshold, direction, lo, hi):
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "hm-na", ""
+    if threshold is not None and direction in ("higher", "lower"):
+        ok = value >= threshold if direction == "higher" else value <= threshold
+        return ("hm-pass" if ok else "hm-fail"), ""
+    span = (hi - lo) or 1.0
+    alpha = 0.15 + 0.6 * ((value - lo) / span)
+    return "hm-scale", f"background:rgba(107,159,255,{alpha:.2f})"
+
+
+def _as_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _metric_points(metric):
+    points = []
+    for point in metric.get("points") or []:
+        if not isinstance(point, dict):
+            continue
+        value = _as_float(point.get("value"))
+        if value is None:
+            continue
+        points.append((point, value))
+    return points
+
+
+def _ordered_nodes(points):
+    nodes = []
+    for point in points:
+        node = str(point.get("node") or "")
+        if node not in nodes:
+            nodes.append(node)
+    return nodes
+
+
+def _shared_prefix(names):
+    """Leading word every name shares ("power GPU2", "power GPU3" -> "power"), else ""."""
+    if len(names) < 2:
+        return ""
+    words = [str(name).split(" ", 1) for name in names]
+    first = words[0][0]
+    if all(len(parts) == 2 and parts[0] == first for parts in words):
+        return first
+    return ""
+
+
+def _worst_point(points, direction):
+    if direction == "lower":
+        return max(points, key=lambda item: item[1])
+    return min(points, key=lambda item: item[1])
+
+
+def _series_points(series):
+    points = []
+    for point in series.get("points") or []:
+        if isinstance(point, dict):
+            x, y = point.get("x"), _as_float(point.get("y"))
+        elif isinstance(point, (list, tuple)) and len(point) >= 2:
+            x, y = point[0], _as_float(point[1])
+        else:
+            continue
+        if y is None:
+            continue
+        points.append((x, y))
+    return points
+
 
 class DeckCardRenderer:
     """Profile-driven card renderers for Run Deck static HTML sections."""
 
     DEFAULT_MAX_LINE_CHART_SERIES = 40
-    _TONES = ("tone1", "tone2", "tone3", "tone4", "tone5", "tone6")
+    MAX_BAR_NODES = 16
+    MAX_SERIES_LINES = 8
 
     def __init__(
         self,
@@ -69,40 +180,34 @@ class DeckCardRenderer:
         return times
 
     @staticmethod
-    def _stage_html(label, sec, pct, tone, per_cell):
+    def _stage_html(label, sec, pct, per_cell):
         head = (
             f"<span class='tl-lbl'>{html.escape(label.replace('_', ' '))}</span><span class='tl-val'>{sec:.1f}s</span>"
         )
         if not per_cell:
-            return f"<div class='tl-seg tl-{tone}' style='flex-grow:{pct:.2f}'>{head}</div>"
+            return f"<div class='tl-seg' style='flex-grow:{pct:.2f}'>{head}</div>"
         cells = "".join(
-            f"<div class='tl-cell tl-{cell_tone}' "
+            f"<div class='tl-cell' "
             f"style='flex-grow:{100.0 * cell_sec / sec:.2f}' title='{html.escape(f'{name}: {cell_sec:.1f}s')}'>"
             f"<span class='tl-lbl'>{html.escape(name)}</span>"
             f"<span class='tl-val'>{cell_sec:.1f}s</span></div>"
-            for name, cell_sec, cell_tone in per_cell
+            for name, cell_sec in per_cell
         )
         return (
-            f"<div class='tl-group tl-{tone}' style='flex-grow:{pct:.2f}'>"
+            f"<div class='tl-group' style='flex-grow:{pct:.2f}'>"
             f"<div class='tl-group-head'>{head}</div>"
             f"<div class='tl-group-body'>{cells}</div></div>"
         )
 
-    @staticmethod
-    def _plain_timeline(lifecycle, labels):
-        """One untoned segment per stage. Inference decks use this path."""
+    def _plain_timeline(self, lifecycle, labels):
+        """One segment per stage, sized against the full lifecycle sum."""
         timeline_total = sum(lifecycle.values()) or 1.0
         parts = []
         for lbl in labels:
             sec = lifecycle.get(lbl, 0.0)
             if sec <= 0:
                 continue
-            pct = 100.0 * sec / timeline_total
-            parts.append(
-                f"<div class='tl-seg' style='flex-grow:{pct:.2f}'>"
-                f"<span class='tl-lbl'>{html.escape(lbl.replace('_', ' '))}</span>"
-                f"<span class='tl-val'>{sec:.1f}s</span></div>"
-            )
+            parts.append(self._stage_html(lbl, sec, 100.0 * sec / timeline_total, ()))
         return "".join(parts) or "<p class='muted'>No lifecycle timings recorded.</p>"
 
     def render_lifecycle(self, payload: dict, _card: dict, data: Any) -> str:
@@ -121,20 +226,12 @@ class DeckCardRenderer:
         }
         timeline_total = sum(totals.values()) or 1.0
         parts = []
-        # Stages and sweep cells share one palette cursor so a cell never repeats the colour
-        # of a stage sitting next to it.
-        tone = 0
         for lbl in labels:
             sec = totals[lbl]
             if sec <= 0:
                 continue
-            stage_tone = self._TONES[tone % len(self._TONES)]
-            tone += 1
-            cells = []
-            for name, cell_sec in per_cell.get(lbl) or []:
-                cells.append((name, cell_sec, self._TONES[tone % len(self._TONES)]))
-                tone += 1
-            parts.append(self._stage_html(lbl, sec, 100.0 * sec / timeline_total, stage_tone, cells))
+            cells = per_cell.get(lbl) or ()
+            parts.append(self._stage_html(lbl, sec, 100.0 * sec / timeline_total, cells))
         return "".join(parts) or "<p class='muted'>No lifecycle timings recorded.</p>"
 
     @staticmethod
@@ -265,11 +362,12 @@ class DeckCardRenderer:
                 cells.append(DeckCardRenderer._status_cell_html(cell))
             body_rows.append(f"<tr>{''.join(cells)}</tr>")
 
+        hint = str(_card.get("hint") or "").strip() if isinstance(_card, dict) else ""
+        hint_html = html.escape(hint) if hint else _DEFAULT_STATUS_HINT_HTML
         return (
             "<div class='results-wrap'><table class='status-matrix'>"
             f"{header}{''.join(body_rows)}</table></div>"
-            "<p class='muted sm-hint'>Click a cell's <strong>items</strong> to expand that "
-            "node × group's ANC item breakdown and artifact links.</p>"
+            f"<p class='muted sm-hint'>{hint_html}</p>"
         )
 
     @staticmethod
@@ -325,6 +423,333 @@ class DeckCardRenderer:
             f"<span class='sm-caret'></span></summary>"
             f"<div class='sm-body'>{summary_line}{item_rows}{links_html}</div>"
             f"</details></td>"
+        )
+
+    @staticmethod
+    def render_status_overview(_payload, _card, data):
+        overview = data if isinstance(data, dict) else {}
+        counts = overview.get("counts") if isinstance(overview.get("counts"), dict) else {}
+        total = sum(int(counts.get(key) or 0) for key in ("pass", "fail", "na"))
+        if total <= 0 and not overview.get("failures_by_node") and not overview.get("failures_by_group"):
+            return "<p class='muted'>No node results recorded.</p>"
+        rate = _fmt_pass_rate(overview.get("pass_rate"))
+        passed = int(counts.get("pass") or 0)
+        failed = int(counts.get("fail") or 0)
+        na_count = int(counts.get("na") or 0)
+        share = max(total, 1)
+        stack = "".join(
+            f"<span class='ov-stack-{key}' style='width:{100.0 * count / share:.1f}%'></span>"
+            for key, count in (("pass", passed), ("fail", failed), ("na", na_count))
+            if count
+        )
+        rate_tone = "summary-stat-fail" if failed else ("summary-stat-pass" if passed else "")
+        summary = (
+            "<div class='summary-grid ov-stats'>"
+            "<div class='summary-card'><h3>Pass rate</h3>"
+            f"<div class='summary-stat {rate_tone}'>{html.escape(rate)}</div>"
+            f"<div class='ov-stack'>{stack}</div>"
+            f"<div class='summary-meta'>{passed} passed · {failed} failed · {na_count} n/a</div>"
+            "</div>"
+            f"<div class='summary-card'><h3>Passed</h3><div class='summary-stat summary-stat-pass'>{passed}</div>"
+            "<div class='summary-meta'>node × group</div></div>"
+            f"<div class='summary-card'><h3>Failed</h3><div class='summary-stat summary-stat-fail'>{failed}</div>"
+            "<div class='summary-meta'>node × group</div></div>"
+            f"<div class='summary-card'><h3>Not evaluated</h3><div class='summary-stat summary-stat-na'>{na_count}</div>"
+            "<div class='summary-meta'>node × group</div></div>"
+            "</div>"
+        )
+        tables = (
+            "<div class='overview-split'>"
+            f"<div>{DeckCardRenderer._failure_table('Node', overview.get('failures_by_node') or [], 'node')}</div>"
+            f"<div>{DeckCardRenderer._failure_table('Group', overview.get('failures_by_group') or [], 'group')}</div>"
+            "</div>"
+        )
+        return summary + tables
+
+    @staticmethod
+    def _failure_table(title, rows, label_key):
+        if not rows:
+            return "<p class='muted'>No results.</p>"
+        max_fail = max(int(row.get("fail") or 0) for row in rows if isinstance(row, dict)) or 1
+        body = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            fail = int(row.get("fail") or 0)
+            width = 100.0 * fail / max_fail if fail else 0
+            body.append(
+                "<tr>"
+                f"<td>{html.escape(str(row.get(label_key, '')))}</td>"
+                f"<td class='ov-fail'>{fail}"
+                f"<span class='fail-track'><span class='fail-fill' style='width:{width:.0f}%'></span></span></td>"
+                f"<td>{int(row.get('pass') or 0)}</td>"
+                f"<td>{int(row.get('na') or 0)}</td>"
+                "</tr>"
+            )
+        head = f"<tr><th>{html.escape(title)}</th><th>Fail</th><th>Pass</th><th>n/a</th></tr>"
+        return f"<table class='overview-table'><thead>{head}</thead><tbody>{''.join(body)}</tbody></table>"
+
+    def render_metric_charts(self, _payload, _card, data):
+        charts = data if isinstance(data, dict) else {}
+        metrics = [item for item in (charts.get("metrics") or []) if isinstance(item, dict)]
+        series = [item for item in (charts.get("series") or []) if isinstance(item, dict)]
+        heatmaps = [item for item in (charts.get("heatmaps") or []) if isinstance(item, dict)]
+        if not metrics and not series and not heatmaps:
+            return "<p class='muted'>No metric data recorded.</p>"
+        groups = {}
+        for metric in metrics:
+            groups.setdefault(str(metric.get("group") or ""), {"metrics": [], "series": []})["metrics"].append(metric)
+        for item in series:
+            groups.setdefault(str(item.get("group") or ""), {"metrics": [], "series": []})["series"].append(item)
+        parts = []
+        for group, members in groups.items():
+            panels = self._metric_group_panels(members["metrics"]) + self._series_group_panels(members["series"])
+            if not panels:
+                continue
+            title = f"<h3 class='chart-group-title'>{html.escape(group)}</h3>" if group else ""
+            parts.append(f"<div class='chart-group'>{title}<div class='chart-grid'>{''.join(panels)}</div></div>")
+        heat_html = "".join(self._heatmap_panel(item) for item in heatmaps)
+        if heat_html:
+            parts.append(
+                "<div class='chart-group'><h3 class='chart-group-title'>Heatmaps</h3>"
+                f"<div class='chart-grid chart-grid-heat'>{heat_html}</div></div>"
+            )
+        return "".join(parts) or "<p class='muted'>No metric data recorded.</p>"
+
+    def _metric_group_panels(self, metrics):
+        # One panel per (unit, threshold, direction) so metrics that share a gate
+        # land on one axis with one threshold line instead of one chart each.
+        charts = {}
+        settings = []
+        for metric in metrics:
+            points = _metric_points(metric)
+            if not points:
+                continue
+            threshold = _as_float(metric.get("threshold"))
+            unit = str(metric.get("unit") or "")
+            if not unit and threshold is None:
+                settings.append((metric, points))
+                continue
+            key = (unit, threshold, str(metric.get("direction") or ""))
+            charts.setdefault(key, []).append((metric, points))
+        panels = [self._clustered_bar_panel(members) for members in charts.values()]
+        if settings:
+            panels.append(self._settings_panel(settings))
+        return [panel for panel in panels if panel]
+
+    def _clustered_bar_panel(self, members):
+        metric0 = members[0][0]
+        unit = str(metric0.get("unit") or "")
+        threshold = _as_float(metric0.get("threshold"))
+        direction = str(metric0.get("direction") or "")
+        nodes = _ordered_nodes(point for _metric, points in members for point, _value in points)
+        rollup = len(nodes) > self.MAX_BAR_NODES
+        columns = []
+        for metric, points in members:
+            if rollup:
+                point, value = _worst_point(points, direction)
+                columns.append((str(metric.get("name") or "metric"), [(point, value, f"worst of {len(points)}")]))
+            else:
+                by_node = {str(point.get("node") or ""): (point, value) for point, value in points}
+                columns.append(
+                    (
+                        str(metric.get("name") or "metric"),
+                        [(*by_node[node], node) for node in nodes if node in by_node],
+                    )
+                )
+        values = [value for _name, bars in columns for _point, value, _label in bars]
+        if threshold is not None:
+            values.append(threshold)
+        domain_min, domain_max, ticks = SweepChartRenderer._display_scale(min(values), max(values))
+
+        def pct(value):
+            return SweepChartRenderer._value_pct(value, domain_min, domain_max)
+
+        y_labels = "".join(
+            f"<span class='chart-ylbl' style='bottom:{pct(tick):.2f}%'>{html.escape(fmt_num(tick))}</span>"
+            for tick in ticks
+        )
+        grid = "".join(f"<span class='chart-hline' style='bottom:{pct(tick):.2f}%'></span>" for tick in ticks)
+        prefix = _shared_prefix([name for name, _bars in columns])
+        if prefix:
+            columns = [(name[len(prefix) + 1 :], bars) for name, bars in columns]
+        cols_html = []
+        x_ticks = []
+        for name, bars in columns:
+            bar_html = []
+            for point, value, label in bars:
+                status = str(point.get("status") or "")
+                bar_class = f"chart-bar-{status}" if status in ("pass", "fail", "na") else "chart-bar-accent2"
+                who = str(point.get("node") or "") if rollup else label
+                full_name = f"{prefix} {name}" if prefix else name
+                tip = html.escape(f"{full_name} · {who}: {fmt_num(value)} {unit} ({status or 'n/a'})".strip())
+                bar_html.append(
+                    f"<div class='chart-bar {bar_class} chart-has-tip' style='height:{pct(value):.1f}%' "
+                    f"data-tip='{tip}' tabindex='0' role='img' aria-label='{tip}'></div>"
+                )
+            cols_html.append(f"<div class='chart-col chart-cluster'>{''.join(bar_html)}</div>")
+            x_ticks.append(f"<span class='chart-xlbl'><span class='chart-xlbl-line'>{html.escape(name)}</span></span>")
+        marker = ""
+        if threshold is not None:
+            marker = f"<span class='chart-threshold' style='bottom:{pct(threshold):.2f}%' title='threshold'></span>"
+        notes = [_threshold_note(metric0, threshold)]
+        if rollup:
+            notes.append(f"worst node per bar across {len(nodes)} nodes")
+        elif len(nodes) > 1:
+            notes.append("bars left→right: " + ", ".join(nodes))
+        note_html = "".join(f"<p class='metric-note'>{html.escape(note)}</p>" for note in notes if note)
+        if len(columns) == 1:
+            title = str(metric0.get("name") or "metric")
+        else:
+            title = prefix or unit or "value"
+        # A few clusters read fine at grid width; only long x-axes need the full row.
+        wide = " chart-panel-wide" if len(columns) > 4 else ""
+        return (
+            f"<div class='chart-panel{wide}'><h3>{html.escape(title)}</h3>{note_html}"
+            f"<div class='chart-viz'><div class='chart-ywrap'><div class='chart-ylabels'>{y_labels}</div></div>"
+            f"<div class='chart-main'><div class='chart-plotbox'><div class='chart-hgrid' aria-hidden='true'>{grid}</div>"
+            f"{marker}<div class='chart-bars'>{''.join(cols_html)}</div></div>"
+            f"<div class='chart-xrow chart-xrow-cluster'>{''.join(x_ticks)}</div></div></div>"
+            f"<div class='chart-unit'>{html.escape(unit)}</div></div>"
+        )
+
+    @staticmethod
+    def _settings_panel(settings):
+        nodes = _ordered_nodes(point for _metric, points in settings for point, _value in points)
+        head = "<tr><th></th>" + "".join(f"<th>{html.escape(node)}</th>" for node in nodes) + "</tr>"
+        body = []
+        for metric, points in settings:
+            by_node = {str(point.get("node") or ""): value for point, value in points}
+            cells = "".join(
+                f"<td>{html.escape(fmt_num(by_node[node]) if node in by_node else '—')}</td>" for node in nodes
+            )
+            body.append(f"<tr><th>{html.escape(str(metric.get('name') or 'metric'))}</th>{cells}</tr>")
+        return (
+            "<div class='chart-panel'><h3>Settings</h3>"
+            f"<table class='overview-table'><thead>{head}</thead><tbody>{''.join(body)}</tbody></table></div>"
+        )
+
+    def _series_group_panels(self, series):
+        merged = {}
+        for item in series:
+            key = (str(item.get("name") or "series"), str(item.get("unit") or ""))
+            merged.setdefault(key, []).append(item)
+        panels = []
+        for (name, unit), items in merged.items():
+            lines = []
+            for item in items:
+                points = _series_points(item)
+                if len(points) >= 2:
+                    lines.append((str(item.get("node") or ""), points))
+            if lines:
+                panels.append(self._multi_series_panel(name, unit, lines, items[0]))
+        return panels
+
+    def _multi_series_panel(self, name, unit, lines, sample):
+        total = len(lines)
+        lines = lines[: self.MAX_SERIES_LINES]
+        x_values = []
+        for _node, points in lines:
+            for x, _y in points:
+                if x not in x_values:
+                    x_values.append(x)
+        ys = [y for _node, points in lines for _x, y in points]
+        domain_min, domain_max, ticks = SweepChartRenderer._display_scale(min(ys), max(ys))
+
+        # A narrow canvas keeps axis text legible when the panel sits in a three-column grid.
+        left, right = 64, 392
+
+        def y_of(value):
+            return 180 - 160 * SweepChartRenderer._value_pct(value, domain_min, domain_max) / 100
+
+        def x_of(x):
+            return left + (right - left) * x_values.index(x) / max(1, len(x_values) - 1)
+
+        x_label = str(sample.get("x_label") or "")
+        svg = []
+        for tick in ticks:
+            y = y_of(tick)
+            svg.append(
+                f"<line x1='{left}' x2='{right}' y1='{y:.2f}' y2='{y:.2f}' stroke='var(--border)'/>"
+                f"<text x='{left - 6}' y='{y:.2f}' text-anchor='end' dominant-baseline='middle'>"
+                f"{html.escape(fmt_num(tick))}</text>"
+            )
+        step = max(1, (len(x_values) + 5) // 6)
+        last = len(x_values) - 1
+        for index, x in enumerate(x_values):
+            ticked = index % step == 0 and (last - index >= step / 2 or index == last)
+            if not ticked and index != last:
+                continue
+            anchor = "end" if index == last and last > 0 else ("start" if index == 0 and last > 0 else "middle")
+            svg.append(f"<text x='{x_of(x):.2f}' y='202' text-anchor='{anchor}'>{html.escape(str(x))}</text>")
+        legend = []
+        for index, (node, points) in enumerate(lines):
+            color = SERIES_COLORS[index % len(SERIES_COLORS)]
+            coords = " ".join(f"{x_of(x):.2f},{y_of(y):.2f}" for x, y in points)
+            svg.append(f"<polyline points='{coords}' fill='none' stroke='{color}' stroke-width='2'/>")
+            for x, y in points:
+                tip = html.escape(f"{node} · {x}: {fmt_num(y)} {unit}".strip())
+                svg.append(
+                    f"<circle cx='{x_of(x):.2f}' cy='{y_of(y):.2f}' r='3' fill='{color}' tabindex='0' "
+                    f"role='img' aria-label='{tip}'><title>{tip}</title></circle>"
+                )
+            legend.append(
+                f"<span class='series-key'><span class='series-swatch' style='background:{color}'></span>"
+                f"{html.escape(node)}</span>"
+            )
+        more = (
+            f"<span class='muted'>+{total - len(lines)} more nodes in the viewer</span>" if total > len(lines) else ""
+        )
+        title = f"{name} by {x_label}" if x_label else name
+        return (
+            f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
+            f"<div class='series-legend'>{''.join(legend)}{more}</div>"
+            f"<svg viewBox='0 0 400 214' role='img' aria-label='{html.escape(title)}' "
+            f"style='width:100%;fill:var(--muted);font-size:11px'>{''.join(svg)}</svg>"
+            f"<div class='chart-unit'>{html.escape(unit)}</div></div>"
+        )
+
+    @staticmethod
+    def _heatmap_panel(heat):
+        rows = heat.get("rows") or []
+        cols = heat.get("cols") or []
+        values = heat.get("values") or []
+        if not rows or not cols:
+            return ""
+        numbers = [
+            value
+            for row in values
+            if isinstance(row, list)
+            for value in row
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        ]
+        lo = min(numbers) if numbers else 0.0
+        hi = max(numbers) if numbers else 1.0
+        threshold = heat.get("threshold")
+        try:
+            threshold = float(threshold) if threshold is not None else None
+        except (TypeError, ValueError):
+            threshold = None
+        direction = str(heat.get("direction") or "")
+        head = "<tr><th></th>" + "".join(f"<th>{html.escape(str(col))}</th>" for col in cols) + "</tr>"
+        body = []
+        for index, row_name in enumerate(rows):
+            row_values = values[index] if index < len(values) and isinstance(values[index], list) else []
+            cells = []
+            for col_index, _col in enumerate(cols):
+                value = row_values[col_index] if col_index < len(row_values) else None
+                css, style = _heat_style(value, threshold, direction, lo, hi)
+                shown = "—" if value is None else fmt_num(value)
+                cells.append(f"<td class='hm-cell {css}' style='{style}'>{html.escape(shown)}</td>")
+            body.append(f"<tr><th>{html.escape(str(row_name))}</th>{''.join(cells)}</tr>")
+        title = str(heat.get("name") or "heatmap")
+        if heat.get("node"):
+            title = f"{title} · {heat['node']}"
+        unit = str(heat.get("unit") or "")
+        unit_html = f"<div class='chart-unit'>{html.escape(unit)}</div>" if unit else ""
+        return (
+            f"<div class='chart-panel'><h3>{html.escape(title)}</h3>"
+            f"<div class='hm-wrap'><table class='hm-table'>{head}{''.join(body)}</table></div>{unit_html}</div>"
         )
 
     @staticmethod
@@ -402,6 +827,8 @@ class DeckCardRenderer:
             "sweep_cell_cards": self.render_cell_cards,
             "table": self.render_table,
             "status_matrix": self.render_status_matrix,
+            "status_overview": self.render_status_overview,
+            "metric_charts": self.render_metric_charts,
             "launch_panel": self.render_launch,
             "line_chart": self.render_line_chart,
             "heatmap": self.render_heatmap,
@@ -416,7 +843,7 @@ class DeckCardRenderer:
 
         bind = card.get("bind") or card_type
         data = resolve_bind(payload, bind) if "." in bind else payload.get(bind)
-        if card.get("when_empty") == "hide" and is_empty(data):
+        if _suppressed_when_empty(card, data):
             return "", "", False
 
         html_body = renderer(payload, card, data)

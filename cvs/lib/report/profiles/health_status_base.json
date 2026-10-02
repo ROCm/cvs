@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "profile_id": "health_status_base",
+  "suite_id": "health_status",
+  "report_basename": "health_status_run_deck",
+  "title": "Health Run Deck",
+  "subtitle": "Health results across the cluster",
+  "footer": "CVS health · render-only · per-node verdict from existing suite checks",
+  "link_name": "Health Run Deck",
+  "dataset_builder": "status_matrix",
+  "interactive_viewer": true,
+  "sources": {
+    "results": "cvs_results_dict",
+    "lifecycle": "lifecycle"
+  },
+  "cards": [
+    {
+      "type": "run_card",
+      "id": "run-card",
+      "title": "Run card",
+      "bind": "datasets.status_matrix.run_card_display"
+    },
+    {
+      "type": "lifecycle_timeline",
+      "id": "lifecycle",
+      "title": "Lifecycle timeline",
+      "bind": "lifecycle"
+    },
+    {
+      "type": "status_overview",
+      "id": "overview",
+      "title": "Health overview",
+      "bind": "datasets.status_matrix.overview"
+    },
+    {
+      "type": "metric_charts",
+      "id": "metrics",
+      "title": "Measurements",
+      "bind": "datasets.status_matrix.metric_charts",
+      "when_empty": "hide"
+    },
+    {
+      "type": "status_matrix",
+      "id": "results",
+      "title": "Full results",
+      "bind": "datasets.status_matrix",
+      "hint": "Open a cell for its captured result details and artifact links."
+    }
+  ]
+}
