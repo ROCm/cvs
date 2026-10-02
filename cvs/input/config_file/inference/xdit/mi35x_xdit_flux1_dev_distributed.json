@@ -1,6 +1,6 @@
 {
     "_comment": "FLUX.1-dev distributed xDiT workload. Replace every <changeme> NCCL/network field before running.",
-    "gpu_name" : "<changeme> mi325",
+    "gpu_name" : "<changeme> mi355",
     "enforce_thresholds": true,
     "threshold_json": "mi325_xdit_flux1_dev_distributed_threshold.json",
     "paths": {
