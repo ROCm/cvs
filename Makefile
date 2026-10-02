@@ -14,8 +14,9 @@ RUFF_PIP = $(RUFF_VENV_DIR)/bin/pip
 RUFF = $(RUFF_VENV_DIR)/bin/ruff
 PYLINT = $(RUFF_VENV_DIR)/bin/pylint
 CVS = $(TEST_VENV_DIR)/bin/cvs
+CLUSTER_MON_DIR = cvs/monitors/cluster-mon
 
-.PHONY: all help hooks sdist build test-venv cvs-venv install installtest ut test \
+.PHONY: all help hooks sdist build test-venv cvs-venv install installtest ut ut-py ut-go test \
         doc-venv html-doc clean_doc_venv gen-anc-suites \
         clean_test_venv clean_cvs_venv clean_sdist clean_pycache clean
 
@@ -30,7 +31,9 @@ help:
 	@echo "  ruff-venv       - Create ruff virtual environment"
 	@echo "  install         - Install from built distribution in .cvs_venv"
 	@echo "  installtest     - Install from built distribution"
-	@echo "  ut              - Execute all Unittests"
+	@echo "  ut              - Execute all Unittests (Python + cluster-mon Go)"
+	@echo "  ut-py           - Execute Python Unittests only"
+	@echo "  ut-go           - Execute cluster-mon Go Unittests (cvs/monitors/cluster-mon)"
 	@echo "  test            - Execute all UTs and cvs cli tests"
 	@echo "  lint            - Run ruff + pylint (logging E1205/E1206 on cvs/)"
 	@echo "  fmt             - Run ruff formatter"
@@ -96,9 +99,14 @@ installtest: test-venv build
 	@echo "Installing from built distribution..."
 	$(PIP) install dist/*.tar.gz -r requirements-test.txt
 
-ut: installtest
+ut-py: installtest
 	@echo "Unit Testing cvs..."
 	$(TEST_VENV_DIR)/bin/python run_all_unittests.py
+
+ut-go:
+	$(MAKE) -C $(CLUSTER_MON_DIR) ut
+
+ut: ut-py ut-go
 
 test: ut
 	@echo "Testing cvs commands..."

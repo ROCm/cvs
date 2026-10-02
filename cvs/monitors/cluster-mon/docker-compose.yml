@@ -37,11 +37,12 @@ services:
     # Port mapping (used with bridge network, default)
     # Comment out if using network_mode: "host"
     ports:
-      - "8005:8001"
+      - "${CLUSTER_MON_PORT:-8005}:8001"
     volumes:
       # Mount config directory for cluster.yaml and nodes.txt
       - ./config:/app/config
-      # SSH keys are uploaded via web UI - no volume mounts needed
+      # Named volume only — never bind-mount host ~/.ssh or the git tree.
+      - cluster_mon_ssh:/root/.ssh
     environment:
       # Polling configuration
       - POLLING__INTERVAL=${POLLING__INTERVAL:-60}
@@ -53,6 +54,9 @@ services:
       # Redis connection (uses Docker service name as hostname)
       - STORAGE__REDIS__URL=redis://redis:6379
       - STORAGE__REDIS__PASSWORD=${REDIS_PASSWORD:-cvs_cluster_mon}
+      # Optional: require Bearer / X-API-Token on /api/ssh-keys and /api/config
+      - CLUSTER_MON_API_TOKEN=${CLUSTER_MON_API_TOKEN:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
     ulimits:
       nofile:
         soft: 65535
@@ -65,7 +69,7 @@ services:
         max-file: "5"
     # Health check disabled - uncomment if needed
     # healthcheck:
-    #   test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8001/health', timeout=5)"]
+    #   test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8001/health"]
     #   interval: 30s
     #   timeout: 10s
     #   retries: 3
@@ -73,3 +77,4 @@ services:
 
 volumes:
   redis_data:
+  cluster_mon_ssh:
