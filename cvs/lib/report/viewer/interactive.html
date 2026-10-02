@@ -62,6 +62,7 @@ h1 { margin: 0 0 0.25rem; font-size: 1.6rem; font-weight: 600; letter-spacing: -
   min-width: 0;
 }
 .toolbar label .filter-label { line-height: 1.2; white-space: nowrap; }
+.filter-note { font-size: 0.68rem; line-height: 1.3; }
 .toolbar label.filter-search,
 .toolbar label.filter-baseline { grid-column: span 2; }
 @media (max-width: 720px) {
@@ -254,7 +255,7 @@ tr.changed td { background: rgba(255,107,53,0.1); }
     </div>
     <label class="filter-field"><span class="filter-label">Tier fail</span><select id="f-tier"><option value="">Any</option></select></label>
     <label class="filter-field filter-search"><span class="filter-label">Search</span><input id="f-search" type="search" placeholder="cell id, host…"/></label>
-    <label class="filter-field filter-baseline"><span class="filter-label">Baseline JSON</span><input id="f-baseline" type="file" accept=".json,application/json"/></label>
+    <label class="filter-field filter-baseline"><span class="filter-label">Baseline JSON</span><input id="f-baseline" type="file" accept=".json,application/json" title="Run Deck JSON from an identical run"/><span class="filter-note">Use the Run Deck JSON from an identical run.</span></label>
     <label class="filter-field filter-delta"><span class="filter-label">Delta %</span><input id="f-delta-threshold" type="number" min="0" step="0.5" value="5"/></label>
     <div class="toolbar-actions">
       <button type="button" id="btn-export">Export CSV</button>
@@ -374,7 +375,7 @@ tr.changed td { background: rgba(255,107,53,0.1); }
       <select id="heatmap-metric" aria-label="Heatmap metric"></select>
     </label>
   </div>
-  <p class="subsection-hint" id="heatmap-hint">Concurrency columns · greener is better for throughput · greener is lower for latency</p>
+  <p class="subsection-hint" id="heatmap-hint">Concurrency columns · stronger blue is better for throughput · stronger blue is lower for latency</p>
   <div style="overflow-x:auto" id="heatmap-wrap"></div>
 </section>
 
@@ -971,7 +972,7 @@ function populateFilters() {
     allOpt.value = '';
     allOpt.textContent = 'All';
     sel.appendChild(allOpt);
-    const uniq = [...new Set(allCells.map(c => String(c[field] ?? '')))].filter(Boolean).sort();
+    const uniq = [...new Set(allCells.map(c => String(c[field] ?? '')))].filter(Boolean).sort(compareSequential);
     uniq.forEach(v => {
       const o = document.createElement('option');
       o.value = v;
@@ -1073,7 +1074,7 @@ function buildOverview() {
 
 const LINE_DASHES = [[], [7, 4], [3, 3], [10, 4, 2, 4]];
 const LINE_POINT_STYLES = ['circle', 'rect', 'triangle', 'rectRot'];
-const CHART_COLORS = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#9aa3b5', '#ff5c6a'];
+const CHART_COLORS = ['#ff6b35', '#6b9fff', '#c77dff', '#3dd68c', '#f0c040', '#ff5c6a'];
 
 function shapeLabel(isl, osl) {
   return shapeLabelFromParts([isl, osl]);
@@ -1986,9 +1987,8 @@ function heatCellStyle(v, minV, maxV, higherBetter) {
   const span = maxV - minV || 1;
   const pct = higherBetter ? (v - minV) / span : 1 - (v - minV) / span;
   const clamped = Math.max(0, Math.min(1, pct));
-  const r = Math.round(255 - clamped * 120);
-  const g = Math.round(80 + clamped * 120);
-  return 'background:rgba(' + r + ',' + g + ',100,0.35)';
+  const alpha = (0.15 + 0.6 * clamped).toFixed(2);
+  return 'background:rgba(107,159,255,' + alpha + ')';
 }
 
 function buildHeatmap(rows) {
@@ -2032,14 +2032,14 @@ function buildHeatmap(rows) {
   const minV = Math.min(...values);
   const maxV = Math.max(...values);
   if (hint) {
-    hint.textContent = meta.label + ' · ' + fieldLabel(concField) + ' columns · greener is '
+    hint.textContent = meta.label + ' · ' + fieldLabel(concField) + ' columns · stronger blue is '
       + (meta.higherBetter ? 'higher' : 'lower') + ' · filtered cells';
   }
   const rowHeader = rowFields.map(f => fieldLabel(f)).join(' / ');
   let html = '<table class="data heat"><thead><tr><th>' + rowHeader + '</th>';
   allConcs.forEach(c => { html += '<th>' + escapeHtmlText(concurrencyTickLabel(c)) + '</th>'; });
   html += '</tr></thead><tbody>';
-  [...groups.entries()].sort().forEach(([key, cells]) => {
+  [...groups.entries()].sort((a, b) => compareSequential(a[0], b[0])).forEach(([key, cells]) => {
     const parts = key.split('|');
     html += '<tr><td>' + rowFields.map((f, i) => fieldLabel(f) + '=' + (parts[i] || '—')).join(' · ') + '</td>';
     allConcs.forEach(conc => {
@@ -2262,6 +2262,35 @@ if (baselineInput) {
   });
 }
 
+function compareSequential(a, b) {
+  const as = a == null ? '' : String(a);
+  const bs = b == null ? '' : String(b);
+  const an = Number(as);
+  const bn = Number(bs);
+  const aNum = as.trim() !== '' && Number.isFinite(an);
+  const bNum = bs.trim() !== '' && Number.isFinite(bn);
+  if (aNum && bNum) return an - bn;
+  if (aNum) return -1;
+  if (bNum) return 1;
+  return as.localeCompare(bs, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function compareSweepCells(a, b) {
+  const fields = ['model', 'gpu', 'isl', 'osl', 'policy', 'concurrency', 'host', 'cell_id'];
+  for (let i = 0; i < fields.length; i++) {
+    const cmp = compareSequential(a[fields[i]], b[fields[i]]);
+    if (cmp) return cmp;
+  }
+  return 0;
+}
+
+function cellsForViewer(data) {
+  const sweep = data && data.datasets && data.datasets.sweep;
+  const full = sweep && Array.isArray(sweep.all_cells) && sweep.all_cells.length ? sweep.all_cells : null;
+  const cells = full || (data && data.cells) || [];
+  return cells.slice().sort(compareSweepCells);
+}
+
 function loadReportData() {
   const embedded = $('embedded-report-json');
   if (embedded && embedded.textContent.trim()) {
@@ -2275,7 +2304,7 @@ function loadReportData() {
 
 loadReportData().then(data => {
   reportData = data;
-  allCells = data.cells || [];
+  allCells = cellsForViewer(data);
   if (data.panels && data.panels.prev_run) {
     applyPrevRunPanel(data.panels.prev_run);
   }

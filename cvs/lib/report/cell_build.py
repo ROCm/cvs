@@ -38,6 +38,35 @@ def bar_pct(actual: float, spec: dict) -> float:
     return 50.0
 
 
+def numeric_token(value):
+    """Sort key that orders numeric sweep fields ahead of text, by magnitude."""
+    if isinstance(value, bool):
+        return (1, str(value))
+    if isinstance(value, (int, float)):
+        return (0, float(value))
+    text = str(value).strip()
+    try:
+        return (0, float(text))
+    except ValueError:
+        return (1, text)
+
+
+def sweep_result_sort_key(item):
+    """Order a sweep result by model, GPU, shape, policy, then concurrency."""
+    key = item[0] if isinstance(item, tuple) else item
+    if isinstance(key, tuple) and len(key) >= 6:
+        model, gpu, isl, osl, policy, conc = key[:6]
+        return (
+            str(model),
+            str(gpu),
+            numeric_token(isl),
+            numeric_token(osl),
+            str(policy),
+            numeric_token(conc),
+        )
+    return ("", "", (0, -1.0), (0, -1.0), "", (0, -1.0))
+
+
 def margin_text(actual: Any, spec: Optional[dict]) -> Optional[str]:
     if spec is None or actual is None:
         return None
@@ -227,10 +256,7 @@ class CellRecordBuilder:
         lifecycle_report: Mapping[str, list],
     ) -> List[dict]:
         cells: List[dict] = []
-        for key, host_dict in sorted(
-            inf_res_dict.items(),
-            key=lambda kv: (kv[0][4], kv[0][5]) if isinstance(kv[0], tuple) and len(kv[0]) >= 6 else (0, 0),
-        ):
+        for key, host_dict in sorted(inf_res_dict.items(), key=sweep_result_sort_key):
             if not isinstance(key, tuple) or len(key) != 6:
                 continue
             if not isinstance(host_dict, dict) or not host_dict:
