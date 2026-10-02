@@ -54,6 +54,7 @@ Thumbs.db
 # Compiled files
 *.pyc
 *.pyo
+bin/
 
 # Test coverage
 .coverage
