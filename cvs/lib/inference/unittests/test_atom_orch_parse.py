@@ -234,6 +234,7 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         orch = FakeOrch()
         variant = _fake_variant(driver="atom")
         variant.model.precision = "mxfp4"
+        variant.gpu_arch = "mi3xx"
         job = AtomJob(
             orch=orch,
             variant=variant,
@@ -247,6 +248,25 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         env_cmd = orch.commands[0][0]
         self.assertIn("ATOM_USE_TRITON_MOE=1", env_cmd)
         self.assertIn("ATOM_USE_TRITON_GEMM=1", env_cmd)
+
+    def test_build_server_cmd_skips_mxfp4_triton_env_on_mi355x(self):
+        orch = FakeOrch()
+        variant = _fake_variant(driver="atom")
+        variant.model.precision = "mxfp4"
+        variant.gpu_arch = "mi355x"
+        job = AtomJob(
+            orch=orch,
+            variant=variant,
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        job.build_server_cmd()
+        env_cmd = orch.commands[0][0]
+        self.assertNotIn("ATOM_USE_TRITON_MOE", env_cmd)
+        self.assertNotIn("ATOM_USE_TRITON_GEMM", env_cmd)
 
     def test_client_log_failures_traceback(self):
         job = AtomJob(
@@ -387,6 +407,21 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         self.assertEqual(job._vllm_client_argv().count("--disable-tqdm"), 1)
 
+    def test_vllm_client_argv_trust_remote_code_follows_serve_args(self):
+        job = AtomJob(
+            orch=FakeOrch(),
+            variant=_fake_variant(driver="vllm_atom"),
+            hf_token="tok",
+            isl="1024",
+            osl="1024",
+            concurrency=128,
+            num_prompts=100,
+        )
+        self.assertNotIn("--trust-remote-code", job._vllm_client_argv())
+        job.serve_args["trust-remote-code"] = True
+        argv = job._vllm_client_argv()
+        self.assertEqual(argv.count("--trust-remote-code"), 1)
+
     def test_client_log_failures_uses_grep_not_tail(self):
         orch = FakeOrch(exec_on_head_return={"node0": ""})
         job = AtomJob(
@@ -465,6 +500,15 @@ class TestATOMAtomOrchParse(unittest.TestCase):
         )
         self.assertTrue(job.EARLY_FAILURE_RE.search(missing_vllm))
         self.assertTrue(job.FATAL_LOG_RE.search(missing_vllm))
+        ignored_optional = (
+            "[2026-09-10 18:47:23] Ignore import error when loading "
+            "sglang.srt.multimodal.processors.mimo_v2: No module named 'torchcodec'"
+        )
+        self.assertFalse(job.EARLY_FAILURE_RE.search(ignored_optional))
+        self.assertFalse(job.FATAL_LOG_RE.search(ignored_optional))
+        hip_assert = "AssertionError: extra_buffer needs CUDA/MUSA/NPU (FLA)."
+        self.assertTrue(job.EARLY_FAILURE_RE.search(hip_assert))
+        self.assertTrue(job.FATAL_LOG_RE.search(hip_assert))
 
     def test_wait_ready_aborts_on_safetensors_engine_crash(self):
         crash = (

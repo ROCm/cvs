@@ -4,19 +4,19 @@
       "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128": {
         "total_token_throughput": {
           "kind": "min_tok_s",
-          "value": 3000
+          "value": 0
         },
         "output_throughput": {
           "kind": "min_tok_s",
-          "value": 1500
+          "value": 0
         },
         "per_gpu_throughput": {
           "kind": "min_tok_s",
-          "value": 375
+          "value": 0
         },
         "output_tput_per_gpu": {
           "kind": "min_tok_s",
-          "value": 188
+          "value": 0
         },
         "mean_ttft_ms": {
           "kind": "max_ms",
@@ -106,19 +106,19 @@
       "ISL=1024,OSL=1024,TP=8,PP=1,CONC=256": {
         "total_token_throughput": {
           "kind": "min_tok_s",
-          "value": 5000
+          "value": 0
         },
         "output_throughput": {
           "kind": "min_tok_s",
-          "value": 2500
+          "value": 0
         },
         "per_gpu_throughput": {
           "kind": "min_tok_s",
-          "value": 625
+          "value": 0
         },
         "output_tput_per_gpu": {
           "kind": "min_tok_s",
-          "value": 313
+          "value": 0
         },
         "mean_ttft_ms": {
           "kind": "max_ms",
@@ -311,7 +311,7 @@
         "gsm8k_flex": {
           "gsm8k.exact_match__flexible-extract": {
             "kind": "min",
-            "value": 0.94
+            "value": 0.0
           }
         },
         "gsm8k_strict": {},
@@ -364,19 +364,19 @@
       "ISL=1024,OSL=1024,TP=8,PP=1,CONC=128": {
         "total_token_throughput": {
           "kind": "min_tok_s",
-          "value": 12470.4
+          "value": 0
         },
         "output_throughput": {
           "kind": "min_tok_s",
-          "value": 6913
+          "value": 0
         },
         "per_gpu_throughput": {
           "kind": "min_tok_s",
-          "value": 1558.8
+          "value": 0
         },
         "output_tput_per_gpu": {
           "kind": "min_tok_s",
-          "value": 777.71
+          "value": 0
         },
         "mean_ttft_ms": {
           "kind": "max_ms",
@@ -466,19 +466,19 @@
       "ISL=1024,OSL=1024,TP=8,PP=1,CONC=256": {
         "total_token_throughput": {
           "kind": "min_tok_s",
-          "value": 13124.7
+          "value": 0
         },
         "output_throughput": {
           "kind": "min_tok_s",
-          "value": 7284
+          "value": 0
         },
         "per_gpu_throughput": {
           "kind": "min_tok_s",
-          "value": 1640.59
+          "value": 0
         },
         "output_tput_per_gpu": {
           "kind": "min_tok_s",
-          "value": 819.45
+          "value": 0
         },
         "mean_ttft_ms": {
           "kind": "max_ms",
@@ -685,7 +685,7 @@
         "gsm8k_flex": {
           "gsm8k.exact_match__flexible-extract": {
             "kind": "min",
-            "value": 0.94
+            "value": 0.0
           }
         },
         "gsm8k_strict": {}

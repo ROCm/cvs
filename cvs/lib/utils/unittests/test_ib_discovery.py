@@ -51,6 +51,10 @@ class TestParseIbvDevinfoList(unittest.TestCase):
 """
         self.assertEqual(_parse_ibv_devinfo_list(raw), ["rdma3", "rdma0", "rdma2", "rdma1"])
 
+    def test_keeps_ionic_hcas_alongside_mlx5(self):
+        raw = "9 HCAs found:\nmlx5_0\nionic_0\nionic_1\nionic_7\n"
+        self.assertEqual(_parse_ibv_devinfo_list(raw), ["mlx5_0", "ionic_0", "ionic_1", "ionic_7"])
+
 
 class TestDiscoverSocketNetdev(unittest.TestCase):
     def test_resolves_common_netdev_from_cluster_ips(self):
@@ -114,6 +118,35 @@ class TestDiscoverSocketNetdev(unittest.TestCase):
         )
         self.assertEqual(hcas, ["mlx5_0", "mlx5_1"])
         self.assertEqual(netdev, "ens51f1np1")
+
+    def test_resolves_hostname_before_netdev_lookup(self):
+        from cvs.lib.utils.ib_discovery import _host_to_ipv4_cmd
+
+        host = "crsuse2-m2m-239"
+        ip = "10.1.2.3"
+        orch = _NetdevOrch(
+            [host],
+            {
+                (host, _host_to_ipv4_cmd(host)): ip + "\n",
+                (host, _cmd_for_ip(ip)): "ens21f0np0\n",
+            },
+        )
+        self.assertEqual(discover_socket_netdev_name(orch, master_addr=host), "ens21f0np0")
+
+    def test_skips_loopback_when_hostname_also_resolves_there(self):
+        from cvs.lib.utils.ib_discovery import _host_to_ipv4_cmd
+
+        host = "crsuse2-m2m-045"
+        ip = "10.9.8.7"
+        orch = _NetdevOrch(
+            [host],
+            {
+                (host, _host_to_ipv4_cmd(host)): "127.0.0.1\n" + ip + "\n",
+                (host, _cmd_for_ip(ip)): "ens21f0np0\n",
+                (host, _cmd_for_ip("127.0.0.1")): "lo\n",
+            },
+        )
+        self.assertEqual(discover_socket_netdev_name(orch, master_addr=host), "ens21f0np0")
 
 
 class TestDiscoverIbHcaNames(unittest.TestCase):

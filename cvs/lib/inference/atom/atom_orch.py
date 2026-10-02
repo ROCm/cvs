@@ -65,7 +65,7 @@ class AtomJob:
         r"|Failed to initialize all EngineCores"
         r"|unexpected SHUTDOWN signal"
         r"|ModuleNotFoundError"
-        r"|No module named",
+        r"|AssertionError",
         re.I,
     )
     FATAL_LOG_RE = re.compile(
@@ -79,7 +79,7 @@ class AtomJob:
         r"|Failed to initialize all EngineCores"
         r"|unexpected SHUTDOWN signal"
         r"|ModuleNotFoundError"
-        r"|No module named",
+        r"|AssertionError",
         re.I,
     )
 
@@ -166,6 +166,7 @@ class AtomJob:
         self.server_env = merge_mxfp4_triton_env(
             getattr(variant.model, "precision", ""),
             variant.roles.server.env,
+            gpu_arch=getattr(variant, "gpu_arch", "") or "",
         )
         configured_netdev = (getattr(variant.roles.server, "ib_netdev", None) or "").strip()
         if ib_netdev:
@@ -895,6 +896,9 @@ class AtomJob:
         extra = shlex.split(self.bench_extra_args) if self.bench_extra_args else []
         if "--disable-tqdm" not in extra:
             argv.append("--disable-tqdm")
+        # bench serve loads the tokenizer itself. Custom models fail unless this matches the server.
+        if self.serve_args.get("trust-remote-code") is True and "--trust-remote-code" not in extra:
+            argv.append("--trust-remote-code")
         if extra:
             argv.extend(extra)
         return argv

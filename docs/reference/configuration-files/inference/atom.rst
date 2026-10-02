@@ -32,9 +32,10 @@ Shipped files live under ``cvs/input/config_file/inference/atom/``:
   {gpu}_atom_{model}_{precision}_distributed.json   # when multinode PP is supported
   {platform}_atom_{model}_{precision}_threshold.json
 
-Config stems use the **family** prefix ``mi3xx``. Threshold files use a
-**platform** prefix (shipped: ``mi325x``, lab-validated on MI325X / gfx942).
-Each config's ``threshold_json`` points at the matching ``mi325x_*_threshold.json``.
+Config stems use a **family** prefix: ``mi3xx`` (MI300X/MI325X / gfx942) or
+``mi355x`` (MI355X / gfx950). Threshold files use a **platform** prefix
+(``mi325x`` or ``mi355x``). Each config's ``threshold_json`` points at the
+matching platform threshold file.
 
 Multi-profile configs (``schema_version: 2``) embed job shapes under ``profiles``.
 Select one at runtime with ``--config_profile NAME`` (or ``CVS_CONFIG_PROFILE``).
@@ -48,7 +49,8 @@ subdirectory (see :doc:`/how-to/test-suites/inference/atom`).
 Shipped model inventory
 =======================
 
-Lab-validated configs only. Native ATOM ``driver=atom`` workloads use flat
+Configs are lab-validated unless their inventory note says otherwise. Native
+ATOM ``driver=atom`` workloads use flat
 ``schema_version: 1`` JSON or ``schema_version: 2`` profiles (``perf``, ``mtp3``).
 
 Framework parity (vLLM / SGLang) uses the unified serving schema under
@@ -63,20 +65,64 @@ still runs with ``cvs run atom``.
      - Config files
      - Notes
    * - ``mi3xx_atom_deepseek-r1_fp8``
-     - ``_single`` (``perf`` + ``mtp3`` profiles), ``_distributed`` (``vllm_atom`` PP=2)
-     - Native ATOM + multinode PP
+     - ``_single`` (``perf`` + ``mtp3`` profiles)
+     - Native ATOM perf + MTP-3
+   * - ``mi3xx_atom_deepseek-v4-flash``
+     - ``_single``
+     - Native ATOM gfx942 V4 gate (Flash-Base TP8 FP8 KV); bring-up thresholds
    * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
+     - ``_single`` (``perf`` + ``mtp3`` profiles)
+     - Native ATOM perf + MTP-3; lab pending for ``mtp3``
+   * - ``mi355x_atom_kimi-k27-code_mxfp4``
      - ``_single``
-     - Native ATOM perf + accuracy
+     - Native ATOM MI355X, TP4 MXFP4; same Spur/Slurm job-step as V4-Pro;
+       writable ``HF_HUB_CACHE``; bring-up thresholds
+   * - ``mi355x_atom_deepseek-v4-pro``
+     - ``_single``
+     - Native ATOM MI355X Pro TP8; Spur 355 job-step proven; writable
+       ``HF_HUB_CACHE``; bring-up thresholds
+   * - ``mi355x_atom_vllm_deepseek-v4-pro``
+     - ``_single``
+     - vLLM parity for V4-Pro FP4 TP8; same 1K/1K and 128/32 cells; bring-up
+   * - ``mi355x_atom_sglang_deepseek-v4-pro``
+     - ``_single``
+     - SGLang try-stem for V4-Pro. SGLang does not currently serve this model;
+       thresholds are off so a Spur run can record the result
+   * - ``mi355x_atom_deepseek-r1_fp8``
+     - ``_single`` (``perf`` + ``mtp3``)
+     - MI355X copy of the gfx942 R1 recipe; bring-up thresholds
+   * - ``mi355x_atom_vllm_deepseek-r1_fp8``
+     - ``_single``, ``_distributed``
+     - MI355X copy of the gfx942 vLLM parity; distributed PP=2
+   * - ``mi355x_atom_sglang_deepseek-r1_fp8``
+     - ``_single``, ``_distributed``
+     - MI355X copy of the gfx942 SGLang parity; ``SGLANG_ROCM_ARCH=gfx950``
+   * - ``mi355x_atom_qwen3.5-397b-a17b_fp8``
+     - ``_single`` (``perf`` + ``mtp3``)
+     - MI355X copy of ``amd/Qwen3.5-397B-A17B-FP8`` (1K/8K); bring-up thresholds
+   * - ``mi355x_atom_vllm_qwen3.5-397b-a17b_fp8``
+     - ``_single``, ``_distributed``
+     - MI355X copy of the gfx942 vLLM parity; distributed PP=2
+   * - ``mi355x_atom_sglang_qwen3.5-397b-a17b_fp8``
+     - ``_single``, ``_distributed``
+     - MI355X copy of the gfx942 SGLang parity; ``SGLANG_ROCM_ARCH=gfx950``
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
-     - ``_single``
-     - vLLM parity (serving schema)
+     - ``_single``, ``_distributed``
+     - vLLM parity (serving schema); distributed uses PP=2
    * - ``mi3xx_atom_vllm_gpt-oss-120b_mxfp4``
      - ``_single``
      - GPT-OSS MXFP4 vLLM parity (serving schema)
+   * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8``
+     - ``_single``, ``_distributed``
+     - Qwen FP8 vLLM parity; ``_single`` lab-validated; distributed PP=2 pending
    * - ``mi3xx_atom_sglang_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - SGLang parity (serving schema)
+   * - ``mi3xx_atom_sglang_qwen3.5-397b-a17b_fp8``
+     - ``_single``, ``_distributed``
+     - Qwen FP8 SGLang parity; ``_single`` lab-validated (hybrid mamba ``no_buffer``,
+       writable ``HF_HUB_CACHE``, ``SGLANG_ROCM_ARCH=gfx942``); distributed PP=2 pending.
+       Image must include ``aiter.ops.flydsl.moe_common``.
 
 Config profiles
 ===============
@@ -85,7 +131,9 @@ Config profiles
 runtime with ``--config_profile`` (or ``CVS_CONFIG_PROFILE``). Flat
 ``schema_version: 1`` files use an implicit ``perf`` profile.
 
-DeepSeek R1 FP8 — ``mi3xx_atom_deepseek-r1_fp8_single.json`` profiles:
+DeepSeek R1 FP8 and native Qwen FP8 single-node stems use the same profile names
+(``mi3xx_atom_deepseek-r1_fp8_single.json``,
+``mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json``):
 
 .. list-table::
    :widths: 2 2 4

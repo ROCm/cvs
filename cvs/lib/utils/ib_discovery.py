@@ -18,7 +18,7 @@ from cvs.lib import globals
 log = globals.log
 
 _IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.I)
-_HCA_NAME_RE = re.compile(r"^(mlx5_\d+|rdma\d+|rocep\w+|bnxt_\w+)$", re.I)
+_HCA_NAME_RE = re.compile(r"^(mlx5_\d+|ionic_\d+|rdma\d+|rocep\w+|bnxt_\w+)$", re.I)
 _NETDEV_NAME_RE = re.compile(r"^[a-zA-Z0-9_.:-]{1,64}$")
 _INVALID_NETDEV_MARKERS = (
     "command not found",
@@ -30,6 +30,7 @@ _INVALID_NETDEV_MARKERS = (
 
 _SYSFS_CMD = "ls /sys/class/infiniband/ 2>/dev/null | tr '\\n' ' '"
 _IBVDEVINFO_CMD = "ibv_devinfo -l 2>/dev/null"
+_IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
 
 
 def _topology_exec(orch, cmd, hosts=None):
@@ -67,6 +68,8 @@ def _valid_netdev_name(name: str) -> bool:
     if any(marker in lower for marker in _INVALID_NETDEV_MARKERS):
         return False
     if _IB_HCA_NETDEV_RE.match(name):
+        return False
+    if lower in ("lo", "lo0"):
         return False
     return True
 
@@ -142,6 +145,34 @@ def validate_ib_hca_preflight(discovered: dict[str, list[str]], requested: list[
             )
 
 
+def _usable_ipv4(token):
+    return bool(_IPV4_RE.match(token or "")) and not token.startswith("127.")
+
+
+def _host_to_ipv4_cmd(host):
+    # Skip 127.0.0.1. Spur /etc/hosts lists the node name there ahead of the real address.
+    inner = f"getent ahostsv4 {shlex.quote(host)} 2>/dev/null | awk '$1 !~ /^127\\./ {{print $1; exit}}'"
+    return f"bash -c {shlex.quote(inner)}"
+
+
+def _first_ipv4(text):
+    for token in (text or "").split():
+        if _usable_ipv4(token):
+            return token
+    return ""
+
+
+def _cluster_ipv4(orch, host, token):
+    """IPv4 for a cluster host key. Spur jobs list hostnames, not addresses."""
+    token = (token or "").strip()
+    if _usable_ipv4(token):
+        return token
+    if not token or _IPV4_RE.match(token):
+        return ""
+    out = _topology_exec(orch, _host_to_ipv4_cmd(token), hosts=[host])
+    return _first_ipv4((out or {}).get(host, ""))
+
+
 def _netdev_for_ip_cmd(ip: str) -> str:
     inner = (
         f"IF=$( (ip -4 -o addr show 2>/dev/null || /sbin/ip -4 -o addr show 2>/dev/null) | "
@@ -165,7 +196,8 @@ def discover_socket_netdev_name(orch, master_addr: str | None = None) -> str:
     """Return the Linux netdev for NCCL/GLOO socket traffic on a homogeneous cluster.
 
     On each host, prefers the interface that owns that host's cluster IP (the key
-    in ``orch.hosts``). Falls back to the egress interface toward ``master_addr``.
+    in ``orch.hosts``, or the IPv4 it resolves to when the key is a hostname).
+    Falls back to the egress interface toward ``master_addr``.
     Requires the same netdev **name** on every node because the suite broadcasts
     one env script to all ranks.
 
@@ -177,12 +209,17 @@ def discover_socket_netdev_name(orch, master_addr: str | None = None) -> str:
 
     master = (master_addr or "").strip() or hosts[0]
     per_host: dict[str, str] = {}
+    master_ip = ""
     for host in hosts:
-        host_ip = str(host).strip()
-        out = _topology_exec(orch, _netdev_for_ip_cmd(host_ip), hosts=[host])
-        netdev = (out or {}).get(host, "").strip()
-        if not _valid_netdev_name(netdev):
-            out = _topology_exec(orch, _netdev_via_route_cmd(master), hosts=[host])
+        host_ip = _cluster_ipv4(orch, host, str(host).strip())
+        if not master_ip:
+            master_ip = _cluster_ipv4(orch, host, master) or host_ip
+        netdev = ""
+        if host_ip:
+            out = _topology_exec(orch, _netdev_for_ip_cmd(host_ip), hosts=[host])
+            netdev = (out or {}).get(host, "").strip()
+        if not _valid_netdev_name(netdev) and master_ip:
+            out = _topology_exec(orch, _netdev_via_route_cmd(master_ip), hosts=[host])
             netdev = (out or {}).get(host, "").strip()
         if not _valid_netdev_name(netdev):
             raise RuntimeError(

@@ -2,7 +2,7 @@
   "schema_version": 2,
   "framework": "atom",
   "default_profile": "perf",
-  "threshold_json": "mi325x_atom_qwen3.5-397b-a17b_fp8_threshold.json",
+  "threshold_json": "mi355x_atom_qwen3.5-397b-a17b_fp8_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/models",
@@ -19,7 +19,7 @@
       "enforce_thresholds": false,
       "container": {
         "lifetime": "per_run",
-        "name": "atom_mi3xx",
+        "name": "atom_mi355x",
         "image": "<changeme>",
         "runtime": {
           "name": "docker",
@@ -47,7 +47,9 @@
             "--trust-remote-code"
           ],
           "env": {
-            "ATOM_DISABLE_MMAP": "true"
+            "ATOM_DISABLE_MMAP": "true",
+            "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
+            "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
           }
         }
       },
@@ -127,7 +129,7 @@
       "enforce_thresholds": false,
       "container": {
         "lifetime": "per_run",
-        "name": "atom_mi3xx",
+        "name": "atom_mi355x",
         "image": "<changeme>",
         "runtime": {
           "name": "docker",
@@ -159,7 +161,9 @@
             "3"
           ],
           "env": {
-            "ATOM_DISABLE_MMAP": "true"
+            "ATOM_DISABLE_MMAP": "true",
+            "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
+            "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
           }
         }
       },
