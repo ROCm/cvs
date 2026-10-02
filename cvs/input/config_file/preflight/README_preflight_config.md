@@ -397,7 +397,7 @@ Runs Node Smoke Tier 3 (`primus-cli direct -- preflight --host --gpu --network`)
 
 - **`connectivity_mode`** (default: `"run"`) — `"run"` or `"skip"`
 - **`auto_setup`** (default: `true`) — clone/update Primus and create venv before Tier 3 (falls back to Tier 1 paths)
-- **`primus_dir`** / **`venv_activate`** — optional; empty inherits from `node_smoke_tier1`
+- **`primus_dir`** / **`venv_activate`** — optional; empty inherits from `node_smoke_tier1`. When Tier 3 uses that same venv, unset `pip_install_mode` and `torch_pip_index_url` inherit from Tier 1 as well; set them on Tier 3 to override
 - **`gpus_per_node`** (default: `8`) — GPUs per node for torchrun
 - **`master_port`** (default: `1234`) — `MASTER_PORT` for the distributed env
 - **`dump_path`** — empty uses `<reporting.artifacts_root_dir>/node_smoke_tier3`

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
 
-from cvs.lib.preflight.primus_setup import PrimusSetup
+from cvs.lib.preflight.primus_setup import PrimusSetup, _DEFAULT_TORCH_INDEX
 from cvs.lib.preflight.tier3_info import (
     _REPORT_BEGIN,
     _REPORT_END,
@@ -99,6 +99,79 @@ class TestResolveTier3Setting(unittest.TestCase):
         self.assertEqual(setup.primus_dir, "/home/user/INSTALL/Primus")
         self.assertEqual(setup.venv_activate, "/home/user/envs/preflight/.venv/bin/activate")
         self.assertIsNone(setup._validate())
+
+    def test_shared_venv_inherits_tier1_index_and_install_mode(self):
+        venv = "/home/user/envs/preflight/.venv/bin/activate"
+        cfg = {
+            "node_smoke_tier1": {
+                "primus_dir": "/home/user/Primus",
+                "venv_activate": venv,
+                "pip_install_mode": "skip",
+                "torch_pip_index_url": "https://download.pytorch.org/whl/rocm6.2",
+            },
+            "node_smoke_tier3": {"auto_setup": True},
+        }
+        setup = PrimusSetup(
+            None,
+            ["node0"],
+            cfg,
+            config_section=NODE_SMOKE_TIER3_SECTION,
+            setting_resolver=resolve_tier3_setting,
+        )
+        self.assertEqual(setup.venv_activate, venv)
+        self.assertEqual(setup.pip_install_mode, "skip")
+        self.assertEqual(setup.torch_pip_index_url, "https://download.pytorch.org/whl/rocm6.2")
+
+    def test_explicit_same_venv_path_inherits_tier1_wheel_settings(self):
+        venv = "/home/user/envs/preflight/.venv/bin/activate"
+        cfg = {
+            "node_smoke": {
+                "venv_activate": venv + "/",
+                "pip_install_mode": "requirements",
+                "torch_pip_index_url": "https://download.pytorch.org/whl/rocm6.2",
+            },
+            "tier3_info": {"venv_activate": venv},
+        }
+        self.assertEqual(
+            resolve_tier3_setting(cfg, "torch_pip_index_url", _DEFAULT_TORCH_INDEX),
+            "https://download.pytorch.org/whl/rocm6.2",
+        )
+        self.assertEqual(resolve_tier3_setting(cfg, "pip_install_mode", "minimal"), "requirements")
+
+    def test_explicit_tier3_wheel_settings_override_shared_venv(self):
+        venv = "/home/user/envs/preflight/.venv/bin/activate"
+        cfg = {
+            "node_smoke": {
+                "venv_activate": venv,
+                "pip_install_mode": "skip",
+                "torch_pip_index_url": "https://download.pytorch.org/whl/rocm6.2",
+            },
+            "tier3_info": {
+                "pip_install_mode": "minimal",
+                "torch_pip_index_url": "https://download.pytorch.org/whl/rocm7.1",
+            },
+        }
+        setup = PrimusSetup(
+            None,
+            ["node0"],
+            cfg,
+            config_section=NODE_SMOKE_TIER3_SECTION,
+            setting_resolver=resolve_tier3_setting,
+        )
+        self.assertEqual(setup.pip_install_mode, "minimal")
+        self.assertEqual(setup.torch_pip_index_url, "https://download.pytorch.org/whl/rocm7.1")
+
+    def test_distinct_tier3_venv_does_not_inherit_tier1_wheel_settings(self):
+        cfg = {
+            "node_smoke": {
+                "venv_activate": "/home/user/envs/preflight/.venv/bin/activate",
+                "pip_install_mode": "skip",
+                "torch_pip_index_url": "https://download.pytorch.org/whl/rocm6.2",
+            },
+            "tier3_info": {"venv_activate": "/home/user/envs/tier3/.venv/bin/activate"},
+        }
+        self.assertEqual(resolve_tier3_setting(cfg, "torch_pip_index_url", _DEFAULT_TORCH_INDEX), _DEFAULT_TORCH_INDEX)
+        self.assertEqual(resolve_tier3_setting(cfg, "pip_install_mode", "minimal"), "minimal")
 
     def test_connectivity_mode_does_not_inherit_node_smoke(self):
         cfg = {

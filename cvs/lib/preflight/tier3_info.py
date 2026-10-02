@@ -45,10 +45,32 @@ _FINDINGS_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Only shared Primus install paths may inherit from Node Smoke Tier 1. Operational knobs
-# (connectivity_mode, timeouts, dump_path, NCCL overrides, etc.) must stay
+# Shared Primus install paths may inherit from Node Smoke Tier 1. Wheel index and
+# pip install mode inherit only when Tier 3 reuses that venv, so the two tiers do
+# not force-reinstall different builds into one environment. Operational knobs
+# (connectivity_mode, timeouts, dump_path, NCCL overrides, etc.) stay
 # node_smoke_tier3-local so enabling Tier 1 does not silently launch Tier 3.
 _TIER3_TIER1_FALLBACK_KEYS = frozenset({"primus_dir", "venv_activate"})
+_TIER3_SHARED_VENV_FALLBACK_KEYS = frozenset({"pip_install_mode", "torch_pip_index_url"})
+
+
+def _normalized_venv_path(path):
+    if path in (None, ""):
+        return ""
+    return str(path).rstrip("/")
+
+
+def _tier3_reuses_tier1_venv(cfg):
+    """True when Tier 3 omits ``venv_activate`` or sets the same path as Tier 1."""
+    tier1_venv = _normalized_venv_path(
+        get_preflight_nested(cfg, NODE_SMOKE_TIER1_SECTION, LEGACY_NODE_SMOKE_SECTION, "venv_activate", None)
+    )
+    if not tier1_venv:
+        return False
+    tier3_venv = _normalized_venv_path(
+        get_preflight_nested(cfg, NODE_SMOKE_TIER3_SECTION, LEGACY_TIER3_INFO_SECTION, "venv_activate", None)
+    )
+    return tier3_venv in ("", tier1_venv)
 
 
 def resolve_tier3_setting(cfg: dict, key: str, default=None):
@@ -56,7 +78,10 @@ def resolve_tier3_setting(cfg: dict, key: str, default=None):
     value = get_preflight_nested(cfg, NODE_SMOKE_TIER3_SECTION, LEGACY_TIER3_INFO_SECTION, key, None)
     if value not in (None, ""):
         return value
-    if key in _TIER3_TIER1_FALLBACK_KEYS:
+    inherit = key in _TIER3_TIER1_FALLBACK_KEYS or (
+        key in _TIER3_SHARED_VENV_FALLBACK_KEYS and _tier3_reuses_tier1_venv(cfg)
+    )
+    if inherit:
         fallback = get_preflight_nested(cfg, NODE_SMOKE_TIER1_SECTION, LEGACY_NODE_SMOKE_SECTION, key, None)
         if fallback not in (None, ""):
             return fallback
