@@ -294,6 +294,18 @@ class TestParseSetupOutput(unittest.TestCase):
         parsed = parse_setup_output("Successfully installed torch\nCVS_PRIMUS_SETUP_OK\n")
         self.assertEqual(parsed["status"], "PASS")
 
+    def test_pip_dependency_warning_with_marker_passes(self):
+        parsed = parse_setup_output(
+            "Successfully installed torch-2.14.1+rocm7.2\n"
+            "ERROR: pip's dependency resolver does not currently take into account all the packages "
+            "that are installed. This behaviour is the source of the following dependency conflicts.\n"
+            "torchvision 0.24.1+rocm6.4 requires torch==2.9.1, but you have torch 2.14.1+rocm7.2 "
+            "which is incompatible.\n"
+            "CVS_PRIMUS_SETUP_OK\n"
+        )
+        self.assertEqual(parsed["status"], "PASS")
+        self.assertEqual(parsed["errors"], [])
+
     def test_output_without_marker_fails(self):
         parsed = parse_setup_output("Successfully installed torch\n")
         self.assertEqual(parsed["status"], "FAIL")

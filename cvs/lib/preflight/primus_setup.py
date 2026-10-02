@@ -268,6 +268,10 @@ def parse_setup_output(output: str) -> Dict[str, Any]:
         return {"status": "FAIL", "errors": ["shell error during Primus setup"]}
     if "fatal: timed out waiting for shared Primus install" in text:
         return {"status": "FAIL", "errors": ["timed out waiting for shared Primus install"]}
+    # The marker is printed only after the setup command succeeds. Pip can still
+    # emit "ERROR:" for a non-fatal dependency-conflict warning on stdout.
+    if _SETUP_OK_MARKER in text:
+        return {"status": "PASS", "errors": []}
     if _GIT_ERROR_RE.search(text):
         if "could not lock config file" in text.lower():
             return {
@@ -282,8 +286,6 @@ def parse_setup_output(output: str) -> Dict[str, Any]:
         return {"status": "FAIL", "errors": ["pip install failed during Primus setup"]}
     if "No module named 'torch'" in text or "ModuleNotFoundError" in text:
         return {"status": "FAIL", "errors": ["torch not available in venv after setup"]}
-    if _SETUP_OK_MARKER in text:
-        return {"status": "PASS", "errors": []}
     if not text:
         return {"status": "FAIL", "errors": ["empty setup output"]}
     return {"status": "FAIL", "errors": ["setup did not report success"]}
