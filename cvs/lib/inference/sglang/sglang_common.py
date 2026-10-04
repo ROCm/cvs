@@ -774,15 +774,9 @@ def verify_openai_compatible_endpoints(
     exec_probe: Callable[[str, int | None], dict[str, str]],
     probe_host_key: str,
     log_label: str | None = None,
-    include_structured_output=True,
 ) -> list[str]:
     """Smoke-test OpenAI-compatible HTTP API via an in-container probe script."""
-    probe_src = OpenAIProbe.probe_script(
-        port,
-        model_name,
-        host=client_host,
-        include_structured_output=include_structured_output,
-    )
+    probe_src = OpenAIProbe.probe_script(port, model_name, host=client_host)
     b64 = base64.b64encode(probe_src.encode('utf-8')).decode('ascii')
     inner = (
         f"mkdir -p {log_dir}/benchmark_node && "
