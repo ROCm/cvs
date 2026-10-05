@@ -35,14 +35,12 @@
           "devices": ["/dev/dri", "/dev/kfd", "/dev/infiniband"],
           "env": {
             "NCCL_PROTO": "Simple",
-            "NCCL_IB_HCA": "ionic_0",
+            "NCCL_IB_HCA": "ionic_0,ionic_1,ionic_2,ionic_3",
             "NCCL_SOCKET_IFNAME": "ens3",
             "GLOO_SOCKET_IFNAME": "ens3",
             "GLOO_TCP_IFNAME": "ens3",
             "NCCL_IB_GID_INDEX": "1",
-            "NCCL_MAX_NCHANNELS": "32",
-            "NCCL_MIN_NCHANNELS": "32",
-            "NCCL_DMABUF_ENABLE": "1",
+            "NCCL_DMABUF_ENABLE": "0",
             "NCCL_DEBUG": "INFO",
             "NCCL_IB_PCI_RELAXED_ORDERING": "0",
             "HIP_VISIBLE_DEVICES": "0,1,2,3",
@@ -71,7 +69,7 @@
       "width": 1024,
       "ulysses_degree": 8,
       "ring_degree": 2,
-      "use_torch_compile": true,
+      "use_torch_compile": false,
       "torchrun_nproc": 8
     }
   }
