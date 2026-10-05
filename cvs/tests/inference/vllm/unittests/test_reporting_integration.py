@@ -143,7 +143,7 @@ class TestVllmReportingIntegration(unittest.TestCase):
         entries = next(iter(_html_tests(html).values()))
         self.assertEqual(len(entries), 1)
         names = _metric_names(entries[0])
-        self.assertEqual(names, ["head: output_throughput", "head: mean_ttft_ms"])
+        self.assertEqual(names, ["output_throughput", "mean_ttft_ms"])
         self.assertEqual(len(names), len(set(names)))
         properties = [
             prop for prop in xml_root.findall(".//property") if prop.attrib.get("name") == "cvs_vllm_metrics_v1"
@@ -269,7 +269,7 @@ class TestVllmReportingIntegration(unittest.TestCase):
         self.assertEqual(content.count(">Passed<"), 2)
         self.assertNotIn("Recorded", content)
         names = _metric_names(entries[0])
-        self.assertEqual(names, ["head: output_throughput", "head: mean_ttft_ms"])
+        self.assertEqual(names, ["output_throughput", "mean_ttft_ms"])
 
 
 if __name__ == "__main__":
