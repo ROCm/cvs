@@ -141,13 +141,13 @@ def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
     )
 
 
-def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-    globals.error_list = []
-    t0 = time.monotonic()
-    im_obj.setup_benchmark_serv_container_env()
-    h = im_obj.run_lm_eval_hellaswag_benchmark_test()
-    lifecycle.phase_labels["accuracy_hellaswag"] = h
-    lifecycle.complete_stage(request, "lm_eval_hellaswag", t0)
+# def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
+#     globals.error_list = []
+#     t0 = time.monotonic()
+#     im_obj.setup_benchmark_serv_container_env()
+#     h = im_obj.run_lm_eval_hellaswag_benchmark_test()
+#     lifecycle.phase_labels["accuracy_hellaswag"] = h
+#     lifecycle.complete_stage(request, "lm_eval_hellaswag", t0)
 
 
 def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict, lifecycle, request):

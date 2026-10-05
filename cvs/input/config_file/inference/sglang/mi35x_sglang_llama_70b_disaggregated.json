@@ -53,6 +53,7 @@
     }
   },
   "server_params": {
+    "serve_port": "8010",
     "backend": "sglang",
     "nnodes": "2",
     "log_level": "info",
