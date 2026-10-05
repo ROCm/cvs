@@ -96,11 +96,11 @@ class SshMeshConnectivityCheck(PreflightCheck):
             peers = [peer_node for peer_node in self.peer_map if peer_node != node]
             if not peers:
                 self.results[node] = {
-                    'status': 'PASS',
+                    'status': 'WARNING',
                     'total_peers': 0,
                     'passed_peers': 0,
                     'failed_peers': [],
-                    'errors': [],
+                    'errors': ['no pairs to test (only 1 node in cluster)'],
                 }
                 continue
 

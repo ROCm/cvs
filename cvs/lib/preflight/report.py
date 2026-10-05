@@ -436,14 +436,18 @@ class PreflightReportGenerator(PreflightCheck):
             }
         total_nodes = len(rocm_results)
         consistent_nodes = sum(1 for result in rocm_results.values() if result['status'] == 'PASS')
+        skipped_nodes = [node for node, result in rocm_results.items() if result['status'] == 'SKIPPED']
         failed_nodes = [node for node, result in rocm_results.items() if result['status'] == 'FAIL']
+        evaluated_nodes = total_nodes - len(skipped_nodes)
 
         return {
-            'status': 'PASS' if consistent_nodes == total_nodes else 'FAIL',
+            'status': 'PASS' if not failed_nodes else 'FAIL',
             'total_nodes': total_nodes,
             'consistent_nodes': consistent_nodes,
             'failed_nodes': failed_nodes,
-            'summary': f"{consistent_nodes}/{total_nodes} nodes have consistent ROCm version",
+            'skipped_nodes': skipped_nodes,
+            'summary': f"{consistent_nodes}/{evaluated_nodes} evaluated nodes have consistent ROCm version"
+            + (f"; {len(skipped_nodes)} skipped (unreachable)" if skipped_nodes else ""),
         }
 
     def _summarize_interface_results(self, interface_results):

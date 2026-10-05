@@ -1,4 +1,5 @@
 # cvs/lib/unittests/test_utils_lib.py
+import json
 import os
 import shlex
 import tempfile
@@ -81,6 +82,53 @@ class TestUtilsLib(unittest.TestCase):
                 'notes': ['_keep', {'gpu_count': '<changeme>'}],
             },
         )
+
+
+class TestExtractJsonFromOutput(unittest.TestCase):
+    def test_plain_json_array_unchanged(self):
+        payload = '[{"gpu": 0}]'
+        self.assertEqual(utils_lib._extract_json_from_output(payload), payload)
+
+    def test_plain_json_object_unchanged(self):
+        payload = '{"key": "value"}'
+        self.assertEqual(utils_lib._extract_json_from_output(payload), payload)
+
+    def test_ssh_motd_banner_before_array_stripped(self):
+        banner = "WARNING: Conductor Auth\nThis is a restricted system.\n"
+        payload = '[{"gpu": 0}]'
+        result = utils_lib._extract_json_from_output(banner + payload)
+        self.assertEqual(result, payload)
+
+    def test_ssh_motd_banner_before_object_stripped(self):
+        banner = "WARNING: Conductor Auth\n"
+        payload = '{"rocm_version": "6.2.0"}'
+        result = utils_lib._extract_json_from_output(banner + payload)
+        self.assertEqual(result, payload)
+
+    def test_no_json_returns_original_string(self):
+        text = "No JSON here at all"
+        self.assertEqual(utils_lib._extract_json_from_output(text), text)
+
+    def test_empty_string_returns_empty_string(self):
+        self.assertEqual(utils_lib._extract_json_from_output(""), "")
+
+
+class TestConvertPhdlJsonToDict(unittest.TestCase):
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_banner_prefix_does_not_cause_failure(self, mock_fail_test):
+        """SSH MOTD banners prepended before amd-smi JSON must parse successfully."""
+        banner = "WARNING: Conductor Auth\nThis is a restricted system.\n"
+        payload = json.dumps([{"gpu": 0}])
+        result = utils_lib.convert_phdl_json_to_dict({'node1': banner + payload})
+        self.assertEqual(result['node1'], [{"gpu": 0}])
+        mock_fail_test.assert_not_called()
+
+    @patch('cvs.lib.utils_lib.fail_test')
+    def test_banner_only_no_json_calls_fail_test(self, mock_fail_test):
+        """Output with banner but no JSON should invoke fail_test and return empty dict."""
+        result = utils_lib.convert_phdl_json_to_dict({'node1': 'WARNING: No JSON here'})
+        self.assertEqual(result['node1'], {})
+        mock_fail_test.assert_called()
 
 
 class TestResolveTestConfigPlaceholdersAorta(unittest.TestCase):

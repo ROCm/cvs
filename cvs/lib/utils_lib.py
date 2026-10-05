@@ -133,10 +133,18 @@ def scan_test_results(out_dict):
                 fail_test(f'Test failed in scan_result on node {host} due to pattern {match.group(0)!r}')
 
 
+def _extract_json_from_output(output: str) -> str:
+    """Strip any leading non-JSON content (e.g. SSH MOTD banners) before parsing."""
+    for i, ch in enumerate(output):
+        if ch in ('{', '['):
+            return output[i:]
+    return output
+
+
 def json_to_dict(json_string):
     log.info('^^^^^^^^^')
     log.info("%s", json_string)
-    return json.loads(json_string)
+    return json.loads(_extract_json_from_output(json_string))
 
 
 def convert_phdl_json_to_dict(dict_json):

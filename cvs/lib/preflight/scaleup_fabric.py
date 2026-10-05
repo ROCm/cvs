@@ -96,8 +96,12 @@ def _parse_json(output: str, command_name: str) -> Tuple[List[Any], List[str]]:
     Some amd-smi builds print multiple JSON documents back-to-back for a
     single ``list --json`` invocation (e.g. a GPU array followed by an
     AI-NIC array), which a plain ``json.loads`` rejects as trailing data.
+    SSH MOTD banners prepended before the JSON are skipped by seeking to
+    the first ``[`` or ``{`` character.
     """
-    raw = (output or "").strip()
+    stripped = (output or "").strip()
+    start = next((i for i, ch in enumerate(stripped) if ch in ('{', '[')), -1)
+    raw = stripped[start:] if start != -1 else stripped
     if not raw:
         return [], [f"{command_name} returned empty output"]
     decoder = json.JSONDecoder()

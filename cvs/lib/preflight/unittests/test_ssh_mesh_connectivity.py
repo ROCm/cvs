@@ -62,15 +62,16 @@ class TestSshMeshConnectivityCheck(unittest.TestCase):
         self.assertEqual(results['node1']['status'], 'WARNING')
         self.assertEqual(results['node2']['status'], 'WARNING')
 
-    def test_single_node_cluster_has_no_peers_and_passes(self):
+    def test_single_node_cluster_has_no_peers_and_warns(self):
         phdl = MagicMock()
         phdl.reachable_hosts = ['node1']
         peer_map = {'node1': '10.0.0.1'}
         checker = self._make_checker(phdl, peer_map)
         results = checker.run()
 
-        self.assertEqual(results['node1']['status'], 'PASS')
+        self.assertEqual(results['node1']['status'], 'WARNING')
         self.assertEqual(results['node1']['total_peers'], 0)
+        self.assertIn('no pairs to test', results['node1']['errors'][0])
         phdl.exec_cmd_list.assert_called_once()
 
     def test_no_reachable_hosts_returns_empty(self):

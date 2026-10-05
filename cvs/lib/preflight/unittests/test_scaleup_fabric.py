@@ -182,6 +182,29 @@ class TestMi4xxParsers(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertIn("c", masks["0000:01:00.0"])
 
+    def test_amd_smi_gpu_json_strips_ssh_motd_banner(self):
+        """SSH MOTD banners prepended before amd-smi JSON must not cause parse errors."""
+        banner = "WARNING: Conductor Auth\nThis is a restricted system.\n"
+        json_payload = json.dumps(_gpu_inventory())
+        gpus, errors = parse_amd_smi_gpu_json(banner + json_payload)
+        self.assertEqual(len(gpus), 4)
+        self.assertEqual(errors, [])
+
+    def test_amd_smi_gpu_json_banner_only_no_json_returns_error(self):
+        """Output with a banner but no JSON must return an error gracefully."""
+        gpus, errors = parse_amd_smi_gpu_json("WARNING: Conductor Auth\nNo JSON here")
+        self.assertEqual(gpus, [])
+        self.assertTrue(errors)
+
+    def test_amd_smi_gpu_json_ignores_trailing_ai_nic_array(self):
+        """amd-smi list --json emits a GPU array then an AI-NIC array; only the first must be parsed."""
+        gpu_payload = json.dumps(_gpu_inventory())
+        ai_nic_payload = json.dumps([{"ai_nic": 0, "bdf": "0000:01:00.0", "vendor_name": "AMD"}])
+        combined = gpu_payload + "\n" + ai_nic_payload
+        gpus, errors = parse_amd_smi_gpu_json(combined)
+        self.assertEqual(len(gpus), 4)
+        self.assertEqual(errors, [])
+
 
 class TestMi4xxNodeHealthCheck(unittest.TestCase):
     def _check(self, phdl, **kwargs):
