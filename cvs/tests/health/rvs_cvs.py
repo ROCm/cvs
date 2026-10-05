@@ -6,18 +6,28 @@ The year included in the foregoing notice is the year of creation of the work.
 All code contained here is Property of Advanced Micro Devices, Inc.
 '''
 
-import pytest
-
-import re
 import json
-from packaging import version
+import re
 
-from cvs.lib.utils_lib import *
+import pytest
+from packaging import version
 
 from cvs.lib import globals, rvs_rundeck
 from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
+from cvs.lib.utils_lib import *
 
 log = globals.log
+
+
+def _payload_sudo_prefix(orch):
+    """Sudo for a command passed to orch.exec().
+
+    sudo_prefix() is host passwordless sudo. Container exec already applies
+    that to `docker exec`, and the payload runs inside the container.
+    """
+    if getattr(orch, 'orchestrator_type', None) == 'container':
+        return ''
+    return orch.sudo_prefix()
 
 
 # Importing additional cmd line args to script ..
@@ -101,26 +111,27 @@ def rvs_version(orch, config_dict):
     Detect RVS version from all nodes.
     Returns the minimum version across all nodes.
     """
-    return get_rvs_version(orch, config_dict['path'])
+    return get_rvs_version(orch, config_dict['path'], config_dict.get('rocm_runtime_lib_path') or '')
 
 
-def get_rvs_version(orch, rvs_path):
+def get_rvs_version(orch, rvs_path, ld_path=None):
     """
     Get RVS version from all nodes.
 
     Args:
       orch: Orchestrator instance
       rvs_path: Path to RVS binary
+      ld_path: Optional LD_LIBRARY_PATH prefix for tarball installs
 
     Returns:
       str: Minimum version across all nodes (e.g., "1.2.0", "1.3.0")
     """
     version_dict = {}
 
-    out_dict = orch.exec(f'{rvs_path}/rvs --version', timeout=30)
+    out_dict = orch.exec(_build_rvs_cmd(rvs_path, '--version', ld_path=ld_path), timeout=30)
 
-    for node in out_dict.keys():
-        output = out_dict[node].strip()
+    for node, output in out_dict.items():
+        output = output.strip()
 
         # Extract version - output is just the version number like "1.2.0" or "1.3.0"
         # First try to match version pattern (digits.digits.digits)
@@ -215,12 +226,9 @@ def get_gpu_device_name(orch):
     """
     device_map = {}
 
-    # Execute amd-smi command to get GPU information in JSON format
-    out_dict = orch.exec('sudo amd-smi static -a -g 0 --json', timeout=30)
+    out_dict = orch.exec(f'{_payload_sudo_prefix(orch)}amd-smi static -a -g 0 --json', timeout=30)
 
-    for node in out_dict.keys():
-        output = out_dict[node]
-
+    for node, output in out_dict.items():
         try:
             # Parse JSON output
             gpu_info = json.loads(output)
@@ -272,10 +280,7 @@ def get_available_device_folders(orch, base_config_path):
 
     out_dict = orch.exec(f'ls -d {base_config_path}/*/ 2>/dev/null', timeout=30)
 
-    for node in out_dict.keys():
-        output = out_dict[node]
-
-        # Extract folder names from paths
+    for node, output in out_dict.items():
         folders = []
         for line in output.split('\n'):
             if line.strip():
@@ -321,7 +326,7 @@ def determine_rvs_config_path(orch, config_dict, config_file):
     default_exists = False
     chosen_path = None
 
-    for node in device_map.keys():
+    for node in device_map:
         device_name = device_map.get(node)
         node_folders = available_folders.get(node, [])
 
@@ -330,7 +335,7 @@ def determine_rvs_config_path(orch, config_dict, config_file):
             device_specific_path = f"{base_path}/{device_name}/{config_file}"
 
             out_dict = orch.exec(f'ls -l {device_specific_path}', timeout=30)
-            if not re.search('No such file', out_dict[node], re.I):
+            if not re.search('No such file', out_dict[node], re.IGNORECASE):
                 log.info(f'Node {node}: Device-specific config found: {device_specific_path}')
                 device_specific_exists = True
                 chosen_path = device_specific_path
@@ -350,8 +355,8 @@ def determine_rvs_config_path(orch, config_dict, config_file):
     log.info('Falling back to default config path')
     out_dict = orch.exec(f'ls -l {default_path}', timeout=30)
 
-    for node in out_dict.keys():
-        if not re.search('No such file', out_dict[node], re.I):
+    for node, output in out_dict.items():
+        if not re.search('No such file', output, re.IGNORECASE):
             log.info(f'Node {node}: Default config found: {default_path}')
             default_exists = True
         else:
@@ -367,7 +372,7 @@ def determine_rvs_config_path(orch, config_dict, config_file):
     return None
 
 
-def _build_rvs_cmd(rvs_path, rvs_args, *, sudo=False, ld_path=None):
+def _build_rvs_cmd(rvs_path, rvs_args, *, sudo_prefix='', ld_path=None):
     """
     Build a fully-formed RVS command string, optionally injecting LD_LIBRARY_PATH.
 
@@ -376,14 +381,15 @@ def _build_rvs_cmd(rvs_path, rvs_args, *, sudo=False, ld_path=None):
       ROCm runtime than the one that /opt/rocm symlinks to. Prepending the user's
       ROCm install (typically ~/install/lib + rocm_sysdeps + llvm/lib) to
       LD_LIBRARY_PATH makes the dynamic loader pick up the matching libs (amd_smi,
-      rocm_smi, hsa, libdrm shims) instead of the system ones. We also have to
-      wrap it in `sudo env LD_LIBRARY_PATH=...` for tests that need root (peqt,
-      level_config) because sudo strips LD_LIBRARY_PATH by default.
+      rocm_smi, hsa, libdrm shims) instead of the system ones. Privileged tests
+      pass _payload_sudo_prefix() ('' inside a container, 'sudo -n ' on bare metal).
+      sudo strips LD_LIBRARY_PATH, so the assignment goes through `env` when that
+      prefix is set.
 
     Args:
       rvs_path: Directory containing the rvs binary (e.g. '/opt/rocm/extras-7/bin').
       rvs_args: Args to rvs (e.g. '-c /path/to.conf', '-r 4').
-      sudo: When True, prefix with sudo (required for level_config and peqt_single).
+      sudo_prefix: From _payload_sudo_prefix(); empty when the command must not sudo.
       ld_path: Optional LD_LIBRARY_PATH prefix; falsy values mean "don't override".
 
     Returns:
@@ -392,11 +398,11 @@ def _build_rvs_cmd(rvs_path, rvs_args, *, sudo=False, ld_path=None):
     bin_path = f'{rvs_path}/rvs'
     if ld_path:
         ld_expr = f'{ld_path}:$LD_LIBRARY_PATH'
-        if sudo:
-            return f'sudo env LD_LIBRARY_PATH="{ld_expr}" {bin_path} {rvs_args}'
+        if sudo_prefix:
+            return f'{sudo_prefix}env LD_LIBRARY_PATH="{ld_expr}" {bin_path} {rvs_args}'
         return f'LD_LIBRARY_PATH="{ld_expr}" {bin_path} {rvs_args}'
-    if sudo:
-        return f'sudo {bin_path} {rvs_args}'
+    if sudo_prefix:
+        return f'{sudo_prefix}{bin_path} {rvs_args}'
     return f'{bin_path} {rvs_args}'
 
 
@@ -412,9 +418,8 @@ def parse_rvs_test_results(test_config, out_dict):
     fail_pattern = test_config.get('fail_regex_pattern', r'\[ERROR\s*\]')
 
     # Standard parsing for all tests
-    for node in out_dict.keys():
-        # Check for failure pattern
-        if re.search(fail_pattern, out_dict[node], re.I):
+    for node, output in out_dict.items():
+        if re.search(fail_pattern, output, re.IGNORECASE):
             fail_test(f'RVS {test_name} test failed on node {node}')
         else:
             log.info(f'RVS {test_name} test passed on node {node}')
@@ -473,9 +478,9 @@ def execute_rvs_test(
             copy_result = orch.exec(f'cp {source_config} {temp_config}', timeout=30)
 
             # Verify copy was successful
-            for node in copy_result.keys():
-                if copy_result[node].strip() and 'No such file' in copy_result[node]:
-                    fail_test(f'Failed to copy GST config file on node {node}: {copy_result[node]}')
+            for node, output in copy_result.items():
+                if output.strip() and 'No such file' in output:
+                    fail_test(f'Failed to copy GST config file on node {node}: {output}')
 
             # Step 4: Add compute_type parameter after specific action names using sed
             sed_commands = [
@@ -485,9 +490,9 @@ def execute_rvs_test(
 
             for sed_cmd in sed_commands:
                 sed_result = orch.exec(sed_cmd, timeout=30)
-                for node in sed_result.keys():
-                    if sed_result[node].strip():
-                        log.warning(f'Node {node}: sed command output: {sed_result[node]}')
+                for node, output in sed_result.items():
+                    if output.strip():
+                        log.warning(f'Node {node}: sed command output: {output}')
 
             # Step 5: Use the modified temp config path
             config_path = temp_config
@@ -501,9 +506,9 @@ def execute_rvs_test(
         # /opt/rocm currently symlinks to. See _build_rvs_cmd for rationale.
         ld_path = config_dict.get('rocm_runtime_lib_path') or ''
 
-        # PEQT requires elevated permissions; everything else runs as the SSH user.
-        sudo = test_name == 'peqt_single'
-        rvs_cmd = _build_rvs_cmd(rvs_path, f'-c {config_path}', sudo=sudo, ld_path=ld_path)
+        # PEQT requires elevated permissions when passwordless sudo exists.
+        sudo_prefix = _payload_sudo_prefix(orch) if test_name == 'peqt_single' else ''
+        rvs_cmd = _build_rvs_cmd(rvs_path, f'-c {config_path}', sudo_prefix=sudo_prefix, ld_path=ld_path)
 
         with timed_stage(lifecycle, test_name):
             out_dict = orch.exec(f'{rvs_cmd}', timeout=timeout)
@@ -536,14 +541,12 @@ def parse_rvs_level_results(test_config, out_dict, level):
         log.warning(f'No fail patterns defined for RVS LEVEL {level} test')
         return
 
-    for node in out_dict.keys():
-        output = out_dict[node]
+    for node, output in out_dict.items():
         node_passed = True
         failures_found = []
 
-        # Check each failure pattern
         for pattern in fail_patterns:
-            if re.search(pattern, output, re.I):
+            if re.search(pattern, output, re.IGNORECASE):
                 failures_found.append(pattern)
                 node_passed = False
 
@@ -612,7 +615,7 @@ def test_rvs_level_config(orch, config_dict, rvs_version, rvs_test_level, rvs_re
 
     # Run RVS with level configuration
     # The -r option runs all modules with predefined configuration for that level
-    rvs_cmd = _build_rvs_cmd(rvs_path, f'-r {rvs_test_level}', sudo=True, ld_path=ld_path)
+    rvs_cmd = _build_rvs_cmd(rvs_path, f'-r {rvs_test_level}', sudo_prefix=_payload_sudo_prefix(orch), ld_path=ld_path)
 
     log.info(f'Executing: {rvs_cmd}')
     with timed_stage(lifecycle, "level_config"):
@@ -647,16 +650,16 @@ def test_rvs_gpu_enumeration(orch, config_dict, rvs_res_dict, cluster_dict, rvs_
     log.info('Testcase Run RVS GPU Enumeration Test')
 
     rvs_path = config_dict['path']
+    ld_path = config_dict.get('rocm_runtime_lib_path') or ''
 
-    # Run GPU enumeration (using gpup module)
     with timed_stage(lifecycle, "gpu_enumeration"):
-        out_dict = orch.exec(f'{rvs_path}/rvs -g', timeout=60)
+        out_dict = orch.exec(_build_rvs_cmd(rvs_path, '-g', ld_path=ld_path), timeout=60)
     print_test_output(log, out_dict)
     scan_test_results(out_dict)
 
     # Validate that GPUs are detected
-    for node in out_dict.keys():
-        if re.search(r'No supported GPUs available', out_dict[node], re.I):
+    for node, output in out_dict.items():
+        if re.search(r'No supported GPUs available', output, re.IGNORECASE):
             fail_test(f'No GPUs detected in RVS enumeration on node {node}')
 
     _capture_rvs_rundeck(
