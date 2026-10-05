@@ -104,13 +104,13 @@ def test_launch_proxy_router(im_obj, lifecycle, request):
     lifecycle.complete_stage(request, "proxy_router_launch", t0)
 
 
-# def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, request):
-#     globals.error_list = []
-#     t0 = time.monotonic()
-#     results = im_obj.verify_openai_compatible_endpoints()
-#     lifecycle.smoke_results = results
-#     lifecycle.openai_completions_5xx_or_hang = bool(getattr(im_obj, "openai_completions_5xx_or_hang", False))
-#     lifecycle.complete_stage(request, "smoke_endpoints", t0)
+def test_openai_compatible_http_endpoints(im_obj, inf_res_dict, lifecycle, request):
+    globals.error_list = []
+    t0 = time.monotonic()
+    results = im_obj.verify_openai_compatible_endpoints()
+    lifecycle.smoke_results = results
+    lifecycle.openai_completions_5xx_or_hang = bool(getattr(im_obj, "openai_completions_5xx_or_hang", False))
+    lifecycle.complete_stage(request, "smoke_endpoints", t0)
 
 
 def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
@@ -141,13 +141,13 @@ def test_run_long_context_accuracy(im_obj, lifecycle, request, acc_cell):
     )
 
 
-# def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
-#     globals.error_list = []
-#     t0 = time.monotonic()
-#     im_obj.setup_benchmark_serv_container_env()
-#     h = im_obj.run_lm_eval_hellaswag_benchmark_test()
-#     lifecycle.phase_labels["accuracy_hellaswag"] = h
-#     lifecycle.complete_stage(request, "lm_eval_hellaswag", t0)
+def test_run_lm_eval_hellaswag_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
+    globals.error_list = []
+    t0 = time.monotonic()
+    im_obj.setup_benchmark_serv_container_env()
+    h = im_obj.run_lm_eval_hellaswag_benchmark_test()
+    lifecycle.phase_labels["accuracy_hellaswag"] = h
+    lifecycle.complete_stage(request, "lm_eval_hellaswag", t0)
 
 
 def test_run_lm_eval_gsm8k_benchmark_test(im_obj, inf_res_dict, lifecycle, request):
