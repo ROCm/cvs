@@ -18,11 +18,11 @@ REQUIRED_LINES = [
 
 class TestLimitsConfCheck(unittest.TestCase):
     def test_all_required_lines_present_pass(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
+        orch = MagicMock()
+        orch.exec.return_value = {
             'node1': "* soft memlock unlimited\n* hard memlock unlimited\n",
         }
-        checker = LimitsConfCheck(phdl, REQUIRED_LINES)
+        checker = LimitsConfCheck(orch, REQUIRED_LINES)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'PASS')
@@ -30,21 +30,21 @@ class TestLimitsConfCheck(unittest.TestCase):
         self.assertEqual(results['node1']['errors'], [])
 
     def test_whitespace_insensitive_match_pass(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
+        orch = MagicMock()
+        orch.exec.return_value = {
             'node1': "*   soft   memlock   unlimited\n*\thard\tmemlock\tunlimited\n",
         }
-        checker = LimitsConfCheck(phdl, REQUIRED_LINES)
+        checker = LimitsConfCheck(orch, REQUIRED_LINES)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'PASS')
 
     def test_missing_line_fails(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
+        orch = MagicMock()
+        orch.exec.return_value = {
             'node1': "* soft memlock unlimited\n",
         }
-        checker = LimitsConfCheck(phdl, REQUIRED_LINES)
+        checker = LimitsConfCheck(orch, REQUIRED_LINES)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'FAIL')
@@ -52,18 +52,18 @@ class TestLimitsConfCheck(unittest.TestCase):
         self.assertIn('missing 1 required line', results['node1']['errors'][0])
 
     def test_empty_file_all_missing_fails(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': ''}
-        checker = LimitsConfCheck(phdl, REQUIRED_LINES)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': ''}
+        checker = LimitsConfCheck(orch, REQUIRED_LINES)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'FAIL')
         self.assertEqual(len(results['node1']['missing_lines']), 2)
 
     def test_empty_required_lines_always_pass(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': ''}
-        checker = LimitsConfCheck(phdl, [])
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': ''}
+        checker = LimitsConfCheck(orch, [])
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'PASS')

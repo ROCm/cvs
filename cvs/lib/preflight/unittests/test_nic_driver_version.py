@@ -28,7 +28,7 @@ EXPECTED_OFED = "MLNX_OFED_LINUX-24.10-1.1.4.0"
 # matched zero rows against real output while still passing against the
 # hand-built ``_broadcom_output`` fixture below. This fixture is fed through the
 # actual embedded shell/awk (via a stubbed niccli/lsmod/sudo on PATH) rather than
-# mocking phdl.exec's return value, so a regression here fails the same way it
+# mocking orch.exec's return value, so a regression here fails the same way it
 # did against real hardware.
 _REAL_NICCLI_LIST_OUTPUT = """
      BoardId(Rev)    MAC Address        FwVersion    PCIAddr        Type   Mode
@@ -98,9 +98,9 @@ def _mellanox_output(mlx5_version, ofed_version):
 
 class TestBroadcomDriverVersionCheck(unittest.TestCase):
     def test_non_broadcom_node_skipped(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': "VENDOR:NOT_BROADCOM"}
-        checker = BroadcomDriverVersionCheck(phdl)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': "VENDOR:NOT_BROADCOM"}
+        checker = BroadcomDriverVersionCheck(orch)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'SKIPPED')
@@ -108,9 +108,9 @@ class TestBroadcomDriverVersionCheck(unittest.TestCase):
         self.assertEqual(results['node1']['errors'], [])
 
     def test_matching_package_version_pass(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER, EXPECTED_PKG_VER)}
-        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER, EXPECTED_PKG_VER)}
+        checker = BroadcomDriverVersionCheck(orch, expected_package_version=EXPECTED_PKG_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'PASS')
@@ -119,18 +119,18 @@ class TestBroadcomDriverVersionCheck(unittest.TestCase):
         self.assertEqual(results['node1']['errors'], [])
 
     def test_version_mismatch_warns(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': _broadcom_output("999.0.0.0")}
-        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': _broadcom_output("999.0.0.0")}
+        checker = BroadcomDriverVersionCheck(orch, expected_package_version=EXPECTED_PKG_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
         self.assertTrue(any('NIC 1 package version=999.0.0.0' in e for e in results['node1']['errors']))
 
     def test_one_of_several_nics_mismatched_warns_only_that_nic(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER, "999.0.0.0")}
-        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER, "999.0.0.0")}
+        checker = BroadcomDriverVersionCheck(orch, expected_package_version=EXPECTED_PKG_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
@@ -138,18 +138,18 @@ class TestBroadcomDriverVersionCheck(unittest.TestCase):
         self.assertIn('NIC 2 package version=999.0.0.0', results['node1']['errors'][0])
 
     def test_malformed_empty_output_skipped(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': ''}
-        checker = BroadcomDriverVersionCheck(phdl)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': ''}
+        checker = BroadcomDriverVersionCheck(orch)
         results = checker.run()
 
         # No VENDOR field at all -> not BROADCOM -> SKIPPED (mirrors non-broadcom nodes).
         self.assertEqual(results['node1']['status'], 'SKIPPED')
 
     def test_niccli_missing_warns(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': "VENDOR:BROADCOM\nNICCLI:MISSING"}
-        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': "VENDOR:BROADCOM\nNICCLI:MISSING"}
+        checker = BroadcomDriverVersionCheck(orch, expected_package_version=EXPECTED_PKG_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
@@ -157,31 +157,31 @@ class TestBroadcomDriverVersionCheck(unittest.TestCase):
         self.assertTrue(any('niccli not found' in e for e in results['node1']['errors']))
 
     def test_broadcom_vendor_with_no_packages_reported_warns(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': "VENDOR:BROADCOM"}
-        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': "VENDOR:BROADCOM"}
+        checker = BroadcomDriverVersionCheck(orch, expected_package_version=EXPECTED_PKG_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
         self.assertTrue(any('niccli not found' in e for e in results['node1']['errors']))
 
     def test_niccli_invoked_with_sudo_by_default(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER)}
-        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER)}
+        checker = BroadcomDriverVersionCheck(orch, expected_package_version=EXPECTED_PKG_VER)
         checker.run()
 
-        command = phdl.exec.call_args[0][0]
+        command = orch.exec.call_args[0][0]
         self.assertIn('sudo niccli --list', command)
         self.assertIn('sudo niccli -i', command)
 
     def test_niccli_invoked_without_sudo_when_disabled(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER)}
-        checker = BroadcomDriverVersionCheck(phdl, expected_package_version=EXPECTED_PKG_VER, use_sudo=False)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER)}
+        checker = BroadcomDriverVersionCheck(orch, expected_package_version=EXPECTED_PKG_VER, use_sudo=False)
         checker.run()
 
-        command = phdl.exec.call_args[0][0]
+        command = orch.exec.call_args[0][0]
         self.assertNotIn('sudo niccli --list', command)
         self.assertNotIn('sudo niccli -i', command)
         self.assertIn('niccli --list', command)
@@ -202,9 +202,9 @@ class TestBroadcomDriverVersionCheck(unittest.TestCase):
 
 class TestAinicDriverVersionCheck(unittest.TestCase):
     def test_non_ainic_node_skipped(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': "VENDOR:NOT_AINIC"}
-        checker = AinicDriverVersionCheck(phdl)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': "VENDOR:NOT_AINIC"}
+        checker = AinicDriverVersionCheck(orch)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'SKIPPED')
@@ -212,9 +212,9 @@ class TestAinicDriverVersionCheck(unittest.TestCase):
         self.assertEqual(results['node1']['errors'], [])
 
     def test_matching_fw_version_pass(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': _ainic_output(EXPECTED_FW_VER, EXPECTED_FW_VER)}
-        checker = AinicDriverVersionCheck(phdl, expected_fw_version=EXPECTED_FW_VER)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': _ainic_output(EXPECTED_FW_VER, EXPECTED_FW_VER)}
+        checker = AinicDriverVersionCheck(orch, expected_fw_version=EXPECTED_FW_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'PASS')
@@ -229,18 +229,18 @@ class TestAinicDriverVersionCheck(unittest.TestCase):
         self.assertEqual(results['node1']['errors'], [])
 
     def test_version_mismatch_warns(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': _ainic_output("0.0.0-a-1")}
-        checker = AinicDriverVersionCheck(phdl, expected_fw_version=EXPECTED_FW_VER)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': _ainic_output("0.0.0-a-1")}
+        checker = AinicDriverVersionCheck(orch, expected_fw_version=EXPECTED_FW_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
         self.assertTrue(any('NIC ionic_0' in e and 'uboot=0.0.0-a-1' in e for e in results['node1']['errors']))
 
     def test_one_of_several_nics_mismatched_warns_only_that_nic(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': _ainic_output(EXPECTED_FW_VER, "0.0.0-a-1")}
-        checker = AinicDriverVersionCheck(phdl, expected_fw_version=EXPECTED_FW_VER)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': _ainic_output(EXPECTED_FW_VER, "0.0.0-a-1")}
+        checker = AinicDriverVersionCheck(orch, expected_fw_version=EXPECTED_FW_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
@@ -248,17 +248,17 @@ class TestAinicDriverVersionCheck(unittest.TestCase):
         self.assertIn('NIC ionic_1', results['node1']['errors'][0])
 
     def test_malformed_empty_output_skipped(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': ''}
-        checker = AinicDriverVersionCheck(phdl)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': ''}
+        checker = AinicDriverVersionCheck(orch)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'SKIPPED')
 
     def test_nicctl_missing_warns(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': "VENDOR:AINIC\nNICCTL:MISSING"}
-        checker = AinicDriverVersionCheck(phdl, expected_fw_version=EXPECTED_FW_VER)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': "VENDOR:AINIC\nNICCTL:MISSING"}
+        checker = AinicDriverVersionCheck(orch, expected_fw_version=EXPECTED_FW_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
@@ -266,20 +266,38 @@ class TestAinicDriverVersionCheck(unittest.TestCase):
         self.assertTrue(any('nicctl not found' in e for e in results['node1']['errors']))
 
     def test_ainic_vendor_with_no_nics_reported_warns(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': "VENDOR:AINIC"}
-        checker = AinicDriverVersionCheck(phdl, expected_fw_version=EXPECTED_FW_VER)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': "VENDOR:AINIC"}
+        checker = AinicDriverVersionCheck(orch, expected_fw_version=EXPECTED_FW_VER)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
         self.assertTrue(any('nicctl not found' in e for e in results['node1']['errors']))
 
+    def test_nicctl_invoked_with_sudo_by_default(self):
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': _ainic_output(EXPECTED_FW_VER)}
+        checker = AinicDriverVersionCheck(orch, expected_fw_version=EXPECTED_FW_VER)
+        checker.run()
+
+        command = orch.exec.call_args[0][0]
+        self.assertIn('sudo nicctl', command)
+
+    def test_nicctl_invoked_without_sudo_when_disabled(self):
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': _ainic_output(EXPECTED_FW_VER)}
+        checker = AinicDriverVersionCheck(orch, expected_fw_version=EXPECTED_FW_VER, use_sudo=False)
+        checker.run()
+
+        command = orch.exec.call_args[0][0]
+        self.assertNotIn('sudo nicctl', command)
+
 
 class TestMellanoxDriverVersionCheck(unittest.TestCase):
     def test_non_mellanox_node_skipped(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': "VENDOR:NOT_MELLANOX"}
-        checker = MellanoxDriverVersionCheck(phdl)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': "VENDOR:NOT_MELLANOX"}
+        checker = MellanoxDriverVersionCheck(orch)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'SKIPPED')
@@ -287,10 +305,10 @@ class TestMellanoxDriverVersionCheck(unittest.TestCase):
         self.assertEqual(results['node1']['errors'], [])
 
     def test_matching_versions_pass(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': _mellanox_output(EXPECTED_MLX5, EXPECTED_OFED)}
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': _mellanox_output(EXPECTED_MLX5, EXPECTED_OFED)}
         checker = MellanoxDriverVersionCheck(
-            phdl, expected_mlx5_core_version=EXPECTED_MLX5, expected_ofed_version=EXPECTED_OFED
+            orch, expected_mlx5_core_version=EXPECTED_MLX5, expected_ofed_version=EXPECTED_OFED
         )
         results = checker.run()
 
@@ -299,10 +317,10 @@ class TestMellanoxDriverVersionCheck(unittest.TestCase):
         self.assertEqual(results['node1']['errors'], [])
 
     def test_version_mismatch_warns(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': _mellanox_output("0.0.0", EXPECTED_OFED)}
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': _mellanox_output("0.0.0", EXPECTED_OFED)}
         checker = MellanoxDriverVersionCheck(
-            phdl, expected_mlx5_core_version=EXPECTED_MLX5, expected_ofed_version=EXPECTED_OFED
+            orch, expected_mlx5_core_version=EXPECTED_MLX5, expected_ofed_version=EXPECTED_OFED
         )
         results = checker.run()
 
@@ -310,9 +328,9 @@ class TestMellanoxDriverVersionCheck(unittest.TestCase):
         self.assertTrue(any('mlx5_core version=0.0.0' in e for e in results['node1']['errors']))
 
     def test_malformed_empty_output_skipped(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': ''}
-        checker = MellanoxDriverVersionCheck(phdl)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': ''}
+        checker = MellanoxDriverVersionCheck(orch)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'SKIPPED')
@@ -320,10 +338,10 @@ class TestMellanoxDriverVersionCheck(unittest.TestCase):
 
 class TestNicDriverVersionCheckDispatcher(unittest.TestCase):
     def test_single_vendor_matches_underlying_check(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER)}
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': _broadcom_output(EXPECTED_PKG_VER)}
         checker = NicDriverVersionCheck(
-            phdl,
+            orch,
             nic_types=['broadcom'],
             vendor_configs={'broadcom': {'expected_package_version': EXPECTED_PKG_VER}},
         )
@@ -335,7 +353,7 @@ class TestNicDriverVersionCheckDispatcher(unittest.TestCase):
         self.assertEqual(results['node1']['errors'], [])
 
     def test_multi_vendor_merges_fail_over_warning(self):
-        phdl = MagicMock()
+        orch = MagicMock()
 
         def fake_exec(cmd):
             if 'niccli' in cmd:
@@ -344,9 +362,9 @@ class TestNicDriverVersionCheckDispatcher(unittest.TestCase):
                 return {'node1': "VENDOR:NOT_AINIC"}
             return {'node1': ''}
 
-        phdl.exec.side_effect = fake_exec
+        orch.exec.side_effect = fake_exec
         checker = NicDriverVersionCheck(
-            phdl,
+            orch,
             nic_types=['ainic', 'broadcom'],
             vendor_configs={'broadcom': {'expected_package_version': EXPECTED_PKG_VER}},
         )
@@ -359,9 +377,9 @@ class TestNicDriverVersionCheckDispatcher(unittest.TestCase):
         self.assertTrue(any('NIC 1 package version=999.0.0.0' in e for e in results['node1']['errors']))
 
     def test_all_vendors_skipped_surfaces_skipped(self):
-        phdl = MagicMock()
-        phdl.exec.side_effect = lambda cmd: {'node1': "VENDOR:NOT_AINIC" if 'nicctl' in cmd else "VENDOR:NOT_BROADCOM"}
-        checker = NicDriverVersionCheck(phdl, nic_types=['ainic', 'broadcom'])
+        orch = MagicMock()
+        orch.exec.side_effect = lambda cmd: {'node1': "VENDOR:NOT_AINIC" if 'nicctl' in cmd else "VENDOR:NOT_BROADCOM"}
+        checker = NicDriverVersionCheck(orch, nic_types=['ainic', 'broadcom'])
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'SKIPPED')

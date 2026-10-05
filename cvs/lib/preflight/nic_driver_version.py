@@ -126,14 +126,16 @@ class AinicDriverVersionCheck(_VendorDriverVersionCheck):
         self,
         phdl,
         expected_fw_version="1.117.5-a-56",
+        use_sudo=True,
         config_dict=None,
     ):
         super().__init__(phdl, config_dict)
         self.expected_fw_version = expected_fw_version
+        self.use_sudo = use_sudo
 
-    @staticmethod
-    def _build_command():
-        return """
+    def _build_command(self):
+        sudo = "sudo " if self.use_sudo else ""
+        return f"""
         if ! lsmod 2>/dev/null | grep -Eq '^ionic(_rdma)?'; then
             echo "VENDOR:NOT_AINIC"
             exit 0
@@ -143,10 +145,10 @@ class AinicDriverVersionCheck(_VendorDriverVersionCheck):
             echo "NICCTL:MISSING"
             exit 0
         fi
-        nicctl show version firmware 2>/dev/null | awk '
-            /^NIC/{nic=$3}
-            /Uboot-A/{uboot=$NF}
-            /Firmware-A/{fw=$NF; print "FW:"nic":"uboot":"fw}
+        {sudo}nicctl show version firmware 2>/dev/null | awk '
+            /^NIC/{{nic=$3}}
+            /Uboot-A/{{uboot=$NF}}
+            /Firmware-A/{{fw=$NF; print "FW:"nic":"uboot":"fw}}
         '
         """
 

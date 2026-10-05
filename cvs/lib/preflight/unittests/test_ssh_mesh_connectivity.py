@@ -11,19 +11,19 @@ from cvs.lib.preflight.ssh_mesh_connectivity import SshMeshConnectivityCheck
 
 
 class TestSshMeshConnectivityCheck(unittest.TestCase):
-    def _make_checker(self, phdl, peer_map, ssh_timeout_sec=10):
-        return SshMeshConnectivityCheck(phdl, peer_map, ssh_timeout_sec=ssh_timeout_sec)
+    def _make_checker(self, orch, peer_map, ssh_timeout_sec=10):
+        return SshMeshConnectivityCheck(orch, peer_map, ssh_timeout_sec=ssh_timeout_sec)
 
     def test_all_peers_reachable_pass(self):
-        phdl = MagicMock()
-        phdl.reachable_hosts = ['node1', 'node2', 'node3']
+        orch = MagicMock()
+        orch.reachable_hosts = ['node1', 'node2', 'node3']
         peer_map = {'node1': '10.0.0.1', 'node2': '10.0.0.2', 'node3': '10.0.0.3'}
-        phdl.exec_cmd_list.return_value = {
+        orch.exec_cmd_list.return_value = {
             'node1': "SSH_MESH_TOTAL:2\nSSH_MESH_PASS:2\nSSH_MESH_FAIL:0\nSSH_MESH_FAILED_PEERS:",
             'node2': "SSH_MESH_TOTAL:2\nSSH_MESH_PASS:2\nSSH_MESH_FAIL:0\nSSH_MESH_FAILED_PEERS:",
             'node3': "SSH_MESH_TOTAL:2\nSSH_MESH_PASS:2\nSSH_MESH_FAIL:0\nSSH_MESH_FAILED_PEERS:",
         }
-        checker = self._make_checker(phdl, peer_map)
+        checker = self._make_checker(orch, peer_map)
         results = checker.run()
 
         for node, result in results.items():
@@ -32,14 +32,14 @@ class TestSshMeshConnectivityCheck(unittest.TestCase):
             self.assertEqual(result['errors'], [])
 
     def test_some_peers_unreachable_warning(self):
-        phdl = MagicMock()
-        phdl.reachable_hosts = ['node1', 'node2']
+        orch = MagicMock()
+        orch.reachable_hosts = ['node1', 'node2']
         peer_map = {'node1': '10.0.0.1', 'node2': '10.0.0.2'}
-        phdl.exec_cmd_list.return_value = {
+        orch.exec_cmd_list.return_value = {
             'node1': "SSH_MESH_TOTAL:1\nSSH_MESH_PASS:0\nSSH_MESH_FAIL:1\nSSH_MESH_FAILED_PEERS:10.0.0.2",
             'node2': "SSH_MESH_TOTAL:1\nSSH_MESH_PASS:1\nSSH_MESH_FAIL:0\nSSH_MESH_FAILED_PEERS:",
         }
-        checker = self._make_checker(phdl, peer_map)
+        checker = self._make_checker(orch, peer_map)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
@@ -48,14 +48,14 @@ class TestSshMeshConnectivityCheck(unittest.TestCase):
         self.assertEqual(results['node2']['status'], 'PASS')
 
     def test_malformed_output_treated_as_warning(self):
-        phdl = MagicMock()
-        phdl.reachable_hosts = ['node1', 'node2']
+        orch = MagicMock()
+        orch.reachable_hosts = ['node1', 'node2']
         peer_map = {'node1': '10.0.0.1', 'node2': '10.0.0.2'}
-        phdl.exec_cmd_list.return_value = {
+        orch.exec_cmd_list.return_value = {
             'node1': "garbage output with no recognizable markers",
             'node2': "",
         }
-        checker = self._make_checker(phdl, peer_map)
+        checker = self._make_checker(orch, peer_map)
         results = checker.run()
 
         # total==0 with no failed_peers parsed still can't be trusted as PASS.
@@ -63,38 +63,38 @@ class TestSshMeshConnectivityCheck(unittest.TestCase):
         self.assertEqual(results['node2']['status'], 'WARNING')
 
     def test_single_node_cluster_has_no_peers_and_warns(self):
-        phdl = MagicMock()
-        phdl.reachable_hosts = ['node1']
+        orch = MagicMock()
+        orch.reachable_hosts = ['node1']
         peer_map = {'node1': '10.0.0.1'}
-        checker = self._make_checker(phdl, peer_map)
+        checker = self._make_checker(orch, peer_map)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'WARNING')
         self.assertEqual(results['node1']['total_peers'], 0)
         self.assertIn('no pairs to test', results['node1']['errors'][0])
-        phdl.exec_cmd_list.assert_called_once()
+        orch.exec_cmd_list.assert_called_once()
 
     def test_no_reachable_hosts_returns_empty(self):
-        phdl = MagicMock()
-        phdl.reachable_hosts = []
-        checker = self._make_checker(phdl, {})
+        orch = MagicMock()
+        orch.reachable_hosts = []
+        checker = self._make_checker(orch, {})
         results = checker.run()
         self.assertEqual(results, {})
-        phdl.exec_cmd_list.assert_not_called()
+        orch.exec_cmd_list.assert_not_called()
 
     def test_exec_cmd_list_called_exactly_once_with_positional_list(self):
-        phdl = MagicMock()
-        phdl.reachable_hosts = ['node1', 'node2']
+        orch = MagicMock()
+        orch.reachable_hosts = ['node1', 'node2']
         peer_map = {'node1': '10.0.0.1', 'node2': '10.0.0.2'}
-        phdl.exec_cmd_list.return_value = {
+        orch.exec_cmd_list.return_value = {
             'node1': "SSH_MESH_TOTAL:1\nSSH_MESH_PASS:1\nSSH_MESH_FAIL:0\nSSH_MESH_FAILED_PEERS:",
             'node2': "SSH_MESH_TOTAL:1\nSSH_MESH_PASS:1\nSSH_MESH_FAIL:0\nSSH_MESH_FAILED_PEERS:",
         }
-        checker = self._make_checker(phdl, peer_map)
+        checker = self._make_checker(orch, peer_map)
         checker.run()
 
-        phdl.exec_cmd_list.assert_called_once()
-        (cmd_list,), _ = phdl.exec_cmd_list.call_args
+        orch.exec_cmd_list.assert_called_once()
+        (cmd_list,), _ = orch.exec_cmd_list.call_args
         self.assertIsInstance(cmd_list, list)
         self.assertEqual(len(cmd_list), 2)
 

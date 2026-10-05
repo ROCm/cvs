@@ -31,11 +31,11 @@ class TestParseResultLine(unittest.TestCase):
 
 class TestPfcValidationCheck(unittest.TestCase):
     def test_all_cards_pass(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
+        orch = MagicMock()
+        orch.exec.return_value = {
             'node1': "RESULT=PASS|CHECK=PFC|CARDS=8|PASSED=8|FAILED=0",
         }
-        checker = PfcValidationCheck(phdl, expected_card_count=8)
+        checker = PfcValidationCheck(orch, expected_card_count=8)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'PASS')
@@ -43,42 +43,42 @@ class TestPfcValidationCheck(unittest.TestCase):
         self.assertEqual(results['node1']['errors'], [])
 
     def test_card_count_mismatch_fails(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
+        orch = MagicMock()
+        orch.exec.return_value = {
             'node1': "RESULT=FAIL|CHECK=PFC|CARDS=4|PASSED=4|FAILED=0",
         }
-        checker = PfcValidationCheck(phdl, expected_card_count=8)
+        checker = PfcValidationCheck(orch, expected_card_count=8)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'FAIL')
         self.assertIn('Expected 8 AINIC card(s), found 4', results['node1']['errors'][0])
 
     def test_pause_type_mismatch_fails(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
+        orch = MagicMock()
+        orch.exec.return_value = {
             'node1': "RESULT=FAIL|CHECK=PFC|CARDS=8|PASSED=7|FAILED=1|FAILED_CARDS=3:PAUSE_TYPE=None",
         }
-        checker = PfcValidationCheck(phdl, expected_card_count=8, expected_pause_type='PFC')
+        checker = PfcValidationCheck(orch, expected_card_count=8, expected_pause_type='PFC')
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'FAIL')
         self.assertIn('PFC mismatch on card(s): 3:PAUSE_TYPE=None', results['node1']['errors'][0])
 
     def test_no_cards_discovered_fails(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
+        orch = MagicMock()
+        orch.exec.return_value = {
             'node1': "RESULT=ERROR|CHECK=PFC|REASON=no_card_ids_found",
         }
-        checker = PfcValidationCheck(phdl)
+        checker = PfcValidationCheck(orch)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'FAIL')
         self.assertIn('no_card_ids_found', results['node1']['errors'][0])
 
     def test_malformed_empty_output_fails(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': ''}
-        checker = PfcValidationCheck(phdl)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': ''}
+        checker = PfcValidationCheck(orch)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'FAIL')
@@ -87,41 +87,41 @@ class TestPfcValidationCheck(unittest.TestCase):
 
 class TestQosValidationCheck(unittest.TestCase):
     def test_all_cards_pass(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
+        orch = MagicMock()
+        orch.exec.return_value = {
             'node1': "RESULT=PASS|CHECK=QOS|CARDS=8|PASSED=8|FAILED=0",
         }
-        checker = QosValidationCheck(phdl, expected_card_count=8)
+        checker = QosValidationCheck(orch, expected_card_count=8)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'PASS')
         self.assertEqual(results['node1']['errors'], [])
 
     def test_dscp_mismatch_fails(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
+        orch = MagicMock()
+        orch.exec.return_value = {
             'node1': "RESULT=FAIL|CHECK=QOS|CARDS=8|PASSED=7|FAILED=1|DETAILS=0:[dscp24_priority=5]",
         }
-        checker = QosValidationCheck(phdl, expected_card_count=8)
+        checker = QosValidationCheck(orch, expected_card_count=8)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'FAIL')
         self.assertIn('QoS mismatch on card(s): 0:[dscp24_priority=5]', results['node1']['errors'][0])
 
     def test_no_cards_discovered_fails(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
+        orch = MagicMock()
+        orch.exec.return_value = {
             'node1': "RESULT=ERROR|CHECK=QOS|REASON=no_card_ids_found",
         }
-        checker = QosValidationCheck(phdl)
+        checker = QosValidationCheck(orch)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'FAIL')
 
     def test_malformed_empty_output_fails(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': None}
-        checker = QosValidationCheck(phdl)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': None}
+        checker = QosValidationCheck(orch)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'FAIL')
@@ -139,10 +139,10 @@ class TestDcqcnValidationCheck(unittest.TestCase):
         return "|".join(parts)
 
     def test_all_devices_pass(self):
-        phdl = MagicMock()
-        checker = DcqcnValidationCheck(phdl, expected_device_count=1)
+        orch = MagicMock()
+        checker = DcqcnValidationCheck(orch, expected_device_count=1)
         blob = self._golden_field_blob(checker)
-        phdl.exec.return_value = {
+        orch.exec.return_value = {
             'node1': f"DEV_FIELDS:mlx5_0:{blob}\nRESULT=RAW|CHECK=DCQCN|DEVICES=1",
         }
         results = checker.run()
@@ -153,10 +153,10 @@ class TestDcqcnValidationCheck(unittest.TestCase):
         self.assertEqual(results['node1']['errors'], [])
 
     def test_device_count_mismatch_fails(self):
-        phdl = MagicMock()
-        checker = DcqcnValidationCheck(phdl, expected_device_count=2)
+        orch = MagicMock()
+        checker = DcqcnValidationCheck(orch, expected_device_count=2)
         blob = self._golden_field_blob(checker)
-        phdl.exec.return_value = {
+        orch.exec.return_value = {
             'node1': f"DEV_FIELDS:mlx5_0:{blob}\nRESULT=RAW|CHECK=DCQCN|DEVICES=1",
         }
         results = checker.run()
@@ -165,10 +165,10 @@ class TestDcqcnValidationCheck(unittest.TestCase):
         self.assertIn('Expected 2 AINIC device(s), found 1', results['node1']['errors'][0])
 
     def test_parameter_mismatch_fails(self):
-        phdl = MagicMock()
-        checker = DcqcnValidationCheck(phdl, expected_device_count=1, ai_rate="160")
+        orch = MagicMock()
+        checker = DcqcnValidationCheck(orch, expected_device_count=1, ai_rate="160")
         blob = self._golden_field_blob(checker, overrides={'Rate increase in AI phase': '999'})
-        phdl.exec.return_value = {
+        orch.exec.return_value = {
             'node1': f"DEV_FIELDS:mlx5_0:{blob}\nRESULT=RAW|CHECK=DCQCN|DEVICES=1",
         }
         results = checker.run()
@@ -178,20 +178,20 @@ class TestDcqcnValidationCheck(unittest.TestCase):
         self.assertIn('Rate increase in AI phase=999 (expected 160)', results['node1']['errors'][-1])
 
     def test_no_devices_found_fails(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {
+        orch = MagicMock()
+        orch.exec.return_value = {
             'node1': "RESULT=ERROR|CHECK=DCQCN|REASON=no_devices_found",
         }
-        checker = DcqcnValidationCheck(phdl)
+        checker = DcqcnValidationCheck(orch)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'FAIL')
         self.assertIn('no_devices_found', results['node1']['errors'][0])
 
     def test_malformed_empty_output_fails(self):
-        phdl = MagicMock()
-        phdl.exec.return_value = {'node1': ''}
-        checker = DcqcnValidationCheck(phdl)
+        orch = MagicMock()
+        orch.exec.return_value = {'node1': ''}
+        checker = DcqcnValidationCheck(orch)
         results = checker.run()
 
         self.assertEqual(results['node1']['status'], 'FAIL')
@@ -245,8 +245,8 @@ class TestPfcQosDcqcnNicTypeGating(unittest.TestCase):
                 },
             },
         }
-        phdl = MagicMock()
-        phdl.reachable_hosts = []
+        orch = MagicMock()
+        orch.reachable_hosts = []
 
         from cvs.tests.preflight import preflight_checks
 
@@ -254,7 +254,7 @@ class TestPfcQosDcqcnNicTypeGating(unittest.TestCase):
         try:
             with patch.object(preflight_checks, 'preflight_update_test_result'):
                 with self.assertRaises(pytest.fail.Exception):
-                    preflight_checks.test_ainic_pfc_qos_dcqcn(phdl, config)
+                    preflight_checks.test_ainic_pfc_qos_dcqcn(orch, config)
             self.assertEqual(preflight_checks.preflight_results['pfc_qos_dcqcn']['status'], 'FAIL')
         finally:
             preflight_checks.preflight_results.clear()
