@@ -248,11 +248,9 @@ def inf_res_dict(cvs_results_dict):
 def pytest_collection_modifyitems(config, items):
     """Pin the lifecycle order explicitly instead of relying on definition order.
 
-    `test_print_results_table` is an imported function (its source line points
-    into _shared.py), so default ordering collects it FIRST -- which would log an
-    empty table before any cell ran. Sort deterministically: launch, sshd, fetch,
-    the benchmark cells, the results table, then teardown last. Items from other
-    modules keep their relative order.
+    Sort deterministically: launch, sshd, fetch, the benchmark cells, the
+    results table, then teardown last. Items from other modules keep their
+    relative order.
     """
     validate_vllm_execution_mode(config)
     rank = {

@@ -92,7 +92,7 @@ class TestLoadMetricReuse(unittest.TestCase):
             mock.patch.object(_common, "_gpu_snap", side_effect=snapshots) as gpu_snap,
             mock.patch.object(_common.time, "monotonic", side_effect=[10.0, 12.0, 20.0, 21.0]),
         ):
-            _common.test_vllm_inference(
+            _common.vllm_inference(
                 mock.Mock(),
                 self.variant,
                 "",
@@ -238,7 +238,7 @@ class TestLoadMetricReuse(unittest.TestCase):
             mock.patch.object(_common, "VllmJob", side_effect=RuntimeError("construction failed")),
             self.assertRaisesRegex(RuntimeError, "construction failed"),
         ):
-            _common.test_vllm_inference(
+            _common.vllm_inference(
                 mock.Mock(),
                 self.variant,
                 "",
@@ -349,7 +349,7 @@ class TestLoadMetricReuse(unittest.TestCase):
             mock.patch.object(_common, "VllmJob", return_value=job),
             self.assertRaisesRegex(RuntimeError, "stop failed"),
         ):
-            _common.test_vllm_inference(
+            _common.vllm_inference(
                 mock.Mock(),
                 self.variant,
                 "",
@@ -385,7 +385,7 @@ class TestLoadMetricReuse(unittest.TestCase):
             mock.patch.object(_common.time, "monotonic", side_effect=[10.0, 12.0]),
             self.assertRaisesRegex(RuntimeError, "client failed"),
         ):
-            _common.test_vllm_inference(
+            _common.vllm_inference(
                 mock.Mock(),
                 self.variant,
                 "",

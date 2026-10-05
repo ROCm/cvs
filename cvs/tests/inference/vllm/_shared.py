@@ -2,10 +2,7 @@
 Copyright 2025 Advanced Micro Devices, Inc.
 All rights reserved.
 
-Shared test helpers for the unified vllm suite.
-
-`test_print_results_table` is imported by both explicit vLLM suites and runs
-after `test_vllm_inference`.
+Shared helpers for the vLLM single and distributed suites.
 '''
 
 from tabulate import tabulate
@@ -16,7 +13,7 @@ from cvs.lib.inference.utils.vllm_metrics import VLLM_RESULTS_COLUMNS
 
 log = globals.log
 
-__all__ = ["test_print_results_table", "validate_vllm_execution_mode"]
+__all__ = ["print_results_table", "validate_vllm_execution_mode"]
 
 
 def validate_vllm_execution_mode(pytestconfig):
@@ -36,7 +33,7 @@ def _cell(m, key):
     return "-" if v is None else v
 
 
-def test_print_results_table(inf_res_dict):
+def print_results_table(inf_res_dict):
     if not inf_res_dict:
         log.info("inf_res_dict empty, nothing to print")
         return
