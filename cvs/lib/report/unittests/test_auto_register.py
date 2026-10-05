@@ -37,6 +37,12 @@ class TestAutoRegister(unittest.TestCase):
                 self.assertEqual(config._suite_report_config["suite_id"], "rccl")
                 self.assertEqual(config._suite_report_config["dataset_builder"], "series")
 
+    def test_auto_register_loads_mori_benchmark_profile(self):
+        config = SimpleNamespace(_suite_name="mori_benchmark_test", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["dataset_builder"], "series")
+        self.assertFalse(config._suite_report_config["interactive_viewer"])
+
     def test_auto_register_loads_megatron_alias(self):
         for stem in ("megatron_single", "megatron_distributed"):
             config = SimpleNamespace(_suite_name=stem, _suite_report_config=None)
@@ -84,12 +90,6 @@ class TestAutoRegister(unittest.TestCase):
         self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
         self.assertEqual(config._suite_report_config["sources"]["results"], "agfhc_res_dict")
         self.assertEqual(config._suite_report_config["lifecycle"]["session_labels"][0], "version_check")
-
-    def test_auto_register_loads_mori_benchmark_profile(self):
-        config = SimpleNamespace(_suite_name="mori_benchmark_test", _suite_report_config=None)
-        self.assertTrue(try_auto_register_suite_report(config))
-        self.assertEqual(config._suite_report_config["dataset_builder"], "series")
-        self.assertFalse(config._suite_report_config["interactive_viewer"])
 
 
 if __name__ == "__main__":
