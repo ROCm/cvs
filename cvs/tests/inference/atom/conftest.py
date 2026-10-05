@@ -165,8 +165,14 @@ def server_session():
 
 
 @pytest.fixture(scope="module")
-def inf_res_dict():
+def cvs_results_dict():
     return {}
+
+
+@pytest.fixture(scope="module")
+def inf_res_dict(cvs_results_dict):
+    """Same dict as ``cvs_results_dict`` so existing cell tests fill the report store."""
+    return cvs_results_dict
 
 
 def pytest_collection_modifyitems(items):

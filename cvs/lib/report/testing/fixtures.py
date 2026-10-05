@@ -120,7 +120,7 @@ def generic_sweep_profile() -> dict:
         "dataset_builder": "sweep",
         "interactive_viewer": True,
         "sources": {
-            "results": "inf_res_dict",
+            "results": "cvs_results_dict",
             "variant": "variant_config",
             "lifecycle": "lifecycle",
         },
