@@ -539,7 +539,11 @@ class MoriBenchmark:
             self._exec_cmd_list(cmd_list, timeout=self.IO_LAUNCH_TIMEOUT)
             exit_codes = self.poll_io_completion(log_paths)
         finally:
-            self.kill_io_processes()
+            # fail_test records without raising, so a launch/poll exception already in flight stays the reported one.
+            try:
+                self.kill_io_processes()
+            except Exception as e:
+                fail_test(f'could not kill MORI-IO processes: {e}')
 
         for host in self.host_list:
             if host not in exit_codes:

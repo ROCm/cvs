@@ -450,6 +450,22 @@ class TestMoriIoLaunch(_MoriBenchCase):
                 bench.run_mori_torch_io_test()
         self.assertIn('pkill', orch.exec_calls[-1]['cmd'])
 
+    def test_kill_failure_does_not_mask_the_poll_error(self):
+        # A lost connection typically breaks both the poll and the kill that follows it.
+        bench = MoriBenchmark(_ContainerFakeOrch(), _mori_dict())
+        with patch.object(MoriBenchmark, 'poll_io_completion', side_effect=RuntimeError('ssh lost')):
+            with patch.object(MoriBenchmark, 'kill_io_processes', side_effect=OSError('container gone')):
+                with self.assertRaises(RuntimeError) as ctx:
+                    bench.run_mori_torch_io_test()
+        self.assertEqual(str(ctx.exception), 'ssh lost')
+        self.assertEqual(globals.error_list, ['could not kill MORI-IO processes: container gone'])
+
+    def test_kill_failure_after_a_clean_run_fails_the_test(self):
+        bench = MoriBenchmark(_ContainerFakeOrch(), _mori_dict())
+        with patch.object(MoriBenchmark, 'kill_io_processes', side_effect=OSError('container gone')):
+            bench.run_mori_torch_io_test()
+        self.assertEqual(globals.error_list, ['could not kill MORI-IO processes: container gone'])
+
     def test_nonzero_exit_code_fails(self):
         def responder(cmd, host):
             if IO_EXIT_MARKER in cmd:
