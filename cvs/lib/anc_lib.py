@@ -751,19 +751,23 @@ def check_version_matches_url(config_dict):
     satisfies the request); only a URL OLDER than the request is a config error.
 
     Only enforced when BOTH a version is configured and one can be parsed from
-    the URL; a blank version or an unparseable URL yields None (no opinion). A
-    configured version that is present but not a STRICT ANC version token (e.g.
-    ``1.7.0-rc.bad`` or ``release-1.7.0``) IS a problem and is reported so the
-    run fails fast instead of contacting nodes with a bad config -- the strict
-    check is required because the comparator tolerates surrounding text and
-    would otherwise silently read ``release-1.7.0`` as ``1.7.0``.
+    the URL; an omitted version or an unparseable URL yields None (no opinion).
+    "Omitted" means ONLY ``None`` or a blank/whitespace string -- a present but
+    non-blank value such as ``0`` is NOT treated as omitted (that would let it
+    bypass validation and silently disable install verification); it reaches the
+    strict check and is reported. A configured version that is present but not a
+    STRICT ANC version token (e.g. ``0``, ``1.7.0-rc.bad`` or ``release-1.7.0``)
+    IS a problem and is reported so the run fails fast instead of contacting
+    nodes with a bad config -- the strict check is required because the
+    comparator tolerates surrounding text and would otherwise silently read
+    ``release-1.7.0`` as ``1.7.0``.
     Applies to legacy and direct packaging alike so a user cannot point a run at
     an archive that cannot satisfy the version they asked for.
     '''
     anc_cfg = config_dict.get("anc", {}) or {}
     configured = anc_cfg.get("anc_version")
     url = anc_cfg.get("anc_release_url")
-    if not configured or not str(configured).strip():
+    if configured is None or (isinstance(configured, str) and not configured.strip()):
         return None
     if not is_strict_anc_version(configured):
         return (
@@ -1895,10 +1899,20 @@ def _chown_tree_to_runner(host, root_path):
 
 
 def _is_within_directory(directory, target):
-    '''True when ``target`` resolves to a path inside ``directory`` (inclusive).'''
-    abs_dir = os.path.abspath(directory)
-    abs_target = os.path.abspath(target)
-    return os.path.commonpath([abs_dir, abs_target]) == abs_dir
+    '''
+    True when ``target`` resolves to a path inside ``directory`` (inclusive).
+
+    Uses ``realpath`` (not lexical ``abspath``) so SYMLINKS are resolved: a
+    pre-existing ``directory/sub -> /outside`` symlink makes a regular
+    ``sub/x`` member resolve outside and correctly fail the check. ``dest_dir``
+    is created with ``exist_ok=True`` and may already contain such a link, so a
+    lexical check would be bypassable. ``target``'s own leaf may not exist yet;
+    ``realpath`` resolves the existing prefix and leaves the rest lexical, which
+    is what we want (the parent chain is what a symlink attack subverts).
+    '''
+    real_dir = os.path.realpath(directory)
+    real_target = os.path.realpath(target)
+    return os.path.commonpath([real_dir, real_target]) == real_dir
 
 
 def _safe_tar_extract(tf, dest_dir):
@@ -1910,13 +1924,13 @@ def _safe_tar_extract(tf, dest_dir):
     (added in 3.12 / backported to 3.9.17+, 3.10.12+, 3.11.4+). Each member is
     validated, then extracted INDIVIDUALLY so no bulk ``extractall`` ever runs on
     unvalidated members. Only regular files and directories are allowed:
-      - its final path must stay within ``dest_dir`` (no absolute path, no
-        ``..`` traversal), and
+      - its final path (resolved through symlinks, see _is_within_directory)
+        must stay within ``dest_dir`` -- no absolute path, no ``..`` traversal,
+        and no escape through a pre-existing symlink in the destination, and
       - symlink, hardlink, device, and FIFO members are rejected outright.
-        Rejecting LINKS is deliberate: a lexical ``abspath`` containment check
-        cannot resolve a symlink created by an EARLIER member in the same
-        archive, so a chained-symlink sequence (``a -> .``; ``a/c -> ../out``;
-        then ``a/c/pwn``) could otherwise write outside ``dest_dir``. ANC log
+        Rejecting LINKS is deliberate: it stops the archive from planting a
+        symlink that a LATER member then writes through (a chained-symlink
+        sequence ``a -> .``; ``a/c -> ../out``; then ``a/c/pwn``). ANC log
         archives contain no links, so rejecting them costs nothing and closes
         the whole traversal class (device/FIFO rejection likewise prevents a
         node-controlled archive dropping a special file on the controller).

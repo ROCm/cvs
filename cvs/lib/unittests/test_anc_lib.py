@@ -547,6 +547,21 @@ class TestCheckVersionMatchesUrl(unittest.TestCase):
             self.assertIsNotNone(problem, bad)
             self.assertIn("not a valid ANC version", problem)
 
+    def test_falsy_nonblank_version_is_not_treated_as_omitted(self):
+        # A present-but-falsy value (0 / False) must NOT be read as "omitted"
+        # (which would bypass validation and disable install verification); it
+        # reaches the strict check and is reported.
+        for bad in (0, False, "0"):
+            cfg = {"anc": {"anc_version": bad, "anc_release_url": "http://x/anc-1.7.0-x86_64.tar.gz"}}
+            problem = anc_lib.check_version_matches_url(cfg)
+            self.assertIsNotNone(problem, repr(bad))
+            self.assertIn("not a valid ANC version", problem)
+
+    def test_none_or_blank_version_is_omitted(self):
+        for omitted in (None, "", "   "):
+            cfg = {"anc": {"anc_version": omitted, "anc_release_url": "http://x/anc-1.7.0-x86_64.tar.gz"}}
+            self.assertIsNone(anc_lib.check_version_matches_url(cfg), repr(omitted))
+
 
 class _RecordingPhdl:
     '''Minimal phdl stand-in: records the install command, returns a success line.'''
@@ -1189,6 +1204,33 @@ class TestSafeTarExtract(unittest.TestCase):
                     with _tar.open(tar_path) as tf:
                         with self.assertRaises(_tar.TarError):
                             anc_lib._safe_tar_extract(tf, dest)
+
+    def test_rejects_write_through_preexisting_symlink(self):
+        # dest_dir is created with exist_ok=True, so it may already contain a
+        # symlink. A regular member "logs/pwn.txt" whose parent "logs" is a
+        # pre-existing symlink out of dest must be rejected (realpath resolves
+        # the link); a lexical check would let it write outside.
+        import tarfile as _tar
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as root:
+            outside = os.path.join(root, "outside")
+            os.makedirs(outside)
+            dest = os.path.join(root, "dest")
+            os.makedirs(dest)
+            os.symlink(outside, os.path.join(dest, "logs"))  # dest/logs -> /outside
+
+            payload = os.path.join(root, "payload")
+            with open(payload, "w") as fh:
+                fh.write("x")
+            tar_path = os.path.join(root, "a.tar")
+            with _tar.open(tar_path, "w") as tf:
+                tf.add(payload, arcname="logs/pwn.txt")
+
+            with _tar.open(tar_path) as tf:
+                with self.assertRaises(_tar.TarError):
+                    anc_lib._safe_tar_extract(tf, dest)
+            self.assertFalse(os.path.exists(os.path.join(outside, "pwn.txt")))
 
 
 if __name__ == "__main__":
