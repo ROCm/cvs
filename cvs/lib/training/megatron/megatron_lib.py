@@ -289,6 +289,7 @@ class MegatronTrainingJob:
         self.container_image = orch.container_config["image"]
         self.distributed_training = distributed_training
         self.nnodes = str(len(orch.hosts))
+        self.gpus_per_node = int(variant_config.gpus_per_node)
         self.nic_type = tdict['nic_type']
         self.hca_id_pattern = tdict['hca_id_pattern']
         self.nccl_ib_hca = tdict['nccl_ib_hca']
@@ -389,11 +390,12 @@ class MegatronTrainingJob:
         # Let us override some of the params based on number of nodes and platform
         # if override flag set ..
         if self.tune_model_params:
-            # Assuming the training json configs were built with 4 nodes = 32 gpus
-            if int(self.global_batch_size) > 32:
-                if int(self.global_batch_size) % 32 == 0:
-                    per_gpu_batch_size = int(self.global_batch_size) / 32
-                    self.global_batch_size = per_gpu_batch_size * int(self.nnodes) * 8
+            # Packaged global batch sizes were built for a 4-node cluster.
+            baseline_gpus = 4 * self.gpus_per_node
+            if int(self.global_batch_size) > baseline_gpus:
+                if int(self.global_batch_size) % baseline_gpus == 0:
+                    per_gpu_batch_size = int(self.global_batch_size) / baseline_gpus
+                    self.global_batch_size = per_gpu_batch_size * int(self.nnodes) * self.gpus_per_node
 
     def _needs_local_tokenizer(self):
         return bool(re.search(r'deepseek|mixtral', self.tokenizer_model, re.I))

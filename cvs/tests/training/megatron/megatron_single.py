@@ -427,7 +427,7 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
 
     tput_per_gpu = train_res_dict[sweep_name].get("throughput_per_gpu", [])
     if tput_per_gpu:
-        gpus_per_node = 8
+        gpus_per_node = int(variant_config.gpus_per_node)
         tokens_per_sec_total = float(tput_per_gpu[-1]) * int(mt_obj.nnodes) * gpus_per_node
         baseline = variant_config.scaling_baseline
         efficiency = compute_scaling_efficiency(
@@ -468,7 +468,7 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
         dialect = dialect_from_image(orch.container_config.get("image", ""))
         tp = getattr(variant_config, "train_params", None) or {}
         seq = tp.get("sequence_length") if isinstance(tp, dict) else getattr(tp, "sequence_length", None)
-        world_size = int(mt_obj.nnodes) * 8
+        world_size = int(mt_obj.nnodes) * int(variant_config.gpus_per_node)
         iter_metrics = parse_iteration_metrics(
             mt_obj._read_last_node_log(), dialect, seq_length=seq, world_size=world_size
         )
@@ -610,7 +610,7 @@ def test_loss_curve(orch, variant_config, sweep_name, train_res_dict, lifecycle,
     tp = getattr(variant_config, "train_params", None) or {}
     seq = tp.get("sequence_length") if isinstance(tp, dict) else getattr(tp, "sequence_length", None)
     nnodes = len(getattr(orch, "hosts", None) or [])
-    world_size = nnodes * 8 if nnodes else None
+    world_size = nnodes * int(variant_config.gpus_per_node) if nnodes else None
     step_metrics = parse_iteration_metrics(log_text, dialect, seq_length=seq, world_size=world_size)
     points = sample_loss_curve(step_metrics, lc.sample_every, lc.milestone_steps)
     train_res_dict[sweep_name].update(sample_training_curves(step_metrics, lc.sample_every, lc.milestone_steps))
