@@ -23,6 +23,7 @@
         "network": "host",
         "user": "root",
         "ipc": "host",
+        "shm_size": "17G",
         "privileged": true,
         "devices": [
           "/dev/kfd",

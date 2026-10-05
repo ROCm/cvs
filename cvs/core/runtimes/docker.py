@@ -356,6 +356,11 @@ class DockerRuntime:
         if ipc:
             args.extend(['--ipc', shlex.quote(ipc)])
 
+        # Shared memory size
+        shm_size = runtime_args_config.get('shm_size')
+        if shm_size:
+            args.extend(['--shm-size', shlex.quote(str(shm_size))])
+
         # Ulimit
         ulimit = runtime_args_config.get('ulimit', [])
         for ul in ulimit:

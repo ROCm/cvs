@@ -21,34 +21,123 @@ jobs:
     runs-on: linux-vultr-mi325-scale-runner
     steps:
       - name: Check out triggering revision
+        id: checkout
         uses: actions/checkout@v4
 
-      - name: Test Aorta Benchmark Tests
+      # Each run's report directory is identified by an exact before/after set
+      # difference of /tmp/cvs_*, not a timestamp: a whole-second-resolution
+      # cutoff (`find -newermt`) can still match an earlier run's report if it
+      # was written in the same second a later run's reference point was taken
+      # (and that later run itself produced nothing), misattributing it. A
+      # directory's presence/absence has no such granularity problem.
+      - name: Snapshot report directories before the distributed run
+        if: always()
+        shell: bash
+        run: ls -d /tmp/cvs_* > /tmp/_cvs_dirs_before_distributed.txt 2>/dev/null || true
+
+      # always() would also run after the job is cancelled or checkout failed
+      # (leaving $GITHUB_WORKSPACE without the suite) -- this self-hosted GPU
+      # runner should not start a long run_direct.sh in either case.
+      - name: Test Aorta Benchmark Tests (distributed)
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         shell: bash
         run: |
           cd /home/arravikum/cvs_aorta/cvs-sbatch
           ./run_direct.sh --cluster ./cluster_config.json --config ./config_aorta_test.json --test "$GITHUB_WORKSPACE/cvs/tests/benchmark/aorta/aorta_distributed.py"
 
-      - name: Collect pytest HTML report
+      - name: Collect distributed pytest HTML report
         if: always()
         shell: bash
         run: |
-          echo "Searching for pytest_report.html..."
+          echo "Searching for the report directory created by this run..."
 
-          REPORT_PATH=$(ls -t /tmp/cvs_*/pytest_report.html 2>/dev/null | head -n1)
+          NEW_DIRS=$(comm -13 <(sort /tmp/_cvs_dirs_before_distributed.txt 2>/dev/null) <(ls -d /tmp/cvs_* 2>/dev/null | sort))
 
-          if [ -z "$REPORT_PATH" ]; then
-            echo "No pytest_report.html found"
+          if [ -z "$NEW_DIRS" ]; then
+            echo "No pytest_report.html found for this run"
             exit 0
           fi
 
-          echo "Found report at: $REPORT_PATH"
-          cp "$REPORT_PATH" ./pytest_report.html
-          ls -lah ./pytest_report.html
+          COUNT=$(printf '%s\n' "$NEW_DIRS" | wc -l)
+          if [ "$COUNT" -ne 1 ]; then
+            echo "Expected exactly one new /tmp/cvs_* directory for this run, found $COUNT:"
+            printf '%s\n' "$NEW_DIRS"
+            exit 1
+          fi
 
-      - name: Upload pytest HTML report
+          NEW_DIR="$NEW_DIRS"
+          if [ ! -f "$NEW_DIR/pytest_report.html" ]; then
+            echo "No pytest_report.html found for this run"
+            exit 0
+          fi
+
+          echo "Found report at: $NEW_DIR/pytest_report.html"
+          cp "$NEW_DIR/pytest_report.html" ./pytest_report_distributed.html
+          ls -lah ./pytest_report_distributed.html
+
+      # NOTE: cluster_config_single.json and config_aorta_single_test.json
+      # live on this self-hosted runner, outside this repo -- confirm both
+      # exist before merging. The aorta_job fixture (cvs/tests/benchmark/aorta/
+      # conftest.py) requires exactly one node for aorta_single and at least
+      # two for aorta_distributed, so this step must use a single-node cluster
+      # file distinct from cluster_config.json above, not the same one. If
+      # either file is missing/wrong, this step fails loudly, which is the
+      # intended signal that single-node coverage still needs wiring up on the
+      # runner side.
+      #
+      # This step's own snapshot/test/collect trio runs independently of the
+      # distributed step's outcome: a distributed failure must not skip
+      # single-node coverage, and must not leave this step's own report-
+      # collection step picking up the distributed run's leftover report
+      # instead. It still must not run after the job is cancelled or checkout
+      # failed, same as the distributed step above.
+      - name: Snapshot report directories before the single-node run
+        if: always()
+        shell: bash
+        run: ls -d /tmp/cvs_* > /tmp/_cvs_dirs_before_single.txt 2>/dev/null || true
+
+      - name: Test Aorta Benchmark Tests (single-node)
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        shell: bash
+        run: |
+          cd /home/arravikum/cvs_aorta/cvs-sbatch
+          ./run_direct.sh --cluster ./cluster_config_single.json --config ./config_aorta_single_test.json --test "$GITHUB_WORKSPACE/cvs/tests/benchmark/aorta/aorta_single.py"
+
+      - name: Collect single-node pytest HTML report
+        if: always()
+        shell: bash
+        run: |
+          echo "Searching for the report directory created by this run..."
+
+          NEW_DIRS=$(comm -13 <(sort /tmp/_cvs_dirs_before_single.txt 2>/dev/null) <(ls -d /tmp/cvs_* 2>/dev/null | sort))
+
+          if [ -z "$NEW_DIRS" ]; then
+            echo "No pytest_report.html found for this run"
+            exit 0
+          fi
+
+          COUNT=$(printf '%s\n' "$NEW_DIRS" | wc -l)
+          if [ "$COUNT" -ne 1 ]; then
+            echo "Expected exactly one new /tmp/cvs_* directory for this run, found $COUNT:"
+            printf '%s\n' "$NEW_DIRS"
+            exit 1
+          fi
+
+          NEW_DIR="$NEW_DIRS"
+          if [ ! -f "$NEW_DIR/pytest_report.html" ]; then
+            echo "No pytest_report.html found for this run"
+            exit 0
+          fi
+
+          echo "Found report at: $NEW_DIR/pytest_report.html"
+          cp "$NEW_DIR/pytest_report.html" ./pytest_report_single.html
+          ls -lah ./pytest_report_single.html
+
+      - name: Upload pytest HTML reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: aorta-benchmark-pytest-report
-          path: pytest_report.html
+          path: |
+            pytest_report_distributed.html
+            pytest_report_single.html

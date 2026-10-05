@@ -119,6 +119,40 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
         self.assertEqual(shlex.split(captured[0]).count("--user"), 1)
         self.assertIn("--user root", captured[0])
 
+    def test_shm_size_runtime_arg_sets_docker_flag(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"shm_size": "17G"}),
+            container_name="cvs_iter_test",
+        )
+        tokens = shlex.split(captured[0])
+        self.assertEqual(tokens.count("--shm-size"), 1)
+        self.assertIn("17G", tokens)
+
+    def test_shm_size_runtime_arg_with_spaces_is_quoted(self):
+        # A value with no special characters (like "17G") round-trips even
+        # without quoting, so it can't prove shlex.quote() is actually called --
+        # a value containing a space must still render as one shell token.
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"shm_size": "17 G"}),
+            container_name="cvs_iter_test",
+        )
+        tokens = shlex.split(captured[0])
+        self.assertIn("17 G", tokens)
+        self.assertNotIn("G", tokens)
+
+    def test_shm_size_runtime_arg_is_opt_in(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={}),
+            container_name="cvs_iter_test",
+        )
+        self.assertNotIn("--shm-size", shlex.split(captured[0]))
+
     def test_user_runtime_arg_is_opt_in(self):
         captured = []
         rt = _make_runtime(captured)

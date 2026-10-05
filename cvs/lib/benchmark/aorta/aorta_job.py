@@ -53,6 +53,10 @@ class AortaJob:
         self.run_id = uuid.uuid4().hex
         self.mount = PurePosixPath(self.config.container_mount_path)
         self.relative_work = PurePosixPath(".cvs-aorta") / self.run_id
+        # aorta_path/mount is commonly a shared filesystem (NFS) mounted
+        # identically on every host, not independent per-host storage -- a
+        # shared relative path here would let one host's writes (scripts,
+        # logs, pid files, trace archives) collide with another's.
         self.work_dirs = [self.mount / self.relative_work / f"node_{i}" for i in range(len(self.hosts))]
         self.output_dir = Path(self.config.output_dir) / self.run_id
         self.artifacts = {}
@@ -541,9 +545,17 @@ class AortaJob:
         for path in self.pid_paths:
             commands.append(
                 f"if test -f {shlex.quote(path)}; then pid=$(cat {shlex.quote(path)}); "
-                'case "$pid" in ""|*[!0-9]*) exit 1;; esac; '
+                # A malformed/empty pid must not skip this host's own cleanup, so
+                # validation happens inline instead of an early `exit`: kill(2)
+                # special-cases pid 0 ("every process in the caller's own process
+                # group") and pid -1, i.e. our "-$pid" with pid=1, ("every process
+                # the caller may signal") -- both values must be rejected before
+                # kill ever sees them, not just trusted to no-op.
+                'case "$pid" in ""|*[!0-9]*) pid="";; esac; '
+                'if [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null; then '
                 'kill -TERM -- -"$pid" 2>/dev/null || true; '
                 'kill -KILL -- -"$pid" 2>/dev/null || true; '
+                "fi; "
                 f"rm -f {shlex.quote(path)}; fi"
             )
         self._exec_list(commands)

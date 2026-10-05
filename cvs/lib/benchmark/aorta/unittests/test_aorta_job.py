@@ -566,3 +566,62 @@ class TestAortaJob(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "chown failed"):
                 job.teardown()
+
+    def test_stop_processes_malformed_pid_still_cleans_up_its_own_host(self):
+        # A malformed/empty pid file must not make this host's own cleanup
+        # exit before `rm -f` runs -- kill is never invoked for it at all
+        # (the `case`/`if` guard filters it out); `|| true` only covers kill
+        # failing to signal an already-dead, otherwise-valid pid.
+        job = self.job()
+        job.pid_paths = ["/tmp/aorta0.pid"]
+        with patch.object(job, "_exec_list") as execute:
+            job.stop_processes()
+        command = execute.call_args.args[0][0]
+        with tempfile.TemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / "aorta0.pid"
+            pid_file.write_text("not-a-pid")
+            script = command.replace("/tmp/aorta0.pid", str(pid_file))
+            result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(pid_file.exists())
+
+    def test_stop_processes_rejects_broadcast_pid_values_without_signaling(self):
+        # kill(2) special-cases pid 0 ("every process in the caller's own
+        # process group") and, via our "-$pid" argument, pid -1 when pid=1
+        # ("every process the caller may signal") -- "0", "1", and "01" (which
+        # a naive digit-only check would accept, but which is numerically 1)
+        # must never reach kill, not just be trusted to no-op.
+        job = self.job()
+        job.pid_paths = ["/tmp/aorta0.pid"]
+        with patch.object(job, "_exec_list") as execute:
+            job.stop_processes()
+        command = execute.call_args.args[0][0]
+        for bad_pid in ("0", "1", "01"):
+            with self.subTest(pid=bad_pid):
+                with tempfile.TemporaryDirectory() as tmp:
+                    pid_file = Path(tmp) / "aorta0.pid"
+                    pid_file.write_text(bad_pid)
+                    kill_log = Path(tmp) / "kill.log"
+                    script = command.replace("/tmp/aorta0.pid", str(pid_file))
+                    wrapped = f'kill() {{ printf "%s\\n" "$*" >> {shlex.quote(str(kill_log))}; }}\n{script}'
+                    result = subprocess.run(["bash", "-c", wrapped], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertFalse(pid_file.exists())
+                    self.assertFalse(kill_log.exists())
+
+    def test_stop_processes_signals_a_valid_pid(self):
+        job = self.job()
+        job.pid_paths = ["/tmp/aorta0.pid"]
+        with patch.object(job, "_exec_list") as execute:
+            job.stop_processes()
+        command = execute.call_args.args[0][0]
+        with tempfile.TemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / "aorta0.pid"
+            pid_file.write_text("123")
+            kill_log = Path(tmp) / "kill.log"
+            script = command.replace("/tmp/aorta0.pid", str(pid_file))
+            wrapped = f'kill() {{ printf "%s\\n" "$*" >> {shlex.quote(str(kill_log))}; }}\n{script}'
+            result = subprocess.run(["bash", "-c", wrapped], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(pid_file.exists())
+            self.assertEqual(kill_log.read_text().splitlines(), ["-TERM -- -123", "-KILL -- -123"])

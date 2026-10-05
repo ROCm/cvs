@@ -62,6 +62,7 @@ _KNOWN_DOCKER_RUNTIME_ARGS = {
     "network",
     "user",
     "ipc",
+    "shm_size",
     "ulimit",
     "privileged",
     "registry",

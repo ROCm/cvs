@@ -179,4 +179,4 @@ class TestAortaConfig(unittest.TestCase):
                 target.write_text(json.dumps(raw))
                 config = load_training_variant(target, {"username": "tester"})
                 self.assertEqual(config.gpus_per_node, 2)
-                self.assertNotIn("shm_size", config.container.runtime.args)
+                self.assertEqual(config.container.runtime.args["shm_size"], "17G")
