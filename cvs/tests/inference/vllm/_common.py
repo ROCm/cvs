@@ -226,7 +226,7 @@ def test_openai_compatible_smoke(orch, variant_config, hf_token, vllm_targets, l
     log.info("OpenAI-compatible smoke results:\n%s", "\n".join(summary))
 
 
-def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_res_dict, lifecycle, request):
+def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_res_dict, lifecycle, request, subtests):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     isl = run.cell.isl
@@ -316,22 +316,20 @@ def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_r
         if dump_job is not None:
             dump_job.dump_server_log()
         raise
+    # Outside the try: a missed threshold fails this cell but must not mark the
+    # lifecycle failed, tear down the live server, or skip later cells.
+    _verify_cell_metrics(published_results, run, variant_config, lifecycle, request, subtests)
 
 
-def test_verify_cell_metrics(run, inf_res_dict, variant_config, lifecycle, request, subtests):
-    """Report configured metrics and verify active gates as pytest subtests."""
-    key = _cell_result_key(variant_config, run)
-    host_dict = inf_res_dict.get(key)
-    if not host_dict:
-        pytest.skip(f"no recorded inference result for {key!r}")
-
+def _verify_cell_metrics(host_dict, run, variant_config, lifecycle, request, subtests):
+    """Report the cell's metrics and verify active gates as pytest subtests."""
     verdicts = evaluate_metric_verdicts(
         host_dict,
         variant_config.thresholds.get(run.cell.key) or {},
         enforce_thresholds=variant_config.enforce_thresholds,
     )
     if not verdicts:
-        pytest.skip(f"no configured metric specs for {run.cell.key}")
+        return
 
     record_benchmark_metric_rows(request.node, verdicts, columns=VLLM_RESULTS_COLUMNS)
     _record_junit_metrics(request.node, host_dict)

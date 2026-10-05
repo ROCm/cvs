@@ -50,17 +50,14 @@ Each stage of the run is an independent test, so every stage becomes its own tim
      - Short-lived server; verifies the OpenAI-compatible API answers.
    * - 5
      - ``test_vllm_inference``
-     - Run one benchmark cell (parametrized per sweep run).
+     - Run one benchmark cell (parametrized per sweep run) and verify its metrics; configured threshold gates are listed as subtests.
    * - 6
-     - ``test_verify_cell_metrics``
-     - One verification parent per cell; configured threshold gates are listed as subtests.
-   * - 7
      - ``test_accuracy_eval``
      - lm-eval accuracy tasks, if any are configured.
-   * - 8
+   * - 7
      - ``test_print_results_table``
      - Console + report summary table.
-   * - 9
+   * - 8
      - ``test_teardown``
      - Stop the server and tear down the container.
 
@@ -71,8 +68,8 @@ Each stage of the run is an independent test, so every stage becomes its own tim
 .. note::
 
   vLLM suite execution is serial and single-pass. Do not use xdist workers or
-  ``pytest-repeat`` counts above one: the verification phase consumes results
-  collected earlier in the same pytest process.
+  ``pytest-repeat`` counts above one: later stages consume results collected
+  earlier in the same pytest process.
 
 If a stage fails, later stages are skipped rather than cascading into confusing downstream errors. The container is still torn down by a leak-guard even when a mid-sweep test fails.
 
@@ -903,11 +900,13 @@ Derived metrics are emitted only when their result is finite:
 Reporting and compatibility
 ---------------------------
 
-``test_verify_cell_metrics`` remains one parent per cell. It computes all host
-rows before emitting one subtest for each present, enforced spec, so one failure
-does not hide sibling verdicts. With enforcement off, those rows pass and no
-threshold is asserted. With enforcement on, finite values without a spec also
-pass, and each enforced spec is a single subtest. The parent also emits one
+Each ``test_vllm_inference`` row verifies its own cell. After the benchmark
+completes, it computes all host rows before emitting one subtest for each
+present, enforced spec, so one failure does not hide sibling verdicts. A missed
+threshold fails that cell's row but does not skip later cells. With enforcement
+off, those rows pass and no threshold is asserted. With enforcement on, finite
+values without a spec also pass, and each enforced spec is a single subtest.
+The row also emits one
 compact JUnit property with ``actuals_by_host`` and metric contract ``{"id":"vllm-bare","version":1}``.
 
 Run Deck tables, charts, and highlights use selected registry metrics rather

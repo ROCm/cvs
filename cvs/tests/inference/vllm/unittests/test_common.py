@@ -28,7 +28,7 @@ class _CapturingSubtests:
             self.failures.append(str(exc))
 
 
-class TestVerifyCellMetrics(unittest.TestCase):
+class TestInferenceCellMetrics(unittest.TestCase):
     def setUp(self):
         registry._ROWS_BY_NODEID.clear()
         registry._COLUMNS_BY_NODEID.clear()
@@ -50,26 +50,23 @@ class TestVerifyCellMetrics(unittest.TestCase):
             },
             enforce_thresholds=False,
         )
-        result_key = _common._cell_result_key(variant, run)
-        inf_res_dict = {
-            result_key: {
-                'head': {
-                    'output_throughput': 99,
-                    'mean_ttft_ms': 40,
-                    'queue_time_p50_ms': None,
-                }
+        host_dict = {
+            'head': {
+                'output_throughput': 99,
+                'mean_ttft_ms': 40,
+                'queue_time_p50_ms': None,
             }
         }
         node = SimpleNamespace(
-            nodeid='cvs/tests/inference/vllm/vllm_single.py::test_verify_cell_metrics[cell]',
+            nodeid='cvs/tests/inference/vllm/vllm_single.py::test_vllm_inference[cell]',
             stash=_FakeStash(),
         )
         lifecycle = SimpleNamespace(record=mock.Mock())
         subtests = SimpleNamespace(test=mock.Mock())
 
-        _common.test_verify_cell_metrics(
+        _common._verify_cell_metrics(
+            host_dict,
             run,
-            inf_res_dict,
             variant,
             lifecycle,
             SimpleNamespace(node=node),
@@ -114,24 +111,21 @@ class TestVerifyCellMetrics(unittest.TestCase):
             },
             enforce_thresholds=True,
         )
-        result_key = _common._cell_result_key(variant, run)
-        inf_res_dict = {
-            result_key: {
-                'head': {'output_throughput': 99, 'mean_ttft_ms': 40},
-                'worker': {'output_throughput': 101, 'mean_ttft_ms': 60},
-            }
+        host_dict = {
+            'head': {'output_throughput': 99, 'mean_ttft_ms': 40},
+            'worker': {'output_throughput': 101, 'mean_ttft_ms': 60},
         }
         node = SimpleNamespace(
-            nodeid='cvs/tests/inference/vllm/vllm_single.py::test_verify_cell_metrics[cell]',
+            nodeid='cvs/tests/inference/vllm/vllm_single.py::test_vllm_inference[cell]',
             stash=_FakeStash(),
             user_properties=[],
         )
         lifecycle = SimpleNamespace(record=mock.Mock())
         subtests = _CapturingSubtests()
 
-        _common.test_verify_cell_metrics(
+        _common._verify_cell_metrics(
+            host_dict,
             run,
-            inf_res_dict,
             variant,
             lifecycle,
             SimpleNamespace(node=node),

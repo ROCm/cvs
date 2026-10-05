@@ -10,7 +10,6 @@ from cvs.tests.inference.vllm._common import (
     test_openai_compatible_smoke,
     test_setup_sshd,
     test_teardown,
-    test_verify_cell_metrics,
     test_vllm_inference,
 )  # noqa: F401
 from cvs.tests.inference.vllm._shared import test_print_results_table  # noqa: F401

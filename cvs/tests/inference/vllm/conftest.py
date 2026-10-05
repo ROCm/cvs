@@ -40,7 +40,7 @@ from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 from cvs.tests.inference.vllm._shared import validate_vllm_execution_mode
 
 log = globals.log
-VLLM_METRIC_VERIFICATION_TEST = 'test_verify_cell_metrics'
+VLLM_INFERENCE_TEST = 'test_vllm_inference'
 
 
 def _is_subtest_report(report) -> bool:
@@ -68,9 +68,9 @@ def _called_from_subtest_context():
     return False
 
 
-def _is_verification_report(report) -> bool:
+def _is_inference_report(report) -> bool:
     test_name = report.nodeid.rsplit('::', 1)[-1].split('[', 1)[0]
-    return report.when == 'call' and test_name == VLLM_METRIC_VERIFICATION_TEST and not _is_subtest_report(report)
+    return report.when == 'call' and test_name == VLLM_INFERENCE_TEST and not _is_subtest_report(report)
 
 
 def _is_full_log_extra(extra: object) -> bool:
@@ -261,11 +261,10 @@ def pytest_collection_modifyitems(config, items):
         "test_discover_topology": 2,
         "test_model_fetch": 3,
         "test_openai_compatible_smoke": 4,
-        "test_vllm_inference": 5,
-        VLLM_METRIC_VERIFICATION_TEST: 6,
-        "test_accuracy_eval": 7,
-        "test_print_results_table": 8,
-        "test_teardown": 9,
+        VLLM_INFERENCE_TEST: 5,
+        "test_accuracy_eval": 6,
+        "test_print_results_table": 7,
+        "test_teardown": 8,
     }
     items.sort(key=lambda it: rank.get(it.originalname or it.name.split("[")[0], 99))
 
@@ -275,7 +274,7 @@ def pytest_runtest_makereport(item, call):
     """Attach metric rows before pytest-html consumes the parent call report."""
     outcome = yield
     report = outcome.get_result()
-    if _called_from_subtest_context() or not _is_verification_report(report):
+    if _called_from_subtest_context() or not _is_inference_report(report):
         return
     _attach_metric_panel(report, benchmark_metric_rows_from_item(item))
 
@@ -283,7 +282,7 @@ def pytest_runtest_makereport(item, call):
 @pytest.hookimpl(hookwrapper=True, trylast=True)
 def pytest_runtest_logreport(report):
     yield
-    if _is_verification_report(report):
+    if _is_inference_report(report):
         rows = benchmark_metric_rows_from_report(report)
         if rows:
             _attach_metric_panel(report, rows)
@@ -291,13 +290,13 @@ def pytest_runtest_logreport(report):
 
 @pytest.hookimpl(trylast=True)
 def pytest_html_results_table_html(report, data):
-    if _is_verification_report(report) and benchmark_metric_rows_from_report(report):
+    if _is_inference_report(report) and benchmark_metric_rows_from_report(report):
         del data[:]
 
 
 @pytest.hookimpl(trylast=True)
 def pytest_html_results_table_row(report, cells):
-    if _is_verification_report(report) and benchmark_metric_rows_from_report(report):
+    if _is_inference_report(report) and benchmark_metric_rows_from_report(report):
         cells[0] = mark_collapsible_result_cell(str(cells[0]))
 
 
@@ -306,4 +305,4 @@ def pytest_sessionfinish(session, exitstatus):
     yield
     htmlpath = getattr(session.config.option, 'htmlpath', None)
     if htmlpath:
-        patch_benchmark_metrics_into_html(Path(htmlpath), benchmark_test_name=VLLM_METRIC_VERIFICATION_TEST)
+        patch_benchmark_metrics_into_html(Path(htmlpath), benchmark_test_name=VLLM_INFERENCE_TEST)
