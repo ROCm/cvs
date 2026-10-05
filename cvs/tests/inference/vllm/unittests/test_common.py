@@ -6,8 +6,6 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest import mock
 
-from _pytest.outcomes import Skipped
-
 from cvs.lib.report import benchmark_metric_registry as registry
 from cvs.tests.inference.vllm import _common
 
@@ -69,20 +67,19 @@ class TestVerifyCellMetrics(unittest.TestCase):
         lifecycle = SimpleNamespace(record=mock.Mock())
         subtests = SimpleNamespace(test=mock.Mock())
 
-        with self.assertRaises(Skipped):
-            _common.test_verify_cell_metrics(
-                run,
-                inf_res_dict,
-                variant,
-                lifecycle,
-                SimpleNamespace(node=node),
-                subtests,
-            )
+        _common.test_verify_cell_metrics(
+            run,
+            inf_res_dict,
+            variant,
+            lifecycle,
+            SimpleNamespace(node=node),
+            subtests,
+        )
 
         rows = registry.benchmark_metric_rows_for_nodeid(node.nodeid)
         self.assertEqual(
             [(row['metric'], row['status']) for row in rows],
-            [('output_throughput', 'record'), ('mean_ttft_ms', 'record')],
+            [('output_throughput', 'pass'), ('mean_ttft_ms', 'pass')],
         )
         subtests.test.assert_not_called()
         lifecycle.record.assert_called_once()
