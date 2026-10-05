@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- RCCL bandwidth thresholds and dip checks now read the configured `rccl.results` table.
+  The shipped dip-check defaults are now `"False"`. Existing configs with
+  `verify_bw_dip` or `verify_lat_dip` set to `"True"`, including copies of the
+  previous defaults, will begin running those checks and may report failures.
+  Re-baseline the thresholds for your cluster before enabling bandwidth verification.
 - RCCL regression reads configured collectives from `rccl_test_params`, with a fallback for older configurations. Both perf and regression consult top-level `results`, accepting NIC/data-type/rank references and legacy flat bandwidth thresholds.
 - RCCL `mpirun` uses the orchestrator's non-default SSH port for container launches.
 - RCCL pairwise/incremental runs no longer inherit the full cluster's legacy flat bandwidth thresholds; only NIC/rank-keyed thresholds (already scoped to node count) carry over to the pairwise sub-cluster run.

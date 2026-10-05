@@ -53,11 +53,12 @@ rccl_err_dict = {
 class RcclVerifier:
     """Pass/fail checks on one RCCL result set. Log scan is separate (stdout)."""
 
-    def __init__(self, test_name, results, expected=None, cvs_params=None):
+    def __init__(self, test_name, results, expected=None, cvs_params=None, resolver_failed=False):
         self.test_name = test_name
         self.results = results
         self.expected = expected
         self.cvs_params = cvs_params or {}
+        self.resolver_failed = resolver_failed
 
     @staticmethod
     def scan_logs(output):
@@ -110,6 +111,9 @@ class RcclVerifier:
         if not expected:
             log.warning(f"No reference data provided for BW dip check, skipping validation for {test_name}")
             return
+        if not self.results:
+            log.warning(f"No RCCL results available for BW dip check, skipping validation for {test_name}")
+            return
         ref_msg_sizes = set(str(size) for size in expected.keys())
         log.info(f"Validating BW dip only for reference message sizes: {ref_msg_sizes}")
         in_place = 0 if re.search('alltoall|all_to_all', test_name, re.I) else 1
@@ -121,12 +125,12 @@ class RcclVerifier:
             if str(act_dict['size']) not in ref_msg_sizes:
                 continue
             current_bw = float(act_dict['busBw'])
-            threshold = float(last_bw) * tolerance
+            threshold = last_bw * tolerance
             if last_bw > 0 and current_bw < threshold:
                 fail_test(
                     f"The BusBW for msg size {act_dict['size']} = {current_bw} is less than the earlier msg size {last_msg_size} = BW {last_bw} (threshold with 5% tolerance: {threshold:.2f})"
                 )
-            last_bw = act_dict['busBw']
+            last_bw = current_bw
             last_msg_size = act_dict['size']
 
     def check_lat_dip(self):
@@ -135,6 +139,9 @@ class RcclVerifier:
         tolerance = 0.95
         if not expected:
             log.warning(f"No reference data provided for latency dip check, skipping validation for {test_name}")
+            return
+        if not self.results:
+            log.warning(f"No RCCL results available for latency dip check, skipping validation for {test_name}")
             return
         ref_msg_sizes = set(str(size) for size in expected.keys())
         log.info(f"Validating latency dip only for reference message sizes: {ref_msg_sizes}")
@@ -147,23 +154,26 @@ class RcclVerifier:
             if str(act_dict['size']) not in ref_msg_sizes:
                 continue
             current_time = float(act_dict['time'])
-            threshold = float(last_time) * tolerance
+            threshold = last_time * tolerance
             if last_time > 0 and current_time < threshold:
                 fail_test(
                     f"The latency for msg size {act_dict['size']} = {current_time} is less than the earlier msg size {last_msg_size} = latency {last_time} (threshold with 5% tolerance: {threshold:.2f})"
                 )
-            last_time = act_dict['time']
+            last_time = current_time
             last_msg_size = act_dict['size']
 
     def check(self):
         if not self.results:
             fail_test(f'RCCL test {self.test_name} produced no result rows')
             return
-        if re.search('True', self.cvs_params.get('verify_bus_bw', 'False'), re.I) and self.expected:
-            self.check_bus_bw()
-        if re.search('True', self.cvs_params.get('verify_bw_dip', 'True'), re.I):
+        if re.search('True', self.cvs_params.get('verify_bus_bw', 'False'), re.I):
+            if self.expected:
+                self.check_bus_bw()
+            elif not self.resolver_failed:
+                fail_test(f'No bus bandwidth thresholds for {self.test_name} in rccl.results.{self.test_name}')
+        if re.search('True', self.cvs_params.get('verify_bw_dip', 'False'), re.I):
             self.check_bw_dip()
-        if re.search('True', self.cvs_params.get('verify_lat_dip', 'True'), re.I):
+        if re.search('True', self.cvs_params.get('verify_lat_dip', 'False'), re.I):
             self.check_lat_dip()
 
     @staticmethod
@@ -583,6 +593,12 @@ class RcclJob:
         env_overrides=None,
     ):
         """Build a job directly from the grouped RCCL configuration."""
+        expected_results = config_dict.get('results')
+        if expected_results is None:
+            cvs_params_results = config_dict.get('cvs_params', {}).get('results')
+            if cvs_params_results:
+                log.warning('rccl.cvs_params.results is deprecated; move it to rccl.results')
+                expected_results = cvs_params_results
         return cls(
             orch=orch,
             test_name=test_name,
@@ -590,10 +606,10 @@ class RcclJob:
             mpi_params=config_dict['mpi_params'],
             rccl_test_params=config_dict['rccl_test_params'],
             cvs_params=config_dict['cvs_params'],
+            expected_results=expected_results,
             cluster_node_list=cluster_node_list,
             vpc_node_list=vpc_node_list,
             env_overrides=env_overrides,
-            expected_results=config_dict.get('results'),
         )
 
     def prepare(self):
@@ -945,8 +961,10 @@ class RcclJob:
         if not result_out:
             return []
         self.collect_gpu_info()
-        test_expected = self._expected_results(['float'])
-        self._verify_results(result_out, test_expected)
+        error_count_before = len(globals.error_list)
+        expected = self._expected_results(['float'])
+        resolver_failed = len(globals.error_list) > error_count_before
+        self._verify_results(result_out, expected, resolver_failed)
         return result_out
 
     def run_perf(self):
@@ -980,8 +998,10 @@ class RcclJob:
         aggregated = self._aggregate_perf_results(validated_results, base_path)
         self.collect_gpu_info()
         verification_results = self._verification_results(aggregated, raw_results)
+        error_count_before = len(globals.error_list)
         expected = self._expected_results(data_types)
-        self._verify_results(verification_results, expected)
+        resolver_failed = len(globals.error_list) > error_count_before
+        self._verify_results(verification_results, expected, resolver_failed)
         return raw_results
 
     def _run_perf_dtype(self, dtype, result_file):
@@ -1074,6 +1094,9 @@ class RcclJob:
 
     def _expected_results(self, data_types):
         """Resolve NIC/rank references or normalize legacy collective thresholds."""
+        if not isinstance(self.expected_results, dict):
+            fail_test('Invalid rccl.results; expected a dictionary of collectives')
+            return None
         nic_model = self.cvs_params.get('nic_model', 'ainic')
         if re.search('ainic|pensando|amd', nic_model, re.I):
             nic_type = 'ainic'
@@ -1087,18 +1110,32 @@ class RcclJob:
 
         result_key = f'{self.test_name}-{"_".join(data_types)}-{self.no_of_global_ranks}'
         log.info(f'Looking up results with key: {result_key} in nic_type: {nic_type}')
-        expected = self.expected_results
-        nic_results = expected.get(nic_type, {}) if isinstance(expected, dict) else {}
-        if result_key in nic_results:
+        nic_results = self.expected_results.get(nic_type, {})
+        if isinstance(nic_results, dict) and result_key in nic_results:
             log.info(f'Found expected results: {nic_type}/{result_key}')
             return nic_results[result_key]
-        test_results = expected.get(self.test_name) if isinstance(expected, dict) else None
-        if test_results and 'bus_bw' in test_results:
-            return {size: {'bus_bw': bandwidth} for size, bandwidth in test_results['bus_bw'].items()}
-        return test_results
+        test_results = self.expected_results.get(self.test_name)
+        if not test_results:
+            return None
+        if not isinstance(test_results, dict):
+            fail_test(f'Invalid rccl.results.{self.test_name}; expected a dictionary of message sizes')
+            return None
+        thresholds = test_results.get('bus_bw', test_results)
+        if not isinstance(thresholds, dict):
+            fail_test(f'Invalid rccl.results.{self.test_name}.bus_bw; expected a dictionary of message sizes')
+            return None
+        expected = {}
+        for size, value in thresholds.items():
+            try:
+                bandwidth = value['bus_bw'] if isinstance(value, dict) else value
+                expected[str(size)] = {'bus_bw': float(bandwidth)}
+            except (KeyError, TypeError, ValueError) as error:
+                fail_test(f'Invalid bus bandwidth threshold in rccl.results.{self.test_name}.{size}: {error}')
+                continue
+        return expected or None
 
-    def _verify_results(self, results, expected):
-        RcclVerifier(self.test_name, results, expected, self.cvs_params).check()
+    def _verify_results(self, results, expected, resolver_failed=False):
+        RcclVerifier(self.test_name, results, expected, self.cvs_params, resolver_failed).check()
 
     @staticmethod
     def aggregate_results(validated_results):
