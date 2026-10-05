@@ -60,35 +60,6 @@
         "_comment_required_lines": "Exact lines that must be present (in any order, whitespace-insensitive) in /etc/security/limits.conf on every node."
       },
 
-      "nic_driver_version": {
-        "_comment": "Per-vendor NIC driver version + provenance validation. Activate one or more vendor sub-blocks via nic_type. Opt-in, disabled by default.",
-
-        "enabled": false,
-        "_comment_enabled": "Enable NIC driver version validation.",
-
-        "nic_type": ["broadcom"],
-        "_comment_nic_type": "One or more of: ainic, broadcom, mellanox. Selects which vendor sub-block(s) below actually run. A node lacking the selected vendor's hardware is reported SKIPPED, not FAILed.",
-
-        "ainic": {
-          "expected_fw_version": "1.117.5-a-56",
-          "_comment_expected_fw_version": "Expected AINIC per-NIC version -- both the 'Uboot-A' and 'Firmware-A' fields from 'nicctl show version firmware' must match this value. nicctl is installed alongside the AINIC driver."
-        },
-
-        "broadcom": {
-          "expected_package_version": "<changeme>",
-          "_comment_expected_package_version": "Expected Broadcom NIC package version -- the 'Active Package Version' field from 'niccli -i <idx> show --pkg_ver'. niccli is installed alongside the Broadcom driver package and does not report kernel module (modinfo) version at all."
-        },
-
-        "mellanox": {
-          "_comment": "NEW, UNVALIDATED against real Mellanox hardware -- no bash/ansible source material exists to port from; designed by analogy to the broadcom/ainic sub-blocks.",
-
-          "expected_mlx5_core_version": "<changeme>",
-          "_comment_expected_mlx5_core_version": "Expected mlx5_core kernel module version (modinfo -F version mlx5_core).",
-
-          "expected_ofed_version": "<changeme>",
-          "_comment_expected_ofed_version": "Expected MLNX_OFED stack version (ofed_info -s)."
-        }
-      }
     },
 
     "connectivity_check": {
@@ -203,18 +174,26 @@
           "_comment_warmup_iterations": "Warmup iterations performed before validation."
         },
 
+      },
+
+      "scale_out": {
+        "_comment": "Scale-out network NIC checks (AINIC/Broadcom/Mellanox). These are opt-in and all disabled by default. Set the top-level enabled flag to false to skip the entire group, or enable individual sub-checks independently.",
+
+        "enabled": false,
+        "_comment_enabled": "Master switch for all scale_out checks. When false, nic_firmware, nic_driver_version, and pfc_qos_dcqcn are all skipped regardless of their individual enabled flags.",
+
+        "nic_type": ["ainic"],
+        "_comment_nic_type": "One or more of: ainic, broadcom, mellanox. Selects which vendor sub-blocks actually run across nic_firmware and nic_driver_version. A node lacking the selected vendor's hardware is reported SKIPPED, not FAILed.",
+
         "nic_firmware": {
-          "_comment": "Per-vendor NIC firmware/host-software validation. Activate one or more vendor sub-blocks via nic_type. Opt-in, disabled by default.",
+          "_comment": "Per-vendor NIC firmware/host-software validation. Opt-in, disabled by default.",
 
           "enabled": false,
           "_comment_enabled": "Enable NIC firmware/host-software validation.",
 
-          "nic_type": ["ainic"],
-          "_comment_nic_type": "One or more of: ainic, broadcom, mellanox. Selects which vendor sub-block(s) below actually run.",
-
           "ainic": {
             "expected_nic_count": 8,
-            "_comment_expected_nic_count": "Exact number of AINIC RDMA devices expected on every node (FAIL on mismatch). Unchanged from today's shipped behavior: no per-node vendor-presence SKIP for AINIC -- see Design decisions.",
+            "_comment_expected_nic_count": "Exact number of AINIC RDMA devices expected on every node (FAIL on mismatch).",
 
             "expected_fw_version": "1.117.5-a-56",
             "_comment_expected_fw_version": "Expected AINIC firmware version (WARNING on mismatch).",
@@ -224,28 +203,53 @@
           },
 
           "broadcom": {
-            "_comment": "NEW: not present in the original ansible/ainicfwcheck/fwcheck.yml (AINIC-only). Adds symmetric firmware validation for Broadcom NICs, detected per-node so mixed fleets don't false-FAIL on non-Broadcom nodes.",
-
             "expected_nic_count": 2,
-            "_comment_expected_nic_count": "Exact number of Broadcom NIC devices expected on every node with Broadcom hardware present (FAIL on mismatch), counted via 'niccli --list' (requires sudo). Note: a dual-port card shows up as 2 rows/devices, one per PCI function -- e.g. 8 dual-port cards = 16.",
+            "_comment_expected_nic_count": "Exact number of Broadcom NIC devices expected per node (FAIL on mismatch), counted via 'niccli --list'. A dual-port card shows up as 2 rows -- e.g. 8 dual-port cards = 16.",
 
             "expected_fw_version": "<changeme>",
-            "_comment_expected_fw_version": "Expected Broadcom NIC firmware version -- the 'FwVersion' column from 'niccli --list' (WARNING on mismatch). niccli is installed alongside the Broadcom driver."
+            "_comment_expected_fw_version": "Expected Broadcom NIC firmware version -- the 'FwVersion' column from 'niccli --list' (WARNING on mismatch)."
           },
 
           "mellanox": {
-            "_comment": "NEW, UNVALIDATED against real Mellanox hardware -- no bash/ansible source material exists to port from; designed by analogy to the ainic/broadcom sub-blocks.",
+            "_comment": "Unvalidated against real Mellanox hardware -- designed by analogy to the ainic/broadcom sub-blocks.",
 
             "expected_nic_count": 8,
-            "_comment_expected_nic_count": "Exact number of Mellanox mlx5 RDMA devices expected on every node with Mellanox hardware present (FAIL on mismatch).",
+            "_comment_expected_nic_count": "Exact number of Mellanox mlx5 RDMA devices expected per node (FAIL on mismatch).",
 
             "expected_fw_version": "<changeme>",
-            "_comment_expected_fw_version": "Expected Mellanox NIC firmware version, e.g. from 'mlxfwmanager --query' or 'ethtool -i <mlx5 iface>' firmware-version field (WARNING on mismatch)."
+            "_comment_expected_fw_version": "Expected Mellanox NIC firmware version from 'ethtool -i <mlx5 iface>' (WARNING on mismatch)."
+          }
+        },
+
+        "nic_driver_version": {
+          "_comment": "Per-vendor NIC driver version + provenance validation. Opt-in, disabled by default.",
+
+          "enabled": false,
+          "_comment_enabled": "Enable NIC driver version validation.",
+
+          "ainic": {
+            "expected_fw_version": "1.117.5-a-56",
+            "_comment_expected_fw_version": "Expected AINIC per-NIC version -- both 'Uboot-A' and 'Firmware-A' fields from 'nicctl show version firmware' must match this value."
+          },
+
+          "broadcom": {
+            "expected_package_version": "<changeme>",
+            "_comment_expected_package_version": "Expected Broadcom NIC package version -- 'Active Package Version' from 'niccli -i <idx> show --pkg_ver'."
+          },
+
+          "mellanox": {
+            "_comment": "Unvalidated against real Mellanox hardware.",
+
+            "expected_mlx5_core_version": "<changeme>",
+            "_comment_expected_mlx5_core_version": "Expected mlx5_core kernel module version (modinfo -F version mlx5_core).",
+
+            "expected_ofed_version": "<changeme>",
+            "_comment_expected_ofed_version": "Expected MLNX_OFED stack version (ofed_info -s)."
           }
         },
 
         "pfc_qos_dcqcn": {
-          "_comment": "AINIC PFC/QoS/DCQCN control-plane validation via 'nicctl'. Blocking FAIL gate when enabled, run alongside the IFoE L2/TransferBench gates. Opt-in, disabled by default. All golden values are generic AINIC defaults and fully overridable per deployment.",
+          "_comment": "AINIC PFC/QoS/DCQCN control-plane validation via 'nicctl'. Opt-in, disabled by default. All golden values are generic AINIC defaults and fully overridable per deployment.",
 
           "enabled": false,
           "_comment_enabled": "Enable AINIC PFC/QoS/DCQCN control-plane validation.",

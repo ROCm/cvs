@@ -86,41 +86,41 @@ def _validate_nic_type(config, config_path, default):
             raise ValueError(f"{config_path}.{vendor} must be an object")
 
 
-# (dotted key path, default nic_type) for the two vendor-selector config blocks; kept in
-# sync with the ``default`` arguments passed to ``_validate_nic_type`` by
-# ``_nic_driver_version_config``/``_nic_firmware_config`` below.
-_NIC_VENDOR_BLOCK_SPECS = (
-    (('node_check', 'nic_driver_version'), ['broadcom']),
-    (('connectivity_check', 'ifoe', 'nic_firmware'), ['ainic']),
-)
+# Path to the scale_out block; kept in sync with _scale_out_config() below.
+# The nic_type selector lives at connectivity_check.scale_out and applies to
+# both nic_firmware and nic_driver_version sub-blocks.
+_NIC_VENDOR_BLOCK_SPECS = ((('connectivity_check', 'scale_out'), ['ainic']),)
 
 
 def _inert_nic_vendor_skip_paths(config_dict):
     """Dotted-path prefixes of vendor sub-blocks present but not selected by nic_type.
 
-    A vendor sub-block that isn't selected in its block's ``nic_type`` list is never read
-    by any check, so an unresolved ``<changeme>`` placeholder left inside it (e.g. a
-    mellanox block while ``nic_type: ["broadcom"]``) must not abort the run. Used to build
-    the ``skip_paths`` passed to ``resolve_test_config_placeholders``, which runs before
-    ``_validate_nic_type``/config-shape validation, directly against the raw config dict.
+    The nic_type selector lives at connectivity_check.scale_out and governs both
+    nic_firmware and nic_driver_version sub-blocks. A vendor sub-block that isn't
+    selected must not cause an unresolved <changeme> abort at config-load time.
     """
     skip_paths = set()
-    for path_keys, default_nic_type in _NIC_VENDOR_BLOCK_SPECS:
-        block = config_dict
-        for key in path_keys:
-            if not isinstance(block, dict):
-                block = None
-                break
-            block = block.get(key)
-        if not isinstance(block, dict):
+    top = config_dict.get('preflight', config_dict)
+    if not isinstance(top, dict):
+        return skip_paths
+    cc = top.get('connectivity_check', {})
+    if not isinstance(cc, dict):
+        return skip_paths
+    scale_out = cc.get('scale_out', {})
+    if not isinstance(scale_out, dict):
+        return skip_paths
+    nic_type = scale_out.get('nic_type', ['ainic'])
+    if not isinstance(nic_type, list):
+        return skip_paths
+    selected = set(nic_type)
+    base = ('connectivity_check', 'scale_out')
+    for sub_block_name in ('nic_firmware', 'nic_driver_version'):
+        sub_block = scale_out.get(sub_block_name, {})
+        if not isinstance(sub_block, dict):
             continue
-        nic_type = block.get('nic_type', default_nic_type)
-        if not isinstance(nic_type, list):
-            continue
-        selected = set(nic_type)
         for vendor in sorted(_VALID_NIC_VENDORS - selected):
-            if vendor in block:
-                skip_paths.add('.'.join(path_keys + (vendor,)))
+            if vendor in sub_block:
+                skip_paths.add('.'.join(base + (sub_block_name, vendor)))
     return skip_paths
 
 
@@ -306,47 +306,71 @@ def _limits_conf_enabled(config_dict):
     return _config_flag_enabled(_limits_conf_config(config_dict).get('enabled'), default=False)
 
 
-def _nic_firmware_config(config_dict):
-    """Return the customer-facing per-vendor NIC firmware/host-software configuration."""
-    config = _ifoe_config(config_dict).get('nic_firmware', {})
+def _scale_out_config(config_dict):
+    """Return the connectivity_check.scale_out block (master config for all NIC scale-out checks)."""
+    config = get_nested_config(config_dict, 'connectivity_check', 'scale_out', {})
     if not isinstance(config, dict):
-        raise ValueError("preflight.connectivity_check.ifoe.nic_firmware must be an object")
+        raise ValueError("preflight.connectivity_check.scale_out must be an object")
+    return config
+
+
+def _scale_out_enabled(config_dict):
+    return _config_flag_enabled(_scale_out_config(config_dict).get('enabled'), default=False)
+
+
+def _nic_firmware_config(config_dict):
+    """Return the scale_out.nic_firmware configuration."""
+    scale_out = _scale_out_config(config_dict)
+    config = scale_out.get('nic_firmware', {})
+    if not isinstance(config, dict):
+        raise ValueError("preflight.connectivity_check.scale_out.nic_firmware must be an object")
     unknown = sorted(
-        key for key in set(config) - {'enabled', 'nic_type', 'ainic', 'broadcom', 'mellanox'} if not key.startswith('_')
+        key for key in set(config) - {'enabled', 'ainic', 'broadcom', 'mellanox'} if not key.startswith('_')
     )
     if unknown:
-        raise ValueError("Unsupported preflight.connectivity_check.ifoe.nic_firmware option(s): " + ', '.join(unknown))
-    _validate_nic_type(config, "preflight.connectivity_check.ifoe.nic_firmware", ['ainic'])
+        raise ValueError(
+            "Unsupported preflight.connectivity_check.scale_out.nic_firmware option(s): " + ', '.join(unknown)
+        )
+    for vendor in ('ainic', 'broadcom', 'mellanox'):
+        sub = config.get(vendor)
+        if sub is not None and not isinstance(sub, dict):
+            raise ValueError(f"preflight.connectivity_check.scale_out.nic_firmware.{vendor} must be an object")
+    nic_type = scale_out.get('nic_type', ['ainic'])
+    _validate_nic_type({'nic_type': nic_type}, "preflight.connectivity_check.scale_out", ['ainic'])
     return config
 
 
 def _nic_firmware_enabled(config_dict):
-    return _config_flag_enabled(_nic_firmware_config(config_dict).get('enabled'), default=False)
+    return _scale_out_enabled(config_dict) and _config_flag_enabled(
+        _nic_firmware_config(config_dict).get('enabled'), default=False
+    )
 
 
 def _pfc_qos_dcqcn_config(config_dict):
-    """Return the customer-facing AINIC PFC/QoS/DCQCN configuration."""
-    config = _ifoe_config(config_dict).get('pfc_qos_dcqcn', {})
+    """Return the scale_out.pfc_qos_dcqcn configuration."""
+    config = _scale_out_config(config_dict).get('pfc_qos_dcqcn', {})
     if not isinstance(config, dict):
-        raise ValueError("preflight.connectivity_check.ifoe.pfc_qos_dcqcn must be an object")
+        raise ValueError("preflight.connectivity_check.scale_out.pfc_qos_dcqcn must be an object")
     unknown = sorted(key for key in set(config) - {'enabled', 'pfc', 'qos', 'dcqcn'} if not key.startswith('_'))
     if unknown:
-        raise ValueError("Unsupported preflight.connectivity_check.ifoe.pfc_qos_dcqcn option(s): " + ', '.join(unknown))
+        raise ValueError(
+            "Unsupported preflight.connectivity_check.scale_out.pfc_qos_dcqcn option(s): " + ', '.join(unknown)
+        )
 
     pfc = config.get('pfc', {})
     if not isinstance(pfc, dict):
-        raise ValueError("preflight.connectivity_check.ifoe.pfc_qos_dcqcn.pfc must be an object")
+        raise ValueError("preflight.connectivity_check.scale_out.pfc_qos_dcqcn.pfc must be an object")
     unknown_pfc = sorted(
         key for key in set(pfc) - {'expected_card_count', 'expected_pause_type'} if not key.startswith('_')
     )
     if unknown_pfc:
         raise ValueError(
-            "Unsupported preflight.connectivity_check.ifoe.pfc_qos_dcqcn.pfc option(s): " + ', '.join(unknown_pfc)
+            "Unsupported preflight.connectivity_check.scale_out.pfc_qos_dcqcn.pfc option(s): " + ', '.join(unknown_pfc)
         )
 
     qos = config.get('qos', {})
     if not isinstance(qos, dict):
-        raise ValueError("preflight.connectivity_check.ifoe.pfc_qos_dcqcn.qos must be an object")
+        raise ValueError("preflight.connectivity_check.scale_out.pfc_qos_dcqcn.qos must be an object")
     unknown_qos = sorted(
         key
         for key in set(qos)
@@ -365,12 +389,12 @@ def _pfc_qos_dcqcn_config(config_dict):
     )
     if unknown_qos:
         raise ValueError(
-            "Unsupported preflight.connectivity_check.ifoe.pfc_qos_dcqcn.qos option(s): " + ', '.join(unknown_qos)
+            "Unsupported preflight.connectivity_check.scale_out.pfc_qos_dcqcn.qos option(s): " + ', '.join(unknown_qos)
         )
 
     dcqcn = config.get('dcqcn', {})
     if not isinstance(dcqcn, dict):
-        raise ValueError("preflight.connectivity_check.ifoe.pfc_qos_dcqcn.dcqcn must be an object")
+        raise ValueError("preflight.connectivity_check.scale_out.pfc_qos_dcqcn.dcqcn must be an object")
     unknown_dcqcn = sorted(
         key
         for key in set(dcqcn)
@@ -394,32 +418,45 @@ def _pfc_qos_dcqcn_config(config_dict):
     )
     if unknown_dcqcn:
         raise ValueError(
-            "Unsupported preflight.connectivity_check.ifoe.pfc_qos_dcqcn.dcqcn option(s): " + ', '.join(unknown_dcqcn)
+            "Unsupported preflight.connectivity_check.scale_out.pfc_qos_dcqcn.dcqcn option(s): "
+            + ', '.join(unknown_dcqcn)
         )
 
     return config
 
 
 def _pfc_qos_dcqcn_enabled(config_dict):
-    return _config_flag_enabled(_pfc_qos_dcqcn_config(config_dict).get('enabled'), default=False)
+    return _scale_out_enabled(config_dict) and _config_flag_enabled(
+        _pfc_qos_dcqcn_config(config_dict).get('enabled'), default=False
+    )
 
 
 def _nic_driver_version_config(config_dict):
-    """Return the customer-facing per-vendor NIC driver-version configuration."""
-    config = _node_check_config(config_dict).get('nic_driver_version', {})
+    """Return the scale_out.nic_driver_version configuration."""
+    scale_out = _scale_out_config(config_dict)
+    config = scale_out.get('nic_driver_version', {})
     if not isinstance(config, dict):
-        raise ValueError("preflight.node_check.nic_driver_version must be an object")
+        raise ValueError("preflight.connectivity_check.scale_out.nic_driver_version must be an object")
     unknown = sorted(
-        key for key in set(config) - {'enabled', 'nic_type', 'ainic', 'broadcom', 'mellanox'} if not key.startswith('_')
+        key for key in set(config) - {'enabled', 'ainic', 'broadcom', 'mellanox'} if not key.startswith('_')
     )
     if unknown:
-        raise ValueError("Unsupported preflight.node_check.nic_driver_version option(s): " + ', '.join(unknown))
-    _validate_nic_type(config, "preflight.node_check.nic_driver_version", ['broadcom'])
+        raise ValueError(
+            "Unsupported preflight.connectivity_check.scale_out.nic_driver_version option(s): " + ', '.join(unknown)
+        )
+    for vendor in ('ainic', 'broadcom', 'mellanox'):
+        sub = config.get(vendor)
+        if sub is not None and not isinstance(sub, dict):
+            raise ValueError(f"preflight.connectivity_check.scale_out.nic_driver_version.{vendor} must be an object")
+    nic_type = scale_out.get('nic_type', ['ainic'])
+    _validate_nic_type({'nic_type': nic_type}, "preflight.connectivity_check.scale_out", ['ainic'])
     return config
 
 
 def _nic_driver_version_enabled(config_dict):
-    return _config_flag_enabled(_nic_driver_version_config(config_dict).get('enabled'), default=False)
+    return _scale_out_enabled(config_dict) and _config_flag_enabled(
+        _nic_driver_version_config(config_dict).get('enabled'), default=False
+    )
 
 
 def _node_health_enabled(config_dict):
@@ -1026,8 +1063,8 @@ def test_nic_driver_version(phdl, config_dict):
     Test per-vendor NIC driver version.
 
     Nodes lacking the configured vendor's hardware are SKIPPED. Activated
-    per vendor via ``connectivity_check.scale_out.nic_type``; opt-in overall
-    via ``preflight.connectivity_check.scale_out.nic_driver_version.enabled``
+    per vendor via ``connectivity_check.scale_out.nic_type``; opt-in overall via
+    ``preflight.connectivity_check.scale_out.nic_driver_version.enabled``
     (also requires ``scale_out.enabled: true``).
     """
     global preflight_results
@@ -1231,7 +1268,7 @@ def test_ainic_pfc_qos_dcqcn(phdl, config_dict):
         preflight_update_test_result()
         return
 
-    nic_types = _nic_firmware_config(config_dict).get('nic_type', ['ainic'])
+    nic_types = _scale_out_config(config_dict).get('nic_type', ['ainic'])
     if 'ainic' not in nic_types:
         message = f"AINIC PFC/QoS/DCQCN validation skipped: configured nic_type is {nic_types}, not ['ainic']"
         log.info(message)

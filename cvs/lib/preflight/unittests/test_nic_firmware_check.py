@@ -412,30 +412,43 @@ class TestNicFirmwareConfigVendorSubBlockValidation(unittest.TestCase):
     def test_non_dict_selected_vendor_subblock_raises_value_error(self):
         config = {
             'connectivity_check': {
-                'ifoe': {'nic_firmware': {'enabled': True, 'nic_type': ['broadcom'], 'broadcom': 999}},
+                'scale_out': {
+                    'enabled': True,
+                    'nic_type': ['broadcom'],
+                    'nic_firmware': {'enabled': True, 'broadcom': 999},
+                },
             },
         }
         with self.assertRaises(ValueError) as ctx:
             self._run_test_nic_firmware(config)
-        self.assertIn('preflight.connectivity_check.ifoe.nic_firmware.broadcom must be an object', str(ctx.exception))
+        self.assertIn(
+            'preflight.connectivity_check.scale_out.nic_firmware.broadcom must be an object', str(ctx.exception)
+        )
 
     def test_string_selected_vendor_subblock_raises_value_error(self):
         config = {
             'connectivity_check': {
-                'ifoe': {'nic_firmware': {'enabled': True, 'nic_type': ['broadcom'], 'broadcom': 'oops'}},
+                'scale_out': {
+                    'enabled': True,
+                    'nic_type': ['broadcom'],
+                    'nic_firmware': {'enabled': True, 'broadcom': 'oops'},
+                },
             },
         }
         with self.assertRaises(ValueError) as ctx:
             self._run_test_nic_firmware(config)
-        self.assertIn('preflight.connectivity_check.ifoe.nic_firmware.broadcom must be an object', str(ctx.exception))
+        self.assertIn(
+            'preflight.connectivity_check.scale_out.nic_firmware.broadcom must be an object', str(ctx.exception)
+        )
 
     def test_non_selected_vendor_malformed_subblock_still_raises(self):
         config = {
             'connectivity_check': {
-                'ifoe': {
+                'scale_out': {
+                    'enabled': True,
+                    'nic_type': ['broadcom'],
                     'nic_firmware': {
                         'enabled': True,
-                        'nic_type': ['broadcom'],
                         'broadcom': {'expected_nic_count': 2},
                         'mellanox': 'oops',
                     },
@@ -444,7 +457,9 @@ class TestNicFirmwareConfigVendorSubBlockValidation(unittest.TestCase):
         }
         with self.assertRaises(ValueError) as ctx:
             self._run_test_nic_firmware(config)
-        self.assertIn('preflight.connectivity_check.ifoe.nic_firmware.mellanox must be an object', str(ctx.exception))
+        self.assertIn(
+            'preflight.connectivity_check.scale_out.nic_firmware.mellanox must be an object', str(ctx.exception)
+        )
 
 
 if __name__ == '__main__':

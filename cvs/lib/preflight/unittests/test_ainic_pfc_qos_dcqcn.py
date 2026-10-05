@@ -221,9 +221,10 @@ class TestPfcQosDcqcnNicTypeGating(unittest.TestCase):
     def test_skipped_when_nic_type_is_not_ainic(self):
         config = {
             'connectivity_check': {
-                'ifoe': {
+                'scale_out': {
+                    'enabled': True,
+                    'nic_type': ['broadcom'],
                     'pfc_qos_dcqcn': {'enabled': True},
-                    'nic_firmware': {'nic_type': ['broadcom']},
                 },
             },
         }
@@ -233,15 +234,14 @@ class TestPfcQosDcqcnNicTypeGating(unittest.TestCase):
         self.assertIn("not ['ainic']", results['pfc_qos_dcqcn']['message'])
 
     def test_not_skipped_by_nic_type_when_ainic_selected(self):
-        # nic_firmware.nic_type defaults to ['ainic'], so an explicit
-        # ['ainic'] selection (or omitting nic_type) must fall through past
-        # the nic_type gate -- reaching the "no reachable nodes" FAIL path
-        # (via pytest.fail) confirms the nic_type gate did not short-circuit.
+        # scale_out.nic_type=['ainic'] must fall through the nic_type gate --
+        # reaching the "no reachable nodes" FAIL path confirms it did not short-circuit.
         config = {
             'connectivity_check': {
-                'ifoe': {
+                'scale_out': {
+                    'enabled': True,
+                    'nic_type': ['ainic'],
                     'pfc_qos_dcqcn': {'enabled': True},
-                    'nic_firmware': {'nic_type': ['ainic']},
                 },
             },
         }

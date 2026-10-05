@@ -382,38 +382,55 @@ class TestNicDriverVersionConfigVendorSubBlockValidation(unittest.TestCase):
 
     def test_non_dict_selected_vendor_subblock_raises_value_error(self):
         config = {
-            'node_check': {
-                'nic_driver_version': {'enabled': True, 'nic_type': ['broadcom'], 'broadcom': 999},
-            },
-        }
-        with self.assertRaises(ValueError) as ctx:
-            self._run_test_nic_driver_version(config)
-        self.assertIn('preflight.node_check.nic_driver_version.broadcom must be an object', str(ctx.exception))
-
-    def test_string_selected_vendor_subblock_raises_value_error(self):
-        config = {
-            'node_check': {
-                'nic_driver_version': {'enabled': True, 'nic_type': ['broadcom'], 'broadcom': 'oops'},
-            },
-        }
-        with self.assertRaises(ValueError) as ctx:
-            self._run_test_nic_driver_version(config)
-        self.assertIn('preflight.node_check.nic_driver_version.broadcom must be an object', str(ctx.exception))
-
-    def test_non_selected_vendor_malformed_subblock_still_raises(self):
-        config = {
-            'node_check': {
-                'nic_driver_version': {
+            'connectivity_check': {
+                'scale_out': {
                     'enabled': True,
                     'nic_type': ['broadcom'],
-                    'broadcom': {'expected_package_version': EXPECTED_PKG_VER},
-                    'mellanox': 'oops',
+                    'nic_driver_version': {'enabled': True, 'broadcom': 999},
                 },
             },
         }
         with self.assertRaises(ValueError) as ctx:
             self._run_test_nic_driver_version(config)
-        self.assertIn('preflight.node_check.nic_driver_version.mellanox must be an object', str(ctx.exception))
+        self.assertIn(
+            'preflight.connectivity_check.scale_out.nic_driver_version.broadcom must be an object', str(ctx.exception)
+        )
+
+    def test_string_selected_vendor_subblock_raises_value_error(self):
+        config = {
+            'connectivity_check': {
+                'scale_out': {
+                    'enabled': True,
+                    'nic_type': ['broadcom'],
+                    'nic_driver_version': {'enabled': True, 'broadcom': 'oops'},
+                },
+            },
+        }
+        with self.assertRaises(ValueError) as ctx:
+            self._run_test_nic_driver_version(config)
+        self.assertIn(
+            'preflight.connectivity_check.scale_out.nic_driver_version.broadcom must be an object', str(ctx.exception)
+        )
+
+    def test_non_selected_vendor_malformed_subblock_still_raises(self):
+        config = {
+            'connectivity_check': {
+                'scale_out': {
+                    'enabled': True,
+                    'nic_type': ['broadcom'],
+                    'nic_driver_version': {
+                        'enabled': True,
+                        'broadcom': {'expected_package_version': EXPECTED_PKG_VER},
+                        'mellanox': 'oops',
+                    },
+                },
+            },
+        }
+        with self.assertRaises(ValueError) as ctx:
+            self._run_test_nic_driver_version(config)
+        self.assertIn(
+            'preflight.connectivity_check.scale_out.nic_driver_version.mellanox must be an object', str(ctx.exception)
+        )
 
 
 class TestInertNicVendorSkipPaths(unittest.TestCase):
@@ -427,22 +444,26 @@ class TestInertNicVendorSkipPaths(unittest.TestCase):
 
     def test_unselected_present_vendor_is_skipped(self):
         config = {
-            'node_check': {
-                'nic_driver_version': {
+            'connectivity_check': {
+                'scale_out': {
                     'nic_type': ['broadcom'],
-                    'broadcom': {'expected_package_version': '233.0.150.0'},
-                    'mellanox': {'expected_mlx5_core_version': '<changeme>'},
+                    'nic_driver_version': {
+                        'broadcom': {'expected_package_version': '233.0.150.0'},
+                        'mellanox': {'expected_mlx5_core_version': '<changeme>'},
+                    },
                 },
             },
         }
-        self.assertEqual(self._skip_paths(config), {'node_check.nic_driver_version.mellanox'})
+        self.assertEqual(self._skip_paths(config), {'connectivity_check.scale_out.nic_driver_version.mellanox'})
 
     def test_selected_vendor_is_not_skipped(self):
         config = {
-            'node_check': {
-                'nic_driver_version': {
+            'connectivity_check': {
+                'scale_out': {
                     'nic_type': ['broadcom'],
-                    'broadcom': {'expected_package_version': '<changeme>'},
+                    'nic_driver_version': {
+                        'broadcom': {'expected_package_version': '<changeme>'},
+                    },
                 },
             },
         }
@@ -450,37 +471,39 @@ class TestInertNicVendorSkipPaths(unittest.TestCase):
 
     def test_absent_vendor_block_not_included(self):
         config = {
-            'node_check': {
-                'nic_driver_version': {'nic_type': ['broadcom'], 'broadcom': {}},
+            'connectivity_check': {
+                'scale_out': {
+                    'nic_type': ['broadcom'],
+                    'nic_driver_version': {'broadcom': {}},
+                },
             },
         }
         self.assertEqual(self._skip_paths(config), set())
 
     def test_defaults_used_when_nic_type_absent(self):
-        # nic_driver_version defaults nic_type to ['broadcom'] when absent, matching
-        # _validate_nic_type's own default, so ainic/mellanox are still inert here.
+        # scale_out defaults nic_type to ['ainic'] when absent, so broadcom/mellanox are inert.
         config = {
-            'node_check': {
-                'nic_driver_version': {
-                    'ainic': {'expected_fw_version': '<changeme>'},
+            'connectivity_check': {
+                'scale_out': {
+                    'nic_driver_version': {
+                        'broadcom': {'expected_package_version': '<changeme>'},
+                    },
                 },
             },
         }
-        self.assertEqual(self._skip_paths(config), {'node_check.nic_driver_version.ainic'})
+        self.assertEqual(self._skip_paths(config), {'connectivity_check.scale_out.nic_driver_version.broadcom'})
 
-    def test_both_blocks_computed_independently(self):
+    def test_both_sub_blocks_computed_from_single_nic_type(self):
+        # nic_type at scale_out level governs both nic_firmware and nic_driver_version.
         config = {
-            'node_check': {
-                'nic_driver_version': {
-                    'nic_type': ['broadcom'],
-                    'mellanox': {'expected_mlx5_core_version': '<changeme>'},
-                },
-            },
             'connectivity_check': {
-                'ifoe': {
+                'scale_out': {
+                    'nic_type': ['broadcom'],
+                    'nic_driver_version': {
+                        'mellanox': {'expected_mlx5_core_version': '<changeme>'},
+                    },
                     'nic_firmware': {
-                        'nic_type': ['ainic'],
-                        'broadcom': {'expected_fw_version': '<changeme>'},
+                        'ainic': {'expected_fw_version': '<changeme>'},
                     },
                 },
             },
@@ -488,15 +511,15 @@ class TestInertNicVendorSkipPaths(unittest.TestCase):
         self.assertEqual(
             self._skip_paths(config),
             {
-                'node_check.nic_driver_version.mellanox',
-                'connectivity_check.ifoe.nic_firmware.broadcom',
+                'connectivity_check.scale_out.nic_driver_version.mellanox',
+                'connectivity_check.scale_out.nic_firmware.ainic',
             },
         )
 
     def test_malformed_config_shape_does_not_raise(self):
         self.assertEqual(self._skip_paths({}), set())
-        self.assertEqual(self._skip_paths({'node_check': 'not-a-dict'}), set())
-        self.assertEqual(self._skip_paths({'node_check': {'nic_driver_version': {'nic_type': 'not-a-list'}}}), set())
+        self.assertEqual(self._skip_paths({'connectivity_check': 'not-a-dict'}), set())
+        self.assertEqual(self._skip_paths({'connectivity_check': {'scale_out': {'nic_type': 'not-a-list'}}}), set())
 
 
 if __name__ == '__main__':

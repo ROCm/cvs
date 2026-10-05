@@ -1814,9 +1814,6 @@ class PreflightNodeCheckConfig(BaseModel):
     limits_conf: PreflightLimitsConfConfig = Field(
         default_factory=PreflightLimitsConfConfig, description="/etc/security/limits.conf validation"
     )
-    nic_driver_version: PreflightNicDriverVersionConfig = Field(
-        default_factory=PreflightNicDriverVersionConfig, description="Per-vendor NIC driver version validation"
-    )
 
 
 class PreflightRdmaConfig(BaseModel):
@@ -2141,14 +2138,44 @@ class PreflightIfoeConfig(BaseModel):
         default_factory=PreflightTransferBenchConfig,
         description="TransferBench IFoE data-path validation",
     )
+
+
+class PreflightScaleOutConfig(BaseModel):
+    """Scale-out network NIC checks (AINIC/Broadcom/Mellanox firmware, driver, PFC/QoS/DCQCN)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False,
+        description="Master switch: when false all scale_out sub-checks are skipped regardless of their individual enabled flags",
+    )
+    nic_type: List[str] = Field(
+        default_factory=lambda: ["ainic"],
+        description="Vendor sub-block(s) to activate across nic_firmware and nic_driver_version: one or more of 'ainic', 'broadcom', 'mellanox'",
+    )
     nic_firmware: PreflightNicFirmwareConfig = Field(
         default_factory=PreflightNicFirmwareConfig,
         description="Per-vendor NIC count / firmware / host-software version validation",
+    )
+    nic_driver_version: PreflightNicDriverVersionConfig = Field(
+        default_factory=PreflightNicDriverVersionConfig,
+        description="Per-vendor NIC driver/package version validation",
     )
     pfc_qos_dcqcn: PreflightPfcQosDcqcnConfig = Field(
         default_factory=PreflightPfcQosDcqcnConfig,
         description="AINIC PFC/QoS/DCQCN control-plane validation",
     )
+
+    @field_validator('nic_type')
+    @classmethod
+    def validate_nic_type(cls, value):
+        valid_vendors = {'ainic', 'broadcom', 'mellanox'}
+        unknown = sorted(set(value) - valid_vendors)
+        if unknown:
+            raise ValueError(f"scale_out.nic_type contains unknown vendor(s): {', '.join(unknown)}")
+        if len(value) != len(set(value)):
+            raise ValueError("scale_out.nic_type must not contain duplicate vendor names")
+        return value
 
 
 class PreflightSshMeshConfig(BaseModel):
@@ -2171,6 +2198,10 @@ class PreflightConnectivityCheckConfig(BaseModel):
     ifoe: PreflightIfoeConfig = Field(default_factory=PreflightIfoeConfig, description="IFoE connectivity settings")
     ssh_mesh: PreflightSshMeshConfig = Field(
         default_factory=PreflightSshMeshConfig, description="Full node x node SSH mesh diagnostic"
+    )
+    scale_out: PreflightScaleOutConfig = Field(
+        default_factory=PreflightScaleOutConfig,
+        description="Scale-out network NIC checks (firmware, driver version, PFC/QoS/DCQCN)",
     )
 
 
