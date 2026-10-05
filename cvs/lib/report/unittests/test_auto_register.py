@@ -63,6 +63,21 @@ class TestAutoRegister(unittest.TestCase):
         self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
         self.assertEqual(config._suite_report_config["sources"]["results"], "rvs_res_dict")
 
+    def test_auto_register_loads_agfhc_cvs_profile(self):
+        config = SimpleNamespace(_suite_name="agfhc_cvs", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["suite_id"], "agfhc_cvs")
+        self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
+        self.assertEqual(config._suite_report_config["sources"]["results"], "agfhc_res_dict")
+
+    def test_auto_register_loads_csp_qual_agfhc_profile(self):
+        config = SimpleNamespace(_suite_name="csp_qual_agfhc", _suite_report_config=None)
+        self.assertTrue(try_auto_register_suite_report(config))
+        self.assertEqual(config._suite_report_config["suite_id"], "csp_qual_agfhc")
+        self.assertEqual(config._suite_report_config["dataset_builder"], "status_matrix")
+        self.assertEqual(config._suite_report_config["sources"]["results"], "agfhc_res_dict")
+        self.assertEqual(config._suite_report_config["lifecycle"]["session_labels"][0], "version_check")
+
 
 if __name__ == "__main__":
     unittest.main()

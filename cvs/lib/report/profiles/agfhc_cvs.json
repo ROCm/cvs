@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "extends": "health_status_base",
+  "profile_id": "agfhc_cvs_rundeck",
+  "suite_id": "agfhc_cvs",
+  "report_basename": "agfhc_run_deck",
+  "title": "AGFHC Run Deck",
+  "subtitle": "AMD GPU Field Health Check · recipe results across the cluster",
+  "footer": "CVS AGFHC · render-only · per-node verdict from the collected AGFHC run (pass / fail)",
+  "link_name": "AGFHC Run Deck",
+  "sources": {
+    "results": "agfhc_res_dict"
+  },
+  "lifecycle": {
+    "session_labels": [
+      "hbm",
+      "hbm1_lvl5",
+      "hbm2_lvl5",
+      "hbm3_lvl3",
+      "all_lvl1",
+      "dma_lvl1",
+      "gfx_lvl1",
+      "pcie_lvl1",
+      "pcie_lvl3",
+      "xgmi_lvl1",
+      "all_perf",
+      "all_lvl5"
+    ]
+  },
+  "cards": [
+    {
+      "id": "results",
+      "hint": "Columns are executed AGFHC recipes. Open a cell for its return code and any listed test results."
+    }
+  ]
+}

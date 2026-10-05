@@ -215,6 +215,17 @@ instead record the individual test groups that run. Regex matching remains the
 only pass/fail path; metric parsing is display-only. Failed-cell items show the
 configured gate regex and the matching RVS output line.
 
+`profiles/agfhc_cvs.json` uses executed AGFHC recipes as matrix groups. The cell
+verdict matches `scan_agfc_results`: missing `code AGFHC_SUCCESS`, or a line
+containing `FAIL`, `ERROR`, or `ABORT`, fails the node. Listed test rows are
+drill-down. Recipe-info contents stay out of the cell. The measurements card
+hides when a run recorded none.
+
+`profiles/csp_qual_agfhc.json` is the CSP qualification suite on the same path.
+Matrix groups are `version_check` plus the CSP recipes (`all_lvl5`, `hbm_lvl5`,
+`minihpl`, `xgmi_lvl1`, `pcie_lvl2`, `all_perf`). Version check uses the
+`agfhc version:` banner rather than `AGFHC_SUCCESS`.
+
 ## Author tiers
 
 | Tier | You add | Core adds |

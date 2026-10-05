@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "extends": "health_status_base",
+  "profile_id": "csp_qual_agfhc_rundeck",
+  "suite_id": "csp_qual_agfhc",
+  "report_basename": "csp_qual_agfhc_run_deck",
+  "title": "CSP Qual AGFHC Run Deck",
+  "subtitle": "AMD GPU Field Health Check · CSP qualification recipes across the cluster",
+  "footer": "CVS CSP Qual AGFHC · render-only · per-node verdict from the collected AGFHC run (pass / fail)",
+  "link_name": "CSP Qual AGFHC Run Deck",
+  "sources": {
+    "results": "agfhc_res_dict"
+  },
+  "lifecycle": {
+    "session_labels": [
+      "version_check",
+      "all_lvl5",
+      "hbm_lvl5",
+      "minihpl",
+      "xgmi_lvl1",
+      "pcie_lvl2",
+      "all_perf"
+    ]
+  },
+  "cards": [
+    {
+      "id": "results",
+      "hint": "Columns are executed CSP qualification steps. Open a cell for its return code and any listed test results."
+    }
+  ]
+}
