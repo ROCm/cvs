@@ -58,7 +58,7 @@
           "* hard nofile 1048576"
         ],
         "_comment_required_lines": "Exact lines that must be present (in any order, whitespace-insensitive) in /etc/security/limits.conf on every node."
-      },
+      }
 
     },
 
@@ -172,7 +172,7 @@
 
           "warmup_iterations": 0,
           "_comment_warmup_iterations": "Warmup iterations performed before validation."
-        },
+        }
 
       },
 
