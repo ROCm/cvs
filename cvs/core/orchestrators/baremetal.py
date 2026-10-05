@@ -7,6 +7,7 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 
 from cvs.core.orchestrators.base import Orchestrator
 from cvs.core.scheduler import is_managed_compute
+from cvs.lib.parallel.config import ParallelConfig
 from cvs.lib.parallel.multiprocess_phandle import MultiProcessParallelHandle
 from cvs.lib.utils_lib import get_passwordless_sudo_status
 
@@ -70,6 +71,8 @@ class BaremetalOrchestrator(Orchestrator):
 
     def _phandle(self, hosts):
         managed = is_managed_compute()
+        overrides = self.config.get('parallel_handle') or {}
+        config_overrides = overrides.get('config') or {}
         return MultiProcessParallelHandle(
             self.log,
             hosts,
@@ -79,8 +82,10 @@ class BaremetalOrchestrator(Orchestrator):
             host_key_check=False,
             stop_on_errors=self.stop_on_errors,
             env_vars=self.config.get('env_vars'),
+            config=ParallelConfig(**config_overrides) if config_overrides else None,
             transport='http' if managed else 'ssh',
             **(self._transport_kwargs() if managed else {}),
+            **(overrides.get('transport_kwargs') or {}),
         )
 
     def close(self):
@@ -128,6 +133,16 @@ class BaremetalOrchestrator(Orchestrator):
             finally:
                 phandle.destroy_clients()
 
+    def exec_on_host(self, cmd, hosts=None, timeout=None, detailed=False, print_console=True):
+        """Execute directly on the host OS."""
+        return self.exec(
+            cmd,
+            hosts=hosts,
+            timeout=timeout,
+            detailed=detailed,
+            print_console=print_console,
+        )
+
     def sudo_prefix(self):
         """
         Return the command prefix needed for privileged commands, probing
@@ -164,6 +179,14 @@ class BaremetalOrchestrator(Orchestrator):
             Dictionary mapping head node to execution result
         """
         return self.head.exec(cmd, timeout=timeout, detailed=detailed, print_console=print_console)
+
+    def upload_to_head(self, local_file, remote_file):
+        """Upload a local file to the head node's host filesystem."""
+        return self.head.upload_file(local_file, remote_file)
+
+    def download_from_head(self, remote_file, local_file):
+        """Download a file from the head node's host filesystem."""
+        return self.head.download_file(remote_file, local_file)
 
     def setup_env(self, hosts, env_script=None):
         """Set up environment on hosts."""

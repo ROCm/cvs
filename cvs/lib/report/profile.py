@@ -6,7 +6,8 @@ Deck profile discovery and source resolution for CVS Run Deck.
 
 Deck profiles live under ``profiles/{stem}.json`` and are loaded by ``auto_register``.
 Profiles may ``extends`` another JSON file (stem without ``.json``) to share sweep/cards
-config; the child overlay wins on conflict.
+config; the child overlay wins on conflict. Card arrays merge by ``id`` so an
+overlay can customize card copy without repeating the shared stack.
 '''
 
 from __future__ import annotations
@@ -26,6 +27,18 @@ PROFILE_STEM_ALIASES: dict[str, str] = {
     "sglang_disagg_distributed": "sglang",
     "vllm_single": "vllm",
     "vllm_distributed": "vllm",
+    "rccl_perf": "rccl",
+    "rccl_regression": "rccl",
+    "rccl_pairwise": "rccl",
+    "xdit_flux_dev_single": "xdit",
+    "xdit_flux_dev_distributed": "xdit",
+    "xdit_wan22_14b_single": "xdit",
+    "xdit_wan22_14b_diffusers_single": "xdit",
+    "xdit_wan22_14b_diffusers_distributed": "xdit",
+    "megatron_single": "megatron",
+    "megatron_distributed": "megatron",
+    "jaxmaxtext_single": "jaxmaxtext",
+    "jaxmaxtext_distributed": "jaxmaxtext",
 }
 
 DEFAULT_SOURCES: dict[str, str] = {
@@ -44,12 +57,35 @@ def profile_json_path(stem: str) -> Path:
     return _PROFILES_DIR / f"{stem}.json"
 
 
+def _merge_profile_cards(base_cards, overlay_cards):
+    merged = [dict(card) if isinstance(card, dict) else card for card in base_cards]
+    positions = {
+        str(card["id"]): index
+        for index, card in enumerate(merged)
+        if isinstance(card, dict) and card.get("id") not in (None, "")
+    }
+    for card in overlay_cards:
+        card_id = str(card.get("id")) if isinstance(card, dict) and card.get("id") not in (None, "") else ""
+        if card_id and card_id in positions:
+            index = positions[card_id]
+            merged[index] = _deep_merge_profile(merged[index], card)
+            continue
+        if card_id:
+            positions[card_id] = len(merged)
+        merged.append(dict(card) if isinstance(card, dict) else card)
+    return merged
+
+
 def _deep_merge_profile(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
     merged: dict[str, Any] = dict(base)
     for key, value in overlay.items():
         if key == "extends":
             continue
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+        if key == "cards" and isinstance(value, list) and isinstance(merged.get(key), list):
+            # Stable card ids let suite overlays customize copy without duplicating
+            # the shared stack or changing its order.
+            merged[key] = _merge_profile_cards(merged[key], value)
+        elif isinstance(value, dict) and isinstance(merged.get(key), dict):
             merged[key] = _deep_merge_profile(merged[key], value)
         else:
             merged[key] = value

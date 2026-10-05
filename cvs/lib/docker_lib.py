@@ -143,6 +143,7 @@ def launch_docker_container(
     shm_size='64G',
     timeout=60 * 10,
     ulimit_nofile=None,
+    ulimit_memlock=None,
 ):
     cmd = f'docker run -d --network {network} --ipc {network} \
             --cap-add=IPC_LOCK --security-opt seccomp=unconfined --privileged '
@@ -165,6 +166,11 @@ def launch_docker_container(
             )
     if ulimit_nofile:
         cmd = cmd + f' --ulimit nofile={ulimit_nofile} '
+    if ulimit_memlock is not None:
+        # RDMA tests register GPU memory via ibv_reg_mr, charged against RLIMIT_MEMLOCK.
+        # Docker defaults the container to 8MB even when the host is unlimited
+        # (--privileged does NOT lift ulimits), so registrations >8MB fail with ENOMEM.
+        cmd = cmd + f' --ulimit memlock={ulimit_memlock} '
     for device in device_list:
         cmd = cmd + f' --device {device} '
     for src_vol in volume_dict.keys():

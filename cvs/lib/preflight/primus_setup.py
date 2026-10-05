@@ -293,7 +293,7 @@ class PrimusSetup(PreflightCheck):
         if err:
             return {"status": "FAIL", "skipped": True, "message": err, "node_results": {}}
 
-        hosts = [h for h in self.phdl.reachable_hosts if h in self.node_list]
+        hosts = [h for h in self.orch.all.reachable_hosts if h in self.node_list]
         if not hosts:
             return {
                 "status": "FAIL",
@@ -331,7 +331,7 @@ class PrimusSetup(PreflightCheck):
             setup_mode = "per-node"
 
         commands: List[str] = []
-        for h in self.phdl.reachable_hosts:
+        for h in self.orch.all.reachable_hosts:
             if h not in hosts:
                 commands.append("true")
             elif use_shared and h != leader:
@@ -345,7 +345,7 @@ class PrimusSetup(PreflightCheck):
             f"venv={self.venv_activate}, pip_mode={self.pip_install_mode}"
         )
 
-        out_dict = self.phdl.exec_cmd_list(commands, timeout=self.setup_timeout)
+        out_dict = self.orch.all.exec_cmd_list(commands, timeout=self.setup_timeout)
 
         hosts_set = set(hosts)
         node_results: Dict[str, Any] = {}

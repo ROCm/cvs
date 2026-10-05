@@ -175,6 +175,7 @@ def test_launch_mori_container(phdl, mori_dict):
         mori_dict['container_config']['env_dict'],
         shm_size='48G',
         timeout=60 * 20,
+        ulimit_memlock='-1',
     )
     # ADD verifications ..
     time.sleep(30)

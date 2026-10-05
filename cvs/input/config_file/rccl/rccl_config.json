@@ -35,18 +35,20 @@
             "data_types": ["float"]
         },
 
-        "_comment_cvs_params": "The rccl_result_file.json will be appended by rccl_test_params.data_types. When it's float the file name will be rccl_result_file_float.json on the head node.",
+        "_comment_cvs_params": "Perf writes per-data-type files (for example rccl_result_file_float.json), combined results and an aggregated JSON on the head node. Managed runs require writable shared storage; containers must bind-mount the result directory at the same path.",
         "cvs_params": {
             "cluster_snapshot_debug": "False",
-            "_comment_nic_model": "Informational: records the cluster's NIC model. Does not affect threshold selection.",
+            "_comment_nic_model": "Selects NIC-keyed results.<nic> thresholds (thor, ainic, connectx). The shipped flat results table is used when no matching NIC/rank key exists.",
             "nic_model": "thor",
             "_comment_verification": "Setting any verify_* flag to True enables that check and can fail the test; set results thresholds for this cluster first.",
             "verify_bus_bw": "False",
             "verify_bw_dip": "False",
             "verify_lat_dip": "False",
+            "_comment_topology_check": "How CVS reacts when rccl-tests' reported nodes/ranks/ranksPerNode/gpusPerRank disagree with the topology CVS launched. 'warn' (default) logs and records the mismatch; 'strict' fails the test; 'off' disables only the requested-vs-reported comparison. Checks are skipped when all rows omit topology. Use 'strict' once your rccl-tests build reports per-node rank counts correctly (see AIMVT-334).",
+            "topology_check": "warn",
             "_comment_cvs_exec_timeout": "Optional. CVS-side outer cap on the SSH-exec call wrapping mpirun (seconds, default 2400).",
             "cvs_exec_timeout": "2400",
-            "rccl_result_file": "/home/{user-id}/rccl_result_file.json",
+            "rccl_result_file": "{run_dir}/rccl_result_file.json",
             "pairwise_min_bw": "300",
             "_comment_pairwise_min_bw": "Minimum bus BW in GB/s required for Phase 2 incremental admission (Phase 1 pairwise never gates on bandwidth, matching the original bash tool). Set to 0 to skip the BW check.",
             "pairwise_results_file": "/tmp/rccl_pairwise_results.json",
@@ -63,7 +65,7 @@
             "NCCL_MAX_NCHANNELS": [ "8", "16" ]
         },
 
-        "_comments_results": "Expected bus bandwidth values below assume the default 2-node, 8-rank-per-node setup. Re-baseline them for each cluster before enabling verification.",
+        "_comments_results": "Both perf and regression read results here. These legacy flat examples assume 2 nodes; calibrate for your hardware before setting verify_bus_bw=True. For references tied to NIC, data types and rank count, use results.<nic>.<collective>-<types>-<ranks>.<bytes>.bus_bw (see the RCCL README).",
         "results": {
             "all_reduce_perf": {
                 "bus_bw": {

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "extends": "health_status_base",
+  "profile_id": "transferbench_cvs_rundeck",
+  "suite_id": "transferbench_cvs",
+  "report_basename": "transferbench_run_deck",
+  "title": "TransferBench Run Deck",
+  "subtitle": "TransferBench · preset results across the cluster",
+  "footer": "CVS TransferBench · render-only · per-node verdict from the collected preset run (pass / fail)",
+  "link_name": "TransferBench Run Deck",
+  "sources": {
+    "results": "transferbench_res_dict"
+  },
+  "lifecycle": {
+    "session_labels": [
+      "a2a",
+      "p2p",
+      "healthcheck",
+      "a2asweep",
+      "scaling",
+      "schmoo"
+    ]
+  },
+  "cards": [
+    {
+      "id": "metrics",
+      "title": "Bandwidth highlights"
+    },
+    {
+      "id": "results",
+      "hint": "Open a cell for that preset's bandwidth, healthcheck subtests, and log links."
+    }
+  ]
+}

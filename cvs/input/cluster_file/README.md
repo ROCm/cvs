@@ -34,7 +34,7 @@ cp cvs/input/cluster_file/cluster_container.json /tmp/my_cluster.json
 
 cvs run rvs_cvs \
     --cluster_file /tmp/my_cluster.json \
-    --config_file cvs/input/config_file/health/mi300_health_config.json
+    --config_file cvs/input/config_file/health/health_config.json
 ```
 
 ## The `container` block schema

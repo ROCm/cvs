@@ -10,6 +10,10 @@ MagicMock orch and a lightweight SimpleNamespace variant -- no SSH, no
 container, no real sleeps (mirrors test_megatron_training_lib.py).
 '''
 
+import base64
+import io
+import struct
+import tarfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -18,6 +22,7 @@ from cvs.lib.training.jaxmaxtext.jaxmaxtext_training_lib import (
     MaxTextTrainingJob,
     _ALWAYS_ON_ERR_PATTERNS,
     _NAN_INF_RE,
+    _TB_COLLECT_MAX_BYTES,
     needs_hf_tokenizer,
 )
 from cvs.lib.utils.log_poller import LogPoller
@@ -723,6 +728,88 @@ class PollForCompletionTests(unittest.TestCase):
         job, _ = _make_job(hosts=["h0"])
         job.poll_for_completion()
         self.assertEqual(mock_poller_cls.call_args.kwargs["timeout_s"], job._poll_count * job._poll_wait_s)
+
+
+def _tfevents_blob(step, tag, value):
+    """One TFRecord-framed Event with a single simple_value scalar."""
+
+    def _v(n):
+        out = bytearray()
+        while True:
+            b = n & 0x7F
+            n >>= 7
+            out.append(b | 0x80 if n else b)
+            if not n:
+                return bytes(out)
+
+    def _key(f, w):
+        return _v((f << 3) | w)
+
+    val = _key(1, 2) + _v(len(tag.encode())) + tag.encode() + _key(2, 5) + struct.pack("<f", value)
+    summary = _key(1, 2) + _v(len(val)) + val
+    event = _key(2, 0) + _v(step) + _key(5, 2) + _v(len(summary)) + summary
+    return struct.pack("<Q", len(event)) + b"\x00\x00\x00\x00" + event + b"\x00\x00\x00\x00"
+
+
+def _b64_tar(files):
+    """base64 of a tar containing ``{name: bytes}`` -- mimics the node-side dump."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:") as tar:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+class CollectTbScalarsTests(unittest.TestCase):
+    @staticmethod
+    def _wire(orch, b64, size_kb=16):
+        """Answer the du size-probe then the tar|base64 pull (in that order)."""
+
+        def _side(cmd, *_a, **_k):
+            if "du -ck" in str(cmd):
+                return {orch.hosts[0]: f"{size_kb}\ttotal\n"}
+            return {orch.hosts[0]: b64}
+
+        orch.exec.side_effect = _side
+
+    def test_parses_scalars_from_node0_tar(self):
+        job, orch = _make_job(hosts=["h0", "h1"])
+        blob = _tfevents_blob(0, "learning/loss", 12.0) + _tfevents_blob(1, "learning/loss", 11.0)
+        self._wire(orch, _b64_tar({"events.out.tfevents.1.host": blob}))
+        scalars = job.collect_tb_scalars()
+        self.assertEqual([s for s, _v in scalars["learning/loss"]], [0, 1])
+        self.assertEqual(job.tb_collection_note, "")
+        # the pull targets node 0 only, stays off-console, and is bounded by a timeout
+        self.assertEqual(orch.exec.call_args.kwargs.get("hosts"), ["h0"])
+        self.assertIs(orch.exec.call_args.kwargs.get("print_console"), False)
+        self.assertIsNotNone(orch.exec.call_args.kwargs.get("timeout"))
+
+    def test_empty_output_returns_empty_with_note(self):
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec.return_value = {"h0": ""}
+        self.assertEqual(job.collect_tb_scalars(), {})
+        self.assertIn("no TensorBoard events", job.tb_collection_note)
+
+    def test_exec_failure_is_swallowed_with_note(self):
+        job, orch = _make_job(hosts=["h0"])
+        orch.exec.side_effect = RuntimeError("no container")
+        self.assertEqual(job.collect_tb_scalars(), {})
+        self.assertIn("failed", job.tb_collection_note)
+
+    def test_oversize_events_are_skipped_without_pull(self):
+        job, orch = _make_job(hosts=["h0"])
+        huge_kb = (_TB_COLLECT_MAX_BYTES // 1024) + 1024
+
+        def _side(cmd, *_a, **_k):
+            if "du -ck" in str(cmd):
+                return {"h0": f"{huge_kb}\ttotal\n"}
+            raise AssertionError("tar pull must not run when events exceed the size cap")
+
+        orch.exec.side_effect = _side
+        self.assertEqual(job.collect_tb_scalars(), {})
+        self.assertIn("cap", job.tb_collection_note)
 
 
 class ScanDmesgForErrorsTests(unittest.TestCase):

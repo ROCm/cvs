@@ -99,11 +99,11 @@ def test_checkpoint_resume(orch, variant_config, hf_token, training_res_dict, li
     return _common.checkpoint_resume(orch, variant_config, hf_token, training_res_dict, lifecycle, request)
 
 
-def test_print_results_table(training_res_dict, request):
+def test_print_results_table(training_res_dict, train_res_dict, request):
     """Log per-sweep result tables, write the consolidated metric-results HTML,
     and record the aggregated failure summary for the pytest final summary."""
     log.info('Starting Testcase: print results table')
-    return _common.print_results_table(training_res_dict, request)
+    return _common.print_results_table(training_res_dict, train_res_dict, request)
 
 
 def test_teardown(orch, lifecycle, request):

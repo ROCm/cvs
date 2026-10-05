@@ -1,0 +1,57 @@
+{
+  "_comment": "FLUX.1-dev single-node xDiT workload. Thresholds live in the sibling threshold JSON.",
+  "gpu_name" : "<changeme> mi325",
+  "enforce_thresholds": true,
+  "threshold_json": "mi325_xdit_flux1_dev_single_threshold.json",
+  "paths": {
+    "shared_fs": "{home}",
+    "models_dir": "{home}/.cache/huggingface",
+    "log_dir": "{home}/cvs_flux1_output",
+    "hf_token_file": "{home}/.hf_token"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "flux-benchmark_single",
+    "_image_example": "amdsiloai/pytorch-xdit:v25.11.2",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "{paths.models_dir}:/hf_home",
+          "{paths.log_dir}:/outputs"
+        ],
+        "devices": ["/dev/dri", "/dev/kfd"],
+        "env": {
+          "NCCL_DEBUG": "ERROR"
+        }
+      }
+    }
+  },
+  "server_params": {
+    "backend": "xdit",
+    "nnodes": "1",
+    "log_level": "info",
+    "model": "<changeme>"
+  },
+  "benchmark_params": {
+    "prompt": "A small cat",
+    "seed": 42,
+    "num_inference_steps": 25,
+    "max_sequence_length": 256,
+    "no_use_resolution_binning": true,
+    "warmup_steps": 1,
+    "warmup_calls": 5,
+    "num_repetitions": 25,
+    "height": 1024,
+    "width": 1024,
+    "ulysses_degree": 8,
+    "ring_degree": 1,
+    "use_torch_compile": true,
+    "torchrun_nproc": 8
+  }
+}

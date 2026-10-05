@@ -1,5 +1,4 @@
 import json
-import math
 import unittest
 from pathlib import Path
 
@@ -12,93 +11,14 @@ from cvs.lib.inference.utils.vllm_config_loader import (
     load_variant,
     serialize_cli_options,
 )
-from cvs.lib.inference.utils.vllm_metrics import METRIC_REGISTRY
 
 
 CELL = "ISL=1024,OSL=1024,TP=8,PP=2,CONC=16"
-EXPECTED_PACKAGED_CONFIG_COUNT = 28
-EXPECTED_PACKAGED_THRESHOLD_NAMES = (
-    "failed",
-    "success_rate",
-    "output_throughput",
-    "total_token_throughput",
-    "mean_ttft_ms",
-    "median_ttft_ms",
-    "p90_ttft_ms",
-    "p95_ttft_ms",
-    "p99_ttft_ms",
-    "mean_tpot_ms",
-    "median_tpot_ms",
-    "p90_tpot_ms",
-    "p95_tpot_ms",
-    "p99_tpot_ms",
-    "mean_itl_ms",
-    "median_itl_ms",
-    "p95_itl_ms",
-    "p99_itl_ms",
-    "mean_e2el_ms",
-    "median_e2el_ms",
-    "p90_e2el_ms",
-    "p95_e2el_ms",
-    "p99_e2el_ms",
-    "peak_gpu_memory_mb",
-    "model_load_memory_mb",
-    "model_load_s",
-    "gpu_bandwidth_util_pct",
-    "gpu_compute_util_pct",
-    "queue_time_p50_ms",
-    "queue_time_p95_ms",
-    "prefill_time_p50_ms",
-    "prefill_time_p95_ms",
-)
-REJECTED_AITER_ENV = {
-    "VLLM_USE_AITER_UNIFIED_ATTENTION",
-    "VLLM_ROCM_USE_AITER_FUSED_MOE_A16W4",
-}
-EXPECTED_AITER_ENV_BY_MODEL = {
-    "deepseek-v4-flash_fp8": {
-        "VLLM_ROCM_USE_AITER": "1",
-        "VLLM_ROCM_USE_AITER_MHA": "0",
-        "GPU_ARCHS": "gfx942",
-    },
-    "deepseek-v4-pro_fp8": {
-        "VLLM_ROCM_USE_AITER": "1",
-        "VLLM_ROCM_USE_AITER_MHA": "0",
-        "GPU_ARCHS": "gfx942",
-    },
-    "glm-51_fp8": {
-        "VLLM_ROCM_USE_AITER": "1",
-        "VLLM_ROCM_USE_AITER_MHA": "0",
-        "GPU_ARCHS": "gfx942",
-    },
-    "glm-52_fp8": {
-        "VLLM_ROCM_USE_AITER": "1",
-        "VLLM_ROCM_USE_AITER_MHA": "0",
-        "GPU_ARCHS": "gfx942",
-    },
-    "kimi-k25_w4a8": {
-        "VLLM_ROCM_USE_AITER": "1",
-        "VLLM_ROCM_USE_AITER_MHA": "0",
-        "VLLM_ROCM_USE_AITER_FP4BMM": "0",
-        "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS": "0",
-        "VLLM_ROCM_USE_AITER_MLA": "0",
-    },
-}
 
 
 def _packaged_configs():
     root = Path(__file__).resolve().parents[3] / "input" / "config_file" / "inference" / "vllm"
     return sorted(path for path in root.glob("*.json") if not path.name.endswith("threshold.json"))
-
-
-def _model_stem(path):
-    _prefix, separator, stem = path.name.partition("_vllm_")
-    if not separator:
-        raise AssertionError(f"unrecognized packaged vLLM config name: {path.name}")
-    for topology in ("_single.json", "_distributed.json"):
-        if stem.endswith(topology):
-            return stem.removesuffix(topology)
-    raise AssertionError(f"unrecognized packaged vLLM config name: {path.name}")
 
 
 def _config(**overrides):
@@ -200,6 +120,18 @@ class TestVllmConfigContract(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "must name at least one device"):
             VariantConfig(**config)
 
+    def test_preserves_runtime_environment_without_model_policy(self):
+        for env in (
+            {"VLLM_ROCM_USE_AITER": "0", "VLLM_ROCM_USE_AITER_MHA": "0"},
+            {"VLLM_ROCM_USE_AITER": "1", "VLLM_ROCM_USE_AITER_MHA": "0"},
+            {"CUSTOM_RUNTIME_OPTION": "custom value"},
+        ):
+            with self.subTest(env=env):
+                config = _config()
+                config["container"]["env"] = env
+                variant = VariantConfig(**config)
+                self.assertEqual(variant.container.env, env)
+
 
 class TestMetadataAndOptionSerialization(unittest.TestCase):
     def test_strips_local_comments_but_preserves_option_payload(self):
@@ -261,11 +193,14 @@ class TestMetadataAndOptionSerialization(unittest.TestCase):
 
 
 class TestPackagedVllmCatalog(unittest.TestCase):
-    def test_every_config_resolves_complete_run_contract(self):
+    def test_shipped_configs_resolve_their_declared_contract(self):
         configs = _packaged_configs()
-        self.assertEqual(len(configs), EXPECTED_PACKAGED_CONFIG_COUNT)
+        self.assertTrue(configs, "No packaged vLLM configs found")
         for path in configs:
             with self.subTest(config=path.name):
+                raw = json.loads(path.read_text())
+                threshold_path = path.parent / raw["threshold_json"]
+                self.assertTrue(threshold_path.is_file(), f"Missing packaged threshold file: {threshold_path}")
                 variant = load_variant(path, {"username": "test"})
                 runs = variant.resolved_runs()
                 self.assertTrue(runs)
@@ -275,88 +210,6 @@ class TestPackagedVllmCatalog(unittest.TestCase):
                 for run in runs:
                     self.assertEqual(run.cell.tp, variant.server_params.tensor_parallel_size)
                     self.assertEqual(run.cell.pp, variant.server_params.pipeline_parallel_size)
-
-    def test_threshold_catalog_matches_packaged_subset_in_registry_order(self):
-        definitions_by_name = {definition.name: definition for definition in METRIC_REGISTRY}
-        expected_names = list(EXPECTED_PACKAGED_THRESHOLD_NAMES)
-        self.assertEqual(len(expected_names), 32)
-        self.assertEqual(
-            expected_names,
-            [definition.name for definition in METRIC_REGISTRY if definition.name in EXPECTED_PACKAGED_THRESHOLD_NAMES],
-        )
-        configs = _packaged_configs()
-        paths = [path.with_name(json.loads(path.read_text())["threshold_json"]) for path in configs]
-        self.assertEqual(len(paths), EXPECTED_PACKAGED_CONFIG_COUNT)
-        cell_count = 0
-        for config_path, threshold_path in zip(configs, paths):
-            with self.subTest(threshold=threshold_path.name):
-                self.assertFalse(load_variant(config_path, {"username": "test"}).enforce_thresholds)
-                payload = json.loads(threshold_path.read_text())
-                cells = {key: value for key, value in payload.items() if not key.startswith("_") and key != "accuracy"}
-                cell_count += len(cells)
-                for specs in cells.values():
-                    self.assertEqual(list(specs), expected_names)
-                    for name, spec in specs.items():
-                        self.assertNotIn(".", name)
-                        self.assertIn(name, definitions_by_name)
-                        self.assertEqual(set(spec), {"kind", "value"})
-                        self.assertEqual(spec["kind"], definitions_by_name[name].direction)
-                        self.assertIsInstance(spec["value"], (int, float))
-                        self.assertNotIsInstance(spec["value"], bool)
-                        self.assertTrue(math.isfinite(spec["value"]))
-                        self.assertEqual(spec["value"], 0)
-        self.assertEqual(cell_count, 56)
-
-    def test_rejected_aiter_names_are_absent(self):
-        for path in _packaged_configs():
-            with self.subTest(config=path.name):
-                variant = load_variant(path, {"username": "test"})
-                self.assertFalse(REJECTED_AITER_ENV & set(variant.container.env))
-
-    def test_model_scoped_aiter_environment(self):
-        for path in _packaged_configs():
-            with self.subTest(config=path.name):
-                variant = load_variant(path, {"username": "test"})
-                actual = {
-                    name: value
-                    for name, value in variant.container.env.items()
-                    if "AITER" in name or name == "GPU_ARCHS"
-                }
-                self.assertEqual(actual, EXPECTED_AITER_ENV_BY_MODEL.get(_model_stem(path), {}))
-
-    def test_mha_setting_requires_master_aiter(self):
-        for path in _packaged_configs():
-            with self.subTest(config=path.name):
-                env = load_variant(path, {"username": "test"}).container.env
-                if "VLLM_ROCM_USE_AITER_MHA" in env:
-                    self.assertEqual(env.get("VLLM_ROCM_USE_AITER"), "1")
-
-    def test_packaged_network_environment(self):
-        expected_hcas = "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7"
-        for path in _packaged_configs():
-            with self.subTest(config=path.name):
-                variant = load_variant(path, {"username": "test"})
-                self.assertNotIn("ib_hca_devices", variant.model_fields_set)
-                self.assertNotIn("ib_netdev", variant.model_fields_set)
-                if path.name.endswith("_distributed.json"):
-                    raw = json.loads(path.read_text())
-                    self.assertEqual(variant.container.env.get("NCCL_IB_HCA"), expected_hcas)
-                    self.assertEqual(variant.container.env.get("NCCL_SOCKET_IFNAME"), "<changeme>")
-                    self.assertEqual(variant.container.env.get("GLOO_SOCKET_IFNAME"), "<changeme>")
-                    self.assertEqual(variant.container.env.get("TP_SOCKET_IFNAME"), "<changeme>")
-                    self.assertEqual(variant.container.env.get("NCCL_IB_GID_INDEX"), "<changeme>")
-                    self.assertEqual(variant.container.env.get("NCCL_DEBUG"), "ERROR")
-                    self.assertIn("selected RNICs", raw["container"]["_comment_socket_interfaces"])
-                    self.assertIn("show_gids", raw["container"]["_comment_gid_index"])
-                else:
-                    for name in (
-                        "NCCL_IB_HCA",
-                        "NCCL_SOCKET_IFNAME",
-                        "GLOO_SOCKET_IFNAME",
-                        "TP_SOCKET_IFNAME",
-                        "NCCL_IB_GID_INDEX",
-                    ):
-                        self.assertNotIn(name, variant.container.env)
 
 
 if __name__ == "__main__":

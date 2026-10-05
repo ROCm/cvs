@@ -185,7 +185,7 @@ class MoriBenchmark:
     ):
         cmd = f'''docker exec {self.container_name} /bin/bash -c "echo '
               export PYTHONPATH={self.mori_dir}:$PYTHONPATH
-              #export LD_LIBRARY_PATH={self.torchlib_dir}:$LD_LIBRARY_PATH
+              export LD_LIBRARY_PATH={self.torchlib_dir}:$LD_LIBRARY_PATH
               export NCCL_SOCKET_IFNAME={self.oob_port}
               export GLOO_SOCKET_IFNAME={self.oob_port}
               export GLOO_TCP_IFNAME={self.oob_port}
@@ -328,7 +328,13 @@ class MoriBenchmark:
                     mpiexec --allow-run-as-root -np 2 ./build/examples/concurrent_put_thread" '''
         out_dict = self.phdl.exec(cmd)
         for node in out_dict.keys():
-            if not re.search('PASSED', out_dict[node], re.I):
+            # NOTE: concurrent_put_thread / concurrent_put_imm_thread perform NO data
+            # verification - they launch the kernel, barrier, and print "test done!".
+            # They never emit "PASSED" (unlike concurrent_put_signal_thread, which does
+            # validate and prints "...tests passed!"). Accepting the completion marker
+            # makes this a SMOKE TEST: it proves the binary ran to completion without
+            # crashing, NOT that the transferred data is correct.
+            if not re.search(r'PASSED|test done!', out_dict[node], re.I):
                 fail_test('ERROR - test concurrent_put_thread did not run properly, no PASSED test results seen')
             if re.search('FAIL', out_dict[node], re.I):
                 fail_test('ERROR - one or more concurrent_put_thread tests failed')
@@ -342,7 +348,13 @@ class MoriBenchmark:
                     mpiexec --allow-run-as-root -np 2 ./build/examples/concurrent_put_imm_thread" '''
         out_dict = self.phdl.exec(cmd)
         for node in out_dict.keys():
-            if not re.search('PASSED', out_dict[node], re.I):
+            # NOTE: concurrent_put_thread / concurrent_put_imm_thread perform NO data
+            # verification - they launch the kernel, barrier, and print "test done!".
+            # They never emit "PASSED" (unlike concurrent_put_signal_thread, which does
+            # validate and prints "...tests passed!"). Accepting the completion marker
+            # makes this a SMOKE TEST: it proves the binary ran to completion without
+            # crashing, NOT that the transferred data is correct.
+            if not re.search(r'PASSED|test done!', out_dict[node], re.I):
                 fail_test('ERROR - test concurrent_put_imm_thread did not run properly, no PASSED test results seen')
             if re.search('FAIL', out_dict[node], re.I):
                 fail_test('ERROR - one or more concurrent_put_imm_thread tests failed')
