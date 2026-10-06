@@ -491,9 +491,6 @@ def test_agfhc_all_perf(
 def test_agfhc_all_lvl5(
     orch,
     config_dict,
-    agfhc_res_dict,
-    cluster_dict,
-    lifecycle,
 ):
     """
     Pytest: Query/validate the AGFHC 'all_lvl5' recipe information.
@@ -506,18 +503,16 @@ def test_agfhc_all_lvl5(
       - Runs: sudo <path>/agfhc --recipe-info all_lvl5 (260-minute timeout).
       - Scans outputs for success/absence of error markers.
       - Prints outputs and updates the test result.
+
+    --recipe-info prints the catalog and does not execute the recipe, so this
+    test stays out of the Run Deck results and lifecycle.
     """
     log.info('Testcase all lvl5')
-    _run_agfhc(
-        orch,
-        config_dict,
-        '--recipe-info all_lvl5',
-        60 * 260,
-        'all_lvl5',
-        agfhc_res_dict,
-        cluster_dict,
-        lifecycle,
-    )
+    path = config_dict['path']
+    out_dict = orch.exec(f'sudo {path}/agfhc --recipe-info all_lvl5', timeout=(60 * 260))
+    scan_agfc_results(out_dict)
+    print_test_output(log, out_dict)
+    update_test_result()
 
 
 # 180m

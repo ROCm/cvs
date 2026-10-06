@@ -44,6 +44,15 @@ class TestClassifyOutput(unittest.TestCase):
         self.assertEqual(items, [])
         self.assertEqual(summary, "passed")
 
+    def test_success_code_requires_one_literal_space(self):
+        for text in (
+            "return code  AGFHC_SUCCESS [0]\n",
+            "return code\tAGFHC_SUCCESS [0]\n",
+        ):
+            status, items, _summary = agfhc_rundeck.classify_output(text)
+            self.assertEqual(status, "fail", text)
+            self.assertEqual(items[0]["name"], "AGFHC_SUCCESS")
+
     def test_missing_success_code_fails(self):
         status, items, summary = agfhc_rundeck.classify_output("recipe finished\n")
         self.assertEqual(status, "fail")

@@ -23,8 +23,7 @@
       "pcie_lvl1",
       "pcie_lvl3",
       "xgmi_lvl1",
-      "all_perf",
-      "all_lvl5"
+      "all_perf"
     ]
   },
   "cards": [

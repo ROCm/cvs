@@ -24,7 +24,7 @@ _STATUSES = ("pass", "fail", "na")
 _RANK = {"na": 0, "pass": 1, "fail": 2}
 
 # Same indicators as scan_agfc_results. AGFHC_FAILURE matches FAIL inside the token.
-_SUCCESS_RE = re.compile(r"code\s+AGFHC_SUCCESS", re.I)
+_SUCCESS_RE = re.compile(r"code AGFHC_SUCCESS", re.I)
 _SCAN_FAIL_RE = re.compile(r"FAIL|ERROR|ABORT", re.I)
 _VERSION_RE = re.compile(r"(?is)agfhc version:\s*([0-9]+(?:\.[0-9A-Za-z]+)*)")
 _COUNTS_RE = re.compile(r"Tests:\s*(\d+)\s+Total,\s*(\d+)\s+Executed,\s*(\d+)\s+Skipped", re.I)
