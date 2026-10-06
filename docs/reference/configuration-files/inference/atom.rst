@@ -83,7 +83,7 @@ still runs with ``cvs run atom``.
        ``HF_HUB_CACHE``; bring-up thresholds
    * - ``mi355x_atom_vllm_deepseek-v4-pro``
      - ``_single``
-     - vLLM parity for V4-Pro FP4 TP8; same 1K/1K and 128/32 cells; bring-up
+     - vLLM parity for V4-Pro FP4 TP8; fp8 KV cache and block size 256; same 1K/1K and 128/32 cells; bring-up
    * - ``mi355x_atom_sglang_deepseek-v4-pro``
      - ``_single``
      - SGLang try-stem for V4-Pro. SGLang does not currently serve this model;

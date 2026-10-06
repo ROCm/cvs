@@ -611,10 +611,12 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(vllm.model.precision, "fp4")
         self.assertEqual(vllm.params.driver, "vllm_atom")
         self.assertEqual(vllm.params.tensor_parallelism, "8")
-        self.assertNotIn("kv-cache-dtype", vllm.roles.server.serve_args)
+        self.assertEqual(vllm.roles.server.serve_args.get("kv-cache-dtype"), "fp8")
         cells = set(vllm.expected_cells())
         self.assertIn("ISL=1024,OSL=1024,TP=8,PP=1,CONC=128", cells)
         self.assertIn("ISL=128,OSL=32,TP=8,PP=1,CONC=1", cells)
+        self.assertEqual(vllm.roles.server.serve_args.get("block-size"), 256)
+        self.assertEqual(vllm.roles.server.serve_args.get("gpu-memory-utilization"), "0.90")
 
         sglang = _atom_config(root, "mi355x_atom_sglang_deepseek-v4-pro_single.json")
         self.assertEqual(sglang.params.driver, "sglang")
