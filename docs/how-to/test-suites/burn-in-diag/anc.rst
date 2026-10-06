@@ -24,7 +24,6 @@ Set up config
 2. Replace every ``<changeme>`` placeholder:
 
    - ``anc_release_url`` — URL of the ANC release archive to download and install
-   - ``log_folder_path`` — controller-side directory prefix for collected logs and auto-generated HTML reports
    - ``anc_version`` — minimum required ANC version (the version in ``anc_release_url`` must be >= this). Install is skipped only when **all** expected nodes already satisfy it; if any node is below the minimum, the installer runs across all nodes.
 
 3. Optionally set ``ANC_INSTALL_PATH`` for relocatable **tar** installs. Deb and rpm packages ignore this key and always install under ``/opt/amdtools``.
@@ -134,8 +133,8 @@ Pass and fail
 
 A node passes only when ANC started (a ``Log directory`` line is present), ``console.log`` was collected, and the **final** return-code line in ``console.log`` is ``ANC_SUCCESS [0]``. Failures on multiple nodes are aggregated into a single test failure.
 
-Logs land under ``<log_folder_path>/anc_logs/<ip>_<hostname>/<test_name>/<timestamp>/``.
-``cvs run`` writes the pytest HTML report under ``<run_dir>`` by default (see
-:doc:`/reference/cli/cvs-run`). ``COLLECT_HTML_REPORTS`` (default ``True``) only
-auto-collects under ``log_folder_path`` when pytest has no ``--html`` (a direct
-``pytest`` invocation, or ``cvs run --no-html``). An explicit ``--html`` always wins.
+Logs land under ``<run_dir>/anc_logs/<ip>_<hostname>/<test_name>/<timestamp>/``.
+``cvs run`` also writes a self-contained pytest HTML report and a text log under
+``<run_dir>`` by default (see :doc:`/reference/cli/cvs-run`); pass ``--html`` /
+``--log-file`` to redirect them or ``--no-html`` / ``--no-log-file`` to suppress
+them. ``<run_dir>`` is ``<workspace>/cvs_runs/<run_id>/``.

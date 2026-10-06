@@ -46,9 +46,21 @@ def _default_workspace():
 
 
 def _resolve_workspace(workspace=None):
-    '''Priority: explicit argument, then CVS_WORKSPACE, then the venv parent.'''
+    '''Priority: explicit argument, then CVS_WORKSPACE, then the venv parent.
+
+    Managed (scheduler) runs must NOT fall through to the venv-parent default:
+    inside a container the venv parent is node-local scratch, not shared storage,
+    so ranks would rendezvous at different paths and the collected artifacts would
+    vanish at job teardown. Require an explicit workspace there instead.
+    '''
     candidate = workspace or os.environ.get("CVS_WORKSPACE")
     if not candidate:
+        if is_managed_compute():
+            raise RuntimeError(
+                "A scheduler-managed run must set an explicit workspace on shared storage: "
+                "pass --workspace or set CVS_WORKSPACE. The venv-parent fallback is node-local "
+                "in a container, so ranks cannot rendezvous and artifacts are lost at teardown."
+            )
         return _default_workspace()
     # Anchored to the cwd at resolution time so that nothing which chdirs later
     # can move the run directory out from under an already-published path.

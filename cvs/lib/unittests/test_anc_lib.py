@@ -1,9 +1,17 @@
 # cvs/lib/unittests/test_anc_lib.py
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cvs.lib.anc_lib as anc_lib
+
+
+def _patch_run_dir(run_dir):
+    '''Patch RunLayout.get() so resolve_anc_log_folder resolves to a fixed run_dir
+    without touching the filesystem or the scheduler environment.'''
+    layout = MagicMock()
+    layout.run_dir = run_dir
+    return patch("cvs.core.run_layout.RunLayout.get", return_value=layout)
 
 
 class TestResolveAncInstallPrefix(unittest.TestCase):
@@ -697,7 +705,7 @@ class TestRunAncGroupsUsesCachedPath(unittest.TestCase):
         cached = anc_lib.AncPaths(prefix="/home/u/anc", anc_dir="/home/u/anc/anc", anc_bin="/home/u/anc/anc/anc.py")
         anc_lib._ANC_INSTALL_PATHS = cached
         cluster = {"node_dict": {"node1": {}}, "username": "u", "priv_key_file": "k"}
-        cfg = {"anc": {"print_all_to_console": "True", "log_folder_path": "/tmp/logs"}}
+        cfg = {"anc": {"print_all_to_console": "True"}}
 
         captured = {}
 
@@ -706,10 +714,26 @@ class TestRunAncGroupsUsesCachedPath(unittest.TestCase):
                 captured["cmd"] = cmd
                 return {}
 
-        with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
-            anc_lib.run_anc_groups(FakePhdl(), cluster, cfg, ["cpu_sanity"], "test_cpu_sanity")
+        with _patch_run_dir("/ws/cvs_runs/1"):
+            with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
+                anc_lib.run_anc_groups(FakePhdl(), cluster, cfg, ["cpu_sanity"], "test_cpu_sanity")
 
         self.assertIn("cd '/home/u/anc/anc' && sudo ./anc.py -g cpu_sanity", captured["cmd"])
+
+
+class TestResolveAncLogFolder(unittest.TestCase):
+    '''resolve_anc_log_folder lays the fixed anc_logs tree under this run's run_dir.'''
+
+    def test_substitutes_node_test_and_timestamp_under_run_dir(self):
+        with _patch_run_dir("/ws/cvs_runs/job-42"):
+            path = anc_lib.resolve_anc_log_folder("test_cpu", "20261006-010203", node="10.0.0.5_node01")
+        self.assertEqual(path, "/ws/cvs_runs/job-42/anc_logs/10.0.0.5_node01/test_cpu/20261006-010203")
+
+    def test_node_token_left_intact_when_node_none(self):
+        with _patch_run_dir("/ws/cvs_runs/job-42"):
+            path = anc_lib.resolve_anc_log_folder("test_cpu", "20261006-010203")
+        # The banner pattern keeps "<node>" so it can be shown before any node is known.
+        self.assertEqual(path, "/ws/cvs_runs/job-42/anc_logs/<node>/test_cpu/20261006-010203")
 
 
 class TestConsoleLogUnder(unittest.TestCase):
@@ -928,7 +952,7 @@ class TestPerUserTmpNamespacing(unittest.TestCase):
         anc_lib._ANC_INSTALL_PATHS = anc_lib.AncPaths("/opt/amdtools", "/opt/amdtools/anc", "/opt/amdtools/anc/anc.py")
         self.addCleanup(setattr, anc_lib, "_ANC_INSTALL_PATHS", None)
         cluster = {"node_dict": {"node1": {}}, "username": "bob", "priv_key_file": "k"}
-        cfg = {"anc": {"print_all_to_console": "False", "log_folder_path": "/tmp/logs"}}
+        cfg = {"anc": {"print_all_to_console": "False"}}
         captured = {}
 
         class FakePhdl:
@@ -936,8 +960,9 @@ class TestPerUserTmpNamespacing(unittest.TestCase):
                 captured["cmd"] = cmd
                 return {}
 
-        with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
-            anc_lib.run_anc_groups(FakePhdl(), cluster, cfg, ["cpu_sanity"], "test_cpu_sanity")
+        with _patch_run_dir("/ws/cvs_runs/1"):
+            with patch.object(anc_lib, "print_test_output"), patch.object(anc_lib, "update_test_result"):
+                anc_lib.run_anc_groups(FakePhdl(), cluster, cfg, ["cpu_sanity"], "test_cpu_sanity")
 
         self.assertIn("/tmp/bob/anc_run_$$.out", captured["cmd"])
         self.assertIn("mkdir -p '/tmp/bob'", captured["cmd"])
@@ -973,44 +998,37 @@ class TestValidateAncConfig(unittest.TestCase):
         return {"username": username}
 
     def test_clean_config_no_problems(self):
-        problems = anc_lib.validate_anc_config(self._cfg(), self._cluster(), require_log_folder=False)
+        problems = anc_lib.validate_anc_config(self._cfg(), self._cluster())
         self.assertEqual(problems, [])
 
     def test_blank_url_flagged(self):
-        problems = anc_lib.validate_anc_config(self._cfg(anc_release_url=""), self._cluster(), require_log_folder=False)
+        problems = anc_lib.validate_anc_config(self._cfg(anc_release_url=""), self._cluster())
         self.assertTrue(any("anc_release_url" in p for p in problems))
 
     def test_config_newer_than_url_flagged(self):
         cfg = self._cfg(anc_version="1.5.6")  # url is 1.5.5; config newer than archive
-        problems = anc_lib.validate_anc_config(cfg, self._cluster(), require_log_folder=False)
+        problems = anc_lib.validate_anc_config(cfg, self._cluster())
         self.assertTrue(any("is newer than" in p for p in problems))
 
     def test_config_older_than_url_ok(self):
         cfg = self._cfg(anc_version="1.5.4")  # url is 1.5.5; archive can satisfy request
-        problems = anc_lib.validate_anc_config(cfg, self._cluster(), require_log_folder=False)
+        problems = anc_lib.validate_anc_config(cfg, self._cluster())
         self.assertFalse(any("newer than" in p or "does not match" in p for p in problems))
 
     def test_invalid_version_flagged(self):
         cfg = self._cfg(anc_version="garbage")  # url parses, configured value does not
-        problems = anc_lib.validate_anc_config(cfg, self._cluster(), require_log_folder=False)
+        problems = anc_lib.validate_anc_config(cfg, self._cluster())
         self.assertTrue(any("not a valid ANC version" in p for p in problems))
 
     def test_unsafe_prefix_flagged_cleanly(self):
         cfg = self._cfg(ANC_INSTALL_PATH="//")
-        problems = anc_lib.validate_anc_config(cfg, self._cluster(), require_log_folder=False)
+        problems = anc_lib.validate_anc_config(cfg, self._cluster())
         # The resolve_anc_paths_from_config ValueError is surfaced, not raised.
         self.assertTrue(any("root" in p.lower() for p in problems))
 
     def test_bad_username_flagged(self):
-        problems = anc_lib.validate_anc_config(self._cfg(), self._cluster(username="a b"), require_log_folder=False)
+        problems = anc_lib.validate_anc_config(self._cfg(), self._cluster(username="a b"))
         self.assertTrue(any("username" in p for p in problems))
-
-    def test_log_folder_required_for_group_suites(self):
-        cfg = self._cfg(log_folder_path="")
-        without = anc_lib.validate_anc_config(cfg, self._cluster(), require_log_folder=False)
-        with_req = anc_lib.validate_anc_config(cfg, self._cluster(), require_log_folder=True)
-        self.assertFalse(any("log_folder_path" in p for p in without))
-        self.assertTrue(any("log_folder_path" in p for p in with_req))
 
 
 class TestTarCleanupFiltersDotDot(unittest.TestCase):

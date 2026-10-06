@@ -33,7 +33,7 @@ Run the three ANC suites in order: install first, then CPU and GPU diagnostics.
     --cluster_file cluster.json \
     --config_file cvs/input/config_file/anc/anc_config.json
 
-Replace ``<changeme>`` in ``anc_release_url`` and ``log_folder_path`` before running. An unresolved placeholder aborts the run before any node is contacted.
+Replace ``<changeme>`` in ``anc_release_url`` before running. An unresolved placeholder aborts the run before any node is contacted.
 
 Sample configuration
 ====================
@@ -57,9 +57,7 @@ Keys prefixed with ``_comment`` are documentation only and ignored at runtime.
         "anc_release_url": "<changeme>",
         "ANC_INSTALL_PATH": "",
         "print_all_to_console": "True",
-        "log_folder_path": "<changeme>",
-        "ADD_ANC_LOGS_TO_HTML_REPORTS": "False",
-        "COLLECT_HTML_REPORTS": "True"
+        "ADD_ANC_LOGS_TO_HTML_REPORTS": "False"
       }
     }
 
@@ -86,12 +84,8 @@ The following table describes each key in the ``anc`` configuration block.
      - **Tar installs only:** relocatable prefix (entrypoint ``<prefix>/anc/anc.py``). Deb/rpm packages ignore this key and install under ``/opt/amdtools``. Leave blank to keep the default ``/opt/amdtools``.
    * - ``print_all_to_console``
      - ``True`` echoes ANC group output to the console; ``False`` suppresses it (install and ldconfig diagnostics still print).
-   * - ``log_folder_path``
-     - Controller-side destination **prefix** for collected logs and the auto-collected HTML report. Required. CVS appends ``anc_logs/<node>/<test_name>/<timestamp>`` and ``html_reports/<node>/<test_name>/<timestamp>/``.
    * - ``ADD_ANC_LOGS_TO_HTML_REPORTS``
      - ``True`` always bundles each node's ANC log tarball into the pytest-html report. ``False`` (default) bundles tarballs only when the test fails.
-   * - ``COLLECT_HTML_REPORTS``
-     - ``True`` (default) auto-generates a pytest-html report under ``log_folder_path`` when pytest is launched without ``--html`` (direct ``pytest``, or ``cvs run --no-html``). ``cvs run`` otherwise writes the report under ``<run_dir>`` by default; an explicit ``--html`` always wins.
 
 Install location
 ================
