@@ -1576,8 +1576,12 @@ class PreflightNodeSmokeConfig(BaseModel):
         description="Venv deps: minimal (torch only), requirements, or skip",
     )
     torch_pip_index_url: str = Field(
-        default="https://download.pytorch.org/whl/rocm6.2",
-        description="PyTorch ROCm wheel index URL for minimal pip_install_mode",
+        default="https://download.pytorch.org/whl/rocm7.2",
+        description=(
+            "PyTorch ROCm wheel index URL for minimal pip_install_mode. "
+            "An importable torch is reinstalled when its HIP major.minor does not match "
+            "the rocm<major>.<minor> in this URL."
+        ),
     )
     primus_git_url: str = Field(
         default="https://github.com/AMD-AIG-AIMA/Primus.git",
