@@ -81,6 +81,31 @@ still runs with ``cvs run atom``.
      - ``_single``
      - Native ATOM MI355X Pro TP8; Spur 355 job-step proven; writable
        ``HF_HUB_CACHE``; bring-up thresholds
+   * - ``mi355x_atom_vllm_deepseek-v4-pro``
+     - ``_single``
+     - vLLM parity for V4-Pro FP4 TP8; same 1K/1K and 128/32 cells; bring-up
+   * - ``mi355x_atom_sglang_deepseek-v4-pro``
+     - ``_single``
+     - SGLang try-stem for V4-Pro. SGLang does not currently serve this model;
+       thresholds are off so a Spur run can record the result
+   * - ``mi355x_atom_deepseek-r1_fp8``
+     - ``_single`` (``perf`` + ``mtp3``)
+     - MI355X copy of the gfx942 R1 recipe; bring-up thresholds
+   * - ``mi355x_atom_vllm_deepseek-r1_fp8``
+     - ``_single``, ``_distributed``
+     - MI355X copy of the gfx942 vLLM parity; distributed PP=2
+   * - ``mi355x_atom_sglang_deepseek-r1_fp8``
+     - ``_single``, ``_distributed``
+     - MI355X copy of the gfx942 SGLang parity; ``SGLANG_ROCM_ARCH=gfx950``
+   * - ``mi355x_atom_qwen3.5-397b-a17b_fp8``
+     - ``_single`` (``perf`` + ``mtp3``)
+     - MI355X copy of ``amd/Qwen3.5-397B-A17B-FP8`` (1K/8K); bring-up thresholds
+   * - ``mi355x_atom_vllm_qwen3.5-397b-a17b_fp8``
+     - ``_single``, ``_distributed``
+     - MI355X copy of the gfx942 vLLM parity; distributed PP=2
+   * - ``mi355x_atom_sglang_qwen3.5-397b-a17b_fp8``
+     - ``_single``, ``_distributed``
+     - MI355X copy of the gfx942 SGLang parity; ``SGLANG_ROCM_ARCH=gfx950``
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - vLLM parity (serving schema); distributed uses PP=2
