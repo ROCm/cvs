@@ -5,12 +5,21 @@ All rights reserved.
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
 from cvs.core.orchestrators.factory import OrchestratorConfig, OrchestratorFactory
 from cvs.lib import globals
-from cvs.lib.training.jaxmaxtext.utils.maxtext_parsing import TRAINING_METRICS
+from cvs.lib.report.benchmark_metric_registry import (
+    benchmark_metric_columns_for_nodeid,
+    benchmark_metric_rows_from_item,
+    benchmark_metric_rows_from_report,
+    mark_collapsible_result_cell,
+    patch_benchmark_metrics_into_html,
+    stamp_benchmark_metric_rows_on_report,
+)
+from cvs.lib.report.render.perf_metric_table import render_benchmark_metrics_html
 from cvs.lib.training.jaxmaxtext.utils.training_config_loader import (
     load_training_variant,
     validate_thresholds_cover_training,
@@ -18,28 +27,48 @@ from cvs.lib.training.jaxmaxtext.utils.training_config_loader import (
 from cvs.lib.utils_lib import resolve_cluster_config_placeholders
 from cvs.tests.training.jaxmaxtext import _common
 
+_METRIC_TEST_NAME = "test_metric"
+
 log = globals.log
 
 
 def pytest_generate_tests(metafunc):
-    """Parametrize per-sweep tests for BOTH suites (single + distributed):
-    training_run/loss_curve over sweeps, metric over (sweep x TRAINING_METRICS)."""
+    """Parametrize per-sweep tests (training_run / metric / loss_curve) for both
+    suites. test_metric runs once per sweep and reports every metric as a
+    collapsible per-metric verdict (see _common.metric), so it is parametrized by
+    sweep only -- not the (sweep x metric) cartesian product it used before."""
     config_file = metafunc.config.getoption("config_file")
     if config_file and os.path.isfile(config_file):
         names = _common._enabled_sweep_names(config_file)
     else:
         names = ["default"]
     labels = [_common._sweep_label(n) for n in names]
-
-    if "metric" in metafunc.fixturenames and "sweep_name" in metafunc.fixturenames:
-        cases, ids = [], []
-        for name, label in zip(names, labels):
-            for short, _unit in TRAINING_METRICS:
-                cases.append((name, short))
-                ids.append(f"{label}-{short}")
-        metafunc.parametrize("sweep_name,metric", cases, ids=ids)
-    elif "sweep_name" in metafunc.fixturenames:
+    if "sweep_name" in metafunc.fixturenames:
         metafunc.parametrize("sweep_name", names, ids=labels)
+
+
+def _nodeid_test_name(nodeid):
+    return nodeid.rsplit("::", 1)[-1].split("[", 1)[0]
+
+
+def _is_url_extra(extra):
+    return isinstance(extra, dict) and extra.get("format_type") == "url"
+
+
+def _attach_metric_verdict_extras(report, nodeid, rows):
+    """Keep existing link extras (Full Log / Metric Results) and add the
+    collapsible per-metric verdict panel for a test_metric row."""
+    if not rows:
+        return
+    try:
+        import pytest_html
+    except ImportError:
+        return
+    extras = [extra for extra in getattr(report, "extras", []) or [] if _is_url_extra(extra)]
+    columns = benchmark_metric_columns_for_nodeid(nodeid)
+    extras.append(pytest_html.extras.html(render_benchmark_metrics_html(rows, columns=columns)))
+    report.extras = extras
+    stamp_benchmark_metric_rows_on_report(report, rows)
 
 
 def _deep_merge(base, override):
@@ -226,29 +255,30 @@ def pytest_runtest_makereport(item, call):
     except ImportError:
         return
 
+    # test_metric reports every metric as a collapsible per-metric verdict panel.
+    # Keep its shared "Metric Results" link (written by test_print_results_table)
+    # plus its Full Log, then attach the panel. Skip the link when the row was
+    # skipped (an earlier stage failed -> no metric_results.html was written).
+    if _nodeid_test_name(report.nodeid) == _METRIC_TEST_NAME:
+        extras = getattr(report, "extras", [])
+        if report.outcome != "skipped":
+            mgr = getattr(item.config, "_html_report_manager", None)
+            if mgr is not None and getattr(mgr, "is_enabled", False):
+                link = f"{mgr._test_html_dir}/metric_results.html"
+                if not any(isinstance(e, dict) and e.get("content") == link for e in extras):
+                    extras.append(pytest_html.extras.url(link, name="Metric Results"))
+                    report.extras = extras
+        _attach_metric_verdict_extras(report, item.nodeid, benchmark_metric_rows_from_item(item))
+        return
+
     lc = item.funcargs.get("lifecycle")
     rows = getattr(lc, "report", {}).get(item.nodeid) if lc else None
     artifacts = getattr(lc, "artifacts", {}).get(item.nodeid) if lc else None
 
-    # Each metric row gets an EXTRA "Metric Results" link to the single shared
-    # metric-results HTML file (written by test_print_results_table), in addition
-    # to its own per-test "Full Log" link (kept as-is). Skip the link for SKIPPED
-    # metric rows: when an earlier stage (e.g. smoke) fails, the metric tests are
-    # skipped and test_print_results_table writes no metric_results.html, so the
-    # link would point at empty/missing content.
-    metric_link = None
-    if (item.originalname or "") == "test_metric" and report.outcome != "skipped":
-        mgr = getattr(item.config, "_html_report_manager", None)
-        if mgr is not None and getattr(mgr, "is_enabled", False):
-            metric_link = f"{mgr._test_html_dir}/metric_results.html"
-
-    if not rows and not artifacts and not metric_link:
+    if not rows and not artifacts:
         return
 
     extras = getattr(report, "extras", [])
-
-    if metric_link:
-        extras.append(pytest_html.extras.url(metric_link, name="Metric Results"))
 
     if rows:
         body = "".join(f"<tr><td>{label}</td><td>{value:.1f}</td><td>{unit}</td></tr>" for label, value, unit in rows)
@@ -269,3 +299,42 @@ def pytest_runtest_makereport(item, call):
             pass
 
     report.extras = extras
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_runtest_logreport(report):
+    """Re-attach the per-metric panel after pytest-html stores the call report."""
+    yield
+    if report.when != "call" or _nodeid_test_name(report.nodeid) != _METRIC_TEST_NAME:
+        return
+    rows = benchmark_metric_rows_from_report(report)
+    if rows:
+        _attach_metric_verdict_extras(report, report.nodeid, rows)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_html_results_table_html(report, data):
+    """Drop the inline log for test_metric rows; the collapsible panel replaces it."""
+    if _nodeid_test_name(report.nodeid) != _METRIC_TEST_NAME:
+        return
+    if benchmark_metric_rows_from_report(report):
+        del data[:]
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_html_results_table_row(report, cells):
+    """Mark test_metric result cells collapsible so the metric panel expands."""
+    if report.when != "call" or _nodeid_test_name(report.nodeid) != _METRIC_TEST_NAME:
+        return
+    if benchmark_metric_rows_from_report(report):
+        cells[0] = mark_collapsible_result_cell(str(cells[0]))
+
+
+@pytest.hookimpl(hookwrapper=True, trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    """Patch the written pytest-html so test_metric rows expose the collapsible
+    per-metric panel and the filter bar shows the per-metric verdict counts."""
+    yield
+    htmlpath = getattr(session.config.option, "htmlpath", None)
+    if htmlpath:
+        patch_benchmark_metrics_into_html(Path(htmlpath), benchmark_test_name=_METRIC_TEST_NAME)
