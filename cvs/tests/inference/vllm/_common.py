@@ -1,4 +1,4 @@
-'''Shared vLLM lifecycle tests for the explicit single and distributed suites.'''
+'''Shared vLLM lifecycle stages called by the single and distributed suite tests.'''
 
 import json
 import pathlib
@@ -8,7 +8,6 @@ import time
 import pytest
 
 from cvs.lib import globals
-from cvs.lib.inference.utils.inference_suite_lifecycle import test_accuracy_eval  # noqa: F401
 from cvs.lib.inference.utils.vllm_config_loader import load_variant
 from cvs.lib.inference.utils.vllm_metrics import (
     METRIC_REGISTRY,
@@ -28,7 +27,6 @@ from cvs.lib.utils.gpu import (
 )
 from cvs.lib.report.benchmark_metric_registry import record_benchmark_metric_rows
 
-from ._shared import test_print_results_table  # noqa: F401
 
 log = globals.log
 
@@ -65,7 +63,7 @@ def _cell_result_key(variant, run):
     )
 
 
-def test_launch_container(orch, vllm_targets, lifecycle, request):
+def launch_container(orch, vllm_targets, lifecycle, request):
     started = time.monotonic()
     launched = orch.setup_containers()
     lifecycle.record(request.node.nodeid, "container_launch", time.monotonic() - started)
@@ -78,11 +76,11 @@ def test_launch_container(orch, vllm_targets, lifecycle, request):
         pytest.fail(f"container {name} not running after setup_containers()")
 
 
-def test_setup_sshd():
+def setup_sshd():
     pytest.skip("vLLM uses host-network NCCL/gloo rather than in-container sshd")
 
 
-def test_discover_topology(orch, variant_config, vllm_targets, lifecycle, request):
+def discover_topology(orch, variant_config, vllm_targets, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     if len(vllm_targets[0]) == 1:
@@ -112,7 +110,7 @@ def test_discover_topology(orch, variant_config, vllm_targets, lifecycle, reques
     lifecycle.record(request.node.nodeid, "topology_discovery", time.monotonic() - started)
 
 
-def test_model_fetch(orch, variant_config, lifecycle, request):
+def model_fetch(orch, variant_config, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     path = variant_config.paths.models_dir
@@ -195,7 +193,7 @@ def _record_junit_metrics(node, actuals_by_host):
     node.user_properties = properties
 
 
-def test_openai_compatible_smoke(orch, variant_config, hf_token, vllm_targets, lifecycle, request):
+def openai_compatible_smoke(orch, variant_config, hf_token, vllm_targets, lifecycle, request):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     job = VllmJob(
@@ -226,7 +224,7 @@ def test_openai_compatible_smoke(orch, variant_config, hf_token, vllm_targets, l
     log.info("OpenAI-compatible smoke results:\n%s", "\n".join(summary))
 
 
-def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_res_dict, lifecycle, request):
+def vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_res_dict, lifecycle, request, subtests):
     if lifecycle.failed:
         pytest.skip("a prior lifecycle stage failed")
     isl = run.cell.isl
@@ -316,22 +314,20 @@ def test_vllm_inference(orch, variant_config, hf_token, vllm_targets, run, inf_r
         if dump_job is not None:
             dump_job.dump_server_log()
         raise
+    # Outside the try: a missed threshold fails this cell but must not mark the
+    # lifecycle failed, tear down the live server, or skip later cells.
+    _verify_cell_metrics(published_results, run, variant_config, lifecycle, request, subtests)
 
 
-def test_verify_cell_metrics(run, inf_res_dict, variant_config, lifecycle, request, subtests):
-    """Report configured metrics and verify active gates as pytest subtests."""
-    key = _cell_result_key(variant_config, run)
-    host_dict = inf_res_dict.get(key)
-    if not host_dict:
-        pytest.skip(f"no recorded inference result for {key!r}")
-
+def _verify_cell_metrics(host_dict, run, variant_config, lifecycle, request, subtests):
+    """Report the cell's metrics and verify active gates as pytest subtests."""
     verdicts = evaluate_metric_verdicts(
         host_dict,
         variant_config.thresholds.get(run.cell.key) or {},
         enforce_thresholds=variant_config.enforce_thresholds,
     )
     if not verdicts:
-        pytest.skip(f"no configured metric specs for {run.cell.key}")
+        return
 
     record_benchmark_metric_rows(request.node, verdicts, columns=VLLM_RESULTS_COLUMNS)
     _record_junit_metrics(request.node, host_dict)
@@ -343,7 +339,7 @@ def test_verify_cell_metrics(run, inf_res_dict, variant_config, lifecycle, reque
     lifecycle.record(request.node.nodeid, "metric_verification", time.monotonic() - started)
 
 
-def test_teardown(orch, lifecycle, request):
+def teardown(orch, lifecycle, request):
     name = orch.get_container_name(orch.container_config, orch.container_config["image"])
     started = time.monotonic()
     orch.teardown_containers()

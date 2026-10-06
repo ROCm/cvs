@@ -124,11 +124,10 @@ Use ``vllm_distributed`` for one distributed service across the cluster:
 Step 4: Read the results
 ========================
 
-Open the HTML report. Each lifecycle stage, benchmark cell, and verification phase is its own row:
+Open the HTML report. Each lifecycle stage and benchmark cell is its own row:
 
 - **Lifecycle rows** — container launch, topology discovery, model fetch, the OpenAI-compatible smoke test, then teardown. These tell you *how far* the run got.
-- **Inference rows** — one per sweep cell, labelled ``<combo>-conc<N>``.
-- **Verification rows** — one per cell. Expand the row to see every finite metric plus every configured threshold. With enforcement off, those subtests pass. With enforcement on, each configured threshold is one subtest. A missing or invalid gated value fails for every datasource, including GPU and Prometheus.
+- **Inference rows** — one per sweep cell, labelled ``<combo>-conc<N>``. Expand the row to see every finite metric plus every configured threshold. With enforcement off, those subtests pass. With enforcement on, each configured threshold is one subtest, and a missed threshold fails that cell's row without skipping later cells. A missing or invalid gated value fails for every datasource, including GPU and Prometheus.
 - **Results table** — the summary is also printed to the console. Metric names are bare (for example, ``output_throughput`` and ``queue_time_p95_ms``).
 
 Per-cell logs land under your configured ``log_dir``::
@@ -220,8 +219,6 @@ Common pitfalls
 **Container launch crashes with "too many values to unpack".** You placed ``env`` under ``container.runtime.args``. It belongs at the ``container`` top level.
 
 **A threshold fails with "actual must be a finite built-in int or float".** The gated datasource did not produce a valid value. Inspect the raw benchmark artifact, GPU telemetry, or server metrics for that cell. The suite owns benchmark percentile collection; workload configuration cannot override it.
-
-**A verification parent skips.** The benchmark produced no parseable result for that cell. With no active metric gates, finite values are retained as passing rows.
 
 **A Run Deck baseline is incompatible.** vLLM reports identify the bare metric
 contract as ``{"id":"vllm-bare","version":1}``. Historical reports containing

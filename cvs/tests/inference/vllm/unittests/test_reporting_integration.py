@@ -34,9 +34,7 @@ class TestVllmReportingIntegration(unittest.TestCase):
 
             import pytest
 
-            from cvs.tests.inference.vllm._common import (
-                test_verify_cell_metrics as verify_cell_metrics,
-            )
+            from cvs.tests.inference.vllm._common import _verify_cell_metrics
 
             CELL = "ISL=128,OSL=128,TP=1,PP=1,CONC=1"
 
@@ -65,21 +63,11 @@ class TestVllmReportingIntegration(unittest.TestCase):
                 )
 
             @pytest.fixture
-            def inf_res_dict(run, variant_config):
-                key = (
-                    variant_config.model_id,
-                    "",
-                    "128",
-                    "128",
-                    CELL,
-                    1,
-                )
+            def host_dict():
                 return {
-                    key: {
-                        "head": {
-                            "output_throughput": 2.0,
-                            "mean_ttft_ms": 3.0,
-                        }
+                    "head": {
+                        "output_throughput": 2.0,
+                        "mean_ttft_ms": 3.0,
                     }
                 }
 
@@ -87,17 +75,17 @@ class TestVllmReportingIntegration(unittest.TestCase):
             def lifecycle():
                 return SimpleNamespace(record=lambda *args: None)
 
-            def test_verify_cell_metrics(
+            def test_vllm_inference(
+                host_dict,
                 run,
-                inf_res_dict,
                 variant_config,
                 lifecycle,
                 request,
                 subtests,
             ):
-                verify_cell_metrics(
+                _verify_cell_metrics(
+                    host_dict,
                     run,
-                    inf_res_dict,
                     variant_config,
                     lifecycle,
                     request,
@@ -140,7 +128,10 @@ class TestVllmReportingIntegration(unittest.TestCase):
         self.assertIn("output_throughput", html)
         self.assertIn("mean_ttft_ms", html)
         self.assertNotIn("client.output_throughput", html)
-        entries = next(iter(_html_tests(html).values()))
+        tests = _html_tests(html)
+        self.assertEqual(len(tests), 1)
+        self.assertIn("::test_vllm_inference", next(iter(tests)))
+        entries = next(iter(tests.values()))
         self.assertEqual(len(entries), 1)
         names = _metric_names(entries[0])
         self.assertEqual(names, ["output_throughput", "mean_ttft_ms"])
@@ -162,9 +153,7 @@ class TestVllmReportingIntegration(unittest.TestCase):
 
             import pytest
 
-            from cvs.tests.inference.vllm._common import (
-                test_verify_cell_metrics as verify_cell_metrics,
-            )
+            from cvs.tests.inference.vllm._common import _verify_cell_metrics
 
             CELL = "ISL=128,OSL=128,TP=1,PP=1,CONC=1"
 
@@ -192,21 +181,11 @@ class TestVllmReportingIntegration(unittest.TestCase):
                 )
 
             @pytest.fixture
-            def inf_res_dict(run, variant_config):
-                key = (
-                    variant_config.model_id,
-                    "",
-                    "128",
-                    "128",
-                    CELL,
-                    1,
-                )
+            def host_dict():
                 return {
-                    key: {
-                        "head": {
-                            "output_throughput": 2.0,
-                            "mean_ttft_ms": 3.0,
-                        }
+                    "head": {
+                        "output_throughput": 2.0,
+                        "mean_ttft_ms": 3.0,
                     }
                 }
 
@@ -214,17 +193,17 @@ class TestVllmReportingIntegration(unittest.TestCase):
             def lifecycle():
                 return SimpleNamespace(record=lambda *args: None)
 
-            def test_verify_cell_metrics(
+            def test_vllm_inference(
+                host_dict,
                 run,
-                inf_res_dict,
                 variant_config,
                 lifecycle,
                 request,
                 subtests,
             ):
-                verify_cell_metrics(
+                _verify_cell_metrics(
+                    host_dict,
                     run,
-                    inf_res_dict,
                     variant_config,
                     lifecycle,
                     request,
@@ -260,7 +239,9 @@ class TestVllmReportingIntegration(unittest.TestCase):
             )
             report = html_path.read_text()
 
-        entries = next(iter(_html_tests(report).values()))
+        tests = _html_tests(report)
+        self.assertEqual(len(tests), 1)
+        entries = next(iter(tests.values()))
         self.assertEqual(len(entries), 1)
         result = entries[0]["resultsTableRow"][0]
         self.assertIn("Passed", result)

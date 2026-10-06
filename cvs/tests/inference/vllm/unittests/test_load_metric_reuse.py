@@ -1,6 +1,7 @@
 '''Unit tests for vLLM server load metric reuse.'''
 
 import unittest
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest import mock
 
@@ -29,9 +30,19 @@ def _job(signature):
     return job
 
 
+class _Subtests:
+    def __init__(self):
+        self.calls = []
+
+    @contextmanager
+    def test(self, **kwargs):
+        self.calls.append(kwargs)
+        yield
+
+
 def _request(nodeid):
     return SimpleNamespace(
-        node=SimpleNamespace(nodeid=nodeid),
+        node=SimpleNamespace(nodeid=nodeid, stash={}, user_properties=[]),
         config=SimpleNamespace(
             option=SimpleNamespace(htmlpath=None),
             _test_html_dir="test_html",
@@ -53,7 +64,7 @@ def _lifecycle():
 
 class TestLoadMetricReuse(unittest.TestCase):
     def setUp(self):
-        self.variant = SimpleNamespace(model_id="model")
+        self.variant = SimpleNamespace(model_id="model", thresholds={}, enforce_thresholds=False)
         self.results = {}
         self.lifecycle = _lifecycle()
         self.patches = [
@@ -75,13 +86,13 @@ class TestLoadMetricReuse(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def invoke(self, run, job, snapshots):
+    def invoke(self, run, job, snapshots, subtests=None):
         with (
             mock.patch.object(_common, "VllmJob", return_value=job),
             mock.patch.object(_common, "_gpu_snap", side_effect=snapshots) as gpu_snap,
-            mock.patch.object(_common.time, "monotonic", side_effect=[10.0, 12.0]),
+            mock.patch.object(_common.time, "monotonic", side_effect=[10.0, 12.0, 20.0, 21.0]),
         ):
-            _common.test_vllm_inference(
+            _common.vllm_inference(
                 mock.Mock(),
                 self.variant,
                 "",
@@ -90,6 +101,7 @@ class TestLoadMetricReuse(unittest.TestCase):
                 self.results,
                 self.lifecycle,
                 _request(f"test_vllm_inference[{run.cell.key}]"),
+                subtests or _Subtests(),
             )
         return gpu_snap
 
@@ -226,7 +238,7 @@ class TestLoadMetricReuse(unittest.TestCase):
             mock.patch.object(_common, "VllmJob", side_effect=RuntimeError("construction failed")),
             self.assertRaisesRegex(RuntimeError, "construction failed"),
         ):
-            _common.test_vllm_inference(
+            _common.vllm_inference(
                 mock.Mock(),
                 self.variant,
                 "",
@@ -235,6 +247,7 @@ class TestLoadMetricReuse(unittest.TestCase):
                 self.results,
                 self.lifecycle,
                 _request("test_vllm_inference[construction-failure]"),
+                _Subtests(),
             )
 
         self.assertTrue(self.lifecycle.failed)
@@ -302,6 +315,27 @@ class TestLoadMetricReuse(unittest.TestCase):
             },
         )
 
+    def test_threshold_miss_fails_cell_without_stopping_later_cells(self):
+        run = _run(1)
+        job = _job(("same",))
+        self.variant.enforce_thresholds = True
+        self.variant.thresholds = {run.cell.key: {"output_throughput": {"kind": "min", "value": 5.0}}}
+        subtests = _Subtests()
+
+        with self.assertRaisesRegex(AssertionError, "output_throughput"):
+            self.invoke(
+                run,
+                job,
+                [{"gpu.used_vram": 100}, {"gpu.used_vram": 125}],
+                subtests,
+            )
+
+        self.assertEqual(subtests.calls, [{"node": "head", "metric": "output_throughput"}])
+        self.assertFalse(self.lifecycle.failed)
+        self.assertIs(self.lifecycle.live_server_job, job)
+        self.assertIn(_common._cell_result_key(self.variant, run), self.results)
+        job.dump_server_log.assert_not_called()
+
     def test_restart_failure_clears_server_identity_and_measurements(self):
         run = _run(1)
         job = _job(("new",))
@@ -315,7 +349,7 @@ class TestLoadMetricReuse(unittest.TestCase):
             mock.patch.object(_common, "VllmJob", return_value=job),
             self.assertRaisesRegex(RuntimeError, "stop failed"),
         ):
-            _common.test_vllm_inference(
+            _common.vllm_inference(
                 mock.Mock(),
                 self.variant,
                 "",
@@ -324,6 +358,7 @@ class TestLoadMetricReuse(unittest.TestCase):
                 self.results,
                 self.lifecycle,
                 _request("test_vllm_inference[restart-failure]"),
+                _Subtests(),
             )
 
         self.assertIsNone(self.lifecycle.live_server_sig)
@@ -350,7 +385,7 @@ class TestLoadMetricReuse(unittest.TestCase):
             mock.patch.object(_common.time, "monotonic", side_effect=[10.0, 12.0]),
             self.assertRaisesRegex(RuntimeError, "client failed"),
         ):
-            _common.test_vllm_inference(
+            _common.vllm_inference(
                 mock.Mock(),
                 self.variant,
                 "",
@@ -359,6 +394,7 @@ class TestLoadMetricReuse(unittest.TestCase):
                 self.results,
                 self.lifecycle,
                 _request("test_vllm_inference[failure]"),
+                _Subtests(),
             )
 
         self.assertIsNone(self.lifecycle.live_server_sig)

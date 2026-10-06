@@ -16,7 +16,7 @@ class TestPrintResultsTable(unittest.TestCase):
         results = {("model", "", "1024", "1024", "default", 16): {"host": {"total_token_throughput": 1.0}}}
 
         with mock.patch.object(_shared.log, "info") as log_info:
-            _shared.test_print_results_table(results)
+            _shared.print_results_table(results)
 
         log_info.assert_called_once()
 
