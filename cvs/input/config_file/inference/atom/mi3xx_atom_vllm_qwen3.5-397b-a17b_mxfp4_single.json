@@ -1,0 +1,96 @@
+{
+  "_comment": "Qwen3.5-397B MXFP4 vLLM plugin recipe, TP4. Native and SGLang recipes serve the FP8 checkpoint, which is already shipped. gpu_arch stays mi355x. Bring-up thresholds.",
+  "gpu_arch": "mi355x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_atom_vllm_qwen3.5-397b-a17b_mxfp4_single_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "amd/Qwen3.5-397B-A17B-MXFP4",
+    "remote": 0,
+    "precision": "mxfp4"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "vllm_mi3xx_qwenmx_single",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-models-mount>:/models:ro"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "server_params": {
+    "backend": "vllm_atom",
+    "nnodes": "1",
+    "model": "amd/Qwen3.5-397B-A17B-MXFP4",
+    "tensor_parallelism": "4",
+    "pipeline_parallelism": "1",
+    "port_no": "8000",
+    "serve_args": {
+      "async-scheduling": true,
+      "load-format": "fastsafetensors",
+      "trust-remote-code": true,
+      "compilation-config": "{\"cudagraph_mode\": \"FULL_AND_PIECEWISE\"}",
+      "kv-cache-dtype": "fp8",
+      "gpu-memory-utilization": "0.9",
+      "no-enable-prefix-caching": true
+    },
+    "env": {
+      "ATOM_ENABLE_QK_NORM_ROPE_CACHE_QUANT_FUSION": "1",
+      "ATOM_USE_CUSTOM_ALL_GATHER": "0",
+      "ATOM_FP8_BLOCKSCALE_WEIGHT_PRESHUFFLE": "0",
+      "GATED_DELTA_RULE_TRITON_AUTOTUNE": "1"
+    }
+  },
+  "benchmark_params": {
+    "backend": "vllm",
+    "data_set_name": "random",
+    "num_prompts": "1000",
+    "random_range_ratio": "0.8",
+    "max_model_length": "16384",
+    "metric_percentiles": "95,99",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60",
+    "reuse_server_across_sweep": "true"
+  },
+  "sweeps": {
+    "ISL=1024,OSL=1024,TP=4,PP=1,CONC=32": {},
+    "ISL=1024,OSL=1024,TP=4,PP=1,CONC=64": {},
+    "ISL=128,OSL=32,TP=4,PP=1,CONC=1": {}
+  },
+  "runs": [],
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      }
+    ]
+  }
+}
