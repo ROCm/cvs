@@ -73,8 +73,11 @@ still runs with ``cvs run atom``.
      - ``_single``
      - vLLM parity (serving schema)
    * - ``mi3xx_atom_vllm_gpt-oss-120b_mxfp4``
+     - ``_single``, ``_distributed``
+     - GPT-OSS MXFP4 vLLM parity; distributed is PP=2 at the shipped TP4
+   * - ``mi3xx_atom_gpt-oss-120b_mxfp4``
      - ``_single``
-     - GPT-OSS MXFP4 vLLM parity (serving schema)
+     - Native ATOM single-GPU recipe; bring-up thresholds
    * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
      - Qwen FP8 vLLM parity; distributed uses PP=2; lab pending
