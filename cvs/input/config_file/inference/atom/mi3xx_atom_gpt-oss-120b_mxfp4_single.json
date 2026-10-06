@@ -1,0 +1,88 @@
+{
+  "_comment": "GPT-OSS-120B native openai_server. The recipe says one GPU is enough, with FP8 KV and gpu-memory-utilization 0.5. The existing vLLM stem stays TP4. Bring-up thresholds.",
+  "gpu_arch": "mi3xx",
+  "schema_version": 1,
+  "framework": "atom",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_atom_gpt-oss-120b_mxfp4_single_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "openai/gpt-oss-120b",
+    "remote": 0,
+    "precision": "mxfp4"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "atom_mi3xx",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-models-mount>:/models:ro"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "roles": {
+    "server": {
+      "atom_args": [
+        "-tp",
+        "1",
+        "--kv_cache_dtype",
+        "fp8",
+        "--gpu-memory-utilization",
+        "0.5"
+      ],
+      "env": {}
+    }
+  },
+  "params": {
+    "driver": "atom",
+    "port_no": "8000",
+    "tensor_parallelism": "1",
+    "random_range_ratio": "0.8",
+    "num_prompts": "1000",
+    "max_model_length": "16384",
+    "metric_percentiles": "95,99",
+    "reuse_server_across_sweep": "true",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60"
+  },
+  "sweeps": {
+    "ISL=1024,OSL=1024,TP=1,PP=1,CONC=8": {},
+    "ISL=128,OSL=32,TP=1,PP=1,CONC=1": {}
+  },
+  "runs": [],
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      }
+    ]
+  }
+}
