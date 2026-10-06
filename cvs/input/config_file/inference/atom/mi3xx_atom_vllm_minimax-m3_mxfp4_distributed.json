@@ -1,0 +1,106 @@
+{
+  "_comment": "MiniMax-M3 MXFP4 vLLM recipe, TP4. The recipe omits online quant for MXFP4 and passes --no-trust-remote-code. gpu_arch stays mi355x. Bring-up thresholds. Distributed PP=2.",
+  "gpu_arch": "mi355x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_atom_vllm_minimax-m3_mxfp4_distributed_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "amd/MiniMax-M3-MXFP4",
+    "remote": 0,
+    "precision": "mxfp4"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "vllm_mi3xx_minimaxm3_distributed",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-models-mount>:/models:ro",
+          "/dev/infiniband:/dev/infiniband"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd",
+          "/dev/infiniband/rdma_cm"
+        ]
+      }
+    }
+  },
+  "server_params": {
+    "backend": "vllm_atom",
+    "nnodes": "2",
+    "model": "amd/MiniMax-M3-MXFP4",
+    "tensor_parallelism": "4",
+    "pipeline_parallelism": "2",
+    "port_no": "8000",
+    "serve_args": {
+      "dtype": "auto",
+      "load-format": "auto",
+      "gpu-memory-utilization": "0.85",
+      "max-num-batched-tokens": 32768,
+      "block-size": 128,
+      "no-async-scheduling": true,
+      "kv-cache-dtype": "auto",
+      "no-enable-prefix-caching": true,
+      "language-model-only": true,
+      "no-trust-remote-code": true,
+      "hf-overrides": "{\"use_index_cache\": true, \"index_topk_freq\": 4}",
+      "compilation-config": "{\"cudagraph_mode\": \"FULL_AND_PIECEWISE\"}"
+    },
+    "master_addr": "{head-node-ip}",
+    "master_port": "29501",
+    "ib_hca_devices": "auto",
+    "ib_netdev": "auto",
+    "env": {
+      "AITER_QUICK_REDUCE_QUANTIZATION": "INT4",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_DEBUG": "ERROR"
+    }
+  },
+  "benchmark_params": {
+    "backend": "vllm",
+    "data_set_name": "random",
+    "num_prompts": "1000",
+    "random_range_ratio": "0.8",
+    "max_model_length": "32768",
+    "metric_percentiles": "95,99",
+    "client_poll_count": "150",
+    "client_poll_wait_time": "60",
+    "reuse_server_across_sweep": "true"
+  },
+  "sweeps": {
+    "ISL=1024,OSL=1024,TP=4,PP=2,CONC=32": {},
+    "ISL=1024,OSL=1024,TP=4,PP=2,CONC=64": {},
+    "ISL=128,OSL=32,TP=4,PP=2,CONC=1": {}
+  },
+  "runs": [],
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      }
+    ]
+  }
+}
