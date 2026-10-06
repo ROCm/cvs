@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from cvs.lib.utils.log_poller import LogPoller
+from cvs.lib.utils.log_poller import LogPollTimeout, LogPoller
 
 _MOD = "cvs.lib.utils.log_poller"
 
@@ -241,8 +241,10 @@ class PollTests(unittest.TestCase):
         p = LogPoller(_orch(["h0"]), ["/l0"], complete_pattern="done", timeout_s=10)
         p.is_complete = MagicMock(return_value=False)
         p.drain = MagicMock(return_value={})
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(LogPollTimeout) as ctx:
             p.poll()
+        self.assertIsInstance(ctx.exception, RuntimeError)
+        self.assertIn("did not complete within", str(ctx.exception))
 
     @patch(f"{_MOD}.ConsoleSpinner")
     @patch(f"{_MOD}.time.sleep")

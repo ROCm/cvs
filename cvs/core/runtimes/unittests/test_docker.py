@@ -109,6 +109,183 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
             f"User volume '/foo:/bar' must appear exactly once in:\n{cmd}",
         )
 
+    def test_user_runtime_arg_sets_docker_user_flag(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"user": "root"}),
+            container_name="cvs_iter_test",
+        )
+        self.assertEqual(shlex.split(captured[0]).count("--user"), 1)
+        self.assertIn("--user root", captured[0])
+
+    def test_shm_size_runtime_arg_sets_docker_flag(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"shm_size": "17G"}),
+            container_name="cvs_iter_test",
+        )
+        tokens = shlex.split(captured[0])
+        self.assertEqual(tokens.count("--shm-size"), 1)
+        self.assertIn("17G", tokens)
+
+    def test_shm_size_runtime_arg_with_spaces_is_quoted(self):
+        # A value with no special characters (like "17G") round-trips even
+        # without quoting, so it can't prove shlex.quote() is actually called --
+        # a value containing a space must still render as one shell token.
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"shm_size": "17 G"}),
+            container_name="cvs_iter_test",
+        )
+        tokens = shlex.split(captured[0])
+        self.assertIn("17 G", tokens)
+        self.assertNotIn("G", tokens)
+
+    def test_shm_size_runtime_arg_is_opt_in(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={}),
+            container_name="cvs_iter_test",
+        )
+        self.assertNotIn("--shm-size", shlex.split(captured[0]))
+
+    def test_user_runtime_arg_is_opt_in(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={}),
+            container_name="cvs_iter_test",
+        )
+        self.assertNotIn("--user", shlex.split(captured[0]))
+
+    def test_user_runtime_arg_accepts_uid_zero(self):
+        # user=0 (root's numeric UID) is falsy in Python; a bare `if user:`
+        # would silently drop it, so this pins `if user is not None:`.
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"user": 0}),
+            container_name="cvs_iter_test",
+        )
+        self.assertEqual(shlex.split(captured[0]).count("--user"), 1)
+        self.assertIn("--user 0", captured[0])
+
+    def test_env_runtime_args_render_every_entry(self):
+        # runtime.args.env is a dict; iterating it directly yields keys only,
+        # so this pins the `.items()` fix and covers more than one entry.
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"env": {"FOO": "bar", "BAZ": "qux"}}),
+            container_name="cvs_iter_test",
+        )
+        cmd = captured[0]
+        self.assertIn("-e FOO=bar", cmd)
+        self.assertIn("-e BAZ=qux", cmd)
+
+    def test_env_values_with_spaces_are_quoted(self):
+        # A config value containing a space must not be split into separate
+        # shell tokens: {"A": "a b"} must render as one -e argument, not
+        # '-e A=a' followed by a bare 'b' token.
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(env={"A": "a b"}),
+            container_name="cvs_iter_test",
+        )
+        cmd = captured[0]
+        tokens = shlex.split(cmd)
+        self.assertIn("A=a b", tokens)
+        self.assertNotIn("b", tokens)
+
+    def test_env_values_with_shell_metacharacters_do_not_execute(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(env={"A": "$(touch /tmp/pwned)"}),
+            container_name="cvs_iter_test",
+        )
+        cmd = captured[0]
+        tokens = shlex.split(cmd)
+        self.assertIn("A=$(touch /tmp/pwned)", tokens)
+
+    def test_volume_values_with_spaces_are_quoted(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(),
+            container_name="cvs_iter_test",
+            volumes=["/home/u ser:/workspace"],
+        )
+        cmd = captured[0]
+        tokens = shlex.split(cmd)
+        self.assertIn("/home/u ser:/workspace", tokens)
+
+    def test_runtime_args_devices_with_spaces_are_quoted(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.setup_containers(
+            container_config=_container_config(extra_runtime_args={"devices": ["/dev/my dev"]}),
+            container_name="cvs_iter_test",
+        )
+        cmd = captured[0]
+        tokens = shlex.split(cmd)
+        self.assertIn("/dev/my dev", tokens)
+
+    def test_last_setup_error_records_image_and_hosts_on_startup_failure(self):
+        # A failed `docker run` must leave enough detail behind (image, failed
+        # hosts, reason) for a caller to build a useful failure message instead
+        # of the generic "container setup failed".
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            if "docker run" in cmd:
+                return {"host1": {"output": "", "exit_code": 0}, "host2": {"output": "no space left", "exit_code": 1}}
+            return {"host1": {"output": "", "exit_code": 0}, "host2": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1", "host2"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        result = rt.setup_containers(container_config=_container_config(), container_name="cvs_iter_test")
+
+        self.assertFalse(result)
+        self.assertEqual(rt.last_setup_error["image"], "img:test")
+        self.assertEqual(rt.last_setup_error["failed_hosts"], ["host2"])
+        self.assertIn("container startup failed", rt.last_setup_error["reason"])
+
+    def test_last_setup_error_records_image_pull_failure(self):
+        def _fake_exec(cmd, timeout=None, detailed=False, print_console=True):
+            if "docker pull" in cmd:
+                return {"host1": {"output": "manifest unknown", "exit_code": 1}}
+            if "docker images" in cmd:
+                return {"host1": {"output": "", "exit_code": 1}}
+            return {"host1": {"output": "", "exit_code": 0}}
+
+        orchestrator = MagicMock()
+        orchestrator.hosts = ["host1"]
+        orchestrator.all.exec.side_effect = _fake_exec
+        orchestrator.sudo_prefix.return_value = ""
+        rt = DockerRuntime(MagicMock(), orchestrator)
+
+        result = rt.setup_containers(container_config=_container_config(), container_name="cvs_iter_test")
+
+        self.assertFalse(result)
+        self.assertEqual(rt.last_setup_error["failed_hosts"], ["host1"])
+        self.assertIn("image pull failed", rt.last_setup_error["reason"])
+
+    def test_last_setup_error_cleared_on_success(self):
+        captured = []
+        rt = _make_runtime(captured)
+        rt.last_setup_error = {"image": "stale", "failed_hosts": ["host1"], "reason": "stale"}
+        result = rt.setup_containers(container_config=_container_config(), container_name="cvs_iter_test")
+        self.assertTrue(result)
+        self.assertIsNone(rt.last_setup_error)
+
     def test_cmd_never_contains_gpus_all(self):
         # CVS is AMD-only. The rendered docker run cmd must never contain
         # '--gpus all', regardless of any container_config knob a future caller

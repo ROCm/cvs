@@ -1,80 +1,39 @@
-"""
-Unit tests for the config-file Pydantic schemas in ``cvs/parsers/schemas.py``.
+"""Configuration validation entry-point compatibility."""
 
-Copyright 2025 Advanced Micro Devices, Inc.
-All rights reserved.
-"""
-
+import json
+import getpass
 import tempfile
 import unittest
 from pathlib import Path
 
-from pydantic import ValidationError
-
-from cvs.parsers.schemas import AortaBenchmarkConfigFile
-
-
-class TestAortaMultiNodeBlock(unittest.TestCase):
-    def test_default_multi_node_block_has_auto_mode(self):
-        cfg = AortaBenchmarkConfigFile.model_validate({"aorta_path": "/tmp/aorta"})
-        self.assertEqual(cfg.multi_node.master_launch_mode, "auto")
-        self.assertTrue(cfg.multi_node.collect_traces)
-        self.assertEqual(cfg.multi_node.train_script, "train.py")
-
-    def test_yaml_without_multi_node_block_still_validates(self):
-        # Backward compatibility: configs written before this block existed.
-        cfg = AortaBenchmarkConfigFile.model_validate({"aorta_path": "/tmp/aorta"})
-        self.assertIsNotNone(cfg.multi_node)
-
-    def test_extra_keys_under_multi_node_are_rejected(self):
-        raw = {"aorta_path": "/tmp/aorta", "multi_node": {"bogus_key": "value"}}
-        with self.assertRaises(ValidationError):
-            AortaBenchmarkConfigFile.model_validate(raw)
-
-    def test_invalid_master_launch_mode_rejected(self):
-        raw = {"aorta_path": "/tmp/aorta", "multi_node": {"master_launch_mode": "magic"}}
-        with self.assertRaises(ValidationError):
-            AortaBenchmarkConfigFile.model_validate(raw)
-
-    def test_out_of_range_master_port_rejected(self):
-        raw = {"aorta_path": "/tmp/aorta", "multi_node": {"master_port": 80}}
-        with self.assertRaises(ValidationError):
-            AortaBenchmarkConfigFile.model_validate(raw)
+from cvs.lib.benchmark.aorta.aorta_config_loader import AortaVariantConfig
+from cvs.lib.benchmark.aorta.unittests.fixtures import variant_dict
+from cvs.parsers.schemas import validate_config_file
 
 
-class TestAortaTrainScriptPathCheck(unittest.TestCase):
-    """``validate_paths_exist`` should only demand train_script in torchrun mode."""
-
-    def _config(self, root: Path, mode: str) -> AortaBenchmarkConfigFile:
-        for rel in ("config/distributed.yaml", "scripts/build_rccl.sh", "scripts/rccl_exp.sh"):
-            path = root / rel
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.touch()
-        return AortaBenchmarkConfigFile.model_validate(
-            {
-                "aorta_path": str(root),
-                "build_script": "scripts/build_rccl.sh",
-                "experiment_script": "scripts/rccl_exp.sh",
-                "analysis": {"enable_tracelens": False, "enable_gemm_analysis": False},
-                "multi_node": {"master_launch_mode": mode},
-            }
-        )
-
-    def test_torchrun_mode_reports_missing_train_script(self):
+class TestAortaConfigDispatch(unittest.TestCase):
+    def test_generic_validator_delegates_to_shared_variant_loader(self):
         with tempfile.TemporaryDirectory() as tmp:
-            errors = self._config(Path(tmp), "torchrun").validate_paths_exist()
-            self.assertTrue(any("train_script" in e for e in errors), errors)
+            root = Path(tmp)
+            raw = variant_dict()
+            thresholds = raw.pop("thresholds")
+            (root / "test_threshold.json").write_text(json.dumps(thresholds))
+            path = root / "aorta.json"
+            path.write_text(json.dumps(raw))
+            for mode in ("auto", "aorta"):
+                with self.subTest(mode=mode):
+                    config = validate_config_file(path, config_type=mode)
+                    self.assertIsInstance(config, AortaVariantConfig)
+                    self.assertEqual(config.thresholds, thresholds)
 
-    def test_torchrun_mode_passes_when_train_script_exists(self):
+    def test_generic_validator_uses_local_user_without_cluster_context(self):
         with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._config(Path(tmp), "torchrun")
-            (Path(tmp) / "train.py").touch()
-            self.assertEqual(cfg.validate_paths_exist(), [])
-
-    def test_script_mode_does_not_require_train_script(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(self._config(Path(tmp), "script").validate_paths_exist(), [])
-
-
-if __name__ == "__main__":
-    unittest.main()
+            root = Path(tmp)
+            raw = variant_dict()
+            thresholds = raw.pop("thresholds")
+            raw["container"]["name"] = "{user-id}_aorta"
+            (root / "test_threshold.json").write_text(json.dumps(thresholds))
+            path = root / "aorta.json"
+            path.write_text(json.dumps(raw))
+            config = validate_config_file(path)
+            self.assertEqual(config.container.name, f"{getpass.getuser()}_aorta")
