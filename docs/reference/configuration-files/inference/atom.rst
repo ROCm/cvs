@@ -75,6 +75,9 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_vllm_gpt-oss-120b_mxfp4``
      - ``_single``
      - GPT-OSS MXFP4 vLLM parity (serving schema)
+   * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_mxfp4``
+     - ``_single``, ``_distributed``
+     - vLLM MXFP4 plugin recipe; FP8 native and SGLang already shipped; bring-up thresholds
    * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
      - Qwen FP8 vLLM parity; distributed uses PP=2; lab pending
