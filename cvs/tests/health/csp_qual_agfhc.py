@@ -110,14 +110,14 @@ def agfhc_res_dict():
     return {}
 
 
-def _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, group, out_dict, recorder=None):
+def _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, group, out_dict, recorder=None, results_json=None):
     """Best-effort: a reporting problem must not change the AGFHC pass/fail."""
     if agfhc_res_dict is None:
         return
     try:
         meta = agfhc_rundeck.make_meta(cluster_dict, 'csp_qual_agfhc')
         if recorder is None:
-            agfhc_rundeck.record_outputs(agfhc_res_dict, group, out_dict, meta=meta)
+            agfhc_rundeck.record_outputs(agfhc_res_dict, group, out_dict, meta=meta, results_json=results_json)
         else:
             recorder(agfhc_res_dict, out_dict, meta=meta)
     except Exception as exc:
@@ -133,9 +133,9 @@ def _run_agfhc_recipe(phdl, config_dict, args, timeout, stage, out_name, agfhc_r
             timeout=timeout,
         )
     scan_agfc_results(out_dict)
-    get_log_results(phdl, out_dict)
+    results_json = get_log_results(phdl, out_dict)
     print_test_output(log, out_dict)
-    _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, stage, out_dict)
+    _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, stage, out_dict, results_json=results_json)
     update_test_result()
 
 
@@ -178,6 +178,7 @@ def get_log_results(phdl, out_dict):
             log.info('Dumping journal log from all nodes for reference')
             phdl.exec_cmd_list(jrl_cmd_list)
             phdl.exec_cmd_list(err_cmd_list)
+    return res_dict
 
 
 # Create connection to DUTs and export for later use ..

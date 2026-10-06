@@ -175,6 +175,49 @@ class TestRecordOutputs(unittest.TestCase):
         agfhc_rundeck.record_outputs(results, "all_perf", {"n1": {"output": _SUCCESS}})
         self.assertEqual(results["groups"]["all_perf"]["nodes"]["n1"]["status"], "pass")
 
+    def test_results_json_zero_failed_keeps_stdout_pass(self):
+        results = {}
+        agfhc_rundeck.record_outputs(
+            results,
+            "all_lvl5",
+            {"n1": _SUCCESS},
+            results_json={"n1": '{"total_failed": 0, "total_passed": 14}'},
+        )
+        node = results["groups"]["all_lvl5"]["nodes"]["n1"]
+        self.assertEqual(node["status"], "pass")
+        self.assertEqual(node["items"], [])
+
+    def test_results_json_nonzero_failed_fails_a_clean_stdout(self):
+        results = {}
+        agfhc_rundeck.record_outputs(
+            results,
+            "all_lvl5",
+            {"n1": "Tests: 14 Total, 14 Executed, 0 Skipped\n" + _SUCCESS},
+            results_json={"n1": '{"total_failed": 2, "total_passed": 12}'},
+        )
+        node = results["groups"]["all_lvl5"]["nodes"]["n1"]
+        self.assertEqual(node["status"], "fail")
+        self.assertEqual(node["items"][-1]["name"], "total_failed")
+        self.assertIn("total_failed", node["items"][-1]["message"])
+        self.assertIn("14 total", node["items_summary"])
+
+    def test_results_json_missing_zero_pattern_fails(self):
+        results = {}
+        agfhc_rundeck.record_outputs(
+            results,
+            "hbm_lvl5",
+            {"n1": _SUCCESS},
+            results_json={"n1": "No such file or directory"},
+        )
+        node = results["groups"]["hbm_lvl5"]["nodes"]["n1"]
+        self.assertEqual(node["status"], "fail")
+        self.assertEqual(node["items_summary"], "total_failed is not zero")
+
+    def test_stdout_only_capture_ignores_missing_results_json(self):
+        results = {}
+        agfhc_rundeck.record_outputs(results, "hbm", {"n1": _SUCCESS})
+        self.assertEqual(results["groups"]["hbm"]["nodes"]["n1"]["status"], "pass")
+
 
 class TestRecordVersionCheck(unittest.TestCase):
     def test_version_banner_passes_and_fills_meta(self):

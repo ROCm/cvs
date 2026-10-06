@@ -29,7 +29,7 @@
   "cards": [
     {
       "id": "results",
-      "hint": "Columns are executed AGFHC recipes. Open a cell for its return code and any listed test results."
+      "hint": "Columns are executed AGFHC recipes. Open a cell for the return code. Individual tests are listed only when the output includes them."
     }
   ]
 }

@@ -224,7 +224,9 @@ hides when a run recorded none.
 `profiles/csp_qual_agfhc.json` is the CSP qualification suite on the same path.
 Matrix groups are `version_check` plus the CSP recipes (`all_lvl5`, `hbm_lvl5`,
 `minihpl`, `xgmi_lvl1`, `pcie_lvl2`, `all_perf`). Version check uses the
-`agfhc version:` banner rather than `AGFHC_SUCCESS`.
+`agfhc version:` banner rather than `AGFHC_SUCCESS`. Recipe cells also fail
+when `results.json` does not contain `"total_failed": 0,`, the same gate as
+`get_log_results`.
 
 ## Author tiers
 

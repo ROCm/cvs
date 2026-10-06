@@ -25,7 +25,7 @@
   "cards": [
     {
       "id": "results",
-      "hint": "Columns are executed CSP qualification steps. Open a cell for its return code and any listed test results."
+      "hint": "Columns are executed CSP qualification steps. A cell fails when the return code is not AGFHC_SUCCESS or results.json total_failed is not zero. Individual tests are listed only when the output includes them."
     }
   ]
 }
