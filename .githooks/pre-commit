@@ -1,0 +1,21 @@
+#!/bin/sh
+#
+# Copyright 2025 Advanced Micro Devices, Inc.
+# All rights reserved.
+#
+# Warn (never block) on trailing whitespace / space-before-tab in the staged
+# changes. `git diff --cached --check` reports the offending file:line for every
+# added/changed line. This is advisory: the commit still proceeds so you can fix
+# it in a follow-up. Bypass entirely with `git commit --no-verify`.
+
+issues="$(git diff --cached --check 2>/dev/null)"
+if [ -n "$issues" ]; then
+    echo "" >&2
+    echo "pre-commit: WARNING: whitespace issues in staged changes:" >&2
+    echo "$issues" >&2
+    echo "" >&2
+    echo "pre-commit: trailing spaces / space-before-tab above -- please fix them." >&2
+    echo "" >&2
+fi
+
+exit 0
