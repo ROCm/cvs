@@ -1,0 +1,117 @@
+{
+  "_comment": "DeepSeek-R1 MXFP4 SGLang recipe serves amd/DeepSeek-R1-0528-MXFP4-v2 on MI355X, TP8. Bring-up thresholds. Distributed PP=2.",
+  "gpu_arch": "mi355x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_atom_sglang_deepseek-r1_mxfp4_distributed_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "amd/DeepSeek-R1-0528-MXFP4-v2",
+    "remote": 0,
+    "precision": "mxfp4"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "sglang_mi3xx_r1mx_distributed",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-models-mount>:/models:ro",
+          "/dev/infiniband:/dev/infiniband"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd",
+          "/dev/infiniband/rdma_cm"
+        ]
+      }
+    }
+  },
+  "server_params": {
+    "backend": "sglang",
+    "nnodes": "2",
+    "model": "amd/DeepSeek-R1-0528-MXFP4-v2",
+    "tensor_parallelism": "8",
+    "pipeline_parallelism": "2",
+    "port_no": "8000",
+    "log_level": "info",
+    "max_concurrency": "64",
+    "memory_fraction": "0.9",
+    "tokenizer_mode": "auto",
+    "inference_poll_iterations": "150",
+    "context_length": "16384",
+    "add_flags": [
+      "--trust-remote-code",
+      "--attention-backend",
+      "aiter",
+      "--kv-cache-dtype",
+      "fp8_e4m3",
+      "--mem-fraction-static",
+      "0.8"
+    ],
+    "benchmark_serv_node": "<changeme>",
+    "proxy_router_serv_port": "8000",
+    "server_node_list": [
+      "<changeme>",
+      "<changeme>"
+    ],
+    "dist_init_port": "29501",
+    "env": {
+      "AITER_QUICK_REDUCE_QUANTIZATION": "INT4",
+      "SGLANG_AITER_FP8_PREFILL_ATTN": "1",
+      "SGLANG_USE_AITER": "1",
+      "ATOM_ENABLE_DS_QKNORM_QUANT_FUSION": "1",
+      "SGLANG_EXTERNAL_MODEL_PACKAGE": "atom.plugin.sglang.models",
+      "SGLANG_ENABLE_TORCH_COMPILE": "1",
+      "TORCHINDUCTOR_COMPILE_THREADS": "128",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_DEBUG": "ERROR",
+      "SGLANG_ROCM_ARCH": "gfx950"
+    }
+  },
+  "benchmark_params": {
+    "backend": "sglang",
+    "data_set_name": "random",
+    "num_prompts": "1000",
+    "random_range_ratio": "0.8",
+    "max_model_length": "16384",
+    "metric_percentiles": "95,99",
+    "client_poll_count": "150",
+    "client_poll_wait_time": "60",
+    "reuse_server_across_sweep": "true"
+  },
+  "sweeps": {
+    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=32": {},
+    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64": {},
+    "ISL=128,OSL=32,TP=8,PP=2,CONC=1": {}
+  },
+  "runs": [],
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      }
+    ]
+  }
+}
