@@ -96,6 +96,15 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_sglang_glm-5.2_mxfp4``
      - ``_single``, ``_distributed``
      - SGLang MI355 TP4; distributed PP=2; bring-up thresholds
+   * - ``mi3xx_atom_minimax-m3_mxfp4``
+     - ``_single`` (``perf`` + ``eagle3``)
+     - Native ATOM MI355 TP4; bring-up thresholds
+   * - ``mi3xx_atom_vllm_minimax-m3_mxfp4``
+     - ``_single``, ``_distributed``
+     - vLLM TP4; distributed PP=2; bring-up thresholds
+   * - ``mi3xx_atom_sglang_minimax-m3_mxfp4``
+     - ``_single``, ``_distributed``
+     - SGLang TP4; distributed PP=2; bring-up thresholds
    * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
      - Qwen FP8 vLLM parity; distributed uses PP=2; lab pending
