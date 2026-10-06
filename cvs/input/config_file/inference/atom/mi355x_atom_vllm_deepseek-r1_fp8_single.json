@@ -47,7 +47,7 @@
       "kv-cache-dtype": "fp8",
       "trust-remote-code": true,
       "enforce-eager": true,
-      "gpu-memory-utilization": "0.95",
+      "gpu-memory-utilization": "0.70",
       "block-size": 64,
       "no-enable-prefix-caching": true
     },
