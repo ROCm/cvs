@@ -32,6 +32,7 @@ Configs are lab-validated unless a row is marked pending.
 | `mi3xx_atom_vllm_deepseek-r1_mxfp4` | `_single`, `_distributed` | `vllm_atom` (`amd/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4`; bring-up thresholds) |
 | `mi3xx_atom_sglang_deepseek-r1_mxfp4` | `_single`, `_distributed` | `sglang` (`amd/DeepSeek-R1-0528-MXFP4-v2`; bring-up thresholds) |
 | `mi3xx_atom_vllm_qwen3.5-397b-a17b_mxfp4` | `_single`, `_distributed` | `vllm_atom` (MXFP4 plugin recipe; bring-up thresholds) |
+| `mi3xx_atom_mimo-v2.5-pro` | `_single` (profiles: `perf`, `mtp1`) | native `atom` (MI355 TP8; bring-up thresholds) |
 | `mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `vllm_atom` (serving schema; lab pending) |
 | `mi3xx_atom_sglang_deepseek-r1_fp8` | `_single`, `_distributed` | `sglang` (serving schema) |
 | `mi3xx_atom_sglang_qwen3.5-397b-a17b_fp8` | `_single`, `_distributed` | `sglang` (serving schema; lab pending) |
