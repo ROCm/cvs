@@ -618,13 +618,6 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(vllm.roles.server.serve_args.get("block-size"), 256)
         self.assertEqual(vllm.roles.server.serve_args.get("gpu-memory-utilization"), "0.90")
 
-        sglang = _atom_config(root, "mi355x_atom_sglang_deepseek-v4-pro_single.json")
-        self.assertEqual(sglang.params.driver, "sglang")
-        self.assertEqual(sglang.model.precision, "fp4")
-        self.assertEqual(sglang.roles.server.env.get("SGLANG_ROCM_ARCH"), "gfx950")
-        self.assertNotIn("--kv-cache-dtype", sglang.roles.server.sglang_args)
-        self.assertFalse(sglang.enforce_thresholds)
-
     def test_load_v4_pro_mi355x_atom_variant(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi355x_atom_deepseek-v4-pro_single.json")

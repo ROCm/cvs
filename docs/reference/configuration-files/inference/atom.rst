@@ -84,10 +84,6 @@ still runs with ``cvs run atom``.
    * - ``mi355x_atom_vllm_deepseek-v4-pro``
      - ``_single``
      - vLLM parity for V4-Pro FP4 TP8; fp8 KV cache and block size 256; same 1K/1K and 128/32 cells; bring-up
-   * - ``mi355x_atom_sglang_deepseek-v4-pro``
-     - ``_single``
-     - SGLang try-stem for V4-Pro. SGLang does not currently serve this model;
-       thresholds are off so a Spur run can record the result
    * - ``mi355x_atom_deepseek-r1_fp8``
      - ``_single`` (``perf`` + ``mtp3``)
      - MI355X copy of the gfx942 R1 recipe; bring-up thresholds
