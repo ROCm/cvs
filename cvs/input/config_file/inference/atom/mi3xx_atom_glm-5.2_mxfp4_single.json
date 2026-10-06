@@ -1,0 +1,179 @@
+{
+  "_comment": "GLM-5.2-MXFP4 native openai_server, MI355 TP4. Filename follows the mi3xx family rule; gpu_arch stays mi355x. Bring-up thresholds. Select perf for the base server or mtp3 for MTP with 3 speculative tokens.",
+  "gpu_arch": "mi355x",
+  "schema_version": 2,
+  "framework": "atom",
+  "threshold_json": "mi325x_atom_glm-5.2_mxfp4_single_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "amd/GLM-5.2-MXFP4",
+    "remote": 0,
+    "precision": "mxfp4"
+  },
+  "default_profile": "perf",
+  "profiles": {
+    "perf": {
+      "enforce_thresholds": false,
+      "container": {
+        "lifetime": "per_run",
+        "name": "atom_mi3xx",
+        "image": "<changeme>",
+        "runtime": {
+          "name": "docker",
+          "args": {
+            "network": "host",
+            "ipc": "host",
+            "privileged": true,
+            "shm_size": "128G",
+            "volumes": [
+              "/home/{user-id}:/home/{user-id}",
+              "<changeme-models-mount>:/models:ro"
+            ],
+            "devices": [
+              "/dev/dri",
+              "/dev/kfd"
+            ]
+          }
+        }
+      },
+      "roles": {
+        "server": {
+          "atom_args": [
+            "-tp",
+            "4",
+            "--kv_cache_dtype",
+            "fp8",
+            "--no-enable_prefix_caching",
+            "--online_quant_config",
+            "{\"global_quant_config\": \"ptpc_fp8\", \"exclude_layer\": [\"lm_head\", \"model.embed_tokens\", \"*.mlp.gate\", \"*expert*\"]}"
+          ],
+          "env": {
+            "AITER_QUICK_REDUCE_QUANTIZATION": "INT4",
+            "AITER_USE_FLYDSL_MOE_SORTING": "1"
+          }
+        }
+      },
+      "params": {
+        "driver": "atom",
+        "port_no": "8000",
+        "tensor_parallelism": "4",
+        "random_range_ratio": "0.8",
+        "num_prompts": "1000",
+        "max_model_length": "16384",
+        "metric_percentiles": "95,99",
+        "reuse_server_across_sweep": "true",
+        "client_poll_count": "80",
+        "client_poll_wait_time": "60"
+      },
+      "sweeps": {
+        "ISL=1024,OSL=1024,TP=4,PP=1,CONC=32": {},
+        "ISL=1024,OSL=1024,TP=4,PP=1,CONC=64": {},
+        "ISL=128,OSL=32,TP=4,PP=1,CONC=1": {}
+      },
+      "runs": [],
+      "platform": {
+        "gpu_metrics_poll": true
+      },
+      "functional": {
+        "api_smoke": true,
+        "health_check": true
+      },
+      "accuracy": {
+        "tasks": [
+          {
+            "id": "gsm8k_flex",
+            "task": "gsm8k",
+            "num_fewshot": 5,
+            "num_concurrent": 4
+          }
+        ]
+      }
+    },
+    "mtp3": {
+      "enforce_thresholds": false,
+      "container": {
+        "lifetime": "per_run",
+        "name": "atom_mi3xx",
+        "image": "<changeme>",
+        "runtime": {
+          "name": "docker",
+          "args": {
+            "network": "host",
+            "ipc": "host",
+            "privileged": true,
+            "shm_size": "128G",
+            "volumes": [
+              "/home/{user-id}:/home/{user-id}",
+              "<changeme-models-mount>:/models:ro"
+            ],
+            "devices": [
+              "/dev/dri",
+              "/dev/kfd"
+            ]
+          }
+        }
+      },
+      "roles": {
+        "server": {
+          "atom_args": [
+            "-tp",
+            "4",
+            "--kv_cache_dtype",
+            "fp8",
+            "--no-enable_prefix_caching",
+            "--online_quant_config",
+            "{\"global_quant_config\": \"ptpc_fp8\", \"exclude_layer\": [\"lm_head\", \"model.embed_tokens\", \"*.mlp.gate\", \"model.layers.[0-9].mlp.*expert*\", \"model.layers.[1-6][0-9].mlp.*expert*\", \"model.layers.7[0-7].mlp.*expert*\"]}",
+            "--num-speculative-tokens",
+            "3",
+            "--method",
+            "mtp"
+          ],
+          "env": {
+            "AITER_QUICK_REDUCE_QUANTIZATION": "INT4",
+            "AITER_USE_FLYDSL_MOE_SORTING": "1"
+          }
+        }
+      },
+      "params": {
+        "driver": "atom",
+        "port_no": "8000",
+        "tensor_parallelism": "4",
+        "random_range_ratio": "0.8",
+        "num_prompts": "1000",
+        "max_model_length": "16384",
+        "metric_percentiles": "95,99",
+        "reuse_server_across_sweep": "true",
+        "client_poll_count": "80",
+        "client_poll_wait_time": "60"
+      },
+      "sweeps": {
+        "ISL=1024,OSL=1024,TP=4,PP=1,CONC=32": {},
+        "ISL=1024,OSL=1024,TP=4,PP=1,CONC=64": {},
+        "ISL=128,OSL=32,TP=4,PP=1,CONC=1": {}
+      },
+      "runs": [],
+      "platform": {
+        "gpu_metrics_poll": true
+      },
+      "functional": {
+        "api_smoke": true,
+        "health_check": true
+      },
+      "accuracy": {
+        "tasks": [
+          {
+            "id": "gsm8k_flex",
+            "task": "gsm8k",
+            "num_fewshot": 5,
+            "num_concurrent": 4
+          }
+        ]
+      }
+    }
+  }
+}
