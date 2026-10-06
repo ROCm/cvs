@@ -1,0 +1,104 @@
+{
+  "_comment": "GLM-5.2-FP8 vLLM recipe for MI300X/MI308X, TP8. Bring-up thresholds. Distributed PP=2.",
+  "gpu_arch": "mi3xx",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_atom_vllm_glm-5.2_fp8_distributed_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "zai-org/GLM-5.2-FP8",
+    "remote": 0,
+    "precision": "fp8"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "vllm_mi3xx_glm52fp8_distributed",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-models-mount>:/models:ro",
+          "/dev/infiniband:/dev/infiniband"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd",
+          "/dev/infiniband/rdma_cm"
+        ]
+      }
+    }
+  },
+  "server_params": {
+    "backend": "vllm_atom",
+    "nnodes": "2",
+    "model": "zai-org/GLM-5.2-FP8",
+    "tensor_parallelism": "8",
+    "pipeline_parallelism": "2",
+    "port_no": "8000",
+    "serve_args": {
+      "async-scheduling": true,
+      "load-format": "fastsafetensors",
+      "trust-remote-code": true,
+      "compilation-config": "{\"cudagraph_mode\": \"FULL_AND_PIECEWISE\"}",
+      "kv-cache-dtype": "fp8",
+      "max-num-batched-tokens": 16384,
+      "gpu-memory-utilization": "0.9",
+      "no-enable-prefix-caching": true,
+      "additional-config": "{\"online_quant_config\": {\"global_quant_config\": \"ptpc_fp8\", \"exclude_layer\": [\"lm_head\", \"model.embed_tokens\", \"*.mlp.gate\"]}}"
+    },
+    "master_addr": "{head-node-ip}",
+    "master_port": "29501",
+    "ib_hca_devices": "auto",
+    "ib_netdev": "auto",
+    "env": {
+      "AITER_QUICK_REDUCE_QUANTIZATION": "INT4",
+      "AITER_USE_FLYDSL_MOE_SORTING": "1",
+      "NCCL_IB_GID_INDEX": "3",
+      "NCCL_DEBUG": "ERROR"
+    }
+  },
+  "benchmark_params": {
+    "backend": "vllm",
+    "data_set_name": "random",
+    "num_prompts": "1000",
+    "random_range_ratio": "0.8",
+    "max_model_length": "16384",
+    "metric_percentiles": "95,99",
+    "client_poll_count": "150",
+    "client_poll_wait_time": "60",
+    "reuse_server_across_sweep": "true"
+  },
+  "sweeps": {
+    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=32": {},
+    "ISL=1024,OSL=1024,TP=8,PP=2,CONC=64": {},
+    "ISL=128,OSL=32,TP=8,PP=2,CONC=1": {}
+  },
+  "runs": [],
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      }
+    ]
+  }
+}
