@@ -15,7 +15,8 @@ from cvs.lib.parallel_ssh_lib import *
 from cvs.lib.utils_lib import *
 from cvs.lib.verify_lib import *
 
-from cvs.lib import globals
+from cvs.lib import agfhc_rundeck, globals
+from cvs.lib.report.health_lifecycle import HealthLifecycle, timed_stage
 
 log = globals.log
 
@@ -91,6 +92,53 @@ def config_dict(config_file, cluster_dict):
     return config_dict
 
 
+@pytest.fixture(scope="module")
+def lifecycle():
+    """Wall-clock of each CSP Qual AGFHC step, bound as the deck lifecycle source."""
+    return HealthLifecycle()
+
+
+@pytest.fixture(scope="module")
+def agfhc_res_dict():
+    """
+    Module-scoped structured AGFHC results for the Run Deck status matrix.
+
+    Each recipe merges its per-node verdict into this dict. The csp_qual_agfhc
+    profile names this fixture in sources.results, so session binding captures
+    it at module teardown.
+    """
+    return {}
+
+
+def _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, group, out_dict, recorder=None, results_json=None):
+    """Best-effort: a reporting problem must not change the AGFHC pass/fail."""
+    if agfhc_res_dict is None:
+        return
+    try:
+        meta = agfhc_rundeck.make_meta(cluster_dict, 'csp_qual_agfhc')
+        if recorder is None:
+            agfhc_rundeck.record_outputs(agfhc_res_dict, group, out_dict, meta=meta, results_json=results_json)
+        else:
+            recorder(agfhc_res_dict, out_dict, meta=meta)
+    except Exception as exc:
+        log.warning("AGFHC '%s': could not capture Run Deck results: %s", group, exc)
+
+
+def _run_agfhc_recipe(phdl, config_dict, args, timeout, stage, out_name, agfhc_res_dict, cluster_dict, lifecycle):
+    path = config_dict['path']
+    log_dir = config_dict['log_dir']
+    with timed_stage(lifecycle, stage):
+        out_dict = phdl.exec(
+            f'sudo {path}/agfhc {args} --simple-output -o {log_dir}/{out_name}',
+            timeout=timeout,
+        )
+    scan_agfc_results(out_dict)
+    results_json = get_log_results(phdl, out_dict)
+    print_test_output(log, out_dict)
+    _capture_agfhc_rundeck(agfhc_res_dict, cluster_dict, stage, out_dict, results_json=results_json)
+    update_test_result()
+
+
 def scan_agfc_results(out_dict):
     """
     Parse AGFHC run outputs from all nodes and fail on unexpected patterns.
@@ -117,19 +165,20 @@ def get_log_results(phdl, out_dict):
     err_cmd_list = []
     # Check results.json
     for node in out_dict.keys():
-        match = re.search('Log directory:\s+([a-z0-9\/\-\_]+)', out_dict[node], re.I)
+        match = re.search(r'Log directory:\s+([a-z0-9\/\-\_]+)', out_dict[node], re.I)
         log_dir = match.group(1)
         res_cmd_list.append(f'sudo cat {log_dir}/results.json')
         jrl_cmd_list.append(f'sudo cat {log_dir}/journal.log')
         err_cmd_list.append(f'sudo cat {log_dir}/error.json')
     res_dict = phdl.exec_cmd_list(res_cmd_list)
     for node in res_dict.keys():
-        pattern = '"total_failed":\s+0,'
+        pattern = r'"total_failed":\s+0,'
         if not re.search(pattern, res_dict[node], re.I):
             fail_test(f'Total failed tests in results.json is not zero on node {node}')
             log.info('Dumping journal log from all nodes for reference')
             phdl.exec_cmd_list(jrl_cmd_list)
             phdl.exec_cmd_list(err_cmd_list)
+    return res_dict
 
 
 # Create connection to DUTs and export for later use ..
@@ -150,11 +199,12 @@ def phdl(cluster_dict):
 
 # Get the version of AGFHC
 @pytest.mark.dependency()
-def test_version_check(phdl, config_dict):
+def test_version_check(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     globals.error_list = []
     path = config_dict['path']
     log_dir = config_dict['log_dir']
-    out_dict = phdl.exec(f'sudo {path}/agfhc -v')
+    with timed_stage(lifecycle, 'version_check'):
+        out_dict = phdl.exec(f'sudo {path}/agfhc -v')
     for node in out_dict.keys():
         if not re.search('agfhc version:', out_dict[node], re.I):
             fail_test(f'Failed to print the AGFHC version on node {node}, installation not proper')
@@ -165,38 +215,41 @@ def test_version_check(phdl, config_dict):
         phdl.exec(f'sudo mkdir {log_dir}')
     except Exception:
         log.error(f'Error creating log directory {log_dir}')
-    out_dict = phdl.exec(f'sudo ls -ld {log_dir}')
-    for node in out_dict.keys():
-        if re.search('no such', out_dict[node], re.I):
+    ls_dict = phdl.exec(f'sudo ls -ld {log_dir}')
+    for node in ls_dict.keys():
+        if re.search('no such', ls_dict[node], re.I):
             fail_test(f'Error creating the log directory {log_dir} on node {node}')
+    _capture_agfhc_rundeck(
+        agfhc_res_dict,
+        cluster_dict,
+        'version_check',
+        out_dict,
+        recorder=agfhc_rundeck.record_version_check,
+    )
     update_test_result()
 
 
 # 2 hrs test
 @pytest.mark.dependency(depends=["test_version_check"])
-def test_all_lvl5(
-    phdl,
-    config_dict,
-):
+def test_all_lvl5(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     globals.error_list = []
     log.info('Testcase Run all_lvl5 Test')
-    path = config_dict['path']
-    log_dir = config_dict['log_dir']
-    out_dict = phdl.exec(
-        f'sudo {path}/agfhc -r all_lvl5 --simple-output -o {log_dir}/test_all_lvl5', timeout=(60 * 60 * 3) + 30
+    _run_agfhc_recipe(
+        phdl,
+        config_dict,
+        '-r all_lvl5',
+        (60 * 60 * 3) + 30,
+        'all_lvl5',
+        'test_all_lvl5',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
     )
-    scan_agfc_results(out_dict)
-    get_log_results(phdl, out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
 
 
 # 1 iteration = 2 hrs with i=2
 @pytest.mark.dependency(depends=["test_version_check"])
-def test_agfhc_hbm_lvl5(
-    phdl,
-    config_dict,
-):
+def test_agfhc_hbm_lvl5(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     """
     Run AGFHC HBM1 level 5 recipe for 4 iterations
 
@@ -206,93 +259,88 @@ def test_agfhc_hbm_lvl5(
     """
     globals.error_list = []
     log.info('Testcase Run HBM Test - hbm_lvl5')
-    path = config_dict['path']
-    log_dir = config_dict['log_dir']
-    out_dict = phdl.exec(
-        f'sudo {path}/agfhc -r hbm_lvl5:i=2 --simple-output -o {log_dir}/test_agfhc_hbm_lvl5',
-        timeout=(60 * 60 * 10) + 60,
+    _run_agfhc_recipe(
+        phdl,
+        config_dict,
+        '-r hbm_lvl5:i=2',
+        (60 * 60 * 10) + 60,
+        'hbm_lvl5',
+        'test_agfhc_hbm_lvl5',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
     )
-    scan_agfc_results(out_dict)
-    get_log_results(phdl, out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
 
 
 # 4 hrs
 @pytest.mark.dependency(depends=["test_version_check"])
-def test_agfhc_minihpl(
-    phdl,
-    config_dict,
-):
+def test_agfhc_minihpl(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     """
     Run AGFHC miniHPL:
     Validates output and updates test status.
     """
     globals.error_list = []
     log.info('Testcase Run AGFHC miniHPL')
-    path = config_dict['path']
-    log_dir = config_dict['log_dir']
-    out_dict = phdl.exec(
-        f'sudo {path}/agfhc -t minihpl:d=4h --simple-output -o {log_dir}/test_agfhc_minihpl', timeout=(60 * 60 * 5) + 60
+    _run_agfhc_recipe(
+        phdl,
+        config_dict,
+        '-t minihpl:d=4h',
+        (60 * 60 * 5) + 60,
+        'minihpl',
+        'test_agfhc_minihpl',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
     )
-    scan_agfc_results(out_dict)
-    get_log_results(phdl, out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
 
 
 # 5 min
 @pytest.mark.dependency(depends=["test_version_check"])
-def test_agfhc_xgmi_lvl1(
-    phdl,
-    config_dict,
-):
+def test_agfhc_xgmi_lvl1(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     """
     Run AGFHC XGMI lvl1 recipe:
     Shorter test; validates output and records results.
     """
     globals.error_list = []
     log.info('Testcase Run XGMI lvl1')
-    path = config_dict['path']
-    log_dir = config_dict['log_dir']
-    out_dict = phdl.exec(
-        f'sudo {path}/agfhc -r xgmi_lvl1 --simple-output -o {log_dir}/test_agfhc_xgmi_lvl1', timeout=(60 * 20) + 30
+    _run_agfhc_recipe(
+        phdl,
+        config_dict,
+        '-r xgmi_lvl1',
+        (60 * 20) + 30,
+        'xgmi_lvl1',
+        'test_agfhc_xgmi_lvl1',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
     )
-    scan_agfc_results(out_dict)
-    get_log_results(phdl, out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
 
 
 # 10 min
 # adding some additional time for buffer
 @pytest.mark.dependency(depends=["test_version_check"])
-def test_agfhc_pcie_lvl2(
-    phdl,
-    config_dict,
-):
+def test_agfhc_pcie_lvl2(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     """
     Run AGFHC pcie lvl2:
     Validates output and updates test result.
     """
     globals.error_list = []
     log.info('Testcase Run PCIe lvl2')
-    path = config_dict['path']
-    log_dir = config_dict['log_dir']
-    out_dict = phdl.exec(
-        f'sudo {path}/agfhc -r pcie_lvl2 --simple-output -o {log_dir}/test_agfhc_pcie_lvl2', timeout=(60 * 50) + 30
+    _run_agfhc_recipe(
+        phdl,
+        config_dict,
+        '-r pcie_lvl2',
+        (60 * 50) + 30,
+        'pcie_lvl2',
+        'test_agfhc_pcie_lvl2',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
     )
-    scan_agfc_results(out_dict)
-    get_log_results(phdl, out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
 
 
 @pytest.mark.dependency(depends=["test_version_check"])
-def test_agfhc_all_perf(
-    phdl,
-    config_dict,
-):
+def test_agfhc_all_perf(phdl, config_dict, agfhc_res_dict, cluster_dict, lifecycle):
     """
     Pytest: Run the AGFHC 'all_perf' performance recipe across nodes.
 
@@ -308,12 +356,14 @@ def test_agfhc_all_perf(
     """
     globals.error_list = []
     log.info('Testcase Run all_perf')
-    path = config_dict['path']
-    log_dir = config_dict['log_dir']
-    out_dict = phdl.exec(
-        f'sudo {path}/agfhc -r all_perf --simple-output -o {log_dir}/test_agfhc_all_perf', timeout=(60 * 120)
+    _run_agfhc_recipe(
+        phdl,
+        config_dict,
+        '-r all_perf',
+        60 * 120,
+        'all_perf',
+        'test_agfhc_all_perf',
+        agfhc_res_dict,
+        cluster_dict,
+        lifecycle,
     )
-    scan_agfc_results(out_dict)
-    get_log_results(phdl, out_dict)
-    print_test_output(log, out_dict)
-    update_test_result()
