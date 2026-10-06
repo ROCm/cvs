@@ -533,11 +533,132 @@ def _fail_unreachable_nodes(cluster_dict, out_dict, action):
 # the token MUST be checked before the extension.
 PackageFlavour = namedtuple("PackageFlavour", ["pkg_type", "is_direct"])
 
-# Extract the semantic version (``1.4.9`` / ``1.5.5``) from a release URL. The
-# first dotted-numeric run in the filename is the version in every ANC naming
-# scheme, legacy and direct alike ("x86_64"/"x64" have no dot-separated triple,
-# so they never match first).
-_URL_VERSION_RE = re.compile(r"\d+\.\d+(?:\.\d+)*")
+# The ANC version grammar, defined once and reused by every extractor so the
+# "what counts as a version" rule cannot drift between them.
+#   _VERSION_BODY: a dotted-numeric base (>=2 components, so a lone integer is
+#     not a version) with an OPTIONAL lowercase ``-rc.<n>`` suffix. Lowercase is
+#     deliberate -- an IGNORECASE match would accept ``1.7.0-RC.2`` that the
+#     case-sensitive extractors then read as plain ``1.7.0``, letting a lower RC
+#     silently satisfy the guard.
+#   _VERSION_END: a boundary that forbids the match from stopping in the middle
+#     of a longer token. Without it an ATTACHED malformed rc silently truncates
+#     (``1.7.0-rc.bad`` -> ``1.7.0``; ``1.7.0-rc.1foo`` -> ``1.7.0-rc.1``;
+#     ``1.7.0rc1`` -> ``1.7.0``). It rejects a trailing ``.<digit>`` (mid-base),
+#     any alnum (mid-token junk), and a trailing ``-rc`` in ANY case (``-RC`` /
+#     ``-Rc`` too, so an uppercase rc suffix is rejected rather than truncated to
+#     its base). A package revision like the ``-1`` in
+#     ``...-1.7.0-rc.1-1.x86_64.rpm`` is still fine: ``-1`` begins with ``-``
+#     then a digit, which the boundary allows.
+_VERSION_BODY = r"\d+\.\d+(?:\.\d+)*(?:-rc\.\d+)?"
+_VERSION_BODY_GROUPED = r"(\d+\.\d+(?:\.\d+)*)(?:-rc\.(\d+))?"
+_VERSION_END = r"(?!\.\d)(?![0-9A-Za-z])(?![-][rR][cC])"
+
+# Extract the semantic version (``1.4.9`` / ``1.5.5`` / ``1.7.0-rc.1``) from a
+# release URL. The FIRST dotted-numeric run in the filename is the version in
+# every ANC naming scheme, legacy and direct alike ("x86_64"/"x64" have no
+# dot-separated triple, so they never start a candidate). The parser anchors the
+# full grammar at that first candidate position (see parse_version_from_url) and
+# does NOT scan onward -- so a malformed first token (e.g. ``1.7.0-rc.bad``) is
+# rejected rather than silently skipped in favour of a later number like the
+# ``2.31`` in a ``-glibc-2.31`` suffix.
+_URL_VERSION_RE = re.compile(_VERSION_BODY + _VERSION_END)
+_URL_VERSION_CANDIDATE_RE = re.compile(r"\d+\.\d+")
+
+# Match a dotted-numeric release with its optional ``-rc.<n>`` suffix as ONE
+# token (groups: 1 = base, 2 = rc number). The rc is part of the same token, so
+# it is never lost when the version is embedded in text.
+_VERSION_RE = re.compile(_VERSION_BODY_GROUPED + _VERSION_END)
+
+
+def is_strict_anc_version(version):
+    '''
+    True when ``version`` is ENTIRELY a valid ANC version token (no surrounding
+    text, no trailing garbage): the stripped string fullmatches _VERSION_RE.
+
+    Unlike parse_anc_version (which tolerates surrounding text for reading a
+    version off node/URL output), this is the strict gate for a USER-configured
+    value: ``1.7.0`` / ``1.7.0-rc.1`` pass; ``1.7.0-rc.bad`` / ``release-1.7.0``
+    / ``1.7.0-RC.2`` / ``7`` do not. Returns False for blank/None.
+    '''
+    if not version:
+        return False
+    return _VERSION_RE.fullmatch(str(version).strip()) is not None
+
+
+def parse_anc_version(version):
+    '''
+    Parse an ANC version string into a comparable ``(base_tuple, rc)`` pair.
+
+    ``base_tuple`` is the dotted-numeric release (e.g. ``(1, 7, 0)``); ``rc`` is
+    the release-candidate number when the version carries a ``-rc.<n>`` suffix,
+    else None (a final/base release). Returns None when no dotted-numeric version
+    is present -- a bare integer does NOT qualify. Surrounding text is tolerated:
+    the first ``X.Y[.Z...]`` token (with any attached ``-rc.<n>``) is read.
+
+    Examples:
+      "1.7.0"                -> ((1, 7, 0), None)
+      "1.7.0-rc.1"           -> ((1, 7, 0), 1)
+      "ANC 1.7.0-rc.1 build" -> ((1, 7, 0), 1)
+      "1.4.9"                -> ((1, 4, 9), None)
+      "7"                    -> None
+    '''
+    if not version:
+        return None
+    match = _VERSION_RE.search(str(version))
+    if not match:
+        return None
+    base = tuple(int(part) for part in match.group(1).split("."))
+    rc = int(match.group(2)) if match.group(2) is not None else None
+    return (base, rc)
+
+
+def compare_anc_versions(left, right):
+    '''
+    Three-way compare two ANC version strings: -1 / 0 / 1 for left <, ==, >.
+
+    Ordering rules (ANC-specific, intentionally NOT semver):
+      - Base releases compare numerically, zero-padded to equal length
+        (``1.6.0 < 1.7.0 < 1.8.0``).
+      - A release candidate is treated as EQUAL to its own base release
+        (``1.7.0-rc.1 == 1.7.0``) so an installed rc satisfies a request for the
+        matching base and vice versa.
+      - EXCEPT two candidates of the SAME base compare by rc number
+        (``1.7.0-rc.1 < 1.7.0-rc.2 < 1.7.0-rc.10``).
+
+    Raises ValueError if either string carries no parseable version, so callers
+    can surface a clear config error rather than compare silently wrong.
+    '''
+    lv = parse_anc_version(left)
+    rv = parse_anc_version(right)
+    if lv is None or rv is None:
+        raise ValueError(f"unparseable ANC version: {left!r} vs {right!r}")
+    (l_base, l_rc), (r_base, r_rc) = lv, rv
+
+    width = max(len(l_base), len(r_base))
+    l_padded = l_base + (0,) * (width - len(l_base))
+    r_padded = r_base + (0,) * (width - len(r_base))
+    if l_padded != r_padded:
+        return -1 if l_padded < r_padded else 1
+
+    # Same base: rc ranks equal to base, but rc-vs-rc compares by number.
+    if l_rc is not None and r_rc is not None:
+        if l_rc == r_rc:
+            return 0
+        return -1 if l_rc < r_rc else 1
+    return 0
+
+
+def anc_version_satisfies(installed, required):
+    '''
+    True when an ``installed`` ANC version satisfies a ``required`` one, i.e.
+    ``installed >= required`` under compare_anc_versions. Used for the
+    precheck-skip (per node) and post-install verification. Returns False on any
+    unparseable input (treated as "cannot confirm it satisfies").
+    '''
+    try:
+        return compare_anc_versions(installed, required) >= 0
+    except ValueError:
+        return False
 
 
 def detect_package_flavour(anc_release_url):
@@ -595,43 +716,72 @@ def parse_version_from_url(anc_release_url):
     '''
     Extract the semantic version embedded in an ANC release URL, or None.
 
-    Matches the first dotted-numeric run in the filename (e.g. ``1.4.9`` from
-    ``...-1.4.9-deb-linux-x64.tar.gz``, ``1.5.5`` from
-    ``...-1.5.5-x86_64.tar.gz`` and ``..._1.5.5_amd64.deb``). Returns None when
-    the URL is empty or carries no version token.
+    Locates the FIRST dotted-numeric candidate in the filename (e.g. ``1.4.9``
+    from ``...-1.4.9-deb-linux-x64.tar.gz``, ``1.5.5`` from
+    ``...-1.5.5-x86_64.tar.gz`` and ``..._1.5.5_amd64.deb``) and requires the
+    full ANC grammar to match AT that position. Returns None when the URL is
+    empty, carries no candidate, or the first candidate is not a well-formed ANC
+    version -- so a malformed leading token (``anc-1.7.0-rc.bad-glibc-2.31...``)
+    is rejected rather than skipped in favour of the later ``2.31``.
 
     Used by the fail-fast config guard to abort (before contacting any node)
-    when the user-supplied ``anc.anc_version`` disagrees with the archive.
+    when the user-supplied ``anc.anc_version`` is GREATER than the archive
+    version (the archive could not satisfy the requested version).
     '''
     if not anc_release_url:
         return None
     name = anc_release_url.rsplit("/", 1)[-1]
-    match = _URL_VERSION_RE.search(name)
+    candidate = _URL_VERSION_CANDIDATE_RE.search(name)
+    if not candidate:
+        return None
+    match = _URL_VERSION_RE.match(name, candidate.start())
     return match.group(0) if match else None
 
 
 def check_version_matches_url(config_dict):
     '''
-    Return a problem string if config ``anc.anc_version`` disagrees with the
+    Return a problem string if config ``anc.anc_version`` is GREATER than the
     version parsed from ``anc.anc_release_url``, else None.
 
+    The requested ``anc_version`` must be satisfiable by the archive the URL
+    points at, so the rule is ``anc_version <= url_version`` under
+    compare_anc_versions (ANC ordering: a release candidate is equal to its base
+    release, rc-vs-rc compares by number). A URL that is newer than the
+    requested version is fine (the install simply provides a version that
+    satisfies the request); only a URL OLDER than the request is a config error.
+
     Only enforced when BOTH a version is configured and one can be parsed from
-    the URL; a blank version or an unparseable URL yields None (no opinion).
+    the URL; an omitted version or an unparseable URL yields None (no opinion).
+    "Omitted" means ONLY ``None`` or a blank/whitespace string -- a present but
+    non-blank value such as ``0`` is NOT treated as omitted (that would let it
+    bypass validation and silently disable install verification); it reaches the
+    strict check and is reported. A configured version that is present but not a
+    STRICT ANC version token (e.g. ``0``, ``1.7.0-rc.bad`` or ``release-1.7.0``)
+    IS a problem and is reported so the run fails fast instead of contacting
+    nodes with a bad config -- the strict check is required because the
+    comparator tolerates surrounding text and would otherwise silently read
+    ``release-1.7.0`` as ``1.7.0``.
     Applies to legacy and direct packaging alike so a user cannot point a run at
-    the wrong archive for the version they asked for.
+    an archive that cannot satisfy the version they asked for.
     '''
     anc_cfg = config_dict.get("anc", {}) or {}
     configured = anc_cfg.get("anc_version")
     url = anc_cfg.get("anc_release_url")
-    if not configured or not str(configured).strip():
+    if configured is None or (isinstance(configured, str) and not configured.strip()):
         return None
+    if not is_strict_anc_version(configured):
+        return (
+            f"config anc.anc_version ({configured}) is not a valid ANC version; "
+            f"expected a dotted release like 1.7.0 or 1.7.0-rc.1"
+        )
     url_version = parse_version_from_url(url)
     if not url_version:
         return None
-    if str(configured).strip() != url_version:
+    if compare_anc_versions(str(configured).strip(), url_version) > 0:
         return (
-            f"config anc.anc_version ({configured}) does not match the version in "
-            f"anc.anc_release_url ({url_version}); fix one so they agree before running"
+            f"config anc.anc_version ({configured}) is newer than the version in "
+            f"anc.anc_release_url ({url_version}); the archive cannot provide the "
+            f"requested version -- lower anc_version or point the URL at a newer archive"
         )
     return None
 
@@ -648,7 +798,8 @@ def validate_anc_config(config_dict, cluster_dict, require_log_folder):
 
       - anc.anc_release_url present and non-blank (an empty URL would otherwise
         crash install_anc with an uncaught error);
-      - anc.anc_version, when set, matches the version in the URL;
+      - anc.anc_version, when set, is a valid version token and is <= the
+        version in the URL (the archive must be able to satisfy the request);
       - anc.ANC_INSTALL_PATH resolves to a safe, non-root prefix (the shell-safe
         + non-root guards in resolve_anc_install_prefix are surfaced here as a
         clean message rather than a mid-run traceback);
@@ -767,7 +918,7 @@ def resolve_anc_paths_from_config(config_dict):
 # --content-list has no version column and no anc-release-* plugin at all, so
 # this pattern deliberately never matches there (legacy uses --version instead).
 ANC_RELEASE_PLUGIN_RE = re.compile(
-    r"^\s*anc-release-\S+\s+(\d+\.\d+(?:\.\d+)*)\b",
+    r"^\s*anc-release-\S+\s+(" + _VERSION_BODY + r")" + _VERSION_END,
     re.MULTILINE,
 )
 
@@ -804,39 +955,95 @@ def node_release_versions(phdl, anc_bin=ANC_BIN):
     return {host: parse_release_version_from_content_list(output) for host, output in out_dict.items()}
 
 
-def node_version_matches(phdl, expected_version, anc_bin=ANC_BIN, is_direct=False):
+def _parse_version_from_version_output(output):
     '''
-    Query ANC on every node and report which nodes report ``expected_version``.
+    Extract the ANC release version (with any ``-rc.<n>``) from ``--version``
+    output, or None. ANC's ``--version`` prints the release on a labelled line
+    ``Release Version: <version>`` (see anclib ``_display_versions``); the
+    version is read ONLY from that record.
 
-    Mechanism depends on packaging generation:
-      - DIRECT (1.5.0+, ``is_direct=True``): parse ``<anc_bin> --content-list``
-        and compare the ``anc-release-*`` plugin's version column, because
-        ``anc.py --version`` on 1.5.0+ reports the tool version, not the release.
-      - LEGACY (<=1.4.x, ``is_direct=False``): match ``<anc_bin> --version``
-        output, whose version IS the release version there.
+    Anchoring to the label is deliberate: a bare "first dotted number" scan over
+    combined stdout/stderr would mis-read an unrelated number -- e.g. a warning
+    printed before the version, or the ``1.6.0`` inside a relocatable path in a
+    shell ``/opt/anc-1.6.0/anc/anc.py: No such file`` error when ANC is absent --
+    and let the precheck/verify pass on a value that is not the installed
+    release. No ``Release Version:`` line -> None (absent / command failure).
+
+    The LABEL is matched case-insensitively (ANC prints it as ``Release
+    Version:`` / ``ANC Release Version:``, and CVS already treats ANC's labels as
+    case-varying -- see LOG_DIRECTORY_RE), but the version TOKEN stays
+    case-sensitive so an uppercase ``-RC.n`` is not silently read as its base.
+    '''
+    match = re.search(
+        r"(?i:Release\s+Version:)\s*(" + _VERSION_BODY + r")" + _VERSION_END,
+        output or "",
+    )
+    return match.group(1) if match else None
+
+
+def node_installed_versions(phdl, anc_bin=ANC_BIN):
+    '''
+    Return the installed ANC release version per host, detecting the packaging
+    GENERATION from what each node actually reports -- never from the requested
+    URL (a node may already run a different generation than this run installs).
+
+    Per host:
+      - DIRECT (1.5.0+): ``<anc_bin> --content-list`` carries an
+        ``anc-release-*`` plugin line whose version column is the release
+        version. When that line is present it is authoritative (direct
+        ``--version`` reports the tool version, not the release, so it must not
+        be used here).
+      - LEGACY (<=1.4.x): ``--content-list`` has no ``anc-release-*`` line, so
+        the node falls back to ``<anc_bin> --version`` (whose version IS the
+        release version on legacy). This fallback also covers the absent case,
+        where both probes yield None.
+
+    Returns:
+      dict[str, str | None]: host -> installed release version, or None when ANC
+      is absent / unreachable / reports no parseable version.
+    '''
+    direct = node_release_versions(phdl, anc_bin=anc_bin)
+    legacy_hosts = [host for host, version in direct.items() if version is None]
+    if not legacy_hosts:
+        return direct
+
+    # Only the hosts with no anc-release-* line need the legacy --version probe.
+    out_dict = phdl.exec(f"{anc_bin} --version 2>&1 || true", timeout=60)
+    print_test_output(log, out_dict)
+    resolved = dict(direct)
+    for host in legacy_hosts:
+        resolved[host] = _parse_version_from_version_output(out_dict.get(host))
+    return resolved
+
+
+def node_version_matches(phdl, expected_version, anc_bin=ANC_BIN):
+    '''
+    Query ANC on every node and report which nodes SATISFY ``expected_version``.
+
+    A node satisfies the expected version when its installed version is
+    ``>= expected_version`` under compare_anc_versions (ANC ordering: a release
+    candidate is treated as equal to its base release, and rc-vs-rc of the same
+    base compares by rc number). This lets a newer install satisfy an older
+    request and lets an installed ``1.7.0-rc.1`` satisfy a requested ``1.7.0``.
+
+    The installed version is read via node_installed_versions, which detects
+    each node's packaging generation from its own output (``--content-list``
+    first, legacy ``--version`` only when no ``anc-release-*`` line is present),
+    so a node already running a different generation than the requested URL is
+    still compared against its true release version.
 
     ``anc_bin`` is the anc.py entrypoint path; it defaults to the fixed-prefix
     ANC_BIN but callers pass the per-install path (which may be a relocated tar
     prefix) so the check hits the location ANC was actually installed to.
 
-    DIRECT compares the parsed version by exact equality. LEGACY matches
-    ``--version`` output as a whole token (bounded by non-version characters),
-    not a substring, so expecting "1.4.7" does NOT match "1.4.70" or "1.4.7-rc".
-
     Returns:
-      dict[str, bool]: host -> True when the node reports ``expected_version``
-      (False if ANC is absent or reports a different version).
+      dict[str, bool]: host -> True when the node's installed version satisfies
+      ``expected_version`` (False if ANC is absent or reports a lower version).
     '''
-    if is_direct:
-        parsed = node_release_versions(phdl, anc_bin=anc_bin)
-        return {host: version == expected_version for host, version in parsed.items()}
-
-    out_dict = phdl.exec(f"{anc_bin} --version 2>&1 || true", timeout=60)
-    print_test_output(log, out_dict)
-    # Boundaries are any char that isn't part of a version token (digits, dots,
-    # hyphens, alphanumerics) so "1.4.7" won't match inside "1.4.70"/"1.4.7-rc".
-    version_re = re.compile(r"(?<![\w.\-])" + re.escape(expected_version) + r"(?![\w.\-])")
-    return {host: bool(version_re.search(output or "")) for host, output in out_dict.items()}
+    parsed = node_installed_versions(phdl, anc_bin=anc_bin)
+    return {
+        host: bool(version) and anc_version_satisfies(version, expected_version) for host, version in parsed.items()
+    }
 
 
 def install_anc(phdl, cluster_dict, config_dict):
@@ -846,12 +1053,14 @@ def install_anc(phdl, cluster_dict, config_dict):
     The packaging kind is inferred from the ``anc_release_url`` archive name
     (``-deb-`` / ``-rpm-`` / ``-tar-``) and the matching installer is invoked.
     When ``anc_version`` is set in config, a precheck runs first: install is
-    skipped ONLY if every expected node already reports that version. After
-    installing, the same version check runs as the final step to confirm the
-    target version is present on all nodes. The version is read via
-    ``anc.py --content-list`` (the ``anc-release-*`` plugin's version column) for
-    DIRECT 1.5.0+ packaging, and via ``anc.py --version`` for legacy <=1.4.x
-    (whose ``--version`` reports the release version; 1.5.0+ does not).
+    skipped ONLY if every expected node already SATISFIES that version
+    (installed >= requested). If any node is below it, the installer runs on all
+    nodes (already-satisfying nodes are reinstalled). After installing, the same
+    satisfies-check runs as the final step to confirm every node satisfies the
+    target version. The installed version is read per node with the packaging
+    generation auto-detected from each node's own output (``anc.py
+    --content-list`` for DIRECT 1.5.0+, falling back to ``anc.py --version`` for
+    legacy <=1.4.x) -- see node_version_matches.
 
     Node coverage: ``phdl.exec`` returns only reachable hosts, so any expected
     node (from ``cluster_dict["node_dict"]``) that is unreachable is treated as
@@ -886,15 +1095,16 @@ def install_anc(phdl, cluster_dict, config_dict):
 
     expected = _expected_nodes(cluster_dict)
 
-    # Precheck: skip install only when EVERY expected node already runs the
-    # target version. A missing (unreachable) node yields matches.get(host)
-    # == None -> falsy, so we never skip on incomplete coverage.
+    # Precheck: skip install only when EVERY expected node already SATISFIES the
+    # target version (installed >= requested). A missing (unreachable) node
+    # yields matches.get(host) == None -> falsy, so we never skip on incomplete
+    # coverage.
     if anc_version:
-        log.info("ANC precheck: expecting version %s", anc_version)
-        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin, is_direct=flavour.is_direct)
+        log.info("ANC precheck: expecting version >= %s", anc_version)
+        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin)
         if expected and all(matches.get(host) for host in expected):
             log.info(
-                "ANC %s already installed on all nodes; skipping install",
+                "All nodes already satisfy ANC %s (installed >= requested); skipping install",
                 anc_version,
             )
             update_test_result()
@@ -929,9 +1139,8 @@ def install_anc(phdl, cluster_dict, config_dict):
     # install can't pass version verification, and this keeps the failure
     # detail focused).
     if anc_version and not globals.error_list:
-        log.info("ANC final verification: expecting version %s", anc_version)
-        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin, is_direct=flavour.is_direct)
-        verify_source = "--content-list" if flavour.is_direct else "--version"
+        log.info("ANC final verification: expecting version >= %s", anc_version)
+        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin)
         for host in expected:
             if host not in matches:
                 fail_test(
@@ -940,9 +1149,7 @@ def install_anc(phdl, cluster_dict, config_dict):
             elif matches[host]:
                 log.info("Node %s: ANC version %s confirmed", host, anc_version)
             else:
-                fail_test(
-                    f"ANC version verification failed on {host}: expected {anc_version} from '{paths.anc_bin} {verify_source}'"
-                )
+                fail_test(f"ANC version verification failed on {host}: expected {anc_version} at '{paths.anc_bin}'")
 
     update_test_result()
 
@@ -1589,9 +1796,10 @@ def _anc_installed(phdl, cluster_dict, config_dict):
     "Installed" is judged at the per-install anc.py location (a relocated tar
     prefix when configured, else the default), so a run configured for a new
     prefix does not treat a leftover install at the old location as present.
-    When ``anc.anc_version`` is set, "installed" means every node reports that
-    version there (via --content-list for DIRECT 1.5.0+, --version for legacy);
-    otherwise it means that anc.py is present on every node.
+    When ``anc.anc_version`` is set, "installed" means every node reports a
+    satisfying version there (each node's generation is auto-detected via
+    node_version_matches); otherwise it means that anc.py is present on every
+    node.
     '''
     expected = _expected_nodes(cluster_dict)
     if not expected:
@@ -1601,12 +1809,7 @@ def _anc_installed(phdl, cluster_dict, config_dict):
 
     anc_version = config_dict.get("anc", {}).get("anc_version")
     if anc_version:
-        url = config_dict.get("anc", {}).get("anc_release_url") or ""
-        try:
-            is_direct = detect_package_flavour(url).is_direct if url and str(url).strip() else False
-        except ValueError:
-            is_direct = False
-        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin, is_direct=is_direct)
+        matches = node_version_matches(phdl, anc_version, anc_bin=paths.anc_bin)
         return all(matches.get(host) for host in expected)
 
     out_dict = phdl.exec(f"test -f '{paths.anc_bin}' && echo ANC_PRESENT || true", timeout=60)
@@ -1695,6 +1898,54 @@ def _chown_tree_to_runner(host, root_path):
         log.warning("Node %s: could not chown log tree %s: %s", host, root_path, exc)
 
 
+def _is_within_directory(directory, target):
+    '''
+    True when ``target`` resolves to a path inside ``directory`` (inclusive).
+
+    Uses ``realpath`` (not lexical ``abspath``) so SYMLINKS are resolved: a
+    pre-existing ``directory/sub -> /outside`` symlink makes a regular
+    ``sub/x`` member resolve outside and correctly fail the check. ``dest_dir``
+    is created with ``exist_ok=True`` and may already contain such a link, so a
+    lexical check would be bypassable. ``target``'s own leaf may not exist yet;
+    ``realpath`` resolves the existing prefix and leaves the rest lexical, which
+    is what we want (the parent chain is what a symlink attack subverts).
+    '''
+    real_dir = os.path.realpath(directory)
+    real_target = os.path.realpath(target)
+    return os.path.commonpath([real_dir, real_target]) == real_dir
+
+
+def _safe_tar_extract(tf, dest_dir):
+    '''
+    Extract ``tf`` into ``dest_dir`` rejecting any member that would escape it
+    or create a special file.
+
+    Used as the fallback on interpreters without ``extractall(filter="data")``
+    (added in 3.12 / backported to 3.9.17+, 3.10.12+, 3.11.4+). Each member is
+    validated, then extracted INDIVIDUALLY so no bulk ``extractall`` ever runs on
+    unvalidated members. Only regular files and directories are allowed:
+      - its final path (resolved through symlinks, see _is_within_directory)
+        must stay within ``dest_dir`` -- no absolute path, no ``..`` traversal,
+        and no escape through a pre-existing symlink in the destination, and
+      - symlink, hardlink, device, and FIFO members are rejected outright.
+        Rejecting LINKS is deliberate: it stops the archive from planting a
+        symlink that a LATER member then writes through (a chained-symlink
+        sequence ``a -> .``; ``a/c -> ../out``; then ``a/c/pwn``). ANC log
+        archives contain no links, so rejecting them costs nothing and closes
+        the whole traversal class (device/FIFO rejection likewise prevents a
+        node-controlled archive dropping a special file on the controller).
+    Any violation raises ``tarfile.TarError`` (caught by the caller) instead of
+    extracting.
+    '''
+    for member in tf.getmembers():
+        if not (member.isfile() or member.isdir()):
+            raise tarfile.TarError(f"unsafe non-regular member in tar archive ({member.type!r}): {member.name!r}")
+        target = os.path.join(dest_dir, member.name)
+        if not _is_within_directory(dest_dir, target):
+            raise tarfile.TarError(f"unsafe path in tar archive: {member.name!r}")
+        tf.extract(member, dest_dir)
+
+
 def _pull_log_dir(single, host, user, log_dir, dest_dir):
     '''
     Copy the ENTIRE ANC log directory from the node into dest_dir.
@@ -1756,12 +2007,13 @@ def _pull_log_dir(single, host, user, log_dir, dest_dir):
         with tarfile.open(local_tar) as tf:
             # filter="data" sanitizes members (no absolute paths / "../" escapes)
             # and silences the 3.12+ extractall deprecation. The param was added
-            # in 3.12 / backported to 3.9.17+, 3.10.12+, 3.11.4+; fall back for
-            # older interpreters (repo targets python>=3.9).
+            # in 3.12 / backported to 3.9.17+, 3.10.12+, 3.11.4+; on older
+            # interpreters (repo targets python>=3.9) fall back to the explicit
+            # member-validating extractor, which enforces the same containment.
             try:
                 tf.extractall(dest_dir, filter="data")
             except TypeError:
-                tf.extractall(dest_dir)
+                _safe_tar_extract(tf, dest_dir)
     except Exception as exc:
         return None, f"could not extract log archive for {log_dir}: {exc}"
     finally:

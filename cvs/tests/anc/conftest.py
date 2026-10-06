@@ -79,8 +79,10 @@ def config_dict(config_file, cluster_dict, pytestconfig):
     it is not re-checked here. This fixture additionally fails the run before any
     ANC command runs on:
 
-      - a configured anc_version that disagrees with the version parsed from
-        anc_release_url (aborts before any node is contacted); and
+      - a configured anc_version that is invalid or GREATER than the version
+        parsed from anc_release_url -- the archive must be able to satisfy the
+        request, so the rule is anc_version <= url_version (a lower requested
+        version is fine; aborts before any node is contacted); and
       - a missing/blank anc.log_folder_path for the group suites (anc_test_*),
         which write logs + the HTML report under it (the install-only suite does
         not need it).
