@@ -46,7 +46,7 @@ _FINDINGS_RE = re.compile(
 )
 
 # Shared Primus checkout and venv install settings inherit from Node Smoke Tier 1.
-# torch_pip_index_url must inherit: otherwise Tier 3 uses the rocm6.2 default and
+# torch_pip_index_url must inherit: otherwise Tier 3 uses the rocm7.2 default and
 # replaces the wheel Tier 1 already installed. Operational knobs (connectivity_mode,
 # timeouts, dump_path, NCCL overrides, etc.) stay node_smoke_tier3-local.
 _TIER3_TIER1_FALLBACK_KEYS = frozenset({"primus_dir", "venv_activate", "pip_install_mode", "torch_pip_index_url"})

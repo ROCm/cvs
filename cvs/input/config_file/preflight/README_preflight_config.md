@@ -344,10 +344,10 @@ Legacy config key `node_smoke` is accepted as an alias for `node_smoke_tier1`.
   - Leader node clones/installs on shared NFS home; other nodes wait (recommended for shared home)
 - **`pip_install_mode`** (default: `"minimal"`)
   - `"minimal"` — ROCm PyTorch only; `"requirements"` — `pip install -r requirements.txt`; `"skip"` — venv only
-- **`torch_pip_index_url`** (default: `"https://download.pytorch.org/whl/rocm6.2"`)
+- **`torch_pip_index_url`** (default: `"https://download.pytorch.org/whl/rocm7.2"`)
   - PyTorch wheel index for minimal install; match your ROCm version
   - auto_setup reinstalls an importable torch whose HIP major.minor does not match `rocm<major>.<minor>` in this URL
-  - An older wheel that imports, then crashes on the first kernel, is replaced. An index URL without that token always reinstalls.
+  - An older wheel that imports, then crashes on the first kernel, is replaced. An index URL without that token reinstalls only when torch does not import.
 - **`primus_git_url`** (default: `"https://github.com/AMD-AIG-AIMA/Primus.git"`)
 - **`primus_git_branch`** (default: `"dev/preflight-direct-test"`)
 - **`primus_git_recurse_submodules`** (default: `false`)

@@ -32,7 +32,7 @@ _SHELL_ERROR_RE = re.compile(
 _ROCM_INDEX_RE = re.compile(r"rocm(\d+)\.(\d+)", re.IGNORECASE)
 
 # Primus preflight-direct docs: node_smoke needs torch (ROCm build) only.
-_DEFAULT_TORCH_INDEX = "https://download.pytorch.org/whl/rocm6.2"
+_DEFAULT_TORCH_INDEX = "https://download.pytorch.org/whl/rocm7.2"
 _SETUP_OK_MARKER = "CVS_PRIMUS_SETUP_OK"
 
 
@@ -157,9 +157,11 @@ def _torch_hip_match_shell(python_q, expected_mm):
 def _torch_reinstall_shell(python_q, index_q):
     # Uninstall first so a higher version number from another ROCm index cannot
     # satisfy ``pip install`` and leave the incompatible wheel in place.
+    # The brace group keeps ``|| true`` from swallowing a failed earlier step
+    # when this snippet is spliced into ``create_venv && ... && verify``.
     return (
-        f"{python_q} -m pip uninstall -y torch || true; "
-        f"{python_q} -m pip install torch --index-url {index_q} --no-cache-dir"
+        f"{{ {python_q} -m pip uninstall -y torch || true; "
+        f"{python_q} -m pip install torch --index-url {index_q} --no-cache-dir; }}"
     )
 
 
@@ -239,15 +241,17 @@ def build_primus_venv_install_command(
     else:
         # minimal: ROCm torch only (Primus node_smoke). No pip install -e .
         # Reinstall when the wheel is missing or importable but built for another
-        # ROCm/HIP. An index URL with no rocm<major>.<minor> always reinstalls.
+        # ROCm/HIP. An index with no rocm<major>.<minor> cannot check HIP, so leave
+        # an importable torch in place. Uninstalling first would empty the shared
+        # venv if the mirror then fails.
         python_q = _venv_python_quoted(venv_activate)
         reinstall = _torch_reinstall_shell(python_q, index_q)
         expected_mm = rocm_major_minor_from_index_url(torch_pip_index_url)
         if expected_mm:
             ready = _torch_hip_match_shell(python_q, expected_mm)
-            install = f"if ! {ready} 2>/dev/null; then {reinstall}; fi"
         else:
-            install = reinstall
+            ready = f"{python_q} -c {shlex.quote('import torch')}"
+        install = f"if ! {ready} 2>/dev/null; then {reinstall}; fi"
         verify_index = torch_pip_index_url
 
     verify = build_primus_verify_command(

@@ -21,6 +21,7 @@ from cvs.lib.preflight.primus_setup import (
     _resolve_setting_from_sections,
     _torch_hip_check_script,
     _torch_hip_match_shell,
+    _torch_reinstall_shell,
     _venv_root_from_activate,
 )
 from cvs.lib.preflight.node_smoke import (
@@ -132,6 +133,8 @@ class TestPrimusSetupCommands(unittest.TestCase):
         self.assertIn("runner/primus-cli", cmd)
         self.assertIn("import torch", cmd)
         self.assertNotIn('if ! python -c "import torch"', cmd)
+        self.assertIn("https://download.pytorch.org/whl/rocm7.2", cmd)
+        self.assertIn(shlex.quote(_torch_hip_check_script("7.2")), cmd)
 
     def test_minimal_install_replaces_importable_incompatible_torch(self):
         index = "https://download.pytorch.org/whl/rocm7.2"
@@ -149,16 +152,29 @@ class TestPrimusSetupCommands(unittest.TestCase):
         self.assertNotIn('if ! python -c "import torch"', cmd)
         subprocess.run(["bash", "-n", "-c", cmd], check=True)
 
-    def test_index_without_rocm_token_always_reinstalls(self):
+    def test_reinstall_group_does_not_run_after_failed_prefix(self):
+        python_q = shlex.quote("/nonexistent/cvs-primus-python")
+        reinstall = _torch_reinstall_shell(python_q, shlex.quote("https://example.invalid/simple"))
+        script = f"false && {reinstall} && echo SHOULD_NOT_RUN"
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("SHOULD_NOT_RUN", result.stdout)
+        self.assertNotIn("cvs-primus-python", result.stdout + result.stderr)
+
+    def test_index_without_rocm_token_skips_reinstall_when_torch_imports(self):
+        activate = "/home/user/envs/preflight/.venv/bin/activate"
         cmd = build_primus_venv_install_command(
             primus_dir="/home/user/Primus",
-            venv_activate="/home/user/envs/preflight/.venv/bin/activate",
+            venv_activate=activate,
             pip_install_mode="minimal",
             torch_pip_index_url="https://example.invalid/simple",
         )
-        self.assertIn("pip uninstall -y torch", cmd)
-        self.assertNotIn("if !", cmd)
+        python_q = shlex.quote(os.path.join("/home/user/envs/preflight/.venv", "bin", "python"))
+        ready = f"{python_q} -c {shlex.quote('import torch')}"
+        self.assertIn(ready, cmd)
+        self.assertLess(cmd.index("if !"), cmd.index("pip uninstall -y torch"))
         self.assertNotIn("torch.version", cmd)
+        subprocess.run(["bash", "-n", "-c", cmd], check=True)
 
     def test_skip_mode_does_not_reinstall_torch(self):
         cmd = build_primus_venv_install_command(
