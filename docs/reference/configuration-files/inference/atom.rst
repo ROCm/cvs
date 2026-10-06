@@ -75,6 +75,15 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_vllm_gpt-oss-120b_mxfp4``
      - ``_single``
      - GPT-OSS MXFP4 vLLM parity (serving schema)
+   * - ``mi3xx_atom_glm-5.2_fp8``
+     - ``_single`` (``perf`` + ``mtp3``)
+     - Native ATOM MI300X/MI308X TP8; bring-up thresholds
+   * - ``mi3xx_atom_vllm_glm-5.2_fp8``
+     - ``_single``, ``_distributed``
+     - vLLM MI300X/MI308X TP8; distributed PP=2; bring-up thresholds
+   * - ``mi3xx_atom_sglang_glm-5.2_fp8``
+     - ``_single``, ``_distributed``
+     - SGLang MI300X/MI308X TP8; distributed PP=2; bring-up thresholds
    * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
      - Qwen FP8 vLLM parity; distributed uses PP=2; lab pending
