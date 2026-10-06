@@ -16,7 +16,8 @@ Configs are lab-validated unless a row is marked pending.
 | `mi3xx_atom_deepseek-r1_fp8` | `_single` (profiles: `perf`, `mtp3`), `_distributed` (`vllm_atom` PP=2) | native `atom` / `vllm_atom` |
 | `mi3xx_atom_qwen3.5-397b-a17b_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` |
 | `mi3xx_atom_vllm_deepseek-r1_fp8` | `_single` | `vllm_atom` (serving schema) |
-| `mi3xx_atom_vllm_gpt-oss-120b_mxfp4` | `_single` | `vllm_atom` (serving schema) |
+| `mi3xx_atom_vllm_gpt-oss-120b_mxfp4` | `_single`, `_distributed` | `vllm_atom` (serving schema; distributed is PP=2 at the shipped TP4) |
+| `mi3xx_atom_gpt-oss-120b_mxfp4` | `_single` | native `atom` (single GPU; bring-up thresholds) |
 | `mi3xx_atom_vllm_glm-5.1_fp8` | `_single`, `_distributed` | `vllm_atom` (no native or SGLang serve recipe; bring-up thresholds) |
 | `mi3xx_atom_glm-5.2_fp8` | `_single` (profiles: `perf`, `mtp3`) | native `atom` (MI300X/MI308X TP8; bring-up thresholds) |
 | `mi3xx_atom_vllm_glm-5.2_fp8` | `_single`, `_distributed` | `vllm_atom` (bring-up thresholds) |
