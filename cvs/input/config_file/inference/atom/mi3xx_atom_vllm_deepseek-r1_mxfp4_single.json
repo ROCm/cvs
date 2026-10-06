@@ -1,0 +1,94 @@
+{
+  "_comment": "DeepSeek-R1 MXFP4 vLLM recipe serves amd/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4 on MI355X, TP8. Bring-up thresholds.",
+  "gpu_arch": "mi355x",
+  "enforce_thresholds": false,
+  "threshold_json": "mi325x_atom_vllm_deepseek-r1_mxfp4_single_threshold.json",
+  "paths": {
+    "shared_fs": "/home/{user-id}",
+    "models_dir": "/models",
+    "log_dir": "{shared_fs}/LOGS",
+    "hf_token_file": "{shared_fs}/.hf_token"
+  },
+  "model": {
+    "id": "amd/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4",
+    "remote": 0,
+    "precision": "mxfp4"
+  },
+  "container": {
+    "lifetime": "per_run",
+    "name": "vllm_mi3xx_r1mx_single",
+    "image": "<changeme>",
+    "runtime": {
+      "name": "docker",
+      "args": {
+        "network": "host",
+        "ipc": "host",
+        "privileged": true,
+        "shm_size": "128G",
+        "volumes": [
+          "/home/{user-id}:/home/{user-id}",
+          "<changeme-models-mount>:/models:ro"
+        ],
+        "devices": [
+          "/dev/dri",
+          "/dev/kfd"
+        ]
+      }
+    }
+  },
+  "server_params": {
+    "backend": "vllm_atom",
+    "nnodes": "1",
+    "model": "amd/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4",
+    "tensor_parallelism": "8",
+    "pipeline_parallelism": "1",
+    "port_no": "8000",
+    "serve_args": {
+      "async-scheduling": true,
+      "load-format": "fastsafetensors",
+      "trust-remote-code": true,
+      "compilation-config": "{\"cudagraph_mode\": \"FULL_AND_PIECEWISE\"}",
+      "kv-cache-dtype": "fp8",
+      "max-num-batched-tokens": 16384,
+      "gpu-memory-utilization": "0.9",
+      "no-enable-prefix-caching": true
+    },
+    "env": {
+      "AITER_QUICK_REDUCE_QUANTIZATION": "INT4"
+    }
+  },
+  "benchmark_params": {
+    "backend": "vllm",
+    "data_set_name": "random",
+    "num_prompts": "1000",
+    "random_range_ratio": "0.8",
+    "max_model_length": "16384",
+    "metric_percentiles": "95,99",
+    "client_poll_count": "80",
+    "client_poll_wait_time": "60",
+    "reuse_server_across_sweep": "true"
+  },
+  "sweeps": {
+    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=32": {},
+    "ISL=1024,OSL=1024,TP=8,PP=1,CONC=64": {},
+    "ISL=128,OSL=32,TP=8,PP=1,CONC=1": {}
+  },
+  "runs": [],
+  "platform": {
+    "gpu_metrics_poll": true
+  },
+  "functional": {
+    "api_smoke": true,
+    "health_check": true
+  },
+  "accuracy": {
+    "tasks": [
+      {
+        "id": "gsm8k_flex",
+        "task": "gsm8k",
+        "num_fewshot": 5,
+        "num_concurrent": 4
+      }
+    ]
+  }
+}
