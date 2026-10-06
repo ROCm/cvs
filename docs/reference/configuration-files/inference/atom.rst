@@ -105,6 +105,15 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_sglang_minimax-m3_mxfp4``
      - ``_single``, ``_distributed``
      - SGLang TP4; distributed PP=2; bring-up thresholds
+   * - ``mi3xx_atom_deepseek-r1_mxfp4``
+     - ``_single`` (``perf`` + ``mtp3``)
+     - Native ATOM ``amd/DeepSeek-R1-0528-MXFP4`` TP8; mtp3 uses the MTP checkpoint; bring-up thresholds
+   * - ``mi3xx_atom_vllm_deepseek-r1_mxfp4``
+     - ``_single``, ``_distributed``
+     - vLLM ``amd/DeepSeek-R1-0528-MXFP4-MTP-MoEFP4``; bring-up thresholds
+   * - ``mi3xx_atom_sglang_deepseek-r1_mxfp4``
+     - ``_single``, ``_distributed``
+     - SGLang ``amd/DeepSeek-R1-0528-MXFP4-v2``; bring-up thresholds
    * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
      - Qwen FP8 vLLM parity; distributed uses PP=2; lab pending
