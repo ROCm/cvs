@@ -565,6 +565,64 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
             "mi355x_atom_kimi-k27-code_mxfp4_single_threshold.json",
         )
 
+    def test_load_mi355x_copies_of_gfx942_stems(self):
+        root = Path(__file__).resolve().parents[3]
+        cases = (
+            ("mi355x_atom_deepseek-r1_fp8_single.json", "atom", "deepseek-ai/DeepSeek-R1-0528", "1"),
+            ("mi355x_atom_vllm_deepseek-r1_fp8_single.json", "vllm_atom", "deepseek-ai/DeepSeek-R1-0528", "1"),
+            ("mi355x_atom_vllm_deepseek-r1_fp8_distributed.json", "vllm_atom", "deepseek-ai/DeepSeek-R1-0528", "2"),
+            ("mi355x_atom_sglang_deepseek-r1_fp8_single.json", "sglang", "deepseek-ai/DeepSeek-R1-0528", "1"),
+            ("mi355x_atom_sglang_deepseek-r1_fp8_distributed.json", "sglang", "deepseek-ai/DeepSeek-R1-0528", "2"),
+            ("mi355x_atom_qwen3.5-397b-a17b_fp8_single.json", "atom", "amd/Qwen3.5-397B-A17B-FP8", "1"),
+            ("mi355x_atom_vllm_qwen3.5-397b-a17b_fp8_single.json", "vllm_atom", "amd/Qwen3.5-397B-A17B-FP8", "1"),
+            (
+                "mi355x_atom_vllm_qwen3.5-397b-a17b_fp8_distributed.json",
+                "vllm_atom",
+                "amd/Qwen3.5-397B-A17B-FP8",
+                "2",
+            ),
+            ("mi355x_atom_sglang_qwen3.5-397b-a17b_fp8_single.json", "sglang", "amd/Qwen3.5-397B-A17B-FP8", "1"),
+            (
+                "mi355x_atom_sglang_qwen3.5-397b-a17b_fp8_distributed.json",
+                "sglang",
+                "amd/Qwen3.5-397B-A17B-FP8",
+                "2",
+            ),
+        )
+        for name, driver, model_id, nnodes in cases:
+            with self.subTest(name=name):
+                variant = _atom_config(root, name)
+                self.assertEqual(variant.gpu_arch, "mi355x")
+                self.assertEqual(variant.params.driver, driver)
+                self.assertEqual(variant.model.id, model_id)
+                self.assertEqual(variant.params.nnodes, nnodes)
+                self.assertTrue(variant.threshold_json.startswith("mi355x_atom_"))
+                self.assertFalse(variant.enforce_thresholds)
+                self.assertTrue(str(variant.roles.server.env.get("HF_HUB_CACHE", "")).endswith(".cache/huggingface"))
+                if driver == "sglang":
+                    self.assertEqual(variant.roles.server.env.get("SGLANG_ROCM_ARCH"), "gfx950")
+                    self.assertNotEqual(variant.roles.server.env.get("SGLANG_ROCM_ARCH"), "gfx942")
+
+    def test_load_v4_pro_parity_variants(self):
+        root = Path(__file__).resolve().parents[3]
+        vllm = _atom_config(root, "mi355x_atom_vllm_deepseek-v4-pro_single.json")
+        self.assertEqual(vllm.gpu_arch, "mi355x")
+        self.assertEqual(vllm.model.id, "deepseek-ai/DeepSeek-V4-Pro")
+        self.assertEqual(vllm.model.precision, "fp4")
+        self.assertEqual(vllm.params.driver, "vllm_atom")
+        self.assertEqual(vllm.params.tensor_parallelism, "8")
+        self.assertNotIn("kv-cache-dtype", vllm.roles.server.serve_args)
+        cells = set(vllm.expected_cells())
+        self.assertIn("ISL=1024,OSL=1024,TP=8,PP=1,CONC=128", cells)
+        self.assertIn("ISL=128,OSL=32,TP=8,PP=1,CONC=1", cells)
+
+        sglang = _atom_config(root, "mi355x_atom_sglang_deepseek-v4-pro_single.json")
+        self.assertEqual(sglang.params.driver, "sglang")
+        self.assertEqual(sglang.model.precision, "fp4")
+        self.assertEqual(sglang.roles.server.env.get("SGLANG_ROCM_ARCH"), "gfx950")
+        self.assertNotIn("--kv-cache-dtype", sglang.roles.server.sglang_args)
+        self.assertFalse(sglang.enforce_thresholds)
+
     def test_load_v4_pro_mi355x_atom_variant(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi355x_atom_deepseek-v4-pro_single.json")
