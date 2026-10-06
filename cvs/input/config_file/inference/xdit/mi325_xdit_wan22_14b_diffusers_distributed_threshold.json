@@ -4,5 +4,8 @@
   },
   "mi325": {
     "max_avg_pipe_time_s": 300.0
+  },
+  "mi355": {
+    "max_avg_pipe_time_s": 400.0
   }
 }

@@ -1,18 +1,18 @@
 {
-    "_comment": "FLUX.1-dev distributed xDiT workload. Replace every <changeme> NCCL/network field before running.",
+    "_comment": "FLUX.2-dev distributed xDiT workload. Replace every <changeme> NCCL/network field before running.",
     "gpu_name" : "<changeme> mi355",
     "enforce_thresholds": true,
-    "threshold_json": "mi325_xdit_flux1_dev_distributed_threshold.json",
+    "threshold_json": "mi325_xdit_flux2_dev_distributed_threshold.json",
     "paths": {
       "shared_fs": "/home/{user-id}",
-      "models_dir": "/home/{user-id}",
-      "log_dir": "{home}/cvs_flux1_output",
+      "models_dir": "/home/{user-id}/.cache/huggingface",
+      "log_dir": "{home}/cvs_flux2_output",
       "hf_token_file": "/home/{user-id}/.hf_token"
     },
     "container": {
       "lifetime": "per_run",
-      "name": "flux-benchmark_distributed",
-      "_image_example": "amdsiloai/pytorch-xdit:v25.11.2",
+      "name": "flux2-benchmark_distributed",
+      "_image_example": "rocm/ufb-private:xdit-gfx950-py3.12-prereleases-rocm10.1.0rc3-6b5b35c",
       "image": "<changeme>",
       "runtime": {
         "name": "docker",
@@ -54,13 +54,15 @@
       "backend": "xdit",
       "nnodes": "2",
       "log_level": "info",
-      "model": "<changeme>"
+      "model": "<changeme> /shared_nfs/models/Flux2-Dev"
     },
     "benchmark_params": {
+      "model_type": "flux2",
+      "guidance_scale": 4.0,
       "prompt": "A small cat",
       "seed": 42,
-      "num_inference_steps": 25,
-      "max_sequence_length": 256,
+      "num_inference_steps": 50,
+      "max_sequence_length": 512,
       "no_use_resolution_binning": true,
       "warmup_steps": 1,
       "warmup_calls": 5,

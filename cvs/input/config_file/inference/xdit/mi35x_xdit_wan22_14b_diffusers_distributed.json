@@ -1,18 +1,18 @@
 {
-    "_comment": "FLUX.1-dev distributed xDiT workload. Replace every <changeme> NCCL/network field before running.",
+    "_comment": "WAN 2.2 Diffusers xFuser distributed workload. server_params.model is a Hugging Face repo id or an absolute host path. Replace every <changeme> NCCL/network field before running.",
     "gpu_name" : "<changeme> mi355",
     "enforce_thresholds": true,
-    "threshold_json": "mi325_xdit_flux1_dev_distributed_threshold.json",
+    "threshold_json": "mi325_xdit_wan22_14b_diffusers_distributed_threshold.json",
     "paths": {
       "shared_fs": "/home/{user-id}",
       "models_dir": "/home/{user-id}",
-      "log_dir": "{home}/cvs_flux1_output",
+      "log_dir": "{home}/cvs_outputs_wan_diff",
       "hf_token_file": "/home/{user-id}/.hf_token"
     },
     "container": {
       "lifetime": "per_run",
-      "name": "flux-benchmark_distributed",
-      "_image_example": "amdsiloai/pytorch-xdit:v25.11.2",
+      "name": "wan22-benchmark_diffusers_distributed",
+      "_image_example": "rocm/ufb-private:xdit-gfx950-py3.12-prereleases-rocm10.1.0rc3-6b5b35c",
       "image": "<changeme>",
       "runtime": {
         "name": "docker",
@@ -25,6 +25,7 @@
             "/home/{user-id}:/home/{user-id}",
             "{paths.models_dir}:/hf_home",
             "{paths.log_dir}:/outputs",
+            "/home/{user-id}/cvs/cvs/lib/inference/xdit/scripts/wan_i2v_example.py:/benchmark/wan_i2v_example.py",
             "/dev/infiniband:/dev/infiniband",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1.0.54.0-149.g3304be71:/usr/lib/x86_64-linux-gnu/libionic.so.1.0.54.0-149.g3304be71:ro",
             "/usr/lib/x86_64-linux-gnu/libionic.so.1:/usr/lib/x86_64-linux-gnu/libionic.so.1:ro",
@@ -54,23 +55,25 @@
       "backend": "xdit",
       "nnodes": "2",
       "log_level": "info",
-      "model": "<changeme>"
+      "model": "<changeme> /shared_nfs/models/Wan2.2-T2V-A14B-Diffusers"
     },
     "benchmark_params": {
-      "prompt": "A small cat",
-      "seed": 42,
-      "num_inference_steps": 25,
-      "max_sequence_length": 256,
-      "no_use_resolution_binning": true,
+      "model_format": "diffusers",
+      "wan_diffusers_launcher": "xfuser_example",
+      "wan_xfuser_auto_input_image": true,
+      "wan_xfuser_install_video_deps": true,
+      "wan_xfuser_output_type": "pil",
+      "require_video_artifact": true,
+      "prompt": "Summer beach vacation style, a white cat wearing sunglasses sits on a surfboard. The fluffy-furred feline gazes directly at the camera with a relaxed expression. Blurred beach scenery forms the background featuring crystal-clear waters, distant green hills, and a blue sky dotted with white clouds. The cat assumes a naturally relaxed posture, as if savoring the sea breeze and warm sunlight. A close-up shot highlights the feline's intricate details and the refreshing atmosphere of the seaside.",
+      "size": "720*1280",
+      "frame_num": 81,
+      "num_benchmark_steps": 1,
+      "num_inference_steps": 40,
       "warmup_steps": 1,
-      "warmup_calls": 5,
-      "num_repetitions": 25,
-      "height": 1024,
-      "width": 1024,
-      "ulysses_degree": 8,
-      "ring_degree": 2,
-      "use_torch_compile": false,
-      "torchrun_nproc": 8
+      "compile": false,
+      "torchrun_nproc": 8,
+      "ulysses_size": 8,
+      "ring_size": 2
     }
   }
   
