@@ -219,11 +219,15 @@ class NormalizeTrainingConfigTests(unittest.TestCase):
         # NCCL IB device selection present -> inferred distributed
         self.assertTrue(internal["training"]["distributed"])
 
-    def test_xla_flags_folded_into_container_env_quoted(self):
+    def test_xla_flags_folded_into_container_env_unquoted(self):
         internal = normalize_training_config(_new_format_config())
         xf = internal["container"]["env"]["XLA_FLAGS"]
-        # wrapped in double quotes so it survives as one docker -e token
-        self.assertTrue(xf.startswith('"') and xf.endswith('"'))
+        # No surrounding quotes: the runtime shlex-quotes each `-e key=value`
+        # token, so literal quotes here would leak into the container value and
+        # JAX would reject XLA_FLAGS (value must start with `--`).
+        self.assertFalse(xf.startswith('"'))
+        self.assertFalse(xf.endswith('"'))
+        self.assertTrue(xf.startswith("--"))
         self.assertIn("--xla_gpu_autotune_level=0", xf)
 
     def test_empty_xla_flags_omits_xla_flags_env(self):
