@@ -43,7 +43,7 @@
       "size": "720*1280",
       "frame_num": 81,
       "num_benchmark_steps": 5,
-      "compile": true,
+      "compile": false,
       "torchrun_nproc": 8
     }
   }
