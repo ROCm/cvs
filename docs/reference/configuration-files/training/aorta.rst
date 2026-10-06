@@ -132,8 +132,10 @@ Migration and backend support
 
 Replace the former YAML runner configuration with a JSON variant plus threshold file. Move
 Docker settings under ``container``, environment values under ``container.env``, and
-``expected_results`` into the threshold file. Drop ``shm_size`` and use ``ipc: host``.
-Run ``cvs run aorta_single`` or ``cvs run aorta_distributed`` with the matching node count.
+``expected_results`` into the threshold file. Set ``shm_size`` under
+``container.runtime.args`` (restored to match the legacy runner's 17G default); ``ipc: host``
+is also available if needed. Run ``cvs run aorta_single`` or ``cvs run aorta_distributed``
+with the matching node count.
 
 Artifacts now live under the local ``output_dir/<run-id>/``. The distributed parser layout
 remains ``combined_traces/node_<rank>/<original-output>/torch_profiler/``. The suite excludes
