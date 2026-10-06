@@ -21,6 +21,7 @@ _CELL_RE = re.compile(
 _METADATA_PREFIXES = ("_comment", "_example")
 _SOCKET_ENV = {"NCCL_SOCKET_IFNAME", "GLOO_SOCKET_IFNAME", "TP_SOCKET_IFNAME"}
 _SERVER_RESERVED = {"master_addr", "master_port", "nnodes", "node_rank", "headless"}
+_INTERFACE_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,15}$")
 
 
 class _Forbid(BaseModel):
@@ -122,6 +123,15 @@ class ServerParams(_Options):
     server_poll_wait_s: int = 60
     server_warmup_wait_s: int = 330
     distributed_executor_backend: Literal["mp", "ray"] = "mp"
+    host_ip_interface: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _validate_host_ip_interface(self):
+        if self.host_ip_interface is not None and not _INTERFACE_NAME_RE.match(self.host_ip_interface):
+            raise ValueError(
+                f"server_params.host_ip_interface must be a Linux interface name, got {self.host_ip_interface!r}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_upstream_options(self):

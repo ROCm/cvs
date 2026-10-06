@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- vLLM `server_params.host_ip_interface` names the interface whose IPv4 address each node advertises. Each node exports its own `VLLM_HOST_IP` before `vllm serve`, and Ray bootstrap passes the same address as `--node-ip-address`. CVS fails before launch if any node has no IPv4 address on that interface. Unset keeps the current behavior.
+
 ### Changed
 
 - RCCL perf, regression, and pairwise suites use the orchestrator for workload execution, including container-aware launches and cleanup. `RcclJob` and `RcclJob.from_config` now take one `orch` argument in place of the previous two execution handles; `OpenMPI.prepare`, `MpiRun`, and `Srun` callers must also migrate.

@@ -27,6 +27,9 @@ IB device config (distributed only):
       per-node env script.
   Socket interfaces: inherited from container.env. The legacy top-level
       ib_netdev fallback is written into the per-node environment script.
+  Host address: server_params.host_ip_interface adds a VLLM_HOST_IP export to
+      the environment script that each node evaluates for its own interface
+      address; ray start then passes it as --node-ip-address.
 '''
 
 from __future__ import annotations
@@ -47,6 +50,13 @@ from cvs.lib.utils.model_query_lib import OpenAIProbe
 log = globals.log
 _PERCENTILE_METRICS = "ttft,tpot,itl,e2el"
 _METRIC_PERCENTILES = "50,90,95,99"
+# SIOCGIFADDR through Python: vLLM images ship python3 but not always iproute2.
+_INTERFACE_IPV4_PY = (
+    "import fcntl, socket, struct, sys; "
+    "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); "
+    'print(socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915, struct.pack("256s", sys.argv[1].encode()[:15]))[20:24]))'
+)
+_IPV4_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 
 
 def scrape_vllm_metrics(orch, base_url: str, port_no: str, timeout_s: "float | None" = None) -> "str | None":
@@ -175,6 +185,7 @@ class VllmJob:
         self.log_dir = variant.paths.log_dir
         self.serve_args = p.extra_options()
         self.distributed_executor_backend = p.distributed_executor_backend
+        self.host_ip_interface = p.host_ip_interface
         self.benchmark_options = {
             key: value
             for key, value in b.items()
@@ -297,11 +308,36 @@ class VllmJob:
             env_lines.append(f"export TP_SOCKET_IFNAME={shlex.quote(self.ib_netdev)}")
         for k, v in self.server_env.items():
             env_lines.append(f"export {k}={shlex.quote(str(v))}")
+        if self.host_ip_interface:
+            # Left unquoted so each node resolves its own address when it sources the script.
+            env_lines.append(
+                f'export VLLM_HOST_IP="$(python3 -c {shlex.quote(_INTERFACE_IPV4_PY)} '
+                f'{shlex.quote(self.host_ip_interface)} 2>/dev/null)"'
+            )
         env_script = "\n".join(env_lines) + "\n"
         self.orch.exec("bash -c " + shlex.quote(f"printf '%s' {shlex.quote(env_script)} > /tmp/server_env_script.sh"))
+        if self.host_ip_interface:
+            self._verify_host_ips()
         for rank in range(int(self.nnodes)):
             rank_dir = self.out_dir.replace("out-node0", f"out-node{rank}")
             self.orch.exec(f"mkdir -p {shlex.quote(rank_dir)}")
+
+    def _verify_host_ips(self):
+        """Fail before launch unless every host resolved an IPv4 address on host_ip_interface."""
+        out = self.orch.exec(
+            "bash -c " + shlex.quote('source /tmp/server_env_script.sh && printf "%s" "$VLLM_HOST_IP"')
+        )
+        resolved = {h: str((out or {}).get(h) or "").strip() for h in self.hosts}
+        bad = sorted(h for h, ip in resolved.items() if not _IPV4_RE.match(ip))
+        if bad:
+            raise RuntimeError(f"host_ip_interface {self.host_ip_interface!r} has no IPv4 address on {bad}")
+        log.info("VLLM_HOST_IP from %s: %s", self.host_ip_interface, resolved)
+
+    def _ray_start_cmd(self, args):
+        if not self.host_ip_interface:
+            return f"ray start {args}"
+        inner = f'source /tmp/server_env_script.sh && ray start {args} --node-ip-address="$VLLM_HOST_IP"'
+        return "bash -c " + shlex.quote(inner)
 
     def _bootstrap_ray_cluster(self):
         """Bootstrap a Ray cluster across all hosts before launching vllm serve.
@@ -314,7 +350,7 @@ class VllmJob:
         """
         head = self.hosts[0]
         # Step 1: bootstrap head node.
-        head_cmd = f"ray start --head --port={self.master_port}"
+        head_cmd = self._ray_start_cmd(f"--head --port={self.master_port}")
         out = self.orch.exec(head_cmd, hosts=[head], detailed=True)
         for h, result in (out or {}).items():
             if result.get("exit_code", 0) != 0 or self.EARLY_FAILURE_RE.search(result.get("output", "") or ""):
@@ -323,7 +359,7 @@ class VllmJob:
         for rank, host in enumerate(self.hosts):
             if rank == 0:
                 continue
-            worker_cmd = f"ray start --address={self.master_addr}:{self.master_port}"
+            worker_cmd = self._ray_start_cmd(f"--address={self.master_addr}:{self.master_port}")
             out = self.orch.exec(worker_cmd, hosts=[host], detailed=True)
             for h, result in (out or {}).items():
                 if result.get("exit_code", 0) != 0 or self.EARLY_FAILURE_RE.search(result.get("output", "") or ""):

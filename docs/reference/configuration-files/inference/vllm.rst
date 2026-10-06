@@ -209,7 +209,7 @@ Every rank above 0 additionally gets ``--headless``. This path **requires pipeli
 3. Launch ``vllm serve`` on the **head node only** — workers run no serve process
 4. On teardown, broadcast ``ray stop`` after the process kill
 
-Under ray, none of the mp distributed flags are emitted. ``--pipeline-parallel-size`` is added only when ``server_params.pipeline_parallel_size`` is greater than 1.
+Under ray, none of the mp distributed flags are emitted. ``--pipeline-parallel-size`` is added only when ``server_params.pipeline_parallel_size`` is greater than 1. When ``server_params.host_ip_interface`` is set, both ``ray start`` commands also pass ``--node-ip-address`` with the node's own address on that interface.
 
 .. note::
 
@@ -255,6 +255,30 @@ Beyond the validation rules, a multinode run needs:
 - ``container.env.NCCL_SOCKET_IFNAME`` — the Linux netdev associated with the selected RNICs.
 - ``container.env.GLOO_SOCKET_IFNAME`` and ``TP_SOCKET_IFNAME`` — generally the frontend/control-plane interface.
 - ``container.env.NCCL_IB_GID_INDEX`` — the index for the intended RoCE/IB fabric. Use ``show_gids`` inside the container and choose an entry available on every selected HCA and node. If that command is unavailable, inspect ``ibv_devinfo -v`` and ``/sys/class/infiniband/<hca>/ports/<port>/gid_attrs/``.
+
+.. _vllm-host-ip-interface:
+
+Advertised host address
+-----------------------
+
+On hosts with several network interfaces, vLLM and Ray can each pick an
+address on a network the other nodes cannot reach, and startup then hangs.
+Set ``server_params.host_ip_interface`` to the interface the nodes use to
+reach each other, usually the same one as ``GLOO_SOCKET_IFNAME``:
+
+.. code:: json
+
+  "server_params": {
+    "host_ip_interface": "ens3"
+  }
+
+Each node then exports ``VLLM_HOST_IP`` with its own IPv4 address on that
+interface before ``vllm serve`` starts. Under ray, ``ray start`` also receives
+``--node-ip-address`` with that address on every node. CVS checks every node
+before launch and fails if any node has no IPv4 address on the interface.
+A static ``VLLM_HOST_IP`` in ``container.env`` does not work, because that
+value is identical on every node. When the key is unset, vLLM and Ray choose
+their own addresses.
 
 .. _vllm-container:
 
@@ -509,8 +533,9 @@ Server role
 
 ``server_params`` controls the ``vllm serve`` process. Harness-owned fields
 are ``model``, ``tensor_parallel_size``, ``pipeline_parallel_size``, ``port``,
-``dist_init_port``, polling controls, and ``distributed_executor_backend``.
-Every other snake-case key is passed through to ``vllm serve``.
+``dist_init_port``, polling controls, ``distributed_executor_backend``, and
+``host_ip_interface``. Every other snake-case key is passed through to
+``vllm serve``.
 
 .. list-table::
    :widths: 3 2 5
@@ -531,6 +556,9 @@ Every other snake-case key is passed through to ``vllm serve``.
    * - ``port``
      - ``8888``
      - OpenAI-compatible server port.
+   * - ``host_ip_interface``
+     - unset
+     - Linux interface whose IPv4 address each node advertises, for example ``"ens3"``. See :ref:`vllm-host-ip-interface`.
 
 How server_params are flattened
 -------------------------------
@@ -1053,6 +1081,8 @@ Troubleshooting
      - Use ``vllm_distributed`` when the config requires pipeline parallelism.
    * - ``vllm_distributed requires container.env.NCCL_SOCKET_IFNAME``
      - Set all three socket-interface variables under ``container.env``.
+   * - ``host_ip_interface '<name>' has no IPv4 address on [...]``
+     - The listed nodes have no IPv4 address on ``server_params.host_ip_interface`` inside the container. Check the interface name with ``ip -4 addr`` on those hosts, and use host networking.
    * - ``Container image not specified in config``
      - ``container.image`` is empty. Note that a variant ``container`` block with no ``image`` overwrites the cluster file's value.
    * - ``runs must be a nonempty explicit list``
