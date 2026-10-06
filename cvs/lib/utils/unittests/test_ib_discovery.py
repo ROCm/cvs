@@ -51,6 +51,17 @@ class TestParseIbvDevinfoList(unittest.TestCase):
 """
         self.assertEqual(_parse_ibv_devinfo_list(raw), ["rdma3", "rdma0", "rdma2", "rdma1"])
 
+    def test_parses_ionic_hca_names(self):
+        raw = """2 HCAs found:
+        ionic_0
+        ionic_7
+"""
+        self.assertEqual(_parse_ibv_devinfo_list(raw), ["ionic_0", "ionic_7"])
+        self.assertEqual(_parse_ibv_devinfo_list("ionic_0 ionic_1"), ["ionic_0", "ionic_1"])
+
+    def test_rejects_non_numeric_ionic_suffix(self):
+        self.assertEqual(_parse_ibv_devinfo_list("ionic_ ionic_x ionic0"), [])
+
 
 class TestDiscoverSocketNetdev(unittest.TestCase):
     def test_resolves_common_netdev_from_cluster_ips(self):
@@ -130,6 +141,34 @@ class TestDiscoverIbHcaNames(unittest.TestCase):
         )
         discovered = discover_ib_hca_names(orch)
         self.assertEqual(discovered[h0], ["mlx5_0", "mlx5_1"])
+
+    def test_discovers_ionic_hcas(self):
+        from cvs.lib.utils.ib_discovery import _IBVDEVINFO_CMD
+
+        h0, h1 = "10.32.80.112", "10.32.80.113"
+        orch = _NetdevOrch(
+            [h0, h1],
+            {
+                (h0, _IBVDEVINFO_CMD): "ionic_0\nionic_1\n",
+                (h1, _IBVDEVINFO_CMD): "ionic_0\nionic_1\n",
+            },
+        )
+        discovered = discover_ib_hca_names(orch)
+        self.assertEqual(discovered, {h0: ["ionic_0", "ionic_1"], h1: ["ionic_0", "ionic_1"]})
+
+    def test_discovers_ionic_hcas_via_sysfs_fallback(self):
+        from cvs.lib.utils.ib_discovery import _SYSFS_CMD
+
+        h0, h1 = "10.32.80.112", "10.32.80.113"
+        orch = _NetdevOrch(
+            [h0, h1],
+            {
+                (h0, _SYSFS_CMD): "ionic_0 ionic_1 ",
+                (h1, _SYSFS_CMD): "ionic_0 ionic_1 ",
+            },
+        )
+        discovered = discover_ib_hca_names(orch)
+        self.assertEqual(discovered, {h0: ["ionic_0", "ionic_1"], h1: ["ionic_0", "ionic_1"]})
 
 
 class TestResolveMultinodeFabric(unittest.TestCase):

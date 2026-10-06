@@ -18,7 +18,7 @@ from cvs.lib import globals
 log = globals.log
 
 _IB_HCA_NETDEV_RE = re.compile(r"^mlx5_\d+$", re.I)
-_HCA_NAME_RE = re.compile(r"^(mlx5_\d+|rdma\d+|rocep\w+|bnxt_\w+)$", re.I)
+_HCA_NAME_RE = re.compile(r"^(mlx5_\d+|rdma\d+|rocep\w+|bnxt_\w+|ionic_\d+)$", re.I)
 _NETDEV_NAME_RE = re.compile(r"^[a-zA-Z0-9_.:-]{1,64}$")
 _INVALID_NETDEV_MARKERS = (
     "command not found",
@@ -76,7 +76,7 @@ def discover_ib_hca_names(orch) -> dict[str, list[str]]:
 
     Tries ``ibv_devinfo -l`` first; falls back to listing
     ``/sys/class/infiniband/`` when ibv_devinfo is absent from the image.
-    Returns HCA names (e.g. ``rocep28s0``, ``mlx5_0``), correct for
+    Returns HCA names (e.g. ``rocep28s0``, ``mlx5_0``, ``ionic_0``), correct for
     ``NCCL_IB_HCA``. These are NOT Linux netdev names (``ens51f1np1``) --
     those belong in ``ib_netdev`` in the suite config.
 
