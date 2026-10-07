@@ -1,6 +1,5 @@
 {
   "_comment": "DeepSeek-V4-Pro FP4 single-node vLLM parity (MI355X). Weights stay FP4. This vLLM build needs fp8 KV cache and block size 256 so the compressed MLA pages are non-zero. Thresholds are not a gate.",
-  "gpu_arch": "mi355x",
   "enforce_thresholds": false,
   "threshold_json": "mi355x_atom_vllm_deepseek-v4-pro_single_threshold.json",
   "paths": {
@@ -11,8 +10,7 @@
   },
   "model": {
     "id": "deepseek-ai/DeepSeek-V4-Pro",
-    "remote": 0,
-    "precision": "fp4"
+    "remote": 0
   },
   "container": {
     "lifetime": "per_run",
@@ -53,9 +51,7 @@
     },
     "env": {
       "VLLM_ROCM_USE_AITER": "1",
-      "AMDGCN_USE_BUFFER_OPS": "0",
-      "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
-      "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
+      "AMDGCN_USE_BUFFER_OPS": "0"
     }
   },
   "benchmark_params": {

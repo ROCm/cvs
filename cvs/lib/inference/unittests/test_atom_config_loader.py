@@ -420,6 +420,18 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
                 for cell in variant.expected_cells():
                     self.assertIn(cell, variant.thresholds, f"{name} missing {cell}")
 
+    def test_load_mi355x_v4pro_vllm_covers_thresholds(self):
+        root = Path(__file__).resolve().parents[3]
+        name = "mi355x_atom_vllm_deepseek-v4-pro_single.json"
+        variant = _atom_config(root, name)
+        self.assertEqual(variant.gpu_arch, "mi355x")
+        self.assertEqual(variant.params.driver, "vllm_atom")
+        self.assertNotIn("HF_HUB_CACHE", variant.roles.server.env)
+        self.assertNotIn("HF_HOME", variant.roles.server.env)
+        self.assertTrue(variant.expected_cells())
+        for cell in variant.expected_cells():
+            self.assertIn(cell, variant.thresholds, f"{name} missing {cell}")
+
     def test_load_qwen397b_fp8_mtp3(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi3xx_atom_qwen3.5-397b-a17b_fp8_single.json", profile="mtp3")
