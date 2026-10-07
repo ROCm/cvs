@@ -87,7 +87,10 @@ still runs with ``cvs run atom``.
      - GPT-OSS MXFP4 vLLM parity (serving schema)
    * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
-     - Qwen FP8 vLLM parity; distributed uses PP=2; lab pending
+     - Qwen FP8 vLLM parity; ``_single`` lab-validated; distributed PP=2 pending
+   * - ``mi3xx_atom_vllm_qwen3.5-397b-a17b_fp8-gfx950``
+     - ``_single``, ``_distributed``
+     - Qwen FP8 vLLM parity on MI355X; ``gpu_arch`` mi355x; bring-up thresholds
    * - ``mi3xx_atom_sglang_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - SGLang parity (serving schema)
