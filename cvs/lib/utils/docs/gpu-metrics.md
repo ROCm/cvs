@@ -2,11 +2,12 @@
 
 `cvs/lib/utils/gpu.py` is a shared library that any CVS suite — inference or training —
 can use to collect GPU utilisation data during a run and surface it as rows in the
-HTML report. It has no suite-specific logic: it shells out to `amd-smi metric --json`
-via an `Orchestrator` and parses/aggregates the result. This document explains what the
-library measures and how a suite can wire it in; the exact fixture/parametrize/threshold
-plumbing shown below is illustrative reference pseudocode drawn from an inference suite —
-adapt it to your suite's own lifecycle-as-tests structure.
+HTML report. It has no suite-specific logic: it shells out to
+`amd-smi metric --usage --mem-usage --json` via an `Orchestrator` and parses/aggregates
+the result. This document explains what the library measures and how a suite can wire it
+in; the exact fixture/parametrize/threshold plumbing shown below is illustrative reference
+pseudocode drawn from an inference suite — adapt it to your suite's own lifecycle-as-tests
+structure.
 
 ---
 
@@ -36,8 +37,8 @@ pass/fail result if a threshold is configured.
    `model_load_memory_mb` and `model_load_s`.
 3. **Client phase polling** — `poll_gpu_metrics(...)` is called (either synchronously
    with a backgrounded client, or from a thread with a synchronous client) and calls
-   `amd-smi metric --json` on the head node every `poll_interval_s` seconds
-   (default 15 s) until `is_done_fn()` returns `True`.
+   `amd-smi metric --usage --mem-usage --json` on the head node every `poll_interval_s`
+   seconds (default 15 s) until `is_done_fn()` returns `True`.
 4. **Aggregation** — after the client completes, `agg_readings(readings)` reduces the
    poll list to `peak_gpu_memory_mb`, `gpu_compute_util_pct`, and
    `gpu_bandwidth_util_pct`.
@@ -45,10 +46,11 @@ pass/fail result if a threshold is configured.
    `gpu.<key>` so `test_gpu_metric` can read them.
 
 `amd-smi` runs on the host node, not inside the container. Single-node suites use
-`orch.exec_on_head("amd-smi metric --json")`; multi-node suites pass a `nodes` list and
-`gpu.py` calls `orch.exec("amd-smi metric --json", hosts=hosts)` per node instead. This
-is intentional — `amd-smi` is a host-side tool and is not available inside the benchmark
-container.
+`orch.exec_on_head("amd-smi metric --usage --mem-usage --json")`; multi-node suites pass a
+`nodes` list and `gpu.py` calls
+`orch.exec("amd-smi metric --usage --mem-usage --json", hosts=hosts)` per node instead.
+This is intentional — `amd-smi` is a host-side tool and is not available inside the
+benchmark container.
 
 ---
 
@@ -56,10 +58,10 @@ container.
 
 Both `capture_gpu_metrics` and `poll_gpu_metrics` accept an optional `nodes` parameter:
 a `list[(label, hosts)]`, where `hosts` is a list of hostnames. When provided, `gpu.py`
-calls `orch.exec("amd-smi metric --json", hosts=hosts)` once per `(label, hosts)` pair
-per poll, merges every node's GPU entries into a single aggregated snapshot (same shape
-as the single-node case), and separately tracks the last successful per-node VRAM
-reading for the summary block.
+calls `orch.exec("amd-smi metric --usage --mem-usage --json", hosts=hosts)` once per
+`(label, hosts)` pair per poll, merges every node's GPU entries into a single aggregated
+snapshot (same shape as the single-node case), and separately tracks the last successful
+per-node VRAM reading for the summary block.
 
 ```python
 nodes = [
@@ -342,6 +344,12 @@ the metric was unavailable for this run, not a regression.
 
 ## Gotchas
 
+- **Name the `amd-smi metric` sections.** A bare `amd-smi metric` reads every section,
+  including `--xgmi-err`, and that read resets the xGMI error counters, so each poll would
+  erase xGMI error evidence. `gpu.py` requests only `--usage` and `--mem-usage`, the
+  sections behind the VRAM and utilisation metrics. It leaves out `--energy`: amd-smi
+  accepts that flag only on bare-metal Linux, and an SR-IOV guest would reject the whole
+  command. As a result `gpu.energy_j` is always `None`.
 - **`model_load_memory_mb` should be `None` when VRAM data is unavailable, not `0`.**
   Use `... or None` after the subtraction (as shown in Step 1). A zero stored as `0`
   gets gated against thresholds and displayed as `"0"` in the report; `None` causes

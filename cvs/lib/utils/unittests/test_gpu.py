@@ -32,10 +32,12 @@ from unittest.mock import MagicMock, patch
 from cvs.lib.utils.gpu import (
     GPU_METRICS,
     GPU_METRIC_UNITS,
+    _AMD_SMI_METRIC_CMD,
     _RAW_GPU_FIELDS,
     _RAW_GPU_FIELD_UNITS,
     _RECORD_SEP,
     GpuPollerHandle,
+    _capture_multi_node,
     _mean,
     agg_readings,
     capture_gpu_metrics,
@@ -576,7 +578,7 @@ class TestCaptureGpuMetrics(unittest.TestCase):
         self.assertEqual(set(out.keys()), set(ALL_KEYS))
         mock_parse.assert_called_once_with([_full_gpu_entry()])
         # Pin the exact command string sent to amd-smi (host-side, no sudo needed).
-        orch.exec_on_head.assert_called_once_with("amd-smi metric --json", print_console=False)
+        orch.exec_on_head.assert_called_once_with("amd-smi metric --usage --mem-usage --json", print_console=False)
         # Verify parse result is actually returned, not silently discarded.
         self.assertEqual(out["gpu.gfx_activity"], 30)
         self.assertIsNotNone(out["gpu.total_vram"])
@@ -794,7 +796,7 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
         from cvs.lib.utils.gpu import capture_gpu_metrics
 
         result = capture_gpu_metrics(orch, nodes=None)
-        orch.exec_on_head.assert_called_once_with("amd-smi metric --json", print_console=False)
+        orch.exec_on_head.assert_called_once_with("amd-smi metric --usage --mem-usage --json", print_console=False)
         self.assertEqual(result["gpu.used_vram"], 1000)
 
     def test_nodes_provided_calls_orch_exec_with_hosts_not_exec_on_head(self):
@@ -808,8 +810,12 @@ class TestCaptureGpuMetricsMultiNode(unittest.TestCase):
             nodes=[("prefill-0", ["prefill-host"]), ("decode-0", ["decode-host"])],
         )
         orch.exec_on_head.assert_not_called()
-        orch.exec.assert_any_call("amd-smi metric --json", hosts=["prefill-host"], print_console=False)
-        orch.exec.assert_any_call("amd-smi metric --json", hosts=["decode-host"], print_console=False)
+        orch.exec.assert_any_call(
+            "amd-smi metric --usage --mem-usage --json", hosts=["prefill-host"], print_console=False
+        )
+        orch.exec.assert_any_call(
+            "amd-smi metric --usage --mem-usage --json", hosts=["decode-host"], print_console=False
+        )
 
     def test_nodes_vram_summed_across_nodes(self):
         """VRAM from all nodes is summed in the merged result."""
@@ -1258,6 +1264,64 @@ class TestStopAndCollectGpuPollerMultiNode(unittest.TestCase):
         else:
             self.assertEqual(len(readings), 1)
             self.assertEqual(readings[0]["gpu.used_vram"], 1000)
+
+
+# ---------------------------------------------------------------------------
+# _AMD_SMI_METRIC_CMD — the command every snapshot and poll path runs
+# ---------------------------------------------------------------------------
+
+
+class TestAmdSmiMetricCommand(unittest.TestCase):
+    """A bare `amd-smi metric` reads every section, including --xgmi-err, and that
+    read resets the xGMI error counters, so every exec path must name its sections."""
+
+    def test_requests_only_usage_and_mem_usage_sections(self):
+        """Fails on a bare command, on an explicit --xgmi-err, and on --energy, which
+        amd-smi rejects (with the whole command) on SR-IOV guests."""
+        tokens = _AMD_SMI_METRIC_CMD.split()
+        self.assertEqual(tokens[:2], ["amd-smi", "metric"])
+        self.assertCountEqual(tokens[2:], ["--usage", "--mem-usage", "--json"])
+
+    def test_requested_sections_feed_every_reported_metric(self):
+        """amd-smi emits only the requested sections, so a parser that read any other
+        section would report None on every poll."""
+        # amd-smi names each JSON section after its flag: --mem-usage -> "mem_usage".
+        sections = {flag[2:].replace("-", "_") for flag in _AMD_SMI_METRIC_CMD.split()[2:] if flag != "--json"}
+        entry = {key: value for key, value in _full_gpu_entry().items() if key in sections}
+        snap = parse_gpu_metrics([entry])
+        for key in ACTIVITY_KEYS + VRAM_KEYS:
+            with self.subTest(key=key):
+                self.assertIsNotNone(snap[key])
+        for metric, value in agg_readings([snap]).items():
+            with self.subTest(metric=metric):
+                self.assertIsNotNone(value)
+
+    def test_poller_script_polls_with_scoped_command(self):
+        """The remote loop polls for the whole client phase; a bare call there clears
+        the counters on every iteration."""
+        for nodes in (None, ["h1", "h2"]):
+            with self.subTest(nodes=nodes):
+                orch = MagicMock()
+                orch.exec_on_head.return_value = {"head": ""}
+                orch.exec.return_value = {"h1": ""}
+                start_gpu_poller(orch, run_id="r1", nodes=nodes)
+                calls = orch.exec_on_head.call_args_list + orch.exec.call_args_list
+                write_cmds = [c.args[0] for c in calls if "printf" in c.args[0]]
+                self.assertEqual(len(write_cmds), 1 if nodes is None else 2)
+                for cmd in write_cmds:
+                    self.assertIn(f"{_AMD_SMI_METRIC_CMD} >>", cmd)
+                    self.assertNotIn("amd-smi metric --json", cmd)
+                    self.assertNotIn("--xgmi-err", cmd)
+
+    def test_multi_node_snapshot_runs_scoped_command_per_label(self):
+        orch = MagicMock()
+        orch.exec.side_effect = lambda cmd, hosts=None, print_console=True: {
+            hosts[0]: _gpu_chunk_text(used_vram=1000 if hosts == ["p"] else 2000)
+        }
+        merged, per_node_vram = _capture_multi_node(orch, [("prefill-0", ["p"]), ("decode-0", ["d"])])
+        self.assertEqual([c.args[0] for c in orch.exec.call_args_list], [_AMD_SMI_METRIC_CMD] * 2)
+        self.assertEqual(per_node_vram, {"prefill-0": 1000, "decode-0": 2000})
+        self.assertEqual(merged["gpu.used_vram"], 3000)
 
 
 if __name__ == "__main__":
