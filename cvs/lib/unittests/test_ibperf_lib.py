@@ -102,6 +102,30 @@ class TestGetIbBwPps(unittest.TestCase):
         self.assertTrue(all('node2' in c.args[0] for c in mock_fail.call_args_list))
 
 
+class TestRunIbPerfBwTest(unittest.TestCase):
+    @patch.object(ibperf_lib.time, 'sleep')
+    @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
+    @patch.object(ibperf_lib, 'get_ib_bw_pps', return_value={})
+    @patch.object(ibperf_lib, 'check_perftest_dmabuf_support', return_value=False)
+    def test_waits_for_perftest_exit_bounded_by_duration(self, _dmabuf, _bw_pps, mock_wait, _sleep):
+        phdl = MagicMock()
+
+        ibperf_lib.run_ib_perf_bw_test(
+            MagicMock(),
+            phdl,
+            'ib_write_bw',
+            GPU_NUMA,
+            GPU_NIC,
+            {n: {} for n in NODES},
+            '/opt/perftest/bin',
+            8192,
+            3,
+            duration=30,
+        )
+
+        mock_wait.assert_called_once_with(phdl, 'ib_write_bw', 30 + ibperf_lib.PERFTEST_EXIT_SLACK_S)
+
+
 class TestRunIbPerfLatTest(unittest.TestCase):
     @patch.object(ibperf_lib.time, 'sleep')
     @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
