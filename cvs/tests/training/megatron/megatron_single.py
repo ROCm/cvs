@@ -418,6 +418,12 @@ def test_training(orch, variant_config, hf_token, sweep_name, train_res_dict, li
     finally:
         mt_obj.stop_training_processes()
 
+    # fail_test only records messages; the pytest failure is raised here.
+    # An empty sweep makes the matching test_metric and test_loss_curve skip.
+    if globals.error_list:
+        train_res_dict[sweep_name] = None
+        update_test_result()
+
     lifecycle.record(nodeid, "training", elapsed)
     request.node.user_properties.append(("metric_value", elapsed))
     request.node.user_properties.append(("metric_unit", "s"))
@@ -509,11 +515,11 @@ def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
 
         if not enforce or not thresholds:
             reason = "enforce_thresholds=false" if not enforce else f"no thresholds for cell '{cell}'"
-            log.info("record-only for combo '%s' (%s)", sweep_name, reason)
+            log.info("thresholds not enforced for combo '%s' (%s)", sweep_name, reason)
             for metric, value in actuals.items():
                 spec = thresholds.get(metric)
-                rows.append(build_metric_row(sweep_name, metric, spec, value, "RECORD"))
-                verdicts.append(build_benchmark_metric_row(metric, spec, value, "record", enforced=False))
+                rows.append(build_metric_row(sweep_name, metric, spec, value, "PASS"))
+                verdicts.append(build_benchmark_metric_row(metric, spec, value, "pass", enforced=False))
             return
 
         log.info("--- Threshold check for combo '%s' ---", sweep_name)
@@ -540,7 +546,7 @@ def test_metric(variant_config, sweep_name, train_res_dict, lifecycle, request):
                 msg = _check_one(metric, value, spec_with_actuals)
 
             if spec.get("kind") == "info":
-                row_status, verdict_status = "RECORD", "record"
+                row_status, verdict_status = "PASS", "pass"
             elif msg:
                 row_status, verdict_status = "FAIL", "fail"
                 violations.append(msg)

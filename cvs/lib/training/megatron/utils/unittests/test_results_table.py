@@ -20,12 +20,8 @@ class TestResultsTable(unittest.TestCase):
         self.assertEqual(format_expected({"kind": "max", "value": 15}), "<= 15")
         self.assertEqual(format_expected({"kind": "max_ms", "value": 3600000}), "<= 3600000 ms")
         self.assertEqual(format_expected({"kind": "info", "value": 100}), "info (100)")
-        self.assertEqual(
-            format_expected({"kind": "within", "value": 1.0, "tolerance_pct": 5}), "1.0 +/-5%"
-        )
-        self.assertEqual(
-            format_expected({"kind": "min_ratio", "value": 0.8, "reference": "base"}), ">= 0.8 x base"
-        )
+        self.assertEqual(format_expected({"kind": "within", "value": 1.0, "tolerance_pct": 5}), "1.0 +/-5%")
+        self.assertEqual(format_expected({"kind": "min_ratio", "value": 0.8, "reference": "base"}), ">= 0.8 x base")
 
     def test_format_value(self):
         self.assertEqual(format_value(None), "None")
@@ -42,9 +38,7 @@ class TestResultsTable(unittest.TestCase):
         self.assertEqual(metric_unit("training.unknown_metric"), "-")
 
     def test_build_metric_row(self):
-        row = build_metric_row(
-            "BF16", "training.throughput_per_gpu", {"kind": "min", "value": 260}, 483.24, "PASS"
-        )
+        row = build_metric_row("BF16", "training.throughput_per_gpu", {"kind": "min", "value": 260}, 483.24, "PASS")
         self.assertEqual(
             row,
             {
@@ -72,9 +66,7 @@ class TestResultsTable(unittest.TestCase):
 
     def test_build_benchmark_metric_row(self):
         spec = {"kind": "min", "value": 260}
-        row = build_benchmark_metric_row(
-            "training.throughput_per_gpu", spec, 483.24, "pass", reason="", enforced=True
-        )
+        row = build_benchmark_metric_row("training.throughput_per_gpu", spec, 483.24, "pass", reason="", enforced=True)
         self.assertEqual(
             row,
             {

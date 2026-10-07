@@ -303,7 +303,9 @@ _CONTAINER_ENV_TO_JOB = {
 
 class MegatronVariantConfig(_Forbid):
     gpu_name: str
-    gpus_per_node: int = Field(default=8, ge=1, description="GPUs on each node. Used for world size and tokens/s totals.")
+    gpus_per_node: int = Field(
+        default=8, ge=1, description="GPUs on each node. Used for world size and tokens/s totals."
+    )
     enforce_thresholds: bool = True
     threshold_json: str = ""
     paths: MegatronPaths
