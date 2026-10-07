@@ -234,12 +234,14 @@ def get_rdma_nic_dict(phdl):
             if re.search('^link', line):
                 pattern = r"link\s+([a-zA-Z0-9_.-]+)\/([0-9]+)\s+state\s+([A-Za-z]+)\s+physical_state\s+([A-Za-z_]+)\s+netdev\s+([a-zA-Z0-9.-]+)"
                 match = re.search(pattern, line)
-                dev = match.group(1)
-                rdma_dict[node][dev] = {}
-                rdma_dict[node][dev]['port'] = match.group(2)  # Port number (string)
-                rdma_dict[node][dev]['device_status'] = match.group(3)  # Device state (e.g., ACTIVE)
-                rdma_dict[node][dev]['link_status'] = match.group(4)  # Physical link state (e.g., LinkUp)
-                rdma_dict[node][dev]['eth_device'] = match.group(5)  # Associated netdev (e.g., eth0)
+                # dereference match only when it is non-null
+                if match:
+                    dev = match.group(1)
+                    rdma_dict[node][dev] = {}
+                    rdma_dict[node][dev]['port'] = match.group(2)  # Port number (string)
+                    rdma_dict[node][dev]['device_status'] = match.group(3)  # Device state (e.g., ACTIVE)
+                    rdma_dict[node][dev]['link_status'] = match.group(4)  # Physical link state (e.g., LinkUp)
+                    rdma_dict[node][dev]['eth_device'] = match.group(5)  # Associated netdev (e.g., eth0)
     return rdma_dict
 
 

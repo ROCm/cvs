@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `get_rdma_nic_dict` no longer raises `AttributeError` on a node with InfiniBand ports, which
+  report no `netdev` and so do not match the `rdma link` pattern. It now skips unmatched lines,
+  as `get_active_rdma_nic_dict` already did. This unblocks the preflight
+  `test_interface_name_consistency` check, which aborted with a traceback on those nodes.
 - RCCL bandwidth thresholds and dip checks now read the configured `rccl.results` table.
   The shipped dip-check defaults are now `"False"`. Existing configs with
   `verify_bw_dip` or `verify_lat_dip` set to `"True"`, including copies of the
