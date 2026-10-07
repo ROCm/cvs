@@ -499,6 +499,12 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         self.assertEqual(gpu_arch_from_config_path("mi3xx_atom_example.json"), "mi3xx")
         self.assertEqual(gpu_arch_from_config_path("mi355x_atom_example.json"), "mi355x")
 
+    def test_load_mi355x_mxfp4_does_not_inject_triton_env(self):
+        root = Path(__file__).resolve().parents[3]
+        variant = _atom_config(root, "mi3xx_atom_kimi-k27-code_mxfp4_single.json")
+        self.assertNotIn("ATOM_USE_TRITON_MOE", variant.roles.server.env)
+        self.assertNotIn("ATOM_USE_TRITON_GEMM", variant.roles.server.env)
+
     def test_atom_threshold_files_use_aligned_keys_and_bare_metrics(self):
         root = Path(__file__).resolve().parents[3]
         atom_dir = root / "input/config_file/inference/atom"
