@@ -190,8 +190,8 @@ The following table lists the supported ``runtime.args`` keys and their defaults
      - Appended
      - List of ``host:container[:ro]`` mounts. The container always also receives ``/home/$user/.ssh:/host_ssh`` injected by the orchestrator.
    * - ``devices``
-     - ``["/dev/kfd", "/dev/dri", "/dev/infiniband"]`` (appended)
-     - Device passthroughs. Per-host ``/dev/infiniband/*`` is also discovered at runtime.
+     - ``["/dev/kfd", "/dev/dri"]`` (appended)
+     - Device passthroughs. CVS also passes through each device node under ``/dev/infiniband``, discovered on each host at launch; a host without ``/dev/infiniband`` gets none.
    * - ``cap_add``
      - ``["SYS_PTRACE", "IPC_LOCK", "SYS_ADMIN"]`` (appended)
      - Linux capabilities.

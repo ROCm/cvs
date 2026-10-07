@@ -74,9 +74,8 @@ class DockerRuntime:
         """Set up long-running Docker containers on all nodes.
 
         AMD GPU passthrough is provided by the device flags auto-injected from
-        ``DEFAULT_CONTAINER_ARGS`` (``/dev/kfd``, ``/dev/dri``,
-        ``/dev/infiniband``). CVS is AMD-only, so no NVIDIA-style ``--gpus all``
-        flag is emitted.
+        ``DEFAULT_CONTAINER_ARGS`` (``/dev/kfd``, ``/dev/dri``). CVS is
+        AMD-only, so no NVIDIA-style ``--gpus all`` flag is emitted.
 
         Args:
             container_config: Container configuration dictionary. Recognized
