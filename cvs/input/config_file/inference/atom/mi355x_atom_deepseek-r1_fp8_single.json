@@ -1,6 +1,5 @@
 {
   "gpu_arch": "mi355x",
-  "schema_version": 2,
   "framework": "atom",
   "default_profile": "perf",
   "threshold_json": "mi355x_atom_deepseek-r1_fp8_single_threshold.json",
@@ -12,8 +11,7 @@
   },
   "model": {
     "id": "deepseek-ai/DeepSeek-R1-0528",
-    "remote": 0,
-    "precision": "fp8"
+    "remote": 0
   },
   "profiles": {
     "perf": {
