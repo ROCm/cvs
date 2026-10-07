@@ -85,9 +85,9 @@ class TestGetIbBwPps(unittest.TestCase):
         self.assertEqual(phdl.exec.call_count, 2)
         mock_fail.assert_not_called()
 
-    @patch.object(ibperf_lib.time, 'sleep')
+    @patch.object(ibperf_lib, 'PERFTEST_BW_RESULT_TIMEOUT_S', 0)
     @patch.object(ibperf_lib, 'fail_test')
-    def test_fails_once_per_node_after_retries_run_out(self, mock_fail, _sleep):
+    def test_fails_once_per_node_after_retries_run_out(self, mock_fail):
         phdl = MagicMock()
         phdl.exec.return_value = {'node1': BW_LOG, 'node2': '8192 bytes of GPU buffer\n'}
 
