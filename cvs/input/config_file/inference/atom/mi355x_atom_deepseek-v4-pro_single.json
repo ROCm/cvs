@@ -1,5 +1,4 @@
 {
-  "gpu_arch": "mi355x",
   "_comment": "DeepSeek-V4-Pro on MI355X/gfx950, TP8. Official Pro SKU (native FP4). Bring-up stem — confirm atom_args against the image recipe after first start.",
   "threshold_json": "mi355x_atom_deepseek-v4-pro_single_threshold.json",
   "paths": {
@@ -10,8 +9,7 @@
   },
   "model": {
     "id": "deepseek-ai/DeepSeek-V4-Pro",
-    "remote": 0,
-    "precision": "fp4"
+    "remote": 0
   },
   "enforce_thresholds": false,
   "container": {
@@ -44,9 +42,7 @@
         "--trust-remote-code"
       ],
       "env": {
-        "ATOM_DISABLE_MMAP": "true",
-        "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
-        "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
+        "ATOM_DISABLE_MMAP": "true"
       }
     }
   },

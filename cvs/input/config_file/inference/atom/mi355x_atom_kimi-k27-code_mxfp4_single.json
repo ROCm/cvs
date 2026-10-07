@@ -1,5 +1,4 @@
 {
-  "gpu_arch": "mi355x",
   "_comment": "Kimi K2.7-Code MXFP4 on MI355X/gfx950, TP4. Native MXFP4 — do not use as a gfx942 gate. Bring-up stem for Spur/managed 355 labs. Calibrate thresholds after the first clean run.",
   "threshold_json": "mi355x_atom_kimi-k27-code_mxfp4_single_threshold.json",
   "paths": {
@@ -44,9 +43,7 @@
         "--trust-remote-code"
       ],
       "env": {
-        "ATOM_DISABLE_MMAP": "true",
-        "HF_HUB_CACHE": "{paths.shared_fs}/.cache/huggingface",
-        "HF_HOME": "{paths.shared_fs}/.cache/huggingface"
+        "ATOM_DISABLE_MMAP": "true"
       }
     }
   },

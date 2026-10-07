@@ -494,6 +494,13 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         gfx950 = merge_mxfp4_triton_env("mxfp4", {}, gpu_arch="mi355x")
         self.assertNotIn("ATOM_USE_TRITON_MOE", gfx950)
         self.assertNotIn("ATOM_USE_TRITON_GEMM", gfx950)
+        opted_in = merge_mxfp4_triton_env(
+            "mxfp4",
+            {"ATOM_USE_TRITON_MOE": "true", "ATOM_USE_TRITON_GEMM": "true"},
+            gpu_arch="mi355x",
+        )
+        self.assertEqual(opted_in["ATOM_USE_TRITON_MOE"], "1")
+        self.assertEqual(opted_in["ATOM_USE_TRITON_GEMM"], "1")
 
     def test_gpu_arch_from_config_path_reads_family_stem(self):
         self.assertEqual(gpu_arch_from_config_path("mi3xx_atom_example.json"), "mi3xx")
@@ -502,8 +509,15 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
     def test_load_mi355x_mxfp4_does_not_inject_triton_env(self):
         root = Path(__file__).resolve().parents[3]
         variant = _atom_config(root, "mi355x_atom_kimi-k27-code_mxfp4_single.json")
+        self.assertEqual(variant.gpu_arch, "mi355x")
         self.assertNotIn("ATOM_USE_TRITON_MOE", variant.roles.server.env)
         self.assertNotIn("ATOM_USE_TRITON_GEMM", variant.roles.server.env)
+        self.assertNotIn("HF_HUB_CACHE", variant.roles.server.env)
+        self.assertNotIn("HF_HOME", variant.roles.server.env)
+        pro = _atom_config(root, "mi355x_atom_deepseek-v4-pro_single.json")
+        self.assertEqual(pro.gpu_arch, "mi355x")
+        self.assertNotIn("HF_HUB_CACHE", pro.roles.server.env)
+        self.assertNotIn("HF_HOME", pro.roles.server.env)
 
     def test_atom_threshold_files_use_aligned_keys_and_bare_metrics(self):
         root = Path(__file__).resolve().parents[3]

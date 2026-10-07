@@ -12,10 +12,10 @@ from unittest.mock import patch
 import pytest
 
 from cvs.lib.inference.utils.cache_probe import du_bytes
+from cvs.lib.inference.utils import inference_suite_lifecycle as lifecycle_mod
 from cvs.lib.inference.utils.inference_suite_lifecycle import (
     InferenceLifecycle,
     _format_lifecycle_cell_value,
-    test_setup_sshd,
 )
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
 
@@ -44,7 +44,7 @@ class TestSetupSshd(unittest.TestCase):
         orch.setup_sshd = lambda: True
         lifecycle = InferenceLifecycle()
         with patch("cvs.core.scheduler.is_managed_compute", return_value=True):
-            test_setup_sshd(orch, lifecycle, self._request())
+            lifecycle_mod.test_setup_sshd(orch, lifecycle, self._request())
         self.assertFalse(lifecycle.failed)
         self.assertEqual(orch.commands, [])
 
@@ -54,7 +54,7 @@ class TestSetupSshd(unittest.TestCase):
         lifecycle = InferenceLifecycle()
         with patch("cvs.core.scheduler.is_managed_compute", return_value=False):
             with self.assertRaises(pytest.fail.Exception):
-                test_setup_sshd(orch, lifecycle, self._request())
+                lifecycle_mod.test_setup_sshd(orch, lifecycle, self._request())
         self.assertTrue(lifecycle.failed)
         self.assertTrue(orch.commands)
 

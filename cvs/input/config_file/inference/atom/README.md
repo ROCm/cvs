@@ -35,8 +35,8 @@ Configs are lab-validated unless a row is marked pending or bring-up.
 Parity configs (`atom_vllm`, `atom_sglang`) use the unified serving schema:
 `server_params`, `benchmark_params`, `sweeps`, `runs`. Run with ``cvs run atom``.
 
-Config stems use the **family** prefix ``mi3xx``. Threshold files use the **platform**
-prefix ``mi325x``. Copy each
+Config stems use ``mi3xx_*`` (gfx942) or ``mi355x_*`` (gfx950). Threshold
+files use ``mi325x_*`` or ``mi355x_*``. Copy each
 config + its ``threshold_json`` into a dedicated subdirectory before running.
 
 New MI355X stems ship ``enforce_thresholds: false`` until lab calibration.

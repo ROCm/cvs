@@ -55,10 +55,9 @@ def merge_mxfp4_triton_env(precision, env, gpu_arch=""):
     if (precision or "").lower() != "mxfp4":
         return merged
     arch = (gpu_arch or "").strip().lower()
-    if arch and arch not in _GFX942_ARCHES:
-        return merged
-    for key, value in _MXFP4_TRITON_ENV.items():
-        merged.setdefault(key, value)
+    if not arch or arch in _GFX942_ARCHES:
+        for key, value in _MXFP4_TRITON_ENV.items():
+            merged.setdefault(key, value)
     for key in _MXFP4_TRITON_ENV:
         if str(merged.get(key, "")).lower() == "true":
             merged[key] = "1"

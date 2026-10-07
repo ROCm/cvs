@@ -43,7 +43,7 @@ On **Spur or Slurm managed compute**:
 - Use the managed cluster file produced from ``SPUR_NODES`` / HTTP agents.
   ATOM still uses the ``orch`` fixture and the config ``container`` block;
   do not add nested ``spur run`` inside ``AtomJob``.
-- Prove an existing single-node stem first, then run the ``mi3xx_atom_*``
+- Prove an existing single-node stem first, then run the ``mi355x_atom_*``
   stems (Kimi TP4, V4-Pro TP8).
 
 Spur example:
@@ -89,9 +89,9 @@ MI355X Spur stems (same job-step pattern)
 
 On gfx950, copy **Kimi TP4** then **V4-Pro TP8** into **separate** directories
 so each ``--config_file`` sees only its matching ``*threshold.json``. Both
-stems use ``driver=atom``, ``lifetime: per_run``, and a writable
-``HF_HUB_CACHE`` / ``HF_HOME`` under ``paths.shared_fs`` (not the read-only
-``/models`` mount).
+stems use ``driver=atom`` and ``lifetime: per_run``. The server reads weights
+from the ``/models`` mount. If the checkpoint lives under the home cache,
+point the models volume at that directory.
 
 .. code:: bash
 
