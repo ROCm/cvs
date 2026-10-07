@@ -1,6 +1,5 @@
 {
   "gpu_arch": "mi355x",
-  "schema_version": 2,
   "framework": "atom",
   "default_profile": "perf",
   "threshold_json": "mi355x_atom_qwen3.5-397b-a17b_fp8_threshold.json",
@@ -12,8 +11,7 @@
   },
   "model": {
     "id": "amd/Qwen3.5-397B-A17B-FP8",
-    "remote": 0,
-    "precision": "fp8"
+    "remote": 0
   },
   "profiles": {
     "perf": {
