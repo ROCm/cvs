@@ -6,9 +6,17 @@ Unit tests for inference_suite_lifecycle helpers.
 '''
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
 
 from cvs.lib.inference.utils.cache_probe import du_bytes
-from cvs.lib.inference.utils.inference_suite_lifecycle import _format_lifecycle_cell_value
+from cvs.lib.inference.utils.inference_suite_lifecycle import (
+    InferenceLifecycle,
+    _format_lifecycle_cell_value,
+    test_setup_sshd,
+)
 from cvs.lib.inference.unittests.fake_orch import FakeOrch
 
 
@@ -25,6 +33,30 @@ class TestFormatLifecycleCellValue(unittest.TestCase):
 
     def test_none_renders_dash(self):
         self.assertEqual(_format_lifecycle_cell_value(None), "-")
+
+
+class TestSetupSshd(unittest.TestCase):
+    def _request(self):
+        return SimpleNamespace(node=SimpleNamespace(nodeid="test_setup_sshd"))
+
+    def test_managed_multinode_does_not_probe_listen_port(self):
+        orch = FakeOrch(hosts=["node0", "node1"])
+        orch.setup_sshd = lambda: True
+        lifecycle = InferenceLifecycle()
+        with patch("cvs.core.scheduler.is_managed_compute", return_value=True):
+            test_setup_sshd(orch, lifecycle, self._request())
+        self.assertFalse(lifecycle.failed)
+        self.assertEqual(orch.commands, [])
+
+    def test_baremetal_multinode_still_requires_listen_port(self):
+        orch = FakeOrch(exec_return={"node0": "NO", "node1": "NO"}, hosts=["node0", "node1"])
+        orch.setup_sshd = lambda: True
+        lifecycle = InferenceLifecycle()
+        with patch("cvs.core.scheduler.is_managed_compute", return_value=False):
+            with self.assertRaises(pytest.fail.Exception):
+                test_setup_sshd(orch, lifecycle, self._request())
+        self.assertTrue(lifecycle.failed)
+        self.assertTrue(orch.commands)
 
 
 class TestDuBytes(unittest.TestCase):
