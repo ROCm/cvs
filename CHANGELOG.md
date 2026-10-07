@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Orchestrator` now declares `exec_on_host`, `upload_to_head`, `download_from_head`, and `download_file` as required methods. RCCL uses the first three for host diagnostics and result transfers instead of reaching through internal handles; Aorta uses `download_file` for per-host artifact pickup. Custom orchestrator subclasses must implement all four methods.
 - Node Smoke Tier 1, Tier 2, and Tier 3 now run by default. Set `node_smoke_tier1.connectivity_mode` or `node_smoke_tier3.connectivity_mode` to `"skip"` to disable a tier, or set `node_smoke_tier1.tier2_perf` to `false` to disable Tier 2 only. Previously all three were opt-in (`connectivity_mode` defaulted to `"skip"` and `tier2_perf` defaulted to `false`).
 - `cvs run` writes a self-contained pytest HTML report and a text log under `<workspace>/cvs_runs/<run_id>/` by default. `--html` and `--log-file` override those paths; `--no-html` and `--no-log-file` suppress them.
+- ANC artifacts now all live under the run directory. Collected ANC logs land at `<run_dir>/anc_logs/<node>/<test_name>/<timestamp>/` instead of a configured prefix, and the HTML/log reports come from `cvs run`'s standard paths. The `anc.log_folder_path` and `anc.COLLECT_HTML_REPORTS` config keys are removed (ANC no longer self-collects HTML; use `--no-html` to suppress the report).
+- A scheduler-managed `cvs run` must now set an explicit workspace on shared storage (`--workspace` or `CVS_WORKSPACE`); it no longer silently falls back to the venv parent, which is node-local in a container and loses collected artifacts at job teardown.
 
 ### Fixed
 

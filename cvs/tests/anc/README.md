@@ -55,8 +55,8 @@ from its installed location `<prefix>/anc/anc.py` — `<prefix>` is `/opt/amdtoo
 by default, or, for **tar** installs only, the relocated `ANC_INSTALL_PATH`
 (deb/rpm always use `/opt/amdtools`).
 
-**Logs & console:** each group's ANC log directory is copied under the
-`log_folder_path` prefix, where CVS lays down the fixed
+**Logs & console:** each group's ANC log directory is copied under this run's
+`run_dir`, where CVS lays down the fixed
 `anc_logs/<node>/<test_name>/<timestamp>` structure (`<node>` is that node's
 `<ip>_<hostname>` label — so multi-node runs group every test/timestamp under
 each node's own folder); the resolved pattern is printed before the run. Set `print_all_to_console` to `False` in config to suppress the
@@ -135,17 +135,14 @@ The ANC config lives at `cvs/input/config_file/anc/anc_config.json`:
         "anc_release_url": "<changeme>",
         "ANC_INSTALL_PATH": "",
         "print_all_to_console": "True",
-        "log_folder_path": "<changeme>",
-        "ADD_ANC_LOGS_TO_HTML_REPORTS": "False",
-        "COLLECT_HTML_REPORTS": "True"
+        "ADD_ANC_LOGS_TO_HTML_REPORTS": "False"
     }
 }
 ```
 
-`anc_release_url` and `log_folder_path` ship as the `<changeme>` placeholder and
-**must** be replaced before running; an unresolved `<changeme>` aborts the run
-up front (the standard config resolver hard-exits on it, before any node is
-contacted).
+`anc_release_url` ships as the `<changeme>` placeholder and **must** be replaced
+before running; an unresolved `<changeme>` aborts the run up front (the standard
+config resolver hard-exits on it, before any node is contacted).
 
 Each key is documented inline in the shipped config via a matching
 `_comment_<key>` sibling (keys prefixed with `_comment` are ignored at runtime).
@@ -158,19 +155,17 @@ Each key is documented inline in the shipped config via a matching
 | `anc_release_url` | ANC release archive URL (used by `anc_installation`). Both packaging generations are auto-detected from the filename: **legacy (≤1.4.x)** outer tarballs carry a `-deb-`/`-rpm-`/`-tar-` token (e.g. `anc-release-helios-nda-1.4.9-tar-linux-x64.tar.gz`); **direct (1.5.0+)** URLs point straight at a `.deb`/`.rpm`/`.tar.gz` with no flavour token (e.g. `anc-release-helios-nda-1.5.5-x86_64.tar.gz`). The download/unpack is staged in a private temp dir on each node and removed after install (success or failure). deb/rpm install to `/opt/amdtools/anc`; tar installs to `ANC_INSTALL_PATH` (default `/opt/amdtools`). |
 | `ANC_INSTALL_PATH` | **Tar installs only:** relocatable prefix ANC is extracted into (its `anc/` dir, tool folders, and content live under here), giving `<prefix>/anc/anc.py`. A leading `~` is expanded and the `{home}`/`{user-id}` placeholders are resolved during config load. The value is validated up front: shell-metacharacters (`'`, `"`, `` ` ``, `$`, `\`, newline) and a prefix that resolves to filesystem root (`/`, `//`) are rejected before any node is contacted. deb/rpm packages carry absolute locations baked into their archive and **ignore** this key. Leave blank or omit to keep the default `/opt/amdtools`. |
 | `print_all_to_console` | `True` echoes ANC group output to console; `False` suppresses it (diagnostics still print). |
-| `log_folder_path` | Controller-side destination **prefix** for **all** ANC artifacts — collected logs and the auto-collected HTML report. A plain directory path (leading `~` expanded); **required** — replace the shipped `<changeme>`. CVS appends its own fixed structure under it: logs at `anc_logs/<node>/<test_name>/<timestamp>` and the report at `html_reports/<node>/<test_name>/<timestamp>/<test_name>.html` (`<node>` → the node's `<ip>_<hostname>` label, `<test_name>` → the group's test name, `<timestamp>` → per-run stamp). |
 | `ADD_ANC_LOGS_TO_HTML_REPORTS` | Governs the per-node **ANC logs** tarball links. `True` always bundles each node's collected log tree (one `.tar.gz` + link per node) into the pytest-html report zip. `False` (default) bundles them **only when the test fails**. The per-node `errors.json` links appear regardless of this flag. |
-| `COLLECT_HTML_REPORTS` | `True` (default) auto-generates a pytest-html report even when no `--html` is passed, written under `log_folder_path`. `False` disables auto-collection. An explicit `--html` on the command line always overrides the auto-collected path. |
 
-`log_folder_path` is a directory prefix. Leading `~` is expanded, and the
-standard config placeholders `{home}`/`{user-id}` are resolved during config
-load (it does **not** accept the CVS-owned `<node>`/`<test_name>`/`<timestamp>`
-tokens — those name the fixed structure CVS appends under the prefix). With a
-`log_folder_path` of `/home/user/cvs_logs`, logs land at
-`/home/user/cvs_logs/anc_logs/<node>/<test_name>/<timestamp>` and the HTML report
-at `/home/user/cvs_logs/html_reports/<node>/<test_name>/<timestamp>/<test_name>.html`,
-where `<node>` is that node's `<ip>_<hostname>` label. To send the report
-elsewhere, pass `--html` on the command line.
+ANC no longer takes an artifact-path config key. Collected logs and the pytest
+HTML/log reports all land under this run's `run_dir`
+(`<workspace>/cvs_runs/<run_id>/`, resolved by `RunLayout` — the same directory
+`cvs run` writes `--html`/`--log-file` into). The collected log tree is laid down
+at `<run_dir>/anc_logs/<node>/<test_name>/<timestamp>` (`<node>` → the node's
+`<ip>_<hostname>` label, `<test_name>` → the group's test name, `<timestamp>` →
+per-run stamp). To send the HTML report or log file elsewhere, pass `--html` /
+`--log-file` on the command line; use `--no-html` / `--no-log-file` to suppress
+them.
 
 ---
 
@@ -321,17 +316,20 @@ failure (one failure per test, not one per node).
 
 ## 6. Artifacts
 
-Per node and per test, artifacts are downloaded under the `log_folder_path`
-prefix, in this fixed layout:
+Per node and per test, artifacts are downloaded under this run's `run_dir`, in
+this fixed layout:
 
 ```
-<log_folder_path>/anc_logs/<ip>_<hostname>/<test_name>/<timestamp>/
+<run_dir>/anc_logs/<ip>_<hostname>/<test_name>/<timestamp>/
 ```
 
-- `<log_folder_path>` is the user-supplied prefix (a plain directory path) — see
-  the `log_folder_path` row in the config table above.
+- `<run_dir>` is `<workspace>/cvs_runs/<run_id>/`, resolved by `RunLayout` — the
+  same directory `cvs run` writes its `--html`/`--log-file` into. The workspace
+  comes from `--workspace`, then `$CVS_WORKSPACE`, then (unmanaged runs only) the
+  venv's parent; `<run_id>` is the scheduler job id under a scheduler, else a
+  local timestamp.
 - `anc_logs/<ip>_<hostname>/<test_name>/<timestamp>` is the fixed structure CVS
-  lays down under the prefix: `<ip>_<hostname>` is the per-node label,
+  lays down under `run_dir`: `<ip>_<hostname>` is the per-node label,
   `<test_name>` is the group's test name (e.g. `test_cpu_all`), and `<timestamp>`
   keeps repeated runs separate.
 
@@ -345,11 +343,10 @@ Collected files:
 
 ### In the HTML report
 
-A pytest-html report is produced whenever `--html` is passed **or**
-`COLLECT_HTML_REPORTS` is `True` (the default) — in the latter case the report is
-written automatically under `log_folder_path` (at
-`html_reports/<node>/<test_name>/<timestamp>/<test_name>.html`) with no `--html`
-needed. An explicit `--html` always overrides that auto-collected path.
+`cvs run` writes a self-contained pytest-html report by default at
+`<run_dir>/<test-file-stem>.html` (and a text log at `<run_dir>/<test-file-stem>.log`).
+Pass `--html` / `--log-file` to redirect them to an explicit path, or `--no-html` /
+`--no-log-file` to suppress them. ANC adds no report machinery of its own.
 
 **Reports section.** Above the results table, this section is failure-focused: it
 lists **only the FAILED tests**. Each failed test shows a red **FAILED** verdict
@@ -375,5 +372,5 @@ artifacts (e.g. rccl/preflight) keep a flat bullet list.
   - `False` (default) — attach **only when the test fails**, so passing runs keep
     the report small while failures always ship their full logs.
 
-The full tree is always written to `log_folder_path` regardless of these flags;
+The full tree is always written under `run_dir` regardless of these flags;
 they only govern what gets embedded in the HTML report bundle.

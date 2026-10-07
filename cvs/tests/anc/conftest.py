@@ -82,10 +82,10 @@ def config_dict(config_file, cluster_dict, pytestconfig):
       - a configured anc_version that is invalid or GREATER than the version
         parsed from anc_release_url -- the archive must be able to satisfy the
         request, so the rule is anc_version <= url_version (a lower requested
-        version is fine; aborts before any node is contacted); and
-      - a missing/blank anc.log_folder_path for the group suites (anc_test_*),
-        which write logs + the HTML report under it (the install-only suite does
-        not need it).
+        version is fine; aborts before any node is contacted).
+
+    Collected ANC logs and the pytest HTML/log reports all land under this run's
+    run_dir (resolved by RunLayout), so there is no artifact-path config to check.
 
     Failing here (fixture setup) means a bad config costs seconds, not a full
     suite run on the nodes.
@@ -98,11 +98,7 @@ def config_dict(config_file, cluster_dict, pytestconfig):
 
     suite_name = getattr(pytestconfig, "_suite_name", "") or ""
     if suite_name.startswith("anc") and "anc" in config_dict:
-        # Group suites (anc_test_*) additionally require a usable log_folder_path
-        # prefix; the install-only suite does not.
-        problems = anc_lib.validate_anc_config(
-            config_dict, cluster_dict, require_log_folder=suite_name.startswith("anc_test")
-        )
+        problems = anc_lib.validate_anc_config(config_dict, cluster_dict)
         if problems:
             pytest.fail(
                 "ANC config error (fix before running): " + "; ".join(problems),
