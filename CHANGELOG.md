@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RCCL: accept single-node results without a topology block, reject mixed result shapes regardless of row order, and report malformed JSON result structures without crashing row processing.
 - RCCL: return cleanly when a run produces no result rows instead of raising `IndexError` from the bandwidth-dip check. Log scanning still fails these runs for missing bandwidth numbers.
 - IB topology discovery recognizes AMD Pollara (Ionic) HCA names such as `ionic_0`. Previously they were filtered out, so callers found no HCAs on Ionic clusters.
+- Accuracy tasks from runs that share a container no longer install lm-eval at the same time, which could fail one `pip install` partway. The version check and install now hold an `flock` on `/tmp/cvs_lm_eval_install.lock`; images without `flock` run them unlocked, as before.
 
 ## [0.2.0] - 2026-09-23
 
