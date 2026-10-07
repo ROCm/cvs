@@ -18,6 +18,7 @@ from cvs.lib.inference.atom.atom_config_loader import (
     expand_sweep_parametrize,
     gpu_arch_from_config_path,
     load_variant,
+    merge_mxfp4_triton_env,
     orchestrator_container_from_variant,
     placeholder_gated_threshold_cell,
     resolve_atom_profile,
@@ -485,6 +486,18 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         cell = "ISL=512,OSL=512,TP=8,PP=2,CONC=16"
         self.assertIn(cell, variant.expected_cells())
         self.assertIn("scaling.efficiency_pct", variant.thresholds[cell])
+
+    def test_merge_mxfp4_triton_env_skips_mi355x(self):
+        gfx942 = merge_mxfp4_triton_env("mxfp4", {}, gpu_arch="mi3xx")
+        self.assertEqual(gfx942["ATOM_USE_TRITON_MOE"], "1")
+        self.assertEqual(gfx942["ATOM_USE_TRITON_GEMM"], "1")
+        gfx950 = merge_mxfp4_triton_env("mxfp4", {}, gpu_arch="mi355x")
+        self.assertNotIn("ATOM_USE_TRITON_MOE", gfx950)
+        self.assertNotIn("ATOM_USE_TRITON_GEMM", gfx950)
+
+    def test_gpu_arch_from_config_path_reads_family_stem(self):
+        self.assertEqual(gpu_arch_from_config_path("mi3xx_atom_example.json"), "mi3xx")
+        self.assertEqual(gpu_arch_from_config_path("mi355x_atom_example.json"), "mi355x")
 
     def test_atom_threshold_files_use_aligned_keys_and_bare_metrics(self):
         root = Path(__file__).resolve().parents[3]
