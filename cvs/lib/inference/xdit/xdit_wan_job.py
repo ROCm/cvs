@@ -40,6 +40,7 @@ from cvs.lib.inference.xdit.xdit_flux_job import (
 from cvs.lib.inference.xdit.xdit_benchmark_job import (
     BenchmarkLaunchPlan,
     PytorchXditBenchmarkJob,
+    build_glob_output_cleanup_cmd,
 )
 
 log = globals.log
@@ -785,8 +786,7 @@ def summarize_wan_benchmark_log(output: str, *, max_lines: int = 8) -> str:
 
 
 def build_wan_output_cleanup_cmd(output_base_dir: str, *, use_sudo: bool = True) -> str:
-    prefix = "sudo " if use_sudo else ""
-    return f"bash -c {shlex.quote(f'{prefix}rm -rf {output_base_dir}/wan_22_*_outputs')}"
+    return build_glob_output_cleanup_cmd(output_base_dir, "wan_22_*_outputs", use_sudo=use_sudo)
 
 
 WanLaunchPlan = BenchmarkLaunchPlan

@@ -61,6 +61,38 @@ def remote_benchmark_collect_cmd(output_dir):
     return "python3 -c " + shlex.quote(_REMOTE_COLLECT_SCRIPT) + " " + shlex.quote(str(output_dir))
 
 
+def build_glob_output_cleanup_cmd(output_base_dir, name_glob, *, use_sudo=True):
+    """Remove ``output_base_dir``/``name_glob`` on the remote host.
+
+    Container jobs can leave root-owned trees under a user-owned log directory.
+    Sudo is used only when this user cannot write the base directory or a
+    matching tree, and only when passwordless sudo works (``sudo -n``).
+    """
+    output_base_dir = str(output_base_dir).rstrip("/")
+    # Glob must expand in the shell — do not quote the * on rm.
+    plain = f"rm -rf {output_base_dir}/{name_glob}"
+    if not use_sudo:
+        return f"bash -c {shlex.quote(plain)}"
+    script = "\n".join(
+        [
+            f"base={shlex.quote(output_base_dir)}",
+            f"glob={shlex.quote(name_glob)}",
+            'if [ -d "$base" ] && { [ ! -w "$base" ] || find "$base" -mindepth 1 ! -writable '
+            '\\( -name "$glob" -o -path "$base/$glob/*" \\) -print -quit | grep -q .; }; then',
+            "  if sudo -n true >/dev/null 2>&1; then",
+            '    sudo -n rm -rf "$base"/$glob',
+            "  else",
+            '    echo "output cleanup needs sudo but passwordless sudo is unavailable; removing without sudo" >&2',
+            '    rm -rf "$base"/$glob',
+            "  fi",
+            "else",
+            '  rm -rf "$base"/$glob',
+            "fi",
+        ]
+    )
+    return "bash -c " + shlex.quote(script)
+
+
 def _parse_artifact_payload(text):
     if _ARTIFACT_BEGIN not in text or _ARTIFACT_END not in text:
         return None

@@ -10,6 +10,7 @@ from cvs.lib.inference.xdit.xdit_benchmark_job import (
     BenchmarkLaunchPlan,
     PytorchXditBenchmarkJob,
     _REMOTE_COLLECT_SCRIPT,
+    build_glob_output_cleanup_cmd,
     stage_remote_benchmark_outputs,
 )
 from cvs.lib.inference.xdit.xdit_flux import FluxOutputParser
@@ -362,6 +363,27 @@ class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
         self.assertIsNotNone(result, errors)
         self.assertEqual(result.repetition_count, 25)
         self.assertAlmostEqual(result.avg_pipe_time_s, 0.9674)
+
+
+class TestGlobOutputCleanupCmd(unittest.TestCase):
+    def test_sudo_disabled_is_plain_rm(self):
+        cmd = build_glob_output_cleanup_cmd("/home/user/cvs_flux_output", "flux_*_outputs", use_sudo=False)
+        self.assertEqual(cmd, "bash -c 'rm -rf /home/user/cvs_flux_output/flux_*_outputs'")
+
+    def test_sudo_only_when_tree_is_not_writable(self):
+        cmd = build_glob_output_cleanup_cmd("/home/user/cvs_flux_output/", "flux_*_outputs")
+        self.assertTrue(cmd.startswith("bash -c "))
+        script = cmd[len("bash -c ") :]
+        self.assertIn('[ ! -w "$base" ]', script)
+        self.assertIn('find "$base" -mindepth 1 ! -writable', script)
+        self.assertIn('-name "$glob"', script)
+        self.assertIn("sudo -n true", script)
+        self.assertIn('sudo -n rm -rf "$base"/$glob', script)
+        self.assertIn("passwordless sudo is unavailable", script)
+        self.assertNotIn("sudo rm", script)
+        self.assertNotIn("sudo  rm", script)
+        self.assertIn("flux_*_outputs", script)
+        self.assertNotIn("/home/user/cvs_flux_output//", script)
 
 
 if __name__ == "__main__":
