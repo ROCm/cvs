@@ -19,8 +19,10 @@ log = logging.getLogger(__name__)
 _dmabuf_support_cache = {}
 _rocm_path_cache = {}
 
-# Covers connection setup, the client's launch delay, and perftest's warm-up margins.
+# Added to the BW ``duration``: covers connection setup, the client's launch delay, and perftest's warm-up margins.
 PERFTEST_EXIT_SLACK_S = 60
+# Latency tests have no ``-D`` duration, so this bounds the whole run.
+PERFTEST_LAT_EXIT_TIMEOUT_S = 60
 PERFTEST_EXIT_POLL_S = 5
 PERFTEST_RESULT_POLL_S = 10
 PERFTEST_BW_RESULT_TIMEOUT_S = 80
@@ -258,7 +260,7 @@ def get_ib_lat_numb(phdl, msg_size, cmd, instance_no=None):
             fail_test(f'IB Test failed - Error patterns seen on node {node}')
 
     # Collect the latency numbers
-    pattern = "{}[\t\s]+[0-9]+[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)".format(
+    pattern = r"{}[\t\s]+[0-9]+[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)[\t\s]+([0-9\.]+)".format(
         msg_size
     )
     keys = ('t_min', 't_max', 't_typical', 't_avg', 't_stdev', 't_99_pct', 't_99_9_pct')
@@ -586,10 +588,13 @@ def run_ib_perf_lat_test(
     time.sleep(2)
     phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
 
-    unconfirmed = wait_for_perftest_exit(phdl, lat_test, PERFTEST_EXIT_SLACK_S)
+    unconfirmed = wait_for_perftest_exit(phdl, lat_test, PERFTEST_LAT_EXIT_TIMEOUT_S)
     if unconfirmed:
         log.warning(
-            '%s exit not confirmed on %s after %ss; reading logs anyway', lat_test, unconfirmed, PERFTEST_EXIT_SLACK_S
+            '%s exit not confirmed on %s after %ss; reading logs anyway',
+            lat_test,
+            unconfirmed,
+            PERFTEST_LAT_EXIT_TIMEOUT_S,
         )
 
     for instance_no in range(0, inst_count):
