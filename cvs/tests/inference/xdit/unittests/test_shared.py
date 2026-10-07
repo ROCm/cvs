@@ -11,7 +11,9 @@ from cvs.tests.inference.xdit._shared import (
     Lifecycle,
     _SecretValue,
     _attach_benchmark_artifacts,
+    _is_flux2_workload,
     _output_dirs_by_host,
+    _output_parser,
     _report_dimensions,
     _report_threshold,
     benchmark_params_from_variant,
@@ -425,6 +427,52 @@ class TestVerifyModelStage(unittest.TestCase):
             verify_model_stage(orch, variant, {"family": "wan", "diffusers": False}, MagicMock(), MagicMock())
         download.assert_called_once()
         fail.assert_not_called()
+
+
+class TestOutputParserRequirements(unittest.TestCase):
+    def test_flux1_requires_num_repetitions(self):
+        variant = SimpleNamespace(model=SimpleNamespace(id="black-forest-labs/FLUX.1-dev"), inference={})
+        params = {"num_repetitions": 25}
+        parser = _output_parser(
+            {"family": "flux", "distributed": False, "diffusers": False},
+            params,
+            "/out",
+            variant,
+        )
+        self.assertFalse(_is_flux2_workload(variant, params))
+        self.assertEqual(parser.expected_repetitions, 25)
+
+    def test_flux2_does_not_require_flux1_repetition_count(self):
+        variant = SimpleNamespace(model=SimpleNamespace(id="black-forest-labs/FLUX.2-dev"), inference={})
+        params = {"model_type": "flux2", "num_repetitions": 25}
+        parser = _output_parser(
+            {"family": "flux", "distributed": False, "diffusers": False},
+            params,
+            "/out",
+            variant,
+        )
+        self.assertTrue(_is_flux2_workload(variant, params))
+        self.assertIsNone(parser.expected_repetitions)
+
+    def test_native_wan_requires_num_benchmark_steps(self):
+        variant = SimpleNamespace(inference={})
+        parser = _output_parser(
+            {"family": "wan", "distributed": False, "diffusers": False},
+            {"num_benchmark_steps": 5, "require_video_artifact": True},
+            "/out",
+            variant,
+        )
+        self.assertEqual(parser.expected_steps, 5)
+
+    def test_wan_diffusers_does_not_use_native_step_count(self):
+        variant = SimpleNamespace(inference={})
+        parser = _output_parser(
+            {"family": "wan", "distributed": False, "diffusers": True},
+            {"num_benchmark_steps": 5, "num_repetitions": 3},
+            "/out",
+            variant,
+        )
+        self.assertFalse(hasattr(parser, "expected_steps"))
 
 
 if __name__ == "__main__":

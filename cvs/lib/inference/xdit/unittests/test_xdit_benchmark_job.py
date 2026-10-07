@@ -349,6 +349,8 @@ class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
             os.makedirs(results)
             with open(os.path.join(results, "timing.json"), "w", encoding="utf-8") as handle:
                 handle.write(json.dumps([{"pipe_time": 0.9674}] * 25))
+            with open(os.path.join(results, "flux_0.png"), "wb") as handle:
+                handle.write(b"png")
             payload = _collect_tree(tmp)
         job = _make_job(["10.0.0.1"])
         job.s_phdl.exec_cmd_list.return_value = {"10.0.0.1": payload}
@@ -356,7 +358,7 @@ class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
         job.store_output_dir_hint(plan)
         local = job.inference_dict["_test_output_dir"]
         self.assertNotIn("/home/user/stub_output", local)
-        result, errors = FluxOutputParser(local).parse()
+        result, errors = FluxOutputParser(local, expected_repetitions=25).parse()
         self.assertIsNotNone(result, errors)
         self.assertEqual(result.repetition_count, 25)
         self.assertAlmostEqual(result.avg_pipe_time_s, 0.9674)

@@ -18,7 +18,9 @@ from cvs.lib import globals
 from cvs.lib.inference.xdit.xdit_flux import FluxOutputParser
 from cvs.lib.inference.xdit.xdit_flux_job import (
     build_output_cleanup_cmd,
+    is_flux2_model,
     launch_flux_benchmark,
+    resolve_flux_model_type,
     validate_flux_parallelism_config,
 )
 from cvs.lib.inference.xdit.xdit_model_verify import (
@@ -450,16 +452,49 @@ def _metric_name(spec):
     return "avg_total_time_s" if spec["family"] == "wan" and not spec["diffusers"] else "avg_pipe_time_s"
 
 
-def _output_parser(spec, params, output_dir):
+def _configured_count(value):
+    if value is None or str(value).strip() == "":
+        return None
+    return int(value)
+
+
+def _is_flux2_workload(variant, params):
+    inference = inference_from_variant(variant)
+    model = value_from_variant(variant, "model")
+    model_id = None
+    if isinstance(model, dict):
+        model_id = model.get("id")
+    elif model is not None:
+        model_id = getattr(model, "id", None)
+    model_type = resolve_flux_model_type(
+        params.get("model_type") or inference.get("_resolved_flux_model_type"),
+        inference.get("model_repo"),
+        model_id,
+    )
+    return is_flux2_model(model_type)
+
+
+def _output_parser(spec, params, output_dir, variant):
     if spec["family"] == "flux":
-        return FluxOutputParser(output_dir, expected_image_pattern="flux_*.png")
+        expected_repetitions = None
+        if not _is_flux2_workload(variant, params):
+            expected_repetitions = _configured_count(params.get("num_repetitions"))
+        return FluxOutputParser(
+            output_dir,
+            expected_image_pattern="flux_*.png",
+            expected_repetitions=expected_repetitions,
+        )
     if spec["diffusers"]:
         return WanI2vOutputParser(
             output_dir,
             require_video_artifact=bool(params.get("require_video_artifact", True)),
         )
     artifact = "video.mp4" if params.get("require_video_artifact", True) else ""
-    return WanOutputParser(output_dir, expected_artifact=artifact)
+    return WanOutputParser(
+        output_dir,
+        expected_artifact=artifact,
+        expected_steps=_configured_count(params.get("num_benchmark_steps")),
+    )
 
 
 def _is_report_artifact(name):
@@ -595,7 +630,13 @@ def parse_thresholds_stage(variant, gpu_type, spec, lifecycle, request):
     failures = []
     for host, output_dir in outputs.items():
         _attach_benchmark_artifacts(request, host, output_dir)
-        parser = _output_parser(spec, params, output_dir)
+        parser = _output_parser(spec, params, output_dir, variant)
+        if spec["family"] == "flux" and not _is_flux2_workload(variant, params) and parser.expected_repetitions is None:
+            failures.append(f"{host}: FLUX.1 requires num_repetitions")
+            continue
+        if spec["family"] == "wan" and not spec["diffusers"] and parser.expected_steps is None:
+            failures.append(f"{host}: native WAN requires num_benchmark_steps")
+            continue
         result, errors = parser.parse()
         if result is None:
             failures.append(f"Failed to parse xDiT output on {host} from {output_dir}: {errors}")
