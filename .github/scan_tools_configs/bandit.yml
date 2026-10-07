@@ -1,18 +1,21 @@
-# bandit minimal configuration
+# bandit configuration for CVS
 # Reference: https://bandit.readthedocs.io/en/latest/config.html
 #
-# The default for repositories that ship no bandit config of their own.
-# A repository that ships one (`bandit.yaml` or `bandit.yml`) replaces
-# this file wholesale rather than layering onto it, so suppressions and
-# tuning that belong to a single repository (e.g. `skips: [...]`) belong
-# there. What goes here is what should hold for a repository that has
-# said nothing.
+# Passed as `bandit_config_path` by the security-scan workflows, so it
+# replaces the rocm-security-gh default wholesale rather than layering
+# onto it.
+#
+# Bandit skips a file when an entry glob-matches its path or is a plain
+# substring of it, so every entry is a whole path segment with both
+# slashes. A bare `build` or `tests` would also skip production code,
+# such as `cell_build.py` or the customer-facing `cvs/tests/` suites.
 
 exclude_dirs:
-  - .git
-  - .venv
-  - venv
-  - build
-  - dist
-  - node_modules
-  - __pycache__
+  - /.git/
+  - /.venv/
+  - /venv/
+  - /build/
+  - /dist/
+  - /node_modules/
+  - /__pycache__/
+  - /unittests/
