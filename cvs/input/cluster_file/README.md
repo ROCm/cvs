@@ -49,7 +49,7 @@ Consumed by `ContainerOrchestrator` in [`cvs/core/orchestrators/container.py`](.
 | `runtime.name` | str | `"docker"` | Container runtime. Supported: `docker` (concrete), `enroot` (stub). |
 | `runtime.args` | dict | `{}` | Backend-specific runtime arguments (see below). Defaults from `DEFAULT_CONTAINER_ARGS` in [`cvs/core/orchestrators/container.py`](../../core/orchestrators/container.py) apply for any key omitted here. |
 
-CVS's own internal commands -- the Docker CLI calls made by `DockerRuntime` (`docker run`/`exec`/`rm`/`ps`/`load`) and the MPI hostfile cleanup in `BaremetalOrchestrator` -- automatically detect whether `sudo` is needed. Once per run, CVS probes each host with `sudo -n true` and caches whether passwordless sudo is available; every subsequent privileged command is then prefixed with `sudo -n ` or left unprefixed accordingly, for the lifetime of that run. No cluster-file configuration is required whether the SSH user has passwordless sudo, is already in the `docker` group, or has direct access to the resources it needs.
+CVS's own internal commands -- the Docker CLI calls made by `DockerRuntime` (`docker run`/`exec`/`rm`/`ps`/`load`) -- automatically detect whether `sudo` is needed. Once per run, CVS probes each host with `sudo -n true` and caches whether passwordless sudo is available; every subsequent privileged command is then prefixed with `sudo -n ` or left unprefixed accordingly, for the lifetime of that run. No cluster-file configuration is required whether the SSH user has passwordless sudo, is already in the `docker` group, or has direct access to the resources it needs.
 
 ### `runtime.args` (docker) reference
 
