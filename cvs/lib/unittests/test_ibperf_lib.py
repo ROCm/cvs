@@ -53,6 +53,7 @@ BW_LOG = '8192 bytes of GPU buffer\n 8192       5000           512.00           
 NODES = ('node1', 'node2')
 GPU_NIC = {n: {f'card{g}': {'rdma_dev': f'rdma{g}'} for g in range(8)} for n in NODES}
 GPU_NUMA = {n: {f'card{g}': {'local_cpulist': '0-63'} for g in range(8)} for n in NODES}
+BCK_NIC = {n: {} for n in NODES}
 LAT = dict.fromkeys(('t_min', 't_max', 't_typical', 't_avg', 't_stdev', 't_99_pct', 't_99_9_pct'), '1.0')
 
 
@@ -77,9 +78,8 @@ class TestWaitForPerftestExit(unittest.TestCase):
 
 
 class TestGetIbBwPps(unittest.TestCase):
-    @patch.object(ibperf_lib.time, 'sleep')
     @patch.object(ibperf_lib, 'fail_test')
-    def test_stops_polling_once_every_node_reports(self, mock_fail, _sleep):
+    def test_stops_polling_once_every_node_reports(self, mock_fail):
         phdl = MagicMock()
         phdl.exec.return_value = {'node1': BW_LOG, 'node2': BW_LOG}
 
@@ -111,16 +111,7 @@ class TestRunIbPerfBwTest(unittest.TestCase):
         phdl = MagicMock()
 
         ibperf_lib.run_ib_perf_bw_test(
-            MagicMock(),
-            phdl,
-            'ib_write_bw',
-            GPU_NUMA,
-            GPU_NIC,
-            {n: {} for n in NODES},
-            '/opt/perftest/bin',
-            8192,
-            3,
-            duration=30,
+            MagicMock(), phdl, 'ib_write_bw', GPU_NUMA, GPU_NIC, BCK_NIC, '/opt/perftest/bin', 8192, 3, duration=30
         )
 
         mock_wait.assert_called_once_with(phdl, 'ib_write_bw', 30 + ibperf_lib.PERFTEST_EXIT_SLACK_S)
@@ -136,7 +127,7 @@ class TestRunIbPerfLatTest(unittest.TestCase):
         phdl = MagicMock()
 
         ibperf_lib.run_ib_perf_lat_test(
-            MagicMock(), phdl, 'ib_write_lat', GPU_NUMA, GPU_NIC, {n: {} for n in NODES}, '/opt/perftest/bin', 64, 3
+            MagicMock(), phdl, 'ib_write_lat', GPU_NUMA, GPU_NIC, BCK_NIC, '/opt/perftest/bin', 64, 3
         )
 
         server_cmd, client_cmd = phdl.exec_cmd_list.call_args_list[1].args[0]
@@ -158,15 +149,7 @@ class TestRunIbPerfLatTest(unittest.TestCase):
     @patch.object(ibperf_lib, 'check_perftest_dmabuf_support', return_value=False)
     def test_keeps_reporting_node_when_another_is_missing(self, *_mocks):
         res = ibperf_lib.run_ib_perf_lat_test(
-            MagicMock(),
-            MagicMock(),
-            'ib_write_lat',
-            GPU_NUMA,
-            GPU_NIC,
-            {n: {} for n in NODES},
-            '/opt/perftest/bin',
-            64,
-            3,
+            MagicMock(), MagicMock(), 'ib_write_lat', GPU_NUMA, GPU_NIC, BCK_NIC, '/opt/perftest/bin', 64, 3
         )
 
         self.assertEqual(sorted(res['node1']), list(range(8)))
