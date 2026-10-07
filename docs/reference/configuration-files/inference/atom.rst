@@ -85,6 +85,9 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_vllm_deepseek-r1_fp8``
      - ``_single``
      - vLLM parity (serving schema)
+   * - ``mi3xx_atom_vllm_deepseek-r1_fp8-gfx950``
+     - ``_single``, ``_distributed``
+     - vLLM parity on MI355X; ``gpu_arch`` mi355x; bring-up thresholds
    * - ``mi3xx_atom_vllm_gpt-oss-120b_mxfp4``
      - ``_single``
      - GPT-OSS MXFP4 vLLM parity (serving schema)
@@ -94,6 +97,9 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_sglang_deepseek-r1_fp8``
      - ``_single``, ``_distributed``
      - SGLang parity (serving schema)
+   * - ``mi3xx_atom_sglang_deepseek-r1_fp8-gfx950``
+     - ``_single``, ``_distributed``
+     - SGLang parity on MI355X; ``gpu_arch`` mi355x; bring-up thresholds
    * - ``mi3xx_atom_sglang_qwen3.5-397b-a17b_fp8``
      - ``_single``, ``_distributed``
      - Qwen FP8 SGLang parity; distributed uses PP=2; lab pending
