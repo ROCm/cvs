@@ -501,7 +501,7 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
 
     def test_load_mi355x_mxfp4_does_not_inject_triton_env(self):
         root = Path(__file__).resolve().parents[3]
-        variant = _atom_config(root, "mi3xx_atom_kimi-k27-code_mxfp4_single.json")
+        variant = _atom_config(root, "mi355x_atom_kimi-k27-code_mxfp4_single.json")
         self.assertNotIn("ATOM_USE_TRITON_MOE", variant.roles.server.env)
         self.assertNotIn("ATOM_USE_TRITON_GEMM", variant.roles.server.env)
 
@@ -509,26 +509,24 @@ class TestATOMAtomConfigLoader(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         atom_dir = root / "input/config_file/inference/atom"
         cell_no_pp = re.compile(r"^ISL=.*,TP=\d+,CONC=")
-        config_platform_stem = re.compile(r"^mi325x_|^mi35x_|^mi300x_|^mi355x_")
-        threshold_family_stem = re.compile(r"^mi3xx_|^mi35x_|^mi300x_|^mi355x_")
         for path in sorted(atom_dir.glob("*.json")):
             if "threshold" in path.name:
-                self.assertFalse(
-                    threshold_family_stem.match(path.name),
-                    f"threshold must use platform stem, not family: {path.name}",
-                )
                 self.assertTrue(
-                    path.name.startswith("mi325x_"),
-                    f"shipped thresholds are mi325x-only: {path.name}",
+                    path.name.startswith(("mi325x_", "mi355x_", "mi300x_")),
+                    f"threshold must use a platform prefix: {path.name}",
+                )
+                self.assertFalse(
+                    path.name.startswith("mi3xx_"),
+                    f"threshold must not use the mi3xx family prefix: {path.name}",
                 )
             else:
-                self.assertFalse(
-                    config_platform_stem.match(path.name),
-                    f"config must use family stem mi3xx, not platform: {path.name}",
-                )
                 self.assertTrue(
-                    path.name.startswith("mi3xx_"),
-                    f"shipped configs use mi3xx family stem: {path.name}",
+                    path.name.startswith(("mi3xx_", "mi355x_")),
+                    f"config must use mi3xx or mi355x: {path.name}",
+                )
+                self.assertFalse(
+                    path.name.startswith(("mi325x_", "mi300x_")),
+                    f"config must not use an mi325x or mi300x prefix: {path.name}",
                 )
         for path in sorted(atom_dir.glob("*threshold*.json")):
             text = path.read_text(encoding="utf-8")
