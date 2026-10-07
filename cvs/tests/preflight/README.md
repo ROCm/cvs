@@ -42,6 +42,12 @@ cvs run preflight_checks \
   --self-contained-html
 ```
 
+`--html` also writes a Run Deck next to the pytest report: `preflight_run_deck.html`,
+`preflight_run_deck.json`, and `preflight_run_deck_viewer.html`. The deck is a
+node-by-check matrix of the same preflight results. A skipped check, or a Node
+Smoke check Primus did not score, shows as n/a. GEMM, HBM, and local RCCL values
+from the Node Smoke payload are charted when they are present.
+
 ## Test Modes
 
 ### Basic Mode (Default)

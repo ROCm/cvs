@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "extends": "health_status_base",
+  "profile_id": "preflight_checks_rundeck",
+  "suite_id": "preflight_checks",
+  "report_basename": "preflight_run_deck",
+  "title": "Preflight Run Deck",
+  "subtitle": "Cluster preflight · health, Node Smoke, and connectivity",
+  "footer": "CVS preflight · render-only · per-node verdict from the collected preflight checks (pass / fail / n/a)",
+  "link_name": "Preflight Run Deck",
+  "sources": {
+    "results": "preflight_res_dict"
+  },
+  "lifecycle": {
+    "session_labels": [
+      "node_reachability",
+      "node_health",
+      "rocm_versions",
+      "ifoe_l2_connectivity",
+      "transferbench_smoke",
+      "interface_names",
+      "gid_consistency",
+      "node_smoke_tier1",
+      "node_smoke_tier2",
+      "node_smoke_tier3",
+      "rdma_connectivity"
+    ]
+  },
+  "cards": [
+    {
+      "id": "metrics",
+      "title": "Perf sanity"
+    },
+    {
+      "id": "results",
+      "hint": "Columns are preflight checks. Open a cell for the per-node detail recorded for that check. N/A means the check was skipped or Primus did not score it."
+    }
+  ]
+}
