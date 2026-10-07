@@ -394,9 +394,9 @@ class TestGetIbBwPps(unittest.TestCase):
         self.assertEqual(phdl.exec.call_count, 2)
         mock_fail.assert_not_called()
 
-    @patch.object(ibperf_lib.time, 'sleep')
+    @patch.object(ibperf_lib, 'PERFTEST_BW_RESULT_TIMEOUT_S', 0)
     @patch.object(ibperf_lib, 'fail_test')
-    def test_fails_once_per_node_after_retries_run_out(self, mock_fail, _sleep):
+    def test_fails_once_per_node_after_retries_run_out(self, mock_fail):
         phdl = MagicMock()
         phdl.exec.return_value = {'node1': BW_LOG, 'node2': '8192 bytes of GPU buffer\n'}
 
@@ -524,12 +524,13 @@ class TestReadLatencyResults(unittest.TestCase):
         self.assertEqual(len(results['client']), 8)
         self.assertTrue(all(row['t_avg'] == '10.98' for row in results['client'].values()))
 
+    @patch.object(ibperf_lib, 'PERFTEST_LAT_RESULT_TIMEOUT_S', 0)
     def test_write_latency_requires_server_table(self):
         server_log = 'allocated 65536 bytes of GPU buffer\n'
         client_log = server_log + '8192 1000 10.66 13.76 10.97 10.98 0.10 12.01 13.76\n'
         phdl = MagicMock()
         phdl.exec.return_value = {'server': server_log, 'client': client_log}
-        with patch.object(ibperf_lib.time, 'sleep'), patch.object(ibperf_lib, 'fail_test') as mock_fail:
+        with patch.object(ibperf_lib, 'fail_test') as mock_fail:
             results = ibperf_lib.get_ib_lat_numb(phdl, 8192, 'cat /tmp/ib_perf_0_logs')
 
         self.assertEqual(results['client']['t_avg'], '10.98')
