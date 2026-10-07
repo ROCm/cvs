@@ -54,21 +54,22 @@ BW_LOG = '8192 bytes of GPU buffer\n 8192       5000           512.00           
 
 class TestWaitForPerftestExit(unittest.TestCase):
     @patch.object(ibperf_lib.time, 'sleep')
-    def test_returns_once_every_node_exited(self, _sleep):
+    def test_returns_once_pgrep_confirms_exit(self, _sleep):
         phdl = MagicMock()
-        phdl.exec.side_effect = [{'node1': 'running', 'node2': 'exited'}, {'node1': 'exited', 'node2': 'exited'}]
+        phdl.exec.side_effect = [
+            {'node1': 'pgrep_rc=0', 'node2': 'pgrep_rc=1'},
+            {'node1': 'pgrep_rc=1', 'node2': 'pgrep_rc=1'},
+        ]
 
-        self.assertEqual(ibperf_lib.wait_for_perftest_exit(phdl, 'ib_write_bw', 90), [])
+        self.assertEqual(ibperf_lib.wait_for_perftest_exit(phdl, 'raw_ethernet_burst_lat', 90), [])
         self.assertEqual(phdl.exec.call_count, 2)
-        self.assertIn('pgrep -x ib_write_bw', phdl.exec.call_args.args[0])
+        self.assertIn('pgrep -x raw_ethernet_bu ', phdl.exec.call_args.args[0])
 
-    @patch.object(ibperf_lib.time, 'sleep')
-    @patch.object(ibperf_lib.time, 'monotonic', side_effect=[0, 10, 91])
-    def test_returns_running_nodes_at_timeout(self, _monotonic, _sleep):
+    def test_errored_poll_is_not_counted_as_exited(self):
         phdl = MagicMock()
-        phdl.exec.return_value = {'node1': 'exited', 'node2': 'running'}
+        phdl.exec.return_value = {'node1': 'pgrep_rc=1', 'node2': 'ABORT: Timeout Error in Host: node2'}
 
-        self.assertEqual(ibperf_lib.wait_for_perftest_exit(phdl, 'ib_write_bw', 90), ['node2'])
+        self.assertEqual(ibperf_lib.wait_for_perftest_exit(phdl, 'ib_write_bw', 0), ['node2'])
 
 
 class TestGetIbBwPps(unittest.TestCase):
