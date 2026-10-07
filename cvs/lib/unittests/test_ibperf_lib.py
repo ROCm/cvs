@@ -150,7 +150,7 @@ class TestRunIbPerfLatTest(unittest.TestCase):
             'echo "numactl --physcpubind=0-63 --localalloc /opt/perftest/bin/ib_write_lat -d rdma0 --use_rocm=0'
             ' -x 3 -F -p 1516 -s 64 node1 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
-        mock_wait.assert_called_once_with(phdl, 'ib_write_lat', ibperf_lib.PERFTEST_EXIT_SLACK_S)
+        mock_wait.assert_called_once_with(phdl, 'ib_write_lat', ibperf_lib.PERFTEST_LAT_EXIT_TIMEOUT_S)
 
     @patch.object(ibperf_lib.time, 'sleep')
     @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
