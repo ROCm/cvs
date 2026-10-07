@@ -69,6 +69,9 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
      - ``_single`` (``perf`` + ``mtp3`` profiles)
      - Native ATOM perf + MTP-3; lab pending for ``mtp3``
+   * - ``mi3xx_atom_deepseek-v4-flash``
+     - ``_single``
+     - Native ATOM gfx942 V4-Flash-Base TP8 FP8 KV; bring-up thresholds
    * - ``mi355x_atom_kimi-k27-code_mxfp4``
      - ``_single``
      - Native ATOM MI355X, TP4 MXFP4; same Spur/Slurm job-step as V4-Pro;
