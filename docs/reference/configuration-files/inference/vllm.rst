@@ -528,6 +528,15 @@ Every other snake-case key is passed through to ``vllm serve``.
    * - ``port``
      - ``8888``
      - OpenAI-compatible server port.
+   * - ``dist_init_port``
+     - ``29501``
+     - Head-node port for multi-host startup: ``--master-port`` on mp, the Ray
+       head port on ray. Ignored on one host.
+   * - ``distributed_executor_backend``
+     - ``"mp"``
+     - Multi-host executor, ``"mp"`` or ``"ray"``; see :ref:`vllm-backends`.
+       Ignored on one host: CVS passes no ``--distributed-executor-backend``,
+       and vLLM picks its own executor.
 
 How server_params are flattened
 -------------------------------
