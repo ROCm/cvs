@@ -1,8 +1,8 @@
 {
-  "_comment": "FLUX.2-dev single-node xDiT workload. Bind-mounts flux2_example.py when the image does not ship it.",
+  "_comment": "FLUX.2-dev single-node xDiT workload. Bind-mounts flux2_example.py when the image does not ship it. Download model before run.",
   "gpu_name" : "<changeme> mi325",
   "enforce_thresholds": true,
-  "threshold_json": "mi325_xdit_flux2_dev_single_threshold.json",
+  "threshold_json": "xdit_flux2_dev_single_threshold.json",
   "paths": {
     "shared_fs": "{home}",
     "models_dir": "{home}/.cache/huggingface",

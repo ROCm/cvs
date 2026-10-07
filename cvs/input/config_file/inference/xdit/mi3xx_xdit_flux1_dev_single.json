@@ -1,8 +1,8 @@
 {
-  "_comment": "FLUX.1-dev single-node xDiT workload. Thresholds live in the sibling threshold JSON.",
+  "_comment": "FLUX.1-dev single-node xDiT workload. Thresholds live in the sibling threshold JSON. Download model before run.",
   "gpu_name" : "<changeme> mi325",
   "enforce_thresholds": true,
-  "threshold_json": "mi325_xdit_flux1_dev_single_threshold.json",
+  "threshold_json": "xdit_flux1_dev_single_threshold.json",
   "paths": {
     "shared_fs": "{home}",
     "models_dir": "{home}/.cache/huggingface",
