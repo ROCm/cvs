@@ -350,6 +350,7 @@ REAL_FAULT_DMESG_LINES = [
     "amdgpu 0000:05:00.0: amdgpu: [mmhub0] retry page fault (src_id:0 ring:0 vmid:0 pasid:0)",
     "amdgpu 0000:05:00.0: GPU fault detected: 146 0x0c680401",
     "BUG: unable to handle page fault for address: ffffc90000a3f000",
+    "Oops: general protection fault, probably for non-canonical address 0xdead000000000100: 0000 [#1] SMP NOPTI",
     "pcieport 0000:00:01.1: AER: Correctable error message received from 0000:01:00.0",
     "pcieport 0000:00:01.1: AER: Uncorrectable (Non-Fatal) error message received from 0000:01:00.0",
     "amdgpu 0000:05:00.0: amdgpu: Uncorrectable error detected in UMC inst: 0, chan_idx: 3",
@@ -377,6 +378,7 @@ class TestErrPatterns(unittest.TestCase):
         for line in (
             "traps: python[4021] general protection fault ip:7f3a5c0b12e4 sp:7ffd2a8c1e50 error:0 in libc.so.6",
             "amdgpu 0000:05:00.0: GPU fault detected: 146 0x0c680401",
+            "Oops: general protection fault, probably for non-canonical address 0xdead000000000100: 0000 [#1] SMP NOPTI",
         ):
             with self.subTest(line=line):
                 self.assertEqual(self._matching_keys(line), ["crash"])

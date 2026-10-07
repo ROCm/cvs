@@ -17,7 +17,7 @@ from cvs.lib import node_scraper_adapter
 
 err_patterns_dict = {
     'gpu_reset': 'GPU reset begin|GPU hang|cp might be in an unrecoverable state|fence wait loop timeout expired',
-    'crash': r'crashed|Traceback|cut here|Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|segfault|show_stack|dump_stack|\bfault ',
+    'crash': r'crashed|Traceback|cut here|Bug:|Call Trace|RIP:|end trace|amdgpu: Fatal error|segfault|show_stack|dump_stack|\bfault\b',
     'test_fail': 'Test failure',
     'fault': 'no-retry page fault|Illegal register access|PROTECTION_FAULT_STATUS',
     # Note: amdgpu oversubscription messages ('Runlist is getting oversubscribed',
