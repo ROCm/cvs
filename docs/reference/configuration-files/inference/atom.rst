@@ -68,7 +68,7 @@ still runs with ``cvs run atom``.
      - Native ATOM + multinode PP
    * - ``mi355x_atom_deepseek-r1_fp8``
      - ``_single`` (``perf`` + ``mtp3`` profiles)
-     - Native ATOM MI355X copy; ``gpu_arch`` mi355x; bring-up thresholds; lab pending for ``mtp3``
+     - Native ATOM MI355X copy; ``gpu_arch`` mi355x; bring-up thresholds
    * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
      - ``_single`` (``perf`` + ``mtp3`` profiles)
      - Native ATOM perf + MTP-3; lab pending for ``mtp3``
