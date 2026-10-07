@@ -76,6 +76,14 @@ from cvs.tests.inference.sglang._shared import (
 
 log = globals.log
 
+# rocm-smi -a asks libdrm for the marketing name, which fails amdgpu_get_auth on MI355X.
+_GPU_DEVICE_ID_PROBE = (
+    'for f in /sys/class/drm/card*/device/device; do '
+    '[ -e "$f" ] || continue; '
+    'printf "Device ID: %s\\n" "$(cat "$f")"; '
+    'done'
+)
+
 SGLANG_PERF_BENCHMARK_TEST = 'test_run_performance_benchmark_test'
 
 # Re-exported for sglang_single.py / sglang_disagg_distributed.py imports.
@@ -393,17 +401,17 @@ def orch(request, cluster_dict, variant_config, lifecycle):
 @pytest.fixture(scope="module")
 def gpu_type(request, orch, variant_config):
     if _use_sglang_single(request):
-        smi_out_dict = orch.all.exec("rocm-smi -a | head -30")
+        smi_out_dict = orch.all.exec(_GPU_DEVICE_ID_PROBE)
         smi_out = next(iter(smi_out_dict.values()))
     elif _use_sglang_distributed(request):
         probe_node = (variant_config.inference.get("_execution_hosts") or orch.hosts)[0]
-        smi_out_dict = orch.all.exec("rocm-smi -a | head -30")
+        smi_out_dict = orch.all.exec(_GPU_DEVICE_ID_PROBE)
         smi_out = smi_out_dict.get(probe_node) or next(iter(smi_out_dict.values()))
     else:
         # Disagg: probe first prefill node (may differ from cluster head).
         prefill_nodes = variant_config.inference["prefill_node_list"]
         probe_node = prefill_nodes[0] if isinstance(prefill_nodes, list) else prefill_nodes
-        smi_out_dict = orch.all.exec("rocm-smi -a | head -30")
+        smi_out_dict = orch.all.exec(_GPU_DEVICE_ID_PROBE)
         smi_out = smi_out_dict.get(probe_node) or next(iter(smi_out_dict.values()))
     return get_model_from_rocm_smi_output(smi_out)
 

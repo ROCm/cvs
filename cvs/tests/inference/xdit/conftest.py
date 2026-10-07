@@ -23,6 +23,14 @@ from cvs.tests.inference.xdit._shared import (
 
 log = globals.log
 
+# rocm-smi -a asks libdrm for the marketing name, which fails amdgpu_get_auth on MI355X.
+_GPU_DEVICE_ID_PROBE = (
+    'for f in /sys/class/drm/card*/device/device; do '
+    '[ -e "$f" ] || continue; '
+    'printf "Device ID: %s\\n" "$(cat "$f")"; '
+    'done'
+)
+
 
 def _deep_merge(base, override):
     if not (isinstance(base, dict) and isinstance(override, dict)):
@@ -128,7 +136,7 @@ def orch(cluster_dict, variant_config, xdit_spec, lifecycle):
 
 @pytest.fixture(scope="module")
 def gpu_type(orch):
-    output_by_host = orch.all.exec("rocm-smi -a | head -30")
+    output_by_host = orch.all.exec(_GPU_DEVICE_ID_PROBE)
     output = next(iter(output_by_host.values()), "")
     return get_model_from_rocm_smi_output(output)
 
