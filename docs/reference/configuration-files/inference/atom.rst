@@ -66,7 +66,7 @@ still runs with ``cvs run atom``.
    * - ``mi3xx_atom_deepseek-r1_fp8``
      - ``_single`` (``perf`` + ``mtp3`` profiles), ``_distributed`` (``vllm_atom`` PP=2)
      - Native ATOM + multinode PP
-   * - ``mi3xx_atom_deepseek-r1_fp8-gfx950``
+   * - ``mi355x_atom_deepseek-r1_fp8``
      - ``_single``
      - Native ATOM MI355X copy; ``gpu_arch`` mi355x; bring-up thresholds
    * - ``mi3xx_atom_qwen3.5-397b-a17b_fp8``
