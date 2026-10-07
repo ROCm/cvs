@@ -25,7 +25,8 @@ err_patterns_dict = {
     # they're matched as warnings via warn_patterns_dict below. See AMD docs:
     # https://instinct.docs.amd.com/projects/amdgpu-docs/en/latest/conceptual/oversubscription.html
     'driver': 'Queue preemption failed for queue|Failed to evict process queues|No more SDMA queue to allocate|amdgpu: process pid',
-    'hardware': r'hardware error|hardware fail|ras error|(?:uncorrectable|correctable err)(?!.*initialized)',
+    'hardware': r'hardware error|hardware fail|ras error|(?:uncorrectable|correctable err)(?!.*initialized)'
+    r'|EDAC (?:MC\d+: \d+ [CU]E |DEVICE\d+: [CU]E: )',
     'network': 'NIC Link is Down|link is down|ib_uverb|CQE|queue catastrophic|CQ error',
 }
 
