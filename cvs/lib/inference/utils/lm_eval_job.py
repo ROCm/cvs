@@ -36,7 +36,7 @@ class LmEvalCtx:
 
 def normalize_client_base_url(base_url: str) -> str:
     """Map bind-all addresses to localhost for outbound HTTP clients."""
-    return base_url.replace("0.0.0.0", "127.0.0.1")
+    return base_url.replace("0.0.0.0", "127.0.0.1")  # nosec B104 # search text for replace(), not a bind address
 
 
 def _split_model_args(value: str) -> Dict[str, str]:
