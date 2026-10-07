@@ -84,6 +84,7 @@ class TestProfile(unittest.TestCase):
         transferbench_raw = json.loads(profile_json_path("transferbench_cvs").read_text(encoding="utf-8"))
         agfhc_raw = json.loads(profile_json_path("agfhc_cvs").read_text(encoding="utf-8"))
         csp_raw = json.loads(profile_json_path("csp_qual_agfhc").read_text(encoding="utf-8"))
+        host_raw = json.loads(profile_json_path("host_configs_cvs").read_text(encoding="utf-8"))
         self.assertEqual(rvs_raw["extends"], "health_status_base")
         self.assertEqual(rvs_raw["cards"], [{"id": "results", "hint": rvs_raw["cards"][0]["hint"]}])
         self.assertEqual(transferbench_raw["extends"], "health_status_base")
@@ -92,11 +93,14 @@ class TestProfile(unittest.TestCase):
         self.assertEqual(agfhc_raw["cards"], [{"id": "results", "hint": agfhc_raw["cards"][0]["hint"]}])
         self.assertEqual(csp_raw["extends"], "health_status_base")
         self.assertEqual(csp_raw["cards"], [{"id": "results", "hint": csp_raw["cards"][0]["hint"]}])
+        self.assertEqual(host_raw["extends"], "health_status_base")
+        self.assertEqual(host_raw["cards"], [{"id": "results", "hint": host_raw["cards"][0]["hint"]}])
 
         rvs = load_json_profile("rvs_cvs")
         transferbench = load_json_profile("transferbench_cvs")
         agfhc = load_json_profile("agfhc_cvs")
         csp = load_json_profile("csp_qual_agfhc")
+        host = load_json_profile("host_configs_cvs")
         self.assertEqual(
             [card["id"] for card in rvs["cards"]],
             ["run-card", "lifecycle", "overview", "metrics", "results"],
@@ -113,15 +117,22 @@ class TestProfile(unittest.TestCase):
             [card["id"] for card in csp["cards"]],
             ["run-card", "lifecycle", "overview", "metrics", "results"],
         )
+        self.assertEqual(
+            [card["id"] for card in host["cards"]],
+            ["run-card", "lifecycle", "overview", "metrics", "results"],
+        )
         self.assertEqual(rvs["lifecycle"]["session_labels"][0], "gpu_enumeration")
         self.assertEqual(transferbench["lifecycle"]["session_labels"][0], "a2a")
         self.assertEqual(agfhc["lifecycle"]["session_labels"][0], "hbm")
         self.assertEqual(csp["lifecycle"]["session_labels"][0], "version_check")
+        self.assertEqual(host["lifecycle"]["session_labels"][0], "os_release")
+        self.assertEqual(host["sources"]["results"], "host_res_dict")
         self.assertEqual(transferbench["cards"][3]["title"], "Bandwidth highlights")
         self.assertEqual(rvs["cards"][3]["title"], "Measurements")
         self.assertEqual(agfhc["cards"][3]["title"], "Measurements")
         self.assertEqual(agfhc["cards"][3]["when_empty"], "hide")
         self.assertEqual(csp["cards"][3]["when_empty"], "hide")
+        self.assertEqual(host["cards"][3]["when_empty"], "hide")
 
     def test_rvs_profile_validates_against_schema(self):
         schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
@@ -136,6 +147,15 @@ class TestProfile(unittest.TestCase):
         Draft202012Validator(schema).validate(profile)
         self.assertEqual(profile["dataset_builder"], "status_matrix")
         self.assertEqual(profile["sources"]["results"], "agfhc_res_dict")
+        self.assertTrue(profile["interactive_viewer"])
+
+    def test_host_configs_profile_validates_against_schema(self):
+        schema = json.loads(profile_json_path("schema").read_text(encoding="utf-8"))
+        profile = load_json_profile("host_configs_cvs")
+        Draft202012Validator(schema).validate(profile)
+        self.assertEqual(profile["dataset_builder"], "status_matrix")
+        self.assertEqual(profile["sources"]["results"], "host_res_dict")
+        self.assertEqual(profile["sources"]["lifecycle"], "lifecycle")
         self.assertTrue(profile["interactive_viewer"])
 
     def test_csp_qual_agfhc_profile_validates_against_schema(self):
