@@ -12,8 +12,8 @@ All code contained here is Property of Advanced Micro Devices, Inc.
 # Pinned invariants:
 #   - User-supplied runtime.args.volumes must NOT be double-listed.
 #   - --gpus all must NEVER be emitted: CVS is AMD-only and AMD GPU access
-#     comes from the auto-injected --device /dev/kfd /dev/dri /dev/infiniband
-#     in DEFAULT_CONTAINER_ARGS. The flag is NVIDIA/CDI-specific and breaks
+#     comes from the auto-injected --device /dev/kfd /dev/dri in
+#     DEFAULT_CONTAINER_ARGS. The flag is NVIDIA/CDI-specific and breaks
 #     AMD-only docker without the AMD container toolkit.
 #   - Every privileged command is built from a single deterministic
 #     orchestrator.sudo_prefix() prefix -- never the old `cmd || sudo -n cmd`
@@ -293,8 +293,8 @@ class TestDockerRuntimeSetupContainers(unittest.TestCase):
         #   1. minimal config, no GPU-related keys
         #   2. legacy config that sets gpu_passthrough=True (must be ignored)
         #   3. config with extra runtime args
-        # AMD GPU access is provided by --device /dev/kfd /dev/dri /dev/infiniband
-        # via DEFAULT_CONTAINER_ARGS -- not by --gpus all.
+        # AMD GPU access is provided by --device /dev/kfd /dev/dri via
+        # DEFAULT_CONTAINER_ARGS -- not by --gpus all.
         for label, cfg in [
             ("minimal", _container_config()),
             ("legacy_gpu_passthrough_true", _container_config(gpu_passthrough=True)),

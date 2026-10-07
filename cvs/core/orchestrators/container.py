@@ -35,12 +35,22 @@ def sshd_port_listen_ok(output) -> bool:
     return "OK" in (text or "")
 
 
+def ib_device_expansion(dev_dir="/dev/infiniband"):
+    """Shell substitution that emits ``--device <node>:<node>`` for each entry in *dev_dir*.
+
+    The shell on each host expands it when ``docker run`` executes, so every
+    host passes only the RDMA device nodes it has. A glob that matches nothing
+    stays literal, hence the ``-e`` test: without it, a host lacking *dev_dir*
+    would pass the pattern itself as a device path.
+    """
+    return f'$(for dev in {dev_dir}/*; do [ -e "$dev" ] && echo -n "--device $dev:$dev "; done)'
+
+
 # Default container configuration - matches the original docker command
 DEFAULT_CONTAINER_ARGS = {
     "devices": [
         "/dev/kfd",  # Kernel Fusion Driver (ROCm)
         "/dev/dri",  # Direct Rendering Infrastructure
-        "/dev/infiniband",  # All infiniband devices
     ],
     "capabilities": [
         "SYS_PTRACE",  # Debug processes
@@ -442,9 +452,6 @@ class ContainerOrchestrator(BaremetalOrchestrator):
         if 'privileged' not in runtime_args:
             runtime_args['privileged'] = self.is_privileged()
 
-        # Add InfiniBand device discovery via shell expansion (per-host)
-        ib_device_expansion = '$(for dev in /dev/infiniband/*; do echo -n "--device $dev:$dev "; done)'
-
         launched = self.runtime.setup_containers(
             modified_config,
             container_name,
@@ -455,7 +462,7 @@ class ContainerOrchestrator(BaremetalOrchestrator):
             environment=environment,
             groups=groups,
             ulimits=ulimits,
-            device_expansion=ib_device_expansion,
+            device_expansion=ib_device_expansion(),
         )
         return launched
 
