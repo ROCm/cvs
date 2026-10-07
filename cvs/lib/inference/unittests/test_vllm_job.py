@@ -346,7 +346,7 @@ class TestServerCommandsInBash(unittest.TestCase):
         bin_dir = os.path.join(self.tmp, "bin")
         os.makedirs(bin_dir)
         self._write(os.path.join(bin_dir, "vllm"), "#!/bin/sh\nexec sleep 300\n")
-        os.chmod(os.path.join(bin_dir, "vllm"), 0o755)
+        os.chmod(os.path.join(bin_dir, "vllm"), 0o700)
         self.env["PATH"] = f"{bin_dir}:{self.env['PATH']}"
         self.env_script = os.path.join(self.tmp, "server_env_script.sh")
         self._write(self.env_script, "export CVS_TEST_ENV=1\n")
