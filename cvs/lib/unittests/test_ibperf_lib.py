@@ -632,6 +632,11 @@ class TestRunIbPerfLatTest(IbPerfCommandFixtures, unittest.TestCase):
 
 
 class TestRunIbPerfBwTest(IbPerfCommandFixtures, unittest.TestCase):
+    @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
+    def test_waits_for_perftest_exit_bounded_by_duration(self, mock_wait):
+        self.run_bandwidth(duration=30)
+        mock_wait.assert_called_once_with(self.phdl, 'ib_write_bw', 30 + ibperf_lib.PERFTEST_EXIT_SLACK_S)
+
     def test_builds_bw_commands_without_dmabuf(self):
         self.run_bandwidth(use_dmabuf=False)
         self.assertEqual(
