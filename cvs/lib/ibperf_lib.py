@@ -11,6 +11,7 @@ import time
 import xlsxwriter
 
 from cvs.lib.utils_lib import *
+from cvs.lib.utils.polling import poll_until
 
 log = logging.getLogger(__name__)
 
@@ -184,17 +185,20 @@ def check_perftest_dmabuf_support(shdl, binary_path):
 
 
 def wait_for_perftest_exit(phdl, app_name, timeout):
-    """Poll every node until no ``app_name`` process is left or ``timeout`` seconds pass.
+    """Poll every node until ``pgrep`` confirms no ``app_name`` process is left or ``timeout`` seconds pass.
 
-    Returns the nodes still running ``app_name`` when the wait ended; empty when all exited.
+    Only a ``pgrep`` no-match counts as exited, so a node whose poll errored keeps the wait going.
+    ``pgrep -x`` matches the kernel's 15-character process name, so ``app_name`` is truncated to it.
+    Returns the nodes not confirmed exited when the wait ended; empty when all exited.
     """
-    deadline = time.monotonic() + timeout
-    while True:
-        out_dict = phdl.exec(f'pgrep -x {app_name} > /dev/null && echo running || echo exited', print_console=False)
-        running = [node for node, out in out_dict.items() if 'running' in out]
-        if not running or time.monotonic() >= deadline:
-            return running
-        time.sleep(PERFTEST_EXIT_POLL_S)
+    cmd = f'pgrep -x {app_name[:15]} > /dev/null; echo "pgrep_rc=$?"'
+
+    def unconfirmed():
+        out_dict = phdl.exec(cmd, print_console=False)
+        return [node for node, out in out_dict.items() if not re.search(r'\bpgrep_rc=1\b', out)]
+
+    nodes, _ = poll_until(unconfirmed, lambda pending: not pending, timeout, PERFTEST_EXIT_POLL_S)
+    return nodes
 
 
 def get_ib_bw_pps(phdl, msg_size, cmd, instance_no=None):
@@ -439,9 +443,9 @@ def run_ib_perf_bw_test(
     phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
 
     exit_timeout = duration + PERFTEST_EXIT_SLACK_S
-    running = wait_for_perftest_exit(phdl, bw_test, exit_timeout)
-    if running:
-        log.warning('%s still running on %s after %ss; reading logs anyway', bw_test, running, exit_timeout)
+    unconfirmed = wait_for_perftest_exit(phdl, bw_test, exit_timeout)
+    if unconfirmed:
+        log.warning('%s exit not confirmed on %s after %ss; reading logs anyway', bw_test, unconfirmed, exit_timeout)
 
     for instance_no in range(0, inst_count):
         try:
@@ -577,9 +581,11 @@ def run_ib_perf_lat_test(
     time.sleep(2)
     phdl.exec('source /tmp/ib_cmds_file.txt', print_console=False)
 
-    running = wait_for_perftest_exit(phdl, lat_test, PERFTEST_EXIT_SLACK_S)
-    if running:
-        log.warning('%s still running on %s after %ss; reading logs anyway', lat_test, running, PERFTEST_EXIT_SLACK_S)
+    unconfirmed = wait_for_perftest_exit(phdl, lat_test, PERFTEST_EXIT_SLACK_S)
+    if unconfirmed:
+        log.warning(
+            '%s exit not confirmed on %s after %ss; reading logs anyway', lat_test, unconfirmed, PERFTEST_EXIT_SLACK_S
+        )
 
     for instance_no in range(0, inst_count):
         try:
