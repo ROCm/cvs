@@ -7,9 +7,15 @@ All rights reserved.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import shlex
+import shutil
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from cvs.lib import globals
@@ -18,6 +24,122 @@ log = globals.log
 
 CONTAINER_OUTPUT_MOUNT = "/outputs"
 CONTAINER_HF_TOKEN_PATH = "/run/secrets/hf_token"
+_ARTIFACT_BEGIN = "XDIT_ARTIFACTS_BEGIN"
+_ARTIFACT_END = "XDIT_ARTIFACTS_END"
+
+# Controller parse has no view of node-local storage. The writer node prints the
+# benchmark files; the controller rebuilds just enough of the tree to parse.
+_REMOTE_COLLECT_SCRIPT = """
+import base64, json, os, sys
+root = sys.argv[1]
+items = []
+if os.path.isdir(root):
+    for dirpath, _, names in os.walk(root):
+        for name in names:
+            keep = (
+                name == "timing.json"
+                or name.endswith(".png")
+                or name.endswith(".mp4")
+                or (name.startswith("rank0") and name.endswith(".json"))
+            )
+            if not keep:
+                continue
+            path = os.path.join(dirpath, name)
+            try:
+                with open(path, "rb") as handle:
+                    blob = handle.read()
+            except OSError:
+                continue
+            items.append({"rel": os.path.relpath(path, root), "b64": base64.b64encode(blob).decode("ascii")})
+sys.stdout.write("XDIT_ARTIFACTS_BEGIN\\n")
+sys.stdout.write(json.dumps(items))
+sys.stdout.write("\\nXDIT_ARTIFACTS_END\\n")
+"""
+
+
+def remote_benchmark_collect_cmd(output_dir):
+    return "python3 -c " + shlex.quote(_REMOTE_COLLECT_SCRIPT) + " " + shlex.quote(str(output_dir))
+
+
+def _parse_artifact_payload(text):
+    if _ARTIFACT_BEGIN not in text or _ARTIFACT_END not in text:
+        return None
+    raw = text.split(_ARTIFACT_BEGIN, 1)[1].split(_ARTIFACT_END, 1)[0].strip()
+    try:
+        items = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(items, list) or not items:
+        return None
+    return items
+
+
+def _materialize_artifacts(items):
+    root = Path(tempfile.mkdtemp(prefix="xdit-results-"))
+    wrote = False
+    for item in items:
+        rel = str(item.get("rel") or "")
+        rel_path = Path(rel)
+        if not rel or rel_path.is_absolute() or ".." in rel_path.parts:
+            continue
+        try:
+            blob = base64.b64decode(item.get("b64") or "")
+        except (binascii.Error, ValueError, TypeError):
+            continue
+        dest = root / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(blob)
+        wrote = True
+    if not wrote:
+        shutil.rmtree(root, ignore_errors=True)
+        return None
+    return str(root)
+
+
+def stage_remote_benchmark_outputs(s_phdl, output_dirs_by_node):
+    """Read benchmark JSON and media on each writer node and stage them locally.
+
+    Returns a node -> local directory map for nodes whose files were readable.
+    Nodes that share one remote directory reuse the copy from the node that had it.
+    """
+    from cvs.lib.inference.xdit.xdit_flux_job import _exec_cmd_list_on_nodes, _exec_result_output
+
+    nodes = [node for node, path in output_dirs_by_node.items() if path]
+    if not nodes:
+        return {}
+    commands = [remote_benchmark_collect_cmd(output_dirs_by_node[node]) for node in nodes]
+    try:
+        raw = _exec_cmd_list_on_nodes(s_phdl, nodes, commands, print_console=False)
+    except Exception as exc:
+        log.warning("Could not read xDiT benchmark output from nodes: %s", exc)
+        return {}
+
+    payloads = {}
+    for node in nodes:
+        text = _exec_result_output((raw or {}).get(node))
+        items = _parse_artifact_payload(text)
+        if items:
+            payloads[node] = items
+        elif text.strip() and _ARTIFACT_BEGIN not in text:
+            log.warning("xDiT benchmark read on %s did not return artifacts: %s", node, text.strip().splitlines()[-1])
+
+    local_by_remote = {}
+    local_by_node = {}
+    for node in nodes:
+        remote_dir = output_dirs_by_node[node]
+        items = payloads.get(node)
+        if not items or remote_dir in local_by_remote:
+            continue
+        local_dir = _materialize_artifacts(items)
+        if not local_dir:
+            continue
+        local_by_remote[remote_dir] = local_dir
+        log.info("Staged xDiT benchmark files from %s at %s", node, local_dir)
+    for node in nodes:
+        local_dir = local_by_remote.get(output_dirs_by_node[node])
+        if local_dir:
+            local_by_node[node] = local_dir
+    return local_by_node
 
 
 def _hf_home_token_install_cmd(hf_home="/hf_home", token_path=CONTAINER_HF_TOKEN_PATH):
@@ -444,13 +566,22 @@ class PytorchXditBenchmarkJob(ABC):
         return output_dir
 
     def store_output_dir_hint(self, plan: BenchmarkLaunchPlan) -> None:
-        by_node = {node: self._host_output_path(path) for node, path in plan.output_dirs_by_node.items()}
+        remote_by_node = {node: path for node, path in plan.output_dirs_by_node.items() if path}
+        staged = stage_remote_benchmark_outputs(self.s_phdl, remote_by_node)
+        by_node = {node: staged.get(node) or self._host_output_path(path) for node, path in remote_by_node.items()}
         if by_node:
             self.inference_dict["_test_output_dirs_by_node"] = by_node
 
         if plan.primary_output_dir:
-            self.inference_dict["_test_output_dir"] = self._host_output_path(plan.primary_output_dir)
+            writer = next(
+                (node for node, path in remote_by_node.items() if path == plan.primary_output_dir and node in staged),
+                None,
+            )
+            if writer:
+                self.inference_dict["_test_output_dir"] = staged[writer]
+            else:
+                self.inference_dict["_test_output_dir"] = self._host_output_path(plan.primary_output_dir)
             return
 
-        if not self.distributed and len(plan.node_order) == 1:
+        if not self.distributed and len(plan.node_order) == 1 and plan.node_order[0] in by_node:
             self.inference_dict["_test_output_dir"] = by_node[plan.node_order[0]]

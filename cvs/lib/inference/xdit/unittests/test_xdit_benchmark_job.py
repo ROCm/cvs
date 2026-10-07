@@ -1,10 +1,20 @@
+import json
+import os
+import subprocess
+import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock
 
 from cvs.lib.inference.xdit.xdit_benchmark_job import (
     BenchmarkLaunchPlan,
     PytorchXditBenchmarkJob,
+    _REMOTE_COLLECT_SCRIPT,
+    stage_remote_benchmark_outputs,
 )
+from cvs.lib.inference.xdit.xdit_flux import FluxOutputParser
+from cvs.lib.inference.xdit.xdit_wan import WanOutputParser
+from cvs.lib.inference.xdit.xdit_wan_i2v import WanI2vOutputParser
 
 
 class _StubBenchmarkJob(PytorchXditBenchmarkJob):
@@ -240,6 +250,116 @@ class TestPytorchXditBenchmarkJob(unittest.TestCase):
             inference_dict["_test_output_dir"],
             "/host/results/stub_container-10.0.0.1_outputs",
         )
+
+
+class _RecordingExec:
+    def __init__(self, outputs):
+        self.host_list = list(outputs)
+        self.outputs = outputs
+        self.commands = None
+
+    def exec_cmd_list(self, commands, timeout=None, print_console=False):
+        self.commands = list(commands)
+        return {host: self.outputs[host] for host in self.host_list}
+
+
+def _collect_tree(root):
+    proc = subprocess.run(
+        [sys.executable, "-c", _REMOTE_COLLECT_SCRIPT, root],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.stdout
+
+
+class TestStageRemoteBenchmarkOutputs(unittest.TestCase):
+    def test_collect_script_reads_flux_and_wan_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            flux = os.path.join(tmp, "results")
+            os.makedirs(flux)
+            with open(os.path.join(flux, "timing.json"), "w", encoding="utf-8") as handle:
+                handle.write(json.dumps([{"pipe_time": 0.97}]))
+            with open(os.path.join(flux, "flux_0.png"), "wb") as handle:
+                handle.write(b"png")
+            with open(os.path.join(tmp, "noise.log"), "w", encoding="utf-8") as handle:
+                handle.write("ignore")
+            text = _collect_tree(tmp)
+
+        staged = stage_remote_benchmark_outputs(_RecordingExec({"n0": text}), {"n0": "/node/flux_outputs"})
+        result, errors = FluxOutputParser(staged["n0"]).parse()
+        self.assertIsNotNone(result, errors)
+        self.assertAlmostEqual(result.avg_pipe_time_s, 0.97)
+        self.assertEqual(result.repetition_count, 1)
+        self.assertTrue(result.image_paths)
+
+    def test_each_node_keeps_its_own_timing(self):
+        def payload(pipe_time):
+            with tempfile.TemporaryDirectory() as tmp:
+                results = os.path.join(tmp, "results")
+                os.makedirs(results)
+                with open(os.path.join(results, "timing.json"), "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps([{"pipe_time": pipe_time}, {"pipe_time": pipe_time}]))
+                with open(os.path.join(results, "video_i2v.mp4"), "wb") as handle:
+                    handle.write(b"mp4")
+                return _collect_tree(tmp)
+
+        executor = _RecordingExec({"10.0.0.1": payload(0.9674), "10.0.0.2": payload(0.9735)})
+        staged = stage_remote_benchmark_outputs(
+            executor,
+            {
+                "10.0.0.1": "/local/flux_host-a_outputs",
+                "10.0.0.2": "/local/flux_host-b_outputs",
+            },
+        )
+        first, _ = WanI2vOutputParser(staged["10.0.0.1"]).parse()
+        second, _ = WanI2vOutputParser(staged["10.0.0.2"]).parse()
+        self.assertAlmostEqual(first.avg_pipe_time_s, 0.9674)
+        self.assertAlmostEqual(second.avg_pipe_time_s, 0.9735)
+        self.assertNotEqual(staged["10.0.0.1"], staged["10.0.0.2"])
+        self.assertTrue(all("/local/flux_" in cmd for cmd in executor.commands))
+
+    def test_shared_directory_uses_the_node_that_has_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            outputs = os.path.join(tmp, "outputs")
+            os.makedirs(outputs)
+            with open(os.path.join(outputs, "rank0_step0.json"), "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"total_time": 12.5}))
+            with open(os.path.join(outputs, "video.mp4"), "wb") as handle:
+                handle.write(b"mp4")
+            present = _collect_tree(tmp)
+        with tempfile.TemporaryDirectory() as empty_dir:
+            empty = _collect_tree(empty_dir)
+        staged = stage_remote_benchmark_outputs(
+            _RecordingExec({"rank0": empty, "rank1": present}),
+            {"rank0": "/shared/wan_outputs", "rank1": "/shared/wan_outputs"},
+        )
+        self.assertEqual(staged["rank0"], staged["rank1"])
+        result, errors = WanOutputParser(staged["rank1"]).parse()
+        self.assertIsNotNone(result, errors)
+        self.assertAlmostEqual(result.avg_total_time_s, 12.5)
+
+    def test_missing_remote_files_leave_no_local_copy(self):
+        staged = stage_remote_benchmark_outputs(_RecordingExec({"n0": ""}), {"n0": "/node/only"})
+        self.assertEqual(staged, {})
+
+    def test_store_output_dir_hint_points_parser_at_staged_timing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results = os.path.join(tmp, "results")
+            os.makedirs(results)
+            with open(os.path.join(results, "timing.json"), "w", encoding="utf-8") as handle:
+                handle.write(json.dumps([{"pipe_time": 0.9674}] * 25))
+            payload = _collect_tree(tmp)
+        job = _make_job(["10.0.0.1"])
+        job.s_phdl.exec_cmd_list.return_value = {"10.0.0.1": payload}
+        plan = job.build_launch_plan()
+        job.store_output_dir_hint(plan)
+        local = job.inference_dict["_test_output_dir"]
+        self.assertNotIn("/home/user/stub_output", local)
+        result, errors = FluxOutputParser(local).parse()
+        self.assertIsNotNone(result, errors)
+        self.assertEqual(result.repetition_count, 25)
+        self.assertAlmostEqual(result.avg_pipe_time_s, 0.9674)
 
 
 if __name__ == "__main__":
