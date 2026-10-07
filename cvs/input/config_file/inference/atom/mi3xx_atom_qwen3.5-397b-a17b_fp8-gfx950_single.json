@@ -3,7 +3,7 @@
   "schema_version": 2,
   "framework": "atom",
   "default_profile": "perf",
-  "threshold_json": "mi325x_atom_qwen3.5-397b-a17b_fp8-gfx950_threshold.json",
+  "threshold_json": "mi355x_atom_qwen3.5-397b-a17b_fp8_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/models",
