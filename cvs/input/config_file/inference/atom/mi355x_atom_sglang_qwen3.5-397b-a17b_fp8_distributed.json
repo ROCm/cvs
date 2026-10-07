@@ -2,7 +2,7 @@
   "_comment": "Qwen3.5-397B-A17B FP8 distributed SGLang PP=2. Same Qwen3.5 hybrid/AITER flags as single-node; image must ship aiter.ops.flydsl.moe_common. MI355X bring-up copy of the gfx942 recipe; thresholds are not a gate.",
   "gpu_arch": "mi355x",
   "enforce_thresholds": false,
-  "threshold_json": "mi325x_atom_sglang_qwen3.5-397b-a17b_fp8-gfx950_distributed_threshold.json",
+  "threshold_json": "mi355x_atom_sglang_qwen3.5-397b-a17b_fp8_distributed_threshold.json",
   "paths": {
     "shared_fs": "/home/{user-id}",
     "models_dir": "/models",
