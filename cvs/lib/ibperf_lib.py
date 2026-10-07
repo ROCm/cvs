@@ -595,7 +595,7 @@ def run_ib_perf_lat_test(
     for instance_no in range(0, inst_count):
         try:
             lat_dict = get_ib_lat_numb(phdl, msg_size, f'cat /tmp/ib_perf_{instance_no}_logs', instance_no=instance_no)
-            for node in bck_nic_dict.keys():
+            for node in lat_dict.keys():
                 result_dict[node][instance_no] = {}
                 result_dict[node][instance_no]['t_min'] = lat_dict[node]['t_min']
                 result_dict[node][instance_no]['t_max'] = lat_dict[node]['t_max']

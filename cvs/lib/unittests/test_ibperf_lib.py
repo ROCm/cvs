@@ -50,6 +50,10 @@ class TestIbperfLib(unittest.TestCase):
 
 
 BW_LOG = '8192 bytes of GPU buffer\n 8192       5000           512.00             517.14             7.89\n'
+NODES = ('node1', 'node2')
+GPU_NIC = {n: {f'card{g}': {'rdma_dev': f'rdma{g}'} for g in range(8)} for n in NODES}
+GPU_NUMA = {n: {f'card{g}': {'local_cpulist': '0-63'} for g in range(8)} for n in NODES}
+LAT = dict.fromkeys(('t_min', 't_max', 't_typical', 't_avg', 't_stdev', 't_99_pct', 't_99_9_pct'), '1.0')
 
 
 class TestWaitForPerftestExit(unittest.TestCase):
@@ -104,23 +108,11 @@ class TestRunIbPerfLatTest(unittest.TestCase):
     @patch.object(ibperf_lib, 'get_ib_lat_numb')
     @patch.object(ibperf_lib, 'check_perftest_dmabuf_support', return_value=False)
     def test_builds_latency_commands(self, _dmabuf, mock_lat_numb, mock_wait, _sleep):
-        nodes = ('node1', 'node2')
-        lat = dict.fromkeys(('t_min', 't_max', 't_typical', 't_avg', 't_stdev', 't_99_pct', 't_99_9_pct'), '1.0')
-        mock_lat_numb.return_value = {n: lat for n in nodes}
-        gpu_nic_dict = {n: {f'card{g}': {'rdma_dev': f'rdma{g}'} for g in range(8)} for n in nodes}
-        gpu_numa_dict = {n: {f'card{g}': {'local_cpulist': '0-63'} for g in range(8)} for n in nodes}
+        mock_lat_numb.return_value = {n: LAT for n in NODES}
         phdl = MagicMock()
 
         ibperf_lib.run_ib_perf_lat_test(
-            MagicMock(),
-            phdl,
-            'ib_write_lat',
-            gpu_numa_dict,
-            gpu_nic_dict,
-            {n: {} for n in nodes},
-            '/opt/perftest/bin',
-            64,
-            3,
+            MagicMock(), phdl, 'ib_write_lat', GPU_NUMA, GPU_NIC, {n: {} for n in NODES}, '/opt/perftest/bin', 64, 3
         )
 
         server_cmd, client_cmd = phdl.exec_cmd_list.call_args_list[1].args[0]
@@ -135,6 +127,26 @@ class TestRunIbPerfLatTest(unittest.TestCase):
             ' -x 3 -F -p 1516 -s 64 node1 > /tmp/ib_perf_0_logs 2>&1 &" >> /tmp/ib_cmds_file.txt',
         )
         mock_wait.assert_called_once_with(phdl, 'ib_write_lat', ibperf_lib.PERFTEST_EXIT_SLACK_S)
+
+    @patch.object(ibperf_lib.time, 'sleep')
+    @patch.object(ibperf_lib, 'wait_for_perftest_exit', return_value=[])
+    @patch.object(ibperf_lib, 'get_ib_lat_numb', return_value={'node1': LAT})
+    @patch.object(ibperf_lib, 'check_perftest_dmabuf_support', return_value=False)
+    def test_keeps_reporting_node_when_another_is_missing(self, *_mocks):
+        res = ibperf_lib.run_ib_perf_lat_test(
+            MagicMock(),
+            MagicMock(),
+            'ib_write_lat',
+            GPU_NUMA,
+            GPU_NIC,
+            {n: {} for n in NODES},
+            '/opt/perftest/bin',
+            64,
+            3,
+        )
+
+        self.assertEqual(sorted(res['node1']), list(range(8)))
+        self.assertEqual(res['node2'], {})
 
 
 if __name__ == '__main__':
