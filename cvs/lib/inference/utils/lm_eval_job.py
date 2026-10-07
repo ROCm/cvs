@@ -19,10 +19,14 @@ from cvs.lib.inference.utils.accuracy_config import AccuracyTask
 from cvs.lib.inference.utils.lm_eval_parsing import project
 
 LM_EVAL_VERSION = "0.4.12"
+LM_EVAL_INSTALL_LOCK = "/tmp/cvs_lm_eval_install.lock"
+# Runs that share a container share its Python environment, and concurrent pip
+# installs into one environment fail. Images without flock run unlocked.
 LM_EVAL_INSTALL_CHECK_CMD = (
+    "(command -v flock >/dev/null && flock 9; "
     "python -c \"import importlib.metadata as m; import lm_eval, math_verify; "
     f"assert m.version('lm-eval') == '{LM_EVAL_VERSION}'\" 2>/dev/null || "
-    f"pip install -q 'lm-eval[api,math]=={LM_EVAL_VERSION}'"
+    f"pip install -q 'lm-eval[api,math]=={LM_EVAL_VERSION}') 9>{LM_EVAL_INSTALL_LOCK}"
 )
 
 

@@ -12,18 +12,27 @@ cvs/lib/inference/unittests/test_vllm_job_server_reuse.py.
 
 import copy
 import json
+import os
 import shlex
+import shutil
+import subprocess
+import tempfile
 import unittest
 
 from cvs.lib.inference.utils.accuracy_config import AccuracyTask
 from cvs.lib.inference.utils.lm_eval_job import (
     LM_EVAL_INSTALL_CHECK_CMD,
+    LM_EVAL_INSTALL_LOCK,
     LM_EVAL_VERSION,
     LmEvalCtx,
     build_lm_eval_cmd,
     normalize_client_base_url,
     run_accuracy_tasks,
 )
+
+_BASH = shutil.which("bash")
+_FLOCK = shutil.which("flock")
+_needs_bash_and_flock = unittest.skipUnless(_BASH and _FLOCK, "needs bash and flock(1)")
 
 
 def _task(**overrides):
@@ -252,12 +261,47 @@ class TestBuildLmEvalCmd(unittest.TestCase):
 
 
 class TestInstallGuard(unittest.TestCase):
-    '''The install guard must cover the `math` extra and detect it by capability.
+    '''The install guard must cover the `math` extra, detect it by capability,
+    and hold a container-wide lock around both the check and the install.
 
     leaderboard_math_hard imports math_verify at task-build time; the `api`
     extra alone omits it, so the task dies with ModuleNotFoundError after the
     server is already up (observed on GLM-5.2, 2026-07-31).
+
+    Runs that share a container share its Python environment; the lock keeps
+    one run's pip install from overlapping another run's check or install.
     '''
+
+    def _run_guard(self, probe_exit, pip_exit=0, flock_on_path=True):
+        """Run the guard under bash with python and pip stubbed as shell functions.
+
+        The lock moves to a temp dir so concurrent test runs don't share it.
+        Each stub logs whether the lock was held when it ran, and the last log
+        line reports the lock after the guard exits. Returns (process, log lines).
+        """
+        self.assertIn(LM_EVAL_INSTALL_LOCK, LM_EVAL_INSTALL_CHECK_CMD)
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = shlex.quote(os.path.join(tmp, "install.lock"))
+            log_path = os.path.join(tmp, "calls.log")
+            log = shlex.quote(log_path)
+            empty_bin = os.path.join(tmp, "bin")
+            os.mkdir(empty_bin)
+            lock_state = f"$( ({shlex.quote(_FLOCK)} -n 8) 8>{lock} && echo free || echo held)"
+            script = "\n".join(
+                [
+                    f'python() {{ echo "check lock={lock_state}" >> {log}; return {probe_exit}; }}',
+                    f'pip() {{ echo "pip $* lock={lock_state}" >> {log}; return {pip_exit}; }}',
+                    LM_EVAL_INSTALL_CHECK_CMD.replace(LM_EVAL_INSTALL_LOCK, lock),
+                    "status=$?",
+                    f'echo "after lock={lock_state}" >> {log}',
+                    'exit "$status"',
+                ]
+            )
+            path = os.path.dirname(_FLOCK) if flock_on_path else empty_bin
+            proc = subprocess.run([_BASH, "-c", script], env={"PATH": path}, capture_output=True, text=True)
+            with open(log_path, encoding="utf-8") as handle:
+                calls = handle.read().splitlines()
+        return proc, calls
 
     def test_installs_math_extra(self):
         self.assertIn("lm-eval[api,math]", LM_EVAL_INSTALL_CHECK_CMD)
@@ -275,6 +319,51 @@ class TestInstallGuard(unittest.TestCase):
     def test_install_still_runs_only_when_probe_fails(self):
         self.assertIn("||", LM_EVAL_INSTALL_CHECK_CMD)
         self.assertIn("pip install", LM_EVAL_INSTALL_CHECK_CMD)
+
+    @_needs_bash_and_flock
+    def test_check_and_install_run_inside_the_lock(self):
+        # A run queued behind another run's install must re-check the finished
+        # env and skip pip, not import packages that pip is still replacing.
+        proc, calls = self._run_guard(probe_exit=1)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            calls[:2],
+            ["check lock=held", f"pip install -q lm-eval[api,math]=={LM_EVAL_VERSION} lock=held"],
+        )
+
+    @_needs_bash_and_flock
+    def test_lock_is_released_before_lm_eval_runs(self):
+        # Holding the lock through lm_eval would serialize whole accuracy
+        # runs across the container, not just the install.
+        proc, calls = self._run_guard(probe_exit=1)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(calls[-1], "after lock=free")
+
+    @_needs_bash_and_flock
+    def test_passing_check_skips_install(self):
+        proc, calls = self._run_guard(probe_exit=0)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(calls, ["check lock=held", "after lock=free"])
+
+    @_needs_bash_and_flock
+    def test_failed_install_fails_the_guard(self):
+        # build_lm_eval_cmd chains lm_eval after the guard with &&, so a failed
+        # install must surface as the guard's exit code.
+        proc, _ = self._run_guard(probe_exit=1, pip_exit=3)
+        self.assertEqual(proc.returncode, 3)
+
+    @_needs_bash_and_flock
+    def test_without_flock_check_and_install_run_unlocked(self):
+        install = f"pip install -q lm-eval[api,math]=={LM_EVAL_VERSION} lock=free"
+        for probe_exit, expected in (
+            (1, ["check lock=free", install, "after lock=free"]),
+            (0, ["check lock=free", "after lock=free"]),
+        ):
+            with self.subTest(probe_exit=probe_exit):
+                proc, calls = self._run_guard(probe_exit=probe_exit, flock_on_path=False)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(calls, expected)
+                self.assertNotIn("not found", proc.stderr)
 
 
 class FakeOrch:
